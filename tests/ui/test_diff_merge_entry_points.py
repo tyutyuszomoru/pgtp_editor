@@ -107,3 +107,48 @@ def test_compare_merge_two_files_shows_error_on_target_parse_failure(qtbot, tmp_
         window._compare_merge_two_files()
 
     mock_critical.assert_called_once()
+
+
+from tests.ui._menu_helpers import find_action, find_top_menu
+
+
+DUAL_CAPTION_CHANGED_PGTP = """\
+<?xml version="1.0" encoding="UTF-8"?>
+<Project>
+  <Presentation>
+    <Pages>
+      <Page fileName="development_equipment" tableName="pr.equipment" caption="Changed A" ability="Changed B">
+      </Page>
+    </Pages>
+  </Presentation>
+</Project>
+"""
+
+
+def test_next_and_prev_difference_menu_actions_navigate_the_panel(qtbot, tmp_path):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    source_path = _write(tmp_path, "source.pgtp", DUAL_CAPTION_CHANGED_PGTP)
+    target_path = _write(tmp_path, "target.pgtp", VALID_PGTP)
+
+    with patch(
+        "pgtp_editor.ui.main_window.QFileDialog.getOpenFileName",
+        side_effect=[(source_path, ""), (target_path, "")],
+    ):
+        window._compare_merge_two_files()
+
+    menu = find_top_menu(window, "Diff / Merge")
+    next_action = find_action(menu, "Next Difference")
+    prev_action = find_action(menu, "Prev Difference")
+
+    panel = window.center_stage.diff_merge_panel
+    leaves = panel._flattened_leaves()
+    assert len(leaves) == 2
+
+    next_action.trigger()
+    assert panel.tree.currentItem() is leaves[0]
+    next_action.trigger()
+    assert panel.tree.currentItem() is leaves[1]
+
+    prev_action.trigger()
+    assert panel.tree.currentItem() is leaves[0]

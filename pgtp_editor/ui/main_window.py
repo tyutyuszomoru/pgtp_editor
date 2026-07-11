@@ -188,8 +188,10 @@ class MainWindow(QMainWindow):
         compare_action = menu.addAction("Compare / Merge Two Files...")
         compare_action.triggered.connect(self._compare_merge_two_files)
         menu.addSeparator()
-        self._add_stub_action(menu, "Next Difference")
-        self._add_stub_action(menu, "Prev Difference")
+        next_action = menu.addAction("Next Difference")
+        next_action.triggered.connect(self.center_stage.diff_merge_panel.select_next_difference)
+        prev_action = menu.addAction("Prev Difference")
+        prev_action.triggered.connect(self.center_stage.diff_merge_panel.select_previous_difference)
         self._add_stub_action(menu, "Apply Changes to Target")
 
     def _build_tools_menu(self):
