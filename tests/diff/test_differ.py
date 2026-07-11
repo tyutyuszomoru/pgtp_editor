@@ -374,6 +374,62 @@ def test_diff_project_event_suffix_variants_match_by_base_name():
     assert diff.node_kind == "event"
     assert diff.old_value == "old_impl();"
     assert diff.new_value == "new_impl();"
+    # Sanity check: a single event per base name on both sides (the normal
+    # case) must NOT be flagged ambiguous, even though the tag names differ.
+    assert diff.ambiguous is False
+
+
+def test_diff_project_duplicate_sibling_events_paired_positionally_and_flagged_ambiguous():
+    # Two source events (CustomDrawRow, CustomDrawRow_SimpleHandler) both
+    # normalize to base name "CustomDrawRow", as do two target events
+    # (CustomDrawRow, CustomDrawRow_OtherHandler). They should be paired
+    # positionally (1st with 1st, 2nd with 2nd) and every resulting
+    # Difference record marked ambiguous=True -- not a spurious single
+    # record comparing the wrong two events' text.
+    source_page = make_page("shared_page")
+    source_page.events = [
+        make_event("CustomDrawRow", "first_new_impl();"),
+        make_event("CustomDrawRow_SimpleHandler", "second_new_impl();"),
+    ]
+    target_page = make_page("shared_page")
+    target_page.events = [
+        make_event("CustomDrawRow", "first_old_impl();"),
+        make_event("CustomDrawRow_OtherHandler", "second_old_impl();"),
+    ]
+
+    result = diff_project(ProjectModel(pages=[source_page]), ProjectModel(pages=[target_page]))
+
+    assert len(result) == 2
+    for diff in result:
+        assert diff.ambiguous is True
+        assert diff.kind == "changed"
+        assert diff.node_kind == "event"
+
+    by_old_value = {d.old_value: d for d in result}
+    assert by_old_value["first_old_impl();"].new_value == "first_new_impl();"
+    assert by_old_value["second_old_impl();"].new_value == "second_new_impl();"
+
+
+def test_diff_project_duplicate_sibling_events_extra_on_source_side_marked_ambiguous():
+    # 2 source events sharing a base name ("CustomDrawRow"), 1 target event
+    # with that base name: the 1st pair matches (ambiguous, since the group
+    # has size > 1), the 2nd source event has no target counterpart and is
+    # an ambiguous Added record.
+    source_page = make_page("shared_page")
+    source_first = make_event("CustomDrawRow", "first_impl();")
+    source_second = make_event("CustomDrawRow_SimpleHandler", "second_impl();")
+    source_page.events = [source_first, source_second]
+    target_page = make_page("shared_page")
+    target_page.events = [make_event("CustomDrawRow", "first_impl();")]
+
+    result = diff_project(ProjectModel(pages=[source_page]), ProjectModel(pages=[target_page]))
+
+    assert len(result) == 1
+    diff = result[0]
+    assert diff.kind == "added"
+    assert diff.node_kind == "event"
+    assert diff.new_value is source_second
+    assert diff.ambiguous is True
 
 
 from pgtp_editor.model.nodes import DetailNode
