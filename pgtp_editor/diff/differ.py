@@ -30,14 +30,11 @@ def diff_project(source: ProjectModel, target: ProjectModel) -> list[Difference]
                 )
             )
         else:
+            path = [source_page.file_name]
             differences.extend(
-                _compare_attributes(
-                    source_page,
-                    target_page,
-                    path=[source_page.file_name],
-                    node_kind="page",
-                )
+                _compare_attributes(source_page, target_page, path=path, node_kind="page")
             )
+            differences.extend(_compare_columns(source_page, target_page, path=path))
 
     for target_page in target.pages:
         if target_page.file_name not in source_file_names:
@@ -78,4 +75,47 @@ def _compare_attributes(source_node, target_node, path, node_kind) -> list[Diffe
                     ambiguous=False,
                 )
             )
+    return differences
+
+
+def _compare_columns(source_node, target_node, path) -> list[Difference]:
+    """Diff Columns (children) of a matched Page/Detail pair, matched by
+    fieldName, scoped to this parent pair only."""
+    differences: list[Difference] = []
+
+    target_columns_by_field_name = {c.field_name: c for c in target_node.columns}
+    source_field_names = {c.field_name for c in source_node.columns}
+
+    for source_column in source_node.columns:
+        target_column = target_columns_by_field_name.get(source_column.field_name)
+        column_path = path + [source_column.field_name]
+        if target_column is None:
+            differences.append(
+                Difference(
+                    kind="added",
+                    path=column_path,
+                    node_kind="column",
+                    attribute=None,
+                    old_value=None,
+                    new_value=source_column,
+                )
+            )
+        else:
+            differences.extend(
+                _compare_attributes(source_column, target_column, path=column_path, node_kind="column")
+            )
+
+    for target_column in target_node.columns:
+        if target_column.field_name not in source_field_names:
+            differences.append(
+                Difference(
+                    kind="removed",
+                    path=path + [target_column.field_name],
+                    node_kind="column",
+                    attribute=None,
+                    old_value=target_column,
+                    new_value=None,
+                )
+            )
+
     return differences

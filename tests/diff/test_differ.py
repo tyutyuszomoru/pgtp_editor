@@ -76,3 +76,75 @@ def test_diff_project_matched_pages_no_differences():
     target = ProjectModel(pages=[target_page])
 
     assert diff_project(source, target) == []
+
+
+from pgtp_editor.model.nodes import ColumnNode
+
+
+def make_column(field_name, **extra_attrib):
+    attrib = {"fieldName": field_name}
+    attrib.update(extra_attrib)
+    return ColumnNode(identity=field_name, attrib=attrib)
+
+
+def test_diff_project_column_added():
+    col = make_column("new_field", caption="New Field")
+    source_page = make_page("shared_page")
+    source_page.columns = [col]
+    target_page = make_page("shared_page")
+
+    result = diff_project(ProjectModel(pages=[source_page]), ProjectModel(pages=[target_page]))
+
+    assert len(result) == 1
+    diff = result[0]
+    assert diff.kind == "added"
+    assert diff.path == ["shared_page", "new_field"]
+    assert diff.node_kind == "column"
+    assert diff.attribute is None
+    assert diff.old_value is None
+    assert diff.new_value is col
+
+
+def test_diff_project_column_removed():
+    col = make_column("old_field", caption="Old Field")
+    source_page = make_page("shared_page")
+    target_page = make_page("shared_page")
+    target_page.columns = [col]
+
+    result = diff_project(ProjectModel(pages=[source_page]), ProjectModel(pages=[target_page]))
+
+    assert len(result) == 1
+    diff = result[0]
+    assert diff.kind == "removed"
+    assert diff.path == ["shared_page", "old_field"]
+    assert diff.node_kind == "column"
+    assert diff.attribute is None
+    assert diff.old_value is col
+    assert diff.new_value is None
+
+
+def test_diff_project_column_attribute_changed():
+    source_page = make_page("shared_page")
+    source_page.columns = [make_column("tag", caption="New Caption")]
+    target_page = make_page("shared_page")
+    target_page.columns = [make_column("tag", caption="Old Caption")]
+
+    result = diff_project(ProjectModel(pages=[source_page]), ProjectModel(pages=[target_page]))
+
+    assert len(result) == 1
+    diff = result[0]
+    assert diff.kind == "changed"
+    assert diff.path == ["shared_page", "tag"]
+    assert diff.node_kind == "column"
+    assert diff.attribute == "caption"
+    assert diff.old_value == "Old Caption"
+    assert diff.new_value == "New Caption"
+
+
+def test_diff_project_matched_columns_no_differences():
+    source_page = make_page("shared_page")
+    source_page.columns = [make_column("tag", caption="Same")]
+    target_page = make_page("shared_page")
+    target_page.columns = [make_column("tag", caption="Same")]
+
+    assert diff_project(ProjectModel(pages=[source_page]), ProjectModel(pages=[target_page])) == []
