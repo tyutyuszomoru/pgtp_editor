@@ -34,3 +34,40 @@ def test_resolve_path_page_not_found_at_depth_one():
     assert isinstance(result, ResolutionError)
     assert result.segment_index == 0
     assert result.message == "no Page named 'missing_page'"
+
+
+from pgtp_editor.model.nodes import DetailNode
+
+
+def make_detail(table_name, caption, details=None):
+    return DetailNode(
+        identity=f"{table_name}/{caption}",
+        attrib={"tableName": table_name, "caption": caption},
+        details=details or [],
+    )
+
+
+def test_resolve_path_finds_detail_at_depth_two():
+    sub_item = make_detail("pr.attachment", "Sub-item")
+    page = make_page("development_equipment", tableName="pr.equipment")
+    page.details = [sub_item]
+    project = ProjectModel(pages=[page])
+
+    result = resolve_path(project, ["development_equipment", "pr.attachment/Sub-item"])
+
+    assert result is sub_item
+
+
+def test_resolve_path_finds_nested_detail_at_depth_three():
+    level2 = make_detail("pr.level2", "Level2")
+    level1 = make_detail("pr.level1", "Level1", details=[level2])
+    page = make_page("top_page")
+    page.details = [level1]
+    project = ProjectModel(pages=[page])
+
+    result = resolve_path(
+        project,
+        ["top_page", "pr.level1/Level1", "pr.level2/Level2"],
+    )
+
+    assert result is level2
