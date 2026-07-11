@@ -1,6 +1,14 @@
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QDockWidget, QListWidget, QMainWindow, QWidget
+from PySide6.QtWidgets import (
+    QDockWidget,
+    QFileDialog,
+    QListWidget,
+    QMainWindow,
+    QMessageBox,
+    QWidget,
+)
 
+from pgtp_editor.model.parser import load_project
 from pgtp_editor.ui._stub_action import add_stub_action
 from pgtp_editor.ui.about import show_about_dialog
 from pgtp_editor.ui.center_stage import CenterStage
@@ -39,6 +47,34 @@ class MainWindow(QMainWindow):
     def _not_implemented(self, label):
         self.statusBar().showMessage(f"Not yet implemented: {label}", 5000)
 
+    def _open_project(self):
+        path, _filter = QFileDialog.getOpenFileName(
+            self, "Open PGTP Project", "", "PGTP files (*.pgtp)"
+        )
+        if not path:
+            return
+        self.open_project_file(path)
+
+    def open_project_file(self, path):
+        """Load and display the .pgtp project at `path`.
+
+        Split out from `_open_project` so tests can drive the load without
+        going through the QFileDialog. On parse failure, shows a clear
+        error dialog and leaves the currently-displayed tree untouched
+        (never a crash, never a silently-emptied tree).
+        """
+        try:
+            project = load_project(path)
+        except Exception as exc:
+            QMessageBox.critical(
+                self,
+                "Failed to Open Project",
+                f"Could not open '{path}':\n\n{exc}",
+            )
+            return
+        self.project_tree.populate_from_project(project)
+        self.statusBar().showMessage(f"Opened: {path}", 5000)
+
     def _build_menu_bar(self):
         self._build_file_menu()
         self._build_edit_menu()
@@ -51,7 +87,8 @@ class MainWindow(QMainWindow):
     def _build_file_menu(self):
         menu = self.menuBar().addMenu("File")
         self._add_stub_action(menu, "New Project")
-        self._add_stub_action(menu, "Open...")
+        open_action = menu.addAction("Open...")
+        open_action.triggered.connect(self._open_project)
         menu.addMenu("Open Recent")
         self._add_stub_action(menu, "Save")
         self._add_stub_action(menu, "Save As...")
