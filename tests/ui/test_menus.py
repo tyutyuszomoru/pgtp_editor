@@ -145,3 +145,14 @@ def test_tools_menu_contents(qtbot):
         "Find Reused Tables...", "―",
         "Validate Project",
     ]
+
+
+def test_generation_menu_contents(qtbot):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    menu = find_top_menu(window, "Generation")
+    assert action_labels(menu) == [
+        "Locate PHP Generator Executable...", "―",
+        "Generate PHP...", "―",
+        "Open Output Folder",
+    ]

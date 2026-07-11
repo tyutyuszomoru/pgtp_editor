@@ -38,6 +38,7 @@ class MainWindow(QMainWindow):
         self._build_view_menu()
         self._build_diff_merge_menu()
         self._build_tools_menu()
+        self._build_generation_menu()
 
     def _build_file_menu(self):
         menu = self.menuBar().addMenu("File")
@@ -115,3 +116,11 @@ class MainWindow(QMainWindow):
         self._add_stub_action(menu, "Find Reused Tables...")
         menu.addSeparator()
         self._add_stub_action(menu, "Validate Project")
+
+    def _build_generation_menu(self):
+        menu = self.menuBar().addMenu("Generation")
+        self._add_stub_action(menu, "Locate PHP Generator Executable...")
+        menu.addSeparator()
+        self._add_stub_action(menu, "Generate PHP...")
+        menu.addSeparator()
+        self._add_stub_action(menu, "Open Output Folder")
