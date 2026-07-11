@@ -7,39 +7,6 @@ from pgtp_editor.ui._stub_action import add_stub_action
 NODE_KIND_ROLE = Qt.ItemDataRole.UserRole
 TABLE_NAME_ROLE = Qt.ItemDataRole.UserRole + 1
 
-# Placeholder data only — replaced wholesale once the real lxml-backed
-# model exists. "Attachments" and "Characteristics" intentionally share
-# a tableName to exercise the reused-table detection below.
-PLACEHOLDER_PROJECT = {
-    "Equipment": {
-        "table": "pr.equipment",
-        "events": [("OnPreparePage", "S"), ("OnRowProcess", "C")],
-        "details": {
-            "Sub-item": {
-                "table": "pr.attachment",
-                "columns": ["tag", "description"],
-                "events": [("OnPreparePage", "S")],
-            },
-            "Attachments": {
-                "table": "pr.r_characteristic",
-                "columns": ["cvalue"],
-                "events": [],
-            },
-        },
-    },
-    "Work Orders": {
-        "table": "pr.x_workorder",
-        "events": [("OnRowProcess", "C")],
-        "details": {
-            "Characteristics": {
-                "table": "pr.r_characteristic",
-                "columns": ["cvalue"],
-                "events": [],
-            },
-        },
-    },
-}
-
 
 class ProjectTreePanel(QTreeWidget):
     def __init__(self, parent=None, on_stub_action=None):
@@ -48,33 +15,41 @@ class ProjectTreePanel(QTreeWidget):
         self._on_stub_action = on_stub_action or (lambda label: None)
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.customContextMenuRequested.connect(self._show_context_menu)
-        self._populate_placeholder()
 
-    def _populate_placeholder(self):
-        for page_name, page_data in PLACEHOLDER_PROJECT.items():
-            page_table = page_data["table"]
+    def populate_from_project(self, project):
+        """Populate the tree from a parsed ProjectModel (see
+        pgtp_editor.model.parser.load_project). Replaces any existing
+        content — call this after a successful File -> Open.
+        """
+        self.clear()
+        for page in project.pages:
+            page_name = page.attrib.get("caption") or page.file_name or page.identity
+            page_table = page.table_name or ""
             page_item = QTreeWidgetItem([f"(P) {page_name} [{page_table}]"])
             page_item.setData(0, NODE_KIND_ROLE, "page")
             page_item.setData(0, TABLE_NAME_ROLE, page_table)
             self.addTopLevelItem(page_item)
-            for detail_name, detail_data in page_data["details"].items():
-                detail_table = detail_data["table"]
-                detail_item = QTreeWidgetItem([f"(D) {detail_name} [{detail_table}]"])
-                detail_item.setData(0, NODE_KIND_ROLE, "detail")
-                detail_item.setData(0, TABLE_NAME_ROLE, detail_table)
-                page_item.addChild(detail_item)
-                for column_name in detail_data["columns"]:
-                    column_item = QTreeWidgetItem([f"(C) {column_name}"])
-                    column_item.setData(0, NODE_KIND_ROLE, "column")
-                    detail_item.addChild(column_item)
-                for event_name, event_side in detail_data["events"]:
-                    event_item = QTreeWidgetItem([f"(E) {event_side}.{event_name}"])
-                    event_item.setData(0, NODE_KIND_ROLE, "event")
-                    detail_item.addChild(event_item)
-            for event_name, event_side in page_data["events"]:
-                event_item = QTreeWidgetItem([f"(E) {event_side}.{event_name}"])
-                event_item.setData(0, NODE_KIND_ROLE, "event")
-                page_item.addChild(event_item)
+            self._populate_details_and_events(page_item, page)
+
+    def _populate_details_and_events(self, parent_item, node):
+        # Ordering matches the tree's established display shape: nested
+        # Details first, then this node's own Columns, then its Events.
+        for detail in node.details:
+            detail_name = detail.attrib.get("caption") or detail.table_name or detail.identity
+            detail_table = detail.table_name or ""
+            detail_item = QTreeWidgetItem([f"(D) {detail_name} [{detail_table}]"])
+            detail_item.setData(0, NODE_KIND_ROLE, "detail")
+            detail_item.setData(0, TABLE_NAME_ROLE, detail_table)
+            parent_item.addChild(detail_item)
+            self._populate_details_and_events(detail_item, detail)
+        for column in node.columns:
+            column_item = QTreeWidgetItem([f"(C) {column.field_name}"])
+            column_item.setData(0, NODE_KIND_ROLE, "column")
+            parent_item.addChild(column_item)
+        for event in node.events:
+            event_item = QTreeWidgetItem([f"(E) {event.side}.{event.tag_name}"])
+            event_item.setData(0, NODE_KIND_ROLE, "event")
+            parent_item.addChild(event_item)
 
     def iter_detail_items(self):
         for i in range(self.topLevelItemCount()):
