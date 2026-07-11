@@ -123,3 +123,13 @@ def test_expand_all_shows_stub_message(qtbot):
     view_menu = find_top_menu(window, "View")
     find_action(view_menu, "Expand All").trigger()
     assert window.statusBar().currentMessage() == "Not yet implemented: Expand All"
+
+
+def test_diff_merge_menu_contents(qtbot):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    menu = find_top_menu(window, "Diff / Merge")
+    assert action_labels(menu) == [
+        "Compare / Merge Two Files...", "―",
+        "Next Difference", "Prev Difference", "Apply Changes to Target",
+    ]

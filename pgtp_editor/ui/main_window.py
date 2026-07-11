@@ -36,6 +36,7 @@ class MainWindow(QMainWindow):
         self._build_file_menu()
         self._build_edit_menu()
         self._build_view_menu()
+        self._build_diff_merge_menu()
 
     def _build_file_menu(self):
         menu = self.menuBar().addMenu("File")
@@ -94,3 +95,11 @@ class MainWindow(QMainWindow):
 
     def _add_stub_action(self, menu, label):
         return add_stub_action(menu, label, self._not_implemented)
+
+    def _build_diff_merge_menu(self):
+        menu = self.menuBar().addMenu("Diff / Merge")
+        self._add_stub_action(menu, "Compare / Merge Two Files...")
+        menu.addSeparator()
+        self._add_stub_action(menu, "Next Difference")
+        self._add_stub_action(menu, "Prev Difference")
+        self._add_stub_action(menu, "Apply Changes to Target")
