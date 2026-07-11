@@ -30,6 +30,13 @@ def test_audit_dock_on_bottom(qtbot):
     assert window.audit_dock.windowTitle() == "Audit / Problems"
 
 
+def test_properties_dock_on_right(qtbot):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    assert window.dockWidgetArea(window.properties_dock) == Qt.DockWidgetArea.RightDockWidgetArea
+    assert window.properties_dock.windowTitle() == "Properties"
+
+
 def test_center_stage_is_central_widget(qtbot):
     window = MainWindow()
     qtbot.addWidget(window)

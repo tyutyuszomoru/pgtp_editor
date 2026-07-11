@@ -1,5 +1,5 @@
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QDockWidget, QListWidget, QMainWindow
+from PySide6.QtWidgets import QDockWidget, QListWidget, QMainWindow, QWidget
 
 from pgtp_editor.ui._stub_action import add_stub_action
 from pgtp_editor.ui.about import show_about_dialog
@@ -24,6 +24,12 @@ class MainWindow(QMainWindow):
         self.audit_dock.setObjectName("audit_dock")
         self.audit_dock.setWidget(self.audit_panel)
         self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self.audit_dock)
+
+        self.properties_panel = QWidget()
+        self.properties_dock = QDockWidget("Properties", self)
+        self.properties_dock.setObjectName("properties_dock")
+        self.properties_dock.setWidget(self.properties_panel)
+        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.properties_dock)
 
         self.center_stage = CenterStage()
         self.setCentralWidget(self.center_stage)
@@ -81,7 +87,7 @@ class MainWindow(QMainWindow):
         properties_action = menu.addAction("Properties Panel")
         properties_action.setCheckable(True)
         properties_action.setChecked(True)
-        properties_action.toggled.connect(self.center_stage.set_properties_tab_visible)
+        properties_action.toggled.connect(self.properties_dock.setVisible)
 
         audit_action = menu.addAction("Audit/Problems Panel")
         audit_action.setCheckable(True)

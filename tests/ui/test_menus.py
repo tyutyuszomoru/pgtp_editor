@@ -101,12 +101,14 @@ def test_toggling_audit_panel_hides_dock(qtbot):
     assert window.audit_dock.isVisible() is False
 
 
-def test_toggling_properties_panel_hides_tab(qtbot):
+def test_toggling_properties_panel_hides_dock(qtbot):
     window = MainWindow()
     qtbot.addWidget(window)
+    window.show()
+    assert window.properties_dock.isVisible() is True
     view_menu = find_top_menu(window, "View")
     find_action(view_menu, "Properties Panel").trigger()
-    assert window.center_stage.isTabVisible(window.center_stage.properties_tab_index) is False
+    assert window.properties_dock.isVisible() is False
 
 
 def test_toggling_raw_xml_panel_shows_tab(qtbot):
