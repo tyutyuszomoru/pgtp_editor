@@ -71,3 +71,54 @@ def test_resolve_path_finds_nested_detail_at_depth_three():
     )
 
     assert result is level2
+
+
+def test_resolve_path_detail_not_found_at_depth_two():
+    page = make_page("development_equipment")
+    page.details = [make_detail("pr.attachment", "Sub-item")]
+    project = ProjectModel(pages=[page])
+
+    result = resolve_path(
+        project,
+        ["development_equipment", "pr.r_characteristic/Attachment"],
+    )
+
+    assert isinstance(result, ResolutionError)
+    assert result.segment_index == 1
+    assert result.message == (
+        "no Detail matching (tableName='pr.r_characteristic', caption='Attachment') "
+        "under development_equipment"
+    )
+
+
+def test_resolve_path_detail_not_found_at_depth_three_names_full_resolved_prefix():
+    level1 = make_detail("pr.level1", "Level1", details=[])
+    page = make_page("top_page")
+    page.details = [level1]
+    project = ProjectModel(pages=[page])
+
+    result = resolve_path(
+        project,
+        ["top_page", "pr.level1/Level1", "pr.level2/Level2"],
+    )
+
+    assert isinstance(result, ResolutionError)
+    assert result.segment_index == 2
+    assert result.message == (
+        "no Detail matching (tableName='pr.level2', caption='Level2') "
+        "under top_page/pr.level1/Level1"
+    )
+
+
+def test_resolve_path_duplicate_sibling_details_first_match_wins():
+    first = make_detail("pr.operation", "Operation")
+    first.attrib["ability"] = "first"
+    second = make_detail("pr.operation", "Operation")
+    second.attrib["ability"] = "second"
+    page = make_page("shared_page")
+    page.details = [first, second]
+    project = ProjectModel(pages=[page])
+
+    result = resolve_path(project, ["shared_page", "pr.operation/Operation"])
+
+    assert result is first
