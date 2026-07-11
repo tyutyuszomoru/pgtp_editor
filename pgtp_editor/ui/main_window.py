@@ -8,7 +8,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from pgtp_editor.diff.differ import diff_project
+from pgtp_editor.diff.differ import compare_block, diff_project
 from pgtp_editor.model.parser import load_project
 from pgtp_editor.ui._stub_action import add_stub_action
 from pgtp_editor.ui.about import show_about_dialog
@@ -22,7 +22,11 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("PGTP Editor")
         self.resize(1400, 900)
 
-        self.project_tree = ProjectTreePanel(on_stub_action=self._not_implemented)
+        self.project_tree = ProjectTreePanel(
+            on_stub_action=self._not_implemented,
+            on_compare_page=self._compare_page_with,
+            on_compare_detail=self._compare_detail_with,
+        )
         self.tree_dock = QDockWidget("Project Tree", self)
         self.tree_dock.setObjectName("tree_dock")
         self.tree_dock.setWidget(self.project_tree)
@@ -114,6 +118,36 @@ class MainWindow(QMainWindow):
         differences = diff_project(source, target)
         self.center_stage.diff_merge_panel.show_differences(differences)
         self.center_stage.setCurrentIndex(self.center_stage.diff_merge_tab_index)
+
+    def _compare_page_with(self, page_node):
+        target_path, _filter = QFileDialog.getOpenFileName(
+            self, "Select Target Project", "", "PGTP files (*.pgtp)"
+        )
+        if not target_path:
+            return
+        try:
+            target = load_project(target_path)
+        except Exception as exc:
+            QMessageBox.critical(
+                self, "Failed to Open Target Project", f"Could not open '{target_path}':\n\n{exc}"
+            )
+            return
+
+        target_page = next((p for p in target.pages if p.file_name == page_node.file_name), None)
+        if target_page is None:
+            QMessageBox.critical(
+                self,
+                "Page Not Found",
+                f"No Page with fileName '{page_node.file_name}' exists in '{target_path}'.",
+            )
+            return
+
+        differences = compare_block(page_node, target_page, path=[page_node.file_name], node_kind="page")
+        self.center_stage.diff_merge_panel.show_differences(differences)
+        self.center_stage.setCurrentIndex(self.center_stage.diff_merge_tab_index)
+
+    def _compare_detail_with(self, detail_node, source_path):
+        pass  # implemented in Task 17
 
     def _build_menu_bar(self):
         self._build_file_menu()

@@ -152,3 +152,54 @@ def test_next_and_prev_difference_menu_actions_navigate_the_panel(qtbot, tmp_pat
 
     prev_action.trigger()
     assert panel.tree.currentItem() is leaves[0]
+
+
+def test_compare_this_page_with_real_handler(qtbot, tmp_path):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window.open_project_file(_write(tmp_path, "source.pgtp", VALID_PGTP))
+    target_path = _write(tmp_path, "target.pgtp", CHANGED_PGTP)
+
+    page_item = window.project_tree.topLevelItem(0)
+    menu = window.project_tree.build_page_menu(page_item)
+
+    with patch(
+        "pgtp_editor.ui.main_window.QFileDialog.getOpenFileName",
+        return_value=(target_path, ""),
+    ):
+        find_action(menu, "Compare This Page With...").trigger()
+
+    assert window.center_stage.currentIndex() == window.center_stage.diff_merge_tab_index
+    leaves = window.center_stage.diff_merge_panel._flattened_leaves()
+    assert len(leaves) == 1
+
+
+def test_compare_this_page_with_shows_error_when_page_not_found_in_target(qtbot, tmp_path):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window.open_project_file(_write(tmp_path, "source.pgtp", VALID_PGTP))
+    other_page_pgtp = """\
+<?xml version="1.0" encoding="UTF-8"?>
+<Project>
+  <Presentation>
+    <Pages>
+      <Page fileName="a_totally_different_page" tableName="pr.other" caption="Other">
+      </Page>
+    </Pages>
+  </Presentation>
+</Project>
+"""
+    target_path = _write(tmp_path, "target.pgtp", other_page_pgtp)
+
+    page_item = window.project_tree.topLevelItem(0)
+    menu = window.project_tree.build_page_menu(page_item)
+
+    with patch(
+        "pgtp_editor.ui.main_window.QFileDialog.getOpenFileName",
+        return_value=(target_path, ""),
+    ), patch("pgtp_editor.ui.main_window.QMessageBox.critical") as mock_critical:
+        find_action(menu, "Compare This Page With...").trigger()
+
+    mock_critical.assert_called_once()
+    args, _kwargs = mock_critical.call_args
+    assert "development_equipment" in args[2]

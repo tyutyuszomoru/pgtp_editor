@@ -10,10 +10,12 @@ MODEL_NODE_ROLE = Qt.ItemDataRole.UserRole + 2
 
 
 class ProjectTreePanel(QTreeWidget):
-    def __init__(self, parent=None, on_stub_action=None):
+    def __init__(self, parent=None, on_stub_action=None, on_compare_page=None, on_compare_detail=None):
         super().__init__(parent)
         self.setHeaderHidden(True)
         self._on_stub_action = on_stub_action or (lambda label: None)
+        self._on_compare_page = on_compare_page or (lambda page_node: None)
+        self._on_compare_detail = on_compare_detail or (lambda detail_node, source_path: None)
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.customContextMenuRequested.connect(self._show_context_menu)
 
@@ -85,7 +87,10 @@ class ProjectTreePanel(QTreeWidget):
         self._add_stub_action(menu, "Add Detail...")
         menu.addSeparator()
         self._add_stub_action(menu, "Create Client (Readonly) Page")
-        self._add_stub_action(menu, "Compare This Page With...")
+        compare_action = menu.addAction("Compare This Page With...")
+        compare_action.triggered.connect(
+            lambda checked=False, i=item: self._on_compare_page(i.data(0, MODEL_NODE_ROLE))
+        )
         menu.addSeparator()
         self._add_stub_action(menu, "Find Column Usages...")
         self._add_stub_action(menu, "Rename / Unify Captions...")
