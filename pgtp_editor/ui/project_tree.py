@@ -6,6 +6,7 @@ from pgtp_editor.ui._stub_action import add_stub_action
 
 NODE_KIND_ROLE = Qt.ItemDataRole.UserRole
 TABLE_NAME_ROLE = Qt.ItemDataRole.UserRole + 1
+MODEL_NODE_ROLE = Qt.ItemDataRole.UserRole + 2
 
 
 class ProjectTreePanel(QTreeWidget):
@@ -28,6 +29,7 @@ class ProjectTreePanel(QTreeWidget):
             page_item = QTreeWidgetItem([f"(P) {page_name} [{page_table}]"])
             page_item.setData(0, NODE_KIND_ROLE, "page")
             page_item.setData(0, TABLE_NAME_ROLE, page_table)
+            page_item.setData(0, MODEL_NODE_ROLE, page)
             self.addTopLevelItem(page_item)
             self._populate_details_and_events(page_item, page)
 
@@ -40,6 +42,7 @@ class ProjectTreePanel(QTreeWidget):
             detail_item = QTreeWidgetItem([f"(D) {detail_name} [{detail_table}]"])
             detail_item.setData(0, NODE_KIND_ROLE, "detail")
             detail_item.setData(0, TABLE_NAME_ROLE, detail_table)
+            detail_item.setData(0, MODEL_NODE_ROLE, detail)
             parent_item.addChild(detail_item)
             self._populate_details_and_events(detail_item, detail)
         for column in node.columns:

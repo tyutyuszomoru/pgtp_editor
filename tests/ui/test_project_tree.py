@@ -206,3 +206,22 @@ def test_menu_for_position_returns_none_for_event(qtbot):
     rect = tree.visualItemRect(event_item)
     menu = tree.menu_for_position(rect.center())
     assert menu is None
+
+
+from pgtp_editor.ui.project_tree import MODEL_NODE_ROLE
+
+
+def test_page_item_carries_model_node(qtbot):
+    tree = make_populated_tree(qtbot)
+    page_item = tree.topLevelItem(0)
+    node = page_item.data(0, MODEL_NODE_ROLE)
+    assert node.file_name == "development_equipment" or node.attrib.get("caption") == "Equipment"
+    assert node.table_name == "pr.equipment"
+
+
+def test_detail_item_carries_model_node(qtbot):
+    tree = make_populated_tree(qtbot)
+    detail_item = tree.topLevelItem(0).child(0)
+    node = detail_item.data(0, MODEL_NODE_ROLE)
+    assert node.table_name == "pr.attachment"
+    assert node.attrib.get("caption") == "Sub-item"
