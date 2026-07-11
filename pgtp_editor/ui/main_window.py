@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (
 )
 
 from pgtp_editor.diff.differ import compare_block, diff_project
+from pgtp_editor.diff.resolve import ResolutionError, resolve_path
 from pgtp_editor.model.parser import load_project
 from pgtp_editor.ui._stub_action import add_stub_action
 from pgtp_editor.ui.about import show_about_dialog
@@ -147,7 +148,27 @@ class MainWindow(QMainWindow):
         self.center_stage.setCurrentIndex(self.center_stage.diff_merge_tab_index)
 
     def _compare_detail_with(self, detail_node, source_path):
-        pass  # implemented in Task 17
+        target_path_str, _filter = QFileDialog.getOpenFileName(
+            self, "Select Target Project", "", "PGTP files (*.pgtp)"
+        )
+        if not target_path_str:
+            return
+        try:
+            target = load_project(target_path_str)
+        except Exception as exc:
+            QMessageBox.critical(
+                self, "Failed to Open Target Project", f"Could not open '{target_path_str}':\n\n{exc}"
+            )
+            return
+
+        result = resolve_path(target, source_path)
+        if isinstance(result, ResolutionError):
+            QMessageBox.critical(self, "Detail Not Found", result.message)
+            return
+
+        differences = compare_block(detail_node, result, path=source_path, node_kind="detail")
+        self.center_stage.diff_merge_panel.show_differences(differences)
+        self.center_stage.setCurrentIndex(self.center_stage.diff_merge_tab_index)
 
     def _build_menu_bar(self):
         self._build_file_menu()

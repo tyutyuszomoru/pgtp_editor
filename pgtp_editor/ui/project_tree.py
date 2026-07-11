@@ -98,6 +98,23 @@ class ProjectTreePanel(QTreeWidget):
         self._add_stub_action(menu, "Delete Page")
         return menu
 
+    def _build_source_path(self, item) -> list[str]:
+        """Walk from `item` up to the root Page, reading each ancestor's
+        identity segment (Page's file_name, or Detail's tableName/caption)
+        in root-to-leaf order, per spec §3.3."""
+        segments: list[str] = []
+        current = item
+        while current is not None:
+            node = current.data(0, MODEL_NODE_ROLE)
+            kind = current.data(0, NODE_KIND_ROLE)
+            if kind == "page":
+                segments.append(node.file_name)
+            else:
+                segments.append(f"{node.table_name}/{node.attrib.get('caption')}")
+            current = current.parent()
+        segments.reverse()
+        return segments
+
     def build_detail_menu(self, item):
         menu = QMenu(self)
         self._add_stub_action(menu, "Edit Properties")
@@ -112,7 +129,12 @@ class ProjectTreePanel(QTreeWidget):
         self._add_stub_action(menu, "Add Nested Detail...")
         menu.addSeparator()
         self._add_stub_action(menu, "Create Client (Readonly) Page")
-        self._add_stub_action(menu, "Compare This Detail With...")
+        compare_action = menu.addAction("Compare This Detail With...")
+        compare_action.triggered.connect(
+            lambda checked=False, i=item: self._on_compare_detail(
+                i.data(0, MODEL_NODE_ROLE), self._build_source_path(i)
+            )
+        )
         if self.has_duplicate_table(item):
             self._add_stub_action(menu, "Compare with Other Instance...")
         menu.addSeparator()

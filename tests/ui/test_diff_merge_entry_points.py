@@ -203,3 +203,92 @@ def test_compare_this_page_with_shows_error_when_page_not_found_in_target(qtbot,
     mock_critical.assert_called_once()
     args, _kwargs = mock_critical.call_args
     assert "development_equipment" in args[2]
+
+
+SOURCE_WITH_DETAIL_PGTP = """\
+<?xml version="1.0" encoding="UTF-8"?>
+<Project>
+  <Presentation>
+    <Pages>
+      <Page fileName="development_equipment" tableName="pr.equipment" caption="Equipment">
+        <Details>
+          <Detail caption="Equipment\\Sub-item">
+            <Page fileName="" tableName="pr.attachment" caption="Sub-item" ability="insert,edit">
+            </Page>
+          </Detail>
+        </Details>
+      </Page>
+    </Pages>
+  </Presentation>
+</Project>
+"""
+
+TARGET_WITH_CHANGED_DETAIL_PGTP = """\
+<?xml version="1.0" encoding="UTF-8"?>
+<Project>
+  <Presentation>
+    <Pages>
+      <Page fileName="development_equipment" tableName="pr.equipment" caption="Equipment">
+        <Details>
+          <Detail caption="Equipment\\Sub-item">
+            <Page fileName="" tableName="pr.attachment" caption="Sub-item" ability="view">
+            </Page>
+          </Detail>
+        </Details>
+      </Page>
+    </Pages>
+  </Presentation>
+</Project>
+"""
+
+TARGET_MISSING_DETAIL_PGTP = """\
+<?xml version="1.0" encoding="UTF-8"?>
+<Project>
+  <Presentation>
+    <Pages>
+      <Page fileName="development_equipment" tableName="pr.equipment" caption="Equipment">
+      </Page>
+    </Pages>
+  </Presentation>
+</Project>
+"""
+
+
+def test_compare_this_detail_with_real_handler(qtbot, tmp_path):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window.open_project_file(_write(tmp_path, "source.pgtp", SOURCE_WITH_DETAIL_PGTP))
+    target_path = _write(tmp_path, "target.pgtp", TARGET_WITH_CHANGED_DETAIL_PGTP)
+
+    detail_item = window.project_tree.topLevelItem(0).child(0)
+    menu = window.project_tree.build_detail_menu(detail_item)
+
+    with patch(
+        "pgtp_editor.ui.main_window.QFileDialog.getOpenFileName",
+        return_value=(target_path, ""),
+    ):
+        find_action(menu, "Compare This Detail With...").trigger()
+
+    assert window.center_stage.currentIndex() == window.center_stage.diff_merge_tab_index
+    leaves = window.center_stage.diff_merge_panel._flattened_leaves()
+    assert len(leaves) == 1
+
+
+def test_compare_this_detail_with_shows_error_when_detail_not_found_in_target(qtbot, tmp_path):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window.open_project_file(_write(tmp_path, "source.pgtp", SOURCE_WITH_DETAIL_PGTP))
+    target_path = _write(tmp_path, "target.pgtp", TARGET_MISSING_DETAIL_PGTP)
+
+    detail_item = window.project_tree.topLevelItem(0).child(0)
+    menu = window.project_tree.build_detail_menu(detail_item)
+
+    with patch(
+        "pgtp_editor.ui.main_window.QFileDialog.getOpenFileName",
+        return_value=(target_path, ""),
+    ), patch("pgtp_editor.ui.main_window.QMessageBox.critical") as mock_critical:
+        find_action(menu, "Compare This Detail With...").trigger()
+
+    mock_critical.assert_called_once()
+    args, _kwargs = mock_critical.call_args
+    assert "pr.attachment" in args[2]
