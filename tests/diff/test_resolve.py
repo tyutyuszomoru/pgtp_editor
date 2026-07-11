@@ -24,3 +24,13 @@ def test_resolve_path_finds_page_at_depth_one():
     result = resolve_path(project, ["development_equipment"])
 
     assert result is page
+
+
+def test_resolve_path_page_not_found_at_depth_one():
+    project = ProjectModel(pages=[make_page("existing_page")])
+
+    result = resolve_path(project, ["missing_page"])
+
+    assert isinstance(result, ResolutionError)
+    assert result.segment_index == 0
+    assert result.message == "no Page named 'missing_page'"
