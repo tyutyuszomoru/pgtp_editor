@@ -13,15 +13,29 @@ TABLE_NAME_ROLE = Qt.ItemDataRole.UserRole + 1
 PLACEHOLDER_PROJECT = {
     "Equipment": {
         "table": "pr.equipment",
+        "events": [("OnPreparePage", "S"), ("OnRowProcess", "C")],
         "details": {
-            "Sub-item": {"table": "pr.attachment", "fields": ["tag", "description"]},
-            "Attachments": {"table": "pr.r_characteristic", "fields": ["cvalue"]},
+            "Sub-item": {
+                "table": "pr.attachment",
+                "columns": ["tag", "description"],
+                "events": [("OnPreparePage", "S")],
+            },
+            "Attachments": {
+                "table": "pr.r_characteristic",
+                "columns": ["cvalue"],
+                "events": [],
+            },
         },
     },
     "Work Orders": {
         "table": "pr.x_workorder",
+        "events": [("OnRowProcess", "C")],
         "details": {
-            "Characteristics": {"table": "pr.r_characteristic", "fields": ["cvalue"]},
+            "Characteristics": {
+                "table": "pr.r_characteristic",
+                "columns": ["cvalue"],
+                "events": [],
+            },
         },
     },
 }
@@ -38,24 +52,37 @@ class ProjectTreePanel(QTreeWidget):
 
     def _populate_placeholder(self):
         for page_name, page_data in PLACEHOLDER_PROJECT.items():
-            page_item = QTreeWidgetItem([page_name])
+            page_table = page_data["table"]
+            page_item = QTreeWidgetItem([f"(P) {page_name} [{page_table}]"])
             page_item.setData(0, NODE_KIND_ROLE, "page")
+            page_item.setData(0, TABLE_NAME_ROLE, page_table)
             self.addTopLevelItem(page_item)
             for detail_name, detail_data in page_data["details"].items():
-                detail_item = QTreeWidgetItem([detail_name])
+                detail_table = detail_data["table"]
+                detail_item = QTreeWidgetItem([f"(D) {detail_name} [{detail_table}]"])
                 detail_item.setData(0, NODE_KIND_ROLE, "detail")
-                detail_item.setData(0, TABLE_NAME_ROLE, detail_data["table"])
+                detail_item.setData(0, TABLE_NAME_ROLE, detail_table)
                 page_item.addChild(detail_item)
-                for field_name in detail_data["fields"]:
-                    field_item = QTreeWidgetItem([field_name])
-                    field_item.setData(0, NODE_KIND_ROLE, "field")
-                    detail_item.addChild(field_item)
+                for column_name in detail_data["columns"]:
+                    column_item = QTreeWidgetItem([f"(C) {column_name}"])
+                    column_item.setData(0, NODE_KIND_ROLE, "column")
+                    detail_item.addChild(column_item)
+                for event_name, event_side in detail_data["events"]:
+                    event_item = QTreeWidgetItem([f"(E) {event_side}.{event_name}"])
+                    event_item.setData(0, NODE_KIND_ROLE, "event")
+                    detail_item.addChild(event_item)
+            for event_name, event_side in page_data["events"]:
+                event_item = QTreeWidgetItem([f"(E) {event_side}.{event_name}"])
+                event_item.setData(0, NODE_KIND_ROLE, "event")
+                page_item.addChild(event_item)
 
     def iter_detail_items(self):
         for i in range(self.topLevelItemCount()):
             page_item = self.topLevelItem(i)
             for j in range(page_item.childCount()):
-                yield page_item.child(j)
+                child = page_item.child(j)
+                if child.data(0, NODE_KIND_ROLE) == "detail":
+                    yield child
 
     def has_duplicate_table(self, detail_item):
         table_name = detail_item.data(0, TABLE_NAME_ROLE)
@@ -82,7 +109,7 @@ class ProjectTreePanel(QTreeWidget):
         self._add_stub_action(menu, "Create Client (Readonly) Page")
         self._add_stub_action(menu, "Compare This Page With...")
         menu.addSeparator()
-        self._add_stub_action(menu, "Find Field Usages...")
+        self._add_stub_action(menu, "Find Column Usages...")
         self._add_stub_action(menu, "Rename / Unify Captions...")
         menu.addSeparator()
         self._add_stub_action(menu, "Delete Page")
@@ -109,14 +136,14 @@ class ProjectTreePanel(QTreeWidget):
         self._add_stub_action(menu, "Delete Detail (+ nested)")
         return menu
 
-    def build_field_menu(self, item):
+    def build_column_menu(self, item):
         menu = QMenu(self)
         self._add_stub_action(menu, "Edit Caption / Hint / Short Caption")
         menu.addSeparator()
-        self._add_stub_action(menu, "Find All Usages of This Field")
+        self._add_stub_action(menu, "Find All Usages of This Column")
         self._add_stub_action(menu, "Unify Captions Across Pages...")
         menu.addSeparator()
-        self._add_stub_action(menu, "Delete Field")
+        self._add_stub_action(menu, "Delete Column")
         return menu
 
     def build_multi_select_menu(self):
@@ -137,8 +164,8 @@ class ProjectTreePanel(QTreeWidget):
             return self.build_page_menu(item)
         if kind == "detail":
             return self.build_detail_menu(item)
-        if kind == "field":
-            return self.build_field_menu(item)
+        if kind == "column":
+            return self.build_column_menu(item)
         return None
 
     def _show_context_menu(self, pos):
