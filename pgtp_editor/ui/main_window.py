@@ -37,6 +37,7 @@ class MainWindow(QMainWindow):
         self._build_edit_menu()
         self._build_view_menu()
         self._build_diff_merge_menu()
+        self._build_tools_menu()
 
     def _build_file_menu(self):
         menu = self.menuBar().addMenu("File")
@@ -103,3 +104,14 @@ class MainWindow(QMainWindow):
         self._add_stub_action(menu, "Next Difference")
         self._add_stub_action(menu, "Prev Difference")
         self._add_stub_action(menu, "Apply Changes to Target")
+
+    def _build_tools_menu(self):
+        menu = self.menuBar().addMenu("Tools")
+        self._add_stub_action(menu, "Create Client (Readonly) Page...")
+        self._add_stub_action(menu, "Move/Copy Detail...")
+        menu.addSeparator()
+        self._add_stub_action(menu, "Manage Captions...")
+        menu.addSeparator()
+        self._add_stub_action(menu, "Find Reused Tables...")
+        menu.addSeparator()
+        self._add_stub_action(menu, "Validate Project")

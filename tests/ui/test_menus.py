@@ -133,3 +133,15 @@ def test_diff_merge_menu_contents(qtbot):
         "Compare / Merge Two Files...", "―",
         "Next Difference", "Prev Difference", "Apply Changes to Target",
     ]
+
+
+def test_tools_menu_contents(qtbot):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    menu = find_top_menu(window, "Tools")
+    assert action_labels(menu) == [
+        "Create Client (Readonly) Page...", "Move/Copy Detail...", "―",
+        "Manage Captions...", "―",
+        "Find Reused Tables...", "―",
+        "Validate Project",
+    ]
