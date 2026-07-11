@@ -152,3 +152,81 @@ def test_group_prefix_items_not_marked_even_if_all_children_ambiguous(qtbot):
 
     detail_group_item = panel.tree.topLevelItem(0).child(0)
     assert detail_group_item.text(0) == "pr.operation/Operation"
+
+
+from pgtp_editor.model.nodes import DetailNode, EventNode
+
+
+def test_selecting_attribute_changed_leaf_shows_old_and_new(qtbot):
+    panel = DiffMergePanel()
+    qtbot.addWidget(panel)
+    diff = make_diff(
+        ["page_a", "caption"], node_kind="page", kind="changed",
+        attribute="caption", old_value="Old Caption", new_value="New Caption",
+    )
+    panel.show_differences([diff])
+
+    leaf = panel.tree.topLevelItem(0).child(0)
+    panel.tree.setCurrentItem(leaf)
+
+    assert panel.detail_stack.currentWidget() is panel.attribute_view
+    assert panel.attribute_old_label.text() == "Old: Old Caption"
+    assert panel.attribute_new_label.text() == "New: New Caption"
+
+
+def test_selecting_whole_subtree_added_leaf_shows_attrib_table(qtbot):
+    panel = DiffMergePanel()
+    qtbot.addWidget(panel)
+    detail = DetailNode(identity="d1", attrib={"tableName": "pr.attachment", "caption": "Sub-item"})
+    diff = make_diff(
+        ["page_a", "pr.attachment/Sub-item"], node_kind="detail", kind="added",
+        attribute=None, old_value=None, new_value=detail,
+    )
+    panel.show_differences([diff])
+
+    leaf = panel.tree.topLevelItem(0).child(0)
+    panel.tree.setCurrentItem(leaf)
+
+    assert panel.detail_stack.currentWidget() is panel.subtree_view
+    assert panel.subtree_table.rowCount() == 2
+    values = {
+        panel.subtree_table.item(row, 0).text(): panel.subtree_table.item(row, 1).text()
+        for row in range(panel.subtree_table.rowCount())
+    }
+    assert values == {"tableName": "pr.attachment", "caption": "Sub-item"}
+
+
+def test_selecting_event_text_changed_leaf_shows_unified_diff(qtbot):
+    panel = DiffMergePanel()
+    qtbot.addWidget(panel)
+    diff = make_diff(
+        ["page_a", "OnRowProcess"], node_kind="event", kind="changed",
+        attribute=None, old_value="echo 'old';", new_value="echo 'new';",
+    )
+    panel.show_differences([diff])
+
+    leaf = panel.tree.topLevelItem(0).child(0)
+    panel.tree.setCurrentItem(leaf)
+
+    assert panel.detail_stack.currentWidget() is panel.event_diff_view
+    text = panel.event_diff_text.toPlainText()
+    assert "-echo 'old';" in text
+    assert "+echo 'new';" in text
+
+
+def test_selecting_group_node_clears_detail_view(qtbot):
+    panel = DiffMergePanel()
+    qtbot.addWidget(panel)
+    diff = make_diff(
+        ["page_a", "pr.attachment/Sub-item", "caption"], node_kind="detail",
+        kind="changed", attribute="caption", old_value="Old", new_value="New",
+    )
+    panel.show_differences([diff])
+
+    leaf = panel.tree.topLevelItem(0).child(0).child(0)
+    panel.tree.setCurrentItem(leaf)
+    assert panel.detail_stack.currentWidget() is panel.attribute_view
+
+    group_item = panel.tree.topLevelItem(0).child(0)
+    panel.tree.setCurrentItem(group_item)
+    assert panel.detail_stack.currentWidget() is panel.empty_view
