@@ -1,6 +1,6 @@
 # tests/ui/test_menus.py
 from pgtp_editor.ui.main_window import MainWindow
-from tests.ui._menu_helpers import action_labels, find_action, find_top_menu
+from tests.ui._menu_helpers import action_labels, all_top_level_menu_titles, find_action, find_top_menu
 
 
 def test_file_menu_contents(qtbot):
@@ -163,3 +163,10 @@ def test_help_menu_contents(qtbot):
     qtbot.addWidget(window)
     menu = find_top_menu(window, "Help")
     assert action_labels(menu) == ["Documentation", "About"]
+
+
+def test_all_top_level_menus_present_in_order(qtbot):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    titles = all_top_level_menu_titles(window)
+    assert titles == ["File", "Edit", "View", "Diff / Merge", "Tools", "Generation", "Help"]
