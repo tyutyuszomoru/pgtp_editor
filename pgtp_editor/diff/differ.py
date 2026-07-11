@@ -61,7 +61,7 @@ def compare_block(source_node, target_node, path, node_kind) -> list[Difference]
     - attribute differences on this node itself
     - Column diffs (added/removed/changed), scoped to this parent pair
     - EventHandler diffs (added/removed/changed text), scoped to this parent pair
-    (Detail diffing is added in a later task.)
+    - child Detail diffs (added/removed/changed), recursing into matched pairs
 
     `node_kind` is the caller's responsibility ("page" or "detail") since
     this helper itself is shape-agnostic.
@@ -70,7 +70,12 @@ def compare_block(source_node, target_node, path, node_kind) -> list[Difference]
     differences.extend(_compare_attributes(source_node, target_node, path=path, node_kind=node_kind))
     differences.extend(_compare_columns(source_node, target_node, path=path))
     differences.extend(_compare_events(source_node, target_node, path=path))
+    differences.extend(_compare_details(source_node, target_node, path=path))
     return differences
+
+
+def _detail_identity_key(detail) -> tuple:
+    return (detail.table_name, detail.attrib.get("caption"))
 
 
 def _compare_attributes(source_node, target_node, path, node_kind) -> list[Difference]:
@@ -201,5 +206,60 @@ def _compare_events(source_node, target_node, path) -> list[Difference]:
                     new_value=None,
                 )
             )
+
+    return differences
+
+
+def _compare_details(source_node, target_node, path) -> list[Difference]:
+    """Diff child Details of a matched Page/Detail pair, matched by
+    (tableName, caption), scoped to this parent pair only. Recurses into
+    matched pairs via compare_block."""
+    differences: list[Difference] = []
+
+    target_details_by_key: dict[tuple, list] = {}
+    for target_detail in target_node.details:
+        target_details_by_key.setdefault(_detail_identity_key(target_detail), []).append(target_detail)
+
+    source_details_by_key: dict[tuple, list] = {}
+    for source_detail in source_node.details:
+        source_details_by_key.setdefault(_detail_identity_key(source_detail), []).append(source_detail)
+
+    all_keys = set(source_details_by_key.keys()) | set(target_details_by_key.keys())
+
+    for key in all_keys:
+        source_group = source_details_by_key.get(key, [])
+        target_group = target_details_by_key.get(key, [])
+
+        for i in range(max(len(source_group), len(target_group))):
+            source_detail = source_group[i] if i < len(source_group) else None
+            target_detail = target_group[i] if i < len(target_group) else None
+
+            if source_detail is not None and target_detail is not None:
+                detail_path = path + [f"{key[0]}/{key[1]}"]
+                differences.extend(
+                    compare_block(source_detail, target_detail, path=detail_path, node_kind="detail")
+                )
+            elif source_detail is not None:
+                differences.append(
+                    Difference(
+                        kind="added",
+                        path=path + [f"{key[0]}/{key[1]}"],
+                        node_kind="detail",
+                        attribute=None,
+                        old_value=None,
+                        new_value=source_detail,
+                    )
+                )
+            else:
+                differences.append(
+                    Difference(
+                        kind="removed",
+                        path=path + [f"{key[0]}/{key[1]}"],
+                        node_kind="detail",
+                        attribute=None,
+                        old_value=target_detail,
+                        new_value=None,
+                    )
+                )
 
     return differences

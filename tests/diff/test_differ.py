@@ -237,3 +237,105 @@ def test_diff_project_event_suffix_variants_match_by_base_name():
     assert diff.node_kind == "event"
     assert diff.old_value == "old_impl();"
     assert diff.new_value == "new_impl();"
+
+
+from pgtp_editor.model.nodes import DetailNode
+
+
+def make_detail(table_name, caption, **extra_attrib):
+    attrib = {"tableName": table_name, "caption": caption}
+    attrib.update(extra_attrib)
+    return DetailNode(identity=f"{table_name}/{caption}", attrib=attrib)
+
+
+def test_diff_project_detail_added():
+    detail = make_detail("pr.attachment", "Sub-item")
+    source_page = make_page("shared_page")
+    source_page.details = [detail]
+    target_page = make_page("shared_page")
+
+    result = diff_project(ProjectModel(pages=[source_page]), ProjectModel(pages=[target_page]))
+
+    assert len(result) == 1
+    diff = result[0]
+    assert diff.kind == "added"
+    assert diff.path == ["shared_page", "pr.attachment/Sub-item"]
+    assert diff.node_kind == "detail"
+    assert diff.attribute is None
+    assert diff.old_value is None
+    assert diff.new_value is detail
+
+
+def test_diff_project_detail_removed():
+    detail = make_detail("pr.attachment", "Sub-item")
+    source_page = make_page("shared_page")
+    target_page = make_page("shared_page")
+    target_page.details = [detail]
+
+    result = diff_project(ProjectModel(pages=[source_page]), ProjectModel(pages=[target_page]))
+
+    assert len(result) == 1
+    diff = result[0]
+    assert diff.kind == "removed"
+    assert diff.path == ["shared_page", "pr.attachment/Sub-item"]
+    assert diff.node_kind == "detail"
+    assert diff.old_value is detail
+    assert diff.new_value is None
+
+
+def test_diff_project_detail_attribute_changed():
+    source_detail = make_detail("pr.attachment", "Sub-item")
+    source_detail.attrib["ability"] = "insert,edit"
+    target_detail = make_detail("pr.attachment", "Sub-item")
+    target_detail.attrib["ability"] = "view"
+
+    source_page = make_page("shared_page")
+    source_page.details = [source_detail]
+    target_page = make_page("shared_page")
+    target_page.details = [target_detail]
+
+    result = diff_project(ProjectModel(pages=[source_page]), ProjectModel(pages=[target_page]))
+
+    assert len(result) == 1
+    diff = result[0]
+    assert diff.kind == "changed"
+    assert diff.path == ["shared_page", "pr.attachment/Sub-item"]
+    assert diff.node_kind == "detail"
+    assert diff.attribute == "ability"
+    assert diff.old_value == "view"
+    assert diff.new_value == "insert,edit"
+
+
+def test_diff_project_detail_recurses_columns_and_events():
+    source_detail = make_detail("pr.attachment", "Sub-item")
+    source_detail.columns = [make_column("cvalue", caption="New Caption")]
+    target_detail = make_detail("pr.attachment", "Sub-item")
+    target_detail.columns = [make_column("cvalue", caption="Old Caption")]
+
+    source_page = make_page("shared_page")
+    source_page.details = [source_detail]
+    target_page = make_page("shared_page")
+    target_page.details = [target_detail]
+
+    result = diff_project(ProjectModel(pages=[source_page]), ProjectModel(pages=[target_page]))
+
+    assert len(result) == 1
+    diff = result[0]
+    assert diff.kind == "changed"
+    assert diff.path == ["shared_page", "pr.attachment/Sub-item", "cvalue"]
+    assert diff.node_kind == "column"
+    assert diff.attribute == "caption"
+    assert diff.old_value == "Old Caption"
+    assert diff.new_value == "New Caption"
+
+
+def test_diff_project_matched_details_no_differences():
+    source_detail = make_detail("pr.attachment", "Sub-item")
+    target_detail = make_detail("pr.attachment", "Sub-item")
+
+    source_page = make_page("shared_page")
+    source_page.details = [source_detail]
+    target_page = make_page("shared_page")
+    target_page.details = [target_detail]
+
+    assert diff_project(ProjectModel(pages=[source_page]), ProjectModel(pages=[target_page])) == []
