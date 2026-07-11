@@ -159,3 +159,41 @@ class DiffMergePanel(QWidget):
             self.subtree_table.setItem(row, 0, QTableWidgetItem(str(key)))
             self.subtree_table.setItem(row, 1, QTableWidgetItem(str(value)))
         self.detail_stack.setCurrentWidget(self.subtree_view)
+
+    def _flattened_leaves(self) -> list[QTreeWidgetItem]:
+        leaves: list[QTreeWidgetItem] = []
+
+        def visit(item: QTreeWidgetItem):
+            if item.data(0, DIFFERENCE_ROLE) is not None:
+                leaves.append(item)
+            for i in range(item.childCount()):
+                visit(item.child(i))
+
+        for i in range(self.tree.topLevelItemCount()):
+            visit(self.tree.topLevelItem(i))
+        return leaves
+
+    def _current_leaf_position(self, leaves: list[QTreeWidgetItem]) -> int:
+        current = self.tree.currentItem()
+        if current is None:
+            return -1
+        try:
+            return leaves.index(current)
+        except ValueError:
+            return -1
+
+    def select_next_difference(self) -> None:
+        leaves = self._flattened_leaves()
+        if not leaves:
+            return
+        position = self._current_leaf_position(leaves)
+        next_position = min(position + 1, len(leaves) - 1)
+        self.tree.setCurrentItem(leaves[next_position])
+
+    def select_previous_difference(self) -> None:
+        leaves = self._flattened_leaves()
+        if not leaves:
+            return
+        position = self._current_leaf_position(leaves)
+        previous_position = max(position - 1, 0)
+        self.tree.setCurrentItem(leaves[previous_position])

@@ -1,7 +1,7 @@
 from PySide6.QtCore import Qt
 
 from pgtp_editor.diff.records import Difference
-from pgtp_editor.ui.diff_merge_panel import DiffMergePanel
+from pgtp_editor.ui.diff_merge_panel import DIFFERENCE_ROLE, DiffMergePanel
 
 
 def make_diff(path, node_kind, kind, attribute=None, old_value=None, new_value=None, ambiguous=False):
@@ -230,3 +230,47 @@ def test_selecting_group_node_clears_detail_view(qtbot):
     group_item = panel.tree.topLevelItem(0).child(0)
     panel.tree.setCurrentItem(group_item)
     assert panel.detail_stack.currentWidget() is panel.empty_view
+
+
+def test_select_next_difference_walks_leaves_in_display_order(qtbot):
+    panel = DiffMergePanel()
+    qtbot.addWidget(panel)
+    diffs = [
+        make_diff(["page_a", "caption"], node_kind="page", kind="changed", attribute="caption"),
+        make_diff(["page_a", "ability"], node_kind="page", kind="changed", attribute="ability"),
+        make_diff(["page_b", "caption"], node_kind="page", kind="changed", attribute="caption"),
+    ]
+    panel.show_differences(diffs)
+
+    panel.select_next_difference()
+    assert panel.tree.currentItem().data(0, DIFFERENCE_ROLE) is diffs[0]
+
+    panel.select_next_difference()
+    assert panel.tree.currentItem().data(0, DIFFERENCE_ROLE) is diffs[1]
+
+    panel.select_next_difference()
+    assert panel.tree.currentItem().data(0, DIFFERENCE_ROLE) is diffs[2]
+
+    # Stops at the last leaf — no wraparound required.
+    panel.select_next_difference()
+    assert panel.tree.currentItem().data(0, DIFFERENCE_ROLE) is diffs[2]
+
+
+def test_select_previous_difference_walks_leaves_backward(qtbot):
+    panel = DiffMergePanel()
+    qtbot.addWidget(panel)
+    diffs = [
+        make_diff(["page_a", "caption"], node_kind="page", kind="changed", attribute="caption"),
+        make_diff(["page_a", "ability"], node_kind="page", kind="changed", attribute="ability"),
+    ]
+    panel.show_differences(diffs)
+
+    panel.tree.setCurrentItem(panel.tree.topLevelItem(0).child(1))
+    assert panel.tree.currentItem().data(0, DIFFERENCE_ROLE) is diffs[1]
+
+    panel.select_previous_difference()
+    assert panel.tree.currentItem().data(0, DIFFERENCE_ROLE) is diffs[0]
+
+    # Stops at the first leaf — no wraparound required.
+    panel.select_previous_difference()
+    assert panel.tree.currentItem().data(0, DIFFERENCE_ROLE) is diffs[0]
