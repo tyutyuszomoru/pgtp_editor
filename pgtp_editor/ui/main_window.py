@@ -11,7 +11,7 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("PGTP Editor")
         self.resize(1400, 900)
 
-        self.project_tree = ProjectTreePanel()
+        self.project_tree = ProjectTreePanel(on_stub_action=self._not_implemented)
         self.tree_dock = QDockWidget("Project Tree", self)
         self.tree_dock.setObjectName("tree_dock")
         self.tree_dock.setWidget(self.project_tree)
@@ -25,3 +25,6 @@ class MainWindow(QMainWindow):
 
         self.center_stage = CenterStage()
         self.setCentralWidget(self.center_stage)
+
+    def _not_implemented(self, label):
+        self.statusBar().showMessage(f"Not yet implemented: {label}", 5000)

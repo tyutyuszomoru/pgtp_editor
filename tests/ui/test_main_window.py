@@ -34,3 +34,10 @@ def test_center_stage_is_central_widget(qtbot):
     window = MainWindow()
     qtbot.addWidget(window)
     assert window.centralWidget() is window.center_stage
+
+
+def test_not_implemented_shows_status_message(qtbot):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window._not_implemented("Delete Page")
+    assert window.statusBar().currentMessage() == "Not yet implemented: Delete Page"
