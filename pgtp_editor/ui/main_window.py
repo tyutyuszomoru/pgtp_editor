@@ -42,6 +42,9 @@ class MainWindow(QMainWindow):
         self.center_stage = CenterStage()
         self.setCentralWidget(self.center_stage)
 
+        self._current_project = None
+        self._current_project_path = None
+
         self._build_menu_bar()
 
     def _not_implemented(self, label):
@@ -60,8 +63,9 @@ class MainWindow(QMainWindow):
 
         Split out from `_open_project` so tests can drive the load without
         going through the QFileDialog. On parse failure, shows a clear
-        error dialog and leaves the currently-displayed tree untouched
-        (never a crash, never a silently-emptied tree).
+        error dialog and leaves the currently-displayed tree (and the
+        currently-tracked project) untouched (never a crash, never a
+        silently-emptied tree or a silently-forgotten project).
         """
         try:
             project = load_project(path)
@@ -73,6 +77,8 @@ class MainWindow(QMainWindow):
             )
             return
         self.project_tree.populate_from_project(project)
+        self._current_project = project
+        self._current_project_path = path
         self.statusBar().showMessage(f"Opened: {path}", 5000)
 
     def _build_menu_bar(self):

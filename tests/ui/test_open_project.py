@@ -107,3 +107,40 @@ def test_open_action_cancelled_dialog_does_nothing(qtbot):
         window._open_project()
 
     assert window.project_tree.topLevelItemCount() == 0
+
+
+def test_open_project_file_tracks_current_project_and_path(qtbot, tmp_path):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    path = tmp_path / "valid.pgtp"
+    path.write_text(VALID_PGTP, encoding="utf-8")
+
+    window.open_project_file(str(path))
+
+    assert window._current_project is not None
+    assert window._current_project.pages[0].file_name == "development_equipment"
+    assert window._current_project_path == str(path)
+
+
+def test_current_project_is_none_before_any_open(qtbot):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    assert window._current_project is None
+    assert window._current_project_path is None
+
+
+def test_open_project_file_does_not_overwrite_current_project_on_parse_failure(qtbot, tmp_path):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    valid_path = tmp_path / "valid.pgtp"
+    valid_path.write_text(VALID_PGTP, encoding="utf-8")
+    window.open_project_file(str(valid_path))
+    first_project = window._current_project
+
+    broken_path = tmp_path / "broken.pgtp"
+    broken_path.write_text(MALFORMED_PGTP, encoding="utf-8")
+    with patch("pgtp_editor.ui.main_window.QMessageBox.critical"):
+        window.open_project_file(str(broken_path))
+
+    assert window._current_project is first_project
+    assert window._current_project_path == str(valid_path)
