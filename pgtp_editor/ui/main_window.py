@@ -34,6 +34,7 @@ class MainWindow(QMainWindow):
 
     def _build_menu_bar(self):
         self._build_file_menu()
+        self._build_edit_menu()
 
     def _build_file_menu(self):
         menu = self.menuBar().addMenu("File")
@@ -46,6 +47,22 @@ class MainWindow(QMainWindow):
         menu.addSeparator()
         exit_action = menu.addAction("Exit")
         exit_action.triggered.connect(self.close)
+
+    def _build_edit_menu(self):
+        menu = self.menuBar().addMenu("Edit")
+        self._add_stub_action(menu, "Undo")
+        self._add_stub_action(menu, "Redo")
+        menu.addSeparator()
+        self._add_stub_action(menu, "Cut")
+        self._add_stub_action(menu, "Copy")
+        self._add_stub_action(menu, "Paste")
+        self._add_stub_action(menu, "Delete")
+        menu.addSeparator()
+        self._add_stub_action(menu, "Find...")
+        find_replace = self._add_stub_action(menu, "Find & Replace...")
+        find_replace.setShortcut("Ctrl+H")
+        menu.addSeparator()
+        self._add_stub_action(menu, "Preferences...")
 
     def _add_stub_action(self, menu, label):
         return add_stub_action(menu, label, self._not_implemented)

@@ -39,3 +39,23 @@ def test_other_file_actions_show_stub_message(qtbot):
     file_menu = find_top_menu(window, "File")
     find_action(file_menu, "New Project").trigger()
     assert window.statusBar().currentMessage() == "Not yet implemented: New Project"
+
+
+def test_edit_menu_contents(qtbot):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    edit_menu = find_top_menu(window, "Edit")
+    assert action_labels(edit_menu) == [
+        "Undo", "Redo", "―",
+        "Cut", "Copy", "Paste", "Delete", "―",
+        "Find...", "Find & Replace...", "―",
+        "Preferences...",
+    ]
+
+
+def test_find_and_replace_has_ctrl_h_shortcut(qtbot):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    edit_menu = find_top_menu(window, "Edit")
+    action = find_action(edit_menu, "Find & Replace...")
+    assert action.shortcut().toString() == "Ctrl+H"
