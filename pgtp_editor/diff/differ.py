@@ -55,7 +55,7 @@ def diff_project(source: ProjectModel, target: ProjectModel) -> list[Difference]
     return differences
 
 
-def compare_block(source_node, target_node, path, node_kind) -> list[Difference]:
+def compare_block(source_node, target_node, path, node_kind, ambiguous=False) -> list[Difference]:
     """Compare a matched pair of nodes that share the Page/Detail shape
     (attrib, columns, events, details), emitting Difference records for:
     - attribute differences on this node itself
@@ -64,21 +64,27 @@ def compare_block(source_node, target_node, path, node_kind) -> list[Difference]
     - child Detail diffs (added/removed/changed), recursing into matched pairs
 
     `node_kind` is the caller's responsibility ("page" or "detail") since
-    this helper itself is shape-agnostic.
+    this helper itself is shape-agnostic. `ambiguous` is True when this pair
+    itself was matched via the duplicate-(tableName, caption)-sibling
+    positional-pairing fallback (see _compare_details) and propagates to
+    every Difference record produced for this node and its descendants,
+    since none of them can be trusted as confidently as an unambiguous match.
     """
     differences: list[Difference] = []
-    differences.extend(_compare_attributes(source_node, target_node, path=path, node_kind=node_kind))
-    differences.extend(_compare_columns(source_node, target_node, path=path))
-    differences.extend(_compare_events(source_node, target_node, path=path))
-    differences.extend(_compare_details(source_node, target_node, path=path))
+    differences.extend(
+        _compare_attributes(source_node, target_node, path=path, node_kind=node_kind, ambiguous=ambiguous)
+    )
+    differences.extend(_compare_columns(source_node, target_node, path=path, ambiguous=ambiguous))
+    differences.extend(_compare_events(source_node, target_node, path=path, ambiguous=ambiguous))
+    differences.extend(_compare_details(source_node, target_node, path=path, ambiguous=ambiguous))
     return differences
 
 
-def _detail_identity_key(detail) -> tuple:
+def _detail_identity_key(detail) -> tuple[str | None, str | None]:
     return (detail.table_name, detail.attrib.get("caption"))
 
 
-def _compare_attributes(source_node, target_node, path, node_kind) -> list[Difference]:
+def _compare_attributes(source_node, target_node, path, node_kind, ambiguous=False) -> list[Difference]:
     """Compare source_node.attrib vs target_node.attrib, emitting one
     Changed record per differing attribute key. Covers keys present on
     either side (a key missing on one side counts as differing from
@@ -98,13 +104,13 @@ def _compare_attributes(source_node, target_node, path, node_kind) -> list[Diffe
                     attribute=key,
                     old_value=target_value,
                     new_value=source_value,
-                    ambiguous=False,
+                    ambiguous=ambiguous,
                 )
             )
     return differences
 
 
-def _compare_columns(source_node, target_node, path) -> list[Difference]:
+def _compare_columns(source_node, target_node, path, ambiguous=False) -> list[Difference]:
     """Diff Columns (children) of a matched Page/Detail pair, matched by
     fieldName, scoped to this parent pair only."""
     differences: list[Difference] = []
@@ -124,11 +130,14 @@ def _compare_columns(source_node, target_node, path) -> list[Difference]:
                     attribute=None,
                     old_value=None,
                     new_value=source_column,
+                    ambiguous=ambiguous,
                 )
             )
         else:
             differences.extend(
-                _compare_attributes(source_column, target_column, path=column_path, node_kind="column")
+                _compare_attributes(
+                    source_column, target_column, path=column_path, node_kind="column", ambiguous=ambiguous
+                )
             )
 
     for target_column in target_node.columns:
@@ -141,6 +150,7 @@ def _compare_columns(source_node, target_node, path) -> list[Difference]:
                     attribute=None,
                     old_value=target_column,
                     new_value=None,
+                    ambiguous=ambiguous,
                 )
             )
 
@@ -157,7 +167,7 @@ def _event_base_name(tag_name: str) -> str:
     return tag_name.split("_", 1)[0]
 
 
-def _compare_events(source_node, target_node, path) -> list[Difference]:
+def _compare_events(source_node, target_node, path, ambiguous=False) -> list[Difference]:
     """Diff EventHandlers (children) of a matched Page/Detail pair, matched
     by base handler name (after suffix normalization), scoped to this
     parent pair only."""
@@ -179,6 +189,7 @@ def _compare_events(source_node, target_node, path) -> list[Difference]:
                     attribute=None,
                     old_value=None,
                     new_value=source_event,
+                    ambiguous=ambiguous,
                 )
             )
         elif source_event.text != target_event.text:
@@ -190,6 +201,7 @@ def _compare_events(source_node, target_node, path) -> list[Difference]:
                     attribute=None,
                     old_value=target_event.text,
                     new_value=source_event.text,
+                    ambiguous=ambiguous,
                 )
             )
 
@@ -204,16 +216,28 @@ def _compare_events(source_node, target_node, path) -> list[Difference]:
                     attribute=None,
                     old_value=target_event,
                     new_value=None,
+                    ambiguous=ambiguous,
                 )
             )
 
     return differences
 
 
-def _compare_details(source_node, target_node, path) -> list[Difference]:
+def _compare_details(source_node, target_node, path, ambiguous=False) -> list[Difference]:
     """Diff child Details of a matched Page/Detail pair, matched by
     (tableName, caption), scoped to this parent pair only. Recurses into
-    matched pairs via compare_block."""
+    matched pairs via compare_block.
+
+    If more than one sibling Detail on either side shares the same
+    (tableName, caption) key, the extras are paired positionally (1st extra
+    with 1st extra, 2nd with 2nd, etc.) and every Difference record produced
+    from that group -- including all descendants found via recursion -- is
+    marked ambiguous=True, per the design spec's duplicate-sibling handling.
+    A group of size 1 on both sides is the normal, unambiguous case and is
+    not affected by the `ambiguous` flag introduced here (unless the caller
+    itself already passed ambiguous=True, e.g. because this Detail pair is
+    nested inside an outer ambiguous group).
+    """
     differences: list[Difference] = []
 
     target_details_by_key: dict[tuple, list] = {}
@@ -229,36 +253,45 @@ def _compare_details(source_node, target_node, path) -> list[Difference]:
     for key in all_keys:
         source_group = source_details_by_key.get(key, [])
         target_group = target_details_by_key.get(key, [])
+        group_is_ambiguous = ambiguous or len(source_group) > 1 or len(target_group) > 1
 
         for i in range(max(len(source_group), len(target_group))):
             source_detail = source_group[i] if i < len(source_group) else None
             target_detail = target_group[i] if i < len(target_group) else None
+            detail_path = path + [f"{key[0]}/{key[1]}"]
 
             if source_detail is not None and target_detail is not None:
-                detail_path = path + [f"{key[0]}/{key[1]}"]
                 differences.extend(
-                    compare_block(source_detail, target_detail, path=detail_path, node_kind="detail")
+                    compare_block(
+                        source_detail,
+                        target_detail,
+                        path=detail_path,
+                        node_kind="detail",
+                        ambiguous=group_is_ambiguous,
+                    )
                 )
             elif source_detail is not None:
                 differences.append(
                     Difference(
                         kind="added",
-                        path=path + [f"{key[0]}/{key[1]}"],
+                        path=detail_path,
                         node_kind="detail",
                         attribute=None,
                         old_value=None,
                         new_value=source_detail,
+                        ambiguous=group_is_ambiguous,
                     )
                 )
             else:
                 differences.append(
                     Difference(
                         kind="removed",
-                        path=path + [f"{key[0]}/{key[1]}"],
+                        path=detail_path,
                         node_kind="detail",
                         attribute=None,
                         old_value=target_detail,
                         new_value=None,
+                        ambiguous=group_is_ambiguous,
                     )
                 )
 

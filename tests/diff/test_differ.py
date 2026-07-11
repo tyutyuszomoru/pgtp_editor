@@ -150,6 +150,82 @@ def test_diff_project_matched_columns_no_differences():
     assert diff_project(ProjectModel(pages=[source_page]), ProjectModel(pages=[target_page])) == []
 
 
+def test_diff_project_duplicate_sibling_details_paired_positionally_and_flagged_ambiguous():
+    # Two source Details and two target Details share the same
+    # (tableName, caption) = ("pr.operation", "Operation"). They should be
+    # paired positionally (1st with 1st, 2nd with 2nd) and every resulting
+    # Difference record marked ambiguous=True.
+    source_first = make_detail("pr.operation", "Operation")
+    source_first.attrib["ability"] = "first-source-ability"
+    source_second = make_detail("pr.operation", "Operation")
+    source_second.attrib["ability"] = "second-source-ability"
+
+    target_first = make_detail("pr.operation", "Operation")
+    target_first.attrib["ability"] = "first-target-ability"
+    target_second = make_detail("pr.operation", "Operation")
+    target_second.attrib["ability"] = "second-target-ability"
+
+    source_page = make_page("shared_page")
+    source_page.details = [source_first, source_second]
+    target_page = make_page("shared_page")
+    target_page.details = [target_first, target_second]
+
+    result = diff_project(ProjectModel(pages=[source_page]), ProjectModel(pages=[target_page]))
+
+    assert len(result) == 2
+    for diff in result:
+        assert diff.ambiguous is True
+        assert diff.kind == "changed"
+        assert diff.node_kind == "detail"
+        assert diff.attribute == "ability"
+
+    by_old_value = {d.old_value: d for d in result}
+    assert by_old_value["first-target-ability"].new_value == "first-source-ability"
+    assert by_old_value["second-target-ability"].new_value == "second-source-ability"
+
+
+def test_diff_project_duplicate_sibling_details_extra_on_source_side_marked_ambiguous():
+    # 2 source Details, 1 target Detail sharing the same key: the 1st pair
+    # matches (ambiguous, since the group has size > 1), the 2nd source
+    # Detail has no target counterpart and is an ambiguous Added record.
+    source_first = make_detail("pr.operation", "Operation")
+    source_second = make_detail("pr.operation", "Operation")
+    target_first = make_detail("pr.operation", "Operation")
+
+    source_page = make_page("shared_page")
+    source_page.details = [source_first, source_second]
+    target_page = make_page("shared_page")
+    target_page.details = [target_first]
+
+    result = diff_project(ProjectModel(pages=[source_page]), ProjectModel(pages=[target_page]))
+
+    assert len(result) == 1
+    diff = result[0]
+    assert diff.kind == "added"
+    assert diff.node_kind == "detail"
+    assert diff.new_value is source_second
+    assert diff.ambiguous is True
+
+
+def test_diff_project_single_detail_per_key_not_marked_ambiguous():
+    # Sanity check: a group of size 1 on both sides (the normal case,
+    # already covered by Task 7's tests) must NOT be flagged ambiguous.
+    source_detail = make_detail("pr.attachment", "Sub-item")
+    source_detail.attrib["ability"] = "new-ability"
+    target_detail = make_detail("pr.attachment", "Sub-item")
+    target_detail.attrib["ability"] = "old-ability"
+
+    source_page = make_page("shared_page")
+    source_page.details = [source_detail]
+    target_page = make_page("shared_page")
+    target_page.details = [target_detail]
+
+    result = diff_project(ProjectModel(pages=[source_page]), ProjectModel(pages=[target_page]))
+
+    assert len(result) == 1
+    assert result[0].ambiguous is False
+
+
 def test_diff_project_nested_details_two_levels_deep_change_detected():
     # top_page -> Detail(pr.level1) -> Detail(pr.level2) with a changed
     # column caption at the deepest level.
