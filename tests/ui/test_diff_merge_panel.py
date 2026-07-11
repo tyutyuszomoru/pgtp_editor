@@ -51,3 +51,33 @@ def test_show_differences_clears_previous_content(qtbot):
 
     panel.show_differences(diffs)
     assert panel.tree.topLevelItemCount() == 1
+
+
+from pgtp_editor.ui.diff_merge_panel import leaf_label
+
+
+def test_leaf_label_attribute_changed():
+    diff = make_diff(
+        ["development_equipment", "pr.attachment/Sub-item", "caption"],
+        node_kind="detail", kind="changed", attribute="caption",
+        old_value="Old", new_value="New",
+    )
+    assert leaf_label(diff) == "caption: changed"
+
+
+def test_leaf_label_event_added_uses_last_path_segment():
+    diff = make_diff(
+        ["development_equipment", "OnRowProcess"],
+        node_kind="event", kind="added", attribute=None,
+        old_value=None, new_value=object(),
+    )
+    assert leaf_label(diff) == "OnRowProcess: added"
+
+
+def test_leaf_label_detail_removed_uses_last_path_segment():
+    diff = make_diff(
+        ["development_equipment", "pr.attachment/Sub-item"],
+        node_kind="detail", kind="removed", attribute=None,
+        old_value=object(), new_value=None,
+    )
+    assert leaf_label(diff) == "pr.attachment/Sub-item: removed"
