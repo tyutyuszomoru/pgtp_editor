@@ -150,6 +150,67 @@ def test_diff_project_matched_columns_no_differences():
     assert diff_project(ProjectModel(pages=[source_page]), ProjectModel(pages=[target_page])) == []
 
 
+def test_diff_project_nested_details_two_levels_deep_change_detected():
+    # top_page -> Detail(pr.level1) -> Detail(pr.level2) with a changed
+    # column caption at the deepest level.
+    source_level2 = make_detail("pr.level2", "Level2")
+    source_level2.columns = [make_column("deep_field", caption="New Deep Caption")]
+    source_level1 = make_detail("pr.level1", "Level1")
+    source_level1.details = [source_level2]
+    source_page = make_page("top_page")
+    source_page.details = [source_level1]
+
+    target_level2 = make_detail("pr.level2", "Level2")
+    target_level2.columns = [make_column("deep_field", caption="Old Deep Caption")]
+    target_level1 = make_detail("pr.level1", "Level1")
+    target_level1.details = [target_level2]
+    target_page = make_page("top_page")
+    target_page.details = [target_level1]
+
+    result = diff_project(ProjectModel(pages=[source_page]), ProjectModel(pages=[target_page]))
+
+    assert len(result) == 1
+    diff = result[0]
+    assert diff.kind == "changed"
+    assert diff.path == ["top_page", "pr.level1/Level1", "pr.level2/Level2", "deep_field"]
+    assert diff.node_kind == "column"
+    assert diff.attribute == "caption"
+    assert diff.old_value == "Old Deep Caption"
+    assert diff.new_value == "New Deep Caption"
+
+
+def test_diff_project_nested_detail_added_at_second_level():
+    source_level1 = make_detail("pr.level1", "Level1")
+    source_level1.details = [make_detail("pr.level2", "Level2")]
+    source_page = make_page("top_page")
+    source_page.details = [source_level1]
+
+    target_level1 = make_detail("pr.level1", "Level1")
+    target_page = make_page("top_page")
+    target_page.details = [target_level1]
+
+    result = diff_project(ProjectModel(pages=[source_page]), ProjectModel(pages=[target_page]))
+
+    assert len(result) == 1
+    diff = result[0]
+    assert diff.kind == "added"
+    assert diff.path == ["top_page", "pr.level1/Level1", "pr.level2/Level2"]
+    assert diff.node_kind == "detail"
+
+
+def test_diff_project_identical_nested_details_no_differences():
+    def build_tree():
+        level2 = make_detail("pr.level2", "Level2")
+        level2.columns = [make_column("deep_field", caption="Same")]
+        level1 = make_detail("pr.level1", "Level1")
+        level1.details = [level2]
+        page = make_page("top_page")
+        page.details = [level1]
+        return page
+
+    assert diff_project(ProjectModel(pages=[build_tree()]), ProjectModel(pages=[build_tree()])) == []
+
+
 from pgtp_editor.model.nodes import EventNode
 
 
