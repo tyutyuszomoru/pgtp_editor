@@ -82,7 +82,7 @@ def test_compare_merge_two_files_cancelled_target_dialog_does_nothing(qtbot, tmp
     with patch(
         "pgtp_editor.ui.main_window.QFileDialog.getOpenFileName",
         side_effect=[(source_path, ""), ("", "")],
-    ):
+    ), patch("pgtp_editor.ui.main_window.QMessageBox.critical") as mock_critical:
         window._compare_merge_two_files()
 
     # Cancelling the target dialog is a no-op: no comparison is run, so the
@@ -92,6 +92,12 @@ def test_compare_merge_two_files_cancelled_target_dialog_does_nothing(qtbot, tmp
     # navigated" from "navigated but happens to still be tab 0" — the tree
     # content is the reliable signal here.)
     assert window.center_stage.diff_merge_panel._flattened_leaves() == []
+    # A cancelled dialog must be a clean no-op, not a fallthrough into
+    # load_project("") raising PgtpParseError which happens to be caught by
+    # the same except-block and also leaves the tree empty. That coincidence
+    # would let a deleted `if not target_path: return` early-exit go
+    # undetected, so we additionally assert no error dialog was shown.
+    mock_critical.assert_not_called()
 
 
 def test_compare_merge_two_files_shows_error_on_target_parse_failure(qtbot, tmp_path):
