@@ -166,6 +166,10 @@ def test_help_menu_contents(qtbot):
 
 
 def test_all_top_level_menus_present_in_order(qtbot):
+    # Do not call window.show() here — under the offscreen test platform's
+    # small virtual screen, showing this window triggers Qt's menu-bar
+    # overflow chevron, which injects a phantom empty-titled QMenu into
+    # findChildren(QMenu) and breaks this order/count assertion.
     window = MainWindow()
     qtbot.addWidget(window)
     titles = all_top_level_menu_titles(window)
