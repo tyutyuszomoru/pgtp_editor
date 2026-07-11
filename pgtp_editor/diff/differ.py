@@ -30,11 +30,14 @@ def diff_project(source: ProjectModel, target: ProjectModel) -> list[Difference]
                 )
             )
         else:
-            path = [source_page.file_name]
             differences.extend(
-                _compare_attributes(source_page, target_page, path=path, node_kind="page")
+                compare_block(
+                    source_page,
+                    target_page,
+                    path=[source_page.file_name],
+                    node_kind="page",
+                )
             )
-            differences.extend(_compare_columns(source_page, target_page, path=path))
 
     for target_page in target.pages:
         if target_page.file_name not in source_file_names:
@@ -49,6 +52,22 @@ def diff_project(source: ProjectModel, target: ProjectModel) -> list[Difference]
                 )
             )
 
+    return differences
+
+
+def compare_block(source_node, target_node, path, node_kind) -> list[Difference]:
+    """Compare a matched pair of nodes that share the Page/Detail shape
+    (attrib, columns, events, details), emitting Difference records for:
+    - attribute differences on this node itself
+    - Column diffs (added/removed/changed), scoped to this parent pair
+    (Event and Detail diffing are added in later tasks.)
+
+    `node_kind` is the caller's responsibility ("page" or "detail") since
+    this helper itself is shape-agnostic.
+    """
+    differences: list[Difference] = []
+    differences.extend(_compare_attributes(source_node, target_node, path=path, node_kind=node_kind))
+    differences.extend(_compare_columns(source_node, target_node, path=path))
     return differences
 
 
