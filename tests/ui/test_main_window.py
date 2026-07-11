@@ -1,3 +1,5 @@
+from PySide6.QtCore import Qt
+
 from pgtp_editor.ui.main_window import MainWindow
 
 
@@ -12,3 +14,23 @@ def test_default_size(qtbot):
     qtbot.addWidget(window)
     assert window.size().width() == 1400
     assert window.size().height() == 900
+
+
+def test_tree_dock_on_left(qtbot):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    assert window.dockWidgetArea(window.tree_dock) == Qt.DockWidgetArea.LeftDockWidgetArea
+    assert window.tree_dock.windowTitle() == "Project Tree"
+
+
+def test_audit_dock_on_bottom(qtbot):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    assert window.dockWidgetArea(window.audit_dock) == Qt.DockWidgetArea.BottomDockWidgetArea
+    assert window.audit_dock.windowTitle() == "Audit / Problems"
+
+
+def test_center_stage_is_central_widget(qtbot):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    assert window.centralWidget() is window.center_stage

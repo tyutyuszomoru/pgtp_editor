@@ -1,4 +1,8 @@
-from PySide6.QtWidgets import QMainWindow
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QDockWidget, QListWidget, QMainWindow
+
+from pgtp_editor.ui.center_stage import CenterStage
+from pgtp_editor.ui.project_tree import ProjectTreePanel
 
 
 class MainWindow(QMainWindow):
@@ -6,3 +10,18 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("PGTP Editor")
         self.resize(1400, 900)
+
+        self.project_tree = ProjectTreePanel()
+        self.tree_dock = QDockWidget("Project Tree", self)
+        self.tree_dock.setObjectName("tree_dock")
+        self.tree_dock.setWidget(self.project_tree)
+        self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self.tree_dock)
+
+        self.audit_panel = QListWidget()
+        self.audit_dock = QDockWidget("Audit / Problems", self)
+        self.audit_dock.setObjectName("audit_dock")
+        self.audit_dock.setWidget(self.audit_panel)
+        self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self.audit_dock)
+
+        self.center_stage = CenterStage()
+        self.setCentralWidget(self.center_stage)
