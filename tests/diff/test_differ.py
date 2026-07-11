@@ -148,3 +148,92 @@ def test_diff_project_matched_columns_no_differences():
     target_page.columns = [make_column("tag", caption="Same")]
 
     assert diff_project(ProjectModel(pages=[source_page]), ProjectModel(pages=[target_page])) == []
+
+
+from pgtp_editor.model.nodes import EventNode
+
+
+def make_event(tag_name, text, side="S"):
+    return EventNode(identity=tag_name, tag_name=tag_name, side=side, text=text)
+
+
+def test_diff_project_event_added():
+    event = make_event("OnRowProcess", "echo 'new';")
+    source_page = make_page("shared_page")
+    source_page.events = [event]
+    target_page = make_page("shared_page")
+
+    result = diff_project(ProjectModel(pages=[source_page]), ProjectModel(pages=[target_page]))
+
+    assert len(result) == 1
+    diff = result[0]
+    assert diff.kind == "added"
+    assert diff.path == ["shared_page", "OnRowProcess"]
+    assert diff.node_kind == "event"
+    assert diff.attribute is None
+    assert diff.old_value is None
+    assert diff.new_value is event
+
+
+def test_diff_project_event_removed():
+    event = make_event("OnRowProcess", "echo 'old';")
+    source_page = make_page("shared_page")
+    target_page = make_page("shared_page")
+    target_page.events = [event]
+
+    result = diff_project(ProjectModel(pages=[source_page]), ProjectModel(pages=[target_page]))
+
+    assert len(result) == 1
+    diff = result[0]
+    assert diff.kind == "removed"
+    assert diff.path == ["shared_page", "OnRowProcess"]
+    assert diff.node_kind == "event"
+    assert diff.attribute is None
+    assert diff.old_value is event
+    assert diff.new_value is None
+
+
+def test_diff_project_event_text_changed():
+    source_page = make_page("shared_page")
+    source_page.events = [make_event("OnRowProcess", "echo 'new text';")]
+    target_page = make_page("shared_page")
+    target_page.events = [make_event("OnRowProcess", "echo 'old text';")]
+
+    result = diff_project(ProjectModel(pages=[source_page]), ProjectModel(pages=[target_page]))
+
+    assert len(result) == 1
+    diff = result[0]
+    assert diff.kind == "changed"
+    assert diff.path == ["shared_page", "OnRowProcess"]
+    assert diff.node_kind == "event"
+    assert diff.attribute is None
+    assert diff.old_value == "echo 'old text';"
+    assert diff.new_value == "echo 'new text';"
+
+
+def test_diff_project_matched_events_no_differences():
+    source_page = make_page("shared_page")
+    source_page.events = [make_event("OnRowProcess", "same();")]
+    target_page = make_page("shared_page")
+    target_page.events = [make_event("OnRowProcess", "same();")]
+
+    assert diff_project(ProjectModel(pages=[source_page]), ProjectModel(pages=[target_page])) == []
+
+
+def test_diff_project_event_suffix_variants_match_by_base_name():
+    # CustomDrawRow_SimpleHandler and CustomDrawRow_OtherHandler both
+    # normalize to base name "CustomDrawRow" and should be matched as the
+    # same event (base-name matching, per classify_event_side's suffix rule).
+    source_page = make_page("shared_page")
+    source_page.events = [make_event("CustomDrawRow_SimpleHandler", "new_impl();")]
+    target_page = make_page("shared_page")
+    target_page.events = [make_event("CustomDrawRow_OtherHandler", "old_impl();")]
+
+    result = diff_project(ProjectModel(pages=[source_page]), ProjectModel(pages=[target_page]))
+
+    assert len(result) == 1
+    diff = result[0]
+    assert diff.kind == "changed"
+    assert diff.node_kind == "event"
+    assert diff.old_value == "old_impl();"
+    assert diff.new_value == "new_impl();"

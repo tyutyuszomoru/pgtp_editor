@@ -60,7 +60,8 @@ def compare_block(source_node, target_node, path, node_kind) -> list[Difference]
     (attrib, columns, events, details), emitting Difference records for:
     - attribute differences on this node itself
     - Column diffs (added/removed/changed), scoped to this parent pair
-    (Event and Detail diffing are added in later tasks.)
+    - EventHandler diffs (added/removed/changed text), scoped to this parent pair
+    (Detail diffing is added in a later task.)
 
     `node_kind` is the caller's responsibility ("page" or "detail") since
     this helper itself is shape-agnostic.
@@ -68,6 +69,7 @@ def compare_block(source_node, target_node, path, node_kind) -> list[Difference]
     differences: list[Difference] = []
     differences.extend(_compare_attributes(source_node, target_node, path=path, node_kind=node_kind))
     differences.extend(_compare_columns(source_node, target_node, path=path))
+    differences.extend(_compare_events(source_node, target_node, path=path))
     return differences
 
 
@@ -133,6 +135,69 @@ def _compare_columns(source_node, target_node, path) -> list[Difference]:
                     node_kind="column",
                     attribute=None,
                     old_value=target_column,
+                    new_value=None,
+                )
+            )
+
+    return differences
+
+
+def _event_base_name(tag_name: str) -> str:
+    """Strip the suffix-variant portion of an event tag name, matching
+    the exact normalization rule in pgtp_editor.model.nodes.classify_event_side
+    (split on the first underscore, keep the left side). Duplicated here as a
+    one-line expression rather than imported, because classify_event_side
+    itself returns "C"/"S", not the base name in isolation — see Task 6's
+    note in the differ-engine plan for the rationale."""
+    return tag_name.split("_", 1)[0]
+
+
+def _compare_events(source_node, target_node, path) -> list[Difference]:
+    """Diff EventHandlers (children) of a matched Page/Detail pair, matched
+    by base handler name (after suffix normalization), scoped to this
+    parent pair only."""
+    differences: list[Difference] = []
+
+    target_events_by_base_name = {_event_base_name(e.tag_name): e for e in target_node.events}
+    source_base_names = {_event_base_name(e.tag_name) for e in source_node.events}
+
+    for source_event in source_node.events:
+        base_name = _event_base_name(source_event.tag_name)
+        target_event = target_events_by_base_name.get(base_name)
+        event_path = path + [source_event.tag_name]
+        if target_event is None:
+            differences.append(
+                Difference(
+                    kind="added",
+                    path=event_path,
+                    node_kind="event",
+                    attribute=None,
+                    old_value=None,
+                    new_value=source_event,
+                )
+            )
+        elif source_event.text != target_event.text:
+            differences.append(
+                Difference(
+                    kind="changed",
+                    path=event_path,
+                    node_kind="event",
+                    attribute=None,
+                    old_value=target_event.text,
+                    new_value=source_event.text,
+                )
+            )
+
+    for target_event in target_node.events:
+        base_name = _event_base_name(target_event.tag_name)
+        if base_name not in source_base_names:
+            differences.append(
+                Difference(
+                    kind="removed",
+                    path=path + [target_event.tag_name],
+                    node_kind="event",
+                    attribute=None,
+                    old_value=target_event,
                     new_value=None,
                 )
             )
