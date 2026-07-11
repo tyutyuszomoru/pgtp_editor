@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from pgtp_editor.model.nodes import CLIENT_SIDE_EVENT_NAMES, classify_event_side
+from pgtp_editor.model.nodes import CLIENT_SIDE_EVENT_NAMES
 from pgtp_editor.model.parser import load_project
 
 SAMPLE_DIR = Path(__file__).resolve().parents[2] / "sample"
@@ -66,13 +66,55 @@ def test_real_file_event_classification_matches_authoritative_list(sample_path):
     assert len(all_events) > 0
 
     for event in all_events:
-        expected_side = classify_event_side(event.tag_name)
-        assert event.side == expected_side
         base_name = event.tag_name.split("_", 1)[0]
         if base_name in CLIENT_SIDE_EVENT_NAMES:
             assert event.side == "C"
         else:
             assert event.side == "S"
+
+
+def test_real_file_known_client_and_server_events_classified_correctly():
+    """Hardcoded, independent check against tags confirmed (via grep) to
+    actually appear in sample/dev_Ferrara.pgtp.
+
+    This intentionally does NOT call classify_event_side() and compare its
+    result to itself (that would be tautological, since EventNode.side is
+    populated by that very function during parsing). Instead it asserts
+    literal "C"/"S" expectations derived by inspecting the real file.
+    """
+    sample_path = SAMPLE_DIR / "dev_Ferrara.pgtp"
+    _require_sample(sample_path)
+    project = load_project(sample_path)
+
+    all_events = []
+    for page in project.pages:
+        for node in _iter_all_nodes(page):
+            all_events.extend(node.events)
+
+    sides_by_tag = {}
+    for event in all_events:
+        sides_by_tag.setdefault(event.tag_name, event.side)
+
+    # Confirmed present via: grep -oE '<On[A-Za-z_]+' sample/dev_Ferrara.pgtp
+    expected_client_side_tags = [
+        "OnEditFormLoaded",
+        "OnInsertFormLoaded",
+        "OnEditFormEditorValueChanged",
+        "OnInsertFormEditorValueChanged",
+    ]
+    expected_server_side_tags = [
+        "OnPreparePage",
+        "OnPageLoaded",
+        "OnCalculateFields",
+    ]
+
+    for tag in expected_client_side_tags:
+        assert tag in sides_by_tag, f"expected tag {tag!r} to appear in {sample_path.name}"
+        assert sides_by_tag[tag] == "C"
+
+    for tag in expected_server_side_tags:
+        assert tag in sides_by_tag, f"expected tag {tag!r} to appear in {sample_path.name}"
+        assert sides_by_tag[tag] == "S"
 
 
 @pytest.mark.parametrize("sample_path", SAMPLE_FILES)

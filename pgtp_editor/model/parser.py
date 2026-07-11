@@ -33,7 +33,7 @@ def load_project(path) -> ProjectModel:
     """
     try:
         tree = etree.parse(str(path))
-    except etree.XMLSyntaxError as exc:
+    except (etree.XMLSyntaxError, OSError) as exc:
         raise PgtpParseError(f"Could not parse '{path}': {exc}") from exc
 
     root = tree.getroot()

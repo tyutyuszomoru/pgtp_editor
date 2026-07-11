@@ -2,7 +2,7 @@ import textwrap
 
 import pytest
 
-from pgtp_editor.model.parser import load_project
+from pgtp_editor.model.parser import PgtpParseError, load_project
 
 
 def write_pgtp(tmp_path, xml_text, name="test.pgtp"):
@@ -218,6 +218,43 @@ def test_parse_failure_raises_clear_error(tmp_path):
     path.write_text("<Project><Presentation><Pages><Page></Pages></Presentation></Project>", encoding="utf-8")
     with pytest.raises(Exception):
         load_project(path)
+
+
+def test_missing_file_raises_pgtp_parse_error_not_os_error(tmp_path):
+    missing_path = tmp_path / "does_not_exist.pgtp"
+    assert not missing_path.exists()
+    with pytest.raises(PgtpParseError) as excinfo:
+        load_project(missing_path)
+    # The underlying OSError should still be visible as the chained cause.
+    assert excinfo.value.__cause__ is not None
+    assert isinstance(excinfo.value.__cause__, OSError)
+
+
+DETAIL_MISSING_NESTED_PAGE_PROJECT = """\
+<?xml version="1.0" encoding="UTF-8"?>
+<Project>
+  <Presentation>
+    <Pages>
+      <Page fileName="top_page" tableName="pr.top" caption="Top">
+        <Details>
+          <Detail caption="Top\\Broken">
+          </Detail>
+        </Details>
+      </Page>
+    </Pages>
+  </Presentation>
+</Project>
+"""
+
+
+def test_detail_missing_nested_page_raises_pgtp_parse_error_with_sourceline(tmp_path):
+    path = write_pgtp(tmp_path, DETAIL_MISSING_NESTED_PAGE_PROJECT)
+    with pytest.raises(PgtpParseError) as excinfo:
+        load_project(path)
+    message = str(excinfo.value)
+    # The ValueError raised by _parse_detail includes "(line N)"; ensure the
+    # sourceline information survives being wrapped into PgtpParseError.
+    assert "line" in message.lower()
 
 
 def test_missing_optional_attributes_handled(tmp_path):
