@@ -59,3 +59,67 @@ def test_find_and_replace_has_ctrl_h_shortcut(qtbot):
     edit_menu = find_top_menu(window, "Edit")
     action = find_action(edit_menu, "Find & Replace...")
     assert action.shortcut().toString() == "Ctrl+H"
+
+
+def test_view_menu_contents(qtbot):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    view_menu = find_top_menu(window, "View")
+    assert action_labels(view_menu) == [
+        "Project Tree", "Properties Panel", "Audit/Problems Panel", "Raw XML Panel", "―",
+        "Expand All", "Collapse All",
+    ]
+
+
+def test_view_menu_default_checked_states(qtbot):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    view_menu = find_top_menu(window, "View")
+    assert find_action(view_menu, "Project Tree").isChecked() is True
+    assert find_action(view_menu, "Properties Panel").isChecked() is True
+    assert find_action(view_menu, "Audit/Problems Panel").isChecked() is True
+    assert find_action(view_menu, "Raw XML Panel").isChecked() is False
+
+
+def test_toggling_project_tree_hides_dock(qtbot):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window.show()
+    assert window.tree_dock.isVisible() is True
+    view_menu = find_top_menu(window, "View")
+    find_action(view_menu, "Project Tree").trigger()
+    assert window.tree_dock.isVisible() is False
+
+
+def test_toggling_audit_panel_hides_dock(qtbot):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window.show()
+    assert window.audit_dock.isVisible() is True
+    view_menu = find_top_menu(window, "View")
+    find_action(view_menu, "Audit/Problems Panel").trigger()
+    assert window.audit_dock.isVisible() is False
+
+
+def test_toggling_properties_panel_hides_tab(qtbot):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    view_menu = find_top_menu(window, "View")
+    find_action(view_menu, "Properties Panel").trigger()
+    assert window.center_stage.isTabVisible(window.center_stage.properties_tab_index) is False
+
+
+def test_toggling_raw_xml_panel_shows_tab(qtbot):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    view_menu = find_top_menu(window, "View")
+    find_action(view_menu, "Raw XML Panel").trigger()
+    assert window.center_stage.isTabVisible(window.center_stage.raw_xml_tab_index) is True
+
+
+def test_expand_all_shows_stub_message(qtbot):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    view_menu = find_top_menu(window, "View")
+    find_action(view_menu, "Expand All").trigger()
+    assert window.statusBar().currentMessage() == "Not yet implemented: Expand All"

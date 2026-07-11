@@ -35,6 +35,7 @@ class MainWindow(QMainWindow):
     def _build_menu_bar(self):
         self._build_file_menu()
         self._build_edit_menu()
+        self._build_view_menu()
 
     def _build_file_menu(self):
         menu = self.menuBar().addMenu("File")
@@ -63,6 +64,33 @@ class MainWindow(QMainWindow):
         find_replace.setShortcut("Ctrl+H")
         menu.addSeparator()
         self._add_stub_action(menu, "Preferences...")
+
+    def _build_view_menu(self):
+        menu = self.menuBar().addMenu("View")
+
+        tree_action = menu.addAction("Project Tree")
+        tree_action.setCheckable(True)
+        tree_action.setChecked(True)
+        tree_action.toggled.connect(self.tree_dock.setVisible)
+
+        properties_action = menu.addAction("Properties Panel")
+        properties_action.setCheckable(True)
+        properties_action.setChecked(True)
+        properties_action.toggled.connect(self.center_stage.set_properties_tab_visible)
+
+        audit_action = menu.addAction("Audit/Problems Panel")
+        audit_action.setCheckable(True)
+        audit_action.setChecked(True)
+        audit_action.toggled.connect(self.audit_dock.setVisible)
+
+        raw_xml_action = menu.addAction("Raw XML Panel")
+        raw_xml_action.setCheckable(True)
+        raw_xml_action.setChecked(False)
+        raw_xml_action.toggled.connect(self.center_stage.set_raw_xml_tab_visible)
+
+        menu.addSeparator()
+        self._add_stub_action(menu, "Expand All")
+        self._add_stub_action(menu, "Collapse All")
 
     def _add_stub_action(self, menu, label):
         return add_stub_action(menu, label, self._not_implemented)
