@@ -8,6 +8,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from pgtp_editor.diff.differ import diff_project
 from pgtp_editor.model.parser import load_project
 from pgtp_editor.ui._stub_action import add_stub_action
 from pgtp_editor.ui.about import show_about_dialog
@@ -81,6 +82,39 @@ class MainWindow(QMainWindow):
         self._current_project_path = path
         self.statusBar().showMessage(f"Opened: {path}", 5000)
 
+    def _compare_merge_two_files(self):
+        source = self._current_project
+        if source is None:
+            source_path, _filter = QFileDialog.getOpenFileName(
+                self, "Select Source Project", "", "PGTP files (*.pgtp)"
+            )
+            if not source_path:
+                return
+            try:
+                source = load_project(source_path)
+            except Exception as exc:
+                QMessageBox.critical(
+                    self, "Failed to Open Source Project", f"Could not open '{source_path}':\n\n{exc}"
+                )
+                return
+
+        target_path, _filter = QFileDialog.getOpenFileName(
+            self, "Select Target Project", "", "PGTP files (*.pgtp)"
+        )
+        if not target_path:
+            return
+        try:
+            target = load_project(target_path)
+        except Exception as exc:
+            QMessageBox.critical(
+                self, "Failed to Open Target Project", f"Could not open '{target_path}':\n\n{exc}"
+            )
+            return
+
+        differences = diff_project(source, target)
+        self.center_stage.diff_merge_panel.show_differences(differences)
+        self.center_stage.setCurrentIndex(self.center_stage.diff_merge_tab_index)
+
     def _build_menu_bar(self):
         self._build_file_menu()
         self._build_edit_menu()
@@ -151,7 +185,8 @@ class MainWindow(QMainWindow):
 
     def _build_diff_merge_menu(self):
         menu = self.menuBar().addMenu("Diff / Merge")
-        self._add_stub_action(menu, "Compare / Merge Two Files...")
+        compare_action = menu.addAction("Compare / Merge Two Files...")
+        compare_action.triggered.connect(self._compare_merge_two_files)
         menu.addSeparator()
         self._add_stub_action(menu, "Next Difference")
         self._add_stub_action(menu, "Prev Difference")
