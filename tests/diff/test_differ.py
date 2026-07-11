@@ -30,3 +30,49 @@ def test_diff_project_page_added_in_source():
     assert diff.old_value is None
     assert diff.new_value is page
     assert diff.ambiguous is False
+
+
+def test_diff_project_page_removed_from_target():
+    page = make_page("old_page", tableName="pr.old", caption="Old Page")
+    source = ProjectModel(pages=[])
+    target = ProjectModel(pages=[page])
+
+    result = diff_project(source, target)
+
+    assert len(result) == 1
+    diff = result[0]
+    assert diff.kind == "removed"
+    assert diff.path == ["old_page"]
+    assert diff.node_kind == "page"
+    assert diff.attribute is None
+    assert diff.old_value is page
+    assert diff.new_value is None
+    assert diff.ambiguous is False
+
+
+def test_diff_project_page_attribute_changed():
+    source_page = make_page("shared_page", tableName="pr.shared", caption="New Caption")
+    target_page = make_page("shared_page", tableName="pr.shared", caption="Old Caption")
+    source = ProjectModel(pages=[source_page])
+    target = ProjectModel(pages=[target_page])
+
+    result = diff_project(source, target)
+
+    assert len(result) == 1
+    diff = result[0]
+    assert diff.kind == "changed"
+    assert diff.path == ["shared_page"]
+    assert diff.node_kind == "page"
+    assert diff.attribute == "caption"
+    assert diff.old_value == "Old Caption"
+    assert diff.new_value == "New Caption"
+    assert diff.ambiguous is False
+
+
+def test_diff_project_matched_pages_no_differences():
+    source_page = make_page("shared_page", tableName="pr.shared", caption="Same")
+    target_page = make_page("shared_page", tableName="pr.shared", caption="Same")
+    source = ProjectModel(pages=[source_page])
+    target = ProjectModel(pages=[target_page])
+
+    assert diff_project(source, target) == []

@@ -14,7 +14,7 @@ def diff_project(source: ProjectModel, target: ProjectModel) -> list[Difference]
     differences: list[Difference] = []
 
     target_pages_by_file_name = {p.file_name: p for p in target.pages}
-    matched_target_file_names: set[str] = set()
+    source_file_names = {p.file_name for p in source.pages}
 
     for source_page in source.pages:
         target_page = target_pages_by_file_name.get(source_page.file_name)
@@ -30,12 +30,17 @@ def diff_project(source: ProjectModel, target: ProjectModel) -> list[Difference]
                 )
             )
         else:
-            matched_target_file_names.add(source_page.file_name)
+            differences.extend(
+                _compare_attributes(
+                    source_page,
+                    target_page,
+                    path=[source_page.file_name],
+                    node_kind="page",
+                )
+            )
 
     for target_page in target.pages:
-        if target_page.file_name not in matched_target_file_names and target_page.file_name not in {
-            p.file_name for p in source.pages
-        }:
+        if target_page.file_name not in source_file_names:
             differences.append(
                 Difference(
                     kind="removed",
@@ -47,4 +52,30 @@ def diff_project(source: ProjectModel, target: ProjectModel) -> list[Difference]
                 )
             )
 
+    return differences
+
+
+def _compare_attributes(source_node, target_node, path, node_kind) -> list[Difference]:
+    """Compare source_node.attrib vs target_node.attrib, emitting one
+    Changed record per differing attribute key. Covers keys present on
+    either side (a key missing on one side counts as differing from
+    whatever value the other side has, defaulting the missing side to
+    None)."""
+    differences: list[Difference] = []
+    all_keys = set(source_node.attrib.keys()) | set(target_node.attrib.keys())
+    for key in sorted(all_keys):
+        source_value = source_node.attrib.get(key)
+        target_value = target_node.attrib.get(key)
+        if source_value != target_value:
+            differences.append(
+                Difference(
+                    kind="changed",
+                    path=list(path),
+                    node_kind=node_kind,
+                    attribute=key,
+                    old_value=target_value,
+                    new_value=source_value,
+                    ambiguous=False,
+                )
+            )
     return differences
