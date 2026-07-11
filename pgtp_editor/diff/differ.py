@@ -170,55 +170,79 @@ def _event_base_name(tag_name: str) -> str:
 def _compare_events(source_node, target_node, path, ambiguous=False) -> list[Difference]:
     """Diff EventHandlers (children) of a matched Page/Detail pair, matched
     by base handler name (after suffix normalization), scoped to this
-    parent pair only."""
+    parent pair only.
+
+    Real sample data (see dev_Ferrara.pgtp's `r_jcop` page) can carry two
+    distinct, legitimately-different sibling events whose tag names both
+    normalize to the same base name (e.g. `CustomDrawRow` and
+    `CustomDrawRow_SimpleHandler` both normalize to `CustomDrawRow`) --
+    not a data error, just two handlers sharing a base name. A naive
+    one-slot-per-base-name dict would silently collapse them and compare
+    the wrong pair (discovered via the self-diff integration test: it
+    produced a spurious Changed record when diffing a file against
+    itself). This mirrors _compare_details' duplicate-sibling handling:
+    group by base name, pair positionally within each group, and mark
+    every record from a group of size > 1 on either side as ambiguous=True
+    so it surfaces for manual review rather than being silently trusted.
+    """
     differences: list[Difference] = []
 
-    target_events_by_base_name = {_event_base_name(e.tag_name): e for e in target_node.events}
-    source_base_names = {_event_base_name(e.tag_name) for e in source_node.events}
-
-    for source_event in source_node.events:
-        base_name = _event_base_name(source_event.tag_name)
-        target_event = target_events_by_base_name.get(base_name)
-        event_path = path + [source_event.tag_name]
-        if target_event is None:
-            differences.append(
-                Difference(
-                    kind="added",
-                    path=event_path,
-                    node_kind="event",
-                    attribute=None,
-                    old_value=None,
-                    new_value=source_event,
-                    ambiguous=ambiguous,
-                )
-            )
-        elif source_event.text != target_event.text:
-            differences.append(
-                Difference(
-                    kind="changed",
-                    path=event_path,
-                    node_kind="event",
-                    attribute=None,
-                    old_value=target_event.text,
-                    new_value=source_event.text,
-                    ambiguous=ambiguous,
-                )
-            )
-
+    target_events_by_base_name: dict[str, list] = {}
     for target_event in target_node.events:
-        base_name = _event_base_name(target_event.tag_name)
-        if base_name not in source_base_names:
-            differences.append(
-                Difference(
-                    kind="removed",
-                    path=path + [target_event.tag_name],
-                    node_kind="event",
-                    attribute=None,
-                    old_value=target_event,
-                    new_value=None,
-                    ambiguous=ambiguous,
+        target_events_by_base_name.setdefault(_event_base_name(target_event.tag_name), []).append(target_event)
+
+    source_events_by_base_name: dict[str, list] = {}
+    for source_event in source_node.events:
+        source_events_by_base_name.setdefault(_event_base_name(source_event.tag_name), []).append(source_event)
+
+    all_base_names = set(source_events_by_base_name.keys()) | set(target_events_by_base_name.keys())
+
+    for base_name in all_base_names:
+        source_group = source_events_by_base_name.get(base_name, [])
+        target_group = target_events_by_base_name.get(base_name, [])
+        group_is_ambiguous = ambiguous or len(source_group) > 1 or len(target_group) > 1
+
+        for i in range(max(len(source_group), len(target_group))):
+            source_event = source_group[i] if i < len(source_group) else None
+            target_event = target_group[i] if i < len(target_group) else None
+
+            if source_event is not None and target_event is not None:
+                if source_event.text != target_event.text:
+                    differences.append(
+                        Difference(
+                            kind="changed",
+                            path=path + [source_event.tag_name],
+                            node_kind="event",
+                            attribute=None,
+                            old_value=target_event.text,
+                            new_value=source_event.text,
+                            ambiguous=group_is_ambiguous,
+                        )
+                    )
+            elif source_event is not None:
+                differences.append(
+                    Difference(
+                        kind="added",
+                        path=path + [source_event.tag_name],
+                        node_kind="event",
+                        attribute=None,
+                        old_value=None,
+                        new_value=source_event,
+                        ambiguous=group_is_ambiguous,
+                    )
                 )
-            )
+            else:
+                differences.append(
+                    Difference(
+                        kind="removed",
+                        path=path + [target_event.tag_name],
+                        node_kind="event",
+                        attribute=None,
+                        old_value=target_event,
+                        new_value=None,
+                        ambiguous=group_is_ambiguous,
+                    )
+                )
 
     return differences
 
