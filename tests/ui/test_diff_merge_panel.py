@@ -1,3 +1,5 @@
+from PySide6.QtCore import Qt
+
 from pgtp_editor.diff.records import Difference
 from pgtp_editor.ui.diff_merge_panel import DiffMergePanel
 
@@ -81,3 +83,72 @@ def test_leaf_label_detail_removed_uses_last_path_segment():
         old_value=object(), new_value=None,
     )
     assert leaf_label(diff) == "pr.attachment/Sub-item: removed"
+
+
+def test_leaf_items_are_checkable_and_unchecked_by_default(qtbot):
+    panel = DiffMergePanel()
+    qtbot.addWidget(panel)
+    diffs = [make_diff(["page_a", "caption"], node_kind="page", kind="changed", attribute="caption")]
+
+    panel.show_differences(diffs)
+
+    page_item = panel.tree.topLevelItem(0)
+    leaf = page_item.child(0)
+    assert bool(leaf.flags() & Qt.ItemFlag.ItemIsUserCheckable)
+    assert leaf.checkState(0) == Qt.CheckState.Unchecked
+
+
+def test_group_prefix_items_are_not_checkable(qtbot):
+    panel = DiffMergePanel()
+    qtbot.addWidget(panel)
+    diffs = [make_diff(["page_a", "caption"], node_kind="page", kind="changed", attribute="caption")]
+
+    panel.show_differences(diffs)
+
+    page_item = panel.tree.topLevelItem(0)
+    assert not bool(page_item.flags() & Qt.ItemFlag.ItemIsUserCheckable)
+
+
+def test_ambiguous_leaf_gets_warning_marker(qtbot):
+    panel = DiffMergePanel()
+    qtbot.addWidget(panel)
+    diffs = [
+        make_diff(
+            ["page_a", "pr.operation/Operation", "caption"],
+            node_kind="detail", kind="changed", attribute="caption",
+            old_value="Old", new_value="New", ambiguous=True,
+        )
+    ]
+
+    panel.show_differences(diffs)
+
+    leaf = panel.tree.topLevelItem(0).child(0).child(0)
+    assert leaf.text(0) == "⚠ caption: changed"
+
+
+def test_non_ambiguous_leaf_has_no_marker(qtbot):
+    panel = DiffMergePanel()
+    qtbot.addWidget(panel)
+    diffs = [make_diff(["page_a", "caption"], node_kind="page", kind="changed", attribute="caption")]
+
+    panel.show_differences(diffs)
+
+    leaf = panel.tree.topLevelItem(0).child(0)
+    assert leaf.text(0) == "caption: changed"
+
+
+def test_group_prefix_items_not_marked_even_if_all_children_ambiguous(qtbot):
+    panel = DiffMergePanel()
+    qtbot.addWidget(panel)
+    diffs = [
+        make_diff(
+            ["page_a", "pr.operation/Operation", "caption"],
+            node_kind="detail", kind="changed", attribute="caption",
+            ambiguous=True,
+        )
+    ]
+
+    panel.show_differences(diffs)
+
+    detail_group_item = panel.tree.topLevelItem(0).child(0)
+    assert detail_group_item.text(0) == "pr.operation/Operation"

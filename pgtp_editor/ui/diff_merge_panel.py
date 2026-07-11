@@ -46,6 +46,7 @@ class DiffMergePanel(QWidget):
                 item = items_by_prefix.get(accumulated)
                 if item is None:
                     item = QTreeWidgetItem([segment])
+                    item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsUserCheckable)
                     if parent is not None:
                         parent.addChild(item)
                     else:
@@ -55,6 +56,8 @@ class DiffMergePanel(QWidget):
 
             leaf = QTreeWidgetItem([leaf_label(diff)])
             leaf.setData(0, DIFFERENCE_ROLE, diff)
+            leaf.setFlags(leaf.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            leaf.setCheckState(0, Qt.CheckState.Unchecked)
             if parent is not None:
                 parent.addChild(leaf)
             else:
@@ -63,5 +66,7 @@ class DiffMergePanel(QWidget):
 
 def leaf_label(diff) -> str:
     if diff.attribute is not None:
-        return f"{diff.attribute}: {diff.kind}"
-    return f"{diff.path[-1]}: {diff.kind}"
+        label = f"{diff.attribute}: {diff.kind}"
+    else:
+        label = f"{diff.path[-1]}: {diff.kind}"
+    return f"⚠ {label}" if diff.ambiguous else label
