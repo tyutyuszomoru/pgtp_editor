@@ -156,3 +156,10 @@ def test_generation_menu_contents(qtbot):
         "Generate PHP...", "―",
         "Open Output Folder",
     ]
+
+
+def test_help_menu_contents(qtbot):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    menu = find_top_menu(window, "Help")
+    assert action_labels(menu) == ["Documentation", "About"]

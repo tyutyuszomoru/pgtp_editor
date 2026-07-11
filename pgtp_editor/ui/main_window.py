@@ -2,6 +2,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QDockWidget, QListWidget, QMainWindow
 
 from pgtp_editor.ui._stub_action import add_stub_action
+from pgtp_editor.ui.about import show_about_dialog
 from pgtp_editor.ui.center_stage import CenterStage
 from pgtp_editor.ui.project_tree import ProjectTreePanel
 
@@ -39,6 +40,7 @@ class MainWindow(QMainWindow):
         self._build_diff_merge_menu()
         self._build_tools_menu()
         self._build_generation_menu()
+        self._build_help_menu()
 
     def _build_file_menu(self):
         menu = self.menuBar().addMenu("File")
@@ -124,3 +126,9 @@ class MainWindow(QMainWindow):
         self._add_stub_action(menu, "Generate PHP...")
         menu.addSeparator()
         self._add_stub_action(menu, "Open Output Folder")
+
+    def _build_help_menu(self):
+        menu = self.menuBar().addMenu("Help")
+        self._add_stub_action(menu, "Documentation")
+        about_action = menu.addAction("About")
+        about_action.triggered.connect(lambda: show_about_dialog(self))
