@@ -472,3 +472,58 @@ def test_dialog_edits_against_real_storage_dir_persist_to_the_correct_file(qtbot
     reloaded = ModelForRoundTrip.load(model_path)
     entry = reloaded.paths["Project/Page"]["attributes"]["viewAbilityMode"]
     assert entry["labels"]["3"] == "Modal window"
+
+
+from unittest.mock import patch
+
+
+def test_missing_schema_model_shows_empty_state_message_and_hides_controls(qtbot, tmp_path):
+    storage_dir = tmp_path / "storage"
+    storage_dir.mkdir()
+
+    dialog = AnnotateSchemaValuesDialog(schema_storage_dir=storage_dir)
+    qtbot.addWidget(dialog)
+    dialog.show()
+
+    assert dialog.empty_state_label.isVisible() is True
+    assert dialog.empty_state_label.text() == (
+        "No schema data yet. Open a .pgtp file to begin learning the schema, "
+        "then come back here to annotate it."
+    )
+    assert dialog.table.isVisible() is False
+    assert dialog.filter_box.isVisible() is False
+    assert dialog.unlabeled_only_checkbox.isVisible() is False
+
+
+def test_existing_schema_model_hides_empty_state_message(qtbot, tmp_path):
+    storage_dir = tmp_path / "storage"
+    storage_dir.mkdir()
+    model = Model()
+    _seed_enum_attribute(model, "Project/Page", "viewAbilityMode", ["1"])
+    model.save(schema_model_path(storage_dir))
+
+    dialog = AnnotateSchemaValuesDialog(schema_storage_dir=storage_dir)
+    qtbot.addWidget(dialog)
+    dialog.show()
+
+    assert dialog.empty_state_label.isVisible() is False
+    assert dialog.table.isVisible() is True
+    assert dialog.filter_box.isVisible() is True
+    assert dialog.unlabeled_only_checkbox.isVisible() is True
+
+
+def test_malformed_schema_model_shows_critical_message_box(qtbot, tmp_path):
+    storage_dir = tmp_path / "storage"
+    storage_dir.mkdir()
+    model_path = schema_model_path(storage_dir)
+    model_path.write_text("{not valid json", encoding="utf-8")
+
+    with patch("pgtp_editor.ui.annotate_schema_values_dialog.QMessageBox.critical") as mock_critical:
+        dialog = AnnotateSchemaValuesDialog(schema_storage_dir=storage_dir)
+        qtbot.addWidget(dialog)
+
+    mock_critical.assert_called_once()
+    args, _kwargs = mock_critical.call_args
+    assert args[0] is dialog
+    assert "Failed to Load Schema Model" in args[1]
+    assert str(model_path) in args[2]

@@ -65,6 +65,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QMessageBox,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -80,6 +81,11 @@ LABEL_COLUMN = 3
 _COLUMN_HEADERS = ["Element Path", "Attribute", "Value", "Label"]
 _ROW_DATA_ROLE = Qt.ItemDataRole.UserRole
 
+_EMPTY_STATE_TEXT = (
+    "No schema data yet. Open a .pgtp file to begin learning the schema, "
+    "then come back here to annotate it."
+)
+
 
 class AnnotateSchemaValuesDialog(QDialog):
     def __init__(self, parent=None, schema_storage_dir=None):
@@ -89,6 +95,11 @@ class AnnotateSchemaValuesDialog(QDialog):
         self._model = None
         self._model_path = None
         self._all_rows = []
+
+        self.empty_state_label = QLabel(_EMPTY_STATE_TEXT)
+        self.empty_state_label.setWordWrap(True)
+        self.empty_state_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.empty_state_label.setVisible(False)
 
         self.filter_box = QLineEdit()
         self.filter_box.setPlaceholderText("Filter by element path or attribute...")
@@ -109,12 +120,34 @@ class AnnotateSchemaValuesDialog(QDialog):
         self.table.itemChanged.connect(self._on_item_changed)
 
         layout = QVBoxLayout(self)
+        layout.addWidget(self.empty_state_label)
         layout.addLayout(filter_row)
         layout.addWidget(self.table)
+        self._filter_row_widgets = [self.filter_box, self.unlabeled_only_checkbox]
 
         model_path = schema_model_path(schema_storage_dir)
-        model = Model.load(model_path)
+        if not model_path.exists():
+            self._show_empty_state()
+            return
+
+        try:
+            model = Model.load(model_path)
+        except Exception as exc:
+            QMessageBox.critical(
+                self,
+                "Failed to Load Schema Model",
+                f"Could not load '{model_path}':\n\n{exc}",
+            )
+            self._show_empty_state()
+            return
+
         self._load_model_and_populate(model, model_path)
+
+    def _show_empty_state(self):
+        self.empty_state_label.setVisible(True)
+        self.table.setVisible(False)
+        for widget in self._filter_row_widgets:
+            widget.setVisible(False)
 
     @classmethod
     def _for_testing(cls, model, model_path, parent=None):
