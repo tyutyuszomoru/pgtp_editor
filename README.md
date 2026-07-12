@@ -27,13 +27,19 @@ Full background, architecture rationale, and the reasoning behind every scope de
 - Every file opened via File → Open is fed into a per-user, ever-growing structural model of the (otherwise undocumented) `.pgtp` format — element paths, attributes, inferred types, and observed enum values — reported into the Audit panel.
 - **Annotate Schema Values** (Schema menu): a filterable table for attaching human-readable labels to the numeric/coded values the model has observed (e.g. `viewAbilityMode="3"` → "Modal window"), so `schema.xsd` becomes self-documenting over time.
 
-## In progress / not yet merged
+### XML Editor
+- A real syntax-highlighting, line-numbered, foldable code editor (`pgtp_editor/ui/xml_editor.py`) powers the Raw XML tab — unclosed-quote propagation, current-line highlighting, auto-indent, and auto-closing brackets/quotes/tags.
+- On a Tier-1 (well-formedness) parse failure, the app doesn't just show an error dialog: it opens the raw file in this editor with the exact failing line scrolled-to and highlighted.
+- `navigate_to_line`/`line_text`/`select_range_on_line` give other features (like Properties, below) a way to jump to and highlight an exact attribute, not just a line.
 
-These are designed and (in some cases) implemented in separate worktrees, pending review and merge into this branch:
+### Properties panel
+- A read-only, click-to-navigate view (right dock) of everything set on whatever's selected in the Project Tree — every observed attribute for a Page/Detail/Column, or the handler name/side/function-count for an Event.
+- Clicking a property scrolls the XML Editor to its exact line and selects the precise `key="value"` substring — refining past the tree's own line-level navigation.
 
-- **XML Editor** — a real syntax-highlighting, line-numbered, foldable code editor for the Raw XML tab, with Tier-1 parse-failure fallback (opens the raw file with the error line highlighted). Planned follow-ons: bookmarks, search/replace, structural block selection (`Ctrl+Shift+B`/`A`, including correct copy/paste of folded regions), and schema-aware hover tooltips/inline validation.
-- **Properties panel** — a read-only, click-to-navigate view of everything set on the selected tree node, refining past the tree's line-level navigation to the exact attribute in the XML Editor.
+## Planned, not yet started
+
 - **Interface Text Collection** — filter by database column or table across the whole project to review/edit captions, placeholders, `Format`/`Lookup`/`ViewProperties`/`EditProperties`, in one place.
+- **XML Editor** follow-ons: bookmarks, search/replace, structural block selection (`Ctrl+Shift+B`/`A`, including correct copy/paste of folded regions — designed in `docs/superpowers/specs/2026-07-12-pgtp-editor-xml-structural-selection-design.md`, not yet implemented), and schema-aware hover tooltips/inline validation.
 
 Two originally-planned features (dedicated Move/Copy-Detail tooling and Client/read-only-page generation) were dropped once the XML Editor's structural selection + ordinary clipboard operations made dedicated tooling for them unnecessary — see `docs/superpowers/specs/2026-07-11-pgtp-editor-design.md` for the full reasoning.
 
@@ -49,7 +55,13 @@ Two originally-planned features (dedicated Move/Copy-Detail tooling and Client/r
 
     pytest
 
-258 tests passing as of this writing (model, diff, schema learning, and UI layers).
+421 tests passing as of this writing (model, diff, schema learning, and UI layers).
+
+## Building a Windows release
+
+    python optimized_build.py
+
+Produces a size-optimized onedir PyInstaller bundle at `dist/PGTPEditor/`. Package it into a user-space installer with `docs/installer.iss` (Inno Setup) — see that file for the exact install/upgrade/file-association behavior.
 
 ## Licensing and credits
 
