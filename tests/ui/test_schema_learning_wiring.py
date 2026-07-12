@@ -131,3 +131,15 @@ def test_parse_failure_appends_no_schema_audit_entry(qtbot, tmp_path):
         window.open_project_file(str(broken_path))
 
     assert window.audit_panel.count() == 0
+
+
+def test_main_window_constructs_with_no_arguments_and_resolves_real_app_data_dir(qtbot):
+    window = MainWindow()
+    qtbot.addWidget(window)
+
+    assert window._schema_storage_dir is None
+
+    model_path = schema_model_path(window._schema_storage_dir)
+    assert model_path.name == "schema_model.json"
+    # Resolves to the real per-user AppDataLocation, not empty/relative.
+    assert model_path.is_absolute()
