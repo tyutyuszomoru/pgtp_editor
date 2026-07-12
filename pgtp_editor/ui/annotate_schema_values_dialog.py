@@ -56,3 +56,86 @@ def _apply_filters(rows, text_filter, unlabeled_only):
             continue
         result.append(row)
     return result
+
+
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import (
+    QDialog,
+    QTableWidget,
+    QTableWidgetItem,
+    QVBoxLayout,
+)
+
+PATH_COLUMN = 0
+ATTRIBUTE_COLUMN = 1
+VALUE_COLUMN = 2
+LABEL_COLUMN = 3
+_COLUMN_HEADERS = ["Element Path", "Attribute", "Value", "Label"]
+
+
+class AnnotateSchemaValuesDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Annotate Schema Values")
+        self._populating = False
+        self._model = None
+        self._model_path = None
+
+        self.table = QTableWidget(0, 4)
+        self.table.setHorizontalHeaderLabels(_COLUMN_HEADERS)
+        self.table.setSortingEnabled(True)
+        self.table.itemChanged.connect(self._on_item_changed)
+
+        layout = QVBoxLayout(self)
+        layout.addWidget(self.table)
+
+    @classmethod
+    def _for_testing(cls, model, model_path, parent=None):
+        """Constructs the dialog directly against an in-memory Model and a
+        model_path, bypassing disk I/O — used by tests that want to drive
+        the dialog's table/filter/edit behavior against a synthetic Model
+        without writing a real schema_model.json first. The real
+        production path (loading from disk, including the empty-state and
+        malformed-JSON cases) is added in a later task."""
+        dialog = cls(parent)
+        dialog._load_model_and_populate(model, model_path)
+        return dialog
+
+    def _load_model_and_populate(self, model, model_path):
+        self._model = model
+        self._model_path = model_path
+        self._populate_table(_build_rows(model))
+
+    def _populate_table(self, rows):
+        self._populating = True
+        # Sorting must be disabled while rows are being inserted:
+        # QTableWidget re-sorts after every setItem() call when sorting is
+        # enabled, which reorders not-yet-fully-populated rows mid-loop and
+        # leaves stale/None items behind. Restore the previous sorting
+        # state once population is complete.
+        was_sorting_enabled = self.table.isSortingEnabled()
+        self.table.setSortingEnabled(False)
+        try:
+            self.table.setRowCount(len(rows))
+            for row_index, row in enumerate(rows):
+                path_item = QTableWidgetItem(row["path"])
+                path_item.setFlags(path_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                self.table.setItem(row_index, PATH_COLUMN, path_item)
+
+                attribute_item = QTableWidgetItem(row["attribute"])
+                attribute_item.setFlags(attribute_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                self.table.setItem(row_index, ATTRIBUTE_COLUMN, attribute_item)
+
+                value_item = QTableWidgetItem(row["value"])
+                value_item.setFlags(value_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                self.table.setItem(row_index, VALUE_COLUMN, value_item)
+
+                label_item = QTableWidgetItem(row["label"])
+                label_item.setFlags(label_item.flags() | Qt.ItemFlag.ItemIsEditable)
+                self.table.setItem(row_index, LABEL_COLUMN, label_item)
+        finally:
+            self.table.setSortingEnabled(was_sorting_enabled)
+            self._populating = False
+
+    def _on_item_changed(self, item):
+        pass

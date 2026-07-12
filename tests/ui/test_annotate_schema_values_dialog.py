@@ -206,3 +206,70 @@ def test_apply_filters_text_and_unlabeled_only_combine_with_and_semantics():
     result = _apply_filters(rows, text_filter="AbilityMode", unlabeled_only=True)
 
     assert result == [rows[0]]
+
+
+from pgtp_editor.ui.annotate_schema_values_dialog import (
+    ATTRIBUTE_COLUMN,
+    LABEL_COLUMN,
+    PATH_COLUMN,
+    VALUE_COLUMN,
+    AnnotateSchemaValuesDialog,
+)
+
+
+def _dialog_with_model(qtbot, model, tmp_path):
+    dialog = AnnotateSchemaValuesDialog._for_testing(model, tmp_path / "schema_model.json")
+    qtbot.addWidget(dialog)
+    return dialog
+
+
+def test_dialog_table_has_four_columns_with_expected_headers(qtbot, tmp_path):
+    model = Model()
+    dialog = _dialog_with_model(qtbot, model, tmp_path)
+
+    assert dialog.table.columnCount() == 4
+    headers = [dialog.table.horizontalHeaderItem(i).text() for i in range(4)]
+    assert headers == ["Element Path", "Attribute", "Value", "Label"]
+
+
+def test_dialog_table_populates_one_row_per_value(qtbot, tmp_path):
+    model = Model()
+    _seed_enum_attribute(model, "Project/Page", "viewAbilityMode", ["1", "2", "3"])
+    dialog = _dialog_with_model(qtbot, model, tmp_path)
+
+    assert dialog.table.rowCount() == 3
+    values = sorted(dialog.table.item(row, VALUE_COLUMN).text() for row in range(3))
+    assert values == ["1", "2", "3"]
+
+
+def test_dialog_table_cells_show_path_attribute_value_label(qtbot, tmp_path):
+    model = Model()
+    _seed_enum_attribute(
+        model, "Project/Page", "viewAbilityMode", ["3"], labels={"3": "Modal window"},
+    )
+    dialog = _dialog_with_model(qtbot, model, tmp_path)
+
+    assert dialog.table.item(0, PATH_COLUMN).text() == "Project/Page"
+    assert dialog.table.item(0, ATTRIBUTE_COLUMN).text() == "viewAbilityMode"
+    assert dialog.table.item(0, VALUE_COLUMN).text() == "3"
+    assert dialog.table.item(0, LABEL_COLUMN).text() == "Modal window"
+
+
+def test_dialog_table_sorting_is_enabled(qtbot, tmp_path):
+    model = Model()
+    dialog = _dialog_with_model(qtbot, model, tmp_path)
+
+    assert dialog.table.isSortingEnabled() is True
+
+
+def test_dialog_only_label_column_is_editable(qtbot, tmp_path):
+    from PySide6.QtCore import Qt
+
+    model = Model()
+    _seed_enum_attribute(model, "Project/Page", "viewAbilityMode", ["1"])
+    dialog = _dialog_with_model(qtbot, model, tmp_path)
+
+    assert not bool(dialog.table.item(0, PATH_COLUMN).flags() & Qt.ItemFlag.ItemIsEditable)
+    assert not bool(dialog.table.item(0, ATTRIBUTE_COLUMN).flags() & Qt.ItemFlag.ItemIsEditable)
+    assert not bool(dialog.table.item(0, VALUE_COLUMN).flags() & Qt.ItemFlag.ItemIsEditable)
+    assert bool(dialog.table.item(0, LABEL_COLUMN).flags() & Qt.ItemFlag.ItemIsEditable)
