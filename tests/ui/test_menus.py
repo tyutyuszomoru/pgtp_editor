@@ -167,7 +167,6 @@ def test_tools_menu_contents(qtbot):
     qtbot.addWidget(window)
     menu = find_top_menu(window, "Tools")
     assert action_labels(menu) == [
-        "Create Client (Readonly) Page...", "Move/Copy Detail...", "―",
         "Manage Captions...", "―",
         "Find Reused Tables...", "―",
         "Validate Project",

@@ -119,7 +119,7 @@ def test_page_context_menu(qtbot):
         "Edit Properties", "―",
         "Copy", "Paste", "Duplicate", "Copy to Other Open Project...", "―",
         "Add Detail...", "―",
-        "Create Client (Readonly) Page", "Compare This Page With...", "―",
+        "Compare This Page With...", "―",
         "Find Column Usages...", "Rename / Unify Captions...", "―",
         "Delete Page",
     ]
@@ -131,9 +131,9 @@ def test_detail_context_menu_shows_compare_instance_when_table_reused(qtbot):
     menu = tree.build_detail_menu(attachments_detail)
     assert action_labels(menu) == [
         "Edit Properties", "―",
-        "Cut", "Copy", "Paste", "Duplicate", "Move to Parent Page...", "Copy to Other Open Project...", "―",
+        "Cut", "Copy", "Paste", "Duplicate", "Copy to Other Open Project...", "―",
         "Add Nested Detail...", "―",
-        "Create Client (Readonly) Page", "Compare This Detail With...", "Compare with Other Instance...", "―",
+        "Compare This Detail With...", "Compare with Other Instance...", "―",
         "Delete Detail (+ nested)",
     ]
 
@@ -160,7 +160,7 @@ def test_multi_select_menu(qtbot):
     tree = make_populated_tree(qtbot, on_stub_action=lambda label: None)
     menu = tree.build_multi_select_menu()
     assert action_labels(menu) == [
-        "Compare Selected", "Create Client Pages for Selected", "Copy Selected to...",
+        "Compare Selected", "Copy Selected to...",
     ]
 
 

@@ -310,9 +310,6 @@ class MainWindow(QMainWindow):
 
     def _build_tools_menu(self):
         menu = self.menuBar().addMenu("Tools")
-        self._add_stub_action(menu, "Create Client (Readonly) Page...")
-        self._add_stub_action(menu, "Move/Copy Detail...")
-        menu.addSeparator()
         self._add_stub_action(menu, "Manage Captions...")
         menu.addSeparator()
         self._add_stub_action(menu, "Find Reused Tables...")

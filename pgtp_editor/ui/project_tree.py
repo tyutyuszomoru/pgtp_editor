@@ -86,7 +86,6 @@ class ProjectTreePanel(QTreeWidget):
         menu.addSeparator()
         self._add_stub_action(menu, "Add Detail...")
         menu.addSeparator()
-        self._add_stub_action(menu, "Create Client (Readonly) Page")
         compare_action = menu.addAction("Compare This Page With...")
         compare_action.triggered.connect(
             lambda checked=False, i=item: self._on_compare_page(i.data(0, MODEL_NODE_ROLE))
@@ -123,12 +122,10 @@ class ProjectTreePanel(QTreeWidget):
         self._add_stub_action(menu, "Copy")
         self._add_stub_action(menu, "Paste")
         self._add_stub_action(menu, "Duplicate")
-        self._add_stub_action(menu, "Move to Parent Page...")
         self._add_stub_action(menu, "Copy to Other Open Project...")
         menu.addSeparator()
         self._add_stub_action(menu, "Add Nested Detail...")
         menu.addSeparator()
-        self._add_stub_action(menu, "Create Client (Readonly) Page")
         compare_action = menu.addAction("Compare This Detail With...")
         compare_action.triggered.connect(
             lambda checked=False, i=item: self._on_compare_detail(
@@ -154,7 +151,6 @@ class ProjectTreePanel(QTreeWidget):
     def build_multi_select_menu(self):
         menu = QMenu(self)
         self._add_stub_action(menu, "Compare Selected")
-        self._add_stub_action(menu, "Create Client Pages for Selected")
         self._add_stub_action(menu, "Copy Selected to...")
         return menu
 
