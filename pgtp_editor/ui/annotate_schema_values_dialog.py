@@ -75,6 +75,7 @@ ATTRIBUTE_COLUMN = 1
 VALUE_COLUMN = 2
 LABEL_COLUMN = 3
 _COLUMN_HEADERS = ["Element Path", "Attribute", "Value", "Label"]
+_ROW_DATA_ROLE = Qt.ItemDataRole.UserRole
 
 
 class AnnotateSchemaValuesDialog(QDialog):
@@ -160,10 +161,42 @@ class AnnotateSchemaValuesDialog(QDialog):
 
                 label_item = QTableWidgetItem(row["label"])
                 label_item.setFlags(label_item.flags() | Qt.ItemFlag.ItemIsEditable)
+                label_item.setData(_ROW_DATA_ROLE, row)
                 self.table.setItem(row_index, LABEL_COLUMN, label_item)
         finally:
             self.table.setSortingEnabled(was_sorting_enabled)
             self._populating = False
 
     def _on_item_changed(self, item):
-        pass
+        if self._populating or item.column() != LABEL_COLUMN:
+            return
+
+        row_key = item.data(_ROW_DATA_ROLE)
+        path = row_key["path"]
+        attr = row_key["attribute"]
+        value = row_key["value"]
+        new_label = item.text()
+
+        entry = self._model.paths[path]["attributes"][attr]
+        entry.setdefault("labels", {})
+        if new_label:
+            entry["labels"][value] = new_label
+        else:
+            entry["labels"].pop(value, None)
+
+        # item.data() round-trips the row dict through QVariant, which
+        # deep-copies it — so it is not the same object as the dict held
+        # in self._all_rows. Look up the matching row there by identity
+        # key (path, attribute, value) and update it in place so that
+        # subsequent filter toggles see the new label without needing to
+        # rebuild self._all_rows from the model.
+        for candidate in self._all_rows:
+            if (
+                candidate["path"] == path
+                and candidate["attribute"] == attr
+                and candidate["value"] == value
+            ):
+                candidate["label"] = new_label
+                break
+
+        self._model.save(self._model_path)

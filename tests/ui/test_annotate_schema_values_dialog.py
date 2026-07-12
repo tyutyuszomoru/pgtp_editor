@@ -333,3 +333,106 @@ def test_dialog_clearing_text_filter_restores_full_view(qtbot, tmp_path):
     dialog.filter_box.setText("")
 
     assert dialog.table.rowCount() == 2
+
+
+from pgtp_editor.schema_learning.model import Model as ModelForRoundTrip
+
+
+def test_editing_label_cell_updates_in_memory_model(qtbot, tmp_path):
+    model = Model()
+    _seed_enum_attribute(model, "Project/Page", "viewAbilityMode", ["3"])
+    model_path = tmp_path / "schema_model.json"
+    model.save(model_path)
+    dialog = AnnotateSchemaValuesDialog._for_testing(model, model_path)
+    qtbot.addWidget(dialog)
+    dialog.unlabeled_only_checkbox.setChecked(False)
+
+    dialog.table.item(0, LABEL_COLUMN).setText("Modal window")
+
+    entry = model.paths["Project/Page"]["attributes"]["viewAbilityMode"]
+    assert entry["labels"]["3"] == "Modal window"
+
+
+def test_editing_label_cell_saves_and_reloads_with_new_label(qtbot, tmp_path):
+    model = Model()
+    _seed_enum_attribute(model, "Project/Page", "viewAbilityMode", ["3"])
+    model_path = tmp_path / "schema_model.json"
+    model.save(model_path)
+    dialog = AnnotateSchemaValuesDialog._for_testing(model, model_path)
+    qtbot.addWidget(dialog)
+    dialog.unlabeled_only_checkbox.setChecked(False)
+
+    dialog.table.item(0, LABEL_COLUMN).setText("Modal window")
+
+    reloaded = ModelForRoundTrip.load(model_path)
+    entry = reloaded.paths["Project/Page"]["attributes"]["viewAbilityMode"]
+    assert entry["labels"]["3"] == "Modal window"
+
+
+def test_clearing_label_cell_removes_key_rather_than_storing_empty_string(qtbot, tmp_path):
+    model = Model()
+    _seed_enum_attribute(
+        model, "Project/Page", "viewAbilityMode", ["3"], labels={"3": "Modal window"},
+    )
+    model_path = tmp_path / "schema_model.json"
+    model.save(model_path)
+    dialog = AnnotateSchemaValuesDialog._for_testing(model, model_path)
+    qtbot.addWidget(dialog)
+    dialog.unlabeled_only_checkbox.setChecked(False)
+
+    dialog.table.item(0, LABEL_COLUMN).setText("")
+
+    entry = model.paths["Project/Page"]["attributes"]["viewAbilityMode"]
+    assert "3" not in entry["labels"]
+
+    reloaded = ModelForRoundTrip.load(model_path)
+    reloaded_entry = reloaded.paths["Project/Page"]["attributes"]["viewAbilityMode"]
+    assert "3" not in reloaded_entry["labels"]
+
+
+def test_programmatic_table_population_does_not_trigger_save(qtbot, tmp_path):
+    model = Model()
+    _seed_enum_attribute(model, "Project/Page", "viewAbilityMode", ["1", "2", "3"])
+    model_path = tmp_path / "schema_model.json"
+    model.save(model_path)
+    mtime_before_dialog = model_path.stat().st_mtime_ns
+
+    dialog = AnnotateSchemaValuesDialog._for_testing(model, model_path)
+    qtbot.addWidget(dialog)
+
+    # Toggling the checkbox re-populates the table programmatically —
+    # this must not write to disk on its own.
+    dialog.unlabeled_only_checkbox.setChecked(False)
+    dialog.unlabeled_only_checkbox.setChecked(True)
+
+    assert model_path.stat().st_mtime_ns == mtime_before_dialog
+
+
+def test_editing_label_updates_visible_row_after_a_filter_toggle(qtbot, tmp_path):
+    model = Model()
+    _seed_enum_attribute(model, "Project/Page", "viewAbilityMode", ["1", "3"])
+    model_path = tmp_path / "schema_model.json"
+    model.save(model_path)
+    dialog = AnnotateSchemaValuesDialog._for_testing(model, model_path)
+    qtbot.addWidget(dialog)
+    dialog.unlabeled_only_checkbox.setChecked(False)
+
+    row_for_value_3 = next(
+        row for row in range(dialog.table.rowCount())
+        if dialog.table.item(row, VALUE_COLUMN).text() == "3"
+    )
+    dialog.table.item(row_for_value_3, LABEL_COLUMN).setText("Modal window")
+
+    # Flip to "unlabeled only" then back — the labeled row for value "3"
+    # must stay correctly labeled (self._all_rows was kept in sync, not
+    # left stale), and must disappear/reappear per the filter as expected.
+    dialog.unlabeled_only_checkbox.setChecked(True)
+    assert dialog.table.rowCount() == 1
+    assert dialog.table.item(0, VALUE_COLUMN).text() == "1"
+
+    dialog.unlabeled_only_checkbox.setChecked(False)
+    row_for_value_3_again = next(
+        row for row in range(dialog.table.rowCount())
+        if dialog.table.item(row, VALUE_COLUMN).text() == "3"
+    )
+    assert dialog.table.item(row_for_value_3_again, LABEL_COLUMN).text() == "Modal window"
