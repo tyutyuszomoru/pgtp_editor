@@ -125,3 +125,50 @@ def test_build_rows_sorts_by_path_then_attribute_then_value():
         ("Z/Path", "b", "1"),
         ("Z/Path", "b", "2"),
     ]
+
+
+from pgtp_editor.ui.annotate_schema_values_dialog import _apply_filters
+
+
+def test_apply_filters_no_text_no_unlabeled_only_returns_all_rows():
+    rows = [
+        {"path": "A", "attribute": "x", "value": "1", "label": ""},
+        {"path": "B", "attribute": "y", "value": "2", "label": "Two"},
+    ]
+
+    result = _apply_filters(rows, text_filter="", unlabeled_only=False)
+
+    assert result == rows
+
+
+def test_apply_filters_text_matches_path_case_insensitively():
+    rows = [
+        {"path": "Project/AbilityMode", "attribute": "x", "value": "1", "label": ""},
+        {"path": "Project/Other", "attribute": "y", "value": "2", "label": ""},
+    ]
+
+    result = _apply_filters(rows, text_filter="abilitymode", unlabeled_only=False)
+
+    assert result == [rows[0]]
+
+
+def test_apply_filters_text_matches_attribute_case_insensitively():
+    rows = [
+        {"path": "A", "attribute": "viewAbilityMode", "value": "1", "label": ""},
+        {"path": "A", "attribute": "otherAttr", "value": "2", "label": ""},
+    ]
+
+    result = _apply_filters(rows, text_filter="ABILITYMODE", unlabeled_only=False)
+
+    assert result == [rows[0]]
+
+
+def test_apply_filters_text_does_not_match_value_or_label_content():
+    rows = [
+        {"path": "A", "attribute": "x", "value": "3", "label": ""},
+        {"path": "B", "attribute": "y", "value": "9", "label": "value is 3 here"},
+    ]
+
+    result = _apply_filters(rows, text_filter="3", unlabeled_only=False)
+
+    assert result == []

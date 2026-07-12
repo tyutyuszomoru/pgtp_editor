@@ -37,3 +37,22 @@ def _build_rows(model):
                     "label": labels.get(value, ""),
                 })
     return rows
+
+
+def _apply_filters(rows, text_filter, unlabeled_only):
+    """Re-run on every keystroke in the text filter box and every toggle
+    of the "Show only unlabeled" checkbox. `text_filter` matches
+    case-insensitively against `path` and `attribute` only — not `value`
+    or `label` (see design spec §4.2: matching against values too would
+    risk false-positive matches when a value string happens to contain
+    the filter text). `unlabeled_only` keeps rows where `label == ""`.
+    """
+    lowered = text_filter.lower()
+    result = []
+    for row in rows:
+        if lowered and lowered not in row["path"].lower() and lowered not in row["attribute"].lower():
+            continue
+        if unlabeled_only and row["label"] != "":
+            continue
+        result.append(row)
+    return result
