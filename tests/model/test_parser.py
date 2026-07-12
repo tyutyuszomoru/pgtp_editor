@@ -276,3 +276,81 @@ def test_missing_optional_attributes_handled(tmp_path):
     assert page.columns == []
     assert page.details == []
     assert page.events == []
+
+
+from lxml import etree
+
+from pgtp_editor.model.parser import _build_project_model
+
+
+def test_load_project_populates_tree_field(tmp_path):
+    path = write_pgtp(tmp_path, SIMPLE_PROJECT)
+    project = load_project(path)
+    assert project.tree is not None
+    assert project.tree.getroot().tag == "Project"
+
+
+def test_page_element_is_the_real_lxml_element(tmp_path):
+    path = write_pgtp(tmp_path, SIMPLE_PROJECT)
+    project = load_project(path)
+    page = project.pages[0]
+    assert page.element is not None
+    assert page.element.tag == "Page"
+    assert page.element.get("fileName") == "development_equipment"
+
+
+def test_column_element_is_the_real_lxml_element(tmp_path):
+    path = write_pgtp(tmp_path, SIMPLE_PROJECT)
+    project = load_project(path)
+    column = project.pages[0].columns[0]
+    assert column.element is not None
+    assert column.element.tag == "ColumnPresentation"
+    assert column.element.get("fieldName") == "tag"
+
+
+def test_event_element_is_the_real_lxml_element(tmp_path):
+    path = write_pgtp(tmp_path, SIMPLE_PROJECT)
+    project = load_project(path)
+    event = next(e for e in project.pages[0].events if e.tag_name == "OnPreparePage")
+    assert event.element is not None
+    assert event.element.tag == "OnPreparePage"
+
+
+def test_detail_element_and_inner_page_element_are_the_two_real_elements(tmp_path):
+    path = write_pgtp(tmp_path, SIMPLE_PROJECT)
+    project = load_project(path)
+    detail = project.pages[0].details[0]
+    assert detail.element is not None
+    assert detail.element.tag == "Detail"
+    assert detail.inner_page_element is not None
+    assert detail.inner_page_element.tag == "Page"
+    assert detail.inner_page_element.get("tableName") == "pr.attachment"
+
+
+def test_build_project_model_accepts_an_already_parsed_tree(tmp_path):
+    path = write_pgtp(tmp_path, SIMPLE_PROJECT)
+    tree = etree.parse(str(path))
+    project = _build_project_model(tree, source_description=str(path))
+    assert len(project.pages) == 2
+    assert project.tree is tree
+    assert project.pages[0].element is tree.getroot().find("Presentation/Pages/Page")
+
+
+def test_build_project_model_wraps_structural_errors_with_source_description(tmp_path):
+    # NOTE: deviates from the plan's original fixture, which used
+    # `<Page></Pages>` -- that's malformed at the XML *syntax* level (a
+    # mismatched tag), so `etree.parse` itself raises XMLSyntaxError before
+    # `_build_project_model` is ever reached, making it impossible to
+    # exercise this function's own error-wrapping behavior. This fixture
+    # (borrowed from DETAIL_MISSING_NESTED_PAGE_PROJECT above) is
+    # well-formed XML that only fails during the structural walk inside
+    # `_build_project_model` (a Detail with no nested Page), which is what
+    # this test is actually meant to verify.
+    path = tmp_path / "broken.pgtp"
+    path.write_text(DETAIL_MISSING_NESTED_PAGE_PROJECT, encoding="utf-8")
+    tree = etree.parse(str(path))
+    from pgtp_editor.model.parser import PgtpParseError
+
+    with pytest.raises(PgtpParseError) as excinfo:
+        _build_project_model(tree, source_description="my-custom-description")
+    assert "my-custom-description" in str(excinfo.value)
