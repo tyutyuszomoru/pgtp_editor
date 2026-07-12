@@ -50,6 +50,8 @@ class MainWindow(QMainWindow):
 
         self._current_project = None
         self._current_project_path = None
+        self._current_diff_target_project = None
+        self._current_diff_target_path = None
 
         self._build_menu_bar()
 
@@ -116,6 +118,8 @@ class MainWindow(QMainWindow):
             )
             return
 
+        self._current_diff_target_project = target
+        self._current_diff_target_path = target_path
         differences = diff_project(source, target)
         self.center_stage.diff_merge_panel.show_differences(differences)
         self.center_stage.setCurrentIndex(self.center_stage.diff_merge_tab_index)
@@ -143,6 +147,8 @@ class MainWindow(QMainWindow):
             )
             return
 
+        self._current_diff_target_project = target
+        self._current_diff_target_path = target_path
         differences = compare_block(page_node, target_page, path=[page_node.file_name], node_kind="page")
         self.center_stage.diff_merge_panel.show_differences(differences)
         self.center_stage.setCurrentIndex(self.center_stage.diff_merge_tab_index)
@@ -166,6 +172,8 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Detail Not Found", result.message)
             return
 
+        self._current_diff_target_project = target
+        self._current_diff_target_path = target_path_str
         differences = compare_block(detail_node, result, path=source_path, node_kind="detail")
         self.center_stage.diff_merge_panel.show_differences(differences)
         self.center_stage.setCurrentIndex(self.center_stage.diff_merge_tab_index)
