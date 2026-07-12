@@ -562,3 +562,53 @@ def test_apply_added_detail_creates_details_container_if_absent():
     apply_differences(target, [diff])
 
     assert page_el.find("Details") is not None
+
+
+def test_apply_differences_does_not_filter_ambiguous_differences_itself():
+    """apply.py has no special-cased 'ignore ambiguous' logic of its own --
+    the ambiguity gate is entirely main_window.py's responsibility (spec
+    §7.2). This locks in that apply_differences applies whatever list it's
+    handed, ambiguous or not."""
+    target = build_project(SIMPLE_TARGET)
+    diff = Difference(
+        kind="changed",
+        path=["development_equipment"],
+        node_kind="page",
+        attribute="caption",
+        old_value="Old Caption",
+        new_value="New Caption",
+        ambiguous=True,
+    )
+
+    result = apply_differences(target, [diff])
+
+    assert result.failed == []
+    assert result.applied == [diff]
+    page_el = target.tree.getroot().find("Presentation/Pages/Page")
+    assert page_el.get("caption") == "New Caption"
+
+
+def test_apply_differences_mid_list_failure_still_applies_earlier_successes_to_the_tree():
+    """A failing resolve_path lookup mid-list (simulating Target having
+    changed since compare-time) must not prevent earlier, successful
+    differences in the same call from being reflected in the tree --
+    it is the caller's (main_window.py's) job per spec §7.3 to discard the
+    whole working copy on any failure, not apply_differences's job to roll
+    anything back itself."""
+    target = build_project(SIMPLE_TARGET)
+    good_diff = Difference(
+        kind="changed", path=["development_equipment"], node_kind="page",
+        attribute="caption", old_value="Old Caption", new_value="New Caption",
+    )
+    bad_diff = Difference(
+        kind="changed", path=["page_that_does_not_exist"], node_kind="page",
+        attribute="caption", old_value="X", new_value="Y",
+    )
+
+    result = apply_differences(target, [good_diff, bad_diff])
+
+    assert result.applied == [good_diff]
+    assert len(result.failed) == 1
+    assert result.failed[0].difference is bad_diff
+    page_el = target.tree.getroot().find("Presentation/Pages/Page")
+    assert page_el.get("caption") == "New Caption"
