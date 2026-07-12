@@ -63,6 +63,7 @@ class DetailNode:
     identity: str
     attrib: dict
     sourceline: int | None = None
+    inner_sourceline: int | None = None
     details: list["DetailNode"] = field(default_factory=list)
     columns: list[ColumnNode] = field(default_factory=list)
     events: list[EventNode] = field(default_factory=list)
