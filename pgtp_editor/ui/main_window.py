@@ -178,6 +178,29 @@ class MainWindow(QMainWindow):
         self.center_stage.diff_merge_panel.show_differences(differences)
         self.center_stage.setCurrentIndex(self.center_stage.diff_merge_tab_index)
 
+    def _apply_changes_to_target(self):
+        checked = self.center_stage.diff_merge_panel.checked_differences()
+        if not checked:
+            QMessageBox.information(
+                self, "Apply Changes to Target", "No differences are checked to apply."
+            )
+            return
+
+        ambiguous = [d for d in checked if d.ambiguous]
+        if ambiguous:
+            details = "\n".join(
+                f"- {'/'.join(d.path)} ({d.node_kind}/{d.attribute}: {d.kind})" for d in ambiguous
+            )
+            QMessageBox.critical(
+                self,
+                "Cannot Apply: Ambiguous Differences Checked",
+                "The following checked differences are ambiguous (matched via "
+                "positional pairing of duplicate siblings) and cannot be safely "
+                "applied automatically. Uncheck them and re-run Apply, or verify "
+                "the pairing by hand in the detail view first:\n\n" + details,
+            )
+            return
+
     def _build_menu_bar(self):
         self._build_file_menu()
         self._build_edit_menu()
@@ -255,7 +278,8 @@ class MainWindow(QMainWindow):
         next_action.triggered.connect(self.center_stage.diff_merge_panel.select_next_difference)
         prev_action = menu.addAction("Prev Difference")
         prev_action.triggered.connect(self.center_stage.diff_merge_panel.select_previous_difference)
-        self._add_stub_action(menu, "Apply Changes to Target")
+        apply_action = menu.addAction("Apply Changes to Target")
+        apply_action.triggered.connect(self._apply_changes_to_target)
 
     def _build_tools_menu(self):
         menu = self.menuBar().addMenu("Tools")
