@@ -8,3 +8,11 @@ __pycache__/
 *.egg-info/
 .pytest_cache/
 .coverage
+
+# Harness-local worktrees/config, never part of the project itself
+.claude/
+
+# Separate standalone tool with its own git history (vendored into
+# pgtp_editor/schema_learning/) - kept on disk for reference, not tracked
+# here to avoid embedding its nested .git as a stray gitlink.
+pgtp_analytics/

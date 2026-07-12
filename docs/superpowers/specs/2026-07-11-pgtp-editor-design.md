@@ -11,9 +11,11 @@ SQL Maestro's **PostgreSQL PHP Generator** ("PHPGen") is a Windows GUI tool that
 The vendor GUI does not support several workflows the team needs on an ongoing basis:
 
 1. **Diff and merge** two `.pgtp` files, to bring a developer's local changes into a shared project file.
-2. **Move and copy structural blocks** (specifically `Detail` master-detail subgrids), since the vendor GUI has no such operation.
+2. ~~Move and copy structural blocks (specifically `Detail` master-detail subgrids)~~ — **OBSOLETE**, see note below.
 3. **Keep field captions/labels coherent** across a project (the same underlying DB field should read the same everywhere it appears) and **translate the UI to other languages**.
-4. **Generate "client" (read-only) copies of pages** for external/client-facing views.
+4. ~~Generate "client" (read-only) copies of pages for external/client-facing views~~ — **OBSOLETE**, see note below.
+
+**Post-hoc note (2026-07-12):** Goals #2 and #4 were dropped once the XML Editor feature (structural block-select via `Ctrl+B`/`Ctrl+Shift+B` + ordinary clipboard operations, plus schema-aware hover tooltips once Schema Learning's enum labels are filled in) made dedicated tooling for them unnecessary — a Detail can be cut/copied/pasted directly in the raw XML view (including when folded), and a client/read-only Page can be copied the same way and its `*AbilityMode` attributes set by hand, informed by the hover tooltip once its label is known. See `docs/superpowers/specs/2026-07-12-pgtp-editor-xml-editor-foundation-design.md` and its sibling future sub-projects (D: structural selection, E: schema integration).
 
 This document specifies a companion desktop tool, **PGTP Editor**, that adds these capabilities without displacing the vendor GUI — PHPGen remains the only thing that compiles `.pgtp` → PHP; PGTP Editor only edits the `.pgtp` XML and can optionally invoke the vendor's own generator executable as a subprocess.
 
@@ -100,10 +102,10 @@ Before this project, a 3-script Python pipeline (`extract_ui_strings.py` → `tr
 ### 3.1 In scope
 
 1. Diff/Merge between two `.pgtp` files (§6.1)
-2. Move/Copy of `Detail` blocks; copy (not move) of `Page` blocks (§6.2)
+2. ~~Move/Copy of `Detail` blocks; copy (not move) of `Page` blocks (§6.2)~~ — **OBSOLETE**, see §1's post-hoc note.
 3. Unified Caption Management: coherence audit + LLM translation (§6.3)
 4. Reused-table coherence check within a single file (§6.4)
-5. Client (read-only) page generation (§6.5)
+5. ~~Client (read-only) page generation (§6.5)~~ — **OBSOLETE**, see §1's post-hoc note.
 6. Invoking the vendor's PHP Generator executable to compile output (§6.6)
 7. Structural + well-formedness validation (§6.7)
 
@@ -195,7 +197,7 @@ Using `fileName` as the Page identity key is also *why* the duplicate-`fileName`
 | **Edit** | Undo, Redo, ―, Cut, Copy, Paste, Delete, ―, Find..., Find & Replace... (Ctrl+H), ―, Preferences... |
 | **View** | ☑ Project Tree, ☑ Properties Panel, ☑ Audit/Problems Panel, ☐ Raw XML (text editor) Panel, ―, Expand All, Collapse All |
 | **Diff / Merge** | Compare / Merge Two Files... (prompts for **Source** and **Target**, §6.1), ―, Next Difference, Prev Difference, Apply Changes to Target (overwrites Target, keeps a `.bak`) |
-| **Tools** | Create Client (Readonly) Page..., Move/Copy Detail..., ―, Manage Captions... (unified coherence + translation, §6.3), ―, Find Reused Tables... (§6.4), ―, Validate Project (orphan refs, dupe filenames) |
+| **Tools** | Manage Captions... (unified coherence + translation, §6.3), ―, Find Reused Tables... (§6.4), ―, Validate Project (orphan refs, dupe filenames) |
 | **Generation** | Locate PHP Generator Executable... (one-time setting), ―, Generate PHP... (prompts for output folder, pre-filled from `Project@outputPath`, then runs the CLI from §2.5), ―, Open Output Folder |
 | **Help** | Documentation, About (OSS credits, §9) |
 
@@ -210,7 +212,6 @@ Copy to Other Open Project...
 ―
 Add Detail...
 ―
-Create Client (Readonly) Page
 Compare This Page With...
 ―
 Find Field Usages...
@@ -225,12 +226,10 @@ Delete Page
 Edit Properties
 ―
 Cut  Copy  Paste  Duplicate
-Move to Parent Page...
 Copy to Other Open Project...
 ―
 Add Nested Detail...
 ―
-Create Client (Readonly) Page
 Compare This Detail With...
 Compare with Other Instance... (§6.4, only shown when this table appears elsewhere in the file)
 ―
@@ -248,7 +247,7 @@ Delete Field
 ```
 (Note: earlier drafts of this menu included "Copy Field" / "Copy Field to Other Page..." — removed per the finalized scope decision in §3.2 that field-level copy doesn't make sense as a standalone feature.)
 
-**Multi-select** (ctrl/shift-click several Pages or Details): Compare Selected, Create Client Pages for Selected (batch), Copy Selected to...
+**Multi-select** (ctrl/shift-click several Pages or Details): Compare Selected, Copy Selected to...
 
 ## 6. Feature designs
 
@@ -261,7 +260,9 @@ A **one-way, two-file** operation — deliberately not a 3-way merge with a trac
 - **Resolution:** each difference is a candidate patch with **Apply / Skip** (default: skip — nothing changes until explicitly chosen), not "keep A / keep B," since without an ancestor there's no notion of which side is "right" — every difference is a genuine developer decision.
 - **Output:** applying the chosen patches **overwrites the Target file directly**, with an automatic `.bak` backup of the pre-merge Target kept first (same convention as the existing translator toolchain, §2.6) — not a one-way door.
 
-### 6.2 Move / Copy
+### 6.2 Move / Copy — OBSOLETE (2026-07-12)
+
+**This feature is no longer being built.** See §1's post-hoc note — Detail/Page relocation and duplication is handled by the XML Editor's structural block-select + ordinary clipboard operations instead of a dedicated in-tool move/copy UI. Kept below for historical reference only.
 
 Scope was narrowed during design to exactly what's needed:
 
@@ -292,7 +293,14 @@ Rather than a new engine, this **reuses the §6.1 differ and diff/merge UI at De
 - Right-click any instance within such a group → **Compare with Other Instance...** → opens the exact same Source/Target diff view from §6.1, scoped to the two selected subtrees. Same Apply/Skip-per-difference workflow, **never automatic** — matching the requirement that reconciling reused-table drift is always a developer decision, not an automatic sync.
 - With 3+ instances in a group, reconciliation is done pairwise (pick any two, diff, repeat) rather than building a separate N-way merge UI — this was an explicit simplification, reusing §6.1 exactly rather than inventing new merge machinery.
 
-### 6.5 Client (read-only) page generation
+### 6.5 Client (read-only) page generation — OBSOLETE (2026-07-12)
+
+**This feature is no longer being built.** The user decided a dedicated clone-and-rewrite-ability-attributes tool isn't needed: a client/read-only Page can be produced by copying the Page's XML block directly in the XML Editor (structural select + copy/paste, same mechanism that also obsoleted §6.2's Move/Copy — see §1's post-hoc note) and then hand-editing its `*AbilityMode` attributes. The still-unresolved numeric ability-code mapping (§2.4) remains worth deriving empirically, but now purely to power the XML Editor's future schema-aware hover tooltips (sub-project E, once Schema Learning's enum labels are filled in by the intern) rather than to drive automated rewriting — the tooltip tells the user which numeric code means what, and they set it by hand.
+
+The original design (kept below for historical reference, not to be implemented):
+
+<details>
+<summary>Original design (superseded)</summary>
 
 Clones a selected `Page` subtree — recursively including nested `Details` — into new `Page`/`Detail` elements in the same file, then rewrites the clone's ability attributes to be read-only:
 
@@ -300,9 +308,9 @@ Clones a selected `Page` subtree — recursively including nested `Details` — 
 - `editAbilityMode`, `insertAbilityMode`, `copyAbilityMode`, `multiEditAbility` set to their respective Disabled code.
 - Delete/Multi-delete bits cleared.
 
-**This cannot be correctly implemented until the exact numeric ability codes are empirically derived** (§2.4, deferred item in §8) — using the wrong constant would silently ship a "client page" that's still editable, which is worse than not having the feature at all.
+Naming convention (fixed, no per-instance prompt): the clone's `fileName` is `<original>_client` (e.g. `development_equipment` → `development_equipment_client`). The caption gets an analogous suffix (e.g. "Equipment" → "Equipment (Client)") for recognizability in the running app's own menus. Must still satisfy the fileName-uniqueness rule (§6.7).
 
-Naming convention (fixed, no per-instance prompt): the clone's `fileName` is `<original>_client` (e.g. `development_equipment` → `development_equipment_client`). The caption gets an analogous suffix (e.g. "Equipment" → "Equipment (Client)") for recognizability in the running app's own menus — this suffix convention was proposed during design and not explicitly contested. Must still satisfy the fileName-uniqueness rule (§6.7); the deterministic `_client` suffix makes collisions rare but the same paste-time check applies.
+</details>
 
 ### 6.6 Generate PHP (vendor tool invocation)
 
@@ -341,7 +349,7 @@ Deep referential-integrity checks (verifying that `Lookup`/`FieldMap` targets ac
 - Round-trip fidelity: load a sample file, save unchanged, byte-diff against the original.
 - Identity-key matching and differ correctness — using **small synthetic XML fixtures** built specifically to exercise add/remove/change/move cases, rather than relying only on the two large real sample files (which are useful for integration coverage but too large/slow to reason about per-unit-test).
 - Coherence-audit grouping logic.
-- Client-page ability-flag rewriting — blocked on the empirical ability-code lookup table below.
+- ~~Client-page ability-flag rewriting — blocked on the empirical ability-code lookup table below.~~ (OBSOLETE — §6.5 dropped; the lookup table below is still worth doing, now for XML Editor hover-tooltip purposes instead.)
 
 The two real sample files serve as **integration/regression tests**: "open, make no changes, save, byte-diff" and "run coherence audit, assert the known `tag`/`objecttype_id` inconsistencies are detected."
 
@@ -349,7 +357,7 @@ The **UI layer** gets standard manual/exploratory testing for desktop GUI work r
 
 **Deferred empirical work required before implementation can be considered complete** (these are concrete, scoped research tasks, not open-ended unknowns):
 
-1. **Ability-code lookup table (§2.4, blocks §6.5):** build small test projects in the real PHPGenerator GUI that each differ by exactly one Ability dropdown setting, save, and diff the XML to derive the exact numeric code for each of Disabled/Separated Page/Inline mode/Modal window (View/Edit/Insert/Copying), Disabled/Separated Page/Modal window (Multi-edit), and the Delete/Multi-delete bit(s).
+1. **Ability-code lookup table (§2.4):** no longer blocks anything (§6.5, the feature that needed it, is obsolete) but is still worth deriving — it will power the XML Editor's future schema-aware hover tooltips (sub-project E) so a developer hand-setting a client/read-only page's ability attributes can see what each numeric code means. Build small test projects in the real PHPGenerator GUI that each differ by exactly one Ability dropdown setting, save, and diff the XML to derive the exact numeric code for each of Disabled/Separated Page/Inline mode/Modal window (View/Edit/Insert/Copying), Disabled/Separated Page/Modal window (Multi-edit), and the Delete/Multi-delete bit(s). The Schema Learning intern's enum-labeling work (once the numeric codes are known) is the more immediate path to getting this info into the app.
 2. **lxml round-trip fidelity (architecture assumption in §4.1):** confirmed empirically as part of the automated test suite above, but flagged here since the whole "preserve exact serialization" design principle (§2.1) depends on it holding true in practice, not just in theory.
 
 ## 9. Licensing and credits
@@ -370,3 +378,4 @@ Recorded here because several of these reversed or narrowed an earlier assumptio
 - Coherence audit and translation were designed as two separate menu items, then **unified into one Caption Management feature** on the realization they're the same substitution operation with a different value source.
 - The reused-table coherence check (§6.4) was a new requirement surfaced mid-design (not in the original four goals) and was scoped to **reuse the diff/merge engine** rather than become a new one.
 - The text-editor widget's reference implementation changed from QScintilla to a **PySide6 port of QCodeEditor** once QCodeEditor was pointed out directly, since introducing a separate Scintilla binding alongside a QCodeEditor-inspired `QPlainTextEdit` widget would have been redundant.
+- **(2026-07-12) Original goals #2 (Move/Copy of `Detail` blocks, §6.2) and #4 (Client read-only page generation, §6.5) were both dropped as dedicated features** once the XML Editor's structural block-select (`Ctrl+B`/`Ctrl+Shift+B`) plus ordinary clipboard operations made them unnecessary — a Detail or Page can be cut/copied/pasted directly in the raw XML view (including when folded, a hard requirement), and a client/read-only Page's ability attributes can be set by hand with the help of the XML Editor's future schema-aware hover tooltips once Schema Learning's enum labels are filled in. The still-open ability-code empirical work (§8, item 1) is retained for that purpose, no longer to block §6.5 (which no longer exists).
