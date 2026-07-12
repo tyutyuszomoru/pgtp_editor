@@ -71,8 +71,28 @@ def _apply_changed_attribute(target: ProjectModel, diff: Difference) -> None:
     if isinstance(resolved, ResolutionError):
         raise _ApplyError(resolved.message)
 
-    element = resolved.element
+    element = _target_element_for_attribute(resolved, diff.attribute)
     if diff.new_value is None:
         element.attrib.pop(diff.attribute, None)
     else:
         element.set(diff.attribute, diff.new_value)
+
+
+def _target_element_for_attribute(resolved, attribute: str):
+    """Return the real lxml element a given attribute key should be
+    mutated on. A PageNode/ColumnNode/EventNode has exactly one real
+    element. A DetailNode has two (the outer <Detail> and the nested
+    <Page>) -- per spec §5.1, prefer whichever real element already
+    carries that attribute key, checking inner_page_element first (since
+    _parse_detail's merge order lets the nested Page's own attributes win
+    in the merged view), and defaulting to inner_page_element (the
+    substantive-data element) if the key exists on neither yet.
+    """
+    if getattr(resolved, "inner_page_element", None) is None:
+        return resolved.element
+
+    if attribute in resolved.inner_page_element.attrib:
+        return resolved.inner_page_element
+    if attribute in resolved.element.attrib:
+        return resolved.element
+    return resolved.inner_page_element

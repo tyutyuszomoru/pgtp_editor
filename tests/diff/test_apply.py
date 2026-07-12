@@ -95,3 +95,111 @@ def test_apply_changed_attribute_with_none_new_value_deletes_attribute():
     assert result.failed == []
     page_el = target.tree.getroot().find("Presentation/Pages/Page")
     assert "ability" not in page_el.attrib
+
+
+DETAIL_TARGET = """\
+<Project>
+  <Presentation>
+    <Pages>
+      <Page fileName="development_equipment" tableName="pr.equipment" caption="Equipment">
+        <Details>
+          <Detail caption="Equipment\\Sub-item">
+            <Page fileName="" tableName="pr.attachment" caption="Sub-item" ability="view"/>
+          </Detail>
+        </Details>
+      </Page>
+    </Pages>
+  </Presentation>
+</Project>
+"""
+
+
+def test_apply_changed_detail_attribute_on_nested_page_element():
+    target = build_project(DETAIL_TARGET)
+    diff = Difference(
+        kind="changed",
+        path=["development_equipment", "pr.attachment/Sub-item"],
+        node_kind="detail",
+        attribute="ability",
+        old_value="view",
+        new_value="insert,edit",
+    )
+
+    result = apply_differences(target, [diff])
+
+    assert result.failed == []
+    detail = target.pages[0].details[0]
+    assert detail.inner_page_element.get("ability") == "insert,edit"
+    # The outer <Detail> element itself carries no "ability" attribute in
+    # this fixture and must remain untouched.
+    assert "ability" not in detail.element.attrib
+
+
+def test_apply_changed_detail_attribute_on_outer_detail_element_when_key_lives_there():
+    xml = """\
+<Project>
+  <Presentation>
+    <Pages>
+      <Page fileName="p" tableName="pr.p">
+        <Details>
+          <Detail caption="Sub-item" outerOnlyFlag="old-value">
+            <Page fileName="" tableName="pr.attachment" caption="Sub-item"/>
+          </Detail>
+        </Details>
+      </Page>
+    </Pages>
+  </Presentation>
+</Project>
+"""
+    target = build_project(xml)
+    diff = Difference(
+        kind="changed",
+        path=["p", "pr.attachment/Sub-item"],
+        node_kind="detail",
+        attribute="outerOnlyFlag",
+        old_value="old-value",
+        new_value="new-value",
+    )
+
+    result = apply_differences(target, [diff])
+
+    assert result.failed == []
+    detail = target.pages[0].details[0]
+    assert detail.element.get("outerOnlyFlag") == "new-value"
+    assert "outerOnlyFlag" not in detail.inner_page_element.attrib
+
+
+def test_apply_changed_detail_attribute_new_key_defaults_to_inner_page_element():
+    xml = """\
+<Project>
+  <Presentation>
+    <Pages>
+      <Page fileName="p" tableName="pr.p">
+        <Details>
+          <Detail caption="Sub-item">
+            <Page fileName="" tableName="pr.attachment" caption="Sub-item"/>
+          </Detail>
+        </Details>
+      </Page>
+    </Pages>
+  </Presentation>
+</Project>
+"""
+    target = build_project(xml)
+    # brandNewKey exists on neither real element yet (Source added it) --
+    # per spec §5.1, defaults to inner_page_element (the substantive-data element).
+    diff = Difference(
+        kind="changed",
+        path=["p", "pr.attachment/Sub-item"],
+        node_kind="detail",
+        attribute="brandNewKey",
+        old_value=None,
+        new_value="brand-new-value",
+    )
+
+    result = apply_differences(target, [diff])
+
+    assert result.failed == []
+    detail = target.pages[0].details[0]
+    assert detail.inner_page_element.get("brandNewKey") == "brand-new-value"
+    assert "brandNewKey" not in detail.element.attrib
