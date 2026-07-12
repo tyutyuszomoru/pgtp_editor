@@ -70,6 +70,9 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
+from pgtp_editor.schema_learning.model import Model
+from pgtp_editor.schema_learning.storage import schema_model_path
+
 PATH_COLUMN = 0
 ATTRIBUTE_COLUMN = 1
 VALUE_COLUMN = 2
@@ -79,7 +82,7 @@ _ROW_DATA_ROLE = Qt.ItemDataRole.UserRole
 
 
 class AnnotateSchemaValuesDialog(QDialog):
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, schema_storage_dir=None):
         super().__init__(parent)
         self.setWindowTitle("Annotate Schema Values")
         self._populating = False
@@ -108,6 +111,10 @@ class AnnotateSchemaValuesDialog(QDialog):
         layout = QVBoxLayout(self)
         layout.addLayout(filter_row)
         layout.addWidget(self.table)
+
+        model_path = schema_model_path(schema_storage_dir)
+        model = Model.load(model_path)
+        self._load_model_and_populate(model, model_path)
 
     @classmethod
     def _for_testing(cls, model, model_path, parent=None):

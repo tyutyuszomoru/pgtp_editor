@@ -436,3 +436,39 @@ def test_editing_label_updates_visible_row_after_a_filter_toggle(qtbot, tmp_path
         if dialog.table.item(row, VALUE_COLUMN).text() == "3"
     )
     assert dialog.table.item(row_for_value_3_again, LABEL_COLUMN).text() == "Modal window"
+
+
+from pgtp_editor.schema_learning.storage import schema_model_path
+
+
+def test_dialog_loads_model_from_schema_storage_dir_on_construction(qtbot, tmp_path):
+    storage_dir = tmp_path / "storage"
+    storage_dir.mkdir()
+    model = Model()
+    _seed_enum_attribute(model, "Project/Page", "viewAbilityMode", ["3"])
+    model.save(schema_model_path(storage_dir))
+
+    dialog = AnnotateSchemaValuesDialog(schema_storage_dir=storage_dir)
+    qtbot.addWidget(dialog)
+    dialog.unlabeled_only_checkbox.setChecked(False)
+
+    assert dialog.table.rowCount() == 1
+    assert dialog.table.item(0, VALUE_COLUMN).text() == "3"
+
+
+def test_dialog_edits_against_real_storage_dir_persist_to_the_correct_file(qtbot, tmp_path):
+    storage_dir = tmp_path / "storage"
+    storage_dir.mkdir()
+    model = Model()
+    _seed_enum_attribute(model, "Project/Page", "viewAbilityMode", ["3"])
+    model_path = schema_model_path(storage_dir)
+    model.save(model_path)
+
+    dialog = AnnotateSchemaValuesDialog(schema_storage_dir=storage_dir)
+    qtbot.addWidget(dialog)
+    dialog.unlabeled_only_checkbox.setChecked(False)
+    dialog.table.item(0, LABEL_COLUMN).setText("Modal window")
+
+    reloaded = ModelForRoundTrip.load(model_path)
+    entry = reloaded.paths["Project/Page"]["attributes"]["viewAbilityMode"]
+    assert entry["labels"]["3"] == "Modal window"
