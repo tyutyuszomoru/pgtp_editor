@@ -203,3 +203,104 @@ def test_apply_changed_detail_attribute_new_key_defaults_to_inner_page_element()
     detail = target.pages[0].details[0]
     assert detail.inner_page_element.get("brandNewKey") == "brand-new-value"
     assert "brandNewKey" not in detail.element.attrib
+
+
+COLUMN_TARGET = """\
+<Project>
+  <Presentation>
+    <Pages>
+      <Page fileName="p" tableName="pr.p">
+        <ColumnPresentations>
+          <ColumnPresentation fieldName="tag" caption="Old Tag Caption"/>
+        </ColumnPresentations>
+      </Page>
+    </Pages>
+  </Presentation>
+</Project>
+"""
+
+
+def test_apply_changed_column_attribute():
+    target = build_project(COLUMN_TARGET)
+    diff = Difference(
+        kind="changed",
+        path=["p", "tag"],
+        node_kind="column",
+        attribute="caption",
+        old_value="Old Tag Caption",
+        new_value="New Tag Caption",
+    )
+
+    result = apply_differences(target, [diff])
+
+    assert result.failed == []
+    column_el = target.tree.getroot().find("Presentation/Pages/Page/ColumnPresentations/ColumnPresentation")
+    assert column_el.get("caption") == "New Tag Caption"
+
+
+def test_apply_changed_column_attribute_fails_when_field_name_not_found():
+    target = build_project(COLUMN_TARGET)
+    diff = Difference(
+        kind="changed",
+        path=["p", "does_not_exist"],
+        node_kind="column",
+        attribute="caption",
+        old_value="Old",
+        new_value="New",
+    )
+
+    result = apply_differences(target, [diff])
+
+    assert result.applied == []
+    assert len(result.failed) == 1
+    assert result.failed[0].difference is diff
+
+
+EVENT_TARGET = """\
+<Project>
+  <Presentation>
+    <Pages>
+      <Page fileName="p" tableName="pr.p">
+        <EventHandlers>
+          <OnRowProcess>echo 'old';</OnRowProcess>
+        </EventHandlers>
+      </Page>
+    </Pages>
+  </Presentation>
+</Project>
+"""
+
+
+def test_apply_changed_event_text_replaces_element_text():
+    target = build_project(EVENT_TARGET)
+    diff = Difference(
+        kind="changed",
+        path=["p", "OnRowProcess"],
+        node_kind="event",
+        attribute=None,
+        old_value="echo 'old';",
+        new_value="echo 'new';",
+    )
+
+    result = apply_differences(target, [diff])
+
+    assert result.failed == []
+    event_el = target.tree.getroot().find("Presentation/Pages/Page/EventHandlers/OnRowProcess")
+    assert event_el.text == "echo 'new';"
+
+
+def test_apply_changed_event_text_fails_when_tag_not_found():
+    target = build_project(EVENT_TARGET)
+    diff = Difference(
+        kind="changed",
+        path=["p", "OnDoesNotExist"],
+        node_kind="event",
+        attribute=None,
+        old_value="echo 'old';",
+        new_value="echo 'new';",
+    )
+
+    result = apply_differences(target, [diff])
+
+    assert result.applied == []
+    assert len(result.failed) == 1

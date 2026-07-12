@@ -57,25 +57,58 @@ class _ApplyError(Exception):
 
 
 def _apply_one(target: ProjectModel, diff: Difference) -> None:
-    if diff.kind == "changed" and diff.attribute is not None:
+    if diff.kind == "changed" and diff.node_kind == "event" and diff.attribute is None:
+        _apply_changed_event_text(target, diff)
+    elif diff.kind == "changed" and diff.attribute is not None:
         _apply_changed_attribute(target, diff)
     else:
         raise _ApplyError(f"unsupported difference (kind={diff.kind!r}, node_kind={diff.node_kind!r})")
 
 
 def _apply_changed_attribute(target: ProjectModel, diff: Difference) -> None:
-    if diff.node_kind not in ("page", "detail"):
-        raise _ApplyError(f"attribute changes are only supported for page/detail in this task (got {diff.node_kind!r})")
+    if diff.node_kind in ("page", "detail"):
+        resolved = resolve_path(target, diff.path)
+        if isinstance(resolved, ResolutionError):
+            raise _ApplyError(resolved.message)
+        element = _target_element_for_attribute(resolved, diff.attribute)
+    elif diff.node_kind == "column":
+        element = _find_column_element(target, diff.path)
+    else:
+        raise _ApplyError(f"unsupported node_kind for attribute change: {diff.node_kind!r}")
 
-    resolved = resolve_path(target, diff.path)
-    if isinstance(resolved, ResolutionError):
-        raise _ApplyError(resolved.message)
-
-    element = _target_element_for_attribute(resolved, diff.attribute)
     if diff.new_value is None:
         element.attrib.pop(diff.attribute, None)
     else:
         element.set(diff.attribute, diff.new_value)
+
+
+def _find_column_element(target: ProjectModel, path: list[str]):
+    parent_result = resolve_path(target, path[:-1])
+    if isinstance(parent_result, ResolutionError):
+        raise _ApplyError(parent_result.message)
+
+    field_name = path[-1]
+    match = next((c for c in parent_result.columns if c.field_name == field_name), None)
+    if match is None:
+        raise _ApplyError(f"no Column with fieldName '{field_name}' under {'/'.join(path[:-1])}")
+    return match.element
+
+
+def _find_event_element(target: ProjectModel, path: list[str]):
+    parent_result = resolve_path(target, path[:-1])
+    if isinstance(parent_result, ResolutionError):
+        raise _ApplyError(parent_result.message)
+
+    tag_name = path[-1]
+    match = next((e for e in parent_result.events if e.tag_name == tag_name), None)
+    if match is None:
+        raise _ApplyError(f"no Event with tag_name '{tag_name}' under {'/'.join(path[:-1])}")
+    return match.element
+
+
+def _apply_changed_event_text(target: ProjectModel, diff: Difference) -> None:
+    element = _find_event_element(target, diff.path)
+    element.text = diff.new_value
 
 
 def _target_element_for_attribute(resolved, attribute: str):
