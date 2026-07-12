@@ -268,3 +268,31 @@ def test_current_line_highlight_moves_with_cursor(qtbot):
 
     assert first_selection_block == 0
     assert second_selection_block == 1
+
+
+def test_auto_indent_plain_inherit_case(qtbot):
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    editor.setPlainText("  <Detail>")
+    cursor = editor.textCursor()
+    cursor.movePosition(cursor.MoveOperation.End)
+    editor.setTextCursor(cursor)
+
+    qtbot.keyClick(editor, Qt.Key.Key_Return)
+
+    lines = editor.toPlainText().split("\n")
+    assert lines[1] == "  "
+
+
+def test_auto_indent_after_opening_tag_adds_one_level(qtbot):
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    editor.setPlainText("<Page>\n  <Detail>")
+    cursor = editor.textCursor()
+    cursor.movePosition(cursor.MoveOperation.End)
+    editor.setTextCursor(cursor)
+
+    qtbot.keyClick(editor, Qt.Key.Key_Return)
+
+    lines = editor.toPlainText().split("\n")
+    assert lines[2] == "    "  # "  " inherited + "  " one more level

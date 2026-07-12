@@ -12,7 +12,15 @@ from __future__ import annotations
 import re
 
 from PySide6.QtCore import QPoint, QRect, QSize, Qt
-from PySide6.QtGui import QColor, QPainter, QSyntaxHighlighter, QTextCharFormat, QTextFormat
+from PySide6.QtGui import (
+    QColor,
+    QKeyEvent,
+    QPainter,
+    QSyntaxHighlighter,
+    QTextCharFormat,
+    QTextCursor,
+    QTextFormat,
+)
 from PySide6.QtWidgets import QPlainTextEdit, QTextEdit, QWidget
 
 from pgtp_editor.ui import xml_structure
@@ -71,6 +79,15 @@ class XmlSyntaxHighlighter(QSyntaxHighlighter):
 
 def _has_unterminated_quote(text: str, start: int) -> bool:
     return text.count('"', start) % 2 == 1
+
+
+def _cursor_immediately_after_open_tag(line_text: str, position_in_line: int, tag_name: str) -> bool:
+    """True if the text on `line_text` immediately before `position_in_line`
+    ends with the enclosing tag's own opening `>` and nothing else (i.e.
+    there is no content yet between the open tag and the cursor)."""
+    before_cursor = line_text[:position_in_line]
+    stripped = before_cursor.rstrip()
+    return stripped.endswith(">") and f"<{tag_name}" in stripped and not stripped.endswith("/>")
 
 
 class _EditorGutter(QWidget):
@@ -253,6 +270,35 @@ class XmlEditor(QPlainTextEdit):
             if enabled
             else QPlainTextEdit.LineWrapMode.NoWrap
         )
+
+    def keyPressEvent(self, event: QKeyEvent) -> None:
+        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            self._insert_newline_with_indent()
+            return
+        super().keyPressEvent(event)
+
+    def _insert_newline_with_indent(self) -> None:
+        cursor = self.textCursor()
+        current_line = cursor.block().text()
+        leading_ws = current_line[: len(current_line) - len(current_line.lstrip())]
+        position = cursor.position() - cursor.block().position()
+        text = self.toPlainText()
+        enclosing = xml_structure.find_enclosing_open_tag(text, cursor.position())
+        depth = xml_structure.nesting_depth_at(text, cursor.position())
+        extra_indent = ""
+        # Only add one extra indent level when the tag we just typed the
+        # open-tag-closing '>' for is itself nested inside some other real
+        # parent (depth > 0) -- a root-level element (depth 0) that has no
+        # separate close tag yet is trivially its own "enclosing" tag per
+        # find_enclosing_open_tag, but that's not a case that should add an
+        # indent level: nothing contains it.
+        if (
+            enclosing is not None
+            and depth > 0
+            and _cursor_immediately_after_open_tag(current_line, position, enclosing)
+        ):
+            extra_indent = "  "
+        cursor.insertText("\n" + leading_ws + extra_indent)
 
     def _gutter_width(self) -> int:
         digits = len(str(max(1, self.blockCount())))
