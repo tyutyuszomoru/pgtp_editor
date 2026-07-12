@@ -236,6 +236,13 @@ class XmlEditor(QPlainTextEdit):
                 return True
         return False
 
+    def set_line_wrap_enabled(self, enabled: bool) -> None:
+        self.setLineWrapMode(
+            QPlainTextEdit.LineWrapMode.WidgetWidth
+            if enabled
+            else QPlainTextEdit.LineWrapMode.NoWrap
+        )
+
     def _gutter_width(self) -> int:
         digits = len(str(max(1, self.blockCount())))
         digit_width = self.fontMetrics().horizontalAdvance("9")

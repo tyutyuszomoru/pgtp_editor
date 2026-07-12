@@ -216,3 +216,18 @@ def test_gutter_click_on_fold_glyph_toggles_fold(qtbot):
     editor._gutter.mousePressEvent(event)
 
     assert editor.document().findBlockByNumber(2).isVisible() is False
+
+
+def test_set_line_wrap_enabled_true_sets_widget_width_mode(qtbot):
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    editor.set_line_wrap_enabled(True)
+    assert editor.lineWrapMode() == QPlainTextEdit.LineWrapMode.WidgetWidth
+
+
+def test_set_line_wrap_enabled_false_reverts_to_no_wrap(qtbot):
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    editor.set_line_wrap_enabled(True)
+    editor.set_line_wrap_enabled(False)
+    assert editor.lineWrapMode() == QPlainTextEdit.LineWrapMode.NoWrap
