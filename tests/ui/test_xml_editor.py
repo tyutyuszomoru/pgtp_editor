@@ -121,3 +121,71 @@ def test_gutter_geometry_matches_editor_contents_rect_height(qtbot):
     editor.resize(400, 300)
     editor.show()
     assert editor._gutter.height() == editor.contentsRect().height()
+
+
+def test_toggle_fold_hides_only_contained_blocks(qtbot):
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    text = "<Page>\n  <Detail>\n    content\n  </Detail>\n</Page>"
+    editor.setPlainText(text)
+
+    outer_block = editor.document().findBlockByNumber(0)  # "<Page>"
+    editor._toggle_fold(outer_block)
+
+    # Lines 1-3 (Detail open, content, Detail close) are hidden; lines 0 and
+    # 4 (Page open/close) stay visible.
+    assert editor.document().findBlockByNumber(0).isVisible() is True
+    assert editor.document().findBlockByNumber(1).isVisible() is False
+    assert editor.document().findBlockByNumber(2).isVisible() is False
+    assert editor.document().findBlockByNumber(3).isVisible() is False
+    assert editor.document().findBlockByNumber(4).isVisible() is True
+
+
+def test_toggle_fold_again_reveals_hidden_blocks(qtbot):
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    text = "<Page>\n  <Detail>\n    content\n  </Detail>\n</Page>"
+    editor.setPlainText(text)
+
+    outer_block = editor.document().findBlockByNumber(0)
+    editor._toggle_fold(outer_block)
+    editor._toggle_fold(outer_block)
+
+    for i in range(5):
+        assert editor.document().findBlockByNumber(i).isVisible() is True
+
+
+def test_nested_fold_survives_outer_collapse_and_reexpand(qtbot):
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    text = (
+        "<Page>\n"
+        "  <Detail>\n"
+        "    <Column>\n"
+        "      x\n"
+        "    </Column>\n"
+        "  </Detail>\n"
+        "</Page>"
+    )
+    editor.setPlainText(text)
+
+    detail_block = editor.document().findBlockByNumber(1)  # "  <Detail>"
+    editor._toggle_fold(detail_block)  # collapse inner Column region first
+    assert editor.document().findBlockByNumber(3).isVisible() is False  # "x"
+
+    page_block = editor.document().findBlockByNumber(0)
+    editor._toggle_fold(page_block)  # collapse outer Page region
+    editor._toggle_fold(page_block)  # re-expand outer Page region
+
+    # Inner Column region remains collapsed even after the outer round-trip.
+    assert editor.document().findBlockByNumber(3).isVisible() is False
+
+
+def test_single_line_element_has_no_foldable_region(qtbot):
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    editor.setPlainText("<Page></Page>")
+
+    only_block = editor.document().findBlockByNumber(0)
+    foldable = editor._foldable_region_starting_at(only_block)
+    assert foldable is None

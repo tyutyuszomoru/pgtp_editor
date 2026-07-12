@@ -15,6 +15,8 @@ from PySide6.QtCore import QRect, QSize, Qt
 from PySide6.QtGui import QColor, QPainter, QSyntaxHighlighter, QTextCharFormat
 from PySide6.QtWidgets import QPlainTextEdit, QWidget
 
+from pgtp_editor.ui import xml_structure
+
 STATE_NORMAL = 0
 STATE_IN_UNCLOSED_STRING = 1
 
@@ -119,13 +121,77 @@ class XmlEditor(QPlainTextEdit):
         super().__init__(parent)
         self._highlighter = XmlSyntaxHighlighter(self.document())
         self._gutter = _EditorGutter(self)
+        self._fold_state: dict[int, bool] = {}
         self.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
         self.blockCountChanged.connect(self._update_gutter_width)
         self.updateRequest.connect(self._update_gutter_on_scroll)
+        self.textChanged.connect(self._rescan_structure)
         self._update_gutter_width(0)
+        self._rescan_structure()
 
     def setPlainText(self, text: str) -> None:
         super().setPlainText(text)
+        # Folding state is per-document-instance; a fresh setPlainText call
+        # (a new file loaded into this editor) starts fully unfolded.
+        self._fold_state = {}
+
+    def _rescan_structure(self) -> None:
+        self._spans = xml_structure.scan(self.toPlainText())
+
+    def _foldable_region_starting_at(self, block):
+        """Return (first_contained_block_number, last_contained_block_number)
+        for the foldable region whose open tag starts on `block`, or None if
+        no such region exists (no matching TagSpan, self-closing, or a
+        single-line element)."""
+        block_start = block.position()
+        block_end = block_start + block.length()
+        for span in self._spans:
+            if span.self_closing or span.close_end is None:
+                continue
+            if not (block_start <= span.open_start < block_end):
+                continue
+            open_line = self.document().findBlock(span.open_start).blockNumber()
+            close_line = self.document().findBlock(span.close_end - 1).blockNumber()
+            if open_line == close_line:
+                continue  # single-line element: nothing to fold
+            return open_line + 1, close_line - 1
+        return None
+
+    def _toggle_fold(self, block) -> None:
+        region = self._foldable_region_starting_at(block)
+        if region is None:
+            return
+        first_contained, last_contained = region
+        block_number = block.blockNumber()
+        currently_collapsed = self._fold_state.get(block_number, False)
+        new_visible = currently_collapsed  # if collapsed, expand; else collapse
+        for line_number in range(first_contained, last_contained + 1):
+            contained_block = self.document().findBlockByNumber(line_number)
+            if new_visible and self._is_line_hidden_by_other_collapsed_fold(
+                line_number, exclude_block_number=block_number
+            ):
+                # Expanding this region must not reveal lines that belong to
+                # a separate, still-collapsed nested fold (e.g. re-expanding
+                # an outer element after its inner child was independently
+                # collapsed and never re-expanded).
+                continue
+            contained_block.setVisible(new_visible)
+        self._fold_state[block_number] = not currently_collapsed
+        self.document().markContentsDirty(block.position(), self.document().characterCount() - block.position())
+        self.viewport().update()
+
+    def _is_line_hidden_by_other_collapsed_fold(self, line_number: int, exclude_block_number: int) -> bool:
+        for other_block_number, collapsed in self._fold_state.items():
+            if other_block_number == exclude_block_number or not collapsed:
+                continue
+            other_block = self.document().findBlockByNumber(other_block_number)
+            other_region = self._foldable_region_starting_at(other_block)
+            if other_region is None:
+                continue
+            other_first, other_last = other_region
+            if other_first <= line_number <= other_last:
+                return True
+        return False
 
     def _gutter_width(self) -> int:
         digits = len(str(max(1, self.blockCount())))
