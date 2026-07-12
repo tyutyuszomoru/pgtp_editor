@@ -225,3 +225,18 @@ def test_detail_item_carries_model_node(qtbot):
     node = detail_item.data(0, MODEL_NODE_ROLE)
     assert node.table_name == "pr.attachment"
     assert node.attrib.get("caption") == "Sub-item"
+
+
+def test_column_item_carries_model_node(qtbot):
+    tree = make_populated_tree(qtbot)
+    column_item = tree.topLevelItem(0).child(0).child(0)
+    node = column_item.data(0, MODEL_NODE_ROLE)
+    assert node.field_name == "tag"
+
+
+def test_event_item_carries_model_node(qtbot):
+    tree = make_populated_tree(qtbot)
+    event_item = tree.topLevelItem(0).child(2)
+    node = event_item.data(0, MODEL_NODE_ROLE)
+    assert node.tag_name == "OnPreparePage"
+    assert node.side == "S"

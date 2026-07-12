@@ -50,10 +50,12 @@ class ProjectTreePanel(QTreeWidget):
         for column in node.columns:
             column_item = QTreeWidgetItem([f"(C) {column.field_name}"])
             column_item.setData(0, NODE_KIND_ROLE, "column")
+            column_item.setData(0, MODEL_NODE_ROLE, column)
             parent_item.addChild(column_item)
         for event in node.events:
             event_item = QTreeWidgetItem([f"(E) {event.side}.{event.tag_name}"])
             event_item.setData(0, NODE_KIND_ROLE, "event")
+            event_item.setData(0, MODEL_NODE_ROLE, event)
             parent_item.addChild(event_item)
 
     def iter_detail_items(self):
