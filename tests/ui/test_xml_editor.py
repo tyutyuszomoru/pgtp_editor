@@ -189,3 +189,30 @@ def test_single_line_element_has_no_foldable_region(qtbot):
     only_block = editor.document().findBlockByNumber(0)
     foldable = editor._foldable_region_starting_at(only_block)
     assert foldable is None
+
+
+from PySide6.QtCore import QEvent, QPoint, Qt
+from PySide6.QtGui import QMouseEvent
+
+def test_gutter_click_on_fold_glyph_toggles_fold(qtbot):
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    editor.resize(400, 300)
+    editor.show()
+    text = "<Page>\n  <Detail>\n    content\n  </Detail>\n</Page>"
+    editor.setPlainText(text)
+
+    outer_block = editor.document().findBlockByNumber(0)
+    top = editor.blockBoundingGeometry(outer_block).translated(editor.contentOffset()).top()
+    glyph_point = QPoint(4, int(top) + 2)
+
+    event = QMouseEvent(
+        QEvent.Type.MouseButtonPress,
+        glyph_point,
+        Qt.MouseButton.LeftButton,
+        Qt.MouseButton.LeftButton,
+        Qt.KeyboardModifier.NoModifier,
+    )
+    editor._gutter.mousePressEvent(event)
+
+    assert editor.document().findBlockByNumber(2).isVisible() is False

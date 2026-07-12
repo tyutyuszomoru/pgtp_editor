@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import re
 
-from PySide6.QtCore import QRect, QSize, Qt
+from PySide6.QtCore import QPoint, QRect, QSize, Qt
 from PySide6.QtGui import QColor, QPainter, QSyntaxHighlighter, QTextCharFormat
 from PySide6.QtWidgets import QPlainTextEdit, QWidget
 
@@ -95,6 +95,9 @@ class _EditorGutter(QWidget):
         ).top()
         bottom = top + self._editor.blockBoundingRect(block).height()
 
+        # Fold-triangle glyphs occupy the left [0, _FOLD_GLYPH_WIDTH) strip
+        # of the gutter; line numbers occupy the remaining right-hand strip
+        # and are right-aligned against the gutter's right edge.
         line_number_width = self.width() - _FOLD_GLYPH_WIDTH
 
         while block.isValid() and top <= event.rect().bottom():
@@ -102,7 +105,7 @@ class _EditorGutter(QWidget):
                 number_text = str(block_number + 1)
                 painter.setPen(QColor("#858585"))
                 painter.drawText(
-                    0,
+                    _FOLD_GLYPH_WIDTH,
                     int(top),
                     line_number_width,
                     self._editor.fontMetrics().height(),
@@ -110,10 +113,50 @@ class _EditorGutter(QWidget):
                     number_text,
                 )
 
+                if self._editor._foldable_region_starting_at(block) is not None:
+                    collapsed = self._editor._fold_state.get(block_number, False)
+                    self._draw_fold_glyph(painter, int(top), collapsed)
+
             block = block.next()
             top = bottom
             bottom = top + self._editor.blockBoundingRect(block).height()
             block_number += 1
+
+    def _draw_fold_glyph(self, painter: QPainter, top: int, collapsed: bool) -> None:
+        line_height = self._editor.fontMetrics().height()
+        glyph_left = 0
+        glyph_size = min(_FOLD_GLYPH_WIDTH - 4, line_height - 4)
+        cx = glyph_left + _FOLD_GLYPH_WIDTH // 2
+        cy = top + line_height // 2
+        half = glyph_size // 2
+        painter.setPen(QColor("#858585"))
+        painter.setBrush(QColor("#858585"))
+        if collapsed:
+            # Right-pointing triangle.
+            points = [QPoint(cx - half, cy - half), QPoint(cx - half, cy + half), QPoint(cx + half, cy)]
+        else:
+            # Down-pointing triangle.
+            points = [QPoint(cx - half, cy - half), QPoint(cx + half, cy - half), QPoint(cx, cy + half)]
+        painter.drawPolygon(points)
+
+    def mousePressEvent(self, event) -> None:
+        if event.position().x() >= _FOLD_GLYPH_WIDTH:
+            return
+        block = self._editor.firstVisibleBlock()
+        top = self._editor.blockBoundingGeometry(block).translated(
+            self._editor.contentOffset()
+        ).top()
+        bottom = top + self._editor.blockBoundingRect(block).height()
+        click_y = event.position().y()
+
+        while block.isValid() and top <= click_y:
+            if block.isVisible() and top <= click_y < bottom:
+                self._editor._toggle_fold(block)
+                self.update()
+                return
+            block = block.next()
+            top = bottom
+            bottom = top + self._editor.blockBoundingRect(block).height()
 
 
 class XmlEditor(QPlainTextEdit):
