@@ -245,7 +245,11 @@ def test_open_project_file_succeeds_even_when_raw_reread_hits_oserror(qtbot, tmp
     path = tmp_path / "valid.pgtp"
     path.write_text(VALID_PGTP, encoding="utf-8")
 
-    with patch("pgtp_editor.ui.main_window.open", side_effect=OSError("boom")):
+    # Simulate the *second* read (the raw-text re-read for the editor)
+    # failing while load_project's own read succeeded, by making the shared
+    # read helper raise for main_window only. load_project uses the model
+    # layer's own read path and is unaffected.
+    with patch("pgtp_editor.ui.main_window.read_pgtp_text", side_effect=OSError("boom")):
         window.open_project_file(str(path))
 
     assert window.project_tree.topLevelItemCount() == 1

@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
 from pgtp_editor.diff.apply import apply_differences
 from pgtp_editor.diff.differ import compare_block, diff_project
 from pgtp_editor.diff.resolve import ResolutionError, resolve_path
+from pgtp_editor.model.encoding import read_pgtp_text
 from pgtp_editor.model.parser import PgtpParseError, _build_project_model, load_project
 from pgtp_editor.schema_learning.model import Model
 from pgtp_editor.schema_learning.parser import walk_document
@@ -149,17 +150,20 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _read_raw_text(path) -> "str | None":
-        """Read the file at `path` as text, or None on OSError.
+        """Read the file at `path` as text, or None if it can't be read.
 
-        Guards against the TOCTOU race where the file is deleted or becomes
-        unreadable between an earlier successful step (a parse attempt or
-        `load_project` succeeding) and this raw re-read -- a real, if rare,
-        scenario (e.g. the file vanishing mid-open, or a permissions error).
+        Uses the same CESU-8 repair as the model parser (see
+        model/encoding.py) so the raw editor shows exactly what the parser
+        saw -- including files with emoji that a strict UTF-8 read would
+        choke on with UnicodeDecodeError. Guards the TOCTOU race where the
+        file is deleted/becomes unreadable between an earlier successful
+        step and this raw re-read (OSError), and treats a genuinely
+        undecodable file (UnicodeDecodeError even after repair) the same
+        way rather than letting it crash the open/fallback flow.
         """
         try:
-            with open(path, "r", encoding="utf-8") as f:
-                return f.read()
-        except OSError:
+            return read_pgtp_text(path)
+        except (OSError, UnicodeDecodeError):
             return None
 
     def _handle_parse_failure(self, path, exc: PgtpParseError) -> None:

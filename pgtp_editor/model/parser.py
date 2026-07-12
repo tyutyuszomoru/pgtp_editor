@@ -7,8 +7,11 @@ data objects in pgtp_editor.model.nodes.
 """
 from __future__ import annotations
 
+import io
+
 from lxml import etree
 
+from pgtp_editor.model.encoding import read_pgtp_bytes
 from pgtp_editor.model.nodes import (
     ColumnNode,
     DetailNode,
@@ -47,7 +50,11 @@ def load_project(path) -> ProjectModel:
     pgtp_editor/diff/apply.py and MainWindow._apply_changes_to_target).
     """
     try:
-        tree = etree.parse(str(path))
+        # Read bytes and repair CESU-8-encoded emoji (see model/encoding.py)
+        # before handing to lxml, which otherwise rejects the lone surrogate
+        # codepoints such files contain ("Char 0xD83D out of allowed range").
+        data = read_pgtp_bytes(path)
+        tree = etree.parse(io.BytesIO(data))
     except (etree.XMLSyntaxError, OSError) as exc:
         line = exc.lineno if isinstance(exc, etree.XMLSyntaxError) else None
         raise PgtpParseError(f"Could not parse '{path}': {exc}", line=line) from exc
