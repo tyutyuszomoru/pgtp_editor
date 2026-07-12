@@ -296,3 +296,48 @@ def test_auto_indent_after_opening_tag_adds_one_level(qtbot):
 
     lines = editor.toPlainText().split("\n")
     assert lines[2] == "    "  # "  " inherited + "  " one more level
+
+
+def test_typing_less_than_auto_closes_with_greater_than(qtbot):
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    editor.setFocus()
+
+    qtbot.keyClicks(editor, "<")
+
+    assert editor.toPlainText() == "<>"
+    assert editor.textCursor().position() == 1
+
+
+def test_typing_quote_after_equals_auto_closes(qtbot):
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    editor.setFocus()
+
+    qtbot.keyClicks(editor, "fileName=")
+    qtbot.keyClicks(editor, '"')
+
+    assert editor.toPlainText() == 'fileName=""'
+    assert editor.textCursor().position() == len('fileName="')
+
+
+def test_typing_apostrophe_after_equals_auto_closes(qtbot):
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    editor.setFocus()
+
+    qtbot.keyClicks(editor, "fileName=")
+    qtbot.keyClicks(editor, "'")
+
+    assert editor.toPlainText() == "fileName=''"
+    assert editor.textCursor().position() == len("fileName='")
+
+
+def test_typing_quote_not_after_equals_does_not_auto_close(qtbot):
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    editor.setFocus()
+
+    qtbot.keyClicks(editor, 'hello"')
+
+    assert editor.toPlainText() == 'hello"'

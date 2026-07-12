@@ -275,7 +275,73 @@ class XmlEditor(QPlainTextEdit):
         if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
             self._insert_newline_with_indent()
             return
+
+        if event.text() == "<":
+            cursor = self.textCursor()
+            cursor.insertText("<>")
+            cursor.movePosition(QTextCursor.MoveOperation.Left)
+            self.setTextCursor(cursor)
+            return
+
+        if event.text() in ('"', "'"):
+            cursor = self.textCursor()
+            char_before = self._character_before_cursor(cursor)
+            if char_before == "=":
+                quote = event.text()
+                cursor.insertText(quote + quote)
+                cursor.movePosition(QTextCursor.MoveOperation.Left)
+                self.setTextCursor(cursor)
+                return
+
+        if event.text() == ">":
+            if self._type_through_auto_closed_greater_than():
+                return
+            super().keyPressEvent(event)
+            self._maybe_insert_closing_tag()
+            return
+
         super().keyPressEvent(event)
+
+    def _character_before_cursor(self, cursor: QTextCursor) -> str:
+        position = cursor.position()
+        if position == 0:
+            return ""
+        probe = QTextCursor(self.document())
+        probe.setPosition(position - 1)
+        probe.setPosition(position, QTextCursor.MoveMode.KeepAnchor)
+        return probe.selectedText()
+
+    def _character_after_cursor(self, cursor: QTextCursor) -> str:
+        position = cursor.position()
+        probe = QTextCursor(self.document())
+        probe.setPosition(position)
+        probe.movePosition(QTextCursor.MoveOperation.Right, QTextCursor.MoveMode.KeepAnchor)
+        return probe.selectedText()
+
+    def _type_through_auto_closed_greater_than(self) -> bool:
+        cursor = self.textCursor()
+        if self._character_after_cursor(cursor) == ">":
+            cursor.movePosition(QTextCursor.MoveOperation.Right)
+            self.setTextCursor(cursor)
+            return True
+        return False
+
+    def _maybe_insert_closing_tag(self) -> None:
+        cursor = self.textCursor()
+        text = self.toPlainText()
+        position = cursor.position()
+        # Only auto-insert a closing tag when the '>' just typed completes a
+        # non-self-closing opening tag (does not end in "/>").
+        line_start = cursor.block().position()
+        text_before_cursor_on_line = text[line_start:position]
+        if text_before_cursor_on_line.rstrip().endswith("/>"):
+            return
+        enclosing = xml_structure.find_enclosing_open_tag(text, position)
+        if enclosing is None:
+            return
+        cursor.insertText(f"</{enclosing}>")
+        cursor.setPosition(position)
+        self.setTextCursor(cursor)
 
     def _insert_newline_with_indent(self) -> None:
         cursor = self.textCursor()
