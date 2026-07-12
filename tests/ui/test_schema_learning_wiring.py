@@ -133,6 +133,56 @@ def test_parse_failure_appends_no_schema_audit_entry(qtbot, tmp_path):
     assert window.audit_panel.count() == 0
 
 
+def test_report_schema_events_with_exactly_20_events_prints_one_line_each(qtbot, tmp_path):
+    storage_dir = tmp_path / "storage"
+    window = MainWindow(schema_storage_dir=storage_dir)
+    qtbot.addWidget(window)
+    source_path = tmp_path / "twenty.pgtp"
+    source_path.write_text(VALID_PGTP, encoding="utf-8")
+
+    events = [
+        {"kind": "new_attribute", "path": "Project/Presentation/Pages/Page", "attr": f"attr{i}"}
+        for i in range(20)
+    ]
+
+    window._report_schema_events(events, str(source_path))
+
+    assert window.audit_panel.count() == 20
+    for i in range(20):
+        expected = f"[Schema] NEW ATTRIBUTE: Project/Presentation/Pages/Page@attr{i} (first seen in twenty.pgtp)"
+        assert window.audit_panel.item(i).text() == expected
+
+    summary_prefix = "[Schema] Learned"
+    for i in range(window.audit_panel.count()):
+        assert not window.audit_panel.item(i).text().startswith(summary_prefix)
+
+
+def test_report_schema_events_with_21_events_collapses_to_summary_line(qtbot, tmp_path):
+    storage_dir = tmp_path / "storage"
+    window = MainWindow(schema_storage_dir=storage_dir)
+    qtbot.addWidget(window)
+    source_path = tmp_path / "twentyone.pgtp"
+    source_path.write_text(VALID_PGTP, encoding="utf-8")
+
+    events = [
+        {"kind": "new_attribute", "path": "Project/Presentation/Pages/Page", "attr": f"attr{i}"}
+        for i in range(21)
+    ]
+
+    window._report_schema_events(events, str(source_path))
+
+    assert window.audit_panel.count() == 1
+    expected = "[Schema] Learned 21 new structural facts from twentyone.pgtp"
+    assert window.audit_panel.item(0).text() == expected
+
+    for i in range(21):
+        per_event_text = (
+            f"[Schema] NEW ATTRIBUTE: Project/Presentation/Pages/Page@attr{i} "
+            f"(first seen in twentyone.pgtp)"
+        )
+        assert per_event_text != window.audit_panel.item(0).text()
+
+
 def test_main_window_constructs_with_no_arguments_and_resolves_real_app_data_dir(qtbot):
     window = MainWindow()
     qtbot.addWidget(window)
