@@ -304,3 +304,96 @@ def test_apply_changed_event_text_fails_when_tag_not_found():
 
     assert result.applied == []
     assert len(result.failed) == 1
+
+
+REMOVE_TARGET = """\
+<Project>
+  <Presentation>
+    <Pages>
+      <Page fileName="keep_me" tableName="pr.keep"/>
+      <Page fileName="remove_me" tableName="pr.remove">
+        <ColumnPresentations>
+          <ColumnPresentation fieldName="doomed_column" caption="Doomed"/>
+        </ColumnPresentations>
+        <EventHandlers>
+          <OnRowProcess>echo 'doomed';</OnRowProcess>
+        </EventHandlers>
+        <Details>
+          <Detail caption="Doomed\\Sub">
+            <Page fileName="" tableName="pr.doomed_sub" caption="Sub"/>
+          </Detail>
+        </Details>
+      </Page>
+    </Pages>
+  </Presentation>
+</Project>
+"""
+
+
+def test_apply_removed_page_deletes_element_from_parent():
+    target = build_project(REMOVE_TARGET)
+    doomed_page = next(p for p in target.pages if p.file_name == "remove_me")
+    diff = Difference(
+        kind="removed", path=["remove_me"], node_kind="page",
+        attribute=None, old_value=doomed_page, new_value=None,
+    )
+
+    result = apply_differences(target, [diff])
+
+    assert result.failed == []
+    remaining = target.tree.getroot().findall("Presentation/Pages/Page")
+    assert [p.get("fileName") for p in remaining] == ["keep_me"]
+
+
+def test_apply_removed_column_deletes_element():
+    target = build_project(REMOVE_TARGET)
+    page = next(p for p in target.pages if p.file_name == "remove_me")
+    column = page.columns[0]
+    diff = Difference(
+        kind="removed", path=["remove_me", "doomed_column"], node_kind="column",
+        attribute=None, old_value=column, new_value=None,
+    )
+
+    result = apply_differences(target, [diff])
+
+    assert result.failed == []
+    columns_container = target.tree.getroot().find(
+        "Presentation/Pages/Page[@fileName='remove_me']/ColumnPresentations"
+    )
+    assert columns_container.findall("ColumnPresentation") == []
+
+
+def test_apply_removed_event_deletes_element():
+    target = build_project(REMOVE_TARGET)
+    page = next(p for p in target.pages if p.file_name == "remove_me")
+    event = page.events[0]
+    diff = Difference(
+        kind="removed", path=["remove_me", "OnRowProcess"], node_kind="event",
+        attribute=None, old_value=event, new_value=None,
+    )
+
+    result = apply_differences(target, [diff])
+
+    assert result.failed == []
+    events_container = target.tree.getroot().find(
+        "Presentation/Pages/Page[@fileName='remove_me']/EventHandlers"
+    )
+    assert list(events_container) == []
+
+
+def test_apply_removed_detail_deletes_whole_outer_element_including_nested_page():
+    target = build_project(REMOVE_TARGET)
+    page = next(p for p in target.pages if p.file_name == "remove_me")
+    detail = page.details[0]
+    diff = Difference(
+        kind="removed", path=["remove_me", "pr.doomed_sub/Sub"], node_kind="detail",
+        attribute=None, old_value=detail, new_value=None,
+    )
+
+    result = apply_differences(target, [diff])
+
+    assert result.failed == []
+    details_container = target.tree.getroot().find(
+        "Presentation/Pages/Page[@fileName='remove_me']/Details"
+    )
+    assert details_container.findall("Detail") == []

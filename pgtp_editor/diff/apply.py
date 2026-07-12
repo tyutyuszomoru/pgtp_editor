@@ -57,12 +57,29 @@ class _ApplyError(Exception):
 
 
 def _apply_one(target: ProjectModel, diff: Difference) -> None:
-    if diff.kind == "changed" and diff.node_kind == "event" and diff.attribute is None:
+    if diff.kind == "removed":
+        _apply_removed(diff)
+    elif diff.kind == "changed" and diff.node_kind == "event" and diff.attribute is None:
         _apply_changed_event_text(target, diff)
     elif diff.kind == "changed" and diff.attribute is not None:
         _apply_changed_attribute(target, diff)
     else:
         raise _ApplyError(f"unsupported difference (kind={diff.kind!r}, node_kind={diff.node_kind!r})")
+
+
+def _apply_removed(diff: Difference) -> None:
+    """A whole-subtree removed record: diff.old_value is itself the
+    Target-side node carrying its own retained .element -- no resolve_path
+    lookup is needed at all, since the node object *is* the thing to
+    remove. For a Detail, removing the outer <Detail> element also removes
+    everything nested under it (including the inner <Page>) in one call.
+    """
+    node = diff.old_value
+    element = node.element
+    parent = element.getparent()
+    if parent is None:
+        raise _ApplyError("cannot remove an element with no parent (already detached)")
+    parent.remove(element)
 
 
 def _apply_changed_attribute(target: ProjectModel, diff: Difference) -> None:
