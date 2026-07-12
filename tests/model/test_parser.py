@@ -361,8 +361,33 @@ def test_build_project_model_wraps_structural_errors_with_source_description(tmp
     path = tmp_path / "broken.pgtp"
     path.write_text(DETAIL_MISSING_NESTED_PAGE_PROJECT, encoding="utf-8")
     tree = etree.parse(str(path))
-    from pgtp_editor.model.parser import PgtpParseError
 
     with pytest.raises(PgtpParseError) as excinfo:
         _build_project_model(tree, source_description="my-custom-description")
     assert "my-custom-description" in str(excinfo.value)
+
+
+def test_pgtp_parse_error_carries_line_number_for_xml_syntax_error(tmp_path):
+    path = tmp_path / "broken.pgtp"
+    # Genuinely malformed XML (mismatched root tag) triggers XMLSyntaxError,
+    # not the broader structural except clause.
+    path.write_text(
+        "<Project>\n<Presentation>\n<Pages>\n<Page>\n</Pages>\n</Presentation>\n</Project>",
+        encoding="utf-8",
+    )
+    with pytest.raises(PgtpParseError) as excinfo:
+        load_project(path)
+    assert excinfo.value.line is not None
+    assert excinfo.value.line > 0
+
+
+def test_pgtp_parse_error_line_is_none_for_structural_failure(tmp_path):
+    path = write_pgtp(tmp_path, DETAIL_MISSING_NESTED_PAGE_PROJECT)
+    with pytest.raises(PgtpParseError) as excinfo:
+        load_project(path)
+    assert excinfo.value.line is None
+
+
+def test_pgtp_parse_error_line_defaults_to_none():
+    exc = PgtpParseError("some message")
+    assert exc.line is None

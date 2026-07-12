@@ -16,7 +16,7 @@ from PySide6.QtWidgets import (
 from pgtp_editor.diff.apply import apply_differences
 from pgtp_editor.diff.differ import compare_block, diff_project
 from pgtp_editor.diff.resolve import ResolutionError, resolve_path
-from pgtp_editor.model.parser import _build_project_model, load_project
+from pgtp_editor.model.parser import PgtpParseError, _build_project_model, load_project
 from pgtp_editor.schema_learning.model import Model
 from pgtp_editor.schema_learning.parser import walk_document
 from pgtp_editor.schema_learning.storage import schema_model_path, schema_xsd_path
@@ -27,23 +27,6 @@ from pgtp_editor.ui.annotate_schema_values_dialog import AnnotateSchemaValuesDia
 from pgtp_editor.ui.center_stage import CenterStage
 from pgtp_editor.ui.project_tree import ProjectTreePanel
 from pgtp_editor.ui.properties_panel import PropertiesPanel
-
-
-class _NullXmlEditor:
-    """No-op stand-in for the not-yet-merged XmlEditor widget. Satisfies
-    the navigate_to_line/line_text/select_range_on_line interface
-    PropertiesPanel depends on, without doing anything, until the XML
-    Editor Foundation sub-project is merged and CenterStage.xml_editor
-    is real (see the TODO in MainWindow.__init__)."""
-
-    def navigate_to_line(self, line: int) -> None:
-        pass
-
-    def line_text(self, line: int) -> str:
-        return ""
-
-    def select_range_on_line(self, line: int, start: int, end: int) -> None:
-        pass
 
 
 _SCHEMA_REPORT_TEMPLATES = {
@@ -79,20 +62,14 @@ class MainWindow(QMainWindow):
         self.audit_dock.setWidget(self.audit_panel)
         self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self.audit_dock)
 
-        # TODO(xml-editor-foundation): once the XML Editor Foundation
-        # sub-project is merged and CenterStage exposes a real
-        # `xml_editor` attribute (an XmlEditor with navigate_to_line/
-        # line_text/select_range_on_line), replace `_NullXmlEditor()`
-        # below with `self.center_stage.xml_editor`. CenterStage must
-        # then also be constructed before PropertiesPanel, same as today.
-        self.properties_panel = PropertiesPanel(xml_editor=_NullXmlEditor())
+        self.center_stage = CenterStage()
+        self.setCentralWidget(self.center_stage)
+
+        self.properties_panel = PropertiesPanel(xml_editor=self.center_stage.xml_editor)
         self.properties_dock = QDockWidget("Properties", self)
         self.properties_dock.setObjectName("properties_dock")
         self.properties_dock.setWidget(self.properties_panel)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.properties_dock)
-
-        self.center_stage = CenterStage()
-        self.setCentralWidget(self.center_stage)
 
         self._current_project = None
         self._current_project_path = None
@@ -120,22 +97,22 @@ class MainWindow(QMainWindow):
 
         Split out from `_open_project` so tests can drive the load without
         going through the QFileDialog. On parse failure, shows a clear
-        error dialog and leaves the currently-displayed tree (and the
-        currently-tracked project) untouched (never a crash, never a
-        silently-emptied tree or a silently-forgotten project).
+        error dialog, populates the Raw XML fallback view (see
+        `_handle_parse_failure`), and leaves the currently-displayed tree
+        (and the currently-tracked project) untouched (never a crash, never
+        a silently-emptied tree or a silently-forgotten project).
         """
         try:
             project = load_project(path)
-        except Exception as exc:
-            QMessageBox.critical(
-                self,
-                "Failed to Open Project",
-                f"Could not open '{path}':\n\n{exc}",
-            )
+        except PgtpParseError as exc:
+            self._handle_parse_failure(path, exc)
             return
         self.project_tree.populate_from_project(project)
         self._current_project = project
         self._current_project_path = path
+        raw_text = self._read_raw_text(path)
+        if raw_text is not None:
+            self.center_stage.xml_editor.setPlainText(raw_text)
         self.statusBar().showMessage(f"Opened: {path}", 5000)
         self._enrich_schema_from_file(path)
 
@@ -169,6 +146,41 @@ class MainWindow(QMainWindow):
         for event in events:
             template = _SCHEMA_REPORT_TEMPLATES[event["kind"]]
             self.audit_panel.addItem(template.format(source=source_name, **event))
+
+    @staticmethod
+    def _read_raw_text(path) -> "str | None":
+        """Read the file at `path` as text, or None on OSError.
+
+        Guards against the TOCTOU race where the file is deleted or becomes
+        unreadable between an earlier successful step (a parse attempt or
+        `load_project` succeeding) and this raw re-read -- a real, if rare,
+        scenario (e.g. the file vanishing mid-open, or a permissions error).
+        """
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                return f.read()
+        except OSError:
+            return None
+
+    def _handle_parse_failure(self, path, exc: PgtpParseError) -> None:
+        QMessageBox.critical(
+            self,
+            "Failed to Open Project",
+            f"Could not open '{path}':\n\n{exc}",
+        )
+        raw_text = self._read_raw_text(path)
+        if raw_text is None:
+            # The file itself is unreadable (e.g. deleted between the
+            # earlier parse attempt and this read, or a permissions error) --
+            # nothing to show in the fallback view in that case; the dialog
+            # above already reported the failure.
+            return
+        self.center_stage.xml_editor.setPlainText(raw_text)
+        if exc.line is not None:
+            self.center_stage.xml_editor.highlight_error_line(exc.line)
+        self.center_stage.set_raw_xml_tab_visible(True)
+        self._raw_xml_panel_action.setChecked(True)
+        self.center_stage.setCurrentIndex(self.center_stage.raw_xml_tab_index)
 
     def _compare_merge_two_files(self):
         source = self._current_project
@@ -372,10 +384,15 @@ class MainWindow(QMainWindow):
         audit_action.setChecked(True)
         audit_action.toggled.connect(self.audit_dock.setVisible)
 
-        raw_xml_action = menu.addAction("Raw XML Panel")
-        raw_xml_action.setCheckable(True)
-        raw_xml_action.setChecked(False)
-        raw_xml_action.toggled.connect(self.center_stage.set_raw_xml_tab_visible)
+        self._raw_xml_panel_action = menu.addAction("Raw XML Panel")
+        self._raw_xml_panel_action.setCheckable(True)
+        self._raw_xml_panel_action.setChecked(False)
+        self._raw_xml_panel_action.toggled.connect(self.center_stage.set_raw_xml_tab_visible)
+
+        line_wrap_action = menu.addAction("Wrap Raw XML Lines")
+        line_wrap_action.setCheckable(True)
+        line_wrap_action.setChecked(False)
+        line_wrap_action.toggled.connect(self.center_stage.xml_editor.set_line_wrap_enabled)
 
         menu.addSeparator()
         self._add_stub_action(menu, "Expand All")

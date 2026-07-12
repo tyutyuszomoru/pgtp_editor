@@ -31,3 +31,13 @@ def test_diff_merge_tab_holds_a_real_diff_merge_panel(qtbot):
     qtbot.addWidget(stage)
     assert isinstance(stage.diff_merge_panel, DiffMergePanel)
     assert stage.widget(stage.diff_merge_tab_index) is stage.diff_merge_panel
+
+
+from pgtp_editor.ui.xml_editor import XmlEditor
+
+
+def test_raw_xml_tab_holds_a_real_xml_editor(qtbot):
+    stage = CenterStage()
+    qtbot.addWidget(stage)
+    assert isinstance(stage.xml_editor, XmlEditor)
+    assert stage.widget(stage.raw_xml_tab_index) is stage.xml_editor
