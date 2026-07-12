@@ -103,3 +103,94 @@ def test_show_node_with_none_after_population_returns_to_empty_state(qtbot):
     assert panel.is_showing_empty_state() is False
     panel.show_node(None, None)
     assert panel.is_showing_empty_state() is True
+
+
+def test_click_page_row_navigates_to_sourceline(qtbot):
+    stub = _RecordingXmlEditorStub()
+    panel = PropertiesPanel(xml_editor=stub)
+    qtbot.addWidget(panel)
+    panel.show_node(_page_node(), "page")
+    panel._on_row_clicked(0, 0)
+    assert stub.navigate_calls == [5]
+
+
+def test_click_detail_caption_row_uses_outer_sourceline(qtbot):
+    stub = _RecordingXmlEditorStub()
+    panel = PropertiesPanel(xml_editor=stub)
+    qtbot.addWidget(panel)
+    panel.show_node(_detail_node(), "detail")
+    # Row 0 is "caption" per attrib dict insertion order.
+    assert panel._current_rows[0].property_label == "caption"
+    panel._on_row_clicked(0, 0)
+    assert stub.navigate_calls == [10]
+
+
+def test_click_detail_non_caption_row_uses_inner_sourceline(qtbot):
+    stub = _RecordingXmlEditorStub()
+    panel = PropertiesPanel(xml_editor=stub)
+    qtbot.addWidget(panel)
+    panel.show_node(_detail_node(), "detail")
+    # Row 1 is "tableName" per attrib dict insertion order.
+    assert panel._current_rows[1].property_label == "tableName"
+    panel._on_row_clicked(1, 0)
+    assert stub.navigate_calls == [25]
+
+
+def test_click_attribute_row_selects_attribute_span(qtbot):
+    stub = _RecordingXmlEditorStub(
+        line_text_by_line={5: '  <Page fileName="development_equipment" tableName="pr.equipment">'}
+    )
+    panel = PropertiesPanel(xml_editor=stub)
+    qtbot.addWidget(panel)
+    panel.show_node(_page_node(), "page")
+    panel._on_row_clicked(0, 0)  # "fileName" row
+    assert stub.navigate_calls == [5]
+    assert stub.line_text_calls == [5]
+    line_text = '  <Page fileName="development_equipment" tableName="pr.equipment">'
+    expected_start = line_text.find('fileName="')
+    expected_end = line_text.find('"', expected_start + len('fileName="')) + 1
+    assert stub.select_range_calls == [(5, expected_start, expected_end)]
+
+
+def test_click_attribute_row_refinement_failure_falls_back_gracefully(qtbot):
+    # line_text does not contain 'fileName="' at all.
+    stub = _RecordingXmlEditorStub(line_text_by_line={5: "  <Page />"})
+    panel = PropertiesPanel(xml_editor=stub)
+    qtbot.addWidget(panel)
+    panel.show_node(_page_node(), "page")
+    panel._on_row_clicked(0, 0)
+    assert stub.navigate_calls == [5]
+    assert stub.line_text_calls == [5]
+    assert stub.select_range_calls == []  # graceful fallback, never a crash
+
+
+def test_click_event_functions_row_navigates_but_never_refines(qtbot):
+    stub = _RecordingXmlEditorStub()
+    panel = PropertiesPanel(xml_editor=stub)
+    qtbot.addWidget(panel)
+    panel.show_node(_event_node(), "event")
+    functions_row_index = next(
+        i for i, r in enumerate(panel._current_rows) if r.property_label == "Functions"
+    )
+    panel._on_row_clicked(functions_row_index, 0)
+    assert stub.navigate_calls == [7]
+    assert stub.line_text_calls == []
+    assert stub.select_range_calls == []
+
+
+def test_click_detail_row_with_none_target_line_does_not_crash(qtbot):
+    stub = _RecordingXmlEditorStub()
+    panel = PropertiesPanel(xml_editor=stub)
+    qtbot.addWidget(panel)
+    detail = DetailNode(
+        identity="pr.attachment",
+        attrib={"caption": "Sub-item", "tableName": "pr.attachment"},
+        sourceline=10,
+        inner_sourceline=None,
+    )
+    panel.show_node(detail, "detail")
+    table_name_row_index = next(
+        i for i, r in enumerate(panel._current_rows) if r.property_label == "tableName"
+    )
+    panel._on_row_clicked(table_name_row_index, 0)  # target_line is None
+    assert stub.navigate_calls == []  # never called; nothing to navigate to
