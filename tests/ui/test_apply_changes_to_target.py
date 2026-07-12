@@ -88,6 +88,74 @@ import os
 
 from PySide6.QtCore import Qt
 
+VALID_PGTP_TWO_PAGES = """\
+<?xml version="1.0" encoding="UTF-8"?>
+<Project>
+  <Presentation>
+    <Pages>
+      <Page fileName="development_equipment" tableName="pr.equipment" caption="Old Caption A"/>
+      <Page fileName="development_other" tableName="pr.other" caption="Old Caption B"/>
+    </Pages>
+  </Presentation>
+</Project>
+"""
+
+CHANGED_PGTP_TWO_PAGES = """\
+<?xml version="1.0" encoding="UTF-8"?>
+<Project>
+  <Presentation>
+    <Pages>
+      <Page fileName="development_equipment" tableName="pr.equipment" caption="New Caption A"/>
+      <Page fileName="development_other" tableName="pr.other" caption="New Caption B"/>
+    </Pages>
+  </Presentation>
+</Project>
+"""
+
+
+def test_apply_with_mixed_ambiguous_and_non_ambiguous_checked_differences_refuses_entire_batch(
+    qtbot, tmp_path
+):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    source_path = _write(tmp_path, "source.pgtp", CHANGED_PGTP_TWO_PAGES)
+    target_path = _write(tmp_path, "target.pgtp", VALID_PGTP_TWO_PAGES)
+    _compare(window, source_path, target_path)
+    original_target_bytes = open(target_path, "rb").read()
+
+    panel = window.center_stage.diff_merge_panel
+    leaves = panel._flattened_leaves()
+    assert len(leaves) == 2
+
+    diffs = [leaf.data(0, Qt.ItemDataRole.UserRole) for leaf in leaves]
+    # Sanity: the two differences are independent (different Pages).
+    assert diffs[0].path != diffs[1].path
+
+    # One difference is ambiguous, the other is not -- a genuinely mixed batch.
+    # The non-ambiguous one is checked FIRST, so a buggy gate that only
+    # inspects the first checked difference (instead of all of them) would
+    # wrongly let this batch through.
+    diffs[0].ambiguous = False
+    diffs[1].ambiguous = True
+
+    for leaf in leaves:
+        leaf.setCheckState(0, Qt.CheckState.Checked)
+
+    with patch("pgtp_editor.ui.main_window.QMessageBox.critical") as mock_critical:
+        window._apply_changes_to_target()
+
+    mock_critical.assert_called_once()
+    args, _kwargs = mock_critical.call_args
+    assert "Ambiguous" in args[1] or "ambiguous" in args[2].lower()
+    assert not (tmp_path / "target.pgtp.bak").exists()
+
+    # The whole batch must be refused -- including the non-ambiguous
+    # difference. Prove it was NOT silently applied by checking the target
+    # file is completely byte-identical to before Apply was invoked.
+    assert open(target_path, "rb").read() == original_target_bytes
+    assert b'caption="New Caption A"' not in open(target_path, "rb").read()
+    assert b'caption="New Caption B"' not in open(target_path, "rb").read()
+
 
 def _check_all_leaves(panel):
     for leaf in panel._flattened_leaves():
