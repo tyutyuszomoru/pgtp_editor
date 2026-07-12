@@ -1,6 +1,8 @@
 """Tests for pgtp_editor.diff.apply.apply_differences -- see
 docs/superpowers/specs/2026-07-12-pgtp-editor-diff-merge-writeback-design.md §5.
 """
+import copy
+
 from lxml import etree
 
 from pgtp_editor.diff.apply import ApplyFailure, ApplyResult, apply_differences
@@ -397,3 +399,166 @@ def test_apply_removed_detail_deletes_whole_outer_element_including_nested_page(
         "Presentation/Pages/Page[@fileName='remove_me']/Details"
     )
     assert details_container.findall("Detail") == []
+
+
+ADD_SOURCE = """\
+<Project>
+  <Presentation>
+    <Pages>
+      <Page fileName="existing_page" tableName="pr.existing">
+        <ColumnPresentations>
+          <ColumnPresentation fieldName="new_field" caption="Brand New Field"/>
+        </ColumnPresentations>
+        <EventHandlers>
+          <OnRowProcess>echo 'new handler';</OnRowProcess>
+        </EventHandlers>
+        <Details>
+          <Detail caption="Existing\\NewSub">
+            <Page fileName="" tableName="pr.new_sub" caption="NewSub">
+              <Details>
+                <Detail caption="Existing\\NewSub\\Deeper">
+                  <Page fileName="" tableName="pr.deeper" caption="Deeper"/>
+                </Detail>
+              </Details>
+            </Page>
+          </Detail>
+        </Details>
+      </Page>
+      <Page fileName="brand_new_page" tableName="pr.brand_new" caption="Brand New Page"/>
+    </Pages>
+  </Presentation>
+</Project>
+"""
+
+ADD_TARGET = """\
+<Project>
+  <Presentation>
+    <Pages>
+      <Page fileName="existing_page" tableName="pr.existing"/>
+    </Pages>
+  </Presentation>
+</Project>
+"""
+
+
+def test_apply_added_page_appends_deepcopy_to_pages_container():
+    source = build_project(ADD_SOURCE)
+    target = build_project(ADD_TARGET)
+    new_page = next(p for p in source.pages if p.file_name == "brand_new_page")
+    diff = Difference(
+        kind="added", path=["brand_new_page"], node_kind="page",
+        attribute=None, old_value=None, new_value=new_page,
+    )
+
+    result = apply_differences(target, [diff])
+
+    assert result.failed == []
+    pages = target.tree.getroot().findall("Presentation/Pages/Page")
+    assert [p.get("fileName") for p in pages] == ["existing_page", "brand_new_page"]
+    assert pages[1].get("caption") == "Brand New Page"
+    # Confirm it's a deep copy, not a reference into Source's own tree.
+    assert pages[1] is not new_page.element
+
+
+def test_apply_added_column_appends_to_column_presentations():
+    source = build_project(ADD_SOURCE)
+    target = build_project(ADD_TARGET)
+    source_page = next(p for p in source.pages if p.file_name == "existing_page")
+    new_column = source_page.columns[0]
+    diff = Difference(
+        kind="added", path=["existing_page", "new_field"], node_kind="column",
+        attribute=None, old_value=None, new_value=new_column,
+    )
+
+    result = apply_differences(target, [diff])
+
+    assert result.failed == []
+    columns = target.tree.getroot().findall(
+        "Presentation/Pages/Page[@fileName='existing_page']/ColumnPresentations/ColumnPresentation"
+    )
+    assert len(columns) == 1
+    assert columns[0].get("fieldName") == "new_field"
+    assert columns[0].get("caption") == "Brand New Field"
+
+
+def test_apply_added_column_creates_column_presentations_container_if_absent():
+    # ADD_TARGET's existing_page has no ColumnPresentations element at all.
+    target = build_project(ADD_TARGET)
+    page_el = target.tree.getroot().find("Presentation/Pages/Page[@fileName='existing_page']")
+    assert page_el.find("ColumnPresentations") is None
+
+    source = build_project(ADD_SOURCE)
+    source_page = next(p for p in source.pages if p.file_name == "existing_page")
+    new_column = source_page.columns[0]
+    diff = Difference(
+        kind="added", path=["existing_page", "new_field"], node_kind="column",
+        attribute=None, old_value=None, new_value=new_column,
+    )
+
+    apply_differences(target, [diff])
+
+    assert page_el.find("ColumnPresentations") is not None
+
+
+def test_apply_added_event_appends_to_event_handlers_creating_container_if_absent():
+    target = build_project(ADD_TARGET)
+    source = build_project(ADD_SOURCE)
+    source_page = next(p for p in source.pages if p.file_name == "existing_page")
+    new_event = source_page.events[0]
+    diff = Difference(
+        kind="added", path=["existing_page", "OnRowProcess"], node_kind="event",
+        attribute=None, old_value=None, new_value=new_event,
+    )
+
+    result = apply_differences(target, [diff])
+
+    assert result.failed == []
+    event_el = target.tree.getroot().find(
+        "Presentation/Pages/Page[@fileName='existing_page']/EventHandlers/OnRowProcess"
+    )
+    assert event_el is not None
+    assert event_el.text == "echo 'new handler';"
+
+
+def test_apply_added_detail_with_nested_details_survives_intact():
+    target = build_project(ADD_TARGET)
+    source = build_project(ADD_SOURCE)
+    source_page = next(p for p in source.pages if p.file_name == "existing_page")
+    new_detail = source_page.details[0]
+    diff = Difference(
+        kind="added", path=["existing_page", "pr.new_sub/NewSub"], node_kind="detail",
+        attribute=None, old_value=None, new_value=new_detail,
+    )
+
+    result = apply_differences(target, [diff])
+
+    assert result.failed == []
+    detail_el = target.tree.getroot().find(
+        "Presentation/Pages/Page[@fileName='existing_page']/Details/Detail"
+    )
+    assert detail_el is not None
+    inner_page = detail_el.find("Page")
+    assert inner_page.get("tableName") == "pr.new_sub"
+    # The whole nested subtree (a second level of Details/Detail/Page) must
+    # have survived the deepcopy+insert intact.
+    deeper_inner_page = inner_page.find("Details/Detail/Page")
+    assert deeper_inner_page is not None
+    assert deeper_inner_page.get("tableName") == "pr.deeper"
+
+
+def test_apply_added_detail_creates_details_container_if_absent():
+    target = build_project(ADD_TARGET)
+    page_el = target.tree.getroot().find("Presentation/Pages/Page[@fileName='existing_page']")
+    assert page_el.find("Details") is None
+
+    source = build_project(ADD_SOURCE)
+    source_page = next(p for p in source.pages if p.file_name == "existing_page")
+    new_detail = source_page.details[0]
+    diff = Difference(
+        kind="added", path=["existing_page", "pr.new_sub/NewSub"], node_kind="detail",
+        attribute=None, old_value=None, new_value=new_detail,
+    )
+
+    apply_differences(target, [diff])
+
+    assert page_el.find("Details") is not None
