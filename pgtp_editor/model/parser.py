@@ -99,6 +99,7 @@ def _parse_detail(detail_el, parent_identity) -> DetailNode:
         identity=identity,
         attrib=merged_attrib,
         sourceline=detail_el.sourceline,
+        inner_sourceline=inner_page_el.sourceline,
         details=nested_details,
         columns=columns,
         events=events,

@@ -257,6 +257,18 @@ def test_detail_missing_nested_page_raises_pgtp_parse_error_with_sourceline(tmp_
     assert "line" in message.lower()
 
 
+def test_detail_inner_sourceline_is_nested_page_own_line(tmp_path):
+    path = write_pgtp(tmp_path, SIMPLE_PROJECT)
+    project = load_project(path)
+    detail = project.pages[0].details[0]
+    # In SIMPLE_PROJECT (after textwrap.dedent), line 15 is
+    # '<Detail caption="Equipment\\Sub-item">' and line 16 is the nested
+    # '<Page fileName="" tableName="pr.attachment" caption="Sub-item">'.
+    assert detail.sourceline == 15
+    assert detail.inner_sourceline == 16
+    assert detail.sourceline != detail.inner_sourceline
+
+
 def test_missing_optional_attributes_handled(tmp_path):
     xml = """\
     <?xml version="1.0" encoding="UTF-8"?>
