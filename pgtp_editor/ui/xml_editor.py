@@ -294,9 +294,8 @@ class XmlEditor(QPlainTextEdit):
                 return
 
         if event.text() == ">":
-            if self._type_through_auto_closed_greater_than():
-                return
-            super().keyPressEvent(event)
+            if not self._type_through_auto_closed_greater_than():
+                super().keyPressEvent(event)
             self._maybe_insert_closing_tag()
             return
 

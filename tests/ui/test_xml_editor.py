@@ -192,7 +192,7 @@ def test_single_line_element_has_no_foldable_region(qtbot):
 
 
 from PySide6.QtCore import QEvent, QPoint, Qt
-from PySide6.QtGui import QMouseEvent
+from PySide6.QtGui import QMouseEvent, QTextCursor
 
 def test_gutter_click_on_fold_glyph_toggles_fold(qtbot):
     editor = XmlEditor()
@@ -341,3 +341,31 @@ def test_typing_quote_not_after_equals_does_not_auto_close(qtbot):
     qtbot.keyClicks(editor, 'hello"')
 
     assert editor.toPlainText() == 'hello"'
+
+
+def test_completing_opening_tag_auto_inserts_matching_close_tag(qtbot):
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    editor.setFocus()
+
+    # Type "<Page" then the auto-closed ">" is already present from the "<"
+    # auto-close; type through it with ">".
+    qtbot.keyClicks(editor, "<Page")
+    qtbot.keyClick(editor, Qt.Key.Key_Greater)
+
+    assert editor.toPlainText() == "<Page></Page>"
+    assert editor.textCursor().position() == len("<Page>")
+
+
+def test_self_closing_tag_does_not_get_a_matching_close_tag(qtbot):
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    editor.setFocus()
+    editor.setPlainText("<Page/")
+    cursor = editor.textCursor()
+    cursor.movePosition(QTextCursor.MoveOperation.End)
+    editor.setTextCursor(cursor)
+
+    qtbot.keyClick(editor, Qt.Key.Key_Greater)
+
+    assert editor.toPlainText() == "<Page/>"
