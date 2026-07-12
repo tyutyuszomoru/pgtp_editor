@@ -10,14 +10,31 @@ MODEL_NODE_ROLE = Qt.ItemDataRole.UserRole + 2
 
 
 class ProjectTreePanel(QTreeWidget):
-    def __init__(self, parent=None, on_stub_action=None, on_compare_page=None, on_compare_detail=None):
+    def __init__(
+        self,
+        parent=None,
+        on_stub_action=None,
+        on_compare_page=None,
+        on_compare_detail=None,
+        on_selection_changed=None,
+    ):
         super().__init__(parent)
         self.setHeaderHidden(True)
         self._on_stub_action = on_stub_action or (lambda label: None)
         self._on_compare_page = on_compare_page or (lambda page_node: None)
         self._on_compare_detail = on_compare_detail or (lambda detail_node, source_path: None)
+        self._on_selection_changed = on_selection_changed or (lambda node, kind: None)
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.customContextMenuRequested.connect(self._show_context_menu)
+        self.currentItemChanged.connect(self._on_current_item_changed)
+
+    def _on_current_item_changed(self, current, _previous):
+        if current is None:
+            self._on_selection_changed(None, None)
+            return
+        node = current.data(0, MODEL_NODE_ROLE)
+        kind = current.data(0, NODE_KIND_ROLE)
+        self._on_selection_changed(node, kind)
 
     def populate_from_project(self, project):
         """Populate the tree from a parsed ProjectModel (see
