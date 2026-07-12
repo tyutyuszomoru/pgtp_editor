@@ -22,6 +22,24 @@ from pgtp_editor.ui.about import show_about_dialog
 from pgtp_editor.ui.annotate_schema_values_dialog import AnnotateSchemaValuesDialog
 from pgtp_editor.ui.center_stage import CenterStage
 from pgtp_editor.ui.project_tree import ProjectTreePanel
+from pgtp_editor.ui.properties_panel import PropertiesPanel
+
+
+class _NullXmlEditor:
+    """No-op stand-in for the not-yet-merged XmlEditor widget. Satisfies
+    the navigate_to_line/line_text/select_range_on_line interface
+    PropertiesPanel depends on, without doing anything, until the XML
+    Editor Foundation sub-project is merged and CenterStage.xml_editor
+    is real (see the TODO in MainWindow.__init__)."""
+
+    def navigate_to_line(self, line: int) -> None:
+        pass
+
+    def line_text(self, line: int) -> str:
+        return ""
+
+    def select_range_on_line(self, line: int, start: int, end: int) -> None:
+        pass
 
 
 _SCHEMA_REPORT_TEMPLATES = {
@@ -44,6 +62,7 @@ class MainWindow(QMainWindow):
             on_stub_action=self._not_implemented,
             on_compare_page=self._compare_page_with,
             on_compare_detail=self._compare_detail_with,
+            on_selection_changed=self._on_tree_selection_changed,
         )
         self.tree_dock = QDockWidget("Project Tree", self)
         self.tree_dock.setObjectName("tree_dock")
@@ -56,7 +75,13 @@ class MainWindow(QMainWindow):
         self.audit_dock.setWidget(self.audit_panel)
         self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self.audit_dock)
 
-        self.properties_panel = QWidget()
+        # TODO(xml-editor-foundation): once the XML Editor Foundation
+        # sub-project is merged and CenterStage exposes a real
+        # `xml_editor` attribute (an XmlEditor with navigate_to_line/
+        # line_text/select_range_on_line), replace `_NullXmlEditor()`
+        # below with `self.center_stage.xml_editor`. CenterStage must
+        # then also be constructed before PropertiesPanel, same as today.
+        self.properties_panel = PropertiesPanel(xml_editor=_NullXmlEditor())
         self.properties_dock = QDockWidget("Properties", self)
         self.properties_dock.setObjectName("properties_dock")
         self.properties_dock.setWidget(self.properties_panel)
@@ -72,6 +97,9 @@ class MainWindow(QMainWindow):
 
     def _not_implemented(self, label):
         self.statusBar().showMessage(f"Not yet implemented: {label}", 5000)
+
+    def _on_tree_selection_changed(self, node, kind):
+        self.properties_panel.show_node(node, kind)
 
     def _open_project(self):
         path, _filter = QFileDialog.getOpenFileName(
