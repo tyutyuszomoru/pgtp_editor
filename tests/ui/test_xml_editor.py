@@ -369,3 +369,35 @@ def test_self_closing_tag_does_not_get_a_matching_close_tag(qtbot):
     qtbot.keyClick(editor, Qt.Key.Key_Greater)
 
     assert editor.toPlainText() == "<Page/>"
+
+
+def test_highlight_error_line_scrolls_and_highlights(qtbot):
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    editor.setPlainText("line one\nline two\nline three\nline four")
+
+    editor.highlight_error_line(3)
+
+    assert editor.textCursor().blockNumber() == 2  # 1-based line 3 -> 0-based block 2
+    selections = editor.extraSelections()
+    assert len(selections) == 1
+    assert selections[0].cursor.blockNumber() == 2
+    assert selections[0].format.background().color() == editor._error_line_color
+
+
+def test_highlight_error_line_overrides_current_line_highlight(qtbot):
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    editor.setPlainText("line one\nline two\nline three")
+    cursor = editor.textCursor()
+    cursor.setPosition(0)
+    editor.setTextCursor(cursor)  # current-line highlight now on line 0
+
+    editor.highlight_error_line(3)
+
+    # Only the error-line selection survives -- current-line highlighting's
+    # own handler ran first (as a side effect of setTextCursor inside
+    # highlight_error_line) and was then overwritten.
+    selections = editor.extraSelections()
+    assert len(selections) == 1
+    assert selections[0].cursor.blockNumber() == 2

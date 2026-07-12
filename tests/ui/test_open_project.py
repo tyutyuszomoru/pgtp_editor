@@ -144,3 +144,104 @@ def test_open_project_file_does_not_overwrite_current_project_on_parse_failure(q
 
     assert window._current_project is first_project
     assert window._current_project_path == str(valid_path)
+
+
+def test_open_project_file_populates_xml_editor_with_raw_text(qtbot, tmp_path):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    path = tmp_path / "valid.pgtp"
+    path.write_text(VALID_PGTP, encoding="utf-8")
+
+    window.open_project_file(str(path))
+
+    assert window.center_stage.xml_editor.toPlainText() == VALID_PGTP
+
+
+MALFORMED_PGTP_WITH_KNOWN_LINE = (
+    '<?xml version="1.0" encoding="UTF-8"?>\n'
+    "<Project>\n"
+    "  <Presentation>\n"
+    "    <Pages>\n"
+    "      <Page>\n"
+    "    </Pages>\n"
+    "  </Presentation>\n"
+    "</Project>\n"
+)
+
+
+def test_parse_failure_populates_and_shows_raw_xml_tab(qtbot, tmp_path):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    path = tmp_path / "broken.pgtp"
+    path.write_text(MALFORMED_PGTP_WITH_KNOWN_LINE, encoding="utf-8")
+
+    with patch("pgtp_editor.ui.main_window.QMessageBox.critical"):
+        window.open_project_file(str(path))
+
+    assert window.center_stage.isTabVisible(window.center_stage.raw_xml_tab_index) is True
+    assert window.center_stage.currentIndex() == window.center_stage.raw_xml_tab_index
+    assert window.center_stage.xml_editor.toPlainText() == MALFORMED_PGTP_WITH_KNOWN_LINE
+
+
+def test_parse_failure_syncs_raw_xml_panel_checkbox(qtbot, tmp_path):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    path = tmp_path / "broken.pgtp"
+    path.write_text(MALFORMED_PGTP_WITH_KNOWN_LINE, encoding="utf-8")
+
+    with patch("pgtp_editor.ui.main_window.QMessageBox.critical"):
+        window.open_project_file(str(path))
+
+    assert window._raw_xml_panel_action.isChecked() is True
+
+
+def test_parse_failure_highlights_the_reported_error_line(qtbot, tmp_path):
+    from lxml import etree
+
+    window = MainWindow()
+    qtbot.addWidget(window)
+    path = tmp_path / "broken.pgtp"
+    path.write_text(MALFORMED_PGTP_WITH_KNOWN_LINE, encoding="utf-8")
+
+    # Establish, independently of this test's assumptions, what line lxml
+    # itself reports for this fixture -- rather than hard-coding a guessed
+    # line number.
+    try:
+        etree.parse(str(path))
+        expected_line = None
+    except etree.XMLSyntaxError as exc:
+        expected_line = exc.lineno
+    assert expected_line is not None
+
+    with patch("pgtp_editor.ui.main_window.QMessageBox.critical"):
+        window.open_project_file(str(path))
+
+    selections = window.center_stage.xml_editor.extraSelections()
+    assert len(selections) == 1
+    assert selections[0].cursor.blockNumber() == expected_line - 1
+
+
+def test_parse_failure_still_shows_dialog(qtbot, tmp_path):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    path = tmp_path / "broken.pgtp"
+    path.write_text(MALFORMED_PGTP_WITH_KNOWN_LINE, encoding="utf-8")
+
+    with patch("pgtp_editor.ui.main_window.QMessageBox.critical") as mock_critical:
+        window.open_project_file(str(path))
+
+    mock_critical.assert_called_once()
+
+
+def test_parse_failure_does_not_crash_when_file_unreadable_after_initial_parse_attempt(qtbot, tmp_path):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    missing_path = tmp_path / "does_not_exist.pgtp"
+
+    with patch("pgtp_editor.ui.main_window.QMessageBox.critical"):
+        window.open_project_file(str(missing_path))
+
+    # A missing file raises PgtpParseError via the OSError branch in
+    # load_project; _handle_parse_failure's own re-read then also fails with
+    # OSError, and must not crash -- it simply leaves the Raw XML tab alone.
+    assert window.center_stage.isTabVisible(window.center_stage.raw_xml_tab_index) is False

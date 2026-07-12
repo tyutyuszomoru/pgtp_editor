@@ -183,6 +183,7 @@ class XmlEditor(QPlainTextEdit):
         self._gutter = _EditorGutter(self)
         self._fold_state: dict[int, bool] = {}
         self._current_line_color = QColor("#2d2d30")
+        self._error_line_color = QColor("#5a1d1d")
         self.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
         self.blockCountChanged.connect(self._update_gutter_width)
         self.updateRequest.connect(self._update_gutter_on_scroll)
@@ -261,6 +262,19 @@ class XmlEditor(QPlainTextEdit):
         selection.format.setBackground(self._current_line_color)
         selection.format.setProperty(QTextFormat.Property.FullWidthSelection, True)
         selection.cursor = self.textCursor()
+        selection.cursor.clearSelection()
+        self.setExtraSelections([selection])
+
+    def highlight_error_line(self, line: int) -> None:
+        block = self.document().findBlockByNumber(max(0, line - 1))  # 1-based -> 0-based
+        cursor = QTextCursor(block)
+        self.setTextCursor(cursor)
+        self.centerCursor()
+
+        selection = QTextEdit.ExtraSelection()
+        selection.format.setBackground(self._error_line_color)
+        selection.format.setProperty(QTextFormat.Property.FullWidthSelection, True)
+        selection.cursor = cursor
         selection.cursor.clearSelection()
         self.setExtraSelections([selection])
 

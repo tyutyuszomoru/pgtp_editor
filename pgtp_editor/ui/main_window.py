@@ -10,7 +10,7 @@ from PySide6.QtWidgets import (
 
 from pgtp_editor.diff.differ import compare_block, diff_project
 from pgtp_editor.diff.resolve import ResolutionError, resolve_path
-from pgtp_editor.model.parser import load_project
+from pgtp_editor.model.parser import PgtpParseError, load_project
 from pgtp_editor.ui._stub_action import add_stub_action
 from pgtp_editor.ui.about import show_about_dialog
 from pgtp_editor.ui.center_stage import CenterStage
@@ -69,23 +69,45 @@ class MainWindow(QMainWindow):
 
         Split out from `_open_project` so tests can drive the load without
         going through the QFileDialog. On parse failure, shows a clear
-        error dialog and leaves the currently-displayed tree (and the
-        currently-tracked project) untouched (never a crash, never a
-        silently-emptied tree or a silently-forgotten project).
+        error dialog, populates the Raw XML fallback view (see
+        `_handle_parse_failure`), and leaves the currently-displayed tree
+        (and the currently-tracked project) untouched (never a crash, never
+        a silently-emptied tree or a silently-forgotten project).
         """
         try:
             project = load_project(path)
-        except Exception as exc:
-            QMessageBox.critical(
-                self,
-                "Failed to Open Project",
-                f"Could not open '{path}':\n\n{exc}",
-            )
+        except PgtpParseError as exc:
+            self._handle_parse_failure(path, exc)
             return
         self.project_tree.populate_from_project(project)
         self._current_project = project
         self._current_project_path = path
+        with open(path, "r", encoding="utf-8") as f:
+            raw_text = f.read()
+        self.center_stage.xml_editor.setPlainText(raw_text)
         self.statusBar().showMessage(f"Opened: {path}", 5000)
+
+    def _handle_parse_failure(self, path, exc: PgtpParseError) -> None:
+        QMessageBox.critical(
+            self,
+            "Failed to Open Project",
+            f"Could not open '{path}':\n\n{exc}",
+        )
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                raw_text = f.read()
+        except OSError:
+            # The file itself is unreadable (e.g. deleted between the
+            # earlier parse attempt and this read, or a permissions error) --
+            # nothing to show in the fallback view in that case; the dialog
+            # above already reported the failure.
+            return
+        self.center_stage.xml_editor.setPlainText(raw_text)
+        if exc.line is not None:
+            self.center_stage.xml_editor.highlight_error_line(exc.line)
+        self.center_stage.set_raw_xml_tab_visible(True)
+        self._raw_xml_panel_action.setChecked(True)
+        self.center_stage.setCurrentIndex(self.center_stage.raw_xml_tab_index)
 
     def _compare_merge_two_files(self):
         source = self._current_project
