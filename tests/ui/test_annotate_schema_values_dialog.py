@@ -172,3 +172,37 @@ def test_apply_filters_text_does_not_match_value_or_label_content():
     result = _apply_filters(rows, text_filter="3", unlabeled_only=False)
 
     assert result == []
+
+
+def test_apply_filters_unlabeled_only_hides_labeled_rows():
+    rows = [
+        {"path": "A", "attribute": "x", "value": "1", "label": ""},
+        {"path": "A", "attribute": "x", "value": "2", "label": "Two"},
+    ]
+
+    result = _apply_filters(rows, text_filter="", unlabeled_only=True)
+
+    assert result == [rows[0]]
+
+
+def test_apply_filters_unlabeled_only_false_shows_labeled_rows_too():
+    rows = [
+        {"path": "A", "attribute": "x", "value": "1", "label": ""},
+        {"path": "A", "attribute": "x", "value": "2", "label": "Two"},
+    ]
+
+    result = _apply_filters(rows, text_filter="", unlabeled_only=False)
+
+    assert result == rows
+
+
+def test_apply_filters_text_and_unlabeled_only_combine_with_and_semantics():
+    rows = [
+        {"path": "AbilityMode/A", "attribute": "x", "value": "1", "label": ""},
+        {"path": "AbilityMode/A", "attribute": "x", "value": "2", "label": "Labeled"},
+        {"path": "Other/B", "attribute": "y", "value": "3", "label": ""},
+    ]
+
+    result = _apply_filters(rows, text_filter="AbilityMode", unlabeled_only=True)
+
+    assert result == [rows[0]]
