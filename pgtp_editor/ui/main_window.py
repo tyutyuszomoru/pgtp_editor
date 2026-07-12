@@ -1,3 +1,7 @@
+import copy
+import shutil
+
+from lxml import etree
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QDockWidget,
@@ -8,9 +12,10 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from pgtp_editor.diff.apply import apply_differences
 from pgtp_editor.diff.differ import compare_block, diff_project
 from pgtp_editor.diff.resolve import ResolutionError, resolve_path
-from pgtp_editor.model.parser import load_project
+from pgtp_editor.model.parser import _build_project_model, load_project
 from pgtp_editor.ui._stub_action import add_stub_action
 from pgtp_editor.ui.about import show_about_dialog
 from pgtp_editor.ui.center_stage import CenterStage
@@ -200,6 +205,39 @@ class MainWindow(QMainWindow):
                 "the pairing by hand in the detail view first:\n\n" + details,
             )
             return
+
+        target_project = self._current_diff_target_project
+        target_path = self._current_diff_target_path
+
+        working_tree = copy.deepcopy(target_project.tree)
+        working_project = _build_project_model(working_tree, source_description=target_path)
+        result = apply_differences(working_project, checked)
+
+        if result.failed:
+            details = "\n".join(f"- {'/'.join(f.difference.path)}: {f.message}" for f in result.failed)
+            QMessageBox.critical(
+                self,
+                "Apply Failed -- No Changes Written",
+                f"{len(result.failed)} of {len(checked)} checked differences could not "
+                f"be applied (Target may have changed since this comparison was run). "
+                f"No changes were written to '{target_path}'.\n\n" + details,
+            )
+            return
+
+        backup_path = target_path + ".bak"
+        shutil.copy2(target_path, backup_path)
+        serialized = etree.tostring(
+            working_tree, xml_declaration=False, encoding="UTF-8", pretty_print=False
+        )
+        with open(target_path, "wb") as f:
+            f.write(serialized)
+
+        QMessageBox.information(
+            self,
+            "Apply Changes to Target",
+            f"Applied {len(checked)} change(s) to '{target_path}'.\nBackup saved to '{backup_path}'.",
+        )
+        self.open_project_file(target_path)
 
     def _build_menu_bar(self):
         self._build_file_menu()
