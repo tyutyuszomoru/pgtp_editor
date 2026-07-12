@@ -69,3 +69,108 @@ def _rows_for_event(event_node) -> list[RowSpec]:
         RowSpec("Side", side_label, event_node.sourceline, attr_name=None),
         RowSpec("Functions", str(_count_functions(event_node.text)), event_node.sourceline, attr_name=None),
     ]
+
+
+from PySide6.QtWidgets import (
+    QHeaderView,
+    QLabel,
+    QStackedWidget,
+    QTableWidget,
+    QTableWidgetItem,
+    QVBoxLayout,
+    QWidget,
+)
+
+_EMPTY_STATE_MESSAGE = "Select a Page, Detail, Column, or Event to see its properties"
+
+_ROW_BUILDERS = {
+    "page": (lambda n: _rows_for_attrib_node(n), lambda n: f"Page: {n.file_name or n.identity}"),
+    "detail": (_rows_for_detail, lambda n: f"Detail: {n.table_name}/{n.attrib.get('caption', '')}"),
+    "column": (lambda n: _rows_for_attrib_node(n), lambda n: f"Column: {n.field_name}"),
+    "event": (_rows_for_event, lambda n: f"Event: {n.tag_name}"),
+}
+
+
+class PropertiesPanel(QWidget):
+    """Read-only, navigate-only viewer for the currently selected Page,
+    Detail, Column, or Event node. Never edits a value; clicking a row
+    calls into an injected xml_editor object's navigate_to_line (and,
+    for attribute rows, line_text/select_range_on_line) to jump to and
+    highlight the corresponding source location.
+    """
+
+    def __init__(self, xml_editor, parent=None):
+        super().__init__(parent)
+        self._xml_editor = xml_editor
+        self._current_rows: list[RowSpec] = []
+
+        self._header_label = QLabel("")
+        self.table = QTableWidget(0, 2)
+        self.table.setHorizontalHeaderLabels(["Property", "Value"])
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.table.verticalHeader().setVisible(False)
+        self.table.cellClicked.connect(self._on_row_clicked)
+
+        self._populated_page = QWidget()
+        populated_layout = QVBoxLayout(self._populated_page)
+        populated_layout.setContentsMargins(0, 0, 0, 0)
+        populated_layout.addWidget(self._header_label)
+        populated_layout.addWidget(self.table)
+
+        self._empty_label = QLabel(_EMPTY_STATE_MESSAGE)
+
+        self._stack = QStackedWidget()
+        self._stack.addWidget(self._empty_label)
+        self._stack.addWidget(self._populated_page)
+
+        outer_layout = QVBoxLayout(self)
+        outer_layout.setContentsMargins(0, 0, 0, 0)
+        outer_layout.addWidget(self._stack)
+
+        self._show_empty_state()
+
+    def is_showing_empty_state(self) -> bool:
+        return self._stack.currentWidget() is self._empty_label
+
+    def header_text(self) -> str:
+        return self._header_label.text()
+
+    def show_node(self, node, kind: str | None) -> None:
+        if node is None or kind is None:
+            self._show_empty_state()
+            return
+        rows_fn, header_fn = _ROW_BUILDERS[kind]
+        self._current_rows = rows_fn(node)
+        self._populate_table(header_fn(node), self._current_rows)
+
+    def _show_empty_state(self) -> None:
+        self._current_rows = []
+        self._stack.setCurrentWidget(self._empty_label)
+
+    def _populate_table(self, header_text: str, rows: list[RowSpec]) -> None:
+        self._header_label.setText(header_text)
+        self.table.setRowCount(len(rows))
+        for row_index, row_spec in enumerate(rows):
+            self.table.setItem(row_index, 0, QTableWidgetItem(row_spec.property_label))
+            self.table.setItem(row_index, 1, QTableWidgetItem(row_spec.value))
+        self._stack.setCurrentWidget(self._populated_page)
+
+    def _on_row_clicked(self, row: int, _column: int) -> None:
+        spec = self._current_rows[row]
+        if spec.target_line is None:
+            return
+        self._xml_editor.navigate_to_line(spec.target_line)
+        if spec.attr_name is not None:
+            self._select_attribute_on_line(spec.target_line, spec.attr_name)
+
+    def _select_attribute_on_line(self, line: int, attr_name: str) -> None:
+        line_text = self._xml_editor.line_text(line)
+        needle = f'{attr_name}="'
+        start = line_text.find(needle)
+        if start == -1:
+            return
+        value_start = start + len(needle)
+        end = line_text.find('"', value_start)
+        if end == -1:
+            return
+        self._xml_editor.select_range_on_line(line, start, end + 1)
