@@ -20,7 +20,17 @@ from pgtp_editor.model.nodes import (
 
 
 class PgtpParseError(Exception):
-    """Raised when a .pgtp file cannot be parsed into a ProjectModel."""
+    """Raised when a .pgtp file cannot be parsed into a ProjectModel.
+
+    `line` carries the 1-based line number of the failure when it is known
+    (always known for an XML syntax error, via lxml's XMLSyntaxError.lineno;
+    never known for a structurally-unexpected-but-well-formed document, since
+    there is no single line at fault in that case).
+    """
+
+    def __init__(self, message: str, line: int | None = None):
+        super().__init__(message)
+        self.line = line
 
 
 def load_project(path) -> ProjectModel:
@@ -34,7 +44,8 @@ def load_project(path) -> ProjectModel:
     try:
         tree = etree.parse(str(path))
     except (etree.XMLSyntaxError, OSError) as exc:
-        raise PgtpParseError(f"Could not parse '{path}': {exc}") from exc
+        line = exc.lineno if isinstance(exc, etree.XMLSyntaxError) else None
+        raise PgtpParseError(f"Could not parse '{path}': {exc}", line=line) from exc
 
     root = tree.getroot()
 

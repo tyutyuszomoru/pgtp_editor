@@ -276,3 +276,29 @@ def test_missing_optional_attributes_handled(tmp_path):
     assert page.columns == []
     assert page.details == []
     assert page.events == []
+
+
+def test_pgtp_parse_error_carries_line_number_for_xml_syntax_error(tmp_path):
+    path = tmp_path / "broken.pgtp"
+    # Genuinely malformed XML (mismatched root tag) triggers XMLSyntaxError,
+    # not the broader structural except clause.
+    path.write_text(
+        "<Project>\n<Presentation>\n<Pages>\n<Page>\n</Pages>\n</Presentation>\n</Project>",
+        encoding="utf-8",
+    )
+    with pytest.raises(PgtpParseError) as excinfo:
+        load_project(path)
+    assert excinfo.value.line is not None
+    assert excinfo.value.line > 0
+
+
+def test_pgtp_parse_error_line_is_none_for_structural_failure(tmp_path):
+    path = write_pgtp(tmp_path, DETAIL_MISSING_NESTED_PAGE_PROJECT)
+    with pytest.raises(PgtpParseError) as excinfo:
+        load_project(path)
+    assert excinfo.value.line is None
+
+
+def test_pgtp_parse_error_line_defaults_to_none():
+    exc = PgtpParseError("some message")
+    assert exc.line is None
