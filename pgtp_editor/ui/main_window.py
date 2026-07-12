@@ -19,6 +19,7 @@ from pgtp_editor.schema_learning.storage import schema_model_path, schema_xsd_pa
 from pgtp_editor.schema_learning.xsd_gen import generate_xsd
 from pgtp_editor.ui._stub_action import add_stub_action
 from pgtp_editor.ui.about import show_about_dialog
+from pgtp_editor.ui.annotate_schema_values_dialog import AnnotateSchemaValuesDialog
 from pgtp_editor.ui.center_stage import CenterStage
 from pgtp_editor.ui.project_tree import ProjectTreePanel
 
@@ -223,6 +224,7 @@ class MainWindow(QMainWindow):
         self._build_edit_menu()
         self._build_view_menu()
         self._build_diff_merge_menu()
+        self._build_schema_menu()
         self._build_tools_menu()
         self._build_generation_menu()
         self._build_help_menu()
@@ -296,6 +298,15 @@ class MainWindow(QMainWindow):
         prev_action = menu.addAction("Prev Difference")
         prev_action.triggered.connect(self.center_stage.diff_merge_panel.select_previous_difference)
         self._add_stub_action(menu, "Apply Changes to Target")
+
+    def _build_schema_menu(self):
+        menu = self.menuBar().addMenu("Schema")
+        annotate_action = menu.addAction("Annotate Schema Values...")
+        annotate_action.triggered.connect(self._open_annotate_schema_values)
+
+    def _open_annotate_schema_values(self):
+        dialog = AnnotateSchemaValuesDialog(self, schema_storage_dir=self._schema_storage_dir)
+        dialog.exec()
 
     def _build_tools_menu(self):
         menu = self.menuBar().addMenu("Tools")

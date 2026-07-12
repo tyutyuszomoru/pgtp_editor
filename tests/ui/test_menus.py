@@ -137,6 +137,31 @@ def test_diff_merge_menu_contents(qtbot):
     ]
 
 
+def test_schema_menu_contents(qtbot):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    menu = find_top_menu(window, "Schema")
+    assert menu is not None
+    assert action_labels(menu) == ["Annotate Schema Values..."]
+
+
+def test_schema_menu_sits_between_diff_merge_and_tools(qtbot):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    titles = all_top_level_menu_titles(window)
+    assert titles == [
+        "File", "Edit", "View", "Diff / Merge", "Schema", "Tools", "Generation", "Help",
+    ]
+
+
+def test_annotate_schema_values_action_is_always_enabled(qtbot):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    menu = find_top_menu(window, "Schema")
+    action = find_action(menu, "Annotate Schema Values...")
+    assert action.isEnabled() is True
+
+
 def test_tools_menu_contents(qtbot):
     window = MainWindow()
     qtbot.addWidget(window)
@@ -175,4 +200,6 @@ def test_all_top_level_menus_present_in_order(qtbot):
     window = MainWindow()
     qtbot.addWidget(window)
     titles = all_top_level_menu_titles(window)
-    assert titles == ["File", "Edit", "View", "Diff / Merge", "Tools", "Generation", "Help"]
+    assert titles == [
+        "File", "Edit", "View", "Diff / Merge", "Schema", "Tools", "Generation", "Help",
+    ]
