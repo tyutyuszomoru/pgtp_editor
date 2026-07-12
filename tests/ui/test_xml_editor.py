@@ -92,3 +92,32 @@ def test_closing_the_quote_reverts_second_line_format(qtbot):
     second_line_start = fixed_text.index("\n") + 1
     fmt = _format_at(editor, second_line_start + 3)
     assert fmt.foreground().color() != editor._highlighter._string_format.foreground().color()
+
+
+from pgtp_editor.ui.xml_editor import _EditorGutter
+
+
+def test_editor_has_a_gutter(qtbot):
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    assert isinstance(editor._gutter, _EditorGutter)
+
+
+def test_gutter_width_grows_with_more_digits_in_line_count(qtbot):
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    editor.setPlainText("line\n" * 5)  # single-digit line count
+    narrow_margin = editor.viewportMargins().left()
+
+    editor.setPlainText("line\n" * 200)  # triple-digit line count
+    wide_margin = editor.viewportMargins().left()
+
+    assert wide_margin > narrow_margin
+
+
+def test_gutter_geometry_matches_editor_contents_rect_height(qtbot):
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    editor.resize(400, 300)
+    editor.show()
+    assert editor._gutter.height() == editor.contentsRect().height()
