@@ -90,3 +90,40 @@ def scan(text: str) -> list[TagSpan]:
     # unclosed -- emit as-is with close_end=None.
     spans.extend(stack)
     return spans
+
+
+def find_enclosing_open_tag(text: str, position: int) -> str | None:
+    """Find the name of the innermost element that contains `position` and
+    is not yet known to be closed before it.
+
+    A `TagSpan` is a candidate if `open_start < position` (strictly before,
+    so a child element beginning exactly at `position` is not considered
+    its own enclosing tag) and either `close_end is None` or
+    `close_end > position` (i.e. `position` falls strictly inside that
+    element's content span). Among candidates, the one with the greatest
+    `depth` is the innermost.
+    """
+    spans = scan(text)
+    candidates = [
+        span
+        for span in spans
+        if span.open_start < position and (span.close_end is None or span.close_end > position)
+    ]
+    if not candidates:
+        return None
+    innermost = max(candidates, key=lambda span: span.depth)
+    return innermost.name
+
+
+def nesting_depth_at(text: str, position: int) -> int:
+    """Depth of find_enclosing_open_tag's result, or 0 if none."""
+    spans = scan(text)
+    candidates = [
+        span
+        for span in spans
+        if span.open_start < position and (span.close_end is None or span.close_end > position)
+    ]
+    if not candidates:
+        return 0
+    innermost = max(candidates, key=lambda span: span.depth)
+    return innermost.depth

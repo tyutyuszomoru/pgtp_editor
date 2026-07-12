@@ -1,4 +1,5 @@
 from pgtp_editor.ui.xml_structure import TagSpan, scan
+from pgtp_editor.ui.xml_structure import find_enclosing_open_tag, nesting_depth_at
 
 
 def test_scan_well_formed_nesting_produces_correct_depths_and_offsets():
@@ -71,3 +72,44 @@ def test_scan_tolerates_stray_closing_tag_matching_nothing():
     by_name = {span.name: span for span in spans}
     assert set(by_name) == {"Page"}
     assert by_name["Page"].close_end == len(text)
+
+
+def test_find_enclosing_open_tag_inside_nested_element():
+    text = "<Page><Detail>text</Detail></Page>"
+    # Position inside "text", between Detail's open tag and its close tag.
+    position = text.index("text")
+    assert find_enclosing_open_tag(text, position) == "Detail"
+
+
+def test_find_enclosing_open_tag_at_top_level_between_children():
+    text = "<Page><Detail></Detail><Detail></Detail></Page>"
+    position = text.index("><Detail></Detail></Page>") + 1  # just after first </Detail>
+    assert find_enclosing_open_tag(text, position) == "Page"
+
+
+def test_find_enclosing_open_tag_inside_unclosed_tag():
+    text = "<Page><Detail>"
+    position = len(text)
+    assert find_enclosing_open_tag(text, position) == "Detail"
+
+
+def test_find_enclosing_open_tag_returns_none_after_everything_closed():
+    text = "<Page></Page>"
+    position = len(text)
+    assert find_enclosing_open_tag(text, position) is None
+
+
+def test_find_enclosing_open_tag_returns_none_for_position_before_any_tag():
+    text = "  <Page></Page>"
+    assert find_enclosing_open_tag(text, 0) is None
+
+
+def test_nesting_depth_at_matches_enclosing_tag_depth():
+    text = "<Page><Detail><Column/></Detail></Page>"
+    position = text.index("<Column/>")
+    assert nesting_depth_at(text, position) == 1  # inside Detail, which is depth 1
+
+
+def test_nesting_depth_at_is_zero_when_no_enclosing_tag():
+    text = "<Page></Page>"
+    assert nesting_depth_at(text, len(text)) == 0
