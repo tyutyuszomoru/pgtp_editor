@@ -43,3 +43,29 @@ def _rows_for_detail(detail_node) -> list[RowSpec]:
         line = detail_node.sourceline if key == "caption" else detail_node.inner_sourceline
         rows.append(RowSpec(property_label=key, value=str(value), target_line=line, attr_name=key))
     return rows
+
+
+_FUNCTION_DECL_RE = re.compile(r"\bfunction\s*[A-Za-z_$][A-Za-z0-9_$]*\s*\(|\bfunction\s*\(")
+
+
+def _count_functions(text: str | None) -> int:
+    """Approximate, regex-based count of JS/PHP function declarations
+    (named and anonymous) in an event handler body. Not a real parser:
+    misses ES6 arrow functions entirely, and cannot distinguish a
+    'function' token inside a string/comment from a real declaration.
+    Both gaps are accepted — see design spec §3.3.
+    """
+    return len(_FUNCTION_DECL_RE.findall(text or ""))
+
+
+def _rows_for_event(event_node) -> list[RowSpec]:
+    """Exactly three rows for an EventNode: Handler, Side, and a
+    heuristic Functions count. All three navigate to the event's own
+    <OnXxx> opening line; none of them is a key="value" attribute pair,
+    so attr_name is None for all three (no column-precise refinement)."""
+    side_label = "Client" if event_node.side == "C" else "Server"
+    return [
+        RowSpec("Handler", event_node.tag_name, event_node.sourceline, attr_name=None),
+        RowSpec("Side", side_label, event_node.sourceline, attr_name=None),
+        RowSpec("Functions", str(_count_functions(event_node.text)), event_node.sourceline, attr_name=None),
+    ]
