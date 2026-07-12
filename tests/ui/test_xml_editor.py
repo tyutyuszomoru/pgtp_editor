@@ -63,3 +63,32 @@ def test_tag_name_and_attribute_name_get_distinct_formats(qtbot):
     assert tag_name_format.foreground().color() != attr_name_format.foreground().color()
     assert attr_name_format.foreground().color() != attr_value_format.foreground().color()
     assert tag_name_format.foreground().color() != attr_value_format.foreground().color()
+
+
+def test_unclosed_quote_propagates_string_format_to_next_line(qtbot):
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    text = '<Page fileName="unterminated\nsecond line ordinary text'
+    editor.setPlainText(text)
+
+    second_line_start = text.index("\n") + 1
+    fmt = _format_at(editor, second_line_start + 3)  # inside "second"
+    assert fmt.foreground().color() == editor._highlighter._string_format.foreground().color()
+
+
+def test_closing_the_quote_reverts_second_line_format(qtbot):
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    text = '<Page fileName="unterminated\nsecond line ordinary text'
+    editor.setPlainText(text)
+
+    # Now fix it: add the missing closing quote on line 1.
+    cursor = editor.textCursor()
+    cursor.setPosition(text.index("unterminated") + len("unterminated"))
+    editor.setTextCursor(cursor)
+    editor.insertPlainText('"')
+
+    fixed_text = editor.toPlainText()
+    second_line_start = fixed_text.index("\n") + 1
+    fmt = _format_at(editor, second_line_start + 3)
+    assert fmt.foreground().color() != editor._highlighter._string_format.foreground().color()
