@@ -30,12 +30,27 @@ def load_project(path) -> ProjectModel:
     UI's File -> Open handler) can surface a clear error instead of letting
     an lxml exception bubble up uncaught or silently returning an empty
     project.
+
+    Thin wrapper around `_build_project_model`, which does the actual
+    element-walking and can also be called directly against an
+    already-in-memory tree (e.g. a deep copy made during Apply — see
+    pgtp_editor/diff/apply.py and MainWindow._apply_changes_to_target).
     """
     try:
         tree = etree.parse(str(path))
     except (etree.XMLSyntaxError, OSError) as exc:
         raise PgtpParseError(f"Could not parse '{path}': {exc}") from exc
+    return _build_project_model(tree, source_description=str(path))
 
+
+def _build_project_model(tree, source_description: str) -> ProjectModel:
+    """Walk an already-parsed lxml tree and build a ProjectModel from it,
+    retaining a reference to every real lxml element visited.
+
+    Split out of `load_project` so the same walking logic can be re-run
+    against an in-memory tree (e.g. a `copy.deepcopy` of a Target's tree
+    made during Apply) without writing it to disk and reparsing it.
+    """
     root = tree.getroot()
 
     try:
@@ -43,9 +58,9 @@ def load_project(path) -> ProjectModel:
         page_elements = [] if pages_container is None else pages_container.findall("Page")
         pages = [_parse_page(page_el, parent_identity=None) for page_el in page_elements]
     except Exception as exc:  # defensive: any unexpected structural surprise
-        raise PgtpParseError(f"Could not parse '{path}': {exc}") from exc
+        raise PgtpParseError(f"Could not parse '{source_description}': {exc}") from exc
 
-    return ProjectModel(pages=pages)
+    return ProjectModel(pages=pages, tree=tree)
 
 
 def _parse_page(page_el, parent_identity) -> PageNode:
@@ -60,6 +75,7 @@ def _parse_page(page_el, parent_identity) -> PageNode:
         identity=identity,
         attrib=dict(page_el.attrib),
         sourceline=page_el.sourceline,
+        element=page_el,
         details=details,
         columns=columns,
         events=events,
@@ -99,6 +115,8 @@ def _parse_detail(detail_el, parent_identity) -> DetailNode:
         identity=identity,
         attrib=merged_attrib,
         sourceline=detail_el.sourceline,
+        element=detail_el,
+        inner_page_element=inner_page_el,
         details=nested_details,
         columns=columns,
         events=events,
@@ -119,6 +137,7 @@ def _parse_columns(container_el, parent_identity) -> list[ColumnNode]:
                 identity=identity,
                 attrib=dict(col_el.attrib),
                 sourceline=col_el.sourceline,
+                element=col_el,
             )
         )
     return columns
@@ -140,6 +159,7 @@ def _parse_events(container_el, parent_identity) -> list[EventNode]:
                 side=classify_event_side(tag_name),
                 text=event_el.text or "",
                 sourceline=event_el.sourceline,
+                element=event_el,
             )
         )
     return events

@@ -173,6 +173,17 @@ class DiffMergePanel(QWidget):
             visit(self.tree.topLevelItem(i))
         return leaves
 
+    def checked_differences(self) -> list:
+        """Enumerate the Difference object for every leaf whose checkbox is
+        checked, in the same tree order _flattened_leaves() already walks.
+        Group/prefix nodes have no DIFFERENCE_ROLE payload and are never
+        checkable, so they never appear here."""
+        return [
+            leaf.data(0, DIFFERENCE_ROLE)
+            for leaf in self._flattened_leaves()
+            if leaf.checkState(0) == Qt.CheckState.Checked
+        ]
+
     def _current_leaf_position(self, leaves: list[QTreeWidgetItem]) -> int:
         current = self.tree.currentItem()
         if current is None:

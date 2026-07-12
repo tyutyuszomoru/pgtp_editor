@@ -1,5 +1,8 @@
+import copy
+import shutil
 from pathlib import Path
 
+from lxml import etree
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QDockWidget,
@@ -10,9 +13,10 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from pgtp_editor.diff.apply import apply_differences
 from pgtp_editor.diff.differ import compare_block, diff_project
 from pgtp_editor.diff.resolve import ResolutionError, resolve_path
-from pgtp_editor.model.parser import load_project
+from pgtp_editor.model.parser import _build_project_model, load_project
 from pgtp_editor.schema_learning.model import Model
 from pgtp_editor.schema_learning.parser import walk_document
 from pgtp_editor.schema_learning.storage import schema_model_path, schema_xsd_path
@@ -67,6 +71,8 @@ class MainWindow(QMainWindow):
 
         self._current_project = None
         self._current_project_path = None
+        self._current_diff_target_project = None
+        self._current_diff_target_path = None
 
         self._build_menu_bar()
 
@@ -165,6 +171,8 @@ class MainWindow(QMainWindow):
             )
             return
 
+        self._current_diff_target_project = target
+        self._current_diff_target_path = target_path
         differences = diff_project(source, target)
         self.center_stage.diff_merge_panel.show_differences(differences)
         self.center_stage.setCurrentIndex(self.center_stage.diff_merge_tab_index)
@@ -192,6 +200,8 @@ class MainWindow(QMainWindow):
             )
             return
 
+        self._current_diff_target_project = target
+        self._current_diff_target_path = target_path
         differences = compare_block(page_node, target_page, path=[page_node.file_name], node_kind="page")
         self.center_stage.diff_merge_panel.show_differences(differences)
         self.center_stage.setCurrentIndex(self.center_stage.diff_merge_tab_index)
@@ -215,9 +225,67 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Detail Not Found", result.message)
             return
 
+        self._current_diff_target_project = target
+        self._current_diff_target_path = target_path_str
         differences = compare_block(detail_node, result, path=source_path, node_kind="detail")
         self.center_stage.diff_merge_panel.show_differences(differences)
         self.center_stage.setCurrentIndex(self.center_stage.diff_merge_tab_index)
+
+    def _apply_changes_to_target(self):
+        checked = self.center_stage.diff_merge_panel.checked_differences()
+        if not checked:
+            QMessageBox.information(
+                self, "Apply Changes to Target", "No differences are checked to apply."
+            )
+            return
+
+        ambiguous = [d for d in checked if d.ambiguous]
+        if ambiguous:
+            details = "\n".join(
+                f"- {'/'.join(d.path)} ({d.node_kind}/{d.attribute}: {d.kind})" for d in ambiguous
+            )
+            QMessageBox.critical(
+                self,
+                "Cannot Apply: Ambiguous Differences Checked",
+                "The following checked differences are ambiguous (matched via "
+                "positional pairing of duplicate siblings) and cannot be safely "
+                "applied automatically. Uncheck them and re-run Apply, or verify "
+                "the pairing by hand in the detail view first:\n\n" + details,
+            )
+            return
+
+        target_project = self._current_diff_target_project
+        target_path = self._current_diff_target_path
+
+        working_tree = copy.deepcopy(target_project.tree)
+        working_project = _build_project_model(working_tree, source_description=target_path)
+        result = apply_differences(working_project, checked)
+
+        if result.failed:
+            details = "\n".join(f"- {'/'.join(f.difference.path)}: {f.message}" for f in result.failed)
+            QMessageBox.critical(
+                self,
+                "Apply Failed -- No Changes Written",
+                f"{len(result.failed)} of {len(checked)} checked differences could not "
+                f"be applied (Target may have changed since this comparison was run). "
+                f"No changes were written to '{target_path}'.\n\n" + details,
+            )
+            return
+
+        backup_path = target_path + ".bak"
+        shutil.copy2(target_path, backup_path)
+        serialized = etree.tostring(
+            working_tree, xml_declaration=False, encoding="UTF-8", pretty_print=False
+        )
+        with open(target_path, "wb") as f:
+            f.write(serialized)
+
+        QMessageBox.information(
+            self,
+            "Apply Changes to Target",
+            f"Applied {len(checked)} change(s) to '{target_path}'.\nBackup saved to '{backup_path}'.",
+        )
+        self.open_project_file(target_path)
 
     def _build_menu_bar(self):
         self._build_file_menu()
@@ -297,7 +365,8 @@ class MainWindow(QMainWindow):
         next_action.triggered.connect(self.center_stage.diff_merge_panel.select_next_difference)
         prev_action = menu.addAction("Prev Difference")
         prev_action.triggered.connect(self.center_stage.diff_merge_panel.select_previous_difference)
-        self._add_stub_action(menu, "Apply Changes to Target")
+        apply_action = menu.addAction("Apply Changes to Target")
+        apply_action.triggered.connect(self._apply_changes_to_target)
 
     def _build_schema_menu(self):
         menu = self.menuBar().addMenu("Schema")

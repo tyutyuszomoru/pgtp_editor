@@ -298,3 +298,56 @@ def test_compare_this_detail_with_shows_error_when_detail_not_found_in_target(qt
     mock_critical.assert_called_once()
     args, _kwargs = mock_critical.call_args
     assert "pr.attachment" in args[2]
+
+
+def test_compare_merge_two_files_tracks_current_diff_target(qtbot, tmp_path):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    source_path = _write(tmp_path, "source.pgtp", VALID_PGTP)
+    target_path = _write(tmp_path, "target.pgtp", CHANGED_PGTP)
+
+    with patch(
+        "pgtp_editor.ui.main_window.QFileDialog.getOpenFileName",
+        side_effect=[(source_path, ""), (target_path, "")],
+    ):
+        window._compare_merge_two_files()
+
+    assert window._current_diff_target_path == target_path
+    assert window._current_diff_target_project is not None
+    assert window._current_diff_target_project.pages[0].file_name == "development_equipment"
+
+
+def test_compare_this_page_with_tracks_current_diff_target(qtbot, tmp_path):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window.open_project_file(_write(tmp_path, "source.pgtp", VALID_PGTP))
+    target_path = _write(tmp_path, "target.pgtp", CHANGED_PGTP)
+
+    page_item = window.project_tree.topLevelItem(0)
+    menu = window.project_tree.build_page_menu(page_item)
+    with patch(
+        "pgtp_editor.ui.main_window.QFileDialog.getOpenFileName",
+        return_value=(target_path, ""),
+    ):
+        find_action(menu, "Compare This Page With...").trigger()
+
+    assert window._current_diff_target_path == target_path
+    assert window._current_diff_target_project is not None
+
+
+def test_compare_this_detail_with_tracks_current_diff_target(qtbot, tmp_path):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window.open_project_file(_write(tmp_path, "source.pgtp", SOURCE_WITH_DETAIL_PGTP))
+    target_path = _write(tmp_path, "target.pgtp", TARGET_WITH_CHANGED_DETAIL_PGTP)
+
+    detail_item = window.project_tree.topLevelItem(0).child(0)
+    menu = window.project_tree.build_detail_menu(detail_item)
+    with patch(
+        "pgtp_editor.ui.main_window.QFileDialog.getOpenFileName",
+        return_value=(target_path, ""),
+    ):
+        find_action(menu, "Compare This Detail With...").trigger()
+
+    assert window._current_diff_target_path == target_path
+    assert window._current_diff_target_project is not None

@@ -274,3 +274,52 @@ def test_select_previous_difference_walks_leaves_backward(qtbot):
     # Stops at the first leaf — no wraparound required.
     panel.select_previous_difference()
     assert panel.tree.currentItem().data(0, DIFFERENCE_ROLE) is diffs[0]
+
+
+def test_checked_differences_returns_only_checked_leaves_in_tree_order(qtbot):
+    panel = DiffMergePanel()
+    qtbot.addWidget(panel)
+    diffs = [
+        make_diff(["page_a", "caption"], node_kind="page", kind="changed", attribute="caption"),
+        make_diff(["page_a", "ability"], node_kind="page", kind="changed", attribute="ability"),
+        make_diff(["page_b", "caption"], node_kind="page", kind="changed", attribute="caption"),
+    ]
+    panel.show_differences(diffs)
+
+    leaves = panel._flattened_leaves()
+    leaves[0].setCheckState(0, Qt.CheckState.Checked)
+    leaves[2].setCheckState(0, Qt.CheckState.Checked)
+    # leaves[1] stays Unchecked (default).
+
+    checked = panel.checked_differences()
+
+    assert checked == [diffs[0], diffs[2]]
+
+
+def test_checked_differences_returns_empty_list_when_nothing_checked(qtbot):
+    panel = DiffMergePanel()
+    qtbot.addWidget(panel)
+    diffs = [make_diff(["page_a", "caption"], node_kind="page", kind="changed", attribute="caption")]
+    panel.show_differences(diffs)
+
+    assert panel.checked_differences() == []
+
+
+def test_checked_differences_never_includes_group_prefix_nodes(qtbot):
+    panel = DiffMergePanel()
+    qtbot.addWidget(panel)
+    diffs = [
+        make_diff(
+            ["development_equipment", "pr.attachment/Sub-item", "caption"],
+            node_kind="detail", kind="changed", attribute="caption",
+        ),
+    ]
+    panel.show_differences(diffs)
+
+    leaves = panel._flattened_leaves()
+    leaves[0].setCheckState(0, Qt.CheckState.Checked)
+
+    checked = panel.checked_differences()
+
+    assert checked == [diffs[0]]
+    assert len(checked) == 1
