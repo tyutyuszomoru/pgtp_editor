@@ -34,3 +34,40 @@ def test_scan_returns_empty_list_for_empty_text():
 
 def test_scan_returns_empty_list_for_text_with_no_tags():
     assert scan("just some plain text, no tags here") == []
+
+
+def test_scan_tolerates_unclosed_tags_no_closes_at_all():
+    text = "<Page><Detail>"
+    spans = scan(text)
+
+    assert len(spans) == 2
+    by_name = {span.name: span for span in spans}
+    assert by_name["Page"].close_end is None
+    assert by_name["Detail"].close_end is None
+
+
+def test_scan_tolerates_mismatched_tag_closing_outer_before_inner():
+    text = "<Page><Detail></Page>"
+    spans = scan(text)
+
+    by_name = {span.name: span for span in spans}
+    assert by_name["Page"].close_end == len(text)
+    assert by_name["Detail"].close_end is None
+
+
+def test_scan_tolerates_truncated_document_mid_attribute():
+    text = '<Page fileName="foo'
+    spans = scan(text)
+
+    # The regex simply doesn't match an incomplete tag token: nothing
+    # crashes, nothing incorrect is fabricated.
+    assert spans == []
+
+
+def test_scan_tolerates_stray_closing_tag_matching_nothing():
+    text = "</Orphan><Page></Page>"
+    spans = scan(text)
+
+    by_name = {span.name: span for span in spans}
+    assert set(by_name) == {"Page"}
+    assert by_name["Page"].close_end == len(text)
