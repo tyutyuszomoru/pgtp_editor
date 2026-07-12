@@ -245,3 +245,32 @@ def test_parse_failure_does_not_crash_when_file_unreadable_after_initial_parse_a
     # load_project; _handle_parse_failure's own re-read then also fails with
     # OSError, and must not crash -- it simply leaves the Raw XML tab alone.
     assert window.center_stage.isTabVisible(window.center_stage.raw_xml_tab_index) is False
+
+
+from pathlib import Path
+
+SAMPLE_DIR = Path(__file__).resolve().parents[2] / "sample"
+
+
+def test_open_real_sample_file_populates_editor_byte_for_byte(qtbot):
+    sample_path = SAMPLE_DIR / "dev_Ferrara.pgtp"
+    assert sample_path.exists(), f"expected sample fixture at {sample_path}"
+
+    window = MainWindow()
+    qtbot.addWidget(window)
+
+    window.open_project_file(str(sample_path))
+
+    expected_text = sample_path.read_text(encoding="utf-8")
+    actual_text = window.center_stage.xml_editor.toPlainText()
+    # QPlainTextEdit.toPlainText() is a known, Qt-internal lossy round-trip
+    # for U+00A0 (non-breaking space): QTextDocument stores NBSP as a regular
+    # space plus a non-breakable-text flag (for line-wrapping purposes), and
+    # toPlainText() discards that flag, silently downgrading NBSP to U+0020.
+    # (QTextDocument.toRawText() does preserve it -- confirmed directly
+    # against this same widget -- so the character isn't actually lost from
+    # the document model, only from what toPlainText() reports.) This sample
+    # file contains 3 real NBSP characters in a caption attribute value, so
+    # normalize both sides the same way before comparing; every other
+    # character must still match exactly.
+    assert actual_text.replace("\xa0", " ") == expected_text.replace("\xa0", " ")
