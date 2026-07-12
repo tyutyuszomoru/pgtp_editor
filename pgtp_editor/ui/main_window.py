@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QDockWidget,
@@ -11,15 +13,29 @@ from PySide6.QtWidgets import (
 from pgtp_editor.diff.differ import compare_block, diff_project
 from pgtp_editor.diff.resolve import ResolutionError, resolve_path
 from pgtp_editor.model.parser import load_project
+from pgtp_editor.schema_learning.model import Model
+from pgtp_editor.schema_learning.parser import walk_document
+from pgtp_editor.schema_learning.storage import schema_model_path, schema_xsd_path
+from pgtp_editor.schema_learning.xsd_gen import generate_xsd
 from pgtp_editor.ui._stub_action import add_stub_action
 from pgtp_editor.ui.about import show_about_dialog
 from pgtp_editor.ui.center_stage import CenterStage
 from pgtp_editor.ui.project_tree import ProjectTreePanel
 
 
+_SCHEMA_REPORT_TEMPLATES = {
+    "new_element": "[Schema] NEW ELEMENT: {path} (first seen in {source})",
+    "new_attribute": "[Schema] NEW ATTRIBUTE: {path}@{attr} (first seen in {source})",
+    "new_value": '[Schema] NEW ATTR VALUE: {path}@{attr} += "{value}" (from {source})',
+    "enum_overflow": "[Schema] ENUM OVERFLOWED: {path}@{attr} now free-form string (from {source})",
+    "now_optional": "[Schema] NOW OPTIONAL: {path}@{attr} (previously required, from {source})",
+}
+
+
 class MainWindow(QMainWindow):
-    def __init__(self):
+    def __init__(self, schema_storage_dir: Path | None = None):
         super().__init__()
+        self._schema_storage_dir = schema_storage_dir
         self.setWindowTitle("PGTP Editor")
         self.resize(1400, 900)
 
@@ -86,6 +102,38 @@ class MainWindow(QMainWindow):
         self._current_project = project
         self._current_project_path = path
         self.statusBar().showMessage(f"Opened: {path}", 5000)
+        self._enrich_schema_from_file(path)
+
+    def _enrich_schema_from_file(self, path):
+        try:
+            model_path = schema_model_path(self._schema_storage_dir)
+            xsd_path = schema_xsd_path(self._schema_storage_dir)
+            model_path.parent.mkdir(parents=True, exist_ok=True)
+
+            if model_path.exists():
+                model = Model.load(model_path)
+            else:
+                model = Model()
+
+            events = []
+            for elem_path, attrib, child_tag_counts, has_text in walk_document(path):
+                events.extend(model.merge_element(elem_path, attrib, child_tag_counts, has_text))
+
+            model.save(model_path)
+            xsd_path.write_text(generate_xsd(model), encoding="utf-8")
+
+            self._report_schema_events(events, path)
+        except Exception as exc:
+            self.audit_panel.addItem(f"[Schema] Could not update schema knowledge: {exc}")
+
+    def _report_schema_events(self, events, source_path):
+        source_name = Path(source_path).name
+        if len(events) > 20:
+            self.audit_panel.addItem(f"[Schema] Learned {len(events)} new structural facts from {source_name}")
+            return
+        for event in events:
+            template = _SCHEMA_REPORT_TEMPLATES[event["kind"]]
+            self.audit_panel.addItem(template.format(source=source_name, **event))
 
     def _compare_merge_two_files(self):
         source = self._current_project
