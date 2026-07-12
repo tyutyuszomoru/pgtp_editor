@@ -48,3 +48,39 @@ def test_not_implemented_shows_status_message(qtbot):
     qtbot.addWidget(window)
     window._not_implemented("Delete Page")
     assert window.statusBar().currentMessage() == "Not yet implemented: Delete Page"
+
+
+from pgtp_editor.ui.properties_panel import PropertiesPanel
+
+
+def test_properties_panel_is_a_real_properties_panel(qtbot):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    assert isinstance(window.properties_panel, PropertiesPanel)
+    assert window.properties_dock.widget() is window.properties_panel
+
+
+def test_selecting_tree_item_populates_properties_panel(qtbot):
+    from tests.ui._sample_project import build_sample_project
+
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window.project_tree.populate_from_project(build_sample_project())
+
+    page_item = window.project_tree.topLevelItem(0)
+    window.project_tree.setCurrentItem(page_item)
+
+    assert window.properties_panel.is_showing_empty_state() is False
+    assert window.properties_panel.header_text().startswith("Page:")
+
+
+def test_clearing_tree_selection_returns_properties_panel_to_empty_state(qtbot):
+    from tests.ui._sample_project import build_sample_project
+
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window.project_tree.populate_from_project(build_sample_project())
+    window.project_tree.setCurrentItem(window.project_tree.topLevelItem(0))
+    window.project_tree.setCurrentItem(None)
+
+    assert window.properties_panel.is_showing_empty_state() is True

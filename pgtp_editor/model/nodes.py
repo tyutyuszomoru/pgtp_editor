@@ -71,6 +71,7 @@ class DetailNode:
     sourceline: int | None = None
     element: "etree._Element | None" = None
     inner_page_element: "etree._Element | None" = None
+    inner_sourceline: int | None = None
     details: list["DetailNode"] = field(default_factory=list)
     columns: list[ColumnNode] = field(default_factory=list)
     events: list[EventNode] = field(default_factory=list)

@@ -1,6 +1,10 @@
 """Tests for the retained-lxml-element fields added to the model dataclasses
 for the Diff/Merge write-back feature. See
 docs/superpowers/specs/2026-07-12-pgtp-editor-diff-merge-writeback-design.md §3.2.
+
+Also covers DetailNode.inner_sourceline, added for the Properties panel
+sub-project. See
+docs/superpowers/specs/2026-07-12-pgtp-editor-properties-panel-design.md.
 """
 from lxml import etree
 
@@ -56,3 +60,14 @@ def test_project_model_tree_defaults_to_none_and_can_be_set():
     tree = etree.ElementTree(etree.fromstring("<Project/>"))
     project2 = ProjectModel(pages=[], tree=tree)
     assert project2.tree is tree
+
+
+def test_detail_node_inner_sourceline_defaults_to_none():
+    detail = DetailNode(identity="x", attrib={}, sourceline=10)
+    assert detail.inner_sourceline is None
+
+
+def test_detail_node_inner_sourceline_can_be_set():
+    detail = DetailNode(identity="x", attrib={}, sourceline=10, inner_sourceline=25)
+    assert detail.sourceline == 10
+    assert detail.inner_sourceline == 25

@@ -225,3 +225,53 @@ def test_detail_item_carries_model_node(qtbot):
     node = detail_item.data(0, MODEL_NODE_ROLE)
     assert node.table_name == "pr.attachment"
     assert node.attrib.get("caption") == "Sub-item"
+
+
+def test_column_item_carries_model_node(qtbot):
+    tree = make_populated_tree(qtbot)
+    column_item = tree.topLevelItem(0).child(0).child(0)
+    node = column_item.data(0, MODEL_NODE_ROLE)
+    assert node.field_name == "tag"
+
+
+def test_event_item_carries_model_node(qtbot):
+    tree = make_populated_tree(qtbot)
+    event_item = tree.topLevelItem(0).child(2)
+    node = event_item.data(0, MODEL_NODE_ROLE)
+    assert node.tag_name == "OnPreparePage"
+    assert node.side == "S"
+
+
+def test_selection_changed_callback_invoked_with_node_and_kind(qtbot):
+    calls = []
+    tree = ProjectTreePanel(on_selection_changed=lambda node, kind: calls.append((node, kind)))
+    qtbot.addWidget(tree)
+    tree.populate_from_project(build_sample_project())
+
+    page_item = tree.topLevelItem(0)
+    tree.setCurrentItem(page_item)
+
+    assert len(calls) == 1
+    node, kind = calls[0]
+    assert kind == "page"
+    assert node.table_name == "pr.equipment"
+
+
+def test_selection_changed_callback_invoked_with_none_when_cleared(qtbot):
+    calls = []
+    tree = ProjectTreePanel(on_selection_changed=lambda node, kind: calls.append((node, kind)))
+    qtbot.addWidget(tree)
+    tree.populate_from_project(build_sample_project())
+
+    tree.setCurrentItem(tree.topLevelItem(0))
+    tree.setCurrentItem(None)
+
+    assert calls[-1] == (None, None)
+
+
+def test_selection_changed_callback_defaults_to_noop(qtbot):
+    tree = ProjectTreePanel()
+    qtbot.addWidget(tree)
+    tree.populate_from_project(build_sample_project())
+    # Must not raise even though no callback was supplied.
+    tree.setCurrentItem(tree.topLevelItem(0))

@@ -132,3 +132,55 @@ def test_real_file_nodes_have_identity_and_sourceline(sample_path):
             for event in node.events:
                 assert event.identity
                 assert event.sourceline is not None
+
+
+from pgtp_editor.ui.properties_panel import _count_functions
+
+
+def _iter_all_events(project):
+    for page in project.pages:
+        for node in _iter_all_nodes(page):
+            yield from node.events
+
+
+def test_real_on_edit_form_loaded_bodies_function_counts():
+    """Grounds _count_functions directly against real OnEditFormLoaded
+    bodies in dev_Ferrara.pgtp: a 3561-character body is expected to
+    yield 14 (5 named functions + ~9 anonymous callbacks) and a
+    3572-character body is expected to yield 12, matching the design
+    spec's own grounding pass (2026-07-12-pgtp-editor-properties-panel-
+    design.md, §3.3)."""
+    sample_path = SAMPLE_DIR / "dev_Ferrara.pgtp"
+    _require_sample(sample_path)
+    project = load_project(sample_path)
+
+    edit_form_loaded_bodies = [
+        event.text
+        for event in _iter_all_events(project)
+        if event.tag_name == "OnEditFormLoaded"
+    ]
+    assert edit_form_loaded_bodies, "expected at least one OnEditFormLoaded body in dev_Ferrara.pgtp"
+
+    body_3561 = next((t for t in edit_form_loaded_bodies if len(t) == 3561), None)
+    body_3572 = next((t for t in edit_form_loaded_bodies if len(t) == 3572), None)
+    assert body_3561 is not None, "expected a 3561-character OnEditFormLoaded body"
+    assert body_3572 is not None, "expected a 3572-character OnEditFormLoaded body"
+    assert _count_functions(body_3561) == 14
+    assert _count_functions(body_3572) == 12
+
+
+def test_real_on_calculate_fields_body_has_zero_functions():
+    """A real OnCalculateFields body in dev_Ferrara.pgtp is a bare PHP
+    conditional with no function declarations at all -- "Functions: 0"
+    is the correct, expected result, not an edge case to special-case
+    away (design spec §3.3)."""
+    sample_path = SAMPLE_DIR / "dev_Ferrara.pgtp"
+    _require_sample(sample_path)
+    project = load_project(sample_path)
+
+    zero_function_bodies = [
+        event.text
+        for event in _iter_all_events(project)
+        if event.tag_name == "OnCalculateFields" and _count_functions(event.text) == 0
+    ]
+    assert zero_function_bodies, "expected at least one zero-function OnCalculateFields body"
