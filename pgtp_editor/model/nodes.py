@@ -7,6 +7,10 @@ Nothing here touches lxml directly — that's the parser's job.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from lxml import etree
 
 # Authoritative list of client-side event handler tag names, sourced from
 # the phpgen GUI's own event-type list (see project memory:
@@ -43,6 +47,7 @@ class ColumnNode:
     identity: str
     attrib: dict
     sourceline: int | None = None
+    element: "etree._Element | None" = None
 
     @property
     def field_name(self) -> str | None:
@@ -56,6 +61,7 @@ class EventNode:
     side: str
     text: str
     sourceline: int | None = None
+    element: "etree._Element | None" = None
 
 
 @dataclass
@@ -63,6 +69,8 @@ class DetailNode:
     identity: str
     attrib: dict
     sourceline: int | None = None
+    element: "etree._Element | None" = None
+    inner_page_element: "etree._Element | None" = None
     details: list["DetailNode"] = field(default_factory=list)
     columns: list[ColumnNode] = field(default_factory=list)
     events: list[EventNode] = field(default_factory=list)
@@ -77,6 +85,7 @@ class PageNode:
     identity: str
     attrib: dict
     sourceline: int | None = None
+    element: "etree._Element | None" = None
     details: list[DetailNode] = field(default_factory=list)
     columns: list[ColumnNode] = field(default_factory=list)
     events: list[EventNode] = field(default_factory=list)
@@ -93,3 +102,4 @@ class PageNode:
 @dataclass
 class ProjectModel:
     pages: list[PageNode] = field(default_factory=list)
+    tree: "etree._ElementTree | None" = None
