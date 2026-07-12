@@ -248,6 +248,10 @@ def test_dialog_table_cells_show_path_attribute_value_label(qtbot, tmp_path):
         model, "Project/Page", "viewAbilityMode", ["3"], labels={"3": "Modal window"},
     )
     dialog = _dialog_with_model(qtbot, model, tmp_path)
+    # This row already has a label, and the "Show only unlabeled" checkbox
+    # (added in Task 6) defaults to checked — uncheck it so the labeled
+    # row stays visible for this cell-content assertion.
+    dialog.unlabeled_only_checkbox.setChecked(False)
 
     assert dialog.table.item(0, PATH_COLUMN).text() == "Project/Page"
     assert dialog.table.item(0, ATTRIBUTE_COLUMN).text() == "viewAbilityMode"
@@ -273,3 +277,59 @@ def test_dialog_only_label_column_is_editable(qtbot, tmp_path):
     assert not bool(dialog.table.item(0, ATTRIBUTE_COLUMN).flags() & Qt.ItemFlag.ItemIsEditable)
     assert not bool(dialog.table.item(0, VALUE_COLUMN).flags() & Qt.ItemFlag.ItemIsEditable)
     assert bool(dialog.table.item(0, LABEL_COLUMN).flags() & Qt.ItemFlag.ItemIsEditable)
+
+
+def test_dialog_unlabeled_only_checkbox_defaults_checked(qtbot, tmp_path):
+    model = Model()
+    dialog = _dialog_with_model(qtbot, model, tmp_path)
+
+    assert dialog.unlabeled_only_checkbox.isChecked() is True
+
+
+def test_dialog_default_view_hides_already_labeled_rows(qtbot, tmp_path):
+    model = Model()
+    _seed_enum_attribute(
+        model, "Project/Page", "viewAbilityMode", ["1", "2"], labels={"1": "One"},
+    )
+    dialog = _dialog_with_model(qtbot, model, tmp_path)
+
+    assert dialog.table.rowCount() == 1
+    assert dialog.table.item(0, VALUE_COLUMN).text() == "2"
+
+
+def test_dialog_unchecking_unlabeled_only_reveals_labeled_rows(qtbot, tmp_path):
+    model = Model()
+    _seed_enum_attribute(
+        model, "Project/Page", "viewAbilityMode", ["1", "2"], labels={"1": "One"},
+    )
+    dialog = _dialog_with_model(qtbot, model, tmp_path)
+
+    dialog.unlabeled_only_checkbox.setChecked(False)
+
+    assert dialog.table.rowCount() == 2
+
+
+def test_dialog_text_filter_narrows_visible_rows(qtbot, tmp_path):
+    model = Model()
+    _seed_enum_attribute(model, "Project/AbilityMode", "x", ["1"])
+    _seed_enum_attribute(model, "Project/Other", "y", ["2"])
+    dialog = _dialog_with_model(qtbot, model, tmp_path)
+    dialog.unlabeled_only_checkbox.setChecked(False)
+
+    dialog.filter_box.setText("AbilityMode")
+
+    assert dialog.table.rowCount() == 1
+    assert dialog.table.item(0, PATH_COLUMN).text() == "Project/AbilityMode"
+
+
+def test_dialog_clearing_text_filter_restores_full_view(qtbot, tmp_path):
+    model = Model()
+    _seed_enum_attribute(model, "Project/AbilityMode", "x", ["1"])
+    _seed_enum_attribute(model, "Project/Other", "y", ["2"])
+    dialog = _dialog_with_model(qtbot, model, tmp_path)
+    dialog.unlabeled_only_checkbox.setChecked(False)
+
+    dialog.filter_box.setText("AbilityMode")
+    dialog.filter_box.setText("")
+
+    assert dialog.table.rowCount() == 2

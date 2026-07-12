@@ -60,7 +60,11 @@ def _apply_filters(rows, text_filter, unlabeled_only):
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
+    QCheckBox,
     QDialog,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -80,6 +84,20 @@ class AnnotateSchemaValuesDialog(QDialog):
         self._populating = False
         self._model = None
         self._model_path = None
+        self._all_rows = []
+
+        self.filter_box = QLineEdit()
+        self.filter_box.setPlaceholderText("Filter by element path or attribute...")
+        self.filter_box.textChanged.connect(self._refresh_visible_rows)
+
+        self.unlabeled_only_checkbox = QCheckBox("Show only unlabeled")
+        self.unlabeled_only_checkbox.setChecked(True)
+        self.unlabeled_only_checkbox.toggled.connect(self._refresh_visible_rows)
+
+        filter_row = QHBoxLayout()
+        filter_row.addWidget(QLabel("Filter:"))
+        filter_row.addWidget(self.filter_box)
+        filter_row.addWidget(self.unlabeled_only_checkbox)
 
         self.table = QTableWidget(0, 4)
         self.table.setHorizontalHeaderLabels(_COLUMN_HEADERS)
@@ -87,6 +105,7 @@ class AnnotateSchemaValuesDialog(QDialog):
         self.table.itemChanged.connect(self._on_item_changed)
 
         layout = QVBoxLayout(self)
+        layout.addLayout(filter_row)
         layout.addWidget(self.table)
 
     @classmethod
@@ -104,7 +123,16 @@ class AnnotateSchemaValuesDialog(QDialog):
     def _load_model_and_populate(self, model, model_path):
         self._model = model
         self._model_path = model_path
-        self._populate_table(_build_rows(model))
+        self._all_rows = _build_rows(model)
+        self._refresh_visible_rows()
+
+    def _refresh_visible_rows(self):
+        visible_rows = _apply_filters(
+            self._all_rows,
+            text_filter=self.filter_box.text(),
+            unlabeled_only=self.unlabeled_only_checkbox.isChecked(),
+        )
+        self._populate_table(visible_rows)
 
     def _populate_table(self, rows):
         self._populating = True
