@@ -82,10 +82,25 @@ class MainWindow(QMainWindow):
         self.project_tree.populate_from_project(project)
         self._current_project = project
         self._current_project_path = path
-        with open(path, "r", encoding="utf-8") as f:
-            raw_text = f.read()
-        self.center_stage.xml_editor.setPlainText(raw_text)
+        raw_text = self._read_raw_text(path)
+        if raw_text is not None:
+            self.center_stage.xml_editor.setPlainText(raw_text)
         self.statusBar().showMessage(f"Opened: {path}", 5000)
+
+    @staticmethod
+    def _read_raw_text(path) -> "str | None":
+        """Read the file at `path` as text, or None on OSError.
+
+        Guards against the TOCTOU race where the file is deleted or becomes
+        unreadable between an earlier successful step (a parse attempt or
+        `load_project` succeeding) and this raw re-read -- a real, if rare,
+        scenario (e.g. the file vanishing mid-open, or a permissions error).
+        """
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                return f.read()
+        except OSError:
+            return None
 
     def _handle_parse_failure(self, path, exc: PgtpParseError) -> None:
         QMessageBox.critical(
@@ -93,10 +108,8 @@ class MainWindow(QMainWindow):
             "Failed to Open Project",
             f"Could not open '{path}':\n\n{exc}",
         )
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                raw_text = f.read()
-        except OSError:
+        raw_text = self._read_raw_text(path)
+        if raw_text is None:
             # The file itself is unreadable (e.g. deleted between the
             # earlier parse attempt and this read, or a permissions error) --
             # nothing to show in the fallback view in that case; the dialog

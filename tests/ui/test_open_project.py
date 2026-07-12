@@ -233,6 +233,27 @@ def test_parse_failure_still_shows_dialog(qtbot, tmp_path):
     mock_critical.assert_called_once()
 
 
+def test_open_project_file_succeeds_even_when_raw_reread_hits_oserror(qtbot, tmp_path):
+    """The success path re-reads the file from disk to populate the raw XML
+    editor after `load_project` already succeeded -- a TOCTOU race (the file
+    could vanish or become unreadable between the two reads). That second
+    read failing must not crash the otherwise-successful open: the project
+    tree/model still populate normally, only the raw-text editor population
+    is skipped."""
+    window = MainWindow()
+    qtbot.addWidget(window)
+    path = tmp_path / "valid.pgtp"
+    path.write_text(VALID_PGTP, encoding="utf-8")
+
+    with patch("pgtp_editor.ui.main_window.open", side_effect=OSError("boom")):
+        window.open_project_file(str(path))
+
+    assert window.project_tree.topLevelItemCount() == 1
+    assert window._current_project is not None
+    assert window._current_project_path == str(path)
+    assert window.center_stage.xml_editor.toPlainText() == ""
+
+
 def test_parse_failure_does_not_crash_when_file_unreadable_after_initial_parse_attempt(qtbot, tmp_path):
     window = MainWindow()
     qtbot.addWidget(window)

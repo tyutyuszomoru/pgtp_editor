@@ -189,6 +189,17 @@ class XmlEditor(QPlainTextEdit):
         self.updateRequest.connect(self._update_gutter_on_scroll)
         self.textChanged.connect(self._rescan_structure)
         self.cursorPositionChanged.connect(self._highlight_current_line)
+        # Positions of '>' characters this editor itself auto-inserted as
+        # the closing half of its auto-close-'<' feature (see keyPressEvent's
+        # `event.text() == "<"` branch). Tracked as QTextCursors -- rather
+        # than raw int offsets -- specifically so Qt keeps each position in
+        # sync automatically as the document is edited elsewhere; a raw
+        # offset would go stale after any earlier edit shifts the text.
+        # Consulted by _type_through_auto_closed_greater_than so that typing
+        # '>' only "types through" a '>' this editor itself just inserted,
+        # never an arbitrary pre-existing '>' the cursor happens to sit
+        # before (see the "<Page>" pre-existing-'>' bug this guards against).
+        self._auto_closed_greater_than_cursors: list[QTextCursor] = []
         self._update_gutter_width(0)
         self._rescan_structure()
         self._highlight_current_line()
@@ -293,6 +304,14 @@ class XmlEditor(QPlainTextEdit):
         if event.text() == "<":
             cursor = self.textCursor()
             cursor.insertText("<>")
+            # The just-inserted '>' sits one position to the left of the
+            # cursor's current (post-insert) position. Track it with a
+            # QTextCursor so its position self-adjusts if the document is
+            # edited elsewhere before the user types the matching '>'.
+            greater_than_position = cursor.position() - 1
+            tracked = QTextCursor(self.document())
+            tracked.setPosition(greater_than_position)
+            self._auto_closed_greater_than_cursors.append(tracked)
             cursor.movePosition(QTextCursor.MoveOperation.Left)
             self.setTextCursor(cursor)
             return
@@ -308,8 +327,19 @@ class XmlEditor(QPlainTextEdit):
                 return
 
         if event.text() == ">":
-            if not self._type_through_auto_closed_greater_than():
+            typed_through = self._type_through_auto_closed_greater_than()
+            if not typed_through:
                 super().keyPressEvent(event)
+                cursor = self.textCursor()
+                if self._character_after_cursor(cursor) == ">":
+                    # We just inserted a '>' literally, directly in front of
+                    # some other, unrelated pre-existing '>' (e.g. fixing a
+                    # typo in already-loaded/pasted XML -- the very scenario
+                    # this fix targets). That leftover '>' is not one this
+                    # editor auto-inserted, so this is not a fresh "opening
+                    # tag just got completed" event; don't spuriously
+                    # auto-insert a matching close tag.
+                    return
             self._maybe_insert_closing_tag()
             return
 
@@ -333,11 +363,38 @@ class XmlEditor(QPlainTextEdit):
 
     def _type_through_auto_closed_greater_than(self) -> bool:
         cursor = self.textCursor()
-        if self._character_after_cursor(cursor) == ">":
-            cursor.movePosition(QTextCursor.MoveOperation.Right)
-            self.setTextCursor(cursor)
-            return True
-        return False
+        position = cursor.position()
+        if self._character_after_cursor(cursor) != ">":
+            return False
+        if not self._consume_tracked_auto_closed_greater_than_at(position):
+            # The next character is a '>', but it's not one this editor
+            # itself auto-inserted (e.g. pre-existing/pasted text) -- so the
+            # typed '>' must be inserted literally, not typed through.
+            return False
+        cursor.movePosition(QTextCursor.MoveOperation.Right)
+        self.setTextCursor(cursor)
+        return True
+
+    def _consume_tracked_auto_closed_greater_than_at(self, position: int) -> bool:
+        """If a tracked auto-inserted '>' sits at `position`, remove it from
+        tracking and return True. Otherwise return False. Also opportunistically
+        drops any tracked cursors that no longer point at a '>' (e.g. the
+        auto-inserted '>' was deleted by other edits), so the tracking list
+        doesn't grow stale entries forever."""
+        found = False
+        still_tracked = []
+        for tracked in self._auto_closed_greater_than_cursors:
+            if tracked.isNull():
+                continue
+            tracked_position = tracked.position()
+            if self._character_after_cursor(tracked) != ">":
+                continue  # stale: no longer a '>' at this tracked position
+            if not found and tracked_position == position:
+                found = True
+                continue  # consume this one -- do not keep tracking it
+            still_tracked.append(tracked)
+        self._auto_closed_greater_than_cursors = still_tracked
+        return found
 
     def _maybe_insert_closing_tag(self) -> None:
         cursor = self.textCursor()

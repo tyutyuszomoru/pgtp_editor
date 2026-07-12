@@ -371,6 +371,54 @@ def test_self_closing_tag_does_not_get_a_matching_close_tag(qtbot):
     assert editor.toPlainText() == "<Page/>"
 
 
+def test_typing_greater_than_types_through_only_the_auto_inserted_one(qtbot):
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    editor.setFocus()
+
+    qtbot.keyClicks(editor, "<Tag")
+    qtbot.keyClick(editor, Qt.Key.Key_Greater)
+
+    # The auto-inserted '>' from the "<" auto-close is typed through (no
+    # duplicate '>', cursor moves past it); _maybe_insert_closing_tag then
+    # fires as usual, appending the matching close tag.
+    assert editor.toPlainText() == "<Tag></Tag>"
+    assert editor.textCursor().position() == len("<Tag>")
+
+
+def test_typing_greater_than_before_preexisting_greater_than_inserts_literally(qtbot):
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    editor.setFocus()
+
+    editor.setPlainText("<Page>")
+    cursor = editor.textCursor()
+    cursor.setPosition(len("<Page"))  # right before the real, pre-existing '>'
+    editor.setTextCursor(cursor)
+
+    qtbot.keyClick(editor, Qt.Key.Key_Greater)
+
+    # This '>' was never auto-inserted by this editor, so typing '>' here
+    # must insert literally rather than being swallowed as "type through" --
+    # NOT "<Page></Page>" (the bug this test guards against).
+    assert editor.toPlainText() == "<Page>>"
+
+
+def test_deleting_auto_closed_greater_than_then_retyping_it_still_auto_closes(qtbot):
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    editor.setFocus()
+
+    qtbot.keyClicks(editor, "<Tag")
+    qtbot.keyClick(editor, Qt.Key.Key_Delete)  # deletes the auto-inserted '>'
+    qtbot.keyClicks(editor, ">")  # user retypes '>' manually, nothing follows
+
+    # Even though this '>' wasn't "typed through" (there was nothing after
+    # the cursor to type through), it's still the '>' that freshly completes
+    # this opening tag, so the matching close tag must still be auto-inserted.
+    assert editor.toPlainText() == "<Tag></Tag>"
+
+
 def test_highlight_error_line_scrolls_and_highlights(qtbot):
     editor = XmlEditor()
     qtbot.addWidget(editor)
