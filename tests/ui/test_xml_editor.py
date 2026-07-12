@@ -231,3 +231,40 @@ def test_set_line_wrap_enabled_false_reverts_to_no_wrap(qtbot):
     editor.set_line_wrap_enabled(True)
     editor.set_line_wrap_enabled(False)
     assert editor.lineWrapMode() == QPlainTextEdit.LineWrapMode.NoWrap
+
+
+def test_current_line_highlight_is_single_extra_selection(qtbot):
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    editor.setPlainText("line one\nline two\nline three")
+
+    cursor = editor.textCursor()
+    cursor.setPosition(len("line one") + 1)  # move onto "line two"
+    editor.setTextCursor(cursor)
+
+    assert len(editor.extraSelections()) == 1
+
+
+def test_current_line_highlight_moves_with_cursor(qtbot):
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    editor.setPlainText("line one\nline two\nline three")
+
+    cursor = editor.textCursor()
+    cursor.setPosition(0)
+    editor.setTextCursor(cursor)
+    # Hold a reference to the extraSelections() list before indexing into it:
+    # PySide6 frees the underlying C++ ExtraSelection/QTextCursor objects
+    # once the temporary list itself is garbage-collected, which can happen
+    # before a chained `.extraSelections()[0].cursor...` expression finishes
+    # reading from it.
+    first_selections = editor.extraSelections()
+    first_selection_block = first_selections[0].cursor.blockNumber()
+
+    cursor.setPosition(len("line one") + 1)
+    editor.setTextCursor(cursor)
+    second_selections = editor.extraSelections()
+    second_selection_block = second_selections[0].cursor.blockNumber()
+
+    assert first_selection_block == 0
+    assert second_selection_block == 1

@@ -12,8 +12,8 @@ from __future__ import annotations
 import re
 
 from PySide6.QtCore import QPoint, QRect, QSize, Qt
-from PySide6.QtGui import QColor, QPainter, QSyntaxHighlighter, QTextCharFormat
-from PySide6.QtWidgets import QPlainTextEdit, QWidget
+from PySide6.QtGui import QColor, QPainter, QSyntaxHighlighter, QTextCharFormat, QTextFormat
+from PySide6.QtWidgets import QPlainTextEdit, QTextEdit, QWidget
 
 from pgtp_editor.ui import xml_structure
 
@@ -165,12 +165,15 @@ class XmlEditor(QPlainTextEdit):
         self._highlighter = XmlSyntaxHighlighter(self.document())
         self._gutter = _EditorGutter(self)
         self._fold_state: dict[int, bool] = {}
+        self._current_line_color = QColor("#2d2d30")
         self.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
         self.blockCountChanged.connect(self._update_gutter_width)
         self.updateRequest.connect(self._update_gutter_on_scroll)
         self.textChanged.connect(self._rescan_structure)
+        self.cursorPositionChanged.connect(self._highlight_current_line)
         self._update_gutter_width(0)
         self._rescan_structure()
+        self._highlight_current_line()
 
     def setPlainText(self, text: str) -> None:
         super().setPlainText(text)
@@ -235,6 +238,14 @@ class XmlEditor(QPlainTextEdit):
             if other_first <= line_number <= other_last:
                 return True
         return False
+
+    def _highlight_current_line(self) -> None:
+        selection = QTextEdit.ExtraSelection()
+        selection.format.setBackground(self._current_line_color)
+        selection.format.setProperty(QTextFormat.Property.FullWidthSelection, True)
+        selection.cursor = self.textCursor()
+        selection.cursor.clearSelection()
+        self.setExtraSelections([selection])
 
     def set_line_wrap_enabled(self, enabled: bool) -> None:
         self.setLineWrapMode(
