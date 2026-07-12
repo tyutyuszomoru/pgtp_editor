@@ -1,0 +1,15 @@
+# Runtime dependencies for PGTP Editor.
+#
+# Install into a virtualenv with:
+#   python -m venv .venv
+#   .venv\Scripts\activate
+#   pip install -r requirements.txt
+#
+# Mirrors [project.dependencies] in pyproject.toml - keep both in sync if
+# either changes. Prefer `pip install -e .` for actual development (see
+# requirements-dev.txt); this file exists for a plain venv/pip workflow
+# and for pinning exact versions used by a built release.
+
+PySide6>=6.6
+lxml>=5.0
+defusedxml>=0.7

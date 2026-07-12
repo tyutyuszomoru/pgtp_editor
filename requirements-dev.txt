@@ -1,0 +1,17 @@
+# Development dependencies for PGTP Editor: everything in requirements.txt,
+# plus testing and packaging/build tools.
+#
+# Install into a virtualenv with:
+#   python -m venv .venv
+#   .venv\Scripts\activate
+#   pip install -r requirements-dev.txt
+#
+# Mirrors [project.optional-dependencies].dev in pyproject.toml (pytest,
+# pytest-qt) plus PyInstaller, needed by optimized_build.py to produce the
+# Windows release bundle - keep all three in sync if versions change.
+
+-r requirements.txt
+
+pytest>=8.0
+pytest-qt>=4.4
+PyInstaller>=6.10
