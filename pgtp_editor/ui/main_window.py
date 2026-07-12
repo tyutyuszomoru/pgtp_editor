@@ -226,10 +226,15 @@ class MainWindow(QMainWindow):
         audit_action.setChecked(True)
         audit_action.toggled.connect(self.audit_dock.setVisible)
 
-        raw_xml_action = menu.addAction("Raw XML Panel")
-        raw_xml_action.setCheckable(True)
-        raw_xml_action.setChecked(False)
-        raw_xml_action.toggled.connect(self.center_stage.set_raw_xml_tab_visible)
+        self._raw_xml_panel_action = menu.addAction("Raw XML Panel")
+        self._raw_xml_panel_action.setCheckable(True)
+        self._raw_xml_panel_action.setChecked(False)
+        self._raw_xml_panel_action.toggled.connect(self.center_stage.set_raw_xml_tab_visible)
+
+        line_wrap_action = menu.addAction("Wrap Raw XML Lines")
+        line_wrap_action.setCheckable(True)
+        line_wrap_action.setChecked(False)
+        line_wrap_action.toggled.connect(self.center_stage.xml_editor.set_line_wrap_enabled)
 
         menu.addSeparator()
         self._add_stub_action(menu, "Expand All")

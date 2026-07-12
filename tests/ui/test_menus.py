@@ -66,7 +66,8 @@ def test_view_menu_contents(qtbot):
     qtbot.addWidget(window)
     view_menu = find_top_menu(window, "View")
     assert action_labels(view_menu) == [
-        "Project Tree", "Properties Panel", "Audit/Problems Panel", "Raw XML Panel", "―",
+        "Project Tree", "Properties Panel", "Audit/Problems Panel", "Raw XML Panel",
+        "Wrap Raw XML Lines", "―",
         "Expand All", "Collapse All",
     ]
 
@@ -176,3 +177,38 @@ def test_all_top_level_menus_present_in_order(qtbot):
     qtbot.addWidget(window)
     titles = all_top_level_menu_titles(window)
     assert titles == ["File", "Edit", "View", "Diff / Merge", "Tools", "Generation", "Help"]
+
+
+def test_raw_xml_panel_action_is_accessible_as_attribute(qtbot):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    view_menu = find_top_menu(window, "View")
+    assert window._raw_xml_panel_action is find_action(view_menu, "Raw XML Panel")
+
+
+def test_view_menu_contains_wrap_raw_xml_lines_action(qtbot):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    view_menu = find_top_menu(window, "View")
+    assert action_labels(view_menu) == [
+        "Project Tree", "Properties Panel", "Audit/Problems Panel", "Raw XML Panel",
+        "Wrap Raw XML Lines", "―",
+        "Expand All", "Collapse All",
+    ]
+
+
+def test_wrap_raw_xml_lines_action_default_unchecked(qtbot):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    view_menu = find_top_menu(window, "View")
+    assert find_action(view_menu, "Wrap Raw XML Lines").isChecked() is False
+
+
+def test_toggling_wrap_raw_xml_lines_changes_editor_line_wrap_mode(qtbot):
+    from PySide6.QtWidgets import QPlainTextEdit
+
+    window = MainWindow()
+    qtbot.addWidget(window)
+    view_menu = find_top_menu(window, "View")
+    find_action(view_menu, "Wrap Raw XML Lines").trigger()
+    assert window.center_stage.xml_editor.lineWrapMode() == QPlainTextEdit.LineWrapMode.WidgetWidth
