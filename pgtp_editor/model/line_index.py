@@ -18,6 +18,7 @@ class _Entry:
     depth: int
     start: int            # 1-based start line (node.sourceline)
     end: int | None       # 1-based inclusive end line; filled in a second pass
+    cap_to_subtree: bool = False  # True for Columns (see _assign_end_lines)
 
 
 def _flatten(project: ProjectModel) -> list[_Entry]:
@@ -36,7 +37,9 @@ def _flatten(project: ProjectModel) -> list[_Entry]:
             entries.append(_Entry(detail, depth + 1, detail.sourceline, None))
             visit_container(detail, depth + 1)
         for column in getattr(node, "columns", []):
-            entries.append(_Entry(column, depth + 1, column.sourceline, None))
+            entries.append(
+                _Entry(column, depth + 1, column.sourceline, None, cap_to_subtree=True)
+            )
         for event in getattr(node, "events", []):
             entries.append(_Entry(event, depth + 1, event.sourceline, None))
 
@@ -55,11 +58,35 @@ def _flatten(project: ProjectModel) -> list[_Entry]:
     return entries
 
 
-def _assign_end_lines(entries: list[_Entry], total_lines: int | None = None) -> None:
+def _subtree_last_line(node) -> int | None:
+    """The greatest source line among `node`'s retained lxml element and all
+    its descendant elements, or None when no element/line info is available
+    (e.g. a hand-built node in a unit test). Used to bound a Column to the
+    real extent of its own sub-elements (<ViewProperties>, <Format>, ...)."""
+    element = getattr(node, "element", None)
+    if element is None:
+        return None
+    lines = [el.sourceline for el in element.iter() if el.sourceline is not None]
+    return max(lines) if lines else None
+
+
+def _assign_end_lines(entries: list[_Entry]) -> None:
     """Each entry's end line is one before the start of the next entry (in
     document order) at the SAME OR SHALLOWER depth — i.e. the next entry that
-    is not a descendant of this one. The last such node runs to the end of
-    the document (or, when unknown, to a large sentinel)."""
+    is not a descendant of this one. The last such node runs to a large
+    sentinel (the model does not track the document's true final line).
+
+    That depth rule alone stretches the LAST child of a container all the way
+    to the container's next same-or-shallower sibling, so a Column that is the
+    last node before an outer boundary would absorb its parent's trailing
+    region (closing tags, blank lines) and, being deeper, win the deepest-first
+    lookup — a click on a Detail's `</Page></Detail>` region would wrongly
+    select that Detail's last Column. Columns are therefore capped to the last
+    source line of their own element subtree; those trailing lines then fall
+    back to the enclosing container, which still spans them. (Events are not
+    capped: their multi-line text body has no sub-elements, so a subtree cap
+    would collapse them to a single line. Containers keep the full span and act
+    as the safety net for capped children.)"""
     n = len(entries)
     for i, entry in enumerate(entries):
         end = None
@@ -68,7 +95,11 @@ def _assign_end_lines(entries: list[_Entry], total_lines: int | None = None) -> 
                 end = entries[j].start - 1
                 break
         if end is None:
-            end = total_lines if total_lines is not None else 10**9
+            end = 10**9
+        if entry.cap_to_subtree:
+            subtree_end = _subtree_last_line(entry.node)
+            if subtree_end is not None:
+                end = min(end, subtree_end)
         entry.end = end
 
 

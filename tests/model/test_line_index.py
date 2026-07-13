@@ -134,3 +134,60 @@ def test_event_node_resolved_at_its_line():
     page = PageNode(identity="p", attrib={"tableName": "p"}, sourceline=5, events=[event])
     project = ProjectModel(pages=[page])
     assert node_at_line(project, 8) is event
+
+
+# A Detail whose last (only) Column is self-closed, followed by a sibling
+# Detail. Line numbers (1-based):
+#   1 <?xml ...?>
+#   2 <Project>            5 <Page ...>          8 <Page tableName="a">
+#   3   <Presentation>     6  <Details>          9  <ColumnPresentations>
+#   4    <Pages>           7   <Detail cap="A">  10   <ColumnPresentation .../>
+#  11 </ColumnPresentations> 12 </Page> 13 </Detail>   <-- Detail A trailing region
+#  14   <Detail caption="B"> ... 20 </Detail> 21 </Details> 22 </Page> ...
+_TRAILING_REGION_XML = """\
+<?xml version="1.0" encoding="UTF-8"?>
+<Project>
+  <Presentation>
+    <Pages>
+      <Page fileName="p" tableName="p" caption="P">
+        <Details>
+          <Detail caption="A">
+            <Page tableName="a">
+              <ColumnPresentations>
+                <ColumnPresentation fieldName="c1"/>
+              </ColumnPresentations>
+            </Page>
+          </Detail>
+          <Detail caption="B">
+            <Page tableName="b">
+              <ColumnPresentations>
+                <ColumnPresentation fieldName="c2"/>
+              </ColumnPresentations>
+            </Page>
+          </Detail>
+        </Details>
+      </Page>
+    </Pages>
+  </Presentation>
+</Project>
+"""
+
+
+def test_click_in_detail_closing_region_returns_detail_not_last_column():
+    """Regression: a Column that is the last node before an outer boundary
+    must NOT absorb its parent Detail's trailing `</...>` region. Clicking a
+    closing-tag line of Detail A (lines 11-13, after its only Column on line
+    10) resolves to Detail A, while clicking the Column's own line (10) still
+    resolves to the Column."""
+    from pgtp_editor.model.parser import load_project_from_text
+
+    project = load_project_from_text(_TRAILING_REGION_XML)
+    detail_a = project.pages[0].details[0]
+    column_c1 = detail_a.columns[0]
+
+    # The Column's own open line still resolves to the Column.
+    assert node_at_line(project, 10) is column_c1
+    # Detail A's closing region (below the Column, above sibling Detail B on
+    # line 14) resolves to Detail A -- not to the Column.
+    for line in (11, 12, 13):
+        assert node_at_line(project, line) is detail_a, f"line {line}"
