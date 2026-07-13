@@ -214,6 +214,8 @@ def _reparse_menu_action(window):
 
 
 def test_reparse_action_exists_and_is_not_a_stub(qtbot):
+    from unittest.mock import patch
+
     from pgtp_editor.ui.main_window import MainWindow
 
     window = MainWindow()
@@ -221,7 +223,11 @@ def test_reparse_action_exists_and_is_not_a_stub(qtbot):
     action = _reparse_menu_action(window)
     assert action is not None
     # A stub action would set the "Not yet implemented" status message.
-    action.trigger()
+    # The editor is empty here, so reparse takes the failure path, which shows
+    # a modal QMessageBox.critical -- patch it, or the modal event loop blocks
+    # the headless test run forever.
+    with patch("pgtp_editor.ui.main_window.QMessageBox.critical"):
+        action.trigger()
     assert window.statusBar().currentMessage() != "Not yet implemented: Reparse Raw XML into Tree"
 
 
@@ -344,9 +350,12 @@ def test_reparse_realigns_click_sync_after_line_shift(qtbot):
     window._current_project = project
     window.project_tree.populate_from_project(project)
 
-    # Edit: prepend two blank comment lines so the <Page> shifts down by 2,
-    # then reparse so the model's sourcelines realign to the edited text.
-    shifted = "<!-- a -->\n<!-- b -->\n" + textwrap.dedent(_REPARSE_ONE_PAGE)
+    # Edit: insert two comment lines *after* the XML declaration so the <Page>
+    # shifts down by 2 while the document stays valid (comments before the
+    # <?xml?> declaration would make it malformed, so the reparse would fail
+    # and this test's realign intent would never actually be exercised).
+    one_page_lines = textwrap.dedent(_REPARSE_ONE_PAGE).split("\n")
+    shifted = one_page_lines[0] + "\n<!-- a -->\n<!-- b -->\n" + "\n".join(one_page_lines[1:])
     window.center_stage.xml_editor.setPlainText(shifted)
     window._reparse_raw_xml()
 
