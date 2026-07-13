@@ -84,3 +84,99 @@ def test_clearing_tree_selection_returns_properties_panel_to_empty_state(qtbot):
     window.project_tree.setCurrentItem(None)
 
     assert window.properties_panel.is_showing_empty_state() is True
+
+
+_CLICK_SYNC_PGTP = """\
+<?xml version="1.0" encoding="UTF-8"?>
+<Project>
+  <Presentation>
+    <Pages>
+      <Page fileName="equipment" tableName="pr.equipment" caption="Equipment">
+        <ColumnPresentations>
+          <ColumnPresentation fieldName="tag" caption="Tag"/>
+        </ColumnPresentations>
+        <Details>
+          <Detail caption="Sub-item">
+            <Page fileName="" tableName="pr.attachment" caption="Sub-item">
+              <ColumnPresentations>
+                <ColumnPresentation fieldName="cvalue" caption="Value"/>
+              </ColumnPresentations>
+            </Page>
+          </Detail>
+        </Details>
+      </Page>
+    </Pages>
+  </Presentation>
+</Project>
+"""
+
+
+def _load_click_sync_window(qtbot):
+    import textwrap
+
+    from pgtp_editor.model.parser import load_project_from_text
+    from pgtp_editor.ui.main_window import MainWindow
+
+    window = MainWindow()
+    qtbot.addWidget(window)
+    project = load_project_from_text(textwrap.dedent(_CLICK_SYNC_PGTP))
+    window._current_project = project
+    window.project_tree.populate_from_project(project)
+    return window, project
+
+
+def test_editor_click_selects_enclosing_node_and_updates_properties(qtbot):
+    window, project = _load_click_sync_window(qtbot)
+    detail = project.pages[0].details[0]
+
+    # A click on the outer <Detail> open line resolves to that Detail.
+    window._on_editor_line_clicked(detail.sourceline)
+
+    current = window.project_tree.currentItem()
+    from pgtp_editor.ui.project_tree import MODEL_NODE_ROLE
+
+    assert current is not None
+    assert current.data(0, MODEL_NODE_ROLE) is detail
+    # Tree->Properties fired automatically through existing wiring.
+    assert window.properties_panel.is_showing_empty_state() is False
+    assert window.properties_panel.header_text().startswith("Detail:")
+
+
+def test_editor_click_on_column_line_selects_column(qtbot):
+    window, project = _load_click_sync_window(qtbot)
+    column = project.pages[0].columns[0]
+    window._on_editor_line_clicked(column.sourceline)
+
+    from pgtp_editor.ui.project_tree import MODEL_NODE_ROLE
+
+    assert window.project_tree.currentItem().data(0, MODEL_NODE_ROLE) is column
+
+
+def test_editor_click_above_first_page_is_noop(qtbot):
+    window, project = _load_click_sync_window(qtbot)
+    window.project_tree.setCurrentItem(window.project_tree.topLevelItem(0))
+    before = window.project_tree.currentItem()
+
+    window._on_editor_line_clicked(1)  # line 1 is the <?xml ...?> header
+    assert window.project_tree.currentItem() is before
+
+
+def test_editor_click_with_no_current_project_is_noop(qtbot):
+    from pgtp_editor.ui.main_window import MainWindow
+
+    window = MainWindow()
+    qtbot.addWidget(window)
+    assert window._current_project is None
+    # Must not raise even with no project loaded.
+    window._on_editor_line_clicked(5)
+
+
+def test_line_clicked_signal_is_connected_to_handler(qtbot):
+    window, project = _load_click_sync_window(qtbot)
+    detail = project.pages[0].details[0]
+    # Emitting the editor's signal drives the same end-to-end selection.
+    window.center_stage.xml_editor.line_clicked.emit(detail.sourceline)
+
+    from pgtp_editor.ui.project_tree import MODEL_NODE_ROLE
+
+    assert window.project_tree.currentItem().data(0, MODEL_NODE_ROLE) is detail

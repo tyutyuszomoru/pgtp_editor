@@ -17,6 +17,7 @@ from pgtp_editor.diff.apply import apply_differences
 from pgtp_editor.diff.differ import compare_block, diff_project
 from pgtp_editor.diff.resolve import ResolutionError, resolve_path
 from pgtp_editor.model.encoding import read_pgtp_text
+from pgtp_editor.model.line_index import node_at_line
 from pgtp_editor.model.parser import PgtpParseError, _build_project_model, load_project
 from pgtp_editor.schema_learning.model import Model
 from pgtp_editor.schema_learning.parser import walk_document
@@ -65,6 +66,7 @@ class MainWindow(QMainWindow):
 
         self.center_stage = CenterStage()
         self.setCentralWidget(self.center_stage)
+        self.center_stage.xml_editor.line_clicked.connect(self._on_editor_line_clicked)
 
         self.properties_panel = PropertiesPanel(xml_editor=self.center_stage.xml_editor)
         self.properties_dock = QDockWidget("Properties", self)
@@ -84,6 +86,14 @@ class MainWindow(QMainWindow):
 
     def _on_tree_selection_changed(self, node, kind):
         self.properties_panel.show_node(node, kind)
+
+    def _on_editor_line_clicked(self, line: int) -> None:
+        if self._current_project is None:
+            return
+        node = node_at_line(self._current_project, line)
+        if node is None:
+            return  # click above first page / uncovered region: no-op
+        self.project_tree.select_node(node)  # fires tree -> Properties automatically
 
     def _open_project(self):
         path, _filter = QFileDialog.getOpenFileName(
