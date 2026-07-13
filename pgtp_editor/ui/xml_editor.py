@@ -360,6 +360,33 @@ class XmlEditor(QPlainTextEdit):
         cursor.setPosition(end, QTextCursor.MoveMode.KeepAnchor)
         self.setTextCursor(cursor)
 
+    def select_parent_block(self) -> None:
+        """Ctrl+Shift+A: select the block exactly one nesting level up from
+        the current position. Stateless -- always re-derived from the current
+        selection's START offset (never remembered state), so repeated presses
+        walk up one level each time and a manually adjusted selection Just
+        Works. Using selectionStart() (== the selected block's open_start
+        after a prior press) rather than the cursor's moving-end position
+        avoids landing exactly on close_end, which the containment rule
+        (open_start <= position < end) would resolve to the FOLLOWING sibling
+        instead of this block. No-op when there is no enclosing element, or
+        when the enclosing element is top-level (no parent)."""
+        text = self.toPlainText()
+        cursor = self.textCursor()
+        position = cursor.selectionStart() if cursor.hasSelection() else cursor.position()
+        spans = xml_structure.scan(text)
+        enclosing = xml_structure.enclosing_tag_span(text, position)
+        if enclosing is None:
+            return
+        parent = xml_structure.parent_tag_span(spans, enclosing)
+        if parent is None:
+            return
+        end = parent.close_end if parent.close_end is not None else parent.open_end
+        new_cursor = self.textCursor()
+        new_cursor.setPosition(parent.open_start)
+        new_cursor.setPosition(end, QTextCursor.MoveMode.KeepAnchor)
+        self.setTextCursor(new_cursor)
+
     def _highlight_current_line(self) -> None:
         selection = QTextEdit.ExtraSelection()
         selection.format.setBackground(self._current_line_color)

@@ -1,6 +1,7 @@
 from PySide6.QtWidgets import QApplication, QPlainTextEdit
 
 from pgtp_editor.ui.xml_editor import XmlEditor
+from pgtp_editor.ui.xml_structure import scan as _scan, enclosing_tag_span as _enc, parent_tag_span as _par
 
 
 def test_xml_editor_is_a_plain_text_edit(qtbot):
@@ -743,3 +744,77 @@ def test_copy_nested_folds_outer_block_yields_full_text(qtbot):
 
     editor.copy()
     assert QApplication.clipboard().text() == expected_block_text
+
+
+def test_select_parent_block_from_fresh_cursor_selects_one_level_up(qtbot):
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    text = "<Page>\n  <Detail>\n    <Column>x</Column>\n  </Detail>\n</Page>"
+    editor.setPlainText(text)
+    position = text.index("x")  # inside <Column> content
+    cursor = editor.textCursor()
+    cursor.setPosition(position)
+    editor.setTextCursor(cursor)
+
+    editor.select_parent_block()
+
+    # Independently compute the expected parent (Detail) span.
+    spans = _scan(text)
+    enclosing = _enc(text, position)  # Column
+    parent = _par(spans, enclosing)   # Detail
+    expected = text[parent.open_start:parent.close_end]
+    selected = editor.textCursor().selectedText().replace(" ", "\n")
+    assert selected == expected
+    assert expected == text[text.index("<Detail>"):text.index("</Detail>") + len("</Detail>")]
+
+
+def test_select_parent_block_repeated_presses_walk_up_levels(qtbot):
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    text = "<Page>\n  <Detail>\n    <Column>x</Column>\n  </Detail>\n</Page>"
+    editor.setPlainText(text)
+    cursor = editor.textCursor()
+    cursor.setPosition(text.index("x"))
+    editor.setTextCursor(cursor)
+
+    editor.select_parent_block()  # -> Detail
+    first = editor.textCursor().selectedText().replace(" ", "\n")
+    assert first == text[text.index("<Detail>"):text.index("</Detail>") + len("</Detail>")]
+
+    editor.select_parent_block()  # -> Page (the parent of Detail)
+    second = editor.textCursor().selectedText().replace(" ", "\n")
+    assert second == text  # whole <Page>...</Page>
+
+    editor.select_parent_block()  # Page is top-level: no-op, selection unchanged
+    third = editor.textCursor().selectedText().replace(" ", "\n")
+    assert third == second
+
+
+def test_select_parent_block_at_top_level_is_noop_not_select_all(qtbot):
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    text = "<Page>\n  <Detail>x</Detail>\n</Page>"
+    editor.setPlainText(text)
+    cursor = editor.textCursor()
+    cursor.setPosition(text.index("<Page>") + 1)  # inside the top-level Page's open tag
+    editor.setTextCursor(cursor)
+
+    editor.select_parent_block()
+
+    # Depth-0 element has no parent: no-op. Explicitly NOT "select all".
+    assert editor.textCursor().hasSelection() is False
+    assert editor.textCursor().selectedText() != text
+
+
+def test_select_parent_block_outside_any_element_is_noop(qtbot):
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    text = "  <Page></Page>  "
+    editor.setPlainText(text)
+    cursor = editor.textCursor()
+    cursor.setPosition(0)
+    editor.setTextCursor(cursor)
+
+    editor.select_parent_block()
+
+    assert editor.textCursor().hasSelection() is False
