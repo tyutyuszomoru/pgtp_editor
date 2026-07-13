@@ -560,3 +560,114 @@ def test_find_all_restart_does_not_leak_a_second_timer(qtbot):
     assert window._find_all_timer is not first_timer
     assert not first_timer.isActive()
     qtbot.waitUntil(lambda: not bar._find_all_running, timeout=5000)
+
+
+def test_manage_captions_requires_non_empty_raw_xml(qtbot):
+    from tests.ui._menu_helpers import find_action, find_top_menu
+
+    window = MainWindow()
+    qtbot.addWidget(window)
+    # No project / empty editor -> info message, no mode switch.
+    window.center_stage.xml_editor.setPlainText("")
+    find_action(find_top_menu(window, "Tools"), "Manage Captions...").trigger()
+    assert window.center_stage.isTabVisible(
+        window.center_stage.caption_management_tab_index
+    ) is False
+    assert "Manage Captions" in window.statusBar().currentMessage()
+
+
+def test_manage_captions_enters_mode_and_populates_grid(qtbot):
+    from tests.ui._menu_helpers import find_action, find_top_menu
+
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window.center_stage.xml_editor.setPlainText(
+        '<Root>\n  <Page caption="Home" fileName="home"/>\n</Root>'
+    )
+    find_action(find_top_menu(window, "Tools"), "Manage Captions...").trigger()
+
+    stage = window.center_stage
+    assert stage.isTabVisible(stage.raw_xml_tab_index) is False
+    assert stage.isTabVisible(stage.caption_management_tab_index) is True
+    assert stage.currentIndex() == stage.caption_management_tab_index
+    assert stage.caption_management_panel._model.rowCount() == 1
+    assert stage.caption_management_panel._model.index(0, 4).data() == "Home"
+
+
+def test_manage_captions_apply_writes_into_editor_buffer_and_reports_count(qtbot):
+    from PySide6.QtCore import Qt
+    from tests.ui._menu_helpers import find_action, find_top_menu
+
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window.center_stage.xml_editor.setPlainText(
+        '<Root>\n  <Page caption="Home" fileName="home"/>\n</Root>'
+    )
+    find_action(find_top_menu(window, "Tools"), "Manage Captions...").trigger()
+
+    panel = window.center_stage.caption_management_panel
+    panel._model.setData(panel._model.index(0, 4), "Homepage", Qt.ItemDataRole.EditRole)
+    panel.apply()
+
+    assert window.center_stage.xml_editor.toPlainText() == (
+        '<Root>\n  <Page caption="Homepage" fileName="home"/>\n</Root>'
+    )
+    assert "1" in window.statusBar().currentMessage()
+
+
+def test_manage_captions_apply_with_no_edits_reports_zero(qtbot):
+    from tests.ui._menu_helpers import find_action, find_top_menu
+
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window.center_stage.xml_editor.setPlainText(
+        '<Root>\n  <Page caption="Home"/>\n</Root>'
+    )
+    find_action(find_top_menu(window, "Tools"), "Manage Captions...").trigger()
+
+    panel = window.center_stage.caption_management_panel
+    panel.apply()
+    assert window.center_stage.xml_editor.toPlainText() == (
+        '<Root>\n  <Page caption="Home"/>\n</Root>'
+    )
+    assert "0" in window.statusBar().currentMessage()
+
+
+def test_manage_captions_close_restores_raw_xml(qtbot):
+    from tests.ui._menu_helpers import find_action, find_top_menu
+
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window.center_stage.xml_editor.setPlainText(
+        '<Root>\n  <Page caption="Home"/>\n</Root>'
+    )
+    find_action(find_top_menu(window, "Tools"), "Manage Captions...").trigger()
+    window.center_stage.caption_management_panel.close_panel()
+
+    stage = window.center_stage
+    assert stage.isTabVisible(stage.raw_xml_tab_index) is True
+    assert stage.isTabVisible(stage.caption_management_tab_index) is False
+    assert stage.currentIndex() == stage.raw_xml_tab_index
+
+
+def test_manage_captions_apply_then_reedit_uses_updated_snapshot(qtbot):
+    from PySide6.QtCore import Qt
+    from tests.ui._menu_helpers import find_action, find_top_menu
+
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window.center_stage.xml_editor.setPlainText(
+        '<Root>\n  <Page caption="Home"/>\n</Root>'
+    )
+    find_action(find_top_menu(window, "Tools"), "Manage Captions...").trigger()
+    panel = window.center_stage.caption_management_panel
+
+    panel._model.setData(panel._model.index(0, 4), "Homepage", Qt.ItemDataRole.EditRole)
+    panel.apply()  # editor now has caption="Homepage"; snapshot updated
+
+    # A second edit applies cleanly on the updated snapshot (line still valid).
+    panel._model.setData(panel._model.index(0, 4), "Landing", Qt.ItemDataRole.EditRole)
+    panel.apply()
+    assert window.center_stage.xml_editor.toPlainText() == (
+        '<Root>\n  <Page caption="Landing"/>\n</Root>'
+    )
