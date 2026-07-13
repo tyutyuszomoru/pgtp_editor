@@ -1,4 +1,4 @@
-from PySide6.QtWidgets import QPlainTextEdit
+from PySide6.QtWidgets import QApplication, QPlainTextEdit
 
 from pgtp_editor.ui.xml_editor import XmlEditor
 
@@ -607,3 +607,139 @@ def test_matching_tag_highlight_none_on_self_closing_tag(qtbot):
     editor.setTextCursor(cursor)
     # A self-closing tag has no separate counterpart to highlight.
     assert _matching_tag_selection_count(editor) == 0
+
+
+def test_select_enclosing_block_selects_full_element_including_delimiters(qtbot):
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    text = "<Page>\n  <Detail>\n    x\n  </Detail>\n</Page>"
+    editor.setPlainText(text)
+    cursor = editor.textCursor()
+    cursor.setPosition(text.index("x"))  # inside Detail's content
+    editor.setTextCursor(cursor)
+
+    editor.select_enclosing_block()
+
+    expected = text[text.index("<Detail>"):text.index("</Detail>") + len("</Detail>")]
+    selected = editor.textCursor().selectedText().replace(" ", "\n")
+    assert selected == expected
+
+
+def test_select_enclosing_block_on_self_closing_selects_whole_token(qtbot):
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    text = "<Page>\n  <Column/>\n</Page>"
+    editor.setPlainText(text)
+    cursor = editor.textCursor()
+    cursor.setPosition(text.index("<Column/>") + 2)
+    editor.setTextCursor(cursor)
+
+    editor.select_enclosing_block()
+
+    selected = editor.textCursor().selectedText().replace(" ", "\n")
+    assert selected == "<Column/>"
+
+
+def test_select_enclosing_block_in_intersibling_whitespace_selects_parent(qtbot):
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    text = "<Page>\n  <Detail></Detail>\n  <Detail></Detail>\n</Page>"
+    editor.setPlainText(text)
+    first_close_end = text.index("</Detail>") + len("</Detail>")
+    cursor = editor.textCursor()
+    cursor.setPosition(first_close_end + 1)  # in the "\n  " gap between siblings
+    editor.setTextCursor(cursor)
+
+    editor.select_enclosing_block()
+
+    expected = text  # the whole <Page>...</Page>
+    selected = editor.textCursor().selectedText().replace(" ", "\n")
+    assert selected == expected
+
+
+def test_select_enclosing_block_outside_any_element_is_noop(qtbot):
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    text = "  <Page></Page>  "
+    editor.setPlainText(text)
+    cursor = editor.textCursor()
+    cursor.setPosition(0)  # leading whitespace, outside every element
+    editor.setTextCursor(cursor)
+
+    editor.select_enclosing_block()
+
+    assert editor.textCursor().hasSelection() is False
+
+
+def test_copy_folded_block_yields_full_text(qtbot):
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    editor.setPlainText(
+        '<Page fileName="a">\n'
+        '  <Detail tableName="b">\n'
+        '    <Page fileName="c">\n'
+        '      <ColumnPresentation fieldName="x" caption="X"/>\n'
+        '      <ColumnPresentation fieldName="y" caption="Y"/>\n'
+        "    </Page>\n"
+        "  </Detail>\n"
+        "</Page>\n"
+    )
+    full_text = editor.toPlainText()
+    inner_page_open = full_text.index('<Page fileName="c"')
+    inner_close_end = full_text.index("</Page>", inner_page_open) + len("</Page>")
+    expected_block_text = full_text[inner_page_open:inner_close_end]
+
+    # Fold the inner <Page> region (hides its two ColumnPresentation lines).
+    block = editor.document().findBlock(inner_page_open)
+    editor._toggle_fold(block)
+
+    # Select the folded block via Ctrl+Shift+B mechanism (offset-based).
+    cursor = editor.textCursor()
+    cursor.setPosition(inner_page_open)
+    editor.setTextCursor(cursor)
+    editor.select_enclosing_block()
+
+    selected = editor.textCursor().selectedText().replace(" ", "\n")
+    assert selected == expected_block_text, (
+        "Selecting a folded block must yield its FULL underlying text, "
+        "not the visually-collapsed content."
+    )
+
+    editor.copy()
+    clipboard_text = QApplication.clipboard().text()  # system clipboard uses '\n'
+    assert clipboard_text == expected_block_text
+
+
+def test_copy_nested_folds_outer_block_yields_full_text(qtbot):
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    editor.setPlainText(
+        '<Page fileName="a">\n'
+        '  <Detail tableName="b">\n'
+        '    <Page fileName="c">\n'
+        '      <ColumnPresentation fieldName="x" caption="X"/>\n'
+        "    </Page>\n"
+        "  </Detail>\n"
+        "</Page>\n"
+    )
+    full_text = editor.toPlainText()
+    outer_page_open = full_text.index('<Page fileName="a"')
+    outer_close_end = full_text.rindex("</Page>") + len("</Page>")
+    expected_block_text = full_text[outer_page_open:outer_close_end]
+
+    # Independently collapse the inner <Page> then the <Detail> region.
+    inner_page_open = full_text.index('<Page fileName="c"')
+    editor._toggle_fold(editor.document().findBlock(inner_page_open))
+    detail_open = full_text.index("<Detail")
+    editor._toggle_fold(editor.document().findBlock(detail_open))
+
+    cursor = editor.textCursor()
+    cursor.setPosition(outer_page_open)
+    editor.setTextCursor(cursor)
+    editor.select_enclosing_block()
+
+    selected = editor.textCursor().selectedText().replace(" ", "\n")
+    assert selected == expected_block_text
+
+    editor.copy()
+    assert QApplication.clipboard().text() == expected_block_text

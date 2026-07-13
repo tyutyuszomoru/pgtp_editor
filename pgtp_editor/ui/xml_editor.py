@@ -341,6 +341,25 @@ class XmlEditor(QPlainTextEdit):
         self._matching_tag_selections = selections
         self._refresh_extra_selections()
 
+    def select_enclosing_block(self) -> None:
+        """Ctrl+Shift+B: select the innermost element containing the cursor,
+        from its opening '<' through its closing '>'. Selection is built
+        purely from TagSpan character offsets, so it captures the full
+        underlying text even when intervening blocks are folded (hidden via
+        setVisible(False)); QTextCursor addresses the document's character
+        stream, not what is currently painted. No-op when the cursor is
+        outside every element."""
+        text = self.toPlainText()
+        position = self.textCursor().position()
+        span = xml_structure.enclosing_tag_span(text, position)
+        if span is None:
+            return
+        end = span.close_end if span.close_end is not None else span.open_end
+        cursor = self.textCursor()
+        cursor.setPosition(span.open_start)
+        cursor.setPosition(end, QTextCursor.MoveMode.KeepAnchor)
+        self.setTextCursor(cursor)
+
     def _highlight_current_line(self) -> None:
         selection = QTextEdit.ExtraSelection()
         selection.format.setBackground(self._current_line_color)
