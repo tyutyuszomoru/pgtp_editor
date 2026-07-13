@@ -26,6 +26,9 @@ class FindReplaceBar(QWidget):
         super().__init__(parent)
         self._editor = editor
         self._on_find_all = on_find_all or (lambda term: None)
+        self._on_stop_find_all: Callable[[], None] = lambda: None
+        self._on_status: Callable[[str], None] = lambda msg: None
+        self._find_all_running = False
 
         self._find_field = QLineEdit()
         self._find_field.setPlaceholderText("Find")
@@ -64,6 +67,18 @@ class FindReplaceBar(QWidget):
 
     def set_on_find_all(self, callback: Callable[[str], None]) -> None:
         self._on_find_all = callback
+
+    def set_on_stop_find_all(self, callback: Callable[[], None]) -> None:
+        self._on_stop_find_all = callback
+
+    def set_on_status(self, callback: Callable[[str], None]) -> None:
+        self._on_status = callback
+
+    def set_find_all_running(self, running: bool) -> None:
+        """Driven by the Find All controller: flips the button between
+        'Find All' (idle) and 'Stop' (a streaming run is active)."""
+        self._find_all_running = running
+        self._find_all_button.setText("Stop" if running else "Find All")
 
     # -- show / hide --------------------------------------------------------
 
@@ -108,6 +123,9 @@ class FindReplaceBar(QWidget):
         self._select_span(index, len(term))
 
     def find_all(self) -> None:
+        if self._find_all_running:
+            self._on_stop_find_all()
+            return
         term = self._find_field.text()
         if not term:
             return
@@ -130,15 +148,15 @@ class FindReplaceBar(QWidget):
         replacement = self._replace_field.text()
         text = self._editor.toPlainText()
         matches = search.find_all_matches(text, term)
-        if not matches:
-            return
-        cursor = QTextCursor(self._editor.document())
-        cursor.beginEditBlock()
-        for match in reversed(matches):
-            cursor.setPosition(match.start)
-            cursor.setPosition(match.start + len(term), QTextCursor.MoveMode.KeepAnchor)
-            cursor.insertText(replacement)
-        cursor.endEditBlock()
+        if matches:
+            cursor = QTextCursor(self._editor.document())
+            cursor.beginEditBlock()
+            for match in reversed(matches):
+                cursor.setPosition(match.start)
+                cursor.setPosition(match.start + len(term), QTextCursor.MoveMode.KeepAnchor)
+                cursor.insertText(replacement)
+            cursor.endEditBlock()
+        self._on_status(f'{len(matches)} replacement(s) for "{term}"')
 
     def _select_span(self, index: int, length: int) -> None:
         cursor = self._editor.textCursor()

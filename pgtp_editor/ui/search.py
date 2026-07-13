@@ -47,25 +47,32 @@ def find_next(text: str, term: str, from_pos: int, *, wrap: bool = True) -> int 
     return None
 
 
-def find_all_matches(text: str, term: str) -> list[Match]:
-    """Return every non-overlapping case-insensitive match of `term`,
-    scanned left-to-right, advancing by len(term) after each hit (adjacent
-    matches all found; overlapping ones not). Empty `term` -> []."""
+def iter_matches(text: str, term: str):
+    """Yield every non-overlapping case-insensitive match of `term` lazily,
+    left-to-right, advancing by len(term) after each hit. Empty term/text
+    yields nothing. This is the single scan implementation; find_all_matches
+    is list(iter_matches(...))."""
     if not term:
-        return []
+        return
     lowered_text = text.lower()
     lowered_term = term.lower()
     term_len = len(term)
-    matches: list[Match] = []
     pos = 0
     while True:
         found = lowered_text.find(lowered_term, pos)
         if found == -1:
             break
+        # O(found) per hit -> O(n*m) for m matches; fine for editor-sized
+        # documents (the streaming driver keeps the UI responsive regardless).
         line = text.count("\n", 0, found) + 1
-        matches.append(Match(start=found, line=line, preview=_line_preview(text, found)))
+        yield Match(start=found, line=line, preview=_line_preview(text, found))
         pos = found + term_len
-    return matches
+
+
+def find_all_matches(text: str, term: str) -> list[Match]:
+    """Return every non-overlapping case-insensitive match of `term`
+    (list form of iter_matches). Empty `term` -> []."""
+    return list(iter_matches(text, term))
 
 
 def _line_preview(text: str, index: int) -> str:
