@@ -113,3 +113,115 @@ def test_nesting_depth_at_matches_enclosing_tag_depth():
 def test_nesting_depth_at_is_zero_when_no_enclosing_tag():
     text = "<Page></Page>"
     assert nesting_depth_at(text, len(text)) == 0
+
+
+from pgtp_editor.ui.xml_structure import enclosing_tag_span, parent_tag_span
+
+
+def test_enclosing_tag_span_inside_text_content_returns_innermost():
+    text = "<Page><Detail>text</Detail></Page>"
+    span = enclosing_tag_span(text, text.index("text"))
+    assert span is not None
+    assert span.name == "Detail"
+    assert span.depth == 1
+
+
+def test_enclosing_tag_span_inside_open_tag_delimiters_returns_that_span():
+    text = "<Page><Detail>text</Detail></Page>"
+    # Position between '<' and '>' of the <Detail> open tag.
+    position = text.index("<Detail>") + 1
+    span = enclosing_tag_span(text, position)
+    assert span is not None
+    assert span.name == "Detail"
+
+
+def test_enclosing_tag_span_at_open_start_boundary_is_included():
+    text = "<Page><Detail>text</Detail></Page>"
+    position = text.index("<Detail>")  # exactly at Detail's open_start
+    span = enclosing_tag_span(text, position)
+    assert span is not None
+    assert span.name == "Detail"
+
+
+def test_enclosing_tag_span_in_intersibling_whitespace_returns_parent():
+    text = "<Page>\n  <Detail></Detail>\n  <Detail></Detail>\n</Page>"
+    # Position on the blank spot between the two </Detail> and <Detail>.
+    first_close_end = text.index("</Detail>") + len("</Detail>")
+    span = enclosing_tag_span(text, first_close_end + 1)  # in the "\n  " gap
+    assert span is not None
+    assert span.name == "Page"
+    assert span.depth == 0
+
+
+def test_enclosing_tag_span_outside_every_element_returns_none():
+    text = "  <Page></Page>  "
+    assert enclosing_tag_span(text, 0) is None  # leading whitespace
+    assert enclosing_tag_span(text, len(text)) is None  # trailing whitespace
+
+
+def test_enclosing_tag_span_self_closing_returns_that_span():
+    text = "<Page><Column/></Page>"
+    position = text.index("<Column/>") + 2  # inside the self-closing token
+    span = enclosing_tag_span(text, position)
+    assert span is not None
+    assert span.name == "Column"
+    assert span.self_closing is True
+    assert text[span.open_start:span.close_end] == "<Column/>"
+
+
+def test_enclosing_tag_span_repeated_sibling_names_returns_correct_instance():
+    text = "<Root><Item>A</Item><Item>B</Item></Root>"
+    span = enclosing_tag_span(text, text.index("B"))
+    assert span is not None
+    assert span.name == "Item"
+    # The correct instance is the SECOND <Item>, identified by open_start.
+    assert span.open_start == text.rindex("<Item>")
+
+
+def test_enclosing_tag_span_tolerates_unclosed_tag():
+    text = "<Page><Detail>"
+    span = enclosing_tag_span(text, len(text))
+    assert span is not None
+    assert span.name == "Detail"
+
+
+def test_parent_tag_span_of_leaf_returns_immediate_parent():
+    text = "<Page><Detail><Column/></Detail></Page>"
+    spans = scan(text)
+    column = next(s for s in spans if s.name == "Column")
+    parent = parent_tag_span(spans, column)
+    assert parent is not None
+    assert parent.name == "Detail"
+    assert parent.depth == 1
+
+
+def test_parent_tag_span_of_mid_level_returns_one_up():
+    text = "<Page><Detail><Column/></Detail></Page>"
+    spans = scan(text)
+    detail = next(s for s in spans if s.name == "Detail")
+    parent = parent_tag_span(spans, detail)
+    assert parent is not None
+    assert parent.name == "Page"
+    assert parent.depth == 0
+
+
+def test_parent_tag_span_of_top_level_returns_none():
+    text = "<Page><Detail></Detail></Page>"
+    spans = scan(text)
+    page = next(s for s in spans if s.name == "Page")
+    assert parent_tag_span(spans, page) is None
+
+
+def test_parent_tag_span_repeated_sibling_names_finds_correct_single_parent():
+    text = "<Root><Group><Item>A</Item></Group><Group><Item>B</Item></Group></Root>"
+    spans = scan(text)
+    # The <Item> containing "B" -- identified by open_start, not name.
+    item_b = next(
+        s for s in spans if s.name == "Item" and s.open_start == text.rindex("<Item>")
+    )
+    parent = parent_tag_span(spans, item_b)
+    assert parent is not None
+    assert parent.name == "Group"
+    # It must be the SECOND Group (the one that actually contains item_b),
+    # not the first Group with the same name.
+    assert parent.open_start == text.rindex("<Group>")
