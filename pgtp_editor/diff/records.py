@@ -14,6 +14,7 @@ class Difference:
     kind: str  # "added" | "removed" | "changed"
     path: list[str]
     node_kind: str  # "page" | "detail" | "column" | "event"
+    #                | "format" | "lookup" | "view_properties" | "edit_properties"
     attribute: str | None
     old_value: Any
     new_value: Any
