@@ -17,7 +17,13 @@ from pgtp_editor.diff.apply import apply_differences
 from pgtp_editor.diff.differ import compare_block, diff_project
 from pgtp_editor.diff.resolve import ResolutionError, resolve_path
 from pgtp_editor.model.encoding import read_pgtp_text
-from pgtp_editor.model.parser import PgtpParseError, _build_project_model, load_project
+from pgtp_editor.model.line_index import node_at_line
+from pgtp_editor.model.parser import (
+    PgtpParseError,
+    _build_project_model,
+    load_project,
+    load_project_from_text,
+)
 from pgtp_editor.schema_learning.model import Model
 from pgtp_editor.schema_learning.parser import walk_document
 from pgtp_editor.schema_learning.storage import schema_model_path, schema_xsd_path
@@ -65,6 +71,7 @@ class MainWindow(QMainWindow):
 
         self.center_stage = CenterStage()
         self.setCentralWidget(self.center_stage)
+        self.center_stage.xml_editor.line_clicked.connect(self._on_editor_line_clicked)
 
         self.properties_panel = PropertiesPanel(xml_editor=self.center_stage.xml_editor)
         self.properties_dock = QDockWidget("Properties", self)
@@ -84,6 +91,14 @@ class MainWindow(QMainWindow):
 
     def _on_tree_selection_changed(self, node, kind):
         self.properties_panel.show_node(node, kind)
+
+    def _on_editor_line_clicked(self, line: int) -> None:
+        if self._current_project is None:
+            return
+        node = node_at_line(self._current_project, line)
+        if node is None:
+            return  # click above first page / uncovered region: no-op
+        self.project_tree.select_node(node)  # fires tree -> Properties automatically
 
     def _open_project(self):
         path, _filter = QFileDialog.getOpenFileName(
@@ -185,6 +200,35 @@ class MainWindow(QMainWindow):
         self.center_stage.set_raw_xml_tab_visible(True)
         self._raw_xml_panel_action.setChecked(True)
         self.center_stage.setCurrentIndex(self.center_stage.raw_xml_tab_index)
+
+    def _reparse_raw_xml(self):
+        text = self.center_stage.xml_editor.toPlainText()
+        try:
+            project = load_project_from_text(text, source_description="<editor>")
+        except PgtpParseError as exc:
+            self._handle_reparse_failure(exc)
+            return
+        # SUCCESS: rebuild tree + adopt the new model so click-sync realigns.
+        self.project_tree.populate_from_project(project)
+        self._current_project = project
+        # Properties has no valid selection against the freshly rebuilt tree
+        # (populate_from_project cleared it); show the empty state until the
+        # user clicks again. show_node(None, None) is the panel's own reset.
+        self.properties_panel.show_node(None, None)
+        self.statusBar().showMessage("Reparsed raw XML into tree", 5000)
+
+    def _handle_reparse_failure(self, exc: PgtpParseError) -> None:
+        # Mirror the Tier-1 open-failure pattern (_handle_parse_failure), but
+        # WITHOUT re-reading a file and WITHOUT touching the existing model or
+        # tree: the last-good state must survive a failed reparse so the user
+        # can fix the XML and try again.
+        QMessageBox.critical(
+            self,
+            "Reparse Failed",
+            f"Could not reparse the raw XML:\n\n{exc}",
+        )
+        if exc.line is not None:
+            self.center_stage.xml_editor.highlight_error_line(exc.line)
 
     def _compare_merge_two_files(self):
         source = self._current_project
@@ -433,6 +477,9 @@ class MainWindow(QMainWindow):
         self._add_stub_action(menu, "Find Reused Tables...")
         menu.addSeparator()
         self._add_stub_action(menu, "Validate Project")
+        menu.addSeparator()
+        reparse_action = menu.addAction("Reparse Raw XML into Tree")
+        reparse_action.triggered.connect(self._reparse_raw_xml)
 
     def _build_generation_menu(self):
         menu = self.menuBar().addMenu("Generation")

@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import re
 
-from PySide6.QtCore import QPoint, QRect, QSize, Qt
+from PySide6.QtCore import QPoint, QRect, QSize, Qt, Signal
 from PySide6.QtGui import (
     QColor,
     QKeyEvent,
@@ -192,6 +192,8 @@ class _EditorGutter(QWidget):
 
 
 class XmlEditor(QPlainTextEdit):
+    line_clicked = Signal(int)  # 1-based line of a left-mouse click in the text
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self._highlighter = XmlSyntaxHighlighter(self.document())
@@ -537,6 +539,17 @@ class XmlEditor(QPlainTextEdit):
             return
 
         super().keyPressEvent(event)
+
+    def mouseReleaseEvent(self, event) -> None:
+        # Let Qt place the text cursor at the clicked position first, then
+        # read the resulting 1-based line and notify listeners. This is the
+        # editor->tree click-sync entry point (see MainWindow). It only reads
+        # the cursor; it does not alter selection, folding, or the
+        # auto-close/auto-indent state.
+        super().mouseReleaseEvent(event)
+        if event.button() == Qt.MouseButton.LeftButton:
+            line = self.textCursor().blockNumber() + 1  # 0-based -> 1-based
+            self.line_clicked.emit(line)
 
     def _character_before_cursor(self, cursor: QTextCursor) -> str:
         position = cursor.position()

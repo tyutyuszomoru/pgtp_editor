@@ -42,6 +42,7 @@ class ProjectTreePanel(QTreeWidget):
         content — call this after a successful File -> Open.
         """
         self.clear()
+        self._item_by_node_id = {}
         for page in project.pages:
             page_name = page.attrib.get("caption") or page.file_name or page.identity
             page_table = page.table_name or ""
@@ -49,6 +50,7 @@ class ProjectTreePanel(QTreeWidget):
             page_item.setData(0, NODE_KIND_ROLE, "page")
             page_item.setData(0, TABLE_NAME_ROLE, page_table)
             page_item.setData(0, MODEL_NODE_ROLE, page)
+            self._item_by_node_id[id(page)] = page_item
             self.addTopLevelItem(page_item)
             self._populate_details_and_events(page_item, page)
 
@@ -62,18 +64,35 @@ class ProjectTreePanel(QTreeWidget):
             detail_item.setData(0, NODE_KIND_ROLE, "detail")
             detail_item.setData(0, TABLE_NAME_ROLE, detail_table)
             detail_item.setData(0, MODEL_NODE_ROLE, detail)
+            self._item_by_node_id[id(detail)] = detail_item
             parent_item.addChild(detail_item)
             self._populate_details_and_events(detail_item, detail)
         for column in node.columns:
             column_item = QTreeWidgetItem([f"(C) {column.field_name}"])
             column_item.setData(0, NODE_KIND_ROLE, "column")
             column_item.setData(0, MODEL_NODE_ROLE, column)
+            self._item_by_node_id[id(column)] = column_item
             parent_item.addChild(column_item)
         for event in node.events:
             event_item = QTreeWidgetItem([f"(E) {event.side}.{event.tag_name}"])
             event_item.setData(0, NODE_KIND_ROLE, "event")
             event_item.setData(0, MODEL_NODE_ROLE, event)
+            self._item_by_node_id[id(event)] = event_item
             parent_item.addChild(event_item)
+
+    def select_node(self, node) -> bool:
+        """Select the tree item backing `node`, if present. Returns True if a
+        matching item was found and selected, False otherwise (e.g. node is
+        None, or is from a stale/other model). Setting the current item fires
+        the existing currentItemChanged -> _on_selection_changed -> Properties
+        flow; no extra Properties wiring is needed here."""
+        if node is None:
+            return False
+        item = getattr(self, "_item_by_node_id", {}).get(id(node))
+        if item is None:
+            return False
+        self.setCurrentItem(item)
+        return True
 
     def iter_detail_items(self):
         for i in range(self.topLevelItemCount()):

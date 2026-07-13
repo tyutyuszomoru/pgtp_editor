@@ -14,6 +14,7 @@ dependencies = [
 dev = [
     "pytest>=8.0",
     "pytest-qt>=4.4",
+    "pytest-timeout>=2.4",
 ]
 
 [build-system]
@@ -26,3 +27,10 @@ include = ["pgtp_editor*"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 qt_api = "pyside6"
+# Hard safety net: any test that reaches an un-patched modal Qt call
+# (QDialog.exec / QMessageBox.* / QFileDialog.*) blocks on a modal event loop
+# forever. --timeout aborts such a test after 60s with a traceback naming it,
+# instead of letting the whole run hang indefinitely. "thread" method is
+# required on Windows (the default signal-based method needs SIGALRM, which
+# Windows lacks).
+addopts = "--timeout=60 --timeout-method=thread"

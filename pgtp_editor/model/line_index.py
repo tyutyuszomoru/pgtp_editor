@@ -1,0 +1,123 @@
+# pgtp_editor/model/line_index.py
+"""Resolve a 1-based source line number to the nearest enclosing model node.
+
+Pure and Qt-free: operates only on the ProjectModel dataclasses in
+pgtp_editor.model.nodes. Used by the editor->tree click-sync (MainWindow)
+to turn an editor click position into the tree node to select.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+from pgtp_editor.model.nodes import ProjectModel
+
+
+@dataclass
+class _Entry:
+    node: object          # PageNode | DetailNode | ColumnNode | EventNode
+    depth: int
+    start: int            # 1-based start line (node.sourceline)
+    end: int | None       # 1-based inclusive end line; filled in a second pass
+    cap_to_subtree: bool = False  # True for Columns (see _assign_end_lines)
+
+
+def _flatten(project: ProjectModel) -> list[_Entry]:
+    """Walk the model in document order, emitting one _Entry per node with
+    its depth and start line. Order within a container matches the tree's
+    own display/emit order (nested Details, then Columns, then Events) — but
+    correctness depends only on start lines being monotonic in document order,
+    which they are because the parser reads them straight off lxml's
+    document-order .sourceline. A Detail's range starts at its OUTER
+    sourceline (the <Detail> open tag), never inner_sourceline."""
+    entries: list[_Entry] = []
+
+    def visit_container(node, depth: int) -> None:
+        # A Page or Detail: its own children are details, columns, events.
+        for detail in getattr(node, "details", []):
+            entries.append(_Entry(detail, depth + 1, detail.sourceline, None))
+            visit_container(detail, depth + 1)
+        for column in getattr(node, "columns", []):
+            entries.append(
+                _Entry(column, depth + 1, column.sourceline, None, cap_to_subtree=True)
+            )
+        for event in getattr(node, "events", []):
+            entries.append(_Entry(event, depth + 1, event.sourceline, None))
+
+    for page in project.pages:
+        entries.append(_Entry(page, 0, page.sourceline, None))
+        visit_container(page, 0)
+
+    # Drop any node whose start line is unknown (sourceline is None) — it
+    # cannot participate in a line-range lookup. In practice sourceline is
+    # always populated by the parser off a real lxml element.
+    entries = [e for e in entries if e.start is not None]
+    # Sort strictly by document position (start line). Ties should not occur
+    # for distinct elements (each element opens on its own line in real
+    # .pgtp files); a stable sort preserves emit order if they ever did.
+    entries.sort(key=lambda e: e.start)
+    return entries
+
+
+def _subtree_last_line(node) -> int | None:
+    """The greatest source line among `node`'s retained lxml element and all
+    its descendant elements, or None when no element/line info is available
+    (e.g. a hand-built node in a unit test). Used to bound a Column to the
+    real extent of its own sub-elements (<ViewProperties>, <Format>, ...)."""
+    element = getattr(node, "element", None)
+    if element is None:
+        return None
+    lines = [el.sourceline for el in element.iter() if el.sourceline is not None]
+    return max(lines) if lines else None
+
+
+def _assign_end_lines(entries: list[_Entry]) -> None:
+    """Each entry's end line is one before the start of the next entry (in
+    document order) at the SAME OR SHALLOWER depth — i.e. the next entry that
+    is not a descendant of this one. The last such node runs to a large
+    sentinel (the model does not track the document's true final line).
+
+    That depth rule alone stretches the LAST child of a container all the way
+    to the container's next same-or-shallower sibling, so a Column that is the
+    last node before an outer boundary would absorb its parent's trailing
+    region (closing tags, blank lines) and, being deeper, win the deepest-first
+    lookup — a click on a Detail's `</Page></Detail>` region would wrongly
+    select that Detail's last Column. Columns are therefore capped to the last
+    source line of their own element subtree; those trailing lines then fall
+    back to the enclosing container, which still spans them. (Events are not
+    capped: their multi-line text body has no sub-elements, so a subtree cap
+    would collapse them to a single line. Containers keep the full span and act
+    as the safety net for capped children.)"""
+    n = len(entries)
+    for i, entry in enumerate(entries):
+        end = None
+        for j in range(i + 1, n):
+            if entries[j].depth <= entry.depth:
+                end = entries[j].start - 1
+                break
+        if end is None:
+            end = 10**9
+        if entry.cap_to_subtree:
+            subtree_end = _subtree_last_line(entry.node)
+            if subtree_end is not None:
+                end = min(end, subtree_end)
+        entry.end = end
+
+
+def node_at_line(project, line: int):
+    """Return the deepest node whose [start, end] line range contains `line`,
+    or None if `line` falls above the first node / outside any node's range
+    (e.g. the file header or DataSources area the model does not cover)."""
+    if project is None:
+        return None
+    entries = _flatten(project)
+    _assign_end_lines(entries)
+    # Deepest-first: among all entries whose range contains `line`, return the
+    # one with the greatest depth. Because ranges of deeper nodes are nested
+    # strictly inside their ancestors', the deepest containing entry is the
+    # nearest enclosing node.
+    best = None
+    for entry in entries:
+        if entry.start <= line <= entry.end:
+            if best is None or entry.depth > best.depth:
+                best = entry
+    return best.node if best is not None else None

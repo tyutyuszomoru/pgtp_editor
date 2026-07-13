@@ -7,11 +7,12 @@
 #   pip install -r requirements-dev.txt
 #
 # Mirrors [project.optional-dependencies].dev in pyproject.toml (pytest,
-# pytest-qt) plus PyInstaller, needed by optimized_build.py to produce the
-# Windows release bundle - keep all three in sync if versions change.
+# pytest-qt, pytest-timeout) plus PyInstaller, needed by optimized_build.py to
+# produce the Windows release bundle - keep all in sync if versions change.
 
 -r requirements.txt
 
 pytest>=8.0
 pytest-qt>=4.4
+pytest-timeout>=2.4
 PyInstaller>=6.10

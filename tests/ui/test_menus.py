@@ -170,7 +170,8 @@ def test_tools_menu_contents(qtbot):
     assert action_labels(menu) == [
         "Manage Captions...", "―",
         "Find Reused Tables...", "―",
-        "Validate Project",
+        "Validate Project", "―",
+        "Reparse Raw XML into Tree",
     ]
 
 
