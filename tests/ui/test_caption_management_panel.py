@@ -144,3 +144,63 @@ def test_sorting_by_value_column(qtbot):
     )
     panel._proxy.sort(4, Qt.SortOrder.AscendingOrder)
     assert _visible_value_column(panel) == ["Apple", "Zebra"]
+
+
+def _set_value(panel, row, text):
+    # Set through the source model's Value column, mirroring an editor commit.
+    index = panel._model.index(row, 4)
+    panel._model.setData(index, text, Qt.ItemDataRole.EditRole)
+
+
+def test_editing_value_marks_row_changed(qtbot):
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    panel.load_entries(_sample_entries())
+    _set_value(panel, 0, "Homepage")
+    assert panel.changed_edits() == [(_sample_entries()[0], "Homepage")]
+
+
+def test_unchanged_rows_are_not_emitted(qtbot):
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    panel.load_entries(_sample_entries())
+    assert panel.changed_edits() == []
+
+
+def test_editing_then_restoring_original_value_is_not_dirty(qtbot):
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    panel.load_entries(_sample_entries())
+    _set_value(panel, 0, "Homepage")
+    _set_value(panel, 0, "Home")  # back to the original scanned value
+    assert panel.changed_edits() == []
+
+
+def test_apply_invokes_callback_with_edited_text(qtbot):
+    captured = {}
+    panel = CaptionManagementPanel(on_apply=lambda text: captured.setdefault("text", text))
+    qtbot.addWidget(panel)
+    snapshot = '<Root>\n  <Page caption="Home" fileName="home"/>\n</Root>'
+    entries = [_entry(2, "Page", "home", "caption", "Home")]
+    panel.load_entries(entries, snapshot_text=snapshot)
+    _set_value(panel, 0, "Homepage")
+    panel.apply()
+    assert captured["text"] == '<Root>\n  <Page caption="Homepage" fileName="home"/>\n</Root>'
+
+
+def test_apply_with_no_edits_returns_identical_text(qtbot):
+    captured = {}
+    panel = CaptionManagementPanel(on_apply=lambda text: captured.setdefault("text", text))
+    qtbot.addWidget(panel)
+    snapshot = '<Root>\n  <Page caption="Home"/>\n</Root>'
+    panel.load_entries([_entry(2, "Page", "home", "caption", "Home")], snapshot_text=snapshot)
+    panel.apply()
+    assert captured["text"] == snapshot
+
+
+def test_close_invokes_close_callback(qtbot):
+    calls = []
+    panel = CaptionManagementPanel(on_close=lambda: calls.append(True))
+    qtbot.addWidget(panel)
+    panel.close_panel()
+    assert calls == [True]
