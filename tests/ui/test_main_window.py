@@ -374,6 +374,7 @@ def test_find_all_populates_audit_panel_with_line_items_and_summary(qtbot):
     qtbot.addWidget(window)
     window.center_stage.xml_editor.setPlainText("first page\nsecond line\nthird page here")
     window._populate_find_all_results("page")
+    qtbot.waitUntil(lambda: not window.center_stage.find_replace_bar._find_all_running, timeout=5000)
 
     texts = [window.audit_panel.item(i).text() for i in range(window.audit_panel.count())]
     assert texts == [
@@ -395,6 +396,7 @@ def test_find_all_clears_only_prior_find_entries(qtbot):
 
     window._populate_find_all_results("page")
     window._populate_find_all_results("page")  # run again
+    qtbot.waitUntil(lambda: not window.center_stage.find_replace_bar._find_all_running, timeout=5000)
 
     texts = [window.audit_panel.item(i).text() for i in range(window.audit_panel.count())]
     # The seeded [Schema] entry survives exactly once; only ONE generation of
@@ -412,6 +414,7 @@ def test_clicking_find_result_navigates_editor_to_line(qtbot):
     qtbot.addWidget(window)
     window.center_stage.xml_editor.setPlainText("a\nb\npage on line 3\nd")
     window._populate_find_all_results("page")
+    qtbot.waitUntil(lambda: not window.center_stage.find_replace_bar._find_all_running, timeout=5000)
 
     result_item = window.audit_panel.item(0)
     assert result_item.data(Qt.ItemDataRole.UserRole) == 3
@@ -443,6 +446,7 @@ def test_clicking_summary_line_is_a_noop(qtbot):
     qtbot.addWidget(window)
     window.center_stage.xml_editor.setPlainText("page\npage")
     window._populate_find_all_results("page")
+    qtbot.waitUntil(lambda: not window.center_stage.find_replace_bar._find_all_running, timeout=5000)
     window.center_stage.xml_editor.moveCursor(QTextCursor.MoveOperation.Start)
     before = window.center_stage.xml_editor.textCursor().blockNumber()
 
@@ -462,6 +466,7 @@ def test_find_all_via_menu_populates_audit_panel(qtbot):
     window.center_stage.xml_editor.setPlainText("alpha page beta")
     window.center_stage.find_replace_bar._find_field.setText("page")
     find_action(find_top_menu(window, "Edit"), "Find All").trigger()
+    qtbot.waitUntil(lambda: not window.center_stage.find_replace_bar._find_all_running, timeout=5000)
 
     texts = [window.audit_panel.item(i).text() for i in range(window.audit_panel.count())]
     assert "[Find] line 1: alpha page beta" in texts
