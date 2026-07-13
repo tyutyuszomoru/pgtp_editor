@@ -408,9 +408,27 @@ class MainWindow(QMainWindow):
         self._add_stub_action(menu, "Paste")
         self._add_stub_action(menu, "Delete")
         menu.addSeparator()
-        self._add_stub_action(menu, "Find...")
-        find_replace = self._add_stub_action(menu, "Find & Replace...")
-        find_replace.setShortcut("Ctrl+H")
+
+        find_action = menu.addAction("Find...")
+        find_action.setShortcut("Ctrl+F")
+        find_action.triggered.connect(self._show_find_bar)
+
+        find_next_action = menu.addAction("Find Next")
+        find_next_action.setShortcut("F3")
+        find_next_action.triggered.connect(self._find_next)
+
+        find_all_action = menu.addAction("Find All")
+        find_all_action.setShortcut("Ctrl+Shift+F")
+        find_all_action.triggered.connect(self._find_all)
+
+        replace_action = menu.addAction("Replace...")
+        replace_action.setShortcut("Ctrl+R")
+        replace_action.triggered.connect(self._show_replace_bar)
+
+        replace_all_action = menu.addAction("Replace All")
+        replace_all_action.setShortcut("Ctrl+Alt+Return")
+        replace_all_action.triggered.connect(self._replace_all)
+
         menu.addSeparator()
         self._add_stub_action(menu, "Preferences...")
 
@@ -448,6 +466,31 @@ class MainWindow(QMainWindow):
 
     def _add_stub_action(self, menu, label):
         return add_stub_action(menu, label, self._not_implemented)
+
+    def _reveal_raw_xml_tab(self):
+        self.center_stage.set_raw_xml_tab_visible(True)
+        self._raw_xml_panel_action.setChecked(True)
+        self.center_stage.setCurrentIndex(self.center_stage.raw_xml_tab_index)
+
+    def _show_find_bar(self):
+        self._reveal_raw_xml_tab()
+        self.center_stage.find_replace_bar.show_find()
+
+    def _show_replace_bar(self):
+        self._reveal_raw_xml_tab()
+        self.center_stage.find_replace_bar.show_replace()
+
+    def _find_next(self):
+        self._reveal_raw_xml_tab()
+        self.center_stage.find_replace_bar.find_next()
+
+    def _find_all(self):
+        self._reveal_raw_xml_tab()
+        self.center_stage.find_replace_bar.find_all()
+
+    def _replace_all(self):
+        self._reveal_raw_xml_tab()
+        self.center_stage.find_replace_bar.replace_all()
 
     def _build_diff_merge_menu(self):
         menu = self.menuBar().addMenu("Diff / Merge")
