@@ -184,3 +184,42 @@ def test_real_on_calculate_fields_body_has_zero_functions():
         if event.tag_name == "OnCalculateFields" and _count_functions(event.text) == 0
     ]
     assert zero_function_bodies, "expected at least one zero-function OnCalculateFields body"
+
+
+from pathlib import Path
+
+import pytest
+
+from pgtp_editor.model.parser import load_project
+
+_SAMPLE_DIR = Path(__file__).resolve().parents[2] / "sample"
+
+
+def _load_dev_ferrara():
+    path = _SAMPLE_DIR / "dev_Ferrara.pgtp"
+    if not path.exists():
+        pytest.skip(f"sample fixture not present on disk: {path}")
+    return load_project(path)
+
+
+def test_real_sample_column_sub_elements_populated():
+    project = _load_dev_ferrara()
+
+    # The top-level development_equipment page carries the columns verified
+    # in spec §3/§5.2: `wbs1` (Lookup pr.x_wbs + dynamicCombobox edit) and
+    # `id` (numeric Format nested in ViewProperties).
+    page = next(p for p in project.pages if p.file_name == "development_equipment")
+    columns = {c.field_name: c for c in page.columns}
+
+    wbs1 = columns["wbs1"]
+    assert wbs1.lookup is not None
+    assert wbs1.lookup.attrib["tableName"] == "pr.x_wbs"
+    assert wbs1.lookup.attrib["linkFieldName"] == "wbs_id"
+    assert wbs1.lookup.attrib["displayFieldName"] == "wbs_name"
+    assert wbs1.edit_properties is not None
+    assert wbs1.edit_properties.attrib["type"] == "dynamicCombobox"
+
+    id_col = columns["id"]
+    assert id_col.format is not None
+    assert id_col.format.attrib["type"] == "number"
+    assert id_col.view_properties is not None
