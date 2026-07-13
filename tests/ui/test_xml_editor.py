@@ -818,3 +818,49 @@ def test_select_parent_block_outside_any_element_is_noop(qtbot):
     editor.select_parent_block()
 
     assert editor.textCursor().hasSelection() is False
+
+
+def test_ctrl_shift_b_shortcut_selects_enclosing_block(qtbot):
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    editor.show()
+    qtbot.waitExposed(editor)
+    text = "<Page>\n  <Detail>\n    x\n  </Detail>\n</Page>"
+    editor.setPlainText(text)
+    editor.activateWindow()
+    editor.raise_()
+    editor.setFocus()
+    QApplication.setActiveWindow(editor)
+    qtbot.waitActive(editor)
+    cursor = editor.textCursor()
+    cursor.setPosition(text.index("x"))
+    editor.setTextCursor(cursor)
+
+    qtbot.keyClick(editor, Qt.Key.Key_B, Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.ShiftModifier)
+
+    expected = text[text.index("<Detail>"):text.index("</Detail>") + len("</Detail>")]
+    selected = editor.textCursor().selectedText().replace(" ", "\n")
+    assert selected == expected
+
+
+def test_ctrl_shift_a_shortcut_selects_parent_block(qtbot):
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    editor.show()
+    qtbot.waitExposed(editor)
+    text = "<Page>\n  <Detail>\n    <Column>x</Column>\n  </Detail>\n</Page>"
+    editor.setPlainText(text)
+    editor.activateWindow()
+    editor.raise_()
+    editor.setFocus()
+    QApplication.setActiveWindow(editor)
+    qtbot.waitActive(editor)
+    cursor = editor.textCursor()
+    cursor.setPosition(text.index("x"))
+    editor.setTextCursor(cursor)
+
+    qtbot.keyClick(editor, Qt.Key.Key_A, Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.ShiftModifier)
+
+    expected = text[text.index("<Detail>"):text.index("</Detail>") + len("</Detail>")]
+    selected = editor.textCursor().selectedText().replace(" ", "\n")
+    assert selected == expected
