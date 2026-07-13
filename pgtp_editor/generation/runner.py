@@ -40,6 +40,7 @@ class GeneratorRunner(QObject):
         self._process: QProcess | None = None
         self._on_output: Callable[[str], None] = lambda line: None
         self._on_finished: Callable[[int], None] = lambda code: None
+        self._finished_emitted = False
 
     def run(
         self,
@@ -49,6 +50,7 @@ class GeneratorRunner(QObject):
     ) -> None:
         self._on_output = on_output
         self._on_finished = on_finished
+        self._finished_emitted = False
 
         process = QProcess(self)
         # Merge stderr into stdout so all generator chatter is captured in order.
@@ -70,11 +72,20 @@ class GeneratorRunner(QObject):
         for line in data.splitlines():
             self._on_output(line)
 
-    def _emit_finished(self, exit_code: int, _exit_status) -> None:
+    def _finish_once(self, exit_code: int) -> None:
+        """Call on_finished exactly once per run. A crashed process fires BOTH
+        errorOccurred(Crashed) and finished(...), and a failed start fires
+        errorOccurred; this guard prevents the UI seeing two result dialogs."""
+        if self._finished_emitted:
+            return
+        self._finished_emitted = True
         self._on_finished(int(exit_code))
+
+    def _emit_finished(self, exit_code: int, _exit_status) -> None:
+        self._finish_once(exit_code)
 
     def _on_error(self, _error) -> None:
         if self._process is None:
             return
         self._on_output(f"Failed to start generator: {self._process.errorString()}")
-        self._on_finished(1)
+        self._finish_once(1)

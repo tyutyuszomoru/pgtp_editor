@@ -52,3 +52,16 @@ def test_generator_runner_run_signature_is_the_injection_contract():
     # MainWindow injects a fake with this exact signature; keep them in lockstep.
     params = list(inspect.signature(GeneratorRunner.run).parameters)
     assert params == ["self", "command", "on_output", "on_finished"]
+
+
+def test_generator_runner_calls_on_finished_at_most_once(qtbot):
+    # A crashed process fires both errorOccurred(Crashed) and finished(...);
+    # on_finished must still reach the UI only once (no double result dialog).
+    runner = GeneratorRunner()
+    calls = []
+    runner._on_finished = lambda code: calls.append(code)
+    runner._finished_emitted = False
+
+    runner._finish_once(2)   # e.g. errorOccurred(Crashed) path first
+    runner._finish_once(2)   # then finished(...) for the same run
+    assert calls == [2]

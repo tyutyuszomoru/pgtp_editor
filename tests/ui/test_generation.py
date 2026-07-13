@@ -134,6 +134,37 @@ def test_generate_with_no_configured_exe_shows_info_and_stops(qtbot, tmp_path):
     assert fake.commands == []
 
 
+def test_generate_is_noop_while_already_generating(qtbot, tmp_path):
+    # A run is in flight (FakeRunner never calls on_finished, so _is_generating
+    # stays True); a second Generate must NOT start an overlapping run.
+    window, fake, exe = _configured_window(qtbot, tmp_path)
+    window.center_stage.xml_editor.setPlainText("<Project/>")
+    window._current_project_path = str(tmp_path / "proj.pgtp")
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+
+    with patch(
+        "pgtp_editor.ui.main_window.QMessageBox.question",
+        return_value=QMessageBox.StandardButton.Save,
+    ), patch(
+        "pgtp_editor.ui.main_window.QFileDialog.getExistingDirectory",
+        return_value=str(out_dir),
+    ):
+        window._generate_php()
+    assert len(fake.commands) == 1
+    assert window._is_generating is True
+
+    # Second invocation returns immediately (guard is the first check, so no
+    # prompts are reached and no patch is needed).
+    window._generate_php()
+    assert len(fake.commands) == 1  # still just the one run
+
+    # After the first run finishes, a new run is allowed again.
+    with patch("pgtp_editor.ui.main_window.QMessageBox.information"):
+        fake.emit_finished(0)
+    assert window._is_generating is False
+
+
 def test_generate_happy_path_builds_and_runs_command(qtbot, tmp_path):
     window, fake, exe = _configured_window(qtbot, tmp_path)
     window.center_stage.xml_editor.setPlainText("<Project/>")

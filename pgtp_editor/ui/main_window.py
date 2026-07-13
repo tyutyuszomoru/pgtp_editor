@@ -69,6 +69,7 @@ class MainWindow(QMainWindow):
         self._generator_config_dir = generator_config_dir
         self._generator_runner = generator_runner if generator_runner is not None else GeneratorRunner()
         self._current_output_folder = None
+        self._is_generating = False
         self.setWindowTitle("PGTP Editor")
         self.resize(1400, 900)
 
@@ -742,6 +743,12 @@ class MainWindow(QMainWindow):
                 self.audit_panel.takeItem(row)
 
     def _generate_php(self) -> None:
+        # 0. Reject a second run while one is in flight (avoid overlapping
+        # QProcess instances orphaning the first).
+        if self._is_generating:
+            self.statusBar().showMessage("A generation is already in progress.", 5000)
+            return
+
         # 1. Require an open project (a tracked model or non-empty editor).
         if self._current_project is None and not self.center_stage.xml_editor.toPlainText().strip():
             self.statusBar().showMessage("Open a project before generating.", 5000)
@@ -787,6 +794,7 @@ class MainWindow(QMainWindow):
         self._clear_generator_output()
         command = build_generate_command(exe, self._current_project_path, output_folder)
         self._current_output_folder = output_folder
+        self._is_generating = True
         self.statusBar().showMessage("Generating…")
         self._generator_runner.run(
             command,
@@ -798,6 +806,7 @@ class MainWindow(QMainWindow):
         self.audit_panel.addItem(f"{_GENERATOR_OUTPUT_PREFIX}{line}")
 
     def _on_generation_finished(self, exit_code: int) -> None:
+        self._is_generating = False
         self.audit_panel.addItem(f"{_GENERATOR_OUTPUT_PREFIX}Generation finished (exit {exit_code})")
         if exit_code == 0:
             QMessageBox.information(self, "Generate PHP", "Generation succeeded.")
