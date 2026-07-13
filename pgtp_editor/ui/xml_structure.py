@@ -127,3 +127,56 @@ def nesting_depth_at(text: str, position: int) -> int:
         return 0
     innermost = max(candidates, key=lambda span: span.depth)
     return innermost.depth
+
+
+def enclosing_tag_span(text: str, position: int) -> TagSpan | None:
+    """Return the innermost TagSpan that structurally contains `position`
+    -- the block Ctrl+Shift+B would select if the cursor were at `position`.
+
+    A span is a candidate if `position` falls within its full extent:
+      * `[open_start, close_end)` for a span with a known close_end
+        (this includes self-closing spans, whose close_end == open_end,
+        and covers the open-tag delimiters, the content, and the close tag);
+      * `[open_start, len(text))` for a span never closed (close_end is None),
+        since its true extent is unknown and it is still the best available
+        "what am I inside of" answer.
+    Among all candidates the one with the greatest `depth` (innermost) wins.
+    Returns None when `position` is outside every element.
+    """
+    best: TagSpan | None = None
+    for span in scan(text):
+        if span.close_end is not None:
+            contains = span.open_start <= position < span.close_end
+        else:
+            # The `<= len(text)` half is documentary only: a cursor position
+            # can never exceed len(text), so it is always true. It records the
+            # intent that an unclosed element extends to end-of-document.
+            contains = span.open_start <= position <= len(text)
+        if contains and (best is None or span.depth > best.depth):
+            best = span
+    return best
+
+
+def parent_tag_span(spans: list[TagSpan], span: TagSpan) -> TagSpan | None:
+    """Return the TagSpan exactly one nesting level up from `span` -- the
+    block Ctrl+Shift+A selects, given the TagSpan Ctrl+Shift+B would select.
+
+    The parent is the span at depth == span.depth - 1 whose extent
+    structurally contains `span`'s extent. Returns None when span.depth == 0
+    (a top-level element has no parent). Operates over the caller's already
+    computed `scan()` result to avoid a redundant re-scan. The containment
+    check is defensive against malformed input (mismatched tags can leave
+    spans with close_end=None at unexpected depths); for well-formed XML the
+    depth==span.depth-1 candidate is already unique.
+    """
+    if span.depth == 0:
+        return None
+    span_end = span.close_end if span.close_end is not None else span.open_end
+    for candidate in spans:
+        if candidate.depth != span.depth - 1:
+            continue
+        if candidate.open_start <= span.open_start and (
+            candidate.close_end is None or candidate.close_end >= span_end
+        ):
+            return candidate
+    return None

@@ -1,6 +1,7 @@
-from PySide6.QtWidgets import QPlainTextEdit
+from PySide6.QtWidgets import QApplication, QPlainTextEdit
 
 from pgtp_editor.ui.xml_editor import XmlEditor
+from pgtp_editor.ui.xml_structure import scan as _scan, enclosing_tag_span as _enc, parent_tag_span as _par
 
 
 def test_xml_editor_is_a_plain_text_edit(qtbot):
@@ -468,6 +469,58 @@ def test_navigate_to_line_scrolls_and_highlights_with_navigation_color(qtbot):
     assert editor._navigation_highlight_color != editor._error_line_color
 
 
+def test_navigation_highlight_cleared_on_next_cursor_move(qtbot):
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    editor.setPlainText("line one\nline two\nline three\nline four")
+
+    editor.navigate_to_line(2)
+    # Immediately after navigation, the nav band is the sole overriding
+    # selection.
+    nav_color = editor._navigation_highlight_color
+    after_nav = editor.extraSelections()
+    after_nav_colors = [sel.format.background().color() for sel in after_nav]
+    assert len(after_nav) == 1
+    assert nav_color in after_nav_colors
+
+    # A subsequent independent cursor move to a different line must wipe the
+    # navigation band -- it is a one-shot, not a sticky selection.
+    cursor = editor.textCursor()
+    cursor.setPosition(0)  # move onto line 0
+    editor.setTextCursor(cursor)
+
+    after_move_colors = [
+        sel.format.background().color() for sel in editor.extraSelections()
+    ]
+    assert nav_color not in after_move_colors
+    assert editor._current_line_color in after_move_colors
+    assert editor._oneshot_selection is None
+
+
+def test_error_highlight_cleared_on_next_cursor_move(qtbot):
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    editor.setPlainText("line one\nline two\nline three\nline four")
+
+    editor.highlight_error_line(2)
+    error_color = editor._error_line_color
+    after_error = editor.extraSelections()
+    after_error_colors = [sel.format.background().color() for sel in after_error]
+    assert len(after_error) == 1
+    assert error_color in after_error_colors
+
+    cursor = editor.textCursor()
+    cursor.setPosition(0)
+    editor.setTextCursor(cursor)
+
+    after_move_colors = [
+        sel.format.background().color() for sel in editor.extraSelections()
+    ]
+    assert error_color not in after_move_colors
+    assert editor._current_line_color in after_move_colors
+    assert editor._oneshot_selection is None
+
+
 def test_line_text_returns_the_plain_text_of_the_requested_line(qtbot):
     editor = XmlEditor()
     qtbot.addWidget(editor)
@@ -500,3 +553,366 @@ def test_select_range_on_line_selects_exact_substring(qtbot):
     selections = editor.extraSelections()
     assert len(selections) == 1
     assert selections[0].cursor.selectedText() == 'caption="Equipment"'
+
+
+def test_refresh_extra_selections_combiner_exists_and_current_line_only(qtbot):
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    editor.setPlainText("line one\nline two")
+    cursor = editor.textCursor()
+    cursor.setPosition(0)
+    editor.setTextCursor(cursor)
+    # With only the current-line contribution active, exactly one selection.
+    assert len(editor.extraSelections()) == 1
+    assert editor._matching_tag_selections == []
+    assert editor._oneshot_selection is None
+
+
+def test_refresh_extra_selections_current_line_uses_named_list(qtbot):
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    editor.setPlainText("line one\nline two")
+    cursor = editor.textCursor()
+    cursor.setPosition(0)
+    editor.setTextCursor(cursor)
+    assert len(editor._current_line_selections) == 1
+
+
+def _matching_tag_selection_count(editor):
+    """Number of extra-selections whose background is the matching-tag color."""
+    color = editor._matching_tag_color
+    return sum(
+        1
+        for sel in editor.extraSelections()
+        if sel.format.background().color() == color
+    )
+
+
+def test_matching_tag_highlight_on_open_tag_highlights_both(qtbot):
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    text = "<Page>\n  <Detail>x</Detail>\n</Page>"
+    editor.setPlainText(text)
+    cursor = editor.textCursor()
+    cursor.setPosition(text.index("<Detail>") + 1)  # inside the open tag
+    editor.setTextCursor(cursor)
+    assert _matching_tag_selection_count(editor) == 2
+
+
+def test_matching_tag_highlight_on_close_tag_highlights_both(qtbot):
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    text = "<Page>\n  <Detail>x</Detail>\n</Page>"
+    editor.setPlainText(text)
+    cursor = editor.textCursor()
+    cursor.setPosition(text.index("</Detail>") + 1)  # inside the close tag
+    editor.setTextCursor(cursor)
+    assert _matching_tag_selection_count(editor) == 2
+
+
+def test_matching_tag_highlight_absent_when_cursor_in_content(qtbot):
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    text = "<Page>\n  <Detail>content</Detail>\n</Page>"
+    editor.setPlainText(text)
+    cursor = editor.textCursor()
+    cursor.setPosition(text.index("content"))  # in text content, not on a tag
+    editor.setTextCursor(cursor)
+    assert _matching_tag_selection_count(editor) == 0
+    # Current-line highlight is still present and unaffected.
+    assert len(editor._current_line_selections) == 1
+
+
+def test_matching_tag_highlight_coexists_with_current_line(qtbot):
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    text = "<Page>\n  <Detail>x</Detail>\n</Page>"
+    editor.setPlainText(text)
+    cursor = editor.textCursor()
+    cursor.setPosition(text.index("<Detail>") + 1)
+    editor.setTextCursor(cursor)
+    colors = [sel.format.background().color() for sel in editor.extraSelections()]
+    assert editor._current_line_color in colors
+    assert editor._matching_tag_color in colors
+
+
+def test_matching_tag_highlight_cleared_when_cursor_moves_off_tag(qtbot):
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    text = "<Page>\n  <Detail>content</Detail>\n</Page>"
+    editor.setPlainText(text)
+    cursor = editor.textCursor()
+    cursor.setPosition(text.index("<Detail>") + 1)
+    editor.setTextCursor(cursor)
+    assert _matching_tag_selection_count(editor) == 2
+    cursor.setPosition(text.index("content"))
+    editor.setTextCursor(cursor)
+    assert _matching_tag_selection_count(editor) == 0
+
+
+def test_matching_tag_highlight_none_on_self_closing_tag(qtbot):
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    text = "<Page>\n  <Column/>\n</Page>"
+    editor.setPlainText(text)
+    cursor = editor.textCursor()
+    cursor.setPosition(text.index("<Column/>") + 2)  # inside the self-closing token
+    editor.setTextCursor(cursor)
+    # A self-closing tag has no separate counterpart to highlight.
+    assert _matching_tag_selection_count(editor) == 0
+
+
+def test_select_enclosing_block_selects_full_element_including_delimiters(qtbot):
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    text = "<Page>\n  <Detail>\n    x\n  </Detail>\n</Page>"
+    editor.setPlainText(text)
+    cursor = editor.textCursor()
+    cursor.setPosition(text.index("x"))  # inside Detail's content
+    editor.setTextCursor(cursor)
+
+    editor.select_enclosing_block()
+
+    expected = text[text.index("<Detail>"):text.index("</Detail>") + len("</Detail>")]
+    selected = editor.textCursor().selectedText().replace(" ", "\n")
+    assert selected == expected
+
+
+def test_select_enclosing_block_on_self_closing_selects_whole_token(qtbot):
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    text = "<Page>\n  <Column/>\n</Page>"
+    editor.setPlainText(text)
+    cursor = editor.textCursor()
+    cursor.setPosition(text.index("<Column/>") + 2)
+    editor.setTextCursor(cursor)
+
+    editor.select_enclosing_block()
+
+    selected = editor.textCursor().selectedText().replace(" ", "\n")
+    assert selected == "<Column/>"
+
+
+def test_select_enclosing_block_in_intersibling_whitespace_selects_parent(qtbot):
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    text = "<Page>\n  <Detail></Detail>\n  <Detail></Detail>\n</Page>"
+    editor.setPlainText(text)
+    first_close_end = text.index("</Detail>") + len("</Detail>")
+    cursor = editor.textCursor()
+    cursor.setPosition(first_close_end + 1)  # in the "\n  " gap between siblings
+    editor.setTextCursor(cursor)
+
+    editor.select_enclosing_block()
+
+    expected = text  # the whole <Page>...</Page>
+    selected = editor.textCursor().selectedText().replace(" ", "\n")
+    assert selected == expected
+
+
+def test_select_enclosing_block_outside_any_element_is_noop(qtbot):
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    text = "  <Page></Page>  "
+    editor.setPlainText(text)
+    cursor = editor.textCursor()
+    cursor.setPosition(0)  # leading whitespace, outside every element
+    editor.setTextCursor(cursor)
+
+    editor.select_enclosing_block()
+
+    assert editor.textCursor().hasSelection() is False
+
+
+def test_copy_folded_block_yields_full_text(qtbot):
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    editor.setPlainText(
+        '<Page fileName="a">\n'
+        '  <Detail tableName="b">\n'
+        '    <Page fileName="c">\n'
+        '      <ColumnPresentation fieldName="x" caption="X"/>\n'
+        '      <ColumnPresentation fieldName="y" caption="Y"/>\n'
+        "    </Page>\n"
+        "  </Detail>\n"
+        "</Page>\n"
+    )
+    full_text = editor.toPlainText()
+    inner_page_open = full_text.index('<Page fileName="c"')
+    inner_close_end = full_text.index("</Page>", inner_page_open) + len("</Page>")
+    expected_block_text = full_text[inner_page_open:inner_close_end]
+
+    # Fold the inner <Page> region (hides its two ColumnPresentation lines).
+    block = editor.document().findBlock(inner_page_open)
+    editor._toggle_fold(block)
+
+    # Select the folded block via Ctrl+Shift+B mechanism (offset-based).
+    cursor = editor.textCursor()
+    cursor.setPosition(inner_page_open)
+    editor.setTextCursor(cursor)
+    editor.select_enclosing_block()
+
+    selected = editor.textCursor().selectedText().replace(" ", "\n")
+    assert selected == expected_block_text, (
+        "Selecting a folded block must yield its FULL underlying text, "
+        "not the visually-collapsed content."
+    )
+
+    editor.copy()
+    clipboard_text = QApplication.clipboard().text()  # system clipboard uses '\n'
+    assert clipboard_text == expected_block_text
+
+
+def test_copy_nested_folds_outer_block_yields_full_text(qtbot):
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    editor.setPlainText(
+        '<Page fileName="a">\n'
+        '  <Detail tableName="b">\n'
+        '    <Page fileName="c">\n'
+        '      <ColumnPresentation fieldName="x" caption="X"/>\n'
+        "    </Page>\n"
+        "  </Detail>\n"
+        "</Page>\n"
+    )
+    full_text = editor.toPlainText()
+    outer_page_open = full_text.index('<Page fileName="a"')
+    outer_close_end = full_text.rindex("</Page>") + len("</Page>")
+    expected_block_text = full_text[outer_page_open:outer_close_end]
+
+    # Independently collapse the inner <Page> then the <Detail> region.
+    inner_page_open = full_text.index('<Page fileName="c"')
+    editor._toggle_fold(editor.document().findBlock(inner_page_open))
+    detail_open = full_text.index("<Detail")
+    editor._toggle_fold(editor.document().findBlock(detail_open))
+
+    cursor = editor.textCursor()
+    cursor.setPosition(outer_page_open)
+    editor.setTextCursor(cursor)
+    editor.select_enclosing_block()
+
+    selected = editor.textCursor().selectedText().replace(" ", "\n")
+    assert selected == expected_block_text
+
+    editor.copy()
+    assert QApplication.clipboard().text() == expected_block_text
+
+
+def test_select_parent_block_from_fresh_cursor_selects_one_level_up(qtbot):
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    text = "<Page>\n  <Detail>\n    <Column>x</Column>\n  </Detail>\n</Page>"
+    editor.setPlainText(text)
+    position = text.index("x")  # inside <Column> content
+    cursor = editor.textCursor()
+    cursor.setPosition(position)
+    editor.setTextCursor(cursor)
+
+    editor.select_parent_block()
+
+    # Independently compute the expected parent (Detail) span.
+    spans = _scan(text)
+    enclosing = _enc(text, position)  # Column
+    parent = _par(spans, enclosing)   # Detail
+    expected = text[parent.open_start:parent.close_end]
+    selected = editor.textCursor().selectedText().replace(" ", "\n")
+    assert selected == expected
+    assert expected == text[text.index("<Detail>"):text.index("</Detail>") + len("</Detail>")]
+
+
+def test_select_parent_block_repeated_presses_walk_up_levels(qtbot):
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    text = "<Page>\n  <Detail>\n    <Column>x</Column>\n  </Detail>\n</Page>"
+    editor.setPlainText(text)
+    cursor = editor.textCursor()
+    cursor.setPosition(text.index("x"))
+    editor.setTextCursor(cursor)
+
+    editor.select_parent_block()  # -> Detail
+    first = editor.textCursor().selectedText().replace(" ", "\n")
+    assert first == text[text.index("<Detail>"):text.index("</Detail>") + len("</Detail>")]
+
+    editor.select_parent_block()  # -> Page (the parent of Detail)
+    second = editor.textCursor().selectedText().replace(" ", "\n")
+    assert second == text  # whole <Page>...</Page>
+
+    editor.select_parent_block()  # Page is top-level: no-op, selection unchanged
+    third = editor.textCursor().selectedText().replace(" ", "\n")
+    assert third == second
+
+
+def test_select_parent_block_at_top_level_is_noop_not_select_all(qtbot):
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    text = "<Page>\n  <Detail>x</Detail>\n</Page>"
+    editor.setPlainText(text)
+    cursor = editor.textCursor()
+    cursor.setPosition(text.index("<Page>") + 1)  # inside the top-level Page's open tag
+    editor.setTextCursor(cursor)
+
+    editor.select_parent_block()
+
+    # Depth-0 element has no parent: no-op. Explicitly NOT "select all".
+    assert editor.textCursor().hasSelection() is False
+    assert editor.textCursor().selectedText() != text
+
+
+def test_select_parent_block_outside_any_element_is_noop(qtbot):
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    text = "  <Page></Page>  "
+    editor.setPlainText(text)
+    cursor = editor.textCursor()
+    cursor.setPosition(0)
+    editor.setTextCursor(cursor)
+
+    editor.select_parent_block()
+
+    assert editor.textCursor().hasSelection() is False
+
+
+def test_ctrl_shift_b_shortcut_selects_enclosing_block(qtbot):
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    editor.show()
+    qtbot.waitExposed(editor)
+    text = "<Page>\n  <Detail>\n    x\n  </Detail>\n</Page>"
+    editor.setPlainText(text)
+    editor.activateWindow()
+    editor.raise_()
+    editor.setFocus()
+    QApplication.setActiveWindow(editor)
+    qtbot.waitActive(editor)
+    cursor = editor.textCursor()
+    cursor.setPosition(text.index("x"))
+    editor.setTextCursor(cursor)
+
+    qtbot.keyClick(editor, Qt.Key.Key_B, Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.ShiftModifier)
+
+    expected = text[text.index("<Detail>"):text.index("</Detail>") + len("</Detail>")]
+    selected = editor.textCursor().selectedText().replace(" ", "\n")
+    assert selected == expected
+
+
+def test_ctrl_shift_a_shortcut_selects_parent_block(qtbot):
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    editor.show()
+    qtbot.waitExposed(editor)
+    text = "<Page>\n  <Detail>\n    <Column>x</Column>\n  </Detail>\n</Page>"
+    editor.setPlainText(text)
+    editor.activateWindow()
+    editor.raise_()
+    editor.setFocus()
+    QApplication.setActiveWindow(editor)
+    qtbot.waitActive(editor)
+    cursor = editor.textCursor()
+    cursor.setPosition(text.index("x"))
+    editor.setTextCursor(cursor)
+
+    qtbot.keyClick(editor, Qt.Key.Key_A, Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.ShiftModifier)
+
+    expected = text[text.index("<Detail>"):text.index("</Detail>") + len("</Detail>")]
+    selected = editor.textCursor().selectedText().replace(" ", "\n")
+    assert selected == expected

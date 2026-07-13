@@ -15,7 +15,9 @@ from PySide6.QtCore import QPoint, QRect, QSize, Qt
 from PySide6.QtGui import (
     QColor,
     QKeyEvent,
+    QKeySequence,
     QPainter,
+    QShortcut,
     QSyntaxHighlighter,
     QTextCharFormat,
     QTextCursor,
@@ -88,6 +90,19 @@ def _cursor_immediately_after_open_tag(line_text: str, position_in_line: int, ta
     before_cursor = line_text[:position_in_line]
     stripped = before_cursor.rstrip()
     return stripped.endswith(">") and f"<{tag_name}" in stripped and not stripped.endswith("/>")
+
+
+def _closing_tag_start(text: str, span: xml_structure.TagSpan) -> int | None:
+    """Given a TagSpan with a known close_end, find where its own '</name>'
+    token begins. Returns None if the span is self-closing or has no
+    close_end. rfind over [open_end, close_end) is exact: the close tag's
+    '</name>' is the last such occurrence before close_end, and the open
+    tag's own '<' is a strictly earlier, distinct position."""
+    if span.close_end is None or span.self_closing:
+        return None
+    close_tag_prefix = "</" + span.name
+    start = text.rfind(close_tag_prefix, span.open_end, span.close_end)
+    return start if start != -1 else None
 
 
 class _EditorGutter(QWidget):
@@ -185,11 +200,29 @@ class XmlEditor(QPlainTextEdit):
         self._current_line_color = QColor("#2d2d30")
         self._error_line_color = QColor("#5a1d1d")
         self._navigation_highlight_color = QColor("#264f78")
+        self._matching_tag_color = QColor("#3a5f3a")
+        self._current_line_selections: list[QTextEdit.ExtraSelection] = []
+        self._matching_tag_selections: list[QTextEdit.ExtraSelection] = []
+        # One-shot "overriding" indicator used by navigate_to_line,
+        # highlight_error_line and select_range_on_line. It sits on top of the
+        # current-line band and matching-tag spans, and is cleared on the next
+        # cursor move (see _highlight_current_line) so it does not persist and
+        # accumulate across independent navigations.
+        self._oneshot_selection: QTextEdit.ExtraSelection | None = None
         self.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
         self.blockCountChanged.connect(self._update_gutter_width)
         self.updateRequest.connect(self._update_gutter_on_scroll)
         self.textChanged.connect(self._rescan_structure)
         self.cursorPositionChanged.connect(self._highlight_current_line)
+        self.cursorPositionChanged.connect(self._update_matching_tag_highlight)
+
+        select_block_shortcut = QShortcut(QKeySequence("Ctrl+Shift+B"), self)
+        select_block_shortcut.setContext(Qt.ShortcutContext.WidgetShortcut)
+        select_block_shortcut.activated.connect(self.select_enclosing_block)
+
+        select_parent_shortcut = QShortcut(QKeySequence("Ctrl+Shift+A"), self)
+        select_parent_shortcut.setContext(Qt.ShortcutContext.WidgetShortcut)
+        select_parent_shortcut.activated.connect(self.select_parent_block)
         # Positions of '>' characters this editor itself auto-inserted as
         # the closing half of its auto-close-'<' feature (see keyPressEvent's
         # `event.text() == "<"` branch). Tracked as QTextCursors -- rather
@@ -269,13 +302,135 @@ class XmlEditor(QPlainTextEdit):
                 return True
         return False
 
+    def _refresh_extra_selections(self) -> None:
+        """The single place XmlEditor calls setExtraSelections. Combines
+        every named selection source in a fixed layering order (current-line
+        band underneath, matching-tag spans above it, one-shot navigation/
+        error line on top) and pushes the combined list to Qt in one call.
+        Individual features update their own named attribute and call this;
+        they never call setExtraSelections directly."""
+        selections: list[QTextEdit.ExtraSelection] = []
+        selections.extend(self._current_line_selections)
+        selections.extend(self._matching_tag_selections)
+        if self._oneshot_selection is not None:
+            selections.append(self._oneshot_selection)
+        self.setExtraSelections(selections)
+
+    def _set_oneshot_selection(self, selection: QTextEdit.ExtraSelection) -> None:
+        """Install `selection` as the sole overriding indicator: clear the
+        current-line band and matching-tag spans, set the one-shot slot, and
+        push the combined list. Reproduces the pre-refactor "replace the whole
+        list" semantics for navigate_to_line / highlight_error_line /
+        select_range_on_line, so exactly one selection remains immediately
+        afterward. The one-shot is cleared on the NEXT cursor move by
+        _highlight_current_line."""
+        self._current_line_selections = []
+        self._matching_tag_selections = []
+        self._oneshot_selection = selection
+        self._refresh_extra_selections()
+
+    def _make_span_cursor(self, start: int, end: int) -> QTextCursor:
+        cursor = QTextCursor(self.document())
+        cursor.setPosition(start)
+        cursor.setPosition(end, QTextCursor.MoveMode.KeepAnchor)
+        return cursor
+
+    def _update_matching_tag_highlight(self) -> None:
+        text = self.toPlainText()
+        position = self.textCursor().position()
+        span = xml_structure.enclosing_tag_span(text, position)
+        self._matching_tag_selections = []
+        if span is None or span.self_closing:
+            self._refresh_extra_selections()
+            return
+
+        on_open_tag = span.open_start <= position < span.open_end
+        close_start = _closing_tag_start(text, span)
+        on_close_tag = (
+            close_start is not None
+            and span.close_end is not None
+            and close_start <= position < span.close_end
+        )
+        if not (on_open_tag or on_close_tag):
+            self._refresh_extra_selections()
+            return
+
+        open_selection = QTextEdit.ExtraSelection()
+        open_selection.format.setBackground(self._matching_tag_color)
+        open_selection.cursor = self._make_span_cursor(span.open_start, span.open_end)
+        selections = [open_selection]
+
+        if close_start is not None and span.close_end is not None:
+            close_selection = QTextEdit.ExtraSelection()
+            close_selection.format.setBackground(self._matching_tag_color)
+            close_selection.cursor = self._make_span_cursor(close_start, span.close_end)
+            selections.append(close_selection)
+
+        self._matching_tag_selections = selections
+        self._refresh_extra_selections()
+
+    def select_enclosing_block(self) -> None:
+        """Ctrl+Shift+B: select the innermost element containing the cursor,
+        from its opening '<' through its closing '>'. Selection is built
+        purely from TagSpan character offsets, so it captures the full
+        underlying text even when intervening blocks are folded (hidden via
+        setVisible(False)); QTextCursor addresses the document's character
+        stream, not what is currently painted. No-op when the cursor is
+        outside every element."""
+        text = self.toPlainText()
+        position = self.textCursor().position()
+        span = xml_structure.enclosing_tag_span(text, position)
+        if span is None:
+            return
+        end = span.close_end if span.close_end is not None else span.open_end
+        cursor = self.textCursor()
+        cursor.setPosition(span.open_start)
+        cursor.setPosition(end, QTextCursor.MoveMode.KeepAnchor)
+        self.setTextCursor(cursor)
+
+    def select_parent_block(self) -> None:
+        """Ctrl+Shift+A: select the block exactly one nesting level up from
+        the current position. Stateless -- always re-derived from the current
+        selection's START offset (never remembered state), so repeated presses
+        walk up one level each time and a manually adjusted selection Just
+        Works. Using selectionStart() (== the selected block's open_start
+        after a prior press) rather than the cursor's moving-end position
+        avoids landing exactly on close_end, which the containment rule
+        (open_start <= position < end) would resolve to the FOLLOWING sibling
+        instead of this block. No-op when there is no enclosing element, or
+        when the enclosing element is top-level (no parent)."""
+        text = self.toPlainText()
+        cursor = self.textCursor()
+        position = cursor.selectionStart() if cursor.hasSelection() else cursor.position()
+        spans = xml_structure.scan(text)
+        enclosing = xml_structure.enclosing_tag_span(text, position)
+        if enclosing is None:
+            return
+        parent = xml_structure.parent_tag_span(spans, enclosing)
+        if parent is None:
+            return
+        end = parent.close_end if parent.close_end is not None else parent.open_end
+        new_cursor = self.textCursor()
+        new_cursor.setPosition(parent.open_start)
+        new_cursor.setPosition(end, QTextCursor.MoveMode.KeepAnchor)
+        self.setTextCursor(new_cursor)
+
     def _highlight_current_line(self) -> None:
+        # An independent cursor move clears any lingering one-shot navigation/
+        # error/range band, reproducing the pre-refactor "next cursor move
+        # wipes the one-shot indicator" behavior. When highlight_error_line /
+        # navigate_to_line / select_range_on_line call setTextCursor, this slot
+        # fires FIRST (as a side effect) and clears the slot; those methods
+        # then set their own one-shot AFTER via _set_oneshot_selection, so the
+        # override survives until the next genuinely independent cursor move.
+        self._oneshot_selection = None
         selection = QTextEdit.ExtraSelection()
         selection.format.setBackground(self._current_line_color)
         selection.format.setProperty(QTextFormat.Property.FullWidthSelection, True)
         selection.cursor = self.textCursor()
         selection.cursor.clearSelection()
-        self.setExtraSelections([selection])
+        self._current_line_selections = [selection]
+        self._refresh_extra_selections()
 
     def highlight_error_line(self, line: int) -> None:
         self._scroll_and_highlight_whole_line(line, self._error_line_color)
@@ -299,7 +454,12 @@ class XmlEditor(QPlainTextEdit):
         selection.format.setProperty(QTextFormat.Property.FullWidthSelection, True)
         selection.cursor = cursor
         selection.cursor.clearSelection()
-        self.setExtraSelections([selection])
+        # This whole-line indicator is a one-shot that intentionally overrides
+        # both the current-line band and any matching-tag highlight, matching
+        # the pre-refactor behavior (setTextCursor above fires the current-line
+        # slot first; we then set this one-shot so only this indicator remains
+        # until the next cursor move).
+        self._set_oneshot_selection(selection)
 
     def line_text(self, line: int) -> str:
         """Return the plain text of `line` (1-based), or "" if out of range."""
@@ -320,7 +480,7 @@ class XmlEditor(QPlainTextEdit):
         selection = QTextEdit.ExtraSelection()
         selection.format.setBackground(self._navigation_highlight_color)
         selection.cursor = cursor
-        self.setExtraSelections([selection])
+        self._set_oneshot_selection(selection)
 
     def set_line_wrap_enabled(self, enabled: bool) -> None:
         self.setLineWrapMode(
