@@ -500,3 +500,26 @@ def test_select_range_on_line_selects_exact_substring(qtbot):
     selections = editor.extraSelections()
     assert len(selections) == 1
     assert selections[0].cursor.selectedText() == 'caption="Equipment"'
+
+
+def test_refresh_extra_selections_combiner_exists_and_current_line_only(qtbot):
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    editor.setPlainText("line one\nline two")
+    cursor = editor.textCursor()
+    cursor.setPosition(0)
+    editor.setTextCursor(cursor)
+    # With only the current-line contribution active, exactly one selection.
+    assert len(editor.extraSelections()) == 1
+    assert editor._matching_tag_selections == []
+    assert editor._error_line_selection is None
+
+
+def test_refresh_extra_selections_current_line_uses_named_list(qtbot):
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    editor.setPlainText("line one\nline two")
+    cursor = editor.textCursor()
+    cursor.setPosition(0)
+    editor.setTextCursor(cursor)
+    assert len(editor._current_line_selections) == 1
