@@ -90,6 +90,19 @@ def _cursor_immediately_after_open_tag(line_text: str, position_in_line: int, ta
     return stripped.endswith(">") and f"<{tag_name}" in stripped and not stripped.endswith("/>")
 
 
+def _closing_tag_start(text: str, span: xml_structure.TagSpan) -> int | None:
+    """Given a TagSpan with a known close_end, find where its own '</name>'
+    token begins. Returns None if the span is self-closing or has no
+    close_end. rfind over [open_end, close_end) is exact: the close tag's
+    '</name>' is the last such occurrence before close_end, and the open
+    tag's own '<' is a strictly earlier, distinct position."""
+    if span.close_end is None or span.self_closing:
+        return None
+    close_tag_prefix = "</" + span.name
+    start = text.rfind(close_tag_prefix, span.open_end, span.close_end)
+    return start if start != -1 else None
+
+
 class _EditorGutter(QWidget):
     """Line-number and fold-marker gutter, the standard QPlainTextEdit
     side-widget pattern (Qt's "Code Editor Example")."""
@@ -194,6 +207,7 @@ class XmlEditor(QPlainTextEdit):
         self.updateRequest.connect(self._update_gutter_on_scroll)
         self.textChanged.connect(self._rescan_structure)
         self.cursorPositionChanged.connect(self._highlight_current_line)
+        self.cursorPositionChanged.connect(self._update_matching_tag_highlight)
         # Positions of '>' characters this editor itself auto-inserted as
         # the closing half of its auto-close-'<' feature (see keyPressEvent's
         # `event.text() == "<"` branch). Tracked as QTextCursors -- rather
@@ -286,6 +300,46 @@ class XmlEditor(QPlainTextEdit):
         if self._error_line_selection is not None:
             selections.append(self._error_line_selection)
         self.setExtraSelections(selections)
+
+    def _make_span_cursor(self, start: int, end: int) -> QTextCursor:
+        cursor = QTextCursor(self.document())
+        cursor.setPosition(start)
+        cursor.setPosition(end, QTextCursor.MoveMode.KeepAnchor)
+        return cursor
+
+    def _update_matching_tag_highlight(self) -> None:
+        text = self.toPlainText()
+        position = self.textCursor().position()
+        span = xml_structure.enclosing_tag_span(text, position)
+        self._matching_tag_selections = []
+        if span is None or span.self_closing:
+            self._refresh_extra_selections()
+            return
+
+        on_open_tag = span.open_start <= position < span.open_end
+        close_start = _closing_tag_start(text, span)
+        on_close_tag = (
+            close_start is not None
+            and span.close_end is not None
+            and close_start <= position < span.close_end
+        )
+        if not (on_open_tag or on_close_tag):
+            self._refresh_extra_selections()
+            return
+
+        open_selection = QTextEdit.ExtraSelection()
+        open_selection.format.setBackground(self._matching_tag_color)
+        open_selection.cursor = self._make_span_cursor(span.open_start, span.open_end)
+        selections = [open_selection]
+
+        if close_start is not None and span.close_end is not None:
+            close_selection = QTextEdit.ExtraSelection()
+            close_selection.format.setBackground(self._matching_tag_color)
+            close_selection.cursor = self._make_span_cursor(close_start, span.close_end)
+            selections.append(close_selection)
+
+        self._matching_tag_selections = selections
+        self._refresh_extra_selections()
 
     def _highlight_current_line(self) -> None:
         selection = QTextEdit.ExtraSelection()

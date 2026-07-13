@@ -523,3 +523,87 @@ def test_refresh_extra_selections_current_line_uses_named_list(qtbot):
     cursor.setPosition(0)
     editor.setTextCursor(cursor)
     assert len(editor._current_line_selections) == 1
+
+
+def _matching_tag_selection_count(editor):
+    """Number of extra-selections whose background is the matching-tag color."""
+    color = editor._matching_tag_color
+    return sum(
+        1
+        for sel in editor.extraSelections()
+        if sel.format.background().color() == color
+    )
+
+
+def test_matching_tag_highlight_on_open_tag_highlights_both(qtbot):
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    text = "<Page>\n  <Detail>x</Detail>\n</Page>"
+    editor.setPlainText(text)
+    cursor = editor.textCursor()
+    cursor.setPosition(text.index("<Detail>") + 1)  # inside the open tag
+    editor.setTextCursor(cursor)
+    assert _matching_tag_selection_count(editor) == 2
+
+
+def test_matching_tag_highlight_on_close_tag_highlights_both(qtbot):
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    text = "<Page>\n  <Detail>x</Detail>\n</Page>"
+    editor.setPlainText(text)
+    cursor = editor.textCursor()
+    cursor.setPosition(text.index("</Detail>") + 1)  # inside the close tag
+    editor.setTextCursor(cursor)
+    assert _matching_tag_selection_count(editor) == 2
+
+
+def test_matching_tag_highlight_absent_when_cursor_in_content(qtbot):
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    text = "<Page>\n  <Detail>content</Detail>\n</Page>"
+    editor.setPlainText(text)
+    cursor = editor.textCursor()
+    cursor.setPosition(text.index("content"))  # in text content, not on a tag
+    editor.setTextCursor(cursor)
+    assert _matching_tag_selection_count(editor) == 0
+    # Current-line highlight is still present and unaffected.
+    assert len(editor._current_line_selections) == 1
+
+
+def test_matching_tag_highlight_coexists_with_current_line(qtbot):
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    text = "<Page>\n  <Detail>x</Detail>\n</Page>"
+    editor.setPlainText(text)
+    cursor = editor.textCursor()
+    cursor.setPosition(text.index("<Detail>") + 1)
+    editor.setTextCursor(cursor)
+    colors = [sel.format.background().color() for sel in editor.extraSelections()]
+    assert editor._current_line_color in colors
+    assert editor._matching_tag_color in colors
+
+
+def test_matching_tag_highlight_cleared_when_cursor_moves_off_tag(qtbot):
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    text = "<Page>\n  <Detail>content</Detail>\n</Page>"
+    editor.setPlainText(text)
+    cursor = editor.textCursor()
+    cursor.setPosition(text.index("<Detail>") + 1)
+    editor.setTextCursor(cursor)
+    assert _matching_tag_selection_count(editor) == 2
+    cursor.setPosition(text.index("content"))
+    editor.setTextCursor(cursor)
+    assert _matching_tag_selection_count(editor) == 0
+
+
+def test_matching_tag_highlight_none_on_self_closing_tag(qtbot):
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    text = "<Page>\n  <Column/>\n</Page>"
+    editor.setPlainText(text)
+    cursor = editor.textCursor()
+    cursor.setPosition(text.index("<Column/>") + 2)  # inside the self-closing token
+    editor.setTextCursor(cursor)
+    # A self-closing tag has no separate counterpart to highlight.
+    assert _matching_tag_selection_count(editor) == 0
