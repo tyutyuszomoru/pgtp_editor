@@ -236,3 +236,80 @@ def test_generate_output_folder_prefilled_from_project_output_path(qtbot, tmp_pa
         window._generate_php()
 
     assert captured["directory"] == out_attr
+
+
+def _run_generation(window, fake, tmp_path):
+    from PySide6.QtWidgets import QMessageBox
+    window.center_stage.xml_editor.setPlainText("<Project/>")
+    window._current_project_path = str(tmp_path / "proj.pgtp")
+    out_dir = tmp_path / "out"
+    out_dir.mkdir(exist_ok=True)
+    with patch(
+        "pgtp_editor.ui.main_window.QMessageBox.question",
+        return_value=QMessageBox.StandardButton.Save,
+    ), patch(
+        "pgtp_editor.ui.main_window.QFileDialog.getExistingDirectory",
+        return_value=str(out_dir),
+    ):
+        window._generate_php()
+    return out_dir
+
+
+def test_zero_exit_shows_success_dialog_and_summary(qtbot, tmp_path):
+    window, fake, exe = _configured_window(qtbot, tmp_path)
+    _run_generation(window, fake, tmp_path)
+
+    with patch("pgtp_editor.ui.main_window.QMessageBox.information") as mock_info:
+        fake.emit_finished(0)
+
+    assert mock_info.called
+    texts = [window.audit_panel.item(i).text() for i in range(window.audit_panel.count())]
+    assert "[PHP] Generation finished (exit 0)" in texts
+    assert window.statusBar().currentMessage() == "Generation succeeded"
+
+
+def test_nonzero_exit_shows_failure_dialog(qtbot, tmp_path):
+    window, fake, exe = _configured_window(qtbot, tmp_path)
+    _run_generation(window, fake, tmp_path)
+
+    with patch("pgtp_editor.ui.main_window.QMessageBox.critical") as mock_critical:
+        fake.emit_finished(3)
+
+    assert mock_critical.called
+    assert window.statusBar().currentMessage() == "Generation failed (exit 3)"
+
+
+def test_open_output_folder_before_any_run_is_a_noop(qtbot, tmp_path):
+    window = MainWindow(generator_config_dir=tmp_path)
+    qtbot.addWidget(window)
+    assert window._current_output_folder is None
+
+    with patch("pgtp_editor.ui.main_window.QDesktopServices.openUrl") as mock_open:
+        window._open_output_folder()
+
+    assert not mock_open.called
+
+
+def test_open_output_folder_after_run_opens_the_folder(qtbot, tmp_path):
+    window, fake, exe = _configured_window(qtbot, tmp_path)
+    out_dir = _run_generation(window, fake, tmp_path)
+
+    with patch("pgtp_editor.ui.main_window.QDesktopServices.openUrl") as mock_open:
+        window._open_output_folder()
+
+    assert mock_open.called
+    opened_url = mock_open.call_args.args[0]
+    assert opened_url.toLocalFile().rstrip("/") == str(out_dir).replace("\\", "/").rstrip("/")
+
+
+def test_open_output_folder_menu_action_is_wired(qtbot, tmp_path):
+    from tests.ui._menu_helpers import find_action, find_top_menu
+
+    window, fake, exe = _configured_window(qtbot, tmp_path)
+    _run_generation(window, fake, tmp_path)
+    menu = find_top_menu(window, "Generation")
+
+    with patch("pgtp_editor.ui.main_window.QDesktopServices.openUrl") as mock_open:
+        find_action(menu, "Open Output Folder").trigger()
+
+    assert mock_open.called
