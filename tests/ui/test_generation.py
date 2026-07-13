@@ -41,3 +41,55 @@ def test_output_folder_starts_unset(qtbot, tmp_path):
     window = MainWindow(generator_config_dir=tmp_path)
     qtbot.addWidget(window)
     assert window._current_output_folder is None
+
+
+from unittest.mock import patch
+
+from pgtp_editor.generation.config import load_executable_path
+
+
+def test_locate_generator_saves_chosen_path(qtbot, tmp_path):
+    window = MainWindow(generator_config_dir=tmp_path)
+    qtbot.addWidget(window)
+    exe = tmp_path / "PgPHPGeneratorPro.exe"
+    exe.write_text("", encoding="utf-8")
+
+    with patch(
+        "pgtp_editor.ui.main_window.QFileDialog.getOpenFileName",
+        return_value=(str(exe), "Executables (*.exe)"),
+    ):
+        window._locate_generator()
+
+    assert load_executable_path(base_dir=tmp_path) == str(exe)
+    assert window.statusBar().currentMessage() == f"PHP Generator set: {exe.name}"
+
+
+def test_locate_generator_cancel_is_a_noop(qtbot, tmp_path):
+    window = MainWindow(generator_config_dir=tmp_path)
+    qtbot.addWidget(window)
+
+    with patch(
+        "pgtp_editor.ui.main_window.QFileDialog.getOpenFileName",
+        return_value=("", ""),
+    ):
+        window._locate_generator()
+
+    assert load_executable_path(base_dir=tmp_path) is None
+
+
+def test_locate_generator_menu_action_is_wired(qtbot, tmp_path):
+    from tests.ui._menu_helpers import find_action, find_top_menu
+
+    window = MainWindow(generator_config_dir=tmp_path)
+    qtbot.addWidget(window)
+    exe = tmp_path / "gen.exe"
+    exe.write_text("", encoding="utf-8")
+    menu = find_top_menu(window, "Generation")
+
+    with patch(
+        "pgtp_editor.ui.main_window.QFileDialog.getOpenFileName",
+        return_value=(str(exe), "Executables (*.exe)"),
+    ):
+        find_action(menu, "Locate PHP Generator Executable...").trigger()
+
+    assert load_executable_path(base_dir=tmp_path) == str(exe)
