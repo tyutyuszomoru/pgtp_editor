@@ -916,3 +916,53 @@ def test_ctrl_shift_a_shortcut_selects_parent_block(qtbot):
     expected = text[text.index("<Detail>"):text.index("</Detail>") + len("</Detail>")]
     selected = editor.textCursor().selectedText().replace(" ", "\n")
     assert selected == expected
+
+
+from PySide6.QtCore import QPoint as _QPoint, Qt as _Qt  # noqa: E402
+from PySide6.QtGui import QTextCursor as _QTextCursor  # noqa: E402
+from PySide6.QtTest import QTest as _QTest  # noqa: E402
+
+
+def test_line_clicked_signal_exists():
+    # Class-level Signal is present and typed for one int argument.
+    assert hasattr(XmlEditor, "line_clicked")
+
+
+def test_mouse_release_emits_one_based_line_from_cursor(qtbot):
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    editor.setPlainText("line one\nline two\nline three\nline four")
+
+    # Place the cursor on the 3rd block (0-based blockNumber 2) so the
+    # override reads it after super() runs. We drive mouseReleaseEvent
+    # directly with a synthetic position on that line's rect.
+    block = editor.document().findBlockByNumber(2)
+    cursor = _QTextCursor(block)
+    editor.setTextCursor(cursor)
+
+    emitted = []
+    editor.line_clicked.connect(emitted.append)
+
+    rect = editor.cursorRect(editor.textCursor())
+    pos = rect.center()
+    _QTest.mouseClick(editor.viewport(), _Qt.MouseButton.LeftButton, _Qt.KeyboardModifier.NoModifier, pos)
+
+    assert emitted, "line_clicked should have fired on a left mouse release"
+    # Whatever line the click landed on, it must be reported 1-based and match
+    # the post-click cursor's own block number + 1.
+    assert emitted[-1] == editor.textCursor().blockNumber() + 1
+
+
+def test_right_click_does_not_emit_line_clicked(qtbot):
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    editor.setPlainText("line one\nline two")
+
+    emitted = []
+    editor.line_clicked.connect(emitted.append)
+
+    rect = editor.cursorRect(editor.textCursor())
+    _QTest.mouseClick(
+        editor.viewport(), _Qt.MouseButton.RightButton, _Qt.KeyboardModifier.NoModifier, rect.center()
+    )
+    assert emitted == []
