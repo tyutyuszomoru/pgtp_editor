@@ -3,7 +3,7 @@ import shutil
 from pathlib import Path
 
 from lxml import etree
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
     QDockWidget,
     QFileDialog,
@@ -39,6 +39,8 @@ from pgtp_editor.ui.properties_panel import PropertiesPanel
 
 
 _FIND_RESULT_PREFIX = "[Find] "
+
+_FIND_ALL_BATCH = 200
 
 _SCHEMA_REPORT_TEMPLATES = {
     "new_element": "[Schema] NEW ELEMENT: {path} (first seen in {source})",
@@ -77,6 +79,13 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(self.center_stage)
         self.center_stage.xml_editor.line_clicked.connect(self._on_editor_line_clicked)
         self.center_stage.find_replace_bar.set_on_find_all(self._populate_find_all_results)
+        self.center_stage.find_replace_bar.set_on_stop_find_all(self._stop_find_all)
+        self.center_stage.find_replace_bar.set_on_status(self.statusBar().showMessage)
+        self._find_all_timer = None
+        self._find_all_iter = None
+        self._find_all_stop = False
+        self._find_all_count = 0
+        self._find_all_term = ""
         self.audit_panel.itemClicked.connect(self._on_audit_item_clicked)
 
         self.properties_panel = PropertiesPanel(xml_editor=self.center_stage.xml_editor)
@@ -170,17 +179,63 @@ class MainWindow(QMainWindow):
             self.audit_panel.addItem(template.format(source=source_name, **event))
 
     def _populate_find_all_results(self, term: str) -> None:
+        """Start a streaming Find All: results are appended to the Audit panel
+        a batch at a time on a 0ms QTimer, yielding to the event loop between
+        batches so the UI stays responsive and Stop takes effect promptly."""
+        self._cancel_find_all_timer()
         self._clear_find_results()
+        self._find_all_term = term
+        self._find_all_count = 0
+        self._find_all_stop = False
         text = self.center_stage.xml_editor.toPlainText()
-        matches = search.find_all_matches(text, term)
-        for match in matches:
+        self._find_all_iter = search.iter_matches(text, term)
+        self.center_stage.find_replace_bar.set_find_all_running(True)
+        self.statusBar().showMessage(f'Finding "{term}"…')
+        self._find_all_timer = QTimer(self)
+        self._find_all_timer.timeout.connect(self._find_all_step)
+        self._find_all_timer.start(0)
+
+    def _find_all_step(self) -> None:
+        if self._find_all_stop:
+            self._finish_find_all(stopped=True)
+            return
+        for _ in range(_FIND_ALL_BATCH):
+            try:
+                match = next(self._find_all_iter)
+            except StopIteration:
+                self._finish_find_all(stopped=False)
+                return
             item = QListWidgetItem(f"{_FIND_RESULT_PREFIX}line {match.line}: {match.preview}")
             item.setData(Qt.ItemDataRole.UserRole, match.line)
             self.audit_panel.addItem(item)
+            self._find_all_count += 1
+        self.statusBar().showMessage(
+            f'Finding "{self._find_all_term}"… found {self._find_all_count}'
+        )
+
+    def _finish_find_all(self, stopped: bool) -> None:
+        self._cancel_find_all_timer()
         summary = QListWidgetItem(
-            f'{_FIND_RESULT_PREFIX}{len(matches)} match(es) for "{term}"'
+            f'{_FIND_RESULT_PREFIX}{self._find_all_count} match(es) for "{self._find_all_term}"'
         )
         self.audit_panel.addItem(summary)  # no line data -> clicking is a no-op
+        self.center_stage.find_replace_bar.set_find_all_running(False)
+        if stopped:
+            self.statusBar().showMessage(
+                f"Find All stopped — found {self._find_all_count} item(s)"
+            )
+        else:
+            self.statusBar().showMessage(f"Found {self._find_all_count} item(s)")
+
+    def _stop_find_all(self) -> None:
+        """Request that an in-flight streaming Find All stop; the next
+        _find_all_step tick finishes the run, keeping results found so far."""
+        self._find_all_stop = True
+
+    def _cancel_find_all_timer(self) -> None:
+        if self._find_all_timer is not None:
+            self._find_all_timer.stop()
+            self._find_all_timer = None
 
     def _clear_find_results(self) -> None:
         """Remove only prior [Find]-prefixed entries, leaving schema-learning

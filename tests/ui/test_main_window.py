@@ -480,3 +480,78 @@ def test_replace_all_via_menu_mutates_document(qtbot):
 
     find_action(find_top_menu(window, "Edit"), "Replace All").trigger()
     assert window.center_stage.xml_editor.toPlainText() == "X X X"
+
+
+def test_find_all_streaming_completes_and_reports_final_count(qtbot):
+    from PySide6.QtCore import Qt as _Qt
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window.center_stage.xml_editor.setPlainText("page one\nsecond\nthird page here")
+    bar = window.center_stage.find_replace_bar
+
+    window._populate_find_all_results("page")
+    qtbot.waitUntil(lambda: not bar._find_all_running, timeout=5000)
+
+    texts = [window.audit_panel.item(i).text() for i in range(window.audit_panel.count())]
+    assert texts == [
+        "[Find] line 1: page one",
+        "[Find] line 3: third page here",
+        '[Find] 2 match(es) for "page"',
+    ]
+    assert window.audit_panel.item(0).data(_Qt.ItemDataRole.UserRole) == 1
+    assert window.statusBar().currentMessage() == "Found 2 item(s)"
+    assert bar._find_all_button.text() == "Find All"
+
+
+def test_find_all_stop_keeps_partial_results(qtbot):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    # Many matches so a single batch is a strict subset of the total.
+    window.center_stage.xml_editor.setPlainText("\n".join(f"a{i}" for i in range(500)))
+    bar = window.center_stage.find_replace_bar
+
+    window._populate_find_all_results("a")
+    # Take manual control of stepping so the test is deterministic (no timing).
+    window._find_all_timer.stop()
+    window._find_all_step()          # process exactly one batch
+    partial = window._find_all_count
+    assert 0 < partial < 500
+    results_before_summary = window.audit_panel.count()
+
+    window._stop_find_all()
+    window._find_all_step()          # observes the stop flag -> finishes
+
+    assert bar._find_all_running is False
+    assert bar._find_all_button.text() == "Find All"
+    # Partial results kept; exactly one summary line appended after them.
+    assert window.audit_panel.count() == results_before_summary + 1
+    summary = window.audit_panel.item(window.audit_panel.count() - 1).text()
+    assert summary == f'[Find] {partial} match(es) for "a"'
+    assert window.statusBar().currentMessage() == f"Find All stopped — found {partial} item(s)"
+
+
+def test_find_all_live_count_status_after_a_batch(qtbot):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window.center_stage.xml_editor.setPlainText("\n".join(f"a{i}" for i in range(500)))
+
+    window._populate_find_all_results("a")
+    window._find_all_timer.stop()
+    window._find_all_step()
+    msg = window.statusBar().currentMessage()
+    assert msg.startswith('Finding "a"… found ')
+
+
+def test_find_all_restart_does_not_leak_a_second_timer(qtbot):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window.center_stage.xml_editor.setPlainText("page page")
+    bar = window.center_stage.find_replace_bar
+
+    window._populate_find_all_results("page")
+    first_timer = window._find_all_timer
+    window._populate_find_all_results("page")  # re-trigger while (nominally) active
+    # The previous timer was stopped/dropped; a fresh one is in place.
+    assert window._find_all_timer is not first_timer
+    assert not first_timer.isActive()
+    qtbot.waitUntil(lambda: not bar._find_all_running, timeout=5000)
