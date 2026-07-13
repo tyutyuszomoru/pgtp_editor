@@ -36,3 +36,19 @@ def test_build_generate_command_is_five_elements_in_fixed_order():
     assert command[2] == "-output"
     assert command[3] == "o"
     assert command[4] == "-generate"
+
+
+import inspect
+
+from pgtp_editor.generation.runner import GeneratorRunner
+
+
+def test_generator_runner_is_constructible(qtbot):
+    runner = GeneratorRunner()
+    assert runner is not None
+
+
+def test_generator_runner_run_signature_is_the_injection_contract():
+    # MainWindow injects a fake with this exact signature; keep them in lockstep.
+    params = list(inspect.signature(GeneratorRunner.run).parameters)
+    assert params == ["self", "command", "on_output", "on_finished"]
