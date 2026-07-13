@@ -8,6 +8,7 @@ from PySide6.QtWidgets import (
     QDockWidget,
     QFileDialog,
     QListWidget,
+    QListWidgetItem,
     QMainWindow,
     QMessageBox,
     QWidget,
@@ -32,9 +33,12 @@ from pgtp_editor.ui._stub_action import add_stub_action
 from pgtp_editor.ui.about import show_about_dialog
 from pgtp_editor.ui.annotate_schema_values_dialog import AnnotateSchemaValuesDialog
 from pgtp_editor.ui.center_stage import CenterStage
+from pgtp_editor.ui import search
 from pgtp_editor.ui.project_tree import ProjectTreePanel
 from pgtp_editor.ui.properties_panel import PropertiesPanel
 
+
+_FIND_RESULT_PREFIX = "[Find] "
 
 _SCHEMA_REPORT_TEMPLATES = {
     "new_element": "[Schema] NEW ELEMENT: {path} (first seen in {source})",
@@ -72,6 +76,8 @@ class MainWindow(QMainWindow):
         self.center_stage = CenterStage()
         self.setCentralWidget(self.center_stage)
         self.center_stage.xml_editor.line_clicked.connect(self._on_editor_line_clicked)
+        self.center_stage.find_replace_bar.set_on_find_all(self._populate_find_all_results)
+        self.audit_panel.itemClicked.connect(self._on_audit_item_clicked)
 
         self.properties_panel = PropertiesPanel(xml_editor=self.center_stage.xml_editor)
         self.properties_dock = QDockWidget("Properties", self)
@@ -162,6 +168,35 @@ class MainWindow(QMainWindow):
         for event in events:
             template = _SCHEMA_REPORT_TEMPLATES[event["kind"]]
             self.audit_panel.addItem(template.format(source=source_name, **event))
+
+    def _populate_find_all_results(self, term: str) -> None:
+        self._clear_find_results()
+        text = self.center_stage.xml_editor.toPlainText()
+        matches = search.find_all_matches(text, term)
+        for match in matches:
+            item = QListWidgetItem(f"{_FIND_RESULT_PREFIX}line {match.line}: {match.preview}")
+            item.setData(Qt.ItemDataRole.UserRole, match.line)
+            self.audit_panel.addItem(item)
+        summary = QListWidgetItem(
+            f'{_FIND_RESULT_PREFIX}{len(matches)} match(es) for "{term}"'
+        )
+        self.audit_panel.addItem(summary)  # no line data -> clicking is a no-op
+
+    def _clear_find_results(self) -> None:
+        """Remove only prior [Find]-prefixed entries, leaving schema-learning
+        / validation entries intact. Iterates from the bottom so removals
+        don't shift not-yet-visited indices."""
+        for row in range(self.audit_panel.count() - 1, -1, -1):
+            item = self.audit_panel.item(row)
+            if item.text().startswith(_FIND_RESULT_PREFIX):
+                self.audit_panel.takeItem(row)
+
+    def _on_audit_item_clicked(self, item) -> None:
+        line = item.data(Qt.ItemDataRole.UserRole)
+        if line is None:
+            return  # schema entry or the [Find] summary line: no-op
+        self.center_stage.setCurrentIndex(self.center_stage.raw_xml_tab_index)
+        self.center_stage.xml_editor.navigate_to_line(line)
 
     @staticmethod
     def _read_raw_text(path) -> "str | None":
@@ -408,9 +443,27 @@ class MainWindow(QMainWindow):
         self._add_stub_action(menu, "Paste")
         self._add_stub_action(menu, "Delete")
         menu.addSeparator()
-        self._add_stub_action(menu, "Find...")
-        find_replace = self._add_stub_action(menu, "Find & Replace...")
-        find_replace.setShortcut("Ctrl+H")
+
+        find_action = menu.addAction("Find...")
+        find_action.setShortcut("Ctrl+F")
+        find_action.triggered.connect(self._show_find_bar)
+
+        find_next_action = menu.addAction("Find Next")
+        find_next_action.setShortcut("F3")
+        find_next_action.triggered.connect(self._find_next)
+
+        find_all_action = menu.addAction("Find All")
+        find_all_action.setShortcut("Ctrl+Shift+F")
+        find_all_action.triggered.connect(self._find_all)
+
+        replace_action = menu.addAction("Replace...")
+        replace_action.setShortcut("Ctrl+R")
+        replace_action.triggered.connect(self._show_replace_bar)
+
+        replace_all_action = menu.addAction("Replace All")
+        replace_all_action.setShortcut("Ctrl+Alt+Return")
+        replace_all_action.triggered.connect(self._replace_all)
+
         menu.addSeparator()
         self._add_stub_action(menu, "Preferences...")
 
@@ -448,6 +501,31 @@ class MainWindow(QMainWindow):
 
     def _add_stub_action(self, menu, label):
         return add_stub_action(menu, label, self._not_implemented)
+
+    def _reveal_raw_xml_tab(self):
+        self.center_stage.set_raw_xml_tab_visible(True)
+        self._raw_xml_panel_action.setChecked(True)
+        self.center_stage.setCurrentIndex(self.center_stage.raw_xml_tab_index)
+
+    def _show_find_bar(self):
+        self._reveal_raw_xml_tab()
+        self.center_stage.find_replace_bar.show_find()
+
+    def _show_replace_bar(self):
+        self._reveal_raw_xml_tab()
+        self.center_stage.find_replace_bar.show_replace()
+
+    def _find_next(self):
+        self._reveal_raw_xml_tab()
+        self.center_stage.find_replace_bar.find_next()
+
+    def _find_all(self):
+        self._reveal_raw_xml_tab()
+        self.center_stage.find_replace_bar.find_all()
+
+    def _replace_all(self):
+        self._reveal_raw_xml_tab()
+        self.center_stage.find_replace_bar.replace_all()
 
     def _build_diff_merge_menu(self):
         menu = self.menuBar().addMenu("Diff / Merge")

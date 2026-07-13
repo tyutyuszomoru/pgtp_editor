@@ -48,17 +48,49 @@ def test_edit_menu_contents(qtbot):
     assert action_labels(edit_menu) == [
         "Undo", "Redo", "―",
         "Cut", "Copy", "Paste", "Delete", "―",
-        "Find...", "Find & Replace...", "―",
+        "Find...", "Find Next", "Find All", "Replace...", "Replace All", "―",
         "Preferences...",
     ]
 
 
-def test_find_and_replace_has_ctrl_h_shortcut(qtbot):
+def test_edit_menu_search_shortcuts(qtbot):
     window = MainWindow()
     qtbot.addWidget(window)
     edit_menu = find_top_menu(window, "Edit")
-    action = find_action(edit_menu, "Find & Replace...")
-    assert action.shortcut().toString() == "Ctrl+H"
+    expected = {
+        "Find...": "Ctrl+F",
+        "Find Next": "F3",
+        "Find All": "Ctrl+Shift+F",
+        "Replace...": "Ctrl+R",
+        "Replace All": "Ctrl+Alt+Return",
+    }
+    for label, combo in expected.items():
+        action = find_action(edit_menu, label)
+        assert action is not None
+        assert action.shortcut().toString() == combo
+
+
+def test_find_menu_action_shows_bar_and_raw_tab(qtbot):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    edit_menu = find_top_menu(window, "Edit")
+    find_action(edit_menu, "Find...").trigger()
+    # The window itself is never shown in this test, so isVisible() (which
+    # requires all ancestors on screen) is False; isVisibleTo(tab) reflects
+    # the bar's own show state, which show_find() sets.
+    bar = window.center_stage.find_replace_bar
+    assert bar.isVisibleTo(window.center_stage.raw_xml_tab) is True
+    assert window.center_stage.currentIndex() == window.center_stage.raw_xml_tab_index
+
+
+def test_replace_menu_action_shows_replace_row(qtbot):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    edit_menu = find_top_menu(window, "Edit")
+    find_action(edit_menu, "Replace...").trigger()
+    bar = window.center_stage.find_replace_bar
+    assert bar.isVisibleTo(window.center_stage.raw_xml_tab) is True
+    assert bar._replace_row_widget.isVisibleTo(bar) is True
 
 
 def test_view_menu_contents(qtbot):

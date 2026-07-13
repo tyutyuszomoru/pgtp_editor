@@ -484,6 +484,16 @@ class XmlEditor(QPlainTextEdit):
         selection.cursor = cursor
         self._set_oneshot_selection(selection)
 
+    def replace_current_selection(self, text: str) -> None:
+        """Replace the current selection's text with `text` as a single undo
+        step. No-op if there is no selection. Used by FindReplaceBar's
+        Replace (Search & Replace sub-project)."""
+        cursor = self.textCursor()
+        if not cursor.hasSelection():
+            return
+        cursor.insertText(text)  # QTextCursor.insertText replaces the selection
+        self.setTextCursor(cursor)
+
     def set_line_wrap_enabled(self, enabled: bool) -> None:
         self.setLineWrapMode(
             QPlainTextEdit.LineWrapMode.WidgetWidth

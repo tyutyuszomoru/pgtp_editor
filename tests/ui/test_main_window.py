@@ -363,3 +363,120 @@ def test_reparse_realigns_click_sync_after_line_shift(qtbot):
     # Clicking the page's (now-shifted) line resolves to the rebuilt node.
     window._on_editor_line_clicked(new_page.sourceline)
     assert window.project_tree.currentItem().data(0, MODEL_NODE_ROLE) is new_page
+
+
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QTextCursor
+
+
+def test_find_all_populates_audit_panel_with_line_items_and_summary(qtbot):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window.center_stage.xml_editor.setPlainText("first page\nsecond line\nthird page here")
+    window._populate_find_all_results("page")
+
+    texts = [window.audit_panel.item(i).text() for i in range(window.audit_panel.count())]
+    assert texts == [
+        "[Find] line 1: first page",
+        "[Find] line 3: third page here",
+        '[Find] 2 match(es) for "page"',
+    ]
+    # Line data stored on result items, None on the summary line.
+    assert window.audit_panel.item(0).data(Qt.ItemDataRole.UserRole) == 1
+    assert window.audit_panel.item(1).data(Qt.ItemDataRole.UserRole) == 3
+    assert window.audit_panel.item(2).data(Qt.ItemDataRole.UserRole) is None
+
+
+def test_find_all_clears_only_prior_find_entries(qtbot):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window.audit_panel.addItem("[Schema] seeded entry")
+    window.center_stage.xml_editor.setPlainText("page here")
+
+    window._populate_find_all_results("page")
+    window._populate_find_all_results("page")  # run again
+
+    texts = [window.audit_panel.item(i).text() for i in range(window.audit_panel.count())]
+    # The seeded [Schema] entry survives exactly once; only ONE generation of
+    # [Find] entries is present (result line + summary).
+    assert texts.count("[Schema] seeded entry") == 1
+    assert texts == [
+        "[Schema] seeded entry",
+        "[Find] line 1: page here",
+        '[Find] 1 match(es) for "page"',
+    ]
+
+
+def test_clicking_find_result_navigates_editor_to_line(qtbot):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window.center_stage.xml_editor.setPlainText("a\nb\npage on line 3\nd")
+    window._populate_find_all_results("page")
+
+    result_item = window.audit_panel.item(0)
+    assert result_item.data(Qt.ItemDataRole.UserRole) == 3
+    window._on_audit_item_clicked(result_item)
+
+    assert window.center_stage.currentIndex() == window.center_stage.raw_xml_tab_index
+    # navigate_to_line moved the cursor to that block (1-based line 3).
+    assert window.center_stage.xml_editor.textCursor().blockNumber() + 1 == 3
+
+
+def test_clicking_non_find_entry_is_a_noop(qtbot):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window.center_stage.xml_editor.setPlainText("a\nb\nc")
+    # Put the cursor on line 1 and record it.
+    window.center_stage.xml_editor.moveCursor(QTextCursor.MoveOperation.Start)
+    before = window.center_stage.xml_editor.textCursor().blockNumber()
+
+    window.audit_panel.addItem("[Schema] not clickable to navigate")
+    schema_item = window.audit_panel.item(window.audit_panel.count() - 1)
+    window._on_audit_item_clicked(schema_item)  # no line data -> no-op
+
+    after = window.center_stage.xml_editor.textCursor().blockNumber()
+    assert after == before
+
+
+def test_clicking_summary_line_is_a_noop(qtbot):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window.center_stage.xml_editor.setPlainText("page\npage")
+    window._populate_find_all_results("page")
+    window.center_stage.xml_editor.moveCursor(QTextCursor.MoveOperation.Start)
+    before = window.center_stage.xml_editor.textCursor().blockNumber()
+
+    summary_item = window.audit_panel.item(window.audit_panel.count() - 1)
+    assert summary_item.data(Qt.ItemDataRole.UserRole) is None
+    window._on_audit_item_clicked(summary_item)
+
+    after = window.center_stage.xml_editor.textCursor().blockNumber()
+    assert after == before
+
+
+def test_find_all_via_menu_populates_audit_panel(qtbot):
+    from tests.ui._menu_helpers import find_action, find_top_menu
+
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window.center_stage.xml_editor.setPlainText("alpha page beta")
+    window.center_stage.find_replace_bar._find_field.setText("page")
+    find_action(find_top_menu(window, "Edit"), "Find All").trigger()
+
+    texts = [window.audit_panel.item(i).text() for i in range(window.audit_panel.count())]
+    assert "[Find] line 1: alpha page beta" in texts
+    assert '[Find] 1 match(es) for "page"' in texts
+
+
+def test_replace_all_via_menu_mutates_document(qtbot):
+    from tests.ui._menu_helpers import find_action, find_top_menu
+
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window.center_stage.xml_editor.setPlainText("page page page")
+    bar = window.center_stage.find_replace_bar
+    bar._find_field.setText("page")
+    bar._replace_field.setText("X")
+
+    find_action(find_top_menu(window, "Edit"), "Replace All").trigger()
+    assert window.center_stage.xml_editor.toPlainText() == "X X X"
