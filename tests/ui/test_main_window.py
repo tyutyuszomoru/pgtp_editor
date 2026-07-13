@@ -466,3 +466,17 @@ def test_find_all_via_menu_populates_audit_panel(qtbot):
     texts = [window.audit_panel.item(i).text() for i in range(window.audit_panel.count())]
     assert "[Find] line 1: alpha page beta" in texts
     assert '[Find] 1 match(es) for "page"' in texts
+
+
+def test_replace_all_via_menu_mutates_document(qtbot):
+    from tests.ui._menu_helpers import find_action, find_top_menu
+
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window.center_stage.xml_editor.setPlainText("page page page")
+    bar = window.center_stage.find_replace_bar
+    bar._find_field.setText("page")
+    bar._replace_field.setText("X")
+
+    find_action(find_top_menu(window, "Edit"), "Replace All").trigger()
+    assert window.center_stage.xml_editor.toPlainText() == "X X X"
