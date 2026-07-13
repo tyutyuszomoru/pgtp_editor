@@ -612,3 +612,45 @@ def test_apply_differences_mid_list_failure_still_applies_earlier_successes_to_t
     assert result.failed[0].difference is bad_diff
     page_el = target.tree.getroot().find("Presentation/Pages/Page")
     assert page_el.get("caption") == "New Caption"
+
+
+def test_apply_sub_element_changed_attribute_fails_cleanly():
+    # A changed Format attribute is NOT applied by this sub-project (spec §4.6:
+    # sub-element write-back is scoped out and left a documented limitation).
+    # It must land in ApplyResult.failed, not silently corrupt the tree.
+    target = build_project(SIMPLE_TARGET)
+    diff = Difference(
+        kind="changed",
+        path=["development_equipment", "some_field", "Format"],
+        node_kind="format",
+        attribute="decimalSeparator",
+        old_value=".",
+        new_value=",",
+    )
+
+    result = apply_differences(target, [diff])
+
+    assert result.applied == []
+    assert len(result.failed) == 1
+    assert result.failed[0].difference is diff
+    assert "format" in result.failed[0].message
+
+
+def test_apply_sub_element_added_fails_cleanly():
+    # An added Lookup sub-element is likewise not applied (spec §4.6).
+    target = build_project(SIMPLE_TARGET)
+    diff = Difference(
+        kind="added",
+        path=["development_equipment", "some_field", "Lookup"],
+        node_kind="lookup",
+        attribute=None,
+        old_value=None,
+        new_value=None,  # value irrelevant: it fails before dereferencing it
+    )
+
+    result = apply_differences(target, [diff])
+
+    assert result.applied == []
+    assert len(result.failed) == 1
+    assert result.failed[0].difference is diff
+    assert "lookup" in result.failed[0].message
