@@ -10,10 +10,15 @@ def test_three_tabs_in_order(qtbot):
     assert stage.tabText(2) == "Raw XML"
 
 
-def test_raw_xml_tab_hidden_by_default(qtbot):
+def test_default_tab_visibility_raw_xml_shown_others_hidden(qtbot):
     stage = CenterStage()
     qtbot.addWidget(stage)
-    assert stage.isTabVisible(stage.raw_xml_tab_index) is False
+    # New default (spec §6.1): Raw XML is the working tab; Diff/Merge and
+    # Caption Management are revealed only when invoked.
+    assert stage.isTabVisible(stage.raw_xml_tab_index) is True
+    assert stage.isTabVisible(stage.diff_merge_tab_index) is False
+    assert stage.isTabVisible(stage.caption_management_tab_index) is False
+    assert stage.currentIndex() == stage.raw_xml_tab_index
 
 
 def test_set_raw_xml_tab_visible(qtbot):
@@ -54,3 +59,32 @@ def test_raw_xml_tab_container_holds_find_replace_bar(qtbot):
     qtbot.addWidget(stage)
     assert isinstance(stage.find_replace_bar, FindReplaceBar)
     assert stage.find_replace_bar.parent() is stage.raw_xml_tab
+
+
+from pgtp_editor.ui.caption_management_panel import CaptionManagementPanel
+
+
+def test_caption_management_tab_holds_the_panel(qtbot):
+    stage = CenterStage()
+    qtbot.addWidget(stage)
+    assert isinstance(stage.caption_management_panel, CaptionManagementPanel)
+    assert stage.widget(stage.caption_management_tab_index) is stage.caption_management_panel
+
+
+def test_enter_caption_mode_hides_raw_shows_caption(qtbot):
+    stage = CenterStage()
+    qtbot.addWidget(stage)
+    stage.enter_caption_mode()
+    assert stage.isTabVisible(stage.raw_xml_tab_index) is False
+    assert stage.isTabVisible(stage.caption_management_tab_index) is True
+    assert stage.currentIndex() == stage.caption_management_tab_index
+
+
+def test_leave_caption_mode_restores_raw(qtbot):
+    stage = CenterStage()
+    qtbot.addWidget(stage)
+    stage.enter_caption_mode()
+    stage.leave_caption_mode()
+    assert stage.isTabVisible(stage.raw_xml_tab_index) is True
+    assert stage.isTabVisible(stage.caption_management_tab_index) is False
+    assert stage.currentIndex() == stage.raw_xml_tab_index
