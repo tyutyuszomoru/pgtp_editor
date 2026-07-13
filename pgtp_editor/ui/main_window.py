@@ -487,6 +487,39 @@ class MainWindow(QMainWindow):
         )
         self.open_project_file(target_path)
 
+    def _write_project_text(self, path) -> None:
+        """Write the Raw XML editor buffer verbatim to `path` as UTF-8. If
+        `path` already exists, copy it to `path + '.bak'` first (same .bak
+        convention as Apply-to-Target)."""
+        if Path(path).exists():
+            shutil.copy2(path, path + ".bak")
+        Path(path).write_text(self.center_stage.xml_editor.toPlainText(), encoding="utf-8")
+
+    def _save_project(self) -> None:
+        if not self._current_project_path:
+            self._save_project_as()
+            return
+        try:
+            self._write_project_text(self._current_project_path)
+        except OSError as exc:
+            QMessageBox.critical(self, "Save Failed", f"Could not save:\n\n{exc}")
+            return
+        self.statusBar().showMessage(f"Saved {Path(self._current_project_path).name}", 5000)
+
+    def _save_project_as(self) -> None:
+        path, _filter = QFileDialog.getSaveFileName(
+            self, "Save Project As", "", "PGTP files (*.pgtp)"
+        )
+        if not path:
+            return
+        try:
+            self._write_project_text(path)
+        except OSError as exc:
+            QMessageBox.critical(self, "Save Failed", f"Could not save:\n\n{exc}")
+            return
+        self._current_project_path = path
+        self.statusBar().showMessage(f"Saved as {Path(path).name}", 5000)
+
     def _build_menu_bar(self):
         self._build_file_menu()
         self._build_edit_menu()
@@ -503,8 +536,10 @@ class MainWindow(QMainWindow):
         open_action = menu.addAction("Open...")
         open_action.triggered.connect(self._open_project)
         menu.addMenu("Open Recent")
-        self._add_stub_action(menu, "Save")
-        self._add_stub_action(menu, "Save As...")
+        save_action = menu.addAction("Save")
+        save_action.triggered.connect(self._save_project)
+        save_as_action = menu.addAction("Save As...")
+        save_as_action.triggered.connect(self._save_project_as)
         self._add_stub_action(menu, "Close")
         menu.addSeparator()
         exit_action = menu.addAction("Exit")
