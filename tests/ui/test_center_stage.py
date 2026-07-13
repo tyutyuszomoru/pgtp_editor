@@ -40,4 +40,17 @@ def test_raw_xml_tab_holds_a_real_xml_editor(qtbot):
     stage = CenterStage()
     qtbot.addWidget(stage)
     assert isinstance(stage.xml_editor, XmlEditor)
-    assert stage.widget(stage.raw_xml_tab_index) is stage.xml_editor
+    # The Raw XML tab now hosts a container widget (editor + find/replace
+    # bar); xml_editor remains the accessor and lives inside that container.
+    assert stage.widget(stage.raw_xml_tab_index) is stage.raw_xml_tab
+    assert stage.xml_editor.parent() is stage.raw_xml_tab
+
+
+from pgtp_editor.ui.find_replace_bar import FindReplaceBar
+
+
+def test_raw_xml_tab_container_holds_find_replace_bar(qtbot):
+    stage = CenterStage()
+    qtbot.addWidget(stage)
+    assert isinstance(stage.find_replace_bar, FindReplaceBar)
+    assert stage.find_replace_bar.parent() is stage.raw_xml_tab
