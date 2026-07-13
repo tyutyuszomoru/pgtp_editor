@@ -391,3 +391,67 @@ def test_pgtp_parse_error_line_is_none_for_structural_failure(tmp_path):
 def test_pgtp_parse_error_line_defaults_to_none():
     exc = PgtpParseError("some message")
     assert exc.line is None
+
+
+def test_load_project_from_text_valid_returns_model():
+    from pgtp_editor.model.parser import load_project_from_text
+
+    project = load_project_from_text(textwrap.dedent(SIMPLE_PROJECT))
+    assert len(project.pages) == 2
+    first = project.pages[0]
+    assert first.file_name == "development_equipment"
+    assert [c.field_name for c in first.columns] == ["tag", "description"]
+    assert [e.tag_name for e in first.events] == ["OnPreparePage", "OnRowProcess"]
+    # sourceline is populated off the in-memory parse, exactly like load_project.
+    assert first.sourceline is not None
+
+
+def test_load_project_from_text_malformed_raises_with_line():
+    from pgtp_editor.model.parser import load_project_from_text
+
+    bad = textwrap.dedent(
+        """\
+        <?xml version="1.0" encoding="UTF-8"?>
+        <Project>
+          <Presentation>
+            <Pages>
+              <Page fileName="x" tableName="t" caption="X">
+            </Pages>
+          </Presentation>
+        </Project>
+        """
+    )
+    with pytest.raises(PgtpParseError) as excinfo:
+        load_project_from_text(bad)
+    assert excinfo.value.line is not None
+    assert isinstance(excinfo.value.line, int)
+
+
+def test_load_project_from_text_wellformed_but_no_pages_yields_empty_model():
+    from pgtp_editor.model.parser import load_project_from_text
+
+    text = "<Project><Other/></Project>"
+    project = load_project_from_text(text)
+    assert project.pages == []
+
+
+def test_load_project_from_text_parity_with_load_project(tmp_path):
+    from pgtp_editor.model.parser import load_project_from_text
+
+    path = write_pgtp(tmp_path, SIMPLE_PROJECT)
+    from_file = load_project(path)
+    from_text = load_project_from_text(path.read_text(encoding="utf-8"))
+    assert len(from_file.pages) == len(from_text.pages)
+    assert [p.file_name for p in from_file.pages] == [p.file_name for p in from_text.pages]
+    assert (
+        [c.field_name for c in from_file.pages[0].columns]
+        == [c.field_name for c in from_text.pages[0].columns]
+    )
+
+
+def test_load_project_from_text_source_description_in_error_message():
+    from pgtp_editor.model.parser import load_project_from_text
+
+    with pytest.raises(PgtpParseError) as excinfo:
+        load_project_from_text("<Project><unclosed></Project>", source_description="<my-editor>")
+    assert "<my-editor>" in str(excinfo.value)

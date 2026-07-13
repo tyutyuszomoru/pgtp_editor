@@ -61,6 +61,28 @@ def load_project(path) -> ProjectModel:
     return _build_project_model(tree, source_description=str(path))
 
 
+def load_project_from_text(text: str, source_description: str = "<editor>") -> ProjectModel:
+    """Parse an in-memory .pgtp document `text` into a ProjectModel.
+
+    The in-memory sibling of `load_project`: used by the Reparse action to
+    feed the raw-XML editor's current contents back into the model without
+    round-tripping through a file on disk. Shares `_build_project_model` and
+    the same PgtpParseError/line-number handling as `load_project`.
+
+    The text is already a Python str held in the editor, so CESU-8 repair
+    (which operates on raw bytes off disk) does not apply — any astral-plane
+    characters are already proper Python characters. Encode to UTF-8 bytes so
+    lxml parses from a byte stream exactly as `load_project` does.
+    """
+    try:
+        tree = etree.parse(io.BytesIO(text.encode("utf-8")))
+    except etree.XMLSyntaxError as exc:
+        raise PgtpParseError(
+            f"Could not parse {source_description}: {exc}", line=exc.lineno
+        ) from exc
+    return _build_project_model(tree, source_description=source_description)
+
+
 def _build_project_model(tree, source_description: str) -> ProjectModel:
     """Walk an already-parsed lxml tree and build a ProjectModel from it,
     retaining a reference to every real lxml element visited.
