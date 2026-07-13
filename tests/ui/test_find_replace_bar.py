@@ -165,3 +165,65 @@ def test_replace_all_no_matches_is_noop(qtbot):
     bar._replace_field.setText("X")
     bar.replace_all()
     assert editor.toPlainText() == "nothing here"
+
+
+def test_set_find_all_running_toggles_button_label(qtbot):
+    editor = _editor(qtbot, "page")
+    bar = FindReplaceBar(editor)
+    qtbot.addWidget(bar)
+    assert bar._find_all_button.text() == "Find All"
+    bar.set_find_all_running(True)
+    assert bar._find_all_button.text() == "Stop"
+    bar.set_find_all_running(False)
+    assert bar._find_all_button.text() == "Find All"
+
+
+def test_find_all_calls_on_find_all_when_idle(qtbot):
+    editor = _editor(qtbot, "page page")
+    bar = FindReplaceBar(editor)
+    qtbot.addWidget(bar)
+    calls = []
+    bar.set_on_find_all(lambda term: calls.append(term))
+    bar._find_field.setText("page")
+    bar.find_all()
+    assert calls == ["page"]
+
+
+def test_find_all_calls_stop_callback_when_running(qtbot):
+    editor = _editor(qtbot, "page page")
+    bar = FindReplaceBar(editor)
+    qtbot.addWidget(bar)
+    find_calls, stop_calls = [], []
+    bar.set_on_find_all(lambda term: find_calls.append(term))
+    bar.set_on_stop_find_all(lambda: stop_calls.append(True))
+    bar._find_field.setText("page")
+    bar.set_find_all_running(True)  # simulate an active run
+    bar.find_all()
+    assert stop_calls == [True]
+    assert find_calls == []  # does NOT start a new find while running
+
+
+def test_replace_all_reports_status_count(qtbot):
+    editor = _editor(qtbot, "page page PAGE")
+    bar = FindReplaceBar(editor)
+    qtbot.addWidget(bar)
+    messages = []
+    bar.set_on_status(lambda msg: messages.append(msg))
+    bar._find_field.setText("page")
+    bar._replace_field.setText("X")
+    bar.replace_all()
+    assert editor.toPlainText() == "X X X"
+    assert messages == ['3 replacement(s) for "page"']
+
+
+def test_replace_all_reports_zero_when_no_matches(qtbot):
+    editor = _editor(qtbot, "nothing here")
+    bar = FindReplaceBar(editor)
+    qtbot.addWidget(bar)
+    messages = []
+    bar.set_on_status(lambda msg: messages.append(msg))
+    bar._find_field.setText("zzz")
+    bar._replace_field.setText("X")
+    bar.replace_all()
+    assert editor.toPlainText() == "nothing here"
+    assert messages == ['0 replacement(s) for "zzz"']
