@@ -13,6 +13,7 @@ from lxml import etree
 
 from pgtp_editor.model.encoding import read_pgtp_bytes
 from pgtp_editor.model.nodes import (
+    ChildElement,
     ColumnNode,
     DetailNode,
     EventNode,
@@ -179,9 +180,27 @@ def _parse_columns(container_el, parent_identity) -> list[ColumnNode]:
                 attrib=dict(col_el.attrib),
                 sourceline=col_el.sourceline,
                 element=col_el,
+                # <Format> is always nested inside <ViewProperties>, never a
+                # direct child of <ColumnPresentation> -- see spec §3.2.
+                format=_child_element(col_el.find("ViewProperties/Format")),
+                lookup=_child_element(col_el.find("Lookup")),
+                view_properties=_child_element(col_el.find("ViewProperties")),
+                edit_properties=_child_element(col_el.find("EditProperties")),
             )
         )
     return columns
+
+
+def _child_element(el):
+    """Wrap an optional sub-element into a ChildElement, or None if absent.
+
+    `el` is an lxml element or None (the result of an ElementTree.find).
+    Absent sub-elements (find returned None) naturally leave the ColumnNode
+    field at its None default.
+    """
+    if el is None:
+        return None
+    return ChildElement(attrib=dict(el.attrib), sourceline=el.sourceline, element=el)
 
 
 def _parse_events(container_el, parent_identity) -> list[EventNode]:
