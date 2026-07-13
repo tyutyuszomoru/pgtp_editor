@@ -180,3 +180,177 @@ def test_line_clicked_signal_is_connected_to_handler(qtbot):
     from pgtp_editor.ui.project_tree import MODEL_NODE_ROLE
 
     assert window.project_tree.currentItem().data(0, MODEL_NODE_ROLE) is detail
+
+
+_REPARSE_ONE_PAGE = """\
+<?xml version="1.0" encoding="UTF-8"?>
+<Project>
+  <Presentation>
+    <Pages>
+      <Page fileName="equipment" tableName="pr.equipment" caption="Equipment"/>
+    </Pages>
+  </Presentation>
+</Project>
+"""
+
+_REPARSE_TWO_PAGES = """\
+<?xml version="1.0" encoding="UTF-8"?>
+<Project>
+  <Presentation>
+    <Pages>
+      <Page fileName="equipment" tableName="pr.equipment" caption="Equipment"/>
+      <Page fileName="work_orders" tableName="pr.x_workorder" caption="Work Orders"/>
+    </Pages>
+  </Presentation>
+</Project>
+"""
+
+
+def _reparse_menu_action(window):
+    from tests.ui._menu_helpers import find_action, find_top_menu
+
+    menu = find_top_menu(window, "Tools")
+    return find_action(menu, "Reparse Raw XML into Tree")
+
+
+def test_reparse_action_exists_and_is_not_a_stub(qtbot):
+    from pgtp_editor.ui.main_window import MainWindow
+
+    window = MainWindow()
+    qtbot.addWidget(window)
+    action = _reparse_menu_action(window)
+    assert action is not None
+    # A stub action would set the "Not yet implemented" status message.
+    action.trigger()
+    assert window.statusBar().currentMessage() != "Not yet implemented: Reparse Raw XML into Tree"
+
+
+def test_reparse_success_rebuilds_tree_and_adopts_new_model(qtbot):
+    import textwrap
+
+    from pgtp_editor.model.parser import load_project_from_text
+    from pgtp_editor.ui.main_window import MainWindow
+
+    window = MainWindow()
+    qtbot.addWidget(window)
+    # Start with a one-page model loaded.
+    project = load_project_from_text(textwrap.dedent(_REPARSE_ONE_PAGE))
+    window._current_project = project
+    window.project_tree.populate_from_project(project)
+    assert window.project_tree.topLevelItemCount() == 1
+
+    # User edits the editor to a two-page document, then reparses.
+    window.center_stage.xml_editor.setPlainText(textwrap.dedent(_REPARSE_TWO_PAGES))
+    window._reparse_raw_xml()
+
+    assert window.project_tree.topLevelItemCount() == 2
+    assert window._current_project is not project
+    assert len(window._current_project.pages) == 2
+    # Properties reset to empty after the rebuild cleared the selection.
+    assert window.properties_panel.is_showing_empty_state() is True
+
+
+def test_reparse_failure_preserves_model_and_tree_and_highlights_line(qtbot, monkeypatch):
+    import textwrap
+
+    from PySide6.QtWidgets import QMessageBox
+
+    from pgtp_editor.model.parser import load_project_from_text
+    from pgtp_editor.ui.main_window import MainWindow
+
+    window = MainWindow()
+    qtbot.addWidget(window)
+    project = load_project_from_text(textwrap.dedent(_REPARSE_ONE_PAGE))
+    window._current_project = project
+    window.project_tree.populate_from_project(project)
+    items_before = window.project_tree.topLevelItemCount()
+
+    # Suppress the real modal dialog and record that it was shown.
+    critical_calls = []
+    monkeypatch.setattr(
+        QMessageBox, "critical", lambda *args, **kwargs: critical_calls.append(args)
+    )
+    # Spy on the editor's error-line highlight.
+    highlighted = []
+    monkeypatch.setattr(
+        window.center_stage.xml_editor,
+        "highlight_error_line",
+        lambda line: highlighted.append(line),
+    )
+
+    window.center_stage.xml_editor.setPlainText(
+        "<Project><Presentation><Pages><Page></Pages></Presentation></Project>"
+    )
+    window._reparse_raw_xml()
+
+    assert critical_calls, "expected QMessageBox.critical to be shown"
+    assert highlighted, "expected highlight_error_line to be called for the error line"
+    # Last-good state survived: same model object, same tree contents.
+    assert window._current_project is project
+    assert window.project_tree.topLevelItemCount() == items_before
+
+
+def test_reparse_failure_without_line_number_still_shows_dialog(qtbot, monkeypatch):
+    import textwrap
+
+    from PySide6.QtWidgets import QMessageBox
+
+    from pgtp_editor.model.parser import load_project_from_text
+    from pgtp_editor.ui.main_window import MainWindow
+
+    window = MainWindow()
+    qtbot.addWidget(window)
+    project = load_project_from_text(textwrap.dedent(_REPARSE_ONE_PAGE))
+    window._current_project = project
+    window.project_tree.populate_from_project(project)
+
+    critical_calls = []
+    monkeypatch.setattr(
+        QMessageBox, "critical", lambda *args, **kwargs: critical_calls.append(args)
+    )
+    highlighted = []
+    monkeypatch.setattr(
+        window.center_stage.xml_editor,
+        "highlight_error_line",
+        lambda line: highlighted.append(line),
+    )
+
+    # Force a PgtpParseError with line=None by monkeypatching the parser
+    # entry point MainWindow calls.
+    import pgtp_editor.ui.main_window as mw
+    from pgtp_editor.model.parser import PgtpParseError
+
+    def _raise_no_line(text, source_description="<editor>"):
+        raise PgtpParseError("structural surprise", line=None)
+
+    monkeypatch.setattr(mw, "load_project_from_text", _raise_no_line)
+    window._reparse_raw_xml()
+
+    assert critical_calls, "dialog still shown when line is unknown"
+    assert highlighted == []  # no line to highlight
+    assert window._current_project is project  # state preserved
+
+
+def test_reparse_realigns_click_sync_after_line_shift(qtbot):
+    import textwrap
+
+    from pgtp_editor.model.parser import load_project_from_text
+    from pgtp_editor.ui.main_window import MainWindow
+    from pgtp_editor.ui.project_tree import MODEL_NODE_ROLE
+
+    window = MainWindow()
+    qtbot.addWidget(window)
+    project = load_project_from_text(textwrap.dedent(_REPARSE_ONE_PAGE))
+    window._current_project = project
+    window.project_tree.populate_from_project(project)
+
+    # Edit: prepend two blank comment lines so the <Page> shifts down by 2,
+    # then reparse so the model's sourcelines realign to the edited text.
+    shifted = "<!-- a -->\n<!-- b -->\n" + textwrap.dedent(_REPARSE_ONE_PAGE)
+    window.center_stage.xml_editor.setPlainText(shifted)
+    window._reparse_raw_xml()
+
+    new_page = window._current_project.pages[0]
+    # Clicking the page's (now-shifted) line resolves to the rebuilt node.
+    window._on_editor_line_clicked(new_page.sourceline)
+    assert window.project_tree.currentItem().data(0, MODEL_NODE_ROLE) is new_page
