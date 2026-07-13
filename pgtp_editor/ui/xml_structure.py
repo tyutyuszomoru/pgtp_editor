@@ -148,6 +148,9 @@ def enclosing_tag_span(text: str, position: int) -> TagSpan | None:
         if span.close_end is not None:
             contains = span.open_start <= position < span.close_end
         else:
+            # The `<= len(text)` half is documentary only: a cursor position
+            # can never exceed len(text), so it is always true. It records the
+            # intent that an unclosed element extends to end-of-document.
             contains = span.open_start <= position <= len(text)
         if contains and (best is None or span.depth > best.depth):
             best = span

@@ -469,6 +469,58 @@ def test_navigate_to_line_scrolls_and_highlights_with_navigation_color(qtbot):
     assert editor._navigation_highlight_color != editor._error_line_color
 
 
+def test_navigation_highlight_cleared_on_next_cursor_move(qtbot):
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    editor.setPlainText("line one\nline two\nline three\nline four")
+
+    editor.navigate_to_line(2)
+    # Immediately after navigation, the nav band is the sole overriding
+    # selection.
+    nav_color = editor._navigation_highlight_color
+    after_nav = editor.extraSelections()
+    after_nav_colors = [sel.format.background().color() for sel in after_nav]
+    assert len(after_nav) == 1
+    assert nav_color in after_nav_colors
+
+    # A subsequent independent cursor move to a different line must wipe the
+    # navigation band -- it is a one-shot, not a sticky selection.
+    cursor = editor.textCursor()
+    cursor.setPosition(0)  # move onto line 0
+    editor.setTextCursor(cursor)
+
+    after_move_colors = [
+        sel.format.background().color() for sel in editor.extraSelections()
+    ]
+    assert nav_color not in after_move_colors
+    assert editor._current_line_color in after_move_colors
+    assert editor._oneshot_selection is None
+
+
+def test_error_highlight_cleared_on_next_cursor_move(qtbot):
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    editor.setPlainText("line one\nline two\nline three\nline four")
+
+    editor.highlight_error_line(2)
+    error_color = editor._error_line_color
+    after_error = editor.extraSelections()
+    after_error_colors = [sel.format.background().color() for sel in after_error]
+    assert len(after_error) == 1
+    assert error_color in after_error_colors
+
+    cursor = editor.textCursor()
+    cursor.setPosition(0)
+    editor.setTextCursor(cursor)
+
+    after_move_colors = [
+        sel.format.background().color() for sel in editor.extraSelections()
+    ]
+    assert error_color not in after_move_colors
+    assert editor._current_line_color in after_move_colors
+    assert editor._oneshot_selection is None
+
+
 def test_line_text_returns_the_plain_text_of_the_requested_line(qtbot):
     editor = XmlEditor()
     qtbot.addWidget(editor)
@@ -513,7 +565,7 @@ def test_refresh_extra_selections_combiner_exists_and_current_line_only(qtbot):
     # With only the current-line contribution active, exactly one selection.
     assert len(editor.extraSelections()) == 1
     assert editor._matching_tag_selections == []
-    assert editor._error_line_selection is None
+    assert editor._oneshot_selection is None
 
 
 def test_refresh_extra_selections_current_line_uses_named_list(qtbot):

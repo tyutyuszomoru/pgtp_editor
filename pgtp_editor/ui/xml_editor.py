@@ -203,7 +203,12 @@ class XmlEditor(QPlainTextEdit):
         self._matching_tag_color = QColor("#3a5f3a")
         self._current_line_selections: list[QTextEdit.ExtraSelection] = []
         self._matching_tag_selections: list[QTextEdit.ExtraSelection] = []
-        self._error_line_selection: QTextEdit.ExtraSelection | None = None
+        # One-shot "overriding" indicator used by navigate_to_line,
+        # highlight_error_line and select_range_on_line. It sits on top of the
+        # current-line band and matching-tag spans, and is cleared on the next
+        # cursor move (see _highlight_current_line) so it does not persist and
+        # accumulate across independent navigations.
+        self._oneshot_selection: QTextEdit.ExtraSelection | None = None
         self.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
         self.blockCountChanged.connect(self._update_gutter_width)
         self.updateRequest.connect(self._update_gutter_on_scroll)
@@ -307,9 +312,22 @@ class XmlEditor(QPlainTextEdit):
         selections: list[QTextEdit.ExtraSelection] = []
         selections.extend(self._current_line_selections)
         selections.extend(self._matching_tag_selections)
-        if self._error_line_selection is not None:
-            selections.append(self._error_line_selection)
+        if self._oneshot_selection is not None:
+            selections.append(self._oneshot_selection)
         self.setExtraSelections(selections)
+
+    def _set_oneshot_selection(self, selection: QTextEdit.ExtraSelection) -> None:
+        """Install `selection` as the sole overriding indicator: clear the
+        current-line band and matching-tag spans, set the one-shot slot, and
+        push the combined list. Reproduces the pre-refactor "replace the whole
+        list" semantics for navigate_to_line / highlight_error_line /
+        select_range_on_line, so exactly one selection remains immediately
+        afterward. The one-shot is cleared on the NEXT cursor move by
+        _highlight_current_line."""
+        self._current_line_selections = []
+        self._matching_tag_selections = []
+        self._oneshot_selection = selection
+        self._refresh_extra_selections()
 
     def _make_span_cursor(self, start: int, end: int) -> QTextCursor:
         cursor = QTextCursor(self.document())
@@ -398,6 +416,14 @@ class XmlEditor(QPlainTextEdit):
         self.setTextCursor(new_cursor)
 
     def _highlight_current_line(self) -> None:
+        # An independent cursor move clears any lingering one-shot navigation/
+        # error/range band, reproducing the pre-refactor "next cursor move
+        # wipes the one-shot indicator" behavior. When highlight_error_line /
+        # navigate_to_line / select_range_on_line call setTextCursor, this slot
+        # fires FIRST (as a side effect) and clears the slot; those methods
+        # then set their own one-shot AFTER via _set_oneshot_selection, so the
+        # override survives until the next genuinely independent cursor move.
+        self._oneshot_selection = None
         selection = QTextEdit.ExtraSelection()
         selection.format.setBackground(self._current_line_color)
         selection.format.setProperty(QTextFormat.Property.FullWidthSelection, True)
@@ -431,11 +457,9 @@ class XmlEditor(QPlainTextEdit):
         # This whole-line indicator is a one-shot that intentionally overrides
         # both the current-line band and any matching-tag highlight, matching
         # the pre-refactor behavior (setTextCursor above fires the current-line
-        # slot first; we then clear it so only this indicator remains).
-        self._current_line_selections = []
-        self._matching_tag_selections = []
-        self._error_line_selection = selection
-        self._refresh_extra_selections()
+        # slot first; we then set this one-shot so only this indicator remains
+        # until the next cursor move).
+        self._set_oneshot_selection(selection)
 
     def line_text(self, line: int) -> str:
         """Return the plain text of `line` (1-based), or "" if out of range."""
@@ -456,10 +480,7 @@ class XmlEditor(QPlainTextEdit):
         selection = QTextEdit.ExtraSelection()
         selection.format.setBackground(self._navigation_highlight_color)
         selection.cursor = cursor
-        self._current_line_selections = []
-        self._matching_tag_selections = []
-        self._error_line_selection = selection
-        self._refresh_extra_selections()
+        self._set_oneshot_selection(selection)
 
     def set_line_wrap_enabled(self, enabled: bool) -> None:
         self.setLineWrapMode(
