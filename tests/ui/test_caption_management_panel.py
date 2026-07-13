@@ -204,3 +204,68 @@ def test_close_invokes_close_callback(qtbot):
     qtbot.addWidget(panel)
     panel.close_panel()
     assert calls == [True]
+
+
+from pgtp_editor.ui.caption_management_panel import _INCONSISTENT_BACKGROUND
+
+
+def _background(panel, row):
+    return panel._model.index(row, 0).data(Qt.ItemDataRole.BackgroundRole)
+
+
+def test_divergent_anchor_attribute_group_is_tinted(qtbot):
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    # Same (anchor="acct", attribute="caption") but different values -> both
+    # rows flagged inconsistent.
+    panel.load_entries(
+        [
+            _entry(2, "Page", "acct", "caption", "Account"),
+            _entry(9, "Detail", "acct", "caption", "Accounts"),
+        ]
+    )
+    assert _background(panel, 0) == _INCONSISTENT_BACKGROUND
+    assert _background(panel, 1) == _INCONSISTENT_BACKGROUND
+
+
+def test_consistent_group_is_not_tinted(qtbot):
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    panel.load_entries(
+        [
+            _entry(2, "Page", "acct", "caption", "Account"),
+            _entry(9, "Detail", "acct", "caption", "Account"),  # identical value
+        ]
+    )
+    assert _background(panel, 0) is None
+    assert _background(panel, 1) is None
+
+
+def test_editing_a_value_can_clear_inconsistency(qtbot):
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    panel.load_entries(
+        [
+            _entry(2, "Page", "acct", "caption", "Account"),
+            _entry(9, "Detail", "acct", "caption", "Accounts"),
+        ]
+    )
+    assert _background(panel, 0) == _INCONSISTENT_BACKGROUND
+    # Align the second row's value with the first -> group now consistent.
+    _set_value(panel, 1, "Account")
+    assert _background(panel, 0) is None
+    assert _background(panel, 1) is None
+
+
+def test_different_attribute_same_anchor_not_grouped(qtbot):
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    # Same anchor, DIFFERENT attribute -> not the same group -> not tinted.
+    panel.load_entries(
+        [
+            _entry(2, "Page", "acct", "caption", "Account"),
+            _entry(2, "Page", "acct", "shortCaption", "Acct"),
+        ]
+    )
+    assert _background(panel, 0) is None
+    assert _background(panel, 1) is None
