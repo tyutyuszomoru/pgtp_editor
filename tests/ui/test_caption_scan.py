@@ -115,3 +115,111 @@ def test_anchor_falls_back_to_fileName_then_tableName_then_tag():
 
     tag_text = '<Root>\n  <MenuGroup caption="C"/>\n</Root>'
     assert scan_captions(tag_text)[0].anchor == "MenuGroup"
+
+
+from pgtp_editor.ui.caption_scan import apply_caption_edits
+from lxml import etree as _etree
+
+
+def _entry(line, attribute, element_tag="Page", anchor="a", value=""):
+    return CaptionEntry(
+        line=line, element_tag=element_tag, anchor=anchor, attribute=attribute, value=value
+    )
+
+
+def test_apply_replaces_single_attribute_value():
+    text = '<Root>\n  <Page caption="Old" fileName="home"/>\n</Root>'
+    result = apply_caption_edits(text, [(_entry(2, "caption"), "New")])
+    assert result == '<Root>\n  <Page caption="New" fileName="home"/>\n</Root>'
+
+
+def test_apply_empty_edit_set_is_identity():
+    text = '<Root>\n  <Page caption="Old"/>\n</Root>'
+    assert apply_caption_edits(text, []) == text
+
+
+def test_apply_preserves_unedited_lines_byte_for_byte():
+    text = (
+        "<Root>\n"
+        '  <Page caption="Old" fileName="home"/>\n'
+        '  <Detail caption="Keep" tableName="t"/>\n'
+        "</Root>"
+    )
+    result = apply_caption_edits(text, [(_entry(2, "caption"), "New")])
+    lines = result.splitlines(keepends=True)
+    original_lines = text.splitlines(keepends=True)
+    # Every line except line 2 is byte-identical.
+    assert lines[0] == original_lines[0]
+    assert lines[2] == original_lines[2]
+    assert lines[3] == original_lines[3]
+    assert 'caption="New"' in lines[1]
+
+
+def test_apply_boundary_caption_not_matched_inside_shortCaption():
+    # A line with BOTH caption and shortCaption/insertFormCaption: editing
+    # `caption` must change ONLY caption, never the tail of the longer names.
+    text = (
+        "<Root>\n"
+        '  <Page insertFormCaption="I" caption="C" shortCaption="S"/>\n'
+        "</Root>"
+    )
+    result = apply_caption_edits(text, [(_entry(2, "caption"), "CHANGED")])
+    assert result == (
+        "<Root>\n"
+        '  <Page insertFormCaption="I" caption="CHANGED" shortCaption="S"/>\n'
+        "</Root>"
+    )
+
+
+def test_apply_shortCaption_edit_leaves_caption_untouched():
+    text = '<Root>\n  <Page caption="C" shortCaption="S"/>\n</Root>'
+    result = apply_caption_edits(text, [(_entry(2, "shortCaption"), "S2")])
+    assert result == '<Root>\n  <Page caption="C" shortCaption="S2"/>\n</Root>'
+
+
+def test_apply_escapes_special_characters_double_quoted():
+    text = '<Root>\n  <Page caption="Old"/>\n</Root>'
+    result = apply_caption_edits(text, [(_entry(2, "caption"), 'A & B < C > D "q"')])
+    # & first, then < > "  -> the raw line contains the escaped form.
+    assert 'caption="A &amp; B &lt; C &gt; D &quot;q&quot;"' in result
+
+
+def test_apply_escaping_round_trips_through_lxml():
+    text = '<Root>\n  <Page caption="Old" shortCaption="Keep"/>\n</Root>'
+    new_value = 'Tom & Jerry <best> "friends"'
+    result = apply_caption_edits(text, [(_entry(2, "caption"), new_value)])
+    root = _etree.fromstring(result.encode("utf-8"))
+    page = root[0]
+    assert page.attrib["caption"] == new_value  # decodes back to the intended string
+    assert page.attrib["shortCaption"] == "Keep"  # untouched attribute preserved
+
+
+def test_apply_multiple_edits_on_same_line():
+    text = '<Root>\n  <Page caption="C" shortCaption="S"/>\n</Root>'
+    result = apply_caption_edits(
+        text,
+        [(_entry(2, "caption"), "C2"), (_entry(2, "shortCaption"), "S2")],
+    )
+    assert result == '<Root>\n  <Page caption="C2" shortCaption="S2"/>\n</Root>'
+
+
+def test_apply_missing_attribute_on_line_is_skipped_not_crash():
+    # Defensive: an edit naming an attribute that isn't on the given line
+    # leaves that line unchanged and does not corrupt others.
+    text = '<Root>\n  <Page caption="C"/>\n  <Page shortCaption="S"/>\n</Root>'
+    result = apply_caption_edits(
+        text,
+        [
+            (_entry(2, "shortCaption"), "WONT_MATCH"),  # line 2 has no shortCaption
+            (_entry(3, "shortCaption"), "S2"),
+        ],
+    )
+    assert result == '<Root>\n  <Page caption="C"/>\n  <Page shortCaption="S2"/>\n</Root>'
+
+
+def test_apply_only_replaces_first_occurrence_on_line():
+    # count=1: if the same attribute somehow appears twice on a line, only the
+    # first is replaced (matches the scan's single-value read).
+    text = '<Root>\n  <Page caption="A" caption="B"/>\n</Root>'
+    result = apply_caption_edits(text, [(_entry(2, "caption"), "X")])
+    assert result == '<Root>\n  <Page caption="X" caption="B"/>\n</Root>'

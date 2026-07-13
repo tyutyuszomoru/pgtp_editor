@@ -92,3 +92,52 @@ def _resolve_anchor(element) -> str:
         if value:
             return value
     return element.tag
+
+
+def apply_caption_edits(text: str, edits) -> str:
+    """Return `text` with each edit's new value written onto its source line.
+
+    `edits` is an iterable of `(entry, new_value)` pairs for CHANGED rows
+    only (each `entry` carries the 1-based `line` and the `attribute` name).
+    Each edit replaces `attribute="..."` on `text.splitlines(keepends=True)
+    [line-1]` with `attribute="<escaped_new_value>"`:
+
+    - The match is anchored with a negative lookbehind on word chars/hyphen so
+      the attribute name cannot match the tail of a longer name (critical:
+      `caption` must NOT match inside `shortCaption`/`insertFormCaption`).
+      count=1 replaces only the first occurrence.
+    - The new value is XML-attribute-escaped for a double-quoted attribute
+      (& first, then < > "). .pgtp attributes use double quotes.
+    - If the pattern does not match on that line (attribute unexpectedly
+      absent), the line is left unchanged. Never crashes or corrupts.
+
+    Unedited lines are byte-for-byte unchanged. Relies on the verified .pgtp
+    convention that an element's opening tag (all its attributes) is on a
+    single line (`sourceline`).
+    """
+    lines = text.splitlines(keepends=True)
+    for entry, new_value in edits:
+        index = entry.line - 1
+        if not (0 <= index < len(lines)):
+            continue  # defensive: line out of range
+        lines[index] = _replace_attribute_on_line(lines[index], entry.attribute, new_value)
+    return "".join(lines)
+
+
+def _replace_attribute_on_line(line: str, attribute: str, new_value: str) -> str:
+    pattern = re.compile(r'(?<![\w-])' + re.escape(attribute) + r'="[^"]*"')
+    replacement = f'{attribute}="{_escape_attribute_value(new_value)}"'
+    # re.sub treats backslashes in the replacement specially; pass a function
+    # so the (already-escaped) replacement text is inserted verbatim.
+    return pattern.sub(lambda _match: replacement, line, count=1)
+
+
+def _escape_attribute_value(value: str) -> str:
+    """Escape `value` for a double-quoted XML attribute. `&` must be escaped
+    first so the ampersands introduced by the other replacements are not
+    double-escaped."""
+    value = value.replace("&", "&amp;")
+    value = value.replace("<", "&lt;")
+    value = value.replace(">", "&gt;")
+    value = value.replace('"', "&quot;")
+    return value
