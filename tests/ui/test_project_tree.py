@@ -275,3 +275,84 @@ def test_selection_changed_callback_defaults_to_noop(qtbot):
     tree.populate_from_project(build_sample_project())
     # Must not raise even though no callback was supplied.
     tree.setCurrentItem(tree.topLevelItem(0))
+
+
+def test_select_node_selects_the_backing_item_and_returns_true(qtbot):
+    project = build_sample_project()
+    tree = ProjectTreePanel()
+    qtbot.addWidget(tree)
+    tree.populate_from_project(project)
+
+    page_node = project.pages[0]
+    assert tree.select_node(page_node) is True
+    current = tree.currentItem()
+    assert current is not None
+    assert current.data(0, MODEL_NODE_ROLE) is page_node
+
+
+def test_select_node_selects_a_deep_column_node(qtbot):
+    project = build_sample_project()
+    tree = ProjectTreePanel()
+    qtbot.addWidget(tree)
+    tree.populate_from_project(project)
+
+    # Equipment page -> first Detail ("Sub-item") -> first Column ("tag").
+    column_node = project.pages[0].details[0].columns[0]
+    assert tree.select_node(column_node) is True
+    assert tree.currentItem().data(0, MODEL_NODE_ROLE) is column_node
+
+
+def test_select_node_fires_selection_changed_to_properties(qtbot):
+    calls = []
+    project = build_sample_project()
+    tree = ProjectTreePanel(on_selection_changed=lambda node, kind: calls.append((node, kind)))
+    qtbot.addWidget(tree)
+    tree.populate_from_project(project)
+
+    detail_node = project.pages[0].details[0]
+    tree.select_node(detail_node)
+    assert calls[-1][0] is detail_node
+    assert calls[-1][1] == "detail"
+
+
+def test_select_node_none_returns_false_and_changes_nothing(qtbot):
+    project = build_sample_project()
+    tree = ProjectTreePanel()
+    qtbot.addWidget(tree)
+    tree.populate_from_project(project)
+    tree.setCurrentItem(tree.topLevelItem(0))
+    before = tree.currentItem()
+
+    assert tree.select_node(None) is False
+    assert tree.currentItem() is before
+
+
+def test_select_node_foreign_node_returns_false_and_changes_nothing(qtbot):
+    project = build_sample_project()
+    tree = ProjectTreePanel()
+    qtbot.addWidget(tree)
+    tree.populate_from_project(project)
+    tree.setCurrentItem(tree.topLevelItem(0))
+    before = tree.currentItem()
+
+    # A node object never inserted into this tree (from a different model).
+    foreign = build_sample_project().pages[0]
+    assert tree.select_node(foreign) is False
+    assert tree.currentItem() is before
+
+
+def test_index_is_rebuilt_on_repopulate(qtbot):
+    tree = ProjectTreePanel()
+    qtbot.addWidget(tree)
+
+    first_project = build_sample_project()
+    tree.populate_from_project(first_project)
+    stale_node = first_project.pages[0]
+
+    second_project = build_sample_project()
+    tree.populate_from_project(second_project)
+
+    # The stale node from the first populate is no longer in the index.
+    assert tree.select_node(stale_node) is False
+    # The fresh node from the second populate is.
+    assert tree.select_node(second_project.pages[0]) is True
