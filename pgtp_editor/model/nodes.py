@@ -43,11 +43,31 @@ def classify_event_side(tag_name: str) -> str:
 
 
 @dataclass
+class ChildElement:
+    """A single-occurrence optional presentation child of a ColumnPresentation
+    (one of <Format>, <Lookup>, <ViewProperties>, <EditProperties>).
+
+    Holds only the child's own attributes plus a reference to the retained
+    real lxml element (for future write-back). Does not descend into the
+    child's own children: a <Format> nested inside a <ViewProperties> is
+    captured separately as ColumnNode.format (see parser._parse_columns),
+    not by walking into ColumnNode.view_properties.
+    """
+    attrib: dict
+    sourceline: int | None = None
+    element: "etree._Element | None" = None
+
+
+@dataclass
 class ColumnNode:
     identity: str
     attrib: dict
     sourceline: int | None = None
     element: "etree._Element | None" = None
+    format: "ChildElement | None" = None
+    lookup: "ChildElement | None" = None
+    view_properties: "ChildElement | None" = None
+    edit_properties: "ChildElement | None" = None
 
     @property
     def field_name(self) -> str | None:

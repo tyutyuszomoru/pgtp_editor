@@ -71,3 +71,44 @@ def test_detail_node_inner_sourceline_can_be_set():
     detail = DetailNode(identity="x", attrib={}, sourceline=10, inner_sourceline=25)
     assert detail.sourceline == 10
     assert detail.inner_sourceline == 25
+
+
+from pgtp_editor.model.nodes import ChildElement, ColumnNode
+
+
+def test_child_element_holds_attrib_sourceline_element():
+    child = ChildElement(attrib={"type": "number"}, sourceline=42, element=None)
+    assert child.attrib == {"type": "number"}
+    assert child.sourceline == 42
+    assert child.element is None
+
+
+def test_child_element_defaults_sourceline_and_element_to_none():
+    child = ChildElement(attrib={"type": "text"})
+    assert child.sourceline is None
+    assert child.element is None
+
+
+def test_column_node_sub_element_fields_default_to_none():
+    col = ColumnNode(identity="tag", attrib={"fieldName": "tag"})
+    assert col.format is None
+    assert col.lookup is None
+    assert col.view_properties is None
+    assert col.edit_properties is None
+
+
+def test_column_node_accepts_sub_element_fields():
+    fmt = ChildElement(attrib={"type": "number", "decimalSeparator": "."})
+    edit = ChildElement(attrib={"type": "textBox", "placeholder": "Hi"})
+    col = ColumnNode(
+        identity="tag",
+        attrib={"fieldName": "tag"},
+        format=fmt,
+        edit_properties=edit,
+    )
+    assert col.format is fmt
+    assert col.edit_properties is edit
+    # placeholder is reached through edit_properties.attrib, no dedicated field:
+    assert col.edit_properties.attrib.get("placeholder") == "Hi"
+    assert col.lookup is None
+    assert col.view_properties is None

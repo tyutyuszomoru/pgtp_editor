@@ -139,6 +139,32 @@ def _compare_columns(source_node, target_node, path, ambiguous=False) -> list[Di
                     source_column, target_column, path=column_path, node_kind="column", ambiguous=ambiguous
                 )
             )
+            for source_child, target_child, node_kind, tag_name in (
+                (source_column.format, target_column.format, "format", "Format"),
+                (source_column.lookup, target_column.lookup, "lookup", "Lookup"),
+                (
+                    source_column.view_properties,
+                    target_column.view_properties,
+                    "view_properties",
+                    "ViewProperties",
+                ),
+                (
+                    source_column.edit_properties,
+                    target_column.edit_properties,
+                    "edit_properties",
+                    "EditProperties",
+                ),
+            ):
+                differences.extend(
+                    _compare_child_element(
+                        source_child,
+                        target_child,
+                        path=column_path,
+                        node_kind=node_kind,
+                        tag_name=tag_name,
+                        ambiguous=ambiguous,
+                    )
+                )
 
     for target_column in target_node.columns:
         if target_column.field_name not in source_field_names:
@@ -154,6 +180,74 @@ def _compare_columns(source_node, target_node, path, ambiguous=False) -> list[Di
                 )
             )
 
+    return differences
+
+
+def _compare_child_element(
+    source_child, target_child, path, node_kind, tag_name, ambiguous=False
+) -> list[Difference]:
+    """Compare one optional sub-element slot (Format/Lookup/ViewProperties/
+    EditProperties) of a matched column pair, bracket-per-bracket,
+    value-per-value.
+
+    `source_child`/`target_child` are each a ChildElement or None.
+    `path` is the enclosing column's path; `node_kind` is the sub-element
+    kind ("format"/"lookup"/"view_properties"/"edit_properties"); `tag_name`
+    is the XML tag used as the trailing path segment ("Format" etc.).
+
+    - present on source only -> one `added` record (whole ChildElement)
+    - present on target only -> one `removed` record (whole ChildElement)
+    - present on both        -> one `changed` record per differing attrib key
+    - absent on both         -> nothing
+    Mirrors _compare_attributes / _compare_columns exactly, threading
+    `ambiguous`.
+    """
+    child_path = path + [tag_name]
+
+    if source_child is not None and target_child is None:
+        return [
+            Difference(
+                kind="added",
+                path=child_path,
+                node_kind=node_kind,
+                attribute=None,
+                old_value=None,
+                new_value=source_child,
+                ambiguous=ambiguous,
+            )
+        ]
+    if source_child is None and target_child is not None:
+        return [
+            Difference(
+                kind="removed",
+                path=child_path,
+                node_kind=node_kind,
+                attribute=None,
+                old_value=target_child,
+                new_value=None,
+                ambiguous=ambiguous,
+            )
+        ]
+    if source_child is None and target_child is None:
+        return []
+
+    differences: list[Difference] = []
+    all_keys = set(source_child.attrib.keys()) | set(target_child.attrib.keys())
+    for key in sorted(all_keys):
+        source_value = source_child.attrib.get(key)
+        target_value = target_child.attrib.get(key)
+        if source_value != target_value:
+            differences.append(
+                Difference(
+                    kind="changed",
+                    path=child_path,
+                    node_kind=node_kind,
+                    attribute=key,
+                    old_value=target_value,
+                    new_value=source_value,
+                    ambiguous=ambiguous,
+                )
+            )
     return differences
 
 

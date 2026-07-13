@@ -455,3 +455,88 @@ def test_load_project_from_text_source_description_in_error_message():
     with pytest.raises(PgtpParseError) as excinfo:
         load_project_from_text("<Project><unclosed></Project>", source_description="<my-editor>")
     assert "<my-editor>" in str(excinfo.value)
+
+
+COLUMNS_WITH_SUBELEMENTS = """\
+<?xml version="1.0" encoding="UTF-8"?>
+<Project>
+  <Presentation>
+    <Pages>
+      <Page fileName="dev_equipment" tableName="pr.equipment" caption="Equipment">
+        <ColumnPresentations>
+          <ColumnPresentation fieldName="all_four" caption="All Four">
+            <Lookup tableName="pr.x_wbs" linkFieldName="wbs_id" displayFieldName="wbs_name"/>
+            <ViewProperties type="text" maxLength="75">
+              <Format type="number" decimalSeparator="."/>
+            </ViewProperties>
+            <EditProperties type="textBox" maxLength="30" placeholder="Hi"/>
+          </ColumnPresentation>
+          <ColumnPresentation fieldName="none_present" caption="None"/>
+          <ColumnPresentation fieldName="some_present" caption="Some">
+            <ViewProperties type="text"/>
+            <EditProperties type="dynamicCombobox"/>
+          </ColumnPresentation>
+        </ColumnPresentations>
+      </Page>
+    </Pages>
+  </Presentation>
+</Project>
+"""
+
+
+def _columns_by_field_name(tmp_path):
+    path = write_pgtp(tmp_path, COLUMNS_WITH_SUBELEMENTS)
+    project = load_project(path)
+    columns = project.pages[0].columns
+    return {c.field_name: c for c in columns}
+
+
+def test_parse_columns_all_four_sub_elements_populated(tmp_path):
+    col = _columns_by_field_name(tmp_path)["all_four"]
+
+    assert col.lookup is not None
+    assert col.lookup.attrib["tableName"] == "pr.x_wbs"
+    assert col.lookup.attrib["linkFieldName"] == "wbs_id"
+    assert col.lookup.attrib["displayFieldName"] == "wbs_name"
+
+    assert col.view_properties is not None
+    assert col.view_properties.attrib["type"] == "text"
+    assert col.view_properties.attrib["maxLength"] == "75"
+
+    assert col.edit_properties is not None
+    assert col.edit_properties.attrib["type"] == "textBox"
+    # placeholder falls out of the generic EditProperties capture, no field:
+    assert col.edit_properties.attrib.get("placeholder") == "Hi"
+
+    # sourceline populated, real element retained:
+    assert col.lookup.sourceline is not None
+    assert col.edit_properties.element is not None
+
+
+def test_parse_columns_format_nested_in_view_properties_is_captured(tmp_path):
+    # Regression guard: <Format> is a GRANDCHILD (inside ViewProperties),
+    # never a direct child of ColumnPresentation, so a naive
+    # col_el.find("Format") would leave this None. It must be found via
+    # ViewProperties/Format. See spec §3.2.
+    col = _columns_by_field_name(tmp_path)["all_four"]
+    assert col.format is not None
+    assert col.format.attrib["type"] == "number"
+    assert col.format.attrib["decimalSeparator"] == "."
+    # view_properties captures only its OWN attribs, not Format's:
+    assert "decimalSeparator" not in col.view_properties.attrib
+
+
+def test_parse_columns_none_present_leaves_all_four_none(tmp_path):
+    col = _columns_by_field_name(tmp_path)["none_present"]
+    assert col.format is None
+    assert col.lookup is None
+    assert col.view_properties is None
+    assert col.edit_properties is None
+
+
+def test_parse_columns_some_present_gives_correct_mix(tmp_path):
+    col = _columns_by_field_name(tmp_path)["some_present"]
+    assert col.view_properties is not None
+    assert col.edit_properties is not None
+    assert col.format is None   # no nested <Format>
+    assert col.lookup is None   # no <Lookup>
