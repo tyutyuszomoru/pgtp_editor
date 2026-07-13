@@ -76,3 +76,37 @@ def test_find_all_matches_preview_is_trimmed_whole_line():
 def test_match_is_frozen_dataclass():
     m = Match(start=0, line=1, preview="x")
     assert (m.start, m.line, m.preview) == (0, 1, "x")
+
+
+import itertools
+
+from pgtp_editor.ui.search import iter_matches
+
+
+def test_iter_matches_matches_find_all_matches():
+    from pgtp_editor.ui.search import find_all_matches
+    text = "page PAGE page\nno hits\nlast page"
+    assert list(iter_matches(text, "page")) == find_all_matches(text, "page")
+
+
+def test_iter_matches_empty_term_yields_nothing():
+    assert list(iter_matches("anything", "")) == []
+
+
+def test_iter_matches_empty_text_yields_nothing():
+    assert list(iter_matches("", "page")) == []
+
+
+def test_iter_matches_is_lazy():
+    # A huge input with a match very early: islice must return the first hit
+    # without scanning/among building the whole result list.
+    text = "page" + ("x" * 1_000_000)
+    first_two = list(itertools.islice(iter_matches(text, "x"), 2))
+    assert [m.start for m in first_two] == [4, 5]
+
+
+def test_iter_matches_line_and_preview():
+    text = "l1\n  hit here  \nl3"
+    (m,) = list(iter_matches(text, "hit"))
+    assert m.line == 2
+    assert m.preview == "hit here"
