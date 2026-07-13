@@ -3,7 +3,8 @@ import shutil
 from pathlib import Path
 
 from lxml import etree
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt, QTimer, QUrl
+from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QDockWidget,
     QFileDialog,
@@ -15,6 +16,8 @@ from PySide6.QtWidgets import (
 )
 
 from pgtp_editor.diff.apply import apply_differences
+from pgtp_editor.generation.config import load_executable_path, save_executable_path
+from pgtp_editor.generation.runner import GeneratorRunner, build_generate_command
 from pgtp_editor.diff.differ import compare_block, diff_project
 from pgtp_editor.diff.resolve import ResolutionError, resolve_path
 from pgtp_editor.model.encoding import read_pgtp_text
@@ -41,6 +44,8 @@ from pgtp_editor.ui.properties_panel import PropertiesPanel
 
 _FIND_RESULT_PREFIX = "[Find] "
 
+_GENERATOR_OUTPUT_PREFIX = "[PHP] "
+
 _FIND_ALL_BATCH = 200
 
 _SCHEMA_REPORT_TEMPLATES = {
@@ -53,9 +58,17 @@ _SCHEMA_REPORT_TEMPLATES = {
 
 
 class MainWindow(QMainWindow):
-    def __init__(self, schema_storage_dir: Path | None = None):
+    def __init__(
+        self,
+        schema_storage_dir: Path | None = None,
+        generator_config_dir: Path | None = None,
+        generator_runner=None,
+    ):
         super().__init__()
         self._schema_storage_dir = schema_storage_dir
+        self._generator_config_dir = generator_config_dir
+        self._generator_runner = generator_runner if generator_runner is not None else GeneratorRunner()
+        self._current_output_folder = None
         self.setWindowTitle("PGTP Editor")
         self.resize(1400, 900)
 
