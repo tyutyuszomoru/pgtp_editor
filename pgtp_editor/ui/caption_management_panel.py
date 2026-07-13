@@ -84,6 +84,12 @@ class _CaptionTableModel(QAbstractTableModel):
             return None
         entry = self._entries[index.row()]
         column = index.column()
+        # The proxy's sortRole is EditRole; return the Line as an int there so
+        # clicking the Line header sorts document-order (2, 3, 10) rather than
+        # lexicographically (10, 2, 3). DisplayRole stays str for rendering and
+        # for the substring filter (which reads DisplayRole).
+        if role == Qt.ItemDataRole.EditRole and column == 0:
+            return entry.line
         if role in (Qt.ItemDataRole.DisplayRole, Qt.ItemDataRole.EditRole):
             if column == 0:
                 return str(entry.line)
@@ -142,7 +148,10 @@ class _CaptionFilterProxyModel(QSortFilterProxyModel):
 
     def set_column_filter(self, column: int, text: str) -> None:
         self._column_filters[column] = text.lower()
-        self.invalidateFilter()
+        # Re-run the filter. Both invalidateFilter() and invalidateRowsFilter()
+        # are deprecated in this PySide6 version; invalidate() is the
+        # non-deprecated call (it also re-sorts, negligible for our row counts).
+        self.invalidate()
 
     def filterAcceptsRow(self, source_row, source_parent) -> bool:
         model = self.sourceModel()
@@ -171,6 +180,8 @@ class CaptionManagementPanel(QWidget):
         self._model = _CaptionTableModel(self)
         self._proxy = _CaptionFilterProxyModel(self)
         self._proxy.setSourceModel(self._model)
+        # Sort on EditRole so the Line column sorts numerically (see model.data).
+        self._proxy.setSortRole(Qt.ItemDataRole.EditRole)
 
         self._table = QTableView()
         self._table.setModel(self._proxy)

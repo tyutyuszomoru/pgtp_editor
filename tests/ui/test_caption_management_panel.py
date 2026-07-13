@@ -146,6 +146,23 @@ def test_sorting_by_value_column(qtbot):
     assert _visible_value_column(panel) == ["Apple", "Zebra"]
 
 
+def test_sorting_by_line_column_is_numeric(qtbot):
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    panel.load_entries(
+        [
+            _entry(10, "Page", "a", "caption", "ten"),
+            _entry(2, "Page", "b", "caption", "two"),
+            _entry(3, "Page", "c", "caption", "three"),
+        ]
+    )
+    panel._proxy.sort(0, Qt.SortOrder.AscendingOrder)
+    proxy = panel._proxy
+    lines = [proxy.index(r, 0).data(Qt.ItemDataRole.DisplayRole) for r in range(proxy.rowCount())]
+    # Numeric order (2, 3, 10), NOT lexicographic (10, 2, 3).
+    assert lines == ["2", "3", "10"]
+
+
 def _set_value(panel, row, text):
     # Set through the source model's Value column, mirroring an editor commit.
     index = panel._model.index(row, 4)
