@@ -532,3 +532,247 @@ def test_diff_project_matched_details_no_differences():
     target_page.details = [target_detail]
 
     assert diff_project(ProjectModel(pages=[source_page]), ProjectModel(pages=[target_page])) == []
+
+
+from pgtp_editor.model.nodes import ChildElement, DetailNode
+
+
+def make_child(**attrib):
+    return ChildElement(attrib=dict(attrib))
+
+
+def _one_column_pair(source_col, target_col):
+    """Wrap a source/target ColumnNode pair into matching single-column pages
+    and return diff_project's result."""
+    source_page = make_page("shared_page")
+    source_page.columns = [source_col]
+    target_page = make_page("shared_page")
+    target_page.columns = [target_col]
+    return diff_project(ProjectModel(pages=[source_page]), ProjectModel(pages=[target_page]))
+
+
+# ---- Format ----------------------------------------------------------------
+
+def test_sub_element_format_added():
+    src = make_column("amount", caption="Amount")
+    src.format = make_child(type="number", decimalSeparator=".")
+    tgt = make_column("amount", caption="Amount")
+
+    result = _one_column_pair(src, tgt)
+
+    assert len(result) == 1
+    diff = result[0]
+    assert diff.kind == "added"
+    assert diff.node_kind == "format"
+    assert diff.path == ["shared_page", "amount", "Format"]
+    assert diff.attribute is None
+    assert diff.old_value is None
+    assert diff.new_value is src.format
+    assert diff.ambiguous is False
+
+
+def test_sub_element_format_removed():
+    src = make_column("amount", caption="Amount")
+    tgt = make_column("amount", caption="Amount")
+    tgt.format = make_child(type="number", decimalSeparator=".")
+
+    result = _one_column_pair(src, tgt)
+
+    assert len(result) == 1
+    diff = result[0]
+    assert diff.kind == "removed"
+    assert diff.node_kind == "format"
+    assert diff.path == ["shared_page", "amount", "Format"]
+    assert diff.old_value is tgt.format
+    assert diff.new_value is None
+
+
+def test_sub_element_format_attribute_changed():
+    src = make_column("amount", caption="Amount")
+    src.format = make_child(type="number", decimalSeparator=",")
+    tgt = make_column("amount", caption="Amount")
+    tgt.format = make_child(type="number", decimalSeparator=".")
+
+    result = _one_column_pair(src, tgt)
+
+    assert len(result) == 1
+    diff = result[0]
+    assert diff.kind == "changed"
+    assert diff.node_kind == "format"
+    assert diff.path == ["shared_page", "amount", "Format"]
+    assert diff.attribute == "decimalSeparator"
+    assert diff.old_value == "."
+    assert diff.new_value == ","
+
+
+# ---- Lookup ----------------------------------------------------------------
+
+def test_sub_element_lookup_added():
+    src = make_column("wbs1")
+    src.lookup = make_child(tableName="pr.x_wbs")
+    tgt = make_column("wbs1")
+
+    result = _one_column_pair(src, tgt)
+    assert len(result) == 1
+    assert result[0].kind == "added"
+    assert result[0].node_kind == "lookup"
+    assert result[0].path == ["shared_page", "wbs1", "Lookup"]
+    assert result[0].new_value is src.lookup
+
+
+def test_sub_element_lookup_removed():
+    src = make_column("wbs1")
+    tgt = make_column("wbs1")
+    tgt.lookup = make_child(tableName="pr.x_wbs")
+
+    result = _one_column_pair(src, tgt)
+    assert len(result) == 1
+    assert result[0].kind == "removed"
+    assert result[0].node_kind == "lookup"
+    assert result[0].old_value is tgt.lookup
+
+
+def test_sub_element_lookup_attribute_changed():
+    src = make_column("wbs1")
+    src.lookup = make_child(tableName="pr.x_wbs_new")
+    tgt = make_column("wbs1")
+    tgt.lookup = make_child(tableName="pr.x_wbs")
+
+    result = _one_column_pair(src, tgt)
+    assert len(result) == 1
+    assert result[0].kind == "changed"
+    assert result[0].node_kind == "lookup"
+    assert result[0].attribute == "tableName"
+    assert result[0].old_value == "pr.x_wbs"
+    assert result[0].new_value == "pr.x_wbs_new"
+
+
+# ---- ViewProperties --------------------------------------------------------
+
+def test_sub_element_view_properties_added():
+    src = make_column("descr")
+    src.view_properties = make_child(type="text")
+    tgt = make_column("descr")
+
+    result = _one_column_pair(src, tgt)
+    assert len(result) == 1
+    assert result[0].kind == "added"
+    assert result[0].node_kind == "view_properties"
+    assert result[0].path == ["shared_page", "descr", "ViewProperties"]
+
+
+def test_sub_element_view_properties_removed():
+    src = make_column("descr")
+    tgt = make_column("descr")
+    tgt.view_properties = make_child(type="text")
+
+    result = _one_column_pair(src, tgt)
+    assert len(result) == 1
+    assert result[0].kind == "removed"
+    assert result[0].node_kind == "view_properties"
+
+
+def test_sub_element_view_properties_attribute_changed():
+    src = make_column("descr")
+    src.view_properties = make_child(type="text", maxLength="100")
+    tgt = make_column("descr")
+    tgt.view_properties = make_child(type="text", maxLength="75")
+
+    result = _one_column_pair(src, tgt)
+    assert len(result) == 1
+    assert result[0].kind == "changed"
+    assert result[0].node_kind == "view_properties"
+    assert result[0].attribute == "maxLength"
+    assert result[0].old_value == "75"
+    assert result[0].new_value == "100"
+
+
+# ---- EditProperties --------------------------------------------------------
+
+def test_sub_element_edit_properties_added():
+    src = make_column("tag")
+    src.edit_properties = make_child(type="textBox", placeholder="Tag no.")
+    tgt = make_column("tag")
+
+    result = _one_column_pair(src, tgt)
+    assert len(result) == 1
+    assert result[0].kind == "added"
+    assert result[0].node_kind == "edit_properties"
+    assert result[0].path == ["shared_page", "tag", "EditProperties"]
+
+
+def test_sub_element_edit_properties_removed():
+    src = make_column("tag")
+    tgt = make_column("tag")
+    tgt.edit_properties = make_child(type="textBox")
+
+    result = _one_column_pair(src, tgt)
+    assert len(result) == 1
+    assert result[0].kind == "removed"
+    assert result[0].node_kind == "edit_properties"
+
+
+def test_sub_element_edit_properties_placeholder_changed():
+    src = make_column("tag")
+    src.edit_properties = make_child(type="textBox", placeholder="New hint")
+    tgt = make_column("tag")
+    tgt.edit_properties = make_child(type="textBox", placeholder="Old hint")
+
+    result = _one_column_pair(src, tgt)
+    assert len(result) == 1
+    assert result[0].kind == "changed"
+    assert result[0].node_kind == "edit_properties"
+    assert result[0].attribute == "placeholder"
+    assert result[0].old_value == "Old hint"
+    assert result[0].new_value == "New hint"
+
+
+# ---- No-change, multi-key, ambiguous propagation ---------------------------
+
+def test_sub_element_no_change_emits_nothing():
+    src = make_column("tag")
+    src.edit_properties = make_child(type="textBox", placeholder="Same")
+    src.view_properties = make_child(type="text")
+    tgt = make_column("tag")
+    tgt.edit_properties = make_child(type="textBox", placeholder="Same")
+    tgt.view_properties = make_child(type="text")
+
+    assert _one_column_pair(src, tgt) == []
+
+
+def test_sub_element_multiple_changed_keys_emits_one_record_per_key_sorted():
+    src = make_column("amount")
+    src.format = make_child(type="number", decimalSeparator=",", thousandSeparator=".")
+    tgt = make_column("amount")
+    tgt.format = make_child(type="number", decimalSeparator=".", thousandSeparator=",")
+
+    result = _one_column_pair(src, tgt)
+    assert len(result) == 2
+    # sorted by attribute key: decimalSeparator before thousandSeparator
+    assert [d.attribute for d in result] == ["decimalSeparator", "thousandSeparator"]
+    assert all(d.node_kind == "format" and d.kind == "changed" for d in result)
+
+
+def test_sub_element_ambiguous_flag_propagates_from_enclosing_pair():
+    # Two source + two target Details share (tableName, caption), forcing the
+    # duplicate-sibling positional-pairing fallback (ambiguous=True), which
+    # threads through to a column pair's sub-element diff.
+    def detail_with_format(sep):
+        col = make_column("amount")
+        col.format = make_child(type="number", decimalSeparator=sep)
+        d = DetailNode(identity="pr.op/Op", attrib={"tableName": "pr.op", "caption": "Op"})
+        d.columns = [col]
+        return d
+
+    source_page = make_page("shared_page")
+    source_page.details = [detail_with_format(","), detail_with_format(",")]
+    target_page = make_page("shared_page")
+    target_page.details = [detail_with_format("."), detail_with_format(".")]
+
+    result = diff_project(ProjectModel(pages=[source_page]), ProjectModel(pages=[target_page]))
+
+    # Each of the two positionally-paired Details yields one Format change.
+    format_diffs = [d for d in result if d.node_kind == "format"]
+    assert len(format_diffs) == 2
+    assert all(d.ambiguous is True for d in format_diffs)
+    assert all(d.attribute == "decimalSeparator" for d in format_diffs)
