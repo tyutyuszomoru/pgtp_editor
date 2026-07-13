@@ -62,6 +62,8 @@ def iter_matches(text: str, term: str):
         found = lowered_text.find(lowered_term, pos)
         if found == -1:
             break
+        # O(found) per hit -> O(n*m) for m matches; fine for editor-sized
+        # documents (the streaming driver keeps the UI responsive regardless).
         line = text.count("\n", 0, found) + 1
         yield Match(start=found, line=line, preview=_line_preview(text, found))
         pos = found + term_len

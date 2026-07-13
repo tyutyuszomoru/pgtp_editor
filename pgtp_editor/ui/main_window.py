@@ -235,7 +235,13 @@ class MainWindow(QMainWindow):
     def _cancel_find_all_timer(self) -> None:
         if self._find_all_timer is not None:
             self._find_all_timer.stop()
+            # deleteLater the C++ QTimer so repeated Find All runs don't
+            # accumulate stopped timer children on the window.
+            self._find_all_timer.deleteLater()
             self._find_all_timer = None
+        # Drop the (possibly large) generator so we don't hold its closure
+        # over the snapshotted document text between runs.
+        self._find_all_iter = None
 
     def _clear_find_results(self) -> None:
         """Remove only prior [Find]-prefixed entries, leaving schema-learning
