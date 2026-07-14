@@ -540,3 +540,140 @@ def test_parse_columns_some_present_gives_correct_mix(tmp_path):
     assert col.edit_properties is not None
     assert col.format is None   # no nested <Format>
     assert col.lookup is None   # no <Lookup>
+
+
+COLUMNS_BLOCK_PGTP = """\
+<?xml version="1.0" encoding="UTF-8"?>
+<Project>
+  <Presentation>
+    <Pages>
+      <Page fileName="dev_equipment" tableName="pr.equipment" caption="Equipment">
+        <ColumnPresentations>
+          <ColumnPresentation fieldName="id" caption="Id"/>
+          <ColumnPresentation fieldName="descr" caption="Description"/>
+          <ColumnPresentation fieldName="loner" caption="Loner"/>
+        </ColumnPresentations>
+        <Columns>
+          <List>
+            <Column fieldName="id"/>
+            <Column fieldName="descr" visible="false"/>
+          </List>
+          <View>
+            <Column fieldName="id"/>
+            <Column fieldName="descr"/>
+          </View>
+          <Edit>
+            <Column fieldName="id" visible="false"/>
+            <Column fieldName="descr"/>
+          </Edit>
+          <Insert><Column fieldName="id"/><Column fieldName="descr"/></Insert>
+          <QuickFilter><Column fieldName="id"/><Column fieldName="descr"/></QuickFilter>
+          <FilterBuilder><Column fieldName="id"/><Column fieldName="descr"/></FilterBuilder>
+          <Print><Column fieldName="id"/><Column fieldName="descr"/></Print>
+          <Export><Column fieldName="id"/><Column fieldName="descr"/></Export>
+          <Compare><Column fieldName="id"/><Column fieldName="descr"/></Compare>
+          <MultiEdit><Column fieldName="id"/><Column fieldName="descr"/></MultiEdit>
+        </Columns>
+      </Page>
+    </Pages>
+  </Presentation>
+</Project>
+"""
+
+
+def _columns_by_field(tmp_path):
+    project = load_project(write_pgtp(tmp_path, COLUMNS_BLOCK_PGTP))
+    return {c.field_name: c for c in project.pages[0].columns}
+
+
+def test_representations_length_and_order(tmp_path):
+    from pgtp_editor.model.parser import REPRESENTATION_NAMES
+    col = _columns_by_field(tmp_path)["id"]
+    assert [r.name for r in col.representations] == list(REPRESENTATION_NAMES)
+
+
+def test_representations_visible_and_hidden(tmp_path):
+    reps = {r.name: r for r in _columns_by_field(tmp_path)["id"].representations}
+    assert reps["List"].visible is True          # no visible attr -> visible
+    assert reps["Edit"].visible is False         # visible="false" -> hidden
+    assert reps["List"].sourceline is not None
+
+
+def test_representations_hidden_for_descr_in_list(tmp_path):
+    reps = {r.name: r for r in _columns_by_field(tmp_path)["descr"].representations}
+    assert reps["List"].visible is False
+    assert reps["View"].visible is True
+
+
+def test_column_not_listed_in_present_representation_is_none(tmp_path):
+    # 'loner' has a ColumnPresentation but appears in no representation list.
+    reps = {r.name: r for r in _columns_by_field(tmp_path)["loner"].representations}
+    assert reps["List"].visible is None
+    assert reps["List"].sourceline is None
+    # Still length-10 (every present representation contributes a row).
+    assert len(_columns_by_field(tmp_path)["loner"].representations) == 10
+
+
+PARTIAL_REPRESENTATION_PGTP = """\
+<?xml version="1.0" encoding="UTF-8"?>
+<Project><Presentation><Pages>
+  <Page fileName="p" tableName="t" caption="P">
+    <ColumnPresentations>
+      <ColumnPresentation fieldName="here"/>
+      <ColumnPresentation fieldName="there"/>
+    </ColumnPresentations>
+    <Columns>
+      <List><Column fieldName="here"/><Column fieldName="there"/></List>
+      <Edit><Column fieldName="there"/></Edit>
+    </Columns>
+  </Page>
+</Pages></Presentation></Project>
+"""
+
+
+def test_column_present_in_some_reps_absent_from_others_gets_per_rep_none(tmp_path):
+    # 'here' IS listed in <List> but NOT in the (present) <Edit> block. It must
+    # get List=visible AND Edit=None -- the per-representation None path, which
+    # is distinct from the wholesale "in no representation at all" fallback.
+    project = load_project(write_pgtp(tmp_path, PARTIAL_REPRESENTATION_PGTP))
+    here = {c.field_name: c for c in project.pages[0].columns}["here"]
+    reps = {r.name: r for r in here.representations}
+    assert reps["List"].visible is True
+    assert reps["List"].sourceline is not None
+    assert reps["Edit"].visible is None       # present block, no entry for 'here'
+    assert reps["Edit"].sourceline is None
+    # Only List and Edit are present in this block; both surface for 'here'.
+    assert set(reps) == {"List", "Edit"}
+
+
+def test_no_columns_block_gives_empty_representations(tmp_path):
+    xml = """\
+<?xml version="1.0" encoding="UTF-8"?>
+<Project><Presentation><Pages>
+  <Page fileName="p" tableName="t" caption="P">
+    <ColumnPresentations><ColumnPresentation fieldName="id"/></ColumnPresentations>
+  </Page>
+</Pages></Presentation></Project>
+"""
+    project = load_project(write_pgtp(tmp_path, xml))
+    assert project.pages[0].columns[0].representations == []
+
+
+def test_detail_inner_page_columns_get_representations(tmp_path):
+    xml = """\
+<?xml version="1.0" encoding="UTF-8"?>
+<Project><Presentation><Pages>
+  <Page fileName="p" tableName="t" caption="P">
+    <Details><Detail caption="D"><Page tableName="pr.child">
+      <ColumnPresentations><ColumnPresentation fieldName="x"/></ColumnPresentations>
+      <Columns><List><Column fieldName="x" visible="false"/></List></Columns>
+    </Page></Detail></Details>
+  </Page>
+</Pages></Presentation></Project>
+"""
+    project = load_project(write_pgtp(tmp_path, xml))
+    detail_col = project.pages[0].details[0].columns[0]
+    reps = {r.name: r for r in detail_col.representations}
+    # Only <List> is present in this block; absent representations are omitted.
+    assert reps["List"].visible is False
+    assert "Edit" not in reps

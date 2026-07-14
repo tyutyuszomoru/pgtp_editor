@@ -125,3 +125,55 @@ def test_count_functions_synthetic_named_and_anonymous_mix():
     $('span.subs').each(function() { markDone(); });
     """
     assert _count_functions(body) == 8
+
+
+from pgtp_editor.model.nodes import RepresentationVisibility
+from pgtp_editor.ui.properties_panel import _rows_for_column
+
+
+def _column_with_reps():
+    return ColumnNode(
+        identity="c",
+        attrib={"fieldName": "id", "caption": "Id"},
+        sourceline=5,
+        representations=[
+            RepresentationVisibility("List", True, 20),
+            RepresentationVisibility("Edit", False, 30),
+            RepresentationVisibility("Compare", None, None),
+        ],
+    )
+
+
+def test_rows_for_column_starts_with_attribute_rows():
+    rows = _rows_for_column(_column_with_reps())
+    assert rows[0].property_label == "fieldName"
+    assert rows[1].property_label == "caption"
+
+
+def test_rows_for_column_has_divider_then_representation_rows():
+    rows = _rows_for_column(_column_with_reps())
+    labels = [r.property_label for r in rows]
+    assert "— Representations —" in labels
+    divider = labels.index("— Representations —")
+    rep_rows = rows[divider + 1:]
+    assert [(r.property_label, r.value) for r in rep_rows] == [
+        ("List", "visible"),
+        ("Edit", "hidden"),
+        ("Compare", "— (not listed)"),
+    ]
+
+
+def test_rows_for_column_representation_navigation_targets():
+    rows = _rows_for_column(_column_with_reps())
+    by_label = {r.property_label: r for r in rows}
+    assert by_label["List"].target_line == 20 and by_label["List"].attr_name is None
+    assert by_label["Edit"].target_line == 30
+    # "not listed" and the divider are non-navigating.
+    assert by_label["Compare"].target_line is None
+    assert by_label["— Representations —"].target_line is None
+
+
+def test_rows_for_column_no_representations_has_no_divider():
+    col = ColumnNode(identity="c", attrib={"fieldName": "id"}, sourceline=5)
+    labels = [r.property_label for r in _rows_for_column(col)]
+    assert "— Representations —" not in labels
