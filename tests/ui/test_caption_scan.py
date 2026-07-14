@@ -386,3 +386,64 @@ def test_matches_regular():
 def test_matches_regular_invalid_raises():
     with pytest.raises(ValueError):
         matches("abc", r"(", "regular", True)
+
+
+# --- Phase 5: transform_caption ---------------------------------------------
+
+from pgtp_editor.ui.caption_scan import TRANSFORM_KINDS, transform_caption
+
+
+def test_transform_kinds_constant():
+    assert TRANSFORM_KINDS == (
+        "title",
+        "upper",
+        "lower",
+        "sentence",
+        "trim",
+        "humanize",
+    )
+
+
+def test_transform_title():
+    assert transform_caption("wbs id", "title") == "Wbs Id"
+
+
+def test_transform_upper():
+    assert transform_caption("Wbs Id", "upper") == "WBS ID"
+
+
+def test_transform_lower():
+    assert transform_caption("Wbs Id", "lower") == "wbs id"
+
+
+def test_transform_sentence():
+    assert transform_caption("hello WORLD", "sentence") == "Hello world"
+    assert transform_caption("", "sentence") == ""
+
+
+def test_transform_trim():
+    assert transform_caption("  hello world  ", "trim") == "hello world"
+    # internal runs are NOT collapsed
+    assert transform_caption("  a   b  ", "trim") == "a   b"
+
+
+def test_transform_humanize_drops_trailing_id():
+    assert transform_caption("physicallocation_id", "humanize") == "Physicallocation"
+    assert transform_caption("wbs_id", "humanize") == "Wbs"
+
+
+def test_transform_humanize_multiword():
+    assert transform_caption("physical_location_id", "humanize") == "Physical Location"
+
+
+def test_transform_humanize_non_id_trailing_kept():
+    assert transform_caption("criticality_lvl", "humanize") == "Criticality Lvl"
+
+
+def test_transform_humanize_no_underscore():
+    assert transform_caption("criticality", "humanize") == "Criticality"
+
+
+def test_transform_unknown_kind_raises():
+    with pytest.raises(ValueError):
+        transform_caption("x", "bogus")

@@ -37,6 +37,7 @@ from pgtp_editor.ui.caption_scan import (
     apply_caption_edits,
     apply_find_replace,
     matches,
+    transform_caption,
 )
 
 _COLUMNS = (
@@ -605,6 +606,49 @@ class CaptionManagementPanel(QWidget):
                 count += 1
         return count
 
+    # -- bulk transform + unify (Phase 5) -----------------------------------
+
+    def bulk_transform_selection(self, kind: str) -> None:
+        """Apply ``transform_caption(seed, kind)`` to every selected row and
+        write the result into that row's New Value. The seed is the row's
+        current New Value if non-empty, else its (read-only) Value — so a
+        transform is a one-click edit that seeds from the original value. The
+        Value column is never touched."""
+        for source_row in self._selected_source_rows():
+            new_value = self._model.new_value_at(source_row)
+            seed = new_value if new_value else self._model.entries()[source_row].value
+            self._model.set_new_value(source_row, transform_caption(seed, kind))
+
+    def unify_from_row(self, source_row: int) -> None:
+        """Set the New Value of every OTHER row sharing this row's
+        ``(anchor, attribute)`` whose effective current value differs from the
+        source row's target, to that target. The target is the source row's New
+        Value if set, else its Value. A row's effective current value is its New
+        Value if set, else its Value; rows already matching are left
+        untouched."""
+        if not (0 <= source_row < self._model.rowCount()):
+            return
+        entries = self._model.entries()
+        source_entry = entries[source_row]
+        source_new = self._model.new_value_at(source_row)
+        target = source_new if source_new else source_entry.value
+        key = (source_entry.anchor, source_entry.attribute)
+        for row, entry in enumerate(entries):
+            if row == source_row:
+                continue
+            if (entry.anchor, entry.attribute) != key:
+                continue
+            row_new = self._model.new_value_at(row)
+            effective = row_new if row_new else entry.value
+            if effective != target:
+                self._model.set_new_value(row, target)
+
+    def unify_current(self) -> None:
+        source_row = self._current_source_row()
+        if source_row is None:
+            return
+        self.unify_from_row(source_row)
+
     # -- header value filters (Phase 3) -------------------------------------
 
     def distinct_values(self, column: int) -> list[str]:
@@ -653,8 +697,28 @@ class CaptionManagementPanel(QWidget):
 
     # -- context menu -------------------------------------------------------
 
+    # Transform ▸ submenu: display label -> transform_caption kind.
+    _TRANSFORM_ACTIONS: tuple[tuple[str, str], ...] = (
+        ("Title Case", "title"),
+        ("UPPERCASE", "upper"),
+        ("lowercase", "lower"),
+        ("Sentence case", "sentence"),
+        ("Trim whitespace", "trim"),
+        ("Humanize field name", "humanize"),
+    )
+
     def _show_context_menu(self, pos) -> None:
         menu = QMenu(self._table)
         menu.addAction("Insert NULL to empty field", self.insert_null_into_selection)
         menu.addAction("Go to line in XML", self.go_to_line_current)
+        menu.addSeparator()
+        transform_menu = menu.addMenu("Transform")
+        for label, kind in self._TRANSFORM_ACTIONS:
+            transform_menu.addAction(
+                label, lambda kind=kind: self.bulk_transform_selection(kind)
+            )
+        menu.addAction(
+            "Unify: set all inconsistent siblings to this value",
+            self.unify_current,
+        )
         menu.exec(self._table.viewport().mapToGlobal(pos))

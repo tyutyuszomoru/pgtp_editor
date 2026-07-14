@@ -693,3 +693,116 @@ def test_find_filter_ands_with_value_filter(qtbot):
     panel.apply_find_filter("Page", "normal", False)  # rows 0,1
     panel._proxy.set_value_filter(_VALUE_COLUMN, {"Orders Page"})  # row 1
     assert _visible_value_column(panel) == ["Orders Page"]
+
+
+# -- Phase 5: bulk transform -------------------------------------------------
+
+
+def test_bulk_transform_seeds_from_value_when_new_value_empty(qtbot):
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    panel.load_entries([_entry(2, "Page", "home", "caption", "home page")])
+    _select_source_rows(panel, [0])
+    panel.bulk_transform_selection("title")
+    assert panel._model.new_value_at(0) == "Home Page"
+    # marked changed, Value untouched
+    assert panel._model.index(0, _CHANGED_COLUMN).data() == "*"
+    assert panel._model.index(0, _VALUE_COLUMN).data() == "home page"
+
+
+def test_bulk_transform_seeds_from_new_value_when_set(qtbot):
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    panel.load_entries([_entry(2, "Page", "home", "caption", "original")])
+    panel._model.set_new_value(0, "edited value")
+    _select_source_rows(panel, [0])
+    panel.bulk_transform_selection("upper")
+    assert panel._model.new_value_at(0) == "EDITED VALUE"
+    assert panel._model.index(0, _VALUE_COLUMN).data() == "original"
+
+
+def test_bulk_transform_applies_to_all_selected(qtbot):
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    panel.load_entries(
+        [
+            _entry(2, "Page", "a", "caption", "one"),
+            _entry(3, "Page", "b", "caption", "two"),
+            _entry(4, "Page", "c", "caption", "three"),
+        ]
+    )
+    _select_source_rows(panel, [0, 2])
+    panel.bulk_transform_selection("upper")
+    assert panel._model.new_value_at(0) == "ONE"
+    assert panel._model.new_value_at(1) == ""  # unselected untouched
+    assert panel._model.new_value_at(2) == "THREE"
+
+
+def test_bulk_transform_humanize_fills_empty_from_anchor_style_value(qtbot):
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    panel.load_entries([_entry(2, "ColumnPresentation", "wbs_id", "caption", "wbs_id")])
+    _select_source_rows(panel, [0])
+    panel.bulk_transform_selection("humanize")
+    assert panel._model.new_value_at(0) == "Wbs"
+
+
+# -- Phase 5: unify ----------------------------------------------------------
+
+
+def _unify_entries():
+    # Three rows share (anchor="wbs", attribute="caption") with divergent
+    # values; a fourth is a different group.
+    return [
+        _entry(2, "ColumnPresentation", "wbs", "caption", "WBS ID"),
+        _entry(3, "ColumnPresentation", "wbs", "caption", "Wbs Id"),
+        _entry(4, "ColumnPresentation", "wbs", "caption", "wbs"),
+        _entry(5, "ColumnPresentation", "cost", "caption", "Cost"),
+    ]
+
+
+def test_unify_sets_divergent_siblings_only(qtbot):
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    panel.load_entries(_unify_entries())
+    panel.unify_from_row(0)  # target = row 0's Value "WBS ID"
+    assert panel._model.new_value_at(0) == ""  # source untouched
+    assert panel._model.new_value_at(1) == "WBS ID"
+    assert panel._model.new_value_at(2) == "WBS ID"
+    assert panel._model.new_value_at(3) == ""  # other group untouched
+
+
+def test_unify_leaves_already_matching_untouched(qtbot):
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    entries = [
+        _entry(2, "ColumnPresentation", "wbs", "caption", "WBS"),
+        _entry(3, "ColumnPresentation", "wbs", "caption", "WBS"),  # already matches
+        _entry(4, "ColumnPresentation", "wbs", "caption", "other"),
+    ]
+    panel.load_entries(entries)
+    panel.unify_from_row(0)
+    assert panel._model.new_value_at(0) == ""
+    assert panel._model.new_value_at(1) == ""  # already matched -> untouched
+    assert panel._model.new_value_at(2) == "WBS"
+
+
+def test_unify_target_uses_new_value_when_set(qtbot):
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    panel.load_entries(_unify_entries())
+    panel._model.set_new_value(0, "Canonical")
+    panel.unify_from_row(0)
+    assert panel._model.new_value_at(1) == "Canonical"
+    assert panel._model.new_value_at(2) == "Canonical"
+    assert panel._model.new_value_at(3) == ""
+
+
+def test_unify_current_uses_current_row(qtbot):
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    panel.load_entries(_unify_entries())
+    _select_source_rows(panel, [0])
+    panel.unify_current()
+    assert panel._model.new_value_at(1) == "WBS ID"
+    assert panel._model.new_value_at(2) == "WBS ID"

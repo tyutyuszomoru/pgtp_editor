@@ -266,6 +266,62 @@ def apply_find_replace(
     return "".join(result)
 
 
+# ---------------------------------------------------------------------------
+# Bulk transform core (Phase 5). Qt-free and fully unit-tested.
+#
+# `transform_caption(text, kind)` returns a transformed copy of `text` for one
+# of the supported `kind`s. Used by the panel's Transform ▸ submenu to rewrite
+# the selection's New Value in one click.
+# ---------------------------------------------------------------------------
+
+TRANSFORM_KINDS: tuple[str, ...] = (
+    "title",
+    "upper",
+    "lower",
+    "sentence",
+    "trim",
+    "humanize",
+)
+
+
+def transform_caption(text: str, kind: str) -> str:
+    """Return `text` transformed under `kind`.
+
+    - "title":    Title Case (``wbs id`` -> ``Wbs Id``).
+    - "upper":    UPPERCASE.
+    - "lower":    lowercase.
+    - "sentence": Sentence case (first char upper, the rest lower).
+    - "trim":     strip leading/trailing whitespace (ends only).
+    - "humanize": humanize a field-name-like string: split on ``_``, drop a
+                  trailing token equal to ``id`` (case-insensitive), Title Case
+                  the remaining words, join with spaces
+                  (``physical_location_id`` -> ``Physical Location``,
+                  ``wbs_id`` -> ``Wbs``, ``criticality_lvl`` ->
+                  ``Criticality Lvl``). Deterministic (no dictionary
+                  word-splitting): a single run-together token like
+                  ``physicallocation`` stays one word (``Physicallocation``).
+                  Empty result if the only token was ``id``.
+    """
+    if kind not in TRANSFORM_KINDS:
+        raise ValueError(f"Unknown transform kind: {kind!r}")
+    if kind == "title":
+        return text.title()
+    if kind == "upper":
+        return text.upper()
+    if kind == "lower":
+        return text.lower()
+    if kind == "sentence":
+        stripped = text.lower()
+        return stripped[:1].upper() + stripped[1:]
+    if kind == "trim":
+        return text.strip()
+    # humanize
+    tokens = text.split("_")
+    if len(tokens) > 1 and tokens[-1].lower() == "id":
+        tokens = tokens[:-1]
+    return " ".join(token.title() for token in tokens)
+
+
 def apply_caption_edits(text: str, edits) -> str:
     """Return `text` with each edit's new value written onto its source line.
 
