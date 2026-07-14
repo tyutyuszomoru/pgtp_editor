@@ -19,7 +19,16 @@ from pgtp_editor.model.nodes import (
     EventNode,
     PageNode,
     ProjectModel,
+    RepresentationVisibility,
     classify_event_side,
+)
+
+
+# The fixed, ordered set of representation lists inside a Page's <Columns>
+# block (verified uniform across sample files). Order is the display order.
+REPRESENTATION_NAMES = (
+    "List", "View", "Edit", "Insert", "QuickFilter",
+    "FilterBuilder", "Print", "Export", "Compare", "MultiEdit",
 )
 
 
@@ -165,15 +174,63 @@ def _parse_detail(detail_el, parent_identity) -> DetailNode:
     )
 
 
+def _build_representation_index(container_el):
+    """Map fieldName -> ordered list[RepresentationVisibility] from the
+    container's sibling <Columns> block. Only representations whose element
+    is actually present contribute rows; within a present representation, a
+    column with no <Column> entry gets visible=None ("not listed"). Returns
+    ({}, []) when there is no <Columns> block (every column then gets [])."""
+    columns_block = container_el.find("Columns")
+    if columns_block is None:
+        return {}, []
+
+    present_names = []
+    # entries_by_rep[name][field_name] = (visible, sourceline)
+    entries_by_rep: dict = {}
+    field_names = set()
+    for name in REPRESENTATION_NAMES:
+        rep_el = columns_block.find(name)
+        if rep_el is None:
+            continue  # absent representation -> omitted for everyone
+        present_names.append(name)
+        per_field = {}
+        for entry in rep_el.findall("Column"):
+            fn = entry.get("fieldName", "") or ""
+            per_field[fn] = (entry.get("visible") != "false", entry.sourceline)
+            field_names.add(fn)
+        entries_by_rep[name] = per_field
+
+    index: dict = {}
+    for fn in field_names:
+        reps = []
+        for name in present_names:
+            per_field = entries_by_rep[name]
+            if fn in per_field:
+                visible, sourceline = per_field[fn]
+                reps.append(RepresentationVisibility(name=name, visible=visible, sourceline=sourceline))
+            else:
+                reps.append(RepresentationVisibility(name=name, visible=None, sourceline=None))
+        index[fn] = reps
+    return index, present_names
+
+
 def _parse_columns(container_el, parent_identity) -> list[ColumnNode]:
     columns_container = container_el.find("ColumnPresentations")
     if columns_container is None:
         return []
 
+    representation_index, present_names = _build_representation_index(container_el)
+
     columns = []
     for col_el in columns_container.findall("ColumnPresentation"):
         field_name = col_el.get("fieldName", "") or ""
         identity = _make_identity(parent_identity, field_name)
+        # A column present in <ColumnPresentations> but in no representation
+        # list still gets a full "not listed" row per present representation.
+        reps = representation_index.get(field_name) or [
+            RepresentationVisibility(name=n, visible=None, sourceline=None)
+            for n in present_names
+        ]
         columns.append(
             ColumnNode(
                 identity=identity,
@@ -186,6 +243,7 @@ def _parse_columns(container_el, parent_identity) -> list[ColumnNode]:
                 lookup=_child_element(col_el.find("Lookup")),
                 view_properties=_child_element(col_el.find("ViewProperties")),
                 edit_properties=_child_element(col_el.find("EditProperties")),
+                representations=reps,
             )
         )
     return columns
