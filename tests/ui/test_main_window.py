@@ -913,3 +913,128 @@ def test_caption_filter_action_exists_in_tools_menu(qtbot):
     qtbot.addWidget(window)
     action = find_action(find_top_menu(window, "Tools"), "Caption Filter…")
     assert action is not None
+
+
+# ---------------------------------------------------------------------------
+# Tier-2 Validate Project wiring
+# ---------------------------------------------------------------------------
+
+_DUP_FILENAME_XML = (
+    '<Project>\n'
+    '  <Presentation>\n'
+    '    <Pages>\n'
+    '      <Page fileName="dup.php" tableName="t1"/>\n'
+    '      <Page fileName="dup.php" tableName="t2"/>\n'
+    '    </Pages>\n'
+    '  </Presentation>\n'
+    '</Project>\n'
+)
+
+
+def _load_into_window(window, xml_text):
+    """Attach a text-built project to the window without touching disk/modals."""
+    from pgtp_editor.model.parser import load_project_from_text
+
+    project = load_project_from_text(xml_text)
+    window._current_project = project
+    window.center_stage.xml_editor.setPlainText(xml_text)
+    return project
+
+
+def _validation_items(window):
+    from pgtp_editor.ui.main_window import _VALIDATION_PREFIX
+
+    return [
+        window.audit_panel.item(row).text()
+        for row in range(window.audit_panel.count())
+        if window.audit_panel.item(row).text().startswith(_VALIDATION_PREFIX)
+    ]
+
+
+def test_validate_with_no_project_shows_info_and_empty_audit(qtbot):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    assert window._current_project is None
+    window._validate_project()
+    assert window.statusBar().currentMessage() == "Open a project to validate."
+    assert window.audit_panel.count() == 0
+
+
+def test_validate_duplicate_filename_populates_audit_and_status(qtbot):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    _load_into_window(window, _DUP_FILENAME_XML)
+
+    window._validate_project()
+
+    items = _validation_items(window)
+    errors = [t for t in items if "ERROR" in t]
+    assert len(errors) == 2
+    assert all("dup.php" in t for t in errors)
+    # Status summary names the error count.
+    assert window.statusBar().currentMessage() == "Validation: 2 error(s), 0 warning(s)"
+
+
+def test_clear_validation_results_removes_only_validation_items(qtbot):
+    from PySide6.QtWidgets import QListWidgetItem
+
+    window = MainWindow()
+    qtbot.addWidget(window)
+    # Seed a schema entry that must survive.
+    window.audit_panel.addItem(QListWidgetItem("[Schema] x"))
+    _load_into_window(window, _DUP_FILENAME_XML)
+    window._validate_project()
+    assert _validation_items(window)  # validation items present
+
+    window._clear_validation_results()
+
+    assert _validation_items(window) == []
+    remaining = [
+        window.audit_panel.item(row).text() for row in range(window.audit_panel.count())
+    ]
+    assert "[Schema] x" in remaining
+
+
+def test_clicking_validation_item_navigates_to_line(qtbot):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    _load_into_window(window, _DUP_FILENAME_XML)
+    window._validate_project()
+
+    # Find the first validation row and click it.
+    from pgtp_editor.ui.main_window import _VALIDATION_PREFIX
+
+    row = next(
+        r
+        for r in range(window.audit_panel.count())
+        if window.audit_panel.item(r).text().startswith(_VALIDATION_PREFIX)
+    )
+    item = window.audit_panel.item(row)
+    line = item.data(Qt.ItemDataRole.UserRole)
+    assert line is not None
+
+    window._on_audit_item_clicked(item)
+
+    # Switched to the Raw XML tab and moved the cursor to the issue line.
+    assert window.center_stage.currentIndex() == window.center_stage.raw_xml_tab_index
+    cursor = window.center_stage.xml_editor.textCursor()
+    assert cursor.blockNumber() + 1 == line
+
+
+def test_validate_passes_on_clean_project(qtbot):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    clean = (
+        '<Project>\n'
+        '  <Presentation>\n'
+        '    <Pages>\n'
+        '      <Page fileName="a.php" tableName="t_a"/>\n'
+        '      <Page fileName="b.php" tableName="t_b"/>\n'
+        '    </Pages>\n'
+        '  </Presentation>\n'
+        '</Project>\n'
+    )
+    _load_into_window(window, clean)
+    window._validate_project()
+    assert _validation_items(window) == []
+    assert window.statusBar().currentMessage() == "Validation passed — no issues."
