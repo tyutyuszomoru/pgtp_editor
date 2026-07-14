@@ -1,3 +1,4 @@
+import pytest
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QGuiApplication
 
@@ -325,7 +326,16 @@ def _visible_value_column(panel):
     ]
 
 
-def test_filter_value_column_narrows_visible_rows(qtbot):
+def test_inline_filter_row_removed(qtbot):
+    # Phase 4 removed the per-column inline QLineEdit filter row (superseded by
+    # header value filters + the shared find/filter modal).
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    assert not hasattr(panel, "_filter_fields")
+    assert not hasattr(panel, "_filter_row")
+
+
+def test_find_filter_matches_any_cell(qtbot):
     panel = CaptionManagementPanel()
     qtbot.addWidget(panel)
     panel.load_entries(
@@ -335,11 +345,13 @@ def test_filter_value_column_narrows_visible_rows(qtbot):
             _entry(4, "Detail", "orders", "shortCaption", "Ord"),
         ]
     )
-    panel._filter_fields[_VALUE_COLUMN].setText("ord")
+    # Whole-row find filter, case-insensitive "ord": matches the two rows
+    # whose anchor/value contain it.
+    panel.apply_find_filter("ord", "normal", False)
     assert sorted(_visible_value_column(panel)) == ["Ord", "Orders"]
 
 
-def test_filter_attribute_column(qtbot):
+def test_find_filter_regex_mode(qtbot):
     panel = CaptionManagementPanel()
     qtbot.addWidget(panel)
     panel.load_entries(
@@ -348,20 +360,11 @@ def test_filter_attribute_column(qtbot):
             _entry(3, "Detail", "orders", "shortCaption", "Ord"),
         ]
     )
-    panel._filter_fields[_ATTRIBUTE_COLUMN].setText("shortcaption")
+    panel.apply_find_filter(r"^Ord$", "regular", True)
     assert _visible_value_column(panel) == ["Ord"]
 
 
-def test_filter_changed_column_isolates_changed_rows(qtbot):
-    panel = CaptionManagementPanel()
-    qtbot.addWidget(panel)
-    panel.load_entries(_sample_entries())
-    _set_new_value(panel, 1, "New")
-    panel._filter_fields[_CHANGED_COLUMN].setText("*")
-    assert _visible_value_column(panel) == ["Orders"]
-
-
-def test_empty_filter_shows_all_rows(qtbot):
+def test_empty_find_filter_shows_all_rows(qtbot):
     panel = CaptionManagementPanel()
     qtbot.addWidget(panel)
     panel.load_entries(
@@ -370,8 +373,8 @@ def test_empty_filter_shows_all_rows(qtbot):
             _entry(3, "Detail", "orders", "caption", "Orders"),
         ]
     )
-    panel._filter_fields[_VALUE_COLUMN].setText("home")
-    panel._filter_fields[_VALUE_COLUMN].setText("")
+    panel.apply_find_filter("home", "normal", False)
+    panel.apply_find_filter("", "normal", False)
     assert sorted(_visible_value_column(panel)) == ["Home", "Orders"]
 
 
@@ -473,9 +476,9 @@ def test_value_filter_ands_with_substring_filter(qtbot):
             _entry(4, "Detail", "cart", "caption", "Cart"),
         ]
     )
-    # Substring filter keeps rows containing "order"; value filter keeps only
-    # "Orders". Intersection is just "Orders".
-    panel._proxy.set_column_filter(_VALUE_COLUMN, "order")
+    # Find filter keeps rows matching "order" (any cell); value filter keeps
+    # only "Orders". Intersection is just "Orders".
+    panel._proxy.set_regex_filter("order", "normal", False)
     panel._proxy.set_value_filter(_VALUE_COLUMN, {"Orders"})
     assert _visible_value_column(panel) == ["Orders"]
 
@@ -619,3 +622,74 @@ def test_header_indicator_only_on_filtered_column(qtbot):
 
     assert header(_ATTRIBUTE_COLUMN) == "Attribute ▾"
     assert header(_VALUE_COLUMN) == "Value"
+
+
+# -- Phase 4: shared find / filter / replace on the panel -------------------
+
+
+def _replace_entries():
+    return [
+        _entry(2, "Page", "home", "caption", "Home Page"),
+        _entry(3, "Detail", "orders", "caption", "Orders Page"),
+        _entry(4, "Detail", "cart", "caption", "Cart"),
+    ]
+
+
+def test_replace_all_global_writes_new_value_on_all_matches(qtbot):
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    panel.load_entries(_replace_entries())
+    count = panel.replace_all_find("Page", "Screen", "normal", True, in_selection=False)
+    assert count == 2
+    assert panel._model.new_value_at(0) == "Home Screen"
+    assert panel._model.new_value_at(1) == "Orders Screen"
+    assert panel._model.new_value_at(2) == ""  # "Cart" has no match -> untouched
+
+
+def test_replace_all_in_selection_only_touches_visible_rows(qtbot):
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    panel.load_entries(_replace_entries())
+    # Filter to rows matching "Home" -> only the first row is visible.
+    panel.apply_find_filter("Home", "normal", False)
+    count = panel.replace_all_find("Page", "Screen", "normal", True, in_selection=True)
+    assert count == 1
+    assert panel._model.new_value_at(0) == "Home Screen"
+    assert panel._model.new_value_at(1) == ""  # filtered out -> untouched
+    assert panel._model.new_value_at(2) == ""
+
+
+def test_replace_all_regex_capture_group(qtbot):
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    panel.load_entries([_entry(2, "Page", "p", "caption", "John Smith")])
+    count = panel.replace_all_find(
+        r"(\w+) (\w+)", r"\2 \1", "regular", True, in_selection=False
+    )
+    assert count == 1
+    assert panel._model.new_value_at(0) == "Smith John"
+
+
+def test_apply_find_filter_invalid_regex_raises(qtbot):
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    panel.load_entries(_replace_entries())
+    with pytest.raises(ValueError):
+        panel.apply_find_filter("(", "regular", True)
+
+
+def test_current_filter_pattern_reflects_active_filter(qtbot):
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    panel.load_entries(_replace_entries())
+    panel.apply_find_filter("Page", "normal", False)
+    assert panel.current_filter_pattern() == "Page"
+
+
+def test_find_filter_ands_with_value_filter(qtbot):
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    panel.load_entries(_replace_entries())
+    panel.apply_find_filter("Page", "normal", False)  # rows 0,1
+    panel._proxy.set_value_filter(_VALUE_COLUMN, {"Orders Page"})  # row 1
+    assert _visible_value_column(panel) == ["Orders Page"]

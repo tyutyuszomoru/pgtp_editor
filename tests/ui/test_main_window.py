@@ -725,3 +725,86 @@ def test_readonly_edit_attempt_flashes_status_hint(qtbot):
     qtbot.addWidget(window)
     window.center_stage.xml_editor.read_only_edit_attempted.emit()
     assert "read-only" in window.statusBar().currentMessage()
+
+
+# -- Phase 4: shared find/filter/replace dialog wiring ----------------------
+
+
+def _enter_caption_mode_with(window, snapshot):
+    from tests.ui._menu_helpers import find_action, find_top_menu
+
+    window.center_stage.xml_editor.setPlainText(snapshot)
+    find_action(find_top_menu(window, "Tools"), "Manage Captions...").trigger()
+
+
+def test_caption_filter_dialog_filters_grid(qtbot):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    _enter_caption_mode_with(
+        window,
+        '<Root>\n  <Page caption="Home"/>\n  <Page caption="Orders"/>\n</Root>',
+    )
+    dialog = window._make_caption_find_replace_dialog(replace_enabled=False)
+    dialog.find_field.setText("Home")
+    dialog._do_filter()
+
+    panel = window.center_stage.caption_management_panel
+    proxy = panel._proxy
+    visible = [
+        proxy.index(r, 6).data(Qt.ItemDataRole.DisplayRole)
+        for r in range(proxy.rowCount())
+    ]
+    assert visible == ["Home"]
+
+
+def test_caption_replace_all_writes_new_value_and_reports(qtbot):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    _enter_caption_mode_with(
+        window,
+        '<Root>\n  <Page caption="Home Page"/>\n  <Page caption="Orders Page"/>\n</Root>',
+    )
+    dialog = window._make_caption_find_replace_dialog(replace_enabled=True)
+    dialog.find_field.setText("Page")
+    dialog.replace_field.setText("Screen")
+    dialog.global_radio.setChecked(True)
+    dialog._do_replace_all()
+
+    panel = window.center_stage.caption_management_panel
+    assert panel._model.new_value_at(0) == "Home Screen"
+    assert panel._model.new_value_at(1) == "Orders Screen"
+    assert "2 caption" in window.statusBar().currentMessage()
+
+
+def test_replace_dialog_preloads_active_filter_pattern(qtbot):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    _enter_caption_mode_with(
+        window, '<Root>\n  <Page caption="Home"/>\n</Root>'
+    )
+    panel = window.center_stage.caption_management_panel
+    panel.apply_find_filter("Ho", "normal", False)
+    dialog = window._make_caption_find_replace_dialog(replace_enabled=True)
+    assert dialog.find_field.text() == "Ho"
+
+
+def test_caption_filter_invalid_regex_shows_inline_error(qtbot):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    _enter_caption_mode_with(
+        window, '<Root>\n  <Page caption="Home"/>\n</Root>'
+    )
+    dialog = window._make_caption_find_replace_dialog(replace_enabled=False)
+    dialog.find_field.setText("(")
+    dialog.set_mode("regular")
+    dialog._do_filter()  # must not raise / not pop a modal
+    assert dialog.error_label.text() != ""
+
+
+def test_caption_filter_action_exists_in_tools_menu(qtbot):
+    from tests.ui._menu_helpers import find_action, find_top_menu
+
+    window = MainWindow()
+    qtbot.addWidget(window)
+    action = find_action(find_top_menu(window, "Tools"), "Caption Filter…")
+    assert action is not None

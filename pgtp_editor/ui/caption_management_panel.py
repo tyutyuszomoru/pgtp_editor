@@ -23,7 +23,6 @@ from PySide6.QtGui import QColor, QGuiApplication, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
-    QLineEdit,
     QListWidget,
     QListWidgetItem,
     QMenu,
@@ -33,7 +32,12 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from pgtp_editor.ui.caption_scan import CaptionEntry, apply_caption_edits
+from pgtp_editor.ui.caption_scan import (
+    CaptionEntry,
+    apply_caption_edits,
+    apply_find_replace,
+    matches,
+)
 
 _COLUMNS = (
     "Changed",
@@ -212,25 +216,42 @@ class _CaptionTableModel(QAbstractTableModel):
 
 
 class _CaptionFilterProxyModel(QSortFilterProxyModel):
-    """Multi-column filter combining two independent, ANDed mechanisms:
+    """Multi-mechanism filter combining two independent, ANDed filters:
 
-    * a per-column case-insensitive **substring** filter (the inline filter
-      row), and
+    * a whole-row **find filter** (Phase 4 shared modal): a row passes iff ANY
+      of its displayed cells matches the find pattern under the given search
+      mode + case (``set_regex_filter(pattern, mode, case)``; empty pattern =
+      no filter). Handles the three ``caption_scan`` modes, incl. regex.
     * a per-column Excel-style **value-set** filter (the header-filter popup):
       ``set_value_filter(column, allowed)`` keeps a row iff its cell text for
       that column is in ``allowed`` (``None`` = no value filter on that
       column).
 
-    A row is accepted iff it passes every active filter on every column."""
+    A row is accepted iff it passes every active filter."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._column_filters: dict[int, str] = {}
         self._value_filters: dict[int, set[str]] = {}
+        # Whole-row find filter (Phase 4). Empty pattern = inactive.
+        self._find_pattern: str = ""
+        self._find_mode: str = "normal"
+        self._find_case: bool = False
 
-    def set_column_filter(self, column: int, text: str) -> None:
-        self._column_filters[column] = text.lower()
+    def set_regex_filter(self, pattern: str, mode: str, case: bool) -> None:
+        """Set the whole-row find filter. A row passes iff any displayed cell
+        matches `pattern` under `mode`/`case` (see caption_scan.matches). An
+        empty `pattern` clears the filter. Raises ValueError on invalid regex
+        (the caller/dialog catches it and shows an inline error)."""
+        # Validate up front so an invalid regex surfaces immediately (via the
+        # dialog's ValueError catch) rather than being swallowed per-row.
+        matches("", pattern, mode, case)
+        self._find_pattern = pattern
+        self._find_mode = mode
+        self._find_case = case
         self.invalidate()
+
+    def find_pattern(self) -> str:
+        return self._find_pattern
 
     def set_value_filter(self, column: int, allowed: set[str] | None) -> None:
         """Restrict `column` to rows whose DisplayRole text is in `allowed`.
@@ -261,12 +282,27 @@ class _CaptionFilterProxyModel(QSortFilterProxyModel):
 
     def filterAcceptsRow(self, source_row, source_parent) -> bool:
         model = self.sourceModel()
-        for column, needle in self._column_filters.items():
-            if not needle:
-                continue
-            index = model.index(source_row, column, source_parent)
-            haystack = (index.data(Qt.ItemDataRole.DisplayRole) or "").lower()
-            if needle not in haystack:
+        # Whole-row find filter: the row passes iff ANY displayed cell matches.
+        if self._find_pattern:
+            column_count = model.columnCount()
+            try:
+                any_match = any(
+                    matches(
+                        model.index(source_row, column, source_parent).data(
+                            Qt.ItemDataRole.DisplayRole
+                        )
+                        or "",
+                        self._find_pattern,
+                        self._find_mode,
+                        self._find_case,
+                    )
+                    for column in range(column_count)
+                )
+            except ValueError:
+                # Invalid pattern (should have been caught at set time): treat
+                # as no match rather than crash the view repaint.
+                return False
+            if not any_match:
                 return False
         for column, allowed in self._value_filters.items():
             index = model.index(source_row, column, source_parent)
@@ -408,20 +444,6 @@ class CaptionManagementPanel(QWidget):
         header.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         header.customContextMenuRequested.connect(self._show_header_context_menu)
 
-        # One filter QLineEdit per column (removed by Phase 4).
-        self._filter_row = QWidget()
-        filter_layout = QHBoxLayout(self._filter_row)
-        filter_layout.setContentsMargins(0, 0, 0, 0)
-        self._filter_fields: list[QLineEdit] = []
-        for column in range(self._model.columnCount()):
-            field = QLineEdit()
-            field.setPlaceholderText(f"Filter {_COLUMNS[column]}")
-            field.textChanged.connect(
-                lambda text, col=column: self._proxy.set_column_filter(col, text)
-            )
-            filter_layout.addWidget(field)
-            self._filter_fields.append(field)
-
         self._apply_button = QPushButton("Apply")
         self._close_button = QPushButton("Close")
         self._apply_button.clicked.connect(self.apply)
@@ -433,7 +455,6 @@ class CaptionManagementPanel(QWidget):
         button_row.addWidget(self._close_button)
 
         layout = QVBoxLayout(self)
-        layout.addWidget(self._filter_row)
         layout.addWidget(self._table)
         layout.addLayout(button_row)
 
@@ -538,6 +559,51 @@ class CaptionManagementPanel(QWidget):
             return
         for source_row, value in zip(target_rows, clipboard_lines):
             self._model.set_new_value(source_row, value)
+
+    # -- shared find / filter / replace (Phase 4) ---------------------------
+
+    def apply_find_filter(self, pattern: str, mode: str, case: bool) -> None:
+        """Apply a whole-row find filter via the proxy. Raises ValueError on an
+        invalid regex (caller/dialog shows it inline)."""
+        self._proxy.set_regex_filter(pattern, mode, case)
+
+    def current_filter_pattern(self) -> str:
+        """The proxy's currently-active find pattern (for pre-loading the
+        Replace dialog's Find-what)."""
+        return self._proxy.find_pattern()
+
+    def _visible_source_rows(self) -> list[int]:
+        """Source-model rows currently visible through the proxy (the
+        In-selection / filtered scope for Replace All)."""
+        return [
+            self._proxy.mapToSource(self._proxy.index(r, 0)).row()
+            for r in range(self._proxy.rowCount())
+        ]
+
+    def replace_all_find(
+        self,
+        find: str,
+        replacement: str,
+        mode: str,
+        case: bool,
+        in_selection: bool,
+    ) -> int:
+        """Apply find->replace to the Value of each row in scope, writing the
+        result into that row's New Value (non-destructive). Scope: In selection
+        = currently-visible/filtered rows; Global = all source rows. Returns the
+        number of rows changed. Raises ValueError on invalid regex."""
+        if in_selection:
+            rows = self._visible_source_rows()
+        else:
+            rows = list(range(self._model.rowCount()))
+        count = 0
+        for source_row in rows:
+            old_value = self._model.entries()[source_row].value
+            new_value = apply_find_replace(old_value, find, replacement, mode, case)
+            if new_value is not None:
+                self._model.set_new_value(source_row, new_value)
+                count += 1
+        return count
 
     # -- header value filters (Phase 3) -------------------------------------
 

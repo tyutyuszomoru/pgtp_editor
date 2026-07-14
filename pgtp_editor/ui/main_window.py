@@ -4,7 +4,7 @@ from pathlib import Path
 
 from lxml import etree
 from PySide6.QtCore import Qt, QTimer, QUrl
-from PySide6.QtGui import QDesktopServices
+from PySide6.QtGui import QDesktopServices, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QDockWidget,
     QFileDialog,
@@ -36,6 +36,7 @@ from pgtp_editor.schema_learning.xsd_gen import generate_xsd
 from pgtp_editor.ui._stub_action import add_stub_action
 from pgtp_editor.ui.about import show_about_dialog
 from pgtp_editor.ui.annotate_schema_values_dialog import AnnotateSchemaValuesDialog
+from pgtp_editor.ui.caption_find_replace_dialog import CaptionFindReplaceDialog
 from pgtp_editor.ui.center_stage import CenterStage
 from pgtp_editor.ui import caption_scan
 from pgtp_editor.ui import search
@@ -106,6 +107,18 @@ class MainWindow(QMainWindow):
         self.center_stage.caption_management_panel._on_apply = self._apply_caption_edits
         self.center_stage.caption_management_panel._on_close = self._close_caption_mode
         self.center_stage.caption_management_panel.on_go_to_line = self._caption_go_to_line
+        self._caption_find_replace_dialog = None
+        # Ctrl+R inside the caption panel opens the shared dialog in Replace
+        # mode. Scoped to the panel (WidgetWithChildrenShortcut) so it does not
+        # collide with the Edit-menu global Ctrl+R (Raw XML replace) — this one
+        # only fires when the caption grid has focus (i.e. in Caption Mode).
+        caption_replace_shortcut = QShortcut(
+            QKeySequence("Ctrl+R"), self.center_stage.caption_management_panel
+        )
+        caption_replace_shortcut.setContext(
+            Qt.ShortcutContext.WidgetWithChildrenShortcut
+        )
+        caption_replace_shortcut.activated.connect(self._open_caption_replace_dialog)
         self.center_stage.xml_editor.read_only_edit_attempted.connect(
             self._on_read_only_edit_attempted
         )
@@ -686,6 +699,52 @@ class MainWindow(QMainWindow):
         self.center_stage.setCurrentIndex(self.center_stage.raw_xml_tab_index)
         self.center_stage.xml_editor.navigate_to_line(line)
 
+    def _make_caption_find_replace_dialog(self, replace_enabled: bool):
+        """Construct (but do NOT exec) the shared Find/Filter/Replace dialog
+        wired to the caption panel. In Replace mode, Find-what is pre-loaded
+        with the grid's currently-active filter pattern. Returns the dialog so
+        tests can drive it without ``.exec()``."""
+        panel = self.center_stage.caption_management_panel
+        initial_find = panel.current_filter_pattern() if replace_enabled else ""
+        dialog = CaptionFindReplaceDialog(
+            on_filter=self._caption_apply_filter,
+            on_replace_all=self._caption_replace_all,
+            replace_enabled=replace_enabled,
+            initial_find=initial_find,
+            parent=self,
+        )
+        # Keep a reference so the non-modal dialog is not garbage-collected.
+        self._caption_find_replace_dialog = dialog
+        return dialog
+
+    def _open_caption_filter_dialog(self) -> None:
+        """Tools -> Caption Filter…: open the shared dialog in filter-only mode
+        (non-blocking show)."""
+        dialog = self._make_caption_find_replace_dialog(replace_enabled=False)
+        dialog.show()
+
+    def _open_caption_replace_dialog(self) -> None:
+        """Caption-mode Ctrl+R: open the shared dialog in Replace mode,
+        pre-loading the grid's active filter pattern (non-blocking show)."""
+        dialog = self._make_caption_find_replace_dialog(replace_enabled=True)
+        dialog.show()
+
+    def _caption_apply_filter(self, pattern: str, mode: str, case: bool) -> None:
+        """Filter callback: apply the pattern as a whole-row grid filter. Lets
+        an invalid-regex ValueError propagate so the dialog shows it inline."""
+        self.center_stage.caption_management_panel.apply_find_filter(pattern, mode, case)
+
+    def _caption_replace_all(
+        self, find: str, replacement: str, mode: str, case: bool, in_selection: bool
+    ) -> None:
+        """Replace-All callback: transform each in-scope row's Value into its
+        New Value, then report the count. Lets ValueError propagate for the
+        dialog's inline error."""
+        count = self.center_stage.caption_management_panel.replace_all_find(
+            find, replacement, mode, case, in_selection
+        )
+        self.statusBar().showMessage(f"Replaced in {count} caption(s).", 5000)
+
     def _on_read_only_edit_attempted(self) -> None:
         """Flash a non-modal hint when the user tries to edit the read-only
         Raw XML editor while in Caption Mode."""
@@ -718,6 +777,8 @@ class MainWindow(QMainWindow):
         menu = self.menuBar().addMenu("Tools")
         manage_captions_action = menu.addAction("Manage Captions...")
         manage_captions_action.triggered.connect(self._enter_caption_mode)
+        caption_filter_action = menu.addAction("Caption Filter…")
+        caption_filter_action.triggered.connect(self._open_caption_filter_dialog)
         menu.addSeparator()
         self._add_stub_action(menu, "Find Reused Tables...")
         menu.addSeparator()

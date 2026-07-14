@@ -141,6 +141,131 @@ def _resolve_anchor(element) -> str:
     return element.tag
 
 
+# ---------------------------------------------------------------------------
+# Find / Filter / Replace core (Phase 4). Qt-free and fully unit-tested.
+#
+# Three search modes, shared by the grid filter and the Replace-All transform:
+#   - "normal":   plain substring; find matched literally, replace-all.
+#   - "extended": C-style escapes (\n \t \r \0 \xNN and \\) are decoded in BOTH
+#                 find and replacement, then treated as a plain substring.
+#   - "regular":  Python regex; capture-group refs (\1, \g<name>) honored in the
+#                 replacement. Invalid patterns raise ValueError.
+# ---------------------------------------------------------------------------
+
+SEARCH_MODES: tuple[str, ...] = ("normal", "extended", "regular")
+
+_EXTENDED_ESCAPE = re.compile(r"\\(x[0-9A-Fa-f]{2}|[nrt0\\])")
+
+
+def _decode_extended(text: str) -> str:
+    """Decode the Extended-mode escape sequences \\n \\t \\r \\0 \\xNN \\\\ in
+    `text`, leaving any other backslash sequence untouched (verbatim)."""
+
+    def replace(match: re.Match) -> str:
+        token = match.group(1)
+        if token == "n":
+            return "\n"
+        if token == "t":
+            return "\t"
+        if token == "r":
+            return "\r"
+        if token == "0":
+            return "\0"
+        if token == "\\":
+            return "\\"
+        # token is xNN
+        return chr(int(token[1:], 16))
+
+    return _EXTENDED_ESCAPE.sub(replace, text)
+
+
+def matches(value: str, find: str, mode: str, case_sensitive: bool) -> bool:
+    """True iff `find` matches somewhere in `value` under `mode`/`case_sensitive`.
+
+    An empty `find` matches everything (used as a cleared filter). Invalid regex
+    in `"regular"` mode raises ValueError with a clear message."""
+    if mode not in SEARCH_MODES:
+        raise ValueError(f"Unknown search mode: {mode!r}")
+    if find == "":
+        return True
+    if mode == "regular":
+        flags = 0 if case_sensitive else re.IGNORECASE
+        try:
+            pattern = re.compile(find, flags)
+        except re.error as exc:
+            raise ValueError(f"Invalid regular expression: {exc}") from exc
+        return pattern.search(value) is not None
+    needle = _decode_extended(find) if mode == "extended" else find
+    if case_sensitive:
+        return needle in value
+    return needle.lower() in value.lower()
+
+
+def apply_find_replace(
+    value: str,
+    find: str,
+    replacement: str,
+    mode: str,
+    case_sensitive: bool,
+) -> str | None:
+    """Return `value` with every occurrence of `find` replaced by `replacement`
+    under `mode`, or None if `find` does not match `value` (so callers can skip
+    unchanged rows).
+
+    - "normal":   plain substring replace-all.
+    - "extended": decode escapes in find AND replacement, then plain replace-all.
+    - "regular":  regex sub with capture-group refs (\\1, \\g<name>) in the
+                  replacement; honors case_sensitive. Invalid regex -> ValueError.
+    """
+    if mode not in SEARCH_MODES:
+        raise ValueError(f"Unknown search mode: {mode!r}")
+    if find == "":
+        return None  # an empty pattern never "matches" for replacement purposes
+
+    if mode == "regular":
+        flags = 0 if case_sensitive else re.IGNORECASE
+        try:
+            pattern = re.compile(find, flags)
+        except re.error as exc:
+            raise ValueError(f"Invalid regular expression: {exc}") from exc
+        if pattern.search(value) is None:
+            return None
+        try:
+            return pattern.sub(replacement, value)
+        except re.error as exc:
+            raise ValueError(f"Invalid replacement: {exc}") from exc
+
+    needle = find
+    repl = replacement
+    if mode == "extended":
+        needle = _decode_extended(find)
+        repl = _decode_extended(replacement)
+
+    if case_sensitive:
+        if needle not in value:
+            return None
+        return value.replace(needle, repl)
+
+    # Case-insensitive plain replace-all: find all match spans on a lowercased
+    # copy, then splice the original around them so the untouched parts keep
+    # their original casing.
+    lowered_value = value.lower()
+    lowered_needle = needle.lower()
+    start = lowered_value.find(lowered_needle)
+    if start == -1:
+        return None
+    result: list[str] = []
+    cursor = 0
+    step = len(lowered_needle)
+    while start != -1:
+        result.append(value[cursor:start])
+        result.append(repl)
+        cursor = start + step
+        start = lowered_value.find(lowered_needle, cursor)
+    result.append(value[cursor:])
+    return "".join(result)
+
+
 def apply_caption_edits(text: str, edits) -> str:
     """Return `text` with each edit's new value written onto its source line.
 

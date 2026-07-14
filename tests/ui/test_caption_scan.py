@@ -271,3 +271,118 @@ def test_apply_only_replaces_first_occurrence_on_line():
     text = '<Root>\n  <Page caption="A" caption="B"/>\n</Root>'
     result = apply_caption_edits(text, [(_entry(2, "caption"), "X")])
     assert result == '<Root>\n  <Page caption="X" caption="B"/>\n</Root>'
+
+
+# -- Phase 4: find / filter / replace core ---------------------------------
+
+import pytest
+
+from pgtp_editor.ui.caption_scan import (
+    SEARCH_MODES,
+    apply_find_replace,
+    matches,
+)
+
+
+def test_search_modes_constant():
+    assert SEARCH_MODES == ("normal", "extended", "regular")
+
+
+# apply_find_replace -- normal mode
+
+def test_normal_replace_all_occurrences():
+    assert apply_find_replace("ababab", "a", "X", "normal", True) == "XbXbXb"
+
+
+def test_normal_no_match_returns_none():
+    assert apply_find_replace("hello", "zzz", "X", "normal", True) is None
+
+
+def test_normal_case_sensitive_does_not_match_wrong_case():
+    assert apply_find_replace("Hello", "hello", "X", "normal", True) is None
+
+
+def test_normal_case_insensitive_matches_and_preserves_original_casing():
+    # Replaces the matched span but keeps surrounding casing intact.
+    assert apply_find_replace("HELLO world", "hello", "hi", "normal", False) == "hi world"
+
+
+def test_normal_case_insensitive_replaces_all():
+    assert apply_find_replace("Ab ab AB", "ab", "_", "normal", False) == "_ _ _"
+
+
+def test_empty_find_returns_none():
+    assert apply_find_replace("hello", "", "X", "normal", True) is None
+
+
+# apply_find_replace -- extended mode
+
+def test_extended_decodes_newline_escape_in_find():
+    # find is the two-char string backslash-n, decoded to a real newline.
+    assert apply_find_replace("a\nb", chr(92) + "n", " ", "extended", True) == "a b"
+
+
+def test_extended_decodes_tab_and_hex_in_replacement():
+    # replacement is backslash-t backslash-x41 -> tab + char 0x41 ("A").
+    repl = chr(92) + "t" + chr(92) + "x41"
+    assert apply_find_replace("aXb", "X", repl, "extended", True) == "a\tAb"
+
+
+def test_extended_decodes_backslash_and_null():
+    assert apply_find_replace("a" + chr(92) + "b", chr(92) + chr(92), "/", "extended", True) == "a/b"
+    assert apply_find_replace("a\x00b", chr(92) + "0", "-", "extended", True) == "a-b"
+
+
+# apply_find_replace -- regular mode
+
+def test_regex_capture_group_reference():
+    result = apply_find_replace("John Smith", r"(\w+) (\w+)", r"\2 \1", "regular", True)
+    assert result == "Smith John"
+
+
+def test_regex_no_match_returns_none():
+    assert apply_find_replace("abc", r"\d+", "X", "regular", True) is None
+
+
+def test_regex_case_insensitive():
+    assert apply_find_replace("Hello", r"hello", "hi", "regular", False) == "hi"
+
+
+def test_regex_case_sensitive_no_match():
+    assert apply_find_replace("Hello", r"hello", "hi", "regular", True) is None
+
+
+def test_regex_invalid_raises_value_error():
+    with pytest.raises(ValueError):
+        apply_find_replace("abc", r"(", "X", "regular", True)
+
+
+def test_unknown_mode_raises_value_error():
+    with pytest.raises(ValueError):
+        apply_find_replace("abc", "a", "X", "bogus", True)
+
+
+# matches()
+
+def test_matches_normal():
+    assert matches("hello world", "world", "normal", True) is True
+    assert matches("hello world", "WORLD", "normal", True) is False
+    assert matches("hello world", "WORLD", "normal", False) is True
+
+
+def test_matches_empty_find_matches_everything():
+    assert matches("anything", "", "normal", True) is True
+
+
+def test_matches_extended():
+    assert matches("a\tb", "\t", "extended", True) is True
+
+
+def test_matches_regular():
+    assert matches("abc123", r"\d+", "regular", True) is True
+    assert matches("abc", r"\d+", "regular", True) is False
+
+
+def test_matches_regular_invalid_raises():
+    with pytest.raises(ValueError):
+        matches("abc", r"(", "regular", True)

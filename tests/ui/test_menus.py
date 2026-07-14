@@ -200,7 +200,7 @@ def test_tools_menu_contents(qtbot):
     qtbot.addWidget(window)
     menu = find_top_menu(window, "Tools")
     assert action_labels(menu) == [
-        "Manage Captions...", "―",
+        "Manage Captions...", "Caption Filter…", "―",
         "Find Reused Tables...", "―",
         "Validate Project", "―",
         "Reparse Raw XML into Tree",
