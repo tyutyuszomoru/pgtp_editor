@@ -223,3 +223,19 @@ def test_real_sample_column_sub_elements_populated():
     assert id_col.format is not None
     assert id_col.format.attrib["type"] == "number"
     assert id_col.view_properties is not None
+
+
+def test_real_sample_column_representations_populated():
+    project = _load_dev_ferrara()   # existing helper; skips if sample absent
+    page = next(p for p in project.pages if p.file_name == "development_equipment")
+    columns = {c.field_name: c for c in page.columns}
+    id_col = columns["id"]
+    reps = {r.name: r for r in id_col.representations}
+    # All 10 representations present for a real page.
+    assert set(reps) == {
+        "List", "View", "Edit", "Insert", "QuickFilter",
+        "FilterBuilder", "Print", "Export", "Compare", "MultiEdit",
+    }
+    # 'id' is hidden in Edit but shown in List (per the real file).
+    assert reps["Edit"].visible is False
+    assert reps["List"].visible is True
