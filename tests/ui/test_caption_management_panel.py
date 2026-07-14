@@ -587,6 +587,135 @@ def test_popup_reflects_existing_filter_state(qtbot):
     assert checked == {"Home", "Cart"}
 
 
+# -- header filter popup search box (Excel-style) ---------------------------
+
+
+def _hidden_states(popup):
+    return [popup._list.item(i).isHidden() for i in range(popup._list.count())]
+
+
+def test_popup_search_hides_nonmatching_and_checks_matches(qtbot):
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    panel.load_entries(_value_filter_entries())
+    popup = panel.open_header_filter(_VALUE_COLUMN)
+    qtbot.addWidget(popup)
+    labels = popup.item_labels()  # ["Cart", "Home", "Orders"]
+
+    popup._on_search("art")  # substring of "Cart" only
+
+    cart = labels.index("Cart")
+    home = labels.index("Home")
+    orders = labels.index("Orders")
+    # Matching row visible, non-matching hidden.
+    assert popup._list.item(cart).isHidden() is False
+    assert popup._list.item(home).isHidden() is True
+    assert popup._list.item(orders).isHidden() is True
+    # Non-empty search checks matches, unchecks non-matches.
+    assert popup.is_checked(cart) is True
+    assert popup.is_checked(home) is False
+    assert popup.is_checked(orders) is False
+
+
+def test_popup_search_then_checked_values_and_apply(qtbot):
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    panel.load_entries(_value_filter_entries())
+    captured = []
+    popup = _open_popup_capturing(panel, captured)
+    qtbot.addWidget(popup)
+
+    popup._on_search("art")
+
+    assert popup.checked_values() == {"Cart"}
+    popup.apply_filter()
+    assert captured == [(_VALUE_COLUMN, {"Cart"})]
+
+
+def _open_popup_capturing(panel, captured):
+    from pgtp_editor.ui.caption_management_panel import _HeaderFilterPopup
+
+    return _HeaderFilterPopup(
+        _VALUE_COLUMN,
+        panel.cascaded_distinct_values(_VALUE_COLUMN),
+        panel._proxy.value_filter(_VALUE_COLUMN),
+        on_apply=lambda col, allowed: captured.append((col, allowed)),
+    )
+
+
+def test_popup_empty_search_shows_all_and_preserves_checks(qtbot):
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    panel.load_entries(_value_filter_entries())
+    popup = panel.open_header_filter(_VALUE_COLUMN)
+    qtbot.addWidget(popup)
+    labels = popup.item_labels()
+    orders = labels.index("Orders")
+
+    # Manual uncheck before any search.
+    popup.set_checked(orders, False)
+    # Type then clear.
+    popup._on_search("art")
+    popup._on_search("")
+
+    # All rows revealed again.
+    assert _hidden_states(popup) == [False, False, False]
+    # Empty search leaves check states unchanged (manual uncheck preserved).
+    assert popup.is_checked(orders) is False
+
+
+def test_popup_select_all_under_search_affects_visible_only(qtbot):
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    panel.load_entries(_value_filter_entries())
+    popup = panel.open_header_filter(_VALUE_COLUMN)
+    qtbot.addWidget(popup)
+    labels = popup.item_labels()
+
+    popup._on_search("o")  # matches "Home" and "Orders", not "Cart"
+    popup.clear_all()  # clears only visible (Home, Orders)
+    popup.select_all()  # selects only visible (Home, Orders)
+
+    assert popup.is_checked(labels.index("Home")) is True
+    assert popup.is_checked(labels.index("Orders")) is True
+    # Hidden "Cart" untouched by visible-only clear/select.
+    assert popup.is_checked(labels.index("Cart")) is False
+
+
+def test_popup_clear_all_under_search_affects_visible_only(qtbot):
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    panel.load_entries(_value_filter_entries())
+    popup = panel.open_header_filter(_VALUE_COLUMN)
+    qtbot.addWidget(popup)
+    labels = popup.item_labels()
+
+    popup._on_search("o")  # visible: Home, Orders; hidden+unchecked: Cart
+    popup.clear_all()
+
+    assert popup.is_checked(labels.index("Home")) is False
+    assert popup.is_checked(labels.index("Orders")) is False
+
+
+def test_popup_search_full_flow_filters_proxy(qtbot):
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    panel.load_entries(
+        [
+            _entry(2, "Page", "home", "caption", "AI Home"),
+            _entry(3, "Detail", "orders", "caption", "AI Orders"),
+            _entry(4, "Detail", "cart", "caption", "Cart"),
+        ]
+    )
+    popup = panel.open_header_filter(_VALUE_COLUMN)
+    qtbot.addWidget(popup)
+
+    popup._on_search("AI")
+    popup.apply_filter()
+
+    assert sorted(_visible_value_column(panel)) == ["AI Home", "AI Orders"]
+
+
 # -- active-filter header indicator -----------------------------------------
 
 

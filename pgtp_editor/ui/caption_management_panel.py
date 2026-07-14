@@ -23,6 +23,7 @@ from PySide6.QtGui import QColor, QFont, QGuiApplication, QKeySequence, QShortcu
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
+    QLineEdit,
     QListWidget,
     QListWidgetItem,
     QMenu,
@@ -433,6 +434,15 @@ class _HeaderFilterPopup(QWidget):
         # (0 rows). itemClicked flips the whole row's check state.
         self._list.itemClicked.connect(self._toggle_item)
 
+        # Excel-style search box at the TOP of the popup. Typing narrows the
+        # visible rows to substring matches and (for a non-empty query) checks
+        # matches / unchecks non-matches, so OK filters the column to exactly
+        # the search matches. Clearing reveals all rows and leaves check state
+        # alone so a manual selection is not clobbered.
+        self._search = QLineEdit()
+        self._search.setPlaceholderText("Search…")
+        self._search.textChanged.connect(self._on_search)
+
         select_all_btn = QPushButton("Select all")
         clear_btn = QPushButton("Clear")
         ok_btn = QPushButton("OK")
@@ -448,6 +458,7 @@ class _HeaderFilterPopup(QWidget):
         bottom_row.addWidget(ok_btn)
 
         layout = QVBoxLayout(self)
+        layout.addWidget(self._search)
         layout.addLayout(top_row)
         layout.addWidget(self._list)
         layout.addLayout(bottom_row)
@@ -473,13 +484,34 @@ class _HeaderFilterPopup(QWidget):
             Qt.CheckState.Unchecked if now_checked else Qt.CheckState.Checked
         )
 
-    def select_all(self) -> None:
+    def _on_search(self, text: str) -> None:
+        """Narrow the list to substring matches of `text`. For a NON-EMPTY
+        query, also check matches and uncheck non-matches so OK filters the
+        column to exactly the search results. An EMPTY query reveals every row
+        and leaves check states unchanged (don't clobber a manual selection)."""
+        query = text.strip().lower()
         for i in range(self._list.count()):
-            self._list.item(i).setCheckState(Qt.CheckState.Checked)
+            item = self._list.item(i)
+            matched = query in self._values[i].lower()
+            item.setHidden(not matched)
+            if query:
+                item.setCheckState(
+                    Qt.CheckState.Checked if matched else Qt.CheckState.Unchecked
+                )
+
+    def select_all(self) -> None:
+        # When a search is active, act only on the currently-visible (matching)
+        # rows — "Select all search results".
+        for i in range(self._list.count()):
+            if not self._list.item(i).isHidden():
+                self._list.item(i).setCheckState(Qt.CheckState.Checked)
 
     def clear_all(self) -> None:
+        # When a search is active, act only on the currently-visible (matching)
+        # rows — "Clear search results".
         for i in range(self._list.count()):
-            self._list.item(i).setCheckState(Qt.CheckState.Unchecked)
+            if not self._list.item(i).isHidden():
+                self._list.item(i).setCheckState(Qt.CheckState.Unchecked)
 
     def checked_values(self) -> set[str]:
         return {
