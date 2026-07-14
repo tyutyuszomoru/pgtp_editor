@@ -738,13 +738,18 @@ def test_bulk_transform_applies_to_all_selected(qtbot):
     assert panel._model.new_value_at(2) == "THREE"
 
 
-def test_bulk_transform_humanize_fills_empty_from_anchor_style_value(qtbot):
+def test_bulk_transform_humanize_seeds_from_field_name_not_caption(qtbot):
+    # Humanize derives a caption from the fieldName (the anchor), NOT from the
+    # existing caption value -- that's its whole point (fill a caption from the
+    # column's field name). Anchor differs from Value here to prove it.
     panel = CaptionManagementPanel()
     qtbot.addWidget(panel)
-    panel.load_entries([_entry(2, "ColumnPresentation", "wbs_id", "caption", "wbs_id")])
+    panel.load_entries(
+        [_entry(2, "ColumnPresentation", "physical_location_id", "caption", "Old Caption")]
+    )
     _select_source_rows(panel, [0])
     panel.bulk_transform_selection("humanize")
-    assert panel._model.new_value_at(0) == "Wbs"
+    assert panel._model.new_value_at(0) == "Physical Location"
 
 
 # -- Phase 5: unify ----------------------------------------------------------

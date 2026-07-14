@@ -610,13 +610,21 @@ class CaptionManagementPanel(QWidget):
 
     def bulk_transform_selection(self, kind: str) -> None:
         """Apply ``transform_caption(seed, kind)`` to every selected row and
-        write the result into that row's New Value. The seed is the row's
-        current New Value if non-empty, else its (read-only) Value — so a
-        transform is a one-click edit that seeds from the original value. The
-        Value column is never touched."""
+        write the result into that row's New Value. For most kinds the seed is
+        the row's current New Value if non-empty, else its (read-only) Value —
+        a one-click edit that seeds from the original caption. The exception is
+        ``"humanize"``, whose whole purpose is to derive a caption *from the
+        field name*: it seeds from the row's anchor (the column's fieldName),
+        so e.g. `physical_location_id` becomes `Physical Location` regardless of
+        the current caption. The Value column is never touched."""
+        entries = self._model.entries()
         for source_row in self._selected_source_rows():
-            new_value = self._model.new_value_at(source_row)
-            seed = new_value if new_value else self._model.entries()[source_row].value
+            entry = entries[source_row]
+            if kind == "humanize":
+                seed = entry.anchor
+            else:
+                new_value = self._model.new_value_at(source_row)
+                seed = new_value if new_value else entry.value
             self._model.set_new_value(source_row, transform_caption(seed, kind))
 
     def unify_from_row(self, source_row: int) -> None:
