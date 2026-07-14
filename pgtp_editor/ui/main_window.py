@@ -3,7 +3,8 @@ import shutil
 from pathlib import Path
 
 from lxml import etree
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt, QTimer, QUrl
+from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QDockWidget,
     QFileDialog,
@@ -15,6 +16,8 @@ from PySide6.QtWidgets import (
 )
 
 from pgtp_editor.diff.apply import apply_differences
+from pgtp_editor.generation.config import load_executable_path, save_executable_path
+from pgtp_editor.generation.runner import GeneratorRunner, build_generate_command
 from pgtp_editor.diff.differ import compare_block, diff_project
 from pgtp_editor.diff.resolve import ResolutionError, resolve_path
 from pgtp_editor.model.encoding import read_pgtp_text
@@ -41,6 +44,8 @@ from pgtp_editor.ui.properties_panel import PropertiesPanel
 
 _FIND_RESULT_PREFIX = "[Find] "
 
+_GENERATOR_OUTPUT_PREFIX = "[PHP] "
+
 _FIND_ALL_BATCH = 200
 
 _SCHEMA_REPORT_TEMPLATES = {
@@ -53,9 +58,18 @@ _SCHEMA_REPORT_TEMPLATES = {
 
 
 class MainWindow(QMainWindow):
-    def __init__(self, schema_storage_dir: Path | None = None):
+    def __init__(
+        self,
+        schema_storage_dir: Path | None = None,
+        generator_config_dir: Path | None = None,
+        generator_runner=None,
+    ):
         super().__init__()
         self._schema_storage_dir = schema_storage_dir
+        self._generator_config_dir = generator_config_dir
+        self._generator_runner = generator_runner if generator_runner is not None else GeneratorRunner()
+        self._current_output_folder = None
+        self._is_generating = False
         self.setWindowTitle("PGTP Editor")
         self.resize(1400, 900)
 
@@ -474,6 +488,39 @@ class MainWindow(QMainWindow):
         )
         self.open_project_file(target_path)
 
+    def _write_project_text(self, path) -> None:
+        """Write the Raw XML editor buffer verbatim to `path` as UTF-8. If
+        `path` already exists, copy it to `path + '.bak'` first (same .bak
+        convention as Apply-to-Target)."""
+        if Path(path).exists():
+            shutil.copy2(path, path + ".bak")
+        Path(path).write_text(self.center_stage.xml_editor.toPlainText(), encoding="utf-8")
+
+    def _save_project(self) -> None:
+        if not self._current_project_path:
+            self._save_project_as()
+            return
+        try:
+            self._write_project_text(self._current_project_path)
+        except OSError as exc:
+            QMessageBox.critical(self, "Save Failed", f"Could not save:\n\n{exc}")
+            return
+        self.statusBar().showMessage(f"Saved {Path(self._current_project_path).name}", 5000)
+
+    def _save_project_as(self) -> None:
+        path, _filter = QFileDialog.getSaveFileName(
+            self, "Save Project As", "", "PGTP files (*.pgtp)"
+        )
+        if not path:
+            return
+        try:
+            self._write_project_text(path)
+        except OSError as exc:
+            QMessageBox.critical(self, "Save Failed", f"Could not save:\n\n{exc}")
+            return
+        self._current_project_path = path
+        self.statusBar().showMessage(f"Saved as {Path(path).name}", 5000)
+
     def _build_menu_bar(self):
         self._build_file_menu()
         self._build_edit_menu()
@@ -490,8 +537,10 @@ class MainWindow(QMainWindow):
         open_action = menu.addAction("Open...")
         open_action.triggered.connect(self._open_project)
         menu.addMenu("Open Recent")
-        self._add_stub_action(menu, "Save")
-        self._add_stub_action(menu, "Save As...")
+        save_action = menu.addAction("Save")
+        save_action.triggered.connect(self._save_project)
+        save_as_action = menu.addAction("Save As...")
+        save_as_action.triggered.connect(self._save_project_as)
         self._add_stub_action(menu, "Close")
         menu.addSeparator()
         exit_action = menu.addAction("Exit")
@@ -655,11 +704,126 @@ class MainWindow(QMainWindow):
 
     def _build_generation_menu(self):
         menu = self.menuBar().addMenu("Generation")
-        self._add_stub_action(menu, "Locate PHP Generator Executable...")
+        locate_action = menu.addAction("Locate PHP Generator Executable...")
+        locate_action.triggered.connect(self._locate_generator)
         menu.addSeparator()
-        self._add_stub_action(menu, "Generate PHP...")
+        generate_action = menu.addAction("Generate PHP...")
+        generate_action.triggered.connect(self._generate_php)
         menu.addSeparator()
-        self._add_stub_action(menu, "Open Output Folder")
+        open_output_action = menu.addAction("Open Output Folder")
+        open_output_action.triggered.connect(self._open_output_folder)
+
+    def _locate_generator(self) -> None:
+        path, _filter = QFileDialog.getOpenFileName(
+            self, "Locate PHP Generator Executable", "", "Executables (*.exe);;All files (*)"
+        )
+        if not path:
+            return
+        save_executable_path(path, base_dir=self._generator_config_dir)
+        self.statusBar().showMessage(f"PHP Generator set: {Path(path).name}", 5000)
+
+    def _project_output_folder_default(self) -> str:
+        """Prefill for the output-folder dialog: the project's Project@outputPath
+        if readable, else the directory of the current project file, else ''."""
+        project = self._current_project
+        if project is not None and project.tree is not None:
+            root = project.tree.getroot()
+            if root is not None:
+                declared = root.get("outputPath")
+                if declared:
+                    return declared
+        if self._current_project_path:
+            return str(Path(self._current_project_path).parent)
+        return ""
+
+    def _clear_generator_output(self) -> None:
+        """Remove only prior [PHP]-prefixed Audit entries (leave [Find]/[Schema])."""
+        for row in range(self.audit_panel.count() - 1, -1, -1):
+            if self.audit_panel.item(row).text().startswith(_GENERATOR_OUTPUT_PREFIX):
+                self.audit_panel.takeItem(row)
+
+    def _generate_php(self) -> None:
+        # 0. Reject a second run while one is in flight (avoid overlapping
+        # QProcess instances orphaning the first).
+        if self._is_generating:
+            self.statusBar().showMessage("A generation is already in progress.", 5000)
+            return
+
+        # 1. Require an open project (a tracked model or non-empty editor).
+        if self._current_project is None and not self.center_stage.xml_editor.toPlainText().strip():
+            self.statusBar().showMessage("Open a project before generating.", 5000)
+            return
+
+        # 2. Require a configured executable.
+        exe = load_executable_path(base_dir=self._generator_config_dir)
+        if exe is None:
+            QMessageBox.information(
+                self,
+                "Generate PHP",
+                "Locate the PHP Generator executable first (Generation > Locate PHP Generator Executable...).",
+            )
+            return
+
+        # 3. Save vs Save As vs Cancel so on-disk content matches the editor.
+        choice = QMessageBox.question(
+            self,
+            "Save Before Generating",
+            "The generator reads the project from disk. Save the current editor "
+            "contents before generating?",
+            QMessageBox.StandardButton.Save
+            | QMessageBox.StandardButton.SaveAll  # used as the "Save As..." button
+            | QMessageBox.StandardButton.Cancel,
+        )
+        if choice == QMessageBox.StandardButton.Cancel:
+            return
+        if choice == QMessageBox.StandardButton.SaveAll:
+            self._save_project_as()
+        else:
+            self._save_project()  # delegates to Save As when there's no path yet
+        if not self._current_project_path:
+            return  # Save As was cancelled -> nothing on disk to generate from
+
+        # 4. Output folder (prefilled).
+        output_folder = QFileDialog.getExistingDirectory(
+            self, "Select Output Folder", self._project_output_folder_default()
+        )
+        if not output_folder:
+            return
+
+        # 5. Run via the injected runner.
+        self._clear_generator_output()
+        command = build_generate_command(exe, self._current_project_path, output_folder)
+        self._current_output_folder = output_folder
+        self._is_generating = True
+        self.statusBar().showMessage("Generating…")
+        self._generator_runner.run(
+            command,
+            on_output=self._append_generator_output,
+            on_finished=self._on_generation_finished,
+        )
+
+    def _append_generator_output(self, line: str) -> None:
+        self.audit_panel.addItem(f"{_GENERATOR_OUTPUT_PREFIX}{line}")
+
+    def _on_generation_finished(self, exit_code: int) -> None:
+        self._is_generating = False
+        self.audit_panel.addItem(f"{_GENERATOR_OUTPUT_PREFIX}Generation finished (exit {exit_code})")
+        if exit_code == 0:
+            QMessageBox.information(self, "Generate PHP", "Generation succeeded.")
+            self.statusBar().showMessage("Generation succeeded", 5000)
+        else:
+            QMessageBox.critical(
+                self,
+                "Generate PHP",
+                f"Generation failed (exit {exit_code}). See the Audit / Problems panel for the generator log.",
+            )
+            self.statusBar().showMessage(f"Generation failed (exit {exit_code})", 5000)
+
+    def _open_output_folder(self) -> None:
+        if not self._current_output_folder:
+            self.statusBar().showMessage("No output folder yet — run Generate PHP first.", 5000)
+            return
+        QDesktopServices.openUrl(QUrl.fromLocalFile(self._current_output_folder))
 
     def _build_help_menu(self):
         menu = self.menuBar().addMenu("Help")
