@@ -38,13 +38,17 @@ class CenterStage(QTabWidget):
         self.setTabVisible(self.raw_xml_tab_index, visible)
 
     def enter_caption_mode(self):
-        """Freeze/hide Raw XML and reveal + switch to Caption Management."""
-        self.setTabVisible(self.raw_xml_tab_index, False)
+        """Keep Raw XML visible but read-only, and reveal + switch to Caption
+        Management (Phase 1: Raw XML is no longer hidden during caption mode)."""
+        self.setTabVisible(self.raw_xml_tab_index, True)
+        self.xml_editor.setReadOnly(True)
         self.setTabVisible(self.caption_management_tab_index, True)
         self.setCurrentIndex(self.caption_management_tab_index)
 
     def leave_caption_mode(self):
-        """Hide Caption Management and restore + switch to Raw XML."""
+        """Re-enable editing on Raw XML, hide Caption Management, and switch
+        back to Raw XML."""
+        self.xml_editor.setReadOnly(False)
         self.setTabVisible(self.caption_management_tab_index, False)
         self.setTabVisible(self.raw_xml_tab_index, True)
         self.setCurrentIndex(self.raw_xml_tab_index)

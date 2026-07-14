@@ -587,7 +587,9 @@ def test_manage_captions_enters_mode_and_populates_grid(qtbot):
     find_action(find_top_menu(window, "Tools"), "Manage Captions...").trigger()
 
     stage = window.center_stage
-    assert stage.isTabVisible(stage.raw_xml_tab_index) is False
+    # Phase 1: Raw XML stays visible but read-only in Caption Mode.
+    assert stage.isTabVisible(stage.raw_xml_tab_index) is True
+    assert stage.xml_editor.isReadOnly() is True
     assert stage.isTabVisible(stage.caption_management_tab_index) is True
     assert stage.currentIndex() == stage.caption_management_tab_index
     assert stage.caption_management_panel._model.rowCount() == 1
@@ -671,3 +673,33 @@ def test_manage_captions_apply_then_reedit_uses_updated_snapshot(qtbot):
     assert window.center_stage.xml_editor.toPlainText() == (
         '<Root>\n  <Page caption="Landing"/>\n</Root>'
     )
+
+
+# --- Phase 1: mode indicator + read-only hint -----------------------------
+
+def test_mode_label_initial_text_is_editing_mode(qtbot):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    assert window._mode_label.text() == "Editing Mode"
+
+
+def test_mode_label_flips_on_enter_and_close_caption_mode(qtbot):
+    from tests.ui._menu_helpers import find_action, find_top_menu
+
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window.center_stage.xml_editor.setPlainText(
+        '<Root>\n  <Page caption="Home"/>\n</Root>'
+    )
+    find_action(find_top_menu(window, "Tools"), "Manage Captions...").trigger()
+    assert window._mode_label.text() == "Caption Mode (XML read-only)"
+
+    window.center_stage.caption_management_panel.close_panel()
+    assert window._mode_label.text() == "Editing Mode"
+
+
+def test_readonly_edit_attempt_flashes_status_hint(qtbot):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window.center_stage.xml_editor.read_only_edit_attempted.emit()
+    assert "read-only" in window.statusBar().currentMessage()

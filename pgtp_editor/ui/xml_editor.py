@@ -193,6 +193,10 @@ class _EditorGutter(QWidget):
 
 class XmlEditor(QPlainTextEdit):
     line_clicked = Signal(int)  # 1-based line of a left-mouse click in the text
+    # Emitted when a text-modifying key is pressed while the editor is
+    # read-only (Caption Mode). The base already blocks the edit; this signal
+    # lets MainWindow flash a non-modal "read-only" hint.
+    read_only_edit_attempted = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -501,7 +505,29 @@ class XmlEditor(QPlainTextEdit):
             else QPlainTextEdit.LineWrapMode.NoWrap
         )
 
+    @staticmethod
+    def _is_text_modifying_key(event: QKeyEvent) -> bool:
+        """True if `event` would mutate the document: a printable character,
+        one of Backspace/Delete/Return/Enter, or a paste (Ctrl+V). Used only
+        in read-only mode to decide whether to emit read_only_edit_attempted."""
+        if event.matches(QKeySequence.StandardKey.Paste):
+            return True
+        if event.key() in (
+            Qt.Key.Key_Backspace,
+            Qt.Key.Key_Delete,
+            Qt.Key.Key_Return,
+            Qt.Key.Key_Enter,
+        ):
+            return True
+        return bool(event.text()) and event.text().isprintable()
+
     def keyPressEvent(self, event: QKeyEvent) -> None:
+        if self.isReadOnly() and self._is_text_modifying_key(event):
+            # Caption Mode: the base QPlainTextEdit already refuses the edit
+            # when read-only; the only added behavior is a non-modal hint.
+            self.read_only_edit_attempted.emit()
+            return
+
         if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
             self._insert_newline_with_indent()
             return

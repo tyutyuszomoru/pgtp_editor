@@ -8,6 +8,7 @@ from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QDockWidget,
     QFileDialog,
+    QLabel,
     QListWidget,
     QListWidgetItem,
     QMainWindow,
@@ -104,6 +105,13 @@ class MainWindow(QMainWindow):
         self.audit_panel.itemClicked.connect(self._on_audit_item_clicked)
         self.center_stage.caption_management_panel._on_apply = self._apply_caption_edits
         self.center_stage.caption_management_panel._on_close = self._close_caption_mode
+        self.center_stage.xml_editor.read_only_edit_attempted.connect(
+            self._on_read_only_edit_attempted
+        )
+
+        # Permanent status-bar mode indicator (Editing vs Caption Mode).
+        self._mode_label = QLabel("Editing Mode")
+        self.statusBar().addPermanentWidget(self._mode_label)
 
         self.properties_panel = PropertiesPanel(xml_editor=self.center_stage.xml_editor)
         self.properties_dock = QDockWidget("Properties", self)
@@ -653,6 +661,7 @@ class MainWindow(QMainWindow):
         entries = caption_scan.scan_captions(snapshot)
         self.center_stage.caption_management_panel.load_entries(entries, snapshot_text=snapshot)
         self.center_stage.enter_caption_mode()
+        self._mode_label.setText("Caption Mode (XML read-only)")
 
     def _apply_caption_edits(self, edited_text: str) -> None:
         """Panel Apply callback: count the changed rows, write the edited text
@@ -668,6 +677,14 @@ class MainWindow(QMainWindow):
         """Panel Close callback: leave caption mode and restore Raw XML.
         Pending (unapplied) edits are discarded by re-scanning on next enter."""
         self.center_stage.leave_caption_mode()
+        self._mode_label.setText("Editing Mode")
+
+    def _on_read_only_edit_attempted(self) -> None:
+        """Flash a non-modal hint when the user tries to edit the read-only
+        Raw XML editor while in Caption Mode."""
+        self.statusBar().showMessage(
+            "Raw XML is read-only in Caption Mode — close Caption Mode to edit.", 4000
+        )
 
     def _build_diff_merge_menu(self):
         menu = self.menuBar().addMenu("Diff / Merge")
