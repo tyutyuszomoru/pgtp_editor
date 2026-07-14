@@ -84,6 +84,9 @@ class _CaptionTableModel(QAbstractTableModel):
         self._new_values: list[str] = []
         # Columns with an active value filter (for the header ▾ indicator).
         self._filtered_columns: set[int] = set()
+        # (anchor, attribute) keys whose group has >1 distinct EFFECTIVE value.
+        # Precomputed by _recompute_inconsistency so _is_inconsistent is O(1).
+        self._inconsistent_keys: set[tuple[str, str]] = set()
 
     # -- population ---------------------------------------------------------
 
@@ -91,6 +94,7 @@ class _CaptionTableModel(QAbstractTableModel):
         self.beginResetModel()
         self._entries = list(entries)
         self._new_values = ["" for _ in self._entries]
+        self._recompute_inconsistency()
         self.endResetModel()
 
     def entries(self) -> list[CaptionEntry]:
@@ -107,12 +111,37 @@ class _CaptionTableModel(QAbstractTableModel):
         return result
 
     def set_new_value(self, row: int, text: str) -> None:
-        """Set the New Value of a source-model row (used by menu actions and
-        paste). Repaints the row and refreshes coloring."""
+        """Set the New Value of a single source-model row (used by single-cell
+        menu actions). Recomputes inconsistency and repaints. For bulk updates
+        prefer ``set_new_values`` (one recompute + one dataChanged)."""
         if not (0 <= row < len(self._new_values)):
             return
         self._new_values[row] = text
+        self._recompute_inconsistency()
         self._emit_row_changed(row)
+
+    def set_new_values(self, updates: dict[int, str]) -> None:
+        """Batched setter for bulk operations: write every New Value in
+        ``updates`` (row -> text), recompute inconsistency ONCE, then emit a
+        SINGLE dataChanged spanning the whole grid — rather than one recompute
+        + emit per row. Out-of-range rows are ignored."""
+        if not updates:
+            return
+        for row, text in updates.items():
+            if 0 <= row < len(self._new_values):
+                self._new_values[row] = text
+        self._recompute_inconsistency()
+        top = self.index(0, 0)
+        bottom = self.index(self.rowCount() - 1, self.columnCount() - 1)
+        self.dataChanged.emit(
+            top,
+            bottom,
+            [
+                Qt.ItemDataRole.DisplayRole,
+                Qt.ItemDataRole.EditRole,
+                Qt.ItemDataRole.BackgroundRole,
+            ],
+        )
 
     def new_value_at(self, row: int) -> str:
         return self._new_values[row]
@@ -189,6 +218,7 @@ class _CaptionTableModel(QAbstractTableModel):
         if role != Qt.ItemDataRole.EditRole or index.column() != _NEW_VALUE_COLUMN:
             return False
         self._new_values[index.row()] = value
+        self._recompute_inconsistency()
         self._emit_row_changed(index.row())
         return True
 
@@ -205,15 +235,26 @@ class _CaptionTableModel(QAbstractTableModel):
 
     # -- inconsistency ------------------------------------------------------
 
+    def _recompute_inconsistency(self) -> None:
+        """Scan entries once, grouping by (anchor, attribute) using each row's
+        EFFECTIVE value (its New Value if non-empty, else entry.value), and
+        store the set of keys whose group has >1 distinct effective value.
+        Using the effective value means a group that has been unified/edited
+        into agreement drops its inconsistency tint even on unedited siblings.
+        Called on populate and after any value mutation so ``_is_inconsistent``
+        is an O(1) membership test."""
+        groups: dict[tuple[str, str], set[str]] = {}
+        for entry, new_value in zip(self._entries, self._new_values):
+            key = (entry.anchor, entry.attribute)
+            effective = new_value if new_value else entry.value
+            groups.setdefault(key, set()).add(effective)
+        self._inconsistent_keys = {
+            key for key, values in groups.items() if len(values) > 1
+        }
+
     def _is_inconsistent(self, row: int) -> bool:
         entry = self._entries[row]
-        key = (entry.anchor, entry.attribute)
-        values = {
-            other.value
-            for other in self._entries
-            if (other.anchor, other.attribute) == key
-        }
-        return len(values) > 1
+        return (entry.anchor, entry.attribute) in self._inconsistent_keys
 
 
 class _CaptionFilterProxyModel(QSortFilterProxyModel):
@@ -339,7 +380,10 @@ class _HeaderFilterPopup(QWidget):
 
         self._list = QListWidget()
         for value in self._values:
-            item = QListWidgetItem(value)
+            # Show the empty distinct value with a readable placeholder while
+            # still filtering on the real "" (see checked_values, which maps by
+            # index back to self._values, not the displayed label).
+            item = QListWidgetItem(value if value != "" else "(empty)")
             item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
             initially_checked = checked is None or value in checked
             item.setCheckState(
@@ -512,8 +556,8 @@ class CaptionManagementPanel(QWidget):
 
     def insert_null_into_selection(self) -> None:
         """Set the New Value of every selected row to the NULL sentinel."""
-        for source_row in self._selected_source_rows():
-            self._model.set_new_value(source_row, NULL_SENTINEL)
+        updates = {row: NULL_SENTINEL for row in self._selected_source_rows()}
+        self._model.set_new_values(updates)
 
     # -- Go to line ---------------------------------------------------------
 
@@ -555,11 +599,10 @@ class CaptionManagementPanel(QWidget):
             return
         clipboard_lines = QGuiApplication.clipboard().text().split("\n")
         if len(clipboard_lines) == 1:
-            for source_row in target_rows:
-                self._model.set_new_value(source_row, clipboard_lines[0])
-            return
-        for source_row, value in zip(target_rows, clipboard_lines):
-            self._model.set_new_value(source_row, value)
+            updates = {row: clipboard_lines[0] for row in target_rows}
+        else:
+            updates = dict(zip(target_rows, clipboard_lines))
+        self._model.set_new_values(updates)
 
     # -- shared find / filter / replace (Phase 4) ---------------------------
 
@@ -597,14 +640,14 @@ class CaptionManagementPanel(QWidget):
             rows = self._visible_source_rows()
         else:
             rows = list(range(self._model.rowCount()))
-        count = 0
+        updates: dict[int, str] = {}
         for source_row in rows:
             old_value = self._model.entries()[source_row].value
             new_value = apply_find_replace(old_value, find, replacement, mode, case)
             if new_value is not None:
-                self._model.set_new_value(source_row, new_value)
-                count += 1
-        return count
+                updates[source_row] = new_value
+        self._model.set_new_values(updates)
+        return len(updates)
 
     # -- bulk transform + unify (Phase 5) -----------------------------------
 
@@ -618,6 +661,7 @@ class CaptionManagementPanel(QWidget):
         so e.g. `physical_location_id` becomes `Physical Location` regardless of
         the current caption. The Value column is never touched."""
         entries = self._model.entries()
+        updates: dict[int, str] = {}
         for source_row in self._selected_source_rows():
             entry = entries[source_row]
             if kind == "humanize":
@@ -625,7 +669,8 @@ class CaptionManagementPanel(QWidget):
             else:
                 new_value = self._model.new_value_at(source_row)
                 seed = new_value if new_value else entry.value
-            self._model.set_new_value(source_row, transform_caption(seed, kind))
+            updates[source_row] = transform_caption(seed, kind)
+        self._model.set_new_values(updates)
 
     def unify_from_row(self, source_row: int) -> None:
         """Set the New Value of every OTHER row sharing this row's
@@ -641,6 +686,7 @@ class CaptionManagementPanel(QWidget):
         source_new = self._model.new_value_at(source_row)
         target = source_new if source_new else source_entry.value
         key = (source_entry.anchor, source_entry.attribute)
+        updates: dict[int, str] = {}
         for row, entry in enumerate(entries):
             if row == source_row:
                 continue
@@ -649,7 +695,8 @@ class CaptionManagementPanel(QWidget):
             row_new = self._model.new_value_at(row)
             effective = row_new if row_new else entry.value
             if effective != target:
-                self._model.set_new_value(row, target)
+                updates[row] = target
+        self._model.set_new_values(updates)
 
     def unify_current(self) -> None:
         source_row = self._current_source_row()

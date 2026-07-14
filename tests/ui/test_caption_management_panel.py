@@ -811,3 +811,104 @@ def test_unify_current_uses_current_row(qtbot):
     panel.unify_current()
     assert panel._model.new_value_at(1) == "WBS ID"
     assert panel._model.new_value_at(2) == "WBS ID"
+
+
+# -- inconsistency from EFFECTIVE values ------------------------------------
+
+
+def test_inconsistency_uses_effective_value_not_scanned_value(qtbot):
+    # Two siblings with divergent scanned Values are inconsistent. After setting
+    # the New Value of one to match the other's effective value, the group is
+    # consistent and NEITHER row is flagged inconsistent.
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    panel.load_entries(
+        [
+            _entry(2, "Page", "acct", "caption", "Account"),
+            _entry(9, "Detail", "acct", "caption", "Accounts"),
+        ]
+    )
+    model = panel._model
+    assert model._is_inconsistent(0) is True
+    assert model._is_inconsistent(1) is True
+    # Make row 1's effective value match row 0's ("Account").
+    panel._model.set_new_value(1, "Account")
+    # Group now agrees on the effective value -> neither is inconsistent.
+    assert model._is_inconsistent(0) is False
+    assert model._is_inconsistent(1) is False
+    # The edited row still shows the changed tint (changed wins); the unedited
+    # sibling no longer shows the warm inconsistency tint.
+    assert _background(panel, 1) == _CHANGED_BACKGROUND
+    assert _background(panel, 0) is None
+
+
+def test_set_new_values_emits_data_changed_once(qtbot):
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    panel.load_entries(_sample_entries())
+    emissions = []
+    panel._model.dataChanged.connect(
+        lambda tl, br, roles: emissions.append((tl, br, roles))
+    )
+    panel._model.set_new_values({0: "A", 2: "B"})
+    assert len(emissions) == 1
+    tl, br, _roles = emissions[0]
+    # Spans the whole grid.
+    assert (tl.row(), tl.column()) == (0, _CHANGED_COLUMN)
+    assert (br.row(), br.column()) == (
+        panel._model.rowCount() - 1,
+        panel._model.columnCount() - 1,
+    )
+    assert panel._model.new_value_at(0) == "A"
+    assert panel._model.new_value_at(2) == "B"
+
+
+# -- sort-active proxy->source mapping under bulk ops -----------------------
+
+
+def test_paste_multiline_under_active_sort_maps_to_source_rows(qtbot):
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    # Source order by line 10, 2, 3; sorting Line ascending reorders the VIEW to
+    # source rows 1, 2, 0. Selecting the first two visible rows must paste onto
+    # the correct SOURCE rows, in visual order.
+    panel.load_entries(
+        [
+            _entry(10, "Page", "a", "caption", "ten"),
+            _entry(2, "Page", "b", "caption", "two"),
+            _entry(3, "Page", "c", "caption", "three"),
+        ]
+    )
+    panel._proxy.sort(_LINE_COLUMN, Qt.SortOrder.AscendingOrder)
+    # Visible order is now source rows [1 (line 2), 2 (line 3), 0 (line 10)].
+    # Select the first two visible rows (source rows 1 and 2).
+    _select_source_rows(panel, [1, 2])
+    QGuiApplication.clipboard().setText("First\nSecond")
+    panel.paste_into_new_value()
+    # Line i -> visual row i: source row 1 gets "First", source row 2 "Second".
+    assert panel._model.new_value_at(1) == "First"
+    assert panel._model.new_value_at(2) == "Second"
+    assert panel._model.new_value_at(0) == ""  # visible last, unselected
+
+
+def test_replace_all_in_selection_under_active_sort_maps_to_source(qtbot):
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    panel.load_entries(
+        [
+            _entry(10, "Page", "a", "caption", "ten Page"),
+            _entry(2, "Page", "b", "caption", "two Page"),
+            _entry(3, "Page", "c", "caption", "three Page"),
+        ]
+    )
+    # Sort descending by Line, then filter to two rows; replace within scope.
+    panel._proxy.sort(_LINE_COLUMN, Qt.SortOrder.DescendingOrder)
+    panel.apply_find_filter("two Page", "normal", False)  # only source row 1
+    count = panel.replace_all_find(
+        "Page", "Screen", "normal", True, in_selection=True
+    )
+    assert count == 1
+    # The replacement landed on the correct SOURCE row (row 1), not a proxy row.
+    assert panel._model.new_value_at(1) == "two Screen"
+    assert panel._model.new_value_at(0) == ""
+    assert panel._model.new_value_at(2) == ""
