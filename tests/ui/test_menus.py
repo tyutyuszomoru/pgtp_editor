@@ -49,6 +49,7 @@ def test_edit_menu_contents(qtbot):
         "Undo", "Redo", "―",
         "Cut", "Copy", "Paste", "Delete", "―",
         "Find...", "Find Next", "Find All", "Replace...", "Replace All", "―",
+        "Select Enclosing Block", "Select Parent Block", "―",
         "Preferences...",
     ]
 
@@ -68,6 +69,52 @@ def test_edit_menu_search_shortcuts(qtbot):
         action = find_action(edit_menu, label)
         assert action is not None
         assert action.shortcut().toString() == combo
+
+
+def test_edit_menu_structural_selection_shortcuts(qtbot):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    edit_menu = find_top_menu(window, "Edit")
+    assert find_action(edit_menu, "Select Enclosing Block").shortcut().toString() == "Ctrl+Shift+B"
+    assert find_action(edit_menu, "Select Parent Block").shortcut().toString() == "Ctrl+Shift+A"
+
+
+def test_select_enclosing_block_action_selects_block(qtbot):
+    from PySide6.QtGui import QTextCursor
+
+    window = MainWindow()
+    qtbot.addWidget(window)
+    editor = window.center_stage.xml_editor
+    text = "<Page>\n  <Detail>\n    x\n  </Detail>\n</Page>"
+    editor.setPlainText(text)
+    cursor = editor.textCursor()
+    cursor.setPosition(text.index("x"))
+    editor.setTextCursor(cursor)
+
+    edit_menu = find_top_menu(window, "Edit")
+    find_action(edit_menu, "Select Enclosing Block").trigger()
+
+    expected = text[text.index("<Detail>"):text.index("</Detail>") + len("</Detail>")]
+    selected = editor.textCursor().selectedText().replace(" ", "\n")
+    assert selected == expected
+
+
+def test_select_parent_block_action_selects_parent(qtbot):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    editor = window.center_stage.xml_editor
+    text = "<Page>\n  <Detail>\n    <Column>x</Column>\n  </Detail>\n</Page>"
+    editor.setPlainText(text)
+    cursor = editor.textCursor()
+    cursor.setPosition(text.index("x"))
+    editor.setTextCursor(cursor)
+
+    edit_menu = find_top_menu(window, "Edit")
+    find_action(edit_menu, "Select Parent Block").trigger()
+
+    expected = text[text.index("<Detail>"):text.index("</Detail>") + len("</Detail>")]
+    selected = editor.textCursor().selectedText().replace(" ", "\n")
+    assert selected == expected
 
 
 def test_find_menu_action_shows_bar_and_raw_tab(qtbot):
