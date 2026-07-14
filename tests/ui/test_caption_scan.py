@@ -117,6 +117,54 @@ def test_anchor_falls_back_to_fileName_then_tableName_then_tag():
     assert scan_captions(tag_text)[0].anchor == "MenuGroup"
 
 
+# -- breadcrumb ------------------------------------------------------------
+
+
+def test_breadcrumb_from_page_detail_ancestors_for_column():
+    text = (
+        "<Root>\n"
+        '  <Page caption="Equipment" fileName="equip">\n'
+        '    <Detail caption="Attachments" tableName="att">\n'
+        '      <ColumnPresentation caption="WBS" fieldName="wbs_id"/>\n'
+        "    </Detail>\n"
+        "  </Page>\n"
+        "</Root>"
+    )
+    entries = scan_captions(text)
+    column_entry = next(e for e in entries if e.element_tag == "ColumnPresentation")
+    assert column_entry.breadcrumb == "Equipment → Attachments → wbs_id"
+
+
+def test_breadcrumb_falls_back_to_fileName_then_tag():
+    text = (
+        "<Root>\n"
+        '  <Page fileName="equip">\n'
+        '    <ColumnPresentation caption="Name" fieldName="name_col"/>\n'
+        "  </Page>\n"
+        "</Root>"
+    )
+    entries = scan_captions(text)
+    column_entry = next(e for e in entries if e.element_tag == "ColumnPresentation")
+    # Page has no caption -> falls back to fileName "equip"; column label is its
+    # fieldName.
+    assert column_entry.breadcrumb == "equip → name_col"
+
+
+def test_breadcrumb_top_level_element_is_just_its_own_label():
+    text = '<Root>\n  <Page caption="Home" fileName="home"/>\n</Root>'
+    entry = scan_captions(text)[0]
+    # No Page/Detail/OnTheFlyInsertPage ancestor -> breadcrumb is the element's
+    # own label (a Page's caption).
+    assert entry.breadcrumb == "Home"
+
+
+def test_breadcrumb_default_empty_on_dataclass():
+    entry = CaptionEntry(
+        line=2, element_tag="Page", anchor="p1", attribute="caption", value="Hello"
+    )
+    assert entry.breadcrumb == ""
+
+
 from pgtp_editor.ui.caption_scan import apply_caption_edits
 from lxml import etree as _etree
 

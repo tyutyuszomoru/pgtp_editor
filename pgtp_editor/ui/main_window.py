@@ -105,6 +105,7 @@ class MainWindow(QMainWindow):
         self.audit_panel.itemClicked.connect(self._on_audit_item_clicked)
         self.center_stage.caption_management_panel._on_apply = self._apply_caption_edits
         self.center_stage.caption_management_panel._on_close = self._close_caption_mode
+        self.center_stage.caption_management_panel.on_go_to_line = self._caption_go_to_line
         self.center_stage.xml_editor.read_only_edit_attempted.connect(
             self._on_read_only_edit_attempted
         )
@@ -678,6 +679,12 @@ class MainWindow(QMainWindow):
         Pending (unapplied) edits are discarded by re-scanning on next enter."""
         self.center_stage.leave_caption_mode()
         self._mode_label.setText("Editing Mode")
+
+    def _caption_go_to_line(self, line: int) -> None:
+        """Caption panel Go-to-line callback: switch to the Raw XML tab (which
+        stays visible but read-only in Caption Mode) and navigate to `line`."""
+        self.center_stage.setCurrentIndex(self.center_stage.raw_xml_tab_index)
+        self.center_stage.xml_editor.navigate_to_line(line)
 
     def _on_read_only_edit_attempted(self) -> None:
         """Flash a non-modal hint when the user tries to edit the read-only

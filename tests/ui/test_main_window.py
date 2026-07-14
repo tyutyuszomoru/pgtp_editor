@@ -593,7 +593,8 @@ def test_manage_captions_enters_mode_and_populates_grid(qtbot):
     assert stage.isTabVisible(stage.caption_management_tab_index) is True
     assert stage.currentIndex() == stage.caption_management_tab_index
     assert stage.caption_management_panel._model.rowCount() == 1
-    assert stage.caption_management_panel._model.index(0, 4).data() == "Home"
+    # Value is now column 6 (read-only); New Value is column 7.
+    assert stage.caption_management_panel._model.index(0, 6).data() == "Home"
 
 
 def test_manage_captions_apply_writes_into_editor_buffer_and_reports_count(qtbot):
@@ -608,7 +609,8 @@ def test_manage_captions_apply_writes_into_editor_buffer_and_reports_count(qtbot
     find_action(find_top_menu(window, "Tools"), "Manage Captions...").trigger()
 
     panel = window.center_stage.caption_management_panel
-    panel._model.setData(panel._model.index(0, 4), "Homepage", Qt.ItemDataRole.EditRole)
+    # Edit the New Value column (7); Value column (6) is read-only.
+    panel._model.setData(panel._model.index(0, 7), "Homepage", Qt.ItemDataRole.EditRole)
     panel.apply()
 
     assert window.center_stage.xml_editor.toPlainText() == (
@@ -664,11 +666,11 @@ def test_manage_captions_apply_then_reedit_uses_updated_snapshot(qtbot):
     find_action(find_top_menu(window, "Tools"), "Manage Captions...").trigger()
     panel = window.center_stage.caption_management_panel
 
-    panel._model.setData(panel._model.index(0, 4), "Homepage", Qt.ItemDataRole.EditRole)
+    panel._model.setData(panel._model.index(0, 7), "Homepage", Qt.ItemDataRole.EditRole)
     panel.apply()  # editor now has caption="Homepage"; snapshot updated
 
     # A second edit applies cleanly on the updated snapshot (line still valid).
-    panel._model.setData(panel._model.index(0, 4), "Landing", Qt.ItemDataRole.EditRole)
+    panel._model.setData(panel._model.index(0, 7), "Landing", Qt.ItemDataRole.EditRole)
     panel.apply()
     assert window.center_stage.xml_editor.toPlainText() == (
         '<Root>\n  <Page caption="Landing"/>\n</Root>'
@@ -696,6 +698,26 @@ def test_mode_label_flips_on_enter_and_close_caption_mode(qtbot):
 
     window.center_stage.caption_management_panel.close_panel()
     assert window._mode_label.text() == "Editing Mode"
+
+
+def test_caption_go_to_line_switches_to_raw_xml_and_navigates(qtbot):
+    from tests.ui._menu_helpers import find_action, find_top_menu
+
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window.center_stage.xml_editor.setPlainText(
+        '<Root>\n  <Page caption="Home"/>\n  <Page caption="Other"/>\n</Root>'
+    )
+    find_action(find_top_menu(window, "Tools"), "Manage Captions...").trigger()
+
+    calls = []
+    window.center_stage.xml_editor.navigate_to_line = lambda line: calls.append(line)
+    # Row 1 is on source line 3; go_to_line via the panel callback.
+    window.center_stage.caption_management_panel.on_go_to_line(3)
+
+    stage = window.center_stage
+    assert stage.currentIndex() == stage.raw_xml_tab_index
+    assert calls == [3]
 
 
 def test_readonly_edit_attempt_flashes_status_hint(qtbot):

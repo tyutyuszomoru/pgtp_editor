@@ -32,6 +32,11 @@ CAPTION_ATTRIBUTES: tuple[str, ...] = (
 # inconsistency highlighting only -- never for write-back.
 _ANCHOR_ATTRIBUTES: tuple[str, ...] = ("fieldName", "fileName", "tableName")
 
+# Tags whose captions form the structural breadcrumb context (spec §2.1).
+_BREADCRUMB_ANCESTOR_TAGS: frozenset[str] = frozenset(
+    {"Page", "Detail", "OnTheFlyInsertPage"}
+)
+
 
 @dataclass(frozen=True)
 class CaptionEntry:
@@ -46,6 +51,10 @@ class CaptionEntry:
                   only; not used for write-back.
     attribute:    one of CAPTION_ATTRIBUTES.
     value:        the decoded (unescaped) current value, as lxml returns it.
+    breadcrumb:   structural path from Page/Detail/OnTheFlyInsertPage ancestors
+                  (outermost first) plus the element's own label, joined with
+                  " → ". Display-only. Defaults to "" so bare constructions
+                  (tests, callers pre-Phase-2) still work.
     """
 
     line: int
@@ -53,6 +62,7 @@ class CaptionEntry:
     anchor: str
     attribute: str
     value: str
+    breadcrumb: str = ""
 
 
 def scan_captions(text: str) -> list[CaptionEntry]:
@@ -72,6 +82,7 @@ def scan_captions(text: str) -> list[CaptionEntry]:
         if line is None:
             continue  # defensive; not expected for parsed elements
         anchor = _resolve_anchor(element)
+        breadcrumb = _build_breadcrumb(element)
         for attribute in CAPTION_ATTRIBUTES:
             if attribute in element.attrib:
                 entries.append(
@@ -81,9 +92,45 @@ def scan_captions(text: str) -> list[CaptionEntry]:
                         anchor=anchor,
                         attribute=attribute,
                         value=element.attrib[attribute],
+                        breadcrumb=breadcrumb,
                     )
                 )
     return entries
+
+
+def _build_breadcrumb(element) -> str:
+    """Structural path: each Page/Detail/OnTheFlyInsertPage ancestor's label
+    (outermost first), then the element's own label. Joined with ' → '."""
+    ancestor_labels: list[str] = []
+    for ancestor in element.iterancestors():
+        if isinstance(ancestor.tag, str) and ancestor.tag in _BREADCRUMB_ANCESTOR_TAGS:
+            ancestor_labels.append(_ancestor_label(ancestor))
+    ancestor_labels.reverse()  # iterancestors() is innermost-first
+    ancestor_labels.append(_own_label(element))
+    return " → ".join(ancestor_labels)
+
+
+def _ancestor_label(ancestor) -> str:
+    """A breadcrumb ancestor's label: caption, else fileName, else tableName,
+    else its tag."""
+    for attribute in ("caption", "fileName", "tableName"):
+        value = ancestor.attrib.get(attribute)
+        if value:
+            return value
+    return ancestor.tag
+
+
+def _own_label(element) -> str:
+    """The element's own breadcrumb label: fieldName for a ColumnPresentation,
+    else its caption, else its tag."""
+    if element.tag == "ColumnPresentation":
+        field_name = element.attrib.get("fieldName")
+        if field_name:
+            return field_name
+    caption = element.attrib.get("caption")
+    if caption:
+        return caption
+    return element.tag
 
 
 def _resolve_anchor(element) -> str:
