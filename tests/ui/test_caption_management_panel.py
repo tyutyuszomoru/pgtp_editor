@@ -8,6 +8,7 @@ from pgtp_editor.ui.caption_management_panel import (
     NULL_SENTINEL,
     _CHANGED_BACKGROUND,
     _INCONSISTENT_BACKGROUND,
+    _FILTER_HEADER_FOREGROUND,
     _CHANGED_COLUMN,
     _LINE_COLUMN,
     _BREADCRUMB_COLUMN,
@@ -602,10 +603,35 @@ def test_header_indicator_appears_and_disappears(qtbot):
 
     assert header(_VALUE_COLUMN) == "Value"
     panel._proxy.set_value_filter(_VALUE_COLUMN, {"Home"})
-    assert header(_VALUE_COLUMN) == "Value ▾"
+    assert header(_VALUE_COLUMN) == "Value ▼"
     # Full select-all (all distinct values) is treated as no filter -> None.
     panel._proxy.set_value_filter(_VALUE_COLUMN, None)
     assert header(_VALUE_COLUMN) == "Value"
+
+
+def test_filtered_column_header_is_bold_and_colored(qtbot):
+    # Issue #6: a filtered column's header must be unmistakable — bold FontRole
+    # AND a distinct foreground color AND a clear ▼ marker.
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    panel.load_entries(_value_filter_entries())
+    model = panel._model
+
+    def role(col, data_role):
+        return model.headerData(col, Qt.Orientation.Horizontal, data_role)
+
+    # Unfiltered: no bold, no special foreground.
+    assert role(_VALUE_COLUMN, Qt.ItemDataRole.FontRole) is None
+    assert role(_VALUE_COLUMN, Qt.ItemDataRole.ForegroundRole) is None
+
+    panel._proxy.set_value_filter(_VALUE_COLUMN, {"Home"})
+
+    font = role(_VALUE_COLUMN, Qt.ItemDataRole.FontRole)
+    assert font is not None and font.bold()
+    assert role(_VALUE_COLUMN, Qt.ItemDataRole.ForegroundRole) == _FILTER_HEADER_FOREGROUND
+    assert role(_VALUE_COLUMN, Qt.ItemDataRole.DisplayRole) == "Value ▼"
+    # An unfiltered sibling stays plain.
+    assert role(_ATTRIBUTE_COLUMN, Qt.ItemDataRole.FontRole) is None
 
 
 def test_header_indicator_only_on_filtered_column(qtbot):
@@ -620,7 +646,7 @@ def test_header_indicator_only_on_filtered_column(qtbot):
             col, Qt.Orientation.Horizontal, Qt.ItemDataRole.DisplayRole
         )
 
-    assert header(_ATTRIBUTE_COLUMN) == "Attribute ▾"
+    assert header(_ATTRIBUTE_COLUMN) == "Attribute ▼"
     assert header(_VALUE_COLUMN) == "Value"
 
 
@@ -912,3 +938,159 @@ def test_replace_all_in_selection_under_active_sort_maps_to_source(qtbot):
     assert panel._model.new_value_at(1) == "two Screen"
     assert panel._model.new_value_at(0) == ""
     assert panel._model.new_value_at(2) == ""
+
+
+# -- Issue #4: row-click toggles the value-filter checkbox ------------------
+
+
+def _breadcrumb_anchor_entries():
+    return [
+        _entry(2, "Page", "home", "caption", "Home", breadcrumb="A → x"),
+        _entry(3, "Detail", "orders", "caption", "Orders", breadcrumb="A → y"),
+        _entry(4, "Detail", "cart", "caption", "Cart", breadcrumb="B → z"),
+    ]
+
+
+def _visible_column(panel, column):
+    proxy = panel._proxy
+    return [
+        proxy.index(r, column).data(Qt.ItemDataRole.DisplayRole)
+        for r in range(proxy.rowCount())
+    ]
+
+
+def test_row_click_toggles_checkbox_flow_breadcrumb(qtbot):
+    # Issue #4 full flow: open popup -> clear all -> click ONE row (via the
+    # itemClicked handler) -> apply -> exactly the matching rows are visible.
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    panel.load_entries(_breadcrumb_anchor_entries())
+    popup = panel.open_header_filter(_BREADCRUMB_COLUMN)
+    qtbot.addWidget(popup)
+    popup.clear_all()
+    labels = popup.item_labels()
+    target = labels.index("A → y")
+    # Simulate clicking the row (not just the tiny indicator): drive the handler
+    # the itemClicked signal is wired to.
+    popup._toggle_item(popup._list.item(target))
+    assert popup.is_checked(target)
+    popup.apply_filter()
+    assert _visible_column(panel, _BREADCRUMB_COLUMN) == ["A → y"]
+
+
+def test_row_click_toggles_checkbox_flow_anchor(qtbot):
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    panel.load_entries(_breadcrumb_anchor_entries())
+    popup = panel.open_header_filter(_ANCHOR_COLUMN)
+    qtbot.addWidget(popup)
+    popup.clear_all()
+    labels = popup.item_labels()
+    target = labels.index("cart")
+    popup._toggle_item(popup._list.item(target))
+    popup.apply_filter()
+    assert _visible_column(panel, _ANCHOR_COLUMN) == ["cart"]
+
+
+def test_row_click_toggle_is_reversible(qtbot):
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    panel.load_entries(_breadcrumb_anchor_entries())
+    popup = panel.open_header_filter(_VALUE_COLUMN)
+    qtbot.addWidget(popup)
+    item = popup._list.item(0)
+    assert popup.is_checked(0)  # checked by default
+    popup._toggle_item(item)
+    assert not popup.is_checked(0)
+    popup._toggle_item(item)
+    assert popup.is_checked(0)
+
+
+# -- Issue #5: cascading distinct values ------------------------------------
+
+
+def test_cascaded_distinct_values_reflects_other_active_filters(qtbot):
+    # Filter column A (Breadcrumb) to one value; the popup for column B (Value)
+    # then lists only B-values co-occurring with that A value.
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    panel.load_entries(_breadcrumb_anchor_entries())
+    # A = Breadcrumb filtered to "A → x" and "A → y" (both start with "A").
+    panel._proxy.set_value_filter(_BREADCRUMB_COLUMN, {"A → x", "A → y"})
+    # Cascaded distinct Values: only Home and Orders co-occur; Cart is excluded.
+    assert panel.cascaded_distinct_values(_VALUE_COLUMN) == ["Home", "Orders"]
+
+
+def test_cascaded_distinct_values_excludes_own_filter(qtbot):
+    # The target column's OWN filter must NOT restrict its own listed values,
+    # so the user can still see and re-check values they filtered out.
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    panel.load_entries(_breadcrumb_anchor_entries())
+    panel._proxy.set_value_filter(_VALUE_COLUMN, {"Home"})
+    # All three Values still appear (own filter ignored).
+    assert panel.cascaded_distinct_values(_VALUE_COLUMN) == ["Cart", "Home", "Orders"]
+
+
+def test_cascaded_distinct_values_honors_find_filter(qtbot):
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    panel.load_entries(_breadcrumb_anchor_entries())
+    panel._proxy.set_regex_filter("Orders", "normal", False)
+    assert panel.cascaded_distinct_values(_VALUE_COLUMN) == ["Orders"]
+
+
+def test_open_header_filter_uses_cascaded_values(qtbot):
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    panel.load_entries(_breadcrumb_anchor_entries())
+    panel._proxy.set_value_filter(_BREADCRUMB_COLUMN, {"B → z"})
+    popup = panel.open_header_filter(_VALUE_COLUMN)
+    qtbot.addWidget(popup)
+    # Only "Cart" co-occurs with breadcrumb "B → z".
+    assert popup.item_labels() == ["Cart"]
+
+
+# -- Issue #2: clear exit-caption-mode button -------------------------------
+
+
+def test_exit_button_labelled_and_wired(qtbot):
+    calls = []
+    panel = CaptionManagementPanel(on_close=lambda: calls.append(True))
+    qtbot.addWidget(panel)
+    assert panel._close_button.text() == "Exit Caption Mode"
+    panel._close_button.click()
+    assert calls == [True]
+
+
+# -- Issue #1: Ctrl+F / Ctrl+R open the caption dialogs ---------------------
+
+
+def test_ctrl_f_shortcut_opens_filter_dialog(qtbot):
+    calls = []
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    panel.on_open_filter = lambda: calls.append("filter")
+    # The panel owns a WidgetWithChildrenShortcut-scoped Ctrl+F shortcut.
+    assert panel._filter_shortcut.key().toString() == "Ctrl+F"
+    assert (
+        panel._filter_shortcut.context()
+        == Qt.ShortcutContext.WidgetWithChildrenShortcut
+    )
+    # Drive the bound slot (no .exec()): it delegates to on_open_filter.
+    panel._filter_shortcut.activated.emit()
+    assert calls == ["filter"]
+
+
+def test_ctrl_r_shortcut_opens_replace_dialog(qtbot):
+    calls = []
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    panel.on_open_replace = lambda: calls.append("replace")
+    assert panel._replace_shortcut.key().toString() == "Ctrl+R"
+    assert (
+        panel._replace_shortcut.context()
+        == Qt.ShortcutContext.WidgetWithChildrenShortcut
+    )
+    panel._replace_shortcut.activated.emit()
+    assert calls == ["replace"]

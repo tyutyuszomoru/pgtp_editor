@@ -4,7 +4,7 @@ from pathlib import Path
 
 from lxml import etree
 from PySide6.QtCore import Qt, QTimer, QUrl
-from PySide6.QtGui import QDesktopServices, QKeySequence, QShortcut
+from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QDockWidget,
     QFileDialog,
@@ -107,18 +107,19 @@ class MainWindow(QMainWindow):
         self.center_stage.caption_management_panel._on_apply = self._apply_caption_edits
         self.center_stage.caption_management_panel._on_close = self._close_caption_mode
         self.center_stage.caption_management_panel.on_go_to_line = self._caption_go_to_line
+        # Ctrl+F / Ctrl+R inside the caption panel open the shared dialog in
+        # Filter / Replace mode (issue #1). The panel owns the
+        # WidgetWithChildrenShortcut-scoped QShortcuts so they fire only when
+        # the caption grid has focus (Caption Mode) and take precedence over the
+        # Edit-menu global Ctrl+F / Ctrl+R (Raw XML find/replace); here we just
+        # wire the panel's callbacks to open the caption dialogs.
+        self.center_stage.caption_management_panel.on_open_filter = (
+            self._open_caption_filter_dialog
+        )
+        self.center_stage.caption_management_panel.on_open_replace = (
+            self._open_caption_replace_dialog
+        )
         self._caption_find_replace_dialog = None
-        # Ctrl+R inside the caption panel opens the shared dialog in Replace
-        # mode. Scoped to the panel (WidgetWithChildrenShortcut) so it does not
-        # collide with the Edit-menu global Ctrl+R (Raw XML replace) — this one
-        # only fires when the caption grid has focus (i.e. in Caption Mode).
-        caption_replace_shortcut = QShortcut(
-            QKeySequence("Ctrl+R"), self.center_stage.caption_management_panel
-        )
-        caption_replace_shortcut.setContext(
-            Qt.ShortcutContext.WidgetWithChildrenShortcut
-        )
-        caption_replace_shortcut.activated.connect(self._open_caption_replace_dialog)
         self.center_stage.xml_editor.read_only_edit_attempted.connect(
             self._on_read_only_edit_attempted
         )

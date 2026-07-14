@@ -19,7 +19,7 @@ from PySide6.QtCore import (
     QSortFilterProxyModel,
     Qt,
 )
-from PySide6.QtGui import QColor, QGuiApplication, QKeySequence, QShortcut
+from PySide6.QtGui import QColor, QFont, QGuiApplication, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
@@ -62,8 +62,12 @@ _NEW_VALUE_COLUMN = 7
 # The literal New Value sentinel that resolves to an empty caption.
 NULL_SENTINEL = "<NULL>"
 
-# Appended to a column header when that column has an active value filter.
-_FILTER_INDICATOR = " ▾"
+# Suffix appended to a column header when that column has an active value
+# filter. Paired with a bold font + highlight foreground (see headerData) so a
+# filtered column is unmistakable (issue #6).
+_FILTER_INDICATOR = " ▼"
+# Foreground color for a filtered column's header text (bright accent).
+_FILTER_HEADER_FOREGROUND = QColor("#4fc3f7")
 
 # Warm tint for rows whose (anchor, attribute) group has divergent values.
 _INCONSISTENT_BACKGROUND = QColor("#3a2f1d")
@@ -165,11 +169,22 @@ class _CaptionTableModel(QAbstractTableModel):
         )
 
     def headerData(self, section, orientation, role=Qt.ItemDataRole.DisplayRole):
-        if orientation == Qt.Orientation.Horizontal and role == Qt.ItemDataRole.DisplayRole:
+        if orientation != Qt.Orientation.Horizontal:
+            return None
+        is_filtered = section in self._filtered_columns
+        if role == Qt.ItemDataRole.DisplayRole:
             label = _COLUMNS[section]
-            if section in self._filtered_columns:
+            if is_filtered:
                 label += _FILTER_INDICATOR
             return label
+        # A filtered column's header is signalled unmistakably (issue #6): bold
+        # font AND a bright accent foreground, on top of the ▼ marker.
+        if is_filtered and role == Qt.ItemDataRole.FontRole:
+            font = QFont()
+            font.setBold(True)
+            return font
+        if is_filtered and role == Qt.ItemDataRole.ForegroundRole:
+            return _FILTER_HEADER_FOREGROUND
         return None
 
     def data(self, index, role=Qt.ItemDataRole.DisplayRole):
@@ -322,36 +337,57 @@ class _CaptionFilterProxyModel(QSortFilterProxyModel):
         super().setSourceModel(model)
         self._notify_filtered_columns()
 
-    def filterAcceptsRow(self, source_row, source_parent) -> bool:
+    def _passes_find_filter(self, source_row, source_parent=QModelIndex()) -> bool:
+        """True iff the row passes the whole-row find filter (or none active)."""
+        if not self._find_pattern:
+            return True
         model = self.sourceModel()
-        # Whole-row find filter: the row passes iff ANY displayed cell matches.
-        if self._find_pattern:
-            column_count = model.columnCount()
-            try:
-                any_match = any(
-                    matches(
-                        model.index(source_row, column, source_parent).data(
-                            Qt.ItemDataRole.DisplayRole
-                        )
-                        or "",
-                        self._find_pattern,
-                        self._find_mode,
-                        self._find_case,
+        try:
+            return any(
+                matches(
+                    model.index(source_row, column, source_parent).data(
+                        Qt.ItemDataRole.DisplayRole
                     )
-                    for column in range(column_count)
+                    or "",
+                    self._find_pattern,
+                    self._find_mode,
+                    self._find_case,
                 )
-            except ValueError:
-                # Invalid pattern (should have been caught at set time): treat
-                # as no match rather than crash the view repaint.
-                return False
-            if not any_match:
-                return False
+                for column in range(model.columnCount())
+            )
+        except ValueError:
+            # Invalid pattern (should have been caught at set time): treat as no
+            # match rather than crash the view repaint.
+            return False
+
+    def _passes_value_filters(
+        self, source_row, source_parent=QModelIndex(), exclude_column: int | None = None
+    ) -> bool:
+        """True iff the row passes every active per-column value filter, except
+        the one on `exclude_column` (used for cascaded distinct values)."""
+        model = self.sourceModel()
         for column, allowed in self._value_filters.items():
-            index = model.index(source_row, column, source_parent)
-            cell = index.data(Qt.ItemDataRole.DisplayRole) or ""
+            if column == exclude_column:
+                continue
+            cell = model.index(source_row, column, source_parent).data(
+                Qt.ItemDataRole.DisplayRole
+            ) or ""
             if cell not in allowed:
                 return False
         return True
+
+    def row_passes_other_filters(self, source_row, target_column: int) -> bool:
+        """True iff `source_row` passes the find filter AND every value filter
+        EXCEPT the one on `target_column`. Used to compute cascaded distinct
+        values for the header popup of `target_column` (issue #5)."""
+        return self._passes_find_filter(source_row) and self._passes_value_filters(
+            source_row, exclude_column=target_column
+        )
+
+    def filterAcceptsRow(self, source_row, source_parent) -> bool:
+        if not self._passes_find_filter(source_row, source_parent):
+            return False
+        return self._passes_value_filters(source_row, source_parent)
 
 
 class _HeaderFilterPopup(QWidget):
@@ -391,6 +427,12 @@ class _HeaderFilterPopup(QWidget):
             )
             self._list.addItem(item)
 
+        # Clicking ANYWHERE on a value row toggles its checkbox (issue #4):
+        # without this only the small checkbox indicator toggles, so the common
+        # "Clear → click a value → OK" gesture would apply an empty checked set
+        # (0 rows). itemClicked flips the whole row's check state.
+        self._list.itemClicked.connect(self._toggle_item)
+
         select_all_btn = QPushButton("Select all")
         clear_btn = QPushButton("Clear")
         ok_btn = QPushButton("OK")
@@ -421,6 +463,14 @@ class _HeaderFilterPopup(QWidget):
     def set_checked(self, index: int, checked: bool) -> None:
         self._list.item(index).setCheckState(
             Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked
+        )
+
+    def _toggle_item(self, item: QListWidgetItem) -> None:
+        """Flip `item`'s check state. Wired to the list's ``itemClicked`` so a
+        click anywhere on a value row toggles its checkbox (issue #4)."""
+        now_checked = item.checkState() == Qt.CheckState.Checked
+        item.setCheckState(
+            Qt.CheckState.Unchecked if now_checked else Qt.CheckState.Checked
         )
 
     def select_all(self) -> None:
@@ -462,6 +512,11 @@ class CaptionManagementPanel(QWidget):
         self._on_apply = on_apply or (lambda edited_text: None)
         self._on_close = on_close or (lambda: None)
         self.on_go_to_line = on_go_to_line or (lambda line: None)
+        # Callbacks opening the shared caption Find/Filter/Replace dialog in
+        # filter vs replace mode (issue #1). MainWindow wires these after
+        # construction; the panel's own Ctrl+F / Ctrl+R shortcuts invoke them.
+        self.on_open_filter = lambda: None
+        self.on_open_replace = lambda: None
         self._snapshot_text = ""
 
         self._model = _CaptionTableModel(self)
@@ -490,7 +545,9 @@ class CaptionManagementPanel(QWidget):
         header.customContextMenuRequested.connect(self._show_header_context_menu)
 
         self._apply_button = QPushButton("Apply")
-        self._close_button = QPushButton("Close")
+        # Clear, obvious way to leave Caption Mode (issue #2). Wired to on_close
+        # → MainWindow._close_caption_mode → leave_caption_mode.
+        self._close_button = QPushButton("Exit Caption Mode")
         self._apply_button.clicked.connect(self.apply)
         self._close_button.clicked.connect(self.close_panel)
 
@@ -507,6 +564,24 @@ class CaptionManagementPanel(QWidget):
         QShortcut(QKeySequence.StandardKey.Copy, self._table, self.copy_selection)
         QShortcut(QKeySequence.StandardKey.Paste, self._table, self.paste_into_new_value)
         QShortcut(QKeySequence("Ctrl+G"), self._table, self.go_to_line_current)
+
+        # Ctrl+F / Ctrl+R open the caption Filter / Replace dialogs while the
+        # caption panel (or a child) has focus (issue #1). Scoped with
+        # WidgetWithChildrenShortcut so they fire only in Caption Mode and take
+        # precedence over the editor's global Edit-menu Ctrl+F / Ctrl+R, which
+        # keep driving normal Raw-XML find/replace outside Caption Mode.
+        self._filter_shortcut = QShortcut(
+            QKeySequence("Ctrl+F"), self, self.open_filter_dialog
+        )
+        self._filter_shortcut.setContext(
+            Qt.ShortcutContext.WidgetWithChildrenShortcut
+        )
+        self._replace_shortcut = QShortcut(
+            QKeySequence("Ctrl+R"), self, self.open_replace_dialog
+        )
+        self._replace_shortcut.setContext(
+            Qt.ShortcutContext.WidgetWithChildrenShortcut
+        )
 
     # -- API ----------------------------------------------------------------
 
@@ -527,6 +602,16 @@ class CaptionManagementPanel(QWidget):
 
     def close_panel(self) -> None:
         self._on_close()
+
+    def open_filter_dialog(self) -> None:
+        """Panel Ctrl+F: open the shared caption dialog in FILTER mode (issue
+        #1). Delegates to the MainWindow-injected callback."""
+        self.on_open_filter()
+
+    def open_replace_dialog(self) -> None:
+        """Panel Ctrl+R: open the shared caption dialog in REPLACE mode (issue
+        #1). Delegates to the MainWindow-injected callback."""
+        self.on_open_replace()
 
     # -- selection helpers --------------------------------------------------
 
@@ -715,13 +800,32 @@ class CaptionManagementPanel(QWidget):
         }
         return sorted(values)
 
+    def cascaded_distinct_values(self, column: int) -> list[str]:
+        """Excel-style cascaded distinct values for `column` (issue #5).
+
+        List only the values present in the CURRENTLY-FILTERED set: a source
+        row contributes its `column` value only if the row passes every OTHER
+        active value-filter AND the active find filter. The target column's own
+        value-filter is EXCLUDED from the test, so you can still see and adjust
+        its own values. With no other filters active this equals
+        ``distinct_values(column)``."""
+        values: set[str] = set()
+        for row in range(self._model.rowCount()):
+            if not self._proxy.row_passes_other_filters(row, column):
+                continue
+            cell = self._model.index(row, column).data(Qt.ItemDataRole.DisplayRole) or ""
+            values.add(cell)
+        return sorted(values)
+
     def open_header_filter(self, column: int) -> _HeaderFilterPopup:
         """Build and show the non-blocking value-filter popup for `column`,
-        seeded from the column's distinct values and current filter state.
-        Returns the popup so tests can drive it without ``.exec()``."""
+        seeded from the column's CASCADED distinct values (only values present
+        in the currently-filtered set, excluding this column's own filter —
+        issue #5) and its current filter state. Returns the popup so tests can
+        drive it without ``.exec()``."""
         popup = _HeaderFilterPopup(
             column,
-            self.distinct_values(column),
+            self.cascaded_distinct_values(column),
             self._proxy.value_filter(column),
             on_apply=self._proxy.set_value_filter,
             parent=self,

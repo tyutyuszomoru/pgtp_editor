@@ -801,6 +801,36 @@ def test_caption_filter_invalid_regex_shows_inline_error(qtbot):
     assert dialog.error_label.text() != ""
 
 
+def test_panel_ctrl_f_opens_caption_filter_dialog(qtbot):
+    # Issue #1: the caption panel's Ctrl+F callback opens the shared dialog in
+    # FILTER mode (no .exec() — we drive the panel slot the shortcut invokes).
+    window = MainWindow()
+    qtbot.addWidget(window)
+    _enter_caption_mode_with(window, '<Root>\n  <Page caption="Home"/>\n</Root>')
+    panel = window.center_stage.caption_management_panel
+    panel.open_filter_dialog()
+    dialog = window._caption_find_replace_dialog
+    assert dialog is not None
+    assert dialog.windowTitle() == "Caption Filter"
+    assert not dialog._replace_enabled
+
+
+def test_panel_ctrl_r_opens_caption_replace_dialog(qtbot):
+    # Issue #1: the caption panel's Ctrl+R callback opens the shared dialog in
+    # REPLACE mode, pre-loading the active filter pattern.
+    window = MainWindow()
+    qtbot.addWidget(window)
+    _enter_caption_mode_with(window, '<Root>\n  <Page caption="Home"/>\n</Root>')
+    panel = window.center_stage.caption_management_panel
+    panel.apply_find_filter("Ho", "normal", False)
+    panel.open_replace_dialog()
+    dialog = window._caption_find_replace_dialog
+    assert dialog is not None
+    assert dialog.windowTitle() == "Caption Replace"
+    assert dialog._replace_enabled
+    assert dialog.find_field.text() == "Ho"
+
+
 def test_caption_filter_action_exists_in_tools_menu(qtbot):
     from tests.ui._menu_helpers import find_action, find_top_menu
 

@@ -100,11 +100,23 @@ def scan_captions(text: str) -> list[CaptionEntry]:
 
 def _build_breadcrumb(element) -> str:
     """Structural path: each Page/Detail/OnTheFlyInsertPage ancestor's label
-    (outermost first), then the element's own label. Joined with ' → '."""
+    (outermost first), then the element's own label. Joined with ' → '.
+
+    A .pgtp Detail is ``<Detail caption="X"><Page ...>`` where the inner
+    ``<Page>`` repeats the level, which would show each Detail twice
+    (issue #3). To collapse a Detail and its immediate inner ``<Page>`` into
+    ONE level, we SKIP any ``<Page>``/``<OnTheFlyInsertPage>`` ancestor whose
+    parent is a ``<Detail>`` — the Detail already represents that level. Top-
+    level Pages and each Detail are kept."""
     ancestor_labels: list[str] = []
     for ancestor in element.iterancestors():
-        if isinstance(ancestor.tag, str) and ancestor.tag in _BREADCRUMB_ANCESTOR_TAGS:
-            ancestor_labels.append(_ancestor_label(ancestor))
+        if not (isinstance(ancestor.tag, str) and ancestor.tag in _BREADCRUMB_ANCESTOR_TAGS):
+            continue
+        if ancestor.tag in ("Page", "OnTheFlyInsertPage"):
+            parent = ancestor.getparent()
+            if parent is not None and parent.tag == "Detail":
+                continue  # the wrapping Detail already represents this level
+        ancestor_labels.append(_ancestor_label(ancestor))
     ancestor_labels.reverse()  # iterancestors() is innermost-first
     ancestor_labels.append(_own_label(element))
     return " → ".join(ancestor_labels)
@@ -112,8 +124,23 @@ def _build_breadcrumb(element) -> str:
 
 def _ancestor_label(ancestor) -> str:
     """A breadcrumb ancestor's label: caption, else fileName, else tableName,
-    else its tag."""
-    for attribute in ("caption", "fileName", "tableName"):
+    else its tag.
+
+    For a Detail we prefer the Detail's OWN caption; if it has none we fall back
+    to its immediate inner ``<Page>``'s caption/fileName/tableName (so a
+    caption-less Detail still shows a meaningful label — issue #3) before
+    resorting to the Detail's own fileName/tableName or tag."""
+    caption = ancestor.attrib.get("caption")
+    if caption:
+        return caption
+    if ancestor.tag == "Detail":
+        inner_page = ancestor.find("Page")
+        if inner_page is not None:
+            for attribute in ("caption", "fileName", "tableName"):
+                value = inner_page.attrib.get(attribute)
+                if value:
+                    return value
+    for attribute in ("fileName", "tableName"):
         value = ancestor.attrib.get(attribute)
         if value:
             return value

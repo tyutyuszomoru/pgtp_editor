@@ -165,6 +165,53 @@ def test_breadcrumb_default_empty_on_dataclass():
     assert entry.breadcrumb == ""
 
 
+def test_breadcrumb_detail_inner_page_not_doubled():
+    # Real .pgtp shape: a <Detail> wraps an inner <Page> that repeats the same
+    # level. The Detail and its immediate inner <Page> must collapse to ONE
+    # breadcrumb level (issue #3), so a Page>Detail>Detail>column produces
+    # 'Équipement → Équipement\\Sous-article → Activités → col', NOT the doubled
+    # 'Équipement → Équipement\\Sous-article → Équipement\\Sous-article → …'.
+    text = (
+        "<Root>\n"
+        '  <Page caption="Équipement" fileName="equip">\n'
+        '    <Detail caption="Équipement\\Sous-article" tableName="sub">\n'
+        '      <Page fileName="subpage">\n'
+        '        <Detail caption="Activités" tableName="act">\n'
+        '          <Page fileName="actpage">\n'
+        '            <ColumnPresentation caption="Col" fieldName="col"/>\n'
+        "          </Page>\n"
+        "        </Detail>\n"
+        "      </Page>\n"
+        "    </Detail>\n"
+        "  </Page>\n"
+        "</Root>"
+    )
+    entries = scan_captions(text)
+    column_entry = next(e for e in entries if e.element_tag == "ColumnPresentation")
+    assert column_entry.breadcrumb == (
+        "Équipement → Équipement\\Sous-article → Activités → col"
+    )
+
+
+def test_breadcrumb_captionless_detail_falls_back_to_inner_page_label():
+    # A caption-less Detail still shows a meaningful label by falling back to
+    # its inner Page's caption/fileName/tableName.
+    text = (
+        "<Root>\n"
+        '  <Page caption="Top" fileName="top">\n'
+        '    <Detail tableName="dt">\n'
+        '      <Page caption="InnerPageLabel" fileName="inner">\n'
+        '        <ColumnPresentation caption="Col" fieldName="col"/>\n'
+        "      </Page>\n"
+        "    </Detail>\n"
+        "  </Page>\n"
+        "</Root>"
+    )
+    entries = scan_captions(text)
+    column_entry = next(e for e in entries if e.element_tag == "ColumnPresentation")
+    assert column_entry.breadcrumb == "Top → InnerPageLabel → col"
+
+
 from pgtp_editor.ui.caption_scan import apply_caption_edits
 from lxml import etree as _etree
 
