@@ -71,6 +71,30 @@ def _rows_for_event(event_node) -> list[RowSpec]:
     ]
 
 
+_REPRESENTATIONS_DIVIDER = "— Representations —"
+
+
+def _rows_for_column(column_node) -> list[RowSpec]:
+    """Column attribute rows, then (if the column carries representation
+    visibilities) a divider and one row per representation showing
+    visible / hidden / — (not listed). Representation rows navigate to that
+    column's <Column> entry line (attr_name=None -> no attribute selection);
+    the divider and not-listed rows are non-navigating."""
+    rows = _rows_for_attrib_node(column_node)
+    representations = getattr(column_node, "representations", [])
+    if representations:
+        rows.append(RowSpec(_REPRESENTATIONS_DIVIDER, "", target_line=None, attr_name=None))
+        for rep in representations:
+            if rep.visible is True:
+                value = "visible"
+            elif rep.visible is False:
+                value = "hidden"
+            else:
+                value = "— (not listed)"
+            rows.append(RowSpec(rep.name, value, target_line=rep.sourceline, attr_name=None))
+    return rows
+
+
 from PySide6.QtWidgets import (
     QHeaderView,
     QLabel,
@@ -86,7 +110,7 @@ _EMPTY_STATE_MESSAGE = "Select a Page, Detail, Column, or Event to see its prope
 _ROW_BUILDERS = {
     "page": (lambda n: _rows_for_attrib_node(n), lambda n: f"Page: {n.file_name or n.identity}"),
     "detail": (_rows_for_detail, lambda n: f"Detail: {n.table_name}/{n.attrib.get('caption', '')}"),
-    "column": (lambda n: _rows_for_attrib_node(n), lambda n: f"Column: {n.field_name}"),
+    "column": (_rows_for_column, lambda n: f"Column: {n.field_name}"),
     "event": (_rows_for_event, lambda n: f"Event: {n.tag_name}"),
 }
 
