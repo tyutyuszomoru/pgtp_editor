@@ -4,10 +4,11 @@ from pathlib import Path
 
 from lxml import etree
 from PySide6.QtCore import Qt, QTimer, QUrl
-from PySide6.QtGui import QDesktopServices
+from PySide6.QtGui import QDesktopServices, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QDockWidget,
     QFileDialog,
+    QLabel,
     QListWidget,
     QListWidgetItem,
     QMainWindow,
@@ -35,6 +36,7 @@ from pgtp_editor.schema_learning.xsd_gen import generate_xsd
 from pgtp_editor.ui._stub_action import add_stub_action
 from pgtp_editor.ui.about import show_about_dialog
 from pgtp_editor.ui.annotate_schema_values_dialog import AnnotateSchemaValuesDialog
+from pgtp_editor.ui.caption_find_replace_dialog import CaptionFindReplaceDialog
 from pgtp_editor.ui.center_stage import CenterStage
 from pgtp_editor.ui import caption_scan
 from pgtp_editor.ui import search
@@ -104,6 +106,40 @@ class MainWindow(QMainWindow):
         self.audit_panel.itemClicked.connect(self._on_audit_item_clicked)
         self.center_stage.caption_management_panel._on_apply = self._apply_caption_edits
         self.center_stage.caption_management_panel._on_close = self._close_caption_mode
+        self.center_stage.caption_management_panel.on_go_to_line = self._caption_go_to_line
+        # Ctrl+F / Ctrl+R open the caption Filter / Replace dialogs (issue #1).
+        # Wire the panel's callbacks to open the caption dialogs; the panel's
+        # open_filter_dialog / open_replace_dialog methods delegate to these.
+        self.center_stage.caption_management_panel.on_open_filter = (
+            self._open_caption_filter_dialog
+        )
+        self.center_stage.caption_management_panel.on_open_replace = (
+            self._open_caption_replace_dialog
+        )
+        self._caption_find_replace_dialog = None
+
+        # Window-scoped, mode-gated Ctrl+F / Ctrl+R. While Caption Mode is
+        # active these fire anywhere in the window (regardless of which widget
+        # has focus — e.g. after Go-to-line moves focus to the read-only Raw XML
+        # editor) and route to the caption Filter / Replace dialogs. They are
+        # disabled outside Caption Mode; the Edit-menu Find…/Replace… actions
+        # drive normal Raw-XML find/replace instead. Toggled in
+        # _enter_caption_mode / _close_caption_mode.
+        self._caption_filter_shortcut = QShortcut(QKeySequence("Ctrl+F"), self)
+        self._caption_filter_shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
+        self._caption_filter_shortcut.activated.connect(self._caption_shortcut_open_filter)
+        self._caption_filter_shortcut.setEnabled(False)
+        self._caption_replace_shortcut = QShortcut(QKeySequence("Ctrl+R"), self)
+        self._caption_replace_shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
+        self._caption_replace_shortcut.activated.connect(self._caption_shortcut_open_replace)
+        self._caption_replace_shortcut.setEnabled(False)
+        self.center_stage.xml_editor.read_only_edit_attempted.connect(
+            self._on_read_only_edit_attempted
+        )
+
+        # Permanent status-bar mode indicator (Editing vs Caption Mode).
+        self._mode_label = QLabel("Editing Mode")
+        self.statusBar().addPermanentWidget(self._mode_label)
 
         self.properties_panel = PropertiesPanel(xml_editor=self.center_stage.xml_editor)
         self.properties_dock = QDockWidget("Properties", self)
@@ -560,6 +596,7 @@ class MainWindow(QMainWindow):
         find_action = menu.addAction("Find...")
         find_action.setShortcut("Ctrl+F")
         find_action.triggered.connect(self._show_find_bar)
+        self._editor_find_action = find_action
 
         find_next_action = menu.addAction("Find Next")
         find_next_action.setShortcut("F3")
@@ -572,6 +609,7 @@ class MainWindow(QMainWindow):
         replace_action = menu.addAction("Replace...")
         replace_action.setShortcut("Ctrl+R")
         replace_action.triggered.connect(self._show_replace_bar)
+        self._editor_replace_action = replace_action
 
         replace_all_action = menu.addAction("Replace All")
         replace_all_action.setShortcut("Ctrl+Alt+Return")
@@ -653,6 +691,15 @@ class MainWindow(QMainWindow):
         entries = caption_scan.scan_captions(snapshot)
         self.center_stage.caption_management_panel.load_entries(entries, snapshot_text=snapshot)
         self.center_stage.enter_caption_mode()
+        self._mode_label.setText("Caption Mode (XML read-only)")
+        # Caption Mode is authoritative: Ctrl+F / Ctrl+R follow the mode, not
+        # focus. Enable the window-scoped caption shortcuts and disable the
+        # editor Find…/Replace… actions (disabling a QAction disables its
+        # shortcut, so there is no ambiguous-shortcut conflict).
+        self._caption_filter_shortcut.setEnabled(True)
+        self._caption_replace_shortcut.setEnabled(True)
+        self._editor_find_action.setEnabled(False)
+        self._editor_replace_action.setEnabled(False)
 
     def _apply_caption_edits(self, edited_text: str) -> None:
         """Panel Apply callback: count the changed rows, write the edited text
@@ -668,6 +715,84 @@ class MainWindow(QMainWindow):
         """Panel Close callback: leave caption mode and restore Raw XML.
         Pending (unapplied) edits are discarded by re-scanning on next enter."""
         self.center_stage.leave_caption_mode()
+        self._mode_label.setText("Editing Mode")
+        # Reverse the mode gating: disable the caption shortcuts and restore the
+        # editor Find…/Replace… actions (and their Ctrl+F / Ctrl+R shortcuts).
+        self._caption_filter_shortcut.setEnabled(False)
+        self._caption_replace_shortcut.setEnabled(False)
+        self._editor_find_action.setEnabled(True)
+        self._editor_replace_action.setEnabled(True)
+
+    def _caption_go_to_line(self, line: int) -> None:
+        """Caption panel Go-to-line callback: switch to the Raw XML tab (which
+        stays visible but read-only in Caption Mode) and navigate to `line`."""
+        self.center_stage.setCurrentIndex(self.center_stage.raw_xml_tab_index)
+        self.center_stage.xml_editor.navigate_to_line(line)
+
+    def _make_caption_find_replace_dialog(self, replace_enabled: bool):
+        """Construct (but do NOT exec) the shared Find/Filter/Replace dialog
+        wired to the caption panel. In Replace mode, Find-what is pre-loaded
+        with the grid's currently-active filter pattern. Returns the dialog so
+        tests can drive it without ``.exec()``."""
+        panel = self.center_stage.caption_management_panel
+        initial_find = panel.current_filter_pattern() if replace_enabled else ""
+        dialog = CaptionFindReplaceDialog(
+            on_filter=self._caption_apply_filter,
+            on_replace_all=self._caption_replace_all,
+            replace_enabled=replace_enabled,
+            initial_find=initial_find,
+            parent=self,
+        )
+        # Keep a reference so the non-modal dialog is not garbage-collected.
+        self._caption_find_replace_dialog = dialog
+        return dialog
+
+    def _caption_shortcut_open_filter(self) -> None:
+        """Window-scoped Ctrl+F slot (active only in Caption Mode): route to the
+        caption panel's filter dialog regardless of which widget has focus."""
+        self.center_stage.caption_management_panel.open_filter_dialog()
+
+    def _caption_shortcut_open_replace(self) -> None:
+        """Window-scoped Ctrl+R slot (active only in Caption Mode): route to the
+        caption panel's replace dialog regardless of which widget has focus
+        (e.g. after Go-to-line moved focus to the read-only Raw XML editor).
+        Preserves the pre-load-active-filter behaviour via open_replace_dialog."""
+        self.center_stage.caption_management_panel.open_replace_dialog()
+
+    def _open_caption_filter_dialog(self) -> None:
+        """Tools -> Caption Filter…: open the shared dialog in filter-only mode
+        (non-blocking show)."""
+        dialog = self._make_caption_find_replace_dialog(replace_enabled=False)
+        dialog.show()
+
+    def _open_caption_replace_dialog(self) -> None:
+        """Caption-mode Ctrl+R: open the shared dialog in Replace mode,
+        pre-loading the grid's active filter pattern (non-blocking show)."""
+        dialog = self._make_caption_find_replace_dialog(replace_enabled=True)
+        dialog.show()
+
+    def _caption_apply_filter(self, pattern: str, mode: str, case: bool) -> None:
+        """Filter callback: apply the pattern as a whole-row grid filter. Lets
+        an invalid-regex ValueError propagate so the dialog shows it inline."""
+        self.center_stage.caption_management_panel.apply_find_filter(pattern, mode, case)
+
+    def _caption_replace_all(
+        self, find: str, replacement: str, mode: str, case: bool, in_selection: bool
+    ) -> None:
+        """Replace-All callback: transform each in-scope row's Value into its
+        New Value, then report the count. Lets ValueError propagate for the
+        dialog's inline error."""
+        count = self.center_stage.caption_management_panel.replace_all_find(
+            find, replacement, mode, case, in_selection
+        )
+        self.statusBar().showMessage(f"Replaced in {count} caption(s).", 5000)
+
+    def _on_read_only_edit_attempted(self) -> None:
+        """Flash a non-modal hint when the user tries to edit the read-only
+        Raw XML editor while in Caption Mode."""
+        self.statusBar().showMessage(
+            "Raw XML is read-only in Caption Mode — close Caption Mode to edit.", 4000
+        )
 
     def _build_diff_merge_menu(self):
         menu = self.menuBar().addMenu("Diff / Merge")
@@ -694,6 +819,8 @@ class MainWindow(QMainWindow):
         menu = self.menuBar().addMenu("Tools")
         manage_captions_action = menu.addAction("Manage Captions...")
         manage_captions_action.triggered.connect(self._enter_caption_mode)
+        caption_filter_action = menu.addAction("Caption Filter…")
+        caption_filter_action.triggered.connect(self._open_caption_filter_dialog)
         menu.addSeparator()
         self._add_stub_action(menu, "Find Reused Tables...")
         menu.addSeparator()

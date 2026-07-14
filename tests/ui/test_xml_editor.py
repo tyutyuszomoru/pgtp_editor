@@ -966,3 +966,73 @@ def test_right_click_does_not_emit_line_clicked(qtbot):
         editor.viewport(), _Qt.MouseButton.RightButton, _Qt.KeyboardModifier.NoModifier, rect.center()
     )
     assert emitted == []
+
+
+# --- Phase 1: read-only Caption Mode behavior -----------------------------
+
+from PySide6.QtCore import Qt as _Qt2, QEvent as _QEvent
+from PySide6.QtGui import QKeyEvent as _QKeyEvent
+
+
+def _send_key(editor, key, text="", modifiers=_Qt2.KeyboardModifier.NoModifier):
+    event = _QKeyEvent(_QEvent.Type.KeyPress, key, modifiers, text)
+    editor.keyPressEvent(event)
+
+
+def test_readonly_text_keypress_emits_signal_and_leaves_text_unchanged(qtbot):
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    editor.setPlainText("<Page/>")
+    editor.setReadOnly(True)
+    emitted = []
+    editor.read_only_edit_attempted.connect(lambda: emitted.append(True))
+
+    _send_key(editor, _Qt2.Key.Key_A, "a")
+
+    assert emitted == [True]
+    assert editor.toPlainText() == "<Page/>"
+
+
+def test_readonly_backspace_and_paste_emit_signal(qtbot):
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    editor.setPlainText("<Page/>")
+    editor.setReadOnly(True)
+    emitted = []
+    editor.read_only_edit_attempted.connect(lambda: emitted.append(True))
+
+    _send_key(editor, _Qt2.Key.Key_Backspace)
+    _send_key(editor, _Qt2.Key.Key_Delete)
+    _send_key(editor, _Qt2.Key.Key_Return)
+    _send_key(editor, _Qt2.Key.Key_V, "v", _Qt2.KeyboardModifier.ControlModifier)
+
+    assert len(emitted) == 4
+    assert editor.toPlainText() == "<Page/>"
+
+
+def test_readonly_navigation_key_does_not_emit(qtbot):
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    editor.setPlainText("<Page/>")
+    editor.setReadOnly(True)
+    emitted = []
+    editor.read_only_edit_attempted.connect(lambda: emitted.append(True))
+
+    _send_key(editor, _Qt2.Key.Key_Right)
+    _send_key(editor, _Qt2.Key.Key_Down)
+
+    assert emitted == []
+
+
+def test_editable_keypress_does_not_emit_and_mutates_text(qtbot):
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    editor.setPlainText("")
+    assert editor.isReadOnly() is False
+    emitted = []
+    editor.read_only_edit_attempted.connect(lambda: emitted.append(True))
+
+    _send_key(editor, _Qt2.Key.Key_A, "a")
+
+    assert emitted == []
+    assert editor.toPlainText() == "a"

@@ -71,11 +71,13 @@ def test_caption_management_tab_holds_the_panel(qtbot):
     assert stage.widget(stage.caption_management_tab_index) is stage.caption_management_panel
 
 
-def test_enter_caption_mode_hides_raw_shows_caption(qtbot):
+def test_enter_caption_mode_keeps_raw_visible_readonly_shows_caption(qtbot):
     stage = CenterStage()
     qtbot.addWidget(stage)
     stage.enter_caption_mode()
-    assert stage.isTabVisible(stage.raw_xml_tab_index) is False
+    # Phase 1: Raw XML stays VISIBLE but read-only (no longer hidden).
+    assert stage.isTabVisible(stage.raw_xml_tab_index) is True
+    assert stage.xml_editor.isReadOnly() is True
     assert stage.isTabVisible(stage.caption_management_tab_index) is True
     assert stage.currentIndex() == stage.caption_management_tab_index
 
@@ -86,5 +88,6 @@ def test_leave_caption_mode_restores_raw(qtbot):
     stage.enter_caption_mode()
     stage.leave_caption_mode()
     assert stage.isTabVisible(stage.raw_xml_tab_index) is True
+    assert stage.xml_editor.isReadOnly() is False
     assert stage.isTabVisible(stage.caption_management_tab_index) is False
     assert stage.currentIndex() == stage.raw_xml_tab_index

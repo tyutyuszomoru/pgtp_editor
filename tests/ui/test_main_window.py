@@ -587,11 +587,14 @@ def test_manage_captions_enters_mode_and_populates_grid(qtbot):
     find_action(find_top_menu(window, "Tools"), "Manage Captions...").trigger()
 
     stage = window.center_stage
-    assert stage.isTabVisible(stage.raw_xml_tab_index) is False
+    # Phase 1: Raw XML stays visible but read-only in Caption Mode.
+    assert stage.isTabVisible(stage.raw_xml_tab_index) is True
+    assert stage.xml_editor.isReadOnly() is True
     assert stage.isTabVisible(stage.caption_management_tab_index) is True
     assert stage.currentIndex() == stage.caption_management_tab_index
     assert stage.caption_management_panel._model.rowCount() == 1
-    assert stage.caption_management_panel._model.index(0, 4).data() == "Home"
+    # Value is now column 6 (read-only); New Value is column 7.
+    assert stage.caption_management_panel._model.index(0, 6).data() == "Home"
 
 
 def test_manage_captions_apply_writes_into_editor_buffer_and_reports_count(qtbot):
@@ -606,7 +609,8 @@ def test_manage_captions_apply_writes_into_editor_buffer_and_reports_count(qtbot
     find_action(find_top_menu(window, "Tools"), "Manage Captions...").trigger()
 
     panel = window.center_stage.caption_management_panel
-    panel._model.setData(panel._model.index(0, 4), "Homepage", Qt.ItemDataRole.EditRole)
+    # Edit the New Value column (7); Value column (6) is read-only.
+    panel._model.setData(panel._model.index(0, 7), "Homepage", Qt.ItemDataRole.EditRole)
     panel.apply()
 
     assert window.center_stage.xml_editor.toPlainText() == (
@@ -662,12 +666,250 @@ def test_manage_captions_apply_then_reedit_uses_updated_snapshot(qtbot):
     find_action(find_top_menu(window, "Tools"), "Manage Captions...").trigger()
     panel = window.center_stage.caption_management_panel
 
-    panel._model.setData(panel._model.index(0, 4), "Homepage", Qt.ItemDataRole.EditRole)
+    panel._model.setData(panel._model.index(0, 7), "Homepage", Qt.ItemDataRole.EditRole)
     panel.apply()  # editor now has caption="Homepage"; snapshot updated
 
     # A second edit applies cleanly on the updated snapshot (line still valid).
-    panel._model.setData(panel._model.index(0, 4), "Landing", Qt.ItemDataRole.EditRole)
+    panel._model.setData(panel._model.index(0, 7), "Landing", Qt.ItemDataRole.EditRole)
     panel.apply()
     assert window.center_stage.xml_editor.toPlainText() == (
         '<Root>\n  <Page caption="Landing"/>\n</Root>'
     )
+
+
+# --- Phase 1: mode indicator + read-only hint -----------------------------
+
+def test_mode_label_initial_text_is_editing_mode(qtbot):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    assert window._mode_label.text() == "Editing Mode"
+
+
+def test_mode_label_flips_on_enter_and_close_caption_mode(qtbot):
+    from tests.ui._menu_helpers import find_action, find_top_menu
+
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window.center_stage.xml_editor.setPlainText(
+        '<Root>\n  <Page caption="Home"/>\n</Root>'
+    )
+    find_action(find_top_menu(window, "Tools"), "Manage Captions...").trigger()
+    assert window._mode_label.text() == "Caption Mode (XML read-only)"
+
+    window.center_stage.caption_management_panel.close_panel()
+    assert window._mode_label.text() == "Editing Mode"
+
+
+def test_caption_go_to_line_switches_to_raw_xml_and_navigates(qtbot):
+    from tests.ui._menu_helpers import find_action, find_top_menu
+
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window.center_stage.xml_editor.setPlainText(
+        '<Root>\n  <Page caption="Home"/>\n  <Page caption="Other"/>\n</Root>'
+    )
+    find_action(find_top_menu(window, "Tools"), "Manage Captions...").trigger()
+
+    calls = []
+    window.center_stage.xml_editor.navigate_to_line = lambda line: calls.append(line)
+    # Row 1 is on source line 3; go_to_line via the panel callback.
+    window.center_stage.caption_management_panel.on_go_to_line(3)
+
+    stage = window.center_stage
+    assert stage.currentIndex() == stage.raw_xml_tab_index
+    assert calls == [3]
+
+
+def test_readonly_edit_attempt_flashes_status_hint(qtbot):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window.center_stage.xml_editor.read_only_edit_attempted.emit()
+    assert "read-only" in window.statusBar().currentMessage()
+
+
+# -- Phase 4: shared find/filter/replace dialog wiring ----------------------
+
+
+def _enter_caption_mode_with(window, snapshot):
+    from tests.ui._menu_helpers import find_action, find_top_menu
+
+    window.center_stage.xml_editor.setPlainText(snapshot)
+    find_action(find_top_menu(window, "Tools"), "Manage Captions...").trigger()
+
+
+def test_caption_filter_dialog_filters_grid(qtbot):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    _enter_caption_mode_with(
+        window,
+        '<Root>\n  <Page caption="Home"/>\n  <Page caption="Orders"/>\n</Root>',
+    )
+    dialog = window._make_caption_find_replace_dialog(replace_enabled=False)
+    dialog.find_field.setText("Home")
+    dialog._do_filter()
+
+    panel = window.center_stage.caption_management_panel
+    proxy = panel._proxy
+    visible = [
+        proxy.index(r, 6).data(Qt.ItemDataRole.DisplayRole)
+        for r in range(proxy.rowCount())
+    ]
+    assert visible == ["Home"]
+
+
+def test_caption_replace_all_writes_new_value_and_reports(qtbot):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    _enter_caption_mode_with(
+        window,
+        '<Root>\n  <Page caption="Home Page"/>\n  <Page caption="Orders Page"/>\n</Root>',
+    )
+    dialog = window._make_caption_find_replace_dialog(replace_enabled=True)
+    dialog.find_field.setText("Page")
+    dialog.replace_field.setText("Screen")
+    dialog.global_radio.setChecked(True)
+    dialog._do_replace_all()
+
+    panel = window.center_stage.caption_management_panel
+    assert panel._model.new_value_at(0) == "Home Screen"
+    assert panel._model.new_value_at(1) == "Orders Screen"
+    assert "2 caption" in window.statusBar().currentMessage()
+
+
+def test_replace_dialog_preloads_active_filter_pattern(qtbot):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    _enter_caption_mode_with(
+        window, '<Root>\n  <Page caption="Home"/>\n</Root>'
+    )
+    panel = window.center_stage.caption_management_panel
+    panel.apply_find_filter("Ho", "normal", False)
+    dialog = window._make_caption_find_replace_dialog(replace_enabled=True)
+    assert dialog.find_field.text() == "Ho"
+
+
+def test_caption_filter_invalid_regex_shows_inline_error(qtbot):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    _enter_caption_mode_with(
+        window, '<Root>\n  <Page caption="Home"/>\n</Root>'
+    )
+    dialog = window._make_caption_find_replace_dialog(replace_enabled=False)
+    dialog.find_field.setText("(")
+    dialog.set_mode("regular")
+    dialog._do_filter()  # must not raise / not pop a modal
+    assert dialog.error_label.text() != ""
+
+
+def test_caption_ctrl_f_opens_caption_filter_dialog(qtbot):
+    # Issue #1: the window-scoped Ctrl+F shortcut (active in Caption Mode) opens
+    # the shared dialog in FILTER mode (no .exec() — we drive the connected
+    # slot, not a real key event).
+    window = MainWindow()
+    qtbot.addWidget(window)
+    _enter_caption_mode_with(window, '<Root>\n  <Page caption="Home"/>\n</Root>')
+    window._caption_filter_shortcut.activated.emit()
+    dialog = window._caption_find_replace_dialog
+    assert dialog is not None
+    assert dialog.windowTitle() == "Caption Filter"
+    assert not dialog._replace_enabled
+
+
+def test_caption_ctrl_r_opens_caption_replace_dialog(qtbot):
+    # Issue #1: the window-scoped Ctrl+R shortcut (active in Caption Mode) opens
+    # the shared dialog in REPLACE mode, pre-loading the active filter pattern.
+    window = MainWindow()
+    qtbot.addWidget(window)
+    _enter_caption_mode_with(window, '<Root>\n  <Page caption="Home"/>\n</Root>')
+    panel = window.center_stage.caption_management_panel
+    panel.apply_find_filter("Ho", "normal", False)
+    window._caption_replace_shortcut.activated.emit()
+    dialog = window._caption_find_replace_dialog
+    assert dialog is not None
+    assert dialog.windowTitle() == "Caption Replace"
+    assert dialog._replace_enabled
+    assert dialog.find_field.text() == "Ho"
+
+
+def test_caption_shortcuts_are_window_scoped_ctrl_f_ctrl_r(qtbot):
+    # The caption shortcuts must be WindowShortcut-scoped (fire anywhere in the
+    # window, not just when a particular widget has focus) and bound to
+    # Ctrl+F / Ctrl+R.
+    window = MainWindow()
+    qtbot.addWidget(window)
+    assert window._caption_filter_shortcut.key().toString() == "Ctrl+F"
+    assert window._caption_replace_shortcut.key().toString() == "Ctrl+R"
+    assert (
+        window._caption_filter_shortcut.context()
+        == Qt.ShortcutContext.WindowShortcut
+    )
+    assert (
+        window._caption_replace_shortcut.context()
+        == Qt.ShortcutContext.WindowShortcut
+    )
+
+
+def test_caption_shortcuts_disabled_outside_caption_mode(qtbot):
+    # Before entering Caption Mode: caption shortcuts disabled, editor
+    # Find…/Replace… enabled.
+    window = MainWindow()
+    qtbot.addWidget(window)
+    assert not window._caption_filter_shortcut.isEnabled()
+    assert not window._caption_replace_shortcut.isEnabled()
+    assert window._editor_find_action.isEnabled()
+    assert window._editor_replace_action.isEnabled()
+
+
+def test_enter_caption_mode_gates_shortcuts(qtbot):
+    # After entering Caption Mode: caption shortcuts enabled, editor
+    # Find…/Replace… disabled (so they cannot steal Ctrl+F / Ctrl+R).
+    window = MainWindow()
+    qtbot.addWidget(window)
+    _enter_caption_mode_with(window, '<Root>\n  <Page caption="Home"/>\n</Root>')
+    assert window._caption_filter_shortcut.isEnabled()
+    assert window._caption_replace_shortcut.isEnabled()
+    assert not window._editor_find_action.isEnabled()
+    assert not window._editor_replace_action.isEnabled()
+
+
+def test_close_caption_mode_restores_editor_actions(qtbot):
+    # After leaving Caption Mode: caption shortcuts disabled again, editor
+    # Find…/Replace… re-enabled.
+    window = MainWindow()
+    qtbot.addWidget(window)
+    _enter_caption_mode_with(window, '<Root>\n  <Page caption="Home"/>\n</Root>')
+    window._close_caption_mode()
+    assert not window._caption_filter_shortcut.isEnabled()
+    assert not window._caption_replace_shortcut.isEnabled()
+    assert window._editor_find_action.isEnabled()
+    assert window._editor_replace_action.isEnabled()
+
+
+def test_caption_replace_shortcut_routes_to_caption_after_go_to_line(qtbot):
+    # Focus-independence regression (issue #1): enter Caption Mode, then
+    # Go-to-line (which switches to the Raw XML tab / moves focus to the
+    # read-only editor). Triggering the caption Ctrl+R shortcut path must STILL
+    # open the caption Replace dialog — not the editor's replace bar — because
+    # the shortcut follows the mode, not focus. Driven via the connected slot
+    # (no real key events, no .exec()).
+    window = MainWindow()
+    qtbot.addWidget(window)
+    _enter_caption_mode_with(window, '<Root>\n  <Page caption="Home"/>\n</Root>')
+    # Simulate Go-to-line: switches tab to Raw XML and moves focus there.
+    window._caption_go_to_line(2)
+    # Drive the slot the _caption_replace_shortcut is connected to.
+    window._caption_replace_shortcut.activated.emit()
+    dialog = window._caption_find_replace_dialog
+    assert dialog is not None
+    # It routed to the CAPTION replace dialog, not the editor replace bar.
+    assert dialog.windowTitle() == "Caption Replace"
+    assert dialog._replace_enabled
+
+
+def test_caption_filter_action_exists_in_tools_menu(qtbot):
+    from tests.ui._menu_helpers import find_action, find_top_menu
+
+    window = MainWindow()
+    qtbot.addWidget(window)
+    action = find_action(find_top_menu(window, "Tools"), "Caption Filter…")
+    assert action is not None
