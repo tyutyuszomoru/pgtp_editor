@@ -4,7 +4,7 @@ from pathlib import Path
 
 from lxml import etree
 from PySide6.QtCore import Qt, QTimer, QUrl
-from PySide6.QtGui import QDesktopServices
+from PySide6.QtGui import QDesktopServices, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QDockWidget,
     QFileDialog,
@@ -107,12 +107,9 @@ class MainWindow(QMainWindow):
         self.center_stage.caption_management_panel._on_apply = self._apply_caption_edits
         self.center_stage.caption_management_panel._on_close = self._close_caption_mode
         self.center_stage.caption_management_panel.on_go_to_line = self._caption_go_to_line
-        # Ctrl+F / Ctrl+R inside the caption panel open the shared dialog in
-        # Filter / Replace mode (issue #1). The panel owns the
-        # WidgetWithChildrenShortcut-scoped QShortcuts so they fire only when
-        # the caption grid has focus (Caption Mode) and take precedence over the
-        # Edit-menu global Ctrl+F / Ctrl+R (Raw XML find/replace); here we just
-        # wire the panel's callbacks to open the caption dialogs.
+        # Ctrl+F / Ctrl+R open the caption Filter / Replace dialogs (issue #1).
+        # Wire the panel's callbacks to open the caption dialogs; the panel's
+        # open_filter_dialog / open_replace_dialog methods delegate to these.
         self.center_stage.caption_management_panel.on_open_filter = (
             self._open_caption_filter_dialog
         )
@@ -120,6 +117,22 @@ class MainWindow(QMainWindow):
             self._open_caption_replace_dialog
         )
         self._caption_find_replace_dialog = None
+
+        # Window-scoped, mode-gated Ctrl+F / Ctrl+R. While Caption Mode is
+        # active these fire anywhere in the window (regardless of which widget
+        # has focus — e.g. after Go-to-line moves focus to the read-only Raw XML
+        # editor) and route to the caption Filter / Replace dialogs. They are
+        # disabled outside Caption Mode; the Edit-menu Find…/Replace… actions
+        # drive normal Raw-XML find/replace instead. Toggled in
+        # _enter_caption_mode / _close_caption_mode.
+        self._caption_filter_shortcut = QShortcut(QKeySequence("Ctrl+F"), self)
+        self._caption_filter_shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
+        self._caption_filter_shortcut.activated.connect(self._caption_shortcut_open_filter)
+        self._caption_filter_shortcut.setEnabled(False)
+        self._caption_replace_shortcut = QShortcut(QKeySequence("Ctrl+R"), self)
+        self._caption_replace_shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
+        self._caption_replace_shortcut.activated.connect(self._caption_shortcut_open_replace)
+        self._caption_replace_shortcut.setEnabled(False)
         self.center_stage.xml_editor.read_only_edit_attempted.connect(
             self._on_read_only_edit_attempted
         )
@@ -583,6 +596,7 @@ class MainWindow(QMainWindow):
         find_action = menu.addAction("Find...")
         find_action.setShortcut("Ctrl+F")
         find_action.triggered.connect(self._show_find_bar)
+        self._editor_find_action = find_action
 
         find_next_action = menu.addAction("Find Next")
         find_next_action.setShortcut("F3")
@@ -595,6 +609,7 @@ class MainWindow(QMainWindow):
         replace_action = menu.addAction("Replace...")
         replace_action.setShortcut("Ctrl+R")
         replace_action.triggered.connect(self._show_replace_bar)
+        self._editor_replace_action = replace_action
 
         replace_all_action = menu.addAction("Replace All")
         replace_all_action.setShortcut("Ctrl+Alt+Return")
@@ -677,6 +692,14 @@ class MainWindow(QMainWindow):
         self.center_stage.caption_management_panel.load_entries(entries, snapshot_text=snapshot)
         self.center_stage.enter_caption_mode()
         self._mode_label.setText("Caption Mode (XML read-only)")
+        # Caption Mode is authoritative: Ctrl+F / Ctrl+R follow the mode, not
+        # focus. Enable the window-scoped caption shortcuts and disable the
+        # editor Find…/Replace… actions (disabling a QAction disables its
+        # shortcut, so there is no ambiguous-shortcut conflict).
+        self._caption_filter_shortcut.setEnabled(True)
+        self._caption_replace_shortcut.setEnabled(True)
+        self._editor_find_action.setEnabled(False)
+        self._editor_replace_action.setEnabled(False)
 
     def _apply_caption_edits(self, edited_text: str) -> None:
         """Panel Apply callback: count the changed rows, write the edited text
@@ -693,6 +716,12 @@ class MainWindow(QMainWindow):
         Pending (unapplied) edits are discarded by re-scanning on next enter."""
         self.center_stage.leave_caption_mode()
         self._mode_label.setText("Editing Mode")
+        # Reverse the mode gating: disable the caption shortcuts and restore the
+        # editor Find…/Replace… actions (and their Ctrl+F / Ctrl+R shortcuts).
+        self._caption_filter_shortcut.setEnabled(False)
+        self._caption_replace_shortcut.setEnabled(False)
+        self._editor_find_action.setEnabled(True)
+        self._editor_replace_action.setEnabled(True)
 
     def _caption_go_to_line(self, line: int) -> None:
         """Caption panel Go-to-line callback: switch to the Raw XML tab (which
@@ -717,6 +746,18 @@ class MainWindow(QMainWindow):
         # Keep a reference so the non-modal dialog is not garbage-collected.
         self._caption_find_replace_dialog = dialog
         return dialog
+
+    def _caption_shortcut_open_filter(self) -> None:
+        """Window-scoped Ctrl+F slot (active only in Caption Mode): route to the
+        caption panel's filter dialog regardless of which widget has focus."""
+        self.center_stage.caption_management_panel.open_filter_dialog()
+
+    def _caption_shortcut_open_replace(self) -> None:
+        """Window-scoped Ctrl+R slot (active only in Caption Mode): route to the
+        caption panel's replace dialog regardless of which widget has focus
+        (e.g. after Go-to-line moved focus to the read-only Raw XML editor).
+        Preserves the pre-load-active-filter behaviour via open_replace_dialog."""
+        self.center_stage.caption_management_panel.open_replace_dialog()
 
     def _open_caption_filter_dialog(self) -> None:
         """Tools -> Caption Filter…: open the shared dialog in filter-only mode

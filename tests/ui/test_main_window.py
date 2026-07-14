@@ -801,34 +801,109 @@ def test_caption_filter_invalid_regex_shows_inline_error(qtbot):
     assert dialog.error_label.text() != ""
 
 
-def test_panel_ctrl_f_opens_caption_filter_dialog(qtbot):
-    # Issue #1: the caption panel's Ctrl+F callback opens the shared dialog in
-    # FILTER mode (no .exec() — we drive the panel slot the shortcut invokes).
+def test_caption_ctrl_f_opens_caption_filter_dialog(qtbot):
+    # Issue #1: the window-scoped Ctrl+F shortcut (active in Caption Mode) opens
+    # the shared dialog in FILTER mode (no .exec() — we drive the connected
+    # slot, not a real key event).
     window = MainWindow()
     qtbot.addWidget(window)
     _enter_caption_mode_with(window, '<Root>\n  <Page caption="Home"/>\n</Root>')
-    panel = window.center_stage.caption_management_panel
-    panel.open_filter_dialog()
+    window._caption_filter_shortcut.activated.emit()
     dialog = window._caption_find_replace_dialog
     assert dialog is not None
     assert dialog.windowTitle() == "Caption Filter"
     assert not dialog._replace_enabled
 
 
-def test_panel_ctrl_r_opens_caption_replace_dialog(qtbot):
-    # Issue #1: the caption panel's Ctrl+R callback opens the shared dialog in
-    # REPLACE mode, pre-loading the active filter pattern.
+def test_caption_ctrl_r_opens_caption_replace_dialog(qtbot):
+    # Issue #1: the window-scoped Ctrl+R shortcut (active in Caption Mode) opens
+    # the shared dialog in REPLACE mode, pre-loading the active filter pattern.
     window = MainWindow()
     qtbot.addWidget(window)
     _enter_caption_mode_with(window, '<Root>\n  <Page caption="Home"/>\n</Root>')
     panel = window.center_stage.caption_management_panel
     panel.apply_find_filter("Ho", "normal", False)
-    panel.open_replace_dialog()
+    window._caption_replace_shortcut.activated.emit()
     dialog = window._caption_find_replace_dialog
     assert dialog is not None
     assert dialog.windowTitle() == "Caption Replace"
     assert dialog._replace_enabled
     assert dialog.find_field.text() == "Ho"
+
+
+def test_caption_shortcuts_are_window_scoped_ctrl_f_ctrl_r(qtbot):
+    # The caption shortcuts must be WindowShortcut-scoped (fire anywhere in the
+    # window, not just when a particular widget has focus) and bound to
+    # Ctrl+F / Ctrl+R.
+    window = MainWindow()
+    qtbot.addWidget(window)
+    assert window._caption_filter_shortcut.key().toString() == "Ctrl+F"
+    assert window._caption_replace_shortcut.key().toString() == "Ctrl+R"
+    assert (
+        window._caption_filter_shortcut.context()
+        == Qt.ShortcutContext.WindowShortcut
+    )
+    assert (
+        window._caption_replace_shortcut.context()
+        == Qt.ShortcutContext.WindowShortcut
+    )
+
+
+def test_caption_shortcuts_disabled_outside_caption_mode(qtbot):
+    # Before entering Caption Mode: caption shortcuts disabled, editor
+    # Find…/Replace… enabled.
+    window = MainWindow()
+    qtbot.addWidget(window)
+    assert not window._caption_filter_shortcut.isEnabled()
+    assert not window._caption_replace_shortcut.isEnabled()
+    assert window._editor_find_action.isEnabled()
+    assert window._editor_replace_action.isEnabled()
+
+
+def test_enter_caption_mode_gates_shortcuts(qtbot):
+    # After entering Caption Mode: caption shortcuts enabled, editor
+    # Find…/Replace… disabled (so they cannot steal Ctrl+F / Ctrl+R).
+    window = MainWindow()
+    qtbot.addWidget(window)
+    _enter_caption_mode_with(window, '<Root>\n  <Page caption="Home"/>\n</Root>')
+    assert window._caption_filter_shortcut.isEnabled()
+    assert window._caption_replace_shortcut.isEnabled()
+    assert not window._editor_find_action.isEnabled()
+    assert not window._editor_replace_action.isEnabled()
+
+
+def test_close_caption_mode_restores_editor_actions(qtbot):
+    # After leaving Caption Mode: caption shortcuts disabled again, editor
+    # Find…/Replace… re-enabled.
+    window = MainWindow()
+    qtbot.addWidget(window)
+    _enter_caption_mode_with(window, '<Root>\n  <Page caption="Home"/>\n</Root>')
+    window._close_caption_mode()
+    assert not window._caption_filter_shortcut.isEnabled()
+    assert not window._caption_replace_shortcut.isEnabled()
+    assert window._editor_find_action.isEnabled()
+    assert window._editor_replace_action.isEnabled()
+
+
+def test_caption_replace_shortcut_routes_to_caption_after_go_to_line(qtbot):
+    # Focus-independence regression (issue #1): enter Caption Mode, then
+    # Go-to-line (which switches to the Raw XML tab / moves focus to the
+    # read-only editor). Triggering the caption Ctrl+R shortcut path must STILL
+    # open the caption Replace dialog — not the editor's replace bar — because
+    # the shortcut follows the mode, not focus. Driven via the connected slot
+    # (no real key events, no .exec()).
+    window = MainWindow()
+    qtbot.addWidget(window)
+    _enter_caption_mode_with(window, '<Root>\n  <Page caption="Home"/>\n</Root>')
+    # Simulate Go-to-line: switches tab to Raw XML and moves focus there.
+    window._caption_go_to_line(2)
+    # Drive the slot the _caption_replace_shortcut is connected to.
+    window._caption_replace_shortcut.activated.emit()
+    dialog = window._caption_find_replace_dialog
+    assert dialog is not None
+    # It routed to the CAPTION replace dialog, not the editor replace bar.
+    assert dialog.windowTitle() == "Caption Replace"
+    assert dialog._replace_enabled
 
 
 def test_caption_filter_action_exists_in_tools_menu(qtbot):

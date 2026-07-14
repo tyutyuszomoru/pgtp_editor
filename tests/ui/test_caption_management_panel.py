@@ -1066,31 +1066,32 @@ def test_exit_button_labelled_and_wired(qtbot):
 # -- Issue #1: Ctrl+F / Ctrl+R open the caption dialogs ---------------------
 
 
-def test_ctrl_f_shortcut_opens_filter_dialog(qtbot):
+def test_panel_does_not_own_filter_replace_shortcuts(qtbot):
+    # Issue #1: Ctrl+F / Ctrl+R are now owned by MainWindow as window-scoped,
+    # mode-gated shortcuts (they follow Caption Mode, not focus). The panel must
+    # NOT own its own Ctrl+F / Ctrl+R QShortcuts (that would create an ambiguous
+    # double-binding with the window shortcuts).
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    assert not hasattr(panel, "_filter_shortcut")
+    assert not hasattr(panel, "_replace_shortcut")
+
+
+def test_open_filter_dialog_delegates_to_callback(qtbot):
+    # The panel's open_filter_dialog method (called by the MainWindow window
+    # shortcut) delegates to the injected on_open_filter callback.
     calls = []
     panel = CaptionManagementPanel()
     qtbot.addWidget(panel)
     panel.on_open_filter = lambda: calls.append("filter")
-    # The panel owns a WidgetWithChildrenShortcut-scoped Ctrl+F shortcut.
-    assert panel._filter_shortcut.key().toString() == "Ctrl+F"
-    assert (
-        panel._filter_shortcut.context()
-        == Qt.ShortcutContext.WidgetWithChildrenShortcut
-    )
-    # Drive the bound slot (no .exec()): it delegates to on_open_filter.
-    panel._filter_shortcut.activated.emit()
+    panel.open_filter_dialog()
     assert calls == ["filter"]
 
 
-def test_ctrl_r_shortcut_opens_replace_dialog(qtbot):
+def test_open_replace_dialog_delegates_to_callback(qtbot):
     calls = []
     panel = CaptionManagementPanel()
     qtbot.addWidget(panel)
     panel.on_open_replace = lambda: calls.append("replace")
-    assert panel._replace_shortcut.key().toString() == "Ctrl+R"
-    assert (
-        panel._replace_shortcut.context()
-        == Qt.ShortcutContext.WidgetWithChildrenShortcut
-    )
-    panel._replace_shortcut.activated.emit()
+    panel.open_replace_dialog()
     assert calls == ["replace"]

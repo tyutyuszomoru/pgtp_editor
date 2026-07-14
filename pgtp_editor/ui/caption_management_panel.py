@@ -565,23 +565,11 @@ class CaptionManagementPanel(QWidget):
         QShortcut(QKeySequence.StandardKey.Paste, self._table, self.paste_into_new_value)
         QShortcut(QKeySequence("Ctrl+G"), self._table, self.go_to_line_current)
 
-        # Ctrl+F / Ctrl+R open the caption Filter / Replace dialogs while the
-        # caption panel (or a child) has focus (issue #1). Scoped with
-        # WidgetWithChildrenShortcut so they fire only in Caption Mode and take
-        # precedence over the editor's global Edit-menu Ctrl+F / Ctrl+R, which
-        # keep driving normal Raw-XML find/replace outside Caption Mode.
-        self._filter_shortcut = QShortcut(
-            QKeySequence("Ctrl+F"), self, self.open_filter_dialog
-        )
-        self._filter_shortcut.setContext(
-            Qt.ShortcutContext.WidgetWithChildrenShortcut
-        )
-        self._replace_shortcut = QShortcut(
-            QKeySequence("Ctrl+R"), self, self.open_replace_dialog
-        )
-        self._replace_shortcut.setContext(
-            Qt.ShortcutContext.WidgetWithChildrenShortcut
-        )
+        # Ctrl+F / Ctrl+R for the caption Filter / Replace dialogs are owned by
+        # MainWindow as window-scoped, mode-gated shortcuts (issue #1) so they
+        # follow Caption Mode rather than focus. They call this panel's
+        # open_filter_dialog / open_replace_dialog methods below, which delegate
+        # to the injected on_open_filter / on_open_replace callbacks.
 
     # -- API ----------------------------------------------------------------
 
