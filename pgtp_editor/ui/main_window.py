@@ -616,6 +616,20 @@ class MainWindow(QMainWindow):
         replace_all_action.triggered.connect(self._replace_all)
 
         menu.addSeparator()
+
+        select_enclosing_action = menu.addAction("Select Enclosing Block")
+        select_enclosing_action.setShortcut("Ctrl+Shift+B")
+        select_enclosing_action.triggered.connect(
+            self.center_stage.xml_editor.select_enclosing_block
+        )
+
+        select_parent_action = menu.addAction("Select Parent Block")
+        select_parent_action.setShortcut("Ctrl+Shift+A")
+        select_parent_action.triggered.connect(
+            self.center_stage.xml_editor.select_parent_block
+        )
+
+        menu.addSeparator()
         self._add_stub_action(menu, "Preferences...")
 
     def _build_view_menu(self):

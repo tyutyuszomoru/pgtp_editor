@@ -17,7 +17,6 @@ from PySide6.QtGui import (
     QKeyEvent,
     QKeySequence,
     QPainter,
-    QShortcut,
     QSyntaxHighlighter,
     QTextCharFormat,
     QTextCursor,
@@ -222,13 +221,6 @@ class XmlEditor(QPlainTextEdit):
         self.cursorPositionChanged.connect(self._highlight_current_line)
         self.cursorPositionChanged.connect(self._update_matching_tag_highlight)
 
-        select_block_shortcut = QShortcut(QKeySequence("Ctrl+Shift+B"), self)
-        select_block_shortcut.setContext(Qt.ShortcutContext.WidgetShortcut)
-        select_block_shortcut.activated.connect(self.select_enclosing_block)
-
-        select_parent_shortcut = QShortcut(QKeySequence("Ctrl+Shift+A"), self)
-        select_parent_shortcut.setContext(Qt.ShortcutContext.WidgetShortcut)
-        select_parent_shortcut.activated.connect(self.select_parent_block)
         # Positions of '>' characters this editor itself auto-inserted as
         # the closing half of its auto-close-'<' feature (see keyPressEvent's
         # `event.text() == "<"` branch). Tracked as QTextCursors -- rather
