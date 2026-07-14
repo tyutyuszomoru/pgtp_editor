@@ -614,6 +614,38 @@ def test_column_not_listed_in_present_representation_is_none(tmp_path):
     assert len(_columns_by_field(tmp_path)["loner"].representations) == 10
 
 
+PARTIAL_REPRESENTATION_PGTP = """\
+<?xml version="1.0" encoding="UTF-8"?>
+<Project><Presentation><Pages>
+  <Page fileName="p" tableName="t" caption="P">
+    <ColumnPresentations>
+      <ColumnPresentation fieldName="here"/>
+      <ColumnPresentation fieldName="there"/>
+    </ColumnPresentations>
+    <Columns>
+      <List><Column fieldName="here"/><Column fieldName="there"/></List>
+      <Edit><Column fieldName="there"/></Edit>
+    </Columns>
+  </Page>
+</Pages></Presentation></Project>
+"""
+
+
+def test_column_present_in_some_reps_absent_from_others_gets_per_rep_none(tmp_path):
+    # 'here' IS listed in <List> but NOT in the (present) <Edit> block. It must
+    # get List=visible AND Edit=None -- the per-representation None path, which
+    # is distinct from the wholesale "in no representation at all" fallback.
+    project = load_project(write_pgtp(tmp_path, PARTIAL_REPRESENTATION_PGTP))
+    here = {c.field_name: c for c in project.pages[0].columns}["here"]
+    reps = {r.name: r for r in here.representations}
+    assert reps["List"].visible is True
+    assert reps["List"].sourceline is not None
+    assert reps["Edit"].visible is None       # present block, no entry for 'here'
+    assert reps["Edit"].sourceline is None
+    # Only List and Edit are present in this block; both surface for 'here'.
+    assert set(reps) == {"List", "Edit"}
+
+
 def test_no_columns_block_gives_empty_representations(tmp_path):
     xml = """\
 <?xml version="1.0" encoding="UTF-8"?>

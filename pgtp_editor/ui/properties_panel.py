@@ -81,7 +81,7 @@ def _rows_for_column(column_node) -> list[RowSpec]:
     column's <Column> entry line (attr_name=None -> no attribute selection);
     the divider and not-listed rows are non-navigating."""
     rows = _rows_for_attrib_node(column_node)
-    representations = getattr(column_node, "representations", [])
+    representations = column_node.representations
     if representations:
         rows.append(RowSpec(_REPRESENTATIONS_DIVIDER, "", target_line=None, attr_name=None))
         for rep in representations:
