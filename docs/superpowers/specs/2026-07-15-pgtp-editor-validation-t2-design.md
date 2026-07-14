@@ -10,7 +10,7 @@ Run a set of structural sanity checks over the open project and report each find
 ## Scope
 
 **In scope — three checks:**
-1. **Duplicate `Page@fileName` (ERROR)** — the one hard rule. Across the whole document, every `<Page>` with a non-empty `fileName` must be unique. Each `<Page>` sharing a duplicated `fileName` is reported (so the user sees all colliding locations).
+1. **Duplicate `Page@fileName` (ERROR)** — the one hard rule. Among top-level `<Page>` elements (direct children of `<Pages>`), every `<Page>` with a non-empty `fileName` must be unique. Each such top-level `<Page>` sharing a duplicated `fileName` is reported (so the user sees all colliding locations), one ERROR per colliding page. Nested `<Detail>` pages legitimately reuse their master page's `fileName` and are excluded.
 2. **Missing required attributes (WARNING):**
    - A `<Page>` that is a direct child of `<Pages>` (a top-level page) missing `fileName` or `tableName`.
    - A `<ColumnPresentation>` missing `fieldName`.
@@ -21,7 +21,7 @@ Run a set of structural sanity checks over the open project and report each find
 ## Core — `pgtp_editor/validation/tier2.py` (new, Qt-free, unit-tested)
 - `@dataclass(frozen=True) ValidationIssue`: `severity: str` (`"error"` | `"warning"`), `message: str`, `line: int | None` (the offending element's `sourceline`, for navigation).
 - `validate_project(project) -> list[ValidationIssue]`: operates on `project.tree.getroot()` (lxml). Returns issues in document order (by line, then a stable order per line). Empty list = clean. If `project` or its tree is None → `[]`.
-  - Duplicate fileName: collect `(fileName, element)` for every `<Page>` with non-empty `fileName`; for any fileName with >1 element, emit an ERROR per element: `duplicate Page fileName "X"`.
+  - Duplicate fileName: collect `(fileName, element)` for every top-level `<Page>` (parent tag `Pages`) with non-empty `fileName`; for any fileName with >1 element, emit an ERROR per element: `duplicate Page fileName "X"`. Nested `<Detail>` pages are skipped.
   - Missing attrs: iterate; for a `<Page>` whose parent tag is `Pages`, warn on absent/empty `fileName` (`Page missing fileName`) and absent/empty `tableName` (`Page missing tableName`); for every `<ColumnPresentation>`, warn on absent/empty `fieldName` (`ColumnPresentation missing fieldName`).
   - Unexpected children: for each `<Pages>`/`<Details>`/`<ColumnPresentations>` element, any element child (skip comments/PIs) whose tag != the allowed child → warning `unexpected <TAG> inside <CONTAINER>`.
 - New package: `pgtp_editor/validation/__init__.py`.

@@ -67,6 +67,49 @@ def test_duplicate_filename_emits_one_error_per_colliding_page():
     assert sorted(e.line for e in errors) == [4, 6]
 
 
+def test_two_top_level_pages_sharing_filename_emit_two_errors():
+    # Genuine collision: two DIRECT children of <Pages> share a fileName.
+    text = (
+        '<Project>\n'
+        '  <Presentation>\n'
+        '    <Pages>\n'
+        '      <Page fileName="event" tableName="t1"/>\n'
+        '      <Page fileName="event" tableName="t2"/>\n'
+        '    </Pages>\n'
+        '  </Presentation>\n'
+        '</Project>\n'
+    )
+    project = load_project_from_text(text)
+    errors = _errors(validate_project(project))
+    assert len(errors) == 2
+    assert all(e.message == 'duplicate Page fileName "event"' for e in errors)
+    assert sorted(e.line for e in errors) == [4, 5]
+
+
+def test_nested_detail_page_reusing_master_filename_emits_no_error():
+    # Regression: a top-level <Page fileName="event"> containing a nested
+    # <Detail><Page fileName="event"> legitimately reuses the master page's
+    # fileName. The dup check is scoped to top-level pages, so this must NOT
+    # produce any ERROR-severity issue.
+    text = (
+        '<Project>\n'
+        '  <Presentation>\n'
+        '    <Pages>\n'
+        '      <Page fileName="event" tableName="t">\n'
+        '        <Details>\n'
+        '          <Detail tableName="d">\n'
+        '            <Page fileName="event" tableName="d"/>\n'
+        '          </Detail>\n'
+        '        </Details>\n'
+        '      </Page>\n'
+        '    </Pages>\n'
+        '  </Presentation>\n'
+        '</Project>\n'
+    )
+    project = load_project_from_text(text)
+    assert _errors(validate_project(project)) == []
+
+
 def test_unique_filenames_emit_no_duplicate_error():
     text = (
         '<Project>\n'

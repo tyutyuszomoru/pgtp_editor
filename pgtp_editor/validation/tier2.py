@@ -8,8 +8,10 @@ panel (click-to-navigate via the issue's line).
 
 Three checks (see the design doc):
   1. Duplicate ``Page@fileName`` (ERROR) -- the one hard rule. Every
-     ``<Page>`` with a non-empty ``fileName`` must be unique document-wide;
-     each colliding ``<Page>`` is reported so all locations are visible.
+     top-level ``<Page>`` (a direct child of ``<Pages>``) with a non-empty
+     ``fileName`` must be unique; each colliding ``<Page>`` is reported so all
+     locations are visible. Nested ``<Detail>`` pages legitimately reuse their
+     master page's ``fileName`` and are excluded.
   2. Missing required attributes (WARNING) -- a top-level ``<Page>`` (direct
      child of ``<Pages>``) missing/empty ``fileName`` or ``tableName``; every
      ``<ColumnPresentation>`` missing/empty ``fieldName``.
@@ -86,6 +88,12 @@ def _check_duplicate_filenames(root) -> list[ValidationIssue]:
     by_name: dict[str, list] = {}
     for page in root.iter("Page"):
         if not _is_element(page):
+            continue
+        # Only top-level pages (direct children of <Pages>) generate files, so
+        # the uniqueness rule applies only to them. Nested <Detail> pages
+        # legitimately reuse their master page's fileName.
+        parent = page.getparent()
+        if parent is None or parent.tag != "Pages":
             continue
         file_name = _attr(page, "fileName")
         if file_name:
