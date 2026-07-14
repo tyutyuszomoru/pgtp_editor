@@ -254,6 +254,36 @@ def test_tools_menu_contents(qtbot):
     ]
 
 
+def test_validate_project_action_populates_audit(qtbot):
+    from pgtp_editor.model.parser import load_project_from_text
+    from pgtp_editor.ui.main_window import _VALIDATION_PREFIX
+
+    window = MainWindow()
+    qtbot.addWidget(window)
+    xml = (
+        '<Project>\n'
+        '  <Presentation>\n'
+        '    <Pages>\n'
+        '      <Page fileName="dup.php" tableName="t1"/>\n'
+        '      <Page fileName="dup.php" tableName="t2"/>\n'
+        '    </Pages>\n'
+        '  </Presentation>\n'
+        '</Project>\n'
+    )
+    window._current_project = load_project_from_text(xml)
+    window.center_stage.xml_editor.setPlainText(xml)
+
+    menu = find_top_menu(window, "Tools")
+    find_action(menu, "Validate Project").trigger()
+
+    validation_items = [
+        window.audit_panel.item(row).text()
+        for row in range(window.audit_panel.count())
+        if window.audit_panel.item(row).text().startswith(_VALIDATION_PREFIX)
+    ]
+    assert any("ERROR" in t for t in validation_items)
+
+
 def test_generation_menu_contents(qtbot):
     window = MainWindow()
     qtbot.addWidget(window)

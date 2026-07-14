@@ -33,6 +33,7 @@ from pgtp_editor.schema_learning.model import Model
 from pgtp_editor.schema_learning.parser import walk_document
 from pgtp_editor.schema_learning.storage import schema_model_path, schema_xsd_path
 from pgtp_editor.schema_learning.xsd_gen import generate_xsd
+from pgtp_editor.validation.tier2 import validate_project
 from pgtp_editor.ui._stub_action import add_stub_action
 from pgtp_editor.ui.about import show_about_dialog
 from pgtp_editor.ui.annotate_schema_values_dialog import AnnotateSchemaValuesDialog
@@ -45,6 +46,8 @@ from pgtp_editor.ui.properties_panel import PropertiesPanel
 
 
 _FIND_RESULT_PREFIX = "[Find] "
+
+_VALIDATION_PREFIX = "[Validate] "
 
 _GENERATOR_OUTPUT_PREFIX = "[PHP] "
 
@@ -304,6 +307,47 @@ class MainWindow(QMainWindow):
             item = self.audit_panel.item(row)
             if item.text().startswith(_FIND_RESULT_PREFIX):
                 self.audit_panel.takeItem(row)
+
+    def _clear_validation_results(self) -> None:
+        """Remove only prior [Validate]-prefixed audit entries, leaving find /
+        schema-learning entries intact. Iterates from the bottom so removals
+        don't shift not-yet-visited indices."""
+        for row in range(self.audit_panel.count() - 1, -1, -1):
+            item = self.audit_panel.item(row)
+            if item.text().startswith(_VALIDATION_PREFIX):
+                self.audit_panel.takeItem(row)
+
+    def _validate_project(self) -> None:
+        """Run the Tier-2 structural-sanity checks and report into the Audit
+        panel; each issue is click-to-navigable via its source line."""
+        if self._current_project is None:
+            self.statusBar().showMessage("Open a project to validate.", 5000)
+            return
+        self._clear_validation_results()
+        issues = validate_project(self._current_project)
+        n_err = 0
+        n_warn = 0
+        for issue in issues:
+            if issue.severity == "error":
+                n_err += 1
+            else:
+                n_warn += 1
+            if issue.line is None:
+                text = f"{_VALIDATION_PREFIX}{issue.severity.upper()}: {issue.message}"
+            else:
+                text = (
+                    f"{_VALIDATION_PREFIX}{issue.severity.upper()} "
+                    f"line {issue.line}: {issue.message}"
+                )
+            item = QListWidgetItem(text)
+            item.setData(Qt.ItemDataRole.UserRole, issue.line)
+            self.audit_panel.addItem(item)
+        if issues:
+            self.statusBar().showMessage(
+                f"Validation: {n_err} error(s), {n_warn} warning(s)", 5000
+            )
+        else:
+            self.statusBar().showMessage("Validation passed — no issues.", 5000)
 
     def _on_audit_item_clicked(self, item) -> None:
         line = item.data(Qt.ItemDataRole.UserRole)
@@ -838,7 +882,8 @@ class MainWindow(QMainWindow):
         menu.addSeparator()
         self._add_stub_action(menu, "Find Reused Tables...")
         menu.addSeparator()
-        self._add_stub_action(menu, "Validate Project")
+        validate_action = menu.addAction("Validate Project")
+        validate_action.triggered.connect(self._validate_project)
         menu.addSeparator()
         reparse_action = menu.addAction("Reparse Raw XML into Tree")
         reparse_action.triggered.connect(self._reparse_raw_xml)
