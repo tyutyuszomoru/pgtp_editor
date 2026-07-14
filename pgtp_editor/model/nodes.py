@@ -58,6 +58,23 @@ class ChildElement:
     element: "etree._Element | None" = None
 
 
+@dataclass(frozen=True)
+class RepresentationVisibility:
+    """A column's visibility within one representation list of a Page's
+    <Columns> block (List/View/Edit/Insert/QuickFilter/FilterBuilder/Print/
+    Export/Compare/MultiEdit).
+
+    visible:    True if shown, False if the entry carries visible="false",
+                None if the column has no <Column> entry in this (present)
+                representation ("not listed").
+    sourceline: the <Column> entry's 1-based source line (for navigation);
+                None when visible is None.
+    """
+    name: str
+    visible: bool | None = None
+    sourceline: int | None = None
+
+
 @dataclass
 class ColumnNode:
     identity: str
@@ -68,6 +85,7 @@ class ColumnNode:
     lookup: "ChildElement | None" = None
     view_properties: "ChildElement | None" = None
     edit_properties: "ChildElement | None" = None
+    representations: list["RepresentationVisibility"] = field(default_factory=list)
 
     @property
     def field_name(self) -> str | None:

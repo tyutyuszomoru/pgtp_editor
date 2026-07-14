@@ -112,3 +112,28 @@ def test_column_node_accepts_sub_element_fields():
     assert col.edit_properties.attrib.get("placeholder") == "Hi"
     assert col.lookup is None
     assert col.view_properties is None
+
+
+from pgtp_editor.model.nodes import ColumnNode, RepresentationVisibility
+
+
+def test_representation_visibility_holds_name_visible_sourceline():
+    rep = RepresentationVisibility(name="Edit", visible=False, sourceline=42)
+    assert (rep.name, rep.visible, rep.sourceline) == ("Edit", False, 42)
+
+
+def test_representation_visibility_defaults():
+    rep = RepresentationVisibility(name="List")
+    assert rep.visible is None
+    assert rep.sourceline is None
+
+
+def test_column_node_representations_defaults_to_empty_list():
+    col = ColumnNode(identity="c", attrib={"fieldName": "c"})
+    assert col.representations == []
+
+
+def test_column_node_accepts_representations():
+    reps = [RepresentationVisibility(name="List", visible=True, sourceline=10)]
+    col = ColumnNode(identity="c", attrib={"fieldName": "c"}, representations=reps)
+    assert col.representations is reps
