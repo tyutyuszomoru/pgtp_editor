@@ -271,7 +271,10 @@ def test_parse_failure_does_not_crash_when_file_unreadable_after_initial_parse_a
     # A missing file raises PgtpParseError via the OSError branch in
     # load_project; _handle_parse_failure's own re-read then also fails with
     # OSError, and must not crash -- it simply leaves the Raw XML tab alone.
-    assert window.center_stage.isTabVisible(window.center_stage.raw_xml_tab_index) is False
+    # Under the new default (spec §6.1) the Raw XML tab is visible; the
+    # unreadable-file branch returns early without touching its visibility, so
+    # it remains visible.
+    assert window.center_stage.isTabVisible(window.center_stage.raw_xml_tab_index) is True
 
 
 from pathlib import Path

@@ -33,6 +33,7 @@ from pgtp_editor.ui._stub_action import add_stub_action
 from pgtp_editor.ui.about import show_about_dialog
 from pgtp_editor.ui.annotate_schema_values_dialog import AnnotateSchemaValuesDialog
 from pgtp_editor.ui.center_stage import CenterStage
+from pgtp_editor.ui import caption_scan
 from pgtp_editor.ui import search
 from pgtp_editor.ui.project_tree import ProjectTreePanel
 from pgtp_editor.ui.properties_panel import PropertiesPanel
@@ -87,6 +88,8 @@ class MainWindow(QMainWindow):
         self._find_all_count = 0
         self._find_all_term = ""
         self.audit_panel.itemClicked.connect(self._on_audit_item_clicked)
+        self.center_stage.caption_management_panel._on_apply = self._apply_caption_edits
+        self.center_stage.caption_management_panel._on_close = self._close_caption_mode
 
         self.properties_panel = PropertiesPanel(xml_editor=self.center_stage.xml_editor)
         self.properties_dock = QDockWidget("Properties", self)
@@ -588,6 +591,35 @@ class MainWindow(QMainWindow):
         self._reveal_raw_xml_tab()
         self.center_stage.find_replace_bar.replace_all()
 
+    def _enter_caption_mode(self):
+        """Tools -> Manage Captions...: snapshot the frozen Raw XML, scan it,
+        load the grid, and enter caption mode (Raw XML hidden). Requires
+        non-empty Raw XML; otherwise a status message and no mode change."""
+        snapshot = self.center_stage.xml_editor.toPlainText()
+        if not snapshot.strip():
+            self.statusBar().showMessage(
+                "Manage Captions: open a project (Raw XML is empty) first.", 5000
+            )
+            return
+        entries = caption_scan.scan_captions(snapshot)
+        self.center_stage.caption_management_panel.load_entries(entries, snapshot_text=snapshot)
+        self.center_stage.enter_caption_mode()
+
+    def _apply_caption_edits(self, edited_text: str) -> None:
+        """Panel Apply callback: count the changed rows, write the edited text
+        into the Raw XML editor buffer (in memory only), and refresh the
+        panel's snapshot so further edits in the same session stay line-valid."""
+        panel = self.center_stage.caption_management_panel
+        changed_count = len(panel.changed_edits())
+        self.center_stage.xml_editor.setPlainText(edited_text)
+        panel.load_entries(caption_scan.scan_captions(edited_text), snapshot_text=edited_text)
+        self.statusBar().showMessage(f"Updated {changed_count} caption(s).", 5000)
+
+    def _close_caption_mode(self):
+        """Panel Close callback: leave caption mode and restore Raw XML.
+        Pending (unapplied) edits are discarded by re-scanning on next enter."""
+        self.center_stage.leave_caption_mode()
+
     def _build_diff_merge_menu(self):
         menu = self.menuBar().addMenu("Diff / Merge")
         compare_action = menu.addAction("Compare / Merge Two Files...")
@@ -611,7 +643,8 @@ class MainWindow(QMainWindow):
 
     def _build_tools_menu(self):
         menu = self.menuBar().addMenu("Tools")
-        self._add_stub_action(menu, "Manage Captions...")
+        manage_captions_action = menu.addAction("Manage Captions...")
+        manage_captions_action.triggered.connect(self._enter_caption_mode)
         menu.addSeparator()
         self._add_stub_action(menu, "Find Reused Tables...")
         menu.addSeparator()
