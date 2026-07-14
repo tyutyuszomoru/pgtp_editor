@@ -24,6 +24,8 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
     QLineEdit,
+    QListWidget,
+    QListWidgetItem,
     QMenu,
     QPushButton,
     QTableView,
@@ -55,6 +57,9 @@ _NEW_VALUE_COLUMN = 7
 # The literal New Value sentinel that resolves to an empty caption.
 NULL_SENTINEL = "<NULL>"
 
+# Appended to a column header when that column has an active value filter.
+_FILTER_INDICATOR = " ▾"
+
 # Warm tint for rows whose (anchor, attribute) group has divergent values.
 _INCONSISTENT_BACKGROUND = QColor("#3a2f1d")
 # Cool tint for changed rows (New Value non-empty). Wins over inconsistency.
@@ -72,6 +77,8 @@ class _CaptionTableModel(QAbstractTableModel):
         super().__init__(parent)
         self._entries: list[CaptionEntry] = []
         self._new_values: list[str] = []
+        # Columns with an active value filter (for the header ▾ indicator).
+        self._filtered_columns: set[int] = set()
 
     # -- population ---------------------------------------------------------
 
@@ -113,9 +120,22 @@ class _CaptionTableModel(QAbstractTableModel):
     def columnCount(self, parent=QModelIndex()) -> int:
         return 0 if parent.isValid() else len(_COLUMNS)
 
+    def set_filtered_columns(self, columns: set[int]) -> None:
+        """Record which columns have an active value filter so their headers
+        show the ▾ indicator. Repaints the horizontal header."""
+        if columns == self._filtered_columns:
+            return
+        self._filtered_columns = set(columns)
+        self.headerDataChanged.emit(
+            Qt.Orientation.Horizontal, 0, len(_COLUMNS) - 1
+        )
+
     def headerData(self, section, orientation, role=Qt.ItemDataRole.DisplayRole):
         if orientation == Qt.Orientation.Horizontal and role == Qt.ItemDataRole.DisplayRole:
-            return _COLUMNS[section]
+            label = _COLUMNS[section]
+            if section in self._filtered_columns:
+                label += _FILTER_INDICATOR
+            return label
         return None
 
     def data(self, index, role=Qt.ItemDataRole.DisplayRole):
@@ -192,16 +212,52 @@ class _CaptionTableModel(QAbstractTableModel):
 
 
 class _CaptionFilterProxyModel(QSortFilterProxyModel):
-    """Multi-column filter: a per-column case-insensitive substring filter,
-    ANDed across all columns. Empty filters match everything."""
+    """Multi-column filter combining two independent, ANDed mechanisms:
+
+    * a per-column case-insensitive **substring** filter (the inline filter
+      row), and
+    * a per-column Excel-style **value-set** filter (the header-filter popup):
+      ``set_value_filter(column, allowed)`` keeps a row iff its cell text for
+      that column is in ``allowed`` (``None`` = no value filter on that
+      column).
+
+    A row is accepted iff it passes every active filter on every column."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self._column_filters: dict[int, str] = {}
+        self._value_filters: dict[int, set[str]] = {}
 
     def set_column_filter(self, column: int, text: str) -> None:
         self._column_filters[column] = text.lower()
         self.invalidate()
+
+    def set_value_filter(self, column: int, allowed: set[str] | None) -> None:
+        """Restrict `column` to rows whose DisplayRole text is in `allowed`.
+        `None` removes the value filter for that column."""
+        if allowed is None:
+            self._value_filters.pop(column, None)
+        else:
+            self._value_filters[column] = set(allowed)
+        self._notify_filtered_columns()
+        self.invalidate()
+
+    def value_filter(self, column: int) -> set[str] | None:
+        allowed = self._value_filters.get(column)
+        return set(allowed) if allowed is not None else None
+
+    def filtered_columns(self) -> set[int]:
+        return set(self._value_filters)
+
+    def _notify_filtered_columns(self) -> None:
+        model = self.sourceModel()
+        setter = getattr(model, "set_filtered_columns", None)
+        if setter is not None:
+            setter(self.filtered_columns())
+
+    def setSourceModel(self, model) -> None:  # noqa: N802 (Qt override)
+        super().setSourceModel(model)
+        self._notify_filtered_columns()
 
     def filterAcceptsRow(self, source_row, source_parent) -> bool:
         model = self.sourceModel()
@@ -212,7 +268,105 @@ class _CaptionFilterProxyModel(QSortFilterProxyModel):
             haystack = (index.data(Qt.ItemDataRole.DisplayRole) or "").lower()
             if needle not in haystack:
                 return False
+        for column, allowed in self._value_filters.items():
+            index = model.index(source_row, column, source_parent)
+            cell = index.data(Qt.ItemDataRole.DisplayRole) or ""
+            if cell not in allowed:
+                return False
         return True
+
+
+class _HeaderFilterPopup(QWidget):
+    """Non-blocking Excel-style value-filter popup for one column.
+
+    Lists the column's DISTINCT source-model values as checkable items (all
+    checked by default, or reflecting the column's current filter), with
+    "Select all" / "Clear" and OK. OK calls ``on_apply(column, allowed)``
+    where ``allowed`` is ``None`` when every value is checked (no filter) and
+    the checked set otherwise. Built with the ``Qt.Popup`` window flag so it
+    dismisses on outside click without a blocking modal loop — tests drive its
+    methods directly and never call ``.exec()``."""
+
+    def __init__(
+        self,
+        column: int,
+        values: Sequence[str],
+        checked: set[str] | None,
+        on_apply: Callable[[int, set[str] | None], None],
+        parent=None,
+    ):
+        super().__init__(parent, Qt.WindowType.Popup)
+        self._column = column
+        self._values = list(values)
+        self._on_apply = on_apply
+
+        self._list = QListWidget()
+        for value in self._values:
+            item = QListWidgetItem(value)
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            initially_checked = checked is None or value in checked
+            item.setCheckState(
+                Qt.CheckState.Checked if initially_checked else Qt.CheckState.Unchecked
+            )
+            self._list.addItem(item)
+
+        select_all_btn = QPushButton("Select all")
+        clear_btn = QPushButton("Clear")
+        ok_btn = QPushButton("OK")
+        select_all_btn.clicked.connect(self.select_all)
+        clear_btn.clicked.connect(self.clear_all)
+        ok_btn.clicked.connect(self._ok)
+
+        top_row = QHBoxLayout()
+        top_row.addWidget(select_all_btn)
+        top_row.addWidget(clear_btn)
+        bottom_row = QHBoxLayout()
+        bottom_row.addStretch(1)
+        bottom_row.addWidget(ok_btn)
+
+        layout = QVBoxLayout(self)
+        layout.addLayout(top_row)
+        layout.addWidget(self._list)
+        layout.addLayout(bottom_row)
+
+    # -- test/drive API -----------------------------------------------------
+
+    def item_labels(self) -> list[str]:
+        return list(self._values)
+
+    def is_checked(self, index: int) -> bool:
+        return self._list.item(index).checkState() == Qt.CheckState.Checked
+
+    def set_checked(self, index: int, checked: bool) -> None:
+        self._list.item(index).setCheckState(
+            Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked
+        )
+
+    def select_all(self) -> None:
+        for i in range(self._list.count()):
+            self._list.item(i).setCheckState(Qt.CheckState.Checked)
+
+    def clear_all(self) -> None:
+        for i in range(self._list.count()):
+            self._list.item(i).setCheckState(Qt.CheckState.Unchecked)
+
+    def checked_values(self) -> set[str]:
+        return {
+            self._values[i]
+            for i in range(self._list.count())
+            if self.is_checked(i)
+        }
+
+    def apply_filter(self) -> None:
+        """Push the current checkbox state to the proxy via on_apply. When all
+        values are checked the column has no filter (``None``)."""
+        checked = self.checked_values()
+        allowed = None if len(checked) == len(self._values) else checked
+        self._on_apply(self._column, allowed)
+
+    def _ok(self) -> None:
+        self.apply_filter()
+        self.close()
 
 
 class CaptionManagementPanel(QWidget):
@@ -237,13 +391,22 @@ class CaptionManagementPanel(QWidget):
 
         self._table = QTableView()
         self._table.setModel(self._proxy)
-        self._table.setSortingEnabled(True)
+        # Header-click opens the Excel-style value-filter popup (see
+        # open_header_filter). Sorting therefore moves off left-click: it is
+        # available programmatically (proxy.sort) and via the header's
+        # right-click context menu (Sort ascending / descending). We disable
+        # QTableView's built-in click-to-sort so a header click filters rather
+        # than sorts, but keep the proxy sortable so sorting still works.
+        self._table.setSortingEnabled(False)
         self._table.setSelectionBehavior(QTableView.SelectionBehavior.SelectItems)
         self._table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._table.customContextMenuRequested.connect(self._show_context_menu)
-        self._table.horizontalHeader().setSectionResizeMode(
-            QHeaderView.ResizeMode.Interactive
-        )
+        header = self._table.horizontalHeader()
+        header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        header.setSortIndicatorShown(True)
+        header.sectionClicked.connect(self.open_header_filter)
+        header.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        header.customContextMenuRequested.connect(self._show_header_context_menu)
 
         # One filter QLineEdit per column (removed by Phase 4).
         self._filter_row = QWidget()
@@ -375,6 +538,52 @@ class CaptionManagementPanel(QWidget):
             return
         for source_row, value in zip(target_rows, clipboard_lines):
             self._model.set_new_value(source_row, value)
+
+    # -- header value filters (Phase 3) -------------------------------------
+
+    def distinct_values(self, column: int) -> list[str]:
+        """De-duplicated, sorted DisplayRole values for `column`, read from the
+        SOURCE model (all rows), independent of the current filtered view."""
+        values = {
+            self._model.index(row, column).data(Qt.ItemDataRole.DisplayRole) or ""
+            for row in range(self._model.rowCount())
+        }
+        return sorted(values)
+
+    def open_header_filter(self, column: int) -> _HeaderFilterPopup:
+        """Build and show the non-blocking value-filter popup for `column`,
+        seeded from the column's distinct values and current filter state.
+        Returns the popup so tests can drive it without ``.exec()``."""
+        popup = _HeaderFilterPopup(
+            column,
+            self.distinct_values(column),
+            self._proxy.value_filter(column),
+            on_apply=self._proxy.set_value_filter,
+            parent=self,
+        )
+        header = self._table.horizontalHeader()
+        pos = header.mapToGlobal(header.rect().bottomLeft())
+        popup.move(pos)
+        popup.show()
+        return popup
+
+    def _show_header_context_menu(self, pos) -> None:
+        header = self._table.horizontalHeader()
+        column = header.logicalIndexAt(pos)
+        if column < 0:
+            return
+        menu = QMenu(self._table)
+        menu.addAction(
+            "Sort ascending",
+            lambda: self._proxy.sort(column, Qt.SortOrder.AscendingOrder),
+        )
+        menu.addAction(
+            "Sort descending",
+            lambda: self._proxy.sort(column, Qt.SortOrder.DescendingOrder),
+        )
+        menu.addSeparator()
+        menu.addAction("Filter…", lambda: self.open_header_filter(column))
+        menu.exec(header.mapToGlobal(pos))
 
     # -- context menu -------------------------------------------------------
 

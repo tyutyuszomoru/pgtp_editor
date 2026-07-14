@@ -424,3 +424,198 @@ def test_close_invokes_close_callback(qtbot):
     qtbot.addWidget(panel)
     panel.close_panel()
     assert calls == [True]
+
+
+# -- Phase 3: Excel-style header value filters ------------------------------
+
+
+def _value_filter_entries():
+    return [
+        _entry(2, "Page", "home", "caption", "Home"),
+        _entry(3, "Detail", "orders", "caption", "Orders"),
+        _entry(4, "Detail", "cart", "caption", "Cart"),
+    ]
+
+
+def test_set_value_filter_hides_unchecked_values(qtbot):
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    panel.load_entries(_value_filter_entries())
+    panel._proxy.set_value_filter(_VALUE_COLUMN, {"Home", "Cart"})
+    assert sorted(_visible_value_column(panel)) == ["Cart", "Home"]
+
+
+def test_set_value_filter_none_clears(qtbot):
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    panel.load_entries(_value_filter_entries())
+    panel._proxy.set_value_filter(_VALUE_COLUMN, {"Home"})
+    assert _visible_value_column(panel) == ["Home"]
+    panel._proxy.set_value_filter(_VALUE_COLUMN, None)
+    assert sorted(_visible_value_column(panel)) == ["Cart", "Home", "Orders"]
+
+
+def test_set_value_filter_empty_set_hides_all(qtbot):
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    panel.load_entries(_value_filter_entries())
+    panel._proxy.set_value_filter(_VALUE_COLUMN, set())
+    assert _visible_value_column(panel) == []
+
+
+def test_value_filter_ands_with_substring_filter(qtbot):
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    panel.load_entries(
+        [
+            _entry(2, "Page", "home", "caption", "Order Home"),
+            _entry(3, "Detail", "orders", "caption", "Orders"),
+            _entry(4, "Detail", "cart", "caption", "Cart"),
+        ]
+    )
+    # Substring filter keeps rows containing "order"; value filter keeps only
+    # "Orders". Intersection is just "Orders".
+    panel._proxy.set_column_filter(_VALUE_COLUMN, "order")
+    panel._proxy.set_value_filter(_VALUE_COLUMN, {"Orders"})
+    assert _visible_value_column(panel) == ["Orders"]
+
+
+def test_value_filter_ands_across_columns(qtbot):
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    panel.load_entries(
+        [
+            _entry(2, "Page", "home", "caption", "Home"),
+            _entry(3, "Detail", "orders", "shortCaption", "Home"),
+            _entry(4, "Detail", "cart", "caption", "Cart"),
+        ]
+    )
+    panel._proxy.set_value_filter(_VALUE_COLUMN, {"Home"})
+    panel._proxy.set_value_filter(_ATTRIBUTE_COLUMN, {"caption"})
+    # Only row 0 has Value "Home" AND Attribute "caption".
+    assert _visible_value_column(panel) == ["Home"]
+
+
+def test_distinct_values_deduped_and_sorted(qtbot):
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    panel.load_entries(
+        [
+            _entry(2, "Page", "home", "caption", "Beta"),
+            _entry(3, "Detail", "orders", "caption", "Alpha"),
+            _entry(4, "Detail", "cart", "caption", "Beta"),
+        ]
+    )
+    assert panel.distinct_values(_VALUE_COLUMN) == ["Alpha", "Beta"]
+
+
+def test_distinct_values_uses_source_not_filtered_view(qtbot):
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    panel.load_entries(_value_filter_entries())
+    # Filter the view down to one row...
+    panel._proxy.set_value_filter(_VALUE_COLUMN, {"Home"})
+    # ...distinct values still reflect the full source model.
+    assert panel.distinct_values(_VALUE_COLUMN) == ["Cart", "Home", "Orders"]
+
+
+# -- header filter popup ----------------------------------------------------
+
+
+def test_popup_builds_checkable_item_per_distinct_value(qtbot):
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    panel.load_entries(_value_filter_entries())
+    popup = panel.open_header_filter(_VALUE_COLUMN)
+    qtbot.addWidget(popup)
+    labels = popup.item_labels()
+    assert labels == ["Cart", "Home", "Orders"]
+    # All checked initially.
+    assert all(popup.is_checked(i) for i in range(len(labels)))
+
+
+def test_popup_clear_then_apply_hides_all(qtbot):
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    panel.load_entries(_value_filter_entries())
+    popup = panel.open_header_filter(_VALUE_COLUMN)
+    qtbot.addWidget(popup)
+    popup.clear_all()
+    popup.apply_filter()
+    assert _visible_value_column(panel) == []
+
+
+def test_popup_select_all_then_apply_clears_filter(qtbot):
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    panel.load_entries(_value_filter_entries())
+    # Start with an active filter.
+    panel._proxy.set_value_filter(_VALUE_COLUMN, {"Home"})
+    popup = panel.open_header_filter(_VALUE_COLUMN)
+    qtbot.addWidget(popup)
+    popup.select_all()
+    popup.apply_filter()
+    assert sorted(_visible_value_column(panel)) == ["Cart", "Home", "Orders"]
+
+
+def test_popup_apply_subset_filters_to_checked(qtbot):
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    panel.load_entries(_value_filter_entries())
+    popup = panel.open_header_filter(_VALUE_COLUMN)
+    qtbot.addWidget(popup)
+    # Uncheck "Orders" (index 2 in sorted order Cart/Home/Orders).
+    labels = popup.item_labels()
+    popup.set_checked(labels.index("Orders"), False)
+    popup.apply_filter()
+    assert sorted(_visible_value_column(panel)) == ["Cart", "Home"]
+
+
+def test_popup_reflects_existing_filter_state(qtbot):
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    panel.load_entries(_value_filter_entries())
+    panel._proxy.set_value_filter(_VALUE_COLUMN, {"Home", "Cart"})
+    popup = panel.open_header_filter(_VALUE_COLUMN)
+    qtbot.addWidget(popup)
+    labels = popup.item_labels()
+    checked = {labels[i] for i in range(len(labels)) if popup.is_checked(i)}
+    assert checked == {"Home", "Cart"}
+
+
+# -- active-filter header indicator -----------------------------------------
+
+
+def test_header_indicator_appears_and_disappears(qtbot):
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    panel.load_entries(_value_filter_entries())
+    model = panel._model
+
+    def header(col):
+        return model.headerData(
+            col, Qt.Orientation.Horizontal, Qt.ItemDataRole.DisplayRole
+        )
+
+    assert header(_VALUE_COLUMN) == "Value"
+    panel._proxy.set_value_filter(_VALUE_COLUMN, {"Home"})
+    assert header(_VALUE_COLUMN) == "Value ▾"
+    # Full select-all (all distinct values) is treated as no filter -> None.
+    panel._proxy.set_value_filter(_VALUE_COLUMN, None)
+    assert header(_VALUE_COLUMN) == "Value"
+
+
+def test_header_indicator_only_on_filtered_column(qtbot):
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    panel.load_entries(_value_filter_entries())
+    model = panel._model
+    panel._proxy.set_value_filter(_ATTRIBUTE_COLUMN, {"caption"})
+
+    def header(col):
+        return model.headerData(
+            col, Qt.Orientation.Horizontal, Qt.ItemDataRole.DisplayRole
+        )
+
+    assert header(_ATTRIBUTE_COLUMN) == "Attribute ▾"
+    assert header(_VALUE_COLUMN) == "Value"
