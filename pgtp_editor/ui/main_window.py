@@ -640,7 +640,10 @@ class MainWindow(QMainWindow):
             finally:
                 self._loading = False
         self._set_dirty(False)
-        # Seed the document snapshot history with the freshly-loaded text.
+        # A newly-opened project is a fresh document: drop the previous
+        # project's snapshots so undo never crosses between documents, then seed
+        # the history with the freshly-loaded text.
+        self._history.clear()
         self._history.push(
             self.center_stage.xml_editor.toPlainText(),
             f"Opened {Path(path).name}",
@@ -1125,6 +1128,9 @@ class MainWindow(QMainWindow):
         self.project_tree.clear()
         self._current_project = None
         self._current_project_path = None
+        # Drop the closed document's snapshots so a later undo can't restore it
+        # into the emptied editor.
+        self._history.clear()
         self._set_dirty(False)
 
     def _revert_project(self) -> None:

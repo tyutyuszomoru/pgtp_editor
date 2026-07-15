@@ -333,3 +333,37 @@ def test_undo_redo_actions_exist_with_shortcuts(qtbot, tmp_path):
     seqs = {s.key().toString() for s in window.findChildren(type(window._undo_shortcut))}
     assert QKeySequence("Ctrl+Z").toString() in seqs
     assert QKeySequence("Ctrl+Y").toString() in seqs
+
+
+def _make_project_named(tmp_path, name, table):
+    path = tmp_path / name
+    path.write_text(
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        f'<Project fileName="{name}">\n'
+        f'  <Page fileName="p1" tableName="{table}" caption="C"/>\n'
+        "</Project>\n",
+        encoding="utf-8",
+        newline="",
+    )
+    return path
+
+
+def test_opening_second_project_resets_history(qtbot, tmp_path):
+    window = _window(qtbot, tmp_path)
+    a = _make_project_named(tmp_path, "a.pgtp", "t.aaa")
+    b = _make_project_named(tmp_path, "b.pgtp", "t.bbb")
+    window.open_project_file(str(a))
+    window.open_project_file(str(b))
+    # History holds only project B's seed -- undo cannot cross into A.
+    assert window._history.can_undo() is False
+    assert [label for _i, label in window._history.entries()] == ["Opened b.pgtp"]
+    assert "t.aaa" not in window.center_stage.xml_editor.toPlainText()
+
+
+def test_close_project_clears_history(qtbot, tmp_path):
+    window = _window(qtbot, tmp_path)
+    path = _make_project(tmp_path)
+    window.open_project_file(str(path))
+    window._close_project(confirm="discard")
+    assert window._history.entries() == []
+    assert window._history.can_undo() is False

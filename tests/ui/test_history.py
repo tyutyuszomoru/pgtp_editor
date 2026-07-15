@@ -129,3 +129,19 @@ def test_entries_order_oldest_to_newest():
 def _texts(h):
     """Test helper: (index, text) pairs oldest->newest."""
     return [(i, snap) for i, snap in enumerate(h._texts())]
+
+
+def test_clear_empties_history():
+    from pgtp_editor.ui.history import SnapshotHistory
+
+    h = SnapshotHistory(10)
+    h.push("a", "one")
+    h.push("b", "two")
+    h.clear()
+    assert h.current_index == -1
+    assert h.entries() == []
+    assert h.can_undo() is False
+    assert h.can_redo() is False
+    # Usable again after clear.
+    h.push("c", "fresh")
+    assert h.entries() == [(0, "fresh")]

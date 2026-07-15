@@ -19,6 +19,13 @@ class SnapshotHistory:
         self._snapshots = []  # list of (text, label), oldest -> newest
         self.current_index = -1
 
+    def clear(self):
+        """Drop all snapshots (used when the document changes identity -- a new
+        project is opened or the current one is closed -- so undo never crosses
+        from one document into another)."""
+        self._snapshots = []
+        self.current_index = -1
+
     def push(self, text, label=""):
         """Append a snapshot. No-op if ``text`` equals the current head's text
         (coalescing). Truncates any redo tail first, then enforces ``max_len``
