@@ -219,10 +219,39 @@ class MainWindow(QMainWindow):
         self._current_diff_target_project = None
         self._current_diff_target_path = None
 
+        # Document dirty-state tracking. `_loading` guards programmatic
+        # setPlainText calls (load/revert/close) so they don't spuriously
+        # mark the buffer dirty.
+        self._dirty = False
+        self._loading = False
+        self.center_stage.xml_editor.textChanged.connect(self._on_editor_text_changed)
+
         self._build_menu_bar()
 
     def _not_implemented(self, label):
         self.statusBar().showMessage(f"Not yet implemented: {label}", 5000)
+
+    # -- Document state: dirty tracking + window title -----------------------
+
+    def _on_editor_text_changed(self) -> None:
+        """Mark the buffer dirty when the user edits the Raw XML editor.
+        Programmatic sets (load/revert/close) run under `_loading` and are
+        ignored so they don't spuriously flag the document dirty."""
+        if self._loading:
+            return
+        self._set_dirty(True)
+
+    def _set_dirty(self, dirty: bool) -> None:
+        self._dirty = dirty
+        self._update_title()
+
+    def _update_title(self) -> None:
+        title = "PGTP Editor"
+        if self._current_project_path:
+            title = f"{title} - {Path(self._current_project_path).name}"
+        if self._dirty:
+            title = f"{title} *"
+        self.setWindowTitle(title)
 
     def _on_tree_selection_changed(self, node, kind):
         self.properties_panel.show_node(node, kind)
@@ -380,7 +409,12 @@ class MainWindow(QMainWindow):
         self._current_project_path = path
         raw_text = self._read_raw_text(path)
         if raw_text is not None:
-            self.center_stage.xml_editor.setPlainText(raw_text)
+            self._loading = True
+            try:
+                self.center_stage.xml_editor.setPlainText(raw_text)
+            finally:
+                self._loading = False
+        self._set_dirty(False)
         self.statusBar().showMessage(f"Opened: {path}", 5000)
         self._enrich_schema_from_file(path)
 
@@ -774,6 +808,7 @@ class MainWindow(QMainWindow):
         except OSError as exc:
             QMessageBox.critical(self, "Save Failed", f"Could not save:\n\n{exc}")
             return
+        self._set_dirty(False)
         self.statusBar().showMessage(f"Saved {Path(self._current_project_path).name}", 5000)
 
     def _save_project_as(self) -> None:
@@ -788,7 +823,99 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Save Failed", f"Could not save:\n\n{exc}")
             return
         self._current_project_path = path
+        self._set_dirty(False)
         self.statusBar().showMessage(f"Saved as {Path(path).name}", 5000)
+
+    # -- Close / Revert ------------------------------------------------------
+
+    def _confirm_close(self) -> str:
+        """Ask the user how to resolve unsaved changes before closing.
+
+        Returns "save", "discard", or "cancel". Split out from
+        `_close_project` so tests can pass `confirm=` directly (or
+        monkeypatch this) instead of ever driving a real modal.
+        """
+        result = QMessageBox.question(
+            self,
+            "Unsaved Changes",
+            "The project has unsaved changes. Save before closing?",
+            QMessageBox.StandardButton.Save
+            | QMessageBox.StandardButton.Discard
+            | QMessageBox.StandardButton.Cancel,
+        )
+        if result == QMessageBox.StandardButton.Save:
+            return "save"
+        if result == QMessageBox.StandardButton.Discard:
+            return "discard"
+        return "cancel"
+
+    def _close_project(self, confirm=None) -> None:
+        """Close the current project, prompting to resolve unsaved changes.
+
+        `confirm` is the test seam: "save"/"discard"/"cancel". When None and
+        the buffer is dirty, `_confirm_close()` decides; when None and clean,
+        the close proceeds (treated as "discard").
+        """
+        if self._dirty:
+            if confirm is None:
+                confirm = self._confirm_close()
+        else:
+            confirm = "discard"
+
+        if confirm == "cancel":
+            return
+        if confirm == "save":
+            self._save_project()
+            if self._dirty:
+                # Save was cancelled (e.g. Save-As dialog dismissed) --
+                # don't discard the user's changes.
+                return
+
+        self._loading = True
+        try:
+            self.center_stage.xml_editor.setPlainText("")
+        finally:
+            self._loading = False
+        self.project_tree.clear()
+        self._current_project = None
+        self._current_project_path = None
+        self._set_dirty(False)
+
+    def _revert_project(self) -> None:
+        """Reload the project from its `<path>.bak` backup, if one exists.
+
+        Restores the .bak content into the editor and rebuilds the tree from
+        it while keeping `_current_project_path` pointing at the real file.
+        The buffer then differs from the on-disk file, so the document is
+        marked dirty.
+        """
+        if not self._current_project_path:
+            self.statusBar().showMessage("Nothing to revert to.", 5000)
+            return
+        bak_path = self._current_project_path + ".bak"
+        if not Path(bak_path).exists():
+            self.statusBar().showMessage("Nothing to revert to.", 5000)
+            return
+
+        try:
+            project = load_project(bak_path)
+        except PgtpParseError as exc:
+            self._handle_parse_failure(bak_path, exc)
+            return
+
+        raw_text = self._read_raw_text(bak_path)
+        if raw_text is not None:
+            self._loading = True
+            try:
+                self.center_stage.xml_editor.setPlainText(raw_text)
+            finally:
+                self._loading = False
+        self.project_tree.populate_from_project(project)
+        self._current_project = project
+        self._set_dirty(True)
+        self.statusBar().showMessage(
+            f"Reverted to {Path(bak_path).name}", 5000
+        )
 
     def _build_menu_bar(self):
         self._build_file_menu()
@@ -810,7 +937,12 @@ class MainWindow(QMainWindow):
         save_action.triggered.connect(self._save_project)
         save_as_action = menu.addAction("Save As...")
         save_as_action.triggered.connect(self._save_project_as)
-        self._add_stub_action(menu, "Close")
+        revert_action = menu.addAction("Revert")
+        revert_action.triggered.connect(self._revert_project)
+        self._revert_action = revert_action
+        close_action = menu.addAction("Close")
+        close_action.triggered.connect(lambda: self._close_project())
+        self._close_action = close_action
         menu.addSeparator()
         exit_action = menu.addAction("Exit")
         exit_action.triggered.connect(self.close)

@@ -10,7 +10,8 @@ def test_file_menu_contents(qtbot):
     assert file_menu is not None
     labels = action_labels(file_menu)
     assert labels == [
-        "New Project", "Open...", "Open Recent", "Save", "Save As...", "Close", "―", "Exit",
+        "New Project", "Open...", "Open Recent", "Save", "Save As...",
+        "Revert", "Close", "―", "Exit",
     ]
 
 
