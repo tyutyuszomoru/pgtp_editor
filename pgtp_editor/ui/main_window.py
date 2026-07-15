@@ -4,7 +4,7 @@ from pathlib import Path
 
 from lxml import etree
 from PySide6.QtCore import Qt, QSettings, QTimer, QUrl
-from PySide6.QtGui import QDesktopServices, QKeySequence, QShortcut
+from PySide6.QtGui import QAction, QDesktopServices, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QApplication,
     QDialog,
@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMessageBox,
     QTabWidget,
+    QToolBar,
     QVBoxLayout,
     QWidget,
 )
@@ -49,7 +50,14 @@ from pgtp_editor.ui.manual_panel import (
     parse_chapters,
 )
 from pgtp_editor.ui.code_editor import CodeEditorDialog
+from pgtp_editor.ui.customize_toolbar_dialog import CustomizeToolbarDialog
 from pgtp_editor.ui.history import SnapshotHistory
+from pgtp_editor.ui.toolbar_registry import (
+    AVAILABLE_COMMANDS,
+    DEFAULT_TOOLBAR_IDS,
+    label_for,
+    valid_ids,
+)
 from pgtp_editor.ui.event_body import (
     extract_event_body,
     insert_event_handler,
@@ -270,6 +278,12 @@ class MainWindow(QMainWindow):
 
         self._build_menu_bar()
 
+        # Customizable icon bar (Sub-project E). Built after the slots and menus
+        # exist. objectName "main_toolbar" so D's saveState/restoreState covers
+        # it. The Customize dialog reference is held so it isn't GC'd while shown.
+        self._customize_toolbar_dialog = None
+        self._build_toolbar()
+
         # Restore persisted window geometry/dock state and theme (Sub-project D).
         # Done after docks/toolbars/menus exist so restoreState can match dock
         # object names and the theme action can be checked. A fresh settings
@@ -302,6 +316,72 @@ class MainWindow(QMainWindow):
     def _on_light_theme_toggled(self, checked):
         apply_theme(QApplication.instance(), checked)
         self._settings.setValue("lightTheme", checked)
+
+    # -- Customizable toolbar (Sub-project E) --------------------------------
+
+    def _build_toolbar(self):
+        """Create the Main Toolbar and restore its command set from settings."""
+        self._toolbar = self.addToolBar("Main Toolbar")
+        # objectName so D's saveState()/restoreState() persists this toolbar's
+        # position along with the docks.
+        self._toolbar.setObjectName("main_toolbar")
+        # id -> slot for every command the toolbar can host.
+        self._toolbar_slots = {
+            "open": self._open_project,
+            "save": self._save_project,
+            "undo": self._undo,
+            "redo": self._redo,
+            "find": self._show_find_bar,
+            "validate": self._validate_project,
+            "generate": self._generate_php,
+        }
+        self._toolbar_ids = []
+        self._apply_toolbar_ids(self._restore_toolbar_ids())
+
+    def _restore_toolbar_ids(self):
+        """Read the stored toolbar ids, tolerant of the backend returning a
+        list, a comma-separated string, or None; fall back to the default set
+        when nothing valid is stored."""
+        stored = self._settings.value("toolbarIds")
+        if stored is None:
+            ids = DEFAULT_TOOLBAR_IDS
+        elif isinstance(stored, str):
+            ids = stored.split(",")
+        else:
+            ids = list(stored)
+        ids = valid_ids(ids)
+        return ids if ids else DEFAULT_TOOLBAR_IDS
+
+    def _apply_toolbar_ids(self, ids):
+        """Clear and repopulate the toolbar from an ordered id list (unknown
+        and duplicate ids are dropped)."""
+        ids = valid_ids(ids)
+        self._toolbar.clear()
+        for command_id in ids:
+            action = QAction(label_for(command_id), self)
+            action.triggered.connect(self._toolbar_slots[command_id])
+            self._toolbar.addAction(action)
+        self._toolbar_ids = ids
+
+    def _save_toolbar_ids(self):
+        """Persist the current toolbar ids (stored as a list)."""
+        self._settings.setValue("toolbarIds", self._toolbar_ids)
+
+    def _apply_and_save_toolbar_ids(self, ids):
+        """Apply an id list to the toolbar and persist it (test seam / the
+        Customize dialog's OK path)."""
+        self._apply_toolbar_ids(ids)
+        self._save_toolbar_ids()
+
+    def _open_customize_toolbar(self):
+        """Open the (non-modal) Customize Toolbar dialog; on OK, apply and
+        persist the chosen ordered id list."""
+        dialog = CustomizeToolbarDialog(AVAILABLE_COMMANDS, self._toolbar_ids, self)
+        dialog.accepted.connect(
+            lambda: self._apply_and_save_toolbar_ids(dialog.result_ids())
+        )
+        self._customize_toolbar_dialog = dialog
+        dialog.show()
 
     def _not_implemented(self, label):
         self.statusBar().showMessage(f"Not yet implemented: {label}", 5000)
@@ -1207,6 +1287,10 @@ class MainWindow(QMainWindow):
         self._light_theme_action.setCheckable(True)
         self._light_theme_action.setChecked(False)
         self._light_theme_action.toggled.connect(self._on_light_theme_toggled)
+
+        menu.addSeparator()
+        customize_toolbar_action = menu.addAction("Customize Toolbar…")
+        customize_toolbar_action.triggered.connect(self._open_customize_toolbar)
 
     def _add_stub_action(self, menu, label):
         return add_stub_action(menu, label, self._not_implemented)

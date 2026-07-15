@@ -159,6 +159,8 @@ def test_view_menu_contents(qtbot):
         "Expand All", "Collapse All",
         "―",
         "Light Theme",
+        "―",
+        "Customize Toolbar…",
     ]
 
 
