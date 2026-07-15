@@ -495,8 +495,12 @@ class MainWindow(QMainWindow):
             self._apply_history_text(text)
 
     def _history_entries(self):
-        """Snapshot entries newest-first, for the jump-list popup (test seam)."""
-        return list(reversed(self._history.entries()))
+        """Edit snapshots newest-first, for the jump-list popup (test seam).
+
+        Uses ``edit_entries`` so Open/Revert baselines are not shown -- opening
+        a file is not an undoable item; the baseline is only the floor undo
+        returns to."""
+        return list(reversed(self._history.edit_entries()))
 
     def _history_jump(self, index) -> None:
         text = self._history.jump_to(index)
@@ -511,7 +515,12 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout(dialog)
         listw = QListWidget(dialog)
         layout.addWidget(listw)
-        for index, label in self._history_entries():
+        entries = self._history_entries()
+        if not entries:
+            placeholder = QListWidgetItem("(no edits to undo)")
+            placeholder.setFlags(Qt.ItemFlag.NoItemFlags)
+            listw.addItem(placeholder)
+        for index, label in entries:
             item = QListWidgetItem(label or f"Snapshot {index}")
             item.setData(Qt.ItemDataRole.UserRole, index)
             listw.addItem(item)
@@ -706,6 +715,7 @@ class MainWindow(QMainWindow):
         self._history.push(
             self.center_stage.xml_editor.toPlainText(),
             f"Opened {Path(path).name}",
+            baseline=True,
         )
         self.statusBar().showMessage(f"Opened: {path}", 5000)
         self._enrich_schema_from_file(path)
@@ -916,6 +926,7 @@ class MainWindow(QMainWindow):
         self._history.push(
             self.center_stage.xml_editor.toPlainText(),
             f"Opened (unparsed) {Path(path).name}",
+            baseline=True,
         )
         if exc.line is not None:
             self.center_stage.xml_editor.highlight_error_line(exc.line)
@@ -1226,6 +1237,7 @@ class MainWindow(QMainWindow):
             self._history.push(
                 self.center_stage.xml_editor.toPlainText(),
                 f"Reverted {Path(self._current_project_path).name}",
+                baseline=True,
             )
         self.project_tree.populate_from_project(project)
         self._current_project = project

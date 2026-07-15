@@ -145,3 +145,21 @@ def test_clear_empties_history():
     # Usable again after clear.
     h.push("c", "fresh")
     assert h.entries() == [(0, "fresh")]
+
+
+def test_edit_entries_excludes_baselines():
+    from pgtp_editor.ui.history import SnapshotHistory
+
+    h = SnapshotHistory(10)
+    h.push("opened", "Opened f.pgtp", baseline=True)
+    h.push("e1", "Edit")
+    h.push("e2", "Edit")
+    # entries() has all 3; edit_entries() drops the baseline.
+    assert [lbl for _i, lbl in h.entries()] == ["Opened f.pgtp", "Edit", "Edit"]
+    assert [lbl for _i, lbl in h.edit_entries()] == ["Edit", "Edit"]
+    # Indices in edit_entries are the real snapshot indices (1, 2).
+    assert [i for i, _lbl in h.edit_entries()] == [1, 2]
+    # Undo still bottoms out at the baseline (index 0) and no further.
+    assert h.undo() == "e1"
+    assert h.undo() == "opened"
+    assert h.can_undo() is False

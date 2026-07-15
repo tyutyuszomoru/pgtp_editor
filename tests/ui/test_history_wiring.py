@@ -131,11 +131,26 @@ def test_history_entries_reflects_order_newest_first(qtbot, tmp_path):
     window.open_project_file(str(path))
     window.center_stage.xml_editor.setPlainText("second")
     window._capture_snapshot_now()
+    window.center_stage.xml_editor.setPlainText("third")
+    window._capture_snapshot_now()
 
-    entries = window._history_entries()  # newest-first
+    entries = window._history_entries()  # newest-first, edits only
 
-    assert entries[0][1] == "Edit"
-    assert "demo.pgtp" in entries[-1][1]
+    # Two edits, newest first; the "Opened" baseline is NOT listed.
+    assert [label for _i, label in entries] == ["Edit", "Edit"]
+    assert not any("demo.pgtp" in label for _i, label in entries)
+
+
+def test_open_baseline_is_not_an_undo_item(qtbot, tmp_path):
+    window = _window(qtbot, tmp_path)
+    path = _make_project(tmp_path)
+    window.open_project_file(str(path))
+    # Right after opening: nothing to undo, and the jump list is empty
+    # (the "Opened" baseline is the floor, not an item).
+    assert window._history_entries() == []
+    assert window._history.can_undo() is False
+    # But the baseline still exists internally as the undo floor.
+    assert window._history.entries() == [(0, "Opened demo.pgtp")]
 
 
 def test_history_jump_sets_editor_to_snapshot(qtbot, tmp_path):
