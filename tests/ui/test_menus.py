@@ -222,7 +222,11 @@ def test_schema_menu_contents(qtbot):
     qtbot.addWidget(window)
     menu = find_top_menu(window, "Schema")
     assert menu is not None
-    assert action_labels(menu) == ["Annotate Schema Values..."]
+    assert action_labels(menu) == [
+        "Annotate Schema Values...",
+        "Open XSD",
+        "Open XSD Labels (JSON)",
+    ]
 
 
 def test_schema_menu_sits_between_diff_merge_and_tools(qtbot):

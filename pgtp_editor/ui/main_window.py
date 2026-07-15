@@ -57,6 +57,8 @@ from pgtp_editor.ui import caption_scan
 from pgtp_editor.ui import search
 from pgtp_editor.ui.project_tree import ProjectTreePanel
 from pgtp_editor.ui.properties_panel import PropertiesPanel
+from pgtp_editor.ui.schema_viewer import SchemaViewerWindow
+from pgtp_editor.ui.schema_viewer_data import open_labels_text, open_xsd_text
 
 
 _FIND_RESULT_PREFIX = "[Find] "
@@ -89,6 +91,10 @@ class MainWindow(QMainWindow):
         self._generator_runner = generator_runner if generator_runner is not None else GeneratorRunner()
         self._current_output_folder = None
         self._is_generating = False
+        # Read-only schema viewer windows (Phase 1). Held on self so they are
+        # not garbage-collected while open; reused/refreshed on reopen.
+        self._xsd_viewer = None
+        self._labels_viewer = None
         self.setWindowTitle("PGTP Editor")
         self.resize(1400, 900)
 
@@ -1190,10 +1196,38 @@ class MainWindow(QMainWindow):
         menu = self.menuBar().addMenu("Schema")
         annotate_action = menu.addAction("Annotate Schema Values...")
         annotate_action.triggered.connect(self._open_annotate_schema_values)
+        open_xsd_action = menu.addAction("Open XSD")
+        open_xsd_action.triggered.connect(self._open_xsd_viewer)
+        open_labels_action = menu.addAction("Open XSD Labels (JSON)")
+        open_labels_action.triggered.connect(self._open_labels_viewer)
 
     def _open_annotate_schema_values(self):
         dialog = AnnotateSchemaValuesDialog(self, schema_storage_dir=self._schema_storage_dir)
         dialog.exec()
+
+    _NO_SCHEMA_MESSAGE = "No schema learned yet — open a .pgtp file first."
+
+    def _open_xsd_viewer(self):
+        text = open_xsd_text(self._schema_storage_dir)
+        if text is None:
+            self.statusBar().showMessage(self._NO_SCHEMA_MESSAGE, 5000)
+            return
+        if self._xsd_viewer is None:
+            self._xsd_viewer = SchemaViewerWindow(self)
+        self._xsd_viewer.set_title("Schema XSD")
+        self._xsd_viewer.set_content(text)
+        self._xsd_viewer.show()
+
+    def _open_labels_viewer(self):
+        text = open_labels_text(self._schema_storage_dir)
+        if text is None:
+            self.statusBar().showMessage(self._NO_SCHEMA_MESSAGE, 5000)
+            return
+        if self._labels_viewer is None:
+            self._labels_viewer = SchemaViewerWindow(self)
+        self._labels_viewer.set_title("Schema Labels (JSON)")
+        self._labels_viewer.set_content(text)
+        self._labels_viewer.show()
 
     def _build_tools_menu(self):
         menu = self.menuBar().addMenu("Tools")
