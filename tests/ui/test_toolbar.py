@@ -119,3 +119,15 @@ def test_opening_customize_toolbar_does_not_block(qtbot, tmp_path):
     window._open_customize_toolbar()  # non-modal show(), must not raise/block
     assert window._customize_toolbar_dialog is not None
     assert window._customize_toolbar_dialog.selected_ids() == window._toolbar_ids
+
+
+def test_toolbar_shows_text_labels_not_blank_buttons(qtbot, tmp_path):
+    from PySide6.QtCore import Qt
+
+    window = MainWindow(settings=_ini_settings(tmp_path))
+    qtbot.addWidget(window)
+    # The actions carry no icons, so the toolbar must use a text style or the
+    # buttons render blank.
+    assert window._toolbar.toolButtonStyle() == Qt.ToolButtonStyle.ToolButtonTextOnly
+    labels = [a.text() for a in window._toolbar.actions()]
+    assert all(labels)  # no empty labels

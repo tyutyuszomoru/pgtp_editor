@@ -325,6 +325,9 @@ class MainWindow(QMainWindow):
         # objectName so D's saveState()/restoreState() persists this toolbar's
         # position along with the docks.
         self._toolbar.setObjectName("main_toolbar")
+        # The toolbar actions have no icons, so show their text labels --
+        # otherwise the default icon-only style renders blank buttons.
+        self._toolbar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
         # id -> slot for every command the toolbar can host.
         self._toolbar_slots = {
             "open": self._open_project,
