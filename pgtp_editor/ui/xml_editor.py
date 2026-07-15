@@ -20,6 +20,7 @@ from PySide6.QtGui import (
     QKeySequence,
     QPainter,
     QPalette,
+    QPen,
     QSyntaxHighlighter,
     QTextCharFormat,
     QTextCursor,
@@ -345,20 +346,29 @@ class _EditorGutter(QWidget):
 
     def _draw_fold_glyph(self, painter: QPainter, top: int, collapsed: bool) -> None:
         line_height = self._editor.fontMetrics().height()
-        glyph_left = 0
-        glyph_size = min(_FOLD_GLYPH_WIDTH - 4, line_height - 4)
-        cx = glyph_left + _FOLD_GLYPH_WIDTH // 2
+        glyph_size = min(_FOLD_GLYPH_WIDTH - 6, line_height - 6)
+        half = max(2, glyph_size // 2)
+        depth = max(1, half // 2)  # how far the chevron's tip protrudes
+        cx = _FOLD_GLYPH_WIDTH // 2
         cy = top + line_height // 2
-        half = glyph_size // 2
-        painter.setPen(self._editor._gutter_fg_color)
-        painter.setBrush(self._editor._gutter_fg_color)
+        # A fine, unfilled chevron (technical arrow) rather than a filled triangle.
+        pen = QPen(self._editor._gutter_fg_color)
+        pen.setWidthF(1.3)
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+        painter.setPen(pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.save()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         if collapsed:
-            # Right-pointing triangle.
-            points = [QPoint(cx - half, cy - half), QPoint(cx - half, cy + half), QPoint(cx + half, cy)]
+            # Right-pointing chevron ">"
+            painter.drawLine(cx - depth, cy - half, cx + depth, cy)
+            painter.drawLine(cx + depth, cy, cx - depth, cy + half)
         else:
-            # Down-pointing triangle.
-            points = [QPoint(cx - half, cy - half), QPoint(cx + half, cy - half), QPoint(cx, cy + half)]
-        painter.drawPolygon(points)
+            # Down-pointing chevron "v"
+            painter.drawLine(cx - half, cy - depth, cx, cy + depth)
+            painter.drawLine(cx, cy + depth, cx + half, cy - depth)
+        painter.restore()
 
     def mousePressEvent(self, event) -> None:
         if event.position().x() >= _FOLD_GLYPH_WIDTH:

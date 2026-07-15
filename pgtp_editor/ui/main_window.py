@@ -1280,14 +1280,19 @@ class MainWindow(QMainWindow):
 
     def _build_edit_menu(self):
         menu = self.menuBar().addMenu("Edit")
-        # Quick keys step (Ctrl+Z/Ctrl+Y wired as QShortcuts in __init__); the
-        # menu items open the non-modal jump list of recent snapshots.
+        # Undo and Redo are distinct single-step actions (Ctrl+Z / Ctrl+Y are
+        # wired as QShortcuts + editor key-routing in __init__; the menu items
+        # step directly). "History…" opens the non-modal navigator where moving
+        # back = undo and forward = redo.
         undo_action = menu.addAction("Undo")
-        undo_action.triggered.connect(self._open_history_jump_list)
+        undo_action.triggered.connect(self._undo)
         self._undo_action = undo_action
         redo_action = menu.addAction("Redo")
-        redo_action.triggered.connect(self._open_history_jump_list)
+        redo_action.triggered.connect(self._redo)
         self._redo_action = redo_action
+        history_action = menu.addAction("History…")
+        history_action.triggered.connect(self._open_history_jump_list)
+        self._history_action = history_action
         menu.addSeparator()
         self._add_stub_action(menu, "Cut")
         self._add_stub_action(menu, "Copy")

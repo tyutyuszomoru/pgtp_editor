@@ -382,3 +382,21 @@ def test_close_project_clears_history(qtbot, tmp_path):
     window._close_project(confirm="discard")
     assert window._history.entries() == []
     assert window._history.can_undo() is False
+
+
+def test_edit_menu_undo_and_redo_step_distinctly(qtbot, tmp_path):
+    window = _window(qtbot, tmp_path)
+    path = _make_project(tmp_path)
+    window.open_project_file(str(path))
+    window.center_stage.xml_editor.setPlainText("edit one")
+    window._capture_snapshot_now()
+    edit_menu = find_top_menu(window, "Edit")
+
+    # Edit > Undo steps back to the opened text (distinct from Redo).
+    find_action(edit_menu, "Undo").trigger()
+    assert window.center_stage.xml_editor.toPlainText() != "edit one"
+    # Edit > Redo steps forward again.
+    find_action(edit_menu, "Redo").trigger()
+    assert window.center_stage.xml_editor.toPlainText() == "edit one"
+    # History... exists as the combined navigator (opens non-modally).
+    assert find_action(edit_menu, "History…") is not None

@@ -55,7 +55,7 @@ def test_edit_menu_contents(qtbot):
     qtbot.addWidget(window)
     edit_menu = find_top_menu(window, "Edit")
     assert action_labels(edit_menu) == [
-        "Undo", "Redo", "―",
+        "Undo", "Redo", "History…", "―",
         "Cut", "Copy", "Paste", "Delete", "―",
         "Find...", "Find Next", "Find All", "Replace...", "Replace All", "―",
         "Select Enclosing Block", "Select Parent Block", "―",
