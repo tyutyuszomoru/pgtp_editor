@@ -83,6 +83,13 @@ class MainWindow(QMainWindow):
             on_compare_page=self._compare_page_with,
             on_compare_detail=self._compare_detail_with,
             on_selection_changed=self._on_tree_selection_changed,
+            on_activate_node=self._on_tree_activate_node,
+            on_jump_to_xml=self._on_tree_jump_to_xml,
+            on_select_xml_block=self._on_tree_select_xml_block,
+            on_see_table_in_caption=self._on_tree_see_table_in_caption,
+            on_see_table_details_in_caption=self._on_tree_see_table_details_in_caption,
+            on_jump_to_column_visibility=self._on_tree_jump_to_column_visibility,
+            on_see_column_in_caption=self._on_tree_see_column_in_caption,
         )
         self.tree_dock = QDockWidget("Project Tree", self)
         self.tree_dock.setObjectName("tree_dock")
@@ -139,6 +146,9 @@ class MainWindow(QMainWindow):
         self.center_stage.xml_editor.read_only_edit_attempted.connect(
             self._on_read_only_edit_attempted
         )
+        self.center_stage.xml_editor.find_selected_text.connect(
+            self._on_find_selected_text
+        )
 
         # Permanent status-bar mode indicator (Editing vs Caption Mode).
         self._mode_label = QLabel("Editing Mode")
@@ -162,6 +172,123 @@ class MainWindow(QMainWindow):
 
     def _on_tree_selection_changed(self, node, kind):
         self.properties_panel.show_node(node, kind)
+
+    # -- Phase D: tree context-menu + double-click callbacks -----------------
+
+    def _tree_jump_to_line(self, line) -> None:
+        """Reveal the Raw XML tab and navigate the editor to `line`. Shared by
+        double-click activation and the "Jump to …" menu actions. No-op when
+        `line` is None (e.g. a node with no known sourceline)."""
+        if line is None:
+            return
+        self.center_stage.setCurrentIndex(self.center_stage.raw_xml_tab_index)
+        self.center_stage.xml_editor.navigate_to_line(line)
+
+    def _on_tree_activate_node(self, node, kind):
+        """Double-click a tree item: jump the editor to the node's source line
+        (for a Detail, its outer <Detail> open line). Single-click still only
+        updates Properties -- the editor jumps ONLY on explicit activation."""
+        if node is None:
+            return
+        self._tree_jump_to_line(getattr(node, "sourceline", None))
+
+    def _on_tree_jump_to_xml(self, node):
+        if node is None:
+            return
+        self._tree_jump_to_line(getattr(node, "sourceline", None))
+
+    def _on_tree_select_xml_block(self, node):
+        """Select the whole <Page>/<Detail> element block: navigate to the
+        node's open-tag line, move the cursor INTO the opening tag (first '<'
+        + 1) so the enclosing element is the node itself, then select it."""
+        if node is None:
+            return
+        line = getattr(node, "sourceline", None)
+        if line is None:
+            return
+        editor = self.center_stage.xml_editor
+        self.center_stage.setCurrentIndex(self.center_stage.raw_xml_tab_index)
+        editor.navigate_to_line(line)
+        self._place_cursor_in_opening_tag(line)
+        editor.select_enclosing_block()
+
+    def _place_cursor_in_opening_tag(self, line: int) -> None:
+        """Put the editor caret just past the first '<' on `line`, so the
+        enclosing element resolved by select_enclosing_block is the element
+        whose opening tag starts there (not its parent, which a caret in the
+        leading whitespace would resolve to)."""
+        from PySide6.QtGui import QTextCursor
+
+        editor = self.center_stage.xml_editor
+        text = editor.line_text(line)
+        lt = text.find("<")
+        column = lt + 1 if lt != -1 else 0
+        block = editor.document().findBlockByNumber(max(0, line - 1))
+        cursor = QTextCursor(block)
+        cursor.setPosition(block.position() + column)
+        editor.setTextCursor(cursor)
+
+    def _on_tree_see_table_in_caption(self, node):
+        if node is None:
+            return
+        self.enter_caption_mode_for_table(node.table_name or "")
+
+    def _on_tree_see_table_details_in_caption(self, node):
+        if node is None:
+            return
+        self.enter_caption_mode_for_table_details(node.table_name or "")
+
+    def _on_tree_jump_to_column_visibility(self, node):
+        """Jump the editor to the owning page/detail's <Columns> element. The
+        ColumnNode retains its <ColumnPresentation> lxml element; walk up to the
+        ancestor that owns a <Columns> child and use that child's sourceline.
+        Falls back to the column's own line if it cannot be resolved."""
+        if node is None:
+            return
+        line = self._columns_block_line(node)
+        if line is None:
+            line = getattr(node, "sourceline", None)
+        self._tree_jump_to_line(line)
+
+    @staticmethod
+    def _columns_block_line(node):
+        """Resolve the <Columns> block sourceline for a ColumnNode, or None.
+
+        The retained element is the <ColumnPresentation>; its owning page/detail
+        element holds both <ColumnPresentations> (presentation) and <Columns>
+        (visibility) as siblings. Walk ancestors until one has a <Columns>
+        child and return that child's sourceline."""
+        element = getattr(node, "element", None)
+        if element is None:
+            return None
+        current = element.getparent()
+        while current is not None:
+            columns = current.find("Columns")
+            if columns is not None:
+                return columns.sourceline
+            current = current.getparent()
+        return None
+
+    def _on_tree_see_column_in_caption(self, node):
+        if node is None:
+            return
+        table_name = self._owning_table_name(node)
+        self.enter_caption_mode_for_field(node.field_name or "", table_name)
+
+    @staticmethod
+    def _owning_table_name(node):
+        """The tableName of the page/detail owning this column, from the
+        retained <ColumnPresentation> element -- nearest ancestor with a
+        tableName attribute. None if unresolvable (filter then keys on
+        fieldName alone)."""
+        element = getattr(node, "element", None)
+        if element is None:
+            return None
+        for ancestor in element.iterancestors():
+            table_name = ancestor.get("tableName")
+            if table_name:
+                return table_name
+        return None
 
     def _on_editor_line_clicked(self, line: int) -> None:
         if self._current_project is None:
@@ -728,6 +855,15 @@ class MainWindow(QMainWindow):
         self._reveal_raw_xml_tab()
         self.center_stage.find_replace_bar.find_next()
 
+    def _on_find_selected_text(self, text: str) -> None:
+        """Editor right-click "Find": reveal the Raw XML tab, prefill the find
+        bar with the selection, and run Find Next -- the same path Edit ->
+        Find/Find Next drives."""
+        self._reveal_raw_xml_tab()
+        self.center_stage.find_replace_bar.show_find()
+        self.center_stage.find_replace_bar.set_find_text(text)
+        self.center_stage.find_replace_bar.find_next()
+
     def _find_all(self):
         self._reveal_raw_xml_tab()
         self.center_stage.find_replace_bar.find_all()
@@ -736,16 +872,17 @@ class MainWindow(QMainWindow):
         self._reveal_raw_xml_tab()
         self.center_stage.find_replace_bar.replace_all()
 
-    def _enter_caption_mode(self):
+    def _enter_caption_mode(self) -> bool:
         """Tools -> Manage Captions...: snapshot the frozen Raw XML, scan it,
         load the grid, and enter caption mode (Raw XML hidden). Requires
-        non-empty Raw XML; otherwise a status message and no mode change."""
+        non-empty Raw XML; otherwise a status message and no mode change.
+        Returns True iff caption mode was entered (False if Raw XML empty)."""
         snapshot = self.center_stage.xml_editor.toPlainText()
         if not snapshot.strip():
             self.statusBar().showMessage(
                 "Manage Captions: open a project (Raw XML is empty) first.", 5000
             )
-            return
+            return False
         entries = caption_scan.scan_captions(snapshot)
         self.center_stage.caption_management_panel.load_entries(entries, snapshot_text=snapshot)
         self.center_stage.enter_caption_mode()
@@ -758,6 +895,31 @@ class MainWindow(QMainWindow):
         self._caption_replace_shortcut.setEnabled(True)
         self._editor_find_action.setEnabled(False)
         self._editor_replace_action.setEnabled(False)
+        return True
+
+    def enter_caption_mode_for_table(self, table_name: str) -> None:
+        """Enter caption mode, then filter the grid to `table_name`'s rows
+        (Phase C.2). No-op filter if entering failed (empty Raw XML)."""
+        if self._enter_caption_mode():
+            self.center_stage.caption_management_panel.filter_to_table(table_name)
+
+    def enter_caption_mode_for_table_details(self, table_name: str) -> None:
+        """Enter caption mode, then filter to `table_name`'s Detail-embed rows
+        (Phase C.2)."""
+        if self._enter_caption_mode():
+            self.center_stage.caption_management_panel.filter_to_table_details(
+                table_name
+            )
+
+    def enter_caption_mode_for_field(
+        self, field_name: str, table_name: str | None = None
+    ) -> None:
+        """Enter caption mode, then filter to the column `field_name` (optionally
+        also `table_name`) and select/scroll to its row (Phase C.2)."""
+        if self._enter_caption_mode():
+            self.center_stage.caption_management_panel.filter_to_field(
+                field_name, table_name
+            )
 
     def _apply_caption_edits(self, edited_text: str) -> None:
         """Panel Apply callback: count the changed rows, write the edited text

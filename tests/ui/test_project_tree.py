@@ -116,33 +116,22 @@ def test_page_context_menu(qtbot):
     tree = make_populated_tree(qtbot, on_stub_action=lambda label: None)
     menu = tree.build_page_menu(tree.topLevelItem(0))
     assert action_labels(menu) == [
-        "Edit Properties", "―",
-        "Copy", "Paste", "Duplicate", "Copy to Other Open Project...", "―",
-        "Add Detail...", "―",
-        "Compare This Page With...", "―",
-        "Find Column Usages...", "Rename / Unify Captions...", "―",
-        "Delete Page",
+        "Jump to page xml",
+        "Select page xml",
+        "Add Event Handler",
+        "See database table in caption mode",
     ]
 
 
-def test_detail_context_menu_shows_compare_instance_when_table_reused(qtbot):
+def test_detail_context_menu(qtbot):
     tree = make_populated_tree(qtbot, on_stub_action=lambda label: None)
-    attachments_detail = tree.topLevelItem(0).child(1)
-    menu = tree.build_detail_menu(attachments_detail)
+    detail_item = tree.topLevelItem(0).child(0)
+    menu = tree.build_detail_menu(detail_item)
     assert action_labels(menu) == [
-        "Edit Properties", "―",
-        "Cut", "Copy", "Paste", "Duplicate", "Copy to Other Open Project...", "―",
-        "Add Nested Detail...", "―",
-        "Compare This Detail With...", "Compare with Other Instance...", "―",
-        "Delete Detail (+ nested)",
+        "Jump to detail xml",
+        "Select detail xml",
+        "See database table in caption mode",
     ]
-
-
-def test_detail_context_menu_hides_compare_instance_when_table_unique(qtbot):
-    tree = make_populated_tree(qtbot, on_stub_action=lambda label: None)
-    sub_item_detail = tree.topLevelItem(0).child(0)
-    menu = tree.build_detail_menu(sub_item_detail)
-    assert "Compare with Other Instance..." not in action_labels(menu)
 
 
 def test_column_context_menu(qtbot):
@@ -150,9 +139,9 @@ def test_column_context_menu(qtbot):
     column_item = tree.topLevelItem(0).child(0).child(0)
     menu = tree.build_column_menu(column_item)
     assert action_labels(menu) == [
-        "Edit Caption / Hint / Short Caption", "―",
-        "Find All Usages of This Column", "Unify Captions Across Pages...", "―",
-        "Delete Column",
+        "Jump to column visibility in xml",
+        "Jump to column presentation in xml",
+        "See column in caption mode",
     ]
 
 
@@ -168,8 +157,8 @@ def test_stub_action_callback_invoked(qtbot):
     calls = []
     tree = make_populated_tree(qtbot, on_stub_action=calls.append)
     menu = tree.build_page_menu(tree.topLevelItem(0))
-    find_action(menu, "Delete Page").trigger()
-    assert calls == ["Delete Page"]
+    find_action(menu, "Add Event Handler").trigger()
+    assert calls == ["Add Event Handler"]
 
 
 def test_menu_for_position_dispatches_by_kind(qtbot):
@@ -177,7 +166,7 @@ def test_menu_for_position_dispatches_by_kind(qtbot):
     page_item = tree.topLevelItem(0)
     rect = tree.visualItemRect(page_item)
     menu = tree.menu_for_position(rect.center())
-    assert action_labels(menu)[0] == "Edit Properties"
+    assert action_labels(menu)[0] == "Jump to page xml"
 
 
 def test_menu_for_position_dispatches_detail(qtbot):
@@ -186,7 +175,7 @@ def test_menu_for_position_dispatches_detail(qtbot):
     detail_item = tree.topLevelItem(0).child(0)
     rect = tree.visualItemRect(detail_item)
     menu = tree.menu_for_position(rect.center())
-    assert action_labels(menu)[0] == "Edit Properties"
+    assert action_labels(menu)[0] == "Jump to detail xml"
 
 
 def test_menu_for_position_dispatches_column(qtbot):
@@ -195,7 +184,7 @@ def test_menu_for_position_dispatches_column(qtbot):
     column_item = tree.topLevelItem(0).child(0).child(0)
     rect = tree.visualItemRect(column_item)
     menu = tree.menu_for_position(rect.center())
-    assert action_labels(menu)[0] == "Edit Caption / Hint / Short Caption"
+    assert action_labels(menu)[0] == "Jump to column visibility in xml"
 
 
 def test_menu_for_position_returns_none_for_event(qtbot):
@@ -339,6 +328,110 @@ def test_select_node_foreign_node_returns_false_and_changes_nothing(qtbot):
     foreign = build_sample_project().pages[0]
     assert tree.select_node(foreign) is False
     assert tree.currentItem() is before
+
+
+# --- Phase D: double-click jump + redesigned menus ------------------------
+
+
+def test_double_click_invokes_on_activate_node_with_node_and_kind(qtbot):
+    calls = []
+    project = build_sample_project()
+    tree = ProjectTreePanel(on_activate_node=lambda node, kind: calls.append((node, kind)))
+    qtbot.addWidget(tree)
+    tree.populate_from_project(project)
+
+    page_item = tree.topLevelItem(0)
+    tree.itemDoubleClicked.emit(page_item, 0)
+
+    assert len(calls) == 1
+    node, kind = calls[0]
+    assert kind == "page"
+    assert node is project.pages[0]
+
+
+def test_single_click_selection_does_not_invoke_on_activate_node(qtbot):
+    activate_calls = []
+    selection_calls = []
+    tree = ProjectTreePanel(
+        on_activate_node=lambda node, kind: activate_calls.append((node, kind)),
+        on_selection_changed=lambda node, kind: selection_calls.append((node, kind)),
+    )
+    qtbot.addWidget(tree)
+    tree.populate_from_project(build_sample_project())
+
+    tree.setCurrentItem(tree.topLevelItem(0))
+
+    # Single-click / current-item change routes ONLY to Properties.
+    assert selection_calls and selection_calls[-1][1] == "page"
+    assert activate_calls == []
+
+
+def test_page_menu_actions_invoke_wired_callbacks(qtbot):
+    jump, select, see = [], [], []
+    project = build_sample_project()
+    tree = ProjectTreePanel(
+        on_jump_to_xml=jump.append,
+        on_select_xml_block=select.append,
+        on_see_table_in_caption=see.append,
+    )
+    qtbot.addWidget(tree)
+    tree.populate_from_project(project)
+    page_item = tree.topLevelItem(0)
+    menu = tree.build_page_menu(page_item)
+
+    find_action(menu, "Jump to page xml").trigger()
+    find_action(menu, "Select page xml").trigger()
+    find_action(menu, "See database table in caption mode").trigger()
+
+    assert jump == [project.pages[0]]
+    assert select == [project.pages[0]]
+    assert see == [project.pages[0]]
+
+
+def test_detail_menu_actions_invoke_wired_callbacks(qtbot):
+    jump, select, see = [], [], []
+    project = build_sample_project()
+    tree = ProjectTreePanel(
+        on_jump_to_xml=jump.append,
+        on_select_xml_block=select.append,
+        on_see_table_details_in_caption=see.append,
+    )
+    qtbot.addWidget(tree)
+    tree.populate_from_project(project)
+    detail_node = project.pages[0].details[0]
+    detail_item = tree.topLevelItem(0).child(0)
+    menu = tree.build_detail_menu(detail_item)
+
+    find_action(menu, "Jump to detail xml").trigger()
+    find_action(menu, "Select detail xml").trigger()
+    find_action(menu, "See database table in caption mode").trigger()
+
+    assert jump == [detail_node]
+    assert select == [detail_node]
+    assert see == [detail_node]
+
+
+def test_column_menu_actions_invoke_wired_callbacks(qtbot):
+    visibility, presentation, see = [], [], []
+    project = build_sample_project()
+    tree = ProjectTreePanel(
+        on_jump_to_column_visibility=visibility.append,
+        on_jump_to_xml=presentation.append,
+        on_see_column_in_caption=see.append,
+    )
+    qtbot.addWidget(tree)
+    tree.populate_from_project(project)
+    column_node = project.pages[0].details[0].columns[0]
+    column_item = tree.topLevelItem(0).child(0).child(0)
+    menu = tree.build_column_menu(column_item)
+
+    find_action(menu, "Jump to column visibility in xml").trigger()
+    find_action(menu, "Jump to column presentation in xml").trigger()
+    find_action(menu, "See column in caption mode").trigger()
+
+    assert visibility == [column_node]
+    assert presentation == [column_node]
+    assert see == [column_node]
 
 
 def test_index_is_rebuilt_on_repopulate(qtbot):

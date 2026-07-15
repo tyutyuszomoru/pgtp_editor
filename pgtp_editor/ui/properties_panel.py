@@ -95,7 +95,9 @@ def _rows_for_column(column_node) -> list[RowSpec]:
     return rows
 
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QHeaderView,
     QLabel,
     QStackedWidget,
@@ -104,6 +106,8 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+
+_READ_ONLY_HINT = "Read-only — click a row to edit in the XML editor"
 
 _EMPTY_STATE_MESSAGE = "Select a Page, Detail, Column, or Event to see its properties"
 
@@ -133,6 +137,9 @@ class PropertiesPanel(QWidget):
         self.table.setHorizontalHeaderLabels(["Property", "Value"])
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.table.verticalHeader().setVisible(False)
+        # Explicit read-only contract: no cell may ever be edited via the UI.
+        self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.table.setToolTip(_READ_ONLY_HINT)
         self.table.cellClicked.connect(self._on_row_clicked)
 
         self._populated_page = QWidget()
@@ -175,9 +182,18 @@ class PropertiesPanel(QWidget):
         self._header_label.setText(header_text)
         self.table.setRowCount(len(rows))
         for row_index, row_spec in enumerate(rows):
-            self.table.setItem(row_index, 0, QTableWidgetItem(row_spec.property_label))
-            self.table.setItem(row_index, 1, QTableWidgetItem(row_spec.value))
+            self.table.setItem(row_index, 0, self._make_item(row_spec.property_label))
+            self.table.setItem(row_index, 1, self._make_item(row_spec.value))
         self._stack.setCurrentWidget(self._populated_page)
+
+    @staticmethod
+    def _make_item(text: str) -> QTableWidgetItem:
+        """Build a read-only table item: the editable flag is explicitly
+        cleared so no cell can ever be edited (belt-and-suspenders with the
+        table's NoEditTriggers)."""
+        item = QTableWidgetItem(text)
+        item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+        return item
 
     def _on_row_clicked(self, row: int, _column: int) -> None:
         spec = self._current_rows[row]

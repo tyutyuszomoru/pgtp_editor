@@ -22,7 +22,8 @@ from PySide6.QtGui import (
     QTextCursor,
     QTextFormat,
 )
-from PySide6.QtWidgets import QPlainTextEdit, QTextEdit, QWidget
+from PySide6.QtGui import QAction
+from PySide6.QtWidgets import QMenu, QPlainTextEdit, QTextEdit, QWidget
 
 from pgtp_editor.ui import xml_structure
 
@@ -196,6 +197,10 @@ class XmlEditor(QPlainTextEdit):
     # read-only (Caption Mode). The base already blocks the edit; this signal
     # lets MainWindow flash a non-modal "read-only" hint.
     read_only_edit_attempted = Signal()
+    # Emitted when the user picks "Find" from the editor's right-click context
+    # menu with a non-empty selection. Carries the selected text; MainWindow
+    # reveals the Raw XML find bar, prefills it, and runs Find Next.
+    find_selected_text = Signal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -381,10 +386,15 @@ class XmlEditor(QPlainTextEdit):
         if span is None:
             return
         end = span.close_end if span.close_end is not None else span.open_end
+        # Anchor at the block END and move the caret to the block START with
+        # KeepAnchor: the whole block stays selected, but selectionStart()==the
+        # caret position, so the visible cursor (and the ensured-visible scroll)
+        # lands at the beginning of the selection rather than the end.
         cursor = self.textCursor()
-        cursor.setPosition(span.open_start)
-        cursor.setPosition(end, QTextCursor.MoveMode.KeepAnchor)
+        cursor.setPosition(end)
+        cursor.setPosition(span.open_start, QTextCursor.MoveMode.KeepAnchor)
         self.setTextCursor(cursor)
+        self.ensureCursorVisible()
 
     def select_parent_block(self) -> None:
         """Ctrl+Shift+A: select the block exactly one nesting level up from
@@ -408,10 +418,16 @@ class XmlEditor(QPlainTextEdit):
         if parent is None:
             return
         end = parent.close_end if parent.close_end is not None else parent.open_end
+        # Caret-at-start (see select_enclosing_block): anchor at END, caret at
+        # START, so selectionStart() is where the visible cursor sits and the
+        # view scrolls to the block's beginning. Note select_parent_block
+        # re-derives from selectionStart() on the next press, so caret-at-start
+        # keeps repeated presses walking up correctly.
         new_cursor = self.textCursor()
-        new_cursor.setPosition(parent.open_start)
-        new_cursor.setPosition(end, QTextCursor.MoveMode.KeepAnchor)
+        new_cursor.setPosition(end)
+        new_cursor.setPosition(parent.open_start, QTextCursor.MoveMode.KeepAnchor)
         self.setTextCursor(new_cursor)
+        self.ensureCursorVisible()
 
     def _highlight_current_line(self) -> None:
         # An independent cursor move clears any lingering one-shot navigation/
@@ -567,6 +583,36 @@ class XmlEditor(QPlainTextEdit):
             return
 
         super().keyPressEvent(event)
+
+    def _build_context_menu(self) -> QMenu:
+        """Build the editor's right-click menu: the standard editable menu
+        with a "Find" action prepended when there is a non-empty selection.
+        Split out from contextMenuEvent so tests can inspect/trigger the menu
+        without calling .exec() (which would block on a real popup)."""
+        menu = self.createStandardContextMenu()
+        cursor = self.textCursor()
+        if cursor.hasSelection():
+            find_action = QAction("Find", menu)
+            find_action.triggered.connect(self._emit_find_selected_text)
+            actions = menu.actions()
+            before = actions[0] if actions else None
+            if before is not None:
+                menu.insertAction(before, find_action)
+            else:
+                menu.addAction(find_action)
+        return menu
+
+    def _emit_find_selected_text(self) -> None:
+        # QTextCursor.selectedText() uses U+2029 (paragraph separator) to join
+        # lines of a multi-line selection; collapse those to spaces so the find
+        # term is a plain string. Single-line selections (the norm) are
+        # unaffected.
+        selected = self.textCursor().selectedText().replace(chr(0x2029), chr(32))
+        self.find_selected_text.emit(selected)
+
+    def contextMenuEvent(self, event) -> None:
+        menu = self._build_context_menu()
+        menu.exec(event.globalPos())
 
     def mouseReleaseEvent(self, event) -> None:
         # Let Qt place the text cursor at the clicked position first, then

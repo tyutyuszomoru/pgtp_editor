@@ -1,3 +1,6 @@
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QAbstractItemView
+
 from pgtp_editor.model.nodes import ColumnNode, DetailNode, EventNode, PageNode
 from pgtp_editor.ui.properties_panel import PropertiesPanel
 
@@ -176,6 +179,39 @@ def test_click_event_functions_row_navigates_but_never_refines(qtbot):
     assert stub.navigate_calls == [7]
     assert stub.line_text_calls == []
     assert stub.select_range_calls == []
+
+
+def test_table_has_no_edit_triggers(qtbot):
+    panel = PropertiesPanel(xml_editor=_RecordingXmlEditorStub())
+    qtbot.addWidget(panel)
+    assert panel.table.editTriggers() == QAbstractItemView.EditTrigger.NoEditTriggers
+
+
+def test_no_cell_is_editable_for_every_node_kind(qtbot):
+    stub = _RecordingXmlEditorStub()
+    panel = PropertiesPanel(xml_editor=stub)
+    qtbot.addWidget(panel)
+    cases = [
+        (_page_node(), "page"),
+        (_detail_node(), "detail"),
+        (_column_node(), "column"),
+        (_event_node(), "event"),
+    ]
+    for node, kind in cases:
+        panel.show_node(node, kind)
+        for row in range(panel.table.rowCount()):
+            for column in range(panel.table.columnCount()):
+                item = panel.table.item(row, column)
+                assert item is not None
+                assert item.flags() & Qt.ItemFlag.ItemIsEditable == Qt.ItemFlag(0), (
+                    f"cell ({row},{column}) editable for kind={kind}"
+                )
+
+
+def test_read_only_hint_present(qtbot):
+    panel = PropertiesPanel(xml_editor=_RecordingXmlEditorStub())
+    qtbot.addWidget(panel)
+    assert "read-only" in panel.table.toolTip().lower()
 
 
 def test_click_detail_row_with_none_target_line_does_not_crash(qtbot):
