@@ -6,6 +6,7 @@ from lxml import etree
 from PySide6.QtCore import Qt, QTimer, QUrl
 from PySide6.QtGui import QDesktopServices, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
+    QDialog,
     QDockWidget,
     QFileDialog,
     QLabel,
@@ -14,6 +15,7 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMessageBox,
     QTabWidget,
+    QVBoxLayout,
     QWidget,
 )
 
@@ -46,6 +48,7 @@ from pgtp_editor.ui.manual_panel import (
     parse_chapters,
 )
 from pgtp_editor.ui.code_editor import CodeEditorDialog
+from pgtp_editor.ui.history import SnapshotHistory
 from pgtp_editor.ui.event_body import (
     extract_event_body,
     insert_event_handler,
@@ -226,6 +229,20 @@ class MainWindow(QMainWindow):
         self._loading = False
         self.center_stage.xml_editor.textChanged.connect(self._on_editor_text_changed)
 
+        # Document-level snapshot history (Sub-project C), independent of the
+        # editor's per-keystroke undo. `_restoring` guards the guarded setter
+        # so an undo/redo/jump restore is never recorded as a new snapshot.
+        self._history = SnapshotHistory(10)
+        self._restoring = False
+        self._snapshot_timer = QTimer(self)
+        self._snapshot_timer.setSingleShot(True)
+        self._snapshot_timer.setInterval(400)
+        self._snapshot_timer.timeout.connect(self._capture_snapshot_now)
+        self._undo_shortcut = QShortcut(QKeySequence("Ctrl+Z"), self)
+        self._undo_shortcut.activated.connect(self._undo)
+        self._redo_shortcut = QShortcut(QKeySequence("Ctrl+Y"), self)
+        self._redo_shortcut.activated.connect(self._redo)
+
         self._build_menu_bar()
 
     def _not_implemented(self, label):
@@ -240,6 +257,70 @@ class MainWindow(QMainWindow):
         if self._loading:
             return
         self._set_dirty(True)
+        # Debounce a document-level snapshot capture (Sub-project C). We start
+        # the timer even during a `_restoring` apply; the fire-time guards
+        # (`_restoring`/`_loading` and the head-coalesce check) ensure a restore
+        # never records a spurious snapshot.
+        self._snapshot_timer.start()
+
+    def _capture_snapshot_now(self) -> None:
+        """Fire-time handler for the debounce timer (called directly in tests).
+        Push the current editor text as a snapshot unless we're restoring or
+        loading, or the text already matches the history head (coalesced)."""
+        if self._restoring or self._loading:
+            return
+        self._history.push(self.center_stage.xml_editor.toPlainText(), "Edit")
+
+    # -- Snapshot history: undo/redo/jump (Sub-project C) --------------------
+
+    def _apply_history_text(self, text: str) -> None:
+        """Set the editor to `text` without recording a new snapshot."""
+        self._restoring = True
+        try:
+            self.center_stage.xml_editor.setPlainText(text)
+        finally:
+            self._restoring = False
+
+    def _undo(self) -> None:
+        text = self._history.undo()
+        if text is not None:
+            self._apply_history_text(text)
+
+    def _redo(self) -> None:
+        text = self._history.redo()
+        if text is not None:
+            self._apply_history_text(text)
+
+    def _history_entries(self):
+        """Snapshot entries newest-first, for the jump-list popup (test seam)."""
+        return list(reversed(self._history.entries()))
+
+    def _history_jump(self, index) -> None:
+        text = self._history.jump_to(index)
+        if text is not None:
+            self._apply_history_text(text)
+
+    def _open_history_jump_list(self) -> None:
+        """Show a small non-modal popup listing snapshots newest-first;
+        selecting one jumps to it. Never `.exec()`'d (see the test seam)."""
+        dialog = QDialog(self)
+        dialog.setWindowTitle("History")
+        layout = QVBoxLayout(dialog)
+        listw = QListWidget(dialog)
+        layout.addWidget(listw)
+        for index, label in self._history_entries():
+            item = QListWidgetItem(label or f"Snapshot {index}")
+            item.setData(Qt.ItemDataRole.UserRole, index)
+            listw.addItem(item)
+
+        def _on_activated(item):
+            self._history_jump(item.data(Qt.ItemDataRole.UserRole))
+            dialog.close()
+
+        listw.itemActivated.connect(_on_activated)
+        listw.itemClicked.connect(_on_activated)
+        self._history_dialog = dialog
+        dialog.show()
 
     def _set_dirty(self, dirty: bool) -> None:
         self._dirty = dirty
@@ -415,6 +496,11 @@ class MainWindow(QMainWindow):
             finally:
                 self._loading = False
         self._set_dirty(False)
+        # Seed the document snapshot history with the freshly-loaded text.
+        self._history.push(
+            self.center_stage.xml_editor.toPlainText(),
+            f"Opened {Path(path).name}",
+        )
         self.statusBar().showMessage(f"Opened: {path}", 5000)
         self._enrich_schema_from_file(path)
 
@@ -959,8 +1045,14 @@ class MainWindow(QMainWindow):
 
     def _build_edit_menu(self):
         menu = self.menuBar().addMenu("Edit")
-        self._add_stub_action(menu, "Undo")
-        self._add_stub_action(menu, "Redo")
+        # Quick keys step (Ctrl+Z/Ctrl+Y wired as QShortcuts in __init__); the
+        # menu items open the non-modal jump list of recent snapshots.
+        undo_action = menu.addAction("Undo")
+        undo_action.triggered.connect(self._open_history_jump_list)
+        self._undo_action = undo_action
+        redo_action = menu.addAction("Redo")
+        redo_action.triggered.connect(self._open_history_jump_list)
+        self._redo_action = redo_action
         menu.addSeparator()
         self._add_stub_action(menu, "Cut")
         self._add_stub_action(menu, "Copy")
