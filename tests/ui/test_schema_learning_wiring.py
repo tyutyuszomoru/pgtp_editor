@@ -44,6 +44,20 @@ def test_open_project_file_creates_schema_model_and_xsd_on_success(qtbot, tmp_pa
     assert "Project" in model.paths
 
 
+def test_open_project_file_injects_schema_model_into_editor(qtbot, tmp_path):
+    storage_dir = tmp_path / "storage"
+    window = MainWindow(schema_storage_dir=storage_dir)
+    qtbot.addWidget(window)
+    project_path = tmp_path / "valid.pgtp"
+    project_path.write_text(VALID_PGTP, encoding="utf-8")
+
+    window.open_project_file(str(project_path))
+
+    model = window.center_stage.xml_editor._schema_model
+    assert model is not None
+    assert "Project" in model.paths
+
+
 def test_open_project_file_appends_audit_entries_on_success(qtbot, tmp_path):
     storage_dir = tmp_path / "storage"
     window = MainWindow(schema_storage_dir=storage_dir)
