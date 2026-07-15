@@ -23,6 +23,23 @@ def test_manual_populated_and_show_manual_reveals(qtbot):
     assert win.left_tabs.currentWidget() is win.manual_contents
 
 
+def test_contents_tab_rides_with_manual(qtbot):
+    win = MainWindow()
+    qtbot.addWidget(win)
+    lt = win.left_tabs
+    cs = win.center_stage
+    # Hidden by default.
+    assert lt.isTabVisible(win.contents_tab_index) is False
+    # Opening the Manual reveals + focuses Contents.
+    win._show_manual()
+    assert lt.isTabVisible(win.contents_tab_index) is True
+    assert lt.currentWidget() is win.manual_contents
+    # Closing the Manual (e.g. its ✕) hides Contents and falls back to Project.
+    cs.hide_manual()
+    assert lt.isTabVisible(win.contents_tab_index) is False
+    assert lt.currentIndex() == win.project_tab_index
+
+
 def test_show_manual_toggles_off_when_already_focused(qtbot):
     win = MainWindow()
     qtbot.addWidget(win)

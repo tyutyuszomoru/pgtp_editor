@@ -1,3 +1,4 @@
+from PySide6.QtCore import Signal
 from PySide6.QtWidgets import QTabBar, QTabWidget, QVBoxLayout, QWidget
 
 from pgtp_editor.ui.caption_management_panel import CaptionManagementPanel
@@ -8,6 +9,10 @@ from pgtp_editor.ui.xml_editor import XmlEditor
 
 
 class CenterStage(QTabWidget):
+    # Emitted when the Manual tab is revealed (True) or hidden (False), so the
+    # main window can keep the left-dock Contents tab in lockstep with it.
+    manual_visibility_changed = Signal(bool)
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.diff_merge_panel = DiffMergePanel()
@@ -59,12 +64,14 @@ class CenterStage(QTabWidget):
     def show_manual(self):
         self.setTabVisible(self.manual_tab_index, True)
         self.setCurrentIndex(self.manual_tab_index)
+        self.manual_visibility_changed.emit(True)
 
     def hide_manual(self):
         """Hide the Manual tab and return to Raw XML (the ✕ close action)."""
         self.setTabVisible(self.manual_tab_index, False)
         if self.currentIndex() == self.manual_tab_index:
             self.setCurrentIndex(self.raw_xml_tab_index)
+        self.manual_visibility_changed.emit(False)
 
     def enter_caption_mode(self):
         """Keep Raw XML visible but read-only, and reveal + switch to Caption

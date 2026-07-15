@@ -110,9 +110,12 @@ class MainWindow(QMainWindow):
         self.tree_dock = QDockWidget("Project Tree", self)
         self.tree_dock.setObjectName("tree_dock")
         self.left_tabs = QTabWidget()
-        self.left_tabs.addTab(self.project_tree, "Project")
+        self.project_tab_index = self.left_tabs.addTab(self.project_tree, "Project")
         self.manual_contents = ManualContentsPanel()
-        self.left_tabs.addTab(self.manual_contents, "Contents")
+        self.contents_tab_index = self.left_tabs.addTab(self.manual_contents, "Contents")
+        # Contents rides with the Manual: hidden until the Manual is shown, and
+        # hidden again when the Manual closes.
+        self.left_tabs.setTabVisible(self.contents_tab_index, False)
         self.tree_dock.setWidget(self.left_tabs)
         self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self.tree_dock)
 
@@ -131,6 +134,9 @@ class MainWindow(QMainWindow):
         # wiring run unguarded so a genuine logic bug surfaces instead of being
         # swallowed.
         self.manual_contents.chapter_selected.connect(self._on_manual_chapter_selected)
+        self.center_stage.manual_visibility_changed.connect(
+            self._on_manual_visibility_changed
+        )
         try:
             manual_text = load_manual_text()
         except Exception as exc:  # pragma: no cover - packaging safety net
@@ -1337,7 +1343,8 @@ class MainWindow(QMainWindow):
 
     def _show_manual(self):
         # F1 / Help ▸ Manual toggles: if the Manual tab is already the one in
-        # view, hide it; otherwise reveal it and bring the Contents tab forward.
+        # view, hide it; otherwise reveal it. The Contents tab follows via
+        # _on_manual_visibility_changed.
         cs = self.center_stage
         if (
             cs.isTabVisible(cs.manual_tab_index)
@@ -1347,7 +1354,16 @@ class MainWindow(QMainWindow):
             return
         cs.show_manual()
         self.tree_dock.setVisible(True)
-        self.left_tabs.setCurrentWidget(self.manual_contents)
+
+    def _on_manual_visibility_changed(self, visible):
+        """Keep the left-dock Contents tab in lockstep with the Manual tab: show
+        and focus it when the Manual opens, hide it and fall back to Project when
+        the Manual closes."""
+        self.left_tabs.setTabVisible(self.contents_tab_index, visible)
+        if visible:
+            self.left_tabs.setCurrentWidget(self.manual_contents)
+        else:
+            self.left_tabs.setCurrentIndex(self.project_tab_index)
 
     def _on_manual_chapter_selected(self, index):
         self.center_stage.show_manual()

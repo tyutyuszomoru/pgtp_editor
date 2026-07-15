@@ -254,3 +254,24 @@ def test_dialog_ctrl_w_cancels(qtbot):
     qtbot.waitExposed(dialog)
     with qtbot.waitSignal(dialog.cancelled, timeout=1000):
         qtbot.keyClick(dialog, Qt.Key.Key_W, Qt.KeyboardModifier.ControlModifier)
+
+
+def test_dialog_opens_at_80_percent_of_parent_window(qtbot):
+    from PySide6.QtWidgets import QMainWindow
+
+    host = QMainWindow()
+    qtbot.addWidget(host)
+    host.resize(1000, 800)
+    dialog = CodeEditorDialog(language="php", handler_name="OnX", parent=host)
+    qtbot.addWidget(dialog)
+    # 80% of the host window, within rounding.
+    assert abs(dialog.width() - 800) <= 2
+    assert abs(dialog.height() - 640) <= 2
+
+
+def test_dialog_without_parent_uses_minimum_size(qtbot):
+    dialog = CodeEditorDialog(language="js", handler_name="OnY")
+    qtbot.addWidget(dialog)
+    # No parent to size against: at least the usable minimum.
+    assert dialog.minimumWidth() == 480
+    assert dialog.minimumHeight() == 320

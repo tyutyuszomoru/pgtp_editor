@@ -363,6 +363,18 @@ class CodeEditorDialog(QDialog):
         cancel_shortcut = QShortcut(QKeySequence("Ctrl+W"), self, self.cancel)
         cancel_shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
 
+        # Open at 80% of the host (XML editor) window so there's room to work.
+        self.setMinimumSize(480, 320)
+        if parent is not None:
+            reference = parent.window()
+            if reference is not None:
+                ref_size = reference.size()
+                if ref_size.width() > 0 and ref_size.height() > 0:
+                    self.resize(
+                        int(ref_size.width() * 0.8),
+                        int(ref_size.height() * 0.8),
+                    )
+
     def keyPressEvent(self, event: QKeyEvent) -> None:
         # Ctrl+S / Ctrl+W handled here in addition to the WindowShortcut
         # QShortcuts above, so save/cancel are reliably reachable when a key
