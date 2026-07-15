@@ -157,6 +157,8 @@ def test_view_menu_contents(qtbot):
         "Project Tree", "Properties Panel", "Audit/Problems Panel", "Raw XML Panel",
         "―",
         "Expand All", "Collapse All",
+        "―",
+        "Light Theme",
     ]
 
 

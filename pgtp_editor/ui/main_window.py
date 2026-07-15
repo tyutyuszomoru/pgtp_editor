@@ -3,9 +3,10 @@ import shutil
 from pathlib import Path
 
 from lxml import etree
-from PySide6.QtCore import Qt, QTimer, QUrl
+from PySide6.QtCore import Qt, QSettings, QTimer, QUrl
 from PySide6.QtGui import QDesktopServices, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
+    QApplication,
     QDialog,
     QDockWidget,
     QFileDialog,
@@ -61,6 +62,7 @@ from pgtp_editor.ui import search
 from pgtp_editor.ui.project_tree import ProjectTreePanel
 from pgtp_editor.ui.properties_panel import PropertiesPanel
 from pgtp_editor.ui.schema_viewer import SchemaViewerWindow
+from pgtp_editor.ui.theme import apply_theme
 from pgtp_editor.ui.schema_viewer_data import open_labels_text, open_xsd_text
 
 
@@ -87,8 +89,24 @@ class MainWindow(QMainWindow):
         schema_storage_dir: Path | None = None,
         generator_config_dir: Path | None = None,
         generator_runner=None,
+        settings=None,
     ):
         super().__init__()
+        # Injectable so tests point at a temp QSettings ini instead of the real
+        # user registry (Sub-project D).
+        # IniFormat (not the platform-native registry) so the location is a
+        # plain file under UserScope -- portable, inspectable, and redirectable
+        # by tests via QSettings.setPath (Sub-project D).
+        self._settings = (
+            settings
+            if settings is not None
+            else QSettings(
+                QSettings.Format.IniFormat,
+                QSettings.Scope.UserScope,
+                "MDS",
+                "PGTP Editor",
+            )
+        )
         self._schema_storage_dir = schema_storage_dir
         self._generator_config_dir = generator_config_dir
         self._generator_runner = generator_runner if generator_runner is not None else GeneratorRunner()
@@ -251,6 +269,39 @@ class MainWindow(QMainWindow):
         self.center_stage.xml_editor.redo_requested.connect(self._redo)
 
         self._build_menu_bar()
+
+        # Restore persisted window geometry/dock state and theme (Sub-project D).
+        # Done after docks/toolbars/menus exist so restoreState can match dock
+        # object names and the theme action can be checked. A fresh settings
+        # store has no keys, so the default resize(1400, 900) stands.
+        self._restore_window_state()
+        self._restore_theme()
+
+    def _restore_window_state(self):
+        geometry = self._settings.value("geometry")
+        if geometry is not None:
+            self.restoreGeometry(geometry)
+        window_state = self._settings.value("windowState")
+        if window_state is not None:
+            self.restoreState(window_state)
+
+    def _restore_theme(self):
+        light = self._settings.value("lightTheme", False, type=bool)
+        if light:
+            self._light_theme_action.setChecked(True)
+            apply_theme(QApplication.instance(), True)
+
+    def closeEvent(self, event):
+        # Persist window geometry/dock state on close (Sub-project D). No modal
+        # prompt here -- File > Close handles the unsaved-changes prompt.
+        self._settings.setValue("geometry", self.saveGeometry())
+        self._settings.setValue("windowState", self.saveState())
+        self._settings.sync()
+        super().closeEvent(event)
+
+    def _on_light_theme_toggled(self, checked):
+        apply_theme(QApplication.instance(), checked)
+        self._settings.setValue("lightTheme", checked)
 
     def _not_implemented(self, label):
         self.statusBar().showMessage(f"Not yet implemented: {label}", 5000)
@@ -1150,6 +1201,12 @@ class MainWindow(QMainWindow):
         expand_all_action.triggered.connect(self.project_tree.expandAll)
         collapse_all_action = menu.addAction("Collapse All")
         collapse_all_action.triggered.connect(self.project_tree.collapseAll)
+
+        menu.addSeparator()
+        self._light_theme_action = menu.addAction("Light Theme")
+        self._light_theme_action.setCheckable(True)
+        self._light_theme_action.setChecked(False)
+        self._light_theme_action.toggled.connect(self._on_light_theme_toggled)
 
     def _add_stub_action(self, menu, label):
         return add_stub_action(menu, label, self._not_implemented)
