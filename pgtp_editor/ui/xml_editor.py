@@ -14,6 +14,8 @@ import re
 from PySide6.QtCore import QPoint, QRect, QSize, Qt, Signal
 from PySide6.QtGui import (
     QColor,
+    QFont,
+    QFontDatabase,
     QKeyEvent,
     QKeySequence,
     QPainter,
@@ -26,6 +28,7 @@ from PySide6.QtGui import QAction
 from PySide6.QtWidgets import QMenu, QPlainTextEdit, QTextEdit, QWidget
 
 from pgtp_editor.ui import xml_structure
+from pgtp_editor.ui.event_body import event_body_line_ranges
 
 STATE_NORMAL = 0
 STATE_IN_UNCLOSED_STRING = 1
@@ -201,6 +204,11 @@ class XmlEditor(QPlainTextEdit):
     # menu with a non-empty selection. Carries the selected text; MainWindow
     # reveals the Raw XML find bar, prefills it, and runs Find Next.
     find_selected_text = Signal(str)
+    # Emitted when the user picks "Edit code..." from the editor's right-click
+    # context menu while the cursor is inside an event-handler body. Carries
+    # the 1-based line of that handler's open tag; MainWindow opens the
+    # CodeEditorDialog and owns the write-back.
+    edit_code_requested = Signal(int)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -213,6 +221,16 @@ class XmlEditor(QPlainTextEdit):
         self._matching_tag_color = QColor("#3a5f3a")
         self._current_line_selections: list[QTextEdit.ExtraSelection] = []
         self._matching_tag_selections: list[QTextEdit.ExtraSelection] = []
+        # Distinct styling for event-handler code bodies (the text between
+        # <OnXxx ...> and </OnXxx>): a subdued background + monospace font,
+        # keyed to event_body_line_ranges so styling and the "which handler is
+        # under the cursor" lookup share one source of truth. Recomputed on
+        # every text change (see _refresh_code_region_selections); rendered
+        # underneath every other extra-selection layer. Read-only-safe:
+        # extra selections are purely visual and apply in Caption Mode too.
+        self._code_region_color = QColor("#232a2f")
+        self._code_region_font = self._make_monospace_font()
+        self._code_region_selections: list[QTextEdit.ExtraSelection] = []
         # One-shot "overriding" indicator used by navigate_to_line,
         # highlight_error_line and select_range_on_line. It sits on top of the
         # current-line band and matching-tag spans, and is cleared on the next
@@ -223,6 +241,7 @@ class XmlEditor(QPlainTextEdit):
         self.blockCountChanged.connect(self._update_gutter_width)
         self.updateRequest.connect(self._update_gutter_on_scroll)
         self.textChanged.connect(self._rescan_structure)
+        self.textChanged.connect(self._refresh_code_region_selections)
         self.cursorPositionChanged.connect(self._highlight_current_line)
         self.cursorPositionChanged.connect(self._update_matching_tag_highlight)
 
@@ -239,6 +258,7 @@ class XmlEditor(QPlainTextEdit):
         self._auto_closed_greater_than_cursors: list[QTextCursor] = []
         self._update_gutter_width(0)
         self._rescan_structure()
+        self._refresh_code_region_selections()
         self._highlight_current_line()
 
     def setPlainText(self, text: str) -> None:
@@ -313,11 +333,59 @@ class XmlEditor(QPlainTextEdit):
         Individual features update their own named attribute and call this;
         they never call setExtraSelections directly."""
         selections: list[QTextEdit.ExtraSelection] = []
+        # Code-region background sits underneath everything so the current-line
+        # band, matching-tag spans and one-shot indicators paint over it.
+        selections.extend(self._code_region_selections)
         selections.extend(self._current_line_selections)
         selections.extend(self._matching_tag_selections)
         if self._oneshot_selection is not None:
             selections.append(self._oneshot_selection)
         self.setExtraSelections(selections)
+
+    def _make_monospace_font(self) -> QFont:
+        font = QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont)
+        font.setStyleHint(QFont.StyleHint.Monospace)
+        font.setFixedPitch(True)
+        return font
+
+    def _refresh_code_region_selections(self) -> None:
+        """Recompute the distinct styling for event-handler code bodies from
+        event_body_line_ranges. Marks every line from a handler's open-tag line
+        through its close-tag line (inclusive) with a subdued full-width
+        background band + monospace font. Purely visual, so it is safe when the
+        editor is read-only (Caption Mode)."""
+        text = self.toPlainText()
+        document = self.document()
+        selections: list[QTextEdit.ExtraSelection] = []
+        for range_ in event_body_line_ranges(text):
+            for line in range(range_["start_line"], range_["end_line"] + 1):
+                block = document.findBlockByNumber(line - 1)  # 1-based -> 0-based
+                if not block.isValid():
+                    continue
+                selection = QTextEdit.ExtraSelection()
+                selection.format.setBackground(self._code_region_color)
+                selection.format.setFont(self._code_region_font)
+                selection.format.setProperty(
+                    QTextFormat.Property.FullWidthSelection, True
+                )
+                cursor = QTextCursor(block)
+                cursor.clearSelection()
+                selection.cursor = cursor
+                selections.append(selection)
+        self._code_region_selections = selections
+        self._refresh_extra_selections()
+
+    def event_body_start_line_at_cursor(self) -> int | None:
+        """Return the 1-based open-tag line of the event-handler body the
+        cursor currently sits within (start_line..end_line inclusive), or None
+        when the cursor is not inside any event-handler body. Drives whether
+        the "Edit code..." context-menu action is offered and which handler it
+        targets."""
+        cursor_line = self.textCursor().blockNumber() + 1  # 0-based -> 1-based
+        for range_ in event_body_line_ranges(self.toPlainText()):
+            if range_["start_line"] <= cursor_line <= range_["end_line"]:
+                return range_["start_line"]
+        return None
 
     def _set_oneshot_selection(self, selection: QTextEdit.ExtraSelection) -> None:
         """Install `selection` as the sole overriding indicator: clear the
@@ -591,15 +659,28 @@ class XmlEditor(QPlainTextEdit):
         without calling .exec() (which would block on a real popup)."""
         menu = self.createStandardContextMenu()
         cursor = self.textCursor()
+        actions = menu.actions()
+        before = actions[0] if actions else None
         if cursor.hasSelection():
             find_action = QAction("Find", menu)
             find_action.triggered.connect(self._emit_find_selected_text)
-            actions = menu.actions()
-            before = actions[0] if actions else None
             if before is not None:
                 menu.insertAction(before, find_action)
             else:
                 menu.addAction(find_action)
+        # "Edit code..." is offered only when the cursor is inside an
+        # event-handler body; triggering it hands the handler's open-tag line
+        # to MainWindow, which owns the CodeEditorDialog + write-back.
+        start_line = self.event_body_start_line_at_cursor()
+        if start_line is not None:
+            edit_code_action = QAction("Edit code…", menu)
+            edit_code_action.triggered.connect(
+                lambda: self.edit_code_requested.emit(start_line)
+            )
+            if before is not None:
+                menu.insertAction(before, edit_code_action)
+            else:
+                menu.addAction(edit_code_action)
         return menu
 
     def _emit_find_selected_text(self) -> None:
