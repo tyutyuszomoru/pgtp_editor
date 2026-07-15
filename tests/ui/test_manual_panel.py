@@ -62,15 +62,24 @@ def test_manual_heading_count_matches_parse_chapters(qtbot):
     panel = ManualPanel()
     qtbot.addWidget(panel)
     panel.set_markdown(text)
-    # Count heading blocks Qt produced.
+    # Collect (level, text) of every heading block Qt produced, in order.
     doc = panel.document()
-    heading_blocks = 0
+    qt_headings = []
     block = doc.begin()
     while block.isValid():
-        if block.blockFormat().headingLevel() > 0:
-            heading_blocks += 1
+        level = block.blockFormat().headingLevel()
+        if level > 0:
+            qt_headings.append((level, block.text()))
         block = block.next()
-    assert heading_blocks == len(parse_chapters(text))
+    chapters = parse_chapters(text)
+    # Count must match...
+    assert len(qt_headings) == len(chapters)
+    # ...AND each Nth heading must align in level and title. This catches a
+    # same-count desync (e.g. a setext heading Qt sees but parse_chapters
+    # doesn't) that would silently mis-target every subsequent chapter's scroll.
+    for (qt_level, qt_text), chapter in zip(qt_headings, chapters):
+        assert qt_level == chapter.level
+        assert qt_text == chapter.title
 
 
 def test_contents_panel_emits_positional_index(qtbot):

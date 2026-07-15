@@ -126,15 +126,19 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(self.center_stage)
 
         # Populate the (static) manual once, into both the center-stage Manual
-        # tab and the left-dock Contents tree. Guarded so a packaging failure
-        # degrades gracefully rather than crashing the window.
+        # tab and the left-dock Contents tree. Only the resource load is guarded
+        # (a packaging failure degrades gracefully); rendering/parsing and signal
+        # wiring run unguarded so a genuine logic bug surfaces instead of being
+        # swallowed.
+        self.manual_contents.chapter_selected.connect(self._on_manual_chapter_selected)
         try:
             manual_text = load_manual_text()
+        except Exception as exc:  # pragma: no cover - packaging safety net
+            manual_text = None
+            self.statusBar().showMessage(f"Manual unavailable: {exc}")
+        if manual_text is not None:
             self.center_stage.manual_panel.set_markdown(manual_text)
             self.manual_contents.set_chapters(parse_chapters(manual_text))
-            self.manual_contents.chapter_selected.connect(self._on_manual_chapter_selected)
-        except Exception as exc:  # pragma: no cover - packaging safety net
-            self.statusBar().showMessage(f"Manual unavailable: {exc}")
 
         self.center_stage.xml_editor.line_clicked.connect(self._on_editor_line_clicked)
         self.center_stage.find_replace_bar.set_on_find_all(self._populate_find_all_results)
