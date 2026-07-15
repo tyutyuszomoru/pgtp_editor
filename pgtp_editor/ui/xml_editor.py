@@ -387,6 +387,13 @@ class XmlEditor(QPlainTextEdit):
     # the 1-based line of that handler's open tag; MainWindow opens the
     # CodeEditorDialog and owns the write-back.
     edit_code_requested = Signal(int)
+    # Emitted when Ctrl+Z / Ctrl+Y (or Ctrl+Shift+Z) is pressed while the
+    # editor is focused. The editor's native per-keystroke undo would otherwise
+    # shadow the window-level snapshot undo; keyPressEvent consumes these keys
+    # and routes them to MainWindow's document-level snapshot undo/redo instead
+    # (Sub-project C, C1).
+    undo_requested = Signal()
+    redo_requested = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -786,6 +793,25 @@ class XmlEditor(QPlainTextEdit):
             # Caption Mode: the base QPlainTextEdit already refuses the edit
             # when read-only; the only added behavior is a non-modal hint.
             self.read_only_edit_attempted.emit()
+            return
+
+        # Route Ctrl+Z / Ctrl+Y / Ctrl+Shift+Z to the document-level snapshot
+        # undo/redo (MainWindow) rather than QPlainTextEdit's native char-level
+        # undo, which would otherwise win while the editor has focus (C1).
+        # Consume the key here so the coexisting window QShortcut does not also
+        # fire (no double-undo).
+        mods = event.modifiers()
+        ctrl = Qt.KeyboardModifier.ControlModifier
+        shift = Qt.KeyboardModifier.ShiftModifier
+        if mods == ctrl and event.key() == Qt.Key.Key_Z:
+            self.undo_requested.emit()
+            event.accept()
+            return
+        if (mods == ctrl and event.key() == Qt.Key.Key_Y) or (
+            mods == (ctrl | shift) and event.key() == Qt.Key.Key_Z
+        ):
+            self.redo_requested.emit()
+            event.accept()
             return
 
         if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):

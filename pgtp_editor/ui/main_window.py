@@ -242,6 +242,13 @@ class MainWindow(QMainWindow):
         self._undo_shortcut.activated.connect(self._undo)
         self._redo_shortcut = QShortcut(QKeySequence("Ctrl+Y"), self)
         self._redo_shortcut.activated.connect(self._redo)
+        # When the Raw XML editor has focus its native undo would shadow the
+        # window shortcuts; the editor consumes Ctrl+Z/Ctrl+Y in keyPressEvent
+        # and routes them here instead. Both paths call the same _undo/_redo,
+        # and the focused editor consumes the key so the window shortcut does
+        # not also fire (no double-undo). (Sub-project C, C1.)
+        self.center_stage.xml_editor.undo_requested.connect(self._undo)
+        self.center_stage.xml_editor.redo_requested.connect(self._redo)
 
         self._build_menu_bar()
 
@@ -703,6 +710,14 @@ class MainWindow(QMainWindow):
             self.center_stage.xml_editor.setPlainText(raw_text)
         finally:
             self._loading = False
+        # Seed the snapshot history with the as-loaded (unparsed) text so undo
+        # after fixing the broken file has a base to return to, mirroring a
+        # normal open. Pushed after the `_loading` block so it reflects the
+        # shown text.
+        self._history.push(
+            self.center_stage.xml_editor.toPlainText(),
+            f"Opened (unparsed) {Path(path).name}",
+        )
         if exc.line is not None:
             self.center_stage.xml_editor.highlight_error_line(exc.line)
         self.center_stage.set_raw_xml_tab_visible(True)
@@ -1004,6 +1019,12 @@ class MainWindow(QMainWindow):
                 self.center_stage.xml_editor.setPlainText(raw_text)
             finally:
                 self._loading = False
+            # Seed the snapshot history with the reverted text so undo/redo
+            # semantics after a revert match a normal open.
+            self._history.push(
+                self.center_stage.xml_editor.toPlainText(),
+                f"Reverted {Path(self._current_project_path).name}",
+            )
         self.project_tree.populate_from_project(project)
         self._current_project = project
         self._set_dirty(True)
