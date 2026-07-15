@@ -59,3 +59,21 @@ def enum_hint(model, tag_chain, attr):
         label = labels.get(value)
         parts.append(f"{value} = {label}" if label else f"{value}")
     return f"{attr} — " + " · ".join(parts)
+
+
+def unused_setting_attributes(model, tag_chain, present_attrs) -> list[str]:
+    """Sorted names of *setting* attributes known at ``tag_chain`` that the
+    element does not already carry.
+
+    ``present_attrs`` is a collection of attribute names already on the
+    element. Returns the sorted list of attribute names whose
+    ``attribute_kind == "setting"`` and whose name is not in
+    ``present_attrs``. An unknown ``tag_chain`` yields ``[]``.
+    """
+    attributes = model.paths.get(tag_chain, {}).get("attributes", {})
+    present = set(present_attrs)
+    return sorted(
+        name
+        for name, entry in attributes.items()
+        if attribute_kind(entry) == "setting" and name not in present
+    )
