@@ -1208,7 +1208,11 @@ class MainWindow(QMainWindow):
     _NO_SCHEMA_MESSAGE = "No schema learned yet — open a .pgtp file first."
 
     def _open_xsd_viewer(self):
-        text = open_xsd_text(self._schema_storage_dir)
+        try:
+            text = open_xsd_text(self._schema_storage_dir)
+        except Exception as exc:
+            self.statusBar().showMessage(f"Could not read schema model: {exc}", 5000)
+            return
         if text is None:
             self.statusBar().showMessage(self._NO_SCHEMA_MESSAGE, 5000)
             return

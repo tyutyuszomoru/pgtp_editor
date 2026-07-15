@@ -68,3 +68,12 @@ def test_open_labels_viewer_empty_storage_shows_message_and_no_viewer(qtbot, tmp
 
     assert getattr(window, "_labels_viewer", None) is None
     assert "No schema learned yet" in window.statusBar().currentMessage()
+
+
+def test_open_xsd_viewer_survives_corrupt_model_json(qtbot, tmp_path):
+    # A corrupt schema_model.json must degrade to a status message, not crash.
+    schema_model_path(tmp_path).write_text("{ not valid json", encoding="utf-8")
+    window = MainWindow(schema_storage_dir=tmp_path)
+    qtbot.addWidget(window)
+    window._open_xsd_viewer()  # must not raise
+    assert window._xsd_viewer is None
