@@ -294,6 +294,16 @@ class MainWindow(QMainWindow):
         self._customize_toolbar_dialog = None
         self._build_toolbar()
 
+        # Capture the app's ORIGINAL style + palette (its real OS-dark look)
+        # BEFORE any theme is applied, so turning Light Theme off can restore
+        # exactly this rather than a generic light default. The palette is
+        # copy-constructed so a later setPalette does not mutate the capture,
+        # and the style key (e.g. "windowsvista") is stored to restore via
+        # setStyle (Sub-project D, #9).
+        app = QApplication.instance()
+        self._default_palette = QPalette(app.palette())
+        self._default_style_key = app.style().objectName()
+
         # Restore persisted window geometry/dock state and theme (Sub-project D).
         # Done after docks/toolbars/menus exist so restoreState can match dock
         # object names and the theme action can be checked. A fresh settings
@@ -313,7 +323,12 @@ class MainWindow(QMainWindow):
         light = self._settings.value("lightTheme", False, type=bool)
         if light:
             self._light_theme_action.setChecked(True)
-            apply_theme(QApplication.instance(), True)
+            apply_theme(
+                QApplication.instance(),
+                True,
+                self._default_palette,
+                self._default_style_key,
+            )
             # Toolbar was built under the default palette; re-tint its icons to
             # the just-applied light palette so they stay legible.
             self._refresh_toolbar_icons()
@@ -327,7 +342,12 @@ class MainWindow(QMainWindow):
         super().closeEvent(event)
 
     def _on_light_theme_toggled(self, checked):
-        apply_theme(QApplication.instance(), checked)
+        apply_theme(
+            QApplication.instance(),
+            checked,
+            self._default_palette,
+            self._default_style_key,
+        )
         self._settings.setValue("lightTheme", checked)
         # The palette flipped -- re-tint the toolbar icons so they stay legible.
         self._refresh_toolbar_icons()
@@ -386,8 +406,10 @@ class MainWindow(QMainWindow):
 
     def _toolbar_icon_color(self):
         """The current palette's window-text color -- what the toolbar icons
-        are tinted to so they stay legible against either theme."""
-        return self.palette().color(QPalette.ColorRole.WindowText)
+        are tinted to so they stay legible against either theme. Reads the
+        APP palette (not self.palette()) so it reflects the just-applied theme
+        even in the window whose toggle triggered the change."""
+        return QApplication.instance().palette().color(QPalette.ColorRole.WindowText)
 
     def _set_action_icon(self, action, command_id, color) -> None:
         """Tint and assign the Breeze icon for `command_id` to `action`. A
