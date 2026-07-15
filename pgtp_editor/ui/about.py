@@ -26,6 +26,8 @@ ABOUT_TEXT = (
     "<li><a href=\"https://github.com/luchko/QCodeEditor\">QCodeEditor</a> "
     "(luchko, MIT License) &mdash; the code-editor widget is a PySide6 port "
     "of this project's approach.</li>"
+    "<li><a href=\"https://github.com/KDE/breeze-icons\">Breeze icons</a> "
+    "(KDE, LGPL-3.0) &mdash; the toolbar icons, recolored at runtime.</li>"
     "</ul>"
 )
 

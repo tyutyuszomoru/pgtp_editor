@@ -121,13 +121,32 @@ def test_opening_customize_toolbar_does_not_block(qtbot, tmp_path):
     assert window._customize_toolbar_dialog.selected_ids() == window._toolbar_ids
 
 
-def test_toolbar_shows_text_labels_not_blank_buttons(qtbot, tmp_path):
+def test_toolbar_shows_text_beside_icon(qtbot, tmp_path):
     from PySide6.QtCore import Qt
 
     window = MainWindow(settings=_ini_settings(tmp_path))
     qtbot.addWidget(window)
-    # The actions carry no icons, so the toolbar must use a text style or the
-    # buttons render blank.
-    assert window._toolbar.toolButtonStyle() == Qt.ToolButtonStyle.ToolButtonTextOnly
+    # Icon + label: the actions now carry Breeze icons alongside their text.
+    assert (
+        window._toolbar.toolButtonStyle()
+        == Qt.ToolButtonStyle.ToolButtonTextBesideIcon
+    )
     labels = [a.text() for a in window._toolbar.actions()]
     assert all(labels)  # no empty labels
+
+
+def test_every_toolbar_action_has_a_non_null_icon(qtbot, tmp_path):
+    window = MainWindow(settings=_ini_settings(tmp_path))
+    qtbot.addWidget(window)
+    actions = window._toolbar.actions()
+    assert actions
+    assert all(not a.icon().isNull() for a in actions)
+
+
+def test_toggling_light_theme_keeps_icons_non_null(qtbot, tmp_path):
+    window = MainWindow(settings=_ini_settings(tmp_path))
+    qtbot.addWidget(window)
+    window._on_light_theme_toggled(True)
+    actions = window._toolbar.actions()
+    assert actions
+    assert all(not a.icon().isNull() for a in actions)

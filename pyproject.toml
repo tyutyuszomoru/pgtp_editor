@@ -25,7 +25,7 @@ build-backend = "setuptools.build_meta"
 include = ["pgtp_editor*"]
 
 [tool.setuptools.package-data]
-"pgtp_editor" = ["resources/*.md"]
+"pgtp_editor" = ["resources/*.md", "resources/icons/breeze/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

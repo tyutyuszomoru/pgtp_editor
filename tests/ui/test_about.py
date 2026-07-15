@@ -27,3 +27,9 @@ def test_keeps_license_and_genuine_credits():
 def test_drops_supernano_credit():
     assert "SuperNano" not in ABOUT_TEXT
     assert "nano" not in ABOUT_TEXT
+
+
+def test_credits_breeze_icons():
+    assert "Breeze" in ABOUT_TEXT
+    assert "LGPL" in ABOUT_TEXT
+    assert "KDE" in ABOUT_TEXT
