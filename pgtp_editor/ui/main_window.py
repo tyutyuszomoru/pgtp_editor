@@ -55,6 +55,9 @@ from pgtp_editor.ui.manual_panel import (
     load_manual_text,
     parse_chapters,
 )
+from pgtp_editor.db.config import save_connection, seed_params
+from pgtp_editor.db.introspect import test_connection as db_test_connection
+from pgtp_editor.ui.connection_setup_dialog import ConnectionSetupDialog
 from pgtp_editor.ui.code_editor import CodeEditorDialog
 from pgtp_editor.ui.customize_toolbar_dialog import CustomizeToolbarDialog
 from pgtp_editor.ui.history import SnapshotHistory
@@ -134,6 +137,8 @@ class MainWindow(QMainWindow):
         self._xsd_viewer = None
         self._labels_viewer = None
         self._reused_tables_window = None
+        # Connection Setup dialog, held so it is not GC'd while shown non-modally.
+        self._connection_dialog = None
         self.setWindowTitle("PGTP Editor")
         self.resize(1400, 900)
 
@@ -1251,6 +1256,7 @@ class MainWindow(QMainWindow):
         self._build_edit_menu()
         self._build_view_menu()
         self._build_schema_menu()
+        self._build_database_menu()
         self._build_tools_menu()
         self._build_generation_menu()
         self._build_help_menu()
@@ -1704,6 +1710,25 @@ class MainWindow(QMainWindow):
         self._labels_viewer.set_title("Schema Labels (JSON)")
         self._labels_viewer.set_content(text)
         self._labels_viewer.show()
+
+    def _build_database_menu(self):
+        menu = self.menuBar().addMenu("Database")
+        setup_action = menu.addAction("Connection Setup…")
+        setup_action.triggered.connect(self._open_connection_setup)
+
+    def _open_connection_setup(self):
+        tree = (
+            self._current_project.tree
+            if self._current_project is not None
+            else None
+        )
+        dialog = ConnectionSetupDialog(parent=self, tester=db_test_connection)
+        dialog.set_params(seed_params(tree, self._settings))
+        dialog.accepted.connect(
+            lambda: save_connection(self._settings, dialog.params())
+        )
+        self._connection_dialog = dialog
+        dialog.show()
 
     def _open_reused_tables(self):
         if self._current_project is None:

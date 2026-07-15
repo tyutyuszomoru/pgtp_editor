@@ -8,6 +8,7 @@ dependencies = [
     "PySide6>=6.6",
     "lxml>=5.0",
     "defusedxml>=0.7",
+    "psycopg[binary]>=3.1",
 ]
 
 [project.optional-dependencies]
