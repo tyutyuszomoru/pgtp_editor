@@ -4,7 +4,13 @@ from pathlib import Path
 
 from lxml import etree
 from PySide6.QtCore import Qt, QSettings, QTimer, QUrl
-from PySide6.QtGui import QAction, QDesktopServices, QKeySequence, QShortcut
+from PySide6.QtGui import (
+    QAction,
+    QDesktopServices,
+    QKeySequence,
+    QPalette,
+    QShortcut,
+)
 from PySide6.QtWidgets import (
     QApplication,
     QDialog,
@@ -52,6 +58,7 @@ from pgtp_editor.ui.manual_panel import (
 from pgtp_editor.ui.code_editor import CodeEditorDialog
 from pgtp_editor.ui.customize_toolbar_dialog import CustomizeToolbarDialog
 from pgtp_editor.ui.history import SnapshotHistory
+from pgtp_editor.ui.icons import themed_icon
 from pgtp_editor.ui.toolbar_registry import (
     AVAILABLE_COMMANDS,
     DEFAULT_TOOLBAR_IDS,
@@ -307,6 +314,9 @@ class MainWindow(QMainWindow):
         if light:
             self._light_theme_action.setChecked(True)
             apply_theme(QApplication.instance(), True)
+            # Toolbar was built under the default palette; re-tint its icons to
+            # the just-applied light palette so they stay legible.
+            self._refresh_toolbar_icons()
 
     def closeEvent(self, event):
         # Persist window geometry/dock state on close (Sub-project D). No modal
@@ -319,6 +329,8 @@ class MainWindow(QMainWindow):
     def _on_light_theme_toggled(self, checked):
         apply_theme(QApplication.instance(), checked)
         self._settings.setValue("lightTheme", checked)
+        # The palette flipped -- re-tint the toolbar icons so they stay legible.
+        self._refresh_toolbar_icons()
 
     # -- Customizable toolbar (Sub-project E) --------------------------------
 
@@ -328,9 +340,10 @@ class MainWindow(QMainWindow):
         # objectName so D's saveState()/restoreState() persists this toolbar's
         # position along with the docks.
         self._toolbar.setObjectName("main_toolbar")
-        # The toolbar actions have no icons, so show their text labels --
-        # otherwise the default icon-only style renders blank buttons.
-        self._toolbar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
+        # Icon + label: each command carries a Breeze icon beside its text.
+        self._toolbar.setToolButtonStyle(
+            Qt.ToolButtonStyle.ToolButtonTextBesideIcon
+        )
         # id -> slot for every command the toolbar can host.
         self._toolbar_slots = {
             "open": self._open_project,
@@ -363,11 +376,35 @@ class MainWindow(QMainWindow):
         and duplicate ids are dropped)."""
         ids = valid_ids(ids)
         self._toolbar.clear()
+        color = self._toolbar_icon_color()
         for command_id in ids:
             action = QAction(label_for(command_id), self)
             action.triggered.connect(self._toolbar_slots[command_id])
+            self._set_action_icon(action, command_id, color)
             self._toolbar.addAction(action)
         self._toolbar_ids = ids
+
+    def _toolbar_icon_color(self):
+        """The current palette's window-text color -- what the toolbar icons
+        are tinted to so they stay legible against either theme."""
+        return self.palette().color(QPalette.ColorRole.WindowText)
+
+    def _set_action_icon(self, action, command_id, color) -> None:
+        """Tint and assign the Breeze icon for `command_id` to `action`. A
+        missing/damaged icon is skipped (label stays) rather than crashing --
+        shouldn't happen with the vendored set."""
+        try:
+            action.setIcon(themed_icon(command_id, color))
+        except Exception:  # pragma: no cover - vendored set is always present
+            pass
+
+    def _refresh_toolbar_icons(self) -> None:
+        """Re-tint every current toolbar action's icon to the current palette
+        color, without rebuilding the toolbar. Called after a theme change so
+        the icons recolor to stay legible when the palette flips."""
+        color = self._toolbar_icon_color()
+        for action, command_id in zip(self._toolbar.actions(), self._toolbar_ids):
+            self._set_action_icon(action, command_id, color)
 
     def _save_toolbar_ids(self):
         """Persist the current toolbar ids (stored as a list)."""
