@@ -1224,3 +1224,164 @@ def test_open_replace_dialog_delegates_to_callback(qtbot):
     panel.on_open_replace = lambda: calls.append("replace")
     panel.open_replace_dialog()
     assert calls == ["replace"]
+
+
+# -- Phase C.2: preset-filter entry (row predicate) -------------------------
+
+
+def _ctx_entry(line, tag, anchor, attribute, value, table_name="", field_name="", in_detail=False):
+    return CaptionEntry(
+        line=line,
+        element_tag=tag,
+        anchor=anchor,
+        attribute=attribute,
+        value=value,
+        table_name=table_name,
+        field_name=field_name,
+        in_detail=in_detail,
+    )
+
+
+def _context_entries():
+    return [
+        # top-level page on pr.equip
+        _ctx_entry(2, "Page", "equip", "caption", "Equipment", table_name="pr.equip"),
+        # a column on the top-level page
+        _ctx_entry(4, "ColumnPresentation", "wbs_id", "caption", "WBS",
+                   table_name="pr.equip", field_name="wbs_id"),
+        # a detail on pr.att
+        _ctx_entry(6, "Detail", "att", "caption", "Attachments", table_name="pr.att"),
+        # a column inside a detail whose owning table is pr.att
+        _ctx_entry(9, "ColumnPresentation", "att_name", "caption", "Name",
+                   table_name="pr.att", field_name="att_name", in_detail=True),
+        # unrelated page on another table
+        _ctx_entry(12, "Page", "other", "caption", "Other", table_name="pr.other"),
+    ]
+
+
+def test_set_row_predicate_filters_by_table(qtbot):
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    panel.load_entries(_context_entries())
+    panel._proxy.set_row_predicate(lambda e: e.table_name == "pr.equip")
+    assert sorted(_visible_value_column(panel)) == ["Equipment", "WBS"]
+
+
+def test_set_row_predicate_none_clears(qtbot):
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    panel.load_entries(_context_entries())
+    panel._proxy.set_row_predicate(lambda e: e.table_name == "pr.equip")
+    assert len(_visible_value_column(panel)) == 2
+    panel._proxy.set_row_predicate(None)
+    assert len(_visible_value_column(panel)) == 5
+
+
+def test_row_predicate_ands_with_value_and_find_filters(qtbot):
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    panel.load_entries(_context_entries())
+    # Predicate limits to pr.equip (Equipment, WBS); value filter to WBS.
+    panel._proxy.set_row_predicate(lambda e: e.table_name == "pr.equip")
+    panel._proxy.set_value_filter(_VALUE_COLUMN, {"WBS"})
+    assert _visible_value_column(panel) == ["WBS"]
+    # A find filter that excludes WBS -> empty.
+    panel._proxy.set_regex_filter("Equipment", "normal", False)
+    assert _visible_value_column(panel) == []
+
+
+def test_entry_at_accessor(qtbot):
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    entries = _context_entries()
+    panel.load_entries(entries)
+    assert panel._model.entry_at(0).table_name == "pr.equip"
+    assert panel._model.entry_at(1).field_name == "wbs_id"
+
+
+def test_filter_to_table_shows_only_that_table(qtbot):
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    panel.load_entries(_context_entries())
+    panel.filter_to_table("pr.equip")
+    assert sorted(_visible_value_column(panel)) == ["Equipment", "WBS"]
+
+
+def test_filter_to_table_details_shows_only_detail_rows(qtbot):
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    panel.load_entries(_context_entries())
+    panel.filter_to_table_details("pr.att")
+    # Only the in-detail column (Name) matches: table pr.att AND in_detail.
+    # The <Detail> caption row itself (Attachments) is NOT in_detail.
+    assert _visible_value_column(panel) == ["Name"]
+
+
+def test_filter_to_field_shows_and_selects_matching_row(qtbot):
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    entries = _context_entries()
+    panel.load_entries(entries)
+    panel.filter_to_field("wbs_id")
+    assert _visible_value_column(panel) == ["WBS"]
+    # The matching row is selected.
+    selected = panel._table.selectionModel().selectedRows()
+    assert len(selected) == 1
+    source_row = panel._proxy.mapToSource(selected[0]).row()
+    assert panel._model.entry_at(source_row).field_name == "wbs_id"
+
+
+# -- Phase C.3: clear all filters -------------------------------------------
+
+
+def test_clear_all_filters_resets_everything(qtbot):
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    panel.load_entries(_context_entries())
+    panel._proxy.set_regex_filter("Name", "normal", False)
+    panel._proxy.set_value_filter(_VALUE_COLUMN, {"Name"})
+    panel._proxy.set_row_predicate(lambda e: e.table_name == "pr.att")
+    # Sanity: everything narrows to one row.
+    assert _visible_value_column(panel) == ["Name"]
+    panel.clear_all_filters()
+    # All rows visible again.
+    assert len(_visible_value_column(panel)) == 5
+    # Header indicators cleared.
+    assert panel._proxy.filtered_columns() == set()
+    assert panel._model._filtered_columns == set()
+    assert panel._proxy.find_pattern() == ""
+
+
+def test_clear_all_filters_in_context_menu_wired(qtbot, monkeypatch):
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    panel.load_entries(_context_entries())
+    # Capture the menu built by _show_context_menu without exec-ing it.
+    captured = {}
+
+    class _FakeMenu:
+        def __init__(self, *a, **k):
+            self._actions = []
+
+        def addAction(self, label, cb=None):
+            self._actions.append((label, cb))
+            return (label, cb)
+
+        def addSeparator(self):
+            pass
+
+        def addMenu(self, label):
+            return _FakeMenu()
+
+        def exec(self, *a, **k):
+            captured["actions"] = self._actions
+
+    monkeypatch.setattr(
+        "pgtp_editor.ui.caption_management_panel.QMenu", _FakeMenu
+    )
+    panel._show_context_menu(panel._table.viewport().rect().center())
+    labels = [label for label, _ in captured["actions"]]
+    assert "Clear all filters" in labels
+    # The wired callback is clear_all_filters.
+    cb = dict(captured["actions"])["Clear all filters"]
+    assert cb == panel.clear_all_filters

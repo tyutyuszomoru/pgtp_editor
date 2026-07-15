@@ -212,6 +212,91 @@ def test_breadcrumb_captionless_detail_falls_back_to_inner_page_label():
     assert column_entry.breadcrumb == "Top → InnerPageLabel → col"
 
 
+# -- table_name / field_name / in_detail context (Phase C.1) --------------
+
+
+def test_scan_column_entry_has_fieldName_and_owning_table():
+    text = (
+        "<Root>\n"
+        '  <Page caption="Equipment" fileName="equip" tableName="pr.equip">\n'
+        '    <Columns>\n'
+        '      <ColumnPresentation caption="WBS" fieldName="wbs_id"/>\n'
+        "    </Columns>\n"
+        "  </Page>\n"
+        "</Root>"
+    )
+    entries = scan_captions(text)
+    column_entry = next(e for e in entries if e.element_tag == "ColumnPresentation")
+    assert column_entry.field_name == "wbs_id"
+    assert column_entry.table_name == "pr.equip"
+    assert column_entry.in_detail is False
+
+
+def test_scan_page_caption_entry_has_table_name_and_empty_field_name():
+    text = '<Root>\n  <Page caption="Home" fileName="home" tableName="pr.home"/>\n</Root>'
+    entry = scan_captions(text)[0]
+    assert entry.table_name == "pr.home"
+    assert entry.field_name == ""
+    assert entry.in_detail is False
+
+
+def test_scan_detail_caption_entry_has_table_name_and_empty_field_name():
+    text = '<Root>\n  <Detail caption="Orders" tableName="pr.orders"/>\n</Root>'
+    entry = scan_captions(text)[0]
+    assert entry.table_name == "pr.orders"
+    assert entry.field_name == ""
+    # A <Detail> element itself: any ancestor is a Detail? No — its own tag is
+    # Detail but it has no Detail *ancestor*. in_detail is about being WITHIN a
+    # Detail embed, so the Detail element itself is not "in a detail".
+    assert entry.in_detail is False
+
+
+def test_scan_column_in_detail_is_in_detail_with_owning_table():
+    text = (
+        "<Root>\n"
+        '  <Page caption="Equipment" fileName="equip" tableName="pr.equip">\n'
+        '    <Detail caption="Attachments" tableName="pr.att">\n'
+        '      <Page fileName="attpage">\n'
+        '        <Columns>\n'
+        '          <ColumnPresentation caption="Name" fieldName="att_name"/>\n'
+        "        </Columns>\n"
+        "      </Page>\n"
+        "    </Detail>\n"
+        "  </Page>\n"
+        "</Root>"
+    )
+    entries = scan_captions(text)
+    column_entry = next(e for e in entries if e.element_tag == "ColumnPresentation")
+    assert column_entry.field_name == "att_name"
+    # Nearest ancestor-or-self with a tableName is the inner Page (no tableName)
+    # then the Detail (pr.att). The wrapping Detail's table owns this column.
+    assert column_entry.table_name == "pr.att"
+    assert column_entry.in_detail is True
+
+
+def test_scan_top_level_page_column_is_not_in_detail():
+    text = (
+        "<Root>\n"
+        '  <Page caption="Equipment" fileName="equip" tableName="pr.equip">\n'
+        '    <ColumnPresentation caption="WBS" fieldName="wbs_id"/>\n'
+        "  </Page>\n"
+        "</Root>"
+    )
+    entries = scan_captions(text)
+    column_entry = next(e for e in entries if e.element_tag == "ColumnPresentation")
+    assert column_entry.in_detail is False
+    assert column_entry.table_name == "pr.equip"
+
+
+def test_scan_table_field_default_empty_on_dataclass():
+    entry = CaptionEntry(
+        line=2, element_tag="Page", anchor="p1", attribute="caption", value="Hello"
+    )
+    assert entry.table_name == ""
+    assert entry.field_name == ""
+    assert entry.in_detail is False
+
+
 from pgtp_editor.ui.caption_scan import apply_caption_edits
 from lxml import etree as _etree
 

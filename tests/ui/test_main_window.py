@@ -1056,3 +1056,76 @@ def test_find_selected_text_reveals_raw_xml_tab_and_prefills_and_searches(qtbot)
     # find_next ran: the editor now has the term selected (unambiguous term so
     # the case-insensitive search doesn't match "Page" first).
     assert cs.xml_editor.textCursor().selectedText() == "widget"
+
+
+# -- Phase C.2: enter caption mode with a preset filter ---------------------
+
+_CAPTION_CONTEXT_XML = (
+    "<Root>\n"
+    '  <Page caption="Equipment" fileName="equip" tableName="pr.equip">\n'
+    "    <Columns>\n"
+    '      <ColumnPresentation caption="WBS" fieldName="wbs_id"/>\n'
+    "    </Columns>\n"
+    '    <Detail caption="Attachments" tableName="pr.att">\n'
+    '      <Page fileName="attpage">\n'
+    "        <Columns>\n"
+    '          <ColumnPresentation caption="Name" fieldName="att_name"/>\n'
+    "        </Columns>\n"
+    "      </Page>\n"
+    "    </Detail>\n"
+    "  </Page>\n"
+    '  <Page caption="Other" fileName="other" tableName="pr.other"/>\n'
+    "</Root>"
+)
+
+
+def _visible_values(panel):
+    proxy = panel._proxy
+    from pgtp_editor.ui.caption_management_panel import _VALUE_COLUMN
+
+    return [
+        proxy.index(r, _VALUE_COLUMN).data(Qt.ItemDataRole.DisplayRole)
+        for r in range(proxy.rowCount())
+    ]
+
+
+def test_enter_caption_mode_for_table_filters_grid(qtbot):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window.center_stage.xml_editor.setPlainText(_CAPTION_CONTEXT_XML)
+
+    window.enter_caption_mode_for_table("pr.equip")
+
+    stage = window.center_stage
+    assert stage.currentIndex() == stage.caption_management_tab_index
+    panel = stage.caption_management_panel
+    # Only rows whose owning table is pr.equip: the Equipment page + its WBS
+    # column (the Detail is pr.att, the second page is pr.other).
+    assert sorted(_visible_values(panel)) == ["Equipment", "WBS"]
+
+
+def test_enter_caption_mode_for_table_details_filters_to_detail_rows(qtbot):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window.center_stage.xml_editor.setPlainText(_CAPTION_CONTEXT_XML)
+
+    window.enter_caption_mode_for_table_details("pr.att")
+
+    panel = window.center_stage.caption_management_panel
+    # Only the in-detail column on pr.att (Name).
+    assert _visible_values(panel) == ["Name"]
+
+
+def test_enter_caption_mode_for_field_selects_row(qtbot):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window.center_stage.xml_editor.setPlainText(_CAPTION_CONTEXT_XML)
+
+    window.enter_caption_mode_for_field("wbs_id")
+
+    panel = window.center_stage.caption_management_panel
+    assert _visible_values(panel) == ["WBS"]
+    selected = panel._table.selectionModel().selectedRows()
+    assert len(selected) == 1
+    source_row = panel._proxy.mapToSource(selected[0]).row()
+    assert panel._model.entry_at(source_row).field_name == "wbs_id"

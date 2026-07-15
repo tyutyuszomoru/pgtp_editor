@@ -105,6 +105,11 @@ class _CaptionTableModel(QAbstractTableModel):
     def entries(self) -> list[CaptionEntry]:
         return self._entries
 
+    def entry_at(self, source_row: int) -> CaptionEntry:
+        """The CaptionEntry backing `source_row` (used by the proxy's row
+        predicate to filter on the entry's exact table_name/field_name/etc.)."""
+        return self._entries[source_row]
+
     def changed_edits(self) -> list[tuple[CaptionEntry, str]]:
         """(entry, resolved_new_value) for every row whose New Value is
         non-empty. `<NULL>` resolves to "" (caption set empty)."""
@@ -294,6 +299,22 @@ class _CaptionFilterProxyModel(QSortFilterProxyModel):
         self._find_pattern: str = ""
         self._find_mode: str = "normal"
         self._find_case: bool = False
+        # Preset row predicate (Phase C.2): fn(entry: CaptionEntry) -> bool, or
+        # None for no predicate. ANDed with the find + value filters. Reads the
+        # source CaptionEntry via the model's entry_at accessor.
+        self._row_predicate: Callable[[CaptionEntry], bool] | None = None
+
+    def set_row_predicate(
+        self, predicate: Callable[[CaptionEntry], bool] | None
+    ) -> None:
+        """Set a preset row predicate over the source ``CaptionEntry`` (Phase
+        C.2). A row passes iff ``predicate(entry)`` is True; ``None`` clears it.
+        ANDed with the find + value filters."""
+        self._row_predicate = predicate
+        self.invalidate()
+
+    def row_predicate(self) -> Callable[[CaptionEntry], bool] | None:
+        return self._row_predicate
 
     def set_regex_filter(self, pattern: str, mode: str, case: bool) -> None:
         """Set the whole-row find filter. A row passes iff any displayed cell
@@ -385,7 +406,20 @@ class _CaptionFilterProxyModel(QSortFilterProxyModel):
             source_row, exclude_column=target_column
         )
 
+    def _passes_row_predicate(self, source_row) -> bool:
+        """True iff the preset row predicate accepts the source row's entry (or
+        no predicate is active)."""
+        if self._row_predicate is None:
+            return True
+        model = self.sourceModel()
+        getter = getattr(model, "entry_at", None)
+        if getter is None:
+            return True
+        return bool(self._row_predicate(getter(source_row)))
+
     def filterAcceptsRow(self, source_row, source_parent) -> bool:
+        if not self._passes_row_predicate(source_row):
+            return False
         if not self._passes_find_filter(source_row, source_parent):
             return False
         return self._passes_value_filters(source_row, source_parent)
@@ -856,6 +890,60 @@ class CaptionManagementPanel(QWidget):
         popup.show()
         return popup
 
+    # -- preset filters (Phase C.2) -----------------------------------------
+
+    def filter_to_table(self, table_name: str) -> None:
+        """Show only rows whose owning page/detail table is `table_name`."""
+        self._proxy.set_row_predicate(lambda e: e.table_name == table_name)
+
+    def filter_to_table_details(self, table_name: str) -> None:
+        """Show only rows whose owning table is `table_name` AND that live
+        within a <Detail> embed (so you see how a DB table is captioned across
+        its Detail embeds)."""
+        self._proxy.set_row_predicate(
+            lambda e: e.table_name == table_name and e.in_detail
+        )
+
+    def filter_to_field(self, field_name: str, table_name: str | None = None) -> None:
+        """Show only rows whose column `field_name` matches (optionally also
+        `table_name`), then SELECT + scroll to the first matching row so the
+        specific column line is highlighted."""
+        if table_name is None:
+            self._proxy.set_row_predicate(lambda e: e.field_name == field_name)
+        else:
+            self._proxy.set_row_predicate(
+                lambda e: e.field_name == field_name and e.table_name == table_name
+            )
+        self._select_first_visible_row()
+
+    def _select_first_visible_row(self) -> None:
+        """Select and scroll to the first row visible through the proxy."""
+        if self._proxy.rowCount() == 0:
+            return
+        first = self._proxy.index(0, 0)
+        self._table.selectRow(first.row())
+        self._table.scrollTo(first)
+
+    def _source_row_to_proxy_row(self, source_row: int) -> int:
+        """Proxy (visual) row index for a source-model row, or -1 if filtered
+        out."""
+        proxy_index = self._proxy.mapFromSource(self._model.index(source_row, 0))
+        return proxy_index.row() if proxy_index.isValid() else -1
+
+    def _proxy_row_to_source_row(self, proxy_row: int) -> int:
+        """Source-model row index for a proxy (visual) row."""
+        return self._proxy.mapToSource(self._proxy.index(proxy_row, 0)).row()
+
+    # -- clear all filters (Phase C.3) --------------------------------------
+
+    def clear_all_filters(self) -> None:
+        """Clear the find filter, every header value filter, and the preset row
+        predicate; refresh the header indicators."""
+        self._proxy.set_regex_filter("", self._proxy._find_mode, self._proxy._find_case)
+        for column in list(self._proxy.filtered_columns()):
+            self._proxy.set_value_filter(column, None)
+        self._proxy.set_row_predicate(None)
+
     def _show_header_context_menu(self, pos) -> None:
         header = self._table.horizontalHeader()
         column = header.logicalIndexAt(pos)
@@ -900,4 +988,6 @@ class CaptionManagementPanel(QWidget):
             "Unify: set all inconsistent siblings to this value",
             self.unify_current,
         )
+        menu.addSeparator()
+        menu.addAction("Clear all filters", self.clear_all_filters)
         menu.exec(self._table.viewport().mapToGlobal(pos))

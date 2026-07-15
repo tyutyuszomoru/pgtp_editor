@@ -55,6 +55,15 @@ class CaptionEntry:
                   (outermost first) plus the element's own label, joined with
                   " → ". Display-only. Defaults to "" so bare constructions
                   (tests, callers pre-Phase-2) still work.
+    table_name:   the nearest ancestor-or-self Page/Detail/OnTheFlyInsertPage's
+                  `tableName` (first non-empty walking self then ancestors),
+                  else "". For a ColumnPresentation this is its owning
+                  page/detail's DB table. Exact string, for preset filtering.
+    field_name:   the element's own `fieldName` iff it is a ColumnPresentation,
+                  else "". Exact string, for preset filtering.
+    in_detail:    True iff any ancestor is a <Detail> (i.e. the element lives
+                  within a Detail embed). Used to filter captions to Detail
+                  embeds of a table. Defaults to False.
     """
 
     line: int
@@ -63,6 +72,9 @@ class CaptionEntry:
     attribute: str
     value: str
     breadcrumb: str = ""
+    table_name: str = ""
+    field_name: str = ""
+    in_detail: bool = False
 
 
 def scan_captions(text: str) -> list[CaptionEntry]:
@@ -83,6 +95,13 @@ def scan_captions(text: str) -> list[CaptionEntry]:
             continue  # defensive; not expected for parsed elements
         anchor = _resolve_anchor(element)
         breadcrumb = _build_breadcrumb(element)
+        table_name = _resolve_table_name(element)
+        field_name = (
+            element.attrib.get("fieldName", "")
+            if element.tag == "ColumnPresentation"
+            else ""
+        )
+        in_detail = _is_in_detail(element)
         for attribute in CAPTION_ATTRIBUTES:
             if attribute in element.attrib:
                 entries.append(
@@ -93,9 +112,37 @@ def scan_captions(text: str) -> list[CaptionEntry]:
                         attribute=attribute,
                         value=element.attrib[attribute],
                         breadcrumb=breadcrumb,
+                        table_name=table_name,
+                        field_name=field_name,
+                        in_detail=in_detail,
                     )
                 )
     return entries
+
+
+def _resolve_table_name(element) -> str:
+    """The `tableName` of the nearest ancestor-or-self Page/Detail/
+    OnTheFlyInsertPage element (walk self, then iterancestors; first with a
+    non-empty tableName), else ""."""
+    candidates = [element, *element.iterancestors()]
+    for candidate in candidates:
+        if not isinstance(candidate.tag, str):
+            continue
+        if candidate.tag not in _BREADCRUMB_ANCESTOR_TAGS:
+            continue
+        table_name = candidate.attrib.get("tableName")
+        if table_name:
+            return table_name
+    return ""
+
+
+def _is_in_detail(element) -> bool:
+    """True iff any ancestor is a <Detail> (the element lives within a Detail
+    embed). The element's own tag being Detail does not count."""
+    for ancestor in element.iterancestors():
+        if isinstance(ancestor.tag, str) and ancestor.tag == "Detail":
+            return True
+    return False
 
 
 def _build_breadcrumb(element) -> str:

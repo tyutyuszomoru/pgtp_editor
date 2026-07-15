@@ -748,16 +748,17 @@ class MainWindow(QMainWindow):
         self._reveal_raw_xml_tab()
         self.center_stage.find_replace_bar.replace_all()
 
-    def _enter_caption_mode(self):
+    def _enter_caption_mode(self) -> bool:
         """Tools -> Manage Captions...: snapshot the frozen Raw XML, scan it,
         load the grid, and enter caption mode (Raw XML hidden). Requires
-        non-empty Raw XML; otherwise a status message and no mode change."""
+        non-empty Raw XML; otherwise a status message and no mode change.
+        Returns True iff caption mode was entered (False if Raw XML empty)."""
         snapshot = self.center_stage.xml_editor.toPlainText()
         if not snapshot.strip():
             self.statusBar().showMessage(
                 "Manage Captions: open a project (Raw XML is empty) first.", 5000
             )
-            return
+            return False
         entries = caption_scan.scan_captions(snapshot)
         self.center_stage.caption_management_panel.load_entries(entries, snapshot_text=snapshot)
         self.center_stage.enter_caption_mode()
@@ -770,6 +771,31 @@ class MainWindow(QMainWindow):
         self._caption_replace_shortcut.setEnabled(True)
         self._editor_find_action.setEnabled(False)
         self._editor_replace_action.setEnabled(False)
+        return True
+
+    def enter_caption_mode_for_table(self, table_name: str) -> None:
+        """Enter caption mode, then filter the grid to `table_name`'s rows
+        (Phase C.2). No-op filter if entering failed (empty Raw XML)."""
+        if self._enter_caption_mode():
+            self.center_stage.caption_management_panel.filter_to_table(table_name)
+
+    def enter_caption_mode_for_table_details(self, table_name: str) -> None:
+        """Enter caption mode, then filter to `table_name`'s Detail-embed rows
+        (Phase C.2)."""
+        if self._enter_caption_mode():
+            self.center_stage.caption_management_panel.filter_to_table_details(
+                table_name
+            )
+
+    def enter_caption_mode_for_field(
+        self, field_name: str, table_name: str | None = None
+    ) -> None:
+        """Enter caption mode, then filter to the column `field_name` (optionally
+        also `table_name`) and select/scroll to its row (Phase C.2)."""
+        if self._enter_caption_mode():
+            self.center_stage.caption_management_panel.filter_to_field(
+                field_name, table_name
+            )
 
     def _apply_caption_edits(self, edited_text: str) -> None:
         """Panel Apply callback: count the changed rows, write the edited text
