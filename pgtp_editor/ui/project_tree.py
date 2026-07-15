@@ -17,6 +17,13 @@ class ProjectTreePanel(QTreeWidget):
         on_compare_page=None,
         on_compare_detail=None,
         on_selection_changed=None,
+        on_activate_node=None,
+        on_jump_to_xml=None,
+        on_select_xml_block=None,
+        on_see_table_in_caption=None,
+        on_see_table_details_in_caption=None,
+        on_jump_to_column_visibility=None,
+        on_see_column_in_caption=None,
     ):
         super().__init__(parent)
         self.setHeaderHidden(True)
@@ -24,9 +31,24 @@ class ProjectTreePanel(QTreeWidget):
         self._on_compare_page = on_compare_page or (lambda page_node: None)
         self._on_compare_detail = on_compare_detail or (lambda detail_node, source_path: None)
         self._on_selection_changed = on_selection_changed or (lambda node, kind: None)
+        # Phase D callbacks (default no-ops so the panel is usable standalone).
+        self._on_activate_node = on_activate_node or (lambda node, kind: None)
+        self._on_jump_to_xml = on_jump_to_xml or (lambda node: None)
+        self._on_select_xml_block = on_select_xml_block or (lambda node: None)
+        self._on_see_table_in_caption = on_see_table_in_caption or (lambda node: None)
+        self._on_see_table_details_in_caption = (
+            on_see_table_details_in_caption or (lambda node: None)
+        )
+        self._on_jump_to_column_visibility = (
+            on_jump_to_column_visibility or (lambda node: None)
+        )
+        self._on_see_column_in_caption = on_see_column_in_caption or (lambda node: None)
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.customContextMenuRequested.connect(self._show_context_menu)
         self.currentItemChanged.connect(self._on_current_item_changed)
+        # Single-click / current-item change still only updates Properties; the
+        # editor jumps ONLY on an explicit double-click (Phase D.1).
+        self.itemDoubleClicked.connect(self._on_item_double_clicked)
 
     def _on_current_item_changed(self, current, _previous):
         if current is None:
@@ -35,6 +57,13 @@ class ProjectTreePanel(QTreeWidget):
         node = current.data(0, MODEL_NODE_ROLE)
         kind = current.data(0, NODE_KIND_ROLE)
         self._on_selection_changed(node, kind)
+
+    def _on_item_double_clicked(self, item, _column=0):
+        if item is None:
+            return
+        node = item.data(0, MODEL_NODE_ROLE)
+        kind = item.data(0, NODE_KIND_ROLE)
+        self._on_activate_node(node, kind)
 
     def populate_from_project(self, project):
         """Populate the tree from a parsed ProjectModel (see
@@ -114,76 +143,55 @@ class ProjectTreePanel(QTreeWidget):
         return add_stub_action(menu, label, self._on_stub_action)
 
     def build_page_menu(self, item):
+        node = item.data(0, MODEL_NODE_ROLE)
         menu = QMenu(self)
-        self._add_stub_action(menu, "Edit Properties")
-        menu.addSeparator()
-        self._add_stub_action(menu, "Copy")
-        self._add_stub_action(menu, "Paste")
-        self._add_stub_action(menu, "Duplicate")
-        self._add_stub_action(menu, "Copy to Other Open Project...")
-        menu.addSeparator()
-        self._add_stub_action(menu, "Add Detail...")
-        menu.addSeparator()
-        compare_action = menu.addAction("Compare This Page With...")
-        compare_action.triggered.connect(
-            lambda checked=False, i=item: self._on_compare_page(i.data(0, MODEL_NODE_ROLE))
+        jump_action = menu.addAction("Jump to page xml")
+        jump_action.triggered.connect(
+            lambda checked=False, n=node: self._on_jump_to_xml(n)
         )
-        menu.addSeparator()
-        self._add_stub_action(menu, "Find Column Usages...")
-        self._add_stub_action(menu, "Rename / Unify Captions...")
-        menu.addSeparator()
-        self._add_stub_action(menu, "Delete Page")
+        select_action = menu.addAction("Select page xml")
+        select_action.triggered.connect(
+            lambda checked=False, n=node: self._on_select_xml_block(n)
+        )
+        self._add_stub_action(menu, "Add Event Handler")
+        see_action = menu.addAction("See database table in caption mode")
+        see_action.triggered.connect(
+            lambda checked=False, n=node: self._on_see_table_in_caption(n)
+        )
         return menu
 
-    def _build_source_path(self, item) -> list[str]:
-        """Walk from `item` up to the root Page, reading each ancestor's
-        identity segment (Page's file_name, or Detail's tableName/caption)
-        in root-to-leaf order, per spec §3.3."""
-        segments: list[str] = []
-        current = item
-        while current is not None:
-            node = current.data(0, MODEL_NODE_ROLE)
-            kind = current.data(0, NODE_KIND_ROLE)
-            if kind == "page":
-                segments.append(node.file_name)
-            else:
-                segments.append(f"{node.table_name}/{node.attrib.get('caption')}")
-            current = current.parent()
-        segments.reverse()
-        return segments
-
     def build_detail_menu(self, item):
+        node = item.data(0, MODEL_NODE_ROLE)
         menu = QMenu(self)
-        self._add_stub_action(menu, "Edit Properties")
-        menu.addSeparator()
-        self._add_stub_action(menu, "Cut")
-        self._add_stub_action(menu, "Copy")
-        self._add_stub_action(menu, "Paste")
-        self._add_stub_action(menu, "Duplicate")
-        self._add_stub_action(menu, "Copy to Other Open Project...")
-        menu.addSeparator()
-        self._add_stub_action(menu, "Add Nested Detail...")
-        menu.addSeparator()
-        compare_action = menu.addAction("Compare This Detail With...")
-        compare_action.triggered.connect(
-            lambda checked=False, i=item: self._on_compare_detail(
-                i.data(0, MODEL_NODE_ROLE), self._build_source_path(i)
-            )
+        jump_action = menu.addAction("Jump to detail xml")
+        jump_action.triggered.connect(
+            lambda checked=False, n=node: self._on_jump_to_xml(n)
         )
-        if self.has_duplicate_table(item):
-            self._add_stub_action(menu, "Compare with Other Instance...")
-        menu.addSeparator()
-        self._add_stub_action(menu, "Delete Detail (+ nested)")
+        select_action = menu.addAction("Select detail xml")
+        select_action.triggered.connect(
+            lambda checked=False, n=node: self._on_select_xml_block(n)
+        )
+        see_action = menu.addAction("See database table in caption mode")
+        see_action.triggered.connect(
+            lambda checked=False, n=node: self._on_see_table_details_in_caption(n)
+        )
         return menu
 
     def build_column_menu(self, item):
+        node = item.data(0, MODEL_NODE_ROLE)
         menu = QMenu(self)
-        self._add_stub_action(menu, "Edit Caption / Hint / Short Caption")
-        menu.addSeparator()
-        self._add_stub_action(menu, "Find All Usages of This Column")
-        self._add_stub_action(menu, "Unify Captions Across Pages...")
-        menu.addSeparator()
-        self._add_stub_action(menu, "Delete Column")
+        visibility_action = menu.addAction("Jump to column visibility in xml")
+        visibility_action.triggered.connect(
+            lambda checked=False, n=node: self._on_jump_to_column_visibility(n)
+        )
+        presentation_action = menu.addAction("Jump to column presentation in xml")
+        presentation_action.triggered.connect(
+            lambda checked=False, n=node: self._on_jump_to_xml(n)
+        )
+        see_action = menu.addAction("See column in caption mode")
+        see_action.triggered.connect(
+            lambda checked=False, n=node: self._on_see_column_in_caption(n)
+        )
         return menu
 
     def build_multi_select_menu(self):

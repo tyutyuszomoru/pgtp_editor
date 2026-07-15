@@ -1129,3 +1129,141 @@ def test_enter_caption_mode_for_field_selects_row(qtbot):
     assert len(selected) == 1
     source_row = panel._proxy.mapToSource(selected[0]).row()
     assert panel._model.entry_at(source_row).field_name == "wbs_id"
+
+
+# -- Phase D: tree double-click jump + redesigned context menus -------------
+
+_TREE_D_PGTP = """\
+<?xml version="1.0" encoding="UTF-8"?>
+<Project>
+  <Presentation>
+    <Pages>
+      <Page fileName="equipment" tableName="pr.equipment" caption="Equipment">
+        <ColumnPresentations>
+          <ColumnPresentation fieldName="tag" caption="Tag"/>
+        </ColumnPresentations>
+        <Columns>
+          <List>
+            <Column fieldName="tag" visible="true"/>
+          </List>
+        </Columns>
+        <Details>
+          <Detail caption="Sub-item" tableName="pr.attachment">
+            <Page fileName="" tableName="pr.attachment" caption="Sub-item">
+              <ColumnPresentations>
+                <ColumnPresentation fieldName="cvalue" caption="Value"/>
+              </ColumnPresentations>
+            </Page>
+          </Detail>
+        </Details>
+      </Page>
+    </Pages>
+  </Presentation>
+</Project>
+"""
+
+
+def _load_tree_d_window(qtbot):
+    import textwrap
+
+    from pgtp_editor.model.parser import load_project_from_text
+
+    window = MainWindow()
+    qtbot.addWidget(window)
+    text = textwrap.dedent(_TREE_D_PGTP)
+    window.center_stage.xml_editor.setPlainText(text)
+    project = load_project_from_text(text)
+    window._current_project = project
+    window.project_tree.populate_from_project(project)
+    return window, project
+
+
+def test_double_click_jumps_editor_to_node_line(qtbot):
+    window, project = _load_tree_d_window(qtbot)
+    detail = project.pages[0].details[0]
+
+    page_item = window.project_tree.topLevelItem(0)
+    detail_item = page_item.child(0)
+    window.project_tree.itemDoubleClicked.emit(detail_item, 0)
+
+    cs = window.center_stage
+    assert cs.currentIndex() == cs.raw_xml_tab_index
+    # The editor caret is on the outer <Detail> open line.
+    line = window.center_stage.xml_editor.textCursor().blockNumber() + 1
+    assert line == detail.sourceline
+
+
+def test_select_page_xml_selects_whole_page_block(qtbot):
+    window, project = _load_tree_d_window(qtbot)
+    page = project.pages[0]
+
+    window._on_tree_select_xml_block(page)
+
+    editor = window.center_stage.xml_editor
+    # Qt uses U+2029 (paragraph separator) for line breaks in selectedText();
+    # normalise to real newlines before asserting.
+    selected = editor.textCursor().selectedText().replace(chr(0x2029), "\n")
+    assert selected.startswith("<Page fileName=\"equipment\"")
+    assert selected.rstrip().endswith("</Page>")
+    # Whole element captured: the nested Detail is inside the selection.
+    assert "<Detail caption=\"Sub-item\"" in selected
+
+
+def test_select_detail_xml_selects_whole_detail_block(qtbot):
+    window, project = _load_tree_d_window(qtbot)
+    detail = project.pages[0].details[0]
+
+    window._on_tree_select_xml_block(detail)
+
+    editor = window.center_stage.xml_editor
+    selected = editor.textCursor().selectedText().replace(chr(0x2029), "\n")
+    assert selected.startswith("<Detail caption=\"Sub-item\"")
+    assert selected.rstrip().endswith("</Detail>")
+
+
+def test_jump_to_column_visibility_lands_on_columns_line(qtbot):
+    window, project = _load_tree_d_window(qtbot)
+    column = project.pages[0].columns[0]
+
+    window._on_tree_jump_to_column_visibility(column)
+
+    editor = window.center_stage.xml_editor
+    landed_line = editor.textCursor().blockNumber() + 1
+    assert editor.line_text(landed_line).strip() == "<Columns>"
+
+
+def test_jump_to_column_presentation_lands_on_column_presentation_line(qtbot):
+    window, project = _load_tree_d_window(qtbot)
+    column = project.pages[0].columns[0]
+
+    window._on_tree_jump_to_xml(column)
+
+    editor = window.center_stage.xml_editor
+    landed_line = editor.textCursor().blockNumber() + 1
+    assert landed_line == column.sourceline
+    assert "ColumnPresentation" in editor.line_text(landed_line)
+
+
+def test_see_table_in_caption_enters_filtered_caption_mode(qtbot):
+    window, project = _load_tree_d_window(qtbot)
+    page = project.pages[0]
+
+    window._on_tree_see_table_in_caption(page)
+
+    stage = window.center_stage
+    assert stage.currentIndex() == stage.caption_management_tab_index
+    panel = stage.caption_management_panel
+    # pr.equipment rows only: the Equipment page caption + its Tag column.
+    assert sorted(_visible_values(panel)) == ["Equipment", "Tag"]
+
+
+def test_see_column_in_caption_filters_and_selects_row(qtbot):
+    window, project = _load_tree_d_window(qtbot)
+    column = project.pages[0].columns[0]
+
+    window._on_tree_see_column_in_caption(column)
+
+    panel = window.center_stage.caption_management_panel
+    assert _visible_values(panel) == ["Tag"]
+    selected = panel._table.selectionModel().selectedRows()
+    assert len(selected) == 1

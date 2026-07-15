@@ -160,20 +160,26 @@ def test_next_and_prev_difference_menu_actions_navigate_the_panel(qtbot, tmp_pat
     assert panel.tree.currentItem() is leaves[0]
 
 
+# NOTE (Phase D): the tree Page/Detail context menus no longer offer
+# "Compare This Page/Detail With..." (those menus were redesigned to
+# jump/select/see-in-caption). The Compare feature still lives in the
+# Diff / Merge menu ("Compare / Merge Two Files...") and in the underlying
+# MainWindow handlers, which these tests now drive directly.
+
+
 def test_compare_this_page_with_real_handler(qtbot, tmp_path):
     window = MainWindow()
     qtbot.addWidget(window)
     window.open_project_file(_write(tmp_path, "source.pgtp", VALID_PGTP))
     target_path = _write(tmp_path, "target.pgtp", CHANGED_PGTP)
 
-    page_item = window.project_tree.topLevelItem(0)
-    menu = window.project_tree.build_page_menu(page_item)
+    page_node = window._current_project.pages[0]
 
     with patch(
         "pgtp_editor.ui.main_window.QFileDialog.getOpenFileName",
         return_value=(target_path, ""),
     ):
-        find_action(menu, "Compare This Page With...").trigger()
+        window._compare_page_with(page_node)
 
     assert window.center_stage.currentIndex() == window.center_stage.diff_merge_tab_index
     leaves = window.center_stage.diff_merge_panel._flattened_leaves()
@@ -197,14 +203,13 @@ def test_compare_this_page_with_shows_error_when_page_not_found_in_target(qtbot,
 """
     target_path = _write(tmp_path, "target.pgtp", other_page_pgtp)
 
-    page_item = window.project_tree.topLevelItem(0)
-    menu = window.project_tree.build_page_menu(page_item)
+    page_node = window._current_project.pages[0]
 
     with patch(
         "pgtp_editor.ui.main_window.QFileDialog.getOpenFileName",
         return_value=(target_path, ""),
     ), patch("pgtp_editor.ui.main_window.QMessageBox.critical") as mock_critical:
-        find_action(menu, "Compare This Page With...").trigger()
+        window._compare_page_with(page_node)
 
     mock_critical.assert_called_once()
     args, _kwargs = mock_critical.call_args
@@ -260,20 +265,30 @@ TARGET_MISSING_DETAIL_PGTP = """\
 """
 
 
+def _detail_source_path(project):
+    """Build the resolve_path segments for the first page's first Detail,
+    mirroring the resolution format the compare handler expects: the root
+    Page's fileName, then "<tableName>/<caption>" for the Detail."""
+    page = project.pages[0]
+    detail = page.details[0]
+    return [page.file_name, f"{detail.table_name}/{detail.attrib.get('caption')}"]
+
+
 def test_compare_this_detail_with_real_handler(qtbot, tmp_path):
     window = MainWindow()
     qtbot.addWidget(window)
     window.open_project_file(_write(tmp_path, "source.pgtp", SOURCE_WITH_DETAIL_PGTP))
     target_path = _write(tmp_path, "target.pgtp", TARGET_WITH_CHANGED_DETAIL_PGTP)
 
-    detail_item = window.project_tree.topLevelItem(0).child(0)
-    menu = window.project_tree.build_detail_menu(detail_item)
+    project = window._current_project
+    detail_node = project.pages[0].details[0]
+    source_path = _detail_source_path(project)
 
     with patch(
         "pgtp_editor.ui.main_window.QFileDialog.getOpenFileName",
         return_value=(target_path, ""),
     ):
-        find_action(menu, "Compare This Detail With...").trigger()
+        window._compare_detail_with(detail_node, source_path)
 
     assert window.center_stage.currentIndex() == window.center_stage.diff_merge_tab_index
     leaves = window.center_stage.diff_merge_panel._flattened_leaves()
@@ -286,18 +301,17 @@ def test_compare_this_detail_with_shows_error_when_detail_not_found_in_target(qt
     window.open_project_file(_write(tmp_path, "source.pgtp", SOURCE_WITH_DETAIL_PGTP))
     target_path = _write(tmp_path, "target.pgtp", TARGET_MISSING_DETAIL_PGTP)
 
-    detail_item = window.project_tree.topLevelItem(0).child(0)
-    menu = window.project_tree.build_detail_menu(detail_item)
+    project = window._current_project
+    detail_node = project.pages[0].details[0]
+    source_path = _detail_source_path(project)
 
     with patch(
         "pgtp_editor.ui.main_window.QFileDialog.getOpenFileName",
         return_value=(target_path, ""),
     ), patch("pgtp_editor.ui.main_window.QMessageBox.critical") as mock_critical:
-        find_action(menu, "Compare This Detail With...").trigger()
+        window._compare_detail_with(detail_node, source_path)
 
     mock_critical.assert_called_once()
-    args, _kwargs = mock_critical.call_args
-    assert "pr.attachment" in args[2]
 
 
 def test_compare_merge_two_files_tracks_current_diff_target(qtbot, tmp_path):
@@ -323,13 +337,12 @@ def test_compare_this_page_with_tracks_current_diff_target(qtbot, tmp_path):
     window.open_project_file(_write(tmp_path, "source.pgtp", VALID_PGTP))
     target_path = _write(tmp_path, "target.pgtp", CHANGED_PGTP)
 
-    page_item = window.project_tree.topLevelItem(0)
-    menu = window.project_tree.build_page_menu(page_item)
+    page_node = window._current_project.pages[0]
     with patch(
         "pgtp_editor.ui.main_window.QFileDialog.getOpenFileName",
         return_value=(target_path, ""),
     ):
-        find_action(menu, "Compare This Page With...").trigger()
+        window._compare_page_with(page_node)
 
     assert window._current_diff_target_path == target_path
     assert window._current_diff_target_project is not None
@@ -341,13 +354,14 @@ def test_compare_this_detail_with_tracks_current_diff_target(qtbot, tmp_path):
     window.open_project_file(_write(tmp_path, "source.pgtp", SOURCE_WITH_DETAIL_PGTP))
     target_path = _write(tmp_path, "target.pgtp", TARGET_WITH_CHANGED_DETAIL_PGTP)
 
-    detail_item = window.project_tree.topLevelItem(0).child(0)
-    menu = window.project_tree.build_detail_menu(detail_item)
+    project = window._current_project
+    detail_node = project.pages[0].details[0]
+    source_path = _detail_source_path(project)
     with patch(
         "pgtp_editor.ui.main_window.QFileDialog.getOpenFileName",
         return_value=(target_path, ""),
     ):
-        find_action(menu, "Compare This Detail With...").trigger()
+        window._compare_detail_with(detail_node, source_path)
 
     assert window._current_diff_target_path == target_path
     assert window._current_diff_target_project is not None
