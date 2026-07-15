@@ -1038,3 +1038,21 @@ def test_validate_passes_on_clean_project(qtbot):
     window._validate_project()
     assert _validation_items(window) == []
     assert window.statusBar().currentMessage() == "Validation passed — no issues."
+
+
+def test_find_selected_text_reveals_raw_xml_tab_and_prefills_and_searches(qtbot):
+    from pgtp_editor.ui.main_window import MainWindow
+
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window.center_stage.xml_editor.setPlainText("<Page>\n  widget\n</Page>\n")
+
+    # Simulate the editor's right-click "Find" emitting the selected text.
+    window.center_stage.xml_editor.find_selected_text.emit("widget")
+
+    cs = window.center_stage
+    assert cs.currentIndex() == cs.raw_xml_tab_index
+    assert cs.find_replace_bar._find_field.text() == "widget"
+    # find_next ran: the editor now has the term selected (unambiguous term so
+    # the case-insensitive search doesn't match "Page" first).
+    assert cs.xml_editor.textCursor().selectedText() == "widget"

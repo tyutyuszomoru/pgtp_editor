@@ -96,6 +96,13 @@ class FindReplaceBar(QWidget):
         self._find_field.setFocus()
         self._find_field.selectAll()
 
+    def set_find_text(self, text: str) -> None:
+        """Set the Find field's text (used by the editor's right-click
+        "Find" path, which prefills from the selection and then runs
+        find_next). Distinct from _prefill_from_selection, which only fills
+        when opened with an active editor selection."""
+        self._find_field.setText(text)
+
     def _prefill_from_selection(self) -> None:
         selected = self._editor.textCursor().selectedText()
         if selected:

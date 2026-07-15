@@ -676,6 +676,10 @@ def test_select_enclosing_block_selects_full_element_including_delimiters(qtbot)
     expected = text[text.index("<Detail>"):text.index("</Detail>") + len("</Detail>")]
     selected = editor.textCursor().selectedText().replace(" ", "\n")
     assert selected == expected
+    # A.1: caret sits at the block START (selectionStart) while the whole
+    # block stays selected, so the view shows the start of the selection.
+    assert editor.textCursor().position() == editor.textCursor().selectionStart()
+    assert editor.textCursor().position() == text.index("<Detail>")
 
 
 def test_select_enclosing_block_on_self_closing_selects_whole_token(qtbot):
@@ -691,6 +695,8 @@ def test_select_enclosing_block_on_self_closing_selects_whole_token(qtbot):
 
     selected = editor.textCursor().selectedText().replace(" ", "\n")
     assert selected == "<Column/>"
+    assert editor.textCursor().position() == editor.textCursor().selectionStart()
+    assert editor.textCursor().position() == text.index("<Column/>")
 
 
 def test_select_enclosing_block_in_intersibling_whitespace_selects_parent(qtbot):
@@ -818,6 +824,9 @@ def test_select_parent_block_from_fresh_cursor_selects_one_level_up(qtbot):
     selected = editor.textCursor().selectedText().replace(" ", "\n")
     assert selected == expected
     assert expected == text[text.index("<Detail>"):text.index("</Detail>") + len("</Detail>")]
+    # A.1: parent-block selection also lands caret-at-start.
+    assert editor.textCursor().position() == editor.textCursor().selectionStart()
+    assert editor.textCursor().position() == parent.open_start
 
 
 def test_select_parent_block_repeated_presses_walk_up_levels(qtbot):
@@ -990,3 +999,73 @@ def test_editable_keypress_does_not_emit_and_mutates_text(qtbot):
 
     assert emitted == []
     assert editor.toPlainText() == "a"
+
+
+# --- A.2: right-click "Find" on a selection --------------------------------
+
+def _select_range(editor, start, end):
+    cursor = editor.textCursor()
+    cursor.setPosition(start)
+    cursor.setPosition(end, _QTextCursor.MoveMode.KeepAnchor)
+    editor.setTextCursor(cursor)
+
+
+def test_find_selected_text_signal_exists():
+    assert hasattr(XmlEditor, "find_selected_text")
+
+
+def test_context_menu_has_find_action_at_top_when_selection(qtbot):
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    text = "<Page>hello</Page>"
+    editor.setPlainText(text)
+    _select_range(editor, text.index("hello"), text.index("hello") + len("hello"))
+
+    menu = editor._build_context_menu()
+    actions = menu.actions()
+    assert actions, "menu should not be empty"
+    assert actions[0].text() == "Find"
+
+
+def test_context_menu_has_no_find_action_without_selection(qtbot):
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    editor.setPlainText("<Page>hello</Page>")
+    cursor = editor.textCursor()
+    cursor.setPosition(0)
+    editor.setTextCursor(cursor)
+
+    menu = editor._build_context_menu()
+    assert all(a.text() != "Find" for a in menu.actions())
+
+
+def test_find_action_emits_find_selected_text_with_selection(qtbot):
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    text = "<Page>hello</Page>"
+    editor.setPlainText(text)
+    _select_range(editor, text.index("hello"), text.index("hello") + len("hello"))
+
+    menu = editor._build_context_menu()
+    find_action = next(a for a in menu.actions() if a.text() == "Find")
+
+    with qtbot.waitSignal(editor.find_selected_text, timeout=1000) as blocker:
+        find_action.trigger()
+    assert blocker.args == ["hello"]
+
+
+def test_find_action_collapses_multiline_paragraph_separators(qtbot):
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    text = "<Page>\n  hi\n</Page>"
+    editor.setPlainText(text)
+    _select_range(editor, 0, len(text))
+
+    menu = editor._build_context_menu()
+    find_action = next(a for a in menu.actions() if a.text() == "Find")
+    with qtbot.waitSignal(editor.find_selected_text, timeout=1000) as blocker:
+        find_action.trigger()
+    emitted = blocker.args[0]
+    # QTextCursor.selectedText() joins lines with U+2029; the emitted term
+    # must contain no paragraph separators (collapsed to spaces).
+    assert " " not in emitted

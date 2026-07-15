@@ -139,6 +139,9 @@ class MainWindow(QMainWindow):
         self.center_stage.xml_editor.read_only_edit_attempted.connect(
             self._on_read_only_edit_attempted
         )
+        self.center_stage.xml_editor.find_selected_text.connect(
+            self._on_find_selected_text
+        )
 
         # Permanent status-bar mode indicator (Editing vs Caption Mode).
         self._mode_label = QLabel("Editing Mode")
@@ -726,6 +729,15 @@ class MainWindow(QMainWindow):
 
     def _find_next(self):
         self._reveal_raw_xml_tab()
+        self.center_stage.find_replace_bar.find_next()
+
+    def _on_find_selected_text(self, text: str) -> None:
+        """Editor right-click "Find": reveal the Raw XML tab, prefill the find
+        bar with the selection, and run Find Next -- the same path Edit ->
+        Find/Find Next drives."""
+        self._reveal_raw_xml_tab()
+        self.center_stage.find_replace_bar.show_find()
+        self.center_stage.find_replace_bar.set_find_text(text)
         self.center_stage.find_replace_bar.find_next()
 
     def _find_all(self):
