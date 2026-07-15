@@ -2,6 +2,7 @@
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QMenu, QTreeWidget, QTreeWidgetItem
 
+from pgtp_editor.model.event_handlers import EVENT_HANDLERS
 from pgtp_editor.ui._stub_action import add_stub_action
 
 NODE_KIND_ROLE = Qt.ItemDataRole.UserRole
@@ -24,6 +25,8 @@ class ProjectTreePanel(QTreeWidget):
         on_see_table_details_in_caption=None,
         on_jump_to_column_visibility=None,
         on_see_column_in_caption=None,
+        on_edit_event_code=None,
+        on_add_event_handler=None,
     ):
         super().__init__(parent)
         self.setHeaderHidden(True)
@@ -43,6 +46,9 @@ class ProjectTreePanel(QTreeWidget):
             on_jump_to_column_visibility or (lambda node: None)
         )
         self._on_see_column_in_caption = on_see_column_in_caption or (lambda node: None)
+        # SP3 callbacks (event-node edit-code + Page insert-event-handler).
+        self._on_edit_event_code = on_edit_event_code or (lambda node: None)
+        self._on_add_event_handler = on_add_event_handler or (lambda node, tag: None)
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.customContextMenuRequested.connect(self._show_context_menu)
         self.currentItemChanged.connect(self._on_current_item_changed)
@@ -153,10 +159,46 @@ class ProjectTreePanel(QTreeWidget):
         select_action.triggered.connect(
             lambda checked=False, n=node: self._on_select_xml_block(n)
         )
-        self._add_stub_action(menu, "Add Event Handler")
+        self._add_add_event_handler_submenu(menu, node)
         see_action = menu.addAction("See database table in caption mode")
         see_action.triggered.connect(
             lambda checked=False, n=node: self._on_see_table_in_caption(n)
+        )
+        return menu
+
+    def _add_add_event_handler_submenu(self, menu, page_node):
+        """Add the Page menu's "Add Event Handler ▸" submenu listing all known
+        handlers (grouped Client / Server). Handlers already present on the page
+        are greyed-out. Choosing one invokes on_add_event_handler(node, tag)."""
+        submenu = QMenu("Add Event Handler", self)
+        menu.addMenu(submenu)
+        existing = {
+            event.tag_name for event in getattr(page_node, "events", []) or []
+        }
+        submenu.addSection("Client (JS)")
+        self._add_handler_entries(submenu, page_node, existing, side="C")
+        submenu.addSection("Server (PHP)")
+        self._add_handler_entries(submenu, page_node, existing, side="S")
+        return submenu
+
+    def _add_handler_entries(self, submenu, page_node, existing, side):
+        for tag, tag_side in EVENT_HANDLERS:
+            if tag_side != side:
+                continue
+            action = submenu.addAction(tag)
+            if tag in existing:
+                action.setEnabled(False)
+            else:
+                action.triggered.connect(
+                    lambda checked=False, n=page_node, t=tag: self._on_add_event_handler(n, t)
+                )
+
+    def build_event_menu(self, item):
+        node = item.data(0, MODEL_NODE_ROLE)
+        menu = QMenu(self)
+        edit_action = menu.addAction("Edit code…")
+        edit_action.triggered.connect(
+            lambda checked=False, n=node: self._on_edit_event_code(n)
         )
         return menu
 
@@ -213,6 +255,8 @@ class ProjectTreePanel(QTreeWidget):
             return self.build_detail_menu(item)
         if kind == "column":
             return self.build_column_menu(item)
+        if kind == "event":
+            return self.build_event_menu(item)
         return None
 
     def _show_context_menu(self, pos):
