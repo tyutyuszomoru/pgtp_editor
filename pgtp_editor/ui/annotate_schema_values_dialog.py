@@ -276,9 +276,13 @@ class AnnotateSchemaValuesDialog(QDialog):
                 for display, _key in _KIND_CHOICES:
                     combo.addItem(display)
                 combo.setCurrentIndex(self._kind_choice_index(row["kind"]))
-                combo.currentIndexChanged.connect(
-                    lambda _idx, r=row_index: self._on_kind_combo_changed(r)
-                )
+                # Bind the (path, attribute) identity onto the combo so the
+                # write-back handler resolves the acting row by identity —
+                # NOT by a captured visual index, which goes stale the moment
+                # the user sorts the table (QTableWidget moves cell widgets to
+                # new visual rows but our index would not follow).
+                combo.setProperty("row_key", (row["path"], row["attribute"]))
+                combo.currentIndexChanged.connect(self._on_kind_combo_changed)
                 self.attribute_table.setCellWidget(row_index, KIND_COLUMN, combo)
         finally:
             self.attribute_table.setSortingEnabled(was_sorting_enabled)
@@ -307,35 +311,46 @@ class AnnotateSchemaValuesDialog(QDialog):
         combo = self.attribute_table.cellWidget(row_index, KIND_COLUMN)
         target = self._kind_choice_index(kind)
         if combo.currentIndex() == target:
-            # Combo already at the target; apply the write directly.
-            self._apply_kind(row_index, kind)
+            # Combo already at the target; apply the write directly using the
+            # combo's own identity (never a visual index).
+            path, attribute = combo.property("row_key")
+            self._apply_kind(path, attribute, kind)
         else:
             combo.setCurrentIndex(target)  # triggers _on_kind_combo_changed
 
-    def _on_kind_combo_changed(self, row_index):
+    def _on_kind_combo_changed(self, _index):
         if self._populating:
             return
-        combo = self.attribute_table.cellWidget(row_index, KIND_COLUMN)
+        combo = self.sender()
+        if combo is None:
+            return
+        path, attribute = combo.property("row_key")
         _display, kind = _KIND_CHOICES[combo.currentIndex()]
-        self._apply_kind(row_index, kind)
+        self._apply_kind(path, attribute, kind)
 
-    def _apply_kind(self, row_index, kind):
-        row = self._visible_rows[row_index]
-        entry = self._model.paths[row["path"]]["attributes"][row["attribute"]]
+    def _apply_kind(self, path, attribute, kind):
+        entry = self._model.paths[path]["attributes"][attribute]
         if kind == "unclassified":
             entry.pop("kind", None)
         else:
             entry["kind"] = kind
-        row["kind"] = kind
-        # Keep the master row list in sync so re-filtering reflects it.
+        # Keep both the visible and master row lists in sync so re-filtering
+        # reflects the new kind.
         for candidate in self._all_rows:
-            if candidate["path"] == row["path"] and candidate["attribute"] == row["attribute"]:
+            if candidate["path"] == path and candidate["attribute"] == attribute:
+                candidate["kind"] = kind
+                break
+        for candidate in self._visible_rows:
+            if candidate["path"] == path and candidate["attribute"] == attribute:
                 candidate["kind"] = kind
                 break
         self._model.save(self._model_path)
-        # Refresh the right pane to reflect the new kind for the current row.
-        if self._selected_row_index() == row_index:
-            self._show_values_for_row(row_index)
+        # Re-filter + repopulate so a row whose new kind falls outside the
+        # active filter (e.g. Content in the default content-hidden view)
+        # leaves the list immediately. Repopulation resets the right pane to
+        # the placeholder, which is the sensible state when the previously
+        # selected row may have just disappeared.
+        self._refresh_visible_rows()
 
     # --- selection / right pane ---------------------------------------
 
@@ -403,10 +418,43 @@ class AnnotateSchemaValuesDialog(QDialog):
             return
         value = self.value_table.item(item.row(), VALUE_VALUE_COLUMN).text()
         new_label = item.text()
-        entry = self._model.paths[self._current_value_path]["attributes"][self._current_value_attribute]
+        path = self._current_value_path
+        attribute = self._current_value_attribute
+        entry = self._model.paths[path]["attributes"][attribute]
         entry.setdefault("labels", {})
         if new_label:
             entry["labels"][value] = new_label
         else:
             entry["labels"].pop(value, None)
         self._model.save(self._model_path)
+        self._refresh_labeled_count(path, attribute)
+
+    def _refresh_labeled_count(self, path, attribute):
+        """Recompute the ``#labeled`` count for ``(path, attribute)`` and
+        update both the row model and the left-table cell in place so the
+        left pane stays accurate without a full re-filter."""
+        entry = self._model.paths[path]["attributes"][attribute]
+        values = entry.get("values") or []
+        labels = entry.get("labels", {})
+        num_labeled = sum(1 for value in values if value in labels)
+        for candidate in self._all_rows:
+            if candidate["path"] == path and candidate["attribute"] == attribute:
+                candidate["num_labeled"] = num_labeled
+                break
+        for candidate in self._visible_rows:
+            if candidate["path"] == path and candidate["attribute"] == attribute:
+                candidate["num_labeled"] = num_labeled
+                break
+        # Locate the cell by its visible path/attribute text — the visual row
+        # order may differ from ``_visible_rows`` after the user sorts.
+        for visual_row in range(self.attribute_table.rowCount()):
+            path_item = self.attribute_table.item(visual_row, PATH_COLUMN)
+            attr_item = self.attribute_table.item(visual_row, ATTRIBUTE_COLUMN)
+            if (
+                path_item is not None
+                and attr_item is not None
+                and path_item.text() == path
+                and attr_item.text() == attribute
+            ):
+                self._set_readonly_item(visual_row, NUM_LABELED_COLUMN, str(num_labeled))
+                break

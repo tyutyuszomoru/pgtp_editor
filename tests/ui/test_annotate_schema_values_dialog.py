@@ -197,6 +197,8 @@ def test_filter_kind_and_text_combine():
 # UI: dialog construction / left pane
 # ---------------------------------------------------------------------------
 
+from PySide6.QtCore import Qt
+
 from pgtp_editor.ui.annotate_schema_values_dialog import (
     ATTRIBUTE_COLUMN,
     KIND_COLUMN,
@@ -436,6 +438,129 @@ def test_programmatic_population_does_not_save(qtbot, tmp_path):
     dialog.set_kind_filter("setting")
 
     assert model_path.stat().st_mtime_ns == mtime_before
+
+
+def test_repopulation_does_not_fire_kind_combo_writeback(qtbot, tmp_path):
+    """Repopulating the left table (which recreates Kind combos and sets
+    their current index) must not trigger a write-back / save."""
+    model = Model()
+    _seed_enum_attribute(model, "P", "a", ["1"], kind="setting")
+    _seed_enum_attribute(model, "P", "b", ["1"], kind="content")
+    model_path = tmp_path / "schema_model.json"
+    model.save(model_path)
+
+    dialog = AnnotateSchemaValuesDialog._for_testing(model, model_path)
+    qtbot.addWidget(dialog)
+    mtime_before = model_path.stat().st_mtime_ns
+
+    # A filter change repopulates the table (recreating combos at various
+    # indices). None of that should write to disk.
+    dialog.set_kind_filter("all")
+    dialog.set_kind_filter("setting")
+    dialog.set_kind_filter(None)
+
+    assert model_path.stat().st_mtime_ns == mtime_before
+
+
+# ---------------------------------------------------------------------------
+# C1: kind write-back resolves acting row by identity, not captured index,
+# so it stays correct after the user sorts the left table.
+# ---------------------------------------------------------------------------
+
+
+def test_kind_writeback_targets_correct_attribute_after_sort(qtbot, tmp_path):
+    model = Model()
+    _seed_enum_attribute(model, "P", "aaa", ["1"])
+    _seed_enum_attribute(model, "P", "zzz", ["1"])
+    model_path = tmp_path / "schema_model.json"
+    model.save(model_path)
+    dialog = AnnotateSchemaValuesDialog._for_testing(model, model_path)
+    qtbot.addWidget(dialog)
+
+    # Initially sorted ascending: row 0 == "aaa", row 1 == "zzz".
+    # Reverse the visual order by sorting descending on the attribute col.
+    dialog.attribute_table.sortItems(ATTRIBUTE_COLUMN, Qt.DescendingOrder)
+
+    # After descending sort, visual row 0 is "zzz", visual row 1 is "aaa".
+    visual_row_0_attr = dialog.attribute_table.item(0, ATTRIBUTE_COLUMN).text()
+    visual_row_1_attr = dialog.attribute_table.item(1, ATTRIBUTE_COLUMN).text()
+    assert visual_row_0_attr == "zzz"
+    assert visual_row_1_attr == "aaa"
+
+    # Drive the combo at VISUAL row 0 (which shows "zzz") to Content.
+    combo = dialog.attribute_table.cellWidget(0, KIND_COLUMN)
+    combo.setCurrentIndex(2)  # Content
+
+    # The attribute ACTUALLY shown at visual row 0 ("zzz") must be the one
+    # that changed; "aaa" must be untouched.
+    reloaded = ModelForRoundTrip.load(model_path)
+    attrs = reloaded.paths["P"]["attributes"]
+    assert attrs["zzz"]["kind"] == "content"
+    assert "kind" not in attrs["aaa"]
+
+
+# ---------------------------------------------------------------------------
+# I2: marking a row a kind outside the active filter removes its row.
+# ---------------------------------------------------------------------------
+
+
+def test_marking_content_removes_row_from_default_view(qtbot, tmp_path):
+    model = Model()
+    _seed_enum_attribute(model, "P", "a_setting", ["1"], kind="setting")
+    _seed_enum_attribute(model, "P", "b_unclassified", ["1"])
+    model_path = tmp_path / "schema_model.json"
+    model.save(model_path)
+    dialog = AnnotateSchemaValuesDialog._for_testing(model, model_path)
+    qtbot.addWidget(dialog)
+
+    # Default view shows both.
+    assert dialog.attribute_table.rowCount() == 2
+
+    # Find the visual row showing "a_setting" and mark it Content.
+    target_row = next(
+        r for r in range(dialog.attribute_table.rowCount())
+        if dialog.attribute_table.item(r, ATTRIBUTE_COLUMN).text() == "a_setting"
+    )
+    combo = dialog.attribute_table.cellWidget(target_row, KIND_COLUMN)
+    combo.setCurrentIndex(2)  # Content
+
+    # In the default (content-hidden) view, the row must be gone.
+    shown = {
+        dialog.attribute_table.item(r, ATTRIBUTE_COLUMN).text()
+        for r in range(dialog.attribute_table.rowCount())
+    }
+    assert "a_setting" not in shown
+    assert shown == {"b_unclassified"}
+    assert model.paths["P"]["attributes"]["a_setting"]["kind"] == "content"
+
+
+# ---------------------------------------------------------------------------
+# M3: #labeled column refreshes after a label edit.
+# ---------------------------------------------------------------------------
+
+
+def test_labeled_count_updates_after_label_edit(qtbot, tmp_path):
+    model = Model()
+    _seed_enum_attribute(model, "P", "editFormMode", ["1", "2"], kind="setting")
+    model_path = tmp_path / "schema_model.json"
+    model.save(model_path)
+    dialog = AnnotateSchemaValuesDialog._for_testing(model, model_path)
+    qtbot.addWidget(dialog)
+    dialog.select_attribute_row(0)
+
+    # Initially nothing labeled.
+    def labeled_cell_text():
+        for r in range(dialog.attribute_table.rowCount()):
+            if dialog.attribute_table.item(r, ATTRIBUTE_COLUMN).text() == "editFormMode":
+                return dialog.attribute_table.item(r, NUM_LABELED_COLUMN).text()
+        raise AssertionError("editFormMode row not found")
+
+    assert labeled_cell_text() == "0"
+
+    # Label one value.
+    dialog.value_table.item(0, VALUE_LABEL_COLUMN).setText("Modal")
+
+    assert labeled_cell_text() == "1"
 
 
 # ---------------------------------------------------------------------------
