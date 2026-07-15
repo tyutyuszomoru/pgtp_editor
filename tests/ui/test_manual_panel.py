@@ -71,3 +71,33 @@ def test_manual_heading_count_matches_parse_chapters(qtbot):
             heading_blocks += 1
         block = block.next()
     assert heading_blocks == len(parse_chapters(text))
+
+
+def test_contents_panel_emits_positional_index(qtbot):
+    from pgtp_editor.ui.manual_panel import Chapter, ManualContentsPanel
+    panel = ManualContentsPanel()
+    qtbot.addWidget(panel)
+    chapters = [
+        Chapter(1, "Title"), Chapter(2, "One"),
+        Chapter(3, "One-a"), Chapter(2, "Two"),
+    ]
+    panel.set_chapters(chapters)
+    received = []
+    panel.chapter_selected.connect(received.append)
+    # "One-a" is nested under "One"; find it and click.
+    one = _find_item(panel.tree, "One")
+    one_a = one.child(0)
+    assert one_a.text(0) == "One-a"
+    panel.tree.itemClicked.emit(one_a, 0)
+    assert received == [2]  # positional index of "One-a"
+
+
+def _find_item(tree, title):
+    it = tree.invisibleRootItem()
+    stack = [it.child(i) for i in range(it.childCount())]
+    while stack:
+        node = stack.pop()
+        if node.text(0) == title:
+            return node
+        stack.extend(node.child(i) for i in range(node.childCount()))
+    return None

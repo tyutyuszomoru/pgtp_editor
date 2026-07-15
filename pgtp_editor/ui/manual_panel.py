@@ -75,3 +75,46 @@ class ManualPanel(QTextBrowser):
                     bar.setValue(bar.value() + top)
                     return
             block = block.next()
+
+
+class ManualContentsPanel(QWidget):
+    chapter_selected = Signal(int)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        self.tree = QTreeWidget()
+        self.tree.setHeaderHidden(True)
+        layout.addWidget(self.tree)
+        self.tree.itemClicked.connect(self._on_item_clicked)
+
+    def set_chapters(self, chapters) -> None:
+        self.tree.clear()
+        last_h2 = None
+        title_item = None
+        for index, ch in enumerate(chapters):
+            item = QTreeWidgetItem([ch.title])
+            item.setData(0, Qt.ItemDataRole.UserRole, index)
+            if ch.level <= 1:
+                self.tree.addTopLevelItem(item)
+                title_item = item
+                last_h2 = None
+            elif ch.level == 2:
+                if title_item is not None:
+                    title_item.addChild(item)
+                else:
+                    self.tree.addTopLevelItem(item)
+                last_h2 = item
+            else:  # level >= 3
+                parent = last_h2 or title_item
+                if parent is not None:
+                    parent.addChild(item)
+                else:
+                    self.tree.addTopLevelItem(item)
+        self.tree.expandAll()
+
+    def _on_item_clicked(self, item, _column) -> None:
+        index = item.data(0, Qt.ItemDataRole.UserRole)
+        if index is not None:
+            self.chapter_selected.emit(int(index))
