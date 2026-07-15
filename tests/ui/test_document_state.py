@@ -243,3 +243,26 @@ def test_revert_menu_action_wired(qtbot, tmp_path):
     # No project loaded -> message path, no modal, no crash.
     find_action(file_menu, "Revert").trigger()
     assert window.statusBar().currentMessage() == "Nothing to revert to."
+
+
+# -- failed open must not mark dirty (C1 regression) ------------------------
+
+
+def test_failed_open_does_not_mark_dirty(qtbot, tmp_path):
+    from unittest.mock import patch
+
+    window = _window(qtbot, tmp_path)
+    # Open a good project first so there is a tracked path to protect.
+    good = _make_project(tmp_path, "good.pgtp")
+    window.open_project_file(str(good))
+    assert window._dirty is False
+
+    bad = tmp_path / "bad.pgtp"
+    bad.write_text("<Project><oops>", encoding="utf-8", newline="")
+    with patch("pgtp_editor.ui.main_window.QMessageBox.critical"):
+        window.open_project_file(str(bad))
+
+    # The failed open showed the fallback text but must NOT mark the document
+    # dirty, and must leave the tracked project pointing at the good file.
+    assert window._dirty is False
+    assert window._current_project_path == str(good)

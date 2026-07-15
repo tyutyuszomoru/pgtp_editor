@@ -608,7 +608,15 @@ class MainWindow(QMainWindow):
             # nothing to show in the fallback view in that case; the dialog
             # above already reported the failure.
             return
-        self.center_stage.xml_editor.setPlainText(raw_text)
+        # The fallback view displays on-disk content of a file that FAILED to
+        # open -- it is not a user edit, so it must not mark the document dirty
+        # (and must never let a later Save overwrite the still-tracked good
+        # project with this broken text). Guard the same way as the load path.
+        self._loading = True
+        try:
+            self.center_stage.xml_editor.setPlainText(raw_text)
+        finally:
+            self._loading = False
         if exc.line is not None:
             self.center_stage.xml_editor.highlight_error_line(exc.line)
         self.center_stage.set_raw_xml_tab_visible(True)
