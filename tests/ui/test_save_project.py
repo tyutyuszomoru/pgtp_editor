@@ -19,6 +19,23 @@ def test_write_project_text_writes_editor_buffer_verbatim(qtbot, tmp_path):
     assert target.read_text(encoding="utf-8") == "<Project/>\n"
 
 
+def test_write_project_text_preserves_lf_no_crlf_translation(qtbot, tmp_path):
+    """Regression: Path.write_text opens in text mode, so on Windows it
+    translates \\n -> \\r\\n, silently corrupting LF-lined .pgtp files. The
+    editor holds LF; the file on disk must hold LF byte-for-byte."""
+    window = _window(qtbot, tmp_path)
+    text = "<a>\n  <b/>\n</a>\n"
+    window.center_stage.xml_editor.setPlainText(text)
+    target = tmp_path / "x.pgtp"
+
+    window._write_project_text(str(target))
+
+    data = target.read_bytes()
+    assert b"\r\n" not in data
+    assert b"\r" not in data
+    assert data == text.encode("utf-8")
+
+
 def test_write_project_text_makes_bak_on_overwrite(qtbot, tmp_path):
     window = _window(qtbot, tmp_path)
     target = tmp_path / "out.pgtp"
