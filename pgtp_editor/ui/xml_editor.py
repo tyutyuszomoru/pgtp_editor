@@ -27,7 +27,10 @@ from PySide6.QtGui import (
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import QMenu, QPlainTextEdit, QTextEdit, QToolTip, QWidget
 
-from pgtp_editor.schema_learning.settings_index import enum_hint
+from pgtp_editor.schema_learning.settings_index import (
+    enum_hint,
+    unused_setting_attributes,
+)
 from pgtp_editor.ui import xml_structure
 from pgtp_editor.ui.event_body import event_body_line_ranges
 
@@ -102,6 +105,81 @@ def attribute_at_position(text: str, pos: int):
         walker = parent
     tag_chain = "/".join(reversed(names))
     return tag_chain, attr
+
+
+def enclosing_open_tag(text: str, pos: int):
+    """Resolve a document position that falls *inside an opening tag* (on the
+    name, an attribute, or the whitespace between tokens) to
+    ``(tag_chain, present_attrs, insert_pos)``; return ``None`` otherwise.
+
+    - ``tag_chain``: slash-joined ancestor open-tag names from the document
+      root down to and including this tag (same construction Phase 3 uses via
+      xml_structure's scan/parent_tag_span).
+    - ``present_attrs``: the set of attribute names already on this opening
+      tag, parsed quote-awarely so a '>' inside a quoted value does not
+      truncate the tag.
+    - ``insert_pos``: index of the tag's closing '>' (or the '/' of a
+      self-closing '/>'), i.e. where a new ` name=""` should be spliced.
+
+    Returns ``None`` when ``pos`` is in text content, a close tag, or outside
+    every element. Unlike ``attribute_at_position``, ``pos`` need not be on an
+    attribute token -- anywhere inside the opening-tag region qualifies.
+    """
+    spans = xml_structure.scan(text)
+
+    containing = None
+    containing_open_end = None
+    for span in spans:
+        real_open_end = _opening_tag_end(text, span.open_start)
+        if real_open_end is None:
+            continue
+        if span.open_start <= pos < real_open_end and (
+            containing is None or span.depth > containing.depth
+        ):
+            containing = span
+            containing_open_end = real_open_end
+    if containing is None:
+        return None
+
+    # insert_pos: the '/' of a self-closing '/>' or the closing '>'. The tag's
+    # true end is containing_open_end (just past '>'); walk back over a
+    # trailing '/' so a self-closing tag splices before "/>".
+    insert_pos = containing_open_end - 1  # index of '>'
+    if insert_pos - 1 >= containing.open_start and text[insert_pos - 1] == "/":
+        insert_pos -= 1
+
+    present_attrs = {
+        match.group(1)
+        for match in _ATTR_PAIR_RE.finditer(
+            text[containing.open_start:containing_open_end]
+        )
+    }
+
+    names = [containing.name]
+    walker = containing
+    while walker.depth > 0:
+        parent = xml_structure.parent_tag_span(spans, walker)
+        if parent is None:
+            break
+        names.append(parent.name)
+        walker = parent
+    tag_chain = "/".join(reversed(names))
+    return tag_chain, present_attrs, insert_pos
+
+
+def insert_attribute(text: str, insert_pos: int, name: str):
+    """Splice ` name=""` (leading space + name + ``=""``) into ``text`` just
+    before ``insert_pos`` and return ``(new_text, caret_pos)`` where
+    ``caret_pos`` is the index BETWEEN the two inserted quotes.
+
+    ``insert_pos`` is the index of the tag's closing '>' (or the '/' of a
+    self-closing '/>'); the inserted text goes immediately before it.
+    """
+    fragment = f' {name}=""'
+    new_text = text[:insert_pos] + fragment + text[insert_pos:]
+    # Caret sits between the two quotes: one char back from the fragment's end.
+    caret_pos = insert_pos + len(fragment) - 1
+    return new_text, caret_pos
 
 
 def _opening_tag_end(text: str, open_start: int):
@@ -784,6 +862,23 @@ class XmlEditor(QPlainTextEdit):
                 menu.insertAction(before, edit_code_action)
             else:
                 menu.addAction(edit_code_action)
+        # "Add attribute ▸" lists settings-attributes the schema knows for this
+        # element path that the element doesn't already have. Omitted entirely
+        # when there are none (model None, read-only, not in an opening tag, or
+        # nothing unused) so the menu stays clean.
+        names = self.unused_attributes_at(self.textCursor().position())
+        if names:
+            add_menu = QMenu("Add attribute", menu)
+            for name in names:
+                action = QAction(name, add_menu)
+                action.triggered.connect(
+                    lambda _checked=False, n=name: self._insert_attribute(n)
+                )
+                add_menu.addAction(action)
+            if before is not None:
+                menu.insertMenu(before, add_menu)
+            else:
+                menu.addMenu(add_menu)
         return menu
 
     def _emit_find_selected_text(self) -> None:
@@ -803,6 +898,47 @@ class XmlEditor(QPlainTextEdit):
         MainWindow after each enrich so value-hover tooltips reflect the
         latest labels; None disables hovers (default)."""
         self._schema_model = model
+
+    def unused_attributes_at(self, cursor_pos: int) -> list[str]:
+        """Setting-attributes the schema knows for the opening tag at
+        ``cursor_pos`` that the element does not already carry, sorted.
+
+        Returns ``[]`` when the editor is read-only (Caption Mode), no model is
+        set, ``cursor_pos`` is not inside an opening tag, or nothing is unused.
+        Drives the "Add attribute" submenu; exposed so tests can exercise the
+        menu-building logic without popping a real menu.
+        """
+        if self.isReadOnly() or self._schema_model is None:
+            return []
+        resolved = enclosing_open_tag(self.toPlainText(), cursor_pos)
+        if resolved is None:
+            return []
+        tag_chain, present_attrs, _insert_pos = resolved
+        return unused_setting_attributes(
+            self._schema_model, tag_chain, present_attrs
+        )
+
+    def _insert_attribute(self, name: str) -> None:
+        """Insert ` name=""` into the opening tag at the current cursor and
+        place the caret between the quotes. Recomputes ``enclosing_open_tag``
+        from the live buffer (in case it moved since the menu was built) and
+        applies the edit through a QTextCursor so it is a single undoable step.
+        No-op when the cursor is not inside an opening tag."""
+        resolved = enclosing_open_tag(
+            self.toPlainText(), self.textCursor().position()
+        )
+        if resolved is None:
+            return
+        _tag_chain, _present_attrs, insert_pos = resolved
+        fragment = f' {name}=""'
+        cursor = self.textCursor()
+        cursor.beginEditBlock()
+        cursor.setPosition(insert_pos)
+        cursor.insertText(fragment)
+        cursor.endEditBlock()
+        # Caret between the two quotes: one char back from the fragment's end.
+        cursor.setPosition(insert_pos + len(fragment) - 1)
+        self.setTextCursor(cursor)
 
     def _hint_for_help_pos(self, char_pos: int):
         """Given a document character position, return the settings hover
