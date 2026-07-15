@@ -402,6 +402,12 @@ class MainWindow(QMainWindow):
             model.save(model_path)
             xsd_path.write_text(generate_xsd(model), encoding="utf-8")
 
+            # Hand the freshly-updated in-memory model to the Raw XML editor so
+            # value-hover tooltips reflect the latest labels without a per-hover
+            # disk reload. If enrichment fails below, the editor keeps whatever
+            # model it had (possibly None), which is fine.
+            self.center_stage.xml_editor.set_schema_model(model)
+
             self._report_schema_events(events, path)
         except Exception as exc:
             self.audit_panel.addItem(f"[Schema] Could not update schema knowledge: {exc}")
