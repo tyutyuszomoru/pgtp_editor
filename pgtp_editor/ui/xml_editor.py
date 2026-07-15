@@ -19,6 +19,7 @@ from PySide6.QtGui import (
     QKeyEvent,
     QKeySequence,
     QPainter,
+    QPalette,
     QSyntaxHighlighter,
     QTextCharFormat,
     QTextCursor,
@@ -234,6 +235,13 @@ class XmlSyntaxHighlighter(QSyntaxHighlighter):
         self._string_format = QTextCharFormat()
         self._string_format.setForeground(QColor("#ce9178"))
 
+    def set_colors(self, tag: str, attr_name: str, string: str) -> None:
+        """Recolor the three syntax formats (tag, attribute-name, string) for a
+        light or dark theme. The caller rehighlights afterwards."""
+        self._tag_format.setForeground(QColor(tag))
+        self._attr_name_format.setForeground(QColor(attr_name))
+        self._string_format.setForeground(QColor(string))
+
     def highlightBlock(self, text: str) -> None:
         start = 0
         if self.previousBlockState() == STATE_IN_UNCLOSED_STRING:
@@ -299,7 +307,7 @@ class _EditorGutter(QWidget):
 
     def paintEvent(self, event) -> None:
         painter = QPainter(self)
-        painter.fillRect(event.rect(), QColor("#2b2b2b"))
+        painter.fillRect(event.rect(), self._editor._gutter_bg_color)
 
         block = self._editor.firstVisibleBlock()
         block_number = block.blockNumber()
@@ -316,7 +324,7 @@ class _EditorGutter(QWidget):
         while block.isValid() and top <= event.rect().bottom():
             if block.isVisible() and bottom >= event.rect().top():
                 number_text = str(block_number + 1)
-                painter.setPen(QColor("#858585"))
+                painter.setPen(self._editor._gutter_fg_color)
                 painter.drawText(
                     _FOLD_GLYPH_WIDTH,
                     int(top),
@@ -342,8 +350,8 @@ class _EditorGutter(QWidget):
         cx = glyph_left + _FOLD_GLYPH_WIDTH // 2
         cy = top + line_height // 2
         half = glyph_size // 2
-        painter.setPen(QColor("#858585"))
-        painter.setBrush(QColor("#858585"))
+        painter.setPen(self._editor._gutter_fg_color)
+        painter.setBrush(self._editor._gutter_fg_color)
         if collapsed:
             # Right-pointing triangle.
             points = [QPoint(cx - half, cy - half), QPoint(cx - half, cy + half), QPoint(cx + half, cy)]
@@ -400,6 +408,13 @@ class XmlEditor(QPlainTextEdit):
         self._highlighter = XmlSyntaxHighlighter(self.document())
         self._gutter = _EditorGutter(self)
         self._fold_state: dict[int, bool] = {}
+        # Theme-aware colors. These default to the DARK set; apply_theme_colors
+        # swaps the whole set to the LIGHT variant (and back) and is driven
+        # automatically off ApplicationPaletteChange in changeEvent, so the
+        # editor follows the app's Light/Dark theme. The gutter widget reads
+        # _gutter_bg_color/_gutter_fg_color directly when painting.
+        self._gutter_bg_color = QColor("#2b2b2b")
+        self._gutter_fg_color = QColor("#858585")
         self._current_line_color = QColor("#2d2d30")
         self._error_line_color = QColor("#5a1d1d")
         self._navigation_highlight_color = QColor("#264f78")
@@ -454,6 +469,56 @@ class XmlEditor(QPlainTextEdit):
         # Folding state is per-document-instance; a fresh setPlainText call
         # (a new file loaded into this editor) starts fully unfolded.
         self._fold_state = {}
+
+    def apply_theme_colors(self, light: bool) -> None:
+        """Swap the editor's color attributes and the syntax highlighter's
+        format colors between a LIGHT set (readable dark-on-white) and the DARK
+        set (the original values), then rehighlight and repaint so the change
+        shows immediately -- gutter, current-line band, matching-tag spans and
+        code-region backgrounds all recolor at once. Wired to run automatically
+        on ApplicationPaletteChange via changeEvent."""
+        if light:
+            self._gutter_bg_color = QColor("#f0f0f0")
+            self._gutter_fg_color = QColor("#888888")
+            self._current_line_color = QColor("#eef1f7")
+            self._error_line_color = QColor("#f7d4d4")
+            self._navigation_highlight_color = QColor("#cfe0ff")
+            self._matching_tag_color = QColor("#d3ecd3")
+            self._code_region_color = QColor("#eef2f5")
+            self._highlighter.set_colors(
+                tag="#0000ff", attr_name="#e50000", string="#a31515"
+            )
+        else:
+            self._gutter_bg_color = QColor("#2b2b2b")
+            self._gutter_fg_color = QColor("#858585")
+            self._current_line_color = QColor("#2d2d30")
+            self._error_line_color = QColor("#5a1d1d")
+            self._navigation_highlight_color = QColor("#264f78")
+            self._matching_tag_color = QColor("#3a5f3a")
+            self._code_region_color = QColor("#232a2f")
+            self._highlighter.set_colors(
+                tag="#569cd6", attr_name="#9cdcfe", string="#ce9178"
+            )
+        self._highlighter.rehighlight()
+        # Rebuild the extra-selection layers so their stored per-selection
+        # colors pick up the new values (they cache the color at build time).
+        self._refresh_code_region_selections()
+        self._update_matching_tag_highlight()
+        self._highlight_current_line()
+        self._gutter.update()
+
+    def changeEvent(self, event) -> None:
+        super().changeEvent(event)
+        if event.type() in (
+            QEvent.Type.ApplicationPaletteChange,
+            QEvent.Type.PaletteChange,
+        ):
+            # changeEvent can fire during base-class construction, before the
+            # theme attributes/highlighter exist; ignore until we're set up.
+            if not hasattr(self, "_highlighter"):
+                return
+            light = self.palette().color(QPalette.ColorRole.Base).lightness() > 128
+            self.apply_theme_colors(light)
 
     def _rescan_structure(self) -> None:
         self._spans = xml_structure.scan(self.toPlainText())
