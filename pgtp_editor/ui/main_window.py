@@ -701,7 +701,9 @@ class MainWindow(QMainWindow):
         convention as Apply-to-Target)."""
         if Path(path).exists():
             shutil.copy2(path, path + ".bak")
-        Path(path).write_text(self.center_stage.xml_editor.toPlainText(), encoding="utf-8")
+        Path(path).write_text(
+            self.center_stage.xml_editor.toPlainText(), encoding="utf-8", newline=""
+        )
 
     def _save_project(self) -> None:
         if not self._current_project_path:
