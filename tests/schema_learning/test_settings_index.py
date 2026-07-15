@@ -3,6 +3,7 @@ from pgtp_editor.schema_learning.settings_index import (
     attribute_kind,
     enum_hint,
     is_enum_candidate,
+    unused_setting_attributes,
 )
 
 
@@ -151,3 +152,75 @@ def test_enum_hint_values_sorted():
     entry["labels"] = {}
     model = _model_with(entry)
     assert enum_hint(model, "Root/Node", "editFormMode") == "editFormMode — 1 · 2 · 3"
+
+
+# --- unused_setting_attributes --------------------------------------------
+
+
+def _model_with_attrs(attributes, tag_chain="Root/Node"):
+    model = Model()
+    model.paths[tag_chain] = {
+        "attributes": attributes,
+        "children": {},
+        "instance_count": 1,
+        "order": [],
+        "order_stable": True,
+        "has_text": False,
+    }
+    return model
+
+
+def test_unused_setting_attributes_returns_settings_not_present():
+    model = _model_with_attrs(
+        {
+            "editFormMode": _entry(kind="setting"),
+            "pageMode": _entry(kind="setting"),
+        }
+    )
+    assert unused_setting_attributes(model, "Root/Node", set()) == [
+        "editFormMode",
+        "pageMode",
+    ]
+
+
+def test_unused_setting_attributes_excludes_present():
+    model = _model_with_attrs(
+        {
+            "editFormMode": _entry(kind="setting"),
+            "pageMode": _entry(kind="setting"),
+        }
+    )
+    assert unused_setting_attributes(model, "Root/Node", {"editFormMode"}) == [
+        "pageMode"
+    ]
+
+
+def test_unused_setting_attributes_excludes_content_and_unclassified():
+    model = _model_with_attrs(
+        {
+            "editFormMode": _entry(kind="setting"),
+            "caption": _entry(kind="content"),
+            "name": _entry(),  # unclassified
+        }
+    )
+    assert unused_setting_attributes(model, "Root/Node", set()) == ["editFormMode"]
+
+
+def test_unused_setting_attributes_unknown_path_returns_empty():
+    model = _model_with_attrs({"editFormMode": _entry(kind="setting")})
+    assert unused_setting_attributes(model, "Root/Missing", set()) == []
+
+
+def test_unused_setting_attributes_sorted():
+    model = _model_with_attrs(
+        {
+            "zeta": _entry(kind="setting"),
+            "alpha": _entry(kind="setting"),
+            "mid": _entry(kind="setting"),
+        }
+    )
+    assert unused_setting_attributes(model, "Root/Node", set()) == [
+        "alpha",
+        "mid",
+        "zeta",
+    ]
