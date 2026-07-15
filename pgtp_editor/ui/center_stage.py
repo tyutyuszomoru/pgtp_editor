@@ -1,4 +1,4 @@
-from PySide6.QtWidgets import QTabWidget, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QTabBar, QTabWidget, QVBoxLayout, QWidget
 
 from pgtp_editor.ui.caption_management_panel import CaptionManagementPanel
 from pgtp_editor.ui.diff_merge_panel import DiffMergePanel
@@ -39,12 +39,32 @@ class CenterStage(QTabWidget):
         self.setTabVisible(self.manual_tab_index, False)
         self.setCurrentIndex(self.raw_xml_tab_index)
 
+        # Only the Manual tab is closable (a ✕ that hides it again). The other
+        # tabs are structural, so strip their close buttons on both sides.
+        self.setTabsClosable(True)
+        bar = self.tabBar()
+        for index in range(self.count()):
+            if index != self.manual_tab_index:
+                bar.setTabButton(index, QTabBar.ButtonPosition.RightSide, None)
+                bar.setTabButton(index, QTabBar.ButtonPosition.LeftSide, None)
+        self.tabCloseRequested.connect(self._on_tab_close_requested)
+
+    def _on_tab_close_requested(self, index):
+        if index == self.manual_tab_index:
+            self.hide_manual()
+
     def set_raw_xml_tab_visible(self, visible):
         self.setTabVisible(self.raw_xml_tab_index, visible)
 
     def show_manual(self):
         self.setTabVisible(self.manual_tab_index, True)
         self.setCurrentIndex(self.manual_tab_index)
+
+    def hide_manual(self):
+        """Hide the Manual tab and return to Raw XML (the ✕ close action)."""
+        self.setTabVisible(self.manual_tab_index, False)
+        if self.currentIndex() == self.manual_tab_index:
+            self.setCurrentIndex(self.raw_xml_tab_index)
 
     def enter_caption_mode(self):
         """Keep Raw XML visible but read-only, and reveal + switch to Caption

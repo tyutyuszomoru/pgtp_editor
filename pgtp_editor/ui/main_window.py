@@ -1336,7 +1336,16 @@ class MainWindow(QMainWindow):
         about_action.triggered.connect(lambda: show_about_dialog(self))
 
     def _show_manual(self):
-        self.center_stage.show_manual()
+        # F1 / Help ▸ Manual toggles: if the Manual tab is already the one in
+        # view, hide it; otherwise reveal it and bring the Contents tab forward.
+        cs = self.center_stage
+        if (
+            cs.isTabVisible(cs.manual_tab_index)
+            and cs.currentIndex() == cs.manual_tab_index
+        ):
+            cs.hide_manual()
+            return
+        cs.show_manual()
         self.tree_dock.setVisible(True)
         self.left_tabs.setCurrentWidget(self.manual_contents)
 
