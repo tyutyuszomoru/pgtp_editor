@@ -10,9 +10,25 @@ def test_file_menu_contents(qtbot):
     assert file_menu is not None
     labels = action_labels(file_menu)
     assert labels == [
-        "New Project", "Open...", "Open Recent", "Save", "Save As...",
+        "Open...", "Open Recent", "Save", "Save As...",
         "Revert", "Close", "―", "Exit",
     ]
+
+
+def test_file_menu_shortcuts(qtbot):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    file_menu = find_top_menu(window, "File")
+    expected = {
+        "Open...": "Ctrl+O",
+        "Save": "Ctrl+S",
+        "Save As...": "Ctrl+Shift+S",
+        "Close": "Ctrl+W",
+    }
+    for label, combo in expected.items():
+        action = find_action(file_menu, label)
+        assert action is not None
+        assert action.shortcut().toString() == combo
 
 
 def test_open_recent_is_an_empty_submenu(qtbot):
@@ -32,14 +48,6 @@ def test_exit_action_closes_window(qtbot):
     file_menu = find_top_menu(window, "File")
     find_action(file_menu, "Exit").trigger()
     assert window.isVisible() is False
-
-
-def test_other_file_actions_show_stub_message(qtbot):
-    window = MainWindow()
-    qtbot.addWidget(window)
-    file_menu = find_top_menu(window, "File")
-    find_action(file_menu, "New Project").trigger()
-    assert window.statusBar().currentMessage() == "Not yet implemented: New Project"
 
 
 def test_edit_menu_contents(qtbot):
@@ -147,7 +155,7 @@ def test_view_menu_contents(qtbot):
     view_menu = find_top_menu(window, "View")
     assert action_labels(view_menu) == [
         "Project Tree", "Properties Panel", "Audit/Problems Panel", "Raw XML Panel",
-        "Wrap Raw XML Lines", "―",
+        "―",
         "Expand All", "Collapse All",
     ]
 
@@ -159,7 +167,7 @@ def test_view_menu_default_checked_states(qtbot):
     assert find_action(view_menu, "Project Tree").isChecked() is True
     assert find_action(view_menu, "Properties Panel").isChecked() is True
     assert find_action(view_menu, "Audit/Problems Panel").isChecked() is True
-    assert find_action(view_menu, "Raw XML Panel").isChecked() is False
+    assert find_action(view_menu, "Raw XML Panel").isChecked() is True
 
 
 def test_toggling_project_tree_hides_dock(qtbot):
@@ -192,30 +200,40 @@ def test_toggling_properties_panel_hides_dock(qtbot):
     assert window.properties_dock.isVisible() is False
 
 
-def test_toggling_raw_xml_panel_shows_tab(qtbot):
+def test_toggling_raw_xml_panel_hides_and_shows_tab(qtbot):
     window = MainWindow()
     qtbot.addWidget(window)
+    center = window.center_stage
+    # Starts visible (and the action checked); toggling once hides it.
+    assert center.isTabVisible(center.raw_xml_tab_index) is True
     view_menu = find_top_menu(window, "View")
-    find_action(view_menu, "Raw XML Panel").trigger()
-    assert window.center_stage.isTabVisible(window.center_stage.raw_xml_tab_index) is True
+    raw_action = find_action(view_menu, "Raw XML Panel")
+    raw_action.trigger()
+    assert center.isTabVisible(center.raw_xml_tab_index) is False
+    raw_action.trigger()
+    assert center.isTabVisible(center.raw_xml_tab_index) is True
 
 
-def test_expand_all_shows_stub_message(qtbot):
+def test_expand_all_and_collapse_all_drive_tree(qtbot):
+    from tests.ui._sample_project import build_sample_project
+
     window = MainWindow()
     qtbot.addWidget(window)
+    window.project_tree.populate_from_project(build_sample_project())
+    top = window.project_tree.topLevelItem(0)
+    assert top is not None and top.childCount() > 0
+
     view_menu = find_top_menu(window, "View")
+    find_action(view_menu, "Collapse All").trigger()
+    assert top.isExpanded() is False
     find_action(view_menu, "Expand All").trigger()
-    assert window.statusBar().currentMessage() == "Not yet implemented: Expand All"
+    assert top.isExpanded() is True
 
 
-def test_diff_merge_menu_contents(qtbot):
+def test_no_top_level_diff_merge_menu(qtbot):
     window = MainWindow()
     qtbot.addWidget(window)
-    menu = find_top_menu(window, "Diff / Merge")
-    assert action_labels(menu) == [
-        "Compare / Merge Two Files...", "―",
-        "Next Difference", "Prev Difference", "Apply Changes to Target",
-    ]
+    assert find_top_menu(window, "Diff / Merge") is None
 
 
 def test_schema_menu_contents(qtbot):
@@ -230,12 +248,12 @@ def test_schema_menu_contents(qtbot):
     ]
 
 
-def test_schema_menu_sits_between_diff_merge_and_tools(qtbot):
+def test_schema_menu_sits_between_view_and_tools(qtbot):
     window = MainWindow()
     qtbot.addWidget(window)
     titles = all_top_level_menu_titles(window)
     assert titles == [
-        "File", "Edit", "View", "Diff / Merge", "Schema", "Tools", "Generation", "Help",
+        "File", "Edit", "View", "Schema", "Tools", "Generation", "Help",
     ]
 
 
@@ -255,7 +273,9 @@ def test_tools_menu_contents(qtbot):
         "Manage Captions...", "Caption Filter…", "―",
         "Find Reused Tables...", "―",
         "Validate Project", "―",
-        "Reparse Raw XML into Tree",
+        "Reparse Raw XML into Tree", "―",
+        "Compare / Merge Two Files...", "Next Difference", "Prev Difference",
+        "Apply Changes to Target",
     ]
 
 
@@ -316,7 +336,7 @@ def test_all_top_level_menus_present_in_order(qtbot):
     qtbot.addWidget(window)
     titles = all_top_level_menu_titles(window)
     assert titles == [
-        "File", "Edit", "View", "Diff / Merge", "Schema", "Tools", "Generation", "Help",
+        "File", "Edit", "View", "Schema", "Tools", "Generation", "Help",
     ]
 
 
@@ -327,29 +347,9 @@ def test_raw_xml_panel_action_is_accessible_as_attribute(qtbot):
     assert window._raw_xml_panel_action is find_action(view_menu, "Raw XML Panel")
 
 
-def test_view_menu_contains_wrap_raw_xml_lines_action(qtbot):
+def test_view_menu_has_no_wrap_raw_xml_lines_action(qtbot):
     window = MainWindow()
     qtbot.addWidget(window)
     view_menu = find_top_menu(window, "View")
-    assert action_labels(view_menu) == [
-        "Project Tree", "Properties Panel", "Audit/Problems Panel", "Raw XML Panel",
-        "Wrap Raw XML Lines", "―",
-        "Expand All", "Collapse All",
-    ]
-
-
-def test_wrap_raw_xml_lines_action_default_unchecked(qtbot):
-    window = MainWindow()
-    qtbot.addWidget(window)
-    view_menu = find_top_menu(window, "View")
-    assert find_action(view_menu, "Wrap Raw XML Lines").isChecked() is False
-
-
-def test_toggling_wrap_raw_xml_lines_changes_editor_line_wrap_mode(qtbot):
-    from PySide6.QtWidgets import QPlainTextEdit
-
-    window = MainWindow()
-    qtbot.addWidget(window)
-    view_menu = find_top_menu(window, "View")
-    find_action(view_menu, "Wrap Raw XML Lines").trigger()
-    assert window.center_stage.xml_editor.lineWrapMode() == QPlainTextEdit.LineWrapMode.WidgetWidth
+    assert "Wrap Raw XML Lines" not in action_labels(view_menu)
+    assert "Wrap Lines" not in action_labels(view_menu)

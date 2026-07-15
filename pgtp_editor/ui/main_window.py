@@ -929,7 +929,6 @@ class MainWindow(QMainWindow):
         self._build_file_menu()
         self._build_edit_menu()
         self._build_view_menu()
-        self._build_diff_merge_menu()
         self._build_schema_menu()
         self._build_tools_menu()
         self._build_generation_menu()
@@ -937,18 +936,21 @@ class MainWindow(QMainWindow):
 
     def _build_file_menu(self):
         menu = self.menuBar().addMenu("File")
-        self._add_stub_action(menu, "New Project")
         open_action = menu.addAction("Open...")
+        open_action.setShortcut("Ctrl+O")
         open_action.triggered.connect(self._open_project)
         menu.addMenu("Open Recent")
         save_action = menu.addAction("Save")
+        save_action.setShortcut("Ctrl+S")
         save_action.triggered.connect(self._save_project)
         save_as_action = menu.addAction("Save As...")
+        save_as_action.setShortcut("Ctrl+Shift+S")
         save_as_action.triggered.connect(self._save_project_as)
         revert_action = menu.addAction("Revert")
         revert_action.triggered.connect(self._revert_project)
         self._revert_action = revert_action
         close_action = menu.addAction("Close")
+        close_action.setShortcut("Ctrl+W")
         close_action.triggered.connect(lambda: self._close_project())
         self._close_action = close_action
         menu.addSeparator()
@@ -1025,17 +1027,16 @@ class MainWindow(QMainWindow):
 
         self._raw_xml_panel_action = menu.addAction("Raw XML Panel")
         self._raw_xml_panel_action.setCheckable(True)
-        self._raw_xml_panel_action.setChecked(False)
+        # The Raw XML tab is visible by default (see center_stage), so the
+        # action starts checked to reflect real visibility.
+        self._raw_xml_panel_action.setChecked(True)
         self._raw_xml_panel_action.toggled.connect(self.center_stage.set_raw_xml_tab_visible)
 
-        line_wrap_action = menu.addAction("Wrap Raw XML Lines")
-        line_wrap_action.setCheckable(True)
-        line_wrap_action.setChecked(False)
-        line_wrap_action.toggled.connect(self.center_stage.xml_editor.set_line_wrap_enabled)
-
         menu.addSeparator()
-        self._add_stub_action(menu, "Expand All")
-        self._add_stub_action(menu, "Collapse All")
+        expand_all_action = menu.addAction("Expand All")
+        expand_all_action.triggered.connect(self.project_tree.expandAll)
+        collapse_all_action = menu.addAction("Collapse All")
+        collapse_all_action.triggered.connect(self.project_tree.collapseAll)
 
     def _add_stub_action(self, menu, label):
         return add_stub_action(menu, label, self._not_implemented)
@@ -1326,18 +1327,6 @@ class MainWindow(QMainWindow):
             "Raw XML is read-only in Caption Mode — close Caption Mode to edit.", 4000
         )
 
-    def _build_diff_merge_menu(self):
-        menu = self.menuBar().addMenu("Diff / Merge")
-        compare_action = menu.addAction("Compare / Merge Two Files...")
-        compare_action.triggered.connect(self._compare_merge_two_files)
-        menu.addSeparator()
-        next_action = menu.addAction("Next Difference")
-        next_action.triggered.connect(self.center_stage.diff_merge_panel.select_next_difference)
-        prev_action = menu.addAction("Prev Difference")
-        prev_action.triggered.connect(self.center_stage.diff_merge_panel.select_previous_difference)
-        apply_action = menu.addAction("Apply Changes to Target")
-        apply_action.triggered.connect(self._apply_changes_to_target)
-
     def _build_schema_menu(self):
         menu = self.menuBar().addMenu("Schema")
         annotate_action = menu.addAction("Annotate Schema Values...")
@@ -1393,6 +1382,15 @@ class MainWindow(QMainWindow):
         menu.addSeparator()
         reparse_action = menu.addAction("Reparse Raw XML into Tree")
         reparse_action.triggered.connect(self._reparse_raw_xml)
+        menu.addSeparator()
+        compare_action = menu.addAction("Compare / Merge Two Files...")
+        compare_action.triggered.connect(self._compare_merge_two_files)
+        next_action = menu.addAction("Next Difference")
+        next_action.triggered.connect(self.center_stage.diff_merge_panel.select_next_difference)
+        prev_action = menu.addAction("Prev Difference")
+        prev_action.triggered.connect(self.center_stage.diff_merge_panel.select_previous_difference)
+        apply_action = menu.addAction("Apply Changes to Target")
+        apply_action.triggered.connect(self._apply_changes_to_target)
 
     def _build_generation_menu(self):
         menu = self.menuBar().addMenu("Generation")

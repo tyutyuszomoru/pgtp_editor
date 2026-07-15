@@ -143,7 +143,7 @@ def test_next_and_prev_difference_menu_actions_navigate_the_panel(qtbot, tmp_pat
     ):
         window._compare_merge_two_files()
 
-    menu = find_top_menu(window, "Diff / Merge")
+    menu = find_top_menu(window, "Tools")
     next_action = find_action(menu, "Next Difference")
     prev_action = find_action(menu, "Prev Difference")
 
@@ -163,7 +163,7 @@ def test_next_and_prev_difference_menu_actions_navigate_the_panel(qtbot, tmp_pat
 # NOTE (Phase D): the tree Page/Detail context menus no longer offer
 # "Compare This Page/Detail With..." (those menus were redesigned to
 # jump/select/see-in-caption). The Compare feature still lives in the
-# Diff / Merge menu ("Compare / Merge Two Files...") and in the underlying
+# Tools menu ("Compare / Merge Two Files...") and in the underlying
 # MainWindow handlers, which these tests now drive directly.
 
 

@@ -1027,6 +1027,31 @@ def test_context_menu_has_find_action_at_top_when_selection(qtbot):
     assert actions[0].text() == "Find"
 
 
+def test_context_menu_has_checkable_wrap_lines_action(qtbot):
+    from PySide6.QtWidgets import QPlainTextEdit
+
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    editor.setPlainText("<Page>hello</Page>")
+
+    menu = editor._build_context_menu()
+    wrap_action = next((a for a in menu.actions() if a.text() == "Wrap Lines"), None)
+    assert wrap_action is not None
+    assert wrap_action.isCheckable() is True
+    # Default editor has no wrap, so the action reflects unchecked.
+    assert wrap_action.isChecked() is False
+
+    wrap_action.trigger()
+    assert editor.lineWrapMode() == QPlainTextEdit.LineWrapMode.WidgetWidth
+
+    # Rebuilding the menu reflects the now-enabled wrap state.
+    menu2 = editor._build_context_menu()
+    wrap_action2 = next(a for a in menu2.actions() if a.text() == "Wrap Lines")
+    assert wrap_action2.isChecked() is True
+    wrap_action2.trigger()
+    assert editor.lineWrapMode() == QPlainTextEdit.LineWrapMode.NoWrap
+
+
 def test_context_menu_has_no_find_action_without_selection(qtbot):
     editor = XmlEditor()
     qtbot.addWidget(editor)
