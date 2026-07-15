@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QMainWindow,
     QMessageBox,
+    QTabWidget,
     QWidget,
 )
 
@@ -39,6 +40,11 @@ from pgtp_editor.ui.about import show_about_dialog
 from pgtp_editor.ui.annotate_schema_values_dialog import AnnotateSchemaValuesDialog
 from pgtp_editor.ui.caption_find_replace_dialog import CaptionFindReplaceDialog
 from pgtp_editor.ui.center_stage import CenterStage
+from pgtp_editor.ui.manual_panel import (
+    ManualContentsPanel,
+    load_manual_text,
+    parse_chapters,
+)
 from pgtp_editor.ui.code_editor import CodeEditorDialog
 from pgtp_editor.ui.event_body import (
     extract_event_body,
@@ -103,7 +109,11 @@ class MainWindow(QMainWindow):
         )
         self.tree_dock = QDockWidget("Project Tree", self)
         self.tree_dock.setObjectName("tree_dock")
-        self.tree_dock.setWidget(self.project_tree)
+        self.left_tabs = QTabWidget()
+        self.left_tabs.addTab(self.project_tree, "Project")
+        self.manual_contents = ManualContentsPanel()
+        self.left_tabs.addTab(self.manual_contents, "Contents")
+        self.tree_dock.setWidget(self.left_tabs)
         self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self.tree_dock)
 
         self.audit_panel = QListWidget()
@@ -114,6 +124,22 @@ class MainWindow(QMainWindow):
 
         self.center_stage = CenterStage()
         self.setCentralWidget(self.center_stage)
+
+        # Populate the (static) manual once, into both the center-stage Manual
+        # tab and the left-dock Contents tree. Only the resource load is guarded
+        # (a packaging failure degrades gracefully); rendering/parsing and signal
+        # wiring run unguarded so a genuine logic bug surfaces instead of being
+        # swallowed.
+        self.manual_contents.chapter_selected.connect(self._on_manual_chapter_selected)
+        try:
+            manual_text = load_manual_text()
+        except Exception as exc:  # pragma: no cover - packaging safety net
+            manual_text = None
+            self.statusBar().showMessage(f"Manual unavailable: {exc}")
+        if manual_text is not None:
+            self.center_stage.manual_panel.set_markdown(manual_text)
+            self.manual_contents.set_chapters(parse_chapters(manual_text))
+
         self.center_stage.xml_editor.line_clicked.connect(self._on_editor_line_clicked)
         self.center_stage.find_replace_bar.set_on_find_all(self._populate_find_all_results)
         self.center_stage.find_replace_bar.set_on_stop_find_all(self._stop_find_all)
@@ -1303,6 +1329,17 @@ class MainWindow(QMainWindow):
 
     def _build_help_menu(self):
         menu = self.menuBar().addMenu("Help")
-        self._add_stub_action(menu, "Documentation")
+        manual_action = menu.addAction("Manual")
+        manual_action.setShortcut("F1")
+        manual_action.triggered.connect(self._show_manual)
         about_action = menu.addAction("About")
         about_action.triggered.connect(lambda: show_about_dialog(self))
+
+    def _show_manual(self):
+        self.center_stage.show_manual()
+        self.tree_dock.setVisible(True)
+        self.left_tabs.setCurrentWidget(self.manual_contents)
+
+    def _on_manual_chapter_selected(self, index):
+        self.center_stage.show_manual()
+        self.center_stage.manual_panel.scroll_to_chapter(index)

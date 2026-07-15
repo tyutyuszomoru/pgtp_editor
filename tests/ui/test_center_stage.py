@@ -1,13 +1,14 @@
 from pgtp_editor.ui.center_stage import CenterStage
 
 
-def test_three_tabs_in_order(qtbot):
+def test_tabs_in_order(qtbot):
     stage = CenterStage()
     qtbot.addWidget(stage)
-    assert stage.count() == 3
+    assert stage.count() == 4
     assert stage.tabText(0) == "Diff / Merge"
     assert stage.tabText(1) == "Caption Management"
     assert stage.tabText(2) == "Raw XML"
+    assert stage.tabText(3) == "Manual"
 
 
 def test_default_tab_visibility_raw_xml_shown_others_hidden(qtbot):

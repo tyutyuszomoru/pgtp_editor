@@ -3,6 +3,7 @@ from PySide6.QtWidgets import QTabWidget, QVBoxLayout, QWidget
 from pgtp_editor.ui.caption_management_panel import CaptionManagementPanel
 from pgtp_editor.ui.diff_merge_panel import DiffMergePanel
 from pgtp_editor.ui.find_replace_bar import FindReplaceBar
+from pgtp_editor.ui.manual_panel import ManualPanel
 from pgtp_editor.ui.xml_editor import XmlEditor
 
 
@@ -27,15 +28,23 @@ class CenterStage(QTabWidget):
         raw_layout.addWidget(self.find_replace_bar)
         self.raw_xml_tab_index = self.addTab(self.raw_xml_tab, "Raw XML")
 
+        self.manual_panel = ManualPanel()
+        self.manual_tab_index = self.addTab(self.manual_panel, "Manual")
+
         # New default (spec §6.1): Raw XML is the working tab; Diff/Merge and
         # Caption Management are revealed only when their entry points run.
         self.setTabVisible(self.diff_merge_tab_index, False)
         self.setTabVisible(self.caption_management_tab_index, False)
         self.setTabVisible(self.raw_xml_tab_index, True)
+        self.setTabVisible(self.manual_tab_index, False)
         self.setCurrentIndex(self.raw_xml_tab_index)
 
     def set_raw_xml_tab_visible(self, visible):
         self.setTabVisible(self.raw_xml_tab_index, visible)
+
+    def show_manual(self):
+        self.setTabVisible(self.manual_tab_index, True)
+        self.setCurrentIndex(self.manual_tab_index)
 
     def enter_caption_mode(self):
         """Keep Raw XML visible but read-only, and reveal + switch to Caption
