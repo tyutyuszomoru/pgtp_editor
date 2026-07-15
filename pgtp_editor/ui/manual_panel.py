@@ -46,3 +46,32 @@ def parse_chapters(md_text: str) -> list[Chapter]:
                 if title:
                     chapters.append(Chapter(hashes, title))
     return chapters
+
+
+class ManualPanel(QTextBrowser):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setOpenExternalLinks(True)
+        self._markdown = ""
+
+    def set_markdown(self, text: str) -> None:
+        self._markdown = text
+        self.setMarkdown(text)
+
+    def scroll_to_chapter(self, index: int) -> None:
+        if index < 0:
+            return
+        doc = self.document()
+        seen = -1
+        block = doc.begin()
+        while block.isValid():
+            if block.blockFormat().headingLevel() > 0:
+                seen += 1
+                if seen == index:
+                    cursor = QTextCursor(block)
+                    self.setTextCursor(cursor)
+                    top = self.cursorRect().top()
+                    bar = self.verticalScrollBar()
+                    bar.setValue(bar.value() + top)
+                    return
+            block = block.next()

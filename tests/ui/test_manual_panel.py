@@ -40,3 +40,34 @@ def test_parse_chapters_trims_and_matches_real_manual():
     assert chs[0] == Chapter(1, "PGTP Editor")
     assert any(c == Chapter(2, "Caption Management") for c in chs)
     assert all(c.title == c.title.strip() and c.title for c in chs)
+
+
+def test_manual_panel_renders_and_scrolls_to_chapter(qtbot):
+    from pgtp_editor.ui.manual_panel import ManualPanel, parse_chapters
+    md = "# T\n\nintro\n\n## One\naaa\n\n## Two\nbbb\n\n## Three\nccc\n"
+    panel = ManualPanel()
+    qtbot.addWidget(panel)
+    panel.set_markdown(md)
+    chapters = parse_chapters(md)
+    # scroll to "Two" (index 2): cursor block text must equal that heading.
+    panel.scroll_to_chapter(2)
+    assert panel.textCursor().block().text() == chapters[2].title
+    panel.scroll_to_chapter(999)  # out of range: no crash, no move
+    assert panel.textCursor().block().text() == chapters[2].title
+
+
+def test_manual_heading_count_matches_parse_chapters(qtbot):
+    from pgtp_editor.ui.manual_panel import ManualPanel, load_manual_text, parse_chapters
+    text = load_manual_text()
+    panel = ManualPanel()
+    qtbot.addWidget(panel)
+    panel.set_markdown(text)
+    # Count heading blocks Qt produced.
+    doc = panel.document()
+    heading_blocks = 0
+    block = doc.begin()
+    while block.isValid():
+        if block.blockFormat().headingLevel() > 0:
+            heading_blocks += 1
+        block = block.next()
+    assert heading_blocks == len(parse_chapters(text))
