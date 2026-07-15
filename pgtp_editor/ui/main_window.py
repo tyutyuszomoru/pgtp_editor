@@ -3,9 +3,11 @@ import shutil
 from pathlib import Path
 
 from lxml import etree
-from PySide6.QtCore import Qt, QTimer, QUrl
-from PySide6.QtGui import QDesktopServices, QKeySequence, QShortcut
+from PySide6.QtCore import Qt, QSettings, QTimer, QUrl
+from PySide6.QtGui import QAction, QDesktopServices, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
+    QApplication,
+    QDialog,
     QDockWidget,
     QFileDialog,
     QLabel,
@@ -14,6 +16,8 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMessageBox,
     QTabWidget,
+    QToolBar,
+    QVBoxLayout,
     QWidget,
 )
 
@@ -46,6 +50,14 @@ from pgtp_editor.ui.manual_panel import (
     parse_chapters,
 )
 from pgtp_editor.ui.code_editor import CodeEditorDialog
+from pgtp_editor.ui.customize_toolbar_dialog import CustomizeToolbarDialog
+from pgtp_editor.ui.history import SnapshotHistory
+from pgtp_editor.ui.toolbar_registry import (
+    AVAILABLE_COMMANDS,
+    DEFAULT_TOOLBAR_IDS,
+    label_for,
+    valid_ids,
+)
 from pgtp_editor.ui.event_body import (
     extract_event_body,
     insert_event_handler,
@@ -58,6 +70,9 @@ from pgtp_editor.ui import search
 from pgtp_editor.ui.project_tree import ProjectTreePanel
 from pgtp_editor.ui.properties_panel import PropertiesPanel
 from pgtp_editor.ui.schema_viewer import SchemaViewerWindow
+from pgtp_editor.analysis.reused_tables import collect_table_usages
+from pgtp_editor.ui.reused_tables_window import ReusedTablesWindow
+from pgtp_editor.ui.theme import apply_theme
 from pgtp_editor.ui.schema_viewer_data import open_labels_text, open_xsd_text
 
 
@@ -84,8 +99,24 @@ class MainWindow(QMainWindow):
         schema_storage_dir: Path | None = None,
         generator_config_dir: Path | None = None,
         generator_runner=None,
+        settings=None,
     ):
         super().__init__()
+        # Injectable so tests point at a temp QSettings ini instead of the real
+        # user registry (Sub-project D).
+        # IniFormat (not the platform-native registry) so the location is a
+        # plain file under UserScope -- portable, inspectable, and redirectable
+        # by tests via QSettings.setPath (Sub-project D).
+        self._settings = (
+            settings
+            if settings is not None
+            else QSettings(
+                QSettings.Format.IniFormat,
+                QSettings.Scope.UserScope,
+                "MDS",
+                "PGTP Editor",
+            )
+        )
         self._schema_storage_dir = schema_storage_dir
         self._generator_config_dir = generator_config_dir
         self._generator_runner = generator_runner if generator_runner is not None else GeneratorRunner()
@@ -95,6 +126,7 @@ class MainWindow(QMainWindow):
         # not garbage-collected while open; reused/refreshed on reopen.
         self._xsd_viewer = None
         self._labels_viewer = None
+        self._reused_tables_window = None
         self.setWindowTitle("PGTP Editor")
         self.resize(1400, 900)
 
@@ -219,10 +251,232 @@ class MainWindow(QMainWindow):
         self._current_diff_target_project = None
         self._current_diff_target_path = None
 
+        # Document dirty-state tracking. `_loading` guards programmatic
+        # setPlainText calls (load/revert/close) so they don't spuriously
+        # mark the buffer dirty.
+        self._dirty = False
+        self._loading = False
+        self.center_stage.xml_editor.textChanged.connect(self._on_editor_text_changed)
+
+        # Document-level snapshot history (Sub-project C), independent of the
+        # editor's per-keystroke undo. `_restoring` guards the guarded setter
+        # so an undo/redo/jump restore is never recorded as a new snapshot.
+        self._history = SnapshotHistory(10)
+        self._restoring = False
+        self._snapshot_timer = QTimer(self)
+        self._snapshot_timer.setSingleShot(True)
+        self._snapshot_timer.setInterval(400)
+        self._snapshot_timer.timeout.connect(self._capture_snapshot_now)
+        self._undo_shortcut = QShortcut(QKeySequence("Ctrl+Z"), self)
+        self._undo_shortcut.activated.connect(self._undo)
+        self._redo_shortcut = QShortcut(QKeySequence("Ctrl+Y"), self)
+        self._redo_shortcut.activated.connect(self._redo)
+        # When the Raw XML editor has focus its native undo would shadow the
+        # window shortcuts; the editor consumes Ctrl+Z/Ctrl+Y in keyPressEvent
+        # and routes them here instead. Both paths call the same _undo/_redo,
+        # and the focused editor consumes the key so the window shortcut does
+        # not also fire (no double-undo). (Sub-project C, C1.)
+        self.center_stage.xml_editor.undo_requested.connect(self._undo)
+        self.center_stage.xml_editor.redo_requested.connect(self._redo)
+
         self._build_menu_bar()
+
+        # Customizable icon bar (Sub-project E). Built after the slots and menus
+        # exist. objectName "main_toolbar" so D's saveState/restoreState covers
+        # it. The Customize dialog reference is held so it isn't GC'd while shown.
+        self._customize_toolbar_dialog = None
+        self._build_toolbar()
+
+        # Restore persisted window geometry/dock state and theme (Sub-project D).
+        # Done after docks/toolbars/menus exist so restoreState can match dock
+        # object names and the theme action can be checked. A fresh settings
+        # store has no keys, so the default resize(1400, 900) stands.
+        self._restore_window_state()
+        self._restore_theme()
+
+    def _restore_window_state(self):
+        geometry = self._settings.value("geometry")
+        if geometry is not None:
+            self.restoreGeometry(geometry)
+        window_state = self._settings.value("windowState")
+        if window_state is not None:
+            self.restoreState(window_state)
+
+    def _restore_theme(self):
+        light = self._settings.value("lightTheme", False, type=bool)
+        if light:
+            self._light_theme_action.setChecked(True)
+            apply_theme(QApplication.instance(), True)
+
+    def closeEvent(self, event):
+        # Persist window geometry/dock state on close (Sub-project D). No modal
+        # prompt here -- File > Close handles the unsaved-changes prompt.
+        self._settings.setValue("geometry", self.saveGeometry())
+        self._settings.setValue("windowState", self.saveState())
+        self._settings.sync()
+        super().closeEvent(event)
+
+    def _on_light_theme_toggled(self, checked):
+        apply_theme(QApplication.instance(), checked)
+        self._settings.setValue("lightTheme", checked)
+
+    # -- Customizable toolbar (Sub-project E) --------------------------------
+
+    def _build_toolbar(self):
+        """Create the Main Toolbar and restore its command set from settings."""
+        self._toolbar = self.addToolBar("Main Toolbar")
+        # objectName so D's saveState()/restoreState() persists this toolbar's
+        # position along with the docks.
+        self._toolbar.setObjectName("main_toolbar")
+        # The toolbar actions have no icons, so show their text labels --
+        # otherwise the default icon-only style renders blank buttons.
+        self._toolbar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
+        # id -> slot for every command the toolbar can host.
+        self._toolbar_slots = {
+            "open": self._open_project,
+            "save": self._save_project,
+            "undo": self._undo,
+            "redo": self._redo,
+            "find": self._show_find_bar,
+            "validate": self._validate_project,
+            "generate": self._generate_php,
+        }
+        self._toolbar_ids = []
+        self._apply_toolbar_ids(self._restore_toolbar_ids())
+
+    def _restore_toolbar_ids(self):
+        """Read the stored toolbar ids, tolerant of the backend returning a
+        list, a comma-separated string, or None; fall back to the default set
+        when nothing valid is stored."""
+        stored = self._settings.value("toolbarIds")
+        if stored is None:
+            ids = DEFAULT_TOOLBAR_IDS
+        elif isinstance(stored, str):
+            ids = stored.split(",")
+        else:
+            ids = list(stored)
+        ids = valid_ids(ids)
+        return ids if ids else DEFAULT_TOOLBAR_IDS
+
+    def _apply_toolbar_ids(self, ids):
+        """Clear and repopulate the toolbar from an ordered id list (unknown
+        and duplicate ids are dropped)."""
+        ids = valid_ids(ids)
+        self._toolbar.clear()
+        for command_id in ids:
+            action = QAction(label_for(command_id), self)
+            action.triggered.connect(self._toolbar_slots[command_id])
+            self._toolbar.addAction(action)
+        self._toolbar_ids = ids
+
+    def _save_toolbar_ids(self):
+        """Persist the current toolbar ids (stored as a list)."""
+        self._settings.setValue("toolbarIds", self._toolbar_ids)
+
+    def _apply_and_save_toolbar_ids(self, ids):
+        """Apply an id list to the toolbar and persist it (test seam / the
+        Customize dialog's OK path)."""
+        self._apply_toolbar_ids(ids)
+        self._save_toolbar_ids()
+
+    def _open_customize_toolbar(self):
+        """Open the (non-modal) Customize Toolbar dialog; on OK, apply and
+        persist the chosen ordered id list."""
+        dialog = CustomizeToolbarDialog(AVAILABLE_COMMANDS, self._toolbar_ids, self)
+        dialog.accepted.connect(
+            lambda: self._apply_and_save_toolbar_ids(dialog.result_ids())
+        )
+        self._customize_toolbar_dialog = dialog
+        dialog.show()
 
     def _not_implemented(self, label):
         self.statusBar().showMessage(f"Not yet implemented: {label}", 5000)
+
+    # -- Document state: dirty tracking + window title -----------------------
+
+    def _on_editor_text_changed(self) -> None:
+        """Mark the buffer dirty when the user edits the Raw XML editor.
+        Programmatic sets (load/revert/close) run under `_loading` and are
+        ignored so they don't spuriously flag the document dirty."""
+        if self._loading:
+            return
+        self._set_dirty(True)
+        # Debounce a document-level snapshot capture (Sub-project C). We start
+        # the timer even during a `_restoring` apply; the fire-time guards
+        # (`_restoring`/`_loading` and the head-coalesce check) ensure a restore
+        # never records a spurious snapshot.
+        self._snapshot_timer.start()
+
+    def _capture_snapshot_now(self) -> None:
+        """Fire-time handler for the debounce timer (called directly in tests).
+        Push the current editor text as a snapshot unless we're restoring or
+        loading, or the text already matches the history head (coalesced)."""
+        if self._restoring or self._loading:
+            return
+        self._history.push(self.center_stage.xml_editor.toPlainText(), "Edit")
+
+    # -- Snapshot history: undo/redo/jump (Sub-project C) --------------------
+
+    def _apply_history_text(self, text: str) -> None:
+        """Set the editor to `text` without recording a new snapshot."""
+        self._restoring = True
+        try:
+            self.center_stage.xml_editor.setPlainText(text)
+        finally:
+            self._restoring = False
+
+    def _undo(self) -> None:
+        text = self._history.undo()
+        if text is not None:
+            self._apply_history_text(text)
+
+    def _redo(self) -> None:
+        text = self._history.redo()
+        if text is not None:
+            self._apply_history_text(text)
+
+    def _history_entries(self):
+        """Snapshot entries newest-first, for the jump-list popup (test seam)."""
+        return list(reversed(self._history.entries()))
+
+    def _history_jump(self, index) -> None:
+        text = self._history.jump_to(index)
+        if text is not None:
+            self._apply_history_text(text)
+
+    def _open_history_jump_list(self) -> None:
+        """Show a small non-modal popup listing snapshots newest-first;
+        selecting one jumps to it. Never `.exec()`'d (see the test seam)."""
+        dialog = QDialog(self)
+        dialog.setWindowTitle("History")
+        layout = QVBoxLayout(dialog)
+        listw = QListWidget(dialog)
+        layout.addWidget(listw)
+        for index, label in self._history_entries():
+            item = QListWidgetItem(label or f"Snapshot {index}")
+            item.setData(Qt.ItemDataRole.UserRole, index)
+            listw.addItem(item)
+
+        def _on_activated(item):
+            self._history_jump(item.data(Qt.ItemDataRole.UserRole))
+            dialog.close()
+
+        listw.itemActivated.connect(_on_activated)
+        listw.itemClicked.connect(_on_activated)
+        self._history_dialog = dialog
+        dialog.show()
+
+    def _set_dirty(self, dirty: bool) -> None:
+        self._dirty = dirty
+        self._update_title()
+
+    def _update_title(self) -> None:
+        title = "PGTP Editor"
+        if self._current_project_path:
+            title = f"{title} - {Path(self._current_project_path).name}"
+        if self._dirty:
+            title = f"{title} *"
+        self.setWindowTitle(title)
 
     def _on_tree_selection_changed(self, node, kind):
         self.properties_panel.show_node(node, kind)
@@ -380,7 +634,20 @@ class MainWindow(QMainWindow):
         self._current_project_path = path
         raw_text = self._read_raw_text(path)
         if raw_text is not None:
-            self.center_stage.xml_editor.setPlainText(raw_text)
+            self._loading = True
+            try:
+                self.center_stage.xml_editor.setPlainText(raw_text)
+            finally:
+                self._loading = False
+        self._set_dirty(False)
+        # A newly-opened project is a fresh document: drop the previous
+        # project's snapshots so undo never crosses between documents, then seed
+        # the history with the freshly-loaded text.
+        self._history.clear()
+        self._history.push(
+            self.center_stage.xml_editor.toPlainText(),
+            f"Opened {Path(path).name}",
+        )
         self.statusBar().showMessage(f"Opened: {path}", 5000)
         self._enrich_schema_from_file(path)
 
@@ -574,7 +841,23 @@ class MainWindow(QMainWindow):
             # nothing to show in the fallback view in that case; the dialog
             # above already reported the failure.
             return
-        self.center_stage.xml_editor.setPlainText(raw_text)
+        # The fallback view displays on-disk content of a file that FAILED to
+        # open -- it is not a user edit, so it must not mark the document dirty
+        # (and must never let a later Save overwrite the still-tracked good
+        # project with this broken text). Guard the same way as the load path.
+        self._loading = True
+        try:
+            self.center_stage.xml_editor.setPlainText(raw_text)
+        finally:
+            self._loading = False
+        # Seed the snapshot history with the as-loaded (unparsed) text so undo
+        # after fixing the broken file has a base to return to, mirroring a
+        # normal open. Pushed after the `_loading` block so it reflects the
+        # shown text.
+        self._history.push(
+            self.center_stage.xml_editor.toPlainText(),
+            f"Opened (unparsed) {Path(path).name}",
+        )
         if exc.line is not None:
             self.center_stage.xml_editor.highlight_error_line(exc.line)
         self.center_stage.set_raw_xml_tab_visible(True)
@@ -774,6 +1057,7 @@ class MainWindow(QMainWindow):
         except OSError as exc:
             QMessageBox.critical(self, "Save Failed", f"Could not save:\n\n{exc}")
             return
+        self._set_dirty(False)
         self.statusBar().showMessage(f"Saved {Path(self._current_project_path).name}", 5000)
 
     def _save_project_as(self) -> None:
@@ -788,13 +1072,113 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Save Failed", f"Could not save:\n\n{exc}")
             return
         self._current_project_path = path
+        self._set_dirty(False)
         self.statusBar().showMessage(f"Saved as {Path(path).name}", 5000)
+
+    # -- Close / Revert ------------------------------------------------------
+
+    def _confirm_close(self) -> str:
+        """Ask the user how to resolve unsaved changes before closing.
+
+        Returns "save", "discard", or "cancel". Split out from
+        `_close_project` so tests can pass `confirm=` directly (or
+        monkeypatch this) instead of ever driving a real modal.
+        """
+        result = QMessageBox.question(
+            self,
+            "Unsaved Changes",
+            "The project has unsaved changes. Save before closing?",
+            QMessageBox.StandardButton.Save
+            | QMessageBox.StandardButton.Discard
+            | QMessageBox.StandardButton.Cancel,
+        )
+        if result == QMessageBox.StandardButton.Save:
+            return "save"
+        if result == QMessageBox.StandardButton.Discard:
+            return "discard"
+        return "cancel"
+
+    def _close_project(self, confirm=None) -> None:
+        """Close the current project, prompting to resolve unsaved changes.
+
+        `confirm` is the test seam: "save"/"discard"/"cancel". When None and
+        the buffer is dirty, `_confirm_close()` decides; when None and clean,
+        the close proceeds (treated as "discard").
+        """
+        if self._dirty:
+            if confirm is None:
+                confirm = self._confirm_close()
+        else:
+            confirm = "discard"
+
+        if confirm == "cancel":
+            return
+        if confirm == "save":
+            self._save_project()
+            if self._dirty:
+                # Save was cancelled (e.g. Save-As dialog dismissed) --
+                # don't discard the user's changes.
+                return
+
+        self._loading = True
+        try:
+            self.center_stage.xml_editor.setPlainText("")
+        finally:
+            self._loading = False
+        self.project_tree.clear()
+        self._current_project = None
+        self._current_project_path = None
+        # Drop the closed document's snapshots so a later undo can't restore it
+        # into the emptied editor.
+        self._history.clear()
+        self._set_dirty(False)
+
+    def _revert_project(self) -> None:
+        """Reload the project from its `<path>.bak` backup, if one exists.
+
+        Restores the .bak content into the editor and rebuilds the tree from
+        it while keeping `_current_project_path` pointing at the real file.
+        The buffer then differs from the on-disk file, so the document is
+        marked dirty.
+        """
+        if not self._current_project_path:
+            self.statusBar().showMessage("Nothing to revert to.", 5000)
+            return
+        bak_path = self._current_project_path + ".bak"
+        if not Path(bak_path).exists():
+            self.statusBar().showMessage("Nothing to revert to.", 5000)
+            return
+
+        try:
+            project = load_project(bak_path)
+        except PgtpParseError as exc:
+            self._handle_parse_failure(bak_path, exc)
+            return
+
+        raw_text = self._read_raw_text(bak_path)
+        if raw_text is not None:
+            self._loading = True
+            try:
+                self.center_stage.xml_editor.setPlainText(raw_text)
+            finally:
+                self._loading = False
+            # Seed the snapshot history with the reverted text so undo/redo
+            # semantics after a revert match a normal open.
+            self._history.push(
+                self.center_stage.xml_editor.toPlainText(),
+                f"Reverted {Path(self._current_project_path).name}",
+            )
+        self.project_tree.populate_from_project(project)
+        self._current_project = project
+        self._set_dirty(True)
+        self.statusBar().showMessage(
+            f"Reverted to {Path(bak_path).name}", 5000
+        )
 
     def _build_menu_bar(self):
         self._build_file_menu()
         self._build_edit_menu()
         self._build_view_menu()
-        self._build_diff_merge_menu()
         self._build_schema_menu()
         self._build_tools_menu()
         self._build_generation_menu()
@@ -802,23 +1186,37 @@ class MainWindow(QMainWindow):
 
     def _build_file_menu(self):
         menu = self.menuBar().addMenu("File")
-        self._add_stub_action(menu, "New Project")
         open_action = menu.addAction("Open...")
+        open_action.setShortcut("Ctrl+O")
         open_action.triggered.connect(self._open_project)
         menu.addMenu("Open Recent")
         save_action = menu.addAction("Save")
+        save_action.setShortcut("Ctrl+S")
         save_action.triggered.connect(self._save_project)
         save_as_action = menu.addAction("Save As...")
+        save_as_action.setShortcut("Ctrl+Shift+S")
         save_as_action.triggered.connect(self._save_project_as)
-        self._add_stub_action(menu, "Close")
+        revert_action = menu.addAction("Revert")
+        revert_action.triggered.connect(self._revert_project)
+        self._revert_action = revert_action
+        close_action = menu.addAction("Close")
+        close_action.setShortcut("Ctrl+W")
+        close_action.triggered.connect(lambda: self._close_project())
+        self._close_action = close_action
         menu.addSeparator()
         exit_action = menu.addAction("Exit")
         exit_action.triggered.connect(self.close)
 
     def _build_edit_menu(self):
         menu = self.menuBar().addMenu("Edit")
-        self._add_stub_action(menu, "Undo")
-        self._add_stub_action(menu, "Redo")
+        # Quick keys step (Ctrl+Z/Ctrl+Y wired as QShortcuts in __init__); the
+        # menu items open the non-modal jump list of recent snapshots.
+        undo_action = menu.addAction("Undo")
+        undo_action.triggered.connect(self._open_history_jump_list)
+        self._undo_action = undo_action
+        redo_action = menu.addAction("Redo")
+        redo_action.triggered.connect(self._open_history_jump_list)
+        self._redo_action = redo_action
         menu.addSeparator()
         self._add_stub_action(menu, "Cut")
         self._add_stub_action(menu, "Copy")
@@ -885,17 +1283,26 @@ class MainWindow(QMainWindow):
 
         self._raw_xml_panel_action = menu.addAction("Raw XML Panel")
         self._raw_xml_panel_action.setCheckable(True)
-        self._raw_xml_panel_action.setChecked(False)
+        # The Raw XML tab is visible by default (see center_stage), so the
+        # action starts checked to reflect real visibility.
+        self._raw_xml_panel_action.setChecked(True)
         self._raw_xml_panel_action.toggled.connect(self.center_stage.set_raw_xml_tab_visible)
 
-        line_wrap_action = menu.addAction("Wrap Raw XML Lines")
-        line_wrap_action.setCheckable(True)
-        line_wrap_action.setChecked(False)
-        line_wrap_action.toggled.connect(self.center_stage.xml_editor.set_line_wrap_enabled)
+        menu.addSeparator()
+        expand_all_action = menu.addAction("Expand All")
+        expand_all_action.triggered.connect(self.project_tree.expandAll)
+        collapse_all_action = menu.addAction("Collapse All")
+        collapse_all_action.triggered.connect(self.project_tree.collapseAll)
 
         menu.addSeparator()
-        self._add_stub_action(menu, "Expand All")
-        self._add_stub_action(menu, "Collapse All")
+        self._light_theme_action = menu.addAction("Light Theme")
+        self._light_theme_action.setCheckable(True)
+        self._light_theme_action.setChecked(False)
+        self._light_theme_action.toggled.connect(self._on_light_theme_toggled)
+
+        menu.addSeparator()
+        customize_toolbar_action = menu.addAction("Customize Toolbar…")
+        customize_toolbar_action.triggered.connect(self._open_customize_toolbar)
 
     def _add_stub_action(self, menu, label):
         return add_stub_action(menu, label, self._not_implemented)
@@ -1186,18 +1593,6 @@ class MainWindow(QMainWindow):
             "Raw XML is read-only in Caption Mode — close Caption Mode to edit.", 4000
         )
 
-    def _build_diff_merge_menu(self):
-        menu = self.menuBar().addMenu("Diff / Merge")
-        compare_action = menu.addAction("Compare / Merge Two Files...")
-        compare_action.triggered.connect(self._compare_merge_two_files)
-        menu.addSeparator()
-        next_action = menu.addAction("Next Difference")
-        next_action.triggered.connect(self.center_stage.diff_merge_panel.select_next_difference)
-        prev_action = menu.addAction("Prev Difference")
-        prev_action.triggered.connect(self.center_stage.diff_merge_panel.select_previous_difference)
-        apply_action = menu.addAction("Apply Changes to Target")
-        apply_action.triggered.connect(self._apply_changes_to_target)
-
     def _build_schema_menu(self):
         menu = self.menuBar().addMenu("Schema")
         annotate_action = menu.addAction("Annotate Schema Values...")
@@ -1239,6 +1634,17 @@ class MainWindow(QMainWindow):
         self._labels_viewer.set_content(text)
         self._labels_viewer.show()
 
+    def _open_reused_tables(self):
+        if self._current_project is None:
+            self.statusBar().showMessage("Open a project first.", 5000)
+            return
+        if self._reused_tables_window is None:
+            self._reused_tables_window = ReusedTablesWindow(self)
+        self._reused_tables_window.set_usages(
+            collect_table_usages(self._current_project)
+        )
+        self._reused_tables_window.show()
+
     def _build_tools_menu(self):
         menu = self.menuBar().addMenu("Tools")
         manage_captions_action = menu.addAction("Manage Captions...")
@@ -1246,13 +1652,23 @@ class MainWindow(QMainWindow):
         caption_filter_action = menu.addAction("Caption Filter…")
         caption_filter_action.triggered.connect(self._open_caption_filter_dialog)
         menu.addSeparator()
-        self._add_stub_action(menu, "Find Reused Tables...")
+        reused_tables_action = menu.addAction("Find Reused Tables...")
+        reused_tables_action.triggered.connect(self._open_reused_tables)
         menu.addSeparator()
         validate_action = menu.addAction("Validate Project")
         validate_action.triggered.connect(self._validate_project)
         menu.addSeparator()
         reparse_action = menu.addAction("Reparse Raw XML into Tree")
         reparse_action.triggered.connect(self._reparse_raw_xml)
+        menu.addSeparator()
+        compare_action = menu.addAction("Compare / Merge Two Files...")
+        compare_action.triggered.connect(self._compare_merge_two_files)
+        next_action = menu.addAction("Next Difference")
+        next_action.triggered.connect(self.center_stage.diff_merge_panel.select_next_difference)
+        prev_action = menu.addAction("Prev Difference")
+        prev_action.triggered.connect(self.center_stage.diff_merge_panel.select_previous_difference)
+        apply_action = menu.addAction("Apply Changes to Target")
+        apply_action.triggered.connect(self._apply_changes_to_target)
 
     def _build_generation_menu(self):
         menu = self.menuBar().addMenu("Generation")
