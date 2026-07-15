@@ -39,6 +39,14 @@ from pgtp_editor.ui.about import show_about_dialog
 from pgtp_editor.ui.annotate_schema_values_dialog import AnnotateSchemaValuesDialog
 from pgtp_editor.ui.caption_find_replace_dialog import CaptionFindReplaceDialog
 from pgtp_editor.ui.center_stage import CenterStage
+from pgtp_editor.ui.code_editor import CodeEditorDialog
+from pgtp_editor.ui.event_body import (
+    extract_event_body,
+    insert_event_handler,
+    replace_event_body,
+)
+from pgtp_editor.model.nodes import classify_event_side
+from pgtp_editor.model.event_handlers import language_for_side
 from pgtp_editor.ui import caption_scan
 from pgtp_editor.ui import search
 from pgtp_editor.ui.project_tree import ProjectTreePanel
@@ -90,6 +98,8 @@ class MainWindow(QMainWindow):
             on_see_table_details_in_caption=self._on_tree_see_table_details_in_caption,
             on_jump_to_column_visibility=self._on_tree_jump_to_column_visibility,
             on_see_column_in_caption=self._on_tree_see_column_in_caption,
+            on_edit_event_code=self._on_tree_edit_event_code,
+            on_add_event_handler=self._on_tree_add_event_handler,
         )
         self.tree_dock = QDockWidget("Project Tree", self)
         self.tree_dock.setObjectName("tree_dock")
@@ -149,6 +159,12 @@ class MainWindow(QMainWindow):
         self.center_stage.xml_editor.find_selected_text.connect(
             self._on_find_selected_text
         )
+        self.center_stage.xml_editor.edit_code_requested.connect(
+            self._on_edit_code_requested
+        )
+        # The live CodeEditorDialog (kept referenced so it is not GC'd while
+        # shown). MainWindow owns its lifecycle + the write-back.
+        self._code_editor_dialog: CodeEditorDialog | None = None
 
         # Permanent status-bar mode indicator (Editing vs Caption Mode).
         self._mode_label = QLabel("Editing Mode")
@@ -865,6 +881,116 @@ class MainWindow(QMainWindow):
         self.center_stage.find_replace_bar.show_find()
         self.center_stage.find_replace_bar.set_find_text(text)
         self.center_stage.find_replace_bar.find_next()
+
+    def _on_edit_code_requested(self, start_line: int) -> None:
+        """Editor "Edit code…": open the dedicated CodeEditorDialog prefilled
+        with the event-handler body at `start_line` (unescaped) in the right
+        language, and on save write the (re-escaped) new body back into the Raw
+        XML buffer. The write-back goes through the buffer regardless of
+        read-only state, so it works in Caption Mode too."""
+        buffer_text = self.center_stage.xml_editor.toPlainText()
+        try:
+            tag, side, body = extract_event_body(buffer_text, start_line)
+        except ValueError:
+            # The body vanished (e.g. buffer edited between menu build and
+            # trigger); nothing to edit.
+            return
+        dialog = CodeEditorDialog(
+            language=language_for_side(side),
+            handler_name=tag,
+            parent=self,
+        )
+        dialog.set_code(body)
+        self._code_editor_dialog = dialog
+
+        def _write_back(new_code: str) -> None:
+            current = self.center_stage.xml_editor.toPlainText()
+            try:
+                updated = replace_event_body(current, start_line, new_code)
+            except ValueError:
+                return
+            self.center_stage.xml_editor.setPlainText(updated)
+
+        dialog.saved.connect(_write_back)
+        # Non-blocking: show() (not exec()) so tests drive save/cancel via the
+        # dialog's own slots without a modal event loop.
+        dialog.setModal(True)
+        dialog.show()
+
+    def _on_tree_edit_event_code(self, node) -> None:
+        """Tree event-node "Edit code…": open the CodeEditorDialog prefilled
+        with the EventNode's body in the right language; on save, write the
+        (re-escaped) body back into the Raw XML buffer at the node's span
+        (reusing replace_event_body keyed to node.sourceline). The write-back
+        goes through the buffer regardless of read-only state."""
+        if node is None:
+            return
+        start_line = getattr(node, "sourceline", None)
+        if start_line is None:
+            self.statusBar().showMessage(
+                "This event handler has no source line to edit.", 5000
+            )
+            return
+        dialog = CodeEditorDialog(
+            language=language_for_side(node.side),
+            handler_name=node.tag_name,
+            parent=self,
+        )
+        dialog.set_code(node.text or "")
+        self._code_editor_dialog = dialog
+
+        def _write_back(new_code: str) -> None:
+            current = self.center_stage.xml_editor.toPlainText()
+            try:
+                updated = replace_event_body(current, start_line, new_code)
+            except ValueError:
+                return
+            self.center_stage.xml_editor.setPlainText(updated)
+
+        dialog.saved.connect(_write_back)
+        dialog.setModal(True)
+        dialog.show()
+
+    def _on_tree_add_event_handler(self, node, tag: str) -> None:
+        """Tree Page "Add Event Handler ▸ <tag>": open an empty
+        CodeEditorDialog in the handler's language; on save, insert a new
+        <tag enabled="true"> handler into the page's <EventHandlers> in the Raw
+        XML buffer (creating the block if absent), then show a status message.
+        The write-back goes through the buffer regardless of read-only state."""
+        if node is None:
+            return
+        page_start_line = getattr(node, "sourceline", None)
+        if page_start_line is None:
+            self.statusBar().showMessage(
+                "This page has no source line to insert into.", 5000
+            )
+            return
+        side = classify_event_side(tag)
+        dialog = CodeEditorDialog(
+            language=language_for_side(side),
+            handler_name=tag,
+            parent=self,
+        )
+        self._code_editor_dialog = dialog
+
+        def _write_back(new_code: str) -> None:
+            current = self.center_stage.xml_editor.toPlainText()
+            try:
+                updated = insert_event_handler(current, page_start_line, tag, new_code)
+            except ValueError:
+                self.statusBar().showMessage(
+                    f"Could not insert {tag}: page not found in the buffer.", 5000
+                )
+                return
+            self.center_stage.xml_editor.setPlainText(updated)
+            self.statusBar().showMessage(
+                f"Added event handler {tag}. Reparse Raw XML to see it in the tree.",
+                5000,
+            )
+
+        dialog.saved.connect(_write_back)
+        dialog.setModal(True)
+        dialog.show()
 
     def _find_all(self):
         self._reveal_raw_xml_tab()

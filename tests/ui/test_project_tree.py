@@ -153,12 +153,12 @@ def test_multi_select_menu(qtbot):
     ]
 
 
-def test_stub_action_callback_invoked(qtbot):
-    calls = []
-    tree = make_populated_tree(qtbot, on_stub_action=calls.append)
+def test_add_event_handler_is_submenu(qtbot):
+    tree = make_populated_tree(qtbot, on_stub_action=lambda label: None)
     menu = tree.build_page_menu(tree.topLevelItem(0))
-    find_action(menu, "Add Event Handler").trigger()
-    assert calls == ["Add Event Handler"]
+    action = find_action(menu, "Add Event Handler")
+    # It's a submenu now, not a flat stub action.
+    assert action.menu() is not None
 
 
 def test_menu_for_position_dispatches_by_kind(qtbot):
@@ -187,14 +187,15 @@ def test_menu_for_position_dispatches_column(qtbot):
     assert action_labels(menu)[0] == "Jump to column visibility in xml"
 
 
-def test_menu_for_position_returns_none_for_event(qtbot):
+def test_menu_for_position_returns_event_menu_for_event(qtbot):
     tree = make_populated_tree(qtbot, on_stub_action=lambda label: None)
     tree.expandAll()
     event_item = tree.topLevelItem(0).child(2)
     assert event_item.data(0, Qt.ItemDataRole.UserRole) == "event"
     rect = tree.visualItemRect(event_item)
     menu = tree.menu_for_position(rect.center())
-    assert menu is None
+    assert menu is not None
+    assert action_labels(menu) == ["Edit code…"]
 
 
 from pgtp_editor.ui.project_tree import MODEL_NODE_ROLE
@@ -432,6 +433,65 @@ def test_column_menu_actions_invoke_wired_callbacks(qtbot):
     assert visibility == [column_node]
     assert presentation == [column_node]
     assert see == [column_node]
+
+
+# --- SP3: event-node edit-code + Page Add Event Handler submenu -----------
+
+from pgtp_editor.model.event_handlers import EVENT_HANDLERS
+
+
+def test_event_menu_edit_code_invokes_callback_with_node(qtbot):
+    calls = []
+    project = build_sample_project()
+    tree = ProjectTreePanel(on_edit_event_code=calls.append)
+    qtbot.addWidget(tree)
+    tree.populate_from_project(project)
+    event_item = tree.topLevelItem(0).child(2)  # (E) S.OnPreparePage
+    event_node = event_item.data(0, MODEL_NODE_ROLE)
+
+    menu = tree.build_event_menu(event_item)
+    find_action(menu, "Edit code…").trigger()
+
+    assert calls == [event_node]
+
+
+def test_add_event_handler_submenu_lists_all_handlers(qtbot):
+    tree = make_populated_tree(qtbot)
+    menu = tree.build_page_menu(tree.topLevelItem(0))
+    submenu = find_action(menu, "Add Event Handler").menu()
+    # Every known handler tag appears as an action (sections are separators).
+    labels = [a.text() for a in submenu.actions() if not a.isSeparator() and a.text()]
+    for tag, _side in EVENT_HANDLERS:
+        assert tag in labels
+    assert len([t for t, _ in EVENT_HANDLERS]) == 40
+
+
+def test_add_event_handler_submenu_greys_out_existing(qtbot):
+    # Equipment page already has OnPreparePage (S) + OnRowProcess (C).
+    tree = make_populated_tree(qtbot)
+    menu = tree.build_page_menu(tree.topLevelItem(0))
+    submenu = find_action(menu, "Add Event Handler").menu()
+    by_text = {a.text(): a for a in submenu.actions() if a.text()}
+    # A present handler is disabled.
+    assert by_text["OnPreparePage"].isEnabled() is False
+    # An absent handler is enabled.
+    assert by_text["OnAfterPageLoad"].isEnabled() is True
+
+
+def test_add_event_handler_pick_invokes_callback_with_node_and_tag(qtbot):
+    calls = []
+    project = build_sample_project()
+    tree = ProjectTreePanel(on_add_event_handler=lambda node, tag: calls.append((node, tag)))
+    qtbot.addWidget(tree)
+    tree.populate_from_project(project)
+    page_node = project.pages[0]
+    menu = tree.build_page_menu(tree.topLevelItem(0))
+    submenu = find_action(menu, "Add Event Handler").menu()
+    by_text = {a.text(): a for a in submenu.actions() if a.text()}
+
+    by_text["OnAfterPageLoad"].trigger()
+
+    assert calls == [(page_node, "OnAfterPageLoad")]
 
 
 def test_index_is_rebuilt_on_repopulate(qtbot):
