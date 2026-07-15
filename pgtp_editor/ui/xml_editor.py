@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import re
 
-from PySide6.QtCore import QPoint, QRect, QSize, Qt, Signal
+from PySide6.QtCore import QEvent, QPoint, QRect, QSize, Qt, Signal
 from PySide6.QtGui import (
     QColor,
     QFont,
@@ -25,8 +25,9 @@ from PySide6.QtGui import (
     QTextFormat,
 )
 from PySide6.QtGui import QAction
-from PySide6.QtWidgets import QMenu, QPlainTextEdit, QTextEdit, QWidget
+from PySide6.QtWidgets import QMenu, QPlainTextEdit, QTextEdit, QToolTip, QWidget
 
+from pgtp_editor.schema_learning.settings_index import enum_hint
 from pgtp_editor.ui import xml_structure
 from pgtp_editor.ui.event_body import event_body_line_ranges
 
@@ -37,6 +38,105 @@ _TAG_OPEN_RE = re.compile(r"</?[A-Za-z_][\w.-]*")
 _TAG_CLOSE_RE = re.compile(r"/?>")
 _ATTR_NAME_RE = re.compile(r"[A-Za-z_][\w.-]*(?=\s*=)")
 _ATTR_VALUE_RE = re.compile(r'"[^"]*"')
+
+# Matches one attribute pair -- name, '=', then a quoted value (single or
+# double quotes; value text may itself contain the *other* quote char and
+# even a '>' since it's inside the quotes) -- inside an opening tag. Used by
+# attribute_at_position to find which attribute the cursor sits on.
+_ATTR_PAIR_RE = re.compile(
+    r"""([A-Za-z_][\w.-]*)\s*=\s*("[^"]*"|'[^']*')"""
+)
+
+
+def attribute_at_position(text: str, pos: int):
+    """Resolve a document character position to ``(tag_chain, attr)`` when it
+    falls on an attribute (name token or quoted value) inside an *opening*
+    tag; otherwise return ``None``.
+
+    ``tag_chain`` is the slash-joined ancestor open-tag names from the
+    document root down to and including the tag the position is in (e.g.
+    ``"PGTPProject/Pages/Page/Editor"``). The ancestor walk reuses
+    xml_structure's tag scanner (``scan``/``parent_tag_span``) rather than a
+    second XML scanner, so open/close/self-closing bookkeeping stays in one
+    place.
+
+    Returns ``None`` when the position is over the tag name, in whitespace
+    between tokens, inside a close tag, in text content, or outside every
+    element.
+    """
+    spans = xml_structure.scan(text)
+
+    # The span the position is in is the innermost one whose *opening* tag
+    # delimiters cover pos (self-closing tags included). A close tag's own
+    # '</name>' is not an open-tag region, so positions there resolve to no
+    # span and return None -- the desired behavior.
+    # xml_structure's tag regex uses [^<>], so it truncates an opening tag at
+    # the first '>' even when that '>' is inside a quoted attribute value. Its
+    # open_start (and name/chain bookkeeping) is still reliable, so we take the
+    # candidate span from open_start but recompute the tag's true '>' end here,
+    # respecting quotes, to stay robust to '>' inside values.
+    containing = None
+    for span in spans:
+        real_open_end = _opening_tag_end(text, span.open_start)
+        if real_open_end is None:
+            continue
+        if span.open_start <= pos < real_open_end and (
+            containing is None or span.depth > containing.depth
+        ):
+            containing = span
+            containing_open_end = real_open_end
+    if containing is None:
+        return None
+
+    attr = _attribute_name_at(text, containing.open_start, containing_open_end, pos)
+    if attr is None:
+        return None
+
+    names = [containing.name]
+    walker = containing
+    while walker.depth > 0:
+        parent = xml_structure.parent_tag_span(spans, walker)
+        if parent is None:
+            break
+        names.append(parent.name)
+        walker = parent
+    tag_chain = "/".join(reversed(names))
+    return tag_chain, attr
+
+
+def _opening_tag_end(text: str, open_start: int):
+    """Return the offset just past the '>' that closes the opening tag
+    beginning at ``open_start``, scanning left-to-right and treating any '>'
+    inside a single- or double-quoted attribute value as ordinary text. Returns
+    None if no closing '>' is found (a truncated/mid-edit tag)."""
+    quote = None
+    for i in range(open_start, len(text)):
+        ch = text[i]
+        if quote is not None:
+            if ch == quote:
+                quote = None
+        elif ch in ('"', "'"):
+            quote = ch
+        elif ch == ">":
+            return i + 1
+    return None
+
+
+def _attribute_name_at(text: str, open_start: int, open_end: int, pos: int):
+    """Return the attribute name whose name-token or quoted value contains
+    ``pos`` within the opening tag spanning ``[open_start, open_end)``, or
+    ``None`` if ``pos`` is over the tag name, in an inter-token gap, or on the
+    tag delimiters."""
+    tag_text = text[open_start:open_end]
+    offset = pos - open_start
+    for match in _ATTR_PAIR_RE.finditer(tag_text):
+        name_start, name_end = match.start(1), match.end(1)
+        value_start, value_end = match.start(2), match.end(2)
+        on_name = name_start <= offset < name_end
+        on_value = value_start <= offset < value_end
+        if on_name or on_value:
+            return match.group(1)
+    return None
 
 # Fixed horizontal allowance reserved for the fold-triangle glyph, added on
 # top of the digit-count-dependent width for line numbers.
@@ -256,6 +356,9 @@ class XmlEditor(QPlainTextEdit):
         # never an arbitrary pre-existing '>' the cursor happens to sit
         # before (see the "<Page>" pre-existing-'>' bug this guards against).
         self._auto_closed_greater_than_cursors: list[QTextCursor] = []
+        # Learned schema model injected by MainWindow after each enrich; None
+        # disables value-hover tooltips (see set_schema_model / event()).
+        self._schema_model = None
         self._update_gutter_width(0)
         self._rescan_structure()
         self._refresh_code_region_selections()
@@ -694,6 +797,41 @@ class XmlEditor(QPlainTextEdit):
     def contextMenuEvent(self, event) -> None:
         menu = self._build_context_menu()
         menu.exec(event.globalPos())
+
+    def set_schema_model(self, model) -> None:
+        """Inject the current in-memory schema Model (or None). Passed by
+        MainWindow after each enrich so value-hover tooltips reflect the
+        latest labels; None disables hovers (default)."""
+        self._schema_model = model
+
+    def _hint_for_help_pos(self, char_pos: int):
+        """Given a document character position, return the settings hover
+        hint text or None. Factored out of the ToolTip event so the
+        resolver+hint path is testable without synthesizing a QHelpEvent.
+        Returns None when no model is set, the position isn't on a setting
+        attribute, or enum_hint yields nothing."""
+        if self._schema_model is None:
+            return None
+        resolved = attribute_at_position(self.toPlainText(), char_pos)
+        if resolved is None:
+            return None
+        tag_chain, attr = resolved
+        return enum_hint(self._schema_model, tag_chain, attr)
+
+    def event(self, e) -> bool:
+        if e.type() == QEvent.Type.ToolTip:
+            # The ToolTip QHelpEvent is delivered to this widget in widget
+            # coordinates; cursorForPosition expects viewport coordinates, so
+            # translate through the viewport before mapping to a char offset.
+            viewport_pos = self.viewport().mapFrom(self, e.pos())
+            char_pos = self.cursorForPosition(viewport_pos).position()
+            text = self._hint_for_help_pos(char_pos)
+            if text:
+                QToolTip.showText(e.globalPos(), text, self)
+            else:
+                QToolTip.hideText()
+            return False
+        return super().event(e)
 
     def mouseReleaseEvent(self, event) -> None:
         # Let Qt place the text cursor at the clicked position first, then
