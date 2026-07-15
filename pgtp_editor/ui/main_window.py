@@ -70,6 +70,8 @@ from pgtp_editor.ui import search
 from pgtp_editor.ui.project_tree import ProjectTreePanel
 from pgtp_editor.ui.properties_panel import PropertiesPanel
 from pgtp_editor.ui.schema_viewer import SchemaViewerWindow
+from pgtp_editor.analysis.reused_tables import collect_table_usages
+from pgtp_editor.ui.reused_tables_window import ReusedTablesWindow
 from pgtp_editor.ui.theme import apply_theme
 from pgtp_editor.ui.schema_viewer_data import open_labels_text, open_xsd_text
 
@@ -124,6 +126,7 @@ class MainWindow(QMainWindow):
         # not garbage-collected while open; reused/refreshed on reopen.
         self._xsd_viewer = None
         self._labels_viewer = None
+        self._reused_tables_window = None
         self.setWindowTitle("PGTP Editor")
         self.resize(1400, 900)
 
@@ -1625,6 +1628,17 @@ class MainWindow(QMainWindow):
         self._labels_viewer.set_content(text)
         self._labels_viewer.show()
 
+    def _open_reused_tables(self):
+        if self._current_project is None:
+            self.statusBar().showMessage("Open a project first.", 5000)
+            return
+        if self._reused_tables_window is None:
+            self._reused_tables_window = ReusedTablesWindow(self)
+        self._reused_tables_window.set_usages(
+            collect_table_usages(self._current_project)
+        )
+        self._reused_tables_window.show()
+
     def _build_tools_menu(self):
         menu = self.menuBar().addMenu("Tools")
         manage_captions_action = menu.addAction("Manage Captions...")
@@ -1632,7 +1646,8 @@ class MainWindow(QMainWindow):
         caption_filter_action = menu.addAction("Caption Filter…")
         caption_filter_action.triggered.connect(self._open_caption_filter_dialog)
         menu.addSeparator()
-        self._add_stub_action(menu, "Find Reused Tables...")
+        reused_tables_action = menu.addAction("Find Reused Tables...")
+        reused_tables_action.triggered.connect(self._open_reused_tables)
         menu.addSeparator()
         validate_action = menu.addAction("Validate Project")
         validate_action.triggered.connect(self._validate_project)
