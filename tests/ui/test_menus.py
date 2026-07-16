@@ -257,7 +257,7 @@ def test_schema_menu_sits_between_view_and_tools(qtbot):
     qtbot.addWidget(window)
     titles = all_top_level_menu_titles(window)
     assert titles == [
-        "File", "Edit", "View", "Schema", "Tools", "Generation", "Help",
+        "File", "Edit", "View", "Schema", "Database", "Tools", "Generation", "Help",
     ]
 
 
@@ -340,7 +340,7 @@ def test_all_top_level_menus_present_in_order(qtbot):
     qtbot.addWidget(window)
     titles = all_top_level_menu_titles(window)
     assert titles == [
-        "File", "Edit", "View", "Schema", "Tools", "Generation", "Help",
+        "File", "Edit", "View", "Schema", "Database", "Tools", "Generation", "Help",
     ]
 
 
