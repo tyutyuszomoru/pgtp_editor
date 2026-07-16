@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
 
 from pgtp_editor.db.config import ConnectionParams
 from pgtp_editor.db.introspect import test_connection
+from pgtp_editor.ui.async_task import run_async
 
 Tester = Callable[[ConnectionParams], "tuple[bool, str]"]
 
@@ -36,6 +37,10 @@ class ConnectionSetupDialog(QDialog):
     ) -> None:
         super().__init__(parent)
         self._tester = tester
+        # Off-thread executor seam. Default runs the connection Test on a
+        # threadpool worker so a slow/unreachable host never freezes the dialog;
+        # tests replace this with a synchronous stub for determinism.
+        self._run_async = run_async
         self.setWindowTitle("Database Connection Setup")
 
         self._host_edit = QLineEdit()
@@ -93,7 +98,28 @@ class ConnectionSetupDialog(QDialog):
         )
 
     def test(self) -> None:
-        ok, message = self._tester(self.params())
-        color = "green" if ok else "red"
-        self._status_label.setText(message)
-        self._status_label.setStyleSheet(f"color: {color};")
+        # Run the connection test off the GUI thread so a slow or unreachable
+        # host can't block the event loop. Busy state is set now; the result (or
+        # error) is applied by the callbacks, which run back on the GUI thread.
+        self._test_button.setEnabled(False)
+        self._status_label.setStyleSheet("")
+        self._status_label.setText("Testing connection…")
+        params = self.params()
+
+        def on_result(result: "tuple[bool, str]") -> None:
+            ok, message = result
+            color = "green" if ok else "red"
+            self._status_label.setText(message)
+            self._status_label.setStyleSheet(f"color: {color};")
+            self._test_button.setEnabled(True)
+
+        def on_error(exc: BaseException) -> None:
+            self._status_label.setText(str(exc))
+            self._status_label.setStyleSheet("color: red;")
+            self._test_button.setEnabled(True)
+
+        self._run_async(
+            lambda: self._tester(params),
+            on_result=on_result,
+            on_error=on_error,
+        )
