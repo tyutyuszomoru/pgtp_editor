@@ -257,7 +257,8 @@ def test_schema_menu_sits_between_view_and_tools(qtbot):
     qtbot.addWidget(window)
     titles = all_top_level_menu_titles(window)
     assert titles == [
-        "File", "Edit", "View", "Schema", "Database", "Tools", "Generation", "Help",
+        "File", "Edit", "View", "Schema", "Database", "Tools", "Bookmarks",
+        "Generation", "Help",
     ]
 
 
@@ -340,7 +341,8 @@ def test_all_top_level_menus_present_in_order(qtbot):
     qtbot.addWidget(window)
     titles = all_top_level_menu_titles(window)
     assert titles == [
-        "File", "Edit", "View", "Schema", "Database", "Tools", "Generation", "Help",
+        "File", "Edit", "View", "Schema", "Database", "Tools", "Bookmarks",
+        "Generation", "Help",
     ]
 
 
@@ -357,3 +359,75 @@ def test_view_menu_has_no_wrap_raw_xml_lines_action(qtbot):
     view_menu = find_top_menu(window, "View")
     assert "Wrap Raw XML Lines" not in action_labels(view_menu)
     assert "Wrap Lines" not in action_labels(view_menu)
+
+
+def test_bookmarks_menu_sits_between_tools_and_generation(qtbot):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    titles = all_top_level_menu_titles(window)
+    assert titles.index("Bookmarks") == titles.index("Tools") + 1
+    assert titles.index("Bookmarks") == titles.index("Generation") - 1
+
+
+def test_bookmarks_menu_contents(qtbot):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    menu = find_top_menu(window, "Bookmarks")
+    assert action_labels(menu) == [
+        "Toggle Bookmark", "Next Bookmark", "Previous Bookmark", "―",
+        "Clear All Bookmarks",
+    ]
+
+
+def test_bookmarks_menu_shortcuts(qtbot):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    menu = find_top_menu(window, "Bookmarks")
+    assert find_action(menu, "Toggle Bookmark").shortcut().toString() == "Ctrl+F2"
+    assert find_action(menu, "Next Bookmark").shortcut().toString() == "F2"
+    assert find_action(menu, "Previous Bookmark").shortcut().toString() == "Shift+F2"
+
+
+def test_toggle_bookmark_action_marks_cursor_line(qtbot):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    editor = window.center_stage.xml_editor
+    editor.setPlainText("a\nb\nc\nd")
+    cursor = editor.textCursor()
+    cursor.setPosition(editor.document().findBlockByNumber(2).position())
+    editor.setTextCursor(cursor)
+    menu = find_top_menu(window, "Bookmarks")
+    find_action(menu, "Toggle Bookmark").trigger()
+    assert editor.bookmarked_lines() == [2]
+
+
+def test_next_bookmark_action_moves_cursor_with_wrap(qtbot):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    editor = window.center_stage.xml_editor
+    editor.setPlainText("a\nb\nc\nd\ne")
+    for n in (1, 3):
+        editor.toggle_bookmark(n)
+    cursor = editor.textCursor()
+    cursor.setPosition(editor.document().findBlockByNumber(0).position())
+    editor.setTextCursor(cursor)
+    menu = find_top_menu(window, "Bookmarks")
+    next_action = find_action(menu, "Next Bookmark")
+    next_action.trigger()
+    assert editor.textCursor().blockNumber() == 1
+    next_action.trigger()
+    assert editor.textCursor().blockNumber() == 3
+    next_action.trigger()  # wrap
+    assert editor.textCursor().blockNumber() == 1
+
+
+def test_clear_all_bookmarks_action(qtbot):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    editor = window.center_stage.xml_editor
+    editor.setPlainText("a\nb\nc")
+    editor.toggle_bookmark(0)
+    editor.toggle_bookmark(2)
+    menu = find_top_menu(window, "Bookmarks")
+    find_action(menu, "Clear All Bookmarks").trigger()
+    assert editor.bookmarked_lines() == []
