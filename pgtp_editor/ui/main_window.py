@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
     QDialog,
     QDockWidget,
     QFileDialog,
+    QInputDialog,
     QLabel,
     QListWidget,
     QListWidgetItem,
@@ -56,8 +57,12 @@ from pgtp_editor.ui.manual_panel import (
     parse_chapters,
 )
 from pgtp_editor.db.config import save_connection, seed_params
+from pgtp_editor.db.compare import check_db_against_xml, check_xml_against_db
+from pgtp_editor.db.introspect import fetch_schema as db_fetch_schema
 from pgtp_editor.db.introspect import test_connection as db_test_connection
+from pgtp_editor.db.rename import rename_field, rename_table
 from pgtp_editor.ui.connection_setup_dialog import ConnectionSetupDialog
+from pgtp_editor.ui.db_check_panel import DbCheckPanel
 from pgtp_editor.ui.code_editor import CodeEditorDialog
 from pgtp_editor.ui.customize_toolbar_dialog import CustomizeToolbarDialog
 from pgtp_editor.ui.history import SnapshotHistory
@@ -139,6 +144,8 @@ class MainWindow(QMainWindow):
         self._reused_tables_window = None
         # Connection Setup dialog, held so it is not GC'd while shown non-modally.
         self._connection_dialog = None
+        # Direction of the last Database Check run, so a rename can re-run it.
+        self._last_db_check_direction = None
         self.setWindowTitle("PGTP Editor")
         self.resize(1400, 900)
 
@@ -166,6 +173,15 @@ class MainWindow(QMainWindow):
         # Contents rides with the Manual: hidden until the Manual is shown, and
         # hidden again when the Manual closes.
         self.left_tabs.setTabVisible(self.contents_tab_index, False)
+        # Database Check results ride in their own hidden tab, revealed and
+        # focused when a check runs (mirrors the Contents tab pattern).
+        self.db_check_panel = DbCheckPanel()
+        self.db_check_tab_index = self.left_tabs.addTab(
+            self.db_check_panel, "Database Check"
+        )
+        self.left_tabs.setTabVisible(self.db_check_tab_index, False)
+        self.db_check_panel.rename_requested.connect(self._on_db_rename_requested)
+        self.db_check_panel.jump_requested.connect(self._on_db_jump_requested)
         self.tree_dock.setWidget(self.left_tabs)
         self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self.tree_dock)
 
@@ -1721,6 +1737,11 @@ class MainWindow(QMainWindow):
         menu = self.menuBar().addMenu("Database")
         setup_action = menu.addAction("Connection Setup…")
         setup_action.triggered.connect(self._open_connection_setup)
+        menu.addSeparator()
+        check_xml_action = menu.addAction("Check: XML → Database")
+        check_xml_action.triggered.connect(lambda: self._run_db_check("xml_to_db"))
+        check_db_action = menu.addAction("Check: Database → XML")
+        check_db_action.triggered.connect(lambda: self._run_db_check("db_to_xml"))
 
     def _open_connection_setup(self):
         tree = (
@@ -1735,6 +1756,97 @@ class MainWindow(QMainWindow):
         )
         self._connection_dialog = dialog
         dialog.show()
+
+    # -- Database Check (SP2) ------------------------------------------------
+
+    def _fetch_db_schema(self, params):
+        """Introspect the database. Injectable seam — tests patch this to return
+        a canned `DatabaseSchema` so no live connection (or psycopg) is needed."""
+        return db_fetch_schema(params)
+
+    def _prompt_rename(self, old):
+        """Ask for a new name (modal QInputDialog). Test seam — patched in tests
+        to bypass the modal. Returns the new name, or None if cancelled."""
+        text, ok = QInputDialog.getText(
+            self,
+            "Rename in XML",
+            f"New name for '{old}' — replaces every matching "
+            "fieldName/tableName occurrence in the file:",
+            text=old,
+        )
+        return text if ok else None
+
+    def _reveal_db_check_tab(self):
+        self.tree_dock.setVisible(True)
+        self.left_tabs.setTabVisible(self.db_check_tab_index, True)
+        self.left_tabs.setCurrentWidget(self.db_check_panel)
+
+    def _run_db_check(self, direction):
+        # Compare against a model parsed from the CURRENT buffer, not the
+        # last-parsed self._current_project -- so renames (and any manual edit)
+        # made since the last load are reflected and the reconcile loop
+        # actually resolves. Falls back to no-op with a status message when the
+        # buffer is empty or not valid XML.
+        text = self.center_stage.xml_editor.toPlainText()
+        if not text.strip():
+            self.statusBar().showMessage("Open a project first.", 5000)
+            return
+        try:
+            project = load_project_from_text(text, source_description="<editor>")
+        except PgtpParseError as exc:
+            self.statusBar().showMessage(
+                f"Database check needs valid XML: {exc}", 8000
+            )
+            return
+        params = seed_params(project.tree, self._settings)
+        if not params.host:
+            self.statusBar().showMessage(
+                "No database connection configured — set one up first.", 5000
+            )
+            self._open_connection_setup()
+            return
+        try:
+            schema = self._fetch_db_schema(params)
+        except Exception as exc:  # noqa: BLE001 — surface any failure, never crash
+            self.statusBar().showMessage(f"Database check failed: {exc}", 8000)
+            return
+        if direction == "xml_to_db":
+            checks = check_xml_against_db(project, schema)
+        else:
+            checks = check_db_against_xml(project, schema)
+        self._last_db_check_direction = direction
+        summary = f"{params.user}@{params.host}:{params.port}/{params.database}"
+        self.db_check_panel.set_result(direction, checks, summary)
+        self._reveal_db_check_tab()
+
+    def _on_db_rename_requested(self, kind, old):
+        new = self._prompt_rename(old)
+        if not new or new == old:
+            return
+        current = self.center_stage.xml_editor.toPlainText()
+        if kind == "table":
+            updated, count = rename_table(current, old, new)
+        else:
+            updated, count = rename_field(current, old, new)
+        # Write through the buffer so the change marks the document dirty and
+        # pushes a snapshot (the editor's textChanged handler does both).
+        self.center_stage.xml_editor.setPlainText(updated)
+        self.statusBar().showMessage(
+            f"Renamed {kind} '{old}' → '{new}' ({count} occurrence(s)).", 5000
+        )
+        if self._last_db_check_direction is not None:
+            self._run_db_check(self._last_db_check_direction)
+
+    def _on_db_jump_requested(self, kind, name):
+        token = f'tableName="{name}"' if kind == "table" else f'fieldName="{name}"'
+        text = self.center_stage.xml_editor.toPlainText()
+        index = text.find(token)
+        if index == -1:
+            self.statusBar().showMessage(f"{name} not found in the buffer.", 5000)
+            return
+        line = text.count("\n", 0, index) + 1
+        self.center_stage.setCurrentIndex(self.center_stage.raw_xml_tab_index)
+        self.center_stage.xml_editor.navigate_to_line(line)
 
     def _open_reused_tables(self):
         if self._current_project is None:
