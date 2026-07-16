@@ -107,11 +107,20 @@ SCHEMA_SQL: list[str] = [_RELATIONS_SQL, _COLUMNS_SQL, _CONSTRAINTS_SQL]
 _KIND_BY_RELKIND = {"r": "table", "p": "table", "v": "view", "m": "matview"}
 
 
-def run_queries(params: ConnectionParams, sql_list: list[str]) -> list[Rows]:
+def run_queries(
+    params: ConnectionParams,
+    sql_list: list[str],
+    connect_timeout: int = 10,
+) -> list[Rows]:
     """Open ONE connection, run each SQL, and return a list of row-lists.
 
     The ONLY function that touches psycopg — imported here, lazily, so the rest
     of the package (and the test suite) loads without the driver installed.
+
+    ``connect_timeout`` (seconds) bounds the connect attempt so an unreachable
+    or slow host fails fast instead of blocking on the OS TCP timeout. This
+    matters even when the call runs off the GUI thread — it caps how long a
+    worker lingers.
     """
     import psycopg  # noqa: PLC0415 — lazy on purpose (see module docstring)
 
@@ -121,6 +130,7 @@ def run_queries(params: ConnectionParams, sql_list: list[str]) -> list[Rows]:
         dbname=params.database or None,
         user=params.user or None,
         password=params.password or None,
+        connect_timeout=connect_timeout,
     )
     try:
         results: list[Rows] = []

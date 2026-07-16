@@ -46,12 +46,23 @@ def _schema():
     return DatabaseSchema(tables={"pr.a": a, "pr.b": missing_xml})
 
 
+def _sync_run(fn, on_result, on_error=None):
+    """Synchronous stand-in for run_async: keeps _run_db_check deterministic and
+    modal-free while still exercising the busy-state + result path. Production
+    runs the schema fetch on a threadpool worker."""
+    try:
+        on_result(fn())
+    except Exception as exc:  # noqa: BLE001
+        (on_error or (lambda _e: None))(exc)
+
+
 def _window_with_project(qtbot):
     window = MainWindow()
     qtbot.addWidget(window)
     window._current_project = _project()
     window.center_stage.xml_editor.setPlainText(_RAW_XML)
     window._fetch_db_schema = lambda params: _schema()
+    window._run_async = _sync_run
     return window
 
 
@@ -104,6 +115,34 @@ def test_run_db_check_fetch_error_shows_status(qtbot):
     window._fetch_db_schema = _boom
     window._run_db_check("xml_to_db")  # must not crash
     assert window.db_check_panel.tree.topLevelItemCount() == 0
+    # The fetch error routes to on_error -> a status message, no crash.
+    assert "no route to host" in window.statusBar().currentMessage()
+
+
+def test_run_db_check_shows_busy_status_then_populates_on_result(qtbot):
+    """With a deferred runner, _run_db_check sets the 'Checking…' busy status and
+    leaves the panel empty until the schema is delivered; delivering it (on the
+    GUI thread) populates the panel and reveals the tab -- both directions."""
+    for direction in ("xml_to_db", "db_to_xml"):
+        window = _window_with_project(qtbot)
+        captured = {}
+
+        def deferred(fn, on_result, on_error=None, _c=captured):
+            _c["fn"] = fn
+            _c["on_result"] = on_result
+
+        window._run_async = deferred
+        window._run_db_check(direction)
+
+        assert "Checking database" in window.statusBar().currentMessage()
+        assert window.db_check_panel.tree.topLevelItemCount() == 0
+        assert not window.left_tabs.isTabVisible(window.db_check_tab_index)
+
+        # Deliver the schema back on the GUI thread.
+        captured["on_result"](captured["fn"]())
+        assert window.db_check_panel.tree.topLevelItemCount() >= 1
+        assert window.left_tabs.isTabVisible(window.db_check_tab_index)
+        assert window._last_db_check_direction == direction
 
 
 def test_on_db_rename_requested_updates_buffer_marks_dirty_and_reruns(qtbot):
@@ -167,6 +206,7 @@ def test_rename_resolves_mismatch_on_rerun_from_buffer(qtbot):
     window = MainWindow()
     qtbot.addWidget(window)
     window.center_stage.xml_editor.setPlainText(_RENAME_XML)
+    window._run_async = _sync_run
     # DB has 'new_col', not 'old_col'.
     schema = DatabaseSchema(tables={
         "pr.a": TableInfo(

@@ -61,6 +61,7 @@ from pgtp_editor.db.compare import check_db_against_xml, check_xml_against_db
 from pgtp_editor.db.introspect import fetch_schema as db_fetch_schema
 from pgtp_editor.db.introspect import test_connection as db_test_connection
 from pgtp_editor.db.rename import rename_field, rename_table
+from pgtp_editor.ui.async_task import run_async
 from pgtp_editor.ui.connection_setup_dialog import ConnectionSetupDialog
 from pgtp_editor.ui.db_check_panel import DbCheckPanel
 from pgtp_editor.ui.code_editor import CodeEditorDialog
@@ -146,6 +147,11 @@ class MainWindow(QMainWindow):
         self._connection_dialog = None
         # Direction of the last Database Check run, so a rename can re-run it.
         self._last_db_check_direction = None
+        # Off-thread executor seam. The Database Check schema fetch opens a
+        # connection; running it here would freeze the window on a slow/dead
+        # host. Default marshals it to a threadpool worker; tests inject a
+        # synchronous stub so the result path stays deterministic.
+        self._run_async = run_async
         self.setWindowTitle("PGTP Editor")
         self.resize(1400, 900)
 
@@ -1805,19 +1811,31 @@ class MainWindow(QMainWindow):
             )
             self._open_connection_setup()
             return
-        try:
-            schema = self._fetch_db_schema(params)
-        except Exception as exc:  # noqa: BLE001 — surface any failure, never crash
+        # The schema fetch opens a DB connection -- move ONLY that off the GUI
+        # thread. Everything above (buffer parse, seed, guards) is fast and stays
+        # here; the compare + panel population happen in on_result, back on the
+        # GUI thread, so they may safely touch widgets.
+        self.statusBar().showMessage("Checking database…")
+
+        def on_result(schema):
+            if direction == "xml_to_db":
+                checks = check_xml_against_db(project, schema)
+            else:
+                checks = check_db_against_xml(project, schema)
+            self._last_db_check_direction = direction
+            summary = f"{params.user}@{params.host}:{params.port}/{params.database}"
+            self.db_check_panel.set_result(direction, checks, summary)
+            self._reveal_db_check_tab()
+            self.statusBar().showMessage("Database check complete.", 3000)
+
+        def on_error(exc):
             self.statusBar().showMessage(f"Database check failed: {exc}", 8000)
-            return
-        if direction == "xml_to_db":
-            checks = check_xml_against_db(project, schema)
-        else:
-            checks = check_db_against_xml(project, schema)
-        self._last_db_check_direction = direction
-        summary = f"{params.user}@{params.host}:{params.port}/{params.database}"
-        self.db_check_panel.set_result(direction, checks, summary)
-        self._reveal_db_check_tab()
+
+        self._run_async(
+            lambda: self._fetch_db_schema(params),
+            on_result=on_result,
+            on_error=on_error,
+        )
 
     def _on_db_rename_requested(self, kind, old):
         new = self._prompt_rename(old)
