@@ -205,7 +205,10 @@ def test_gutter_click_on_fold_glyph_toggles_fold(qtbot):
 
     outer_block = editor.document().findBlockByNumber(0)
     top = editor.blockBoundingGeometry(outer_block).translated(editor.contentOffset()).top()
-    glyph_point = QPoint(4, int(top) + 2)
+    # The fold zone now sits right of the bookmark strip, so the click x is
+    # offset past _BOOKMARK_STRIP_WIDTH into the fold glyph column.
+    from pgtp_editor.ui.xml_editor import _BOOKMARK_STRIP_WIDTH as _BSW
+    glyph_point = QPoint(_BSW + 4, int(top) + 2)
 
     event = QMouseEvent(
         QEvent.Type.MouseButtonPress,
@@ -1094,3 +1097,221 @@ def test_find_action_collapses_multiline_paragraph_separators(qtbot):
     # QTextCursor.selectedText() joins lines with U+2029; the emitted term
     # must contain no paragraph separators (collapsed to spaces).
     assert " " not in emitted
+
+
+# --- Editor bookmarks (session-scoped line marks) --------------------------
+from PySide6.QtCore import QEvent as _QEvent_bm, QPoint as _QPoint_bm, Qt as _Qt_bm
+from PySide6.QtGui import QMouseEvent as _QMouseEvent_bm
+
+
+def test_toggle_bookmark_adds_then_removes(qtbot):
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    editor.setPlainText("a\nb\nc")
+    editor.toggle_bookmark(1)
+    assert editor.bookmarked_lines() == [1]
+    editor.toggle_bookmark(1)
+    assert editor.bookmarked_lines() == []
+
+
+def test_bookmarked_lines_returns_sorted(qtbot):
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    editor.setPlainText("a\nb\nc\nd\ne")
+    for n in (3, 0, 4, 1):
+        editor.toggle_bookmark(n)
+    assert editor.bookmarked_lines() == [0, 1, 3, 4]
+
+
+def test_next_bookmark_returns_smallest_greater(qtbot):
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    editor.setPlainText("a\nb\nc\nd\ne")
+    for n in (1, 3):
+        editor.toggle_bookmark(n)
+    assert editor.next_bookmark(0) == 1
+    assert editor.next_bookmark(1) == 3
+
+
+def test_next_bookmark_wraps_to_smallest(qtbot):
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    editor.setPlainText("a\nb\nc\nd\ne")
+    for n in (1, 3):
+        editor.toggle_bookmark(n)
+    assert editor.next_bookmark(3) == 1
+    assert editor.next_bookmark(4) == 1
+
+
+def test_prev_bookmark_returns_largest_smaller(qtbot):
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    editor.setPlainText("a\nb\nc\nd\ne")
+    for n in (1, 3):
+        editor.toggle_bookmark(n)
+    assert editor.prev_bookmark(4) == 3
+    assert editor.prev_bookmark(3) == 1
+
+
+def test_prev_bookmark_wraps_to_largest(qtbot):
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    editor.setPlainText("a\nb\nc\nd\ne")
+    for n in (1, 3):
+        editor.toggle_bookmark(n)
+    assert editor.prev_bookmark(1) == 3
+    assert editor.prev_bookmark(0) == 3
+
+
+def test_next_prev_bookmark_none_when_empty(qtbot):
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    editor.setPlainText("a\nb\nc")
+    assert editor.next_bookmark(0) is None
+    assert editor.prev_bookmark(0) is None
+
+
+def test_clear_bookmarks_empties(qtbot):
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    editor.setPlainText("a\nb\nc")
+    editor.toggle_bookmark(0)
+    editor.toggle_bookmark(2)
+    editor.clear_bookmarks()
+    assert editor.bookmarked_lines() == []
+
+
+def test_bookmarks_reset_on_set_plain_text(qtbot):
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    editor.setPlainText("a\nb\nc")
+    editor.toggle_bookmark(1)
+    assert editor.bookmarked_lines() == [1]
+    editor.setPlainText("x\ny\nz\nw")
+    assert editor.bookmarked_lines() == []
+
+
+def test_toggle_bookmark_at_cursor_marks_cursor_line(qtbot):
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    editor.setPlainText("a\nb\nc\nd")
+    cursor = editor.textCursor()
+    cursor.setPosition(editor.document().findBlockByNumber(2).position())
+    editor.setTextCursor(cursor)
+    editor.toggle_bookmark_at_cursor()
+    assert editor.bookmarked_lines() == [2]
+
+
+def test_goto_next_bookmark_moves_cursor(qtbot):
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    editor.setPlainText("a\nb\nc\nd\ne")
+    for n in (1, 3):
+        editor.toggle_bookmark(n)
+    cursor = editor.textCursor()
+    cursor.setPosition(editor.document().findBlockByNumber(0).position())
+    editor.setTextCursor(cursor)
+    editor.goto_next_bookmark()
+    assert editor.textCursor().blockNumber() == 1
+    editor.goto_next_bookmark()
+    assert editor.textCursor().blockNumber() == 3
+    # wrap
+    editor.goto_next_bookmark()
+    assert editor.textCursor().blockNumber() == 1
+
+
+def test_goto_prev_bookmark_moves_cursor(qtbot):
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    editor.setPlainText("a\nb\nc\nd\ne")
+    for n in (1, 3):
+        editor.toggle_bookmark(n)
+    cursor = editor.textCursor()
+    cursor.setPosition(editor.document().findBlockByNumber(4).position())
+    editor.setTextCursor(cursor)
+    editor.goto_prev_bookmark()
+    assert editor.textCursor().blockNumber() == 3
+    editor.goto_prev_bookmark()
+    assert editor.textCursor().blockNumber() == 1
+
+
+def test_goto_bookmark_no_op_when_empty(qtbot):
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    editor.setPlainText("a\nb\nc")
+    cursor = editor.textCursor()
+    cursor.setPosition(editor.document().findBlockByNumber(1).position())
+    editor.setTextCursor(cursor)
+    editor.goto_next_bookmark()
+    assert editor.textCursor().blockNumber() == 1
+    editor.goto_prev_bookmark()
+    assert editor.textCursor().blockNumber() == 1
+
+
+def test_gutter_click_in_bookmark_strip_toggles_bookmark(qtbot):
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    editor.resize(400, 300)
+    editor.show()
+    editor.setPlainText("<Page>\n  <Detail>\n    content\n  </Detail>\n</Page>")
+
+    block = editor.document().findBlockByNumber(2)
+    top = editor.blockBoundingGeometry(block).translated(editor.contentOffset()).top()
+    point = _QPoint_bm(2, int(top) + 2)  # x=2 lands in the left bookmark strip
+    event = _QMouseEvent_bm(
+        _QEvent_bm.Type.MouseButtonPress,
+        point,
+        _Qt_bm.MouseButton.LeftButton,
+        _Qt_bm.MouseButton.LeftButton,
+        _Qt_bm.KeyboardModifier.NoModifier,
+    )
+    editor._gutter.mousePressEvent(event)
+    assert editor.bookmarked_lines() == [2]
+
+
+def test_gutter_click_in_fold_zone_still_toggles_fold(qtbot):
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    editor.resize(400, 300)
+    editor.show()
+    editor.setPlainText("<Page>\n  <Detail>\n    content\n  </Detail>\n</Page>")
+
+    outer_block = editor.document().findBlockByNumber(0)
+    top = editor.blockBoundingGeometry(outer_block).translated(editor.contentOffset()).top()
+    # x inside the fold zone (shifted right past the bookmark strip).
+    from pgtp_editor.ui.xml_editor import _BOOKMARK_STRIP_WIDTH, _FOLD_GLYPH_WIDTH
+    fold_x = _BOOKMARK_STRIP_WIDTH + _FOLD_GLYPH_WIDTH // 2
+    point = _QPoint_bm(fold_x, int(top) + 2)
+    event = _QMouseEvent_bm(
+        _QEvent_bm.Type.MouseButtonPress,
+        point,
+        _Qt_bm.MouseButton.LeftButton,
+        _Qt_bm.MouseButton.LeftButton,
+        _Qt_bm.KeyboardModifier.NoModifier,
+    )
+    editor._gutter.mousePressEvent(event)
+    assert editor.document().findBlockByNumber(2).isVisible() is False
+    assert editor.bookmarked_lines() == []
+
+
+def test_gutter_paint_with_bookmarks_does_not_crash(qtbot):
+    from PySide6.QtGui import QPixmap
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    editor.resize(400, 300)
+    editor.show()
+    editor.setPlainText("<Page>\n  <Detail>\n    content\n  </Detail>\n</Page>")
+    editor.toggle_bookmark(1)
+    # A bookmark past EOF must not crash the paint path.
+    editor.toggle_bookmark(999)
+    pixmap = QPixmap(editor._gutter.size())
+    editor._gutter.render(pixmap)
+
+
+def test_next_bookmark_ignores_out_of_range_after_edit(qtbot):
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    editor.setPlainText("a\nb\nc")
+    editor.toggle_bookmark(999)  # points past EOF
+    # navigation must not crash even though the block is invalid
+    editor.goto_next_bookmark()

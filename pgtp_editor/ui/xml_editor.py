@@ -222,6 +222,12 @@ def _attribute_name_at(text: str, open_start: int, open_end: int, pos: int):
 # top of the digit-count-dependent width for line numbers.
 _FOLD_GLYPH_WIDTH = 16
 
+# Fixed horizontal allowance reserved on the LEFT of the gutter for the
+# bookmark strip (where the rounded bookmark tags are drawn / clicked to
+# toggle). Sits left of the fold zone and the line numbers, which both shift
+# right by this amount.
+_BOOKMARK_STRIP_WIDTH = 12
+
 
 class XmlSyntaxHighlighter(QSyntaxHighlighter):
     def __init__(self, document):
@@ -317,23 +323,29 @@ class _EditorGutter(QWidget):
         ).top()
         bottom = top + self._editor.blockBoundingRect(block).height()
 
-        # Fold-triangle glyphs occupy the left [0, _FOLD_GLYPH_WIDTH) strip
-        # of the gutter; line numbers occupy the remaining right-hand strip
-        # and are right-aligned against the gutter's right edge.
-        line_number_width = self.width() - _FOLD_GLYPH_WIDTH
+        # Three zones, left to right: the bookmark strip
+        # [0, _BOOKMARK_STRIP_WIDTH), the fold zone
+        # [_BOOKMARK_STRIP_WIDTH, _BOOKMARK_STRIP_WIDTH + _FOLD_GLYPH_WIDTH),
+        # and the line-number area (right-aligned against the gutter's right
+        # edge). The fold glyph and numbers both shift right by the strip width.
+        number_x = _BOOKMARK_STRIP_WIDTH + _FOLD_GLYPH_WIDTH
+        line_number_width = self.width() - number_x
 
         while block.isValid() and top <= event.rect().bottom():
             if block.isVisible() and bottom >= event.rect().top():
                 number_text = str(block_number + 1)
                 painter.setPen(self._editor._gutter_fg_color)
                 painter.drawText(
-                    _FOLD_GLYPH_WIDTH,
+                    number_x,
                     int(top),
                     line_number_width,
                     self._editor.fontMetrics().height(),
                     Qt.AlignmentFlag.AlignRight,
                     number_text,
                 )
+
+                if block_number in self._editor._bookmarks:
+                    self._draw_bookmark_tag(painter, int(top))
 
                 if self._editor._foldable_region_starting_at(block) is not None:
                     collapsed = self._editor._fold_state.get(block_number, False)
@@ -344,12 +356,29 @@ class _EditorGutter(QWidget):
             bottom = top + self._editor.blockBoundingRect(block).height()
             block_number += 1
 
+    def _draw_bookmark_tag(self, painter: QPainter, top: int) -> None:
+        """Draw a small filled rounded tag in the bookmark strip, vertically
+        centered on the line, in the palette's Highlight accent (theme-aware,
+        no border, antialiased)."""
+        line_height = self._editor.fontMetrics().height()
+        tag_w = _BOOKMARK_STRIP_WIDTH - 4
+        tag_h = max(4, min(line_height - 6, _BOOKMARK_STRIP_WIDTH))
+        x = 2
+        y = top + (line_height - tag_h) // 2
+        radius = max(1, tag_h // 4)
+        painter.save()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(self._editor._bookmark_color())
+        painter.drawRoundedRect(QRect(x, y, tag_w, tag_h), radius, radius)
+        painter.restore()
+
     def _draw_fold_glyph(self, painter: QPainter, top: int, collapsed: bool) -> None:
         line_height = self._editor.fontMetrics().height()
         glyph_size = min(_FOLD_GLYPH_WIDTH - 6, line_height - 6)
         half = max(2, glyph_size // 2)
         depth = max(1, half // 2)  # how far the chevron's tip protrudes
-        cx = _FOLD_GLYPH_WIDTH // 2
+        cx = _BOOKMARK_STRIP_WIDTH + _FOLD_GLYPH_WIDTH // 2
         cy = top + line_height // 2
         # A fine, unfilled chevron (technical arrow) rather than a filled triangle.
         pen = QPen(self._editor._gutter_fg_color)
@@ -371,7 +400,17 @@ class _EditorGutter(QWidget):
         painter.restore()
 
     def mousePressEvent(self, event) -> None:
-        if event.position().x() >= _FOLD_GLYPH_WIDTH:
+        click_x = event.position().x()
+        # Zone routing: bookmark strip toggles the clicked line's bookmark;
+        # fold zone keeps the existing fold toggle; a click in the line-number
+        # area does nothing (as before).
+        in_bookmark_strip = click_x < _BOOKMARK_STRIP_WIDTH
+        in_fold_zone = (
+            _BOOKMARK_STRIP_WIDTH
+            <= click_x
+            < _BOOKMARK_STRIP_WIDTH + _FOLD_GLYPH_WIDTH
+        )
+        if not (in_bookmark_strip or in_fold_zone):
             return
         block = self._editor.firstVisibleBlock()
         top = self._editor.blockBoundingGeometry(block).translated(
@@ -382,7 +421,10 @@ class _EditorGutter(QWidget):
 
         while block.isValid() and top <= click_y:
             if block.isVisible() and top <= click_y < bottom:
-                self._editor._toggle_fold(block)
+                if in_bookmark_strip:
+                    self._editor.toggle_bookmark(block.blockNumber())
+                else:
+                    self._editor._toggle_fold(block)
                 self.update()
                 return
             block = block.next()
@@ -418,6 +460,10 @@ class XmlEditor(QPlainTextEdit):
         self._highlighter = XmlSyntaxHighlighter(self.document())
         self._gutter = _EditorGutter(self)
         self._fold_state: dict[int, bool] = {}
+        # Session/file-scoped line bookmarks, tracked by block number. Reset
+        # alongside _fold_state on every setPlainText (a new file loaded), so
+        # bookmarks never drift from external edits or leak across documents.
+        self._bookmarks: set[int] = set()
         # Theme-aware colors. These default to the DARK set; apply_theme_colors
         # swaps the whole set to the LIGHT variant (and back) and is driven
         # automatically off ApplicationPaletteChange in changeEvent, so the
@@ -479,6 +525,9 @@ class XmlEditor(QPlainTextEdit):
         # Folding state is per-document-instance; a fresh setPlainText call
         # (a new file loaded into this editor) starts fully unfolded.
         self._fold_state = {}
+        # Bookmarks share the fold-state lifecycle: a new document starts with
+        # no bookmarks (session/file-scoped, see __init__).
+        self._bookmarks = set()
 
     def apply_theme_colors(self, light: bool) -> None:
         """Swap the editor's color attributes and the syntax highlighter's
@@ -587,6 +636,75 @@ class XmlEditor(QPlainTextEdit):
             if other_first <= line_number <= other_last:
                 return True
         return False
+
+    # --- Bookmarks ---------------------------------------------------------
+    def toggle_bookmark(self, block_number: int) -> None:
+        """Add or remove a bookmark on ``block_number`` (0-based line index)
+        and repaint the gutter so the tag appears/disappears immediately."""
+        if block_number in self._bookmarks:
+            self._bookmarks.discard(block_number)
+        else:
+            self._bookmarks.add(block_number)
+        self._gutter.update()
+
+    def bookmarked_lines(self) -> list[int]:
+        """Bookmarked block numbers in ascending order."""
+        return sorted(self._bookmarks)
+
+    def next_bookmark(self, from_line: int) -> int | None:
+        """Smallest bookmark strictly greater than ``from_line``, wrapping to
+        the smallest bookmark overall; ``None`` when there are no bookmarks."""
+        ordered = self.bookmarked_lines()
+        if not ordered:
+            return None
+        for line in ordered:
+            if line > from_line:
+                return line
+        return ordered[0]
+
+    def prev_bookmark(self, from_line: int) -> int | None:
+        """Largest bookmark strictly less than ``from_line``, wrapping to the
+        largest bookmark overall; ``None`` when there are no bookmarks."""
+        ordered = self.bookmarked_lines()
+        if not ordered:
+            return None
+        for line in reversed(ordered):
+            if line < from_line:
+                return line
+        return ordered[-1]
+
+    def clear_bookmarks(self) -> None:
+        """Remove every bookmark and repaint the gutter."""
+        self._bookmarks = set()
+        self._gutter.update()
+
+    def toggle_bookmark_at_cursor(self) -> None:
+        """Toggle a bookmark on the line the text cursor currently sits on."""
+        self.toggle_bookmark(self.textCursor().blockNumber())
+
+    def goto_next_bookmark(self) -> None:
+        """Move the cursor to the next bookmark after the current line (with
+        wrap-around) and center it. No-op when there are no bookmarks."""
+        target = self.next_bookmark(self.textCursor().blockNumber())
+        if target is not None:
+            self._goto_bookmark_line(target)
+
+    def goto_prev_bookmark(self) -> None:
+        """Move the cursor to the previous bookmark before the current line
+        (with wrap-around) and center it. No-op when there are no bookmarks."""
+        target = self.prev_bookmark(self.textCursor().blockNumber())
+        if target is not None:
+            self._goto_bookmark_line(target)
+
+    def _goto_bookmark_line(self, block_number: int) -> None:
+        """Move the cursor to ``block_number`` (0-based) and center it. Guards
+        against out-of-range bookmarks that may point past EOF after edits."""
+        block = self.document().findBlockByNumber(block_number)
+        if not block.isValid():
+            return
+        cursor = QTextCursor(block)
+        self.setTextCursor(cursor)
+        self.centerCursor()
 
     def _refresh_extra_selections(self) -> None:
         """The single place XmlEditor calls setExtraSelections. Combines
@@ -1184,10 +1302,21 @@ class XmlEditor(QPlainTextEdit):
             extra_indent = "  "
         cursor.insertText("\n" + leading_ws + extra_indent)
 
+    def _bookmark_color(self) -> QColor:
+        """The bookmark tag's fill, derived from the palette's Highlight role
+        so it reads in both Light and Dark themes. Recomputed on each paint,
+        so it tracks palette changes with no cache to invalidate."""
+        return self.palette().color(QPalette.ColorRole.Highlight)
+
     def _gutter_width(self) -> int:
         digits = len(str(max(1, self.blockCount())))
         digit_width = self.fontMetrics().horizontalAdvance("9")
-        return digits * digit_width + _FOLD_GLYPH_WIDTH + 6
+        return (
+            digits * digit_width
+            + _BOOKMARK_STRIP_WIDTH
+            + _FOLD_GLYPH_WIDTH
+            + 6
+        )
 
     def _update_gutter_width(self, _new_block_count: int) -> None:
         self.setViewportMargins(self._gutter_width(), 0, 0, 0)
