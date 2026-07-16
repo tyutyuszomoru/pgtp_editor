@@ -26,11 +26,22 @@ class _TaskSignals(QObject):
     error = Signal(object)
 
 
+# In-flight tasks are held here for their whole lifetime. Without this, the
+# _Task (and its _TaskSignals holder) can be garbage-collected once run()
+# returns on the worker thread -- before the GUI thread processes the queued
+# result/error signal -- so the callback silently never fires and the caller is
+# stuck in its busy state forever. Each task removes itself on delivery.
+_INFLIGHT: set[_Task] = set()
+
+
 class _Task(QRunnable):
     def __init__(self, fn: Callable[[], Any]) -> None:
         super().__init__()
         self._fn = fn
         self.signals = _TaskSignals()
+        # We own the lifetime via _INFLIGHT; don't let the pool delete the C++
+        # runnable out from under us the moment run() returns.
+        self.setAutoDelete(False)
 
     @Slot()
     def run(self) -> None:
@@ -55,12 +66,25 @@ def run_async(
     a queued connection, so both callbacks run on the GUI thread — safe to touch
     widgets. Uses ``QThreadPool.globalInstance()`` unless ``pool`` is given.
 
-    Returns the worker so a caller may keep a reference if desired; the
-    threadpool owns and auto-deletes it after ``run`` completes.
+    The worker is retained internally (in ``_INFLIGHT``) until its result/error
+    is delivered on the GUI thread, then released -- callers need not keep the
+    returned reference alive. Uses ``QThreadPool.globalInstance()`` unless
+    ``pool`` is given.
     """
     task = _Task(fn)
     task.signals.result.connect(on_result)
     if on_error is not None:
         task.signals.error.connect(on_error)
+
+    # Release the task AFTER the user callbacks have run (both connections are
+    # queued to the GUI thread, delivered in connection order), so it -- and its
+    # signals holder -- stay alive across the thread boundary.
+    def _release(_ignored=None):
+        _INFLIGHT.discard(task)
+
+    task.signals.result.connect(_release)
+    task.signals.error.connect(_release)
+    _INFLIGHT.add(task)
+
     (pool or QThreadPool.globalInstance()).start(task)
     return task

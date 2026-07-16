@@ -40,3 +40,24 @@ def test_run_async_delivers_result_via_real_pool(qtbot):
     with qtbot.waitSignal(task.signals.result, timeout=3000):
         pass
     assert results == [42]
+
+
+def test_run_async_delivers_even_without_caller_reference(qtbot):
+    """Production callers discard the returned task, so run_async must retain it
+    internally until delivery -- otherwise the callback is silently dropped and
+    the caller stays stuck in its busy state. Provoke GC and assert delivery."""
+    import gc
+
+    results = []
+    run_async(lambda: 7, on_result=results.append)  # return value discarded
+    gc.collect()  # would collect the task + signals holder if not retained
+    qtbot.waitUntil(lambda: results == [7], timeout=3000)
+
+
+def test_inflight_set_is_empty_after_delivery(qtbot):
+    from pgtp_editor.ui.async_task import _INFLIGHT
+
+    results = []
+    run_async(lambda: 1, on_result=results.append)
+    qtbot.waitUntil(lambda: results == [1], timeout=3000)
+    qtbot.waitUntil(lambda: len(_INFLIGHT) == 0, timeout=3000)

@@ -60,21 +60,35 @@ def test_load_connection_absent_returns_none(tmp_path):
     assert load_connection(_settings(tmp_path)) is None
 
 
-def test_seed_params_tree_wins_for_non_password_settings_for_password(tmp_path):
+def test_seed_params_saved_wins_over_tree(tmp_path):
+    # Once a connection is saved (e.g. host corrected localhost -> 127.0.0.1),
+    # those values win over the project's <ConnectionOptions> on reopen.
     settings = _settings(tmp_path)
     save_connection(
         settings,
         ConnectionParams(
-            host="sh", port="1111", database="sd", user="su", password="pw"
+            host="127.0.0.1", port="1111", database="sd", user="su", password="pw"
         ),
     )
+    tree = _tree(
+        '<Project><ConnectionOptions host="localhost" port="2222" login="tu" '
+        'password="ignored" database="td"/></Project>'
+    )
+    seeded = seed_params(tree, settings)
+    assert seeded == ConnectionParams(
+        host="127.0.0.1", port="1111", database="sd", user="su", password="pw"
+    )
+
+
+def test_seed_params_uses_tree_when_nothing_saved(tmp_path):
+    settings = _settings(tmp_path)
     tree = _tree(
         '<Project><ConnectionOptions host="th" port="2222" login="tu" '
         'password="ignored" database="td"/></Project>'
     )
     seeded = seed_params(tree, settings)
     assert seeded == ConnectionParams(
-        host="th", port="2222", database="td", user="tu", password="pw"
+        host="th", port="2222", database="td", user="tu", password=""
     )
 
 

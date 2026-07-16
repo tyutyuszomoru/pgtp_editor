@@ -80,18 +80,20 @@ def save_connection(settings: QSettings, params: ConnectionParams) -> None:
 def seed_params(tree, settings: QSettings) -> ConnectionParams:
     """Build the params to pre-fill the Connection Setup dialog.
 
-    Non-password fields prefer the project's ``<ConnectionOptions>``, falling
-    back to saved settings, then blank. The password comes only from saved
-    settings (else blank). Tolerates ``tree=None`` (no project loaded).
+    Saved settings take precedence: once the user has saved a connection, those
+    values win (e.g. a host corrected from ``localhost`` to ``127.0.0.1`` sticks
+    across reopens and is what the checks use). Only fields with no saved value
+    fall back to the project's ``<ConnectionOptions>``, then blank. The password
+    comes only from saved settings (else blank). Tolerates ``tree=None``.
     """
     saved = load_connection(settings)
     from_tree = connection_from_tree(tree)
 
     def pick(name: str) -> str:
+        if saved is not None and getattr(saved, name):
+            return getattr(saved, name)
         if from_tree is not None and getattr(from_tree, name):
             return getattr(from_tree, name)
-        if saved is not None:
-            return getattr(saved, name)
         return ""
 
     return ConnectionParams(
