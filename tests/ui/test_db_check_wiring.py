@@ -13,9 +13,13 @@ from ._menu_helpers import find_action, find_top_menu
 _RAW_XML = (
     '<Project>\n'
     '  <ConnectionOptions host="h" port="5432" login="u" database="d"/>\n'
-    '  <Page tableName="pr.a">\n'
-    '    <Column fieldName="id"/>\n'
-    '  </Page>\n'
+    '  <Presentation><Pages>\n'
+    '    <Page fileName="a" tableName="pr.a">\n'
+    '      <ColumnPresentations>\n'
+    '        <ColumnPresentation fieldName="id"/>\n'
+    '      </ColumnPresentations>\n'
+    '    </Page>\n'
+    '  </Pages></Presentation>\n'
     '</Project>\n'
 )
 
@@ -135,9 +139,49 @@ def test_on_db_jump_requested_navigates_to_line(qtbot):
     window.center_stage.xml_editor.navigate_to_line = lambda line: navigated.append(line)
 
     window._on_db_jump_requested("column", "id")
-    assert navigated == [4]  # fieldName="id" is on line 4
+    assert navigated == [6]  # fieldName="id" is on line 6
     assert window.center_stage.currentIndex() == window.center_stage.raw_xml_tab_index
 
     navigated.clear()
     window._on_db_jump_requested("table", "pr.a")
-    assert navigated == [3]  # tableName="pr.a" is on line 3
+    assert navigated == [4]  # tableName="pr.a" is on line 4
+
+
+_RENAME_XML = (
+    '<Project>\n'
+    '  <ConnectionOptions host="h" port="5432" login="u" database="d"/>\n'
+    '  <Presentation><Pages>\n'
+    '    <Page fileName="a" tableName="pr.a">\n'
+    '      <ColumnPresentations>\n'
+    '        <ColumnPresentation fieldName="old_col"/>\n'
+    '      </ColumnPresentations>\n'
+    '    </Page>\n'
+    '  </Pages></Presentation>\n'
+    '</Project>\n'
+)
+
+
+def test_rename_resolves_mismatch_on_rerun_from_buffer(qtbot):
+    """The reconcile loop must actually work: after renaming a not-found column
+    to the DB name, the re-run (parsed from the edited buffer) flips it ✗→✓."""
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window.center_stage.xml_editor.setPlainText(_RENAME_XML)
+    # DB has 'new_col', not 'old_col'.
+    schema = DatabaseSchema(tables={
+        "pr.a": TableInfo(
+            name="pr.a", kind="table",
+            columns=[ColumnInfo("new_col", "integer", False, False, True, None)],
+        )
+    })
+    window._fetch_db_schema = lambda params: schema
+
+    window._run_db_check("xml_to_db")
+    assert window.db_check_panel._mismatch_count() >= 1  # old_col not found
+
+    # Rename old_col -> new_col (rewrites the buffer + re-runs the check).
+    window._prompt_rename = lambda old: "new_col"
+    window._on_db_rename_requested("column", "old_col")
+
+    assert 'fieldName="new_col"' in window.center_stage.xml_editor.toPlainText()
+    assert window.db_check_panel._mismatch_count() == 0  # resolved from the buffer

@@ -1782,10 +1782,23 @@ class MainWindow(QMainWindow):
         self.left_tabs.setCurrentWidget(self.db_check_panel)
 
     def _run_db_check(self, direction):
-        if self._current_project is None:
+        # Compare against a model parsed from the CURRENT buffer, not the
+        # last-parsed self._current_project -- so renames (and any manual edit)
+        # made since the last load are reflected and the reconcile loop
+        # actually resolves. Falls back to no-op with a status message when the
+        # buffer is empty or not valid XML.
+        text = self.center_stage.xml_editor.toPlainText()
+        if not text.strip():
             self.statusBar().showMessage("Open a project first.", 5000)
             return
-        params = seed_params(self._current_project.tree, self._settings)
+        try:
+            project = load_project_from_text(text, source_description="<editor>")
+        except PgtpParseError as exc:
+            self.statusBar().showMessage(
+                f"Database check needs valid XML: {exc}", 8000
+            )
+            return
+        params = seed_params(project.tree, self._settings)
         if not params.host:
             self.statusBar().showMessage(
                 "No database connection configured — set one up first.", 5000
@@ -1798,9 +1811,9 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(f"Database check failed: {exc}", 8000)
             return
         if direction == "xml_to_db":
-            checks = check_xml_against_db(self._current_project, schema)
+            checks = check_xml_against_db(project, schema)
         else:
-            checks = check_db_against_xml(self._current_project, schema)
+            checks = check_db_against_xml(project, schema)
         self._last_db_check_direction = direction
         summary = f"{params.user}@{params.host}:{params.port}/{params.database}"
         self.db_check_panel.set_result(direction, checks, summary)
