@@ -1258,6 +1258,7 @@ class MainWindow(QMainWindow):
         self._build_schema_menu()
         self._build_database_menu()
         self._build_tools_menu()
+        self._build_bookmarks_menu()
         self._build_generation_menu()
         self._build_help_menu()
 
@@ -1770,6 +1771,26 @@ class MainWindow(QMainWindow):
         prev_action.triggered.connect(self.center_stage.diff_merge_panel.select_previous_difference)
         apply_action = menu.addAction("Apply Changes to Target")
         apply_action.triggered.connect(self._apply_changes_to_target)
+
+    def _build_bookmarks_menu(self):
+        menu = self.menuBar().addMenu("Bookmarks")
+        editor = self.center_stage.xml_editor
+
+        toggle_action = menu.addAction("Toggle Bookmark")
+        toggle_action.setShortcut("Ctrl+F2")
+        toggle_action.triggered.connect(editor.toggle_bookmark_at_cursor)
+
+        next_action = menu.addAction("Next Bookmark")
+        next_action.setShortcut("F2")
+        next_action.triggered.connect(editor.goto_next_bookmark)
+
+        prev_action = menu.addAction("Previous Bookmark")
+        prev_action.setShortcut("Shift+F2")
+        prev_action.triggered.connect(editor.goto_prev_bookmark)
+
+        menu.addSeparator()
+        clear_action = menu.addAction("Clear All Bookmarks")
+        clear_action.triggered.connect(editor.clear_bookmarks)
 
     def _build_generation_menu(self):
         menu = self.menuBar().addMenu("Generation")
