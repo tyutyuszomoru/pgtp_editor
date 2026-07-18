@@ -61,6 +61,36 @@ def enum_hint(model, tag_chain, attr):
     return f"{attr} — " + " · ".join(parts)
 
 
+def known_attributes(model, tag_chain, present_attrs) -> list[str]:
+    """Sorted names of every attribute the schema knows at ``tag_chain``
+    (regardless of ``kind`` classification) that the element does not already
+    carry.
+
+    ``present_attrs`` is a collection of attribute names already on the
+    element. Unlike ``unused_setting_attributes``, this is not restricted to
+    ``attribute_kind == "setting"`` -- it drives the Ctrl+Space attribute
+    completion popup, which should offer everything the schema has observed
+    at this path. An unknown ``tag_chain`` yields ``[]``.
+    """
+    attributes = model.paths.get(tag_chain, {}).get("attributes", {})
+    present = set(present_attrs)
+    return sorted(name for name in attributes if name not in present)
+
+
+def known_values(model, tag_chain, attr) -> list[tuple[str, str | None]]:
+    """``(value, label)`` pairs the schema has observed for ``attr`` at
+    ``tag_chain``, in the entry's original ``values`` order (label is ``None``
+    when unlabeled). Returns ``[]`` when the attribute or path is unknown, or
+    when ``values`` is empty (e.g. a free-text attribute) -- the caller uses
+    an empty result to skip opening the value picker."""
+    entry = model.paths.get(tag_chain, {}).get("attributes", {}).get(attr)
+    if entry is None:
+        return []
+    values = entry.get("values") or []
+    labels = entry.get("labels") or {}
+    return [(value, labels.get(value)) for value in values]
+
+
 def unused_setting_attributes(model, tag_chain, present_attrs) -> list[str]:
     """Sorted names of *setting* attributes known at ``tag_chain`` that the
     element does not already carry.

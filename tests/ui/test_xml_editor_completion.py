@@ -74,3 +74,99 @@ def test_popup_escape_emits_cancelled(qtbot):
     popup = _popup(qtbot, [("alpha", "alpha")])
     with qtbot.waitSignal(popup.cancelled, timeout=500):
         QTest.keyClick(popup, Qt.Key.Key_Escape)
+
+
+def _model_attrs(tag_chain, names):
+    model = Model()
+    model.paths[tag_chain] = {
+        "attributes": {
+            n: {
+                "type": "integer",
+                "values": [],
+                "overflowed": False,
+                "attr_seen_count": 1,
+                "labels": {},
+            }
+            for n in names
+        },
+        "children": {},
+        "instance_count": 1,
+        "order": [],
+        "order_stable": True,
+        "has_text": False,
+    }
+    return model
+
+
+def _editor_in_tag(qtbot, text, model, marker):
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    editor.setPlainText(text)
+    editor.set_schema_model(model)
+    cursor = editor.textCursor()
+    cursor.setPosition(text.index(marker))
+    editor.setTextCursor(cursor)
+    return editor
+
+
+def test_ctrl_space_opens_attribute_popup(qtbot):
+    text = '<Page editFormMode="1"></Page>'
+    model = _model_attrs("Page", ["editFormMode", "pageMode", "layout"])
+    editor = _editor_in_tag(qtbot, text, model, "Page")
+    QTest.keyClick(editor, Qt.Key.Key_Space, Qt.KeyboardModifier.ControlModifier)
+    popup = editor._completion_popup
+    assert popup is not None and popup.isVisible()
+    assert popup.visible_keys() == ["layout", "pageMode"]  # present editFormMode excluded
+
+
+def test_ctrl_space_no_popup_without_model(qtbot):
+    text = '<Page editFormMode="1"></Page>'
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    editor.setPlainText(text)
+    cursor = editor.textCursor()
+    cursor.setPosition(text.index("Page"))
+    editor.setTextCursor(cursor)
+    QTest.keyClick(editor, Qt.Key.Key_Space, Qt.KeyboardModifier.ControlModifier)
+    assert editor._completion_popup is None or not editor._completion_popup.isVisible()
+
+
+def test_ctrl_space_no_popup_when_read_only(qtbot):
+    text = '<Page editFormMode="1"></Page>'
+    model = _model_attrs("Page", ["pageMode"])
+    editor = _editor_in_tag(qtbot, text, model, "Page")
+    editor.setReadOnly(True)
+    QTest.keyClick(editor, Qt.Key.Key_Space, Qt.KeyboardModifier.ControlModifier)
+    assert editor._completion_popup is None or not editor._completion_popup.isVisible()
+
+
+def test_ctrl_space_no_popup_outside_tag(qtbot):
+    text = "<Page>body</Page>"
+    model = _model_attrs("Page", ["pageMode"])
+    editor = _editor_in_tag(qtbot, text, model, "body")
+    QTest.keyClick(editor, Qt.Key.Key_Space, Qt.KeyboardModifier.ControlModifier)
+    assert editor._completion_popup is None or not editor._completion_popup.isVisible()
+
+
+def test_choosing_attribute_inserts_name_equals_quotes(qtbot):
+    text = '<Page editFormMode="1"></Page>'
+    model = _model_attrs("Page", ["pageMode"])
+    editor = _editor_in_tag(qtbot, text, model, "Page")
+    editor._show_attribute_completions()
+    editor._completion_popup.chosen.emit("pageMode")
+    new_text = editor.toPlainText()
+    assert new_text == '<Page editFormMode="1" pageMode=""></Page>'
+    caret = editor.textCursor().position()
+    assert new_text[caret - 1] == '"' and new_text[caret] == '"'
+    assert not editor._completion_popup.isVisible()  # popup dismissed after choose
+
+
+def test_attribute_insert_is_single_undo(qtbot):
+    text = '<Page editFormMode="1"></Page>'
+    model = _model_attrs("Page", ["pageMode"])
+    editor = _editor_in_tag(qtbot, text, model, "Page")
+    editor._show_attribute_completions()
+    editor._completion_popup.chosen.emit("pageMode")
+    assert "pageMode" in editor.toPlainText()
+    editor.undo()
+    assert editor.toPlainText() == text

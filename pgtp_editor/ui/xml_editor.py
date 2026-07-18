@@ -39,6 +39,8 @@ from PySide6.QtWidgets import (
 
 from pgtp_editor.schema_learning.settings_index import (
     enum_hint,
+    known_attributes,
+    known_values,
     unused_setting_attributes,
 )
 from pgtp_editor.ui import xml_structure
@@ -614,6 +616,10 @@ class XmlEditor(QPlainTextEdit):
         # Learned schema model injected by MainWindow after each enrich; None
         # disables value-hover tooltips (see set_schema_model / event()).
         self._schema_model = None
+        # The shared Ctrl+Space completion popup (attribute names, then
+        # chained values). Created lazily on first use; see
+        # _ensure_completion_popup.
+        self._completion_popup: _CompletionPopup | None = None
         self._update_gutter_width(0)
         self._rescan_structure()
         self._refresh_code_region_selections()
@@ -1106,6 +1112,11 @@ class XmlEditor(QPlainTextEdit):
             event.accept()
             return
 
+        if mods == ctrl and event.key() == Qt.Key.Key_Space:
+            self._show_attribute_completions()
+            event.accept()
+            return
+
         if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
             self._insert_newline_with_indent()
             return
@@ -1269,6 +1280,81 @@ class XmlEditor(QPlainTextEdit):
         # Caret between the two quotes: one char back from the fragment's end.
         cursor.setPosition(insert_pos + len(fragment) - 1)
         self.setTextCursor(cursor)
+
+    def _ensure_completion_popup(self) -> _CompletionPopup:
+        if self._completion_popup is None:
+            self._completion_popup = _CompletionPopup(self)
+        return self._completion_popup
+
+    def _popup_at_caret(self, popup: _CompletionPopup) -> None:
+        """Show ``popup`` just below the caret and give it focus."""
+        rect = self.cursorRect()
+        point = self.viewport().mapToGlobal(rect.bottomLeft())
+        popup.move(point)
+        popup.show()
+        popup.setFocus()
+
+    def _show_attribute_completions(self) -> None:
+        """Ctrl+Space entry point. Opens the attribute popup for the opening
+        tag at the caret. No-op when read-only, no model, not inside an
+        opening tag, or nothing unused is left to offer."""
+        if self.isReadOnly() or self._schema_model is None:
+            return
+        resolved = enclosing_open_tag(
+            self.toPlainText(), self.textCursor().position()
+        )
+        if resolved is None:
+            return
+        tag_chain, present_attrs, _insert_pos = resolved
+        names = known_attributes(self._schema_model, tag_chain, present_attrs)
+        if not names:
+            return
+        popup = self._ensure_completion_popup()
+        popup.set_items([(n, n) for n in names])
+        self._rewire_popup(popup, self._complete_attribute)
+        self._popup_at_caret(popup)
+
+    def _rewire_popup(self, popup: _CompletionPopup, on_chosen) -> None:
+        """Point the shared popup's signals at the current completion stage."""
+        try:
+            popup.chosen.disconnect()
+        except (RuntimeError, TypeError):
+            pass
+        try:
+            popup.cancelled.disconnect()
+        except (RuntimeError, TypeError):
+            pass
+        popup.chosen.connect(on_chosen)
+        popup.cancelled.connect(popup.hide)
+
+    def _complete_attribute(self, name: str) -> None:
+        """Insert ``name=""`` at the caret's opening tag (single undoable
+        edit, caret between the quotes), hide the popup, then chain into the
+        value picker when the schema knows values for ``name``."""
+        popup = self._completion_popup
+        if popup is not None:
+            popup.hide()
+        resolved = enclosing_open_tag(
+            self.toPlainText(), self.textCursor().position()
+        )
+        if resolved is None:
+            return
+        tag_chain, _present_attrs, insert_pos = resolved
+        fragment = f' {name}=""'
+        cursor = self.textCursor()
+        cursor.beginEditBlock()
+        cursor.setPosition(insert_pos)
+        cursor.insertText(fragment)
+        cursor.endEditBlock()
+        # Caret between the two quotes: one char back from the fragment's end.
+        cursor.setPosition(insert_pos + len(fragment) - 1)
+        self.setTextCursor(cursor)
+        values = known_values(self._schema_model, tag_chain, name)
+        if values:
+            self._show_value_completions(values)
+
+    def _show_value_completions(self, pairs) -> None:  # replaced in next task
+        return None
 
     def _hint_for_help_pos(self, char_pos: int):
         """Given a document character position, return the settings hover
