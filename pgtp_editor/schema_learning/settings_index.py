@@ -61,6 +61,36 @@ def enum_hint(model, tag_chain, attr):
     return f"{attr} — " + " · ".join(parts)
 
 
+def known_attributes(model, tag_chain, present_attrs) -> list[str]:
+    """Sorted names of every attribute the schema records at ``tag_chain`` that
+    the element does not already carry.
+
+    Unlike ``unused_setting_attributes`` this is NOT filtered by kind — the full
+    set the model has observed for the element is offered (the broad list the
+    XSD shows). ``present_attrs`` is a collection of names already on the tag.
+    An unknown ``tag_chain`` yields ``[]``.
+    """
+    attributes = model.paths.get(tag_chain, {}).get("attributes", {})
+    present = set(present_attrs)
+    return sorted(name for name in attributes if name not in present)
+
+
+def known_values(model, tag_chain, attr) -> list[tuple[str, str | None]]:
+    """Sorted ``(value, label)`` pairs for an attribute's known value set at
+    ``tag_chain`` — the same values ``enum_hint`` renders. ``label`` is
+    ``labels.get(value)`` or ``None``.
+
+    Returns ``[]`` when the attribute is unknown at the path, its entry is
+    ``overflowed``, or it has no ``values`` (nothing reliable to offer). Not
+    filtered by kind, so any enumerated attribute chains into the value picker.
+    """
+    entry = model.paths.get(tag_chain, {}).get("attributes", {}).get(attr)
+    if entry is None or entry.get("overflowed") or not entry.get("values"):
+        return []
+    labels = entry.get("labels") or {}
+    return [(value, labels.get(value)) for value in sorted(entry["values"])]
+
+
 def unused_setting_attributes(model, tag_chain, present_attrs) -> list[str]:
     """Sorted names of *setting* attributes known at ``tag_chain`` that the
     element does not already carry.
