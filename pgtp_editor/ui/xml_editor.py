@@ -27,7 +27,15 @@ from PySide6.QtGui import (
     QTextFormat,
 )
 from PySide6.QtGui import QAction
-from PySide6.QtWidgets import QMenu, QPlainTextEdit, QTextEdit, QToolTip, QWidget
+from PySide6.QtWidgets import (
+    QListWidget,
+    QListWidgetItem,
+    QMenu,
+    QPlainTextEdit,
+    QTextEdit,
+    QToolTip,
+    QWidget,
+)
 
 from pgtp_editor.schema_learning.settings_index import (
     enum_hint,
@@ -430,6 +438,88 @@ class _EditorGutter(QWidget):
             block = block.next()
             top = bottom
             bottom = top + self._editor.blockBoundingRect(block).height()
+
+
+class _CompletionPopup(QListWidget):
+    """Frameless completion list for the XML editor. Holds a master list of
+    ``(key, display)`` items and a running filter; arrows navigate, printable
+    chars filter by key prefix (case-insensitive), Enter/Tab choose, Esc
+    cancels. Emits the chosen *key* (not the display string). Callers pass
+    items pre-ordered; filtering preserves that order."""
+
+    chosen = Signal(str)
+    cancelled = Signal()
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self.setWindowFlags(Qt.WindowType.Popup)
+        self.setUniformItemSizes(True)
+        self._items: list[tuple[str, str]] = []
+        self._filter = ""
+
+    def set_items(self, items) -> None:
+        """Replace the master ``(key, display)`` list, reset the filter, and
+        select the first row."""
+        self._items = list(items)
+        self._filter = ""
+        self._rebuild()
+
+    def append_filter(self, text: str) -> None:
+        self._filter += text
+        self._rebuild()
+
+    def backspace_filter(self) -> None:
+        self._filter = self._filter[:-1]
+        self._rebuild()
+
+    def visible_keys(self) -> list[str]:
+        return [
+            self.item(i).data(Qt.ItemDataRole.UserRole) for i in range(self.count())
+        ]
+
+    def current_key(self):
+        item = self.currentItem()
+        return None if item is None else item.data(Qt.ItemDataRole.UserRole)
+
+    def _rebuild(self) -> None:
+        prefix = self._filter.lower()
+        self.clear()
+        for key, display in self._items:
+            if key.lower().startswith(prefix):
+                item = QListWidgetItem(display)
+                item.setData(Qt.ItemDataRole.UserRole, key)
+                self.addItem(item)
+        if self.count():
+            self.setCurrentRow(0)
+
+    def _choose_current(self) -> None:
+        key = self.current_key()
+        if key is not None:
+            self.chosen.emit(key)
+
+    def keyPressEvent(self, event) -> None:
+        key = event.key()
+        if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Tab):
+            self._choose_current()
+            event.accept()
+            return
+        if key == Qt.Key.Key_Escape:
+            self.cancelled.emit()
+            event.accept()
+            return
+        if key == Qt.Key.Key_Backspace:
+            self.backspace_filter()
+            event.accept()
+            return
+        if key in (Qt.Key.Key_Up, Qt.Key.Key_Down):
+            super().keyPressEvent(event)
+            return
+        text = event.text()
+        if text and text.isprintable() and not text.isspace():
+            self.append_filter(text)
+            event.accept()
+            return
+        super().keyPressEvent(event)
 
 
 class XmlEditor(QPlainTextEdit):
