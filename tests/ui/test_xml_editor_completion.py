@@ -242,3 +242,31 @@ def test_value_escape_leaves_empty_value(qtbot):
     editor._completion_popup.cancelled.emit()
     assert editor.toPlainText() == '<Page editAbilityMode=""></Page>'
     assert not editor._completion_popup.isVisible()
+
+
+def test_end_to_end_ctrl_space_filter_tab_value(qtbot):
+    text = "<Page></Page>"
+    model = _model_valued("Page", "editAbilityMode", ["0", "2", "3"], {"2": "inline"})
+    # also offer a decoy attribute so filtering is meaningful
+    model.paths["Page"]["attributes"]["caption"] = {
+        "type": "string", "values": [], "overflowed": False,
+        "attr_seen_count": 1, "labels": {},
+    }
+    editor = _editor_in_tag(qtbot, text, model, "Page")
+
+    QTest.keyClick(editor, Qt.Key.Key_Space, Qt.KeyboardModifier.ControlModifier)
+    popup = editor._completion_popup
+    assert popup.visible_keys() == ["caption", "editAbilityMode"]
+
+    # type "edit" to filter down, then Tab to insert
+    for ch in "edit":
+        QTest.keyClick(popup, ch)
+    assert popup.visible_keys() == ["editAbilityMode"]
+    QTest.keyClick(popup, Qt.Key.Key_Tab)
+
+    # value picker now open; pick "2" via Down+Enter
+    assert popup.visible_keys() == ["0", "2", "3"]
+    QTest.keyClick(popup, Qt.Key.Key_Down)  # select "2"
+    QTest.keyClick(popup, Qt.Key.Key_Return)
+
+    assert editor.toPlainText() == '<Page editAbilityMode="2"></Page>'
