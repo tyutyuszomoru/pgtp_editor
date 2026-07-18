@@ -170,3 +170,75 @@ def test_attribute_insert_is_single_undo(qtbot):
     assert "pageMode" in editor.toPlainText()
     editor.undo()
     assert editor.toPlainText() == text
+
+
+def _model_valued(tag_chain, attr, values, labels=None):
+    model = Model()
+    model.paths[tag_chain] = {
+        "attributes": {
+            attr: {
+                "type": "integer",
+                "values": values,
+                "overflowed": False,
+                "attr_seen_count": len(values),
+                "labels": labels or {},
+            }
+        },
+        "children": {},
+        "instance_count": 1,
+        "order": [],
+        "order_stable": True,
+        "has_text": False,
+    }
+    return model
+
+
+def test_choosing_valued_attribute_chains_value_popup(qtbot):
+    text = "<Page></Page>"
+    model = _model_valued("Page", "editAbilityMode", ["0", "2", "3"], {"0": "none"})
+    editor = _editor_in_tag(qtbot, text, model, "Page")
+    editor._show_attribute_completions()
+    editor._completion_popup.chosen.emit("editAbilityMode")
+    popup = editor._completion_popup
+    assert popup.isVisible()
+    assert popup.visible_keys() == ["0", "2", "3"]
+    assert popup.item(0).text() == "0 = none"  # label rendered
+    assert popup.item(1).text() == "2"  # bare value when unlabeled
+
+
+def test_choosing_value_inserts_between_quotes(qtbot):
+    text = "<Page></Page>"
+    model = _model_valued("Page", "editAbilityMode", ["0", "2", "3"])
+    editor = _editor_in_tag(qtbot, text, model, "Page")
+    editor._show_attribute_completions()
+    editor._completion_popup.chosen.emit("editAbilityMode")
+    editor._completion_popup.chosen.emit("2")
+    new_text = editor.toPlainText()
+    assert new_text == '<Page editAbilityMode="2"></Page>'
+    caret = editor.textCursor().position()
+    assert new_text[caret - 1] == '"'  # caret lands just after the closing quote
+    assert not editor._completion_popup.isVisible()
+
+
+def test_attribute_without_values_opens_no_value_popup(qtbot):
+    text = "<Page></Page>"
+    model = _model_valued("Page", "caption", [])  # empty values -> no chain
+    editor = _editor_in_tag(qtbot, text, model, "Page")
+    editor._show_attribute_completions()
+    editor._completion_popup.chosen.emit("caption")
+    new_text = editor.toPlainText()
+    assert new_text == '<Page caption=""></Page>'
+    assert not editor._completion_popup.isVisible()
+    caret = editor.textCursor().position()
+    assert new_text[caret - 1] == '"' and new_text[caret] == '"'  # between quotes
+
+
+def test_value_escape_leaves_empty_value(qtbot):
+    text = "<Page></Page>"
+    model = _model_valued("Page", "editAbilityMode", ["0", "2"])
+    editor = _editor_in_tag(qtbot, text, model, "Page")
+    editor._show_attribute_completions()
+    editor._completion_popup.chosen.emit("editAbilityMode")
+    editor._completion_popup.cancelled.emit()
+    assert editor.toPlainText() == '<Page editAbilityMode=""></Page>'
+    assert not editor._completion_popup.isVisible()

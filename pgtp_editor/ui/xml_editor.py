@@ -1353,8 +1353,34 @@ class XmlEditor(QPlainTextEdit):
         if values:
             self._show_value_completions(values)
 
-    def _show_value_completions(self, pairs) -> None:  # replaced in next task
-        return None
+    def _show_value_completions(self, pairs) -> None:
+        """Open the value picker for the just-inserted attribute. ``pairs`` is
+        a list of ``(value, label)``; rows show ``value`` or ``value = label``
+        but carry the bare value as their key. The caret sits between the
+        quotes."""
+        popup = self._ensure_completion_popup()
+        popup.set_items(
+            [
+                (value, f"{value} = {label}" if label else value)
+                for value, label in pairs
+            ]
+        )
+        self._rewire_popup(popup, self._complete_value)
+        self._popup_at_caret(popup)
+
+    def _complete_value(self, value: str) -> None:
+        """Insert ``value`` at the caret (between the quotes) as one undoable
+        edit, move the caret just past the closing quote, and hide the
+        popup."""
+        popup = self._completion_popup
+        if popup is not None:
+            popup.hide()
+        cursor = self.textCursor()
+        cursor.beginEditBlock()
+        cursor.insertText(value)
+        cursor.endEditBlock()
+        cursor.setPosition(cursor.position() + 1)  # step past the closing quote
+        self.setTextCursor(cursor)
 
     def _hint_for_help_pos(self, char_pos: int):
         """Given a document character position, return the settings hover
