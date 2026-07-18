@@ -3,6 +3,8 @@ from pgtp_editor.schema_learning.settings_index import (
     attribute_kind,
     enum_hint,
     is_enum_candidate,
+    known_attributes,
+    known_values,
     unused_setting_attributes,
 )
 
@@ -224,3 +226,119 @@ def test_unused_setting_attributes_sorted():
         "mid",
         "zeta",
     ]
+
+
+# --- known_attributes --------------------------------------------------
+
+
+def _model_multi(tag_chain, names, kind="setting"):
+    model = Model()
+    attributes = {
+        name: {
+            "type": "integer",
+            "values": ["1", "2"],
+            "overflowed": False,
+            "attr_seen_count": 2,
+            "labels": {},
+            "kind": kind,
+        }
+        for name in names
+    }
+    model.paths[tag_chain] = {
+        "attributes": attributes,
+        "children": {},
+        "instance_count": 1,
+        "order": [],
+        "order_stable": True,
+        "has_text": False,
+    }
+    return model
+
+
+def test_known_attributes_returns_all_minus_present_sorted():
+    model = _model_multi("Root/Node", ["zeta", "alpha", "mid"])
+    assert known_attributes(model, "Root/Node", {"mid"}) == ["alpha", "zeta"]
+
+
+def test_known_attributes_not_filtered_by_kind():
+    # unclassified/content attributes are still offered (broad list)
+    model = _model_multi("Root/Node", ["a", "b"], kind="content")
+    assert known_attributes(model, "Root/Node", set()) == ["a", "b"]
+
+
+def test_known_attributes_empty_present_returns_all():
+    model = _model_multi("Root/Node", ["a", "b"])
+    assert known_attributes(model, "Root/Node", []) == ["a", "b"]
+
+
+def test_known_attributes_unknown_path_returns_empty():
+    model = _model_multi("Root/Node", ["a"])
+    assert known_attributes(model, "Root/Missing", set()) == []
+
+
+# --- known_values --------------------------------------------------
+
+
+def _model_one(entry, tag_chain="Root/Node", attr="editAbilityMode"):
+    model = Model()
+    model.paths[tag_chain] = {
+        "attributes": {attr: entry},
+        "children": {},
+        "instance_count": 1,
+        "order": [],
+        "order_stable": True,
+        "has_text": False,
+    }
+    return model
+
+
+def test_known_values_pairs_sorted_with_labels():
+    entry = {
+        "type": "integer",
+        "values": ["3", "0", "2"],
+        "overflowed": False,
+        "attr_seen_count": 3,
+        "labels": {"0": "none", "3": "full"},
+    }
+    model = _model_one(entry)
+    assert known_values(model, "Root/Node", "editAbilityMode") == [
+        ("0", "none"),
+        ("2", None),
+        ("3", "full"),
+    ]
+
+
+def test_known_values_empty_when_overflowed():
+    entry = {
+        "type": "string",
+        "values": ["a", "b"],
+        "overflowed": True,
+        "attr_seen_count": 9,
+        "labels": {},
+    }
+    model = _model_one(entry)
+    assert known_values(model, "Root/Node", "editAbilityMode") == []
+
+
+def test_known_values_empty_when_no_values():
+    entry = {
+        "type": "string",
+        "values": [],
+        "overflowed": False,
+        "attr_seen_count": 0,
+        "labels": {},
+    }
+    model = _model_one(entry)
+    assert known_values(model, "Root/Node", "editAbilityMode") == []
+
+
+def test_known_values_empty_for_unknown_attr():
+    entry = {
+        "type": "integer",
+        "values": ["1"],
+        "overflowed": False,
+        "attr_seen_count": 1,
+        "labels": {},
+    }
+    model = _model_one(entry)
+    assert known_values(model, "Root/Node", "missing") == []
