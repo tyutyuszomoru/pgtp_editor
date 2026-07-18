@@ -620,6 +620,10 @@ class XmlEditor(QPlainTextEdit):
         # chained values). Created lazily on first use; see
         # _ensure_completion_popup.
         self._completion_popup: _CompletionPopup | None = None
+        # True once _rewire_popup has connected the popup's signals at least
+        # once; guards the disconnect calls in _rewire_popup so a fresh popup
+        # doesn't log a PySide6 RuntimeWarning for disconnecting nothing.
+        self._popup_wired = False
         self._update_gutter_width(0)
         self._rescan_structure()
         self._refresh_code_region_selections()
@@ -1261,16 +1265,22 @@ class XmlEditor(QPlainTextEdit):
 
     def _insert_attribute(self, name: str) -> None:
         """Insert ` name=""` into the opening tag at the current cursor and
-        place the caret between the quotes. Recomputes ``enclosing_open_tag``
-        from the live buffer (in case it moved since the menu was built) and
-        applies the edit through a QTextCursor so it is a single undoable step.
-        No-op when the cursor is not inside an opening tag."""
+        place the caret between the quotes. No-op when the cursor is not
+        inside an opening tag. Thin wrapper around
+        ``_splice_attribute_at_cursor``, which does the actual splicing."""
+        self._splice_attribute_at_cursor(name)
+
+    def _splice_attribute_at_cursor(self, name: str):
+        """Insert ` name=""` into the opening tag at the current cursor as one
+        undoable edit and place the caret between the quotes. Returns the
+        tag_chain of the tag spliced into, or None when the cursor is not
+        inside an opening tag (no edit made)."""
         resolved = enclosing_open_tag(
             self.toPlainText(), self.textCursor().position()
         )
         if resolved is None:
-            return
-        _tag_chain, _present_attrs, insert_pos = resolved
+            return None
+        tag_chain, _present_attrs, insert_pos = resolved
         fragment = f' {name}=""'
         cursor = self.textCursor()
         cursor.beginEditBlock()
@@ -1280,6 +1290,7 @@ class XmlEditor(QPlainTextEdit):
         # Caret between the two quotes: one char back from the fragment's end.
         cursor.setPosition(insert_pos + len(fragment) - 1)
         self.setTextCursor(cursor)
+        return tag_chain
 
     def _ensure_completion_popup(self) -> _CompletionPopup:
         if self._completion_popup is None:
@@ -1315,17 +1326,16 @@ class XmlEditor(QPlainTextEdit):
         self._popup_at_caret(popup)
 
     def _rewire_popup(self, popup: _CompletionPopup, on_chosen) -> None:
-        """Point the shared popup's signals at the current completion stage."""
-        try:
+        """Point the shared popup's signals at the current completion stage.
+        Only disconnects previous connections when the popup was actually
+        wired before, so a fresh popup's first use does not trigger a
+        PySide6 RuntimeWarning for disconnecting an unconnected signal."""
+        if self._popup_wired:
             popup.chosen.disconnect()
-        except (RuntimeError, TypeError):
-            pass
-        try:
             popup.cancelled.disconnect()
-        except (RuntimeError, TypeError):
-            pass
         popup.chosen.connect(on_chosen)
         popup.cancelled.connect(popup.hide)
+        self._popup_wired = True
 
     def _complete_attribute(self, name: str) -> None:
         """Insert ``name=""`` at the caret's opening tag (single undoable
@@ -1334,21 +1344,9 @@ class XmlEditor(QPlainTextEdit):
         popup = self._completion_popup
         if popup is not None:
             popup.hide()
-        resolved = enclosing_open_tag(
-            self.toPlainText(), self.textCursor().position()
-        )
-        if resolved is None:
+        tag_chain = self._splice_attribute_at_cursor(name)
+        if tag_chain is None:
             return
-        tag_chain, _present_attrs, insert_pos = resolved
-        fragment = f' {name}=""'
-        cursor = self.textCursor()
-        cursor.beginEditBlock()
-        cursor.setPosition(insert_pos)
-        cursor.insertText(fragment)
-        cursor.endEditBlock()
-        # Caret between the two quotes: one char back from the fragment's end.
-        cursor.setPosition(insert_pos + len(fragment) - 1)
-        self.setTextCursor(cursor)
         values = known_values(self._schema_model, tag_chain, name)
         if values:
             self._show_value_completions(values)
