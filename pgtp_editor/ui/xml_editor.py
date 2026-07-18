@@ -514,6 +514,15 @@ class _CompletionPopup(QListWidget):
         if key in (Qt.Key.Key_Up, Qt.Key.Key_Down):
             super().keyPressEvent(event)
             return
+        # Ctrl/Meta chords (Ctrl+C, Ctrl+A, ...) still carry a text() payload
+        # on some platforms; never swallow them into the filter. Shift stays
+        # allowed (uppercase typing filters) and Alt passes through below via
+        # the empty/non-printable text check or the fallthrough.
+        if event.modifiers() & (
+            Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.MetaModifier
+        ):
+            super().keyPressEvent(event)
+            return
         text = event.text()
         if text and text.isprintable() and not text.isspace():
             self.append_filter(text)

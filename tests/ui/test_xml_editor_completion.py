@@ -56,6 +56,20 @@ def test_popup_tab_emits_chosen(qtbot):
     assert sig.args == ["alpha"]
 
 
+def test_popup_typed_chars_filter_via_keypress(qtbot):
+    popup = _popup(qtbot, [("alpha", "alpha"), ("beta", "beta")])
+    QTest.keyClick(popup, Qt.Key.Key_A)
+    assert popup.visible_keys() == ["alpha"]
+    QTest.keyClick(popup, Qt.Key.Key_Backspace)
+    assert popup.visible_keys() == ["alpha", "beta"]
+
+
+def test_popup_ctrl_key_not_swallowed_into_filter(qtbot):
+    popup = _popup(qtbot, [("alpha", "alpha"), ("beta", "beta")])
+    QTest.keyClick(popup, Qt.Key.Key_C, Qt.KeyboardModifier.ControlModifier)
+    assert popup.visible_keys() == ["alpha", "beta"]  # filter unchanged
+
+
 def test_popup_escape_emits_cancelled(qtbot):
     popup = _popup(qtbot, [("alpha", "alpha")])
     with qtbot.waitSignal(popup.cancelled, timeout=500):
