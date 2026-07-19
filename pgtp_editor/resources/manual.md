@@ -91,6 +91,11 @@ The **Raw XML** tab is a full text editor over the project file.
   monospace band, so JS/PHP bodies stand out from the surrounding XML. Right-click
   inside a body for **Edit code…** (see *The Code Editor*).
 - Right-click a selection for **Find** to search for the selected text.
+- Press **Ctrl+Space** inside an opening tag to list the attributes the schema
+  knows for that element; use the arrow keys and **Tab** (or Enter) to insert the
+  chosen one as `name=""`. When the attribute has known values, a second list
+  appears so you can pick the value too. Type to narrow the list; **Esc**
+  dismisses it.
 
 ---
 

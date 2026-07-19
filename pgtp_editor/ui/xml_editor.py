@@ -27,10 +27,20 @@ from PySide6.QtGui import (
     QTextFormat,
 )
 from PySide6.QtGui import QAction
-from PySide6.QtWidgets import QMenu, QPlainTextEdit, QTextEdit, QToolTip, QWidget
+from PySide6.QtWidgets import (
+    QListWidget,
+    QListWidgetItem,
+    QMenu,
+    QPlainTextEdit,
+    QTextEdit,
+    QToolTip,
+    QWidget,
+)
 
 from pgtp_editor.schema_learning.settings_index import (
     enum_hint,
+    known_attributes,
+    known_values,
     unused_setting_attributes,
 )
 from pgtp_editor.ui import xml_structure
@@ -432,6 +442,97 @@ class _EditorGutter(QWidget):
             bottom = top + self._editor.blockBoundingRect(block).height()
 
 
+class _CompletionPopup(QListWidget):
+    """Frameless completion list for the XML editor. Holds a master list of
+    ``(key, display)`` items and a running filter; arrows navigate, printable
+    chars filter by key prefix (case-insensitive), Enter/Tab choose, Esc
+    cancels. Emits the chosen *key* (not the display string). Callers pass
+    items pre-ordered; filtering preserves that order."""
+
+    chosen = Signal(str)
+    cancelled = Signal()
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self.setWindowFlags(Qt.WindowType.Popup)
+        self.setUniformItemSizes(True)
+        self._items: list[tuple[str, str]] = []
+        self._filter = ""
+
+    def set_items(self, items) -> None:
+        """Replace the master ``(key, display)`` list, reset the filter, and
+        select the first row."""
+        self._items = list(items)
+        self._filter = ""
+        self._rebuild()
+
+    def append_filter(self, text: str) -> None:
+        self._filter += text
+        self._rebuild()
+
+    def backspace_filter(self) -> None:
+        self._filter = self._filter[:-1]
+        self._rebuild()
+
+    def visible_keys(self) -> list[str]:
+        return [
+            self.item(i).data(Qt.ItemDataRole.UserRole) for i in range(self.count())
+        ]
+
+    def current_key(self):
+        item = self.currentItem()
+        return None if item is None else item.data(Qt.ItemDataRole.UserRole)
+
+    def _rebuild(self) -> None:
+        prefix = self._filter.lower()
+        self.clear()
+        for key, display in self._items:
+            if key.lower().startswith(prefix):
+                item = QListWidgetItem(display)
+                item.setData(Qt.ItemDataRole.UserRole, key)
+                self.addItem(item)
+        if self.count():
+            self.setCurrentRow(0)
+
+    def _choose_current(self) -> None:
+        key = self.current_key()
+        if key is not None:
+            self.chosen.emit(key)
+
+    def keyPressEvent(self, event) -> None:
+        key = event.key()
+        if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Tab):
+            self._choose_current()
+            event.accept()
+            return
+        if key == Qt.Key.Key_Escape:
+            self.cancelled.emit()
+            event.accept()
+            return
+        if key == Qt.Key.Key_Backspace:
+            self.backspace_filter()
+            event.accept()
+            return
+        if key in (Qt.Key.Key_Up, Qt.Key.Key_Down):
+            super().keyPressEvent(event)
+            return
+        # Ctrl/Meta chords (Ctrl+C, Ctrl+A, ...) still carry a text() payload
+        # on some platforms; never swallow them into the filter. Shift stays
+        # allowed (uppercase typing filters) and Alt passes through below via
+        # the empty/non-printable text check or the fallthrough.
+        if event.modifiers() & (
+            Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.MetaModifier
+        ):
+            super().keyPressEvent(event)
+            return
+        text = event.text()
+        if text and text.isprintable() and not text.isspace():
+            self.append_filter(text)
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
+
 class XmlEditor(QPlainTextEdit):
     line_clicked = Signal(int)  # 1-based line of a left-mouse click in the text
     # Emitted when a text-modifying key is pressed while the editor is
@@ -515,6 +616,14 @@ class XmlEditor(QPlainTextEdit):
         # Learned schema model injected by MainWindow after each enrich; None
         # disables value-hover tooltips (see set_schema_model / event()).
         self._schema_model = None
+        # The shared Ctrl+Space completion popup (attribute names, then
+        # chained values). Created lazily on first use; see
+        # _ensure_completion_popup.
+        self._completion_popup: _CompletionPopup | None = None
+        # True once _rewire_popup has connected the popup's signals at least
+        # once; guards the disconnect calls in _rewire_popup so a fresh popup
+        # doesn't log a PySide6 RuntimeWarning for disconnecting nothing.
+        self._popup_wired = False
         self._update_gutter_width(0)
         self._rescan_structure()
         self._refresh_code_region_selections()
@@ -1007,6 +1116,11 @@ class XmlEditor(QPlainTextEdit):
             event.accept()
             return
 
+        if mods == ctrl and event.key() == Qt.Key.Key_Space:
+            self._show_attribute_completions()
+            event.accept()
+            return
+
         if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
             self._insert_newline_with_indent()
             return
@@ -1151,16 +1265,22 @@ class XmlEditor(QPlainTextEdit):
 
     def _insert_attribute(self, name: str) -> None:
         """Insert ` name=""` into the opening tag at the current cursor and
-        place the caret between the quotes. Recomputes ``enclosing_open_tag``
-        from the live buffer (in case it moved since the menu was built) and
-        applies the edit through a QTextCursor so it is a single undoable step.
-        No-op when the cursor is not inside an opening tag."""
+        place the caret between the quotes. No-op when the cursor is not
+        inside an opening tag. Thin wrapper around
+        ``_splice_attribute_at_cursor``, which does the actual splicing."""
+        self._splice_attribute_at_cursor(name)
+
+    def _splice_attribute_at_cursor(self, name: str):
+        """Insert ` name=""` into the opening tag at the current cursor as one
+        undoable edit and place the caret between the quotes. Returns the
+        tag_chain of the tag spliced into, or None when the cursor is not
+        inside an opening tag (no edit made)."""
         resolved = enclosing_open_tag(
             self.toPlainText(), self.textCursor().position()
         )
         if resolved is None:
-            return
-        _tag_chain, _present_attrs, insert_pos = resolved
+            return None
+        tag_chain, _present_attrs, insert_pos = resolved
         fragment = f' {name}=""'
         cursor = self.textCursor()
         cursor.beginEditBlock()
@@ -1169,6 +1289,95 @@ class XmlEditor(QPlainTextEdit):
         cursor.endEditBlock()
         # Caret between the two quotes: one char back from the fragment's end.
         cursor.setPosition(insert_pos + len(fragment) - 1)
+        self.setTextCursor(cursor)
+        return tag_chain
+
+    def _ensure_completion_popup(self) -> _CompletionPopup:
+        if self._completion_popup is None:
+            self._completion_popup = _CompletionPopup(self)
+        return self._completion_popup
+
+    def _popup_at_caret(self, popup: _CompletionPopup) -> None:
+        """Show ``popup`` just below the caret and give it focus."""
+        rect = self.cursorRect()
+        point = self.viewport().mapToGlobal(rect.bottomLeft())
+        popup.move(point)
+        popup.show()
+        popup.setFocus()
+
+    def _show_attribute_completions(self) -> None:
+        """Ctrl+Space entry point. Opens the attribute popup for the opening
+        tag at the caret. No-op when read-only, no model, not inside an
+        opening tag, or nothing unused is left to offer."""
+        if self.isReadOnly() or self._schema_model is None:
+            return
+        resolved = enclosing_open_tag(
+            self.toPlainText(), self.textCursor().position()
+        )
+        if resolved is None:
+            return
+        tag_chain, present_attrs, _insert_pos = resolved
+        names = known_attributes(self._schema_model, tag_chain, present_attrs)
+        if not names:
+            return
+        popup = self._ensure_completion_popup()
+        popup.set_items([(n, n) for n in names])
+        self._rewire_popup(popup, self._complete_attribute)
+        self._popup_at_caret(popup)
+
+    def _rewire_popup(self, popup: _CompletionPopup, on_chosen) -> None:
+        """Point the shared popup's signals at the current completion stage.
+        Only disconnects previous connections when the popup was actually
+        wired before, so a fresh popup's first use does not trigger a
+        PySide6 RuntimeWarning for disconnecting an unconnected signal."""
+        if self._popup_wired:
+            popup.chosen.disconnect()
+            popup.cancelled.disconnect()
+        popup.chosen.connect(on_chosen)
+        popup.cancelled.connect(popup.hide)
+        self._popup_wired = True
+
+    def _complete_attribute(self, name: str) -> None:
+        """Insert ``name=""`` at the caret's opening tag (single undoable
+        edit, caret between the quotes), hide the popup, then chain into the
+        value picker when the schema knows values for ``name``."""
+        popup = self._completion_popup
+        if popup is not None:
+            popup.hide()
+        tag_chain = self._splice_attribute_at_cursor(name)
+        if tag_chain is None:
+            return
+        values = known_values(self._schema_model, tag_chain, name)
+        if values:
+            self._show_value_completions(values)
+
+    def _show_value_completions(self, pairs) -> None:
+        """Open the value picker for the just-inserted attribute. ``pairs`` is
+        a list of ``(value, label)``; rows show ``value`` or ``value = label``
+        but carry the bare value as their key. The caret sits between the
+        quotes."""
+        popup = self._ensure_completion_popup()
+        popup.set_items(
+            [
+                (value, f"{value} = {label}" if label else value)
+                for value, label in pairs
+            ]
+        )
+        self._rewire_popup(popup, self._complete_value)
+        self._popup_at_caret(popup)
+
+    def _complete_value(self, value: str) -> None:
+        """Insert ``value`` at the caret (between the quotes) as one undoable
+        edit, move the caret just past the closing quote, and hide the
+        popup."""
+        popup = self._completion_popup
+        if popup is not None:
+            popup.hide()
+        cursor = self.textCursor()
+        cursor.beginEditBlock()
+        cursor.insertText(value)
+        cursor.endEditBlock()
+        cursor.setPosition(cursor.position() + 1)  # step past the closing quote
         self.setTextCursor(cursor)
 
     def _hint_for_help_pos(self, char_pos: int):
