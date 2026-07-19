@@ -321,7 +321,11 @@ def test_generation_menu_contents(qtbot):
     assert action_labels(menu) == [
         "Locate PHP Generator Executable...", "―",
         "Generate PHP...", "―",
-        "Open Output Folder",
+        "Open Output Folder", "―",
+        "Locate panGen Runtime...",
+        "panGen (Generate Own PHP)",
+        "rePHPgen (Analyze Gap)",
+        "Save reJSON...",
     ]
 
 

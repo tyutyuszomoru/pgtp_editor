@@ -1,5 +1,6 @@
 import copy
 import logging
+import os
 import shutil
 from pathlib import Path
 
@@ -31,8 +32,21 @@ from PySide6.QtWidgets import (
 
 from pgtp_editor import debuglog
 from pgtp_editor.diff.apply import apply_differences
-from pgtp_editor.generation.config import load_executable_path, save_executable_path
+from pgtp_editor.generation.config import (
+    generator_config_path,
+    load_executable_path,
+    load_re_phpgen_root,
+    save_executable_path,
+    save_re_phpgen_root,
+)
 from pgtp_editor.generation.runner import GeneratorRunner, build_generate_command
+from pgtp_editor.generation.re_runner import (
+    build_analyze_command,
+    build_pangen_command,
+    resolve_re_phpgen_python,
+    validate_re_phpgen_root,
+)
+from pgtp_editor.generation.gap_summary import summarize_gap_json
 from pgtp_editor.diff.differ import compare_block, diff_project
 from pgtp_editor.diff.resolve import ResolutionError, resolve_path
 from pgtp_editor.model.encoding import read_pgtp_text
@@ -145,6 +159,7 @@ class MainWindow(QMainWindow):
         self._generator_runner = generator_runner if generator_runner is not None else GeneratorRunner()
         self._current_output_folder = None
         self._is_generating = False
+        self._last_gap_json: Path | None = None
         # Read-only schema viewer windows (Phase 1). Held on self so they are
         # not garbage-collected while open; reused/refreshed on reopen.
         self._xsd_viewer = None
@@ -1965,6 +1980,16 @@ class MainWindow(QMainWindow):
         menu.addSeparator()
         open_output_action = menu.addAction("Open Output Folder")
         open_output_action.triggered.connect(self._open_output_folder)
+        menu.addSeparator()
+        locate_pangen_action = menu.addAction("Locate panGen Runtime...")
+        locate_pangen_action.triggered.connect(self._locate_pangen_runtime)
+        pangen_action = menu.addAction("panGen (Generate Own PHP)")
+        pangen_action.triggered.connect(self._pangen)
+        re_phpgen_action = menu.addAction("rePHPgen (Analyze Gap)")
+        re_phpgen_action.triggered.connect(self._re_phpgen_analyze)
+        self._save_rejson_action = menu.addAction("Save reJSON...")
+        self._save_rejson_action.triggered.connect(self._save_rejson)
+        self._save_rejson_action.setEnabled(False)
 
     def _locate_generator(self) -> None:
         path, _filter = QFileDialog.getOpenFileName(
@@ -2079,6 +2104,212 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("No output folder yet — run Generate PHP first.", 5000)
             return
         QDesktopServices.openUrl(QUrl.fromLocalFile(self._current_output_folder))
+
+    # -- panGen / rePHPgen (own generator + gap analysis) --------------------
+
+    def _gap_json_work_path(self) -> Path:
+        """Scratch path for the analyze command's JSON output (next to the
+        generator config, out of the user's project tree)."""
+        return generator_config_path(self._generator_config_dir).parent / "last_gap.json"
+
+    def _re_phpgen_runtime(self) -> tuple[str, str, dict[str, str]] | None:
+        """(python, root, extra_env) or None after showing guidance."""
+        root = load_re_phpgen_root(base_dir=self._generator_config_dir)
+        if not validate_re_phpgen_root(root):
+            QMessageBox.information(
+                self,
+                "panGen",
+                "re_phpgen runtime not found. Set it via "
+                "Generation > Locate panGen Runtime...",
+            )
+            return None
+        python = resolve_re_phpgen_python(root)
+        # Merge-prepend PYTHONPATH: our src first (wins shadowing), user's
+        # pre-existing entries preserved (never clobber their environment).
+        src = str(Path(root) / "src")
+        existing = os.environ.get("PYTHONPATH", "")
+        pythonpath = src + (os.pathsep + existing if existing else "")
+        return python, root, {"PYTHONPATH": pythonpath}
+
+    def _prepare_generation_run(self) -> str | None:
+        """Shared preamble: in-flight guard, open project, save prompt, output
+        folder. Returns the output folder or None. Mirrors _generate_php steps
+        (no vendor-exe check)."""
+        if self._is_generating:
+            self.statusBar().showMessage("A generation is already in progress.", 5000)
+            return None
+        if self._current_project is None and not self.center_stage.xml_editor.toPlainText().strip():
+            self.statusBar().showMessage("Open a project first.", 5000)
+            return None
+        choice = QMessageBox.question(
+            self,
+            "Save Before Running",
+            "panGen reads the project from disk. Save the current editor contents first?",
+            QMessageBox.StandardButton.Save
+            | QMessageBox.StandardButton.SaveAll
+            | QMessageBox.StandardButton.Cancel,
+        )
+        if choice == QMessageBox.StandardButton.Cancel:
+            return None
+        if choice == QMessageBox.StandardButton.SaveAll:
+            self._save_project_as()
+        else:
+            self._save_project()
+        if not self._current_project_path:
+            return None
+        output_folder = QFileDialog.getExistingDirectory(
+            self, "Select Output Folder", self._project_output_folder_default()
+        )
+        return output_folder or None
+
+    def _pangen(self) -> None:
+        runtime = self._re_phpgen_runtime()
+        if runtime is None:
+            return
+        python, root, extra_env = runtime
+        output_folder = self._prepare_generation_run()
+        if output_folder is None:
+            return
+        self._clear_generator_output()
+        self._current_output_folder = output_folder
+        self._is_generating = True
+        self.statusBar().showMessage("panGen: generating…")
+        _log.info("pangen: started")
+        self._generator_runner.run(
+            build_pangen_command(python, self._current_project_path, output_folder),
+            on_output=self._append_generator_output,
+            on_finished=self._on_pangen_finished,
+            cwd=root,
+            extra_env=extra_env,
+        )
+
+    def _on_pangen_finished(self, exit_code: int) -> None:
+        _log.info("pangen: rc=%s", exit_code)
+        self._is_generating = False
+        if exit_code == 0:
+            self.statusBar().showMessage("panGen finished", 5000)
+        else:
+            QMessageBox.warning(
+                self,
+                "panGen",
+                f"panGen failed (exit {exit_code}). See the Audit / Problems panel "
+                "for the generator log.",
+            )
+            self.statusBar().showMessage(f"panGen failed (exit {exit_code})", 5000)
+
+    def _re_phpgen_analyze(self) -> None:
+        runtime = self._re_phpgen_runtime()
+        if runtime is None:
+            return
+        python, root, extra_env = runtime
+        output_folder = self._prepare_generation_run()
+        if output_folder is None:
+            return
+        if not any(Path(output_folder).glob("*.php")):
+            QMessageBox.information(
+                self,
+                "rePHPgen",
+                "No vendor output found in this folder. Generate the project from "
+                "the PHP Generator GUI into this folder first, then run rePHPgen.",
+            )
+            return
+
+        self._clear_generator_output()
+        self._current_output_folder = output_folder
+        self._is_generating = True
+        self._save_rejson_action.setEnabled(False)
+        json_path = self._gap_json_work_path()
+        pgtp = self._current_project_path
+        pangen_command = build_pangen_command(python, pgtp, output_folder)
+        analyze_command = build_analyze_command(python, pgtp, output_folder, str(json_path))
+        self.statusBar().showMessage("rePHPgen: generating…")
+        _log.info("re_phpgen: pangen started")
+
+        def _on_analyze_finished(exit_code: int) -> None:
+            _log.info("re_phpgen: analyze rc=%s", exit_code)
+            self._is_generating = False
+            if exit_code != 0:
+                QMessageBox.warning(
+                    self,
+                    "rePHPgen",
+                    f"Gap analysis failed (exit {exit_code}). See the Audit / "
+                    "Problems panel for the log.",
+                )
+                self.statusBar().showMessage(f"rePHPgen failed (exit {exit_code})", 5000)
+                return
+            self._last_gap_json = json_path
+            self._save_rejson_action.setEnabled(True)
+            summary = summarize_gap_json(json_path)
+            self._append_generator_output(summary.replace("\n", " | "))
+            self.statusBar().showMessage("rePHPgen: gap analysis complete", 5000)
+            QMessageBox.information(self, "rePHPgen — Gap Summary", summary)
+
+        def _on_pangen_done(exit_code: int) -> None:
+            _log.info("re_phpgen: pangen rc=%s", exit_code)
+            if exit_code != 0:
+                self._is_generating = False
+                QMessageBox.warning(
+                    self,
+                    "rePHPgen",
+                    f"panGen failed (exit {exit_code}). See the Audit / Problems "
+                    "panel for the generator log.",
+                )
+                self.statusBar().showMessage(f"rePHPgen failed (exit {exit_code})", 5000)
+                return
+            _log.info("re_phpgen: analyze started")
+            self._generator_runner.run(
+                analyze_command,
+                on_output=self._append_generator_output,
+                on_finished=_on_analyze_finished,
+                cwd=root,
+                extra_env=extra_env,
+            )
+
+        self._generator_runner.run(
+            pangen_command,
+            on_output=self._append_generator_output,
+            on_finished=_on_pangen_done,
+            cwd=root,
+            extra_env=extra_env,
+        )
+
+    def _save_rejson(self) -> None:
+        if self._last_gap_json is None or not Path(self._last_gap_json).is_file():
+            self.statusBar().showMessage("No gap JSON yet — run rePHPgen first.", 5000)
+            return
+        stem = Path(self._current_project_path).stem if self._current_project_path else "project"
+        default_dir = self._current_output_folder or ""
+        path, _filter = QFileDialog.getSaveFileName(
+            self,
+            "Save reJSON",
+            str(Path(default_dir) / f"{stem}_gap.json"),
+            "JSON (*.json)",
+        )
+        if not path:
+            return
+        Path(path).write_text(
+            Path(self._last_gap_json).read_text(encoding="utf-8"), encoding="utf-8"
+        )
+        self.statusBar().showMessage(f"Saved reJSON to {Path(path).name}", 5000)
+
+    def _locate_pangen_runtime(self) -> None:
+        root = QFileDialog.getExistingDirectory(
+            self,
+            "Locate panGen Runtime (re_phpgen repo)",
+            load_re_phpgen_root(base_dir=self._generator_config_dir),
+        )
+        if not root:
+            return
+        if not validate_re_phpgen_root(root):
+            QMessageBox.warning(
+                self,
+                "panGen",
+                "That folder does not look like the re_phpgen repo "
+                "(missing src\\re_phpgen).",
+            )
+            return
+        save_re_phpgen_root(root, base_dir=self._generator_config_dir)
+        self.statusBar().showMessage(f"panGen runtime set: {root}", 5000)
 
     def _build_help_menu(self):
         menu = self.menuBar().addMenu("Help")
