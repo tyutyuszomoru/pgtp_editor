@@ -79,3 +79,69 @@ def test_session_header_written(clean_logging):
     text = next(tmp_path.glob("debug_*.log")).read_text("utf-8")
     assert "session start" in text
     assert "python=" in text
+
+
+import sys
+import threading
+
+
+def _debug_text(tmp_path):
+    return next(tmp_path.glob("debug_*.log")).read_text("utf-8")
+
+
+@pytest.mark.qt_no_exception_capture
+def test_sys_excepthook_logs_traceback(clean_logging):
+    tmp_path = clean_logging
+    debuglog.setup(debug=True, dir_override=tmp_path)
+    try:
+        raise ValueError("kaboom-main")
+    except ValueError:
+        sys.excepthook(*sys.exc_info())
+    text = _debug_text(tmp_path)
+    assert "kaboom-main" in text and "Traceback" in text
+    assert "kaboom-main" in (tmp_path / "errors.log").read_text("utf-8")
+
+
+def test_threading_excepthook_logs(clean_logging):
+    tmp_path = clean_logging
+    debuglog.setup(debug=True, dir_override=tmp_path)
+
+    def die():
+        raise RuntimeError("kaboom-thread")
+
+    t = threading.Thread(target=die, name="victim")
+    t.start()
+    t.join()
+    text = _debug_text(tmp_path)
+    assert "kaboom-thread" in text and "victim" in text
+
+
+def test_teardown_restores_excepthooks(clean_logging):
+    tmp_path = clean_logging
+    before_sys, before_thread = sys.excepthook, threading.excepthook
+    debuglog.setup(debug=True, dir_override=tmp_path)
+    assert sys.excepthook is not before_sys
+    debuglog.teardown()
+    assert sys.excepthook is before_sys
+    assert threading.excepthook is before_thread
+
+
+def test_qt_message_handler_logs_qwarning(clean_logging, qtbot):
+    from PySide6.QtCore import qWarning
+
+    tmp_path = clean_logging
+    debuglog.setup(debug=True, dir_override=tmp_path)
+    debuglog.install_qt_handler()
+    qWarning("qt-says-boo")
+    assert "qt-says-boo" in _debug_text(tmp_path)
+
+
+def test_redacted_hides_password():
+    from pgtp_editor.db.config import ConnectionParams
+
+    params = ConnectionParams(
+        host="127.0.0.1", port="5432", database="d", user="u", password="s3cret"
+    )
+    text = debuglog.redacted(params)
+    assert "s3cret" not in text
+    assert "127.0.0.1" in text and "u" in text and "***" in text

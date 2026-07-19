@@ -19,6 +19,7 @@ import logging.handlers
 import os
 import platform
 import sys
+import threading
 from datetime import datetime
 from pathlib import Path
 
@@ -31,6 +32,10 @@ _log = logging.getLogger(__name__)
 _installed_handlers: list[logging.Handler] = []
 _active = False
 _session_path: Path | None = None
+
+_orig_sys_excepthook = None
+_orig_threading_excepthook = None
+_qt_handler_installed = False
 
 
 def log_dir() -> Path:
@@ -94,6 +99,7 @@ def setup(debug: bool, dir_override: Path | None = None) -> Path | None:
 
     logging.captureWarnings(True)
     _write_session_header(debug)
+    _install_excepthooks()
     return _session_path
 
 
@@ -113,6 +119,7 @@ def _write_session_header(debug: bool) -> None:
 def teardown() -> None:
     """Remove everything setup() installed (test isolation)."""
     global _active, _session_path
+    global _orig_sys_excepthook, _orig_threading_excepthook, _qt_handler_installed
     root = logging.getLogger()
     for handler in _installed_handlers:
         root.removeHandler(handler)
@@ -122,3 +129,77 @@ def teardown() -> None:
     root.setLevel(logging.WARNING)
     _active = False
     _session_path = None
+
+    if _orig_sys_excepthook is not None:
+        sys.excepthook = _orig_sys_excepthook
+        _orig_sys_excepthook = None
+    if _orig_threading_excepthook is not None:
+        threading.excepthook = _orig_threading_excepthook
+        _orig_threading_excepthook = None
+    if _qt_handler_installed:
+        from PySide6.QtCore import qInstallMessageHandler
+
+        qInstallMessageHandler(None)
+        _qt_handler_installed = False
+
+
+def _log_uncaught(exc_type, exc, tb) -> None:
+    _log.error(
+        "uncaught exception", exc_info=(exc_type, exc, tb)
+    )
+
+
+def _sys_hook(exc_type, exc, tb) -> None:
+    _log_uncaught(exc_type, exc, tb)
+    if _orig_sys_excepthook is not None:
+        _orig_sys_excepthook(exc_type, exc, tb)
+
+
+def _threading_hook(args) -> None:
+    _log.error(
+        "uncaught exception in thread %r",
+        args.thread.name if args.thread else "?",
+        exc_info=(args.exc_type, args.exc_value, args.exc_traceback),
+    )
+    if _orig_threading_excepthook is not None:
+        _orig_threading_excepthook(args)
+
+
+def _install_excepthooks() -> None:
+    global _orig_sys_excepthook, _orig_threading_excepthook
+    _orig_sys_excepthook = sys.excepthook
+    _orig_threading_excepthook = threading.excepthook
+    sys.excepthook = _sys_hook
+    threading.excepthook = _threading_hook
+
+
+def install_qt_handler() -> None:
+    """Forward Qt's own messages into logging. Called from main() after
+    PySide6 is importable (setup() itself must stay Qt-free)."""
+    global _qt_handler_installed
+    if _qt_handler_installed:
+        return
+    from PySide6.QtCore import QtMsgType, qInstallMessageHandler
+
+    levels = {
+        QtMsgType.QtDebugMsg: logging.DEBUG,
+        QtMsgType.QtInfoMsg: logging.INFO,
+        QtMsgType.QtWarningMsg: logging.WARNING,
+        QtMsgType.QtCriticalMsg: logging.ERROR,
+        QtMsgType.QtFatalMsg: logging.CRITICAL,
+    }
+
+    def handler(msg_type, context, message):
+        logging.getLogger("qt").log(levels.get(msg_type, logging.WARNING), "%s", message)
+
+    qInstallMessageHandler(handler)
+    _qt_handler_installed = True
+
+
+def redacted(params) -> str:
+    """One-line rendering of ConnectionParams with the password blanked.
+    THE seam-log formatter for connection info — never log params directly."""
+    return (
+        f"host={params.host} port={params.port} "
+        f"database={params.database} user={params.user} password=***"
+    )
