@@ -1225,20 +1225,23 @@ class MainWindow(QMainWindow):
         the buffer is dirty, `_confirm_close()` decides; when None and clean,
         the close proceeds (treated as "discard").
         """
-        _log.info("file: close")
         if self._dirty:
             if confirm is None:
                 confirm = self._confirm_close()
+            outcome = {"save": "saved", "discard": "discarded"}.get(confirm, confirm)
         else:
             confirm = "discard"
+            outcome = "clean"
 
         if confirm == "cancel":
+            _log.info("file: close outcome=cancelled")
             return
         if confirm == "save":
             self._save_project()
             if self._dirty:
                 # Save was cancelled (e.g. Save-As dialog dismissed) --
                 # don't discard the user's changes.
+                _log.info("file: close outcome=cancelled")
                 return
 
         self._loading = True
@@ -1253,6 +1256,7 @@ class MainWindow(QMainWindow):
         # into the emptied editor.
         self._history.clear()
         self._set_dirty(False)
+        _log.info("file: close outcome=%s", outcome)
 
     def _revert_project(self) -> None:
         """Reload the project from its `<path>.bak` backup, if one exists.
@@ -1856,6 +1860,7 @@ class MainWindow(QMainWindow):
             _log.info("db: check %s finished", direction)
 
         def on_error(exc):
+            _log.info("db: check %s failed %s", direction, exc)
             self.statusBar().showMessage(f"Database check failed: {exc}", 8000)
 
         self._run_async(
@@ -1868,12 +1873,12 @@ class MainWindow(QMainWindow):
         new = self._prompt_rename(old)
         if not new or new == old:
             return
-        _log.info("db: rename %s -> %s", old, new)
         current = self.center_stage.xml_editor.toPlainText()
         if kind == "table":
             updated, count = rename_table(current, old, new)
         else:
             updated, count = rename_field(current, old, new)
+        _log.info("db: rename %s -> %s (%d replacements)", old, new, count)
         # Write through the buffer so the change marks the document dirty and
         # pushes a snapshot (the editor's textChanged handler does both).
         self.center_stage.xml_editor.setPlainText(updated)
