@@ -47,7 +47,7 @@ Emits our best-effort `.php` for **every** top-level page of the project (catalo
 ### `analyze <project.pgtp> --vendor <dir> --ours <dir> --json <path>`
 Per-page comparison using the proven symmetric pipeline (`normalize → mask_handler_code → mask_method_bodies` on BOTH sides — comparison mode string `masked-skeleton-v1` recorded in the JSON):
 - For each catalog page: load `<vendor>/<fileName>.php` and `<ours>/<fileName>.php`; statuses `ok` (masked byte-identical), `diff`, `missing_vendor`, `missing_ours`, `error` (with message).
-- For `diff` pages: cause buckets via the existing conditional-feature markers (master-detail, chart, partition, global-handler, unclassified) + diff hunks from `difflib.unified_diff` on the masked texts, capped at 20 hunks/page and 200 lines/page, with `hunks_omitted` count.
+- For `diff` pages: cause buckets via the shared `CAUSE_MARKERS` list in `re_phpgen.gap` (as implemented: master-detail, chart, partition, view-based; `unclassified` when none match — the list is the single source of truth and may grow) + diff hunks from `difflib.unified_diff` on the masked texts, capped at 20 hunks/page and 200 lines/page, with `hunks_omitted` count.
 - Writes the JSON (UTF-8), prints a one-line summary (`analyze: ok X / diff Y / missing Z of N pages -> <json>`). Exit 0 even when diffs exist (diffs are data, not failure); nonzero only on operational failure.
 
 ### Gap JSON format (schema_version 1)
