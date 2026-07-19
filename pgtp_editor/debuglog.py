@@ -51,9 +51,28 @@ _FORMAT = "%(asctime)s.%(msecs)03d %(levelname)-5s [%(threadName)s] %(name)s: %(
 _DATEFMT = "%H:%M:%S"
 
 
+class _SpecFormatter(logging.Formatter):
+    """Spec §3 rendering: main thread shortened to ``gui``; logger names
+    lose the redundant ``pgtp_editor.`` prefix."""
+
+    def __init__(self) -> None:
+        super().__init__(_FORMAT, datefmt=_DATEFMT)
+        self._main_ident = threading.main_thread().ident
+
+    def format(self, record: logging.LogRecord) -> str:
+        if record.thread == self._main_ident:
+            record.threadName = "gui"
+        record.name = record.name.removeprefix("pgtp_editor.")
+        return super().format(record)
+
+
 def setup(debug: bool, dir_override: Path | None = None) -> Path | None:
     """Install logging for this process. Returns the debug session file path
-    (debug mode) or None. Idempotent: a second call is a no-op."""
+    (debug mode) or None. Idempotent: a second call is a no-op.
+
+    A failed log-dir mkdir degrades to a stderr-only handler but still
+    installs the crash-path hooks — logging problems must never disable
+    crash capture."""
     global _active, _session_path
     if _active:
         return _session_path
@@ -62,58 +81,72 @@ def setup(debug: bool, dir_override: Path | None = None) -> Path | None:
     target = dir_override if dir_override is not None else log_dir()
     root = logging.getLogger()
     root.setLevel(TRACE if debug else logging.WARNING)
-    formatter = logging.Formatter(_FORMAT, datefmt=_DATEFMT)
+    formatter = _SpecFormatter()
 
+    stderr_only = False
     try:
         target.mkdir(parents=True, exist_ok=True)
     except OSError:
+        stderr_only = True
         stderr_handler = logging.StreamHandler()
         stderr_handler.setFormatter(formatter)
         root.addHandler(stderr_handler)
         _installed_handlers.append(stderr_handler)
         _log.warning("log dir %s not creatable; logging to stderr only", target)
-        return None
 
-    error_handler = logging.handlers.RotatingFileHandler(
-        target / "errors.log",
-        maxBytes=1_000_000,
-        backupCount=3,
-        encoding="utf-8",
-        delay=True,
-    )
-    error_handler.setLevel(logging.WARNING)
-    error_handler.setFormatter(formatter)
-    root.addHandler(error_handler)
-    _installed_handlers.append(error_handler)
-
-    if debug:
-        stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        _session_path = target / f"debug_{stamp}.log"
-        debug_handler = logging.FileHandler(
-            _session_path, encoding="utf-8", delay=True
+    if not stderr_only:
+        error_handler = logging.handlers.RotatingFileHandler(
+            target / "errors.log",
+            maxBytes=1_000_000,
+            backupCount=3,
+            encoding="utf-8",
+            delay=True,
         )
-        debug_handler.setLevel(TRACE)
-        debug_handler.setFormatter(formatter)
-        root.addHandler(debug_handler)
-        _installed_handlers.append(debug_handler)
+        error_handler.setLevel(logging.WARNING)
+        error_handler.setFormatter(formatter)
+        root.addHandler(error_handler)
+        _installed_handlers.append(error_handler)
+
+        if debug:
+            stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            _session_path = target / f"debug_{stamp}.log"
+            debug_handler = logging.FileHandler(
+                _session_path, encoding="utf-8", delay=True
+            )
+            debug_handler.setLevel(TRACE)
+            debug_handler.setFormatter(formatter)
+            root.addHandler(debug_handler)
+            _installed_handlers.append(debug_handler)
 
     logging.captureWarnings(True)
-    _write_session_header(debug)
+    _write_session_header(debug, target)
     _install_excepthooks()
     return _session_path
 
 
-def _write_session_header(debug: bool) -> None:
+def _app_version() -> str:
+    try:
+        from importlib.metadata import version
+
+        return version("pgtp_editor")
+    except Exception:
+        return "unknown"
+
+
+def _write_session_header(debug: bool, target: Path) -> None:
     _log.log(
         TRACE if debug else logging.WARNING,
-        "session start debug=%s python=%s platform=%s argv=%s",
+        "session start debug=%s app=%s python=%s platform=%s logdir=%s argv=%s",
         debug,
+        _app_version(),
         sys.version.split()[0],
         platform.platform(),
+        target,
         sys.argv,
     )
-    # Qt versions are logged from main() after PySide6 is imported; keeping
-    # this header Qt-free lets setup() run before QApplication exists.
+    # Qt versions and the settings file path are logged from main() after
+    # PySide6 is imported; keeping this header Qt-free lets setup() run
+    # before QApplication exists.
 
 
 def teardown() -> None:

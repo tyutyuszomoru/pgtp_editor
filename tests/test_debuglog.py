@@ -145,3 +145,63 @@ def test_redacted_hides_password():
     text = debuglog.redacted(params)
     assert "s3cret" not in text
     assert "127.0.0.1" in text and "u" in text and "***" in text
+
+
+def test_setup_oserror_falls_back_to_stderr_but_keeps_hooks(clean_logging):
+    """A failed log-dir mkdir must not disable crash capture."""
+    tmp_path = clean_logging
+    blocker = tmp_path / "not-a-dir"
+    blocker.write_text("file, not dir", encoding="utf-8")
+    before_sys = sys.excepthook
+    result = debuglog.setup(debug=True, dir_override=blocker / "logs")
+    assert result is None
+    root = logging.getLogger()
+    assert any(
+        type(h) is logging.StreamHandler for h in root.handlers
+    )
+    assert sys.excepthook is not before_sys
+    debuglog.teardown()
+    assert sys.excepthook is before_sys
+
+
+def test_main_thread_renders_as_gui(clean_logging):
+    tmp_path = clean_logging
+    debuglog.setup(debug=True, dir_override=tmp_path)
+    logging.getLogger("pgtp_editor.test").info("who-am-i")
+    line = next(
+        l for l in _debug_text(tmp_path).splitlines() if "who-am-i" in l
+    )
+    assert "[gui]" in line
+
+
+def test_worker_thread_keeps_its_name(clean_logging):
+    tmp_path = clean_logging
+    debuglog.setup(debug=True, dir_override=tmp_path)
+
+    def work():
+        logging.getLogger("pgtp_editor.test").info("from-worker")
+
+    t = threading.Thread(target=work, name="pool-7")
+    t.start()
+    t.join()
+    line = next(
+        l for l in _debug_text(tmp_path).splitlines() if "from-worker" in l
+    )
+    assert "[pool-7]" in line
+
+
+def test_logger_name_drops_package_prefix(clean_logging):
+    tmp_path = clean_logging
+    debuglog.setup(debug=True, dir_override=tmp_path)
+    logging.getLogger("pgtp_editor.ui.test").info("named")
+    line = next(l for l in _debug_text(tmp_path).splitlines() if "named" in l)
+    assert " ui.test: " in line
+    assert "pgtp_editor.ui.test" not in line
+
+
+def test_session_header_has_version_and_logdir(clean_logging):
+    tmp_path = clean_logging
+    debuglog.setup(debug=True, dir_override=tmp_path)
+    text = _debug_text(tmp_path)
+    assert "app=" in text
+    assert f"logdir={tmp_path}" in text
