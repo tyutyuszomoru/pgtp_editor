@@ -9,8 +9,10 @@ __pycache__/
 .pytest_cache/
 .coverage
 
-# Harness-local worktrees/config, never part of the project itself
-.claude/
+# Harness-local worktrees/config, never part of the project itself —
+# except agent definitions, which are project workflow and must survive clones
+.claude/*
+!.claude/agents/
 
 # Separate standalone tool with its own git history (vendored into
 # pgtp_editor/schema_learning/) - kept on disk for reference, not tracked
