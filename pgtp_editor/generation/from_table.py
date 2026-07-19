@@ -81,6 +81,8 @@ def _build_page_element(table: TableInfo, tag: str, *, file_name: str) -> etree.
     page = etree.Element(tag)
     page.set("type", "table")
     page.set("tableName", table.name)
+    # numberByDataSource sits immediately after tableName in real phpgen output.
+    page.set("numberByDataSource", "0")
     page.set("fileName", file_name)
     short = _short_name(table.name)
     caption = type_map.humanize(short)

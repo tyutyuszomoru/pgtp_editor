@@ -40,10 +40,12 @@ PK_HIDDEN_IN: frozenset[str] = frozenset({"Edit", "Insert", "Compare", "MultiEdi
 
 # -- page-level default attributes (observed dominant values) ---------------
 # Order is load-bearing for serialization (matches sample opening tags). The
-# identity attributes (type/tableName/fileName/caption/shortCaption/groupName)
-# are supplied by the builder; these are the shared defaults.
+# identity attributes (type/tableName/numberByDataSource/fileName/caption/
+# shortCaption) are supplied by the builder in that order — numberByDataSource
+# sits right after tableName in real PHP Generator output (corroborated by
+# sample/dev_Ferrara.pgtp and a captured public.sys_var page) — so it is NOT in
+# this list; these are the shared defaults that follow shortCaption.
 PAGE_DEFAULTS: list[tuple[str, str]] = [
-    ("numberByDataSource", "0"),
     ("addSeparator", "false"),
     ("horizontalFilterCondition", ""),
     ("recordsPerPage", "20"),
