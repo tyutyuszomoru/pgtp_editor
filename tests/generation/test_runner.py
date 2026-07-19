@@ -65,3 +65,25 @@ def test_generator_runner_calls_on_finished_at_most_once(qtbot):
     runner._finish_once(2)   # e.g. errorOccurred(Crashed) path first
     runner._finish_once(2)   # then finished(...) for the same run
     assert calls == [2]
+
+
+import logging
+
+
+def test_run_logs_spawn_and_rc_seams(qtbot, caplog):
+    # A nonexistent program still walks the full seam path: "generate:
+    # spawning ..." at start, "generate: rc=..." when the failed start is
+    # mapped to a nonzero finish.
+    runner = GeneratorRunner()
+    finished = []
+    with caplog.at_level(logging.INFO, logger="pgtp_editor.generation.runner"):
+        runner.run(
+            ["definitely_not_a_real_generator_xyz.exe"],
+            lambda line: None,
+            finished.append,
+        )
+        qtbot.waitUntil(lambda: bool(finished), timeout=5000)
+    messages = [r.message for r in caplog.records]
+    assert any("generate: spawning" in m for m in messages)
+    assert any(m.startswith("generate: rc=1") for m in messages)
+    assert finished == [1]

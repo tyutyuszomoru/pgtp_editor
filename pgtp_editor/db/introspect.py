@@ -13,10 +13,16 @@ importable to run the suite.
 """
 from __future__ import annotations
 
+import logging
+import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
+from pgtp_editor import debuglog
+
 from .config import ConnectionParams
+
+_log = logging.getLogger(__name__)
 
 Rows = list[tuple]
 Runner = Callable[[ConnectionParams, list[str]], list[Rows]]
@@ -145,6 +151,8 @@ def run_queries(
 
 def fetch_schema(params: ConnectionParams, runner: Runner = run_queries) -> DatabaseSchema:
     """Introspect the database into a `DatabaseSchema` keyed by ``schema.table``."""
+    _log.info("db: fetch_schema started %s", debuglog.redacted(params))
+    started = time.monotonic()
     relation_rows, column_rows, constraint_rows = runner(params, list(SCHEMA_SQL))
 
     kinds: dict[str, str] = {}
@@ -181,6 +189,10 @@ def fetch_schema(params: ConnectionParams, runner: Runner = run_queries) -> Data
         name: TableInfo(name=name, kind=kind, columns=columns_by_table.get(name, []))
         for name, kind in kinds.items()
     }
+    elapsed = time.monotonic() - started
+    _log.info(
+        "db: fetch_schema finished %.3fs tables=%d", elapsed, len(tables)
+    )
     return DatabaseSchema(tables=tables)
 
 
@@ -189,8 +201,16 @@ def test_connection(params: ConnectionParams, runner: Runner = run_queries) -> t
 
     Never raises — driver/connection failures are captured as the message.
     """
+    _log.info("db: test_connection started %s", debuglog.redacted(params))
+    started = time.monotonic()
     try:
         runner(params, ["SELECT 1"])
     except Exception as exc:  # noqa: BLE001 — surface any failure as a message
+        _log.info(
+            "db: test_connection finished %.3fs error=%s",
+            time.monotonic() - started,
+            exc,
+        )
         return False, str(exc)
+    _log.info("db: test_connection finished %.3fs ok", time.monotonic() - started)
     return True, "Connected."
