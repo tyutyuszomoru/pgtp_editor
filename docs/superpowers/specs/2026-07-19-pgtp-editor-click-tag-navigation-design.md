@@ -78,11 +78,12 @@ def matching_tag_target(spans, text, position) -> int | None:
     """Offset of the tag matching the one at `position`, or None.
 
     Resolve the enclosing element span. If `position` is within its opening-tag
-    region (open_start <= position < open_end) return the closing tag's start
-    (the '<' of '</name>', i.e. _closing_tag_start). If within its closing-tag
-    region (close_start <= position < close_end) return span.open_start. Return
-    None when the span is self-closing, has no closing tag, or `position` is not
-    on either tag region (e.g. in text content or on an attribute value)."""
+    region (open_start <= position < open_end -- the whole `<name ...>`,
+    attributes included) return the closing tag's start (the '<' of '</name>',
+    i.e. _closing_tag_start). If within its closing-tag region
+    (close_start <= position < close_end) return span.open_start. Return None
+    when the span is self-closing, has no closing tag, or `position` is not on
+    either tag region (in the element's text content, or outside all)."""
 
 def parent_tag_target(spans, position) -> int | None:
     """open_start of the parent of the element enclosing `position`, or None
