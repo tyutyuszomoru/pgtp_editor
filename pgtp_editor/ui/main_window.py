@@ -41,6 +41,7 @@ from pgtp_editor.generation.config import (
 )
 from pgtp_editor.generation.runner import GeneratorRunner, build_generate_command
 from pgtp_editor.generation.re_runner import (
+    PANGEN_SUBFOLDER,
     build_analyze_command,
     build_pangen_command,
     resolve_re_phpgen_python,
@@ -2204,6 +2205,13 @@ class MainWindow(QMainWindow):
         python, root, extra_env = runtime
         output_folder = self._prepare_generation_run()
         if output_folder is None:
+            return
+        if Path(output_folder).name == PANGEN_SUBFOLDER:
+            QMessageBox.information(
+                self, "rePHPgen",
+                "This is panGen's own output subfolder — select the folder that "
+                "contains the vendor-generated .php files instead.",
+            )
             return
         if not any(Path(output_folder).glob("*.php")):
             QMessageBox.information(

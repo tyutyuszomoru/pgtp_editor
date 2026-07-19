@@ -117,6 +117,32 @@ def test_analyze_without_vendor_php_shows_info_and_stops(qtbot, tmp_path):
     assert fake.calls == []
 
 
+def test_analyze_rejects_pangen_output_folder_as_vendor_baseline(qtbot, tmp_path):
+    window, fake, cfg, root = _configured_window(qtbot, tmp_path)
+    _prep_project(window, tmp_path)
+    # Pick the _pangen subfolder itself as the "output" folder; it contains a
+    # .php file (our own generated output) so the old vendor-php precondition
+    # would have passed and compared _pangen against _pangen\_pangen nonsense.
+    pangen_dir = tmp_path / "out" / "_pangen"
+    pangen_dir.mkdir(parents=True)
+    (pangen_dir / "page.php").write_text("<?php", encoding="utf-8")
+
+    with patch(
+        "pgtp_editor.ui.main_window.QMessageBox.question",
+        return_value=QMessageBox.StandardButton.Save,
+    ), patch(
+        "pgtp_editor.ui.main_window.QFileDialog.getExistingDirectory",
+        return_value=str(pangen_dir),
+    ), patch(
+        "pgtp_editor.ui.main_window.QMessageBox.information"
+    ) as mock_info:
+        window._re_phpgen_analyze()
+
+    assert mock_info.called
+    assert "panGen's own output" in mock_info.call_args.args[2]
+    assert fake.calls == []
+
+
 # --------------------------------------------------------------------------- #
 # 3. _re_phpgen_analyze happy path + chaining + failure branch.
 # --------------------------------------------------------------------------- #
