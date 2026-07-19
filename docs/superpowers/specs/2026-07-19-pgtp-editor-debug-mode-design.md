@@ -131,8 +131,11 @@ Plain text, greppable, one event per line:
 14:02:11.703 ERROR [gui ] uncaught in Qt slot: Traceback (most recent call last): ...
 ```
 
-`%(asctime)s.%(msecs)03d LEVEL [thread] message` — thread names shortened
-(`gui` for the main thread, pool workers by their QThreadPool/threading name).
+`%(asctime)s.%(msecs)03d LEVEL [thread] name: message` — thread names
+shortened (`gui` for the main thread, pool workers by their
+QThreadPool/threading name); logger names keep grep value but drop the
+redundant `pgtp_editor.` prefix (`ui.main_window`, `db.introspect`, `trace`,
+`qt`).
 
 ## 4. Module boundaries
 
