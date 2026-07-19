@@ -83,6 +83,13 @@ Each feature goes **brainstorm → spec (`docs/superpowers/specs/`) → plan
 `git merge --no-ff` to `main`**, in an isolated git worktree under
 `.claude/worktrees/`. Nothing is pushed unless explicitly requested.
 
+**Feature-completion test gate:** every finished feature is verified by the
+`feature-tester` subagent (`.claude/agents/feature-tester.md`) — it writes/extends
+unit tests, runs the targeted tests and the full suite, and appends the verified
+result to the append-only [docs/TEST_LOG.md](docs/TEST_LOG.md). A feature without a
+green feature-tester run and a TEST_LOG entry is not done. Policy is spelled out in
+the root `CLAUDE.md`.
+
 **Hard rules that keep the suite healthy — keep following them:**
 - **Modal-hang guardrail:** no test may reach an unpatched `QMessageBox` /
   `QDialog.exec()` / `QFileDialog` — it blocks the event loop forever. Dialogs are
