@@ -56,6 +56,24 @@ class GeneratorRunner(QObject):
         cwd: str | None = None,
         extra_env: dict[str, str] | None = None,
     ) -> None:
+        # Clean up the previous run's QProcess before installing a new one:
+        # without this, reusing one runner across chained runs (pangen ->
+        # analyze) leaks a QProcess per run, and a still-pending readyRead
+        # event from the OLD process would fire _emit_output, which reads
+        # self._process -- i.e. the NEW process's (empty) buffer -- losing the
+        # old run's trailing output line.
+        if self._process is not None:
+            try:
+                self._process.readyReadStandardOutput.disconnect(self._emit_output)
+                self._process.finished.disconnect(self._emit_finished)
+                self._process.errorOccurred.disconnect(self._on_error)
+            except (TypeError, RuntimeError):
+                # Already-deleted C++ object or never-connected signal --
+                # must not crash a new run.
+                pass
+            self._process.deleteLater()
+            self._process = None
+
         self._on_output = on_output
         self._on_finished = on_finished
         self._finished_emitted = False

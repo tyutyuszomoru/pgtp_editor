@@ -200,3 +200,40 @@ def test_runner_extra_env_none_and_cwd_none_explicit(qtbot):
     )
     qtbot.waitUntil(lambda: bool(codes), timeout=10000)
     assert codes == [0] and lines == ["plain"]
+
+
+def test_runner_reuse_cleans_up_prior_qprocess(qtbot):
+    """Reusing one runner across chained runs (pangen -> analyze) must not
+    accumulate QProcess objects: run() disconnects and deleteLater()s the
+    previous process before creating the new one. This locks that the cleanup
+    happens without exceptions and that a fresh QProcess is installed; the
+    lost-trailing-line race (a pending readyRead from the OLD process reading
+    the NEW process's buffer) is not deterministically testable here."""
+    import sys
+
+    from pgtp_editor.generation.runner import GeneratorRunner
+
+    runner = GeneratorRunner()
+    lines1: list[str] = []
+    codes1: list[int] = []
+    runner.run(
+        [sys.executable, "-c", "print('first')"],
+        on_output=lines1.append,
+        on_finished=codes1.append,
+    )
+    qtbot.waitUntil(lambda: bool(codes1), timeout=10000)
+    assert codes1 == [0] and lines1 == ["first"]
+    first = runner._process
+    assert first is not None
+
+    lines2: list[str] = []
+    codes2: list[int] = []
+    runner.run(
+        [sys.executable, "-c", "print('second')"],
+        on_output=lines2.append,
+        on_finished=codes2.append,
+    )
+    # A fresh QProcess replaced the old one immediately on run().
+    assert runner._process is not first
+    qtbot.waitUntil(lambda: bool(codes2), timeout=10000)
+    assert codes2 == [0] and lines2 == ["second"]
