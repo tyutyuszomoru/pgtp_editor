@@ -51,7 +51,7 @@ def test_generator_runner_is_constructible(qtbot):
 def test_generator_runner_run_signature_is_the_injection_contract():
     # MainWindow injects a fake with this exact signature; keep them in lockstep.
     params = list(inspect.signature(GeneratorRunner.run).parameters)
-    assert params == ["self", "command", "on_output", "on_finished"]
+    assert params == ["self", "command", "on_output", "on_finished", "cwd", "extra_env"]
 
 
 def test_generator_runner_calls_on_finished_at_most_once(qtbot):
@@ -87,3 +87,44 @@ def test_run_logs_spawn_and_rc_seams(qtbot, caplog):
     assert any("generate: spawning" in m for m in messages)
     assert any(m.startswith("generate: rc=1") for m in messages)
     assert finished == [1]
+
+
+def test_runner_applies_cwd_and_extra_env(qtbot, tmp_path):
+    import sys
+    from pathlib import Path
+
+    from pgtp_editor.generation.runner import GeneratorRunner
+
+    runner = GeneratorRunner()
+    lines: list[str] = []
+    codes: list[int] = []
+    code = "import os; print(os.getcwd()); print(os.environ.get('PGTP_TEST_ENV', ''))"
+    runner.run(
+        [sys.executable, "-c", code],
+        on_output=lines.append,
+        on_finished=codes.append,
+        cwd=str(tmp_path),
+        extra_env={"PGTP_TEST_ENV": "hello"},
+    )
+    qtbot.waitUntil(lambda: bool(codes), timeout=10000)
+    assert codes == [0]
+    assert Path(lines[0]).resolve() == tmp_path.resolve()
+    assert lines[1] == "hello"
+
+
+def test_runner_without_cwd_env_unchanged(qtbot):
+    """Existing callers pass neither param — behavior must be identical."""
+    import sys
+
+    from pgtp_editor.generation.runner import GeneratorRunner
+
+    runner = GeneratorRunner()
+    lines: list[str] = []
+    codes: list[int] = []
+    runner.run(
+        [sys.executable, "-c", "print('plain')"],
+        on_output=lines.append,
+        on_finished=codes.append,
+    )
+    qtbot.waitUntil(lambda: bool(codes), timeout=10000)
+    assert codes == [0] and lines == ["plain"]

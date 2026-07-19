@@ -19,7 +19,7 @@ import os
 import time
 from collections.abc import Callable
 
-from PySide6.QtCore import QObject, QProcess
+from PySide6.QtCore import QObject, QProcess, QProcessEnvironment
 
 _log = logging.getLogger(__name__)
 
@@ -53,6 +53,8 @@ class GeneratorRunner(QObject):
         command: list[str],
         on_output: Callable[[str], None],
         on_finished: Callable[[int], None],
+        cwd: str | None = None,
+        extra_env: dict[str, str] | None = None,
     ) -> None:
         self._on_output = on_output
         self._on_finished = on_finished
@@ -66,6 +68,13 @@ class GeneratorRunner(QObject):
         # A failure to start (e.g. exe no longer exists) never emits finished;
         # map it to a diagnostic line + a nonzero finish so callers see a failure.
         process.errorOccurred.connect(self._on_error)
+        if cwd:
+            process.setWorkingDirectory(cwd)
+        if extra_env:
+            env = QProcessEnvironment.systemEnvironment()
+            for key, value in extra_env.items():
+                env.insert(key, value)
+            process.setProcessEnvironment(env)
         self._process = process
 
         program, *args = command
