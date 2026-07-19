@@ -268,3 +268,15 @@ You're reading it. Open it any time with **F1** or **Help ▸ Manual**.
 - The manual renders in the center **Manual** tab.
 - The **Contents** tab in the left dock lists every chapter. Click a chapter to
   scroll the manual straight to it.
+
+---
+
+## Troubleshooting: debug mode
+
+Launch the editor with `python -m pgtp_editor.main --debug` (or set the
+environment variable `PGTP_EDITOR_DEBUG=1`) to record a full diagnostic log
+of the session. A red **DEBUG** badge appears in the status bar and the log
+file path is shown at startup. Even without debug mode, errors are always
+recorded to a small `errors.log`. **Help ▸ Open Log Folder** opens the folder
+containing both logs — attach the newest `debug_*.log` when reporting a
+problem.

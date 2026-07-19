@@ -329,7 +329,7 @@ def test_help_menu_contents(qtbot):
     window = MainWindow()
     qtbot.addWidget(window)
     menu = find_top_menu(window, "Help")
-    assert action_labels(menu) == ["Manual", "About"]
+    assert action_labels(menu) == ["Manual", "Open Log Folder", "About"]
 
 
 def test_all_top_level_menus_present_in_order(qtbot):

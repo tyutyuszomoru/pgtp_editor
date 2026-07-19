@@ -1,4 +1,5 @@
 import copy
+import logging
 import shutil
 from pathlib import Path
 
@@ -28,6 +29,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from pgtp_editor import debuglog
 from pgtp_editor.diff.apply import apply_differences
 from pgtp_editor.generation.config import load_executable_path, save_executable_path
 from pgtp_editor.generation.runner import GeneratorRunner, build_generate_command
@@ -91,6 +93,7 @@ from pgtp_editor.ui.reused_tables_window import ReusedTablesWindow
 from pgtp_editor.ui.theme import apply_theme
 from pgtp_editor.ui.schema_viewer_data import open_labels_text, open_xsd_text
 
+_log = logging.getLogger(__name__)
 
 _FIND_RESULT_PREFIX = "[Find] "
 
@@ -116,8 +119,12 @@ class MainWindow(QMainWindow):
         generator_config_dir: Path | None = None,
         generator_runner=None,
         settings=None,
+        *,
+        debug_log_path: Path | None = None,
     ):
         super().__init__()
+        self._debug_log_path = debug_log_path
+        self._debug_label = None
         # Injectable so tests point at a temp QSettings ini instead of the real
         # user registry (Sub-project D).
         # IniFormat (not the platform-native registry) so the location is a
@@ -273,6 +280,17 @@ class MainWindow(QMainWindow):
         # Permanent status-bar mode indicator (Editing vs Caption Mode).
         self._mode_label = QLabel("Editing Mode")
         self.statusBar().addPermanentWidget(self._mode_label)
+
+        if self._debug_log_path is not None:
+            self._debug_label = QLabel("DEBUG")
+            self._debug_label.setStyleSheet(
+                "QLabel { color: white; background: #b33; padding: 1px 6px;"
+                " border-radius: 3px; font-weight: bold; }"
+            )
+            self.statusBar().addPermanentWidget(self._debug_label)
+            self.statusBar().showMessage(
+                f"Debug logging: {self._debug_log_path}", 10000
+            )
 
         self.properties_panel = PropertiesPanel(xml_editor=self.center_stage.xml_editor)
         self.properties_dock = QDockWidget("Properties", self)
@@ -512,11 +530,13 @@ class MainWindow(QMainWindow):
             self._restoring = False
 
     def _undo(self) -> None:
+        _log.info("history: undo")
         text = self._history.undo()
         if text is not None:
             self._apply_history_text(text)
 
     def _redo(self) -> None:
+        _log.info("history: redo")
         text = self._history.redo()
         if text is not None:
             self._apply_history_text(text)
@@ -719,6 +739,7 @@ class MainWindow(QMainWindow):
         (and the currently-tracked project) untouched (never a crash, never
         a silently-emptied tree or a silently-forgotten project).
         """
+        _log.info("file: open %s", path)
         try:
             project = load_project(path)
         except PgtpParseError as exc:
@@ -772,6 +793,7 @@ class MainWindow(QMainWindow):
             self.center_stage.xml_editor.set_schema_model(model)
 
             self._report_schema_events(events, path)
+            _log.info("schema: enriched %s", path)
         except Exception as exc:
             self.audit_panel.addItem(f"[Schema] Could not update schema knowledge: {exc}")
 
@@ -1139,8 +1161,9 @@ class MainWindow(QMainWindow):
         """Write the Raw XML editor buffer verbatim to `path` as UTF-8. If
         `path` already exists, copy it to `path + '.bak'` first (same .bak
         convention as Apply-to-Target)."""
+        _log.info("file: save %s", path)
         if Path(path).exists():
-            shutil.copy2(path, path + ".bak")
+            shutil.copy2(path, str(path) + ".bak")
         Path(path).write_text(
             self.center_stage.xml_editor.toPlainText(), encoding="utf-8", newline=""
         )
@@ -1205,16 +1228,20 @@ class MainWindow(QMainWindow):
         if self._dirty:
             if confirm is None:
                 confirm = self._confirm_close()
+            outcome = {"save": "saved", "discard": "discarded"}.get(confirm, confirm)
         else:
             confirm = "discard"
+            outcome = "clean"
 
         if confirm == "cancel":
+            _log.info("file: close outcome=cancelled")
             return
         if confirm == "save":
             self._save_project()
             if self._dirty:
                 # Save was cancelled (e.g. Save-As dialog dismissed) --
                 # don't discard the user's changes.
+                _log.info("file: close outcome=cancelled")
                 return
 
         self._loading = True
@@ -1229,6 +1256,7 @@ class MainWindow(QMainWindow):
         # into the emptied editor.
         self._history.clear()
         self._set_dirty(False)
+        _log.info("file: close outcome=%s", outcome)
 
     def _revert_project(self) -> None:
         """Reload the project from its `<path>.bak` backup, if one exists.
@@ -1246,6 +1274,7 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("Nothing to revert to.", 5000)
             return
 
+        _log.info("file: revert %s", bak_path)
         try:
             project = load_project(bak_path)
         except PgtpParseError as exc:
@@ -1816,6 +1845,7 @@ class MainWindow(QMainWindow):
         # here; the compare + panel population happen in on_result, back on the
         # GUI thread, so they may safely touch widgets.
         self.statusBar().showMessage("Checking database…")
+        _log.info("db: check %s started %s", direction, debuglog.redacted(params))
 
         def on_result(schema):
             if direction == "xml_to_db":
@@ -1827,8 +1857,10 @@ class MainWindow(QMainWindow):
             self.db_check_panel.set_result(direction, checks, summary)
             self._reveal_db_check_tab()
             self.statusBar().showMessage("Database check complete.", 3000)
+            _log.info("db: check %s finished", direction)
 
         def on_error(exc):
+            _log.info("db: check %s failed %s", direction, exc)
             self.statusBar().showMessage(f"Database check failed: {exc}", 8000)
 
         self._run_async(
@@ -1846,6 +1878,7 @@ class MainWindow(QMainWindow):
             updated, count = rename_table(current, old, new)
         else:
             updated, count = rename_field(current, old, new)
+        _log.info("db: rename %s -> %s (%d replacements)", old, new, count)
         # Write through the buffer so the change marks the document dirty and
         # pushes a snapshot (the editor's textChanged handler does both).
         self.center_stage.xml_editor.setPlainText(updated)
@@ -2016,6 +2049,7 @@ class MainWindow(QMainWindow):
         self._current_output_folder = output_folder
         self._is_generating = True
         self.statusBar().showMessage("Generating…")
+        _log.info("generate: started")
         self._generator_runner.run(
             command,
             on_output=self._append_generator_output,
@@ -2026,6 +2060,7 @@ class MainWindow(QMainWindow):
         self.audit_panel.addItem(f"{_GENERATOR_OUTPUT_PREFIX}{line}")
 
     def _on_generation_finished(self, exit_code: int) -> None:
+        _log.info("generate: rc=%s", exit_code)
         self._is_generating = False
         self.audit_panel.addItem(f"{_GENERATOR_OUTPUT_PREFIX}Generation finished (exit {exit_code})")
         if exit_code == 0:
@@ -2050,8 +2085,23 @@ class MainWindow(QMainWindow):
         manual_action = menu.addAction("Manual")
         manual_action.setShortcut("F1")
         manual_action.triggered.connect(self._show_manual)
+        logs_action = menu.addAction("Open Log Folder")
+        logs_action.triggered.connect(self._open_log_folder)
         about_action = menu.addAction("About")
         about_action.triggered.connect(lambda: show_about_dialog(self))
+
+    def _open_log_folder(self, checked=False, opener=None) -> None:
+        """Open the diagnostic log directory in the system file browser.
+        ``opener`` is an injectable seam so tests never spawn Explorer."""
+        from PySide6.QtCore import QUrl
+        from PySide6.QtGui import QDesktopServices
+
+        from pgtp_editor import debuglog
+
+        target = debuglog.log_dir()
+        target.mkdir(parents=True, exist_ok=True)
+        open_fn = opener if opener is not None else QDesktopServices.openUrl
+        open_fn(QUrl.fromLocalFile(str(target)))
 
     def _show_manual(self):
         # F1 / Help ▸ Manual toggles: if the Manual tab is already the one in
