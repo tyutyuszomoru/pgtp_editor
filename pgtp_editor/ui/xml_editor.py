@@ -445,9 +445,9 @@ class _EditorGutter(QWidget):
 class _CompletionPopup(QListWidget):
     """Frameless completion list for the XML editor. Holds a master list of
     ``(key, display)`` items and a running filter; arrows navigate, printable
-    chars filter by key prefix (case-insensitive), Enter/Tab choose, Esc
-    cancels. Emits the chosen *key* (not the display string). Callers pass
-    items pre-ordered; filtering preserves that order."""
+    chars filter by key prefix (case-insensitive), Enter/Tab or a mouse click
+    choose, Esc cancels. Emits the chosen *key* (not the display string).
+    Callers pass items pre-ordered; filtering preserves that order."""
 
     chosen = Signal(str)
     cancelled = Signal()
@@ -458,6 +458,9 @@ class _CompletionPopup(QListWidget):
         self.setUniformItemSizes(True)
         self._items: list[tuple[str, str]] = []
         self._filter = ""
+        self.itemClicked.connect(
+            lambda item: self.chosen.emit(item.data(Qt.ItemDataRole.UserRole))
+        )
 
     def set_items(self, items) -> None:
         """Replace the master ``(key, display)`` list, reset the filter, and

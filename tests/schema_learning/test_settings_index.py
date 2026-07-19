@@ -332,6 +332,22 @@ def test_known_values_empty_when_no_values():
     assert known_values(model, "Root/Node", "editAbilityMode") == []
 
 
+def test_known_values_missing_labels_key_gives_none_labels():
+    # A legacy/partial entry without a "labels" key still yields pairs, all
+    # labels None.
+    entry = {
+        "type": "integer",
+        "values": ["2", "1"],
+        "overflowed": False,
+        "attr_seen_count": 2,
+    }
+    model = _model_one(entry)
+    assert known_values(model, "Root/Node", "editAbilityMode") == [
+        ("1", None),
+        ("2", None),
+    ]
+
+
 def test_known_values_empty_for_unknown_attr():
     entry = {
         "type": "integer",
