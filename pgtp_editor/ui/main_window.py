@@ -116,8 +116,12 @@ class MainWindow(QMainWindow):
         generator_config_dir: Path | None = None,
         generator_runner=None,
         settings=None,
+        *,
+        debug_log_path: Path | None = None,
     ):
         super().__init__()
+        self._debug_log_path = debug_log_path
+        self._debug_label = None
         # Injectable so tests point at a temp QSettings ini instead of the real
         # user registry (Sub-project D).
         # IniFormat (not the platform-native registry) so the location is a
@@ -273,6 +277,17 @@ class MainWindow(QMainWindow):
         # Permanent status-bar mode indicator (Editing vs Caption Mode).
         self._mode_label = QLabel("Editing Mode")
         self.statusBar().addPermanentWidget(self._mode_label)
+
+        if self._debug_log_path is not None:
+            self._debug_label = QLabel("DEBUG")
+            self._debug_label.setStyleSheet(
+                "QLabel { color: white; background: #b33; padding: 1px 6px;"
+                " border-radius: 3px; font-weight: bold; }"
+            )
+            self.statusBar().addPermanentWidget(self._debug_label)
+            self.statusBar().showMessage(
+                f"Debug logging: {self._debug_log_path}", 10000
+            )
 
         self.properties_panel = PropertiesPanel(xml_editor=self.center_stage.xml_editor)
         self.properties_dock = QDockWidget("Properties", self)
@@ -2050,8 +2065,23 @@ class MainWindow(QMainWindow):
         manual_action = menu.addAction("Manual")
         manual_action.setShortcut("F1")
         manual_action.triggered.connect(self._show_manual)
+        logs_action = menu.addAction("Open Log Folder")
+        logs_action.triggered.connect(self._open_log_folder)
         about_action = menu.addAction("About")
         about_action.triggered.connect(lambda: show_about_dialog(self))
+
+    def _open_log_folder(self, checked=False, opener=None) -> None:
+        """Open the diagnostic log directory in the system file browser.
+        ``opener`` is an injectable seam so tests never spawn Explorer."""
+        from PySide6.QtCore import QUrl
+        from PySide6.QtGui import QDesktopServices
+
+        from pgtp_editor import debuglog
+
+        target = debuglog.log_dir()
+        target.mkdir(parents=True, exist_ok=True)
+        open_fn = opener if opener is not None else QDesktopServices.openUrl
+        open_fn(QUrl.fromLocalFile(str(target)))
 
     def _show_manual(self):
         # F1 / Help ▸ Manual toggles: if the Manual tab is already the one in
