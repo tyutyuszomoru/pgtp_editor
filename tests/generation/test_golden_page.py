@@ -25,10 +25,16 @@ import json
 import os
 from pathlib import Path
 
+import pytest
+
 from pgtp_editor.db.introspect import ColumnInfo, DatabaseSchema, TableInfo
 from pgtp_editor.generation import from_table
 
 _FIXTURES = Path(__file__).parent / "fixtures"
+
+# Fixture base names: each has a <name>.schema.json (input) + <name>.page.xml
+# (expected). Add a new (DDL, schema.json, page.xml) triple and list it here.
+_GOLDEN_FIXTURES = ["golden_gizmo", "golden_gizmo_tag"]
 
 
 def schema_from_json(path: Path) -> DatabaseSchema:
@@ -51,11 +57,13 @@ def schema_from_json(path: Path) -> DatabaseSchema:
     return DatabaseSchema(tables={table.name: table})
 
 
-def test_golden_gizmo_page_matches():
-    schema = schema_from_json(_FIXTURES / "golden_gizmo.schema.json")
-    generated = from_table.serialize(from_table.build_page(schema, "pr.gizmo"), indent=0)
+@pytest.mark.parametrize("name", _GOLDEN_FIXTURES)
+def test_golden_page_matches(name):
+    schema = schema_from_json(_FIXTURES / f"{name}.schema.json")
+    (table_key,) = schema.tables  # single-table fixture
+    generated = from_table.serialize(from_table.build_page(schema, table_key), indent=0)
 
-    golden_path = _FIXTURES / "golden_gizmo.page.xml"
+    golden_path = _FIXTURES / f"{name}.page.xml"
     if os.environ.get("UPDATE_GOLDEN") == "1":
         golden_path.write_text(generated + "\n", encoding="utf-8")
 

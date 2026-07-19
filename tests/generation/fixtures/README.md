@@ -11,12 +11,21 @@ A golden fixture is a **pair**:
 `tests/generation/test_golden_page.py` feeds the `.schema.json` to `build_page`,
 serializes at indent 0, and asserts equality with the `.page.xml`.
 
+## Fixtures
+
+| Base name | Shape it covers |
+|-----------|-----------------|
+| `golden_gizmo` | Single-column serial PK + one of each column type (varchar/text/numeric/boolean/date/timestamp) and a single FK. |
+| `golden_gizmo_tag` | **Composite PK** junction table (both key columns hidden in Edit/Insert/Compare/MultiEdit); key columns are also FKs. |
+
+The fixture set is parametrized in `test_golden_page.py` (`_GOLDEN_FIXTURES`).
+
 ## Current status
 
-`golden_gizmo.page.xml` is a **self-generated snapshot** — a regression lock on
-the generator's *own* output. It is **not yet a parity oracle**: it has never
-been compared against real PHP Generator output. It guards against accidental
-changes, nothing more.
+Both `.page.xml` files are **self-generated snapshots** — a regression lock on
+the generator's *own* output. They are **not yet parity oracles**: they have
+never been compared against real PHP Generator output. They guard against
+accidental changes, nothing more.
 
 ## Turning it into a real parity oracle (the capture)
 

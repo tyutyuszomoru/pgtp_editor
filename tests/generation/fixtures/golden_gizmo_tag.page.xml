@@ -1,0 +1,89 @@
+<Page type="table" tableName="pr.gizmo_tag" fileName="pr_gizmo_tag" caption="Gizmo Tag" shortCaption="Gizmo Tag" numberByDataSource="0" addSeparator="false" horizontalFilterCondition="" recordsPerPage="20" NavigatorPosition="3" insertAbilityMode="3" viewAbilityMode="3" editAbilityMode="2" multiEditAbility="3" includeAllFieldsForMultiEditByDefault="false" deleteAbilityMode="3" copyAbilityMode="3" contentEncoding="UTF-8" exportAllRecordsAvailable="31" exportSelectedRecordsAvailable="31" exportSingleRecordFromGridAvailable="0" exportRecordFromViewFormAvailable="31" printAvailable="13" useActionImages="true" showKeyColumnsImagesInGridHeader="false">
+	<BeforeGridText/>
+	<DetailedDescription/>
+	<ColumnPresentations>
+		<ColumnPresentation fieldName="gizmo_id" caption="Gizmo Id" selectedFilterOperators="1573119">
+			<ViewProperties type="text">
+				<Format type="number" decimalSeparator="."/>
+			</ViewProperties>
+			<EditProperties type="textBox" maxLength="0"/>
+		</ColumnPresentation>
+		<ColumnPresentation fieldName="tag_id" caption="Tag Id" selectedFilterOperators="1573119">
+			<ViewProperties type="text">
+				<Format type="number" decimalSeparator="."/>
+			</ViewProperties>
+			<EditProperties type="textBox" maxLength="0"/>
+		</ColumnPresentation>
+		<ColumnPresentation fieldName="note" caption="Note" selectedFilterOperators="1589247">
+			<ViewProperties type="text"/>
+			<EditProperties type="textBox" maxLength="0"/>
+		</ColumnPresentation>
+		<ColumnPresentation fieldName="added_on" caption="Added On" selectedFilterOperators="1573119">
+			<ViewProperties type="text"/>
+			<EditProperties type="date"/>
+		</ColumnPresentation>
+	</ColumnPresentations>
+	<Columns>
+		<List>
+			<Column fieldName="gizmo_id"/>
+			<Column fieldName="tag_id"/>
+			<Column fieldName="note"/>
+			<Column fieldName="added_on"/>
+		</List>
+		<View>
+			<Column fieldName="gizmo_id"/>
+			<Column fieldName="tag_id"/>
+			<Column fieldName="note"/>
+			<Column fieldName="added_on"/>
+		</View>
+		<Edit>
+			<Column fieldName="gizmo_id" visible="false"/>
+			<Column fieldName="tag_id" visible="false"/>
+			<Column fieldName="note"/>
+			<Column fieldName="added_on"/>
+		</Edit>
+		<Insert>
+			<Column fieldName="gizmo_id" visible="false"/>
+			<Column fieldName="tag_id" visible="false"/>
+			<Column fieldName="note"/>
+			<Column fieldName="added_on"/>
+		</Insert>
+		<QuickFilter>
+			<Column fieldName="gizmo_id"/>
+			<Column fieldName="tag_id"/>
+			<Column fieldName="note"/>
+			<Column fieldName="added_on"/>
+		</QuickFilter>
+		<FilterBuilder>
+			<Column fieldName="gizmo_id"/>
+			<Column fieldName="tag_id"/>
+			<Column fieldName="note"/>
+			<Column fieldName="added_on"/>
+		</FilterBuilder>
+		<Print>
+			<Column fieldName="gizmo_id"/>
+			<Column fieldName="tag_id"/>
+			<Column fieldName="note"/>
+			<Column fieldName="added_on"/>
+		</Print>
+		<Export>
+			<Column fieldName="gizmo_id"/>
+			<Column fieldName="tag_id"/>
+			<Column fieldName="note"/>
+			<Column fieldName="added_on"/>
+		</Export>
+		<Compare>
+			<Column fieldName="gizmo_id" visible="false"/>
+			<Column fieldName="tag_id" visible="false"/>
+			<Column fieldName="note"/>
+			<Column fieldName="added_on"/>
+		</Compare>
+		<MultiEdit>
+			<Column fieldName="gizmo_id" visible="false"/>
+			<Column fieldName="tag_id" visible="false"/>
+			<Column fieldName="note"/>
+			<Column fieldName="added_on"/>
+		</MultiEdit>
+	</Columns>
+	<Details/>
+</Page>
