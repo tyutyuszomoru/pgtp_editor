@@ -10,4 +10,4 @@ Result format: `PASS — <passed> passed, <skipped> skipped` or
 
 | Date | Feature | Test files added/extended | Targeted result | Full suite result | Commit |
 |------|---------|---------------------------|-----------------|-------------------|--------|
-| 2026-07-19 | (baseline — log established) | none (existing suite, 88 test files) | n/a | PASS — 1271 passed, 0 failed (128s) | 9399050 |
+| 2026-07-19 | Debug mode (--debug diagnostic logging) | tests/test_debuglog.py (26→33), tests/test_main.py (4→8), tests/ui/test_main_window_debug.py (6→7), tests/generation/test_runner.py (+1 seam test), tests/db/test_introspect.py (redaction, pre-existing) | PASS — 62 passed (targeted files) | PASS — 1315 passed, 32 skipped (30s) | d090b6f + (uncommitted tests) |

@@ -299,3 +299,87 @@ def test_teardown_uninstalls_tracer(clean_logging):
     assert debuglog.tracer_active()
     debuglog.teardown()
     assert not debuglog.tracer_active()
+
+
+def _flush_all():
+    for h in logging.getLogger().handlers:
+        h.flush()
+
+
+def test_setup_normal_mode_returns_none(clean_logging):
+    assert debuglog.setup(debug=False, dir_override=clean_logging) is None
+
+
+def test_errors_log_rotates_at_byte_limit(clean_logging):
+    """RotatingFileHandler must actually roll over past 1 MB (3 backups)."""
+    tmp_path = clean_logging
+    debuglog.setup(debug=False, dir_override=tmp_path)
+    log = logging.getLogger("pgtp_editor.test")
+    payload = "x" * 10_000
+    for _ in range(120):   # ~1.2 MB of WARNING lines
+        log.warning(payload)
+    _flush_all()
+    assert (tmp_path / "errors.log.1").is_file()
+    # The live file was reset by the rollover; it must not exceed the limit
+    # by more than a single record.
+    assert (tmp_path / "errors.log").stat().st_size <= 1_000_000 + 11_000
+
+
+def test_trace_lines_never_reach_errors_log(clean_logging):
+    """errors.log is WARNING+: tracer output must land only in the debug file."""
+    tmp_path = clean_logging
+    debuglog.setup(debug=True, dir_override=tmp_path)
+    logging.getLogger("pgtp_editor.test").warning("make-errors-log-exist")
+    from pgtp_editor.schema_learning.settings_index import attribute_kind
+
+    attribute_kind({"kind": "setting"})
+    _flush_all()
+    debug_text = _debug_text(tmp_path)
+    assert "> schema_learning.settings_index.attribute_kind" in debug_text
+    errors_text = (tmp_path / "errors.log").read_text("utf-8")
+    assert "TRACE" not in errors_text
+    assert "attribute_kind" not in errors_text
+
+
+def test_tracer_skips_excluded_module(clean_logging):
+    """model.line_index is on the exclusion list: no trace lines, not even
+    for a raise inside it."""
+    tmp_path = clean_logging
+    debuglog.setup(debug=True, dir_override=tmp_path)
+    from pgtp_editor.model import line_index
+
+    try:
+        line_index.node_at_line(None, 0)   # raises inside the excluded module
+    except Exception:
+        pass
+    _flush_all()
+    assert "line_index" not in _debug_text(tmp_path)
+
+
+def test_install_qt_handler_is_idempotent(clean_logging, qtbot):
+    from PySide6.QtCore import qWarning
+
+    tmp_path = clean_logging
+    debuglog.setup(debug=True, dir_override=tmp_path)
+    debuglog.install_qt_handler()
+    debuglog.install_qt_handler()   # second call: no-op, no double logging
+    qwarning_once = "qt-idempotence-probe"
+    qWarning(qwarning_once)
+    _flush_all()
+    assert _debug_text(tmp_path).count(qwarning_once) == 1
+
+
+def test_teardown_removes_qt_handler(clean_logging, qtbot):
+    from PySide6.QtCore import qWarning
+
+    tmp_path = clean_logging
+    first = tmp_path / "first"
+    second = tmp_path / "second"
+    debuglog.setup(debug=True, dir_override=first)
+    debuglog.install_qt_handler()
+    debuglog.teardown()
+    debuglog.setup(debug=True, dir_override=second)   # no install_qt_handler
+    qWarning("post-teardown-qt-msg")
+    _flush_all()
+    text = next(second.glob("debug_*.log")).read_text("utf-8")
+    assert "post-teardown-qt-msg" not in text
