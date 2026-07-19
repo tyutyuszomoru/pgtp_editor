@@ -109,3 +109,39 @@ def test_cursor_navigation_does_not_rescan_document(qtbot, monkeypatch):
         cursor.setPosition(offset)
         editor.setTextCursor(cursor)
     assert calls["n"] == after_edit
+
+
+def test_cursor_navigation_does_not_copy_document_text(qtbot):
+    """Companion regression: even with the spans cached,
+    _update_matching_tag_highlight used to call self.toPlainText() on every
+    cursor move -- a full copy of the document's text (several ms per
+    keystroke on a multi-MB document). The document text is now cached
+    alongside the spans (self._spans_text, same revision guard), so pure
+    cursor navigation must not call toPlainText() at all."""
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    text = "<Page>\n" + "\n".join(f"  <Row{i}>x</Row{i}>" for i in range(20)) + "\n</Page>"
+    editor.setPlainText(text)
+
+    calls = {"n": 0}
+    real_to_plain_text = editor.toPlainText
+
+    def counting_to_plain_text():
+        calls["n"] += 1
+        return real_to_plain_text()
+
+    # Instance-level patch AFTER load: only navigation-time calls count.
+    editor.toPlainText = counting_to_plain_text
+
+    for _ in range(5):
+        qtbot.keyClick(editor, Qt.Key.Key_Down)
+    for offset in (5, 10, 15, 20, 25):
+        cursor = editor.textCursor()
+        cursor.setPosition(offset)
+        editor.setTextCursor(cursor)
+
+    assert calls["n"] == 0, (
+        "cursor navigation called toPlainText() -- the matching-tag "
+        "highlight must reuse the cached document text, not re-copy the "
+        "whole document on every cursor move"
+    )
