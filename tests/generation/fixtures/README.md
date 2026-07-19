@@ -13,20 +13,34 @@ serializes at indent 0, and asserts equality with the `.page.xml`.
 
 ## Fixtures
 
-| Base name | Shape it covers |
-|-----------|-----------------|
-| `golden_gizmo` | Single-column serial PK + one of each column type (varchar/text/numeric/boolean/date/timestamp) and a single FK. |
-| `golden_gizmo_tag` | **Composite PK** junction table (both key columns hidden in Edit/Insert/Compare/MultiEdit); key columns are also FKs. |
-| `golden_memo` | **No PK, all-nullable, text-heavy** — nothing is hidden in any representation; varchar(n)/char(n) carry their length as maxLength while text/citext fall back to maxLength="0". |
+| Base name | Kind | Shape it covers |
+|-----------|------|-----------------|
+| `golden_newtable_1` | **REAL oracle** | Clean no-edits capture from PHP Generator: serial PK + integer + bare varchar + bare numeric + boolean. The generator reproduces it exactly. |
+| `golden_gizmo` | snapshot | Single-column serial PK + one of each column type (varchar/text/numeric/boolean/date/timestamp) and a single FK. |
+| `golden_gizmo_tag` | snapshot | **Composite PK** junction table (both key columns hidden in Edit/Insert/Compare/MultiEdit); key columns are also FKs. |
+| `golden_memo` | snapshot | **No PK, all-nullable, text-heavy** — nothing hidden in any representation; varchar(n)/char(n) carry their length as maxLength while text/citext fall back to maxLength="0". |
 
-The fixture set is parametrized in `test_golden_page.py` (`_GOLDEN_FIXTURES`).
+The fixture set is parametrized in `test_golden_page.py`; real oracles are listed
+in `_REAL_ORACLES` and are never overwritten by `UPDATE_GOLDEN`.
 
 ## Current status
 
-Both `.page.xml` files are **self-generated snapshots** — a regression lock on
-the generator's *own* output. They are **not yet parity oracles**: they have
-never been compared against real PHP Generator output. They guard against
-accidental changes, nothing more.
+`golden_newtable_1` is a **real parity oracle** — the verbatim `<Page>` PHP
+Generator emitted for a no-edits table add, which the generator now reproduces
+exactly (comparison is whitespace-normalized via `test_golden_page._normalize`,
+so phpgen's space indentation and our tab indentation compare equal while
+attribute order is preserved). Calibrating against it fixed several defaults:
+`editAbilityMode=3`, `deleteSelectedAbilityMode`/`highlightRowOnMouseHover`/
+`condensedTable`, per-column `showColumnFilter="false"` (all but boolean) and
+`canSetNull="true"` (nullable), integer `thousandSeparator` / numeric
+`numberAfterDecimal` Format, boolean `1572867` + `displayType="image"`, and the
+bare-table-name `fileName`.
+
+The other three `.page.xml` files remain **self-generated snapshots** — a
+regression lock on the generator's own output, not independently verified. They
+inherit the calibrated defaults but have not themselves been compared against
+real PHP Generator output. Capturing real oracles for a composite-PK table and a
+no-PK/date/timestamp table would be the next parity wins.
 
 ## Turning it into a real parity oracle (the capture)
 

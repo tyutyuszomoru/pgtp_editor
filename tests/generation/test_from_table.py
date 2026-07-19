@@ -45,7 +45,7 @@ def test_build_page_identity_and_defaults():
     assert page.tag == "Page"
     assert page.get("type") == "table"
     assert page.get("tableName") == "pr.equipment"
-    assert page.get("fileName") == "pr_equipment"
+    assert page.get("fileName") == "equipment"  # bare table name, not schema-qualified
     assert page.get("caption") == "Equipment"
     assert page.get("shortCaption") == "Equipment"
     assert page.get("recordsPerPage") == "20"
@@ -214,7 +214,7 @@ def test_build_page_for_view_kind():
     schema = DatabaseSchema({v.name: v})
     page = from_table.build_page(schema, "pr.some_view")
     assert page.get("tableName") == "pr.some_view"
-    assert page.get("fileName") == "pr_some_view"
+    assert page.get("fileName") == "some_view"
     field_names = [cp.get("fieldName")
                    for cp in page.find("ColumnPresentations")]
     assert field_names == ["vid", "vname"]

@@ -1,45 +1,52 @@
 # tests/generation/test_golden_page.py
 """Golden-fixture parity test for build_page.
 
-The fixture is a pair:
-  * golden_gizmo.schema.json  — the generator INPUT (a DatabaseSchema), authored
-    to match golden_gizmo.ddl.sql.
-  * golden_gizmo.page.xml     — the EXPECTED <Page> serialization.
+Each fixture is a pair:
+  * <name>.schema.json  — the generator INPUT (a DatabaseSchema), authored to
+    match <name>.ddl.sql.
+  * <name>.page.xml      — the EXPECTED <Page>.
 
-`build_page(schema)` serialized at indent 0 must equal the .xml byte-for-byte
-(modulo trailing newline). To regenerate the .xml after an intended change to the
-generator, run with UPDATE_GOLDEN=1:
+Comparison is whitespace-normalized: both the generated element and the parsed
+.page.xml are run through `from_table.serialize`, so PHP Generator's space
+indentation and our tab indentation compare equal while attribute order (which
+IS parity-significant) is preserved.
 
-    $env:UPDATE_GOLDEN='1'; python -m pytest tests/generation/test_golden_page.py -q
+Fixtures are of two kinds:
+  * REAL oracles (`_REAL_ORACLES`): the verbatim <Page> PHP Generator produced
+    for a clean, no-edits table add. Ground truth — the generator must reproduce
+    them. UPDATE_GOLDEN must NOT overwrite these.
+  * self-generated snapshots: regression locks on our own output, pending a real
+    capture (see fixtures/README.md). UPDATE_GOLDEN regenerates these:
 
-PROVENANCE: golden_gizmo.page.xml is currently a SELF-GENERATED snapshot (a
-regression lock on the generator's own output), NOT yet a true parity oracle.
-It becomes a parity oracle once it is replaced by the <Page> block that PHP
-Generator itself emits for a freshly-added pr.gizmo table (see the capture
-procedure in golden_gizmo.ddl.sql / fixtures/README.md). When that real output
-is dropped in, this test will fail on every attribute the generator does not yet
-match — that failure list is the parity to-do list; calibrate type_map.py until
-it is green again.
+        UPDATE_GOLDEN=1 python -m pytest tests/generation/test_golden_page.py -q
 """
 import json
 import os
 from pathlib import Path
 
 import pytest
+from lxml import etree
 
 from pgtp_editor.db.introspect import ColumnInfo, DatabaseSchema, TableInfo
 from pgtp_editor.generation import from_table
 
 _FIXTURES = Path(__file__).parent / "fixtures"
 
-# Fixture base names: each has a <name>.schema.json (input) + <name>.page.xml
-# (expected). Add a new (DDL, schema.json, page.xml) triple and list it here.
-_GOLDEN_FIXTURES = ["golden_gizmo", "golden_gizmo_tag", "golden_memo"]
+# Real PHP Generator clean-defaults captures — ground-truth parity oracles.
+_REAL_ORACLES = {"golden_newtable_1"}
+
+# All fixture base names (each has <name>.schema.json + <name>.page.xml).
+_GOLDEN_FIXTURES = [
+    "golden_newtable_1",
+    "golden_gizmo",
+    "golden_gizmo_tag",
+    "golden_memo",
+]
 
 
 def schema_from_json(path: Path) -> DatabaseSchema:
     """Load a one-table DatabaseSchema from a fixture JSON (see the format in
-    golden_gizmo.schema.json). Unknown keys like "__doc__" are ignored."""
+    golden_newtable_1.schema.json). Unknown keys like "__doc__" are ignored."""
     data = json.loads(path.read_text(encoding="utf-8"))
     columns = [
         ColumnInfo(
@@ -57,6 +64,13 @@ def schema_from_json(path: Path) -> DatabaseSchema:
     return DatabaseSchema(tables={table.name: table})
 
 
+def _normalize(xml_text: str) -> str:
+    """Re-serialize an XML fragment through the generator's serializer so
+    indentation is normalized while attribute order is preserved."""
+    element = etree.fromstring(xml_text.encode("utf-8"))
+    return from_table.serialize(element, indent=0)
+
+
 @pytest.mark.parametrize("name", _GOLDEN_FIXTURES)
 def test_golden_page_matches(name):
     schema = schema_from_json(_FIXTURES / f"{name}.schema.json")
@@ -64,8 +78,8 @@ def test_golden_page_matches(name):
     generated = from_table.serialize(from_table.build_page(schema, table_key), indent=0)
 
     golden_path = _FIXTURES / f"{name}.page.xml"
-    if os.environ.get("UPDATE_GOLDEN") == "1":
+    if os.environ.get("UPDATE_GOLDEN") == "1" and name not in _REAL_ORACLES:
         golden_path.write_text(generated + "\n", encoding="utf-8")
 
-    expected = golden_path.read_text(encoding="utf-8").rstrip("\n")
+    expected = _normalize(golden_path.read_text(encoding="utf-8"))
     assert generated == expected

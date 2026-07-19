@@ -1,42 +1,42 @@
-<Page type="table" tableName="pr.gizmo" numberByDataSource="0" fileName="pr_gizmo" caption="Gizmo" shortCaption="Gizmo" addSeparator="false" horizontalFilterCondition="" recordsPerPage="20" NavigatorPosition="3" insertAbilityMode="3" viewAbilityMode="3" editAbilityMode="2" multiEditAbility="3" includeAllFieldsForMultiEditByDefault="false" deleteAbilityMode="3" copyAbilityMode="3" contentEncoding="UTF-8" exportAllRecordsAvailable="31" exportSelectedRecordsAvailable="31" exportSingleRecordFromGridAvailable="0" exportRecordFromViewFormAvailable="31" printAvailable="13" useActionImages="true" showKeyColumnsImagesInGridHeader="false">
+<Page type="table" tableName="pr.gizmo" numberByDataSource="0" fileName="gizmo" caption="Gizmo" shortCaption="Gizmo" addSeparator="false" horizontalFilterCondition="" recordsPerPage="20" NavigatorPosition="3" insertAbilityMode="3" viewAbilityMode="3" editAbilityMode="3" multiEditAbility="3" includeAllFieldsForMultiEditByDefault="false" deleteAbilityMode="3" copyAbilityMode="3" deleteSelectedAbilityMode="3" contentEncoding="UTF-8" exportAllRecordsAvailable="31" exportSelectedRecordsAvailable="31" exportSingleRecordFromGridAvailable="0" exportRecordFromViewFormAvailable="31" printAvailable="13" highlightRowOnMouseHover="true" useActionImages="true" showKeyColumnsImagesInGridHeader="false" condensedTable="true">
 	<BeforeGridText/>
 	<DetailedDescription/>
 	<ColumnPresentations>
-		<ColumnPresentation fieldName="id" caption="Id" selectedFilterOperators="1573119">
+		<ColumnPresentation fieldName="id" caption="Id" showColumnFilter="false" selectedFilterOperators="1573119">
 			<ViewProperties type="text">
-				<Format type="number" decimalSeparator="."/>
+				<Format type="number" thousandSeparator=","/>
 			</ViewProperties>
 			<EditProperties type="textBox" maxLength="0"/>
 		</ColumnPresentation>
-		<ColumnPresentation fieldName="name" caption="Name" selectedFilterOperators="1589247">
+		<ColumnPresentation fieldName="name" caption="Name" showColumnFilter="false" selectedFilterOperators="1589247">
 			<ViewProperties type="text"/>
 			<EditProperties type="textBox" maxLength="60"/>
 		</ColumnPresentation>
-		<ColumnPresentation fieldName="description" caption="Description" selectedFilterOperators="1589247">
+		<ColumnPresentation fieldName="description" caption="Description" showColumnFilter="false" canSetNull="true" selectedFilterOperators="1589247">
 			<ViewProperties type="text"/>
 			<EditProperties type="textBox" maxLength="0"/>
 		</ColumnPresentation>
-		<ColumnPresentation fieldName="qty" caption="Qty" selectedFilterOperators="1573119">
+		<ColumnPresentation fieldName="qty" caption="Qty" showColumnFilter="false" canSetNull="true" selectedFilterOperators="1573119">
 			<ViewProperties type="text">
-				<Format type="number" decimalSeparator="."/>
+				<Format type="number" numberAfterDecimal="2" decimalSeparator="." thousandSeparator=","/>
 			</ViewProperties>
 			<EditProperties type="textBox" maxLength="0"/>
 		</ColumnPresentation>
-		<ColumnPresentation fieldName="is_active" caption="Is Active" selectedFilterOperators="1573119">
-			<ViewProperties type="checkBox"/>
+		<ColumnPresentation fieldName="is_active" caption="Is Active" canSetNull="true" selectedFilterOperators="1572867">
+			<ViewProperties type="checkBox" displayType="image"/>
 			<EditProperties type="checkBox"/>
 		</ColumnPresentation>
-		<ColumnPresentation fieldName="created_on" caption="Created On" selectedFilterOperators="1573119">
+		<ColumnPresentation fieldName="created_on" caption="Created On" showColumnFilter="false" canSetNull="true" selectedFilterOperators="1573119">
 			<ViewProperties type="text"/>
 			<EditProperties type="date"/>
 		</ColumnPresentation>
-		<ColumnPresentation fieldName="updated_at" caption="Updated At" selectedFilterOperators="1573119">
+		<ColumnPresentation fieldName="updated_at" caption="Updated At" showColumnFilter="false" canSetNull="true" selectedFilterOperators="1573119">
 			<ViewProperties type="text"/>
 			<EditProperties type="date"/>
 		</ColumnPresentation>
-		<ColumnPresentation fieldName="category_id" caption="Category Id" selectedFilterOperators="1573119">
+		<ColumnPresentation fieldName="category_id" caption="Category Id" showColumnFilter="false" canSetNull="true" selectedFilterOperators="1573119">
 			<ViewProperties type="text">
-				<Format type="number" decimalSeparator="."/>
+				<Format type="number" thousandSeparator=","/>
 			</ViewProperties>
 			<EditProperties type="textBox" maxLength="0"/>
 		</ColumnPresentation>

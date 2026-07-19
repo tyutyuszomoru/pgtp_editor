@@ -13,7 +13,7 @@ from pgtp_editor.ui.main_window import MainWindow
 _RAW_XML = (
     '<Project>\n'
     '  <Presentation><Pages>\n'
-    '    <Page fileName="pr_existing" tableName="pr.existing">\n'
+    '    <Page fileName="existing" tableName="pr.existing">\n'
     '      <ColumnPresentations/>\n'
     '    </Page>\n'
     '  </Pages></Presentation>\n'
@@ -74,9 +74,9 @@ def test_create_page_duplicate_prompts_and_dedupes_filename(qtbot):
 
     text = window.center_stage.xml_editor.toPlainText()
     assert seen == ["pr.existing"]
-    # Original + de-duplicated new page.
-    assert 'fileName="pr_existing"' in text
-    assert 'fileName="pr_existing_2"' in text
+    # Original + de-duplicated new page (fileName is the bare table name).
+    assert 'fileName="existing"' in text
+    assert 'fileName="existing_2"' in text
 
 
 def test_create_page_duplicate_cancel_leaves_buffer_unchanged(qtbot):
@@ -161,7 +161,8 @@ def test_create_page_filename_collision_only_prompts(qtbot):
     raw = (
         "<Project>\n"
         "  <Presentation><Pages>\n"
-        '    <Page fileName="pr_equipment" tableName="pr.other">\n'
+        # Same derived fileName ("equipment") but a DIFFERENT tableName.
+        '    <Page fileName="equipment" tableName="pr.other">\n'
         "      <ColumnPresentations/>\n"
         "    </Page>\n"
         "  </Pages></Presentation>\n"
@@ -175,7 +176,7 @@ def test_create_page_filename_collision_only_prompts(qtbot):
 
     text = window.center_stage.xml_editor.toPlainText()
     assert seen == ["pr.equipment"]  # fileName collision alone prompts
-    assert 'fileName="pr_equipment_2"' in text
+    assert 'fileName="equipment_2"' in text
     assert 'tableName="pr.equipment"' in text
 
 

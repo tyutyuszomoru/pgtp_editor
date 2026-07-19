@@ -18,14 +18,28 @@ def test_maxlength_of_varchar_and_char():
     assert type_map.maxlength_of("numeric(10,2)") == "0"  # not a char type
 
 
-def test_numeric_column_spec():
+def test_integer_column_spec():
     spec = type_map.column_spec("id", "integer")
     assert spec.selected_filter_operators == type_map.FILTER_OPERATORS_NUMERIC
+    assert spec.emit_show_column_filter_false is True
     assert spec.view_type == "text"
     assert spec.format_type == "number"
-    assert spec.format_extra == {"decimalSeparator": "."}
+    assert spec.format_extra == {"thousandSeparator": ","}
     assert spec.edit_type == "textBox"
     assert spec.edit_extra == {"maxLength": "0"}
+
+
+def test_decimal_column_spec_uses_scale_or_default():
+    scaled = type_map.column_spec("qty", "numeric(10,2)")
+    assert scaled.format_type == "number"
+    assert scaled.format_extra == {
+        "numberAfterDecimal": "2",
+        "decimalSeparator": ".",
+        "thousandSeparator": ",",
+    }
+    # bare numeric -> default 4 fractional digits (matches real phpgen output)
+    bare = type_map.column_spec("amount", "numeric")
+    assert bare.format_extra["numberAfterDecimal"] == "4"
 
 
 def test_string_column_spec_extracts_maxlength():
@@ -41,9 +55,13 @@ def test_string_column_spec_extracts_maxlength():
 def test_boolean_column_spec():
     spec = type_map.column_spec("is_active", "boolean")
     assert spec.view_type == "checkBox"
+    assert spec.view_extra == {"displayType": "image"}
     assert spec.edit_type == "checkBox"
     assert spec.format_type is None
     assert spec.edit_extra == {}
+    # boolean keeps its column filter and uses a distinct filter-operator mask
+    assert spec.emit_show_column_filter_false is False
+    assert spec.selected_filter_operators == type_map.FILTER_OPERATORS_BOOLEAN
 
 
 def test_datetime_column_spec():

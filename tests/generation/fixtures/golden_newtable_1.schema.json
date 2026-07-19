@@ -1,0 +1,12 @@
+{
+  "__doc__": "Generator INPUT for the REAL parity oracle golden_newtable_1.page.xml. data_type values are what pg_catalog.format_type reports (serial -> integer with a nextval default; bare varchar -> 'character varying'; bare numeric -> 'numeric'). Keep in sync with golden_newtable_1.ddl.sql.",
+  "table": "public.newtable_1",
+  "kind": "table",
+  "columns": [
+    {"name": "serial",  "data_type": "integer",           "is_pk": true,  "is_fk": false, "is_nullable": false, "default": "nextval('newtable_1_serial_seq'::regclass)"},
+    {"name": "integer", "data_type": "integer",           "is_pk": false, "is_fk": false, "is_nullable": true,  "default": null},
+    {"name": "comment", "data_type": "character varying", "is_pk": false, "is_fk": false, "is_nullable": true,  "default": null},
+    {"name": "numeric", "data_type": "numeric",           "is_pk": false, "is_fk": false, "is_nullable": true,  "default": null},
+    {"name": "boolean", "data_type": "boolean",           "is_pk": false, "is_fk": false, "is_nullable": true,  "default": null}
+  ]
+}

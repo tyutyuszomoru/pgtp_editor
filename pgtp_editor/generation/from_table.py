@@ -27,8 +27,11 @@ def _short_name(table_key: str) -> str:
 
 
 def _file_name(table_key: str) -> str:
-    """``schema.table`` -> ``schema_table`` (PHP Generator's derived fileName)."""
-    return table_key.replace(".", "_")
+    """PHP Generator's derived fileName is the BARE table name (last segment),
+    not schema-qualified: ``public.newtable_1`` -> ``newtable_1`` (confirmed by
+    the golden_newtable_1 capture — the generated file is ``newtable_1.php`` even
+    though the page class is ``public_newtable_1Page``)."""
+    return table_key.split(".")[-1]
 
 
 def _require_table(schema: DatabaseSchema, table_key: str) -> TableInfo:
@@ -42,15 +45,23 @@ def _require_table(schema: DatabaseSchema, table_key: str) -> TableInfo:
 
 # -- column presentations & representation lists ----------------------------
 
-def _append_column_presentation(parent: etree._Element, name: str, data_type: str) -> None:
-    spec = type_map.column_spec(name, data_type)
+def _append_column_presentation(parent: etree._Element, col) -> None:
+    spec = type_map.column_spec(col.name, col.data_type)
     cp = etree.SubElement(parent, "ColumnPresentation")
-    cp.set("fieldName", name)
+    # Attribute order matches real phpgen output: fieldName, caption,
+    # [showColumnFilter], [canSetNull], selectedFilterOperators.
+    cp.set("fieldName", col.name)
     cp.set("caption", spec.caption)
+    if spec.emit_show_column_filter_false:
+        cp.set("showColumnFilter", "false")
+    if col.is_nullable:
+        cp.set("canSetNull", "true")
     cp.set("selectedFilterOperators", spec.selected_filter_operators)
 
     view = etree.SubElement(cp, "ViewProperties")
     view.set("type", spec.view_type)
+    for key, value in spec.view_extra.items():
+        view.set(key, value)
     if spec.format_type is not None:
         fmt = etree.SubElement(view, "Format")
         fmt.set("type", spec.format_type)
@@ -95,7 +106,7 @@ def _build_page_element(table: TableInfo, tag: str, *, file_name: str) -> etree.
     etree.SubElement(page, "DetailedDescription")
     cps = etree.SubElement(page, "ColumnPresentations")
     for col in table.columns:
-        _append_column_presentation(cps, col.name, col.data_type)
+        _append_column_presentation(cps, col)
     _build_columns_block(page, table)
     etree.SubElement(page, "Details")
     return page
