@@ -17,6 +17,7 @@ serializes at indent 0, and asserts equality with the `.page.xml`.
 |-----------|-----------------|
 | `golden_gizmo` | Single-column serial PK + one of each column type (varchar/text/numeric/boolean/date/timestamp) and a single FK. |
 | `golden_gizmo_tag` | **Composite PK** junction table (both key columns hidden in Edit/Insert/Compare/MultiEdit); key columns are also FKs. |
+| `golden_memo` | **No PK, all-nullable, text-heavy** — nothing is hidden in any representation; varchar(n)/char(n) carry their length as maxLength while text/citext fall back to maxLength="0". |
 
 The fixture set is parametrized in `test_golden_page.py` (`_GOLDEN_FIXTURES`).
 

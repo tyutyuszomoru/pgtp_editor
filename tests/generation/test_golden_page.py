@@ -34,7 +34,7 @@ _FIXTURES = Path(__file__).parent / "fixtures"
 
 # Fixture base names: each has a <name>.schema.json (input) + <name>.page.xml
 # (expected). Add a new (DDL, schema.json, page.xml) triple and list it here.
-_GOLDEN_FIXTURES = ["golden_gizmo", "golden_gizmo_tag"]
+_GOLDEN_FIXTURES = ["golden_gizmo", "golden_gizmo_tag", "golden_memo"]
 
 
 def schema_from_json(path: Path) -> DatabaseSchema:

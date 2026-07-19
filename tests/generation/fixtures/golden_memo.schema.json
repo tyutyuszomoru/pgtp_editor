@@ -1,0 +1,15 @@
+{
+  "__doc__": "Generator INPUT for the all-nullable, no-PK, text-heavy golden fixture. Authored to match golden_memo.ddl.sql exactly. No column is a PK or FK; every column is nullable. Keep in sync with the DDL.",
+  "table": "pr.memo",
+  "kind": "table",
+  "columns": [
+    {"name": "title",        "data_type": "character varying(200)", "is_pk": false, "is_fk": false, "is_nullable": true, "default": null},
+    {"name": "body",         "data_type": "text",                   "is_pk": false, "is_fk": false, "is_nullable": true, "default": null},
+    {"name": "summary",      "data_type": "character varying(500)", "is_pk": false, "is_fk": false, "is_nullable": true, "default": null},
+    {"name": "tags",         "data_type": "character varying(100)", "is_pk": false, "is_fk": false, "is_nullable": true, "default": null},
+    {"name": "author_name",  "data_type": "character varying(120)", "is_pk": false, "is_fk": false, "is_nullable": true, "default": null},
+    {"name": "external_ref", "data_type": "character(12)",          "is_pk": false, "is_fk": false, "is_nullable": true, "default": null},
+    {"name": "slug",         "data_type": "citext",                 "is_pk": false, "is_fk": false, "is_nullable": true, "default": null},
+    {"name": "comments",     "data_type": "text",                   "is_pk": false, "is_fk": false, "is_nullable": true, "default": null}
+  ]
+}
