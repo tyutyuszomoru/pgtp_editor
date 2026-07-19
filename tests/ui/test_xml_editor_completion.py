@@ -76,6 +76,30 @@ def test_popup_escape_emits_cancelled(qtbot):
         QTest.keyClick(popup, Qt.Key.Key_Escape)
 
 
+def test_popup_mouse_click_chooses_row(qtbot):
+    # Spec: "Mouse click on a row -> same as choosing it."
+    popup = _popup(qtbot, [("alpha", "alpha"), ("beta", "beta")])
+    popup.show()
+    rect = popup.visualItemRect(popup.item(1))
+    with qtbot.waitSignal(popup.chosen, timeout=500) as sig:
+        QTest.mouseClick(
+            popup.viewport(), Qt.MouseButton.LeftButton, pos=rect.center()
+        )
+    assert sig.args == ["beta"]
+
+
+def test_popup_empty_filter_result_enter_noop_escape_closes(qtbot):
+    # Spec: an empty filtered list is allowed — nothing selectable, Esc closes.
+    popup = _popup(qtbot, [("alpha", "alpha"), ("beta", "beta")])
+    popup.append_filter("zz")
+    assert popup.visible_keys() == []
+    assert popup.current_key() is None
+    with qtbot.assertNotEmitted(popup.chosen):
+        QTest.keyClick(popup, Qt.Key.Key_Return)
+    with qtbot.waitSignal(popup.cancelled, timeout=500):
+        QTest.keyClick(popup, Qt.Key.Key_Escape)
+
+
 def _model_attrs(tag_chain, names):
     model = Model()
     model.paths[tag_chain] = {
@@ -146,6 +170,36 @@ def test_ctrl_space_no_popup_outside_tag(qtbot):
     editor = _editor_in_tag(qtbot, text, model, "body")
     QTest.keyClick(editor, Qt.Key.Key_Space, Qt.KeyboardModifier.ControlModifier)
     assert editor._completion_popup is None or not editor._completion_popup.isVisible()
+
+
+def test_ctrl_space_no_popup_when_all_attributes_present(qtbot):
+    # Every known attribute already on the tag -> silent no-op, no buffer edit.
+    text = '<Page editFormMode="1"></Page>'
+    model = _model_attrs("Page", ["editFormMode"])
+    editor = _editor_in_tag(qtbot, text, model, "Page")
+    QTest.keyClick(editor, Qt.Key.Key_Space, Qt.KeyboardModifier.ControlModifier)
+    assert editor._completion_popup is None or not editor._completion_popup.isVisible()
+    assert editor.toPlainText() == text
+
+
+def test_ctrl_space_no_popup_in_closing_tag(qtbot):
+    text = "<Page>body</Page>"
+    model = _model_attrs("Page", ["pageMode"])
+    editor = _editor_in_tag(qtbot, text, model, "/Page")  # caret on the '/'
+    QTest.keyClick(editor, Qt.Key.Key_Space, Qt.KeyboardModifier.ControlModifier)
+    assert editor._completion_popup is None or not editor._completion_popup.isVisible()
+
+
+def test_attribute_escape_leaves_buffer_unchanged(qtbot):
+    text = '<Page editFormMode="1"></Page>'
+    model = _model_attrs("Page", ["pageMode"])
+    editor = _editor_in_tag(qtbot, text, model, "Page")
+    editor._show_attribute_completions()
+    popup = editor._completion_popup
+    assert popup.isVisible()
+    QTest.keyClick(popup, Qt.Key.Key_Escape)
+    assert editor.toPlainText() == text
+    assert not popup.isVisible()
 
 
 def test_choosing_attribute_inserts_name_equals_quotes(qtbot):
@@ -242,6 +296,39 @@ def test_value_escape_leaves_empty_value(qtbot):
     editor._completion_popup.cancelled.emit()
     assert editor.toPlainText() == '<Page editAbilityMode=""></Page>'
     assert not editor._completion_popup.isVisible()
+
+
+def test_sequential_completions_rewire_without_double_insert(qtbot):
+    # The single shared popup is rewired per stage; completing a second
+    # attribute must not re-fire the first stage's stale connection (which
+    # would splice the fragment twice).
+    text = "<Page></Page>"
+    model = _model_attrs("Page", ["alpha", "beta"])
+    editor = _editor_in_tag(qtbot, text, model, "Page")
+    editor._show_attribute_completions()
+    editor._completion_popup.chosen.emit("alpha")
+    assert editor.toPlainText() == '<Page alpha=""></Page>'
+    # Caret sits between alpha's quotes — still inside the opening tag.
+    editor._show_attribute_completions()
+    assert editor._completion_popup.visible_keys() == ["beta"]  # alpha now present
+    editor._completion_popup.chosen.emit("beta")
+    assert editor.toPlainText() == '<Page alpha="" beta=""></Page>'
+
+
+def test_chained_insert_undo_granularity(qtbot):
+    # Attribute splice and value insert are each one undoable edit: first undo
+    # strips the value (leaving name=""), second undo restores the original.
+    text = "<Page></Page>"
+    model = _model_valued("Page", "editAbilityMode", ["0", "2"])
+    editor = _editor_in_tag(qtbot, text, model, "Page")
+    editor._show_attribute_completions()
+    editor._completion_popup.chosen.emit("editAbilityMode")
+    editor._completion_popup.chosen.emit("2")
+    assert editor.toPlainText() == '<Page editAbilityMode="2"></Page>'
+    editor.undo()
+    assert editor.toPlainText() == '<Page editAbilityMode=""></Page>'
+    editor.undo()
+    assert editor.toPlainText() == text
 
 
 def test_end_to_end_ctrl_space_filter_tab_value(qtbot):
