@@ -597,6 +597,19 @@ class XmlEditor(QPlainTextEdit):
         # cursor move (see _highlight_current_line) so it does not persist and
         # accumulate across independent navigations.
         self._oneshot_selection: QTextEdit.ExtraSelection | None = None
+        # Cached scan() result and the document text it was scanned from,
+        # refreshed on every textChanged (see _rescan_structure) so that
+        # per-keystroke cursor-move handlers (e.g.
+        # _update_matching_tag_highlight) don't have to re-scan -- or even
+        # re-copy (toPlainText() copies the whole multi-MB document) -- the
+        # document on every arrow key/click. _spans_revision records the
+        # document revision the cache was built from, so a consumer can
+        # detect staleness (see _update_matching_tag_highlight) if signal
+        # order ever changes -- textChanged is expected to fire before
+        # cursorPositionChanged, but that ordering is not contractual.
+        self._spans: list[xml_structure.TagSpan] = []
+        self._spans_text: str = ""
+        self._spans_revision: int | None = None
         self.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
         self.blockCountChanged.connect(self._update_gutter_width)
         self.updateRequest.connect(self._update_gutter_on_scroll)
@@ -692,7 +705,9 @@ class XmlEditor(QPlainTextEdit):
             self.apply_theme_colors(light)
 
     def _rescan_structure(self) -> None:
-        self._spans = xml_structure.scan(self.toPlainText())
+        self._spans_text = self.toPlainText()
+        self._spans = xml_structure.scan(self._spans_text)
+        self._spans_revision = self.document().revision()
 
     def _foldable_region_starting_at(self, block):
         """Return (first_contained_block_number, last_contained_block_number)
@@ -900,9 +915,20 @@ class XmlEditor(QPlainTextEdit):
         return cursor
 
     def _update_matching_tag_highlight(self) -> None:
-        text = self.toPlainText()
+        # Use the cached spans (kept fresh by _rescan_structure on every
+        # textChanged) instead of rescanning the whole document on every
+        # cursor move -- see the _spans/_spans_revision comment in __init__.
+        # textChanged is expected to fire before cursorPositionChanged, but
+        # that ordering isn't contractual, so defensively rescan if the
+        # cache is stale relative to the document's current revision.
+        if self.document().revision() != self._spans_revision:
+            self._rescan_structure()
+        # By the revision invariant just enforced, _spans_text is identical
+        # to what toPlainText() would return -- but without re-copying the
+        # whole document on every cursor move.
+        text = self._spans_text
         position = self.textCursor().position()
-        span = xml_structure.enclosing_tag_span(text, position)
+        span = xml_structure.enclosing_tag_span_from_spans(self._spans, position)
         self._matching_tag_selections = []
         if span is None or span.self_closing:
             self._refresh_extra_selections()

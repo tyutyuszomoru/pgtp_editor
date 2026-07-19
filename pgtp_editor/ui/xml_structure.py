@@ -129,9 +129,11 @@ def nesting_depth_at(text: str, position: int) -> int:
     return innermost.depth
 
 
-def enclosing_tag_span(text: str, position: int) -> TagSpan | None:
-    """Return the innermost TagSpan that structurally contains `position`
-    -- the block Ctrl+Shift+B would select if the cursor were at `position`.
+def enclosing_tag_span_from_spans(spans: list[TagSpan], position: int) -> TagSpan | None:
+    """Same selection logic as `enclosing_tag_span`, but operating over an
+    already-computed `scan()` result to avoid a redundant re-scan. Callers
+    that keep a cached spans list (e.g. XmlEditor's `_spans`) should use this
+    directly instead of `enclosing_tag_span`.
 
     A span is a candidate if `position` falls within its full extent:
       * `[open_start, close_end)` for a span with a known close_end
@@ -144,17 +146,28 @@ def enclosing_tag_span(text: str, position: int) -> TagSpan | None:
     Returns None when `position` is outside every element.
     """
     best: TagSpan | None = None
-    for span in scan(text):
+    for span in spans:
         if span.close_end is not None:
             contains = span.open_start <= position < span.close_end
         else:
-            # The `<= len(text)` half is documentary only: a cursor position
-            # can never exceed len(text), so it is always true. It records the
-            # intent that an unclosed element extends to end-of-document.
-            contains = span.open_start <= position <= len(text)
+            # No upper bound needed here: a cursor position can never exceed
+            # len(text), so an unclosed element (true extent unknown) always
+            # extends to (at least) end-of-document from `open_start` on.
+            contains = span.open_start <= position
         if contains and (best is None or span.depth > best.depth):
             best = span
     return best
+
+
+def enclosing_tag_span(text: str, position: int) -> TagSpan | None:
+    """Return the innermost TagSpan that structurally contains `position`
+    -- the block Ctrl+Shift+B would select if the cursor were at `position`.
+
+    Thin wrapper around `enclosing_tag_span_from_spans` for callers that
+    don't have a cached spans list. See that function for the selection
+    semantics.
+    """
+    return enclosing_tag_span_from_spans(scan(text), position)
 
 
 def parent_tag_span(spans: list[TagSpan], span: TagSpan) -> TagSpan | None:
