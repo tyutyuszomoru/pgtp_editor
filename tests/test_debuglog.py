@@ -213,6 +213,12 @@ def test_exclusion_predicate():
         "pgtp_editor.ui.xml_editor", "_EditorGutter.paintEvent"
     )
     assert debuglog.is_excluded("pgtp_editor.model.line_index", "anything_at_all")
+    assert debuglog.is_excluded(
+        "pgtp_editor.ui.xml_editor", "XmlSyntaxHighlighter.highlightBlock"
+    )
+    assert debuglog.is_excluded(
+        "pgtp_editor.ui.xml_editor", "XmlEditor._update_matching_tag_highlight"
+    )
     assert not debuglog.is_excluded(
         "pgtp_editor.ui.main_window", "MainWindow.open_project_file"
     )
@@ -255,6 +261,30 @@ def test_tracer_logs_raises(clean_logging):
     for h in logging.getLogger().handlers:
         h.flush()
     assert "! ui.xml_editor.insert_attribute" in _debug_text(tmp_path)
+
+
+def test_tracer_depth_recovers_after_exception(clean_logging):
+    """PY_UNWIND must decrement depth: a propagated exception must not
+    permanently indent all subsequent trace lines on that thread."""
+    tmp_path = clean_logging
+    debuglog.setup(debug=True, dir_override=tmp_path)
+    from pgtp_editor.schema_learning.settings_index import attribute_kind
+    from pgtp_editor.ui.xml_editor import insert_attribute
+
+    try:
+        insert_attribute(None, 0, "x")   # TypeError unwinds the frame
+    except TypeError:
+        pass
+    attribute_kind({"kind": "setting"})
+    for h in logging.getLogger().handlers:
+        h.flush()
+    line = next(
+        l
+        for l in _debug_text(tmp_path).splitlines()
+        if "> schema_learning.settings_index.attribute_kind" in l
+    )
+    # Depth back at base: the '>' marker directly follows "trace: ".
+    assert "trace: > schema_learning.settings_index.attribute_kind" in line
 
 
 def test_tracer_not_installed_in_normal_mode(clean_logging):

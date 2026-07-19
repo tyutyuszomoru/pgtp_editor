@@ -261,7 +261,8 @@ _EXCLUSIONS: list[tuple[str, str]] = [
     ("ui.xml_editor", "XmlEditor.blockCount"),
     ("ui.xml_editor", "XmlEditor.updateRequest"),
     ("ui.xml_editor", "XmlEditor.eventFilter"),
-    ("ui.xml_editor", "XmlHighlighter."),
+    ("ui.xml_editor", "XmlSyntaxHighlighter."),
+    ("ui.xml_editor", "XmlEditor._update_matching_tag_highlight"),
     ("model.line_index", ""),
 ]
 
@@ -345,6 +346,18 @@ def _on_raise(code, _offset, exc):
     return None
 
 
+def _on_unwind(code, _offset, _exc):
+    # PY_RETURN never fires for a frame unwound by an exception; without
+    # this, every propagated exception would permanently inflate the
+    # per-thread depth. Log nothing -- the RAISE '!' line already marks it.
+    # PY_UNWIND is a non-local event: returning DISABLE is not allowed
+    # (raises ValueError), so out-of-scope code just returns None.
+    if _trace_scope(code) is None:
+        return None
+    _bump(-1)
+    return None
+
+
 def _install_tracer() -> None:
     global _tracer_installed
     mon = sys.monitoring
@@ -356,9 +369,13 @@ def _install_tracer() -> None:
     mon.register_callback(_TOOL_ID, mon.events.PY_START, _on_start)
     mon.register_callback(_TOOL_ID, mon.events.PY_RETURN, _on_return)
     mon.register_callback(_TOOL_ID, mon.events.RAISE, _on_raise)
+    mon.register_callback(_TOOL_ID, mon.events.PY_UNWIND, _on_unwind)
     mon.set_events(
         _TOOL_ID,
-        mon.events.PY_START | mon.events.PY_RETURN | mon.events.RAISE,
+        mon.events.PY_START
+        | mon.events.PY_RETURN
+        | mon.events.RAISE
+        | mon.events.PY_UNWIND,
     )
     _tracer_installed = True
 
@@ -369,7 +386,12 @@ def _uninstall_tracer() -> None:
         return
     mon = sys.monitoring
     mon.set_events(_TOOL_ID, 0)
-    for event in (mon.events.PY_START, mon.events.PY_RETURN, mon.events.RAISE):
+    for event in (
+        mon.events.PY_START,
+        mon.events.PY_RETURN,
+        mon.events.RAISE,
+        mon.events.PY_UNWIND,
+    ):
         mon.register_callback(_TOOL_ID, event, None)
     mon.free_tool_id(_TOOL_ID)
     _tracer_installed = False
