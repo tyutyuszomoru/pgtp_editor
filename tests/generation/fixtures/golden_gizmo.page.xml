@@ -1,0 +1,147 @@
+<Page type="table" tableName="pr.gizmo" fileName="pr_gizmo" caption="Gizmo" shortCaption="Gizmo" numberByDataSource="0" addSeparator="false" horizontalFilterCondition="" recordsPerPage="20" NavigatorPosition="3" insertAbilityMode="3" viewAbilityMode="3" editAbilityMode="2" multiEditAbility="3" includeAllFieldsForMultiEditByDefault="false" deleteAbilityMode="3" copyAbilityMode="3" contentEncoding="UTF-8" exportAllRecordsAvailable="31" exportSelectedRecordsAvailable="31" exportSingleRecordFromGridAvailable="0" exportRecordFromViewFormAvailable="31" printAvailable="13" useActionImages="true" showKeyColumnsImagesInGridHeader="false">
+	<BeforeGridText/>
+	<DetailedDescription/>
+	<ColumnPresentations>
+		<ColumnPresentation fieldName="id" caption="Id" selectedFilterOperators="1573119">
+			<ViewProperties type="text">
+				<Format type="number" decimalSeparator="."/>
+			</ViewProperties>
+			<EditProperties type="textBox" maxLength="0"/>
+		</ColumnPresentation>
+		<ColumnPresentation fieldName="name" caption="Name" selectedFilterOperators="1589247">
+			<ViewProperties type="text"/>
+			<EditProperties type="textBox" maxLength="60"/>
+		</ColumnPresentation>
+		<ColumnPresentation fieldName="description" caption="Description" selectedFilterOperators="1589247">
+			<ViewProperties type="text"/>
+			<EditProperties type="textBox" maxLength="0"/>
+		</ColumnPresentation>
+		<ColumnPresentation fieldName="qty" caption="Qty" selectedFilterOperators="1573119">
+			<ViewProperties type="text">
+				<Format type="number" decimalSeparator="."/>
+			</ViewProperties>
+			<EditProperties type="textBox" maxLength="0"/>
+		</ColumnPresentation>
+		<ColumnPresentation fieldName="is_active" caption="Is Active" selectedFilterOperators="1573119">
+			<ViewProperties type="checkBox"/>
+			<EditProperties type="checkBox"/>
+		</ColumnPresentation>
+		<ColumnPresentation fieldName="created_on" caption="Created On" selectedFilterOperators="1573119">
+			<ViewProperties type="text"/>
+			<EditProperties type="date"/>
+		</ColumnPresentation>
+		<ColumnPresentation fieldName="updated_at" caption="Updated At" selectedFilterOperators="1573119">
+			<ViewProperties type="text"/>
+			<EditProperties type="date"/>
+		</ColumnPresentation>
+		<ColumnPresentation fieldName="category_id" caption="Category Id" selectedFilterOperators="1573119">
+			<ViewProperties type="text">
+				<Format type="number" decimalSeparator="."/>
+			</ViewProperties>
+			<EditProperties type="textBox" maxLength="0"/>
+		</ColumnPresentation>
+	</ColumnPresentations>
+	<Columns>
+		<List>
+			<Column fieldName="id"/>
+			<Column fieldName="name"/>
+			<Column fieldName="description"/>
+			<Column fieldName="qty"/>
+			<Column fieldName="is_active"/>
+			<Column fieldName="created_on"/>
+			<Column fieldName="updated_at"/>
+			<Column fieldName="category_id"/>
+		</List>
+		<View>
+			<Column fieldName="id"/>
+			<Column fieldName="name"/>
+			<Column fieldName="description"/>
+			<Column fieldName="qty"/>
+			<Column fieldName="is_active"/>
+			<Column fieldName="created_on"/>
+			<Column fieldName="updated_at"/>
+			<Column fieldName="category_id"/>
+		</View>
+		<Edit>
+			<Column fieldName="id" visible="false"/>
+			<Column fieldName="name"/>
+			<Column fieldName="description"/>
+			<Column fieldName="qty"/>
+			<Column fieldName="is_active"/>
+			<Column fieldName="created_on"/>
+			<Column fieldName="updated_at"/>
+			<Column fieldName="category_id"/>
+		</Edit>
+		<Insert>
+			<Column fieldName="id" visible="false"/>
+			<Column fieldName="name"/>
+			<Column fieldName="description"/>
+			<Column fieldName="qty"/>
+			<Column fieldName="is_active"/>
+			<Column fieldName="created_on"/>
+			<Column fieldName="updated_at"/>
+			<Column fieldName="category_id"/>
+		</Insert>
+		<QuickFilter>
+			<Column fieldName="id"/>
+			<Column fieldName="name"/>
+			<Column fieldName="description"/>
+			<Column fieldName="qty"/>
+			<Column fieldName="is_active"/>
+			<Column fieldName="created_on"/>
+			<Column fieldName="updated_at"/>
+			<Column fieldName="category_id"/>
+		</QuickFilter>
+		<FilterBuilder>
+			<Column fieldName="id"/>
+			<Column fieldName="name"/>
+			<Column fieldName="description"/>
+			<Column fieldName="qty"/>
+			<Column fieldName="is_active"/>
+			<Column fieldName="created_on"/>
+			<Column fieldName="updated_at"/>
+			<Column fieldName="category_id"/>
+		</FilterBuilder>
+		<Print>
+			<Column fieldName="id"/>
+			<Column fieldName="name"/>
+			<Column fieldName="description"/>
+			<Column fieldName="qty"/>
+			<Column fieldName="is_active"/>
+			<Column fieldName="created_on"/>
+			<Column fieldName="updated_at"/>
+			<Column fieldName="category_id"/>
+		</Print>
+		<Export>
+			<Column fieldName="id"/>
+			<Column fieldName="name"/>
+			<Column fieldName="description"/>
+			<Column fieldName="qty"/>
+			<Column fieldName="is_active"/>
+			<Column fieldName="created_on"/>
+			<Column fieldName="updated_at"/>
+			<Column fieldName="category_id"/>
+		</Export>
+		<Compare>
+			<Column fieldName="id" visible="false"/>
+			<Column fieldName="name"/>
+			<Column fieldName="description"/>
+			<Column fieldName="qty"/>
+			<Column fieldName="is_active"/>
+			<Column fieldName="created_on"/>
+			<Column fieldName="updated_at"/>
+			<Column fieldName="category_id"/>
+		</Compare>
+		<MultiEdit>
+			<Column fieldName="id" visible="false"/>
+			<Column fieldName="name"/>
+			<Column fieldName="description"/>
+			<Column fieldName="qty"/>
+			<Column fieldName="is_active"/>
+			<Column fieldName="created_on"/>
+			<Column fieldName="updated_at"/>
+			<Column fieldName="category_id"/>
+		</MultiEdit>
+	</Columns>
+	<Details/>
+</Page>

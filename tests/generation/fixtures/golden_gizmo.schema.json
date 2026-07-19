@@ -1,0 +1,15 @@
+{
+  "__doc__": "Generator INPUT for the golden parity fixture. Authored to match golden_gizmo.ddl.sql exactly. Fed to build_page; the expected output lives in golden_gizmo.page.xml. Keep in sync with the DDL.",
+  "table": "pr.gizmo",
+  "kind": "table",
+  "columns": [
+    {"name": "id",          "data_type": "integer",                     "is_pk": true,  "is_fk": false, "is_nullable": false, "default": "nextval('pr.gizmo_id_seq'::regclass)"},
+    {"name": "name",        "data_type": "character varying(60)",       "is_pk": false, "is_fk": false, "is_nullable": false, "default": null},
+    {"name": "description", "data_type": "text",                        "is_pk": false, "is_fk": false, "is_nullable": true,  "default": null},
+    {"name": "qty",         "data_type": "numeric(10,2)",               "is_pk": false, "is_fk": false, "is_nullable": true,  "default": null},
+    {"name": "is_active",   "data_type": "boolean",                     "is_pk": false, "is_fk": false, "is_nullable": true,  "default": null},
+    {"name": "created_on",  "data_type": "date",                        "is_pk": false, "is_fk": false, "is_nullable": true,  "default": null},
+    {"name": "updated_at",  "data_type": "timestamp without time zone", "is_pk": false, "is_fk": false, "is_nullable": true,  "default": null},
+    {"name": "category_id", "data_type": "integer",                     "is_pk": false, "is_fk": true,  "is_nullable": true,  "default": null, "fk_target": "pr.category.id"}
+  ]
+}
