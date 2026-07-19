@@ -1,5 +1,10 @@
 from pgtp_editor.ui.xml_structure import TagSpan, scan
 from pgtp_editor.ui.xml_structure import find_enclosing_open_tag, nesting_depth_at
+from pgtp_editor.ui.xml_structure import (
+    closing_tag_start,
+    matching_tag_target,
+    parent_tag_target,
+)
 
 
 def test_scan_well_formed_nesting_produces_correct_depths_and_offsets():
@@ -225,3 +230,67 @@ def test_parent_tag_span_repeated_sibling_names_finds_correct_single_parent():
     # It must be the SECOND Group (the one that actually contains item_b),
     # not the first Group with the same name.
     assert parent.open_start == text.rindex("<Group>")
+
+
+_DOC = "<root>\n  <page>\n    <col/>\n  </page>\n</root>\n"
+
+
+def test_closing_tag_start_finds_close_token():
+    spans = scan(_DOC)
+    page = next(s for s in spans if s.name == "page")
+    assert closing_tag_start(_DOC, page) == _DOC.index("</page>")
+
+
+def test_closing_tag_start_none_for_self_closing():
+    spans = scan(_DOC)
+    col = next(s for s in spans if s.name == "col")
+    assert closing_tag_start(_DOC, col) is None
+
+
+def test_matching_tag_target_open_to_close():
+    spans = scan(_DOC)
+    pos = _DOC.index("<page>") + 2  # inside the opening <page> tag
+    assert matching_tag_target(spans, _DOC, pos) == _DOC.index("</page>")
+
+
+def test_matching_tag_target_close_to_open():
+    spans = scan(_DOC)
+    pos = _DOC.index("</page>") + 2  # inside the closing </page> tag
+    assert matching_tag_target(spans, _DOC, pos) == _DOC.index("<page>")
+
+
+def test_matching_tag_target_self_closing_is_none():
+    spans = scan(_DOC)
+    pos = _DOC.index("<col/>") + 2
+    assert matching_tag_target(spans, _DOC, pos) is None
+
+
+def test_matching_tag_target_in_text_content_is_none():
+    # position on the whitespace/text between <page> and <col/>, not on a tag
+    spans = scan(_DOC)
+    pos = _DOC.index("<page>") + len("<page>")  # just past '>' , in content
+    assert matching_tag_target(spans, _DOC, pos) is None
+
+
+def test_matching_tag_target_nested_resolves_own_partner():
+    doc = "<a><b>x</b></a>"
+    spans = scan(doc)
+    pos = doc.index("<b>") + 1
+    assert matching_tag_target(spans, doc, pos) == doc.index("</b>")
+
+
+def test_parent_tag_target_nested_returns_parent_open_start():
+    spans = scan(_DOC)
+    pos = _DOC.index("<col/>") + 2      # enclosing = col, parent = page
+    assert parent_tag_target(spans, pos) == _DOC.index("<page>")
+
+
+def test_parent_tag_target_top_level_is_none():
+    spans = scan(_DOC)
+    pos = _DOC.index("<root>") + 2      # enclosing = root (top-level)
+    assert parent_tag_target(spans, pos) is None
+
+
+def test_parent_tag_target_outside_any_element_is_none():
+    spans = scan(_DOC)
+    assert parent_tag_target(spans, len(_DOC)) is None  # trailing newline, outside root

@@ -299,16 +299,9 @@ def _cursor_immediately_after_open_tag(line_text: str, position_in_line: int, ta
 
 
 def _closing_tag_start(text: str, span: xml_structure.TagSpan) -> int | None:
-    """Given a TagSpan with a known close_end, find where its own '</name>'
-    token begins. Returns None if the span is self-closing or has no
-    close_end. rfind over [open_end, close_end) is exact: the close tag's
-    '</name>' is the last such occurrence before close_end, and the open
-    tag's own '<' is a strictly earlier, distinct position."""
-    if span.close_end is None or span.self_closing:
-        return None
-    close_tag_prefix = "</" + span.name
-    start = text.rfind(close_tag_prefix, span.open_end, span.close_end)
-    return start if start != -1 else None
+    """Delegates to xml_structure.closing_tag_start (kept as a module-local
+    name for the highlight call site)."""
+    return xml_structure.closing_tag_start(text, span)
 
 
 class _EditorGutter(QWidget):
