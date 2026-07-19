@@ -3,8 +3,8 @@
 PGTP Editor is a companion tool for SQL Maestro **PostgreSQL PHP Generator**. It
 opens the generator's `.pgtp` project files directly, lets you inspect and edit
 them safely, manage captions in bulk, edit event-handler code comfortably, compare
-project versions, validate structure, and drive PHP generation — all without
-fighting the generator's own UI.
+project versions, check the project against a live database, validate structure,
+and drive PHP generation — all without fighting the generator's own UI.
 
 The editor never rewrites your file behind your back: every change you make is one
 you asked for, and the on-disk bytes are preserved except where you edit.
@@ -18,15 +18,20 @@ you asked for, and the on-disk bytes are preserved except where you edit.
 Use **File ▸ Open** and pick a `.pgtp` file. The window has three areas:
 
 - **Left — Project Tree:** the structure of your project (pages, details, columns,
-  event handlers). A second tab, **Contents**, holds this manual's chapters.
+  event handlers). More tabs share this dock: **Contents** (this manual's
+  chapters) and, after you run a database check, **Database Check**.
 - **Center — Raw XML / Caption Management / Diff-Merge / Manual:** the working
   area. It opens on **Raw XML**; the other tabs appear when you invoke them.
 - **Right — Properties:** a read-only inspector for whatever you select in the tree.
 
-### Saving
+### Saving, closing, reverting
 
-- **File ▸ Save** writes back to the same file.
-- **File ▸ Save As** writes a copy to a new path.
+- **File ▸ Save** (Ctrl+S) writes back to the same file.
+- **File ▸ Save As** (Ctrl+Shift+S) writes a copy to a new path.
+- **File ▸ Close** (Ctrl+W) closes the project; if you have unsaved changes it
+  prompts you to **Save**, **Discard**, or **Cancel**.
+- **File ▸ Revert** discards your edits and reloads the last saved version from the
+  automatic `.bak` backup written on save.
 
 The editor writes UTF-8 and preserves your original line endings — it does not
 convert line endings or re-encode content on save.
@@ -36,7 +41,8 @@ convert line endings or re-encode content on save.
 ## The Project Tree
 
 The tree mirrors your project: **Pages** contain **Columns**, **Details**, and
-**Event Handlers**.
+**Event Handlers**. **View ▸ Expand All** and **Collapse All** open or fold the
+whole tree at once.
 
 - **Single-click** a node to load its **Properties** on the right.
 - **Double-click** a node to **jump to it in the Raw XML editor**.
@@ -64,6 +70,9 @@ Right-click a node for actions specific to its type:
 **Event handler**
 - **Edit code…** — open the handler body in the Code Editor.
 
+After hand-editing the Raw XML, **Tools ▸ Reparse Raw XML into Tree** rebuilds the
+tree from the current editor text.
+
 ---
 
 ## Properties
@@ -85,17 +94,51 @@ The **Raw XML** tab is a full text editor over the project file.
 
 - The **current line** is highlighted, and when the cursor is on a tag its
   **matching tag** is highlighted too.
-- **Ctrl+Shift+B** selects the block enclosing the cursor and moves the cursor to
-  the **start** of the selection, so you can immediately see where the block begins.
+- **Folding:** a chevron in the gutter marks every multi-line element. Click it to
+  collapse or expand that block.
+- **Bookmarks:** click the narrow strip at the left edge of the gutter to set a
+  bookmark on a line (see *Bookmarks*).
 - **Event-handler code regions** are shown with a distinct, subdued background and a
   monospace band, so JS/PHP bodies stand out from the surrounding XML. Right-click
   inside a body for **Edit code…** (see *The Code Editor*).
 - Right-click a selection for **Find** to search for the selected text.
-- Press **Ctrl+Space** inside an opening tag to list the attributes the schema
-  knows for that element; use the arrow keys and **Tab** (or Enter) to insert the
-  chosen one as `name=""`. When the attribute has known values, a second list
-  appears so you can pick the value too. Type to narrow the list; **Esc**
-  dismisses it.
+- Right-click ▸ **Wrap Lines** toggles soft line-wrapping.
+
+### Undo, Redo & History
+
+The editor keeps a rolling history of up to ten XML snapshots.
+
+- **Ctrl+Z** undoes and **Ctrl+Y** redoes a step.
+- **Edit ▸ History…** opens a jump list of the recent snapshots so you can jump
+  straight back to an earlier state. (Snapshots taken when a file is opened or
+  reverted are baselines and are not offered as undo targets.)
+
+### Schema-aware editing
+
+PGTP Editor learns the structure of `.pgtp` files from the projects you open and
+uses that knowledge to help you edit (see *Schema Tools*).
+
+- **Ctrl+Space** inside an opening tag lists the attributes the schema knows for
+  that element; use the arrow keys and **Tab** (or Enter) to insert the chosen one
+  as `name=""`. When the attribute has known values, a second list appears so you
+  can pick the value too. Type to narrow the list; **Esc** dismisses it.
+- **Right-click ▸ Add attribute ▸** lists the *settings* attributes the schema
+  knows for the current element that it doesn't already have — a quick way to add a
+  recognized setting.
+- **Hovering** an attribute value whose meaning has been labelled shows a tooltip
+  spelling it out, e.g. `editFormMode — 1 = modal · 2 = new page · 3 = inline`.
+
+---
+
+## Bookmarks
+
+Bookmarks let you mark lines in the Raw XML editor and jump between them. They live
+for the current session and are not written to the file.
+
+- **Ctrl+F2** (or clicking the bookmark strip in the gutter) toggles a bookmark on
+  the current line; a tag marker appears in the strip.
+- **F2** / **Shift+F2** jump to the next / previous bookmark.
+- The **Bookmarks** menu holds the same actions plus **Clear All Bookmarks**.
 
 ---
 
@@ -103,12 +146,12 @@ The **Raw XML** tab is a full text editor over the project file.
 
 The search bar under the Raw XML editor provides:
 
-- **Find** / **Find next** for incremental search.
-- **Find All** — lists every match. Results stream in **continuously** so a large
-  file stays responsive; a **Stop** button cancels a long search, and the status bar
-  reports **"Found N items."**
-- **Replace** and **Replace All** — Replace All reports how many replacements it
-  made in the status bar.
+- **Find** (Ctrl+F) / **Find Next** (F3) for incremental search.
+- **Find All** (Ctrl+Shift+F) — lists every match. Results stream in
+  **continuously** so a large file stays responsive; a **Stop** button cancels a
+  long search, and the status bar reports **"Found N items."**
+- **Replace** (Ctrl+R) and **Replace All** (Ctrl+Alt+Enter) — Replace All reports
+  how many replacements it made in the status bar.
 
 ---
 
@@ -209,32 +252,100 @@ A shared modal drives searching and bulk editing:
 
 ---
 
-## Diff / Merge
+## Schema Tools
 
-**Diff / Merge** compares two `.pgtp` files side by side so you can see what changed
-between versions and reconcile them. Open it from the menu, choose the two files,
-and review the differences.
+The **Schema** menu exposes the learned model of the `.pgtp` format — the same
+knowledge that drives Ctrl+Space completion, the *Add attribute* menu, and value
+hovers in the Raw XML editor.
+
+- **Annotate Schema Values…** — review the attributes the engine has seen and mark
+  each as a **setting** (a fixed option, e.g. an ability mode) or **content**
+  (file-specific data). For settings with a small set of values you can **label**
+  each value (for example `1 = modal`, `2 = new page`). Those labels are what
+  appear in editor hovers and in the Ctrl+Space value picker.
+- **Open XSD** — view the XSD generated from the learned model (read-only).
+- **Open XSD Labels (JSON)** — view the labels store behind the annotations
+  (read-only).
 
 ---
 
-## Validation
+## Database Check
 
-Validation checks your project for structural problems and reports them as a list of
-issues with severities (errors and warnings) — for example duplicate top-level page
-file names, missing expected attributes, or unexpected children in container
-elements. Select an issue to jump to it. Clearing validation removes the results.
+The **Database** menu compares the tables and columns your project references
+against a live PostgreSQL database.
+
+### Connecting
+
+**Connection Setup…** collects server, port, database, user, and password, with a
+**Test** button. The non-password fields are seeded from the project's
+`<ConnectionOptions>`; a connection you save is remembered and takes precedence over
+the project's values next time.
+
+> On Windows, use **`127.0.0.1`** rather than `localhost` — `localhost` can resolve
+> to IPv6 first and stall the connection. The check runs off the UI thread with a
+> timeout, so an unreachable server reports an error instead of freezing the app.
+
+### Checking
+
+- **Check: XML → Database** verifies every table and column the project references
+  actually exists in the database. Results appear in the **Database Check** tab in
+  the left dock as a tree with green/red ticks. Each table shows its kind —
+  `(T)` table, `(V)` view, `(M)` materialized view — and how many times the project
+  references it `(×N)`; each column shows its datatype, primary keys are underlined,
+  foreign keys are marked `(fk)`, and nullability/defaults are noted. A
+  **show-only-mismatches** toggle and a count help you focus. **Double-click** a
+  result to jump to its place in the XML. If a table isn't found, you can rename it
+  (a project-wide replace) and re-run the check.
+- **Check: Database → XML** is the reverse: it lists tables and columns that exist
+  in the database but the project doesn't reference.
+
+The password is stored with the connection settings and is never written to any log.
+
+---
+
+## Diff / Merge
+
+**Diff / Merge** (under **Tools ▸ Compare / Merge Two Files…**) compares two
+`.pgtp` files side by side so you can see what changed between versions and
+reconcile them. **Next Difference** / **Prev Difference** step through the changes,
+and **Apply Changes to Target** writes the reconciled result.
+
+---
+
+## Validation & Reused Tables
+
+- **Tools ▸ Validate Project** checks your project for structural problems and
+  reports them as a list of issues with severities (errors and warnings) — for
+  example duplicate top-level page file names, missing expected attributes, or
+  unexpected children in container elements. Select an issue to jump to it; clearing
+  validation removes the results.
+- **Tools ▸ Find Reused Tables…** lists database tables referenced by more than one
+  page, with a breadcrumb of where each use lives — useful for spotting where a
+  change to one table's presentation needs to be mirrored elsewhere.
 
 ---
 
 ## Generating PHP
 
-PGTP Editor can drive the PHP Generator command-line to compile your `.pgtp` into
-PHP:
+The **Generation** menu drives the PHP Generator command-line to compile your
+`.pgtp` into PHP:
 
-1. Set the generator path once (stored for future use).
-2. Choose **Generate**. If the project has unsaved changes, you're prompted to
+1. **Locate PHP Generator Executable…** once (the path is stored for future use).
+2. **Generate PHP…** — if the project has unsaved changes, you're prompted to
    **Save** or **Save As** first, so the generator always runs against the file on
    disk.
+3. **Open Output Folder** opens the generated output in your file browser.
+
+---
+
+## Appearance & Layout
+
+- **View ▸ Light Theme** toggles between the light and dark themes.
+- The **View** menu toggles each panel: **Project Tree**, **Properties Panel**,
+  **Audit/Problems Panel**, and **Raw XML Panel**.
+- **View ▸ Customize Toolbar…** chooses which actions appear on the icon toolbar.
+- Your window size and position, dock layout, theme, and toolbar arrangement are
+  remembered between sessions.
 
 ---
 
@@ -244,10 +355,20 @@ PHP:
 |----------|-------|--------|
 | **Ctrl+O** | Global | Open a `.pgtp` file |
 | **Ctrl+S** | Global | Save |
+| **Ctrl+Shift+S** | Global | Save As |
+| **Ctrl+W** | Global | Close project |
 | **F1** | Global | Open the Manual |
+| **Ctrl+F2** | Raw XML | Toggle bookmark |
+| **F2** / **Shift+F2** | Raw XML | Next / previous bookmark |
+| **Ctrl+Z** / **Ctrl+Y** | Raw XML | Undo / redo (snapshot history) |
+| **Ctrl+Space** | Raw XML | Attribute / value completion |
 | **Ctrl+Shift+B** | Raw XML / Code Editor | Select enclosing block (caret to start) |
+| **Ctrl+Shift+A** | Raw XML | Select parent block |
 | **Ctrl+F** | Raw XML | Find |
+| **F3** | Raw XML | Find next |
+| **Ctrl+Shift+F** | Raw XML | Find all |
 | **Ctrl+R** | Raw XML | Replace |
+| **Ctrl+Alt+Enter** | Raw XML | Replace all |
 | **Ctrl+F** | Caption Mode | Open Find/Filter |
 | **Ctrl+R** | Caption Mode | Open Replace |
 | **Ctrl+G** | Caption Mode | Go to line in Raw XML |
