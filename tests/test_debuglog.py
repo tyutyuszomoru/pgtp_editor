@@ -205,3 +205,67 @@ def test_session_header_has_version_and_logdir(clean_logging):
     text = _debug_text(tmp_path)
     assert "app=" in text
     assert f"logdir={tmp_path}" in text
+
+
+def test_exclusion_predicate():
+    assert debuglog.is_excluded("pgtp_editor.ui.xml_editor", "XmlEditor.paintEvent")
+    assert debuglog.is_excluded(
+        "pgtp_editor.ui.xml_editor", "_EditorGutter.paintEvent"
+    )
+    assert debuglog.is_excluded("pgtp_editor.model.line_index", "anything_at_all")
+    assert not debuglog.is_excluded(
+        "pgtp_editor.ui.main_window", "MainWindow.open_project_file"
+    )
+
+
+def test_tracer_logs_traced_package_calls(clean_logging):
+    tmp_path = clean_logging
+    debuglog.setup(debug=True, dir_override=tmp_path)
+    # a real, cheap pgtp_editor function:
+    from pgtp_editor.schema_learning.settings_index import attribute_kind
+
+    attribute_kind({"kind": "setting"})
+    for h in logging.getLogger().handlers:
+        h.flush()
+    text = _debug_text(tmp_path)
+    assert "> schema_learning.settings_index.attribute_kind" in text
+    assert "< schema_learning.settings_index.attribute_kind" in text
+
+
+def test_tracer_ignores_non_package_code(clean_logging):
+    tmp_path = clean_logging
+    debuglog.setup(debug=True, dir_override=tmp_path)
+    import json
+
+    json.dumps({"x": 1})
+    for h in logging.getLogger().handlers:
+        h.flush()
+    assert "json." not in _debug_text(tmp_path)
+
+
+def test_tracer_logs_raises(clean_logging):
+    tmp_path = clean_logging
+    debuglog.setup(debug=True, dir_override=tmp_path)
+    from pgtp_editor.ui.xml_editor import insert_attribute
+
+    try:
+        insert_attribute(None, 0, "x")   # TypeError inside a traced frame
+    except TypeError:
+        pass
+    for h in logging.getLogger().handlers:
+        h.flush()
+    assert "! ui.xml_editor.insert_attribute" in _debug_text(tmp_path)
+
+
+def test_tracer_not_installed_in_normal_mode(clean_logging):
+    tmp_path = clean_logging
+    debuglog.setup(debug=False, dir_override=tmp_path)
+    assert not debuglog.tracer_active()
+
+
+def test_teardown_uninstalls_tracer(clean_logging):
+    tmp_path = clean_logging
+    debuglog.setup(debug=True, dir_override=tmp_path)
+    assert debuglog.tracer_active()
+    debuglog.teardown()
+    assert not debuglog.tracer_active()

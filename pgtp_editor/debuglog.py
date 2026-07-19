@@ -121,6 +121,8 @@ def setup(debug: bool, dir_override: Path | None = None) -> Path | None:
     logging.captureWarnings(True)
     _write_session_header(debug, target)
     _install_excepthooks()
+    if debug:
+        _install_tracer()
     return _session_path
 
 
@@ -153,6 +155,7 @@ def teardown() -> None:
     """Remove everything setup() installed (test isolation)."""
     global _active, _session_path
     global _orig_sys_excepthook, _orig_threading_excepthook, _qt_handler_installed
+    _uninstall_tracer()
     root = logging.getLogger()
     for handler in _installed_handlers:
         root.removeHandler(handler)
@@ -236,3 +239,137 @@ def redacted(params) -> str:
         f"host={params.host} port={params.port} "
         f"database={params.database} user={params.user} password=***"
     )
+
+
+# ---------------------------------------------------------------------------
+# sys.monitoring auto-tracer
+# ---------------------------------------------------------------------------
+# _PACKAGE_DIR is resolved once so filename comparisons and relative_to() are
+# both against fully-resolved, same-case paths (Windows path-case trap).
+_PACKAGE_DIR = Path(__file__).resolve().parent
+_TOOL_ID = sys.monitoring.PROFILER_ID
+_tracer_installed = False
+_depth = threading.local()
+
+# (module suffix, qualname prefix) pairs silenced as flooding hot paths.
+# "" qualname prefix = the whole module. Extend as flooding is observed.
+_EXCLUSIONS: list[tuple[str, str]] = [
+    ("ui.xml_editor", "XmlEditor.paintEvent"),
+    ("ui.xml_editor", "_EditorGutter."),
+    ("ui.xml_editor", "XmlEditor._draw_"),
+    ("ui.xml_editor", "XmlEditor.line_number_area"),
+    ("ui.xml_editor", "XmlEditor.blockCount"),
+    ("ui.xml_editor", "XmlEditor.updateRequest"),
+    ("ui.xml_editor", "XmlEditor.eventFilter"),
+    ("ui.xml_editor", "XmlHighlighter."),
+    ("model.line_index", ""),
+]
+
+
+def is_excluded(module: str, qualname: str) -> bool:
+    """True when (module, qualname) matches the hot-path exclusion list."""
+    for mod_suffix, qual_prefix in _EXCLUSIONS:
+        if module.endswith(mod_suffix) and qualname.startswith(qual_prefix):
+            return True
+    return False
+
+
+def tracer_active() -> bool:
+    return _tracer_installed
+
+
+def _short_module(filename: str) -> str | None:
+    try:
+        rel = Path(filename).resolve().relative_to(_PACKAGE_DIR)
+    except ValueError:
+        # Not under the package dir (or a Windows same-drive/different-case
+        # path relative_to() can't reconcile) -- treat as out of scope.
+        return None
+    return str(rel.with_suffix("")).replace("\\", ".").replace("/", ".")
+
+
+def _trace_scope(code):
+    """Module name for traced code, or None (=> DISABLE) when out of scope."""
+    filename = code.co_filename
+    if not filename.startswith(str(_PACKAGE_DIR)):
+        return None
+    module = _short_module(filename)
+    if module is None:
+        return None
+    if is_excluded(module, code.co_qualname):
+        return None
+    return module
+
+
+def _bump(delta: int) -> int:
+    depth = getattr(_depth, "value", 0)
+    if delta > 0:
+        _depth.value = depth + delta
+        return depth
+    _depth.value = max(0, depth + delta)
+    return _depth.value
+
+
+_trace_log = logging.getLogger("trace")
+
+
+def _on_start(code, _offset):
+    module = _trace_scope(code)
+    if module is None:
+        return sys.monitoring.DISABLE
+    indent = "  " * _bump(+1)
+    _trace_log.log(
+        TRACE, "%s> %s.%s :%d", indent, module, code.co_qualname, code.co_firstlineno
+    )
+    return None
+
+
+def _on_return(code, _offset, _retval):
+    module = _trace_scope(code)
+    if module is None:
+        return sys.monitoring.DISABLE
+    indent = "  " * _bump(-1)
+    _trace_log.log(TRACE, "%s< %s.%s", indent, module, code.co_qualname)
+    return None
+
+
+def _on_raise(code, _offset, exc):
+    module = _trace_scope(code)
+    if module is None:
+        # Returning DISABLE from RAISE is not honored uniformly across
+        # point releases (can raise ValueError there) -- just decline to
+        # log for out-of-scope code instead of trying to disable the event.
+        return None
+    indent = "  " * getattr(_depth, "value", 0)
+    _trace_log.log(TRACE, "%s! %s.%s %r", indent, module, code.co_qualname, exc)
+    return None
+
+
+def _install_tracer() -> None:
+    global _tracer_installed
+    mon = sys.monitoring
+    try:
+        mon.use_tool_id(_TOOL_ID, "pgtp_editor_debug")
+    except ValueError:
+        _log.warning("sys.monitoring profiler slot busy; call tracing disabled")
+        return
+    mon.register_callback(_TOOL_ID, mon.events.PY_START, _on_start)
+    mon.register_callback(_TOOL_ID, mon.events.PY_RETURN, _on_return)
+    mon.register_callback(_TOOL_ID, mon.events.RAISE, _on_raise)
+    mon.set_events(
+        _TOOL_ID,
+        mon.events.PY_START | mon.events.PY_RETURN | mon.events.RAISE,
+    )
+    _tracer_installed = True
+
+
+def _uninstall_tracer() -> None:
+    global _tracer_installed
+    if not _tracer_installed:
+        return
+    mon = sys.monitoring
+    mon.set_events(_TOOL_ID, 0)
+    for event in (mon.events.PY_START, mon.events.PY_RETURN, mon.events.RAISE):
+        mon.register_callback(_TOOL_ID, event, None)
+    mon.free_tool_id(_TOOL_ID)
+    _tracer_installed = False
