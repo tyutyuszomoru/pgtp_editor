@@ -193,3 +193,50 @@ def parent_tag_span(spans: list[TagSpan], span: TagSpan) -> TagSpan | None:
         ):
             return candidate
     return None
+
+
+def closing_tag_start(text: str, span: TagSpan) -> int | None:
+    """Character offset where `span`'s own '</name>' token begins, or None if
+    the span is self-closing or has no close_end. rfind over
+    [open_end, close_end) is exact: the close tag is the last '</name>' before
+    close_end, and the open tag's own '<' is a strictly earlier position."""
+    if span.close_end is None or span.self_closing:
+        return None
+    start = text.rfind("</" + span.name, span.open_end, span.close_end)
+    return start if start != -1 else None
+
+
+def matching_tag_target(
+    spans: list[TagSpan], text: str, position: int
+) -> int | None:
+    """Offset of the tag matching the one at `position`, or None.
+
+    Resolve the enclosing element. If `position` is within its opening-tag
+    region (open_start <= position < open_end -- the whole `<name ...>`,
+    attributes included) return the closing tag's start; if within its
+    closing-tag region (close_start <= position < close_end) return open_start.
+    None when self-closing, no close tag, or `position` is not on either tag
+    region (i.e. in the element's text content, or outside all elements)."""
+    span = enclosing_tag_span_from_spans(spans, position)
+    if span is None or span.self_closing:
+        return None
+    if span.open_start <= position < span.open_end:
+        return closing_tag_start(text, span)
+    close_start = closing_tag_start(text, span)
+    if (
+        close_start is not None
+        and span.close_end is not None
+        and close_start <= position < span.close_end
+    ):
+        return span.open_start
+    return None
+
+
+def parent_tag_target(spans: list[TagSpan], position: int) -> int | None:
+    """open_start of the parent of the element enclosing `position`, or None
+    when there is no enclosing element or it is top-level (no parent)."""
+    enclosing = enclosing_tag_span_from_spans(spans, position)
+    if enclosing is None:
+        return None
+    parent = parent_tag_span(spans, enclosing)
+    return None if parent is None else parent.open_start
