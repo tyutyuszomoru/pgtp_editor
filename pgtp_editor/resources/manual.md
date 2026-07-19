@@ -127,6 +127,9 @@ uses that knowledge to help you edit (see *Schema Tools*).
   recognized setting.
 - **Hovering** an attribute value whose meaning has been labelled shows a tooltip
   spelling it out, e.g. `editFormMode — 1 = modal · 2 = new page · 3 = inline`.
+- **Ctrl+click** a tag to jump to its matching open/close tag; **Alt+click** to
+  jump to the parent element's opening tag. The caret moves and scrolls into
+  view; nothing is selected.
 
 ---
 
@@ -362,6 +365,8 @@ The **Generation** menu drives the PHP Generator command-line to compile your
 | **F2** / **Shift+F2** | Raw XML | Next / previous bookmark |
 | **Ctrl+Z** / **Ctrl+Y** | Raw XML | Undo / redo (snapshot history) |
 | **Ctrl+Space** | Raw XML | Attribute / value completion |
+| **Ctrl+click** | Raw XML (mouse) | Jump to matching open/close tag |
+| **Alt+click** | Raw XML (mouse) | Jump to parent tag start |
 | **Ctrl+Shift+B** | Raw XML / Code Editor | Select enclosing block (caret to start) |
 | **Ctrl+Shift+A** | Raw XML | Select parent block |
 | **Ctrl+F** | Raw XML | Find |

@@ -299,16 +299,9 @@ def _cursor_immediately_after_open_tag(line_text: str, position_in_line: int, ta
 
 
 def _closing_tag_start(text: str, span: xml_structure.TagSpan) -> int | None:
-    """Given a TagSpan with a known close_end, find where its own '</name>'
-    token begins. Returns None if the span is self-closing or has no
-    close_end. rfind over [open_end, close_end) is exact: the close tag's
-    '</name>' is the last such occurrence before close_end, and the open
-    tag's own '<' is a strictly earlier, distinct position."""
-    if span.close_end is None or span.self_closing:
-        return None
-    close_tag_prefix = "</" + span.name
-    start = text.rfind(close_tag_prefix, span.open_end, span.close_end)
-    return start if start != -1 else None
+    """Delegates to xml_structure.closing_tag_start (kept as a module-local
+    name for the highlight call site)."""
+    return xml_structure.closing_tag_start(text, span)
 
 
 class _EditorGutter(QWidget):
@@ -610,6 +603,7 @@ class XmlEditor(QPlainTextEdit):
         self._spans: list[xml_structure.TagSpan] = []
         self._spans_text: str = ""
         self._spans_revision: int | None = None
+        self._nav_click_handled = False
         self.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
         self.blockCountChanged.connect(self._update_gutter_width)
         self.updateRequest.connect(self._update_gutter_on_scroll)
@@ -1438,7 +1432,48 @@ class XmlEditor(QPlainTextEdit):
             return False
         return super().event(e)
 
+    def mousePressEvent(self, event) -> None:
+        # Ctrl+left-click jumps to the matching open/close tag; Alt+left-click
+        # jumps to the parent element's opening tag. Handled at PRESS (not
+        # release) so accepting the event suppresses Qt's Alt+drag column
+        # selection and leaves no stray selection at the destination.
+        if event.button() == Qt.MouseButton.LeftButton:
+            ctrl = Qt.KeyboardModifier.ControlModifier
+            alt = Qt.KeyboardModifier.AltModifier
+            mods = event.modifiers()
+            if mods == ctrl or mods == alt:
+                click_pos = self.cursorForPosition(
+                    event.position().toPoint()
+                ).position()
+                if self.document().revision() != self._spans_revision:
+                    self._rescan_structure()
+                if mods == ctrl:
+                    target = xml_structure.matching_tag_target(
+                        self._spans, self._spans_text, click_pos
+                    )
+                else:
+                    target = xml_structure.parent_tag_target(
+                        self._spans, click_pos
+                    )
+                if target is not None:
+                    cursor = self.textCursor()
+                    cursor.setPosition(target)
+                    self.setTextCursor(cursor)
+                    self.ensureCursorVisible()
+                    self._nav_click_handled = True
+                    self.line_clicked.emit(cursor.blockNumber() + 1)
+                    event.accept()
+                    return
+        super().mousePressEvent(event)
+
     def mouseReleaseEvent(self, event) -> None:
+        # A modifier-jump handled the matching press; consume the release too so
+        # Qt's default release handling doesn't reposition the caret back to the
+        # click point (which would undo the jump and misreport line_clicked).
+        if self._nav_click_handled:
+            self._nav_click_handled = False
+            event.accept()
+            return
         # Let Qt place the text cursor at the clicked position first, then
         # read the resulting 1-based line and notify listeners. This is the
         # editor->tree click-sync entry point (see MainWindow). It only reads
