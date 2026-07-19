@@ -14,9 +14,13 @@ The confirmed CLI shape is:
 """
 from __future__ import annotations
 
+import logging
+import os
 from collections.abc import Callable
 
 from PySide6.QtCore import QObject, QProcess
+
+_log = logging.getLogger(__name__)
 
 
 def build_generate_command(executable: str, pgtp_path: str, output_folder: str) -> list[str]:
@@ -63,6 +67,7 @@ class GeneratorRunner(QObject):
         self._process = process
 
         program, *args = command
+        _log.info("generate: spawning %s (cwd=%s)", command, os.getcwd())
         process.start(program, args)
 
     def _emit_output(self) -> None:
@@ -79,6 +84,7 @@ class GeneratorRunner(QObject):
         if self._finished_emitted:
             return
         self._finished_emitted = True
+        _log.info("generate: rc=%s", int(exit_code))
         self._on_finished(int(exit_code))
 
     def _emit_finished(self, exit_code: int, _exit_status) -> None:

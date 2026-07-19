@@ -1,4 +1,5 @@
 import copy
+import logging
 import shutil
 from pathlib import Path
 
@@ -28,6 +29,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from pgtp_editor import debuglog
 from pgtp_editor.diff.apply import apply_differences
 from pgtp_editor.generation.config import load_executable_path, save_executable_path
 from pgtp_editor.generation.runner import GeneratorRunner, build_generate_command
@@ -91,6 +93,7 @@ from pgtp_editor.ui.reused_tables_window import ReusedTablesWindow
 from pgtp_editor.ui.theme import apply_theme
 from pgtp_editor.ui.schema_viewer_data import open_labels_text, open_xsd_text
 
+_log = logging.getLogger(__name__)
 
 _FIND_RESULT_PREFIX = "[Find] "
 
@@ -527,11 +530,13 @@ class MainWindow(QMainWindow):
             self._restoring = False
 
     def _undo(self) -> None:
+        _log.info("history: undo")
         text = self._history.undo()
         if text is not None:
             self._apply_history_text(text)
 
     def _redo(self) -> None:
+        _log.info("history: redo")
         text = self._history.redo()
         if text is not None:
             self._apply_history_text(text)
@@ -734,6 +739,7 @@ class MainWindow(QMainWindow):
         (and the currently-tracked project) untouched (never a crash, never
         a silently-emptied tree or a silently-forgotten project).
         """
+        _log.info("file: open %s", path)
         try:
             project = load_project(path)
         except PgtpParseError as exc:
@@ -787,6 +793,7 @@ class MainWindow(QMainWindow):
             self.center_stage.xml_editor.set_schema_model(model)
 
             self._report_schema_events(events, path)
+            _log.info("schema: enriched %s", path)
         except Exception as exc:
             self.audit_panel.addItem(f"[Schema] Could not update schema knowledge: {exc}")
 
@@ -1154,8 +1161,9 @@ class MainWindow(QMainWindow):
         """Write the Raw XML editor buffer verbatim to `path` as UTF-8. If
         `path` already exists, copy it to `path + '.bak'` first (same .bak
         convention as Apply-to-Target)."""
+        _log.info("file: save %s", path)
         if Path(path).exists():
-            shutil.copy2(path, path + ".bak")
+            shutil.copy2(path, str(path) + ".bak")
         Path(path).write_text(
             self.center_stage.xml_editor.toPlainText(), encoding="utf-8", newline=""
         )
@@ -1217,6 +1225,7 @@ class MainWindow(QMainWindow):
         the buffer is dirty, `_confirm_close()` decides; when None and clean,
         the close proceeds (treated as "discard").
         """
+        _log.info("file: close")
         if self._dirty:
             if confirm is None:
                 confirm = self._confirm_close()
@@ -1261,6 +1270,7 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("Nothing to revert to.", 5000)
             return
 
+        _log.info("file: revert %s", bak_path)
         try:
             project = load_project(bak_path)
         except PgtpParseError as exc:
@@ -1831,6 +1841,7 @@ class MainWindow(QMainWindow):
         # here; the compare + panel population happen in on_result, back on the
         # GUI thread, so they may safely touch widgets.
         self.statusBar().showMessage("Checking database…")
+        _log.info("db: check %s started %s", direction, debuglog.redacted(params))
 
         def on_result(schema):
             if direction == "xml_to_db":
@@ -1842,6 +1853,7 @@ class MainWindow(QMainWindow):
             self.db_check_panel.set_result(direction, checks, summary)
             self._reveal_db_check_tab()
             self.statusBar().showMessage("Database check complete.", 3000)
+            _log.info("db: check %s finished", direction)
 
         def on_error(exc):
             self.statusBar().showMessage(f"Database check failed: {exc}", 8000)
@@ -1856,6 +1868,7 @@ class MainWindow(QMainWindow):
         new = self._prompt_rename(old)
         if not new or new == old:
             return
+        _log.info("db: rename %s -> %s", old, new)
         current = self.center_stage.xml_editor.toPlainText()
         if kind == "table":
             updated, count = rename_table(current, old, new)
@@ -2031,6 +2044,7 @@ class MainWindow(QMainWindow):
         self._current_output_folder = output_folder
         self._is_generating = True
         self.statusBar().showMessage("Generating…")
+        _log.info("generate: started")
         self._generator_runner.run(
             command,
             on_output=self._append_generator_output,
@@ -2041,6 +2055,7 @@ class MainWindow(QMainWindow):
         self.audit_panel.addItem(f"{_GENERATOR_OUTPUT_PREFIX}{line}")
 
     def _on_generation_finished(self, exit_code: int) -> None:
+        _log.info("generate: rc=%s", exit_code)
         self._is_generating = False
         self.audit_panel.addItem(f"{_GENERATOR_OUTPUT_PREFIX}Generation finished (exit {exit_code})")
         if exit_code == 0:

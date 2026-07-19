@@ -1,4 +1,6 @@
 """Debug-mode UI surface: status chip, Help > Open Log Folder."""
+import logging
+
 from pgtp_editor.ui.main_window import MainWindow
 
 
@@ -38,3 +40,28 @@ def test_help_menu_has_open_log_folder(qtbot):
     qtbot.addWidget(window)
     action = _help_action(window, "Open Log Folder")
     assert action is not None
+
+
+def test_open_project_file_logs_seam(qtbot, tmp_path, caplog):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    project = tmp_path / "p.pgtp"
+    project.write_text(
+        '<?xml version="1.0" encoding="UTF-8"?><Project/>', encoding="utf-8"
+    )
+    with caplog.at_level(logging.INFO, logger="pgtp_editor.ui.main_window"):
+        window.open_project_file(project)
+    assert any("file: open" in r.message for r in caplog.records)
+
+
+def test_save_logs_seam(qtbot, tmp_path, caplog):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    project = tmp_path / "p.pgtp"
+    project.write_text(
+        '<?xml version="1.0" encoding="UTF-8"?><Project/>', encoding="utf-8"
+    )
+    window.open_project_file(project)
+    with caplog.at_level(logging.INFO, logger="pgtp_editor.ui.main_window"):
+        window._write_project_text(project)
+    assert any("file: save" in r.message for r in caplog.records)

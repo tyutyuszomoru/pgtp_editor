@@ -5,6 +5,8 @@ psycopg is NEVER imported here: only `run_queries` imports it (lazily, inside
 the function) and these tests never call it. `fetch_schema`/`test_connection`
 take a `runner=` callable, so the whole suite passes even without psycopg.
 """
+import logging
+
 from pgtp_editor.db.config import ConnectionParams
 from pgtp_editor.db.introspect import (
     SCHEMA_SQL,
@@ -15,7 +17,9 @@ from pgtp_editor.db.introspect import (
 )
 from pgtp_editor.db.introspect import test_connection as check_connection
 
-_PARAMS = ConnectionParams(host="h", port="5432", database="d", user="u", password="p")
+_PARAMS = ConnectionParams(
+    host="h", port="5432", database="d", user="u", password="s3cr3t-real-pw"
+)
 
 
 def _canned_runner():
@@ -135,3 +139,12 @@ def test_dataclasses_and_schema_helpers():
     assert schema.has_table("s.t")
     assert schema.table("s.t") is table
     assert schema.column("s.t", "c") is col
+
+
+def test_fetch_schema_start_log_is_redacted(caplog):
+    runner, _ = _canned_runner()
+    with caplog.at_level(logging.INFO, logger="pgtp_editor.db.introspect"):
+        fetch_schema(_PARAMS, runner=runner)
+    messages = [r.message for r in caplog.records]
+    assert any("password=***" in m for m in messages)
+    assert not any(_PARAMS.password in m for m in messages)
