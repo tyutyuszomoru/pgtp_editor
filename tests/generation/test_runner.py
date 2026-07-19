@@ -128,3 +128,75 @@ def test_runner_without_cwd_env_unchanged(qtbot):
     )
     qtbot.waitUntil(lambda: bool(codes), timeout=10000)
     assert codes == [0] and lines == ["plain"]
+
+
+def test_runner_falsy_cwd_and_env_treated_as_unset(qtbot):
+    """An empty string / empty dict must not trip setWorkingDirectory or
+    setProcessEnvironment (both are guarded by truthiness in run()); the child
+    should behave exactly as if cwd/extra_env were omitted."""
+    import sys
+
+    from pgtp_editor.generation.runner import GeneratorRunner
+
+    runner = GeneratorRunner()
+    lines: list[str] = []
+    codes: list[int] = []
+    runner.run(
+        [sys.executable, "-c", "print('plain')"],
+        on_output=lines.append,
+        on_finished=codes.append,
+        cwd="",
+        extra_env={},
+    )
+    qtbot.waitUntil(lambda: bool(codes), timeout=10000)
+    assert codes == [0] and lines == ["plain"]
+
+
+def test_runner_extra_env_preserves_rest_of_system_environment(qtbot, monkeypatch):
+    """extra_env must be layered onto QProcessEnvironment.systemEnvironment(),
+    not replace it wholesale -- an unrelated pre-existing variable must still
+    reach the child process alongside the new one."""
+    import sys
+
+    from pgtp_editor.generation.runner import GeneratorRunner
+
+    monkeypatch.setenv("PGTP_PRE_EXISTING_VAR", "still-here")
+
+    runner = GeneratorRunner()
+    lines: list[str] = []
+    codes: list[int] = []
+    code = (
+        "import os; "
+        "print(os.environ.get('PGTP_PRE_EXISTING_VAR', '<missing>')); "
+        "print(os.environ.get('PGTP_TEST_ENV', '<missing>'))"
+    )
+    runner.run(
+        [sys.executable, "-c", code],
+        on_output=lines.append,
+        on_finished=codes.append,
+        extra_env={"PGTP_TEST_ENV": "hello"},
+    )
+    qtbot.waitUntil(lambda: bool(codes), timeout=10000)
+    assert codes == [0]
+    assert lines == ["still-here", "hello"]
+
+
+def test_runner_extra_env_none_and_cwd_none_explicit(qtbot):
+    """Callers may pass cwd=None / extra_env=None explicitly (same default as
+    omitting them) -- must not raise and must behave identically to omission."""
+    import sys
+
+    from pgtp_editor.generation.runner import GeneratorRunner
+
+    runner = GeneratorRunner()
+    lines: list[str] = []
+    codes: list[int] = []
+    runner.run(
+        [sys.executable, "-c", "print('plain')"],
+        on_output=lines.append,
+        on_finished=codes.append,
+        cwd=None,
+        extra_env=None,
+    )
+    qtbot.waitUntil(lambda: bool(codes), timeout=10000)
+    assert codes == [0] and lines == ["plain"]
