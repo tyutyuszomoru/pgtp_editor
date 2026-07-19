@@ -119,8 +119,8 @@ needs only spans.
 **Pure (`tests/ui/test_xml_structure.py`):**
 - `matching_tag_target`: click in open tag → closing-tag start; click in close tag
   → open_start; self-closing → None; position in text content → None; position on
-  an attribute value → None; nested element resolves to its own partner (not an
-  ancestor's).
+  an attribute value (still within the open tag) → closing-tag start; nested
+  element resolves to its own partner (not an ancestor's).
 - `parent_tag_target`: nested element → parent `open_start`; deeper nesting → the
   immediate parent; top-level element → None; position outside any element → None.
 
