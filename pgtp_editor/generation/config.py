@@ -60,3 +60,32 @@ def save_executable_path(path: str, base_dir: Path | None = None) -> None:
 
     data[_EXECUTABLE_KEY] = path
     config_path.write_text(json.dumps(data), encoding="utf-8")
+
+
+_RE_PHPGEN_ROOT_KEY = "re_phpgen_root"
+DEFAULT_RE_PHPGEN_ROOT = r"C:\Users\BotondZalai-RuzsicsP\Software dev\re_phpgen"
+
+
+def load_re_phpgen_root(base_dir: Path | None = None) -> str:
+    """Stored re_phpgen repo root, falling back to the machine default."""
+    path = generator_config_path(base_dir)
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        return DEFAULT_RE_PHPGEN_ROOT
+    value = data.get(_RE_PHPGEN_ROOT_KEY) if isinstance(data, dict) else None
+    return value if isinstance(value, str) and value else DEFAULT_RE_PHPGEN_ROOT
+
+
+def save_re_phpgen_root(root: str, base_dir: Path | None = None) -> None:
+    config_path = generator_config_path(base_dir)
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    data: dict = {}
+    try:
+        loaded = json.loads(config_path.read_text(encoding="utf-8"))
+        if isinstance(loaded, dict):
+            data = loaded
+    except (OSError, ValueError, TypeError):
+        data = {}
+    data[_RE_PHPGEN_ROOT_KEY] = root
+    config_path.write_text(json.dumps(data), encoding="utf-8")
