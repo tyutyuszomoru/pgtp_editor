@@ -212,10 +212,11 @@ def matching_tag_target(
     """Offset of the tag matching the one at `position`, or None.
 
     Resolve the enclosing element. If `position` is within its opening-tag
-    region (open_start <= position < open_end) return the closing tag's start;
-    if within its closing-tag region (close_start <= position < close_end)
-    return open_start. None when self-closing, no close tag, or `position` is
-    not on either tag region (text content, attribute value, outside all)."""
+    region (open_start <= position < open_end -- the whole `<name ...>`,
+    attributes included) return the closing tag's start; if within its
+    closing-tag region (close_start <= position < close_end) return open_start.
+    None when self-closing, no close tag, or `position` is not on either tag
+    region (i.e. in the element's text content, or outside all elements)."""
     span = enclosing_tag_span_from_spans(spans, position)
     if span is None or span.self_closing:
         return None

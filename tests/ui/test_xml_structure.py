@@ -294,3 +294,57 @@ def test_parent_tag_target_top_level_is_none():
 def test_parent_tag_target_outside_any_element_is_none():
     spans = scan(_DOC)
     assert parent_tag_target(spans, len(_DOC)) is None  # trailing newline, outside root
+
+
+# --- deeper-nesting / edge cases (feature-tester gap fill) ---
+
+_DEEP = "<a><b><c><d>x</d></c></b></a>"
+
+
+def test_matching_tag_target_deep_nesting_resolves_innermost_not_ancestor():
+    # Clicking the innermost <d> open tag must jump to </d>, never an
+    # ancestor's close tag.
+    spans = scan(_DEEP)
+    pos = _DEEP.index("<d>") + 1
+    assert matching_tag_target(spans, _DEEP, pos) == _DEEP.index("</d>")
+
+
+def test_matching_tag_target_deep_nesting_close_resolves_own_open():
+    spans = scan(_DEEP)
+    pos = _DEEP.index("</c>") + 2
+    assert matching_tag_target(spans, _DEEP, pos) == _DEEP.index("<c>")
+
+
+def test_parent_tag_target_from_grandchild_returns_immediate_parent():
+    # Enclosing of position in <d>'s content is <d>; its parent is <c>,
+    # NOT the root <a>.
+    spans = scan(_DEEP)
+    pos = _DEEP.index("x")
+    assert parent_tag_target(spans, pos) == _DEEP.index("<c>")
+
+
+def test_parent_tag_target_from_mid_level_open_tag_returns_one_up():
+    # Position inside <c>'s open tag -> enclosing is <c>, parent is <b>.
+    spans = scan(_DEEP)
+    pos = _DEEP.index("<c>") + 1
+    assert parent_tag_target(spans, pos) == _DEEP.index("<b>")
+
+
+def test_matching_tag_target_on_attribute_resolves_to_close():
+    # The opening-tag region is [open_start, open_end), which includes the
+    # attribute area. Per the spec's formal region definition a click anywhere
+    # inside the open tag (attributes included) jumps to the close tag. (Note:
+    # the spec/docstring prose "attribute value -> None" contradicts this
+    # formal definition; the implementation follows the formal definition.)
+    doc = '<page fileName="foo"><col/></page>'
+    spans = scan(doc)
+    pos = doc.index('"foo"') + 1
+    assert matching_tag_target(spans, doc, pos) == doc.index("</page>")
+
+
+def test_matching_tag_target_repeated_siblings_resolves_correct_instance():
+    doc = "<root><item>A</item><item>B</item></root>"
+    spans = scan(doc)
+    # Click the SECOND <item> open tag; must jump to the SECOND </item>.
+    pos = doc.rindex("<item>") + 1
+    assert matching_tag_target(spans, doc, pos) == doc.rindex("</item>")
