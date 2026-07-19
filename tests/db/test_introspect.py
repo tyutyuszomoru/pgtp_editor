@@ -106,6 +106,27 @@ def test_fetch_schema_column_metadata():
     assert owner_col.is_nullable is False
 
 
+def test_fetch_schema_captures_fk_target():
+    """FK constraint rows carrying a referenced schema.table.column populate
+    ColumnInfo.fk_target; PK rows (4-tuple or None ref) leave it None."""
+    relations = [("pr", "part", "r")]
+    columns = [
+        ("pr", "part", "id", "integer", True, None),
+        ("pr", "part", "equipment_id", "integer", False, None),
+    ]
+    constraints = [
+        ("pr", "part", "id", "p", None),
+        ("pr", "part", "equipment_id", "f", "pr.equipment.id"),
+    ]
+
+    def runner(params, sql_list):
+        return [relations, columns, constraints]
+
+    schema = fetch_schema(_PARAMS, runner=runner)
+    assert schema.column("pr.part", "equipment_id").fk_target == "pr.equipment.id"
+    assert schema.column("pr.part", "id").fk_target is None
+
+
 def test_fetch_schema_missing_column_returns_none():
     runner, _ = _canned_runner()
     schema = fetch_schema(_PARAMS, runner=runner)

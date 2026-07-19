@@ -48,6 +48,7 @@ from pgtp_editor.generation.re_runner import (
     validate_re_phpgen_root,
 )
 from pgtp_editor.generation.gap_summary import summarize_gap_json
+from pgtp_editor.generation import from_table as table_gen
 from pgtp_editor.diff.differ import compare_block, diff_project
 from pgtp_editor.diff.resolve import ResolutionError, resolve_path
 from pgtp_editor.model.encoding import read_pgtp_text
@@ -170,6 +171,9 @@ class MainWindow(QMainWindow):
         self._connection_dialog = None
         # Direction of the last Database Check run, so a rename can re-run it.
         self._last_db_check_direction = None
+        # Last-fetched DatabaseSchema, so a right-click "create from table" has
+        # the column metadata available without re-querying.
+        self._last_db_schema = None
         # Off-thread executor seam. The Database Check schema fetch opens a
         # connection; running it here would freeze the window on a slow/dead
         # host. Default marshals it to a threadpool worker; tests inject a
@@ -211,6 +215,7 @@ class MainWindow(QMainWindow):
         self.left_tabs.setTabVisible(self.db_check_tab_index, False)
         self.db_check_panel.rename_requested.connect(self._on_db_rename_requested)
         self.db_check_panel.jump_requested.connect(self._on_db_jump_requested)
+        self.db_check_panel.create_requested.connect(self._on_db_create_requested)
         self.tree_dock.setWidget(self.left_tabs)
         self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self.tree_dock)
 
@@ -1869,6 +1874,7 @@ class MainWindow(QMainWindow):
             else:
                 checks = check_db_against_xml(project, schema)
             self._last_db_check_direction = direction
+            self._last_db_schema = schema
             summary = f"{params.user}@{params.host}:{params.port}/{params.database}"
             self.db_check_panel.set_result(direction, checks, summary)
             self._reveal_db_check_tab()
@@ -1914,6 +1920,101 @@ class MainWindow(QMainWindow):
         line = text.count("\n", 0, index) + 1
         self.center_stage.setCurrentIndex(self.center_stage.raw_xml_tab_index)
         self.center_stage.xml_editor.navigate_to_line(line)
+
+    # -- Create page/detail/lookup from a DB table (SP3) ---------------------
+
+    def _confirm_duplicate_page(self, table_name):
+        """Warn that a page for `table_name` already exists; return True to
+        proceed (with a de-duplicated fileName) or False to cancel. Test seam —
+        patched to bypass the modal."""
+        choice = QMessageBox.question(
+            self,
+            "Page Already Exists",
+            f"A page for '{table_name}' already exists in this project.\n\n"
+            "Create another one anyway (with a de-duplicated fileName)?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        return choice == QMessageBox.StandardButton.Yes
+
+    def _on_db_create_requested(self, what, name):
+        """Right-click on a Database → XML table node: synthesize a page (insert
+        into the buffer) or a detail/lookup (copy to clipboard)."""
+        schema = self._last_db_schema
+        if schema is None or schema.table(name) is None:
+            self.statusBar().showMessage(
+                f"No schema for '{name}' — run a Database check first.", 5000
+            )
+            return
+        try:
+            if what == "page":
+                self._create_page_from_table(schema, name)
+            elif what == "detail":
+                element = table_gen.build_detail(schema, name)
+                self._copy_fragment_to_clipboard(element, "Detail", name)
+            elif what == "lookup":
+                element = table_gen.build_lookup(schema, name)
+                self._copy_fragment_to_clipboard(element, "Lookup", name)
+        except table_gen.GenerationError as exc:
+            self.statusBar().showMessage(f"Could not create {what}: {exc}", 8000)
+
+    def _copy_fragment_to_clipboard(self, element, label, name):
+        text = table_gen.serialize(element, indent=0)
+        QApplication.clipboard().setText(text)
+        self.statusBar().showMessage(
+            f"{label} for '{name}' copied to clipboard — paste it into the "
+            "target page.",
+            6000,
+        )
+
+    def _create_page_from_table(self, schema, name):
+        element = table_gen.build_page(schema, name)
+        buffer = self.center_stage.xml_editor.toPlainText()
+
+        file_name = element.get("fileName")
+        if f'tableName="{name}"' in buffer or f'fileName="{file_name}"' in buffer:
+            if not self._confirm_duplicate_page(name):
+                self.statusBar().showMessage("Page creation cancelled.", 3000)
+                return
+            file_name = self._dedupe_file_name(buffer, file_name)
+            element.set("fileName", file_name)
+
+        updated, insert_line = self._insert_page_before_pages_close(buffer, element)
+        if updated is None:
+            self.statusBar().showMessage(
+                "Could not find </Pages> to insert the new page.", 8000
+            )
+            return
+        self.center_stage.xml_editor.setPlainText(updated)
+        self.center_stage.setCurrentIndex(self.center_stage.raw_xml_tab_index)
+        self.center_stage.xml_editor.navigate_to_line(insert_line)
+        self.center_stage.xml_editor.select_enclosing_block()
+        self.statusBar().showMessage(f"Page for '{name}' added.", 5000)
+
+    @staticmethod
+    def _dedupe_file_name(buffer, file_name):
+        candidate = file_name
+        suffix = 2
+        while f'fileName="{candidate}"' in buffer:
+            candidate = f"{file_name}_{suffix}"
+            suffix += 1
+        return candidate
+
+    @staticmethod
+    def _insert_page_before_pages_close(buffer, element):
+        """Splice a serialized <Page> immediately before </Pages>, indented to
+        match the existing <Page> depth. Returns (new_text, page_open_line) or
+        (None, 0) if </Pages> is absent."""
+        close_index = buffer.rfind("</Pages>")
+        if close_index == -1:
+            return None, 0
+        line_start = buffer.rfind("\n", 0, close_index) + 1
+        close_indent = buffer[line_start:close_index]
+        indent_depth = close_indent.count("\t") + 1  # one level deeper than </Pages>
+        fragment = table_gen.serialize(element, indent=indent_depth)
+        new_text = buffer[:line_start] + fragment + "\n" + buffer[line_start:]
+        page_open_line = buffer.count("\n", 0, line_start) + 1
+        return new_text, page_open_line
 
     def _open_reused_tables(self):
         if self._current_project is None:

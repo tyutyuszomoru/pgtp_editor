@@ -37,6 +37,7 @@ _DIRECTION_LABEL = {
 class DbCheckPanel(QWidget):
     rename_requested = Signal(str, str)  # (kind, old_name)
     jump_requested = Signal(str, str)  # (kind, name)
+    create_requested = Signal(str, str)  # (what: page|detail|lookup, table_name)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -155,10 +156,51 @@ class DbCheckPanel(QWidget):
             return
         self.rename_requested.emit(kind, name)
 
+    # "what" -> menu label, for the Database → XML create actions on a table node.
+    _CREATE_ACTIONS = (
+        ("page", "Create new page from this table"),
+        ("detail", "Create new detail from this table…"),
+        ("lookup", "Create new lookup from this table…"),
+    )
+
+    def create_menu_items(self, item: QTreeWidgetItem | None) -> list[tuple[str, str]]:
+        """The (what, label) create actions available for `item` in the
+        Database → XML direction. Only table/view nodes (not columns) qualify;
+        empty in the XML → Database direction. Pure — no popup — so tests can
+        assert the menu contents without a modal."""
+        if item is None or self._direction != "db_to_xml":
+            return []
+        data = item.data(0, Qt.ItemDataRole.UserRole)
+        if not data:
+            return []
+        kind, _name, _ok = data
+        if kind != "table":
+            return []
+        return list(self._CREATE_ACTIONS)
+
+    def request_create(self, what: str, item: QTreeWidgetItem) -> None:
+        """Emit `create_requested(what, table_name)` for a table node."""
+        data = item.data(0, Qt.ItemDataRole.UserRole)
+        if not data:
+            return
+        _kind, name, _ok = data
+        self.create_requested.emit(what, name)
+
     def _on_context_menu(self, pos) -> None:  # pragma: no cover - GUI popup
         item = self.tree.itemAt(pos)
         if item is None:
             return
+        create_items = self.create_menu_items(item)
+        if create_items:
+            menu = QMenu(self.tree)
+            for what, label in create_items:
+                action = menu.addAction(label)
+                action.triggered.connect(
+                    lambda _checked=False, w=what: self.request_create(w, item)
+                )
+            menu.exec(self.tree.viewport().mapToGlobal(pos))
+            return
+
         data = item.data(0, Qt.ItemDataRole.UserRole)
         if not data or self._direction != "xml_to_db":
             return
