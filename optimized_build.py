@@ -15,6 +15,7 @@ usable `upx` executable is found on PATH.
 """
 from __future__ import annotations
 
+import os
 import shutil
 import sys
 from pathlib import Path
@@ -25,6 +26,17 @@ REPO_ROOT = Path(__file__).resolve().parent
 ENTRY_POINT = REPO_ROOT / "pgtp_editor" / "main.py"
 ICON_PATH = REPO_ROOT / "docs" / "pgtpeditor.ico"
 APP_NAME = "PGTPEditor"
+
+# Non-Python package data loaded at runtime via importlib.resources
+# (`files("pgtp_editor") / "resources" / ...`): the in-app manual
+# (resources/manual.md, ui/manual_panel.py) and the Breeze toolbar SVGs
+# (resources/icons/, ui/icons.py). PyInstaller does not pick these up on its
+# own - without bundling them the app launches but the Manual tab is empty and
+# toolbar icons fail to load. The bundle destination MUST stay
+# "pgtp_editor/resources" so it lands next to the imported package and
+# files("pgtp_editor") resolves to it inside the frozen app.
+RESOURCES_SRC = REPO_ROOT / "pgtp_editor" / "resources"
+RESOURCES_DEST = "pgtp_editor/resources"
 
 # Confirmed by grepping every worktree's pgtp_editor/ tree for
 # `from PySide6.<module>` imports: only QtCore, QtGui, and QtWidgets are
@@ -104,6 +116,15 @@ def build() -> None:
             "This file must be committed to the repository for the build "
             "to work from a clean checkout - see docs/pgtpeditor.ico."
         )
+    if not RESOURCES_SRC.is_dir():
+        raise SystemExit(
+            f"Resources folder not found: {RESOURCES_SRC}\n"
+            "The bundled manual and toolbar icons live here; the build cannot "
+            "produce a working app without it."
+        )
+
+    # PyInstaller wants "<src><os.pathsep><dest>" for --add-data.
+    resources_spec = f"{RESOURCES_SRC}{os.pathsep}{RESOURCES_DEST}"
 
     args = [
         str(ENTRY_POINT),
@@ -111,6 +132,7 @@ def build() -> None:
         "--onedir",
         "--windowed",
         "--icon", str(ICON_PATH),
+        "--add-data", resources_spec,
         "--distpath", str(REPO_ROOT / "dist"),
         "--workpath", str(REPO_ROOT / "build"),
         "--clean",

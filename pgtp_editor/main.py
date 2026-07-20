@@ -14,6 +14,14 @@ def parse_args(argv):
         default=os.environ.get("PGTP_EDITOR_DEBUG", "") not in ("", "0"),
         help="write a full-detail diagnostic log for this session",
     )
+    parser.add_argument(
+        "file",
+        nargs="?",
+        default=None,
+        help="optional .pgtp project to open at startup (used by the "
+        "Windows 'Edit with PGTP Editor' right-click verb, which passes "
+        "the clicked file path)",
+    )
     return parser.parse_args(argv)
 
 
@@ -47,6 +55,19 @@ def main():
 
     window = MainWindow(debug_log_path=session_path)
     window.show()
+
+    # Open a file passed on the command line (e.g. the Windows "Edit with
+    # PGTP Editor" right-click verb passes the clicked .pgtp path). Guarded on
+    # existence: open_project_file surfaces parse errors gracefully but a
+    # missing path would raise from load_project, so skip it and warn instead.
+    if args.file is not None:
+        if os.path.isfile(args.file):
+            window.open_project_file(args.file)
+        else:
+            logging.getLogger(__name__).warning(
+                "startup file not found, ignoring: %s", args.file
+            )
+
     if session_path is not None:
         print(f"DEBUG logging -> {session_path}", file=sys.stderr)
     return app.exec()
