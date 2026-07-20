@@ -12,12 +12,27 @@ def _dialog(qtbot, current_ids):
     return dialog
 
 
-def test_constructed_splits_current_and_available(qtbot):
-    dialog = _dialog(qtbot, ["save", "open"])
-    # On-toolbar shows current ids in order.
-    assert dialog.selected_ids() == ["save", "open"]
-    # Available shows the complement in registry order.
-    assert dialog._available_ids() == ["undo", "redo", "find", "validate", "generate"]
+def _enabled(dialog):
+    return dialog._available_enabled_ids()
+
+
+def _all_available(dialog):
+    return dialog._available_ids()
+
+
+def test_available_lists_all_commands_present_ones_disabled(qtbot):
+    # default toolbar = all commands -> Available lists all, all disabled
+    dialog = _dialog(qtbot, ["open", "save", "undo", "redo", "find", "validate", "generate"])
+    assert _all_available(dialog) == ["open", "save", "undo", "redo", "find",
+                                      "validate", "generate"]
+    assert _enabled(dialog) == []            # everything already on the toolbar
+
+
+def test_partial_toolbar_disables_only_present(qtbot):
+    dialog = _dialog(qtbot, ["open", "save"])
+    assert _all_available(dialog) == ["open", "save", "undo", "redo", "find",
+                                      "validate", "generate"]
+    assert _enabled(dialog) == ["undo", "redo", "find", "validate", "generate"]
 
 
 def test_result_ids_matches_selected(qtbot):
@@ -29,25 +44,33 @@ def test_set_ids_resets_both_lists(qtbot):
     dialog = _dialog(qtbot, ["save"])
     dialog.set_ids(["generate", "undo"])
     assert dialog.selected_ids() == ["generate", "undo"]
-    assert dialog._available_ids() == ["open", "save", "redo", "find", "validate"]
+    assert _all_available(dialog) == ["open", "save", "undo", "redo", "find",
+                                      "validate", "generate"]
+    assert _enabled(dialog) == ["open", "save", "redo", "find", "validate"]
 
 
-def test_add_selected_moves_from_available_to_toolbar(qtbot):
+def test_add_enabled_command_moves_to_toolbar_and_disables_in_available(qtbot):
     dialog = _dialog(qtbot, ["open"])
-    # Select "undo" in the Available list, then Add.
     dialog._select_available("undo")
     dialog._add_selected()
-    assert dialog.selected_ids() == ["open", "undo"]
-    assert "undo" not in dialog._available_ids()
+    assert dialog.result_ids() == ["open", "undo"]
+    assert "undo" not in _enabled(dialog)          # now greyed
+    assert "undo" in _all_available(dialog)        # still listed
 
 
-def test_remove_selected_moves_back_to_available_in_registry_order(qtbot):
-    dialog = _dialog(qtbot, ["open", "save", "undo"])
+def test_remove_reenables_in_available(qtbot):
+    dialog = _dialog(qtbot, ["open", "save"])
     dialog._select_toolbar("save")
     dialog._remove_selected()
-    assert dialog.selected_ids() == ["open", "undo"]
-    # Available complement is kept in registry order.
-    assert dialog._available_ids() == ["save", "redo", "find", "validate", "generate"]
+    assert dialog.result_ids() == ["open"]
+    assert "save" in _enabled(dialog)              # re-enabled
+
+
+def test_add_on_present_id_is_noop(qtbot):
+    dialog = _dialog(qtbot, ["open", "save"])
+    dialog._select_available("open")   # already on toolbar (disabled)
+    dialog._add_selected()
+    assert dialog.result_ids() == ["open", "save"]   # unchanged, no duplicate
 
 
 def test_move_up_reorders(qtbot):
