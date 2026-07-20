@@ -172,18 +172,213 @@ def test_on_db_rename_requested_cancelled_prompt_no_change(qtbot):
     assert window.center_stage.xml_editor.toPlainText() == before
 
 
-def test_on_db_jump_requested_navigates_to_line(qtbot):
+def _drain_find_all(window):
+    """Synchronously exhaust the streaming Find-all timer (mirrors the pattern in
+    test_main_window): stop the 0ms QTimer and step until the summary lands."""
+    if window._find_all_timer is not None:
+        window._find_all_timer.stop()
+    for _ in range(10):
+        if window._find_all_iter is None:
+            break
+        window._find_all_step()
+
+
+def test_on_db_jump_requested_lists_all_and_selects_first(qtbot):
     window = _window_with_project(qtbot)
-    navigated = []
-    window.center_stage.xml_editor.navigate_to_line = lambda line: navigated.append(line)
+    bar = window.center_stage.find_replace_bar
+    editor = window.center_stage.xml_editor
 
     window._on_db_jump_requested("column", "id")
-    assert navigated == [6]  # fieldName="id" is on line 6
-    assert window.center_stage.currentIndex() == window.center_stage.raw_xml_tab_index
 
-    navigated.clear()
+    # Raw tab active; Find bar seeded with the fieldName token so F3 can step.
+    assert window.center_stage.currentIndex() == window.center_stage.raw_xml_tab_index
+    assert bar._find_field.text() == 'fieldName="id"'
+    # First occurrence selected in the editor.
+    assert editor.textCursor().selectedText() == 'fieldName="id"'
+    # Find-all streaming started for the same token; results land in the panel.
+    assert window._find_all_term == 'fieldName="id"'
+    _drain_find_all(window)
+    find_rows = [
+        window.audit_panel.item(i).text() for i in range(window.audit_panel.count())
+    ]
+    assert any(t.startswith("[Find] ") and 'fieldName="id"' in t for t in find_rows)
+
+
+def test_on_db_jump_requested_table_token(qtbot):
+    window = _window_with_project(qtbot)
+    editor = window.center_stage.xml_editor
     window._on_db_jump_requested("table", "pr.a")
-    assert navigated == [4]  # tableName="pr.a" is on line 4
+    assert window.center_stage.find_replace_bar._find_field.text() == 'tableName="pr.a"'
+    assert editor.textCursor().selectedText() == 'tableName="pr.a"'
+
+
+def test_on_db_jump_requested_missing_token_shows_status(qtbot):
+    window = _window_with_project(qtbot)
+    window._on_db_jump_requested("table", "pr.absent")
+    assert "not found" in window.statusBar().currentMessage()
+
+
+_MULTI_XML = (
+    '<Project>\n'
+    '  <Presentation><Pages>\n'
+    '    <Page fileName="a" tableName="pr.a"/>\n'
+    '    <Page fileName="b" tableName="pr.a"/>\n'
+    '    <Page fileName="c" tableName="pr.a"/>\n'
+    '  </Pages></Presentation>\n'
+    '</Project>\n'
+)
+
+
+def test_f3_steps_through_occurrences_after_db_jump(qtbot):
+    """After a DB double-click, F3 (Find Next) walks to each next occurrence of
+    the token and wraps — reusing the existing find-next machinery."""
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window.center_stage.xml_editor.setPlainText(_MULTI_XML)
+    editor = window.center_stage.xml_editor
+
+    window._on_db_jump_requested("table", "pr.a")
+    # First occurrence selected (line 3).
+    first = editor.textCursor().selectionStart()
+
+    window._find_next()  # F3
+    second = editor.textCursor().selectionStart()
+    assert second > first
+    assert editor.textCursor().selectedText() == 'tableName="pr.a"'
+
+    window._find_next()  # F3 -> third
+    third = editor.textCursor().selectionStart()
+    assert third > second
+
+    window._find_next()  # F3 -> wraps back to first
+    assert editor.textCursor().selectionStart() == first
+
+
+_MULTI_COL_XML = (
+    '<Project>\n'
+    '  <Presentation><Pages>\n'
+    '    <Page fileName="a" tableName="pr.a">\n'
+    '      <ColumnPresentations>\n'
+    '        <ColumnPresentation fieldName="dup"/>\n'
+    '        <ColumnPresentation fieldName="dup"/>\n'
+    '        <ColumnPresentation fieldName="dup"/>\n'
+    '      </ColumnPresentations>\n'
+    '    </Page>\n'
+    '  </Pages></Presentation>\n'
+    '</Project>\n'
+)
+
+
+def test_on_db_jump_column_lists_all_and_f3_steps(qtbot):
+    """Double-clicking a COLUMN node seeds the fieldName token, selects the first
+    occurrence, lists every occurrence, and F3 walks 1->2->3->wrap."""
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window.center_stage.xml_editor.setPlainText(_MULTI_COL_XML)
+    editor = window.center_stage.xml_editor
+    bar = window.center_stage.find_replace_bar
+
+    window._on_db_jump_requested("column", "dup")
+
+    assert bar._find_field.text() == 'fieldName="dup"'
+    assert editor.textCursor().selectedText() == 'fieldName="dup"'
+    first = editor.textCursor().selectionStart()
+
+    # Every occurrence is listed in the panel.
+    _drain_find_all(window)
+    find_rows = [
+        window.audit_panel.item(i).text()
+        for i in range(window.audit_panel.count())
+        if window.audit_panel.item(i).text().startswith("[Find] ")
+    ]
+    # 3 occurrence rows + 1 summary row.
+    assert sum('fieldName="dup"' in r and "line" in r for r in find_rows) == 3
+
+    window._find_next()  # F3 -> 2nd
+    second = editor.textCursor().selectionStart()
+    assert second > first
+    window._find_next()  # F3 -> 3rd
+    third = editor.textCursor().selectionStart()
+    assert third > second
+    window._find_next()  # F3 -> wraps to 1st
+    assert editor.textCursor().selectionStart() == first
+
+
+def test_f3_single_occurrence_wraps_to_itself(qtbot):
+    """A token appearing exactly once: F3 re-selects the same single occurrence
+    (wrap lands back on itself), never losing the selection."""
+    window = _window_with_project(qtbot)
+    editor = window.center_stage.xml_editor
+
+    window._on_db_jump_requested("column", "id")  # fieldName="id" occurs once
+    start = editor.textCursor().selectionStart()
+    assert editor.textCursor().selectedText() == 'fieldName="id"'
+
+    window._find_next()  # F3 -> wraps back to the same match
+    assert editor.textCursor().selectionStart() == start
+    assert editor.textCursor().selectedText() == 'fieldName="id"'
+
+
+def test_second_db_jump_does_not_accumulate_find_rows(qtbot):
+    """A second double-click re-runs Find All, which clears prior [Find] rows so
+    results don't pile up across double-clicks."""
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window.center_stage.xml_editor.setPlainText(_MULTI_XML)  # 3x tableName="pr.a"
+
+    window._on_db_jump_requested("table", "pr.a")
+    _drain_find_all(window)
+    first_count = sum(
+        window.audit_panel.item(i).text().startswith("[Find] ")
+        for i in range(window.audit_panel.count())
+    )
+
+    window._on_db_jump_requested("table", "pr.a")
+    _drain_find_all(window)
+    second_count = sum(
+        window.audit_panel.item(i).text().startswith("[Find] ")
+        for i in range(window.audit_panel.count())
+    )
+
+    assert first_count > 0
+    assert second_count == first_count  # cleared + re-added, not accumulated
+
+
+def test_missing_token_leaves_find_field_and_selection_untouched(qtbot):
+    """Zero occurrences: the guard shows a status message and does NOT re-seed
+    the Find bar, move the selection, or start a Find All."""
+    window = _window_with_project(qtbot)
+    bar = window.center_stage.find_replace_bar
+    editor = window.center_stage.xml_editor
+
+    # Pre-seed a distinct find term and a selection to prove they survive.
+    bar.set_find_text("SENTINEL")
+    cursor = editor.textCursor()
+    cursor.setPosition(0)
+    cursor.setPosition(5, cursor.MoveMode.KeepAnchor)
+    editor.setTextCursor(cursor)
+    pre_sel = editor.textCursor().selectedText()
+
+    window._on_db_jump_requested("table", "pr.absent")
+
+    assert "not found" in window.statusBar().currentMessage()
+    assert bar._find_field.text() == "SENTINEL"  # untouched
+    assert editor.textCursor().selectedText() == pre_sel  # untouched
+    assert window._find_all_term != 'tableName="pr.absent"'
+
+
+def test_db_jump_reveals_hidden_audit_dock(qtbot):
+    """If a prior action left the Audit dock hidden, a DB double-click reveals it
+    so the listed occurrences are visible."""
+    window = _window_with_project(qtbot)
+    window.audit_dock.setVisible(False)
+    assert window.audit_dock.isHidden()
+
+    window._on_db_jump_requested("column", "id")
+
+    # The offscreen top-level window is never shown, so isVisible() would be
+    # False regardless; assert the explicit hidden flag the handler toggles.
+    assert not window.audit_dock.isHidden()
 
 
 _RENAME_XML = (

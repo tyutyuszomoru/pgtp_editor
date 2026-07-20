@@ -1911,15 +1911,32 @@ class MainWindow(QMainWindow):
             self._run_db_check(self._last_db_check_direction)
 
     def _on_db_jump_requested(self, kind, name):
+        """Double-click on a DB tree node: list EVERY occurrence of the node's
+        attribute token in the Find-all results panel, select the first one, and
+        seed the Find bar so Find Next / F3 steps through them (reusing the
+        existing Find All + Find Next machinery rather than a one-shot jump)."""
         token = f'tableName="{name}"' if kind == "table" else f'fieldName="{name}"'
-        text = self.center_stage.xml_editor.toPlainText()
-        index = text.find(token)
-        if index == -1:
+        editor = self.center_stage.xml_editor
+        if token not in editor.toPlainText():
             self.statusBar().showMessage(f"{name} not found in the buffer.", 5000)
             return
-        line = text.count("\n", 0, index) + 1
         self.center_stage.setCurrentIndex(self.center_stage.raw_xml_tab_index)
-        self.center_stage.xml_editor.navigate_to_line(line)
+        # Clear any selection so the first Find Next lands on the first match.
+        cursor = editor.textCursor()
+        cursor.setPosition(0)
+        editor.setTextCursor(cursor)
+        # Seed the Find bar so Find Next / F3 step through occurrences of the
+        # token. show_find()'s prefill is a no-op now that the selection is clear.
+        bar = self.center_stage.find_replace_bar
+        bar.set_find_text(token)
+        bar.show_find()
+        # List every occurrence in the bottom panel (reuses Find All), and
+        # reveal the panel in case a prior DB check left it hidden.
+        self._populate_find_all_results(token)
+        self.audit_dock.setVisible(True)
+        # Select the first occurrence; F3 (Find Next) continues from there.
+        bar.find_next()
+        editor.setFocus()
 
     # -- Create page/detail/lookup from a DB table (SP3) ---------------------
 
