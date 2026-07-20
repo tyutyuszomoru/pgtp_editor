@@ -68,9 +68,9 @@ class CustomizeToolbarDialog(QDialog):
         return item
 
     def set_ids(self, ids):
-        """Reset both lists from an ordered id list: `ids` populate the
-        On-Toolbar list in that order; the rest fill Available in registry
-        order."""
+        """Reset both lists: `ids` populate the On-Toolbar list in that order;
+        Available lists EVERY command in registry order, with commands already
+        on the toolbar shown disabled so they can't be added twice."""
         current = [cid for cid in ids if cid in self._labels]
         self.toolbar_list.clear()
         for cid in current:
@@ -78,8 +78,14 @@ class CustomizeToolbarDialog(QDialog):
         current_set = set(current)
         self.available_list.clear()
         for cid in self._registry_order:
-            if cid not in current_set:
-                self.available_list.addItem(self._make_item(cid))
+            item = self._make_item(cid)
+            if cid in current_set:
+                item.setFlags(
+                    item.flags()
+                    & ~Qt.ItemFlag.ItemIsEnabled
+                    & ~Qt.ItemFlag.ItemIsSelectable
+                )
+            self.available_list.addItem(item)
 
     # -- accessors (test seam) -----------------------------------------------
 
@@ -95,6 +101,16 @@ class CustomizeToolbarDialog(QDialog):
 
     def _available_ids(self):
         return self._ids_of(self.available_list)
+
+    def _available_enabled_ids(self):
+        """Available ids whose item is enabled (i.e. addable -- not already on
+        the toolbar). Test seam."""
+        out = []
+        for row in range(self.available_list.count()):
+            item = self.available_list.item(row)
+            if item.flags() & Qt.ItemFlag.ItemIsEnabled:
+                out.append(item.data(Qt.ItemDataRole.UserRole))
+        return out
 
     def result_ids(self):
         """The chosen ordered id list (== `selected_ids()`)."""
@@ -122,9 +138,9 @@ class CustomizeToolbarDialog(QDialog):
         item = self.available_list.currentItem()
         if item is None:
             return
-        # Move the current On-Toolbar list to include the selected id, keeping
-        # Available as the registry-ordered complement.
         cid = item.data(Qt.ItemDataRole.UserRole)
+        if cid in set(self.selected_ids()):
+            return
         self.set_ids(self.selected_ids() + [cid])
         self._select_toolbar(cid)
 

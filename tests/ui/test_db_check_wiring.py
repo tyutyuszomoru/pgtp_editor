@@ -225,3 +225,172 @@ def test_rename_resolves_mismatch_on_rerun_from_buffer(qtbot):
 
     assert 'fieldName="new_col"' in window.center_stage.xml_editor.toPlainText()
     assert window.db_check_panel._mismatch_count() == 0  # resolved from the buffer
+
+
+def _run_initial_check(window, direction="xml_to_db"):
+    """Do one real (patched-fetch) check so the cache + panel are populated
+    and the tab is revealed."""
+    window._run_db_check(direction)
+
+
+def test_run_db_check_captures_summary(qtbot):
+    window = _window_with_project(qtbot)
+    _run_initial_check(window)
+    assert window._last_db_check_direction == "xml_to_db"
+    assert window._last_db_schema is not None
+    assert window._last_db_summary == "u@h:5432/d"
+
+
+def test_reparse_refreshes_open_db_check_with_cached_schema(qtbot):
+    window = _window_with_project(qtbot)
+    fetches = []
+    base_fetch = window._fetch_db_schema
+    window._fetch_db_schema = lambda params: (fetches.append(1), base_fetch(params))[1]
+    _run_initial_check(window)
+    assert fetches == [1]                      # one fetch for the initial check
+
+    # Edit the buffer (add a column that IS in the schema was already; instead
+    # remove the page's only column reference to change the mismatch set), then
+    # spy on set_result so we see only the reparse-driven repopulate.
+    calls = []
+    real_set = window.db_check_panel.set_result
+    window.db_check_panel.set_result = lambda *a: (calls.append(a), real_set(*a))[1]
+
+    edited = _RAW_XML.replace('fieldName="id"', 'fieldName="nonexistent"')
+    window.center_stage.xml_editor.setPlainText(edited)
+
+    window._reparse_raw_xml()
+
+    assert fetches == [1]                       # NO re-query — cached schema reused
+    assert len(calls) == 1                       # panel repopulated once by reparse
+    direction, checks, summary = calls[0]
+    assert direction == "xml_to_db"
+    assert summary == "u@h:5432/d"
+    # checks reflect the EDITED buffer against the cached schema:
+    from pgtp_editor.model.parser import load_project_from_text
+    from pgtp_editor.db.compare import check_xml_against_db
+    proj = load_project_from_text(edited, source_description="<editor>")
+    assert checks == check_xml_against_db(proj, window._last_db_schema)
+
+
+def test_reparse_no_refresh_when_db_tab_hidden(qtbot):
+    window = _window_with_project(qtbot)
+    _run_initial_check(window)
+    window.left_tabs.setTabVisible(window.db_check_tab_index, False)
+    calls = []
+    window.db_check_panel.set_result = lambda *a: calls.append(a)
+    window._reparse_raw_xml()
+    assert calls == []
+
+
+def test_reparse_no_refresh_without_prior_check(qtbot):
+    window = _window_with_project(qtbot)
+    # no check run: cache empty, tab hidden by default
+    calls = []
+    window.db_check_panel.set_result = lambda *a: calls.append(a)
+    window._reparse_raw_xml()
+    assert calls == []
+
+
+def test_reparse_refreshes_db_to_xml_direction(qtbot):
+    """The refresh honors the cached direction: a db_to_xml check refreshes via
+    check_db_against_xml, not the xml_to_db path."""
+    window = _window_with_project(qtbot)
+    _run_initial_check(window, "db_to_xml")
+    assert window._last_db_check_direction == "db_to_xml"
+
+    calls = []
+    real_set = window.db_check_panel.set_result
+    window.db_check_panel.set_result = lambda *a: (calls.append(a), real_set(*a))[1]
+
+    edited = _RAW_XML.replace('fieldName="id"', 'fieldName="renamed"')
+    window.center_stage.xml_editor.setPlainText(edited)
+    window._reparse_raw_xml()
+
+    assert len(calls) == 1
+    direction, checks, summary = calls[0]
+    assert direction == "db_to_xml"
+    from pgtp_editor.model.parser import load_project_from_text
+    from pgtp_editor.db.compare import check_db_against_xml
+    proj = load_project_from_text(edited, source_description="<editor>")
+    assert checks == check_db_against_xml(proj, window._last_db_schema)
+
+
+def test_reparse_edit_resolving_mismatch_shows_fewer_problems(qtbot):
+    """A reparse whose edit fixes a not-found column drops the mismatch count
+    relative to the pre-edit refresh (cached schema, no re-query)."""
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window.center_stage.xml_editor.setPlainText(_RENAME_XML)  # references old_col
+    window._run_async = _sync_run
+    schema = DatabaseSchema(tables={
+        "pr.a": TableInfo(
+            name="pr.a", kind="table",
+            columns=[ColumnInfo("new_col", "integer", False, False, True, None)],
+        )
+    })
+    window._fetch_db_schema = lambda params: schema
+    window._run_db_check("xml_to_db")
+    before = window.db_check_panel._mismatch_count()
+    assert before >= 1  # old_col not found
+
+    # Fix the buffer: old_col -> new_col, then reparse (refresh uses cache).
+    edited = _RENAME_XML.replace('fieldName="old_col"', 'fieldName="new_col"')
+    window.center_stage.xml_editor.setPlainText(edited)
+    window._reparse_raw_xml()
+
+    assert window.db_check_panel._mismatch_count() < before
+    assert window.db_check_panel._mismatch_count() == 0
+
+
+def test_reparse_refresh_does_not_mutate_cache(qtbot):
+    """The refresh reuses direction/schema/summary; it must never overwrite the
+    cache (that only happens on a fresh _run_db_check)."""
+    window = _window_with_project(qtbot)
+    _run_initial_check(window)
+    cached_dir = window._last_db_check_direction
+    cached_schema = window._last_db_schema
+    cached_summary = window._last_db_summary
+
+    edited = _RAW_XML.replace('fieldName="id"', 'fieldName="nonexistent"')
+    window.center_stage.xml_editor.setPlainText(edited)
+    window._reparse_raw_xml()
+
+    assert window._last_db_check_direction == cached_dir
+    assert window._last_db_schema is cached_schema      # same object, not re-fetched
+    assert window._last_db_summary == cached_summary
+
+
+def test_reparse_refresh_passes_cached_summary_to_panel(qtbot):
+    """The panel is repopulated with the cached summary line, verbatim."""
+    window = _window_with_project(qtbot)
+    _run_initial_check(window)
+    window._last_db_summary = "custom@snapshot:1/db"  # simulate a prior snapshot
+
+    calls = []
+    real_set = window.db_check_panel.set_result
+    window.db_check_panel.set_result = lambda *a: (calls.append(a), real_set(*a))[1]
+    window._reparse_raw_xml()
+
+    assert len(calls) == 1
+    assert calls[0][2] == "custom@snapshot:1/db"
+
+
+def test_reparse_invalid_buffer_leaves_panel_untouched(qtbot, monkeypatch):
+    """An unparseable buffer: the tree reparse surfaces its own error and the
+    DB-check refresh is skipped -- panel keeps its previous contents, no crash."""
+    from PySide6.QtWidgets import QMessageBox
+    monkeypatch.setattr(QMessageBox, "critical", staticmethod(lambda *a, **k: None))
+
+    window = _window_with_project(qtbot)
+    _run_initial_check(window)
+    populated = window.db_check_panel.tree.topLevelItemCount()
+    assert populated >= 1
+
+    calls = []
+    window.db_check_panel.set_result = lambda *a: calls.append(a)
+    window.center_stage.xml_editor.setPlainText("<Project><broken")
+    window._reparse_raw_xml()  # must not raise
+
+    assert calls == []  # refresh skipped
+    assert window.db_check_panel.tree.topLevelItemCount() == populated  # untouched
