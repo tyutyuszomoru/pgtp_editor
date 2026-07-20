@@ -225,3 +225,68 @@ def test_rename_resolves_mismatch_on_rerun_from_buffer(qtbot):
 
     assert 'fieldName="new_col"' in window.center_stage.xml_editor.toPlainText()
     assert window.db_check_panel._mismatch_count() == 0  # resolved from the buffer
+
+
+def _run_initial_check(window, direction="xml_to_db"):
+    """Do one real (patched-fetch) check so the cache + panel are populated
+    and the tab is revealed."""
+    window._run_db_check(direction)
+
+
+def test_run_db_check_captures_summary(qtbot):
+    window = _window_with_project(qtbot)
+    _run_initial_check(window)
+    assert window._last_db_check_direction == "xml_to_db"
+    assert window._last_db_schema is not None
+    assert window._last_db_summary == "u@h:5432/d"
+
+
+def test_reparse_refreshes_open_db_check_with_cached_schema(qtbot):
+    window = _window_with_project(qtbot)
+    fetches = []
+    base_fetch = window._fetch_db_schema
+    window._fetch_db_schema = lambda params: (fetches.append(1), base_fetch(params))[1]
+    _run_initial_check(window)
+    assert fetches == [1]                      # one fetch for the initial check
+
+    # Edit the buffer (add a column that IS in the schema was already; instead
+    # remove the page's only column reference to change the mismatch set), then
+    # spy on set_result so we see only the reparse-driven repopulate.
+    calls = []
+    real_set = window.db_check_panel.set_result
+    window.db_check_panel.set_result = lambda *a: (calls.append(a), real_set(*a))[1]
+
+    edited = _RAW_XML.replace('fieldName="id"', 'fieldName="nonexistent"')
+    window.center_stage.xml_editor.setPlainText(edited)
+
+    window._reparse_raw_xml()
+
+    assert fetches == [1]                       # NO re-query — cached schema reused
+    assert len(calls) == 1                       # panel repopulated once by reparse
+    direction, checks, summary = calls[0]
+    assert direction == "xml_to_db"
+    assert summary == "u@h:5432/d"
+    # checks reflect the EDITED buffer against the cached schema:
+    from pgtp_editor.model.parser import load_project_from_text
+    from pgtp_editor.db.compare import check_xml_against_db
+    proj = load_project_from_text(edited, source_description="<editor>")
+    assert checks == check_xml_against_db(proj, window._last_db_schema)
+
+
+def test_reparse_no_refresh_when_db_tab_hidden(qtbot):
+    window = _window_with_project(qtbot)
+    _run_initial_check(window)
+    window.left_tabs.setTabVisible(window.db_check_tab_index, False)
+    calls = []
+    window.db_check_panel.set_result = lambda *a: calls.append(a)
+    window._reparse_raw_xml()
+    assert calls == []
+
+
+def test_reparse_no_refresh_without_prior_check(qtbot):
+    window = _window_with_project(qtbot)
+    # no check run: cache empty, tab hidden by default
+    calls = []
+    window.db_check_panel.set_result = lambda *a: calls.append(a)
+    window._reparse_raw_xml()
+    assert calls == []

@@ -154,6 +154,10 @@ class MainWindow(QMainWindow):
         self._connection_dialog = None
         # Direction of the last Database Check run, so a rename can re-run it.
         self._last_db_check_direction = None
+        # Cached schema + connection summary from the last Database Check run,
+        # so a reparse can refresh the panel without re-querying the database.
+        self._last_db_schema = None
+        self._last_db_summary = None
         # Off-thread executor seam. The Database Check schema fetch opens a
         # connection; running it here would freeze the window on a slow/dead
         # host. Default marshals it to a threadpool worker; tests inject a
@@ -998,6 +1002,28 @@ class MainWindow(QMainWindow):
         # user clicks again. show_node(None, None) is the panel's own reset.
         self.properties_panel.show_node(None, None)
         self.statusBar().showMessage("Reparsed raw XML into tree", 5000)
+        self._refresh_db_check_if_open(project)
+
+    def _refresh_db_check_if_open(self, project) -> None:
+        """After a reparse, re-run the last DB check's comparison against the
+        CACHED schema (no re-query) so the open panel reflects the edited XML.
+        No-op unless the Database Check tab is visible and a check already ran.
+        `project` is the freshly parsed model from _reparse_raw_xml."""
+        if (
+            not self.left_tabs.isTabVisible(self.db_check_tab_index)
+            or self._last_db_check_direction is None
+            or self._last_db_schema is None
+        ):
+            return
+        self._populate_db_check(
+            self._last_db_check_direction,
+            self._last_db_schema,
+            project,
+            self._last_db_summary or "",
+        )
+        self.statusBar().showMessage(
+            "Database check refreshed against the last database snapshot.", 4000
+        )
 
     def _handle_reparse_failure(self, exc: PgtpParseError) -> None:
         # Mirror the Tier-1 open-failure pattern (_handle_parse_failure), but
@@ -1816,6 +1842,16 @@ class MainWindow(QMainWindow):
         self.left_tabs.setTabVisible(self.db_check_tab_index, True)
         self.left_tabs.setCurrentWidget(self.db_check_panel)
 
+    def _populate_db_check(self, direction, schema, project, summary):
+        """Compare `project` against `schema` for `direction` and show the
+        result. Shared by the live check (_run_db_check) and the cached-schema
+        refresh (_refresh_db_check_if_open)."""
+        if direction == "xml_to_db":
+            checks = check_xml_against_db(project, schema)
+        else:
+            checks = check_db_against_xml(project, schema)
+        self.db_check_panel.set_result(direction, checks, summary)
+
     def _run_db_check(self, direction):
         # Compare against a model parsed from the CURRENT buffer, not the
         # last-parsed self._current_project -- so renames (and any manual edit)
@@ -1848,13 +1884,11 @@ class MainWindow(QMainWindow):
         _log.info("db: check %s started %s", direction, debuglog.redacted(params))
 
         def on_result(schema):
-            if direction == "xml_to_db":
-                checks = check_xml_against_db(project, schema)
-            else:
-                checks = check_db_against_xml(project, schema)
-            self._last_db_check_direction = direction
             summary = f"{params.user}@{params.host}:{params.port}/{params.database}"
-            self.db_check_panel.set_result(direction, checks, summary)
+            self._last_db_check_direction = direction
+            self._last_db_schema = schema
+            self._last_db_summary = summary
+            self._populate_db_check(direction, schema, project, summary)
             self._reveal_db_check_tab()
             self.statusBar().showMessage("Database check complete.", 3000)
             _log.info("db: check %s finished", direction)
