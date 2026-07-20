@@ -1,5 +1,6 @@
 import copy
 import logging
+import os
 import shutil
 from pathlib import Path
 
@@ -31,8 +32,23 @@ from PySide6.QtWidgets import (
 
 from pgtp_editor import debuglog
 from pgtp_editor.diff.apply import apply_differences
-from pgtp_editor.generation.config import load_executable_path, save_executable_path
+from pgtp_editor.generation.config import (
+    generator_config_path,
+    load_executable_path,
+    load_re_phpgen_root,
+    save_executable_path,
+    save_re_phpgen_root,
+)
 from pgtp_editor.generation.runner import GeneratorRunner, build_generate_command
+from pgtp_editor.generation.re_runner import (
+    PANGEN_SUBFOLDER,
+    build_analyze_command,
+    build_pangen_command,
+    resolve_re_phpgen_python,
+    validate_re_phpgen_root,
+)
+from pgtp_editor.generation.gap_summary import summarize_gap_json
+from pgtp_editor.generation import from_table as table_gen
 from pgtp_editor.diff.differ import compare_block, diff_project
 from pgtp_editor.diff.resolve import ResolutionError, resolve_path
 from pgtp_editor.model.encoding import read_pgtp_text
@@ -145,6 +161,7 @@ class MainWindow(QMainWindow):
         self._generator_runner = generator_runner if generator_runner is not None else GeneratorRunner()
         self._current_output_folder = None
         self._is_generating = False
+        self._last_gap_json: Path | None = None
         # Read-only schema viewer windows (Phase 1). Held on self so they are
         # not garbage-collected while open; reused/refreshed on reopen.
         self._xsd_viewer = None
@@ -154,8 +171,9 @@ class MainWindow(QMainWindow):
         self._connection_dialog = None
         # Direction of the last Database Check run, so a rename can re-run it.
         self._last_db_check_direction = None
-        # Cached schema + connection summary from the last Database Check run,
-        # so a reparse can refresh the panel without re-querying the database.
+        # Cached schema + connection summary from the last Database Check run:
+        # a reparse refreshes the panel without re-querying, and a right-click
+        # "create from table" reuses the column metadata without re-querying.
         self._last_db_schema = None
         self._last_db_summary = None
         # Off-thread executor seam. The Database Check schema fetch opens a
@@ -199,6 +217,7 @@ class MainWindow(QMainWindow):
         self.left_tabs.setTabVisible(self.db_check_tab_index, False)
         self.db_check_panel.rename_requested.connect(self._on_db_rename_requested)
         self.db_check_panel.jump_requested.connect(self._on_db_jump_requested)
+        self.db_check_panel.create_requested.connect(self._on_db_create_requested)
         self.tree_dock.setWidget(self.left_tabs)
         self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self.tree_dock)
 
@@ -1923,15 +1942,127 @@ class MainWindow(QMainWindow):
             self._run_db_check(self._last_db_check_direction)
 
     def _on_db_jump_requested(self, kind, name):
+        """Double-click on a DB tree node: list EVERY occurrence of the node's
+        attribute token in the Find-all results panel, select the first one, and
+        seed the Find bar so Find Next / F3 steps through them (reusing the
+        existing Find All + Find Next machinery rather than a one-shot jump)."""
         token = f'tableName="{name}"' if kind == "table" else f'fieldName="{name}"'
-        text = self.center_stage.xml_editor.toPlainText()
-        index = text.find(token)
-        if index == -1:
+        editor = self.center_stage.xml_editor
+        if token not in editor.toPlainText():
             self.statusBar().showMessage(f"{name} not found in the buffer.", 5000)
             return
-        line = text.count("\n", 0, index) + 1
         self.center_stage.setCurrentIndex(self.center_stage.raw_xml_tab_index)
-        self.center_stage.xml_editor.navigate_to_line(line)
+        # Clear any selection so the first Find Next lands on the first match.
+        cursor = editor.textCursor()
+        cursor.setPosition(0)
+        editor.setTextCursor(cursor)
+        # Seed the Find bar so Find Next / F3 step through occurrences of the
+        # token. show_find()'s prefill is a no-op now that the selection is clear.
+        bar = self.center_stage.find_replace_bar
+        bar.set_find_text(token)
+        bar.show_find()
+        # List every occurrence in the bottom panel (reuses Find All), and
+        # reveal the panel in case a prior DB check left it hidden.
+        self._populate_find_all_results(token)
+        self.audit_dock.setVisible(True)
+        # Select the first occurrence; F3 (Find Next) continues from there.
+        bar.find_next()
+        editor.setFocus()
+
+    # -- Create page/detail/lookup from a DB table (SP3) ---------------------
+
+    def _confirm_duplicate_page(self, table_name):
+        """Warn that a page for `table_name` already exists; return True to
+        proceed (with a de-duplicated fileName) or False to cancel. Test seam —
+        patched to bypass the modal."""
+        choice = QMessageBox.question(
+            self,
+            "Page Already Exists",
+            f"A page for '{table_name}' already exists in this project.\n\n"
+            "Create another one anyway (with a de-duplicated fileName)?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        return choice == QMessageBox.StandardButton.Yes
+
+    def _on_db_create_requested(self, what, name):
+        """Right-click on a Database → XML table node: synthesize a page (insert
+        into the buffer) or a detail/lookup (copy to clipboard)."""
+        schema = self._last_db_schema
+        if schema is None or schema.table(name) is None:
+            self.statusBar().showMessage(
+                f"No schema for '{name}' — run a Database check first.", 5000
+            )
+            return
+        try:
+            if what == "page":
+                self._create_page_from_table(schema, name)
+            elif what == "detail":
+                element = table_gen.build_detail(schema, name)
+                self._copy_fragment_to_clipboard(element, "Detail", name)
+            elif what == "lookup":
+                element = table_gen.build_lookup(schema, name)
+                self._copy_fragment_to_clipboard(element, "Lookup", name)
+        except table_gen.GenerationError as exc:
+            self.statusBar().showMessage(f"Could not create {what}: {exc}", 8000)
+
+    def _copy_fragment_to_clipboard(self, element, label, name):
+        text = table_gen.serialize(element, indent=0)
+        QApplication.clipboard().setText(text)
+        self.statusBar().showMessage(
+            f"{label} for '{name}' copied to clipboard — paste it into the "
+            "target page.",
+            6000,
+        )
+
+    def _create_page_from_table(self, schema, name):
+        element = table_gen.build_page(schema, name)
+        buffer = self.center_stage.xml_editor.toPlainText()
+
+        file_name = element.get("fileName")
+        if f'tableName="{name}"' in buffer or f'fileName="{file_name}"' in buffer:
+            if not self._confirm_duplicate_page(name):
+                self.statusBar().showMessage("Page creation cancelled.", 3000)
+                return
+            file_name = self._dedupe_file_name(buffer, file_name)
+            element.set("fileName", file_name)
+
+        updated, insert_line = self._insert_page_before_pages_close(buffer, element)
+        if updated is None:
+            self.statusBar().showMessage(
+                "Could not find </Pages> to insert the new page.", 8000
+            )
+            return
+        self.center_stage.xml_editor.setPlainText(updated)
+        self.center_stage.setCurrentIndex(self.center_stage.raw_xml_tab_index)
+        self.center_stage.xml_editor.navigate_to_line(insert_line)
+        self.center_stage.xml_editor.select_enclosing_block()
+        self.statusBar().showMessage(f"Page for '{name}' added.", 5000)
+
+    @staticmethod
+    def _dedupe_file_name(buffer, file_name):
+        candidate = file_name
+        suffix = 2
+        while f'fileName="{candidate}"' in buffer:
+            candidate = f"{file_name}_{suffix}"
+            suffix += 1
+        return candidate
+
+    @staticmethod
+    def _insert_page_before_pages_close(buffer, element):
+        """Splice a serialized <Page> immediately before </Pages>, indented to
+        match the existing <Page> depth. Returns (new_text, page_open_line) or
+        (None, 0) if </Pages> is absent."""
+        close_index = buffer.rfind("</Pages>")
+        if close_index == -1:
+            return None, 0
+        line_start = buffer.rfind("\n", 0, close_index) + 1
+        close_indent = buffer[line_start:close_index]
+        indent_depth = close_indent.count("\t") + 1  # one level deeper than </Pages>
+        fragment = table_gen.serialize(element, indent=indent_depth)
+        new_text = buffer[:line_start] + fragment + "\n" + buffer[line_start:]
+        page_open_line = buffer.count("\n", 0, line_start) + 1
+        return new_text, page_open_line
 
     def _open_reused_tables(self):
         if self._current_project is None:
@@ -1999,6 +2130,16 @@ class MainWindow(QMainWindow):
         menu.addSeparator()
         open_output_action = menu.addAction("Open Output Folder")
         open_output_action.triggered.connect(self._open_output_folder)
+        menu.addSeparator()
+        locate_pangen_action = menu.addAction("Locate panGen Runtime...")
+        locate_pangen_action.triggered.connect(self._locate_pangen_runtime)
+        pangen_action = menu.addAction("panGen (Generate Own PHP)")
+        pangen_action.triggered.connect(self._pangen)
+        re_phpgen_action = menu.addAction("rePHPgen (Analyze Gap)")
+        re_phpgen_action.triggered.connect(self._re_phpgen_analyze)
+        self._save_rejson_action = menu.addAction("Save reJSON...")
+        self._save_rejson_action.triggered.connect(self._save_rejson)
+        self._save_rejson_action.setEnabled(False)
 
     def _locate_generator(self) -> None:
         path, _filter = QFileDialog.getOpenFileName(
@@ -2113,6 +2254,219 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("No output folder yet — run Generate PHP first.", 5000)
             return
         QDesktopServices.openUrl(QUrl.fromLocalFile(self._current_output_folder))
+
+    # -- panGen / rePHPgen (own generator + gap analysis) --------------------
+
+    def _gap_json_work_path(self) -> Path:
+        """Scratch path for the analyze command's JSON output (next to the
+        generator config, out of the user's project tree)."""
+        return generator_config_path(self._generator_config_dir).parent / "last_gap.json"
+
+    def _re_phpgen_runtime(self) -> tuple[str, str, dict[str, str]] | None:
+        """(python, root, extra_env) or None after showing guidance."""
+        root = load_re_phpgen_root(base_dir=self._generator_config_dir)
+        if not validate_re_phpgen_root(root):
+            QMessageBox.information(
+                self,
+                "panGen",
+                "re_phpgen runtime not found. Set it via "
+                "Generation > Locate panGen Runtime...",
+            )
+            return None
+        python = resolve_re_phpgen_python(root)
+        # Merge-prepend PYTHONPATH: our src first (wins shadowing), user's
+        # pre-existing entries preserved (never clobber their environment).
+        src = str(Path(root) / "src")
+        existing = os.environ.get("PYTHONPATH", "")
+        pythonpath = src + (os.pathsep + existing if existing else "")
+        return python, root, {"PYTHONPATH": pythonpath}
+
+    def _prepare_generation_run(self) -> str | None:
+        """Shared preamble: in-flight guard, open project, save prompt, output
+        folder. Returns the output folder or None. Mirrors _generate_php steps
+        (no vendor-exe check)."""
+        if self._is_generating:
+            self.statusBar().showMessage("A generation is already in progress.", 5000)
+            return None
+        if self._current_project is None and not self.center_stage.xml_editor.toPlainText().strip():
+            self.statusBar().showMessage("Open a project first.", 5000)
+            return None
+        choice = QMessageBox.question(
+            self,
+            "Save Before Running",
+            "panGen reads the project from disk. Save the current editor contents first?",
+            QMessageBox.StandardButton.Save
+            | QMessageBox.StandardButton.SaveAll
+            | QMessageBox.StandardButton.Cancel,
+        )
+        if choice == QMessageBox.StandardButton.Cancel:
+            return None
+        if choice == QMessageBox.StandardButton.SaveAll:
+            self._save_project_as()
+        else:
+            self._save_project()
+        if not self._current_project_path:
+            return None
+        output_folder = QFileDialog.getExistingDirectory(
+            self, "Select Output Folder", self._project_output_folder_default()
+        )
+        return output_folder or None
+
+    def _pangen(self) -> None:
+        runtime = self._re_phpgen_runtime()
+        if runtime is None:
+            return
+        python, root, extra_env = runtime
+        output_folder = self._prepare_generation_run()
+        if output_folder is None:
+            return
+        self._clear_generator_output()
+        self._current_output_folder = output_folder
+        self._is_generating = True
+        self.statusBar().showMessage("panGen: generating…")
+        _log.info("pangen: started")
+        self._generator_runner.run(
+            build_pangen_command(python, self._current_project_path, output_folder),
+            on_output=self._append_generator_output,
+            on_finished=self._on_pangen_finished,
+            cwd=root,
+            extra_env=extra_env,
+        )
+
+    def _on_pangen_finished(self, exit_code: int) -> None:
+        _log.info("pangen: rc=%s", exit_code)
+        self._is_generating = False
+        if exit_code == 0:
+            self.statusBar().showMessage("panGen finished", 5000)
+        else:
+            QMessageBox.warning(
+                self,
+                "panGen",
+                f"panGen failed (exit {exit_code}). See the Audit / Problems panel "
+                "for the generator log.",
+            )
+            self.statusBar().showMessage(f"panGen failed (exit {exit_code})", 5000)
+
+    def _re_phpgen_analyze(self) -> None:
+        runtime = self._re_phpgen_runtime()
+        if runtime is None:
+            return
+        python, root, extra_env = runtime
+        output_folder = self._prepare_generation_run()
+        if output_folder is None:
+            return
+        if Path(output_folder).name == PANGEN_SUBFOLDER:
+            QMessageBox.information(
+                self, "rePHPgen",
+                "This is panGen's own output subfolder — select the folder that "
+                "contains the vendor-generated .php files instead.",
+            )
+            return
+        if not any(Path(output_folder).glob("*.php")):
+            QMessageBox.information(
+                self,
+                "rePHPgen",
+                "No vendor output found in this folder. Generate the project from "
+                "the PHP Generator GUI into this folder first, then run rePHPgen.",
+            )
+            return
+
+        self._clear_generator_output()
+        self._current_output_folder = output_folder
+        self._is_generating = True
+        self._save_rejson_action.setEnabled(False)
+        json_path = self._gap_json_work_path()
+        pgtp = self._current_project_path
+        pangen_command = build_pangen_command(python, pgtp, output_folder)
+        analyze_command = build_analyze_command(python, pgtp, output_folder, str(json_path))
+        self.statusBar().showMessage("rePHPgen: generating…")
+        _log.info("re_phpgen: pangen started")
+
+        def _on_analyze_finished(exit_code: int) -> None:
+            _log.info("re_phpgen: analyze rc=%s", exit_code)
+            self._is_generating = False
+            if exit_code != 0:
+                QMessageBox.warning(
+                    self,
+                    "rePHPgen",
+                    f"Gap analysis failed (exit {exit_code}). See the Audit / "
+                    "Problems panel for the log.",
+                )
+                self.statusBar().showMessage(f"rePHPgen failed (exit {exit_code})", 5000)
+                return
+            self._last_gap_json = json_path
+            self._save_rejson_action.setEnabled(True)
+            summary = summarize_gap_json(json_path)
+            self._append_generator_output(summary.replace("\n", " | "))
+            self.statusBar().showMessage("rePHPgen: gap analysis complete", 5000)
+            QMessageBox.information(self, "rePHPgen — Gap Summary", summary)
+
+        def _on_pangen_done(exit_code: int) -> None:
+            _log.info("re_phpgen: pangen rc=%s", exit_code)
+            if exit_code != 0:
+                self._is_generating = False
+                QMessageBox.warning(
+                    self,
+                    "rePHPgen",
+                    f"panGen failed (exit {exit_code}). See the Audit / Problems "
+                    "panel for the generator log.",
+                )
+                self.statusBar().showMessage(f"rePHPgen failed (exit {exit_code})", 5000)
+                return
+            _log.info("re_phpgen: analyze started")
+            self._generator_runner.run(
+                analyze_command,
+                on_output=self._append_generator_output,
+                on_finished=_on_analyze_finished,
+                cwd=root,
+                extra_env=extra_env,
+            )
+
+        self._generator_runner.run(
+            pangen_command,
+            on_output=self._append_generator_output,
+            on_finished=_on_pangen_done,
+            cwd=root,
+            extra_env=extra_env,
+        )
+
+    def _save_rejson(self) -> None:
+        if self._last_gap_json is None or not Path(self._last_gap_json).is_file():
+            self.statusBar().showMessage("No gap JSON yet — run rePHPgen first.", 5000)
+            return
+        stem = Path(self._current_project_path).stem if self._current_project_path else "project"
+        default_dir = self._current_output_folder or ""
+        path, _filter = QFileDialog.getSaveFileName(
+            self,
+            "Save reJSON",
+            str(Path(default_dir) / f"{stem}_gap.json"),
+            "JSON (*.json)",
+        )
+        if not path:
+            return
+        Path(path).write_text(
+            Path(self._last_gap_json).read_text(encoding="utf-8"), encoding="utf-8"
+        )
+        self.statusBar().showMessage(f"Saved reJSON to {Path(path).name}", 5000)
+
+    def _locate_pangen_runtime(self) -> None:
+        root = QFileDialog.getExistingDirectory(
+            self,
+            "Locate panGen Runtime (re_phpgen repo)",
+            load_re_phpgen_root(base_dir=self._generator_config_dir),
+        )
+        if not root:
+            return
+        if not validate_re_phpgen_root(root):
+            QMessageBox.warning(
+                self,
+                "panGen",
+                "That folder does not look like the re_phpgen repo "
+                "(missing src\\re_phpgen).",
+            )
+            return
+        save_re_phpgen_root(root, base_dir=self._generator_config_dir)
+        self.statusBar().showMessage(f"panGen runtime set: {root}", 5000)
 
     def _build_help_menu(self):
         menu = self.menuBar().addMenu("Help")

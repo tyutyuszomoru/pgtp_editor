@@ -36,6 +36,7 @@ class ColumnInfo:
     is_fk: bool
     is_nullable: bool
     default: str | None
+    fk_target: str | None = None  # referenced "schema.table.column" for FK columns
 
 
 @dataclass(frozen=True)
@@ -97,12 +98,18 @@ ORDER BY a.attnum
 """
 
 _CONSTRAINTS_SQL = """
-SELECT n.nspname, c.relname, a.attname, con.contype
+SELECT n.nspname, c.relname, lc.attname, con.contype,
+       CASE WHEN con.contype = 'f' THEN rn.nspname || '.' || rc.relname || '.' || rc_att.attname END
 FROM pg_catalog.pg_constraint con
 JOIN pg_catalog.pg_class c ON c.oid = con.conrelid
 JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
-JOIN pg_catalog.pg_attribute a
-     ON a.attrelid = con.conrelid AND a.attnum = ANY(con.conkey)
+JOIN generate_subscripts(con.conkey, 1) AS k(i) ON true
+JOIN pg_catalog.pg_attribute lc
+     ON lc.attrelid = con.conrelid AND lc.attnum = con.conkey[k.i]
+LEFT JOIN pg_catalog.pg_class rc ON rc.oid = con.confrelid
+LEFT JOIN pg_catalog.pg_namespace rn ON rn.oid = rc.relnamespace
+LEFT JOIN pg_catalog.pg_attribute rc_att
+     ON rc_att.attrelid = con.confrelid AND rc_att.attnum = con.confkey[k.i]
 WHERE con.contype IN ('p', 'f')
   AND n.nspname NOT IN ('pg_catalog', 'information_schema')
   AND n.nspname NOT LIKE 'pg_toast%'
@@ -159,15 +166,20 @@ def fetch_schema(params: ConnectionParams, runner: Runner = run_queries) -> Data
     for schema_name, rel_name, relkind in relation_rows:
         kinds[f"{schema_name}.{rel_name}"] = _KIND_BY_RELKIND.get(relkind, "table")
 
-    # Constraint membership: (table_key, column_name) -> contype set.
+    # Constraint membership: (table_key, column_name) -> contype set. FK rows
+    # also carry the referenced "schema.table.column" (None for PKs).
     pk_columns: set[tuple[str, str]] = set()
     fk_columns: set[tuple[str, str]] = set()
-    for schema_name, rel_name, col_name, contype in constraint_rows:
+    fk_targets: dict[tuple[str, str], str] = {}
+    for schema_name, rel_name, col_name, contype, *rest in constraint_rows:
         key = (f"{schema_name}.{rel_name}", col_name)
         if contype == "p":
             pk_columns.add(key)
         elif contype == "f":
             fk_columns.add(key)
+            ref_target = rest[0] if rest else None
+            if ref_target and key not in fk_targets:
+                fk_targets[key] = ref_target
 
     columns_by_table: dict[str, list[ColumnInfo]] = {name: [] for name in kinds}
     for schema_name, rel_name, col_name, data_type, notnull, default in column_rows:
@@ -182,6 +194,7 @@ def fetch_schema(params: ConnectionParams, runner: Runner = run_queries) -> Data
                 is_fk=(table_key, col_name) in fk_columns,
                 is_nullable=not notnull,
                 default=default,
+                fk_target=fk_targets.get((table_key, col_name)),
             )
         )
 

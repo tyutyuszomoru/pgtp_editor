@@ -1,0 +1,141 @@
+<Page type="table" tableName="pr.memo" numberByDataSource="0" fileName="memo" caption="Memo" shortCaption="Memo" addSeparator="false" horizontalFilterCondition="" recordsPerPage="20" NavigatorPosition="3" insertAbilityMode="3" viewAbilityMode="3" editAbilityMode="3" multiEditAbility="3" includeAllFieldsForMultiEditByDefault="false" deleteAbilityMode="3" copyAbilityMode="3" deleteSelectedAbilityMode="3" contentEncoding="UTF-8" exportAllRecordsAvailable="31" exportSelectedRecordsAvailable="31" exportSingleRecordFromGridAvailable="0" exportRecordFromViewFormAvailable="31" printAvailable="13" highlightRowOnMouseHover="true" useActionImages="true" showKeyColumnsImagesInGridHeader="false" condensedTable="true">
+	<BeforeGridText/>
+	<DetailedDescription/>
+	<ColumnPresentations>
+		<ColumnPresentation fieldName="title" caption="Title" showColumnFilter="false" canSetNull="true" selectedFilterOperators="1589247">
+			<ViewProperties type="text"/>
+			<EditProperties type="textBox" maxLength="200"/>
+		</ColumnPresentation>
+		<ColumnPresentation fieldName="body" caption="Body" showColumnFilter="false" canSetNull="true" selectedFilterOperators="1589247">
+			<ViewProperties type="text"/>
+			<EditProperties type="textBox" maxLength="0"/>
+		</ColumnPresentation>
+		<ColumnPresentation fieldName="summary" caption="Summary" showColumnFilter="false" canSetNull="true" selectedFilterOperators="1589247">
+			<ViewProperties type="text"/>
+			<EditProperties type="textBox" maxLength="500"/>
+		</ColumnPresentation>
+		<ColumnPresentation fieldName="tags" caption="Tags" showColumnFilter="false" canSetNull="true" selectedFilterOperators="1589247">
+			<ViewProperties type="text"/>
+			<EditProperties type="textBox" maxLength="100"/>
+		</ColumnPresentation>
+		<ColumnPresentation fieldName="author_name" caption="Author Name" showColumnFilter="false" canSetNull="true" selectedFilterOperators="1589247">
+			<ViewProperties type="text"/>
+			<EditProperties type="textBox" maxLength="120"/>
+		</ColumnPresentation>
+		<ColumnPresentation fieldName="external_ref" caption="External Ref" showColumnFilter="false" canSetNull="true" selectedFilterOperators="1589247">
+			<ViewProperties type="text"/>
+			<EditProperties type="textBox" maxLength="12"/>
+		</ColumnPresentation>
+		<ColumnPresentation fieldName="slug" caption="Slug" showColumnFilter="false" canSetNull="true" selectedFilterOperators="1589247">
+			<ViewProperties type="text"/>
+			<EditProperties type="textBox" maxLength="0"/>
+		</ColumnPresentation>
+		<ColumnPresentation fieldName="comments" caption="Comments" showColumnFilter="false" canSetNull="true" selectedFilterOperators="1589247">
+			<ViewProperties type="text"/>
+			<EditProperties type="textBox" maxLength="0"/>
+		</ColumnPresentation>
+	</ColumnPresentations>
+	<Columns>
+		<List>
+			<Column fieldName="title"/>
+			<Column fieldName="body"/>
+			<Column fieldName="summary"/>
+			<Column fieldName="tags"/>
+			<Column fieldName="author_name"/>
+			<Column fieldName="external_ref"/>
+			<Column fieldName="slug"/>
+			<Column fieldName="comments"/>
+		</List>
+		<View>
+			<Column fieldName="title"/>
+			<Column fieldName="body"/>
+			<Column fieldName="summary"/>
+			<Column fieldName="tags"/>
+			<Column fieldName="author_name"/>
+			<Column fieldName="external_ref"/>
+			<Column fieldName="slug"/>
+			<Column fieldName="comments"/>
+		</View>
+		<Edit>
+			<Column fieldName="title"/>
+			<Column fieldName="body"/>
+			<Column fieldName="summary"/>
+			<Column fieldName="tags"/>
+			<Column fieldName="author_name"/>
+			<Column fieldName="external_ref"/>
+			<Column fieldName="slug"/>
+			<Column fieldName="comments"/>
+		</Edit>
+		<Insert>
+			<Column fieldName="title"/>
+			<Column fieldName="body"/>
+			<Column fieldName="summary"/>
+			<Column fieldName="tags"/>
+			<Column fieldName="author_name"/>
+			<Column fieldName="external_ref"/>
+			<Column fieldName="slug"/>
+			<Column fieldName="comments"/>
+		</Insert>
+		<QuickFilter>
+			<Column fieldName="title"/>
+			<Column fieldName="body"/>
+			<Column fieldName="summary"/>
+			<Column fieldName="tags"/>
+			<Column fieldName="author_name"/>
+			<Column fieldName="external_ref"/>
+			<Column fieldName="slug"/>
+			<Column fieldName="comments"/>
+		</QuickFilter>
+		<FilterBuilder>
+			<Column fieldName="title"/>
+			<Column fieldName="body"/>
+			<Column fieldName="summary"/>
+			<Column fieldName="tags"/>
+			<Column fieldName="author_name"/>
+			<Column fieldName="external_ref"/>
+			<Column fieldName="slug"/>
+			<Column fieldName="comments"/>
+		</FilterBuilder>
+		<Print>
+			<Column fieldName="title"/>
+			<Column fieldName="body"/>
+			<Column fieldName="summary"/>
+			<Column fieldName="tags"/>
+			<Column fieldName="author_name"/>
+			<Column fieldName="external_ref"/>
+			<Column fieldName="slug"/>
+			<Column fieldName="comments"/>
+		</Print>
+		<Export>
+			<Column fieldName="title"/>
+			<Column fieldName="body"/>
+			<Column fieldName="summary"/>
+			<Column fieldName="tags"/>
+			<Column fieldName="author_name"/>
+			<Column fieldName="external_ref"/>
+			<Column fieldName="slug"/>
+			<Column fieldName="comments"/>
+		</Export>
+		<Compare>
+			<Column fieldName="title"/>
+			<Column fieldName="body"/>
+			<Column fieldName="summary"/>
+			<Column fieldName="tags"/>
+			<Column fieldName="author_name"/>
+			<Column fieldName="external_ref"/>
+			<Column fieldName="slug"/>
+			<Column fieldName="comments"/>
+		</Compare>
+		<MultiEdit>
+			<Column fieldName="title"/>
+			<Column fieldName="body"/>
+			<Column fieldName="summary"/>
+			<Column fieldName="tags"/>
+			<Column fieldName="author_name"/>
+			<Column fieldName="external_ref"/>
+			<Column fieldName="slug"/>
+			<Column fieldName="comments"/>
+		</MultiEdit>
+	</Columns>
+	<Details/>
+</Page>

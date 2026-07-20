@@ -176,6 +176,48 @@ def test_rename_not_offered_for_db_to_xml(qtbot):
     assert received == []
 
 
+def test_create_menu_only_in_db_to_xml_for_table_nodes(qtbot):
+    panel = DbCheckPanel()
+    qtbot.addWidget(panel)
+
+    # XML → Database: no create actions at all.
+    panel.set_result("xml_to_db", _checks(), "u@h:5432/db")
+    a_item = next(it for it in _top_items(panel) if "pr.a" in it.text(0))
+    assert panel.create_menu_items(a_item) == []
+
+    # Database → XML: table node offers the three create actions.
+    panel.set_result("db_to_xml", _checks(), "u@h:5432/db")
+    a_item = next(it for it in _top_items(panel) if "pr.a" in it.text(0))
+    whats = [what for what, _label in panel.create_menu_items(a_item)]
+    assert whats == ["page", "detail", "lookup"]
+
+    # A column child node offers nothing.
+    col_item = a_item.child(0)
+    assert panel.create_menu_items(col_item) == []
+
+
+def test_create_menu_offered_for_view_nodes(qtbot):
+    panel = DbCheckPanel()
+    qtbot.addWidget(panel)
+    panel.set_result("db_to_xml", _checks(), "u@h:5432/db")
+    v_item = next(it for it in _top_items(panel) if "pr.v" in it.text(0))
+    whats = [what for what, _label in panel.create_menu_items(v_item)]
+    assert whats == ["page", "detail", "lookup"]
+
+
+def test_request_create_emits_with_table_name(qtbot):
+    panel = DbCheckPanel()
+    qtbot.addWidget(panel)
+    panel.set_result("db_to_xml", _checks(), "u@h:5432/db")
+
+    received = []
+    panel.create_requested.connect(lambda w, n: received.append((w, n)))
+    a_item = next(it for it in _top_items(panel) if "pr.a" in it.text(0))
+    panel.request_create("page", a_item)
+    panel.request_create("detail", a_item)
+    assert received == [("page", "pr.a"), ("detail", "pr.a")]
+
+
 def test_row_data_role_carries_kind_name_ok(qtbot):
     panel = DbCheckPanel()
     qtbot.addWidget(panel)

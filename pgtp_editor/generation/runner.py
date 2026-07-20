@@ -19,7 +19,7 @@ import os
 import time
 from collections.abc import Callable
 
-from PySide6.QtCore import QObject, QProcess
+from PySide6.QtCore import QObject, QProcess, QProcessEnvironment
 
 _log = logging.getLogger(__name__)
 
@@ -53,7 +53,27 @@ class GeneratorRunner(QObject):
         command: list[str],
         on_output: Callable[[str], None],
         on_finished: Callable[[int], None],
+        cwd: str | None = None,
+        extra_env: dict[str, str] | None = None,
     ) -> None:
+        # Clean up the previous run's QProcess before installing a new one:
+        # without this, reusing one runner across chained runs (pangen ->
+        # analyze) leaks a QProcess per run, and a still-pending readyRead
+        # event from the OLD process would fire _emit_output, which reads
+        # self._process -- i.e. the NEW process's (empty) buffer -- losing the
+        # old run's trailing output line.
+        if self._process is not None:
+            try:
+                self._process.readyReadStandardOutput.disconnect(self._emit_output)
+                self._process.finished.disconnect(self._emit_finished)
+                self._process.errorOccurred.disconnect(self._on_error)
+            except (TypeError, RuntimeError):
+                # Already-deleted C++ object or never-connected signal --
+                # must not crash a new run.
+                pass
+            self._process.deleteLater()
+            self._process = None
+
         self._on_output = on_output
         self._on_finished = on_finished
         self._finished_emitted = False
@@ -66,6 +86,13 @@ class GeneratorRunner(QObject):
         # A failure to start (e.g. exe no longer exists) never emits finished;
         # map it to a diagnostic line + a nonzero finish so callers see a failure.
         process.errorOccurred.connect(self._on_error)
+        if cwd:
+            process.setWorkingDirectory(cwd)
+        if extra_env:
+            env = QProcessEnvironment.systemEnvironment()
+            for key, value in extra_env.items():
+                env.insert(key, value)
+            process.setProcessEnvironment(env)
         self._process = process
 
         program, *args = command

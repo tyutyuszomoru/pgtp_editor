@@ -1,0 +1,11 @@
+{
+  "__doc__": "Generator INPUT for the composite-PK golden fixture. Authored to match golden_gizmo_tag.ddl.sql exactly. Both gizmo_id and tag_id are primary-key AND foreign-key columns. Keep in sync with the DDL.",
+  "table": "pr.gizmo_tag",
+  "kind": "table",
+  "columns": [
+    {"name": "gizmo_id", "data_type": "integer", "is_pk": true,  "is_fk": true,  "is_nullable": false, "default": null, "fk_target": "pr.gizmo.id"},
+    {"name": "tag_id",   "data_type": "integer", "is_pk": true,  "is_fk": true,  "is_nullable": false, "default": null, "fk_target": "pr.tag.id"},
+    {"name": "note",     "data_type": "text",    "is_pk": false, "is_fk": false, "is_nullable": true,  "default": null},
+    {"name": "added_on", "data_type": "date",    "is_pk": false, "is_fk": false, "is_nullable": true,  "default": null}
+  ]
+}
