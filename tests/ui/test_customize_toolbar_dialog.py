@@ -99,3 +99,48 @@ def test_move_down_at_bottom_is_noop(qtbot):
     dialog._select_toolbar("save")
     dialog._move_down()
     assert dialog.selected_ids() == ["open", "save"]
+
+
+def test_adding_all_remaining_leaves_available_all_disabled(qtbot):
+    """Starting empty then adding every command reproduces the reported bug's
+    end-state (all commands on the toolbar) -- Available must then be fully
+    disabled, never emptied."""
+    all_ids = [cid for cid, _label in AVAILABLE_COMMANDS]
+    dialog = _dialog(qtbot, [])
+    assert _enabled(dialog) == all_ids   # nothing on toolbar yet -> all addable
+
+    for cid in list(all_ids):
+        dialog._select_available(cid)
+        dialog._add_selected()
+
+    assert dialog.result_ids() == all_ids
+    assert _all_available(dialog) == all_ids   # still lists every command
+    assert _enabled(dialog) == []              # all now greyed
+
+
+def test_result_order_preserved_through_add_remove_move_sequence(qtbot):
+    """result_ids() tracks the toolbar-list order across a mix of operations."""
+    dialog = _dialog(qtbot, ["open", "save"])
+
+    dialog._select_available("undo")
+    dialog._add_selected()                 # [open, save, undo]
+    dialog._select_available("redo")
+    dialog._add_selected()                 # [open, save, undo, redo]
+    assert dialog.result_ids() == ["open", "save", "undo", "redo"]
+
+    dialog._select_toolbar("save")
+    dialog._remove_selected()              # [open, undo, redo]
+    assert dialog.result_ids() == ["open", "undo", "redo"]
+
+    dialog._select_toolbar("redo")
+    dialog._move_up()                      # [open, redo, undo]
+    assert dialog.result_ids() == ["open", "redo", "undo"]
+
+    dialog._select_toolbar("open")
+    dialog._move_down()                    # [redo, open, undo]
+    assert dialog.result_ids() == ["redo", "open", "undo"]
+
+    # Available reflects the final toolbar set: those three disabled, rest live.
+    assert "save" in _enabled(dialog)
+    for cid in ("open", "undo", "redo"):
+        assert cid not in _enabled(dialog)
