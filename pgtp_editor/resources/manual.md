@@ -19,7 +19,8 @@ Use **File ▸ Open** and pick a `.pgtp` file. The window has three areas:
 
 - **Left — Project Tree:** the structure of your project (pages, details, columns,
   event handlers). More tabs share this dock: **Contents** (this manual's
-  chapters) and, after you run a database check, **Database Check**.
+  chapters), **Table references** (when you turn it on from the View menu), and,
+  after you run a database check, **Database Check**.
 - **Center — Raw XML / Caption Management / Diff-Merge / Manual:** the working
   area. It opens on **Raw XML**; the other tabs appear when you invoke them.
 - **Right — Properties:** a read-only inspector for whatever you select in the tree.
@@ -306,6 +307,32 @@ The password is stored with the connection settings and is never written to any 
 
 ---
 
+## Table References
+
+**View ▸ Find table reference** is a checkable toggle that opens the **Table
+references** tab in the left dock. It lists every database table and view your
+project references, grouped so you can see where a change to one table's
+presentation may need mirroring elsewhere.
+
+- Each **top-level row** is a table/view name with a usage count, e.g.
+  `kb.x_objecttype  (3)`.
+- Each **child row** is one reference, shown as a breadcrumb of where it lives
+  (page ▸ detail ▸ column). Lookup references are labelled **(lookup)**, or
+  **(lookup with insert)** when the lookup also has an on-the-fly insert page.
+
+- **Single-click** a reference to load its node in the **Properties** panel — a
+  lookup reference selects its owning column.
+- **Double-click** a reference to **jump to it in the Raw XML editor**: a lookup
+  jumps to its `<Lookup>` line, while a page or detail reference jumps to its own
+  opening tag. This makes the tab a second way to scroll through the XML,
+  alongside the Project Tree.
+
+Turn the toggle off to hide the tab. The list needs an open project (otherwise a
+status-bar message asks you to open one first), and it refreshes to match your
+edits after **Tools ▸ Reparse Raw XML into Tree** while the tab is showing.
+
+---
+
 ## Diff / Merge
 
 **Diff / Merge** (under **Tools ▸ Compare / Merge Two Files…**) compares two
@@ -315,16 +342,13 @@ and **Apply Changes to Target** writes the reconciled result.
 
 ---
 
-## Validation & Reused Tables
+## Validation
 
-- **Tools ▸ Validate Project** checks your project for structural problems and
-  reports them as a list of issues with severities (errors and warnings) — for
-  example duplicate top-level page file names, missing expected attributes, or
-  unexpected children in container elements. Select an issue to jump to it; clearing
-  validation removes the results.
-- **Tools ▸ Find Reused Tables…** lists database tables referenced by more than one
-  page, with a breadcrumb of where each use lives — useful for spotting where a
-  change to one table's presentation needs to be mirrored elsewhere.
+**Tools ▸ Validate Project** checks your project for structural problems and
+reports them as a list of issues with severities (errors and warnings) — for
+example duplicate top-level page file names, missing expected attributes, or
+unexpected children in container elements. Select an issue to jump to it; clearing
+validation removes the results.
 
 ---
 
@@ -345,7 +369,8 @@ The **Generation** menu drives the PHP Generator command-line to compile your
 
 - **View ▸ Light Theme** toggles between the light and dark themes.
 - The **View** menu toggles each panel: **Project Tree**, **Properties Panel**,
-  **Audit/Problems Panel**, and **Raw XML Panel**.
+  **Audit/Problems Panel**, and **Raw XML Panel**. **View ▸ Find table reference**
+  toggles the **Table references** tab (see *Table References*).
 - **View ▸ Customize Toolbar…** chooses which actions appear on the icon toolbar.
 - Your window size and position, dock layout, theme, and toolbar arrangement are
   remembered between sessions.
