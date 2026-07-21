@@ -2,7 +2,7 @@
 ; PGTP Editor - Inno Setup Script
 ; Author    : Botond Zalai-Ruzsics
 ; License   : Open source
-; Version   : 0.1.0
+; Version   : read from pyproject.toml at compile time (see below)
 ; Install   : User-space (AppData\Local), no admin required
 ; =============================================================================
 ;
@@ -16,7 +16,35 @@
 
 #define AppName        "PGTP Editor"
 #define AppID          "PGTPEditor"
-#define AppVersion     "0.1.0"
+
+; ---------------------------------------------------------------------------
+; Single source of truth for the version: pyproject.toml's `version = "x.y.z"`.
+; Read here at compile time so the version is never duplicated in this script.
+; ISPP's SourcePath is this .iss file's directory (docs\), so the project file
+; is one level up. Bump the version in pyproject.toml only.
+; ---------------------------------------------------------------------------
+#define PyProject AddBackslash(SourcePath) + "..\pyproject.toml"
+#ifexist PyProject
+  #define AppVersion ""
+  #define _VerLine ""
+  #define _Rest ""
+  #define _Q """"
+  #define _VerFH FileOpen(PyProject)
+  #sub ScanForVersion
+    #expr _VerLine = FileRead(_VerFH)
+    #if (AppVersion == "") && (Copy(Trim(_VerLine), 1, 7) == "version")
+      ; line is:  version = "x.y.z"  -- take the text between the quotes
+      #expr _Rest = Copy(_VerLine, Pos(_Q, _VerLine) + 1, Len(_VerLine))
+      #expr AppVersion = Copy(_Rest, 1, Pos(_Q, _Rest) - 1)
+    #endif
+  #endsub
+  #for {0; (AppVersion == "") && !FileEof(_VerFH); 0} ScanForVersion
+  #expr FileClose(_VerFH)
+#endif
+#if !defined(AppVersion) || (AppVersion == "")
+  #pragma error "Could not read `version` from pyproject.toml"
+#endif
+
 #define AppPublisher   "Botond Zalai-Ruzsics"
 #define AppExeName     "PGTPEditor.exe"
 #define AppRegKey      "Software\Botond Zalai-Ruzsics\PGTPEditor"
