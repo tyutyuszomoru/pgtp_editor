@@ -124,6 +124,78 @@ def test_open_project_file_tracks_current_project_and_path(qtbot, tmp_path):
     assert window._current_project_path == str(path)
 
 
+def test_open_with_pathlib_path_then_revert_does_not_crash(qtbot, tmp_path):
+    """Opening with a pathlib.Path (not the QFileDialog str) must not break
+    revert. _revert_project builds `<path>.bak` by string concatenation, which
+    raises TypeError on a Path. open_project_file therefore normalizes
+    _current_project_path to str at the assignment site."""
+    window = MainWindow()
+    qtbot.addWidget(window)
+    path = tmp_path / "valid.pgtp"  # a pathlib.Path, not str
+    path.write_text(VALID_PGTP, encoding="utf-8")
+    (tmp_path / "valid.pgtp.bak").write_text(VALID_PGTP, encoding="utf-8")
+
+    window.open_project_file(path)
+
+    assert isinstance(window._current_project_path, str)
+
+    # Would raise TypeError (Path + ".bak") before the fix.
+    window._revert_project()
+
+    assert window._current_project is not None
+    assert window.project_tree.topLevelItemCount() == 1
+
+
+REVERTED_PGTP = VALID_PGTP.replace(
+    'fileName="development_equipment"', 'fileName="old_equipment"'
+)
+
+
+def test_revert_after_pathlib_open_restores_bak_content(qtbot, tmp_path):
+    """After opening with a pathlib.Path, revert must actually load the .bak
+    content (distinct from the current file) into the editor and tree -- not
+    merely avoid crashing. Guards that the str-normalization fix left the
+    revert behavior itself intact."""
+    window = MainWindow()
+    qtbot.addWidget(window)
+    path = tmp_path / "valid.pgtp"  # pathlib.Path, not str
+    path.write_text(VALID_PGTP, encoding="utf-8")
+    (tmp_path / "valid.pgtp.bak").write_text(REVERTED_PGTP, encoding="utf-8")
+
+    window.open_project_file(path)
+    assert window.center_stage.xml_editor.toPlainText() == VALID_PGTP
+
+    window._revert_project()
+
+    assert window.center_stage.xml_editor.toPlainText() == REVERTED_PGTP
+    assert window._current_project.pages[0].file_name == "old_equipment"
+    # Path unchanged -- revert points the buffer at the .bak but keeps the
+    # tracked path on the real file, still as a str.
+    assert window._current_project_path == str(path)
+    assert isinstance(window._current_project_path, str)
+
+
+def test_save_after_pathlib_open_writes_without_crash(qtbot, tmp_path):
+    """The sibling string-concat site is in _write_project_text (`str(path) +
+    '.bak'`). After a pathlib.Path open, saving to the tracked path must
+    overwrite the file and create the .bak without a TypeError, confirming the
+    whole save path holds when _current_project_path originated from a Path."""
+    window = MainWindow()
+    qtbot.addWidget(window)
+    path = tmp_path / "valid.pgtp"  # pathlib.Path, not str
+    path.write_text(VALID_PGTP, encoding="utf-8")
+
+    window.open_project_file(path)
+    window.center_stage.xml_editor.setPlainText("NEW CONTENT")
+
+    # No dialog: existing path is used directly. A modal would hang the test,
+    # so its absence is itself the assertion that none is shown.
+    window._save_project()
+
+    assert (tmp_path / "valid.pgtp").read_text(encoding="utf-8") == "NEW CONTENT"
+    assert (tmp_path / "valid.pgtp.bak").read_text(encoding="utf-8") == VALID_PGTP
+
+
 def test_current_project_is_none_before_any_open(qtbot):
     window = MainWindow()
     qtbot.addWidget(window)

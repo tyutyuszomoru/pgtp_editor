@@ -39,8 +39,9 @@ RESOURCES_SRC = REPO_ROOT / "pgtp_editor" / "resources"
 RESOURCES_DEST = "pgtp_editor/resources"
 
 # Confirmed by grepping every worktree's pgtp_editor/ tree for
-# `from PySide6.<module>` imports: only QtCore, QtGui, and QtWidgets are
-# ever used. Every other PySide6 submodule PyInstaller might otherwise
+# `from PySide6.<module>` imports: only QtCore, QtGui, QtWidgets, and QtSvg
+# are ever used (QtSvg: ui/icons.py renders the Breeze toolbar SVGs via
+# QSvgRenderer). Every other PySide6 submodule PyInstaller might otherwise
 # pull in transitively gets excluded here. If a future feature imports a
 # module not in this app's actual dependency set, add it above this list
 # and re-run the grep check described in this project's build docs
@@ -59,7 +60,10 @@ EXCLUDED_QT_MODULES = [
     "PySide6.QtMultimedia",
     "PySide6.QtMultimediaWidgets",
     "PySide6.QtSql",
-    "PySide6.QtSvg",
+    # NOTE: PySide6.QtSvg is intentionally NOT excluded -- ui/icons.py imports
+    # QSvgRenderer from it to render the toolbar icons. Excluding it makes the
+    # frozen app silently ship with no toolbar icons (the icon load is wrapped
+    # in a try/except that swallows the ImportError).
     "PySide6.QtSvgWidgets",
     "PySide6.QtPdf",
     "PySide6.QtPdfWidgets",
@@ -89,6 +93,63 @@ EXCLUDED_QT_MODULES = [
     "PySide6.Qt3DAnimation",
     "PySide6.Qt3DExtras",
 ]
+
+# Non-Qt third-party modules PyInstaller pulls in only through optional/typing
+# branches of our real dependencies, never at runtime:
+#   - numpy (+ numpy.libs): referenced only by psycopg's optional numpy type
+#     adapters, which this app never registers. ~28 MB.
+#   - yaml (PyYAML): reached only via an optional import branch. ~1 MB.
+# Verified not present in sys.modules after importing the app's runtime modules,
+# so excluding them is safe. This is the single biggest size win.
+EXCLUDED_MODULES = ["numpy", "yaml"]
+
+# Qt shared libraries the PySide6 PyInstaller hook copies wholesale even though
+# a pure-QtWidgets app never loads them. Excluding the Python submodule (above)
+# does NOT drop the corresponding DLL, so we delete them from the finished
+# bundle instead. Names are matched against each file's basename, case-
+# insensitively. Removing these is the second-biggest win (~55 MB uncompressed).
+PRUNE_QT_BINARIES = [
+    "opengl32sw.dll",          # 20 MB software OpenGL fallback (QtQuick only)
+    "Qt6Quick.dll",
+    "Qt6Qml.dll",
+    "Qt6QmlMeta.dll",
+    "Qt6QmlModels.dll",
+    "Qt6QmlWorkerScript.dll",
+    "Qt6Pdf.dll",
+    "Qt6Network.dll",
+    "Qt6OpenGL.dll",
+    "Qt6VirtualKeyboard.dll",
+]
+
+# Qt ships one .qm per language for its built-in strings; this app is English
+# only, so the whole translations/ tree is dead weight (~7 MB).
+PRUNE_QT_DIRS = ["PySide6/translations"]
+
+
+def _prune_bundle(app_dir: Path) -> None:
+    """Delete unused Qt libraries and data from the finished onedir bundle.
+
+    PyInstaller has no CLI switch to drop the Qt DLLs its PySide6 hook collects
+    transitively, so we remove them here after COLLECT. Every path listed is a
+    file/dir we've confirmed a QtWidgets+QtSvg app does not load; the smoke test
+    in build() (launching the frozen exe) guards against an over-eager deletion.
+    """
+    internal = app_dir / "_internal"
+    freed = 0
+
+    deny = {name.lower() for name in PRUNE_QT_BINARIES}
+    for path in internal.rglob("*"):
+        if path.is_file() and path.name.lower() in deny:
+            freed += path.stat().st_size
+            path.unlink()
+
+    for rel in PRUNE_QT_DIRS:
+        target = internal / rel
+        if target.is_dir():
+            freed += sum(f.stat().st_size for f in target.rglob("*") if f.is_file())
+            shutil.rmtree(target)
+
+    print(f"Pruned unused Qt files from bundle: {freed / 1024 / 1024:.1f} MB freed.")
 
 
 def _find_upx() -> str | None:
@@ -139,7 +200,7 @@ def build() -> None:
         "--noconfirm",
     ]
 
-    for module in EXCLUDED_QT_MODULES:
+    for module in EXCLUDED_QT_MODULES + EXCLUDED_MODULES:
         args += ["--exclude-module", module]
 
     upx_dir = _find_upx()
@@ -155,6 +216,7 @@ def build() -> None:
 
     exe_path = REPO_ROOT / "dist" / APP_NAME / f"{APP_NAME}.exe"
     if exe_path.exists():
+        _prune_bundle(exe_path.parent)
         print(f"Build complete: {exe_path}")
     else:
         raise SystemExit(
