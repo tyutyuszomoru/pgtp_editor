@@ -17,6 +17,23 @@
 - If the feature-tester reports implementation bugs, fix them in the main session
   and re-dispatch the agent until it reports green.
 
+## Manual policy (mandatory)
+
+- **Every completed feature triggers the `manual-maintainer` agent — after the
+  feature-tester is green.** Once `feature-tester` reports a green run and the
+  `docs/TEST_LOG.md` entry is written, dispatch the `manual-maintainer` subagent
+  (`.claude/agents/manual-maintainer.md`) with the feature name, its spec/plan
+  paths under `docs/superpowers/`, and the changed files. It updates
+  `pgtp_editor/resources/manual.md` so the manual (prose text and the
+  heading-derived Contents tree) always reflects current behavior, menu
+  locations, and shortcuts. A feature is not done until the manual reflects it,
+  or the agent has explicitly reported that no manual change was needed.
+- The manual update rides with the feature: commit the `manual.md` change
+  together with the feature (git history is the sole record — there is no manual
+  changelog file).
+- If the manual-maintainer reports manual-vs-reality drift or a broken Contents
+  tree it cannot resolve, fix it in the main session and re-dispatch until clean.
+
 ## Test environment
 
 - Use the system `python` — the project is installed editable there with
