@@ -123,6 +123,94 @@ PGTP_TWO_LOOKUPS = PGTP_WITH_LOOKUP.replace(
 )
 
 
+PGTP_LOOKUP_NO_INSERT = """\
+<?xml version="1.0" encoding="UTF-8"?>
+<Project>
+  <Presentation>
+    <Pages>
+      <Page fileName="items" tableName="pr.items" caption="Items">
+        <ColumnPresentations>
+          <ColumnPresentation fieldName="cat">
+            <Lookup tableName="kb.x_category" linkFieldName="id"/>
+          </ColumnPresentation>
+        </ColumnPresentations>
+      </Page>
+    </Pages>
+  </Presentation>
+</Project>
+"""
+
+
+def _open_text(window, tmp_path, text):
+    path = tmp_path / "p.pgtp"
+    path.write_text(text, encoding="utf-8")
+    window.open_project_file(str(path))
+
+
+def test_lookup_without_insert_shows_plain_lookup_label(qtbot, tmp_path):
+    # A <Lookup> with no child <OnTheFlyInsertPage> renders "(lookup)" through
+    # the full analyzer -> panel path (never "(lookup with insert)").
+    window = MainWindow()
+    qtbot.addWidget(window)
+    _open_text(window, tmp_path, PGTP_LOOKUP_NO_INSERT)
+
+    window._toggle_table_references(True)
+
+    tree = window.table_refs_panel.tree
+    labels = [
+        tree.topLevelItem(t).child(c).text(0)
+        for t in range(tree.topLevelItemCount())
+        for c in range(tree.topLevelItem(t).childCount())
+    ]
+    lookup_labels = [lbl for lbl in labels if "Column 'cat'" in lbl]
+    assert lookup_labels == ["Page 'Items' ▸ Column 'cat' (lookup)"]
+    assert all("(lookup with insert)" not in lbl for lbl in labels)
+
+
+def test_toggle_off_then_on_repopulates_the_tab(qtbot, tmp_path):
+    # Toggling the tab off then on must recompute usages and refill the tree
+    # (not leave it stale or empty).
+    window = MainWindow()
+    qtbot.addWidget(window)
+    _open(window, tmp_path)
+
+    window._toggle_table_references(True)
+    first_count = window.table_refs_panel.tree.topLevelItemCount()
+    assert first_count >= 1
+
+    window._toggle_table_references(False)
+    window._toggle_table_references(True)
+
+    assert window.left_tabs.isTabVisible(window.table_refs_tab_index) is True
+    assert window.table_refs_panel.tree.topLevelItemCount() == first_count
+
+
+def test_page_reference_selection_drives_properties_with_page_kind(qtbot, tmp_path):
+    # Selecting a page's own tableName reference drives Properties with the page
+    # node and kind="page" (the non-lookup selection path).
+    window = MainWindow()
+    qtbot.addWidget(window)
+    _open(window, tmp_path)
+    window._toggle_table_references(True)
+
+    tree = window.table_refs_panel.tree
+    # Find the top-level "pr.orders" table row (the page's own reference).
+    page_top = None
+    for i in range(tree.topLevelItemCount()):
+        if tree.topLevelItem(i).text(0).startswith("pr.orders"):
+            page_top = tree.topLevelItem(i)
+            break
+    assert page_top is not None
+
+    with patch.object(window.properties_panel, "show_node") as show:
+        tree.setCurrentItem(page_top.child(0))
+
+    assert show.called
+    node, kind = show.call_args.args
+    assert kind == "page"
+    assert node is not None
+
+
 def test_reparse_refreshes_visible_table_references_tab(qtbot, tmp_path):
     window = MainWindow()
     qtbot.addWidget(window)
