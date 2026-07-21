@@ -108,3 +108,36 @@ def test_tools_menu_has_no_reused_tables_entry(qtbot):
             labels.append(action.text())
     assert not any("Reused Tables" in (t or "") for t in labels)
     assert any("Find table reference" in (t or "") for t in labels)
+
+
+PGTP_TWO_LOOKUPS = PGTP_WITH_LOOKUP.replace(
+    "</Pages>",
+    """  <Page fileName="items" tableName="pr.items" caption="Items">
+        <ColumnPresentations>
+          <ColumnPresentation fieldName="cat">
+            <Lookup tableName="kb.x_category" linkFieldName="id"/>
+          </ColumnPresentation>
+        </ColumnPresentations>
+      </Page>
+</Pages>""",
+)
+
+
+def test_reparse_refreshes_visible_table_references_tab(qtbot, tmp_path):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    _open(window, tmp_path)
+    window._toggle_table_references(True)
+    assert window.table_refs_panel.tree.topLevelItemCount() >= 1
+
+    # Replace the buffer with a project that references a second table, then
+    # reparse. The visible tab must reflect the new content.
+    window.center_stage.xml_editor.setPlainText(PGTP_TWO_LOOKUPS)
+    with patch("pgtp_editor.ui.main_window.QMessageBox.information"):
+        window._reparse_raw_xml()
+
+    names = {
+        window.table_refs_panel.tree.topLevelItem(i).text(0).split("  ")[0]
+        for i in range(window.table_refs_panel.tree.topLevelItemCount())
+    }
+    assert "kb.x_category" in names

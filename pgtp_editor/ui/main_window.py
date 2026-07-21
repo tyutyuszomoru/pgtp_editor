@@ -1048,6 +1048,10 @@ class MainWindow(QMainWindow):
         # SUCCESS: rebuild tree + adopt the new model so click-sync realigns.
         self.project_tree.populate_from_project(project)
         self._current_project = project
+        if self.left_tabs.isTabVisible(self.table_refs_tab_index):
+            self.table_refs_panel.set_usages(
+                collect_table_usages(self._current_project)
+            )
         # Properties has no valid selection against the freshly rebuilt tree
         # (populate_from_project cleared it); show the empty state until the
         # user clicks again. show_node(None, None) is the panel's own reset.
