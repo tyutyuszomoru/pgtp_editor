@@ -770,7 +770,11 @@ class MainWindow(QMainWindow):
             return
         self.project_tree.populate_from_project(project)
         self._current_project = project
-        self._current_project_path = path
+        # Normalize to str so downstream string ops (e.g. the ".bak" path
+        # concatenation in _revert_project / _write_project_text) never hit a
+        # TypeError when a caller passes a pathlib.Path instead of the
+        # QFileDialog string.
+        self._current_project_path = str(path)
         raw_text = self._read_raw_text(path)
         if raw_text is not None:
             self._loading = True
@@ -1314,7 +1318,7 @@ class MainWindow(QMainWindow):
         if not self._current_project_path:
             self.statusBar().showMessage("Nothing to revert to.", 5000)
             return
-        bak_path = self._current_project_path + ".bak"
+        bak_path = str(self._current_project_path) + ".bak"
         if not Path(bak_path).exists():
             self.statusBar().showMessage("Nothing to revert to.", 5000)
             return
