@@ -154,7 +154,8 @@ def test_view_menu_contents(qtbot):
     qtbot.addWidget(window)
     view_menu = find_top_menu(window, "View")
     assert action_labels(view_menu) == [
-        "Project Tree", "Properties Panel", "Audit/Problems Panel", "Raw XML Panel",
+        "Project Tree", "Properties Panel", "Find table reference",
+        "Audit/Problems Panel", "Raw XML Panel",
         "―",
         "Expand All", "Collapse All",
         "―",
@@ -276,7 +277,6 @@ def test_tools_menu_contents(qtbot):
     menu = find_top_menu(window, "Tools")
     assert action_labels(menu) == [
         "Manage Captions...", "Caption Filter…", "―",
-        "Find Reused Tables...", "―",
         "Validate Project", "―",
         "Reparse Raw XML into Tree", "―",
         "Compare / Merge Two Files...", "Next Difference", "Prev Difference",

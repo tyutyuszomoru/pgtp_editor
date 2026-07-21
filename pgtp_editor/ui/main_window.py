@@ -105,7 +105,7 @@ from pgtp_editor.ui.project_tree import ProjectTreePanel
 from pgtp_editor.ui.properties_panel import PropertiesPanel
 from pgtp_editor.ui.schema_viewer import SchemaViewerWindow
 from pgtp_editor.analysis.reused_tables import collect_table_usages
-from pgtp_editor.ui.reused_tables_window import ReusedTablesWindow
+from pgtp_editor.ui.table_references_panel import TableReferencesPanel
 from pgtp_editor.ui.theme import apply_theme
 from pgtp_editor.ui.schema_viewer_data import open_labels_text, open_xsd_text
 
@@ -166,7 +166,6 @@ class MainWindow(QMainWindow):
         # not garbage-collected while open; reused/refreshed on reopen.
         self._xsd_viewer = None
         self._labels_viewer = None
-        self._reused_tables_window = None
         # Connection Setup dialog, held so it is not GC'd while shown non-modally.
         self._connection_dialog = None
         # Direction of the last Database Check run, so a rename can re-run it.
@@ -218,6 +217,15 @@ class MainWindow(QMainWindow):
         self.db_check_panel.rename_requested.connect(self._on_db_rename_requested)
         self.db_check_panel.jump_requested.connect(self._on_db_jump_requested)
         self.db_check_panel.create_requested.connect(self._on_db_create_requested)
+        # Table references ride in their own hidden tab, revealed by the
+        # View > "Find table reference" toggle (mirrors the Database Check tab).
+        self.table_refs_panel = TableReferencesPanel()
+        self.table_refs_tab_index = self.left_tabs.addTab(
+            self.table_refs_panel, "Table references"
+        )
+        self.left_tabs.setTabVisible(self.table_refs_tab_index, False)
+        self.table_refs_panel.selection_changed.connect(self._on_table_ref_selection)
+        self.table_refs_panel.jump_requested.connect(self._tree_jump_to_line)
         self.tree_dock.setWidget(self.left_tabs)
         self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self.tree_dock)
 
@@ -618,6 +626,26 @@ class MainWindow(QMainWindow):
 
     def _on_tree_selection_changed(self, node, kind):
         self.properties_panel.show_node(node, kind)
+
+    def _on_table_ref_selection(self, node, kind):
+        self.properties_panel.show_node(node, kind)
+
+    def _toggle_table_references(self, checked: bool) -> None:
+        """View > "Find table reference": show/hide the Table references tab.
+        On show, (re)compute usages from the current project; if none is open,
+        surface a status message and leave the action unchecked."""
+        if checked:
+            if self._current_project is None:
+                self.statusBar().showMessage("Open a project first.", 5000)
+                self._table_refs_action.setChecked(False)
+                return
+            self.table_refs_panel.set_usages(
+                collect_table_usages(self._current_project)
+            )
+            self.left_tabs.setTabVisible(self.table_refs_tab_index, True)
+            self.left_tabs.setCurrentIndex(self.table_refs_tab_index)
+        else:
+            self.left_tabs.setTabVisible(self.table_refs_tab_index, False)
 
     # -- Phase D: tree context-menu + double-click callbacks -----------------
 
@@ -1459,6 +1487,12 @@ class MainWindow(QMainWindow):
         properties_action.setChecked(True)
         properties_action.toggled.connect(self.properties_dock.setVisible)
 
+        table_refs_action = menu.addAction("Find table reference")
+        table_refs_action.setCheckable(True)
+        table_refs_action.setChecked(False)
+        table_refs_action.toggled.connect(self._toggle_table_references)
+        self._table_refs_action = table_refs_action
+
         audit_action = menu.addAction("Audit/Problems Panel")
         audit_action.setCheckable(True)
         audit_action.setChecked(True)
@@ -2068,26 +2102,12 @@ class MainWindow(QMainWindow):
         page_open_line = buffer.count("\n", 0, line_start) + 1
         return new_text, page_open_line
 
-    def _open_reused_tables(self):
-        if self._current_project is None:
-            self.statusBar().showMessage("Open a project first.", 5000)
-            return
-        if self._reused_tables_window is None:
-            self._reused_tables_window = ReusedTablesWindow(self)
-        self._reused_tables_window.set_usages(
-            collect_table_usages(self._current_project)
-        )
-        self._reused_tables_window.show()
-
     def _build_tools_menu(self):
         menu = self.menuBar().addMenu("Tools")
         manage_captions_action = menu.addAction("Manage Captions...")
         manage_captions_action.triggered.connect(self._enter_caption_mode)
         caption_filter_action = menu.addAction("Caption Filter…")
         caption_filter_action.triggered.connect(self._open_caption_filter_dialog)
-        menu.addSeparator()
-        reused_tables_action = menu.addAction("Find Reused Tables...")
-        reused_tables_action.triggered.connect(self._open_reused_tables)
         menu.addSeparator()
         validate_action = menu.addAction("Validate Project")
         validate_action.triggered.connect(self._validate_project)
