@@ -67,7 +67,7 @@ for the feature name. Do not ask questions back; investigate.
    suite was already run by feature-tester):
 
    ```powershell
-   $env:QT_QPA_PLATFORM='offscreen'; python -m pytest tests\ui\test_*manual*.py -q
+   $env:QT_QPA_PLATFORM='offscreen'; python -m pytest tests\ui -k manual -q
    ```
 
    Use the system `python` (the repo `venv\` is a bare leftover without pytest). If these tests fail
