@@ -24,6 +24,7 @@ touches the real user registry or the real per-user schema storage location.
 import pytest
 from PySide6.QtCore import QSettings
 
+import pgtp_editor.ui.main_window as main_window_module
 from pgtp_editor.schema_learning.model import Model
 from pgtp_editor.schema_learning.storage import schema_model_path, schema_xsd_path
 from pgtp_editor.ui.main_window import MainWindow
@@ -104,6 +105,53 @@ def test_apply_annotation_empty_strings_remove_fields(window):
     assert "notes" not in entry
     assert "kind" not in entry
     assert "enum_mode" not in entry
+
+
+def test_open_annotate_popover_prefills_from_entry(window):
+    model = _seed_model(window)
+    entry = model.paths["Root"]["attributes"]["mode"]
+    entry["labels"]["4"] = "pdf"
+    entry["notes"] = {"4": "n"}
+    entry["kind"] = "setting"
+    entry["enum_mode"] = "bitflags"
+
+    window._open_annotate_popover("Root", "mode", "4")
+
+    popover = window._annotate_popover
+    assert popover is not None
+    assert popover.label_edit.text() == "pdf"
+    assert popover.note_edit.text() == "n"
+    assert popover.kind_combo.currentText() == "Setting"
+    assert popover.bitflags_check.isChecked() is True
+    popover.hide()
+    popover.close()
+
+
+def test_open_annotate_popover_missing_entry_shows_status_only(window):
+    _seed_model(window)
+
+    window._open_annotate_popover("Root", "nope", "1")
+
+    assert getattr(window, "_annotate_popover", None) is None
+    assert "not in the learned schema" in window.statusBar().currentMessage()
+
+
+def test_apply_annotation_save_failure_reports_and_skips_labeled_line(window, monkeypatch):
+    _seed_model(window)
+
+    def _raise(self, path):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(main_window_module.Model, "save", _raise)
+
+    window._apply_annotation("Root", "mode", "4", {
+        "label": "pdf", "note": "", "kind": "unclassified", "bitflags": False,
+    })
+
+    items = [window.audit_panel.item(i).text()
+             for i in range(window.audit_panel.count())]
+    assert any(line.startswith("[Schema] Could not save annotation:") for line in items)
+    assert not any(line.startswith("[Schema] LABELED:") for line in items)
 
 
 def test_schema_menu_has_new_actions(window):
