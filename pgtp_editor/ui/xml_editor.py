@@ -623,6 +623,11 @@ class XmlEditor(QPlainTextEdit):
     # (Sub-project C, C1).
     undo_requested = Signal()
     redo_requested = Signal()
+    # Emitted when the user asks to annotate the attribute value at the
+    # caret (Schema ▸ Annotate Value at Cursor / Ctrl+L / context menu).
+    # Carries (tag_chain, attr, value); MainWindow opens the AnnotatePopover
+    # and owns persistence.
+    annotate_value_requested = Signal(str, str, str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -1342,6 +1347,19 @@ class XmlEditor(QPlainTextEdit):
                 menu.insertAction(before, edit_code_action)
             else:
                 menu.addAction(edit_code_action)
+        # "Annotate value…" opens the schema annotation popover for the
+        # attribute under the cursor. Offered whenever the cursor resolves to
+        # an attribute and a schema model is present (read-only mode too:
+        # annotation edits the model, not the document).
+        if self._schema_model is not None and attribute_value_at_position(
+            self.toPlainText(), cursor.position()
+        ) is not None:
+            annotate_action = QAction("Annotate value…", menu)
+            annotate_action.triggered.connect(self.request_annotate_at_cursor)
+            if before is not None:
+                menu.insertAction(before, annotate_action)
+            else:
+                menu.addAction(annotate_action)
         # "Add attribute ▸" lists settings-attributes the schema knows for this
         # element path that the element doesn't already have. Omitted entirely
         # when there are none (model None, read-only, not in an opening tag, or
@@ -1389,6 +1407,26 @@ class XmlEditor(QPlainTextEdit):
         disables them (default)."""
         self._schema_model = model
         self._refresh_unlabeled_value_selections()
+
+    def schema_model(self):
+        """The injected schema Model, or None. Read-only accessor for
+        MainWindow's annotation flow."""
+        return self._schema_model
+
+    def request_annotate_at_cursor(self) -> bool:
+        """Resolve the caret onto an attribute (name token or value) and
+        emit annotate_value_requested. Returns False when no model is set or
+        the caret is not on an attribute. Works in read-only mode too —
+        annotating edits the schema model, never the document."""
+        if self._schema_model is None:
+            return False
+        resolved = attribute_value_at_position(
+            self.toPlainText(), self.textCursor().position()
+        )
+        if resolved is None:
+            return False
+        self.annotate_value_requested.emit(*resolved)
+        return True
 
     def unused_attributes_at(self, cursor_pos: int) -> list[str]:
         """Setting-attributes the schema knows for the opening tag at

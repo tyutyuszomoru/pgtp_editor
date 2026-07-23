@@ -117,3 +117,44 @@ def test_goto_next_unlabeled_returns_false_without_model(qtbot):
     qtbot.addWidget(editor)
     editor.setPlainText('<Root a="1"/>')
     assert editor.goto_next_unlabeled_value() is False
+
+
+def test_request_annotate_emits_context(qtbot):
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    editor.setPlainText('<Root a="1"/>')
+    editor.set_schema_model(_model({"Root": {"a": _entry(["1"])}}))
+    cursor = editor.textCursor()
+    cursor.setPosition(editor.toPlainText().index('"1"') + 1)
+    editor.setTextCursor(cursor)
+    received = []
+    editor.annotate_value_requested.connect(
+        lambda chain, attr, value: received.append((chain, attr, value))
+    )
+    assert editor.request_annotate_at_cursor() is True
+    assert received == [("Root", "a", "1")]
+
+
+def test_request_annotate_false_without_model_or_off_attribute(qtbot):
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    editor.setPlainText('<Root a="1"/>')
+    assert editor.request_annotate_at_cursor() is False  # no model
+    editor.set_schema_model(_model({"Root": {"a": _entry(["1"])}}))
+    cursor = editor.textCursor()
+    cursor.setPosition(0)  # on '<', not an attribute
+    editor.setTextCursor(cursor)
+    assert editor.request_annotate_at_cursor() is False
+
+
+def test_context_menu_offers_annotate_value_on_attribute(qtbot):
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    editor.setPlainText('<Root a="1"/>')
+    editor.set_schema_model(_model({"Root": {"a": _entry(["1"])}}))
+    cursor = editor.textCursor()
+    cursor.setPosition(editor.toPlainText().index('"1"') + 1)
+    editor.setTextCursor(cursor)
+    menu = editor._build_context_menu()
+    texts = [action.text() for action in menu.actions()]
+    assert "Annotate value…" in texts
