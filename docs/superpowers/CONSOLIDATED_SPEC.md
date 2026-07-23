@@ -363,9 +363,12 @@ of the enclosing element are highlighted (self-closing → none), using cached s
 jumps to the parent element's open tag (both move caret + scroll, no selection; `event.accept()`
 suppresses Qt's Alt-drag). Other modifier combos fall through.
 
-**Selection right-click ▸ "Find"** prepends to the standard context menu when a selection exists; emits
-`find_selected_text(str)` → MainWindow reveals Raw XML + prefills the Find bar. **Line-wrap** toggle
-lives in the editor's right-click context menu (checkable), not the View menu.
+**Right-click context menu:** `contextMenuEvent` first moves the caret to the actually-clicked
+document position (`_prepare_context_menu_at(doc_pos)`) before building the menu, so
+position-dependent entries (e.g. "Annotate value…", §11) reflect the clicked location rather than a
+stale caret. **Selection right-click ▸ "Find"** prepends to the standard context menu when a selection
+exists; emits `find_selected_text(str)` → MainWindow reveals Raw XML + prefills the Find bar.
+**Line-wrap** toggle lives in the editor's right-click context menu (checkable), not the View menu.
 
 **Bookmarks** (session-only, Raw-XML-only): `self._bookmarks: set[int]` (block numbers), reset wherever
 `_fold_state` resets; `toggle_bookmark`, `bookmarked_lines`, `next_bookmark`/`prev_bookmark` (wrap),
@@ -469,9 +472,12 @@ attribute has `enum_mode == "bitflags"`, the user labels only the atomic power-o
 8, …); a composite value's label is **derived** by bit decomposition (e.g. 5 → `"A+C"` from 1=`"A"`,
 4=`"C"`). An explicit label on a composite value overrides its derived label. Derivation tolerates
 enum overflow (`overflowed=True, values=None` → fall back to `labels` keys). Derived labels appear in
-the value-completion popup, the hover enum hint, and generated-XSD documentation; per-value **notes**
-appear in the hover hint and the XSD `xs:documentation` but **not** in the compact completion rows.
-`xsd_gen.py` includes derived bitflag labels and notes in `xs:documentation`.
+the value-completion popup, the hover enum hint, and generated-XSD documentation — **except** that an
+overflowed attribute (`values=None`) emits the plain non-enumerated XSD attribute form with **no
+enumeration and no `xs:documentation` at all** (deliberate, test-pinned behavior: `xsd_gen` only emits
+the enumerated form when `not overflowed`); per-value **notes** appear in the hover hint and the XSD
+`xs:documentation` but **not** in the compact completion rows. `xsd_gen.py` includes derived bitflag
+labels and notes in `xs:documentation`.
 
 **Schema menu:** top-level "Schema" menu (between Diff/Merge and Tools — see consolidated menu):
 - **Annotate Value at Cursor** (Ctrl+L; also offered as a right-click context-menu action on an
@@ -486,8 +492,8 @@ appear in the hover hint and the XSD `xs:documentation` but **not** in the compa
 **Annotation popover** (the sole authoring surface for labeler-owned fields — there is no separate
 labeling dialog): invoked with the caret inside an attribute value (Ctrl+L or context menu); a compact
 popover anchored at the caret containing:
-- a read-only context header — element path chain (resolved via `enclosing_open_tag`), attribute name,
-  and the value under the cursor;
+- a read-only context header — element path chain, attribute name, and the value under the cursor
+  (all three resolved via the pure `attribute_value_at_position(text, pos)` resolver);
 - **Label** line edit, pre-filled with the existing label; Enter commits `labels[value]` on the
   attribute entry and saves `schema_model.json`; an empty label removes the label;
 - **Bit-flags** checkbox — authors the per-attribute `enum_mode`;
@@ -544,7 +550,20 @@ popover anchored at the caret containing:
   **summed** — so "required" (seen count == instance count) survives the merge only when the attribute
   was required on **both** sides. Labeler-owned fields (`labels`, `kind`, `notes`, `enum_mode`) merge
   via union with **never-silent** conflict surfacing.
+  **Accepted limitation — sum-based count merge:** because `merge_models` sums
+  `instance_count`/`attr_seen_count`, repeated **Fetch Team Master** cycles re-add master's counts into
+  the local model (and a user's own observations, once published and folded into master, are re-counted
+  back through master) — counts inflate over time and drift from "observed in N real files".
+  Required-ness (`seen == instance`) is preserved whenever both sides agree, so there is **no silent
+  required/optional corruption**; but the counts must be read as heuristics, not exact observation
+  counts. Accepted for the temporary learning period (see endgame below); an exact fix would require
+  per-source count tracking, which is deliberately not built.
 - **Git transport** (`schema_learning/sync.py`, subprocess `git`, injectable `runner=` for fakes):
+  strictly **non-interactive** — when a deploy key is configured, the scoped `GIT_SSH_COMMAND` includes
+  `-o BatchMode=yes`; every git call additionally sets `GIT_TERMINAL_PROMPT=0` (belt-and-suspenders for
+  non-SSH prompts, e.g. credential helpers) and is bounded by a **120 s timeout**
+  (`_GIT_TIMEOUT_SECONDS`). Timeout or nonzero exit raises `SyncError` (carrying git's stderr) — a hung
+  prompt can never freeze the UI thread, which is where these actions run.
   `ensure_repo` clones if absent else `pull --rebase`, setting a local commit identity
   (`default_username()`); a pull failure is tolerated **only** for a brand-new empty remote, detected
   **deterministically** via `git ls-remote --heads origin` (no branches → empty) — never by
