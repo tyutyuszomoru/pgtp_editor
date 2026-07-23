@@ -76,11 +76,13 @@ from pgtp_editor.model.parser import (
 )
 from pgtp_editor.schema_learning.model import Model
 from pgtp_editor.schema_learning.parser import walk_document
+from pgtp_editor.schema_learning.settings_index import attribute_kind
 from pgtp_editor.schema_learning.storage import schema_model_path, schema_xsd_path
 from pgtp_editor.schema_learning.xsd_gen import generate_xsd
 from pgtp_editor.validation.tier2 import validate_project
 from pgtp_editor.ui._stub_action import add_stub_action
 from pgtp_editor.ui.about import show_about_dialog
+from pgtp_editor.ui.annotate_popover import AnnotatePopover
 from pgtp_editor.ui.annotate_schema_values_dialog import AnnotateSchemaValuesDialog
 from pgtp_editor.ui.caption_find_replace_dialog import CaptionFindReplaceDialog
 from pgtp_editor.ui.center_stage import CenterStage
@@ -322,6 +324,13 @@ class MainWindow(QMainWindow):
         # The live CodeEditorDialog (kept referenced so it is not GC'd while
         # shown). MainWindow owns its lifecycle + the write-back.
         self._code_editor_dialog: CodeEditorDialog | None = None
+
+        self.center_stage.xml_editor.annotate_value_requested.connect(
+            self._open_annotate_popover
+        )
+        # The live AnnotatePopover (kept on self so it is not garbage
+        # collected while shown as a parentless-popup child).
+        self._annotate_popover = None
 
         # Permanent status-bar mode indicator (Editing vs Caption Mode).
         self._mode_label = QLabel("Editing Mode")
@@ -1831,18 +1840,118 @@ class MainWindow(QMainWindow):
 
     def _build_schema_menu(self):
         menu = self.menuBar().addMenu("Schema")
-        annotate_action = menu.addAction("Annotate Schema Values...")
-        annotate_action.triggered.connect(self._open_annotate_schema_values)
+        annotate_action = menu.addAction("Annotate Value at Cursor")
+        annotate_action.setShortcut(QKeySequence("Ctrl+L"))
+        annotate_action.triggered.connect(self._annotate_value_at_cursor)
+        next_unlabeled_action = menu.addAction("Next Unlabeled Value")
+        next_unlabeled_action.setShortcut(QKeySequence("Ctrl+Shift+L"))
+        next_unlabeled_action.triggered.connect(self._goto_next_unlabeled_value)
+        menu.addSeparator()
         open_xsd_action = menu.addAction("Open XSD")
         open_xsd_action.triggered.connect(self._open_xsd_viewer)
         open_labels_action = menu.addAction("Open XSD Labels (JSON)")
         open_labels_action.triggered.connect(self._open_labels_viewer)
 
-    def _open_annotate_schema_values(self):
-        dialog = AnnotateSchemaValuesDialog(self, schema_storage_dir=self._schema_storage_dir)
-        dialog.exec()
-
     _NO_SCHEMA_MESSAGE = "No schema learned yet — open a .pgtp file first."
+
+    def _annotate_value_at_cursor(self):
+        editor = self.center_stage.xml_editor
+        if editor.schema_model() is None:
+            self.statusBar().showMessage(self._NO_SCHEMA_MESSAGE, 5000)
+            return
+        if not editor.request_annotate_at_cursor():
+            self.statusBar().showMessage(
+                "Place the cursor on an attribute value to annotate it.", 5000
+            )
+
+    def _goto_next_unlabeled_value(self):
+        if not self.center_stage.xml_editor.goto_next_unlabeled_value():
+            self.statusBar().showMessage(
+                "No unlabeled enum values in this document.", 5000
+            )
+
+    def _open_annotate_popover(self, tag_chain, attr, value):
+        editor = self.center_stage.xml_editor
+        model = editor.schema_model()
+        entry = (
+            model.paths.get(tag_chain, {}).get("attributes", {}).get(attr)
+            if model is not None
+            else None
+        )
+        if entry is None:
+            # The document carries an attribute the model has not learned yet
+            # (e.g. hand-typed since the last File ▸ Open). Learning is the
+            # engine's job — never create entries from the labeler side.
+            self.statusBar().showMessage(
+                f"'{attr}' is not in the learned schema yet — "
+                "File ▸ Open the file to learn it first.",
+                5000,
+            )
+            return
+        labels = entry.get("labels") or {}
+        notes = entry.get("notes") or {}
+        popover = AnnotatePopover(
+            tag_chain,
+            attr,
+            value,
+            label=labels.get(value, ""),
+            note=notes.get(value, ""),
+            kind=attribute_kind(entry),
+            bitflags=entry.get("enum_mode") == "bitflags",
+            parent=self,
+        )
+        popover.committed.connect(
+            lambda edits: self._apply_annotation(tag_chain, attr, value, edits)
+        )
+        rect = editor.cursorRect()
+        popover.show_at(editor.viewport().mapToGlobal(rect.bottomLeft()))
+        self._annotate_popover = popover
+
+    def _apply_annotation(self, tag_chain, attr, value, edits):
+        """Write one popover commit into the labeler-owned model fields,
+        persist model + regenerated XSD, and refresh the editor. Empty
+        strings remove; 'unclassified' kind and un-checked bitflags remove
+        their keys (absent == default, keeping the JSON tidy)."""
+        editor = self.center_stage.xml_editor
+        model = editor.schema_model()
+        entry = model.paths[tag_chain]["attributes"][attr]
+        label = edits["label"].strip()
+        note = edits["note"].strip()
+        entry.setdefault("labels", {})
+        if label:
+            entry["labels"][value] = label
+        else:
+            entry["labels"].pop(value, None)
+        notes = entry.setdefault("notes", {})
+        if note:
+            notes[value] = note
+        else:
+            notes.pop(value, None)
+        if not entry["notes"]:
+            entry.pop("notes")
+        if edits["bitflags"]:
+            entry["enum_mode"] = "bitflags"
+        else:
+            entry.pop("enum_mode", None)
+        if edits["kind"] == "unclassified":
+            entry.pop("kind", None)
+        else:
+            entry["kind"] = edits["kind"]
+        try:
+            model_path = schema_model_path(self._schema_storage_dir)
+            model_path.parent.mkdir(parents=True, exist_ok=True)
+            model.save(model_path)
+            schema_xsd_path(self._schema_storage_dir).write_text(
+                generate_xsd(model), encoding="utf-8"
+            )
+        except Exception as exc:
+            self.audit_panel.addItem(f"[Schema] Could not save annotation: {exc}")
+            return
+        editor.set_schema_model(model)  # refreshes underlines
+        shown = label if label else "(no label)"
+        self.audit_panel.addItem(
+            f'[Schema] LABELED: {tag_chain}@{attr} "{value}" = "{shown}"'
+        )
 
     def _open_xsd_viewer(self):
         try:

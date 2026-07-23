@@ -247,7 +247,9 @@ def test_schema_menu_contents(qtbot):
     menu = find_top_menu(window, "Schema")
     assert menu is not None
     assert action_labels(menu) == [
-        "Annotate Schema Values...",
+        "Annotate Value at Cursor",
+        "Next Unlabeled Value",
+        "―",
         "Open XSD",
         "Open XSD Labels (JSON)",
     ]
@@ -263,12 +265,20 @@ def test_schema_menu_sits_between_view_and_tools(qtbot):
     ]
 
 
-def test_annotate_schema_values_action_is_always_enabled(qtbot):
+def test_annotate_value_at_cursor_and_next_unlabeled_actions_are_always_enabled(qtbot):
     window = MainWindow()
     qtbot.addWidget(window)
     menu = find_top_menu(window, "Schema")
-    action = find_action(menu, "Annotate Schema Values...")
-    assert action.isEnabled() is True
+    assert find_action(menu, "Annotate Value at Cursor").isEnabled() is True
+    assert find_action(menu, "Next Unlabeled Value").isEnabled() is True
+
+
+def test_schema_menu_shortcuts(qtbot):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    menu = find_top_menu(window, "Schema")
+    assert find_action(menu, "Annotate Value at Cursor").shortcut().toString() == "Ctrl+L"
+    assert find_action(menu, "Next Unlabeled Value").shortcut().toString() == "Ctrl+Shift+L"
 
 
 def test_tools_menu_contents(qtbot):
