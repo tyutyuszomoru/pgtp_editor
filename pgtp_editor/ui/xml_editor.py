@@ -79,9 +79,20 @@ _ATTR_PAIR_RE = re.compile(
 
 
 def attribute_at_position(text: str, pos: int):
-    """Resolve a document character position to ``(tag_chain, attr)`` when it
-    falls on an attribute (name token or quoted value) inside an *opening*
-    tag; otherwise return ``None``.
+    """Resolve a document character position to ``(tag_chain, attr)`` --
+    see attribute_value_at_position, which this delegates to."""
+    resolved = attribute_value_at_position(text, pos)
+    if resolved is None:
+        return None
+    tag_chain, attr, _value = resolved
+    return tag_chain, attr
+
+
+def attribute_value_at_position(text: str, pos: int):
+    """Resolve a document character position to ``(tag_chain, attr, value)``
+    when it falls on an attribute (name token or quoted value) inside an
+    *opening* tag; otherwise return ``None``. ``value`` is the attribute's
+    current value with the quotes stripped.
 
     ``tag_chain`` is the slash-joined ancestor open-tag names from the
     document root down to and including the tag the position is in (e.g.
@@ -118,9 +129,10 @@ def attribute_at_position(text: str, pos: int):
     if containing is None:
         return None
 
-    attr = _attribute_name_at(text, containing.open_start, containing_open_end, pos)
-    if attr is None:
+    pair = _attribute_pair_at(text, containing.open_start, containing_open_end, pos)
+    if pair is None:
         return None
+    attr, value = pair
 
     names = [containing.name]
     walker = containing
@@ -131,7 +143,7 @@ def attribute_at_position(text: str, pos: int):
         names.append(parent.name)
         walker = parent
     tag_chain = "/".join(reversed(names))
-    return tag_chain, attr
+    return tag_chain, attr, value
 
 
 def enclosing_open_tag(text: str, pos: int):
@@ -227,20 +239,18 @@ def _opening_tag_end(text: str, open_start: int):
     return None
 
 
-def _attribute_name_at(text: str, open_start: int, open_end: int, pos: int):
-    """Return the attribute name whose name-token or quoted value contains
-    ``pos`` within the opening tag spanning ``[open_start, open_end)``, or
-    ``None`` if ``pos`` is over the tag name, in an inter-token gap, or on the
-    tag delimiters."""
+def _attribute_pair_at(text: str, open_start: int, open_end: int, pos: int):
+    """Return ``(name, value)`` (value unquoted) for the attribute whose
+    name-token or quoted value contains ``pos`` within the opening tag
+    spanning ``[open_start, open_end)``, or ``None`` if ``pos`` is over the
+    tag name, in an inter-token gap, or on the tag delimiters."""
     tag_text = text[open_start:open_end]
     offset = pos - open_start
     for match in _ATTR_PAIR_RE.finditer(tag_text):
-        name_start, name_end = match.start(1), match.end(1)
-        value_start, value_end = match.start(2), match.end(2)
-        on_name = name_start <= offset < name_end
-        on_value = value_start <= offset < value_end
+        on_name = match.start(1) <= offset < match.end(1)
+        on_value = match.start(2) <= offset < match.end(2)
         if on_name or on_value:
-            return match.group(1)
+            return match.group(1), match.group(2)[1:-1]
     return None
 
 # Fixed horizontal allowance reserved for the fold-triangle glyph, added on
