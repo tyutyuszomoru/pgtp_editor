@@ -53,7 +53,10 @@ from PySide6.QtWidgets import (
 )
 
 from pgtp_editor.schema_learning.settings_index import (
+    attribute_kind,
+    effective_labels,
     enum_hint,
+    is_enum_candidate,
     known_attributes,
     known_values,
     unused_setting_attributes,
@@ -219,6 +222,50 @@ def insert_attribute(text: str, insert_pos: int, name: str):
     # Caret sits between the two quotes: one char back from the fragment's end.
     caret_pos = insert_pos + len(fragment) - 1
     return new_text, caret_pos
+
+
+def unlabeled_value_spans(text: str, spans, model) -> list[tuple[int, int]]:
+    """Absolute ``(start, end)`` character spans (quotes excluded) of every
+    enum-candidate attribute VALUE in ``text`` that has no effective label.
+    Content-kind attributes are skipped — the labeler marked them as
+    not-a-setting, so they should not nag. ``spans`` is
+    ``xml_structure.scan(text)`` (pass the editor's cached scan). Sorted by
+    start offset. Drives the dotted underlines and Next Unlabeled Value."""
+    result = []
+    label_cache: dict[int, dict] = {}
+    for span in spans:
+        open_end = _opening_tag_end(text, span.open_start)
+        if open_end is None:
+            continue
+        names = [span.name]
+        walker = span
+        while walker.depth > 0:
+            parent = xml_structure.parent_tag_span(spans, walker)
+            if parent is None:
+                break
+            names.append(parent.name)
+            walker = parent
+        tag_chain = "/".join(reversed(names))
+        attributes = model.paths.get(tag_chain, {}).get("attributes", {})
+        if not attributes:
+            continue
+        tag_text = text[span.open_start:open_end]
+        for match in _ATTR_PAIR_RE.finditer(tag_text):
+            entry = attributes.get(match.group(1))
+            if entry is None or not is_enum_candidate(entry):
+                continue
+            if attribute_kind(entry) == "content":
+                continue
+            cached = label_cache.get(id(entry))
+            if cached is None:
+                cached = label_cache[id(entry)] = effective_labels(entry)
+            value = match.group(2)[1:-1]
+            if cached.get(value) is not None:
+                continue
+            start = span.open_start + match.start(2) + 1
+            result.append((start, start + len(value)))
+    result.sort()
+    return result
 
 
 def _opening_tag_end(text: str, open_start: int):
@@ -609,6 +656,13 @@ class XmlEditor(QPlainTextEdit):
         self._code_region_color = QColor("#232a2f")
         self._code_region_font = self._make_monospace_font()
         self._code_region_selections: list[QTextEdit.ExtraSelection] = []
+        # Dotted underlines beneath enum-candidate attribute values that have
+        # no label yet — the labeler's "waiting for you" markers. Recomputed
+        # from the cached structure scan on every text change and whenever a
+        # fresh schema model is injected (set_schema_model). Rendered through
+        # the shared extra-selections layering.
+        self._unlabeled_underline_color = QColor("#b8a24e")
+        self._unlabeled_value_selections: list[QTextEdit.ExtraSelection] = []
         # One-shot "overriding" indicator used by navigate_to_line,
         # highlight_error_line and select_range_on_line. It sits on top of the
         # current-line band and matching-tag spans, and is cleared on the next
@@ -634,6 +688,7 @@ class XmlEditor(QPlainTextEdit):
         self.updateRequest.connect(self._update_gutter_on_scroll)
         self.textChanged.connect(self._rescan_structure)
         self.textChanged.connect(self._refresh_code_region_selections)
+        self.textChanged.connect(self._refresh_unlabeled_value_selections)
         self.cursorPositionChanged.connect(self._highlight_current_line)
         self.cursorPositionChanged.connect(self._update_matching_tag_highlight)
 
@@ -688,6 +743,7 @@ class XmlEditor(QPlainTextEdit):
             self._navigation_highlight_color = QColor("#cfe0ff")
             self._matching_tag_color = QColor("#d3ecd3")
             self._code_region_color = QColor("#eef2f5")
+            self._unlabeled_underline_color = QColor("#8a6d3b")
             self._highlighter.set_colors(
                 tag="#0000ff", attr_name="#e50000", string="#a31515"
             )
@@ -699,6 +755,7 @@ class XmlEditor(QPlainTextEdit):
             self._navigation_highlight_color = QColor("#264f78")
             self._matching_tag_color = QColor("#3a5f3a")
             self._code_region_color = QColor("#232a2f")
+            self._unlabeled_underline_color = QColor("#b8a24e")
             self._highlighter.set_colors(
                 tag="#569cd6", attr_name="#9cdcfe", string="#ce9178"
             )
@@ -706,6 +763,7 @@ class XmlEditor(QPlainTextEdit):
         # Rebuild the extra-selection layers so their stored per-selection
         # colors pick up the new values (they cache the color at build time).
         self._refresh_code_region_selections()
+        self._refresh_unlabeled_value_selections()
         self._update_matching_tag_highlight()
         self._highlight_current_line()
         self._gutter.update()
@@ -863,6 +921,7 @@ class XmlEditor(QPlainTextEdit):
         # Code-region background sits underneath everything so the current-line
         # band, matching-tag spans and one-shot indicators paint over it.
         selections.extend(self._code_region_selections)
+        selections.extend(self._unlabeled_value_selections)
         selections.extend(self._current_line_selections)
         selections.extend(self._matching_tag_selections)
         if self._oneshot_selection is not None:
@@ -901,6 +960,43 @@ class XmlEditor(QPlainTextEdit):
                 selections.append(selection)
         self._code_region_selections = selections
         self._refresh_extra_selections()
+
+    def _refresh_unlabeled_value_selections(self) -> None:
+        """Recompute the dotted underlines for unlabeled enum-candidate
+        values from the cached scan. No model -> no underlines."""
+        selections: list[QTextEdit.ExtraSelection] = []
+        if self._schema_model is not None:
+            for start, end in unlabeled_value_spans(
+                self._spans_text, self._spans, self._schema_model
+            ):
+                selection = QTextEdit.ExtraSelection()
+                selection.format.setUnderlineStyle(
+                    QTextCharFormat.UnderlineStyle.DotLine
+                )
+                selection.format.setUnderlineColor(self._unlabeled_underline_color)
+                selection.cursor = self._make_span_cursor(start, end)
+                selections.append(selection)
+        self._unlabeled_value_selections = selections
+        self._refresh_extra_selections()
+
+    def goto_next_unlabeled_value(self) -> bool:
+        """Select the next unlabeled enum-candidate value after the caret
+        (wrapping to the first). Returns False when there are none."""
+        if self._schema_model is None:
+            return False
+        spans_list = unlabeled_value_spans(
+            self._spans_text, self._spans, self._schema_model
+        )
+        if not spans_list:
+            return False
+        pos = self.textCursor().position()
+        target = next(((s, e) for s, e in spans_list if s > pos), spans_list[0])
+        cursor = self.textCursor()
+        cursor.setPosition(target[0])
+        cursor.setPosition(target[1], QTextCursor.MoveMode.KeepAnchor)
+        self.setTextCursor(cursor)
+        self.centerCursor()
+        return True
 
     def event_body_start_line_at_cursor(self) -> int | None:
         """Return the 1-based open-tag line of the event-handler body the
@@ -1288,9 +1384,11 @@ class XmlEditor(QPlainTextEdit):
 
     def set_schema_model(self, model) -> None:
         """Inject the current in-memory schema Model (or None). Passed by
-        MainWindow after each enrich so value-hover tooltips reflect the
-        latest labels; None disables hovers (default)."""
+        MainWindow after each enrich/annotation so hover tooltips, completion
+        and the unlabeled-value underlines reflect the latest labels; None
+        disables them (default)."""
         self._schema_model = model
+        self._refresh_unlabeled_value_selections()
 
     def unused_attributes_at(self, cursor_pos: int) -> list[str]:
         """Setting-attributes the schema knows for the opening tag at
