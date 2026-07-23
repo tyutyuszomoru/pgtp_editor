@@ -1,6 +1,6 @@
 # PGTP Editor — Consolidated Specification
 
-> **Status:** living document · **Last synthesized:** 2026-07-21
+> **Status:** living document · **Last synthesized:** 2026-07-23
 > **Source of truth:** this file is the single reconciled specification for PGTP Editor.
 > It is synthesized from the dated design specs under [`docs/superpowers/specs/`](specs/) using a
 > **latest-wins** rule: where a later spec overrode an earlier decision, only the later decision
@@ -181,7 +181,8 @@ pgtp_editor/
 ├── schema_learning/   # vendored XSD-synthesis engine + storage + settings index
 │   ├── model.py, parser.py (defusedxml), types.py, xsd_gen.py
 │   ├── storage.py     # schema_model_path / schema_xsd_path (AppData)
-│   └── settings_index.py  # kind/labels helpers, enum_hint, known_attributes/known_values
+│   ├── settings_index.py  # kind/labels/notes helpers, enum_hint, bitflag derivation, known_attributes/known_values
+│   └── merge.py       # Qt-free model-to-model semantic merge (team sharing, §11)
 ├── db/                # PostgreSQL introspection & comparison (Qt-free logic)
 │   ├── config.py, introspect.py (psycopg lazy), compare.py, rename.py
 ├── analysis/
@@ -195,7 +196,7 @@ Key `ui/` modules: `main_window.py`, `center_stage.py`, `project_tree.py`, `xml_
 `xml_structure.py`, `code_editor.py`, `event_body.py`, `properties_panel.py`, `find_replace_bar.py`,
 `search.py`, `history.py`, `theme.py`, `toolbar_registry.py`, `customize_toolbar_dialog.py`,
 `diff_merge_panel.py`, `caption_management_panel.py`, `caption_find_replace_dialog.py`,
-`caption_scan.py`, `annotate_schema_values_dialog.py`, `schema_viewer.py`, `db_check_panel.py`,
+`caption_scan.py`, `schema_viewer.py`, `db_check_panel.py`,
 `connection_setup_dialog.py`, `table_references_panel.py`, `manual_panel.py`, `about.py`, `icons.py`.
 
 **Dependency rule:** `model/` touches lxml; nothing in `model/` or `ui/` depends on `diff/`; pure-logic
@@ -432,15 +433,22 @@ Vendored XSD-synthesis engine feeds an ever-growing **per-user** schema `Model` 
 `.pgtp`, used for hover hints and autocomplete. `defusedxml`-based, independent of `model/parser.py`.
 
 **Storage** (`schema_learning/storage.py`, `QStandardPaths.AppDataLocation`, injectable `base_dir`):
-`schema_model_path()`→`schema_model.json`, `schema_xsd_path()`→`schema.xsd`. Per-user, not git-tracked;
-`schema.xsd` regenerated on every enrichment.
+`schema_model_path()`→`schema_model.json`, `schema_xsd_path()`→`schema.xsd`. **The per-user AppData
+model is the local source of truth** (not git-tracked; the team-sharing git repo below is a transport,
+not a second source of truth). `schema.xsd` is regenerated on every enrichment/annotation and is a
+**generated, read-only artifact — hand-edits to `schema.xsd` do not persist**.
 
 **Model:** `Model.paths[chain]["attributes"][attr]` where `chain` = slash-joined tag path from root
 (e.g. `PGTPProject/Pages/Page/Editor`, no indices). Each attribute entry carries engine-owned
-`type`/`values`/`overflowed`/`attr_seen_count` **plus** labeler-owned `labels: dict[value→label]` and
-`kind: "setting"|"content"|None`. The engine is purely additive and must never read/clear `labels` or
-`kind`; readers use `.get(...)`. Enum overflow (`> ENUM_MAX_VALUES` → `overflowed=True, values=None`)
-leaves stale labels harmlessly.
+`type`/`values`/`overflowed`/`attr_seen_count` **plus** labeler-owned fields:
+- `labels: dict[value→label]` — per-value display labels;
+- `kind: "setting"|"content"|None` — Content = the attribute's values are not offered in completion;
+- `notes: dict[value→str]` — per-VALUE free-text structural consequences (e.g. "enables the
+  `<Watermark>` child tag");
+- `enum_mode: "bitflags"|None` — per-ATTRIBUTE flag: values are OR-combinable bit flags.
+
+The engine is purely additive and must never read/clear labeler-owned fields; readers use `.get(...)`.
+Enum overflow (`> ENUM_MAX_VALUES` → `overflowed=True, values=None`) leaves stale labels harmlessly.
 
 **Auto-enrich:** only **File ▸ Open** triggers it (appended to the end of `open_project_file` success
 path, wrapped in try/except → one `[Schema] Could not update…` audit line on failure). Reports via
@@ -450,28 +458,80 @@ path, wrapped in try/except → one `[Schema] Could not update…` audit line on
 **settings_index.py** (Qt-free): `is_enum_candidate`, `attribute_kind`, `enum_hint(model, chain, attr)`
 (one-line hint for **settings** only, e.g. `editFormMode — 1 = modal · 2 = new page · 3 = inline`),
 `unused_setting_attributes` (kind-filtered), `known_attributes(model, chain, present)` (broad, **not**
-kind-filtered), `known_values(model, chain, attr)` (→ `[(value, label|None)]`).
+kind-filtered), `known_values(model, chain, attr)` (→ `[(value, label|None)]`). `known_values` returns
+the **union** of engine-observed values and labeler-added label keys — a value labeled before being
+observed, or dropped from `values` by enum overflow, still completes.
+
+**Bit-flags derivation** (pure, Qt-free, in `settings_index.py` or an adjacent module): when an
+attribute has `enum_mode == "bitflags"`, the user labels only the atomic power-of-two bits (1, 2, 4,
+8, …); a composite value's label is **derived** by bit decomposition (e.g. 5 → `"A+C"` from 1=`"A"`,
+4=`"C"`). An explicit label on a composite value overrides its derived label. Derivation tolerates
+enum overflow (`overflowed=True, values=None` → fall back to `labels` keys). Derived labels appear in
+the value-completion popup, the hover enum hint, and generated-XSD documentation; per-value **notes**
+appear in the hover hint and the XSD `xs:documentation` but **not** in the compact completion rows.
+`xsd_gen.py` includes derived bitflag labels and notes in `xs:documentation`.
 
 **Schema menu:** top-level "Schema" menu (between Diff/Merge and Tools — see consolidated menu):
-- **Annotate Schema Values…** — a **two-pane** labeler (`annotate_schema_values_dialog.py`): left pane
-  one row per enum-candidate `(path, attribute)` with a **Kind** combo (Unclassified/Setting/Content),
-  #values, #labeled; filters = kind (default **Unclassified + Settings**) + text (path/attribute). Right
-  pane = the selected Setting's values with editable labels. Kind/label edits re-save immediately.
-  (This replaced the original flat one-row-per-value table.)
+- **Annotate Value at Cursor** (Ctrl+L; also offered as a right-click context-menu action on an
+  attribute value in the XML editor) — the labeling surface; see "Annotation popover" below.
+- **Next Unlabeled Value** — jumps the caret through the document's unlabeled enum-candidate values in
+  order (shortcut assigned at implementation).
+- **Publish My Annotations / Fetch Team Master / Merge Team Models…** — team sharing, below.
 - **Open XSD** and **Open XSD Labels (JSON)** — read-only non-modal `SchemaViewerWindow` (`schema_viewer.py`,
   a read-only `XmlEditor`).
 
+**Annotation popover** (the sole authoring surface for labeler-owned fields — there is no separate
+labeling dialog): invoked with the caret inside an attribute value (Ctrl+L or context menu); a compact
+popover anchored at the caret containing:
+- a read-only context header — element path chain (resolved via `enclosing_open_tag`), attribute name,
+  and the value under the cursor;
+- **Label** line edit, pre-filled with the existing label; Enter commits `labels[value]` on the
+  attribute entry and saves `schema_model.json`; an empty label removes the label;
+- **Bit-flags** checkbox — authors the per-attribute `enum_mode`;
+- **Note** optional line edit — authors the per-value `notes[value]`;
+- **Setting/Content** control — the authoring surface for the existing `kind` field (same semantics as
+  before; only the UI home changed).
+
 **Editor integration:**
 - **Hover** over an attribute name/value in an opening tag shows a `QToolTip` with `enum_hint(...)`
-  (settings only). Editor gets the model via `set_schema_model(model)` (MainWindow passes the freshly
-  enriched model; `None` disables). Pure resolver `attribute_at_position(text,pos)`.
+  (settings only), including derived bitflag labels and per-value notes. Editor gets the model via
+  `set_schema_model(model)` (MainWindow passes the freshly enriched model; `None` disables). Pure
+  resolver `attribute_at_position(text,pos)`.
+- **Unlabeled-value discovery:** enum-candidate attribute values with no label get a subtle dotted
+  underline, rendered as its own named list through the §8 extra-selections infrastructure; the
+  **Next Unlabeled Value** command navigates between them.
 - **Right-click ▸ Add attribute ▸** submenu from `unused_setting_attributes` (kind-filtered); inserts
   ` name=""` with caret between quotes via pure `insert_attribute(text, tag_open_pos, name)`.
 - **Ctrl+Space autocomplete:** `_CompletionPopup(QListWidget)` (frameless, non-modal). Attribute stage
   uses `known_attributes` (broad); on choose, inserts ` name=""` and, if `known_values` non-empty,
-  chains a value popup (displays `value` or `value = label`, inserts bare value). ↑/↓ navigate,
-  Enter/Tab/click choose, Esc/focus-out cancel, printable chars prefix-filter. Guarded by
-  `not isReadOnly()` + model present + `enclosing_open_tag(...)` resolving.
+  chains a value popup (displays `value` or `value = label`, inserts bare value; derived bitflag labels
+  shown like explicit ones). ↑/↓ navigate, Enter/Tab/click choose, Esc/focus-out cancel, printable
+  chars prefix-filter. Guarded by `not isReadOnly()` + model present + `enclosing_open_tag(...)`
+  resolving.
+
+**Team schema-model sharing** (temporary-by-design capability for the schema learning/writing period):
+- **Shared store:** a dedicated git repository containing **only** schema model JSONs —
+  `models/<username>.json` per user plus `master.json`. Accessed with a bundled/configured **deploy SSH
+  key scoped to that repo alone** (accepted risk for a temporary internal tool: the key can only touch
+  annotation data). Repo URL + key location are configurable in settings.
+- **Schema ▸ Publish My Annotations** — commits and pushes the local user's model as
+  `models/<username>.json`, with a pull/rebase-retry loop underneath; per-user files avoid content
+  collisions.
+- **Schema ▸ Fetch Team Master** — pulls `master.json` and semantically merges it into the local model
+  (additive union for engine-owned fields; labels/kind/notes merged with conflict reporting), then
+  regenerates the local `schema.xsd`.
+- **Schema ▸ Merge Team Models…** (admin action) — folds all `models/*.json` into `master.json` via the
+  same semantic merge; interrupts **only** for genuine conflicts (same `(path, attribute, value)` with
+  two different labels — the user picks); pushes the merged master.
+- **Merge engine** (`schema_learning/merge.py`, Qt-free, unit-testable without Qt or network):
+  model-to-model merge — engine-owned fields via the existing additive semantics (reuse/mirror
+  `Model.merge_element`); labeler-owned fields (`labels`, `kind`, `notes`, `enum_mode`) via union with
+  **never-silent** conflict surfacing.
+- **Failure behavior:** no network, bad key, or merge abort leaves the local model untouched and
+  reports clearly via the existing `[Schema]` audit-line convention.
+- **Endgame (decision recorded; freeze mechanics not yet designed):** when the learning period closes,
+  a final merge produces the frozen master; the XSD generated from it is bundled into the app and the
+  learning/sharing period ends.
 
 ---
 
@@ -808,7 +868,8 @@ Tools; "New Project" removed; line-wrap moved to editor context menu):
   Collapse All, ☐ Light Theme, ☑/☐ Find table reference.
 - **Bookmarks:** Toggle Bookmark (Ctrl+F2), Next Bookmark (F2), Previous Bookmark (Shift+F2), Clear All
   Bookmarks.
-- **Schema:** Annotate Schema Values…, Open XSD, Open XSD Labels (JSON).
+- **Schema:** Annotate Value at Cursor (Ctrl+L; also editor context menu), Next Unlabeled Value,
+  Publish My Annotations, Fetch Team Master, Merge Team Models…, Open XSD, Open XSD Labels (JSON).
 - **Database:** Connection Setup…, Check: XML→Database, Check: Database→XML.
 - **Tools:** Manage Captions…, Caption Filter… (Ctrl+R in caption context), Reparse Raw XML into Tree,
   Validate Project, Compare/Merge Two Files…, Next/Previous Difference, Apply Changes to Target.
@@ -831,6 +892,7 @@ Toolbar default: Open, Save, Undo, Redo, Find, Validate, Generate (customizable)
 | Ctrl+Shift+B / Ctrl+Shift+A | Select Enclosing / Parent Block | Raw XML editor (menu-owned) |
 | Ctrl+click / Alt+click | Jump to matching tag / parent tag | Raw XML editor |
 | Ctrl+F2 / F2 / Shift+F2 | Toggle / Next / Previous Bookmark | Raw XML editor |
+| Ctrl+L | Annotate Value at Cursor (schema label popover) | Raw XML editor |
 | Ctrl+G | Go to line in XML | Caption grid |
 | Ctrl+Shift+B | Bracket-select | Code editor dialog |
 | Ctrl+S / Ctrl+W | Save / Cancel | Code editor dialog |
@@ -870,6 +932,8 @@ is authoritative** (and is what appears in the body above).
 | 2026-07-20 | DB-check populate inline in `on_result`; Toolbar Available = registry-minus-present | `_populate_db_check` + cached-schema reparse refresh; Available = all commands, present ones disabled |
 | 2026-07-20 | Multi-branch model (incl. re-phpgen branch) | Single-branch (`main`); re-phpgen folded in & branch deleted |
 | 2026-07-21 | "Find Reused Tables" modal (`ReusedTablesWindow`) + `TableUsage.breadcrumbs` | Table References dock tab + `TableUsage.references: list[TableReference]`; modal deleted |
+| 2026-07-23 | Two-pane Annotate Schema Values dialog (`annotate_schema_values_dialog.py`) + Schema ▸ "Annotate Schema Values…" (2026-07-15) | Annotate-at-cursor popover in the XML editor (Ctrl+L / value context menu) authoring `labels`/`kind`/`notes`/`enum_mode` + unlabeled-value dotted underlines + Next Unlabeled Value navigation; dialog and menu action deleted |
+| 2026-07-23 | `known_values` = engine-observed values only | Union of engine-observed values and labeler-added label keys |
 
 ---
 
@@ -890,6 +954,9 @@ is authoritative** (and is what appears in the body above).
   (must fail gracefully).
 - **Fold re-scan performance** and `line_index` O(N²) — accepted for now; optimize only if profiling
   demands.
+- **Schema-model freeze mechanics:** the endgame (final merge → frozen master → XSD bundled into the
+  app, learning/sharing period ends) is a recorded decision, but the freeze mechanics are not yet
+  designed. The "Next Unlabeled Value" shortcut binding is also assigned at implementation.
 
 ---
 
