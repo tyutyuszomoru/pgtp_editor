@@ -377,3 +377,61 @@ def test_open_real_sample_file_populates_editor_byte_for_byte(qtbot):
     # normalize both sides the same way before comparing; every other
     # character must still match exactly.
     assert actual_text.replace("\xa0", " ") == expected_text.replace("\xa0", " ")
+
+
+import os
+
+from PySide6.QtWidgets import QApplication
+
+
+def _record_status(window, monkeypatch):
+    messages = []
+    monkeypatch.setattr(
+        window.statusBar(), "showMessage",
+        lambda msg, *a, **k: messages.append(msg),
+    )
+    return messages
+
+
+def test_open_shows_opening_message_with_name_and_size(qtbot, tmp_path, monkeypatch):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    path = tmp_path / "valid.pgtp"
+    path.write_text(VALID_PGTP, encoding="utf-8")
+    messages = _record_status(window, monkeypatch)
+
+    window.open_project_file(str(path))
+
+    opening = [m for m in messages if m.startswith("Opening ")]
+    assert opening, messages
+    assert "valid.pgtp" in opening[0]
+    assert "(" in opening[0] and opening[0].rstrip().endswith("…")
+    assert any(m.startswith("Opened:") for m in messages)
+
+
+def test_open_restores_cursor_on_success(qtbot, tmp_path):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    path = tmp_path / "valid.pgtp"
+    path.write_text(VALID_PGTP, encoding="utf-8")
+
+    window.open_project_file(str(path))
+
+    assert QApplication.overrideCursor() is None
+
+
+def test_open_parse_failure_restores_cursor_before_dialog(qtbot, tmp_path):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    path = tmp_path / "broken.pgtp"
+    path.write_text(MALFORMED_PGTP, encoding="utf-8")
+
+    with patch("pgtp_editor.ui.main_window.QMessageBox.critical") as mock_critical:
+        mock_critical.side_effect = lambda *a, **k: (
+            None if QApplication.overrideCursor() is None
+            else (_ for _ in ()).throw(AssertionError("cursor not restored before dialog"))
+        )
+        window.open_project_file(str(path))
+
+    mock_critical.assert_called_once()
+    assert QApplication.overrideCursor() is None

@@ -83,6 +83,7 @@ from pgtp_editor.ui._stub_action import add_stub_action
 from pgtp_editor.ui.about import show_about_dialog
 from pgtp_editor.ui.annotate_schema_values_dialog import AnnotateSchemaValuesDialog
 from pgtp_editor.ui.caption_find_replace_dialog import CaptionFindReplaceDialog
+from pgtp_editor.ui.busy import busy_status, format_size
 from pgtp_editor.ui.center_stage import CenterStage
 from pgtp_editor.ui.manual_panel import (
     ManualContentsPanel,
@@ -806,37 +807,53 @@ class MainWindow(QMainWindow):
         a silently-emptied tree or a silently-forgotten project).
         """
         _log.info("file: open %s", path)
+        name = Path(path).name
         try:
-            project = load_project(path)
-        except PgtpParseError as exc:
-            self._handle_parse_failure(path, exc)
-            return
-        self.project_tree.populate_from_project(project)
-        self._current_project = project
-        # Normalize to str so downstream string ops (e.g. the ".bak" path
-        # concatenation in _revert_project / _write_project_text) never hit a
-        # TypeError when a caller passes a pathlib.Path instead of the
-        # QFileDialog string.
-        self._current_project_path = str(path)
-        raw_text = self._read_raw_text(path)
-        if raw_text is not None:
-            self._loading = True
+            message = f"Opening {name} ({format_size(os.path.getsize(path))})…"
+        except OSError:
+            # Never fail the open over a stat hiccup; just drop the size.
+            message = f"Opening {name}…"
+
+        parse_error = None
+        with busy_status(self.statusBar(), message):
             try:
-                self.center_stage.xml_editor.setPlainText(raw_text)
-            finally:
-                self._loading = False
-        self._set_dirty(False)
-        # A newly-opened project is a fresh document: drop the previous
-        # project's snapshots so undo never crosses between documents, then seed
-        # the history with the freshly-loaded text.
-        self._history.clear()
-        self._history.push(
-            self.center_stage.xml_editor.toPlainText(),
-            f"Opened {Path(path).name}",
-            baseline=True,
-        )
+                project = load_project(path)
+            except PgtpParseError as exc:
+                parse_error = exc
+            else:
+                self.project_tree.populate_from_project(project)
+                self._current_project = project
+                # Normalize to str so downstream string ops (e.g. the ".bak"
+                # path concatenation in _revert_project / _write_project_text)
+                # never hit a TypeError when a caller passes a pathlib.Path
+                # instead of the QFileDialog string.
+                self._current_project_path = str(path)
+                raw_text = self._read_raw_text(path)
+                if raw_text is not None:
+                    self._loading = True
+                    try:
+                        self.center_stage.xml_editor.setPlainText(raw_text)
+                    finally:
+                        self._loading = False
+                self._set_dirty(False)
+                # A newly-opened project is a fresh document: drop the previous
+                # project's snapshots so undo never crosses between documents,
+                # then seed the history with the freshly-loaded text.
+                self._history.clear()
+                self._history.push(
+                    self.center_stage.xml_editor.toPlainText(),
+                    f"Opened {name}",
+                    baseline=True,
+                )
+                # Schema enrichment is the slowest part of open; keep it inside
+                # the busy block so the hourglass covers it.
+                self._enrich_schema_from_file(path)
+
+        # Cursor restored here (busy_status __exit__), BEFORE any dialog.
+        if parse_error is not None:
+            self._handle_parse_failure(path, parse_error)
+            return
         self.statusBar().showMessage(f"Opened: {path}", 5000)
-        self._enrich_schema_from_file(path)
 
     def _enrich_schema_from_file(self, path):
         try:
