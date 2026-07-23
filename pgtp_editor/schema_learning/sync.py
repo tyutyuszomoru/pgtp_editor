@@ -37,6 +37,13 @@ class SyncError(Exception):
     pass
 
 
+# Git subprocesses must never block forever on an interactive prompt (a
+# missing/rejected host key, a credential helper popping a terminal prompt,
+# etc.) -- callers (MainWindow) are on the UI thread and a hang there hangs
+# the whole app. Every _git() call is bounded by this timeout.
+_GIT_TIMEOUT_SECONDS = 120
+
+
 @dataclass
 class SyncConfig:
     repo_url: str
@@ -54,15 +61,26 @@ def _git(config, args, cwd, runner=subprocess.run):
     if config.key_path:
         env["GIT_SSH_COMMAND"] = (
             f'ssh -i "{config.key_path}" -o IdentitiesOnly=yes '
-            "-o StrictHostKeyChecking=accept-new"
+            "-o StrictHostKeyChecking=accept-new -o BatchMode=yes"
         )
-    completed = runner(
-        ["git", *args],
-        cwd=str(cwd) if cwd else None,
-        env=env,
-        capture_output=True,
-        text=True,
-    )
+    # Belt-and-suspenders alongside BatchMode=yes above: GIT_TERMINAL_PROMPT=0
+    # stops git itself (credential helpers, HTTPS username/password prompts)
+    # from blocking on a terminal prompt, regardless of transport -- not just
+    # the SSH path covered by GIT_SSH_COMMAND.
+    env["GIT_TERMINAL_PROMPT"] = "0"
+    try:
+        completed = runner(
+            ["git", *args],
+            cwd=str(cwd) if cwd else None,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=_GIT_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired:
+        raise SyncError(
+            f"git {' '.join(args)} timed out after {_GIT_TIMEOUT_SECONDS}s"
+        ) from None
     if completed.returncode != 0:
         detail = (completed.stderr or completed.stdout or "").strip()
         raise SyncError(f"git {' '.join(args)} failed: {detail}")

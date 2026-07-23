@@ -1397,8 +1397,38 @@ class XmlEditor(QPlainTextEdit):
         self.find_selected_text.emit(selected)
 
     def contextMenuEvent(self, event) -> None:
+        # event.pos() is delivered in this widget's own coordinates, but
+        # cursorForPosition expects viewport coordinates (same translation
+        # the ToolTip handler in event() does, and for the same reason) --
+        # without it, a right-click on value B while the caret sits on value
+        # A would build the menu (and resolve "Annotate value...", "Add
+        # attribute", "Edit code...") against the stale caret at A instead of
+        # the actually-clicked position.
+        viewport_pos = self.viewport().mapFrom(self, event.pos())
+        doc_pos = self.cursorForPosition(viewport_pos).position()
+        self._prepare_context_menu_at(doc_pos)
         menu = self._build_context_menu()
         menu.exec(event.globalPos())
+
+    def _prepare_context_menu_at(self, doc_pos: int) -> None:
+        """Move the caret to ``doc_pos`` so the context menu built right
+        after this call reflects the right-clicked position rather than a
+        stale caret left over from an earlier click or edit. Split out from
+        contextMenuEvent so tests can drive it directly with a document
+        position instead of synthesizing a QContextMenuEvent.
+
+        Leaves the caret (and selection) untouched when ``doc_pos`` falls
+        inside the current selection: right-clicking inside a selection must
+        not destroy it, since the "Find" action depends on that selection
+        surviving the right-click. Standard editor behavior."""
+        cursor = self.textCursor()
+        if cursor.hasSelection():
+            start, end = cursor.selectionStart(), cursor.selectionEnd()
+            if start <= doc_pos <= end:
+                return
+        new_cursor = QTextCursor(self.document())
+        new_cursor.setPosition(doc_pos)
+        self.setTextCursor(new_cursor)
 
     def set_schema_model(self, model) -> None:
         """Inject the current in-memory schema Model (or None). Passed by

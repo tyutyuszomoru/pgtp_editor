@@ -245,3 +245,57 @@ def test_context_menu_offers_annotate_value_on_attribute(qtbot):
     menu = editor._build_context_menu()
     texts = [action.text() for action in menu.actions()]
     assert "Annotate value…" in texts
+
+
+def test_prepare_context_menu_at_moves_caret_to_clicked_value(qtbot):
+    # Reproduces the reported bug: caret sits on value "1" (attribute a) but
+    # the right-click lands on value "2" (attribute b). The context menu must
+    # resolve against the clicked position, not the stale caret.
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    editor.setPlainText('<Root a="1" b="2"/>')
+    editor.set_schema_model(
+        _model({"Root": {"a": _entry(["1"]), "b": _entry(["2"])}})
+    )
+    cursor = editor.textCursor()
+    cursor.setPosition(0)
+    editor.setTextCursor(cursor)
+
+    click_pos = editor.toPlainText().index('"2"') + 1
+    editor._prepare_context_menu_at(click_pos)
+
+    assert editor.textCursor().position() == click_pos
+    menu = editor._build_context_menu()
+    texts = [action.text() for action in menu.actions()]
+    assert "Annotate value…" in texts
+
+    received = []
+    editor.annotate_value_requested.connect(
+        lambda chain, attr, value: received.append((chain, attr, value))
+    )
+    assert editor.request_annotate_at_cursor() is True
+    assert received == [("Root", "b", "2")]
+
+
+def test_prepare_context_menu_at_preserves_selection_containing_click(qtbot):
+    # Right-clicking inside an existing selection must not collapse it: the
+    # "Find" action depends on the selection surviving the right-click.
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    editor.setPlainText('<Root a="1" b="2"/>')
+    text = editor.toPlainText()
+    sel_start = text.index('"1"') + 1
+    sel_end = sel_start + 1  # spans the "1" value
+
+    cursor = editor.textCursor()
+    cursor.setPosition(sel_start)
+    cursor.setPosition(sel_end, cursor.MoveMode.KeepAnchor)
+    editor.setTextCursor(cursor)
+    assert editor.textCursor().selectedText() == "1"
+
+    click_pos = sel_start  # inside the selection
+    editor._prepare_context_menu_at(click_pos)
+
+    assert editor.textCursor().selectedText() == "1"
+    assert editor.textCursor().selectionStart() == sel_start
+    assert editor.textCursor().selectionEnd() == sel_end

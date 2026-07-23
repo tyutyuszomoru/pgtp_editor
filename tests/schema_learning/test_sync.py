@@ -192,3 +192,47 @@ def test_key_path_sets_git_ssh_command(tmp_path):
     )
     sync._git(config, ["version"], cwd=None, runner=runner)
     assert 'ssh -i "k.pem"' in recorded["env"]["GIT_SSH_COMMAND"]
+    # BatchMode=yes stops ssh from ever falling back to an interactive
+    # passphrase/host-key prompt -- a hard requirement alongside the
+    # GIT_TERMINAL_PROMPT=0 below, since that only covers git's own prompts,
+    # not ssh's.
+    assert "-o BatchMode=yes" in recorded["env"]["GIT_SSH_COMMAND"]
+
+
+def test_git_terminal_prompt_disabled_even_without_key(tmp_path):
+    recorded = {}
+
+    def runner(args, **kwargs):
+        recorded["env"] = kwargs["env"]
+        return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+
+    config = sync.SyncConfig(
+        repo_url="git@example:x.git", clone_dir=tmp_path / "c", key_path=None
+    )
+    sync._git(config, ["version"], cwd=None, runner=runner)
+    assert recorded["env"]["GIT_TERMINAL_PROMPT"] == "0"
+
+
+def test_git_timeout_surfaces_as_sync_error(tmp_path):
+    def runner(args, **kwargs):
+        raise subprocess.TimeoutExpired("git", sync._GIT_TIMEOUT_SECONDS)
+
+    config = sync.SyncConfig(
+        repo_url="git@example:x.git", clone_dir=tmp_path / "c", key_path=None
+    )
+    with pytest.raises(sync.SyncError, match="timed out"):
+        sync._git(config, ["fetch"], cwd=None, runner=runner)
+
+
+def test_git_passes_timeout_kwarg_to_runner(tmp_path):
+    recorded = {}
+
+    def runner(args, **kwargs):
+        recorded["timeout"] = kwargs.get("timeout")
+        return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+
+    config = sync.SyncConfig(
+        repo_url="git@example:x.git", clone_dir=tmp_path / "c", key_path=None
+    )
+    sync._git(config, ["version"], cwd=None, runner=runner)
+    assert recorded["timeout"] == sync._GIT_TIMEOUT_SECONDS
