@@ -207,3 +207,28 @@ def test_xsd_enumerates_labeled_but_unobserved_values():
     xsd = generate_xsd(model)
     assert '<xs:enumeration value="9">' in xsd
     assert "<xs:documentation>special</xs:documentation>" in xsd
+
+
+def test_overflowed_attribute_with_labels_stays_plain():
+    entry = {
+        "type": "integer",
+        "values": None,
+        "overflowed": True,
+        "attr_seen_count": 1,
+        "labels": {"1": "A"},
+    }
+    model = Model()
+    model.paths = {
+        "Root": {
+            "attributes": {"mode": entry},
+            "children": {},
+            "instance_count": 1,
+            "order": [],
+            "order_stable": True,
+            "has_text": False,
+        }
+    }
+    xsd = generate_xsd(model)
+    assert '<xs:attribute name="mode" type="xs:integer"' in xsd
+    assert "xs:restriction" not in xsd
+    assert "xs:enumeration" not in xsd
