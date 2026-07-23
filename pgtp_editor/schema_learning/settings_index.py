@@ -124,12 +124,17 @@ def enum_hint(model, tag_chain, attr):
     if not labels and not is_enum_candidate(entry):
         return None
 
-    values = entry.get("values")
-    keys = values if values else sorted(labels)
+    display = effective_labels(entry)
+    notes = entry.get("notes") or {}
+    universe = set(entry.get("values") or []) | set(labels)
     parts = []
-    for value in sorted(keys):
-        label = labels.get(value)
-        parts.append(f"{value} = {label}" if label else f"{value}")
+    for value in sorted(universe):
+        label = display.get(value)
+        part = f"{value} = {label}" if label else f"{value}"
+        note = notes.get(value)
+        if note:
+            part = f"{part} ({note})"
+        parts.append(part)
     return f"{attr} — " + " · ".join(parts)
 
 
@@ -148,19 +153,22 @@ def known_attributes(model, tag_chain, present_attrs) -> list[str]:
 
 
 def known_values(model, tag_chain, attr) -> list[tuple[str, str | None]]:
-    """Sorted ``(value, label)`` pairs for an attribute's known value set at
-    ``tag_chain`` — the same values ``enum_hint`` renders. ``label`` is
-    ``labels.get(value)`` or ``None``.
+    """Sorted ``(value, label)`` pairs for an attribute at ``tag_chain``.
 
-    Returns ``[]`` when the attribute is unknown at the path, its entry is
-    ``overflowed``, or it has no ``values`` (nothing reliable to offer). Not
-    filtered by kind, so any enumerated attribute chains into the value picker.
-    """
+    The value universe is the UNION of engine-observed ``values`` and
+    labeler-added ``labels`` keys — a value labeled before being observed,
+    or dropped from ``values`` by enum overflow, still completes. Labels are
+    the effective (explicit + derived bit-flag) labels. Returns ``[]`` when
+    the attribute is unknown at the path or the universe is empty. Not
+    filtered by kind."""
     entry = model.paths.get(tag_chain, {}).get("attributes", {}).get(attr)
-    if entry is None or entry.get("overflowed") or not entry.get("values"):
+    if entry is None:
         return []
-    labels = entry.get("labels") or {}
-    return [(value, labels.get(value)) for value in sorted(entry["values"])]
+    universe = set(entry.get("values") or []) | set(entry.get("labels") or {})
+    if not universe:
+        return []
+    labels = effective_labels(entry)
+    return [(value, labels.get(value)) for value in sorted(universe)]
 
 
 def unused_setting_attributes(model, tag_chain, present_attrs) -> list[str]:

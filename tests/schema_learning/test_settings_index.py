@@ -312,6 +312,8 @@ def test_known_values_pairs_sorted_with_labels():
 
 
 def test_known_values_empty_when_overflowed():
+    # Task 2: new union semantics — overflowed without labels but with values
+    # now returns the union (the values)
     entry = {
         "type": "string",
         "values": ["a", "b"],
@@ -320,7 +322,7 @@ def test_known_values_empty_when_overflowed():
         "labels": {},
     }
     model = _model_one(entry)
-    assert known_values(model, "Root/Node", "editAbilityMode") == []
+    assert known_values(model, "Root/Node", "editAbilityMode") == [("a", None), ("b", None)]
 
 
 def test_known_values_empty_when_no_values():
@@ -428,3 +430,66 @@ def test_value_note_reads_notes_dict():
     assert value_note(entry, "4") == "enables the <Watermark> child tag"
     assert value_note(entry, "1") is None
     assert value_note(_entry_attr(["4"]), "4") is None
+
+
+# --- Task 2: known_values union + enum_hint notes ---------------------------
+
+
+def _model_for(entry, chain="Root/Item", attr="mode"):
+    model = Model()
+    model.paths = {
+        chain: {
+            "attributes": {attr: entry},
+            "children": {},
+            "instance_count": 1,
+            "order": [],
+            "order_stable": True,
+            "has_text": False,
+        }
+    }
+    return model
+
+
+def test_known_values_includes_labeled_but_unobserved_values():
+    entry = _entry_attr(["1"], labels={"1": "A", "9": "special"})
+    model = _model_for(entry)
+    assert known_values(model, "Root/Item", "mode") == [
+        ("1", "A"),
+        ("9", "special"),
+    ]
+
+
+def test_known_values_overflowed_offers_label_keys():
+    entry = _entry_attr(None, labels={"1": "A"})
+    model = _model_for(entry)
+    assert known_values(model, "Root/Item", "mode") == [("1", "A")]
+
+
+def test_known_values_overflowed_without_labels_is_empty():
+    entry = _entry_attr(None)
+    model = _model_for(entry)
+    assert known_values(model, "Root/Item", "mode") == []
+
+
+def test_known_values_bitflags_shows_derived_labels():
+    entry = _entry_attr(["1", "2", "3"], labels={"1": "A", "2": "B"}, enum_mode="bitflags")
+    model = _model_for(entry)
+    assert known_values(model, "Root/Item", "mode") == [
+        ("1", "A"),
+        ("2", "B"),
+        ("3", "A+B"),
+    ]
+
+
+def test_enum_hint_appends_notes_and_derived_labels():
+    entry = _entry_attr(
+        ["1", "2", "3"],
+        labels={"1": "A", "2": "B"},
+        notes={"3": "adds the <Extra> tag"},
+        enum_mode="bitflags",
+        kind="setting",
+    )
+    model = _model_for(entry)
+    assert enum_hint(model, "Root/Item", "mode") == (
+        "mode — 1 = A · 2 = B · 3 = A+B (adds the <Extra> tag)"
+    )
