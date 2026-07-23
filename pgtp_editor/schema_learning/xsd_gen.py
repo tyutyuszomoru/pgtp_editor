@@ -15,6 +15,8 @@
 
 from xml.sax.saxutils import escape, quoteattr
 
+from .settings_index import effective_labels
+
 _XSD_BASE = {
     "boolean": "xs:boolean",
     "integer": "xs:integer",
@@ -78,23 +80,33 @@ def _complex_type_lines(path, entry):
     return lines
 
 
+def _documentation_text(label, note):
+    if label and note:
+        return f"{label} — {note}"
+    return label or note or None
+
+
 def _attribute_lines(entry, attr_name):
     attr_entry = entry["attributes"][attr_name]
     required = attr_entry["attr_seen_count"] == entry["instance_count"]
     use = "required" if required else "optional"
     base_type = _XSD_BASE[attr_entry["type"]]
 
-    if not attr_entry["overflowed"] and attr_entry["values"]:
+    universe = sorted(
+        set(attr_entry.get("values") or []) | set(attr_entry.get("labels") or {})
+    )
+    if not attr_entry["overflowed"] and universe:
+        labels = effective_labels(attr_entry)
+        notes = attr_entry.get("notes") or {}
         lines = [f"    <xs:attribute name={quoteattr(attr_name)} use={quoteattr(use)}>"]
         lines.append("      <xs:simpleType>")
         lines.append(f"        <xs:restriction base={quoteattr(base_type)}>")
-        labels = attr_entry.get("labels", {})
-        for value in sorted(attr_entry["values"]):
-            label = labels.get(value)
-            if label:
+        for value in universe:
+            doc = _documentation_text(labels.get(value), notes.get(value))
+            if doc:
                 lines.append(f"          <xs:enumeration value={quoteattr(value)}>")
                 lines.append("            <xs:annotation>")
-                lines.append(f"              <xs:documentation>{escape(label)}</xs:documentation>")
+                lines.append(f"              <xs:documentation>{escape(doc)}</xs:documentation>")
                 lines.append("            </xs:annotation>")
                 lines.append("          </xs:enumeration>")
             else:
