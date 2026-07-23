@@ -117,6 +117,137 @@ def test_fetch_master_merges_into_local_model(window, monkeypatch, tmp_path):
     assert any("Fetched team master" in line for line in _audit_lines(window))
 
 
+def _labeled_model(label_text):
+    model = Model()
+    model.paths = {"Root": {
+        "attributes": {"a": {"type": "integer", "values": ["1"],
+                             "overflowed": False, "attr_seen_count": 1,
+                             "labels": {"1": label_text}}},
+        "children": {}, "instance_count": 1, "order": [],
+        "order_stable": True, "has_text": False,
+    }}
+    return model
+
+
+def test_publish_without_local_model_shows_status_and_skips_sync(window, monkeypatch):
+    window._settings.setValue(SYNC_REPO_URL_KEY, "x:/repo.git")
+    calls = []
+    monkeypatch.setattr(
+        main_window_module.sync, "publish_model",
+        lambda *args, **kwargs: calls.append(args),
+    )
+    window._publish_my_annotations()
+    assert calls == []
+    assert "No schema learned yet" in window.statusBar().currentMessage()
+    assert not any("[Schema]" in line for line in _audit_lines(window))
+
+
+def test_fetch_conflict_keeps_local_label_and_reports(window, monkeypatch, tmp_path):
+    """Spec §11: Fetch merges the master into the LOCAL model; on a label
+    conflict the local value wins and the conflict is surfaced (never
+    silent) as a CONFLICT audit line."""
+    window._settings.setValue(SYNC_REPO_URL_KEY, "x:/repo.git")
+    local_path = schema_model_path(window._schema_storage_dir)
+    local_path.parent.mkdir(parents=True, exist_ok=True)
+    _labeled_model("local label").save(local_path)
+    master_file = tmp_path / "master.json"
+    _labeled_model("master label").save(master_file)
+    monkeypatch.setattr(
+        main_window_module.sync, "fetch_master", lambda config: master_file
+    )
+    window._fetch_team_master()
+    saved = Model.load(local_path)
+    assert saved.paths["Root"]["attributes"]["a"]["labels"] == {"1": "local label"}
+    lines = _audit_lines(window)
+    assert any("Fetched team master" in line for line in lines)
+    assert any(
+        "CONFLICT (kept local)" in line
+        and 'local="local label"' in line
+        and 'master="master label"' in line
+        for line in lines
+    )
+
+
+def test_fetch_failure_leaves_local_model_untouched(window, monkeypatch):
+    """Spec §11 failure behavior: no network / bad key leaves the local
+    model untouched and reports via a [Schema] audit line."""
+    window._settings.setValue(SYNC_REPO_URL_KEY, "x:/repo.git")
+    local_path = schema_model_path(window._schema_storage_dir)
+    local_path.parent.mkdir(parents=True, exist_ok=True)
+    _labeled_model("precious").save(local_path)
+    before = local_path.read_bytes()
+
+    def boom(config):
+        raise SyncError("no network")
+
+    monkeypatch.setattr(main_window_module.sync, "fetch_master", boom)
+    window._fetch_team_master()
+    assert local_path.read_bytes() == before
+    lines = _audit_lines(window)
+    assert any("[Schema] Sync failed: no network" in line for line in lines)
+    assert not any("Fetched team master" in line for line in lines)
+
+
+def test_fetch_without_master_yet_reports_sync_failure(window, monkeypatch):
+    window._settings.setValue(SYNC_REPO_URL_KEY, "x:/repo.git")
+    monkeypatch.setattr(
+        main_window_module.sync, "fetch_master", lambda config: None
+    )
+    window._fetch_team_master()
+    assert any(
+        "no master.json in the team repo yet" in line
+        for line in _audit_lines(window)
+    )
+
+
+def test_merge_accept_applies_resolution_and_pushes(window, monkeypatch, tmp_path):
+    """Accepting the conflict dialog with 'use incoming' selected must fold
+    the incoming label into the pushed master."""
+    window._settings.setValue(SYNC_REPO_URL_KEY, "x:/repo.git")
+    alice_path = tmp_path / "alice.json"
+    bob_path = tmp_path / "bob.json"
+    _labeled_model("Foo").save(alice_path)
+    _labeled_model("Bar").save(bob_path)
+    monkeypatch.setattr(
+        main_window_module.sync, "team_model_paths",
+        lambda config: [alice_path, bob_path],
+    )
+
+    def fake_exec(self):
+        self.choice_combo(0).setCurrentIndex(1)  # take bob's "Bar"
+        return QDialog.DialogCode.Accepted
+
+    monkeypatch.setattr(MergeConflictsDialog, "exec", fake_exec)
+    pushed = []
+
+    def fake_push(config, master):
+        pushed.append(master)
+        return True
+
+    monkeypatch.setattr(main_window_module.sync, "push_master", fake_push)
+    window._merge_team_models()
+    assert len(pushed) == 1
+    assert pushed[0].paths["Root"]["attributes"]["a"]["labels"]["1"] == "Bar"
+    lines = _audit_lines(window)
+    assert "[Schema] Merged team models into master and pushed." in lines
+    assert any("Fetch Team Master" in line for line in lines)
+
+
+def test_merge_with_no_user_models_reports_and_skips_push(window, monkeypatch):
+    window._settings.setValue(SYNC_REPO_URL_KEY, "x:/repo.git")
+    monkeypatch.setattr(
+        main_window_module.sync, "team_model_paths", lambda config: []
+    )
+    pushed = []
+    monkeypatch.setattr(
+        main_window_module.sync, "push_master",
+        lambda config, master: pushed.append(master),
+    )
+    window._merge_team_models()
+    assert pushed == []
+    assert "[Schema] Merge: no models/*.json in the team repo yet." in _audit_lines(window)
+
+
 def test_merge_conflict_shows_each_side_source_not_bare_master(window, monkeypatch, tmp_path):
     """Regression for the finding: master is empty, alice's label for value
     "1" is adopted with no conflict, then bob disagrees with alice -- the

@@ -54,6 +54,22 @@ def test_enter_in_label_commits_payload(qtbot):
     }]
 
 
+def test_enter_in_note_commits_default_payload(qtbot):
+    # The Note field's Enter commits too, and an untouched popover commits
+    # the "remove everything" payload (empty label/note, unclassified,
+    # bitflags off).
+    popover = _popover(qtbot)
+    committed = []
+    popover.committed.connect(committed.append)
+    popover.note_edit.returnPressed.emit()
+    assert committed == [{
+        "label": "",
+        "note": "",
+        "kind": "unclassified",
+        "bitflags": False,
+    }]
+
+
 def test_escape_cancels(qtbot):
     popover = _popover(qtbot)
     cancelled = []

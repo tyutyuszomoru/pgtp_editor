@@ -147,6 +147,93 @@ def test_request_annotate_false_without_model_or_off_attribute(qtbot):
     assert editor.request_annotate_at_cursor() is False
 
 
+def test_resolves_second_attribute_with_entity_value():
+    # The value comes back as the raw quoted text minus quotes — no entity
+    # decoding (labels key on the literal document text).
+    pos = _XML.index("caption")
+    assert attribute_value_at_position(_XML, pos) == (
+        "Root/Item", "caption", "hi &gt; there"
+    )
+
+
+def test_resolves_none_in_inter_attribute_gap():
+    pos = _XML.index('" caption') + 1  # the space between the two attributes
+    assert attribute_value_at_position(_XML, pos) is None
+
+
+def test_unlabeled_value_spans_uses_nested_chain():
+    text = '<A><B mode="1"/></A>'
+    # The same attribute name at the WRONG chain must not match.
+    model = _model({
+        "A/B": {"mode": _entry(["1"])},
+        "A": {"mode": _entry(["1"], labels={"1": "labeled"})},
+    })
+    spans = unlabeled_value_spans(text, xml_structure.scan(text), model)
+    start = text.index('"1"') + 1
+    assert spans == [(start, start + 1)]
+
+
+def test_unlabeled_value_spans_bitflags_derived_label_counts_as_labeled():
+    # 3 has no explicit label but derives "A+B" -> not unlabeled.
+    text = '<Root mode="3"/>'
+    model = _model({
+        "Root": {"mode": _entry(["1", "2", "3"],
+                                labels={"1": "A", "2": "B"},
+                                enum_mode="bitflags")}
+    })
+    assert unlabeled_value_spans(text, xml_structure.scan(text), model) == []
+
+
+def test_goto_next_unlabeled_false_when_all_labeled(qtbot):
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    editor.setPlainText('<Root a="1"/>')
+    editor.set_schema_model(_model({"Root": {"a": _entry(["1"], labels={"1": "A"})}}))
+    assert editor._unlabeled_value_selections == []
+    assert editor.goto_next_unlabeled_value() is False
+
+
+def test_set_schema_model_none_clears_underlines(qtbot):
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    editor.setPlainText('<Root a="1"/>')
+    editor.set_schema_model(_model({"Root": {"a": _entry(["1"])}}))
+    assert len(editor._unlabeled_value_selections) == 1
+    editor.set_schema_model(None)
+    assert editor._unlabeled_value_selections == []
+
+
+def test_request_annotate_works_in_read_only_mode(qtbot):
+    # Spec: annotating edits the schema model, never the document — it must
+    # stay available while the editor is read-only (Caption Mode).
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    editor.setPlainText('<Root a="1"/>')
+    editor.set_schema_model(_model({"Root": {"a": _entry(["1"])}}))
+    editor.setReadOnly(True)
+    cursor = editor.textCursor()
+    cursor.setPosition(editor.toPlainText().index('"1"') + 1)
+    editor.setTextCursor(cursor)
+    received = []
+    editor.annotate_value_requested.connect(
+        lambda chain, attr, value: received.append((chain, attr, value))
+    )
+    assert editor.request_annotate_at_cursor() is True
+    assert received == [("Root", "a", "1")]
+
+
+def test_context_menu_hides_annotate_without_model(qtbot):
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    editor.setPlainText('<Root a="1"/>')
+    cursor = editor.textCursor()
+    cursor.setPosition(editor.toPlainText().index('"1"') + 1)
+    editor.setTextCursor(cursor)
+    menu = editor._build_context_menu()
+    texts = [action.text() for action in menu.actions()]
+    assert "Annotate value…" not in texts
+
+
 def test_context_menu_offers_annotate_value_on_attribute(qtbot):
     editor = XmlEditor()
     qtbot.addWidget(editor)

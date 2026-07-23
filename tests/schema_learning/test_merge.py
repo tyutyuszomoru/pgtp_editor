@@ -184,6 +184,54 @@ def test_children_flags_or_and_order_append():
     assert base2.paths["Root"]["order_stable"] is False
 
 
+def test_apply_resolution_scalar_field_takes_incoming():
+    base = _model({"Root": _element({"a": _attr(["1"], kind="setting")})})
+    conflict = Conflict("Root", "a", "kind", None, "setting", "content")
+    apply_resolution(base, conflict, use_incoming=True)
+    assert base.paths["Root"]["attributes"]["a"]["kind"] == "content"
+
+
+def test_apply_resolution_creates_missing_dict_field():
+    # A resolution can land on an entry that no longer carries the dict
+    # field (e.g. notes emptied since the conflict was recorded) — it must
+    # setdefault, not KeyError.
+    base = _model({"Root": _element({"a": _attr(["1"])})})
+    conflict = Conflict("Root", "a", "notes", "1", "old", "new note")
+    apply_resolution(base, conflict, use_incoming=True)
+    assert base.paths["Root"]["attributes"]["a"]["notes"] == {"1": "new note"}
+
+
+def test_base_overflow_persists_when_incoming_has_values():
+    base = _model({"Root": _element({"a": _attr(None)})})
+    incoming = _model({"Root": _element({"a": _attr(["1", "2"])})})
+    merge_models(base, incoming)
+    attr = base.paths["Root"]["attributes"]["a"]
+    assert attr["overflowed"] is True
+    assert attr["values"] is None
+
+
+def test_incoming_overflow_wipes_values_but_keeps_labels():
+    # Spec §11: enum overflow leaves stale labels harmlessly — the merge
+    # must never clear labeler-owned fields when values overflow.
+    base = _model({"Root": _element({"a": _attr(["1"], labels={"1": "A"})})})
+    incoming = _model({"Root": _element({"a": _attr(None)})})
+    conflicts = merge_models(base, incoming)
+    attr = base.paths["Root"]["attributes"]["a"]
+    assert conflicts == []
+    assert attr["overflowed"] is True
+    assert attr["values"] is None
+    assert attr["labels"] == {"1": "A"}
+
+
+def test_type_widens_via_combine_type_on_merge():
+    base = _model({"Root": _element({"a": _attr(["1"])})})
+    incoming_attr = _attr(["x"])
+    incoming_attr["type"] = "string"
+    incoming = _model({"Root": _element({"a": incoming_attr})})
+    merge_models(base, incoming)
+    assert base.paths["Root"]["attributes"]["a"]["type"] == "string"
+
+
 def test_notes_conflict_detected_like_labels():
     """Test that notes field conflicts are detected and tracked like labels."""
     base = _model({
