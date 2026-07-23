@@ -96,6 +96,75 @@ def test_push_retry_rebases_on_concurrent_push(tmp_path, origin):
     }
 
 
+def test_pull_failure_with_live_remote_raises(tmp_path):
+    # Fake-runner: real-git manipulation of a deleted/moved upstream branch
+    # (see finding discussion) is fragile across git versions, so drive the
+    # deterministic branch directly: pull fails with a message that used to
+    # be string-matched as "empty remote", but ls-remote proves the remote
+    # actually has branches -> the failure must NOT be swallowed.
+    clone_dir = tmp_path / "clone"
+    (clone_dir / ".git").mkdir(parents=True)
+
+    def runner(args, **kwargs):
+        if args[1:3] == ["pull", "--rebase"]:
+            return subprocess.CompletedProcess(
+                args, 1, stdout="", stderr="couldn't find remote ref refs/heads/main"
+            )
+        if args[1:3] == ["ls-remote", "--heads"]:
+            return subprocess.CompletedProcess(
+                args, 0, stdout="abc123\trefs/heads/main\n", stderr=""
+            )
+        return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+
+    config = sync.SyncConfig(repo_url="ignored", clone_dir=clone_dir, key_path=None)
+    with pytest.raises(sync.SyncError, match="couldn't find remote ref"):
+        sync.ensure_repo(config, runner=runner)
+
+
+def test_pull_failure_with_empty_remote_tolerated(tmp_path):
+    clone_dir = tmp_path / "clone"
+    (clone_dir / ".git").mkdir(parents=True)
+
+    def runner(args, **kwargs):
+        if args[1:3] == ["pull", "--rebase"]:
+            return subprocess.CompletedProcess(
+                args, 1, stdout="", stderr="couldn't find remote ref refs/heads/main"
+            )
+        if args[1:3] == ["ls-remote", "--heads"]:
+            return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+        return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+
+    config = sync.SyncConfig(repo_url="ignored", clone_dir=clone_dir, key_path=None)
+    assert sync.ensure_repo(config, runner=runner) == clone_dir
+
+
+def test_push_retry_exhaustion_raises(tmp_path):
+    calls = []
+
+    def runner(args, **kwargs):
+        calls.append(args)
+        if args[1] == "push":
+            return subprocess.CompletedProcess(args, 1, stdout="", stderr="rejected")
+        return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+
+    config = sync.SyncConfig(repo_url="ignored", clone_dir=tmp_path, key_path=None)
+    with pytest.raises(sync.SyncError, match="rejected"):
+        sync._push_with_retry(config, tmp_path, runner)
+    push_calls = [c for c in calls if c[1] == "push"]
+    pull_calls = [c for c in calls if c[1] == "pull"]
+    assert len(push_calls) == 3
+    # No pull after the final (3rd) failed push attempt.
+    assert len(pull_calls) == 2
+
+
+def test_publish_ignores_unrelated_dirty_state(tmp_path, origin):
+    model_path = _model_file(tmp_path)
+    config = _config(tmp_path, origin)
+    assert sync.publish_model(config, model_path, username="alice") is not None
+    (config.clone_dir / "junk.txt").write_text("unrelated")
+    assert sync.publish_model(config, model_path, username="alice") is None
+
+
 def test_bad_url_raises_sync_error(tmp_path):
     config = sync.SyncConfig(
         repo_url=str(tmp_path / "missing.git"),

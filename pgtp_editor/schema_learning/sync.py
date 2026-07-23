@@ -82,17 +82,20 @@ def ensure_repo(config, runner=subprocess.run) -> Path:
             _git(config, ["pull", "--rebase"], cwd=clone_dir, runner=runner)
         except SyncError as exc:
             # A just-created bare origin has no branch to pull from yet; the
-            # first publish will create it. Anything else is a real failure.
-            # Different git versions phrase this differently depending on
-            # whether the empty remote advertised a HEAD symref at clone
-            # time, so tolerate the known variants (case-insensitively).
-            message = str(exc).lower()
-            empty_remote_messages = (
-                "couldn't find remote ref",
-                "no such ref was fetched",
-                "there is no tracking information for the current branch",
-            )
-            if not any(fragment in message for fragment in empty_remote_messages):
+            # first publish will create it. Anything else is a real failure
+            # (e.g. an already-cloned repo whose upstream branch was deleted
+            # or force-moved) and must not be swallowed, or fetch_master would
+            # silently serve stale data. Distinguish the two deterministically
+            # by asking the remote directly instead of pattern-matching
+            # stderr: a brand-new remote genuinely has no branches at all.
+            try:
+                heads = _git(
+                    config, ["ls-remote", "--heads", "origin"],
+                    cwd=clone_dir, runner=runner,
+                )
+            except SyncError:
+                raise exc from None
+            if heads.strip():
                 raise
     username = default_username()
     _git(config, ["config", "user.name", f"{username} (pgtp-editor)"],
@@ -104,17 +107,18 @@ def ensure_repo(config, runner=subprocess.run) -> Path:
 
 def _push_with_retry(config, clone_dir, runner, attempts=3):
     last = None
-    for _ in range(attempts):
+    for attempt in range(attempts):
         try:
             _git(config, ["push", "-u", "origin", "HEAD"], cwd=clone_dir, runner=runner)
             return
         except SyncError as exc:
             last = exc
-            _git(config, ["pull", "--rebase"], cwd=clone_dir, runner=runner)
+            if attempt < attempts - 1:
+                _git(config, ["pull", "--rebase"], cwd=clone_dir, runner=runner)
     raise last
 
 
-def publish_model(config, model_path, username=None, runner=subprocess.run):
+def publish_model(config, model_path, username=None, runner=subprocess.run) -> str | None:
     """Copy the local model into models/<username>.json, commit, push (with
     pull-rebase retry). Returns the repo-relative path, or None when the
     published content is identical to what the repo already holds."""
@@ -123,16 +127,19 @@ def publish_model(config, model_path, username=None, runner=subprocess.run):
     models_dir = clone_dir / "models"
     models_dir.mkdir(exist_ok=True)
     shutil.copyfile(model_path, models_dir / f"{username}.json")
+    rel_path = f"models/{username}.json"
     _git(config, ["add", "models/"], cwd=clone_dir, runner=runner)
-    if not _git(config, ["status", "--porcelain"], cwd=clone_dir, runner=runner).strip():
+    if not _git(
+        config, ["status", "--porcelain", "--", rel_path], cwd=clone_dir, runner=runner
+    ).strip():
         return None
     _git(config, ["commit", "-m", f"Publish annotations: {username}"],
          cwd=clone_dir, runner=runner)
     _push_with_retry(config, clone_dir, runner)
-    return f"models/{username}.json"
+    return rel_path
 
 
-def fetch_master(config, runner=subprocess.run):
+def fetch_master(config, runner=subprocess.run) -> Path | None:
     """Pull and return the path to master.json, or None when the team has
     no merged master yet."""
     clone_dir = ensure_repo(config, runner=runner)
@@ -140,7 +147,7 @@ def fetch_master(config, runner=subprocess.run):
     return master if master.exists() else None
 
 
-def team_model_paths(config, runner=subprocess.run):
+def team_model_paths(config, runner=subprocess.run) -> list[Path]:
     """Pull and return every models/*.json, sorted by filename."""
     clone_dir = ensure_repo(config, runner=runner)
     models_dir = clone_dir / "models"
@@ -153,7 +160,9 @@ def push_master(config, master_model, runner=subprocess.run) -> bool:
     clone_dir = ensure_repo(config, runner=runner)
     master_model.save(clone_dir / "master.json")
     _git(config, ["add", "master.json"], cwd=clone_dir, runner=runner)
-    if not _git(config, ["status", "--porcelain"], cwd=clone_dir, runner=runner).strip():
+    if not _git(
+        config, ["status", "--porcelain", "--", "master.json"], cwd=clone_dir, runner=runner
+    ).strip():
         return False
     _git(config, ["commit", "-m", "Merge team models into master"],
          cwd=clone_dir, runner=runner)
