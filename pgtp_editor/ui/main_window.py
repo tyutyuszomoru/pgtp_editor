@@ -982,25 +982,30 @@ class MainWindow(QMainWindow):
         if self._current_project is None:
             self.statusBar().showMessage("Open a project to validate.", 5000)
             return
+        name = (
+            Path(self._current_project_path).name
+            if self._current_project_path else "project"
+        )
         self._clear_validation_results()
-        issues = validate_project(self._current_project)
-        n_err = 0
-        n_warn = 0
-        for issue in issues:
-            if issue.severity == "error":
-                n_err += 1
-            else:
-                n_warn += 1
-            if issue.line is None:
-                text = f"{_VALIDATION_PREFIX}{issue.severity.upper()}: {issue.message}"
-            else:
-                text = (
-                    f"{_VALIDATION_PREFIX}{issue.severity.upper()} "
-                    f"line {issue.line}: {issue.message}"
-                )
-            item = QListWidgetItem(text)
-            item.setData(Qt.ItemDataRole.UserRole, issue.line)
-            self.audit_panel.addItem(item)
+        with busy_status(self.statusBar(), f"Validating {name}…"):
+            issues = validate_project(self._current_project)
+            n_err = 0
+            n_warn = 0
+            for issue in issues:
+                if issue.severity == "error":
+                    n_err += 1
+                else:
+                    n_warn += 1
+                if issue.line is None:
+                    text = f"{_VALIDATION_PREFIX}{issue.severity.upper()}: {issue.message}"
+                else:
+                    text = (
+                        f"{_VALIDATION_PREFIX}{issue.severity.upper()} "
+                        f"line {issue.line}: {issue.message}"
+                    )
+                item = QListWidgetItem(text)
+                item.setData(Qt.ItemDataRole.UserRole, issue.line)
+                self.audit_panel.addItem(item)
         if issues:
             self.statusBar().showMessage(
                 f"Validation: {n_err} error(s), {n_warn} warning(s)", 5000
@@ -1072,22 +1077,28 @@ class MainWindow(QMainWindow):
 
     def _reparse_raw_xml(self):
         text = self.center_stage.xml_editor.toPlainText()
-        try:
-            project = load_project_from_text(text, source_description="<editor>")
-        except PgtpParseError as exc:
-            self._handle_reparse_failure(exc)
+        parse_error = None
+        with busy_status(self.statusBar(), "Reparsing…"):
+            try:
+                project = load_project_from_text(text, source_description="<editor>")
+            except PgtpParseError as exc:
+                parse_error = exc
+            else:
+                # SUCCESS: rebuild tree + adopt the new model so click-sync realigns.
+                self.project_tree.populate_from_project(project)
+                self._current_project = project
+                if self.left_tabs.isTabVisible(self.table_refs_tab_index):
+                    self.table_refs_panel.set_usages(
+                        collect_table_usages(self._current_project)
+                    )
+                # Properties has no valid selection against the freshly rebuilt
+                # tree (populate_from_project cleared it); show the empty state
+                # until the user clicks again. show_node(None, None) resets it.
+                self.properties_panel.show_node(None, None)
+        # Cursor restored before any failure dialog.
+        if parse_error is not None:
+            self._handle_reparse_failure(parse_error)
             return
-        # SUCCESS: rebuild tree + adopt the new model so click-sync realigns.
-        self.project_tree.populate_from_project(project)
-        self._current_project = project
-        if self.left_tabs.isTabVisible(self.table_refs_tab_index):
-            self.table_refs_panel.set_usages(
-                collect_table_usages(self._current_project)
-            )
-        # Properties has no valid selection against the freshly rebuilt tree
-        # (populate_from_project cleared it); show the empty state until the
-        # user clicks again. show_node(None, None) is the panel's own reset.
-        self.properties_panel.show_node(None, None)
         self.statusBar().showMessage("Reparsed raw XML into tree", 5000)
         self._refresh_db_check_if_open(project)
 
