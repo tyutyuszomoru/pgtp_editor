@@ -2294,7 +2294,7 @@ class MainWindow(QMainWindow):
         command = build_generate_command(exe, self._current_project_path, output_folder)
         self._current_output_folder = output_folder
         self._is_generating = True
-        self.statusBar().showMessage("Generating…")
+        self.statusBar().showMessage("Generating PHP…")
         _log.info("generate: started")
         self._generator_runner.run(
             command,

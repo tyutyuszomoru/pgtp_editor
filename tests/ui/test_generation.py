@@ -186,6 +186,28 @@ def test_generate_happy_path_builds_and_runs_command(qtbot, tmp_path):
     assert window._current_output_folder == str(out_dir)
 
 
+def test_generate_shows_generating_php_status_message(qtbot, tmp_path):
+    window, fake, exe = _configured_window(qtbot, tmp_path)
+    window.center_stage.xml_editor.setPlainText("<Project/>")
+    window._current_project_path = str(tmp_path / "proj.pgtp")
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+
+    messages = []
+    window.statusBar().showMessage = lambda msg, *a, **k: messages.append(msg)
+
+    with patch(
+        "pgtp_editor.ui.main_window.QMessageBox.question",
+        return_value=QMessageBox.StandardButton.Save,
+    ), patch(
+        "pgtp_editor.ui.main_window.QFileDialog.getExistingDirectory",
+        return_value=str(out_dir),
+    ):
+        window._generate_php()
+
+    assert "Generating PHP…" in messages
+
+
 def test_generate_cancel_at_save_prompt_stops(qtbot, tmp_path):
     window, fake, exe = _configured_window(qtbot, tmp_path)
     window.center_stage.xml_editor.setPlainText("<Project/>")
