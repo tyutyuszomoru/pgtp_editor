@@ -1,11 +1,14 @@
 from pgtp_editor.schema_learning.model import Model
 from pgtp_editor.schema_learning.settings_index import (
     attribute_kind,
+    derived_bitflag_label,
+    effective_labels,
     enum_hint,
     is_enum_candidate,
     known_attributes,
     known_values,
     unused_setting_attributes,
+    value_note,
 )
 
 
@@ -358,3 +361,70 @@ def test_known_values_empty_for_unknown_attr():
     }
     model = _model_one(entry)
     assert known_values(model, "Root/Node", "missing") == []
+
+
+# --- derived_bitflag_label, effective_labels, value_note ------------------
+
+
+def _entry_attr(values, labels=None, **extra):
+    entry = {
+        "type": "integer",
+        "values": values,
+        "overflowed": values is None,
+        "attr_seen_count": 1,
+        "labels": labels or {},
+    }
+    entry.update(extra)
+    return entry
+
+
+def test_derived_bitflag_label_composes_atomic_labels():
+    labels = {"1": "A", "2": "B", "4": "C"}
+    assert derived_bitflag_label("3", labels) == "A+B"
+    assert derived_bitflag_label("5", labels) == "A+C"
+    assert derived_bitflag_label("6", labels) == "B+C"
+    assert derived_bitflag_label("7", labels) == "A+B+C"
+
+
+def test_derived_bitflag_label_missing_bit_returns_none():
+    assert derived_bitflag_label("3", {"1": "A"}) is None
+
+
+def test_derived_bitflag_label_rejects_non_numeric_and_nonpositive():
+    assert derived_bitflag_label("x", {"1": "A"}) is None
+    assert derived_bitflag_label("0", {"1": "A"}) is None
+    assert derived_bitflag_label("-2", {"2": "B"}) is None
+
+
+def test_effective_labels_plain_mode_returns_labels_copy():
+    entry = _entry_attr(["1", "2"], labels={"1": "A"})
+    result = effective_labels(entry)
+    assert result == {"1": "A"}
+    result["1"] = "mutated"
+    assert entry["labels"]["1"] == "A"  # a copy, not the stored dict
+
+
+def test_effective_labels_bitflags_derives_composites_explicit_wins():
+    entry = _entry_attr(
+        ["1", "2", "3", "5"],
+        labels={"1": "A", "2": "B", "5": "custom"},
+        enum_mode="bitflags",
+    )
+    assert effective_labels(entry) == {
+        "1": "A",
+        "2": "B",
+        "3": "A+B",       # derived
+        "5": "custom",    # explicit overrides derived "A+?" (4 unlabeled anyway)
+    }
+
+
+def test_effective_labels_bitflags_overflowed_uses_label_keys():
+    entry = _entry_attr(None, labels={"1": "A", "2": "B"}, enum_mode="bitflags")
+    assert effective_labels(entry) == {"1": "A", "2": "B"}
+
+
+def test_value_note_reads_notes_dict():
+    entry = _entry_attr(["4"], notes={"4": "enables the <Watermark> child tag"})
+    assert value_note(entry, "4") == "enables the <Watermark> child tag"
+    assert value_note(entry, "1") is None
+    assert value_note(_entry_attr(["4"]), "4") is None
