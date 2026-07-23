@@ -180,9 +180,10 @@ pgtp_editor/
 │   └── gap_summary.py
 ├── schema_learning/   # vendored XSD-synthesis engine + storage + settings index
 │   ├── model.py, parser.py (defusedxml), types.py, xsd_gen.py
-│   ├── storage.py     # schema_model_path / schema_xsd_path (AppData)
+│   ├── storage.py     # schema_model_path / schema_xsd_path / team_repo_dir (AppData)
 │   ├── settings_index.py  # kind/labels/notes helpers, enum_hint, bitflag derivation, known_attributes/known_values
-│   └── merge.py       # Qt-free model-to-model semantic merge (team sharing, §11)
+│   ├── merge.py       # Qt-free model-to-model semantic merge (team sharing, §11)
+│   └── sync.py        # git subprocess transport: ensure_repo/publish_model/fetch_master/push_master (§11)
 ├── db/                # PostgreSQL introspection & comparison (Qt-free logic)
 │   ├── config.py, introspect.py (psycopg lazy), compare.py, rename.py
 ├── analysis/
@@ -196,7 +197,8 @@ Key `ui/` modules: `main_window.py`, `center_stage.py`, `project_tree.py`, `xml_
 `xml_structure.py`, `code_editor.py`, `event_body.py`, `properties_panel.py`, `find_replace_bar.py`,
 `search.py`, `history.py`, `theme.py`, `toolbar_registry.py`, `customize_toolbar_dialog.py`,
 `diff_merge_panel.py`, `caption_management_panel.py`, `caption_find_replace_dialog.py`,
-`caption_scan.py`, `schema_viewer.py`, `db_check_panel.py`,
+`caption_scan.py`, `schema_viewer.py`, `annotate_popover.py`, `merge_conflicts_dialog.py`,
+`team_sync_dialog.py`, `db_check_panel.py`,
 `connection_setup_dialog.py`, `table_references_panel.py`, `manual_panel.py`, `about.py`, `icons.py`.
 
 **Dependency rule:** `model/` touches lxml; nothing in `model/` or `ui/` depends on `diff/`; pure-logic
@@ -474,9 +476,10 @@ appear in the hover hint and the XSD `xs:documentation` but **not** in the compa
 **Schema menu:** top-level "Schema" menu (between Diff/Merge and Tools — see consolidated menu):
 - **Annotate Value at Cursor** (Ctrl+L; also offered as a right-click context-menu action on an
   attribute value in the XML editor) — the labeling surface; see "Annotation popover" below.
-- **Next Unlabeled Value** — jumps the caret through the document's unlabeled enum-candidate values in
-  order (shortcut assigned at implementation).
-- **Publish My Annotations / Fetch Team Master / Merge Team Models…** — team sharing, below.
+- **Next Unlabeled Value** (Ctrl+Shift+L) — jumps the caret through the document's unlabeled
+  enum-candidate values in order.
+- **Publish My Annotations / Fetch Team Master / Merge Team Models… / Team Sync Settings…** — team
+  sharing, below.
 - **Open XSD** and **Open XSD Labels (JSON)** — read-only non-modal `SchemaViewerWindow` (`schema_viewer.py`,
   a read-only `XmlEditor`).
 
@@ -513,7 +516,13 @@ popover anchored at the caret containing:
 - **Shared store:** a dedicated git repository containing **only** schema model JSONs —
   `models/<username>.json` per user plus `master.json`. Accessed with a bundled/configured **deploy SSH
   key scoped to that repo alone** (accepted risk for a temporary internal tool: the key can only touch
-  annotation data). Repo URL + key location are configurable in settings.
+  annotation data). The local clone lives under `<AppData>/team_schema_repo`
+  (`schema_learning/storage.py::team_repo_dir()`).
+- **Schema ▸ Team Sync Settings…** — opens `TeamSyncSettingsDialog`
+  (`ui/team_sync_dialog.py`): **Repository URL** + **SSH key path**, persisted in QSettings keys
+  `schema_sync/repo_url` / `schema_sync/key_path`. `load_sync_config(settings, base_dir=None)` builds
+  the sync config (repo URL, `team_repo_dir(base_dir)` clone dir, key path) for the actions below;
+  unconfigured sync → a status-bar hint pointing at this dialog.
 - **Schema ▸ Publish My Annotations** — commits and pushes the local user's model as
   `models/<username>.json`, with a pull/rebase-retry loop underneath; per-user files avoid content
   collisions.
@@ -522,11 +531,26 @@ popover anchored at the caret containing:
   regenerates the local `schema.xsd`.
 - **Schema ▸ Merge Team Models…** (admin action) — folds all `models/*.json` into `master.json` via the
   same semantic merge; interrupts **only** for genuine conflicts (same `(path, attribute, value)` with
-  two different labels — the user picks); pushes the merged master.
+  two different labels — the user picks in `MergeConflictsDialog` (`ui/merge_conflicts_dialog.py`));
+  pushes the merged master. **Conflict provenance:** each conflict row's two options are labeled with
+  their true source — "master: X" only when X was genuinely master's prior value, otherwise
+  "<username>: X" for a label adopted from an earlier-merged user model in the same run (a provenance
+  map built in `main_window` via `_merge_user_model_with_provenance`; `MergeConflictsDialog` takes
+  optional `base_sources`/`incoming_sources` lists parallel to the conflicts).
 - **Merge engine** (`schema_learning/merge.py`, Qt-free, unit-testable without Qt or network):
-  model-to-model merge — engine-owned fields via the existing additive semantics (reuse/mirror
-  `Model.merge_element`); labeler-owned fields (`labels`, `kind`, `notes`, `enum_mode`) via union with
-  **never-silent** conflict surfacing.
+  `merge_models(base, incoming) → list[Conflict]` mutates `base` in place; `apply_resolution(model,
+  conflict, use_incoming)` writes the user's pick. Engine-owned fields merge via the existing additive
+  semantics (mirroring `Model.merge_element`), except `instance_count` and `attr_seen_count` are
+  **summed** — so "required" (seen count == instance count) survives the merge only when the attribute
+  was required on **both** sides. Labeler-owned fields (`labels`, `kind`, `notes`, `enum_mode`) merge
+  via union with **never-silent** conflict surfacing.
+- **Git transport** (`schema_learning/sync.py`, subprocess `git`, injectable `runner=` for fakes):
+  `ensure_repo` clones if absent else `pull --rebase`, setting a local commit identity
+  (`default_username()`); a pull failure is tolerated **only** for a brand-new empty remote, detected
+  **deterministically** via `git ls-remote --heads origin` (no branches → empty) — never by
+  stderr string matching. `publish_model`/`push_master` use per-file-scoped no-change detection
+  (`git status --porcelain -- <path>`) so an identical publish is a clean no-op (returns
+  `None`/`False`), and `_push_with_retry` (pull-rebase between attempts, 3 tries) absorbs races.
 - **Failure behavior:** no network, bad key, or merge abort leaves the local model untouched and
   reports clearly via the existing `[Schema]` audit-line convention.
 - **Endgame (decision recorded; freeze mechanics not yet designed):** when the learning period closes,
@@ -868,8 +892,9 @@ Tools; "New Project" removed; line-wrap moved to editor context menu):
   Collapse All, ☐ Light Theme, ☑/☐ Find table reference.
 - **Bookmarks:** Toggle Bookmark (Ctrl+F2), Next Bookmark (F2), Previous Bookmark (Shift+F2), Clear All
   Bookmarks.
-- **Schema:** Annotate Value at Cursor (Ctrl+L; also editor context menu), Next Unlabeled Value,
-  Publish My Annotations, Fetch Team Master, Merge Team Models…, Open XSD, Open XSD Labels (JSON).
+- **Schema:** Annotate Value at Cursor (Ctrl+L; also editor context menu), Next Unlabeled Value
+  (Ctrl+Shift+L), Publish My Annotations, Fetch Team Master, Merge Team Models…, Team Sync Settings…,
+  Open XSD, Open XSD Labels (JSON).
 - **Database:** Connection Setup…, Check: XML→Database, Check: Database→XML.
 - **Tools:** Manage Captions…, Caption Filter… (Ctrl+R in caption context), Reparse Raw XML into Tree,
   Validate Project, Compare/Merge Two Files…, Next/Previous Difference, Apply Changes to Target.
@@ -893,6 +918,7 @@ Toolbar default: Open, Save, Undo, Redo, Find, Validate, Generate (customizable)
 | Ctrl+click / Alt+click | Jump to matching tag / parent tag | Raw XML editor |
 | Ctrl+F2 / F2 / Shift+F2 | Toggle / Next / Previous Bookmark | Raw XML editor |
 | Ctrl+L | Annotate Value at Cursor (schema label popover) | Raw XML editor |
+| Ctrl+Shift+L | Next Unlabeled Value | Raw XML editor |
 | Ctrl+G | Go to line in XML | Caption grid |
 | Ctrl+Shift+B | Bracket-select | Code editor dialog |
 | Ctrl+S / Ctrl+W | Save / Cancel | Code editor dialog |
@@ -956,7 +982,7 @@ is authoritative** (and is what appears in the body above).
   demands.
 - **Schema-model freeze mechanics:** the endgame (final merge → frozen master → XSD bundled into the
   app, learning/sharing period ends) is a recorded decision, but the freeze mechanics are not yet
-  designed. The "Next Unlabeled Value" shortcut binding is also assigned at implementation.
+  designed. (The "Next Unlabeled Value" shortcut is resolved: Ctrl+Shift+L.)
 
 ---
 
