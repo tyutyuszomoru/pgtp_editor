@@ -250,6 +250,11 @@ def test_schema_menu_contents(qtbot):
         "Annotate Value at Cursor",
         "Next Unlabeled Value",
         "―",
+        "Publish My Annotations",
+        "Fetch Team Master",
+        "Merge Team Models…",
+        "Team Sync Settings…",
+        "―",
         "Open XSD",
         "Open XSD Labels (JSON)",
     ]

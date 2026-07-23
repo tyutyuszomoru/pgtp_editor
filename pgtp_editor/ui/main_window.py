@@ -79,6 +79,10 @@ from pgtp_editor.schema_learning.parser import walk_document
 from pgtp_editor.schema_learning.settings_index import attribute_kind
 from pgtp_editor.schema_learning.storage import schema_model_path, schema_xsd_path
 from pgtp_editor.schema_learning.xsd_gen import generate_xsd
+from pgtp_editor.schema_learning import sync
+from pgtp_editor.schema_learning.merge import apply_resolution, merge_models
+from pgtp_editor.ui.merge_conflicts_dialog import MergeConflictsDialog
+from pgtp_editor.ui.team_sync_dialog import TeamSyncSettingsDialog, load_sync_config
 from pgtp_editor.validation.tier2 import validate_project
 from pgtp_editor.ui._stub_action import add_stub_action
 from pgtp_editor.ui.about import show_about_dialog
@@ -1846,6 +1850,15 @@ class MainWindow(QMainWindow):
         next_unlabeled_action.setShortcut(QKeySequence("Ctrl+Shift+L"))
         next_unlabeled_action.triggered.connect(self._goto_next_unlabeled_value)
         menu.addSeparator()
+        publish_action = menu.addAction("Publish My Annotations")
+        publish_action.triggered.connect(self._publish_my_annotations)
+        fetch_action = menu.addAction("Fetch Team Master")
+        fetch_action.triggered.connect(self._fetch_team_master)
+        merge_action = menu.addAction("Merge Team Models…")
+        merge_action.triggered.connect(self._merge_team_models)
+        sync_settings_action = menu.addAction("Team Sync Settings…")
+        sync_settings_action.triggered.connect(self._open_team_sync_settings)
+        menu.addSeparator()
         open_xsd_action = menu.addAction("Open XSD")
         open_xsd_action.triggered.connect(self._open_xsd_viewer)
         open_labels_action = menu.addAction("Open XSD Labels (JSON)")
@@ -1977,6 +1990,140 @@ class MainWindow(QMainWindow):
         self._labels_viewer.set_title("Schema Labels (JSON)")
         self._labels_viewer.set_content(text)
         self._labels_viewer.show()
+
+    def _sync_config(self):
+        """The configured SyncConfig, or None (with a pointer to the
+        settings dialog in the status bar)."""
+        config = load_sync_config(self._settings, self._schema_storage_dir)
+        if config is None:
+            self.statusBar().showMessage(
+                "Team sync is not configured — Schema ▸ Team Sync Settings…", 5000
+            )
+        return config
+
+    def _open_team_sync_settings(self):
+        dialog = TeamSyncSettingsDialog(self._settings, self)
+        dialog.exec()
+
+    def _publish_my_annotations(self):
+        config = self._sync_config()
+        if config is None:
+            return
+        model_path = schema_model_path(self._schema_storage_dir)
+        if not model_path.exists():
+            self.statusBar().showMessage(self._NO_SCHEMA_MESSAGE, 5000)
+            return
+        self.statusBar().showMessage("Publishing annotations…")
+        run_async(
+            lambda: sync.publish_model(config, model_path),
+            self._on_publish_done,
+            self._on_sync_error,
+        )
+
+    def _on_publish_done(self, published):
+        if published is None:
+            self.audit_panel.addItem("[Schema] Publish: no changes since last publish.")
+        else:
+            self.audit_panel.addItem(f"[Schema] Published annotations as {published}")
+        self.statusBar().clearMessage()
+
+    def _on_sync_error(self, exc):
+        """Any sync failure: local model/XSD untouched, one audit line."""
+        self.audit_panel.addItem(f"[Schema] Sync failed: {exc}")
+        self.statusBar().clearMessage()
+
+    def _fetch_team_master(self):
+        config = self._sync_config()
+        if config is None:
+            return
+
+        def job():
+            master = sync.fetch_master(config)
+            if master is None:
+                raise sync.SyncError("no master.json in the team repo yet")
+            return Model.load(master)
+
+        self.statusBar().showMessage("Fetching team master…")
+        run_async(job, self._on_master_fetched, self._on_sync_error)
+
+    def _on_master_fetched(self, remote_model):
+        model_path = schema_model_path(self._schema_storage_dir)
+        model_path.parent.mkdir(parents=True, exist_ok=True)
+        local = Model.load(model_path) if model_path.exists() else Model()
+        conflicts = merge_models(local, remote_model)
+        local.save(model_path)
+        schema_xsd_path(self._schema_storage_dir).write_text(
+            generate_xsd(local), encoding="utf-8"
+        )
+        self.center_stage.xml_editor.set_schema_model(local)
+        self.audit_panel.addItem(
+            "[Schema] Fetched team master and merged it into the local model."
+        )
+        for conflict in conflicts[:20]:
+            self.audit_panel.addItem(
+                f"[Schema] CONFLICT (kept local): {conflict.path}@{conflict.attr}"
+                f' {conflict.field} "{conflict.value or ""}"'
+                f' local="{conflict.base}" master="{conflict.incoming}"'
+            )
+        if len(conflicts) > 20:
+            self.audit_panel.addItem(
+                f"[Schema] …and {len(conflicts) - 20} more conflicts (kept local)."
+            )
+        self.statusBar().clearMessage()
+
+    def _merge_team_models(self):
+        config = self._sync_config()
+        if config is None:
+            return
+
+        def job():
+            paths = sync.team_model_paths(config)
+            master_path = Path(config.clone_dir) / "master.json"
+            master = Model.load(master_path) if master_path.exists() else Model()
+            return master, [(p.stem, Model.load(p)) for p in paths]
+
+        self.statusBar().showMessage("Merging team models…")
+        run_async(
+            job,
+            lambda result: self._on_team_models_loaded(config, result),
+            self._on_sync_error,
+        )
+
+    def _on_team_models_loaded(self, config, result):
+        master, user_models = result
+        if not user_models:
+            self.audit_panel.addItem(
+                "[Schema] Merge: no models/*.json in the team repo yet."
+            )
+            self.statusBar().clearMessage()
+            return
+        conflicts = []
+        for _name, user_model in user_models:
+            conflicts.extend(merge_models(master, user_model))
+        if conflicts:
+            dialog = MergeConflictsDialog(conflicts, parent=self)
+            if dialog.exec() != QDialog.DialogCode.Accepted:
+                self.audit_panel.addItem("[Schema] Merge aborted — nothing was pushed.")
+                self.statusBar().clearMessage()
+                return
+            for use_incoming, conflict in zip(dialog.resolutions(), conflicts):
+                apply_resolution(master, conflict, use_incoming)
+        run_async(
+            lambda: sync.push_master(config, master),
+            self._on_master_pushed,
+            self._on_sync_error,
+        )
+
+    def _on_master_pushed(self, pushed):
+        self.audit_panel.addItem(
+            "[Schema] Merged team models into master and pushed."
+            if pushed
+            else "[Schema] Merge: master unchanged — nothing to push."
+        )
+        self.audit_panel.addItem(
+            "[Schema] Run Schema ▸ Fetch Team Master to update your local model."
+        )
+        self.statusBar().clearMessage()
 
     def _build_database_menu(self):
         menu = self.menuBar().addMenu("Database")
