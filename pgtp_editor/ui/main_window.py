@@ -80,7 +80,12 @@ from pgtp_editor.schema_learning.settings_index import attribute_kind
 from pgtp_editor.schema_learning.storage import schema_model_path, schema_xsd_path
 from pgtp_editor.schema_learning.xsd_gen import generate_xsd
 from pgtp_editor.schema_learning import sync
-from pgtp_editor.schema_learning.merge import apply_resolution, merge_models
+from pgtp_editor.schema_learning.merge import (
+    LABELER_DICT_FIELDS,
+    LABELER_SCALAR_FIELDS,
+    apply_resolution,
+    merge_models,
+)
 from pgtp_editor.ui.merge_conflicts_dialog import MergeConflictsDialog
 from pgtp_editor.ui.team_sync_dialog import TeamSyncSettingsDialog, load_sync_config
 from pgtp_editor.validation.tier2 import validate_project
@@ -146,6 +151,78 @@ _SCHEMA_REPORT_TEMPLATES = {
     "enum_overflow": "[Schema] ENUM OVERFLOWED: {path}@{attr} now free-form string (from {source})",
     "now_optional": "[Schema] NOW OPTIONAL: {path}@{attr} (previously required, from {source})",
 }
+
+
+def _labeler_keys(model):
+    """Yield ``(path, attr, field, value)`` for every labeler-owned entry
+    (labels/notes dict entries, kind/enum_mode scalars) present in
+    ``model``. ``value`` is the dict key for labels/notes, or None for the
+    scalar fields -- mirroring ``Conflict``'s own key shape."""
+    for path, entry in model.paths.items():
+        for attr, attr_entry in entry.get("attributes", {}).items():
+            for field in LABELER_DICT_FIELDS:
+                for value in attr_entry.get(field) or {}:
+                    yield (path, attr, field, value)
+            for field in LABELER_SCALAR_FIELDS:
+                if attr_entry.get(field) is not None:
+                    yield (path, attr, field, None)
+
+
+def _labeler_value(model, path, attr, field, value):
+    """Return the labeler value currently recorded in ``model`` at
+    ``(path, attr, field, value)``, or None if nothing is recorded there
+    yet (missing path, missing attribute, or missing dict/scalar entry)."""
+    entry = model.paths.get(path)
+    if entry is None:
+        return None
+    attr_entry = entry.get("attributes", {}).get(attr)
+    if attr_entry is None:
+        return None
+    if field in LABELER_DICT_FIELDS:
+        return (attr_entry.get(field) or {}).get(value)
+    return attr_entry.get(field)
+
+
+def _merge_user_model_with_provenance(master, name, user_model, origin):
+    """Merge ``user_model`` into ``master`` in place, returning a list of
+    ``(base_source, incoming_source, conflict)`` tuples for the conflicts
+    this merge produced.
+
+    ``origin`` maps ``(path, attr, field, value)`` -> the name of the user
+    model that contributed master's *current* value there; a key absent
+    from ``origin`` means that value is master's own pre-existing state
+    (rendered as "master"). Merging several user models sequentially into
+    the same master means a later user's conflict may be against an
+    earlier user's just-adopted label rather than against master's
+    original value -- ``origin`` lets the caller show the real source
+    instead of always saying "master".
+
+    A key can only ever be a conflict OR a fresh (no-conflict) adoption in
+    a single merge (``merge_models`` records a conflict exactly when master
+    already had a differing value there), so snapshotting "missing before"
+    keys and updating ``origin`` for them after the merge never clashes
+    with this merge's own conflicts.
+    """
+    missing_before = [
+        key for key in _labeler_keys(user_model)
+        if _labeler_value(master, *key) is None
+    ]
+    new_conflicts = merge_models(master, user_model)
+    tagged = [
+        (
+            origin.get(
+                (conflict.path, conflict.attr, conflict.field, conflict.value),
+                "master",
+            ),
+            name,
+            conflict,
+        )
+        for conflict in new_conflicts
+    ]
+    for key in missing_before:
+        if _labeler_value(master, *key) is not None:
+            origin[key] = name
+    return tagged
 
 
 class MainWindow(QMainWindow):
@@ -2097,11 +2174,24 @@ class MainWindow(QMainWindow):
             )
             self.statusBar().clearMessage()
             return
-        conflicts = []
-        for _name, user_model in user_models:
-            conflicts.extend(merge_models(master, user_model))
-        if conflicts:
-            dialog = MergeConflictsDialog(conflicts, parent=self)
+        origin = {}
+        tagged_conflicts = []
+        for name, user_model in user_models:
+            tagged_conflicts.extend(
+                _merge_user_model_with_provenance(master, name, user_model, origin)
+            )
+        if tagged_conflicts:
+            base_sources = [base for base, _incoming, _conflict in tagged_conflicts]
+            incoming_sources = [
+                incoming for _base, incoming, _conflict in tagged_conflicts
+            ]
+            conflicts = [conflict for _base, _incoming, conflict in tagged_conflicts]
+            dialog = MergeConflictsDialog(
+                conflicts,
+                base_sources=base_sources,
+                incoming_sources=incoming_sources,
+                parent=self,
+            )
             if dialog.exec() != QDialog.DialogCode.Accepted:
                 self.audit_panel.addItem("[Schema] Merge aborted — nothing was pushed.")
                 self.statusBar().clearMessage()

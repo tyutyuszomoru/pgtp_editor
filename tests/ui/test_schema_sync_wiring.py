@@ -21,12 +21,14 @@ a synchronous stand-in and every `sync` call is monkeypatched -- never any
 real git/network in these tests."""
 import pytest
 from PySide6.QtCore import QSettings
+from PySide6.QtWidgets import QDialog
 
 from pgtp_editor.schema_learning.model import Model
 from pgtp_editor.schema_learning.storage import schema_model_path
 from pgtp_editor.schema_learning.sync import SyncConfig, SyncError
 from pgtp_editor.ui import main_window as main_window_module
 from pgtp_editor.ui.main_window import MainWindow
+from pgtp_editor.ui.merge_conflicts_dialog import MergeConflictsDialog
 from pgtp_editor.ui.team_sync_dialog import SYNC_REPO_URL_KEY
 
 
@@ -113,3 +115,55 @@ def test_fetch_master_merges_into_local_model(window, monkeypatch, tmp_path):
     local = Model.load(schema_model_path(window._schema_storage_dir))
     assert local.paths["Root"]["attributes"]["a"]["labels"] == {"1": "A"}
     assert any("Fetched team master" in line for line in _audit_lines(window))
+
+
+def test_merge_conflict_shows_each_side_source_not_bare_master(window, monkeypatch, tmp_path):
+    """Regression for the finding: master is empty, alice's label for value
+    "1" is adopted with no conflict, then bob disagrees with alice -- the
+    conflict dialog must attribute the base side to "alice", not "master",
+    since alice's label (not master's) is what bob actually collides with."""
+    window._settings.setValue(SYNC_REPO_URL_KEY, "x:/repo.git")
+
+    def _labeled_model(label_text):
+        model = Model()
+        model.paths = {"Root": {
+            "attributes": {"a": {"type": "integer", "values": ["1"],
+                                 "overflowed": False, "attr_seen_count": 1,
+                                 "labels": {"1": label_text}}},
+            "children": {}, "instance_count": 1, "order": [],
+            "order_stable": True, "has_text": False,
+        }}
+        return model
+
+    alice_path = tmp_path / "alice.json"
+    bob_path = tmp_path / "bob.json"
+    _labeled_model("Foo").save(alice_path)
+    _labeled_model("Bar").save(bob_path)
+
+    monkeypatch.setattr(
+        main_window_module.sync, "team_model_paths",
+        lambda config: [alice_path, bob_path],
+    )
+
+    captured_dialogs = []
+
+    def fake_exec(self):
+        captured_dialogs.append(self)
+        return QDialog.DialogCode.Rejected
+
+    monkeypatch.setattr(MergeConflictsDialog, "exec", fake_exec)
+
+    push_calls = []
+    monkeypatch.setattr(
+        main_window_module.sync, "push_master",
+        lambda config, master: push_calls.append(master),
+    )
+
+    window._merge_team_models()
+
+    assert len(captured_dialogs) == 1
+    combo = captured_dialogs[0].choice_combo(0)
+    assert combo.itemText(0) == "alice: Foo"
+    assert combo.itemText(1) == "bob: Bar"
+    assert not push_calls
+    assert "[Schema] Merge aborted — nothing was pushed." in _audit_lines(window)

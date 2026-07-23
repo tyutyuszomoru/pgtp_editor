@@ -33,7 +33,14 @@ CHOICE_COLUMN = 4
 
 
 class MergeConflictsDialog(QDialog):
-    def __init__(self, conflicts, parent=None):
+    def __init__(self, conflicts, base_sources=None, incoming_sources=None, parent=None):
+        """``base_sources``/``incoming_sources``, when given, are lists
+        aligned index-wise with ``conflicts`` naming which user model each
+        side of the row actually came from (the base side may be another
+        user's just-adopted value rather than master's own pre-existing
+        state, when several team models are merged in one pass). Falling
+        back to None for either list keeps the plain "master:"/"incoming:"
+        labels."""
         super().__init__(parent)
         self.setWindowTitle(f"Merge Conflicts ({len(conflicts)})")
         self._conflicts = list(conflicts)
@@ -50,9 +57,13 @@ class MergeConflictsDialog(QDialog):
                 item = QTableWidgetItem(text)
                 item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
                 self.table.setItem(row, column, item)
+            base_label = (base_sources[row] if base_sources else None) or "master"
+            incoming_label = (
+                incoming_sources[row] if incoming_sources else None
+            ) or "incoming"
             combo = QComboBox()
-            combo.addItem(f"master: {conflict.base}")
-            combo.addItem(f"incoming: {conflict.incoming}")
+            combo.addItem(f"{base_label}: {conflict.base}")
+            combo.addItem(f"{incoming_label}: {conflict.incoming}")
             self.table.setCellWidget(row, CHOICE_COLUMN, combo)
         self.table.resizeColumnsToContents()
 

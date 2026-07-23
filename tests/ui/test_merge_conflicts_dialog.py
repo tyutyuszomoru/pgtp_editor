@@ -27,3 +27,27 @@ def test_default_resolution_keeps_master_and_can_switch(qtbot):
     assert dialog.resolutions() == [False, False]
     dialog.choice_combo(0).setCurrentIndex(1)  # use incoming
     assert dialog.resolutions() == [True, False]
+
+
+def test_source_labels_render_in_combo_text(qtbot):
+    conflicts = [
+        Conflict("Root", "a", "labels", "1", "Foo", "Bar"),
+    ]
+    dialog = MergeConflictsDialog(
+        conflicts, base_sources=["alice"], incoming_sources=["bob"]
+    )
+    qtbot.addWidget(dialog)
+    combo = dialog.choice_combo(0)
+    assert combo.itemText(0) == "alice: Foo"
+    assert combo.itemText(1) == "bob: Bar"
+
+
+def test_missing_source_labels_fall_back_to_master_and_incoming(qtbot):
+    conflicts = [
+        Conflict("Root", "a", "labels", "1", "Foo", "Bar"),
+    ]
+    dialog = MergeConflictsDialog(conflicts, base_sources=[None], incoming_sources=[None])
+    qtbot.addWidget(dialog)
+    combo = dialog.choice_combo(0)
+    assert combo.itemText(0) == "master: Foo"
+    assert combo.itemText(1) == "incoming: Bar"
