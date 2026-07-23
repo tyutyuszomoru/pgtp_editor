@@ -112,3 +112,91 @@ def test_kind_and_enum_mode_conflicts():
     ]
     # enum_mode was unset on base -> adopted, no conflict
     assert base.paths["Root"]["attributes"]["a"]["enum_mode"] == "bitflags"
+
+
+def test_merge_does_not_alias_incoming():
+    """Verify that merge deep-copies incoming paths/attributes, not aliases."""
+    base = _model({})
+    incoming = _model({
+        "Root": _element({"a": _attr(["x"], labels={"x": "label_x"})})
+    })
+    merge_models(base, incoming)
+
+    # Mutate the incoming model's entry
+    incoming.paths["Root"]["attributes"]["a"]["values"].append("y")
+    incoming.paths["Root"]["attributes"]["a"]["labels"]["x"] = "mutated_label"
+
+    # Assert base copies are unaffected
+    assert base.paths["Root"]["attributes"]["a"]["values"] == ["x"]
+    assert base.paths["Root"]["attributes"]["a"]["labels"]["x"] == "label_x"
+
+
+def test_children_flags_or_and_order_append():
+    """Test merging child flags with OR logic and order list merging."""
+    # Scenario 1: children flags merge with OR, order appends new tags
+    base = _model({
+        "Root": _element(
+            children={"A": {"ever_absent": False, "ever_multiple": False}},
+            order=["A"]
+        )
+    })
+    incoming = _model({
+        "Root": _element(
+            children={
+                "A": {"ever_absent": True, "ever_multiple": False},
+                "B": {"ever_absent": False, "ever_multiple": True}
+            },
+            order=["A", "B"]
+        )
+    })
+    conflicts = merge_models(base, incoming)
+    assert conflicts == []
+
+    # Child A flags merged with OR
+    assert base.paths["Root"]["children"]["A"]["ever_absent"] is True
+    assert base.paths["Root"]["children"]["A"]["ever_multiple"] is False
+    # Child B added
+    assert "B" in base.paths["Root"]["children"]
+    assert base.paths["Root"]["children"]["B"]["ever_multiple"] is True
+    # Order appended
+    assert base.paths["Root"]["order"] == ["A", "B"]
+    # order_stable unchanged (no conflict)
+    assert base.paths["Root"]["order_stable"] is True
+
+    # Scenario 2: order conflict flips order_stable to False
+    base2 = _model({
+        "Root": _element(
+            children={"A": {"ever_absent": False, "ever_multiple": False},
+                      "B": {"ever_absent": False, "ever_multiple": False}},
+            order=["A", "B"]
+        )
+    })
+    incoming2 = _model({
+        "Root": _element(
+            children={"A": {"ever_absent": False, "ever_multiple": False},
+                      "B": {"ever_absent": False, "ever_multiple": False}},
+            order=["B", "A"]
+        )
+    })
+    merge_models(base2, incoming2)
+
+    # order_stable flipped because common children have different order
+    assert base2.paths["Root"]["order_stable"] is False
+
+
+def test_notes_conflict_detected_like_labels():
+    """Test that notes field conflicts are detected and tracked like labels."""
+    base = _model({
+        "Root": _element({"a": _attr(["1"], notes={"1": "base note"})})
+    })
+    incoming = _model({
+        "Root": _element({"a": _attr(["1"], notes={"1": "incoming note"})})
+    })
+    conflicts = merge_models(base, incoming)
+
+    # One conflict for the notes field
+    assert conflicts == [
+        Conflict("Root", "a", "notes", "1", "base note", "incoming note")
+    ]
+    # Base value is kept
+    assert base.paths["Root"]["attributes"]["a"]["notes"]["1"] == "base note"

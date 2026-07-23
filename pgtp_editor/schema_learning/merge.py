@@ -78,6 +78,7 @@ def _merge_element_entry(path, base_entry, inc_entry, conflicts):
     for tag, inc_child in inc_entry["children"].items():
         child = base_entry["children"].get(tag)
         if child is None:
+            # Shallow copy is safe: child entries are flat dicts of bools only
             base_entry["children"][tag] = dict(inc_child)
             base_entry["order"].append(tag)
         else:
