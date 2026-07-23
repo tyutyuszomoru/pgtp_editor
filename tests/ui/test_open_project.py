@@ -409,6 +409,34 @@ def test_open_shows_opening_message_with_name_and_size(qtbot, tmp_path, monkeypa
     assert any(m.startswith("Opened:") for m in messages)
 
 
+def test_open_omits_size_suffix_when_getsize_fails(qtbot, tmp_path, monkeypatch):
+    """Spec edge case: if os.path.getsize raises (a stat hiccup), the open must
+    NOT fail -- it just drops the ' (<size>)' suffix and still shows
+    'Opening <name>…' and reaches the terminal 'Opened:' message."""
+    window = MainWindow()
+    qtbot.addWidget(window)
+    path = tmp_path / "valid.pgtp"
+    path.write_text(VALID_PGTP, encoding="utf-8")
+
+    def _boom(*a, **k):
+        raise OSError("stat failed")
+
+    monkeypatch.setattr(os.path, "getsize", _boom)
+    messages = _record_status(window, monkeypatch)
+
+    window.open_project_file(str(path))
+
+    opening = [m for m in messages if m.startswith("Opening ")]
+    assert opening, messages
+    assert "valid.pgtp" in opening[0]
+    # No size suffix -> no parenthesised size, but still the gerund ellipsis.
+    assert "(" not in opening[0]
+    assert opening[0].rstrip().endswith("…")
+    # The open still completed normally.
+    assert any(m.startswith("Opened:") for m in messages)
+    assert window.project_tree.topLevelItemCount() == 1
+
+
 def test_open_restores_cursor_on_success(qtbot, tmp_path):
     window = MainWindow()
     qtbot.addWidget(window)
