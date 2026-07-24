@@ -27,7 +27,10 @@ if "brainstorm" in skill.lower():
         "brainstorm toward folding the idea into an existing feature (or one cohesive "
         "complex feature) rather than adding a marginally-different parallel functionality. "
         "This up-front cost is intentional — it avoids the larger cost of building then "
-        "correcting/overwriting redundant work."
+        "correcting/overwriting redundant work. Once the design is settled, do NOT write a new "
+        "dated spec file under docs/superpowers/specs/ (that folder is frozen history); instead "
+        "dispatch spec-maintainer again to fold the settled design directly into "
+        "docs/superpowers/CONSOLIDATED_SPEC.md with a Supersession Ledger row for any override."
     )
     print(json.dumps({
         "hookSpecificOutput": {

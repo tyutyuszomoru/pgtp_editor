@@ -1,5 +1,30 @@
 # PGTP Editor — project instructions
 
+## Specification policy (mandatory)
+
+- **`docs/superpowers/CONSOLIDATED_SPEC.md` is the single, authoritative spec.**
+  It is the one document that describes current design. Do **not** create new
+  dated spec files under `docs/superpowers/specs/` for new work — that folder is
+  now **frozen historical record** (the source the consolidated spec and its
+  Supersession Ledger were built from). Read those old files for rationale/history;
+  never add to them.
+- **All new or changed design goes into the consolidated spec via the
+  `spec-maintainer` agent — never hand-written into a new file.** When a design
+  decision is settled (after brainstorming, or when a shipped feature diverges
+  from the spec), dispatch the `spec-maintainer` subagent
+  (`.claude/agents/spec-maintainer.md`) to fold it into `CONSOLIDATED_SPEC.md`
+  with latest-wins reconciliation and a Supersession Ledger row for any override.
+  The agent is the sole writer of specification content.
+- **Brainstorming is gated by the same agent (placement gate).** Before design
+  crystallizes, `spec-maintainer` first reports where the idea belongs and whether
+  to extend an existing feature vs. create a new one — so the project grows
+  cohesive complex features instead of near-duplicate parallel functionality. A
+  `PreToolUse` hook on the brainstorming skill injects this reminder automatically.
+- Other agents (`feature-tester`, `manual-maintainer`) that were dispatched with
+  "spec paths under `docs/superpowers/`" now take the relevant **section of
+  `CONSOLIDATED_SPEC.md`** (plus the feature's plan under
+  `docs/superpowers/plans/`, which is still written per-feature) as their spec input.
+
 ## Testing policy (mandatory)
 
 - **Every completed feature triggers the `feature-tester` agent.** When a feature's

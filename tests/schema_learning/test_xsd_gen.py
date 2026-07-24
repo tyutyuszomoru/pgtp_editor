@@ -157,3 +157,78 @@ def test_label_with_xml_special_characters_is_escaped():
 
     assert "<xs:documentation>A &amp; B &lt; C</xs:documentation>" in xsd_text
     ET.fromstring(xsd_text)  # must remain well-formed XML despite the raw label text
+
+
+def test_xsd_documentation_includes_derived_bitflag_labels_and_notes():
+    entry = {
+        "type": "integer",
+        "values": ["1", "2", "3"],
+        "overflowed": False,
+        "attr_seen_count": 1,
+        "labels": {"1": "A", "2": "B"},
+        "notes": {"3": "adds the <Extra> tag"},
+        "enum_mode": "bitflags",
+    }
+    model = Model()
+    model.paths = {
+        "Root": {
+            "attributes": {"mode": entry},
+            "children": {},
+            "instance_count": 1,
+            "order": [],
+            "order_stable": True,
+            "has_text": False,
+        }
+    }
+    xsd = generate_xsd(model)
+    assert "<xs:documentation>A</xs:documentation>" in xsd
+    assert "<xs:documentation>A+B — adds the &lt;Extra&gt; tag</xs:documentation>" in xsd
+
+
+def test_xsd_enumerates_labeled_but_unobserved_values():
+    entry = {
+        "type": "integer",
+        "values": ["1"],
+        "overflowed": False,
+        "attr_seen_count": 1,
+        "labels": {"9": "special"},
+    }
+    model = Model()
+    model.paths = {
+        "Root": {
+            "attributes": {"mode": entry},
+            "children": {},
+            "instance_count": 1,
+            "order": [],
+            "order_stable": True,
+            "has_text": False,
+        }
+    }
+    xsd = generate_xsd(model)
+    assert '<xs:enumeration value="9">' in xsd
+    assert "<xs:documentation>special</xs:documentation>" in xsd
+
+
+def test_overflowed_attribute_with_labels_stays_plain():
+    entry = {
+        "type": "integer",
+        "values": None,
+        "overflowed": True,
+        "attr_seen_count": 1,
+        "labels": {"1": "A"},
+    }
+    model = Model()
+    model.paths = {
+        "Root": {
+            "attributes": {"mode": entry},
+            "children": {},
+            "instance_count": 1,
+            "order": [],
+            "order_stable": True,
+            "has_text": False,
+        }
+    }
+    xsd = generate_xsd(model)
+    assert '<xs:attribute name="mode" type="xs:integer"' in xsd
+    assert "xs:restriction" not in xsd
+    assert "xs:enumeration" not in xsd

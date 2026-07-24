@@ -19,6 +19,7 @@ from PySide6.QtCore import QStandardPaths
 
 _MODEL_FILENAME = "schema_model.json"
 _XSD_FILENAME = "schema.xsd"
+_TEAM_REPO_DIRNAME = "team_schema_repo"
 
 
 def _app_data_dir() -> Path:
@@ -31,3 +32,9 @@ def schema_model_path(base_dir: Path | None = None) -> Path:
 
 def schema_xsd_path(base_dir: Path | None = None) -> Path:
     return (base_dir or _app_data_dir()) / _XSD_FILENAME
+
+
+def team_repo_dir(base_dir: Path | None = None) -> Path:
+    """Local clone location of the team schema-sharing repo (a transport
+    cache, not a source of truth — see CONSOLIDATED_SPEC §11)."""
+    return (base_dir or _app_data_dir()) / _TEAM_REPO_DIRNAME

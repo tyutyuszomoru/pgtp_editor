@@ -53,7 +53,10 @@ from PySide6.QtWidgets import (
 )
 
 from pgtp_editor.schema_learning.settings_index import (
+    attribute_kind,
+    effective_labels,
     enum_hint,
+    is_enum_candidate,
     known_attributes,
     known_values,
     unused_setting_attributes,
@@ -79,9 +82,20 @@ _ATTR_PAIR_RE = re.compile(
 
 
 def attribute_at_position(text: str, pos: int):
-    """Resolve a document character position to ``(tag_chain, attr)`` when it
-    falls on an attribute (name token or quoted value) inside an *opening*
-    tag; otherwise return ``None``.
+    """Resolve a document character position to ``(tag_chain, attr)`` --
+    see attribute_value_at_position, which this delegates to."""
+    resolved = attribute_value_at_position(text, pos)
+    if resolved is None:
+        return None
+    tag_chain, attr, _value = resolved
+    return tag_chain, attr
+
+
+def attribute_value_at_position(text: str, pos: int):
+    """Resolve a document character position to ``(tag_chain, attr, value)``
+    when it falls on an attribute (name token or quoted value) inside an
+    *opening* tag; otherwise return ``None``. ``value`` is the attribute's
+    current value with the quotes stripped.
 
     ``tag_chain`` is the slash-joined ancestor open-tag names from the
     document root down to and including the tag the position is in (e.g.
@@ -118,9 +132,10 @@ def attribute_at_position(text: str, pos: int):
     if containing is None:
         return None
 
-    attr = _attribute_name_at(text, containing.open_start, containing_open_end, pos)
-    if attr is None:
+    pair = _attribute_pair_at(text, containing.open_start, containing_open_end, pos)
+    if pair is None:
         return None
+    attr, value = pair
 
     names = [containing.name]
     walker = containing
@@ -131,7 +146,7 @@ def attribute_at_position(text: str, pos: int):
         names.append(parent.name)
         walker = parent
     tag_chain = "/".join(reversed(names))
-    return tag_chain, attr
+    return tag_chain, attr, value
 
 
 def enclosing_open_tag(text: str, pos: int):
@@ -209,6 +224,50 @@ def insert_attribute(text: str, insert_pos: int, name: str):
     return new_text, caret_pos
 
 
+def unlabeled_value_spans(text: str, spans, model) -> list[tuple[int, int]]:
+    """Absolute ``(start, end)`` character spans (quotes excluded) of every
+    enum-candidate attribute VALUE in ``text`` that has no effective label.
+    Content-kind attributes are skipped — the labeler marked them as
+    not-a-setting, so they should not nag. ``spans`` is
+    ``xml_structure.scan(text)`` (pass the editor's cached scan). Sorted by
+    start offset. Drives the dotted underlines and Next Unlabeled Value."""
+    result = []
+    label_cache: dict[int, dict] = {}
+    for span in spans:
+        open_end = _opening_tag_end(text, span.open_start)
+        if open_end is None:
+            continue
+        names = [span.name]
+        walker = span
+        while walker.depth > 0:
+            parent = xml_structure.parent_tag_span(spans, walker)
+            if parent is None:
+                break
+            names.append(parent.name)
+            walker = parent
+        tag_chain = "/".join(reversed(names))
+        attributes = model.paths.get(tag_chain, {}).get("attributes", {})
+        if not attributes:
+            continue
+        tag_text = text[span.open_start:open_end]
+        for match in _ATTR_PAIR_RE.finditer(tag_text):
+            entry = attributes.get(match.group(1))
+            if entry is None or not is_enum_candidate(entry):
+                continue
+            if attribute_kind(entry) == "content":
+                continue
+            cached = label_cache.get(id(entry))
+            if cached is None:
+                cached = label_cache[id(entry)] = effective_labels(entry)
+            value = match.group(2)[1:-1]
+            if cached.get(value) is not None:
+                continue
+            start = span.open_start + match.start(2) + 1
+            result.append((start, start + len(value)))
+    result.sort()
+    return result
+
+
 def _opening_tag_end(text: str, open_start: int):
     """Return the offset just past the '>' that closes the opening tag
     beginning at ``open_start``, scanning left-to-right and treating any '>'
@@ -227,20 +286,18 @@ def _opening_tag_end(text: str, open_start: int):
     return None
 
 
-def _attribute_name_at(text: str, open_start: int, open_end: int, pos: int):
-    """Return the attribute name whose name-token or quoted value contains
-    ``pos`` within the opening tag spanning ``[open_start, open_end)``, or
-    ``None`` if ``pos`` is over the tag name, in an inter-token gap, or on the
-    tag delimiters."""
+def _attribute_pair_at(text: str, open_start: int, open_end: int, pos: int):
+    """Return ``(name, value)`` (value unquoted) for the attribute whose
+    name-token or quoted value contains ``pos`` within the opening tag
+    spanning ``[open_start, open_end)``, or ``None`` if ``pos`` is over the
+    tag name, in an inter-token gap, or on the tag delimiters."""
     tag_text = text[open_start:open_end]
     offset = pos - open_start
     for match in _ATTR_PAIR_RE.finditer(tag_text):
-        name_start, name_end = match.start(1), match.end(1)
-        value_start, value_end = match.start(2), match.end(2)
-        on_name = name_start <= offset < name_end
-        on_value = value_start <= offset < value_end
+        on_name = match.start(1) <= offset < match.end(1)
+        on_value = match.start(2) <= offset < match.end(2)
         if on_name or on_value:
-            return match.group(1)
+            return match.group(1), match.group(2)[1:-1]
     return None
 
 # Fixed horizontal allowance reserved for the fold-triangle glyph, added on
@@ -566,6 +623,11 @@ class XmlEditor(QPlainTextEdit):
     # (Sub-project C, C1).
     undo_requested = Signal()
     redo_requested = Signal()
+    # Emitted when the user asks to annotate the attribute value at the
+    # caret (Schema ▸ Annotate Value at Cursor / Ctrl+L / context menu).
+    # Carries (tag_chain, attr, value); MainWindow opens the AnnotatePopover
+    # and owns persistence.
+    annotate_value_requested = Signal(str, str, str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -599,6 +661,13 @@ class XmlEditor(QPlainTextEdit):
         self._code_region_color = QColor("#232a2f")
         self._code_region_font = self._make_monospace_font()
         self._code_region_selections: list[QTextEdit.ExtraSelection] = []
+        # Dotted underlines beneath enum-candidate attribute values that have
+        # no label yet — the labeler's "waiting for you" markers. Recomputed
+        # from the cached structure scan on every text change and whenever a
+        # fresh schema model is injected (set_schema_model). Rendered through
+        # the shared extra-selections layering.
+        self._unlabeled_underline_color = QColor("#b8a24e")
+        self._unlabeled_value_selections: list[QTextEdit.ExtraSelection] = []
         # One-shot "overriding" indicator used by navigate_to_line,
         # highlight_error_line and select_range_on_line. It sits on top of the
         # current-line band and matching-tag spans, and is cleared on the next
@@ -624,6 +693,7 @@ class XmlEditor(QPlainTextEdit):
         self.updateRequest.connect(self._update_gutter_on_scroll)
         self.textChanged.connect(self._rescan_structure)
         self.textChanged.connect(self._refresh_code_region_selections)
+        self.textChanged.connect(self._refresh_unlabeled_value_selections)
         self.cursorPositionChanged.connect(self._highlight_current_line)
         self.cursorPositionChanged.connect(self._update_matching_tag_highlight)
 
@@ -678,6 +748,7 @@ class XmlEditor(QPlainTextEdit):
             self._navigation_highlight_color = QColor("#cfe0ff")
             self._matching_tag_color = QColor("#d3ecd3")
             self._code_region_color = QColor("#eef2f5")
+            self._unlabeled_underline_color = QColor("#8a6d3b")
             self._highlighter.set_colors(
                 tag="#0000ff", attr_name="#e50000", string="#a31515"
             )
@@ -689,6 +760,7 @@ class XmlEditor(QPlainTextEdit):
             self._navigation_highlight_color = QColor("#264f78")
             self._matching_tag_color = QColor("#3a5f3a")
             self._code_region_color = QColor("#232a2f")
+            self._unlabeled_underline_color = QColor("#b8a24e")
             self._highlighter.set_colors(
                 tag="#569cd6", attr_name="#9cdcfe", string="#ce9178"
             )
@@ -696,6 +768,7 @@ class XmlEditor(QPlainTextEdit):
         # Rebuild the extra-selection layers so their stored per-selection
         # colors pick up the new values (they cache the color at build time).
         self._refresh_code_region_selections()
+        self._refresh_unlabeled_value_selections()
         self._update_matching_tag_highlight()
         self._highlight_current_line()
         self._gutter.update()
@@ -853,6 +926,7 @@ class XmlEditor(QPlainTextEdit):
         # Code-region background sits underneath everything so the current-line
         # band, matching-tag spans and one-shot indicators paint over it.
         selections.extend(self._code_region_selections)
+        selections.extend(self._unlabeled_value_selections)
         selections.extend(self._current_line_selections)
         selections.extend(self._matching_tag_selections)
         if self._oneshot_selection is not None:
@@ -891,6 +965,43 @@ class XmlEditor(QPlainTextEdit):
                 selections.append(selection)
         self._code_region_selections = selections
         self._refresh_extra_selections()
+
+    def _refresh_unlabeled_value_selections(self) -> None:
+        """Recompute the dotted underlines for unlabeled enum-candidate
+        values from the cached scan. No model -> no underlines."""
+        selections: list[QTextEdit.ExtraSelection] = []
+        if self._schema_model is not None:
+            for start, end in unlabeled_value_spans(
+                self._spans_text, self._spans, self._schema_model
+            ):
+                selection = QTextEdit.ExtraSelection()
+                selection.format.setUnderlineStyle(
+                    QTextCharFormat.UnderlineStyle.DotLine
+                )
+                selection.format.setUnderlineColor(self._unlabeled_underline_color)
+                selection.cursor = self._make_span_cursor(start, end)
+                selections.append(selection)
+        self._unlabeled_value_selections = selections
+        self._refresh_extra_selections()
+
+    def goto_next_unlabeled_value(self) -> bool:
+        """Select the next unlabeled enum-candidate value after the caret
+        (wrapping to the first). Returns False when there are none."""
+        if self._schema_model is None:
+            return False
+        spans_list = unlabeled_value_spans(
+            self._spans_text, self._spans, self._schema_model
+        )
+        if not spans_list:
+            return False
+        pos = self.textCursor().position()
+        target = next(((s, e) for s, e in spans_list if s > pos), spans_list[0])
+        cursor = self.textCursor()
+        cursor.setPosition(target[0])
+        cursor.setPosition(target[1], QTextCursor.MoveMode.KeepAnchor)
+        self.setTextCursor(cursor)
+        self.centerCursor()
+        return True
 
     def event_body_start_line_at_cursor(self) -> int | None:
         """Return the 1-based open-tag line of the event-handler body the
@@ -1236,6 +1347,19 @@ class XmlEditor(QPlainTextEdit):
                 menu.insertAction(before, edit_code_action)
             else:
                 menu.addAction(edit_code_action)
+        # "Annotate value…" opens the schema annotation popover for the
+        # attribute under the cursor. Offered whenever the cursor resolves to
+        # an attribute and a schema model is present (read-only mode too:
+        # annotation edits the model, not the document).
+        if self._schema_model is not None and attribute_value_at_position(
+            self.toPlainText(), cursor.position()
+        ) is not None:
+            annotate_action = QAction("Annotate value…", menu)
+            annotate_action.triggered.connect(self.request_annotate_at_cursor)
+            if before is not None:
+                menu.insertAction(before, annotate_action)
+            else:
+                menu.addAction(annotate_action)
         # "Add attribute ▸" lists settings-attributes the schema knows for this
         # element path that the element doesn't already have. Omitted entirely
         # when there are none (model None, read-only, not in an opening tag, or
@@ -1273,14 +1397,66 @@ class XmlEditor(QPlainTextEdit):
         self.find_selected_text.emit(selected)
 
     def contextMenuEvent(self, event) -> None:
+        # event.pos() is delivered in this widget's own coordinates, but
+        # cursorForPosition expects viewport coordinates (same translation
+        # the ToolTip handler in event() does, and for the same reason) --
+        # without it, a right-click on value B while the caret sits on value
+        # A would build the menu (and resolve "Annotate value...", "Add
+        # attribute", "Edit code...") against the stale caret at A instead of
+        # the actually-clicked position.
+        viewport_pos = self.viewport().mapFrom(self, event.pos())
+        doc_pos = self.cursorForPosition(viewport_pos).position()
+        self._prepare_context_menu_at(doc_pos)
         menu = self._build_context_menu()
         menu.exec(event.globalPos())
 
+    def _prepare_context_menu_at(self, doc_pos: int) -> None:
+        """Move the caret to ``doc_pos`` so the context menu built right
+        after this call reflects the right-clicked position rather than a
+        stale caret left over from an earlier click or edit. Split out from
+        contextMenuEvent so tests can drive it directly with a document
+        position instead of synthesizing a QContextMenuEvent.
+
+        Leaves the caret (and selection) untouched when ``doc_pos`` falls
+        inside the current selection: right-clicking inside a selection must
+        not destroy it, since the "Find" action depends on that selection
+        surviving the right-click. Standard editor behavior."""
+        cursor = self.textCursor()
+        if cursor.hasSelection():
+            start, end = cursor.selectionStart(), cursor.selectionEnd()
+            if start <= doc_pos <= end:
+                return
+        new_cursor = QTextCursor(self.document())
+        new_cursor.setPosition(doc_pos)
+        self.setTextCursor(new_cursor)
+
     def set_schema_model(self, model) -> None:
         """Inject the current in-memory schema Model (or None). Passed by
-        MainWindow after each enrich so value-hover tooltips reflect the
-        latest labels; None disables hovers (default)."""
+        MainWindow after each enrich/annotation so hover tooltips, completion
+        and the unlabeled-value underlines reflect the latest labels; None
+        disables them (default)."""
         self._schema_model = model
+        self._refresh_unlabeled_value_selections()
+
+    def schema_model(self):
+        """The injected schema Model, or None. Read-only accessor for
+        MainWindow's annotation flow."""
+        return self._schema_model
+
+    def request_annotate_at_cursor(self) -> bool:
+        """Resolve the caret onto an attribute (name token or value) and
+        emit annotate_value_requested. Returns False when no model is set or
+        the caret is not on an attribute. Works in read-only mode too —
+        annotating edits the schema model, never the document."""
+        if self._schema_model is None:
+            return False
+        resolved = attribute_value_at_position(
+            self.toPlainText(), self.textCursor().position()
+        )
+        if resolved is None:
+            return False
+        self.annotate_value_requested.emit(*resolved)
+        return True
 
     def unused_attributes_at(self, cursor_pos: int) -> list[str]:
         """Setting-attributes the schema knows for the opening tag at
