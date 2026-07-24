@@ -93,6 +93,7 @@ from pgtp_editor.ui._stub_action import add_stub_action
 from pgtp_editor.ui.about import show_about_dialog
 from pgtp_editor.ui.annotate_popover import AnnotatePopover
 from pgtp_editor.ui.caption_find_replace_dialog import CaptionFindReplaceDialog
+from pgtp_editor.ui.busy import busy_status, format_size
 from pgtp_editor.ui.center_stage import CenterStage
 from pgtp_editor.ui.manual_panel import (
     ManualContentsPanel,
@@ -895,37 +896,53 @@ class MainWindow(QMainWindow):
         a silently-emptied tree or a silently-forgotten project).
         """
         _log.info("file: open %s", path)
+        name = Path(path).name
         try:
-            project = load_project(path)
-        except PgtpParseError as exc:
-            self._handle_parse_failure(path, exc)
-            return
-        self.project_tree.populate_from_project(project)
-        self._current_project = project
-        # Normalize to str so downstream string ops (e.g. the ".bak" path
-        # concatenation in _revert_project / _write_project_text) never hit a
-        # TypeError when a caller passes a pathlib.Path instead of the
-        # QFileDialog string.
-        self._current_project_path = str(path)
-        raw_text = self._read_raw_text(path)
-        if raw_text is not None:
-            self._loading = True
+            message = f"Opening {name} ({format_size(os.path.getsize(path))})…"
+        except OSError:
+            # Never fail the open over a stat hiccup; just drop the size.
+            message = f"Opening {name}…"
+
+        parse_error = None
+        with busy_status(self.statusBar(), message):
             try:
-                self.center_stage.xml_editor.setPlainText(raw_text)
-            finally:
-                self._loading = False
-        self._set_dirty(False)
-        # A newly-opened project is a fresh document: drop the previous
-        # project's snapshots so undo never crosses between documents, then seed
-        # the history with the freshly-loaded text.
-        self._history.clear()
-        self._history.push(
-            self.center_stage.xml_editor.toPlainText(),
-            f"Opened {Path(path).name}",
-            baseline=True,
-        )
+                project = load_project(path)
+            except PgtpParseError as exc:
+                parse_error = exc
+            else:
+                self.project_tree.populate_from_project(project)
+                self._current_project = project
+                # Normalize to str so downstream string ops (e.g. the ".bak"
+                # path concatenation in _revert_project / _write_project_text)
+                # never hit a TypeError when a caller passes a pathlib.Path
+                # instead of the QFileDialog string.
+                self._current_project_path = str(path)
+                raw_text = self._read_raw_text(path)
+                if raw_text is not None:
+                    self._loading = True
+                    try:
+                        self.center_stage.xml_editor.setPlainText(raw_text)
+                    finally:
+                        self._loading = False
+                self._set_dirty(False)
+                # A newly-opened project is a fresh document: drop the previous
+                # project's snapshots so undo never crosses between documents,
+                # then seed the history with the freshly-loaded text.
+                self._history.clear()
+                self._history.push(
+                    self.center_stage.xml_editor.toPlainText(),
+                    f"Opened {name}",
+                    baseline=True,
+                )
+                # Schema enrichment is the slowest part of open; keep it inside
+                # the busy block so the hourglass covers it.
+                self._enrich_schema_from_file(path)
+
+        # Cursor restored here (busy_status __exit__), BEFORE any dialog.
+        if parse_error is not None:
+            self._handle_parse_failure(path, parse_error)
+            return
         self.statusBar().showMessage(f"Opened: {path}", 5000)
-        self._enrich_schema_from_file(path)
 
     def _enrich_schema_from_file(self, path):
         try:
@@ -1054,25 +1071,30 @@ class MainWindow(QMainWindow):
         if self._current_project is None:
             self.statusBar().showMessage("Open a project to validate.", 5000)
             return
+        name = (
+            Path(self._current_project_path).name
+            if self._current_project_path else "project"
+        )
         self._clear_validation_results()
-        issues = validate_project(self._current_project)
-        n_err = 0
-        n_warn = 0
-        for issue in issues:
-            if issue.severity == "error":
-                n_err += 1
-            else:
-                n_warn += 1
-            if issue.line is None:
-                text = f"{_VALIDATION_PREFIX}{issue.severity.upper()}: {issue.message}"
-            else:
-                text = (
-                    f"{_VALIDATION_PREFIX}{issue.severity.upper()} "
-                    f"line {issue.line}: {issue.message}"
-                )
-            item = QListWidgetItem(text)
-            item.setData(Qt.ItemDataRole.UserRole, issue.line)
-            self.audit_panel.addItem(item)
+        with busy_status(self.statusBar(), f"Validating {name}…"):
+            issues = validate_project(self._current_project)
+            n_err = 0
+            n_warn = 0
+            for issue in issues:
+                if issue.severity == "error":
+                    n_err += 1
+                else:
+                    n_warn += 1
+                if issue.line is None:
+                    text = f"{_VALIDATION_PREFIX}{issue.severity.upper()}: {issue.message}"
+                else:
+                    text = (
+                        f"{_VALIDATION_PREFIX}{issue.severity.upper()} "
+                        f"line {issue.line}: {issue.message}"
+                    )
+                item = QListWidgetItem(text)
+                item.setData(Qt.ItemDataRole.UserRole, issue.line)
+                self.audit_panel.addItem(item)
         if issues:
             self.statusBar().showMessage(
                 f"Validation: {n_err} error(s), {n_warn} warning(s)", 5000
@@ -1144,22 +1166,28 @@ class MainWindow(QMainWindow):
 
     def _reparse_raw_xml(self):
         text = self.center_stage.xml_editor.toPlainText()
-        try:
-            project = load_project_from_text(text, source_description="<editor>")
-        except PgtpParseError as exc:
-            self._handle_reparse_failure(exc)
+        parse_error = None
+        with busy_status(self.statusBar(), "Reparsing…"):
+            try:
+                project = load_project_from_text(text, source_description="<editor>")
+            except PgtpParseError as exc:
+                parse_error = exc
+            else:
+                # SUCCESS: rebuild tree + adopt the new model so click-sync realigns.
+                self.project_tree.populate_from_project(project)
+                self._current_project = project
+                if self.left_tabs.isTabVisible(self.table_refs_tab_index):
+                    self.table_refs_panel.set_usages(
+                        collect_table_usages(self._current_project)
+                    )
+                # Properties has no valid selection against the freshly rebuilt
+                # tree (populate_from_project cleared it); show the empty state
+                # until the user clicks again. show_node(None, None) resets it.
+                self.properties_panel.show_node(None, None)
+        # Cursor restored before any failure dialog.
+        if parse_error is not None:
+            self._handle_reparse_failure(parse_error)
             return
-        # SUCCESS: rebuild tree + adopt the new model so click-sync realigns.
-        self.project_tree.populate_from_project(project)
-        self._current_project = project
-        if self.left_tabs.isTabVisible(self.table_refs_tab_index):
-            self.table_refs_panel.set_usages(
-                collect_table_usages(self._current_project)
-            )
-        # Properties has no valid selection against the freshly rebuilt tree
-        # (populate_from_project cleared it); show the empty state until the
-        # user clicks again. show_node(None, None) is the panel's own reset.
-        self.properties_panel.show_node(None, None)
         self.statusBar().showMessage("Reparsed raw XML into tree", 5000)
         self._refresh_db_check_if_open(project)
 
@@ -2611,7 +2639,7 @@ class MainWindow(QMainWindow):
         command = build_generate_command(exe, self._current_project_path, output_folder)
         self._current_output_folder = output_folder
         self._is_generating = True
-        self.statusBar().showMessage("Generating…")
+        self.statusBar().showMessage("Generating PHP…")
         _log.info("generate: started")
         self._generator_runner.run(
             command,

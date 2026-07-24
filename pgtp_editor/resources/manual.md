@@ -25,6 +25,12 @@ Use **File ▸ Open** and pick a `.pgtp` file. The window has three areas:
   area. It opens on **Raw XML**; the other tabs appear when you invoke them.
 - **Right — Properties:** a read-only inspector for whatever you select in the tree.
 
+When you open a file, the status bar shows a live message such as
+`Opening dev_Ferrara.pgtp (312 KB)…` and the pointer becomes a wait cursor
+(hourglass) until the project is loaded; it then settles on `Opened: <path>`.
+The same busy feedback appears during other slow operations — see *A note on
+busy feedback*.
+
 ### Saving, closing, reverting
 
 - **File ▸ Save** (Ctrl+S) writes back to the same file.
@@ -425,6 +431,23 @@ The **Generation** menu drives the PHP Generator command-line to compile your
    **Save** or **Save As** first, so the generator always runs against the file on
    disk.
 3. **Open Output Folder** opens the generated output in your file browser.
+
+---
+
+## A note on busy feedback
+
+Some operations take a moment on a large project. While one runs, PGTP Editor
+shows a wait cursor (hourglass) and a live status-bar message so you can tell it
+is working rather than frozen:
+
+- **Opening a file:** `Opening <name> (<size>)…`, e.g. `Opening dev_Ferrara.pgtp (312 KB)…`.
+- **Tools ▸ Validate Project:** `Validating <name>…`.
+- **Tools ▸ Reparse Raw XML into Tree:** `Reparsing…`.
+- **Generation ▸ Generate PHP…:** `Generating PHP…`.
+
+This is purely a visual cue. The window is still unresponsive to input for the
+duration of the operation — there is no progress bar and nothing to cancel — it
+simply reads as busy instead of stalled.
 
 ---
 
