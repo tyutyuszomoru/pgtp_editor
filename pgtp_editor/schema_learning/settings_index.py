@@ -19,10 +19,10 @@ model's per-attribute entries.
 An attribute entry is the dict stored at
 ``Model.paths[path]["attributes"][name]`` — shaped
 ``{type, values, overflowed, attr_seen_count, labels, [kind]}``. The
-``kind`` key is written ONLY by the labeler (see
-``pgtp_editor.ui.annotate_schema_values_dialog``); attributes created by
-the Schema Learning Engine have no ``kind`` key and are treated as
-unclassified. Readers therefore use ``entry.get("kind")``.
+``kind`` key is written ONLY by the labeler (see the annotation popover
+``pgtp_editor.ui.annotate_popover``, wired via MainWindow); attributes
+created by the Schema Learning Engine have no ``kind`` key and are treated
+as unclassified. Readers therefore use ``entry.get("kind")``.
 """
 from __future__ import annotations
 
@@ -41,6 +41,63 @@ def attribute_kind(entry) -> str:
     """Returns one of ``"unclassified"`` / ``"setting"`` / ``"content"``.
     Missing or ``None`` ``kind`` maps to ``"unclassified"``."""
     return entry.get("kind") or "unclassified"
+
+
+def derived_bitflag_label(value, labels):
+    """Derived display label for a bit-flag composite ``value``.
+
+    ``labels`` maps value-strings to labels; only the atomic power-of-two
+    bits need labels (1, 2, 4, 8, ...). The composite's label is the '+'-join
+    of its set bits' labels in ascending bit order (5 -> "A+C" from 1="A",
+    4="C"). Returns None when ``value`` is not a positive integer or any set
+    bit lacks a label — callers then fall back to showing the bare value.
+    """
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return None
+    if number <= 0:
+        return None
+    parts = []
+    bit = 1
+    remaining = number
+    while remaining:
+        if remaining & 1:
+            label = labels.get(str(bit))
+            if label is None:
+                return None
+            parts.append(label)
+        remaining >>= 1
+        bit <<= 1
+    return "+".join(parts)
+
+
+def effective_labels(entry):
+    """The labels to DISPLAY for an attribute entry: a copy of the explicit
+    ``labels`` plus, when ``enum_mode == "bitflags"``, derived composite
+    labels for every known value (explicit labels always win). The value
+    universe is the union of engine-observed ``values`` and label keys, so
+    derivation works even after enum overflow (``values`` is None)."""
+    labels = entry.get("labels") or {}
+    if entry.get("enum_mode") != "bitflags":
+        return dict(labels)
+    universe = set(entry.get("values") or []) | set(labels)
+    result = {}
+    for value in universe:
+        explicit = labels.get(value)
+        if explicit is not None:
+            result[value] = explicit
+            continue
+        derived = derived_bitflag_label(value, labels)
+        if derived is not None:
+            result[value] = derived
+    return result
+
+
+def value_note(entry, value):
+    """The labeler's free-text note for ``value`` (structural consequences,
+    e.g. "enables the <Watermark> child tag"), or None."""
+    return (entry.get("notes") or {}).get(value)
 
 
 def enum_hint(model, tag_chain, attr):
@@ -67,12 +124,17 @@ def enum_hint(model, tag_chain, attr):
     if not labels and not is_enum_candidate(entry):
         return None
 
-    values = entry.get("values")
-    keys = values if values else sorted(labels)
+    display = effective_labels(entry)
+    notes = entry.get("notes") or {}
+    universe = set(entry.get("values") or []) | set(labels)
     parts = []
-    for value in sorted(keys):
-        label = labels.get(value)
-        parts.append(f"{value} = {label}" if label else f"{value}")
+    for value in sorted(universe):
+        label = display.get(value)
+        part = f"{value} = {label}" if label else f"{value}"
+        note = notes.get(value)
+        if note:
+            part = f"{part} ({note})"
+        parts.append(part)
     return f"{attr} — " + " · ".join(parts)
 
 
@@ -91,19 +153,22 @@ def known_attributes(model, tag_chain, present_attrs) -> list[str]:
 
 
 def known_values(model, tag_chain, attr) -> list[tuple[str, str | None]]:
-    """Sorted ``(value, label)`` pairs for an attribute's known value set at
-    ``tag_chain`` — the same values ``enum_hint`` renders. ``label`` is
-    ``labels.get(value)`` or ``None``.
+    """Sorted ``(value, label)`` pairs for an attribute at ``tag_chain``.
 
-    Returns ``[]`` when the attribute is unknown at the path, its entry is
-    ``overflowed``, or it has no ``values`` (nothing reliable to offer). Not
-    filtered by kind, so any enumerated attribute chains into the value picker.
-    """
+    The value universe is the UNION of engine-observed ``values`` and
+    labeler-added ``labels`` keys — a value labeled before being observed,
+    or dropped from ``values`` by enum overflow, still completes. Labels are
+    the effective (explicit + derived bit-flag) labels. Returns ``[]`` when
+    the attribute is unknown at the path or the universe is empty. Not
+    filtered by kind."""
     entry = model.paths.get(tag_chain, {}).get("attributes", {}).get(attr)
-    if entry is None or entry.get("overflowed") or not entry.get("values"):
+    if entry is None:
         return []
-    labels = entry.get("labels") or {}
-    return [(value, labels.get(value)) for value in sorted(entry["values"])]
+    universe = set(entry.get("values") or []) | set(entry.get("labels") or {})
+    if not universe:
+        return []
+    labels = effective_labels(entry)
+    return [(value, labels.get(value)) for value in sorted(universe)]
 
 
 def unused_setting_attributes(model, tag_chain, present_attrs) -> list[str]:

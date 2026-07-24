@@ -128,12 +128,19 @@ uses that knowledge to help you edit (see *Schema Tools*).
 - **Ctrl+Space** inside an opening tag lists the attributes the schema knows for
   that element; use the arrow keys and **Tab** (or Enter) to insert the chosen one
   as `name=""`. When the attribute has known values, a second list appears so you
-  can pick the value too. Type to narrow the list; **Esc** dismisses it.
+  can pick the value too — each row shows `value = label` when the value has been
+  labelled, including labels derived for bit-flag sums, and the list also offers
+  values known only from their labels even if never yet seen in a file. Type to
+  narrow the list; **Esc** dismisses it.
 - **Right-click ▸ Add attribute ▸** lists the *settings* attributes the schema
   knows for the current element that it doesn't already have — a quick way to add a
   recognized setting.
 - **Hovering** an attribute value whose meaning has been labelled shows a tooltip
-  spelling it out, e.g. `editFormMode — 1 = modal · 2 = new page · 3 = inline`.
+  spelling it out, e.g. `editFormMode — 1 = modal · 2 = new page · 3 = inline`,
+  including any note attached to a value (shown in parentheses after its label).
+- Enum-like values that have **no label yet** are marked with a subtle **dotted
+  underline** — put the cursor on one and press **Ctrl+L** to label it (see
+  *Schema Tools*).
 - **Ctrl+click** a tag to jump to its matching open/close tag; **Alt+click** to
   jump to the parent element's opening tag. The caret moves and scrolls into
   view; nothing is selected.
@@ -264,18 +271,74 @@ A shared modal drives searching and bulk editing:
 
 ## Schema Tools
 
-The **Schema** menu exposes the learned model of the `.pgtp` format — the same
-knowledge that drives Ctrl+Space completion, the *Add attribute* menu, and value
-hovers in the Raw XML editor.
+PGTP Editor learns the structure of `.pgtp` files from the projects you open
+(every **File ▸ Open** enriches the model) — the same knowledge that drives
+Ctrl+Space completion, the *Add attribute* menu, and value hovers in the Raw XML
+editor. The **Schema** menu is where you teach it what the values *mean*, and
+where you share that knowledge with your team.
 
-- **Annotate Schema Values…** — review the attributes the engine has seen and mark
-  each as a **setting** (a fixed option, e.g. an ability mode) or **content**
-  (file-specific data). For settings with a small set of values you can **label**
-  each value (for example `1 = modal`, `2 = new page`). Those labels are what
-  appear in editor hovers and in the Ctrl+Space value picker.
-- **Open XSD** — view the XSD generated from the learned model (read-only).
-- **Open XSD Labels (JSON)** — view the labels store behind the annotations
-  (read-only).
+### Annotating a value
+
+Place the cursor on an attribute value (or its name) in the Raw XML editor and
+choose **Schema ▸ Annotate Value at Cursor** (Ctrl+L), or right-click and pick
+**Annotate value…**. A compact popover opens at the cursor:
+
+- A read-only header shows what you're annotating: the element path, the
+  attribute, and the value under the cursor.
+- **Label** — the value's meaning (for example `1` = `modal`). Press **Enter** to
+  save; saving an empty label removes the label.
+- **Note** — optional free text for structural consequences (for example
+  "enables the `<Watermark>` child tag"). Notes appear in hover hints and in the
+  generated XSD, but not in the compact completion popup.
+- **Bit-flags** — check this when the attribute's values add up (3 = 1+2). You
+  then only label the atomic bits (1, 2, 4, 8, …); composite values get derived
+  labels automatically — with 1 = `A` and 4 = `C`, the value 5 shows as `A+C`.
+  An explicit label on a composite value overrides the derived one.
+- **Kind** — **Unclassified**, **Setting** (a fixed option), or **Content**
+  (file-specific data whose values are not offered in completion).
+
+**Esc** cancels without saving. Annotating works even while the Raw XML editor is
+read-only in Caption Mode — it edits the learned schema, never your document. The
+attribute must already be in the learned schema; if it isn't (say you just
+hand-typed it), open the file via **File ▸ Open** so the engine learns it first.
+
+### Finding unlabeled values
+
+Enum-like values that have no label yet get a subtle **dotted underline** in the
+Raw XML editor. **Schema ▸ Next Unlabeled Value** (Ctrl+Shift+L) selects the next
+one after the cursor, wrapping around at the end of the document — so you can work
+through a file labeling as you go.
+
+### Sharing annotations with your team
+
+The learned schema model is per-user, but the Schema menu can synchronize
+annotations through a small dedicated git repository that holds only schema
+models:
+
+- **Team Sync Settings…** — set the **Repository URL** and the **SSH key path**
+  once.
+- **Publish My Annotations** — uploads your model to the team repository as
+  `models/<username>.json`.
+- **Fetch Team Master** — pulls the team's `master.json` and merges it into your
+  local model. Where your label disagrees with the master's, **your local label
+  wins**; each such conflict is listed in the Audit panel.
+- **Merge Team Models…** — the admin action: folds every user's model into
+  `master.json` and pushes it. When two users labeled the same value differently,
+  a **Merge Conflicts** dialog asks you to pick a side for each disagreement;
+  **Cancel** aborts the whole merge and nothing is pushed.
+
+Failures (no network, a bad key, an aborted merge) always leave your local model
+untouched and report a `[Schema]` line in the Audit panel.
+
+### The generated XSD
+
+- **Open XSD** — view the XSD generated from the learned model, including your
+  labels and notes as documentation.
+- **Open XSD Labels (JSON)** — view the raw model store behind the annotations.
+
+Both viewers are **read-only**: `schema.xsd` is a generated artifact, regenerated
+after every annotation — hand-edits to it do not persist. Annotations live in the
+schema model, not in the XSD.
 
 ---
 
@@ -413,6 +476,8 @@ simply reads as busy instead of stalled.
 | **F2** / **Shift+F2** | Raw XML | Next / previous bookmark |
 | **Ctrl+Z** / **Ctrl+Y** | Raw XML | Undo / redo (snapshot history) |
 | **Ctrl+Space** | Raw XML | Attribute / value completion |
+| **Ctrl+L** | Raw XML | Annotate value at cursor (schema label popover) |
+| **Ctrl+Shift+L** | Raw XML | Next unlabeled value |
 | **Ctrl+click** | Raw XML (mouse) | Jump to matching open/close tag |
 | **Alt+click** | Raw XML (mouse) | Jump to parent tag start |
 | **Ctrl+Shift+B** | Raw XML / Code Editor | Select enclosing block (caret to start) |

@@ -76,12 +76,22 @@ from pgtp_editor.model.parser import (
 )
 from pgtp_editor.schema_learning.model import Model
 from pgtp_editor.schema_learning.parser import walk_document
+from pgtp_editor.schema_learning.settings_index import attribute_kind
 from pgtp_editor.schema_learning.storage import schema_model_path, schema_xsd_path
 from pgtp_editor.schema_learning.xsd_gen import generate_xsd
+from pgtp_editor.schema_learning import sync
+from pgtp_editor.schema_learning.merge import (
+    LABELER_DICT_FIELDS,
+    LABELER_SCALAR_FIELDS,
+    apply_resolution,
+    merge_models,
+)
+from pgtp_editor.ui.merge_conflicts_dialog import MergeConflictsDialog
+from pgtp_editor.ui.team_sync_dialog import TeamSyncSettingsDialog, load_sync_config
 from pgtp_editor.validation.tier2 import validate_project
 from pgtp_editor.ui._stub_action import add_stub_action
 from pgtp_editor.ui.about import show_about_dialog
-from pgtp_editor.ui.annotate_schema_values_dialog import AnnotateSchemaValuesDialog
+from pgtp_editor.ui.annotate_popover import AnnotatePopover
 from pgtp_editor.ui.caption_find_replace_dialog import CaptionFindReplaceDialog
 from pgtp_editor.ui.busy import busy_status, format_size
 from pgtp_editor.ui.center_stage import CenterStage
@@ -142,6 +152,78 @@ _SCHEMA_REPORT_TEMPLATES = {
     "enum_overflow": "[Schema] ENUM OVERFLOWED: {path}@{attr} now free-form string (from {source})",
     "now_optional": "[Schema] NOW OPTIONAL: {path}@{attr} (previously required, from {source})",
 }
+
+
+def _labeler_keys(model):
+    """Yield ``(path, attr, field, value)`` for every labeler-owned entry
+    (labels/notes dict entries, kind/enum_mode scalars) present in
+    ``model``. ``value`` is the dict key for labels/notes, or None for the
+    scalar fields -- mirroring ``Conflict``'s own key shape."""
+    for path, entry in model.paths.items():
+        for attr, attr_entry in entry.get("attributes", {}).items():
+            for field in LABELER_DICT_FIELDS:
+                for value in attr_entry.get(field) or {}:
+                    yield (path, attr, field, value)
+            for field in LABELER_SCALAR_FIELDS:
+                if attr_entry.get(field) is not None:
+                    yield (path, attr, field, None)
+
+
+def _labeler_value(model, path, attr, field, value):
+    """Return the labeler value currently recorded in ``model`` at
+    ``(path, attr, field, value)``, or None if nothing is recorded there
+    yet (missing path, missing attribute, or missing dict/scalar entry)."""
+    entry = model.paths.get(path)
+    if entry is None:
+        return None
+    attr_entry = entry.get("attributes", {}).get(attr)
+    if attr_entry is None:
+        return None
+    if field in LABELER_DICT_FIELDS:
+        return (attr_entry.get(field) or {}).get(value)
+    return attr_entry.get(field)
+
+
+def _merge_user_model_with_provenance(master, name, user_model, origin):
+    """Merge ``user_model`` into ``master`` in place, returning a list of
+    ``(base_source, incoming_source, conflict)`` tuples for the conflicts
+    this merge produced.
+
+    ``origin`` maps ``(path, attr, field, value)`` -> the name of the user
+    model that contributed master's *current* value there; a key absent
+    from ``origin`` means that value is master's own pre-existing state
+    (rendered as "master"). Merging several user models sequentially into
+    the same master means a later user's conflict may be against an
+    earlier user's just-adopted label rather than against master's
+    original value -- ``origin`` lets the caller show the real source
+    instead of always saying "master".
+
+    A key can only ever be a conflict OR a fresh (no-conflict) adoption in
+    a single merge (``merge_models`` records a conflict exactly when master
+    already had a differing value there), so snapshotting "missing before"
+    keys and updating ``origin`` for them after the merge never clashes
+    with this merge's own conflicts.
+    """
+    missing_before = [
+        key for key in _labeler_keys(user_model)
+        if _labeler_value(master, *key) is None
+    ]
+    new_conflicts = merge_models(master, user_model)
+    tagged = [
+        (
+            origin.get(
+                (conflict.path, conflict.attr, conflict.field, conflict.value),
+                "master",
+            ),
+            name,
+            conflict,
+        )
+        for conflict in new_conflicts
+    ]
+    for key in missing_before:
+        if _labeler_value(master, *key) is not None:
+            origin[key] = name
+    return tagged
 
 
 class MainWindow(QMainWindow):
@@ -323,6 +405,13 @@ class MainWindow(QMainWindow):
         # The live CodeEditorDialog (kept referenced so it is not GC'd while
         # shown). MainWindow owns its lifecycle + the write-back.
         self._code_editor_dialog: CodeEditorDialog | None = None
+
+        self.center_stage.xml_editor.annotate_value_requested.connect(
+            self._open_annotate_popover
+        )
+        # The live AnnotatePopover (kept on self so it is not garbage
+        # collected while shown as a parentless-popup child).
+        self._annotate_popover = None
 
         # Permanent status-bar mode indicator (Editing vs Caption Mode).
         self._mode_label = QLabel("Editing Mode")
@@ -1859,18 +1948,127 @@ class MainWindow(QMainWindow):
 
     def _build_schema_menu(self):
         menu = self.menuBar().addMenu("Schema")
-        annotate_action = menu.addAction("Annotate Schema Values...")
-        annotate_action.triggered.connect(self._open_annotate_schema_values)
+        annotate_action = menu.addAction("Annotate Value at Cursor")
+        annotate_action.setShortcut(QKeySequence("Ctrl+L"))
+        annotate_action.triggered.connect(self._annotate_value_at_cursor)
+        next_unlabeled_action = menu.addAction("Next Unlabeled Value")
+        next_unlabeled_action.setShortcut(QKeySequence("Ctrl+Shift+L"))
+        next_unlabeled_action.triggered.connect(self._goto_next_unlabeled_value)
+        menu.addSeparator()
+        publish_action = menu.addAction("Publish My Annotations")
+        publish_action.triggered.connect(self._publish_my_annotations)
+        fetch_action = menu.addAction("Fetch Team Master")
+        fetch_action.triggered.connect(self._fetch_team_master)
+        merge_action = menu.addAction("Merge Team Models…")
+        merge_action.triggered.connect(self._merge_team_models)
+        sync_settings_action = menu.addAction("Team Sync Settings…")
+        sync_settings_action.triggered.connect(self._open_team_sync_settings)
+        menu.addSeparator()
         open_xsd_action = menu.addAction("Open XSD")
         open_xsd_action.triggered.connect(self._open_xsd_viewer)
         open_labels_action = menu.addAction("Open XSD Labels (JSON)")
         open_labels_action.triggered.connect(self._open_labels_viewer)
 
-    def _open_annotate_schema_values(self):
-        dialog = AnnotateSchemaValuesDialog(self, schema_storage_dir=self._schema_storage_dir)
-        dialog.exec()
-
     _NO_SCHEMA_MESSAGE = "No schema learned yet — open a .pgtp file first."
+
+    def _annotate_value_at_cursor(self):
+        editor = self.center_stage.xml_editor
+        if editor.schema_model() is None:
+            self.statusBar().showMessage(self._NO_SCHEMA_MESSAGE, 5000)
+            return
+        if not editor.request_annotate_at_cursor():
+            self.statusBar().showMessage(
+                "Place the cursor on an attribute value to annotate it.", 5000
+            )
+
+    def _goto_next_unlabeled_value(self):
+        if not self.center_stage.xml_editor.goto_next_unlabeled_value():
+            self.statusBar().showMessage(
+                "No unlabeled enum values in this document.", 5000
+            )
+
+    def _open_annotate_popover(self, tag_chain, attr, value):
+        editor = self.center_stage.xml_editor
+        model = editor.schema_model()
+        entry = (
+            model.paths.get(tag_chain, {}).get("attributes", {}).get(attr)
+            if model is not None
+            else None
+        )
+        if entry is None:
+            # The document carries an attribute the model has not learned yet
+            # (e.g. hand-typed since the last File ▸ Open). Learning is the
+            # engine's job — never create entries from the labeler side.
+            self.statusBar().showMessage(
+                f"'{attr}' is not in the learned schema yet — "
+                "File ▸ Open the file to learn it first.",
+                5000,
+            )
+            return
+        labels = entry.get("labels") or {}
+        notes = entry.get("notes") or {}
+        popover = AnnotatePopover(
+            tag_chain,
+            attr,
+            value,
+            label=labels.get(value, ""),
+            note=notes.get(value, ""),
+            kind=attribute_kind(entry),
+            bitflags=entry.get("enum_mode") == "bitflags",
+            parent=self,
+        )
+        popover.committed.connect(
+            lambda edits: self._apply_annotation(tag_chain, attr, value, edits)
+        )
+        rect = editor.cursorRect()
+        popover.show_at(editor.viewport().mapToGlobal(rect.bottomLeft()))
+        self._annotate_popover = popover
+
+    def _apply_annotation(self, tag_chain, attr, value, edits):
+        """Write one popover commit into the labeler-owned model fields,
+        persist model + regenerated XSD, and refresh the editor. Empty
+        strings remove; 'unclassified' kind and un-checked bitflags remove
+        their keys (absent == default, keeping the JSON tidy)."""
+        editor = self.center_stage.xml_editor
+        model = editor.schema_model()
+        entry = model.paths[tag_chain]["attributes"][attr]
+        label = edits["label"].strip()
+        note = edits["note"].strip()
+        entry.setdefault("labels", {})
+        if label:
+            entry["labels"][value] = label
+        else:
+            entry["labels"].pop(value, None)
+        notes = entry.setdefault("notes", {})
+        if note:
+            notes[value] = note
+        else:
+            notes.pop(value, None)
+        if not entry["notes"]:
+            entry.pop("notes")
+        if edits["bitflags"]:
+            entry["enum_mode"] = "bitflags"
+        else:
+            entry.pop("enum_mode", None)
+        if edits["kind"] == "unclassified":
+            entry.pop("kind", None)
+        else:
+            entry["kind"] = edits["kind"]
+        try:
+            model_path = schema_model_path(self._schema_storage_dir)
+            model_path.parent.mkdir(parents=True, exist_ok=True)
+            model.save(model_path)
+            schema_xsd_path(self._schema_storage_dir).write_text(
+                generate_xsd(model), encoding="utf-8"
+            )
+        except Exception as exc:
+            self.audit_panel.addItem(f"[Schema] Could not save annotation: {exc}")
+            return
+        editor.set_schema_model(model)  # refreshes underlines
+        shown = label if label else "(no label)"
+        self.audit_panel.addItem(
+            f'[Schema] LABELED: {tag_chain}@{attr} "{value}" = "{shown}"'
+        )
 
     def _open_xsd_viewer(self):
         try:
@@ -1897,6 +2095,153 @@ class MainWindow(QMainWindow):
         self._labels_viewer.set_title("Schema Labels (JSON)")
         self._labels_viewer.set_content(text)
         self._labels_viewer.show()
+
+    def _sync_config(self):
+        """The configured SyncConfig, or None (with a pointer to the
+        settings dialog in the status bar)."""
+        config = load_sync_config(self._settings, self._schema_storage_dir)
+        if config is None:
+            self.statusBar().showMessage(
+                "Team sync is not configured — Schema ▸ Team Sync Settings…", 5000
+            )
+        return config
+
+    def _open_team_sync_settings(self):
+        dialog = TeamSyncSettingsDialog(self._settings, self)
+        dialog.exec()
+
+    def _publish_my_annotations(self):
+        config = self._sync_config()
+        if config is None:
+            return
+        model_path = schema_model_path(self._schema_storage_dir)
+        if not model_path.exists():
+            self.statusBar().showMessage(self._NO_SCHEMA_MESSAGE, 5000)
+            return
+        self.statusBar().showMessage("Publishing annotations…")
+        run_async(
+            lambda: sync.publish_model(config, model_path),
+            self._on_publish_done,
+            self._on_sync_error,
+        )
+
+    def _on_publish_done(self, published):
+        if published is None:
+            self.audit_panel.addItem("[Schema] Publish: no changes since last publish.")
+        else:
+            self.audit_panel.addItem(f"[Schema] Published annotations as {published}")
+        self.statusBar().clearMessage()
+
+    def _on_sync_error(self, exc):
+        """Any sync failure: local model/XSD untouched, one audit line."""
+        self.audit_panel.addItem(f"[Schema] Sync failed: {exc}")
+        self.statusBar().clearMessage()
+
+    def _fetch_team_master(self):
+        config = self._sync_config()
+        if config is None:
+            return
+
+        def job():
+            master = sync.fetch_master(config)
+            if master is None:
+                raise sync.SyncError("no master.json in the team repo yet")
+            return Model.load(master)
+
+        self.statusBar().showMessage("Fetching team master…")
+        run_async(job, self._on_master_fetched, self._on_sync_error)
+
+    def _on_master_fetched(self, remote_model):
+        model_path = schema_model_path(self._schema_storage_dir)
+        model_path.parent.mkdir(parents=True, exist_ok=True)
+        local = Model.load(model_path) if model_path.exists() else Model()
+        conflicts = merge_models(local, remote_model)
+        local.save(model_path)
+        schema_xsd_path(self._schema_storage_dir).write_text(
+            generate_xsd(local), encoding="utf-8"
+        )
+        self.center_stage.xml_editor.set_schema_model(local)
+        self.audit_panel.addItem(
+            "[Schema] Fetched team master and merged it into the local model."
+        )
+        for conflict in conflicts[:20]:
+            self.audit_panel.addItem(
+                f"[Schema] CONFLICT (kept local): {conflict.path}@{conflict.attr}"
+                f' {conflict.field} "{conflict.value or ""}"'
+                f' local="{conflict.base}" master="{conflict.incoming}"'
+            )
+        if len(conflicts) > 20:
+            self.audit_panel.addItem(
+                f"[Schema] …and {len(conflicts) - 20} more conflicts (kept local)."
+            )
+        self.statusBar().clearMessage()
+
+    def _merge_team_models(self):
+        config = self._sync_config()
+        if config is None:
+            return
+
+        def job():
+            paths = sync.team_model_paths(config)
+            master_path = Path(config.clone_dir) / "master.json"
+            master = Model.load(master_path) if master_path.exists() else Model()
+            return master, [(p.stem, Model.load(p)) for p in paths]
+
+        self.statusBar().showMessage("Merging team models…")
+        run_async(
+            job,
+            lambda result: self._on_team_models_loaded(config, result),
+            self._on_sync_error,
+        )
+
+    def _on_team_models_loaded(self, config, result):
+        master, user_models = result
+        if not user_models:
+            self.audit_panel.addItem(
+                "[Schema] Merge: no models/*.json in the team repo yet."
+            )
+            self.statusBar().clearMessage()
+            return
+        origin = {}
+        tagged_conflicts = []
+        for name, user_model in user_models:
+            tagged_conflicts.extend(
+                _merge_user_model_with_provenance(master, name, user_model, origin)
+            )
+        if tagged_conflicts:
+            base_sources = [base for base, _incoming, _conflict in tagged_conflicts]
+            incoming_sources = [
+                incoming for _base, incoming, _conflict in tagged_conflicts
+            ]
+            conflicts = [conflict for _base, _incoming, conflict in tagged_conflicts]
+            dialog = MergeConflictsDialog(
+                conflicts,
+                base_sources=base_sources,
+                incoming_sources=incoming_sources,
+                parent=self,
+            )
+            if dialog.exec() != QDialog.DialogCode.Accepted:
+                self.audit_panel.addItem("[Schema] Merge aborted — nothing was pushed.")
+                self.statusBar().clearMessage()
+                return
+            for use_incoming, conflict in zip(dialog.resolutions(), conflicts):
+                apply_resolution(master, conflict, use_incoming)
+        run_async(
+            lambda: sync.push_master(config, master),
+            self._on_master_pushed,
+            self._on_sync_error,
+        )
+
+    def _on_master_pushed(self, pushed):
+        self.audit_panel.addItem(
+            "[Schema] Merged team models into master and pushed."
+            if pushed
+            else "[Schema] Merge: master unchanged — nothing to push."
+        )
+        self.audit_panel.addItem(
+            "[Schema] Run Schema ▸ Fetch Team Master to update your local model."
+        )
+        self.statusBar().clearMessage()
 
     def _build_database_menu(self):
         menu = self.menuBar().addMenu("Database")
