@@ -383,3 +383,57 @@ def test_teardown_removes_qt_handler(clean_logging, qtbot):
     _flush_all()
     text = next(second.glob("debug_*.log")).read_text("utf-8")
     assert "post-teardown-qt-msg" not in text
+
+
+def test_schema_learning_enrichment_hot_modules_excluded():
+    # The per-element recursive schema-learning paths (parser.walk_element,
+    # Model.merge_element/_merge_children, types.infer_scalar_type/combine_type)
+    # are called hundreds of thousands of times when enriching a large real
+    # .pgtp on open; tracing them flooded --debug (46 MB in ~90s) until the
+    # process died before enrichment finished. They must be silenced.
+    assert debuglog.is_excluded("pgtp_editor.schema_learning.parser", "walk_element")
+    assert debuglog.is_excluded(
+        "pgtp_editor.schema_learning.model", "Model.merge_element"
+    )
+    assert debuglog.is_excluded(
+        "pgtp_editor.schema_learning.types", "infer_scalar_type"
+    )
+    assert debuglog.is_excluded("pgtp_editor.schema_learning.types", "combine_type")
+    # settings_index is a light, non-flooding path and stays traced.
+    assert not debuglog.is_excluded(
+        "pgtp_editor.schema_learning.settings_index", "attribute_kind"
+    )
+
+
+def test_tracer_silences_schema_learning_enrichment_but_keeps_settings_index(
+    clean_logging,
+):
+    """Behavioral counterpart to the predicate test: under --debug, exercising
+    the enrichment hot paths (parser.walk_element, Model.merge_element ->
+    types.infer_scalar_type/combine_type) must emit NO trace lines for those
+    three modules, while the light settings_index query layer still traces."""
+    import defusedxml.ElementTree as ET
+
+    tmp_path = clean_logging
+    debuglog.setup(debug=True, dir_override=tmp_path)
+
+    from pgtp_editor.schema_learning.model import Model
+    from pgtp_editor.schema_learning.parser import walk_element
+    from pgtp_editor.schema_learning.settings_index import attribute_kind
+
+    root = ET.fromstring('<root a="1"><child b="2"/></root>')
+    walked = list(walk_element(root, root.tag))   # parser (recursive)
+    model = Model()
+    for path, attrib, child_counts, has_text in walked:
+        model.merge_element(path, attrib, child_counts, has_text)   # model -> types
+    attribute_kind({"kind": "setting"})   # settings_index: stays traced
+
+    _flush_all()
+    text = _debug_text(tmp_path)
+    assert "schema_learning.parser" not in text
+    assert "schema_learning.model" not in text
+    assert "schema_learning.types" not in text
+    # settings_index proves the tracer was live and enrichment silencing is
+    # surgical, not a blanket schema_learning shutoff.
+    assert "> schema_learning.settings_index.attribute_kind" in text
+    assert "< schema_learning.settings_index.attribute_kind" in text
