@@ -383,3 +383,23 @@ def test_teardown_removes_qt_handler(clean_logging, qtbot):
     _flush_all()
     text = next(second.glob("debug_*.log")).read_text("utf-8")
     assert "post-teardown-qt-msg" not in text
+
+
+def test_schema_learning_enrichment_hot_modules_excluded():
+    # The per-element recursive schema-learning paths (parser.walk_element,
+    # Model.merge_element/_merge_children, types.infer_scalar_type/combine_type)
+    # are called hundreds of thousands of times when enriching a large real
+    # .pgtp on open; tracing them flooded --debug (46 MB in ~90s) until the
+    # process died before enrichment finished. They must be silenced.
+    assert debuglog.is_excluded("pgtp_editor.schema_learning.parser", "walk_element")
+    assert debuglog.is_excluded(
+        "pgtp_editor.schema_learning.model", "Model.merge_element"
+    )
+    assert debuglog.is_excluded(
+        "pgtp_editor.schema_learning.types", "infer_scalar_type"
+    )
+    assert debuglog.is_excluded("pgtp_editor.schema_learning.types", "combine_type")
+    # settings_index is a light, non-flooding path and stays traced.
+    assert not debuglog.is_excluded(
+        "pgtp_editor.schema_learning.settings_index", "attribute_kind"
+    )
