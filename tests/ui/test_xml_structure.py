@@ -375,3 +375,27 @@ def test_build_parent_map_top_level_spans_have_no_parent():
     spans = xs.scan(text)
     pmap = xs.build_parent_map(spans)
     assert all(pmap[id(s)] is None for s in spans)
+
+
+def test_build_parent_map_matches_parent_tag_span_on_deep_mixed_nesting():
+    """Parity beyond the two-level case: several levels deep, repeated sibling
+    names, self-closing siblings interleaved with containers, and whitespace --
+    every span's parent from the one-pass map must equal parent_tag_span's."""
+    from pgtp_editor.ui import xml_structure as xs
+
+    text = (
+        "<Root>\n"
+        "  <Page><Detail><Column c='1'/><Column c='2'/></Detail></Page>\n"
+        "  <Page><Header/><Detail><Column c='3'/></Detail></Page>\n"
+        "</Root>\n"
+    )
+    spans = xs.scan(text)
+    pmap = xs.build_parent_map(spans)
+    assert set(pmap) == {id(s) for s in spans}
+    for span in spans:
+        expected = xs.parent_tag_span(spans, span)
+        assert pmap[id(span)] is expected, (
+            f"{span.name}@{span.open_start}: got "
+            f"{pmap[id(span)].name if pmap[id(span)] else None}, "
+            f"expected {expected.name if expected else None}"
+        )

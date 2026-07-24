@@ -301,6 +301,22 @@ def test_prepare_context_menu_at_preserves_selection_containing_click(qtbot):
     assert editor.textCursor().selectionEnd() == sel_end
 
 
+def test_unlabeled_value_spans_uses_deep_chain_built_via_parent_map():
+    # A three-level chain A/B/C must be assembled by walking build_parent_map
+    # up two levels; the same attribute name at a shorter/wrong chain must not
+    # match. Guards that the O(1) parent lookup preserves full-chain fidelity.
+    text = '<A><B><C mode="1"/></B></A>'
+    model = _model({
+        "A/B/C": {"mode": _entry(["1"])},
+        "A/C": {"mode": _entry(["1"], labels={"1": "labeled"})},
+        "C": {"mode": _entry(["1"], labels={"1": "labeled"})},
+    })
+    spans = xml_structure.scan(text)
+    result = unlabeled_value_spans(text, spans, model)
+    start = text.index('"1"') + 1
+    assert result == [(start, start + 1)]
+
+
 def test_unlabeled_value_spans_scales_to_large_documents():
     """Regression: unlabeled_value_spans must not recompute each span's parent
     chain with per-span O(n) scans (O(n^2) overall), which hangs on large real
