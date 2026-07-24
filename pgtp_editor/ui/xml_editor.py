@@ -233,6 +233,9 @@ def unlabeled_value_spans(text: str, spans, model) -> list[tuple[int, int]]:
     start offset. Drives the dotted underlines and Next Unlabeled Value."""
     result = []
     label_cache: dict[int, dict] = {}
+    # Precompute every span's parent once (O(n log n)); walking the chain per
+    # span via parent_tag_span is O(n) each -> O(n^2) and hangs on large files.
+    parent_map = xml_structure.build_parent_map(spans)
     for span in spans:
         open_end = _opening_tag_end(text, span.open_start)
         if open_end is None:
@@ -240,7 +243,7 @@ def unlabeled_value_spans(text: str, spans, model) -> list[tuple[int, int]]:
         names = [span.name]
         walker = span
         while walker.depth > 0:
-            parent = xml_structure.parent_tag_span(spans, walker)
+            parent = parent_map.get(id(walker))
             if parent is None:
                 break
             names.append(parent.name)

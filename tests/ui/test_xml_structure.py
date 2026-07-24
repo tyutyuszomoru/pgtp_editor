@@ -348,3 +348,30 @@ def test_matching_tag_target_repeated_siblings_resolves_correct_instance():
     # Click the SECOND <item> open tag; must jump to the SECOND </item>.
     pos = doc.rindex("<item>") + 1
     assert matching_tag_target(spans, doc, pos) == doc.rindex("</item>")
+
+
+def test_build_parent_map_matches_parent_tag_span_on_well_formed():
+    """build_parent_map must return, for every span, the same parent
+    parent_tag_span computes (one-pass O(n log n) vs per-span O(n))."""
+    from pgtp_editor.ui import xml_structure as xs
+
+    text = '<A><B><C x="1"/></B><D/></A>'
+    spans = xs.scan(text)
+    pmap = xs.build_parent_map(spans)
+    assert set(pmap) == {id(s) for s in spans}
+    for span in spans:
+        expected = xs.parent_tag_span(spans, span)
+        assert pmap[id(span)] is expected, (
+            f"{span.name}: got "
+            f"{pmap[id(span)].name if pmap[id(span)] else None}, "
+            f"expected {expected.name if expected else None}"
+        )
+
+
+def test_build_parent_map_top_level_spans_have_no_parent():
+    from pgtp_editor.ui import xml_structure as xs
+
+    text = "<A/><B/>"
+    spans = xs.scan(text)
+    pmap = xs.build_parent_map(spans)
+    assert all(pmap[id(s)] is None for s in spans)

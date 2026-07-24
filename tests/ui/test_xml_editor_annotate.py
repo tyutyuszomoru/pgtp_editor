@@ -299,3 +299,30 @@ def test_prepare_context_menu_at_preserves_selection_containing_click(qtbot):
     assert editor.textCursor().selectedText() == "1"
     assert editor.textCursor().selectionStart() == sel_start
     assert editor.textCursor().selectionEnd() == sel_end
+
+
+def test_unlabeled_value_spans_scales_to_large_documents():
+    """Regression: unlabeled_value_spans must not recompute each span's parent
+    chain with per-span O(n) scans (O(n^2) overall), which hangs on large real
+    files (e.g. the 37k-tag dev_Ferrara.pgtp). The parent walk runs for every
+    span regardless of schema content, so an empty model still exercises it."""
+    import time
+
+    inner = "".join(f'<Field n="{i}"/>' for i in range(20))
+    # Nest a few levels deep (like real .pgtp Page/Detail/Column) so each span's
+    # parent walk is several levels -- amplifying the O(n^2) cost the fix removes.
+    block = f'<Page cap="p"><Section><Group>{inner}</Group></Section></Page>'
+    text = "<Root>" + block * 700 + "</Root>"
+    spans = xml_structure.scan(text)
+    assert len(spans) > 15000  # large enough that O(n^2) is unmistakably slow
+    model = _model({})  # empty schema -> no attribute work, only the parent walk
+
+    start = time.perf_counter()
+    result = unlabeled_value_spans(text, spans, model)
+    elapsed = time.perf_counter() - start
+
+    assert result == []
+    assert elapsed < 3.0, (
+        f"unlabeled_value_spans took {elapsed:.1f}s for {len(spans)} spans "
+        f"-- likely regressed to O(n^2) parent lookups"
+    )
