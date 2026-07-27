@@ -16,7 +16,9 @@
 """Tests for the Edit XSD center-stage tab: per-tab dirty/save/find routing
 (spec §11, Task 8)."""
 import pytest
-from PySide6.QtGui import QCloseEvent
+from PySide6.QtGui import QCloseEvent, QKeySequence
+
+from tests.ui._menu_helpers import find_action, find_top_menu
 
 from pgtp_editor.schema_learning.storage import curated_xsd_path
 from pgtp_editor.ui.main_window import MainWindow
@@ -162,3 +164,49 @@ def test_goto_xsd_falls_back_to_element_then_status(window):
     assert window.center_stage.xsd_editor.textCursor().blockNumber() + 1 == line
     window._goto_xsd("Nope", "x")
     assert "not in the curated XSD" in window.statusBar().currentMessage()
+
+
+def test_window_carries_goto_xsd_action_with_ctrl_l_shortcut(window):
+    matches = [a for a in window.actions() if a.text() == "Go To XSD"]
+    assert len(matches) == 1
+    assert matches[0].shortcut() == QKeySequence("Ctrl+L")
+
+
+def test_goto_xsd_at_cursor_navigates_to_attribute_line(window):
+    _seed(window)
+    window._load_curated_schema()
+    stage = window.center_stage
+    stage.xml_editor.setPlainText('<Root a="1"/>')
+    cursor = stage.xml_editor.textCursor()
+    cursor.setPosition(stage.xml_editor.toPlainText().index('"1"') + 1)
+    stage.xml_editor.setTextCursor(cursor)
+
+    window._goto_xsd_at_cursor()
+
+    assert stage.currentIndex() == stage.xsd_tab_index
+    line = window._curated_schema.attribute_lines[("Root", "a")]
+    assert stage.xsd_editor.textCursor().blockNumber() + 1 == line
+
+
+def test_goto_xsd_at_cursor_unresolvable_shows_status_and_stays_put(window):
+    _seed(window)
+    window._load_curated_schema()
+    stage = window.center_stage
+    stage.xml_editor.setPlainText("")
+
+    window._goto_xsd_at_cursor()
+
+    assert stage.currentIndex() != stage.xsd_tab_index
+    assert (
+        "Place the cursor inside an element"
+        in window.statusBar().currentMessage()
+    )
+
+
+def test_edit_xsd_menu_action_loads_file_into_tab(window):
+    _seed(window)
+    menu = find_top_menu(window, "Schema")
+    find_action(menu, "Edit XSD").trigger()
+    stage = window.center_stage
+    assert stage.currentIndex() == stage.xsd_tab_index
+    assert stage.xsd_editor.toPlainText() == _MINIMAL
