@@ -132,3 +132,31 @@ def test_prepare_context_menu_at_preserves_selection_containing_click(qtbot):
     assert editor.textCursor().selectedText() == "1"
     assert editor.textCursor().selectionStart() == sel_start
     assert editor.textCursor().selectionEnd() == sel_end
+
+
+def test_request_goto_xsd_emits_chain_and_attr(qtbot):
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    editor.setPlainText('<Root a="1"/>')
+    editor.set_schema_model(_model({"Root": {"a": _entry(["1"])}}))
+    cursor = editor.textCursor()
+    cursor.setPosition(editor.toPlainText().index('"1"') + 1)
+    editor.setTextCursor(cursor)
+    received = []
+    editor.goto_xsd_requested.connect(lambda c, a: received.append((c, a)))
+    assert editor.request_goto_xsd() is True
+    assert received == [("Root", "a")]
+
+
+def test_request_goto_xsd_element_only_when_not_on_attribute(qtbot):
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    editor.setPlainText('<Root a="1"/>')
+    editor.set_schema_model(_model({"Root": {"a": _entry(["1"])}}))
+    cursor = editor.textCursor()
+    cursor.setPosition(1)  # on the tag name
+    editor.setTextCursor(cursor)
+    received = []
+    editor.goto_xsd_requested.connect(lambda c, a: received.append((c, a)))
+    assert editor.request_goto_xsd() is True
+    assert received == [("Root", "")]

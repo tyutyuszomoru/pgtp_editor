@@ -576,6 +576,12 @@ class XmlEditor(QPlainTextEdit):
     # (Sub-project C, C1).
     undo_requested = Signal()
     redo_requested = Signal()
+    # Emitted when the user picks "Go To XSD" from the editor's right-click
+    # context menu, or triggers the window-level Ctrl+L action. Carries the
+    # resolved (tag_chain, attr) -- attr is "" when the caret is inside an
+    # opening tag but not on a specific attribute. MainWindow opens the Edit
+    # XSD tab and navigates to the matching definition line.
+    goto_xsd_requested = Signal(str, str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -1288,6 +1294,19 @@ class XmlEditor(QPlainTextEdit):
                 menu.insertMenu(before, add_menu)
             else:
                 menu.addMenu(add_menu)
+        # "Go To XSD" jumps to the curated XSD definition for the element/
+        # attribute under the caret. Offered only when a schema model is
+        # loaded and the caret sits inside an opening tag.
+        if (
+            self._schema_model is not None
+            and enclosing_open_tag(self.toPlainText(), cursor.position()) is not None
+        ):
+            goto_xsd_action = QAction("Go To XSD", menu)
+            goto_xsd_action.triggered.connect(self.request_goto_xsd)
+            if before is not None:
+                menu.insertAction(before, goto_xsd_action)
+            else:
+                menu.addAction(goto_xsd_action)
         # "Wrap Lines" toggles soft line-wrapping of the Raw XML editor. It is
         # checkable and reflects the editor's current wrap state each time the
         # menu is built, and toggling it drives set_line_wrap_enabled.
@@ -1351,6 +1370,26 @@ class XmlEditor(QPlainTextEdit):
         """The injected schema Model, or None. Read-only accessor used by
         tests and callers that need to check whether a schema is loaded."""
         return self._schema_model
+
+    def request_goto_xsd(self) -> bool:
+        """Resolve the caret to (tag_chain, attr) -- attr "" when the caret is
+        inside an opening tag but not on an attribute -- and emit
+        goto_xsd_requested. False when no model or unresolvable."""
+        if self._schema_model is None:
+            return False
+        text = self.toPlainText()
+        pos = self.textCursor().position()
+        resolved = attribute_value_at_position(text, pos)
+        if resolved is not None:
+            tag_chain, attr, _value = resolved
+            self.goto_xsd_requested.emit(tag_chain, attr)
+            return True
+        enclosing = enclosing_open_tag(text, pos)
+        if enclosing is None:
+            return False
+        tag_chain, _present, _insert = enclosing
+        self.goto_xsd_requested.emit(tag_chain, "")
+        return True
 
     def unused_attributes_at(self, cursor_pos: int) -> list[str]:
         """Setting-attributes the schema knows for the opening tag at

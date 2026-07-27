@@ -1,28 +1,18 @@
 # tests/ui/test_schema_menu_entry_point.py
-"""Tests for the Schema menu's four placeholder entry points wired into
-MainWindow: "Edit XSD", "Verify XSD", "Export XSD", "Import XSD". Each is a
-stub wired to MainWindow._not_implemented("<name>") until Tasks 8-11 give
-them real behavior. The old at-cursor annotate popover / team-sync / schema
-viewer entry points (and their tests) were retired as part of the
-curated-XSD pivot's big deletion.
+"""Tests for the Schema menu's remaining placeholder entry points wired into
+MainWindow: "Verify XSD", "Export XSD", "Import XSD". Each is a stub wired to
+MainWindow._not_implemented("<name>") until Tasks 10-11 give them real
+behavior. "Edit XSD" got its real behavior in Task 8 (see
+tests/ui/test_edit_xsd_tab.py); its "not_implemented" test was retired here.
+The old at-cursor annotate popover / team-sync / schema viewer entry points
+(and their tests) were retired as part of the curated-XSD pivot's big
+deletion.
 """
 from unittest.mock import patch
 
 from tests.ui._menu_helpers import find_action, find_top_menu
 
 from pgtp_editor.ui.main_window import MainWindow
-
-
-def test_edit_xsd_action_triggers_not_implemented(qtbot, tmp_path):
-    storage_dir = tmp_path / "storage"
-    window = MainWindow(schema_storage_dir=storage_dir)
-    qtbot.addWidget(window)
-
-    with patch.object(window, "_not_implemented") as mock_handler:
-        menu = find_top_menu(window, "Schema")
-        find_action(menu, "Edit XSD").trigger()
-
-    mock_handler.assert_called_once_with("Edit XSD")
 
 
 def test_verify_xsd_action_triggers_not_implemented(qtbot, tmp_path):

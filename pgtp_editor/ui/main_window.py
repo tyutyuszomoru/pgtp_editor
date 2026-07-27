@@ -323,6 +323,7 @@ class MainWindow(QMainWindow):
         self.center_stage.xml_editor.edit_code_requested.connect(
             self._on_edit_code_requested
         )
+        self.center_stage.xml_editor.goto_xsd_requested.connect(self._goto_xsd)
         # The live CodeEditorDialog (kept referenced so it is not GC'd while
         # shown). MainWindow owns its lifecycle + the write-back.
         self._code_editor_dialog: CodeEditorDialog | None = None
@@ -501,6 +502,37 @@ class MainWindow(QMainWindow):
                 self._xsd_loading = False
             self._set_xsd_dirty(False)
         stage.show_edit_xsd()
+
+    def _goto_xsd_at_cursor(self) -> None:
+        """Ctrl+L / context-menu "Go To XSD": resolve the caret in the Raw
+        XML editor and jump to its curated XSD definition."""
+        editor = self.center_stage.xml_editor
+        if editor.schema_model() is None or not editor.request_goto_xsd():
+            self.statusBar().showMessage(
+                "Place the cursor inside an element in the Raw XML first.", 5000
+            )
+
+    def _goto_xsd(self, tag_chain: str, attr: str) -> None:
+        """Open the Edit XSD tab and select the attribute's definition;
+        fall back to the element's type definition; else status message.
+        Lines come from the last successful parse -- navigation targets the
+        saved file content."""
+        schema = self._curated_schema
+        if schema is None:
+            self.statusBar().showMessage(
+                "No curated XSD loaded yet — Schema ▸ Edit XSD.", 5000
+            )
+            return
+        line = schema.attribute_lines.get((tag_chain, attr))
+        if line is None:
+            line = schema.element_lines.get(tag_chain)
+        if line is None:
+            self.statusBar().showMessage(
+                f"'{tag_chain}' is not in the curated XSD yet.", 5000
+            )
+            return
+        self._open_edit_xsd()
+        self.center_stage.xsd_editor.navigate_to_line(line)
 
     def _save_curated_xsd(self) -> None:
         """Save the XSD tab. The text is ALWAYS written (user text is never
@@ -2039,13 +2071,20 @@ class MainWindow(QMainWindow):
     def _build_schema_menu(self):
         menu = self.menuBar().addMenu("Schema")
         edit_action = menu.addAction("Edit XSD")
-        edit_action.triggered.connect(lambda: self._not_implemented("Edit XSD"))
+        edit_action.triggered.connect(self._open_edit_xsd)
         verify_action = menu.addAction("Verify XSD")
         verify_action.triggered.connect(lambda: self._not_implemented("Verify XSD"))
         export_action = menu.addAction("Export XSD")
         export_action.triggered.connect(lambda: self._not_implemented("Export XSD"))
         import_action = menu.addAction("Import XSD")
         import_action.triggered.connect(lambda: self._not_implemented("Import XSD"))
+        # "Go To XSD" (Ctrl+L) lives as a window-level action, not a menu
+        # entry -- the Schema menu contract is exactly these four items.
+        goto_xsd_action = QAction("Go To XSD", self)
+        goto_xsd_action.setShortcut(QKeySequence("Ctrl+L"))
+        goto_xsd_action.triggered.connect(self._goto_xsd_at_cursor)
+        self.addAction(goto_xsd_action)
+        self._goto_xsd_action = goto_xsd_action
 
     def _build_database_menu(self):
         menu = self.menuBar().addMenu("Database")

@@ -142,3 +142,23 @@ def test_theme_toggle_does_not_mark_dirty(window):
     window.center_stage.xsd_editor.apply_theme_colors(False)
     assert window._dirty is False
     assert window._xsd_dirty is False
+
+
+def test_goto_xsd_navigates_to_attribute_line(window):
+    _seed(window)
+    window._load_curated_schema()
+    window._goto_xsd("Root", "a")
+    stage = window.center_stage
+    assert stage.currentIndex() == stage.xsd_tab_index
+    line = window._curated_schema.attribute_lines[("Root", "a")]
+    assert stage.xsd_editor.textCursor().blockNumber() + 1 == line
+
+
+def test_goto_xsd_falls_back_to_element_then_status(window):
+    _seed(window)
+    window._load_curated_schema()
+    window._goto_xsd("Root", "missing")
+    line = window._curated_schema.element_lines["Root"]
+    assert window.center_stage.xsd_editor.textCursor().blockNumber() + 1 == line
+    window._goto_xsd("Nope", "x")
+    assert "not in the curated XSD" in window.statusBar().currentMessage()
