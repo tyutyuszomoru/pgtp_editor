@@ -105,3 +105,53 @@ def test_enrichment_writes_learned_only_and_keeps_curated_feed(window, tmp_path)
     # completion feed still the curated model — learned attrs are NOT offered
     model = window.center_stage.xml_editor.schema_model()
     assert "PGTPProject/New" not in model.paths
+
+
+def test_first_run_enrichment_bootstraps_and_feeds_editor(window, tmp_path):
+    """End-to-end first run: no curated.xsd and no learned model exist yet.
+    Enriching from an opened project must learn the model, bootstrap
+    curated.xsd from it (one-time seed), and feed the editor's completion
+    model from that fresh curated.xsd (spec §11)."""
+    assert not curated_xsd_path(window._schema_storage_dir).exists()
+    assert not schema_model_path(window._schema_storage_dir).exists()
+    assert window._curated_schema is None
+
+    sample = tmp_path / "sample.pgtp"
+    sample.write_text(
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        '<PGTPProject phpDriver="0"><Page name="orders"/></PGTPProject>',
+        encoding="utf-8",
+    )
+    window._enrich_schema_from_file(str(sample))
+
+    # bootstrap fired: curated.xsd now exists, seeded from the learned model
+    curated = curated_xsd_path(window._schema_storage_dir)
+    assert curated.exists()
+    assert "<xs:schema" in curated.read_text(encoding="utf-8")
+    items = [window.audit_panel.item(i).text() for i in range(window.audit_panel.count())]
+    assert any("Bootstrapped curated.xsd" in line for line in items)
+
+    # and the editor got fed from it — completion knows the learned structure
+    assert window._curated_schema is not None
+    model = window.center_stage.xml_editor.schema_model()
+    assert "phpDriver" in model.paths["PGTPProject"]["attributes"]
+    assert "PGTPProject/Page" in model.paths
+
+
+def test_second_enrichment_does_not_replace_live_curated_schema(window, tmp_path):
+    """Once a curated schema is live, enrichment only writes learned.xsd —
+    it never re-feeds the editor (curated.xsd is the exclusive source and is
+    only re-parsed on save/import)."""
+    _seed_curated(window)
+    window._load_curated_schema()
+    schema_before = window._curated_schema
+
+    sample = tmp_path / "sample.pgtp"
+    sample.write_text(
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        '<PGTPProject><Fresh attr="1"/></PGTPProject>',
+        encoding="utf-8",
+    )
+    window._enrich_schema_from_file(str(sample))
+
+    assert window._curated_schema is schema_before

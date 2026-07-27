@@ -394,6 +394,189 @@ def test_import_with_warnings_ask_user_accept(window, monkeypatch, tmp_path):
     assert verify_items
 
 
+def test_open_edit_xsd_without_file_loads_empty_skeleton(window):
+    """First run, before any curated.xsd exists: Edit XSD opens an empty
+    xs:schema skeleton instead of erroring on the missing file."""
+    window._open_edit_xsd()
+    stage = window.center_stage
+    assert stage.currentIndex() == stage.xsd_tab_index
+    text = stage.xsd_editor.toPlainText()
+    assert text.startswith('<?xml version="1.0"')
+    assert "<xs:schema" in text and "</xs:schema>" in text
+    assert window._xsd_dirty is False
+
+
+def test_verify_without_curated_shows_status(window):
+    """Verify XSD with a clean tab and no curated.xsd on disk: status
+    message, no VERIFY audit lines."""
+    window._verify_xsd()
+    assert "No curated XSD yet." in window.statusBar().currentMessage()
+    texts = [window.audit_panel.item(i).text() for i in range(window.audit_panel.count())]
+    assert not any(t.startswith("[Schema] VERIFY") for t in texts)
+
+
+def test_verify_checks_dirty_tab_text_not_saved_file(window):
+    """When the Edit XSD tab has unsaved edits, Verify XSD must check the
+    live tab text — the thing the user is looking at — not the clean file
+    on disk (spec §11)."""
+    _seed(window)  # saved file is clean, would verify with no issues
+    window._open_edit_xsd()
+    window.center_stage.xsd_editor.setPlainText(_MINIMAL.replace(
+        '<xs:attribute name="a" use="optional" type="xs:string"/>',
+        '<xs:attribute name="a" use="optional" type="xs:string" label="wrong"/>',
+    ))
+    assert window._xsd_dirty is True
+    window._verify_xsd()
+    texts = [window.audit_panel.item(i).text() for i in range(window.audit_panel.count())]
+    assert any("VERIFY line" in t for t in texts)
+    window._confirm_close_xsd = lambda: "discard"  # silence teardown close prompt
+
+
+def test_clicking_verify_issue_with_dirty_tab_preserves_edits(window):
+    """Clicking a VERIFY audit line while the Edit XSD tab holds unsaved
+    edits must navigate WITHOUT reloading curated.xsd over the user's
+    text (the _open_edit_xsd dirty guard)."""
+    _seed(window)
+    window._open_edit_xsd()
+    dirty_text = _MINIMAL.replace(
+        '<xs:attribute name="a" use="optional" type="xs:string"/>',
+        '<xs:attribute name="a" use="optional" type="xs:string" label="wrong"/>',
+    )
+    window.center_stage.xsd_editor.setPlainText(dirty_text)
+    window.center_stage.setCurrentIndex(window.center_stage.raw_xml_tab_index)
+    window._verify_xsd()
+    items = [window.audit_panel.item(i) for i in range(window.audit_panel.count())]
+    verify_item = next(i for i in items if "VERIFY line" in i.text())
+
+    window._on_audit_item_clicked(verify_item)
+
+    stage = window.center_stage
+    assert stage.currentIndex() == stage.xsd_tab_index
+    assert stage.xsd_editor.toPlainText() == dirty_text  # edits NOT clobbered
+    assert window._xsd_dirty is True
+    line = verify_item.data(Qt.ItemDataRole.UserRole)
+    assert stage.xsd_editor.textCursor().blockNumber() + 1 == line
+    window._confirm_close_xsd = lambda: "discard"  # silence teardown close prompt
+
+
+def test_export_without_curated_shows_status_and_no_dialog(window, monkeypatch):
+    dialog_calls = []
+    monkeypatch.setattr(
+        main_window_module.QFileDialog, "getSaveFileName",
+        staticmethod(lambda *a, **k: dialog_calls.append(a) or ("", "")),
+    )
+    window._export_xsd()
+    assert "No curated XSD yet." in window.statusBar().currentMessage()
+    assert not dialog_calls
+
+
+def test_export_with_dirty_tab_shows_save_first_and_no_dialog(window, monkeypatch):
+    _seed(window)
+    window._open_edit_xsd()
+    window.center_stage.xsd_editor.setPlainText(_MINIMAL + "<!-- x -->")
+    assert window._xsd_dirty is True
+    dialog_calls = []
+    monkeypatch.setattr(
+        main_window_module.QFileDialog, "getSaveFileName",
+        staticmethod(lambda *a, **k: dialog_calls.append(a) or ("", "")),
+    )
+    window._export_xsd()
+    assert "save it first" in window.statusBar().currentMessage()
+    assert not dialog_calls
+    window._confirm_close_xsd = lambda: "discard"  # silence teardown close prompt
+
+
+def test_export_cancelled_dialog_is_noop(window, monkeypatch, tmp_path):
+    _seed(window)
+    monkeypatch.setattr(
+        main_window_module.QFileDialog, "getSaveFileName",
+        staticmethod(lambda *a, **k: ("", "")),
+    )
+    criticals = []
+    monkeypatch.setattr(
+        main_window_module.QMessageBox, "critical",
+        staticmethod(lambda *a, **k: criticals.append(a)),
+    )
+    window._export_xsd()
+    assert not criticals
+
+
+def test_export_copy_oserror_shows_critical(window, monkeypatch, tmp_path):
+    _seed(window)
+    dest = tmp_path / "out.xsd"
+    monkeypatch.setattr(
+        main_window_module.QFileDialog, "getSaveFileName",
+        staticmethod(lambda *a, **k: (str(dest), "")),
+    )
+    def _boom(*a, **k):
+        raise OSError("disk full")
+    monkeypatch.setattr(main_window_module.shutil, "copyfile", _boom)
+    criticals = []
+    monkeypatch.setattr(
+        main_window_module.QMessageBox, "critical",
+        staticmethod(lambda *a, **k: criticals.append(a)),
+    )
+    window._export_xsd()
+    assert criticals
+    assert "Export Failed" in criticals[0][1]
+    assert not dest.exists()
+
+
+def test_import_write_oserror_shows_critical_and_keeps_dirty(window, monkeypatch, tmp_path):
+    """If replacing curated.xsd fails at write time, the user sees a
+    critical dialog and the tab's dirty state is NOT cleared."""
+    _seed(window)
+    window._open_edit_xsd()
+    window.center_stage.xsd_editor.setPlainText(_MINIMAL + "<!-- x -->")
+    assert window._xsd_dirty is True
+
+    incoming = tmp_path / "incoming.xsd"
+    incoming.write_text(_MINIMAL.replace('name="a"', 'name="z"'), encoding="utf-8")
+    monkeypatch.setattr(
+        main_window_module.QFileDialog, "getOpenFileName",
+        staticmethod(lambda *a, **k: (str(incoming), "")),
+    )
+    real_write_text = main_window_module.Path.write_text
+    target = curated_xsd_path(window._schema_storage_dir)
+    def _guarded_write(self, *a, **k):
+        if self == target:
+            raise OSError("permission denied")
+        return real_write_text(self, *a, **k)
+    monkeypatch.setattr(main_window_module.Path, "write_text", _guarded_write)
+    criticals = []
+    monkeypatch.setattr(
+        main_window_module.QMessageBox, "critical",
+        staticmethod(lambda *a, **k: criticals.append(a)),
+    )
+    window._import_xsd()
+
+    assert criticals
+    assert "Import Failed" in criticals[0][1]
+    assert window._xsd_dirty is True  # not cleared by a failed import
+    assert target.read_text(encoding="utf-8") == _MINIMAL  # untouched
+    window._confirm_close_xsd = lambda: "discard"  # silence teardown close prompt
+
+
+def test_save_write_oserror_shows_critical_and_keeps_dirty(window, monkeypatch):
+    _seed(window)
+    window._open_edit_xsd()
+    window.center_stage.xsd_editor.setPlainText(_MINIMAL + "<!-- x -->")
+    assert window._xsd_dirty is True
+    def _boom(self, *a, **k):
+        raise OSError("read-only filesystem")
+    monkeypatch.setattr(main_window_module.Path, "write_text", _boom)
+    criticals = []
+    monkeypatch.setattr(
+        main_window_module.QMessageBox, "critical",
+        staticmethod(lambda *a, **k: criticals.append(a)),
+    )
+    window._save_curated_xsd()
+    assert criticals
+    assert "Save Failed" in criticals[0][1]
+    assert window._xsd_dirty is True
+    window._confirm_close_xsd = lambda: "discard"  # silence teardown close prompt
+
+
 def test_import_binary_file_shows_error(window, monkeypatch, tmp_path):
     """Importing a binary or non-UTF-8 file should show an error and preserve curated.xsd."""
     _seed(window)
