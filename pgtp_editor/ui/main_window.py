@@ -283,6 +283,7 @@ class MainWindow(QMainWindow):
         self._find_all_stop = False
         self._find_all_count = 0
         self._find_all_term = ""
+        self._find_all_target = "raw"
         self.audit_panel.itemClicked.connect(self._on_audit_item_clicked)
         self.center_stage.caption_management_panel._on_apply = self._apply_caption_edits
         self.center_stage.caption_management_panel._on_close = self._close_caption_mode
@@ -380,6 +381,22 @@ class MainWindow(QMainWindow):
         self.center_stage.xml_editor.undo_requested.connect(self._undo)
         self.center_stage.xml_editor.redo_requested.connect(self._redo)
 
+        # Edit XSD tab (spec §11): dirty tracking + its own undo/redo routing.
+        # The XSD tab has no snapshot history -- it relies solely on the
+        # editor's native undo, so its Ctrl+Z/Ctrl+Y re-emission is routed
+        # straight back into the editor rather than through _undo/_redo.
+        self._xsd_dirty = False
+        self._xsd_loading = False
+        stage = self.center_stage
+        stage.xsd_editor.textChanged.connect(self._on_xsd_text_changed)
+        stage.xsd_editor.undo_requested.connect(stage.xsd_editor.undo)
+        stage.xsd_editor.redo_requested.connect(stage.xsd_editor.redo)
+        stage.xsd_find_replace_bar.set_on_status(self.statusBar().showMessage)
+        stage.xsd_find_replace_bar.set_on_find_all(
+            lambda term: self._populate_find_all_results(term, target="xsd")
+        )
+        stage.xsd_find_replace_bar.set_on_stop_find_all(self._stop_find_all)
+
         self._build_menu_bar()
 
         # Customizable icon bar (Sub-project E). Built after the slots and menus
@@ -451,6 +468,89 @@ class MainWindow(QMainWindow):
             "[Schema] Bootstrapped curated.xsd from the learned schema (labels preserved)"
         )
 
+    # -- Edit XSD tab (spec §11) ---------------------------------------------
+
+    def _on_xsd_text_changed(self) -> None:
+        if self._xsd_loading:
+            return
+        self._set_xsd_dirty(True)
+
+    def _set_xsd_dirty(self, dirty: bool) -> None:
+        self._xsd_dirty = dirty
+        stage = self.center_stage
+        stage.setTabText(stage.xsd_tab_index, "Edit XSD *" if dirty else "Edit XSD")
+
+    def _open_edit_xsd(self) -> None:
+        """Schema ▸ Edit XSD: load curated.xsd into the XSD tab (unless the
+        tab already holds unsaved edits) and switch to it."""
+        stage = self.center_stage
+        if not self._xsd_dirty:
+            path = curated_xsd_path(self._schema_storage_dir)
+            text = path.read_text(encoding="utf-8") if path.exists() else (
+                '<?xml version="1.0" encoding="UTF-8"?>\n'
+                '<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" '
+                'elementFormDefault="qualified">\n</xs:schema>\n'
+            )
+            self._xsd_loading = True
+            try:
+                stage.xsd_editor.setPlainText(text)
+            finally:
+                self._xsd_loading = False
+            self._set_xsd_dirty(False)
+        stage.show_edit_xsd()
+
+    def _save_curated_xsd(self) -> None:
+        """Save the XSD tab. The text is ALWAYS written (user text is never
+        lost); a malformed file keeps the last good schema live (spec §11)."""
+        path = curated_xsd_path(self._schema_storage_dir)
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(
+                self.center_stage.xsd_editor.toPlainText(), encoding="utf-8", newline=""
+            )
+        except OSError as exc:
+            QMessageBox.critical(self, "Save Failed", f"Could not save:\n\n{exc}")
+            return
+        self._set_xsd_dirty(False)
+        self.statusBar().showMessage("Saved curated.xsd", 5000)
+        self._load_curated_schema()
+
+    def _save_active_tab(self) -> None:
+        """Ctrl+S / File ▸ Save routes to the active center-stage tab."""
+        stage = self.center_stage
+        if stage.currentIndex() == stage.xsd_tab_index:
+            self._save_curated_xsd()
+        else:
+            self._save_project()
+
+    def _active_find_bar(self):
+        """The FindReplaceBar of the active editor tab; defaults to the Raw
+        XML bar (revealing that tab) when neither editor tab is active."""
+        stage = self.center_stage
+        if stage.currentIndex() == stage.xsd_tab_index:
+            return stage.xsd_find_replace_bar
+        self._reveal_raw_xml_tab()
+        return stage.find_replace_bar
+
+    def _confirm_close_xsd(self) -> str:
+        """Ask the user how to resolve unsaved Edit XSD changes before
+        closing. Returns "save", "discard", or "cancel". Split out (mirroring
+        `_confirm_close`) so tests can monkeypatch it instead of ever driving
+        a real modal."""
+        result = QMessageBox.question(
+            self,
+            "Unsaved Changes",
+            "The XSD has unsaved changes. Save before closing?",
+            QMessageBox.StandardButton.Save
+            | QMessageBox.StandardButton.Discard
+            | QMessageBox.StandardButton.Cancel,
+        )
+        if result == QMessageBox.StandardButton.Save:
+            return "save"
+        if result == QMessageBox.StandardButton.Discard:
+            return "discard"
+        return "cancel"
+
     def _restore_window_state(self):
         geometry = self._settings.value("geometry")
         if geometry is not None:
@@ -474,6 +574,20 @@ class MainWindow(QMainWindow):
             self._refresh_toolbar_icons()
 
     def closeEvent(self, event):
+        # Edit XSD tab (spec §11): unsaved XSD edits get their own
+        # save/discard/cancel prompt, distinct from the project's (File >
+        # Close handles that one) since the XSD tab has no Close command.
+        if self._xsd_dirty:
+            confirm = self._confirm_close_xsd()
+            if confirm == "cancel":
+                event.ignore()
+                return
+            if confirm == "save":
+                self._save_curated_xsd()
+                if self._xsd_dirty:
+                    # Save failed (e.g. disk error) -- don't discard changes.
+                    event.ignore()
+                    return
         # Persist window geometry/dock state on close (Sub-project D). No modal
         # prompt here -- File > Close handles the unsaved-changes prompt.
         self._settings.setValue("geometry", self.saveGeometry())
@@ -939,18 +1053,26 @@ class MainWindow(QMainWindow):
             template = _SCHEMA_REPORT_TEMPLATES[event["kind"]]
             self.audit_panel.addItem(template.format(source=source_name, **event))
 
-    def _populate_find_all_results(self, term: str) -> None:
+    def _populate_find_all_results(self, term: str, target: str = "raw") -> None:
         """Start a streaming Find All: results are appended to the Audit panel
         a batch at a time on a 0ms QTimer, yielding to the event loop between
-        batches so the UI stays responsive and Stop takes effect promptly."""
+        batches so the UI stays responsive and Stop takes effect promptly.
+
+        `target` selects which editor tab the search runs over -- "raw" (the
+        Raw XML tab, the default) or "xsd" (the Edit XSD tab) -- and is
+        stashed with each result so clicking it navigates the right editor.
+        """
         self._cancel_find_all_timer()
         self._clear_find_results()
         self._find_all_term = term
+        self._find_all_target = target
         self._find_all_count = 0
         self._find_all_stop = False
-        text = self.center_stage.xml_editor.toPlainText()
+        editor = self.center_stage.xsd_editor if target == "xsd" else self.center_stage.xml_editor
+        bar = self.center_stage.xsd_find_replace_bar if target == "xsd" else self.center_stage.find_replace_bar
+        text = editor.toPlainText()
         self._find_all_iter = search.iter_matches(text, term)
-        self.center_stage.find_replace_bar.set_find_all_running(True)
+        bar.set_find_all_running(True)
         self.statusBar().showMessage(f'Finding "{term}"…')
         self._find_all_timer = QTimer(self)
         self._find_all_timer.timeout.connect(self._find_all_step)
@@ -968,6 +1090,7 @@ class MainWindow(QMainWindow):
                 return
             item = QListWidgetItem(f"{_FIND_RESULT_PREFIX}line {match.line}: {match.preview}")
             item.setData(Qt.ItemDataRole.UserRole, match.line)
+            item.setData(Qt.ItemDataRole.UserRole + 1, self._find_all_target)
             self.audit_panel.addItem(item)
             self._find_all_count += 1
         self.statusBar().showMessage(
@@ -980,7 +1103,12 @@ class MainWindow(QMainWindow):
             f'{_FIND_RESULT_PREFIX}{self._find_all_count} match(es) for "{self._find_all_term}"'
         )
         self.audit_panel.addItem(summary)  # no line data -> clicking is a no-op
-        self.center_stage.find_replace_bar.set_find_all_running(False)
+        bar = (
+            self.center_stage.xsd_find_replace_bar
+            if self._find_all_target == "xsd"
+            else self.center_stage.find_replace_bar
+        )
+        bar.set_find_all_running(False)
         if stopped:
             self.statusBar().showMessage(
                 f"Find All stopped — found {self._find_all_count} item(s)"
@@ -1063,6 +1191,11 @@ class MainWindow(QMainWindow):
         line = item.data(Qt.ItemDataRole.UserRole)
         if line is None:
             return  # schema entry or the [Find] summary line: no-op
+        target = item.data(Qt.ItemDataRole.UserRole + 1)
+        if target == "xsd":
+            self.center_stage.setCurrentIndex(self.center_stage.xsd_tab_index)
+            self.center_stage.xsd_editor.navigate_to_line(line)
+            return
         self.center_stage.setCurrentIndex(self.center_stage.raw_xml_tab_index)
         self.center_stage.xml_editor.navigate_to_line(line)
 
@@ -1491,7 +1624,7 @@ class MainWindow(QMainWindow):
         menu.addMenu("Open Recent")
         save_action = menu.addAction("Save")
         save_action.setShortcut("Ctrl+S")
-        save_action.triggered.connect(self._save_project)
+        save_action.triggered.connect(self._save_active_tab)
         save_as_action = menu.addAction("Save As...")
         save_as_action.setShortcut("Ctrl+Shift+S")
         save_as_action.triggered.connect(self._save_project_as)
@@ -1623,16 +1756,13 @@ class MainWindow(QMainWindow):
         self.center_stage.setCurrentIndex(self.center_stage.raw_xml_tab_index)
 
     def _show_find_bar(self):
-        self._reveal_raw_xml_tab()
-        self.center_stage.find_replace_bar.show_find()
+        self._active_find_bar().show_find()
 
     def _show_replace_bar(self):
-        self._reveal_raw_xml_tab()
-        self.center_stage.find_replace_bar.show_replace()
+        self._active_find_bar().show_replace()
 
     def _find_next(self):
-        self._reveal_raw_xml_tab()
-        self.center_stage.find_replace_bar.find_next()
+        self._active_find_bar().find_next()
 
     def _on_find_selected_text(self, text: str) -> None:
         """Editor right-click "Find": reveal the Raw XML tab, prefill the find
@@ -1754,12 +1884,10 @@ class MainWindow(QMainWindow):
         dialog.show()
 
     def _find_all(self):
-        self._reveal_raw_xml_tab()
-        self.center_stage.find_replace_bar.find_all()
+        self._active_find_bar().find_all()
 
     def _replace_all(self):
-        self._reveal_raw_xml_tab()
-        self.center_stage.find_replace_bar.replace_all()
+        self._active_find_bar().replace_all()
 
     def _enter_caption_mode(self) -> bool:
         """Tools -> Manage Captions...: snapshot the frozen Raw XML, scan it,

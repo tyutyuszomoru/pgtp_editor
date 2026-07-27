@@ -702,7 +702,16 @@ class XmlEditor(QPlainTextEdit):
             self._highlighter.set_colors(
                 tag="#569cd6", attr_name="#9cdcfe", string="#ce9178"
             )
-        self._highlighter.rehighlight()
+        # rehighlight() re-applies character formats over the whole document,
+        # which Qt reports through the same contentsChanged/textChanged path
+        # as a real edit -- with no text actually changing. Left unguarded, a
+        # theme toggle would spuriously mark a clean document (dirty tracking
+        # lives in MainWindow, keyed off textChanged) as having unsaved edits.
+        self.blockSignals(True)
+        try:
+            self._highlighter.rehighlight()
+        finally:
+            self.blockSignals(False)
         # Rebuild the extra-selection layers so their stored per-selection
         # colors pick up the new values (they cache the color at build time).
         self._refresh_code_region_selections()
