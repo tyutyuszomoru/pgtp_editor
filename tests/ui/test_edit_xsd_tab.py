@@ -16,6 +16,7 @@
 """Tests for the Edit XSD center-stage tab: per-tab dirty/save/find routing
 (spec §11, Task 8)."""
 import pytest
+from PySide6.QtCore import Qt
 from PySide6.QtGui import QCloseEvent, QKeySequence
 
 from tests.ui._menu_helpers import find_action, find_top_menu
@@ -210,3 +211,51 @@ def test_edit_xsd_menu_action_loads_file_into_tab(window):
     stage = window.center_stage
     assert stage.currentIndex() == stage.xsd_tab_index
     assert stage.xsd_editor.toPlainText() == _MINIMAL
+
+
+def test_verify_reports_clickable_issue_lines(window):
+    _seed(window, _MINIMAL.replace(
+        '<xs:attribute name="a" use="optional" type="xs:string"/>',
+        '<xs:attribute name="a" use="optional" type="xs:string" label="wrong"/>',
+    ))
+    window._verify_xsd()
+    items = [window.audit_panel.item(i) for i in range(window.audit_panel.count())]
+    verify_items = [i for i in items if "VERIFY line" in i.text()]
+    assert verify_items
+    verify_item = verify_items[0]
+    assert verify_item.data(Qt.ItemDataRole.UserRole + 1) == "xsd"
+    assert isinstance(verify_item.data(Qt.ItemDataRole.UserRole), int)
+
+
+def test_verify_menu_action_wired(window):
+    _seed(window)
+    menu = find_top_menu(window, "Schema")
+    find_action(menu, "Verify XSD").trigger()
+    texts = [window.audit_panel.item(i).text() for i in range(window.audit_panel.count())]
+    assert any(t.startswith("[Schema] VERIFY") for t in texts)
+
+
+def test_clicking_verify_issue_navigates_to_xsd_line(window):
+    _seed(window, _MINIMAL.replace(
+        '<xs:attribute name="a" use="optional" type="xs:string"/>',
+        '<xs:attribute name="a" use="optional" type="xs:string" label="wrong"/>',
+    ))
+    window._verify_xsd()
+    items = [window.audit_panel.item(i) for i in range(window.audit_panel.count())]
+    verify_item = next(i for i in items if "VERIFY line" in i.text())
+    line = verify_item.data(Qt.ItemDataRole.UserRole)
+
+    window._on_audit_item_clicked(verify_item)
+
+    stage = window.center_stage
+    assert stage.currentIndex() == stage.xsd_tab_index
+    assert stage.xsd_editor.textCursor().blockNumber() + 1 == line
+
+
+def test_save_auto_verifies_report_only(window):
+    _seed(window)
+    window._open_edit_xsd()
+    window.center_stage.xsd_editor.setPlainText(_MINIMAL)
+    window._save_curated_xsd()
+    texts = [window.audit_panel.item(i).text() for i in range(window.audit_panel.count())]
+    assert any(t.startswith("[Schema] VERIFY") for t in texts)

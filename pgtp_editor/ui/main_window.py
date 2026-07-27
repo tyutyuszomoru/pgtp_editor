@@ -83,6 +83,7 @@ from pgtp_editor.schema_learning.storage import (
 )
 from pgtp_editor.schema_learning.xsd_gen import generate_curated_xsd, generate_xsd
 from pgtp_editor.schema_learning.xsd_load import XsdLoadError, load_curated
+from pgtp_editor.schema_learning.xsd_verify import verify_curated
 from pgtp_editor.validation.tier2 import validate_project
 from pgtp_editor.ui._stub_action import add_stub_action
 from pgtp_editor.ui.about import show_about_dialog
@@ -549,6 +550,36 @@ class MainWindow(QMainWindow):
         self._set_xsd_dirty(False)
         self.statusBar().showMessage("Saved curated.xsd", 5000)
         self._load_curated_schema()
+        self._report_verify_issues(verify_curated(self.center_stage.xsd_editor.toPlainText()))
+
+    def _verify_xsd(self) -> None:
+        """Schema ▸ Verify XSD: check dialect rules against whatever the
+        user is currently looking at -- the XSD tab's live text when it has
+        unsaved edits, otherwise the saved curated.xsd on disk."""
+        stage = self.center_stage
+        if self._xsd_dirty:
+            text = stage.xsd_editor.toPlainText()
+        else:
+            path = curated_xsd_path(self._schema_storage_dir)
+            if not path.exists():
+                self.statusBar().showMessage("No curated XSD yet.", 5000)
+                return
+            text = path.read_text(encoding="utf-8")
+        self._report_verify_issues(verify_curated(text))
+
+    def _report_verify_issues(self, issues) -> None:
+        """Append Verify XSD results to the audit panel. Each issue line is
+        clickable -- routed through _on_audit_item_clicked's existing
+        (line, target) UserRole/UserRole+1 convention (see _find_all_step),
+        with target "xsd" so the click opens the Edit XSD tab at that line."""
+        if not issues:
+            self.audit_panel.addItem("[Schema] VERIFY: no issues found.")
+            return
+        for issue in issues:
+            item = QListWidgetItem(f"[Schema] VERIFY line {issue.line}: {issue.message}")
+            item.setData(Qt.ItemDataRole.UserRole, issue.line)
+            item.setData(Qt.ItemDataRole.UserRole + 1, "xsd")
+            self.audit_panel.addItem(item)
 
     def _save_active_tab(self) -> None:
         """Ctrl+S / File ▸ Save routes to the active center-stage tab."""
@@ -1230,7 +1261,11 @@ class MainWindow(QMainWindow):
             return  # schema entry or the [Find] summary line: no-op
         target = item.data(Qt.ItemDataRole.UserRole + 1)
         if target == "xsd":
-            self.center_stage.setCurrentIndex(self.center_stage.xsd_tab_index)
+            # _open_edit_xsd loads curated.xsd from disk into the tab when it
+            # isn't already open with unsaved edits (e.g. a Verify XSD run
+            # against the saved file, before the tab has ever been opened),
+            # then switches to it -- same as clicking Schema > Edit XSD.
+            self._open_edit_xsd()
             self.center_stage.xsd_editor.navigate_to_line(line)
             return
         self.center_stage.setCurrentIndex(self.center_stage.raw_xml_tab_index)
@@ -2073,7 +2108,7 @@ class MainWindow(QMainWindow):
         edit_action = menu.addAction("Edit XSD")
         edit_action.triggered.connect(self._open_edit_xsd)
         verify_action = menu.addAction("Verify XSD")
-        verify_action.triggered.connect(lambda: self._not_implemented("Verify XSD"))
+        verify_action.triggered.connect(self._verify_xsd)
         export_action = menu.addAction("Export XSD")
         export_action.triggered.connect(lambda: self._not_implemented("Export XSD"))
         import_action = menu.addAction("Import XSD")
