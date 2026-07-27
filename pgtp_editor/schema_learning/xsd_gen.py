@@ -31,6 +31,17 @@ def _type_name(path):
 
 
 def generate_xsd(model):
+    return _generate(model, _attribute_lines)
+
+
+def generate_curated_xsd(model):
+    """Bootstrap emit mode (spec §11): labels ride as label="…" attributes on
+    xs:enumeration — our curated dialect — instead of xs:documentation. Used
+    exactly once, to seed curated.xsd from the learned model."""
+    return _generate(model, _curated_attribute_lines)
+
+
+def _generate(model, attribute_lines_fn):
     lines = [
         '<?xml version="1.0" encoding="UTF-8"?>',
         '<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" elementFormDefault="qualified">',
@@ -43,13 +54,13 @@ def generate_xsd(model):
         )
 
     for path in sorted(model.paths):
-        lines.extend(_complex_type_lines(path, model.paths[path]))
+        lines.extend(_complex_type_lines(path, model.paths[path], attribute_lines_fn))
 
     lines.append("</xs:schema>")
     return "\n".join(lines) + "\n"
 
 
-def _complex_type_lines(path, entry):
+def _complex_type_lines(path, entry, attribute_lines_fn):
     lines = []
     if not entry["order_stable"]:
         lines.append(
@@ -74,7 +85,7 @@ def _complex_type_lines(path, entry):
         lines.append("    </xs:sequence>")
 
     for attr_name in sorted(entry["attributes"]):
-        lines.extend(_attribute_lines(entry, attr_name))
+        lines.extend(attribute_lines_fn(entry, attr_name))
 
     lines.append("  </xs:complexType>")
     return lines
@@ -84,6 +95,39 @@ def _documentation_text(label, note):
     if label and note:
         return f"{label} — {note}"
     return label or note or None
+
+
+def _curated_attribute_lines(entry, attr_name):
+    """Emit xs:enumeration with label="…" attributes (no xs:documentation)."""
+    attr_entry = entry["attributes"][attr_name]
+    required = attr_entry["attr_seen_count"] == entry["instance_count"]
+    use = "required" if required else "optional"
+    base_type = _XSD_BASE[attr_entry["type"]]
+    universe = sorted(
+        set(attr_entry.get("values") or []) | set(attr_entry.get("labels") or {})
+    )
+    if not attr_entry["overflowed"] and universe:
+        labels = effective_labels(attr_entry)
+        lines = [f"    <xs:attribute name={quoteattr(attr_name)} use={quoteattr(use)}>"]
+        lines.append("      <xs:simpleType>")
+        lines.append(f"        <xs:restriction base={quoteattr(base_type)}>")
+        for value in universe:
+            label = labels.get(value)
+            if label:
+                lines.append(
+                    f"          <xs:enumeration value={quoteattr(value)} "
+                    f"label={quoteattr(label)}/>"
+                )
+            else:
+                lines.append(f"          <xs:enumeration value={quoteattr(value)}/>")
+        lines.append("        </xs:restriction>")
+        lines.append("      </xs:simpleType>")
+        lines.append("    </xs:attribute>")
+        return lines
+    return [
+        f"    <xs:attribute name={quoteattr(attr_name)} type={quoteattr(base_type)} "
+        f"use={quoteattr(use)}/>"
+    ]
 
 
 def _attribute_lines(entry, attr_name):
