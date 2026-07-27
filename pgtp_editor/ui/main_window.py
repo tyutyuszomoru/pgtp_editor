@@ -471,7 +471,10 @@ class MainWindow(QMainWindow):
     # -- Edit XSD tab (spec §11) ---------------------------------------------
 
     def _on_xsd_text_changed(self) -> None:
-        if self._xsd_loading:
+        # A theme toggle's rehighlight() also fires textChanged with no text
+        # actually changed; ignored via is_applying_theme() (see
+        # XmlEditor.apply_theme_colors).
+        if self._xsd_loading or self.center_stage.xsd_editor.is_applying_theme():
             return
         self._set_xsd_dirty(True)
 
@@ -710,8 +713,10 @@ class MainWindow(QMainWindow):
     def _on_editor_text_changed(self) -> None:
         """Mark the buffer dirty when the user edits the Raw XML editor.
         Programmatic sets (load/revert/close) run under `_loading` and are
-        ignored so they don't spuriously flag the document dirty."""
-        if self._loading:
+        ignored so they don't spuriously flag the document dirty. A theme
+        toggle's rehighlight() also fires textChanged with no text actually
+        changed; ignored via is_applying_theme()."""
+        if self._loading or self.center_stage.xml_editor.is_applying_theme():
             return
         self._set_dirty(True)
         # Debounce a document-level snapshot capture (Sub-project C). We start

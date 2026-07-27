@@ -16,6 +16,7 @@
 """Tests for the Edit XSD center-stage tab: per-tab dirty/save/find routing
 (spec §11, Task 8)."""
 import pytest
+from PySide6.QtGui import QCloseEvent
 
 from pgtp_editor.schema_learning.storage import curated_xsd_path
 from pgtp_editor.ui.main_window import MainWindow
@@ -95,3 +96,49 @@ def test_find_bar_routing(window):
     assert window._active_find_bar() is window.center_stage.xsd_find_replace_bar
     window.center_stage.setCurrentIndex(window.center_stage.raw_xml_tab_index)
     assert window._active_find_bar() is window.center_stage.find_replace_bar
+
+
+def test_close_event_xsd_dirty_discard_closes(window, monkeypatch):
+    _seed(window)
+    window._open_edit_xsd()
+    window.center_stage.xsd_editor.setPlainText(_MINIMAL + "<!-- x -->")
+    assert window._xsd_dirty is True
+    monkeypatch.setattr(window, "_confirm_close_xsd", lambda: "discard")
+    event = QCloseEvent()
+    window.closeEvent(event)
+    assert event.isAccepted()
+
+
+def test_close_event_xsd_dirty_cancel_ignores(window, monkeypatch):
+    _seed(window)
+    window._open_edit_xsd()
+    window.center_stage.xsd_editor.setPlainText(_MINIMAL + "<!-- x -->")
+    monkeypatch.setattr(window, "_confirm_close_xsd", lambda: "cancel")
+    event = QCloseEvent()
+    window.closeEvent(event)
+    assert not event.isAccepted()
+    assert window._xsd_dirty is True
+
+
+def test_close_event_xsd_dirty_save_writes_and_closes(window, monkeypatch):
+    path = _seed(window)
+    window._open_edit_xsd()
+    window.center_stage.xsd_editor.setPlainText(_MINIMAL.replace('name="a"', 'name="b"'))
+    monkeypatch.setattr(window, "_confirm_close_xsd", lambda: "save")
+    event = QCloseEvent()
+    window.closeEvent(event)
+    assert event.isAccepted()
+    assert window._xsd_dirty is False
+    assert 'name="b"' in path.read_text(encoding="utf-8")
+
+
+def test_theme_toggle_does_not_mark_dirty(window):
+    """Regression: apply_theme_colors's rehighlight() must not be mistaken
+    for a real edit by either editor's dirty tracking (see
+    XmlEditor.is_applying_theme)."""
+    window.center_stage.xml_editor.apply_theme_colors(True)
+    window.center_stage.xml_editor.apply_theme_colors(False)
+    window.center_stage.xsd_editor.apply_theme_colors(True)
+    window.center_stage.xsd_editor.apply_theme_colors(False)
+    assert window._dirty is False
+    assert window._xsd_dirty is False

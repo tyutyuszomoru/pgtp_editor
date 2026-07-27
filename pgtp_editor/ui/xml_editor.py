@@ -591,6 +591,11 @@ class XmlEditor(QPlainTextEdit):
         # automatically off ApplicationPaletteChange in changeEvent, so the
         # editor follows the app's Light/Dark theme. The gutter widget reads
         # _gutter_bg_color/_gutter_fg_color directly when painting.
+        # Guard flag: True only while apply_theme_colors's rehighlight() is in
+        # flight. Its spurious textChanged (format-only, no text change) would
+        # otherwise be indistinguishable from a real edit to MainWindow's
+        # dirty-tracking handlers; they check is_applying_theme() and no-op.
+        self._applying_theme = False
         self._gutter_bg_color = QColor("#2b2b2b")
         self._gutter_fg_color = QColor("#858585")
         self._current_line_color = QColor("#2d2d30")
@@ -673,6 +678,13 @@ class XmlEditor(QPlainTextEdit):
         # no bookmarks (session/file-scoped, see __init__).
         self._bookmarks = set()
 
+    def is_applying_theme(self) -> bool:
+        """True only while apply_theme_colors's rehighlight() is in flight.
+        Dirty-tracking handlers listening on textChanged should check this
+        and no-op -- rehighlight reformats the whole document (a real Qt
+        textChanged fires) even though no character of text changed."""
+        return self._applying_theme
+
     def apply_theme_colors(self, light: bool) -> None:
         """Swap the editor's color attributes and the syntax highlighter's
         format colors between a LIGHT set (readable dark-on-white) and the DARK
@@ -707,11 +719,15 @@ class XmlEditor(QPlainTextEdit):
         # as a real edit -- with no text actually changing. Left unguarded, a
         # theme toggle would spuriously mark a clean document (dirty tracking
         # lives in MainWindow, keyed off textChanged) as having unsaved edits.
-        self.blockSignals(True)
+        # Rather than blocking signals (which would also swallow this editor's
+        # own textChanged-driven bookkeeping, e.g. structure rescan / code-
+        # region refresh), set a small guard flag MainWindow's dirty handlers
+        # check via is_applying_theme() and early-return on.
+        self._applying_theme = True
         try:
             self._highlighter.rehighlight()
         finally:
-            self.blockSignals(False)
+            self._applying_theme = False
         # Rebuild the extra-selection layers so their stored per-selection
         # colors pick up the new values (they cache the color at build time).
         self._refresh_code_region_selections()
