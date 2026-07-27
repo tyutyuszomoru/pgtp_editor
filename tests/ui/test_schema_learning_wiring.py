@@ -5,8 +5,23 @@ are written to an isolated per-test directory, never the real user's
 AppData location.
 """
 from pgtp_editor.schema_learning.model import Model
-from pgtp_editor.schema_learning.storage import schema_model_path, schema_xsd_path
+from pgtp_editor.schema_learning.storage import (
+    curated_xsd_path,
+    learned_xsd_path,
+    schema_model_path,
+)
 from pgtp_editor.ui.main_window import MainWindow
+
+_CURATED_STUB = """<?xml version="1.0" encoding="UTF-8"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  <xs:element name="Stub" type="Stub_Type"/>
+  <xs:complexType name="Stub_Type">
+    <xs:attribute name="marker" use="optional">
+      <xs:simpleType><xs:restriction base="xs:string"/></xs:simpleType>
+    </xs:attribute>
+  </xs:complexType>
+</xs:schema>
+"""
 
 VALID_PGTP = """\
 <?xml version="1.0" encoding="UTF-8"?>
@@ -36,7 +51,7 @@ def test_open_project_file_creates_schema_model_and_xsd_on_success(qtbot, tmp_pa
     window.open_project_file(str(project_path))
 
     model_path = schema_model_path(storage_dir)
-    xsd_path = schema_xsd_path(storage_dir)
+    xsd_path = learned_xsd_path(storage_dir)
     assert model_path.exists()
     assert xsd_path.exists()
 
@@ -44,8 +59,15 @@ def test_open_project_file_creates_schema_model_and_xsd_on_success(qtbot, tmp_pa
     assert "Project" in model.paths
 
 
-def test_open_project_file_injects_schema_model_into_editor(qtbot, tmp_path):
+def test_open_project_file_does_not_inject_learned_model_into_editor(qtbot, tmp_path):
+    # Curated-only feed (spec §11): enrichment writes learned.xsd but must
+    # NOT push the learned model into the editor's completion/hover source.
+    # Pre-seed curated.xsd so the one-time bootstrap does not fire and the
+    # editor's feed stays exactly the pre-existing curated schema.
     storage_dir = tmp_path / "storage"
+    storage_dir.mkdir(parents=True)
+    curated_xsd_path(storage_dir).write_text(_CURATED_STUB, encoding="utf-8")
+
     window = MainWindow(schema_storage_dir=storage_dir)
     qtbot.addWidget(window)
     project_path = tmp_path / "valid.pgtp"
@@ -55,7 +77,8 @@ def test_open_project_file_injects_schema_model_into_editor(qtbot, tmp_path):
 
     model = window.center_stage.xml_editor._schema_model
     assert model is not None
-    assert "Project" in model.paths
+    assert "Project" not in model.paths
+    assert "Stub" in model.paths
 
 
 def test_open_project_file_appends_audit_entries_on_success(qtbot, tmp_path):
@@ -105,7 +128,7 @@ def test_parse_failure_does_not_create_schema_model_file(qtbot, tmp_path):
         window.open_project_file(str(broken_path))
 
     model_path = schema_model_path(storage_dir)
-    xsd_path = schema_xsd_path(storage_dir)
+    xsd_path = learned_xsd_path(storage_dir)
     assert not model_path.exists()
     assert not xsd_path.exists()
 

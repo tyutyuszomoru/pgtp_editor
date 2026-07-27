@@ -76,8 +76,13 @@ from pgtp_editor.model.parser import (
 )
 from pgtp_editor.schema_learning.model import Model
 from pgtp_editor.schema_learning.parser import walk_document
-from pgtp_editor.schema_learning.storage import schema_model_path, schema_xsd_path
-from pgtp_editor.schema_learning.xsd_gen import generate_xsd
+from pgtp_editor.schema_learning.storage import (
+    curated_xsd_path,
+    learned_xsd_path,
+    schema_model_path,
+)
+from pgtp_editor.schema_learning.xsd_gen import generate_curated_xsd, generate_xsd
+from pgtp_editor.schema_learning.xsd_load import XsdLoadError, load_curated
 from pgtp_editor.validation.tier2 import validate_project
 from pgtp_editor.ui._stub_action import add_stub_action
 from pgtp_editor.ui.about import show_about_dialog
@@ -170,6 +175,10 @@ class MainWindow(QMainWindow):
             )
         )
         self._schema_storage_dir = schema_storage_dir
+        # The parsed curated.xsd (spec §11) — the sole schema source feeding
+        # completion/hover. None until _load_curated_schema succeeds at least
+        # once (loaded after self.audit_panel exists, near the end of __init__).
+        self._curated_schema = None
         self._generator_config_dir = generator_config_dir
         self._generator_runner = generator_runner if generator_runner is not None else GeneratorRunner()
         self._current_output_folder = None
@@ -395,6 +404,52 @@ class MainWindow(QMainWindow):
         # store has no keys, so the default resize(1400, 900) stands.
         self._restore_window_state()
         self._restore_theme()
+
+        # Curated-XSD feed (spec §11): bootstrap once if curated.xsd is
+        # absent but the learning engine has state, then load whatever
+        # curated.xsd now exists into the editor's completion/hover model.
+        # Runs last so self.audit_panel already exists.
+        self._ensure_curated_bootstrap()
+        self._load_curated_schema()
+
+    def _load_curated_schema(self) -> bool:
+        """Parse curated.xsd and feed completion/hover from it — the SOLE
+        schema source (spec §11). On parse failure the last good in-memory
+        schema stays live; returns False. Missing file → False, silent."""
+        path = curated_xsd_path(self._schema_storage_dir)
+        if not path.exists():
+            return False
+        try:
+            schema = load_curated(path.read_text(encoding="utf-8"))
+        except (OSError, XsdLoadError) as exc:
+            self.audit_panel.addItem(
+                f"[Schema] Curated XSD has XML errors: {exc} — keeping last good schema"
+            )
+            return False
+        self._curated_schema = schema
+        self.center_stage.xml_editor.set_schema_model(schema.model)
+        return True
+
+    def _ensure_curated_bootstrap(self) -> None:
+        """One-time seed: if curated.xsd is absent but the learning engine
+        has state, emit it (labels as label="…" attributes). Never runs when
+        the file exists — curated.xsd is hand-owned (spec §11)."""
+        curated = curated_xsd_path(self._schema_storage_dir)
+        if curated.exists():
+            return
+        model_path = schema_model_path(self._schema_storage_dir)
+        if not model_path.exists():
+            return
+        try:
+            model = Model.load(model_path)
+            curated.parent.mkdir(parents=True, exist_ok=True)
+            curated.write_text(generate_curated_xsd(model), encoding="utf-8")
+        except Exception as exc:
+            self.audit_panel.addItem(f"[Schema] Could not bootstrap curated.xsd: {exc}")
+            return
+        self.audit_panel.addItem(
+            "[Schema] Bootstrapped curated.xsd from the learned schema (labels preserved)"
+        )
 
     def _restore_window_state(self):
         geometry = self._settings.value("geometry")
@@ -851,7 +906,7 @@ class MainWindow(QMainWindow):
     def _enrich_schema_from_file(self, path):
         try:
             model_path = schema_model_path(self._schema_storage_dir)
-            xsd_path = schema_xsd_path(self._schema_storage_dir)
+            xsd_path = learned_xsd_path(self._schema_storage_dir)
             model_path.parent.mkdir(parents=True, exist_ok=True)
 
             if model_path.exists():
@@ -866,14 +921,12 @@ class MainWindow(QMainWindow):
             model.save(model_path)
             xsd_path.write_text(generate_xsd(model), encoding="utf-8")
 
-            # Hand the freshly-updated in-memory model to the Raw XML editor so
-            # value-hover tooltips reflect the latest labels without a per-hover
-            # disk reload. If enrichment fails below, the editor keeps whatever
-            # model it had (possibly None), which is fine.
-            self.center_stage.xml_editor.set_schema_model(model)
-
             self._report_schema_events(events, path)
             _log.info("schema: enriched %s", path)
+
+            self._ensure_curated_bootstrap()
+            if self._curated_schema is None:
+                self._load_curated_schema()
         except Exception as exc:
             self.audit_panel.addItem(f"[Schema] Could not update schema knowledge: {exc}")
 
