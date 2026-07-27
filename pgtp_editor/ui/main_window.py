@@ -447,6 +447,7 @@ class MainWindow(QMainWindow):
             return False
         self._curated_schema = schema
         self.center_stage.xml_editor.set_schema_model(schema.model)
+        self.properties_panel.set_schema_model(schema.model)
         return True
 
     def _ensure_curated_bootstrap(self) -> None:

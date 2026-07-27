@@ -122,6 +122,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from pgtp_editor.schema_learning.settings_index import value_label
+from pgtp_editor.ui.xml_editor import attribute_at_position
+
 _READ_ONLY_HINT = "Read-only — click a row to edit in the XML editor"
 
 _EMPTY_STATE_MESSAGE = "Select a Page, Detail, Column, or Event to see its properties"
@@ -146,6 +149,7 @@ class PropertiesPanel(QWidget):
         super().__init__(parent)
         self._xml_editor = xml_editor
         self._current_rows: list[RowSpec] = []
+        self._schema_model = None
 
         self._header_label = QLabel("")
         self.table = QTableWidget(0, 2)
@@ -189,6 +193,35 @@ class PropertiesPanel(QWidget):
         self._current_rows = rows_fn(node)
         self._populate_table(header_fn(node), self._current_rows)
 
+    def set_schema_model(self, model) -> None:
+        """Inject the curated schema model (or None). Labels decorate
+        attribute values as 'value — label' (spec §10); display-only."""
+        self._schema_model = model
+
+    def _display_value(self, spec: RowSpec) -> str:
+        if (
+            self._schema_model is None
+            or spec.attr_name is None
+            or spec.target_line is None
+        ):
+            return spec.value
+        line_text = self._xml_editor.line_text(spec.target_line)
+        needle = f'{spec.attr_name}="'
+        index = line_text.find(needle)
+        if index == -1:
+            return spec.value
+        block = self._xml_editor.document().findBlockByNumber(spec.target_line - 1)
+        if not block.isValid():
+            return spec.value
+        resolved = attribute_at_position(
+            self._xml_editor.toPlainText(), block.position() + index + 1
+        )
+        if resolved is None:
+            return spec.value
+        chain, attr = resolved
+        label = value_label(self._schema_model, chain, attr, spec.value)
+        return f"{spec.value} — {label}" if label else spec.value
+
     def _show_empty_state(self) -> None:
         self._current_rows = []
         self._stack.setCurrentWidget(self._empty_label)
@@ -198,7 +231,7 @@ class PropertiesPanel(QWidget):
         self.table.setRowCount(len(rows))
         for row_index, row_spec in enumerate(rows):
             self.table.setItem(row_index, 0, self._make_item(row_spec.property_label))
-            self.table.setItem(row_index, 1, self._make_item(row_spec.value))
+            self.table.setItem(row_index, 1, self._make_item(self._display_value(row_spec)))
         self._stack.setCurrentWidget(self._populated_page)
 
     @staticmethod
