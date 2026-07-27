@@ -210,6 +210,35 @@ def parent_tag_span(spans: list[TagSpan], span: TagSpan) -> TagSpan | None:
     return None
 
 
+def build_parent_map(spans: list[TagSpan]) -> dict[int, "TagSpan | None"]:
+    """Map ``id(span)`` -> the span one nesting level up (its parent), or None
+    for a top-level span, for EVERY span in a single pass.
+
+    Callers that need every span's parent -- e.g. building each element's full
+    tag-chain -- would otherwise call :func:`parent_tag_span` once per span,
+    which is O(n) each and so O(n^2) overall. On a large real file (dev_Ferrara
+    has ~37k tags) that is tens of seconds and reads as a hang. This computes
+    all parents in O(n log n) via an ancestor stack over spans sorted by open
+    position, and returns the same parent parent_tag_span would for well-formed
+    nesting (the innermost still-open element containing each span).
+    """
+    parent: dict[int, TagSpan | None] = {}
+    stack: list[TagSpan] = []
+    for span in sorted(spans, key=lambda s: s.open_start):
+        span_end = span.close_end if span.close_end is not None else span.open_end
+        while stack:
+            top = stack[-1]
+            top_end = top.close_end if top.close_end is not None else top.open_end
+            if top.open_start <= span.open_start and (
+                top.close_end is None or top_end >= span_end
+            ):
+                break
+            stack.pop()
+        parent[id(span)] = stack[-1] if stack else None
+        stack.append(span)
+    return parent
+
+
 def closing_tag_start(text: str, span: TagSpan) -> int | None:
     """Character offset where `span`'s own '</name>' token begins, or None if
     the span is self-closing or has no close_end. rfind over

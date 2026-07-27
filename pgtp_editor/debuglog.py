@@ -279,6 +279,14 @@ _EXCLUSIONS: list[tuple[str, str]] = [
     ("ui.xml_editor", "XmlSyntaxHighlighter."),
     ("ui.xml_editor", "XmlEditor._update_matching_tag_highlight"),
     ("model.line_index", ""),
+    # Schema-learning enrichment runs per element on open; on a large real
+    # .pgtp (~37k tags) these recursive hot paths emit hundreds of thousands of
+    # trace lines, so --debug crawls and the process dies before the open even
+    # finishes. Silence the enrichment internals wholesale (settings_index, the
+    # light query layer, stays traced).
+    ("schema_learning.parser", ""),
+    ("schema_learning.model", ""),
+    ("schema_learning.types", ""),
 ]
 
 
