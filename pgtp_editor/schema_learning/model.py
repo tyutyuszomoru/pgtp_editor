@@ -73,7 +73,6 @@ class Model:
                         "values": None,
                         "overflowed": True,
                         "attr_seen_count": 1,
-                        "labels": {},
                     }
                 else:
                     entry["attributes"][attr_name] = {
@@ -81,7 +80,6 @@ class Model:
                         "values": [value],
                         "overflowed": False,
                         "attr_seen_count": 1,
-                        "labels": {},
                     }
                 events.append({"kind": "new_attribute", "path": path, "attr": attr_name})
                 continue

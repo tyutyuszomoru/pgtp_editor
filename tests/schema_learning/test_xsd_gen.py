@@ -110,6 +110,7 @@ def test_labeled_enum_value_emits_documentation_while_unlabeled_stays_plain():
     model = Model()
     model.merge_element("Root", {"mode": "1"}, {}, False)
     model.merge_element("Root", {"mode": "2"}, {}, False)
+    model.paths["Root"]["attributes"]["mode"]["labels"] = {}
     model.paths["Root"]["attributes"]["mode"]["labels"]["1"] = "Full export"
 
     xsd_text = generate_xsd(model)
@@ -126,11 +127,11 @@ def test_labeled_enum_value_emits_documentation_while_unlabeled_stays_plain():
 
 
 def test_missing_labels_key_does_not_raise_key_error():
-    # Simulates a schema_model.json written before this sub-project existed:
+    # Simulates a schema_model.json written before labels support existed:
     # no "labels" key at all on the attribute entry.
+    # Now that engine doesn't create labels, this naturally tests the no-labels case.
     model = Model()
     model.merge_element("Root", {"mode": "1"}, {}, False)
-    del model.paths["Root"]["attributes"]["mode"]["labels"]
 
     xsd_text = generate_xsd(model)
 
@@ -140,6 +141,7 @@ def test_missing_labels_key_does_not_raise_key_error():
 def test_empty_string_label_is_treated_as_no_label():
     model = Model()
     model.merge_element("Root", {"mode": "1"}, {}, False)
+    model.paths["Root"]["attributes"]["mode"]["labels"] = {}
     model.paths["Root"]["attributes"]["mode"]["labels"]["1"] = ""
 
     xsd_text = generate_xsd(model)
@@ -151,6 +153,7 @@ def test_empty_string_label_is_treated_as_no_label():
 def test_label_with_xml_special_characters_is_escaped():
     model = Model()
     model.merge_element("Root", {"mode": "1"}, {}, False)
+    model.paths["Root"]["attributes"]["mode"]["labels"] = {}
     model.paths["Root"]["attributes"]["mode"]["labels"]["1"] = "A & B < C"
 
     xsd_text = generate_xsd(model)
