@@ -162,7 +162,7 @@ def test_label_with_xml_special_characters_is_escaped():
     ET.fromstring(xsd_text)  # must remain well-formed XML despite the raw label text
 
 
-def test_xsd_documentation_includes_derived_bitflag_labels_and_notes():
+def test_xsd_documentation_includes_derived_sums_labels_and_notes():
     entry = {
         "type": "integer",
         "values": ["1", "2", "3"],
@@ -170,7 +170,7 @@ def test_xsd_documentation_includes_derived_bitflag_labels_and_notes():
         "attr_seen_count": 1,
         "labels": {"1": "A", "2": "B"},
         "notes": {"3": "adds the <Extra> tag"},
-        "enum_mode": "bitflags",
+        "sums": True,
     }
     model = Model()
     model.paths = {
