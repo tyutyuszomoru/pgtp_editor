@@ -31,11 +31,6 @@ def test_schema_model_path_and_schema_xsd_path_share_the_same_directory(tmp_path
     assert model_path.parent == xsd_path.parent == tmp_path
 
 
-def test_team_repo_dir_under_base_dir(tmp_path):
-    from pgtp_editor.schema_learning.storage import team_repo_dir
-    assert team_repo_dir(tmp_path) == tmp_path / "team_schema_repo"
-
-
 def test_curated_and_learned_xsd_paths(tmp_path):
     from pgtp_editor.schema_learning.storage import curated_xsd_path, learned_xsd_path
     assert curated_xsd_path(tmp_path) == tmp_path / "curated.xsd"
