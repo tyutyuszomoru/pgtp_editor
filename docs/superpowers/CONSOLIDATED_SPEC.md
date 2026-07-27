@@ -476,8 +476,10 @@ checks our dialect, not W3C validity**:
 - `sums="true"` on `<xs:attribute>` — values are **additive**: the user labels only atomic values
   (1, 2, 4, 8, …); the app **derives** every combination's label (`3 = A+B` … `7 = A+B+C`,
   '+'-joined in ascending atomic order) for completion and hover. The Ctrl+Space value list offers
-  **all** combinations (2^n − 1 rows) with derived labels. An explicit enumeration row for a
-  composite value overrides its derived label.
+  **all** combinations (2^n − 1 rows) with derived labels — **capped at
+  `settings_index.SUMS_MAX_ATOMS = 16` labeled atoms**: beyond 16, derivation is skipped entirely
+  (2^n growth would freeze the UI) and only explicit enumeration labels are shown; Verify flags the
+  attribute. An explicit enumeration row for a composite value overrides its derived label.
 - `hint="…"` on `<xs:attribute>` — free-form attribute with a described meaning but no fixed values
   (no restriction block); the hint shows in hover; no value list in completion.
 
@@ -502,7 +504,8 @@ and regenerates **`learned.xsd` only**.
 
 **Feeding pipeline:** `schema_learning/xsd_load.py` (Qt-free; streaming stdlib **expat** with a
 `StartDoctypeDeclHandler` that raises `XsdLoadError` — **DTDs refused**, the same defensive posture as
-defusedxml) parses `curated.xsd` via `load_curated(text) → CuratedSchema`:
+defusedxml; the DTD-refusal message carries the offending line number, `line {n}: DTD declarations are
+not allowed in the curated XSD`) parses `curated.xsd` via `load_curated(text) → CuratedSchema`:
 
 ```
 CuratedSchema{
@@ -516,8 +519,12 @@ Tag matching is **prefix-agnostic** (`xs:attribute` vs any prefix — only the l
 the user may use any namespace prefix in their curated file). Chains are built by a **type-reference
 walk** from top-level `<element name=… type=…>` roots through named `complexType` child elements, with
 a per-path **cycle guard** (`stack | {type_name}`): a recursive type stops, but a type reachable via
-two different paths yields **both** chains. Per-attribute entries carry
-`type` (base mapped to boolean/integer/decimal/string, default string), `values`, `labels`,
+two different paths yields **both** chains. An **inline (unnamed) `complexType`** pushes a `None` frame
+on the loader's type stack: attributes declared inside it land nowhere (they never leak into the
+enclosing named type), while attributes declared **after** it closes correctly belong to the enclosing
+named type again — Verify flags inline complexTypes as off-dialect. Per-attribute entries carry
+`type` (base mapped to boolean/integer/decimal/string with **prefix-agnostic local-part fallback** —
+`xsd:integer` still maps to integer, unknown bases default to string), `values`, `labels`,
 `use`, and optional `sums`/`hint`; unknown structures are silently ignored — dialect complaints are
 Verify's job, not the loader's. The loaded model feeds the `settings_index` query API — `known_attributes(model,
 chain, present)`, `known_values(model, chain, attr)` (→ `[(value, label|None)]`), `enum_hint(model,
@@ -530,7 +537,13 @@ labels (explicit and derived) or the `hint="…"` text; `unused_setting_attribut
 curated schema knows for the chain that are absent from the tag — the old kind filter is gone: an
 attribute is completion-worthy iff it exists in `curated.xsd`. The `sums` derivation is pure and
 Qt-free in `settings_index.py` (composite label by decomposition into labeled atomic values; explicit
-enumeration row wins).
+enumeration row wins; skipped when the labeled atoms exceed `SUMS_MAX_ATOMS = 16`).
+
+**Disk-read guards:** every `curated.xsd` read catches **`OSError` and `UnicodeDecodeError`** (not just
+parse errors). Startup / reload (`_load_curated_schema`, which also catches `XsdLoadError`) emits the
+`[Schema] Curated XSD has XML errors: {error} — keeping last good schema` audit line and keeps the last
+good in-memory schema live; opening the Edit XSD tab or running Verify against the saved file shows a
+status-bar message (`Could not read curated.xsd: {error}`) and aborts.
 
 **Edit XSD tab** (center stage): **Schema ▸ Edit XSD** opens `curated.xsd` in a dedicated
 `CenterStage` tab — a second `XmlEditor` instance with its own `FindReplaceBar` (full
@@ -560,11 +573,15 @@ from the **last successful parse** — navigation targets the saved file content
 - **Verify XSD** — dialect rules via `schema_learning/xsd_verify.py::verify_curated(text) →
   list[Issue{line, message, fatal}]` (streaming expat, prefix-agnostic). Checks as shipped:
   **duplicate enumeration values** (per `xs:attribute`), **`label` off-enumeration** (`label="…"` on
-  any non-enumeration tag), **`sums` off-attribute** (`sums` on any non-attribute tag), **unknown base
-  type** (lenient: a base is accepted with *any* prefix whose local part is one of
-  boolean/integer/decimal/string), **unresolved type references** (element `type=` naming no
-  `complexType`), **duplicate type names**. Malformed XML or a DTD declaration → a **single fatal
-  Issue** (`XML error: …`). Issues are **sorted by line**. Menu action verifies the XSD tab's live
+  any non-enumeration tag), **`sums` off-attribute** (`sums` on any non-attribute tag), **`hint`
+  off-attribute** (`hint` on any non-attribute tag), **unknown base type** (lenient: a base is accepted
+  with *any* prefix whose local part is one of boolean/integer/decimal/string), **unresolved type
+  references** (element `type=` naming no `complexType`), **duplicate type names**, **inline (unnamed)
+  `complexType`** ("not part of the dialect"), **sums attribute with no labeled atomic values**, and
+  **sums attribute exceeding the derivation cap** ("too many values for derivation
+  ({n} > 16)" when its enumeration count exceeds `SUMS_MAX_ATOMS`; both sums rules report at the
+  attribute's start line). Malformed XML or a DTD declaration → a **single fatal Issue**
+  (`XML error: …`, at the offending line). Issues are **sorted by line**. Menu action verifies the XSD tab's live
   text when it has unsaved edits, else the saved `curated.xsd`; also auto-runs report-only on every
   Edit-XSD-tab save and on import. Audit output: one clickable line per issue,
   `[Schema] VERIFY line {n}: {message}` (line on `UserRole`, target `"xsd"` on `UserRole+1` — the same
@@ -1005,6 +1022,7 @@ is authoritative** (and is what appears in the body above).
 | 2026-07-24 | Read-only `SchemaViewerWindow` + Schema ▸ Open XSD / Open XSD Labels (JSON) (`ui/schema_viewer.py`, `ui/schema_viewer_data.py`) | Editable **Edit XSD** center-stage tab (second `XmlEditor` + own `FindReplaceBar`) |
 | 2026-07-24 | "`schema.xsd` is a generated, read-only artifact — hand-edits do not persist"; per-user JSON model as local source of truth for completion | **Inverted:** `curated.xsd` is the official, hand-edited-only schema and sole completion/hover/Properties source; the generated-artifact role moves to `learned.xsd`; `schema_model.json` demoted to the engine's private state |
 | 2026-07-24 | Endgame "freeze master → bundle XSD into the app" (learning-period close-out) | Superseded — the curated XSD is official from day one; no learning-period endgame exists |
+| 2026-07-27 | Unbounded `sums` derivation — completion offers all 2^n − 1 combinations for any number of labeled atoms (2026-07-24) | Capped at `settings_index.SUMS_MAX_ATOMS = 16` labeled atoms: beyond that, derivation is skipped (explicit labels only, UI-freeze guard) and Verify flags the attribute |
 
 ---
 
