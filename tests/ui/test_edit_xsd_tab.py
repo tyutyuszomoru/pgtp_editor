@@ -305,3 +305,117 @@ def test_import_replaces_with_bak_and_reloads(window, monkeypatch, tmp_path):
     assert 'name="z"' in path.read_text(encoding="utf-8")
     assert (path.parent / "curated.xsd.bak").read_text(encoding="utf-8") == _MINIMAL
     assert "z" in window.center_stage.xml_editor.schema_model().paths["Root"]["attributes"]
+
+
+def test_import_with_dirty_tab_includes_notice(window, monkeypatch, tmp_path):
+    """Importing while Edit XSD tab has unsaved edits should include a notice."""
+    _seed(window)
+    window._open_edit_xsd()
+    stage = window.center_stage
+    stage.xsd_editor.setPlainText(_MINIMAL.replace('name="a"', 'name="dirty"'))
+    assert window._xsd_dirty is True
+
+    incoming = tmp_path / "incoming.xsd"
+    incoming.write_text(_MINIMAL.replace('name="a"', 'name="imported"'), encoding="utf-8")
+    monkeypatch.setattr(
+        main_window_module.QFileDialog, "getOpenFileName",
+        staticmethod(lambda *a, **k: (str(incoming), "")),
+    )
+    window._import_xsd()
+
+    # Tab should be reloaded with imported content
+    assert stage.xsd_editor.toPlainText() == incoming.read_text(encoding="utf-8")
+    assert window._xsd_dirty is False
+
+    # Audit log should mention the tab was replaced
+    audit_items = [window.audit_panel.item(i).text() for i in range(window.audit_panel.count())]
+    import_items = [t for t in audit_items if "Imported curated XSD" in t]
+    assert import_items
+    assert "(unsaved XSD tab edits were replaced)" in import_items[0]
+
+
+def test_import_with_warnings_ask_user_decline(window, monkeypatch, tmp_path):
+    """Importing a file with non-fatal dialect warnings should ask the user to confirm."""
+    _seed(window)
+    # Create a file with a non-fatal dialect issue (label on xs:complexType)
+    with_warning = tmp_path / "with_warning.xsd"
+    with_warning.write_text(_MINIMAL.replace(
+        '<xs:complexType name="Root_Type">',
+        '<xs:complexType name="Root_Type" label="wrong">'
+    ), encoding="utf-8")
+
+    monkeypatch.setattr(
+        main_window_module.QFileDialog, "getOpenFileName",
+        staticmethod(lambda *a, **k: (str(with_warning), "")),
+    )
+
+    # User declines import
+    monkeypatch.setattr(
+        main_window_module.QMessageBox, "question",
+        staticmethod(lambda *a, **k: main_window_module.QMessageBox.StandardButton.No),
+    )
+    window._import_xsd()
+
+    # Original file should be untouched
+    path = curated_xsd_path(window._schema_storage_dir)
+    assert path.read_text(encoding="utf-8") == _MINIMAL
+    assert not (path.parent / "curated.xsd.bak").exists()
+
+
+def test_import_with_warnings_ask_user_accept(window, monkeypatch, tmp_path):
+    """Accepting import with warnings should proceed and report the issues."""
+    _seed(window)
+    # Create a file with a non-fatal dialect issue
+    with_warning = tmp_path / "with_warning.xsd"
+    with_warning.write_text(_MINIMAL.replace(
+        '<xs:complexType name="Root_Type">',
+        '<xs:complexType name="Root_Type" label="wrong">'
+    ), encoding="utf-8")
+
+    monkeypatch.setattr(
+        main_window_module.QFileDialog, "getOpenFileName",
+        staticmethod(lambda *a, **k: (str(with_warning), "")),
+    )
+
+    # User accepts import
+    monkeypatch.setattr(
+        main_window_module.QMessageBox, "question",
+        staticmethod(lambda *a, **k: main_window_module.QMessageBox.StandardButton.Yes),
+    )
+    window._import_xsd()
+
+    # File should be replaced
+    path = curated_xsd_path(window._schema_storage_dir)
+    assert 'label="wrong"' in path.read_text(encoding="utf-8")
+
+    # Warnings should be reported in audit panel
+    audit_items = [window.audit_panel.item(i).text() for i in range(window.audit_panel.count())]
+    verify_items = [t for t in audit_items if "VERIFY" in t]
+    assert verify_items
+
+
+def test_import_binary_file_shows_error(window, monkeypatch, tmp_path):
+    """Importing a binary or non-UTF-8 file should show an error and preserve curated.xsd."""
+    _seed(window)
+    binary = tmp_path / "binary.xsd"
+    binary.write_bytes(bytes([0xff, 0xfe, 0x00]))
+
+    monkeypatch.setattr(
+        main_window_module.QFileDialog, "getOpenFileName",
+        staticmethod(lambda *a, **k: (str(binary), "")),
+    )
+
+    criticals = []
+    monkeypatch.setattr(
+        main_window_module.QMessageBox, "critical",
+        staticmethod(lambda *a, **k: criticals.append(a)),
+    )
+    window._import_xsd()
+
+    # Critical error should be shown
+    assert criticals
+    assert "Import Failed" in criticals[0][1]
+
+    # Original file should be untouched
+    path = curated_xsd_path(window._schema_storage_dir)
+    assert path.read_text(encoding="utf-8") == _MINIMAL

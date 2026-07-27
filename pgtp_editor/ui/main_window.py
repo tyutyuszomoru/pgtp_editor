@@ -600,7 +600,7 @@ class MainWindow(QMainWindow):
             return
         try:
             text = Path(source).read_text(encoding="utf-8")
-        except OSError as exc:
+        except (OSError, UnicodeDecodeError) as exc:
             QMessageBox.critical(self, "Import Failed", f"Could not read:\n\n{exc}")
             return
         issues = verify_curated(text)
@@ -618,6 +618,7 @@ class MainWindow(QMainWindow):
             )
             if answer != QMessageBox.StandardButton.Yes:
                 return
+        tab_was_dirty = self._xsd_dirty
         target = curated_xsd_path(self._schema_storage_dir)
         try:
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -636,7 +637,10 @@ class MainWindow(QMainWindow):
                 stage.xsd_editor.setPlainText(text)
             finally:
                 self._xsd_loading = False
-        self.audit_panel.addItem(f"[Schema] Imported curated XSD from {Path(source).name}")
+        notice = f"[Schema] Imported curated XSD from {Path(source).name}"
+        if tab_was_dirty:
+            notice += " (unsaved XSD tab edits were replaced)"
+        self.audit_panel.addItem(notice)
         self._report_verify_issues(issues)
 
     def _report_verify_issues(self, issues) -> None:
