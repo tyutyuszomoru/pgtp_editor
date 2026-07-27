@@ -39,12 +39,24 @@ known values and ``labels`` maps some/all of them to display labels.
 from __future__ import annotations
 
 
+# Above this many labeled atomic values, the 2^n subset-sum derivation
+# becomes a combinatorial blow-up (2^17 = 131072+ rows). Derivation is
+# skipped entirely and only explicit ``labels`` rows are returned; see
+# derived_sums_labels below and the matching xsd_verify rule that flags
+# a ``sums`` attribute exceeding this at authoring time.
+SUMS_MAX_ATOMS = 16
+
+
 def derived_sums_labels(entry):
     """All combination labels for a sums attribute. Atoms = the labeled,
     positive-integer enumeration values; every non-empty subset's sum gets a
     '+'-joined label in ascending atomic order. On duplicate sums the first
     (smallest-atoms) subset wins; explicit enumeration labels overlay LAST,
-    so a hand-written composite row always wins (spec §11)."""
+    so a hand-written composite row always wins (spec §11).
+
+    If the number of labeled atoms exceeds SUMS_MAX_ATOMS, derivation is
+    skipped (2^n subsets would be combinatorially explosive) and only the
+    explicit ``labels`` are returned."""
     labels = entry.get("labels") or {}
     atoms = []
     for value in entry.get("values") or []:
@@ -57,6 +69,8 @@ def derived_sums_labels(entry):
             continue
         if number > 0:
             atoms.append((number, label))
+    if len(atoms) > SUMS_MAX_ATOMS:
+        return dict(labels)
     atoms.sort()
     result = {}
     for mask in range(1, 1 << len(atoms)):

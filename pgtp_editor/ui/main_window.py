@@ -440,7 +440,7 @@ class MainWindow(QMainWindow):
             return False
         try:
             schema = load_curated(path.read_text(encoding="utf-8"))
-        except (OSError, XsdLoadError) as exc:
+        except (OSError, UnicodeDecodeError, XsdLoadError) as exc:
             self.audit_panel.addItem(
                 f"[Schema] Curated XSD has XML errors: {exc} — keeping last good schema"
             )
@@ -492,11 +492,20 @@ class MainWindow(QMainWindow):
         stage = self.center_stage
         if not self._xsd_dirty:
             path = curated_xsd_path(self._schema_storage_dir)
-            text = path.read_text(encoding="utf-8") if path.exists() else (
-                '<?xml version="1.0" encoding="UTF-8"?>\n'
-                '<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" '
-                'elementFormDefault="qualified">\n</xs:schema>\n'
-            )
+            if path.exists():
+                try:
+                    text = path.read_text(encoding="utf-8")
+                except (OSError, UnicodeDecodeError) as exc:
+                    self.statusBar().showMessage(
+                        f"Could not read curated.xsd: {exc}", 5000
+                    )
+                    return
+            else:
+                text = (
+                    '<?xml version="1.0" encoding="UTF-8"?>\n'
+                    '<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" '
+                    'elementFormDefault="qualified">\n</xs:schema>\n'
+                )
             self._xsd_loading = True
             try:
                 stage.xsd_editor.setPlainText(text)
@@ -565,7 +574,13 @@ class MainWindow(QMainWindow):
             if not path.exists():
                 self.statusBar().showMessage("No curated XSD yet.", 5000)
                 return
-            text = path.read_text(encoding="utf-8")
+            try:
+                text = path.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError) as exc:
+                self.statusBar().showMessage(
+                    f"Could not read curated.xsd: {exc}", 5000
+                )
+                return
         self._report_verify_issues(verify_curated(text))
 
     def _export_xsd(self) -> None:

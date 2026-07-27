@@ -54,25 +54,52 @@ def _local(tag: str) -> str:
     return tag.rsplit(":", 1)[-1]
 
 
+def _scalar_for(base: str | None) -> str:
+    """Map a restriction base to our scalar type, prefix-agnostic. Tries an
+    exact match first, then falls back to matching the base's LOCAL part
+    (mirrors _local()) so e.g. ``xsd:integer`` (a non-``xs:`` prefix) still
+    maps to ``integer`` instead of silently falling back to ``string``."""
+    if not base:
+        return "string"
+    if base in _XSD_TO_SCALAR:
+        return _XSD_TO_SCALAR[base]
+    return _XSD_TO_SCALAR.get(f"xs:{_local(base)}", "string")
+
+
 class _Collector:
     def __init__(self, parser):
         self._parser = parser
         self.roots: list[tuple[str, str]] = []   # (element name, type name)
         self.types: dict[str, dict] = {}          # type name -> record
         self._stack: list[str] = []               # local names
-        self._current_type: dict | None = None
+        # Stack of currently-open complexType frames, one entry per
+        # xs:complexType start tag: the record for a named complexType, or
+        # None for an anonymous (unnamed) one. Pushing a frame (rather than
+        # just leaving the enclosing type in place) for the anonymous case
+        # means attributes declared INSIDE it land nowhere — they don't leak
+        # into the enclosing named type — while attributes declared AFTER it
+        # closes correctly see the enclosing named type again, since popping
+        # the anonymous frame restores it as the new stack top.
+        self._type_stack: list[dict | None] = []
         self._current_attr: dict | None = None
+
+    @property
+    def _current_type(self) -> dict | None:
+        return self._type_stack[-1] if self._type_stack else None
 
     def start(self, tag, attrs):
         local = _local(tag)
         parent = self._stack[-1] if self._stack else None
         self._stack.append(local)
         line = self._parser.CurrentLineNumber
-        if local == "complexType" and attrs.get("name"):
-            self._current_type = {
-                "line": line, "children": [], "attributes": {},
-            }
-            self.types[attrs["name"]] = self._current_type
+        if local == "complexType":
+            name = attrs.get("name")
+            if name:
+                record = {"line": line, "children": [], "attributes": {}}
+                self.types[name] = record
+                self._type_stack.append(record)
+            else:
+                self._type_stack.append(None)
         elif local == "element":
             name, type_name = attrs.get("name"), attrs.get("type")
             if name and type_name:
@@ -109,15 +136,18 @@ class _Collector:
                 self._current_type["attributes"][attr["name"]] = attr
             self._current_attr = None
         elif local == "complexType":
-            self._current_type = None
-
-
-def _forbid_dtd(*_args):
-    raise XsdLoadError("DTD declarations are not allowed in the curated XSD")
+            self._type_stack.pop()
 
 
 def load_curated(text: str) -> CuratedSchema:
     parser = expat.ParserCreate()
+
+    def _forbid_dtd(*_args):
+        raise XsdLoadError(
+            f"line {parser.CurrentLineNumber}: DTD declarations are not allowed "
+            "in the curated XSD"
+        )
+
     parser.StartDoctypeDeclHandler = _forbid_dtd
     collector = _Collector(parser)
     parser.StartElementHandler = collector.start
@@ -144,7 +174,7 @@ def _walk(schema, types, tag, type_name, parent_chain, stack):
     entry, _is_new = schema.model._get_or_create_path(chain)
     for attr_name, attr in record["attributes"].items():
         model_entry = {
-            "type": _XSD_TO_SCALAR.get(attr["base"], "string"),
+            "type": _scalar_for(attr["base"]),
             "values": list(attr["values"]),
             "overflowed": False,
             "attr_seen_count": 1,

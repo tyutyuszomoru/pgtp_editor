@@ -602,3 +602,47 @@ def test_import_binary_file_shows_error(window, monkeypatch, tmp_path):
     # Original file should be untouched
     path = curated_xsd_path(window._schema_storage_dir)
     assert path.read_text(encoding="utf-8") == _MINIMAL
+
+
+def test_load_curated_schema_binary_file_returns_false_and_keeps_last_good(window):
+    """A curated.xsd that is binary/non-UTF-8 must not crash
+    _load_curated_schema: it should audit-log the failure, return False, and
+    keep whatever schema was last successfully loaded (spec §11)."""
+    path = _seed(window)
+    window._load_curated_schema()
+    good_model = window.center_stage.xml_editor.schema_model()
+
+    path.write_bytes(bytes([0xff, 0xfe, 0x00]))
+    result = window._load_curated_schema()
+
+    assert result is False
+    assert window.center_stage.xml_editor.schema_model() is good_model
+    texts = [window.audit_panel.item(i).text() for i in range(window.audit_panel.count())]
+    assert any("Curated XSD has XML errors" in t and "keeping last good schema" in t for t in texts)
+
+
+def test_open_edit_xsd_binary_file_shows_status_and_does_not_open(window):
+    """A binary/non-UTF-8 curated.xsd must not crash _open_edit_xsd: it
+    should show a status-bar message and leave the tab untouched instead of
+    switching to it with garbage content."""
+    path = _seed(window)
+    path.write_bytes(bytes([0xff, 0xfe, 0x00]))
+
+    window._open_edit_xsd()
+
+    stage = window.center_stage
+    assert stage.currentIndex() != stage.xsd_tab_index
+    assert "Could not read curated.xsd" in window.statusBar().currentMessage()
+
+
+def test_verify_xsd_binary_file_shows_status_and_no_verify_lines(window):
+    """A binary/non-UTF-8 curated.xsd must not crash _verify_xsd: it should
+    show a status-bar message and produce no VERIFY audit lines."""
+    path = _seed(window)
+    path.write_bytes(bytes([0xff, 0xfe, 0x00]))
+
+    window._verify_xsd()
+
+    assert "Could not read curated.xsd" in window.statusBar().currentMessage()
+    texts = [window.audit_panel.item(i).text() for i in range(window.audit_panel.count())]
+    assert not any(t.startswith("[Schema] VERIFY") for t in texts)

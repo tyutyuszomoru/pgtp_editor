@@ -83,6 +83,60 @@ def test_dtd_is_refused():
         load_curated('<?xml version="1.0"?><!DOCTYPE x [<!ENTITY a "b">]><xs:schema/>')
 
 
+def test_dtd_refusal_message_includes_line():
+    with pytest.raises(XsdLoadError) as excinfo:
+        load_curated(
+            '<?xml version="1.0"?>\n'
+            '<!DOCTYPE x [<!ENTITY a "b">]>\n'
+            "<xs:schema/>"
+        )
+    assert "line" in str(excinfo.value)
+
+
+def test_scalar_type_falls_back_to_base_local_part():
+    """A restriction base with a non-'xs:' prefix (e.g. the schema's own
+    prefix mapped differently, or a stray namespace) must still resolve by
+    LOCAL part instead of silently defaulting to 'string'."""
+    xsd = """<?xml version="1.0"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+  <xs:element name="Root" type="Root_Type"/>
+  <xs:complexType name="Root_Type">
+    <xs:attribute name="a">
+      <xs:simpleType>
+        <xs:restriction base="xsd:integer">
+          <xs:enumeration value="1"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+  </xs:complexType>
+</xs:schema>"""
+    schema = load_curated(xsd)
+    assert schema.model.paths["Root"]["attributes"]["a"]["type"] == "integer"
+
+
+def test_inline_complex_type_does_not_leak_attributes_into_enclosing_type():
+    """An anonymous complexType nested inside the named type (e.g. under a
+    child element) must not have its attributes attributed to the enclosing
+    named type, and attributes declared AFTER the anonymous block closes
+    must still land in the enclosing named type."""
+    xsd = """<?xml version="1.0"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  <xs:element name="Root" type="Root_Type"/>
+  <xs:complexType name="Root_Type">
+    <xs:element name="Child">
+      <xs:complexType>
+        <xs:attribute name="inner" type="xs:string"/>
+      </xs:complexType>
+    </xs:element>
+    <xs:attribute name="outer" type="xs:string"/>
+  </xs:complexType>
+</xs:schema>"""
+    schema = load_curated(xsd)
+    root_attrs = schema.model.paths["Root"]["attributes"]
+    assert "outer" in root_attrs
+    assert "inner" not in root_attrs
+
+
 def test_type_cycle_does_not_hang():
     cyclic = """<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
   <xs:element name="A" type="A_Type"/>

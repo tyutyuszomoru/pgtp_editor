@@ -96,6 +96,78 @@ def test_issues_are_sorted_by_line():
     assert lines == sorted(lines)
 
 
+def test_hint_misplaced_off_attribute_is_flagged():
+    text = _wrap(
+        '  <xs:complexType name="T" hint="wrong">\n'
+        '    <xs:attribute name="a" hint="a file path"/>\n'
+        "  </xs:complexType>"
+    )
+    messages = " | ".join(i.message for i in verify_curated(text))
+    assert "hint=" in messages
+    assert "not on complexType" in messages
+
+
+def test_sums_attribute_with_no_labeled_values_is_flagged():
+    text = _wrap(
+        '  <xs:complexType name="T">\n'
+        '    <xs:attribute name="a" sums="true">\n'
+        "      <xs:simpleType><xs:restriction base=\"xs:integer\">\n"
+        '        <xs:enumeration value="1"/>\n'
+        '        <xs:enumeration value="2"/>\n'
+        "      </xs:restriction></xs:simpleType>\n"
+        "    </xs:attribute>\n"
+        "  </xs:complexType>"
+    )
+    messages = " | ".join(i.message for i in verify_curated(text))
+    assert "sums attribute has no labeled atomic values" in messages
+
+
+def test_sums_attribute_with_a_labeled_value_is_not_flagged():
+    text = _wrap(
+        '  <xs:complexType name="T">\n'
+        '    <xs:attribute name="a" sums="true">\n'
+        "      <xs:simpleType><xs:restriction base=\"xs:integer\">\n"
+        '        <xs:enumeration value="1" label="A"/>\n'
+        "      </xs:restriction></xs:simpleType>\n"
+        "    </xs:attribute>\n"
+        "  </xs:complexType>"
+    )
+    messages = " | ".join(i.message for i in verify_curated(text))
+    assert "no labeled atomic values" not in messages
+
+
+def test_sums_attribute_over_cap_is_flagged():
+    enums = "\n".join(
+        f'        <xs:enumeration value="{i}" label="L{i}"/>' for i in range(17)
+    )
+    text = _wrap(
+        '  <xs:complexType name="T">\n'
+        '    <xs:attribute name="a" sums="true">\n'
+        "      <xs:simpleType><xs:restriction base=\"xs:integer\">\n"
+        f"{enums}\n"
+        "      </xs:restriction></xs:simpleType>\n"
+        "    </xs:attribute>\n"
+        "  </xs:complexType>"
+    )
+    messages = " | ".join(i.message for i in verify_curated(text))
+    assert "sums attribute has too many values for derivation (17 > 16)" in messages
+
+
+def test_inline_unnamed_complex_type_is_flagged():
+    text = _wrap(
+        '  <xs:element name="Root" type="Root_Type"/>\n'
+        '  <xs:complexType name="Root_Type">\n'
+        '    <xs:element name="Child">\n'
+        '      <xs:complexType>\n'
+        '        <xs:attribute name="inner"/>\n'
+        '      </xs:complexType>\n'
+        '    </xs:element>\n'
+        '  </xs:complexType>'
+    )
+    messages = " | ".join(i.message for i in verify_curated(text))
+    assert "inline (unnamed) complexType is not part of the dialect" in messages
+
+
 def test_known_base_with_different_prefix_is_lenient():
     text = (
         '<?xml version="1.0"?>\n'

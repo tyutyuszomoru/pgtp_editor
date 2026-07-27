@@ -15,6 +15,7 @@
 
 from pgtp_editor.schema_learning.model import Model
 from pgtp_editor.schema_learning.settings_index import (
+    SUMS_MAX_ATOMS,
     derived_sums_labels,
     effective_labels,
     enum_hint,
@@ -117,3 +118,18 @@ def test_effective_labels_plain_is_copy():
     result = effective_labels(entry)
     result["1"] = "mutated"
     assert entry["labels"]["1"] == "A"
+
+
+def test_derived_sums_labels_skips_derivation_above_cap():
+    """SUMS_MAX_ATOMS (16) labeled atoms is the combinatorial cap: above it,
+    2**n subset-sum derivation is skipped entirely and only the explicit
+    labels come back — no hang, no huge dict."""
+    assert SUMS_MAX_ATOMS == 16
+    atom_count = SUMS_MAX_ATOMS + 1
+    values = [str(2 ** i) for i in range(atom_count)]
+    labels = {str(2 ** i): f"L{i}" for i in range(atom_count)}
+    entry = _entry(values, labels=labels, sums=True)
+
+    result = derived_sums_labels(entry)
+
+    assert result == labels
