@@ -567,6 +567,78 @@ class MainWindow(QMainWindow):
             text = path.read_text(encoding="utf-8")
         self._report_verify_issues(verify_curated(text))
 
+    def _export_xsd(self) -> None:
+        source = curated_xsd_path(self._schema_storage_dir)
+        if not source.exists():
+            self.statusBar().showMessage("No curated XSD yet.", 5000)
+            return
+        if self._xsd_dirty:
+            self.statusBar().showMessage(
+                "The XSD tab has unsaved changes — save it first (Ctrl+S).", 5000
+            )
+            return
+        dest, _filter = QFileDialog.getSaveFileName(
+            self, "Export XSD", "curated.xsd", "XSD files (*.xsd)"
+        )
+        if not dest:
+            return
+        try:
+            shutil.copyfile(source, dest)
+        except OSError as exc:
+            QMessageBox.critical(self, "Export Failed", f"Could not export:\n\n{exc}")
+            return
+        self.statusBar().showMessage(f"Exported to {Path(dest).name}", 5000)
+
+    def _import_xsd(self) -> None:
+        """Replace curated.xsd with a teammate's file: verify first (hard
+        refuse malformed XML; dialect warnings importable), back up, replace,
+        re-parse (spec §11)."""
+        source, _filter = QFileDialog.getOpenFileName(
+            self, "Import XSD", "", "XSD files (*.xsd);;All files (*)"
+        )
+        if not source:
+            return
+        try:
+            text = Path(source).read_text(encoding="utf-8")
+        except OSError as exc:
+            QMessageBox.critical(self, "Import Failed", f"Could not read:\n\n{exc}")
+            return
+        issues = verify_curated(text)
+        if any(issue.fatal for issue in issues):
+            QMessageBox.critical(
+                self, "Import Refused",
+                "The file is not well-formed XML:\n\n" + issues[0].message,
+            )
+            return
+        if issues:
+            answer = QMessageBox.question(
+                self, "Import With Warnings",
+                f"The file has {len(issues)} dialect warning(s). Import anyway?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                return
+        target = curated_xsd_path(self._schema_storage_dir)
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            if target.exists():
+                shutil.copy2(target, str(target) + ".bak")
+            target.write_text(text, encoding="utf-8")
+        except OSError as exc:
+            QMessageBox.critical(self, "Import Failed", f"Could not write:\n\n{exc}")
+            return
+        self._set_xsd_dirty(False)
+        self._load_curated_schema()
+        stage = self.center_stage
+        if stage.xsd_editor.toPlainText():
+            self._xsd_loading = True
+            try:
+                stage.xsd_editor.setPlainText(text)
+            finally:
+                self._xsd_loading = False
+        self.audit_panel.addItem(f"[Schema] Imported curated XSD from {Path(source).name}")
+        self._report_verify_issues(issues)
+
     def _report_verify_issues(self, issues) -> None:
         """Append Verify XSD results to the audit panel. Each issue line is
         clickable -- routed through _on_audit_item_clicked's existing
@@ -2110,9 +2182,9 @@ class MainWindow(QMainWindow):
         verify_action = menu.addAction("Verify XSD")
         verify_action.triggered.connect(self._verify_xsd)
         export_action = menu.addAction("Export XSD")
-        export_action.triggered.connect(lambda: self._not_implemented("Export XSD"))
+        export_action.triggered.connect(self._export_xsd)
         import_action = menu.addAction("Import XSD")
-        import_action.triggered.connect(lambda: self._not_implemented("Import XSD"))
+        import_action.triggered.connect(self._import_xsd)
         # "Go To XSD" (Ctrl+L) lives as a window-level action, not a menu
         # entry -- the Schema menu contract is exactly these four items.
         goto_xsd_action = QAction("Go To XSD", self)

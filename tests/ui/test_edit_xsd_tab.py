@@ -23,6 +23,7 @@ from tests.ui._menu_helpers import find_action, find_top_menu
 
 from pgtp_editor.schema_learning.storage import curated_xsd_path
 from pgtp_editor.ui.main_window import MainWindow
+from pgtp_editor.ui import main_window as main_window_module
 
 _MINIMAL = """<?xml version="1.0" encoding="UTF-8"?>
 <xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
@@ -259,3 +260,48 @@ def test_save_auto_verifies_report_only(window):
     window._save_curated_xsd()
     texts = [window.audit_panel.item(i).text() for i in range(window.audit_panel.count())]
     assert any(t.startswith("[Schema] VERIFY") for t in texts)
+
+
+def test_export_copies_curated(window, monkeypatch, tmp_path):
+    _seed(window)
+    dest = tmp_path / "out.xsd"
+    monkeypatch.setattr(
+        main_window_module.QFileDialog, "getSaveFileName",
+        staticmethod(lambda *a, **k: (str(dest), "")),
+    )
+    window._export_xsd()
+    assert dest.read_text(encoding="utf-8") == _MINIMAL
+
+
+def test_import_refuses_malformed(window, monkeypatch, tmp_path):
+    _seed(window)
+    bad = tmp_path / "bad.xsd"
+    bad.write_text("<broken", encoding="utf-8")
+    monkeypatch.setattr(
+        main_window_module.QFileDialog, "getOpenFileName",
+        staticmethod(lambda *a, **k: (str(bad), "")),
+    )
+    criticals = []
+    monkeypatch.setattr(
+        main_window_module.QMessageBox, "critical",
+        staticmethod(lambda *a, **k: criticals.append(a)),
+    )
+    window._import_xsd()
+    assert criticals
+    assert curated_xsd_path(window._schema_storage_dir).read_text(encoding="utf-8") == _MINIMAL
+
+
+def test_import_replaces_with_bak_and_reloads(window, monkeypatch, tmp_path):
+    _seed(window)
+    window._load_curated_schema()
+    incoming = tmp_path / "incoming.xsd"
+    incoming.write_text(_MINIMAL.replace('name="a"', 'name="z"'), encoding="utf-8")
+    monkeypatch.setattr(
+        main_window_module.QFileDialog, "getOpenFileName",
+        staticmethod(lambda *a, **k: (str(incoming), "")),
+    )
+    window._import_xsd()
+    path = curated_xsd_path(window._schema_storage_dir)
+    assert 'name="z"' in path.read_text(encoding="utf-8")
+    assert (path.parent / "curated.xsd.bak").read_text(encoding="utf-8") == _MINIMAL
+    assert "z" in window.center_stage.xml_editor.schema_model().paths["Root"]["attributes"]
