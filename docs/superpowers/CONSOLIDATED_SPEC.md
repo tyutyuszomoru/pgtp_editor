@@ -1,6 +1,6 @@
 # PGTP Editor — Consolidated Specification
 
-> **Status:** living document · **Last synthesized:** 2026-07-24
+> **Status:** living document · **Last synthesized:** 2026-07-27
 > **Source of truth:** this file is the single reconciled specification for PGTP Editor.
 > It is synthesized from the dated design specs under [`docs/superpowers/specs/`](specs/) using a
 > **latest-wins** rule: where a later spec overrode an earlier decision, only the later decision
@@ -180,7 +180,8 @@ pgtp_editor/
 │   └── gap_summary.py
 ├── schema_learning/   # curated-XSD schema source + vendored learning engine + settings index
 │   ├── model.py, parser.py (defusedxml), types.py, xsd_gen.py
-│   ├── xsd_load.py    # Qt-free defusedxml loader: curated.xsd → in-memory Model shape (§11)
+│   ├── xsd_load.py    # Qt-free expat loader (DTD refused): curated.xsd → CuratedSchema (§11)
+│   ├── xsd_verify.py  # Qt-free expat dialect verifier: verify_curated(text) → list[Issue] (§11)
 │   ├── storage.py     # schema_model_path / curated_xsd_path / learned_xsd_path (AppData)
 │   └── settings_index.py  # enum_hint, sums (additive-value) derivation, known_attributes/known_values, unused_setting_attributes
 ├── db/                # PostgreSQL introspection & comparison (Qt-free logic)
@@ -203,7 +204,7 @@ Key `ui/` modules: `main_window.py`, `center_stage.py`, `project_tree.py`, `xml_
 `ui/schema_viewer.py`, `ui/schema_viewer_data.py`.)
 
 **Dependency rule:** `model/` touches lxml; nothing in `model/` or `ui/` depends on `diff/`; pure-logic
-modules (`search`, `history`, `caption_scan`, `settings_index`, `xsd_load`, `tier2`, `db/*`,
+modules (`search`, `history`, `caption_scan`, `settings_index`, `xsd_load`, `xsd_verify`, `tier2`, `db/*`,
 `analysis/*`, `type_map`, `from_table`, `xml_structure`) are Qt-free and unit-testable without a
 `QApplication`.
 
@@ -283,7 +284,10 @@ Caption Management, Manual, Edit XSD — non-Raw-XML tabs hidden until invoked).
 Right dock is the **Properties** panel.
 
 **Document state:** `_dirty` + `_set_dirty()` (title gets " *"); editor `textChanged` marks dirty;
-load/save/revert clears. `.bak` (single, overwritten, `shutil.copy2`) is written before overwriting an
+load/save/revert clears. **Theme toggles never dirty either document:** `XmlEditor.apply_theme_colors`
+sets an `_applying_theme` guard around its `rehighlight()` (which fires a spurious `textChanged` with
+no text actually changed); MainWindow's dirty handlers for **both** the Raw XML and Edit XSD editors
+consult `XmlEditor.is_applying_theme()` and no-op. `.bak` (single, overwritten, `shutil.copy2`) is written before overwriting an
 existing file on save — never on Save-As to a new path, never on a failed/no-op write.
 `_write_project_text(path)` writes editor `toPlainText()` as UTF-8 with `newline=""` (byte-preserving).
 `_current_project_path` is normalized to `str`.
@@ -496,8 +500,26 @@ audit line on failure). Reports via `_SCHEMA_REPORT_TEMPLATES`
 one summary line. Diff/Merge file pickers do **not** enrich. Enrichment updates `schema_model.json`
 and regenerates **`learned.xsd` only**.
 
-**Feeding pipeline:** `schema_learning/xsd_load.py` (Qt-free, `defusedxml`) parses `curated.xsd` into
-the existing in-memory `Model` shape, so the `settings_index` query API — `known_attributes(model,
+**Feeding pipeline:** `schema_learning/xsd_load.py` (Qt-free; streaming stdlib **expat** with a
+`StartDoctypeDeclHandler` that raises `XsdLoadError` — **DTDs refused**, the same defensive posture as
+defusedxml) parses `curated.xsd` via `load_curated(text) → CuratedSchema`:
+
+```
+CuratedSchema{
+    model: Model,                                    # the existing in-memory Model shape
+    attribute_lines: dict[(chain, attr) → line],     # 1-based source lines, power Go To XSD
+    element_lines:   dict[chain → line],
+}
+```
+
+Tag matching is **prefix-agnostic** (`xs:attribute` vs any prefix — only the local name matters, since
+the user may use any namespace prefix in their curated file). Chains are built by a **type-reference
+walk** from top-level `<element name=… type=…>` roots through named `complexType` child elements, with
+a per-path **cycle guard** (`stack | {type_name}`): a recursive type stops, but a type reachable via
+two different paths yields **both** chains. Per-attribute entries carry
+`type` (base mapped to boolean/integer/decimal/string, default string), `values`, `labels`,
+`use`, and optional `sums`/`hint`; unknown structures are silently ignored — dialect complaints are
+Verify's job, not the loader's. The loaded model feeds the `settings_index` query API — `known_attributes(model,
 chain, present)`, `known_values(model, chain, attr)` (→ `[(value, label|None)]`), `enum_hint(model,
 chain, attr)` (one-line hint, e.g. `editFormMode — 1 = modal · 2 = new page · 3 = inline`),
 `unused_setting_attributes` — and therefore the completion/hover code keep their contracts. Loaded at
@@ -514,26 +536,50 @@ enumeration row wins).
 `CenterStage` tab — a second `XmlEditor` instance with its own `FindReplaceBar` (full
 find/replace/Find All parity with Raw XML). The tab owns its dirty state (tab-title marker); Ctrl+S
 and Edit-menu Find/Replace route to the **active** tab (per-tab document routing, §7). **Save** →
-write the file → re-parse via `xsd_load` → refresh completion/hover/Properties immediately.
-**Malformed XML on save:** the text is still written (user text is never lost), a parse-error
-`[Schema]` audit line is emitted, and the last good in-memory schema stays live.
+write the file (UTF-8, `newline=""`) → re-parse via `xsd_load` → refresh completion/hover/Properties
+immediately → auto-run Verify report-only on the saved text. **Malformed XML on save:** the text is
+still written (user text is never lost), the audit line
+`[Schema] Curated XSD has XML errors: {error} — keeping last good schema` is emitted, and the last
+good in-memory schema stays live.
 
-**Go To XSD:** Raw XML editor right-click **"Go To XSD"** (Ctrl+L): activates the Edit XSD tab and
-navigates to + selects the `<xs:attribute name="…">` definition inside the enclosing element's type;
-if the attribute is absent there, falls back to the element's type definition; otherwise a status-bar
-message. (Cursor context resolved via the pure `attribute_at_position` /
-`attribute_value_at_position` resolvers.)
+**Bootstrap audit line:** the one-time seeding emits
+`[Schema] Bootstrapped curated.xsd from the learned schema (labels preserved)` (failure →
+`[Schema] Could not bootstrap curated.xsd: {error}`).
+
+**Go To XSD:** a **window-level `QAction`** (`Ctrl+L`, registered via `self.addAction(...)` on
+MainWindow — deliberately **not** a Schema-menu item, so the Schema menu keeps its exactly-four-items
+contract) plus a Raw XML editor right-click **"Go To XSD"** context-menu entry. It resolves the caret's
+attribute/element context (pure `attribute_at_position` / `attribute_value_at_position` resolvers),
+activates the Edit XSD tab, and navigates to the `<xs:attribute name="…">` definition line via
+`CuratedSchema.attribute_lines[(chain, attr)]`; if the attribute is absent, falls back to
+`element_lines[chain]` (the element's type definition); otherwise a status-bar message. Lines come
+from the **last successful parse** — navigation targets the saved file content, not unsaved tab edits.
 
 **Schema menu — exactly four items** (between Diff/Merge and Tools; see consolidated menu):
 - **Edit XSD** — open the tab.
-- **Verify XSD** — well-formedness + dialect rules: duplicate enumeration values, `label` only on
-  enumerations, `sums` only on `xs:attribute`, unknown base types, unresolvable child type
-  references, duplicate type names → clickable `[Schema]` Audit-panel lines. Also auto-runs
-  report-only on every Edit-XSD-tab save.
-- **Export XSD** — Save-As copy of `curated.xsd`.
-- **Import XSD** — Open dialog → **verify the incoming file first** (hard refuse malformed XML;
-  dialect warnings are shown but importable) → back up the current file as `curated.xsd.bak` →
-  replace → re-parse → refresh. Team sharing = plain file exchange via Export/Import.
+- **Verify XSD** — dialect rules via `schema_learning/xsd_verify.py::verify_curated(text) →
+  list[Issue{line, message, fatal}]` (streaming expat, prefix-agnostic). Checks as shipped:
+  **duplicate enumeration values** (per `xs:attribute`), **`label` off-enumeration** (`label="…"` on
+  any non-enumeration tag), **`sums` off-attribute** (`sums` on any non-attribute tag), **unknown base
+  type** (lenient: a base is accepted with *any* prefix whose local part is one of
+  boolean/integer/decimal/string), **unresolved type references** (element `type=` naming no
+  `complexType`), **duplicate type names**. Malformed XML or a DTD declaration → a **single fatal
+  Issue** (`XML error: …`). Issues are **sorted by line**. Menu action verifies the XSD tab's live
+  text when it has unsaved edits, else the saved `curated.xsd`; also auto-runs report-only on every
+  Edit-XSD-tab save and on import. Audit output: one clickable line per issue,
+  `[Schema] VERIFY line {n}: {message}` (line on `UserRole`, target `"xsd"` on `UserRole+1` — the same
+  item-data click convention Find All uses; click activates the Edit XSD tab at that line), or
+  `[Schema] VERIFY: no issues found.` when clean.
+- **Export XSD** — Save-As copy of `curated.xsd` (`shutil.copyfile`); refused with a status-bar
+  message while the XSD tab has unsaved edits ("save it first").
+- **Import XSD** — Open dialog → **verify the incoming file first** (hard refuse malformed XML with an
+  "Import Refused" dialog; non-fatal dialect warnings prompt a `QMessageBox.question` Yes/No
+  "Import With Warnings" confirm) → back up the current file as `curated.xsd.bak` → replace →
+  re-parse → refresh. Read failures catch **`OSError` and `UnicodeDecodeError`** → "Import Failed"
+  critical dialog; a write failure (`OSError`) → "Import Failed" as well. Success emits
+  `[Schema] Imported curated XSD from {name}`, with the suffix
+  `" (unsaved XSD tab edits were replaced)"` appended when the XSD tab was dirty, followed by the
+  verify report. Team sharing = plain file exchange via Export/Import.
 
 **Editor integration** (mechanics unchanged; source now exclusively `curated.xsd`):
 - **Hover** over an attribute name/value in an opening tag shows a `QToolTip` with `enum_hint(...)`,
@@ -885,8 +931,9 @@ Tools; "New Project" removed; line-wrap moved to editor context menu):
   Collapse All, ☐ Light Theme, ☑/☐ Find table reference.
 - **Bookmarks:** Toggle Bookmark (Ctrl+F2), Next Bookmark (F2), Previous Bookmark (Shift+F2), Clear All
   Bookmarks.
-- **Schema:** Edit XSD, Verify XSD, Export XSD, Import XSD — exactly these four (§11). (Go To XSD,
-  Ctrl+L, lives in the Raw XML editor's context menu, not this menu.)
+- **Schema:** Edit XSD, Verify XSD, Export XSD, Import XSD — exactly these four (§11). (Go To XSD is
+  **not** a menu item: it is a window-level Ctrl+L `QAction` added via `MainWindow.addAction` plus a
+  Raw XML editor context-menu entry.)
 - **Database:** Connection Setup…, Check: XML→Database, Check: Database→XML.
 - **Tools:** Manage Captions…, Caption Filter… (Ctrl+R in caption context), Reparse Raw XML into Tree,
   Validate Project, Compare/Merge Two Files…, Next/Previous Difference, Apply Changes to Target.
@@ -909,7 +956,7 @@ Toolbar default: Open, Save, Undo, Redo, Find, Validate, Generate (customizable)
 | Ctrl+Shift+B / Ctrl+Shift+A | Select Enclosing / Parent Block | Raw XML editor (menu-owned) |
 | Ctrl+click / Alt+click | Jump to matching tag / parent tag | Raw XML editor |
 | Ctrl+F2 / F2 / Shift+F2 | Toggle / Next / Previous Bookmark | Raw XML editor |
-| Ctrl+L | Go To XSD (jump to the attribute's definition in curated.xsd) | Raw XML editor |
+| Ctrl+L | Go To XSD (jump to the attribute's definition in curated.xsd) | Window-level QAction (also in the Raw XML editor context menu) |
 | Ctrl+G | Go to line in XML | Caption grid |
 | Ctrl+Shift+B | Bracket-select | Code editor dialog |
 | Ctrl+S / Ctrl+W | Save / Cancel | Code editor dialog |
