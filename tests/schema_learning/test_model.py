@@ -194,23 +194,10 @@ def test_secret_named_attribute_still_emits_new_attribute_event():
 # --- labels field: new tests for this sub-project ---
 
 
-def test_freshly_created_attribute_entry_has_empty_labels():
-    model = Model()
-    model.merge_element("Root", {"a": "1"}, {}, False)
-
-    assert model.paths["Root"]["attributes"]["a"]["labels"] == {}
-
-
-def test_secret_attribute_entry_also_has_empty_labels():
-    model = Model()
-    model.merge_element("Root", {"password": "hunter2"}, {}, False)
-
-    assert model.paths["Root"]["attributes"]["password"]["labels"] == {}
-
-
 def test_labels_round_trip_through_to_dict_from_dict_and_save_load(tmp_path):
     model = Model()
     model.merge_element("Root", {"a": "1"}, {}, False)
+    model.paths["Root"]["attributes"]["a"]["labels"] = {}
     model.paths["Root"]["attributes"]["a"]["labels"]["1"] = "Full export"
 
     restored = Model.from_dict(model.to_dict())
@@ -225,6 +212,7 @@ def test_labels_round_trip_through_to_dict_from_dict_and_save_load(tmp_path):
 def test_merge_element_never_alters_existing_labels_across_repeated_merges():
     model = Model()
     model.merge_element("Root", {"a": "1"}, {}, False)
+    model.paths["Root"]["attributes"]["a"]["labels"] = {}
     model.paths["Root"]["attributes"]["a"]["labels"]["1"] = "One"
 
     # Merge several more times, including a new distinct value, and confirm
@@ -238,6 +226,7 @@ def test_merge_element_never_alters_existing_labels_across_repeated_merges():
 def test_labels_survive_enum_overflow_even_though_values_becomes_none():
     model = Model()
     model.merge_element("Root", {"a": "0"}, {}, False)
+    model.paths["Root"]["attributes"]["a"]["labels"] = {}
     model.paths["Root"]["attributes"]["a"]["labels"]["0"] = "Zero label"
 
     for i in range(1, 11):
@@ -247,3 +236,10 @@ def test_labels_survive_enum_overflow_even_though_values_becomes_none():
     assert attr["overflowed"] is True
     assert attr["values"] is None
     assert attr["labels"] == {"0": "Zero label"}
+
+
+def test_new_attribute_entries_carry_engine_fields_only():
+    model = Model()
+    model.merge_element("Root", {"a": "1"}, {}, False)
+    entry = model.paths["Root"]["attributes"]["a"]
+    assert set(entry) == {"type", "values", "overflowed", "attr_seen_count"}

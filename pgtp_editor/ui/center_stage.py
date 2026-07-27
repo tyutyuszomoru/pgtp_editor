@@ -48,6 +48,18 @@ class CenterStage(QTabWidget):
         raw_layout.addWidget(self.find_replace_bar)
         self.raw_xml_tab_index = self.addTab(self.raw_xml_tab, "Raw XML")
 
+        # Edit XSD tab (spec §11): a second, fully-featured editor for the
+        # hand-curated schema. Hidden until Schema ▸ Edit XSD reveals it.
+        self.xsd_editor = XmlEditor()
+        self.xsd_find_replace_bar = FindReplaceBar(self.xsd_editor)
+        self.xsd_tab = QWidget()
+        xsd_layout = QVBoxLayout(self.xsd_tab)
+        xsd_layout.setContentsMargins(0, 0, 0, 0)
+        xsd_layout.setSpacing(0)
+        xsd_layout.addWidget(self.xsd_editor)
+        xsd_layout.addWidget(self.xsd_find_replace_bar)
+        self.xsd_tab_index = self.addTab(self.xsd_tab, "Edit XSD")
+
         self.manual_panel = ManualPanel()
         self.manual_tab_index = self.addTab(self.manual_panel, "Manual")
 
@@ -56,6 +68,7 @@ class CenterStage(QTabWidget):
         self.setTabVisible(self.diff_merge_tab_index, False)
         self.setTabVisible(self.caption_management_tab_index, False)
         self.setTabVisible(self.raw_xml_tab_index, True)
+        self.setTabVisible(self.xsd_tab_index, False)
         self.setTabVisible(self.manual_tab_index, False)
         self.setCurrentIndex(self.raw_xml_tab_index)
 
@@ -75,6 +88,10 @@ class CenterStage(QTabWidget):
 
     def set_raw_xml_tab_visible(self, visible):
         self.setTabVisible(self.raw_xml_tab_index, visible)
+
+    def show_edit_xsd(self):
+        self.setTabVisible(self.xsd_tab_index, True)
+        self.setCurrentIndex(self.xsd_tab_index)
 
     def show_manual(self):
         self.setTabVisible(self.manual_tab_index, True)

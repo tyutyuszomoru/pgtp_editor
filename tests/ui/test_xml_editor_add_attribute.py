@@ -126,7 +126,6 @@ def _model_settings(tag_chain, names):
             "overflowed": False,
             "attr_seen_count": 2,
             "labels": {},
-            "kind": "setting",
         }
     model.paths[tag_chain] = {
         "attributes": attributes,

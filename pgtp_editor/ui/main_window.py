@@ -76,22 +76,17 @@ from pgtp_editor.model.parser import (
 )
 from pgtp_editor.schema_learning.model import Model
 from pgtp_editor.schema_learning.parser import walk_document
-from pgtp_editor.schema_learning.settings_index import attribute_kind
-from pgtp_editor.schema_learning.storage import schema_model_path, schema_xsd_path
-from pgtp_editor.schema_learning.xsd_gen import generate_xsd
-from pgtp_editor.schema_learning import sync
-from pgtp_editor.schema_learning.merge import (
-    LABELER_DICT_FIELDS,
-    LABELER_SCALAR_FIELDS,
-    apply_resolution,
-    merge_models,
+from pgtp_editor.schema_learning.storage import (
+    curated_xsd_path,
+    learned_xsd_path,
+    schema_model_path,
 )
-from pgtp_editor.ui.merge_conflicts_dialog import MergeConflictsDialog
-from pgtp_editor.ui.team_sync_dialog import TeamSyncSettingsDialog, load_sync_config
+from pgtp_editor.schema_learning.xsd_gen import generate_curated_xsd, generate_xsd
+from pgtp_editor.schema_learning.xsd_load import XsdLoadError, load_curated
+from pgtp_editor.schema_learning.xsd_verify import verify_curated
 from pgtp_editor.validation.tier2 import validate_project
 from pgtp_editor.ui._stub_action import add_stub_action
 from pgtp_editor.ui.about import show_about_dialog
-from pgtp_editor.ui.annotate_popover import AnnotatePopover
 from pgtp_editor.ui.caption_find_replace_dialog import CaptionFindReplaceDialog
 from pgtp_editor.ui.busy import busy_status, format_size
 from pgtp_editor.ui.center_stage import CenterStage
@@ -129,11 +124,9 @@ from pgtp_editor.ui import caption_scan
 from pgtp_editor.ui import search
 from pgtp_editor.ui.project_tree import ProjectTreePanel
 from pgtp_editor.ui.properties_panel import PropertiesPanel
-from pgtp_editor.ui.schema_viewer import SchemaViewerWindow
 from pgtp_editor.analysis.reused_tables import collect_table_usages
 from pgtp_editor.ui.table_references_panel import TableReferencesPanel
 from pgtp_editor.ui.theme import apply_theme
-from pgtp_editor.ui.schema_viewer_data import open_labels_text, open_xsd_text
 
 _log = logging.getLogger(__name__)
 
@@ -152,78 +145,6 @@ _SCHEMA_REPORT_TEMPLATES = {
     "enum_overflow": "[Schema] ENUM OVERFLOWED: {path}@{attr} now free-form string (from {source})",
     "now_optional": "[Schema] NOW OPTIONAL: {path}@{attr} (previously required, from {source})",
 }
-
-
-def _labeler_keys(model):
-    """Yield ``(path, attr, field, value)`` for every labeler-owned entry
-    (labels/notes dict entries, kind/enum_mode scalars) present in
-    ``model``. ``value`` is the dict key for labels/notes, or None for the
-    scalar fields -- mirroring ``Conflict``'s own key shape."""
-    for path, entry in model.paths.items():
-        for attr, attr_entry in entry.get("attributes", {}).items():
-            for field in LABELER_DICT_FIELDS:
-                for value in attr_entry.get(field) or {}:
-                    yield (path, attr, field, value)
-            for field in LABELER_SCALAR_FIELDS:
-                if attr_entry.get(field) is not None:
-                    yield (path, attr, field, None)
-
-
-def _labeler_value(model, path, attr, field, value):
-    """Return the labeler value currently recorded in ``model`` at
-    ``(path, attr, field, value)``, or None if nothing is recorded there
-    yet (missing path, missing attribute, or missing dict/scalar entry)."""
-    entry = model.paths.get(path)
-    if entry is None:
-        return None
-    attr_entry = entry.get("attributes", {}).get(attr)
-    if attr_entry is None:
-        return None
-    if field in LABELER_DICT_FIELDS:
-        return (attr_entry.get(field) or {}).get(value)
-    return attr_entry.get(field)
-
-
-def _merge_user_model_with_provenance(master, name, user_model, origin):
-    """Merge ``user_model`` into ``master`` in place, returning a list of
-    ``(base_source, incoming_source, conflict)`` tuples for the conflicts
-    this merge produced.
-
-    ``origin`` maps ``(path, attr, field, value)`` -> the name of the user
-    model that contributed master's *current* value there; a key absent
-    from ``origin`` means that value is master's own pre-existing state
-    (rendered as "master"). Merging several user models sequentially into
-    the same master means a later user's conflict may be against an
-    earlier user's just-adopted label rather than against master's
-    original value -- ``origin`` lets the caller show the real source
-    instead of always saying "master".
-
-    A key can only ever be a conflict OR a fresh (no-conflict) adoption in
-    a single merge (``merge_models`` records a conflict exactly when master
-    already had a differing value there), so snapshotting "missing before"
-    keys and updating ``origin`` for them after the merge never clashes
-    with this merge's own conflicts.
-    """
-    missing_before = [
-        key for key in _labeler_keys(user_model)
-        if _labeler_value(master, *key) is None
-    ]
-    new_conflicts = merge_models(master, user_model)
-    tagged = [
-        (
-            origin.get(
-                (conflict.path, conflict.attr, conflict.field, conflict.value),
-                "master",
-            ),
-            name,
-            conflict,
-        )
-        for conflict in new_conflicts
-    ]
-    for key in missing_before:
-        if _labeler_value(master, *key) is not None:
-            origin[key] = name
-    return tagged
 
 
 class MainWindow(QMainWindow):
@@ -255,15 +176,15 @@ class MainWindow(QMainWindow):
             )
         )
         self._schema_storage_dir = schema_storage_dir
+        # The parsed curated.xsd (spec §11) — the sole schema source feeding
+        # completion/hover. None until _load_curated_schema succeeds at least
+        # once (loaded after self.audit_panel exists, near the end of __init__).
+        self._curated_schema = None
         self._generator_config_dir = generator_config_dir
         self._generator_runner = generator_runner if generator_runner is not None else GeneratorRunner()
         self._current_output_folder = None
         self._is_generating = False
         self._last_gap_json: Path | None = None
-        # Read-only schema viewer windows (Phase 1). Held on self so they are
-        # not garbage-collected while open; reused/refreshed on reopen.
-        self._xsd_viewer = None
-        self._labels_viewer = None
         # Connection Setup dialog, held so it is not GC'd while shown non-modally.
         self._connection_dialog = None
         # Direction of the last Database Check run, so a rename can re-run it.
@@ -363,6 +284,7 @@ class MainWindow(QMainWindow):
         self._find_all_stop = False
         self._find_all_count = 0
         self._find_all_term = ""
+        self._find_all_target = "raw"
         self.audit_panel.itemClicked.connect(self._on_audit_item_clicked)
         self.center_stage.caption_management_panel._on_apply = self._apply_caption_edits
         self.center_stage.caption_management_panel._on_close = self._close_caption_mode
@@ -402,16 +324,10 @@ class MainWindow(QMainWindow):
         self.center_stage.xml_editor.edit_code_requested.connect(
             self._on_edit_code_requested
         )
+        self.center_stage.xml_editor.goto_xsd_requested.connect(self._goto_xsd)
         # The live CodeEditorDialog (kept referenced so it is not GC'd while
         # shown). MainWindow owns its lifecycle + the write-back.
         self._code_editor_dialog: CodeEditorDialog | None = None
-
-        self.center_stage.xml_editor.annotate_value_requested.connect(
-            self._open_annotate_popover
-        )
-        # The live AnnotatePopover (kept on self so it is not garbage
-        # collected while shown as a parentless-popup child).
-        self._annotate_popover = None
 
         # Permanent status-bar mode indicator (Editing vs Caption Mode).
         self._mode_label = QLabel("Editing Mode")
@@ -467,6 +383,22 @@ class MainWindow(QMainWindow):
         self.center_stage.xml_editor.undo_requested.connect(self._undo)
         self.center_stage.xml_editor.redo_requested.connect(self._redo)
 
+        # Edit XSD tab (spec §11): dirty tracking + its own undo/redo routing.
+        # The XSD tab has no snapshot history -- it relies solely on the
+        # editor's native undo, so its Ctrl+Z/Ctrl+Y re-emission is routed
+        # straight back into the editor rather than through _undo/_redo.
+        self._xsd_dirty = False
+        self._xsd_loading = False
+        stage = self.center_stage
+        stage.xsd_editor.textChanged.connect(self._on_xsd_text_changed)
+        stage.xsd_editor.undo_requested.connect(stage.xsd_editor.undo)
+        stage.xsd_editor.redo_requested.connect(stage.xsd_editor.redo)
+        stage.xsd_find_replace_bar.set_on_status(self.statusBar().showMessage)
+        stage.xsd_find_replace_bar.set_on_find_all(
+            lambda term: self._populate_find_all_results(term, target="xsd")
+        )
+        stage.xsd_find_replace_bar.set_on_stop_find_all(self._stop_find_all)
+
         self._build_menu_bar()
 
         # Customizable icon bar (Sub-project E). Built after the slots and menus
@@ -492,6 +424,291 @@ class MainWindow(QMainWindow):
         self._restore_window_state()
         self._restore_theme()
 
+        # Curated-XSD feed (spec §11): bootstrap once if curated.xsd is
+        # absent but the learning engine has state, then load whatever
+        # curated.xsd now exists into the editor's completion/hover model.
+        # Runs last so self.audit_panel already exists.
+        self._ensure_curated_bootstrap()
+        self._load_curated_schema()
+
+    def _load_curated_schema(self) -> bool:
+        """Parse curated.xsd and feed completion/hover from it — the SOLE
+        schema source (spec §11). On parse failure the last good in-memory
+        schema stays live; returns False. Missing file → False, silent."""
+        path = curated_xsd_path(self._schema_storage_dir)
+        if not path.exists():
+            return False
+        try:
+            schema = load_curated(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, XsdLoadError) as exc:
+            self.audit_panel.addItem(
+                f"[Schema] Curated XSD has XML errors: {exc} — keeping last good schema"
+            )
+            return False
+        self._curated_schema = schema
+        self.center_stage.xml_editor.set_schema_model(schema.model)
+        self.properties_panel.set_schema_model(schema.model)
+        return True
+
+    def _ensure_curated_bootstrap(self) -> None:
+        """One-time seed: if curated.xsd is absent but the learning engine
+        has state, emit it (labels as label="…" attributes). Never runs when
+        the file exists — curated.xsd is hand-owned (spec §11)."""
+        curated = curated_xsd_path(self._schema_storage_dir)
+        if curated.exists():
+            return
+        model_path = schema_model_path(self._schema_storage_dir)
+        if not model_path.exists():
+            return
+        try:
+            model = Model.load(model_path)
+            curated.parent.mkdir(parents=True, exist_ok=True)
+            curated.write_text(generate_curated_xsd(model), encoding="utf-8")
+        except Exception as exc:
+            self.audit_panel.addItem(f"[Schema] Could not bootstrap curated.xsd: {exc}")
+            return
+        self.audit_panel.addItem(
+            "[Schema] Bootstrapped curated.xsd from the learned schema (labels preserved)"
+        )
+
+    # -- Edit XSD tab (spec §11) ---------------------------------------------
+
+    def _on_xsd_text_changed(self) -> None:
+        # A theme toggle's rehighlight() also fires textChanged with no text
+        # actually changed; ignored via is_applying_theme() (see
+        # XmlEditor.apply_theme_colors).
+        if self._xsd_loading or self.center_stage.xsd_editor.is_applying_theme():
+            return
+        self._set_xsd_dirty(True)
+
+    def _set_xsd_dirty(self, dirty: bool) -> None:
+        self._xsd_dirty = dirty
+        stage = self.center_stage
+        stage.setTabText(stage.xsd_tab_index, "Edit XSD *" if dirty else "Edit XSD")
+
+    def _open_edit_xsd(self) -> None:
+        """Schema ▸ Edit XSD: load curated.xsd into the XSD tab (unless the
+        tab already holds unsaved edits) and switch to it."""
+        stage = self.center_stage
+        if not self._xsd_dirty:
+            path = curated_xsd_path(self._schema_storage_dir)
+            if path.exists():
+                try:
+                    text = path.read_text(encoding="utf-8")
+                except (OSError, UnicodeDecodeError) as exc:
+                    self.statusBar().showMessage(
+                        f"Could not read curated.xsd: {exc}", 5000
+                    )
+                    return
+            else:
+                text = (
+                    '<?xml version="1.0" encoding="UTF-8"?>\n'
+                    '<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" '
+                    'elementFormDefault="qualified">\n</xs:schema>\n'
+                )
+            self._xsd_loading = True
+            try:
+                stage.xsd_editor.setPlainText(text)
+            finally:
+                self._xsd_loading = False
+            self._set_xsd_dirty(False)
+        stage.show_edit_xsd()
+
+    def _goto_xsd_at_cursor(self) -> None:
+        """Ctrl+L / context-menu "Go To XSD": resolve the caret in the Raw
+        XML editor and jump to its curated XSD definition."""
+        editor = self.center_stage.xml_editor
+        if editor.schema_model() is None or not editor.request_goto_xsd():
+            self.statusBar().showMessage(
+                "Place the cursor inside an element in the Raw XML first.", 5000
+            )
+
+    def _goto_xsd(self, tag_chain: str, attr: str) -> None:
+        """Open the Edit XSD tab and select the attribute's definition;
+        fall back to the element's type definition; else status message.
+        Lines come from the last successful parse -- navigation targets the
+        saved file content."""
+        schema = self._curated_schema
+        if schema is None:
+            self.statusBar().showMessage(
+                "No curated XSD loaded yet — Schema ▸ Edit XSD.", 5000
+            )
+            return
+        line = schema.attribute_lines.get((tag_chain, attr))
+        if line is None:
+            line = schema.element_lines.get(tag_chain)
+        if line is None:
+            self.statusBar().showMessage(
+                f"'{tag_chain}' is not in the curated XSD yet.", 5000
+            )
+            return
+        self._open_edit_xsd()
+        self.center_stage.xsd_editor.navigate_to_line(line)
+
+    def _save_curated_xsd(self) -> None:
+        """Save the XSD tab. The text is ALWAYS written (user text is never
+        lost); a malformed file keeps the last good schema live (spec §11)."""
+        path = curated_xsd_path(self._schema_storage_dir)
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(
+                self.center_stage.xsd_editor.toPlainText(), encoding="utf-8", newline=""
+            )
+        except OSError as exc:
+            QMessageBox.critical(self, "Save Failed", f"Could not save:\n\n{exc}")
+            return
+        self._set_xsd_dirty(False)
+        self.statusBar().showMessage("Saved curated.xsd", 5000)
+        self._load_curated_schema()
+        self._report_verify_issues(verify_curated(self.center_stage.xsd_editor.toPlainText()))
+
+    def _verify_xsd(self) -> None:
+        """Schema ▸ Verify XSD: check dialect rules against whatever the
+        user is currently looking at -- the XSD tab's live text when it has
+        unsaved edits, otherwise the saved curated.xsd on disk."""
+        stage = self.center_stage
+        if self._xsd_dirty:
+            text = stage.xsd_editor.toPlainText()
+        else:
+            path = curated_xsd_path(self._schema_storage_dir)
+            if not path.exists():
+                self.statusBar().showMessage("No curated XSD yet.", 5000)
+                return
+            try:
+                text = path.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError) as exc:
+                self.statusBar().showMessage(
+                    f"Could not read curated.xsd: {exc}", 5000
+                )
+                return
+        self._report_verify_issues(verify_curated(text))
+
+    def _export_xsd(self) -> None:
+        source = curated_xsd_path(self._schema_storage_dir)
+        if not source.exists():
+            self.statusBar().showMessage("No curated XSD yet.", 5000)
+            return
+        if self._xsd_dirty:
+            self.statusBar().showMessage(
+                "The XSD tab has unsaved changes — save it first (Ctrl+S).", 5000
+            )
+            return
+        dest, _filter = QFileDialog.getSaveFileName(
+            self, "Export XSD", "curated.xsd", "XSD files (*.xsd)"
+        )
+        if not dest:
+            return
+        try:
+            shutil.copyfile(source, dest)
+        except OSError as exc:
+            QMessageBox.critical(self, "Export Failed", f"Could not export:\n\n{exc}")
+            return
+        self.statusBar().showMessage(f"Exported to {Path(dest).name}", 5000)
+
+    def _import_xsd(self) -> None:
+        """Replace curated.xsd with a teammate's file: verify first (hard
+        refuse malformed XML; dialect warnings importable), back up, replace,
+        re-parse (spec §11)."""
+        source, _filter = QFileDialog.getOpenFileName(
+            self, "Import XSD", "", "XSD files (*.xsd);;All files (*)"
+        )
+        if not source:
+            return
+        try:
+            text = Path(source).read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as exc:
+            QMessageBox.critical(self, "Import Failed", f"Could not read:\n\n{exc}")
+            return
+        issues = verify_curated(text)
+        if any(issue.fatal for issue in issues):
+            QMessageBox.critical(
+                self, "Import Refused",
+                "The file is not well-formed XML:\n\n" + issues[0].message,
+            )
+            return
+        if issues:
+            answer = QMessageBox.question(
+                self, "Import With Warnings",
+                f"The file has {len(issues)} dialect warning(s). Import anyway?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                return
+        tab_was_dirty = self._xsd_dirty
+        target = curated_xsd_path(self._schema_storage_dir)
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            if target.exists():
+                shutil.copy2(target, str(target) + ".bak")
+            target.write_text(text, encoding="utf-8")
+        except OSError as exc:
+            QMessageBox.critical(self, "Import Failed", f"Could not write:\n\n{exc}")
+            return
+        self._set_xsd_dirty(False)
+        self._load_curated_schema()
+        stage = self.center_stage
+        if stage.xsd_editor.toPlainText():
+            self._xsd_loading = True
+            try:
+                stage.xsd_editor.setPlainText(text)
+            finally:
+                self._xsd_loading = False
+        notice = f"[Schema] Imported curated XSD from {Path(source).name}"
+        if tab_was_dirty:
+            notice += " (unsaved XSD tab edits were replaced)"
+        self.audit_panel.addItem(notice)
+        self._report_verify_issues(issues)
+
+    def _report_verify_issues(self, issues) -> None:
+        """Append Verify XSD results to the audit panel. Each issue line is
+        clickable -- routed through _on_audit_item_clicked's existing
+        (line, target) UserRole/UserRole+1 convention (see _find_all_step),
+        with target "xsd" so the click opens the Edit XSD tab at that line."""
+        if not issues:
+            self.audit_panel.addItem("[Schema] VERIFY: no issues found.")
+            return
+        for issue in issues:
+            item = QListWidgetItem(f"[Schema] VERIFY line {issue.line}: {issue.message}")
+            item.setData(Qt.ItemDataRole.UserRole, issue.line)
+            item.setData(Qt.ItemDataRole.UserRole + 1, "xsd")
+            self.audit_panel.addItem(item)
+
+    def _save_active_tab(self) -> None:
+        """Ctrl+S / File ▸ Save routes to the active center-stage tab."""
+        stage = self.center_stage
+        if stage.currentIndex() == stage.xsd_tab_index:
+            self._save_curated_xsd()
+        else:
+            self._save_project()
+
+    def _active_find_bar(self):
+        """The FindReplaceBar of the active editor tab; defaults to the Raw
+        XML bar (revealing that tab) when neither editor tab is active."""
+        stage = self.center_stage
+        if stage.currentIndex() == stage.xsd_tab_index:
+            return stage.xsd_find_replace_bar
+        self._reveal_raw_xml_tab()
+        return stage.find_replace_bar
+
+    def _confirm_close_xsd(self) -> str:
+        """Ask the user how to resolve unsaved Edit XSD changes before
+        closing. Returns "save", "discard", or "cancel". Split out (mirroring
+        `_confirm_close`) so tests can monkeypatch it instead of ever driving
+        a real modal."""
+        result = QMessageBox.question(
+            self,
+            "Unsaved Changes",
+            "The XSD has unsaved changes. Save before closing?",
+            QMessageBox.StandardButton.Save
+            | QMessageBox.StandardButton.Discard
+            | QMessageBox.StandardButton.Cancel,
+        )
+        if result == QMessageBox.StandardButton.Save:
+            return "save"
+        if result == QMessageBox.StandardButton.Discard:
+            return "discard"
+        return "cancel"
+
     def _restore_window_state(self):
         geometry = self._settings.value("geometry")
         if geometry is not None:
@@ -515,6 +732,20 @@ class MainWindow(QMainWindow):
             self._refresh_toolbar_icons()
 
     def closeEvent(self, event):
+        # Edit XSD tab (spec §11): unsaved XSD edits get their own
+        # save/discard/cancel prompt, distinct from the project's (File >
+        # Close handles that one) since the XSD tab has no Close command.
+        if self._xsd_dirty:
+            confirm = self._confirm_close_xsd()
+            if confirm == "cancel":
+                event.ignore()
+                return
+            if confirm == "save":
+                self._save_curated_xsd()
+                if self._xsd_dirty:
+                    # Save failed (e.g. disk error) -- don't discard changes.
+                    event.ignore()
+                    return
         # Persist window geometry/dock state on close (Sub-project D). No modal
         # prompt here -- File > Close handles the unsaved-changes prompt.
         self._settings.setValue("geometry", self.saveGeometry())
@@ -637,8 +868,10 @@ class MainWindow(QMainWindow):
     def _on_editor_text_changed(self) -> None:
         """Mark the buffer dirty when the user edits the Raw XML editor.
         Programmatic sets (load/revert/close) run under `_loading` and are
-        ignored so they don't spuriously flag the document dirty."""
-        if self._loading:
+        ignored so they don't spuriously flag the document dirty. A theme
+        toggle's rehighlight() also fires textChanged with no text actually
+        changed; ignored via is_applying_theme()."""
+        if self._loading or self.center_stage.xml_editor.is_applying_theme():
             return
         self._set_dirty(True)
         # Debounce a document-level snapshot capture (Sub-project C). We start
@@ -947,7 +1180,7 @@ class MainWindow(QMainWindow):
     def _enrich_schema_from_file(self, path):
         try:
             model_path = schema_model_path(self._schema_storage_dir)
-            xsd_path = schema_xsd_path(self._schema_storage_dir)
+            xsd_path = learned_xsd_path(self._schema_storage_dir)
             model_path.parent.mkdir(parents=True, exist_ok=True)
 
             if model_path.exists():
@@ -962,14 +1195,12 @@ class MainWindow(QMainWindow):
             model.save(model_path)
             xsd_path.write_text(generate_xsd(model), encoding="utf-8")
 
-            # Hand the freshly-updated in-memory model to the Raw XML editor so
-            # value-hover tooltips reflect the latest labels without a per-hover
-            # disk reload. If enrichment fails below, the editor keeps whatever
-            # model it had (possibly None), which is fine.
-            self.center_stage.xml_editor.set_schema_model(model)
-
             self._report_schema_events(events, path)
             _log.info("schema: enriched %s", path)
+
+            self._ensure_curated_bootstrap()
+            if self._curated_schema is None:
+                self._load_curated_schema()
         except Exception as exc:
             self.audit_panel.addItem(f"[Schema] Could not update schema knowledge: {exc}")
 
@@ -982,18 +1213,26 @@ class MainWindow(QMainWindow):
             template = _SCHEMA_REPORT_TEMPLATES[event["kind"]]
             self.audit_panel.addItem(template.format(source=source_name, **event))
 
-    def _populate_find_all_results(self, term: str) -> None:
+    def _populate_find_all_results(self, term: str, target: str = "raw") -> None:
         """Start a streaming Find All: results are appended to the Audit panel
         a batch at a time on a 0ms QTimer, yielding to the event loop between
-        batches so the UI stays responsive and Stop takes effect promptly."""
+        batches so the UI stays responsive and Stop takes effect promptly.
+
+        `target` selects which editor tab the search runs over -- "raw" (the
+        Raw XML tab, the default) or "xsd" (the Edit XSD tab) -- and is
+        stashed with each result so clicking it navigates the right editor.
+        """
         self._cancel_find_all_timer()
         self._clear_find_results()
         self._find_all_term = term
+        self._find_all_target = target
         self._find_all_count = 0
         self._find_all_stop = False
-        text = self.center_stage.xml_editor.toPlainText()
+        editor = self.center_stage.xsd_editor if target == "xsd" else self.center_stage.xml_editor
+        bar = self.center_stage.xsd_find_replace_bar if target == "xsd" else self.center_stage.find_replace_bar
+        text = editor.toPlainText()
         self._find_all_iter = search.iter_matches(text, term)
-        self.center_stage.find_replace_bar.set_find_all_running(True)
+        bar.set_find_all_running(True)
         self.statusBar().showMessage(f'Finding "{term}"…')
         self._find_all_timer = QTimer(self)
         self._find_all_timer.timeout.connect(self._find_all_step)
@@ -1011,6 +1250,7 @@ class MainWindow(QMainWindow):
                 return
             item = QListWidgetItem(f"{_FIND_RESULT_PREFIX}line {match.line}: {match.preview}")
             item.setData(Qt.ItemDataRole.UserRole, match.line)
+            item.setData(Qt.ItemDataRole.UserRole + 1, self._find_all_target)
             self.audit_panel.addItem(item)
             self._find_all_count += 1
         self.statusBar().showMessage(
@@ -1023,7 +1263,12 @@ class MainWindow(QMainWindow):
             f'{_FIND_RESULT_PREFIX}{self._find_all_count} match(es) for "{self._find_all_term}"'
         )
         self.audit_panel.addItem(summary)  # no line data -> clicking is a no-op
-        self.center_stage.find_replace_bar.set_find_all_running(False)
+        bar = (
+            self.center_stage.xsd_find_replace_bar
+            if self._find_all_target == "xsd"
+            else self.center_stage.find_replace_bar
+        )
+        bar.set_find_all_running(False)
         if stopped:
             self.statusBar().showMessage(
                 f"Find All stopped — found {self._find_all_count} item(s)"
@@ -1106,6 +1351,15 @@ class MainWindow(QMainWindow):
         line = item.data(Qt.ItemDataRole.UserRole)
         if line is None:
             return  # schema entry or the [Find] summary line: no-op
+        target = item.data(Qt.ItemDataRole.UserRole + 1)
+        if target == "xsd":
+            # _open_edit_xsd loads curated.xsd from disk into the tab when it
+            # isn't already open with unsaved edits (e.g. a Verify XSD run
+            # against the saved file, before the tab has ever been opened),
+            # then switches to it -- same as clicking Schema > Edit XSD.
+            self._open_edit_xsd()
+            self.center_stage.xsd_editor.navigate_to_line(line)
+            return
         self.center_stage.setCurrentIndex(self.center_stage.raw_xml_tab_index)
         self.center_stage.xml_editor.navigate_to_line(line)
 
@@ -1534,7 +1788,7 @@ class MainWindow(QMainWindow):
         menu.addMenu("Open Recent")
         save_action = menu.addAction("Save")
         save_action.setShortcut("Ctrl+S")
-        save_action.triggered.connect(self._save_project)
+        save_action.triggered.connect(self._save_active_tab)
         save_as_action = menu.addAction("Save As...")
         save_as_action.setShortcut("Ctrl+Shift+S")
         save_as_action.triggered.connect(self._save_project_as)
@@ -1666,16 +1920,13 @@ class MainWindow(QMainWindow):
         self.center_stage.setCurrentIndex(self.center_stage.raw_xml_tab_index)
 
     def _show_find_bar(self):
-        self._reveal_raw_xml_tab()
-        self.center_stage.find_replace_bar.show_find()
+        self._active_find_bar().show_find()
 
     def _show_replace_bar(self):
-        self._reveal_raw_xml_tab()
-        self.center_stage.find_replace_bar.show_replace()
+        self._active_find_bar().show_replace()
 
     def _find_next(self):
-        self._reveal_raw_xml_tab()
-        self.center_stage.find_replace_bar.find_next()
+        self._active_find_bar().find_next()
 
     def _on_find_selected_text(self, text: str) -> None:
         """Editor right-click "Find": reveal the Raw XML tab, prefill the find
@@ -1797,12 +2048,10 @@ class MainWindow(QMainWindow):
         dialog.show()
 
     def _find_all(self):
-        self._reveal_raw_xml_tab()
-        self.center_stage.find_replace_bar.find_all()
+        self._active_find_bar().find_all()
 
     def _replace_all(self):
-        self._reveal_raw_xml_tab()
-        self.center_stage.find_replace_bar.replace_all()
+        self._active_find_bar().replace_all()
 
     def _enter_caption_mode(self) -> bool:
         """Tools -> Manage Captions...: snapshot the frozen Raw XML, scan it,
@@ -1948,300 +2197,21 @@ class MainWindow(QMainWindow):
 
     def _build_schema_menu(self):
         menu = self.menuBar().addMenu("Schema")
-        annotate_action = menu.addAction("Annotate Value at Cursor")
-        annotate_action.setShortcut(QKeySequence("Ctrl+L"))
-        annotate_action.triggered.connect(self._annotate_value_at_cursor)
-        next_unlabeled_action = menu.addAction("Next Unlabeled Value")
-        next_unlabeled_action.setShortcut(QKeySequence("Ctrl+Shift+L"))
-        next_unlabeled_action.triggered.connect(self._goto_next_unlabeled_value)
-        menu.addSeparator()
-        publish_action = menu.addAction("Publish My Annotations")
-        publish_action.triggered.connect(self._publish_my_annotations)
-        fetch_action = menu.addAction("Fetch Team Master")
-        fetch_action.triggered.connect(self._fetch_team_master)
-        merge_action = menu.addAction("Merge Team Models…")
-        merge_action.triggered.connect(self._merge_team_models)
-        sync_settings_action = menu.addAction("Team Sync Settings…")
-        sync_settings_action.triggered.connect(self._open_team_sync_settings)
-        menu.addSeparator()
-        open_xsd_action = menu.addAction("Open XSD")
-        open_xsd_action.triggered.connect(self._open_xsd_viewer)
-        open_labels_action = menu.addAction("Open XSD Labels (JSON)")
-        open_labels_action.triggered.connect(self._open_labels_viewer)
-
-    _NO_SCHEMA_MESSAGE = "No schema learned yet — open a .pgtp file first."
-
-    def _annotate_value_at_cursor(self):
-        editor = self.center_stage.xml_editor
-        if editor.schema_model() is None:
-            self.statusBar().showMessage(self._NO_SCHEMA_MESSAGE, 5000)
-            return
-        if not editor.request_annotate_at_cursor():
-            self.statusBar().showMessage(
-                "Place the cursor on an attribute value to annotate it.", 5000
-            )
-
-    def _goto_next_unlabeled_value(self):
-        if not self.center_stage.xml_editor.goto_next_unlabeled_value():
-            self.statusBar().showMessage(
-                "No unlabeled enum values in this document.", 5000
-            )
-
-    def _open_annotate_popover(self, tag_chain, attr, value):
-        editor = self.center_stage.xml_editor
-        model = editor.schema_model()
-        entry = (
-            model.paths.get(tag_chain, {}).get("attributes", {}).get(attr)
-            if model is not None
-            else None
-        )
-        if entry is None:
-            # The document carries an attribute the model has not learned yet
-            # (e.g. hand-typed since the last File ▸ Open). Learning is the
-            # engine's job — never create entries from the labeler side.
-            self.statusBar().showMessage(
-                f"'{attr}' is not in the learned schema yet — "
-                "File ▸ Open the file to learn it first.",
-                5000,
-            )
-            return
-        labels = entry.get("labels") or {}
-        notes = entry.get("notes") or {}
-        popover = AnnotatePopover(
-            tag_chain,
-            attr,
-            value,
-            label=labels.get(value, ""),
-            note=notes.get(value, ""),
-            kind=attribute_kind(entry),
-            bitflags=entry.get("enum_mode") == "bitflags",
-            parent=self,
-        )
-        popover.committed.connect(
-            lambda edits: self._apply_annotation(tag_chain, attr, value, edits)
-        )
-        rect = editor.cursorRect()
-        popover.show_at(editor.viewport().mapToGlobal(rect.bottomLeft()))
-        self._annotate_popover = popover
-
-    def _apply_annotation(self, tag_chain, attr, value, edits):
-        """Write one popover commit into the labeler-owned model fields,
-        persist model + regenerated XSD, and refresh the editor. Empty
-        strings remove; 'unclassified' kind and un-checked bitflags remove
-        their keys (absent == default, keeping the JSON tidy)."""
-        editor = self.center_stage.xml_editor
-        model = editor.schema_model()
-        entry = model.paths[tag_chain]["attributes"][attr]
-        label = edits["label"].strip()
-        note = edits["note"].strip()
-        entry.setdefault("labels", {})
-        if label:
-            entry["labels"][value] = label
-        else:
-            entry["labels"].pop(value, None)
-        notes = entry.setdefault("notes", {})
-        if note:
-            notes[value] = note
-        else:
-            notes.pop(value, None)
-        if not entry["notes"]:
-            entry.pop("notes")
-        if edits["bitflags"]:
-            entry["enum_mode"] = "bitflags"
-        else:
-            entry.pop("enum_mode", None)
-        if edits["kind"] == "unclassified":
-            entry.pop("kind", None)
-        else:
-            entry["kind"] = edits["kind"]
-        try:
-            model_path = schema_model_path(self._schema_storage_dir)
-            model_path.parent.mkdir(parents=True, exist_ok=True)
-            model.save(model_path)
-            schema_xsd_path(self._schema_storage_dir).write_text(
-                generate_xsd(model), encoding="utf-8"
-            )
-        except Exception as exc:
-            self.audit_panel.addItem(f"[Schema] Could not save annotation: {exc}")
-            return
-        editor.set_schema_model(model)  # refreshes underlines
-        shown = label if label else "(no label)"
-        self.audit_panel.addItem(
-            f'[Schema] LABELED: {tag_chain}@{attr} "{value}" = "{shown}"'
-        )
-
-    def _open_xsd_viewer(self):
-        try:
-            text = open_xsd_text(self._schema_storage_dir)
-        except Exception as exc:
-            self.statusBar().showMessage(f"Could not read schema model: {exc}", 5000)
-            return
-        if text is None:
-            self.statusBar().showMessage(self._NO_SCHEMA_MESSAGE, 5000)
-            return
-        if self._xsd_viewer is None:
-            self._xsd_viewer = SchemaViewerWindow(self)
-        self._xsd_viewer.set_title("Schema XSD")
-        self._xsd_viewer.set_content(text)
-        self._xsd_viewer.show()
-
-    def _open_labels_viewer(self):
-        text = open_labels_text(self._schema_storage_dir)
-        if text is None:
-            self.statusBar().showMessage(self._NO_SCHEMA_MESSAGE, 5000)
-            return
-        if self._labels_viewer is None:
-            self._labels_viewer = SchemaViewerWindow(self)
-        self._labels_viewer.set_title("Schema Labels (JSON)")
-        self._labels_viewer.set_content(text)
-        self._labels_viewer.show()
-
-    def _sync_config(self):
-        """The configured SyncConfig, or None (with a pointer to the
-        settings dialog in the status bar)."""
-        config = load_sync_config(self._settings, self._schema_storage_dir)
-        if config is None:
-            self.statusBar().showMessage(
-                "Team sync is not configured — Schema ▸ Team Sync Settings…", 5000
-            )
-        return config
-
-    def _open_team_sync_settings(self):
-        dialog = TeamSyncSettingsDialog(self._settings, self)
-        dialog.exec()
-
-    def _publish_my_annotations(self):
-        config = self._sync_config()
-        if config is None:
-            return
-        model_path = schema_model_path(self._schema_storage_dir)
-        if not model_path.exists():
-            self.statusBar().showMessage(self._NO_SCHEMA_MESSAGE, 5000)
-            return
-        self.statusBar().showMessage("Publishing annotations…")
-        run_async(
-            lambda: sync.publish_model(config, model_path),
-            self._on_publish_done,
-            self._on_sync_error,
-        )
-
-    def _on_publish_done(self, published):
-        if published is None:
-            self.audit_panel.addItem("[Schema] Publish: no changes since last publish.")
-        else:
-            self.audit_panel.addItem(f"[Schema] Published annotations as {published}")
-        self.statusBar().clearMessage()
-
-    def _on_sync_error(self, exc):
-        """Any sync failure: local model/XSD untouched, one audit line."""
-        self.audit_panel.addItem(f"[Schema] Sync failed: {exc}")
-        self.statusBar().clearMessage()
-
-    def _fetch_team_master(self):
-        config = self._sync_config()
-        if config is None:
-            return
-
-        def job():
-            master = sync.fetch_master(config)
-            if master is None:
-                raise sync.SyncError("no master.json in the team repo yet")
-            return Model.load(master)
-
-        self.statusBar().showMessage("Fetching team master…")
-        run_async(job, self._on_master_fetched, self._on_sync_error)
-
-    def _on_master_fetched(self, remote_model):
-        model_path = schema_model_path(self._schema_storage_dir)
-        model_path.parent.mkdir(parents=True, exist_ok=True)
-        local = Model.load(model_path) if model_path.exists() else Model()
-        conflicts = merge_models(local, remote_model)
-        local.save(model_path)
-        schema_xsd_path(self._schema_storage_dir).write_text(
-            generate_xsd(local), encoding="utf-8"
-        )
-        self.center_stage.xml_editor.set_schema_model(local)
-        self.audit_panel.addItem(
-            "[Schema] Fetched team master and merged it into the local model."
-        )
-        for conflict in conflicts[:20]:
-            self.audit_panel.addItem(
-                f"[Schema] CONFLICT (kept local): {conflict.path}@{conflict.attr}"
-                f' {conflict.field} "{conflict.value or ""}"'
-                f' local="{conflict.base}" master="{conflict.incoming}"'
-            )
-        if len(conflicts) > 20:
-            self.audit_panel.addItem(
-                f"[Schema] …and {len(conflicts) - 20} more conflicts (kept local)."
-            )
-        self.statusBar().clearMessage()
-
-    def _merge_team_models(self):
-        config = self._sync_config()
-        if config is None:
-            return
-
-        def job():
-            paths = sync.team_model_paths(config)
-            master_path = Path(config.clone_dir) / "master.json"
-            master = Model.load(master_path) if master_path.exists() else Model()
-            return master, [(p.stem, Model.load(p)) for p in paths]
-
-        self.statusBar().showMessage("Merging team models…")
-        run_async(
-            job,
-            lambda result: self._on_team_models_loaded(config, result),
-            self._on_sync_error,
-        )
-
-    def _on_team_models_loaded(self, config, result):
-        master, user_models = result
-        if not user_models:
-            self.audit_panel.addItem(
-                "[Schema] Merge: no models/*.json in the team repo yet."
-            )
-            self.statusBar().clearMessage()
-            return
-        origin = {}
-        tagged_conflicts = []
-        for name, user_model in user_models:
-            tagged_conflicts.extend(
-                _merge_user_model_with_provenance(master, name, user_model, origin)
-            )
-        if tagged_conflicts:
-            base_sources = [base for base, _incoming, _conflict in tagged_conflicts]
-            incoming_sources = [
-                incoming for _base, incoming, _conflict in tagged_conflicts
-            ]
-            conflicts = [conflict for _base, _incoming, conflict in tagged_conflicts]
-            dialog = MergeConflictsDialog(
-                conflicts,
-                base_sources=base_sources,
-                incoming_sources=incoming_sources,
-                parent=self,
-            )
-            if dialog.exec() != QDialog.DialogCode.Accepted:
-                self.audit_panel.addItem("[Schema] Merge aborted — nothing was pushed.")
-                self.statusBar().clearMessage()
-                return
-            for use_incoming, conflict in zip(dialog.resolutions(), conflicts):
-                apply_resolution(master, conflict, use_incoming)
-        run_async(
-            lambda: sync.push_master(config, master),
-            self._on_master_pushed,
-            self._on_sync_error,
-        )
-
-    def _on_master_pushed(self, pushed):
-        self.audit_panel.addItem(
-            "[Schema] Merged team models into master and pushed."
-            if pushed
-            else "[Schema] Merge: master unchanged — nothing to push."
-        )
-        self.audit_panel.addItem(
-            "[Schema] Run Schema ▸ Fetch Team Master to update your local model."
-        )
-        self.statusBar().clearMessage()
+        edit_action = menu.addAction("Edit XSD")
+        edit_action.triggered.connect(self._open_edit_xsd)
+        verify_action = menu.addAction("Verify XSD")
+        verify_action.triggered.connect(self._verify_xsd)
+        export_action = menu.addAction("Export XSD")
+        export_action.triggered.connect(self._export_xsd)
+        import_action = menu.addAction("Import XSD")
+        import_action.triggered.connect(self._import_xsd)
+        # "Go To XSD" (Ctrl+L) lives as a window-level action, not a menu
+        # entry -- the Schema menu contract is exactly these four items.
+        goto_xsd_action = QAction("Go To XSD", self)
+        goto_xsd_action.setShortcut(QKeySequence("Ctrl+L"))
+        goto_xsd_action.triggered.connect(self._goto_xsd_at_cursor)
+        self.addAction(goto_xsd_action)
+        self._goto_xsd_action = goto_xsd_action
 
     def _build_database_menu(self):
         menu = self.menuBar().addMenu("Database")

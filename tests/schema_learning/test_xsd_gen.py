@@ -110,6 +110,7 @@ def test_labeled_enum_value_emits_documentation_while_unlabeled_stays_plain():
     model = Model()
     model.merge_element("Root", {"mode": "1"}, {}, False)
     model.merge_element("Root", {"mode": "2"}, {}, False)
+    model.paths["Root"]["attributes"]["mode"]["labels"] = {}
     model.paths["Root"]["attributes"]["mode"]["labels"]["1"] = "Full export"
 
     xsd_text = generate_xsd(model)
@@ -126,11 +127,11 @@ def test_labeled_enum_value_emits_documentation_while_unlabeled_stays_plain():
 
 
 def test_missing_labels_key_does_not_raise_key_error():
-    # Simulates a schema_model.json written before this sub-project existed:
+    # Simulates a schema_model.json written before labels support existed:
     # no "labels" key at all on the attribute entry.
+    # Now that engine doesn't create labels, this naturally tests the no-labels case.
     model = Model()
     model.merge_element("Root", {"mode": "1"}, {}, False)
-    del model.paths["Root"]["attributes"]["mode"]["labels"]
 
     xsd_text = generate_xsd(model)
 
@@ -140,6 +141,7 @@ def test_missing_labels_key_does_not_raise_key_error():
 def test_empty_string_label_is_treated_as_no_label():
     model = Model()
     model.merge_element("Root", {"mode": "1"}, {}, False)
+    model.paths["Root"]["attributes"]["mode"]["labels"] = {}
     model.paths["Root"]["attributes"]["mode"]["labels"]["1"] = ""
 
     xsd_text = generate_xsd(model)
@@ -151,6 +153,7 @@ def test_empty_string_label_is_treated_as_no_label():
 def test_label_with_xml_special_characters_is_escaped():
     model = Model()
     model.merge_element("Root", {"mode": "1"}, {}, False)
+    model.paths["Root"]["attributes"]["mode"]["labels"] = {}
     model.paths["Root"]["attributes"]["mode"]["labels"]["1"] = "A & B < C"
 
     xsd_text = generate_xsd(model)
@@ -159,7 +162,7 @@ def test_label_with_xml_special_characters_is_escaped():
     ET.fromstring(xsd_text)  # must remain well-formed XML despite the raw label text
 
 
-def test_xsd_documentation_includes_derived_bitflag_labels_and_notes():
+def test_xsd_documentation_includes_derived_sums_labels_and_notes():
     entry = {
         "type": "integer",
         "values": ["1", "2", "3"],
@@ -167,7 +170,7 @@ def test_xsd_documentation_includes_derived_bitflag_labels_and_notes():
         "attr_seen_count": 1,
         "labels": {"1": "A", "2": "B"},
         "notes": {"3": "adds the <Extra> tag"},
-        "enum_mode": "bitflags",
+        "sums": True,
     }
     model = Model()
     model.paths = {
@@ -232,3 +235,38 @@ def test_overflowed_attribute_with_labels_stays_plain():
     assert '<xs:attribute name="mode" type="xs:integer"' in xsd
     assert "xs:restriction" not in xsd
     assert "xs:enumeration" not in xsd
+
+
+# --- xs:enumeration label attribute emission: curated mode tests ---
+
+
+def test_generate_curated_xsd_emits_label_attributes():
+    from pgtp_editor.schema_learning.xsd_gen import generate_curated_xsd
+
+    entry = {
+        "type": "integer", "values": ["0", "1"], "overflowed": False,
+        "attr_seen_count": 1, "labels": {"1": "php-psql"},
+    }
+    model = Model()
+    model.paths = {"Root": {
+        "attributes": {"phpDriver": entry}, "children": {},
+        "instance_count": 1, "order": [], "order_stable": True, "has_text": False,
+    }}
+    xsd = generate_curated_xsd(model)
+    assert '<xs:enumeration value="0"/>' in xsd
+    assert '<xs:enumeration value="1" label="php-psql"/>' in xsd
+    assert "xs:documentation" not in xsd
+
+
+def test_generate_curated_xsd_overflowed_stays_plain():
+    from pgtp_editor.schema_learning.xsd_gen import generate_curated_xsd
+
+    entry = {"type": "string", "values": None, "overflowed": True,
+             "attr_seen_count": 1, "labels": {"x": "y"}}
+    model = Model()
+    model.paths = {"Root": {
+        "attributes": {"a": entry}, "children": {},
+        "instance_count": 1, "order": [], "order_stable": True, "has_text": False,
+    }}
+    xsd = generate_curated_xsd(model)
+    assert "<xs:restriction" not in xsd

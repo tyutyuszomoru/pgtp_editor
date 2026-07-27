@@ -92,7 +92,7 @@ def test_cursor_past_end_returns_none():
 # --- XmlEditor wiring (_hint_for_help_pos + set_schema_model) --------------
 
 
-def _model_setting(tag_chain, attr, values, labels, kind="setting"):
+def _model_setting(tag_chain, attr, values, labels):
     model = Model()
     entry = {
         "type": "integer",
@@ -100,7 +100,6 @@ def _model_setting(tag_chain, attr, values, labels, kind="setting"):
         "overflowed": False,
         "attr_seen_count": len(values) if values else 0,
         "labels": labels,
-        "kind": kind,
     }
     model.paths[tag_chain] = {
         "attributes": {attr: entry},
@@ -139,15 +138,18 @@ def test_hint_for_help_pos_returns_hint_for_setting(qtbot):
     )
 
 
-def test_hint_for_help_pos_none_for_content_attr(qtbot):
+def test_hint_for_help_pos_shows_hint_for_any_known_attr(qtbot):
+    # Curated-XSD pivot (spec §11): there is no kind gate any more — a hint
+    # is offered for ANY known attribute with values or a hint, regardless
+    # of what used to be a "content" classification.
     editor = XmlEditor()
     qtbot.addWidget(editor)
     text = '<Page caption="Hi"></Page>'
     editor.setPlainText(text)
-    model = _model_setting("Page", "caption", ["Hi"], {}, kind="content")
+    model = _model_setting("Page", "caption", ["Hi"], {})
     editor.set_schema_model(model)
     pos = text.index("caption") + 2
-    assert editor._hint_for_help_pos(pos) is None
+    assert editor._hint_for_help_pos(pos) == "caption — Hi"
 
 
 def test_hint_for_help_pos_none_outside_attr(qtbot):

@@ -230,3 +230,52 @@ def test_click_detail_row_with_none_target_line_does_not_crash(qtbot):
     )
     panel._on_row_clicked(table_name_row_index, 0)  # target_line is None
     assert stub.navigate_calls == []  # never called; nothing to navigate to
+
+
+def test_attribute_row_shows_curated_label(qtbot):
+    # Build a panel whose injected editor holds a document containing the
+    # node's line, and a schema model with a label for the value.
+    from pgtp_editor.schema_learning.model import Model
+    from pgtp_editor.ui.xml_editor import XmlEditor
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    editor.setPlainText('<Root>\n  <Page phpDriver="1"/>\n</Root>')
+    model = Model()
+    model.paths = {"Root/Page": {
+        "attributes": {"phpDriver": {
+            "type": "integer", "values": ["0", "1"], "overflowed": False,
+            "attr_seen_count": 1, "labels": {"1": "php-psql"}, "use": "optional",
+        }},
+        "children": {}, "instance_count": 1, "order": [],
+        "order_stable": True, "has_text": False,
+    }}
+    panel = PropertiesPanel(editor)
+    qtbot.addWidget(panel)
+    panel.set_schema_model(model)
+
+    class _Node:
+        sourceline = 2
+        attrib = {"phpDriver": "1"}
+        file_name = "x"
+        identity = "x"
+
+    panel.show_node(_Node(), "page")
+    assert panel.table.item(0, 1).text() == "1 — php-psql"
+
+
+def test_attribute_row_plain_without_model(qtbot):
+    from pgtp_editor.ui.xml_editor import XmlEditor
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    editor.setPlainText('<Root>\n  <Page phpDriver="1"/>\n</Root>')
+    panel = PropertiesPanel(editor)
+    qtbot.addWidget(panel)
+
+    class _Node:
+        sourceline = 2
+        attrib = {"phpDriver": "1"}
+        file_name = "x"
+        identity = "x"
+
+    panel.show_node(_Node(), "page")
+    assert panel.table.item(0, 1).text() == "1"

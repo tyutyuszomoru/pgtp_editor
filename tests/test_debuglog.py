@@ -228,14 +228,14 @@ def test_tracer_logs_traced_package_calls(clean_logging):
     tmp_path = clean_logging
     debuglog.setup(debug=True, dir_override=tmp_path)
     # a real, cheap pgtp_editor function:
-    from pgtp_editor.schema_learning.settings_index import attribute_kind
+    from pgtp_editor.schema_learning.settings_index import effective_labels
 
-    attribute_kind({"kind": "setting"})
+    effective_labels({"labels": {}})
     for h in logging.getLogger().handlers:
         h.flush()
     text = _debug_text(tmp_path)
-    assert "> schema_learning.settings_index.attribute_kind" in text
-    assert "< schema_learning.settings_index.attribute_kind" in text
+    assert "> schema_learning.settings_index.effective_labels" in text
+    assert "< schema_learning.settings_index.effective_labels" in text
 
 
 def test_tracer_ignores_non_package_code(clean_logging):
@@ -268,23 +268,23 @@ def test_tracer_depth_recovers_after_exception(clean_logging):
     permanently indent all subsequent trace lines on that thread."""
     tmp_path = clean_logging
     debuglog.setup(debug=True, dir_override=tmp_path)
-    from pgtp_editor.schema_learning.settings_index import attribute_kind
+    from pgtp_editor.schema_learning.settings_index import effective_labels
     from pgtp_editor.ui.xml_editor import insert_attribute
 
     try:
         insert_attribute(None, 0, "x")   # TypeError unwinds the frame
     except TypeError:
         pass
-    attribute_kind({"kind": "setting"})
+    effective_labels({"labels": {}})
     for h in logging.getLogger().handlers:
         h.flush()
     line = next(
         l
         for l in _debug_text(tmp_path).splitlines()
-        if "> schema_learning.settings_index.attribute_kind" in l
+        if "> schema_learning.settings_index.effective_labels" in l
     )
     # Depth back at base: the '>' marker directly follows "trace: ".
-    assert "trace: > schema_learning.settings_index.attribute_kind" in line
+    assert "trace: > schema_learning.settings_index.effective_labels" in line
 
 
 def test_tracer_not_installed_in_normal_mode(clean_logging):
@@ -330,15 +330,15 @@ def test_trace_lines_never_reach_errors_log(clean_logging):
     tmp_path = clean_logging
     debuglog.setup(debug=True, dir_override=tmp_path)
     logging.getLogger("pgtp_editor.test").warning("make-errors-log-exist")
-    from pgtp_editor.schema_learning.settings_index import attribute_kind
+    from pgtp_editor.schema_learning.settings_index import effective_labels
 
-    attribute_kind({"kind": "setting"})
+    effective_labels({"labels": {}})
     _flush_all()
     debug_text = _debug_text(tmp_path)
-    assert "> schema_learning.settings_index.attribute_kind" in debug_text
+    assert "> schema_learning.settings_index.effective_labels" in debug_text
     errors_text = (tmp_path / "errors.log").read_text("utf-8")
     assert "TRACE" not in errors_text
-    assert "attribute_kind" not in errors_text
+    assert "effective_labels" not in errors_text
 
 
 def test_tracer_skips_excluded_module(clean_logging):
@@ -401,7 +401,7 @@ def test_schema_learning_enrichment_hot_modules_excluded():
     assert debuglog.is_excluded("pgtp_editor.schema_learning.types", "combine_type")
     # settings_index is a light, non-flooding path and stays traced.
     assert not debuglog.is_excluded(
-        "pgtp_editor.schema_learning.settings_index", "attribute_kind"
+        "pgtp_editor.schema_learning.settings_index", "effective_labels"
     )
 
 
@@ -419,14 +419,14 @@ def test_tracer_silences_schema_learning_enrichment_but_keeps_settings_index(
 
     from pgtp_editor.schema_learning.model import Model
     from pgtp_editor.schema_learning.parser import walk_element
-    from pgtp_editor.schema_learning.settings_index import attribute_kind
+    from pgtp_editor.schema_learning.settings_index import effective_labels
 
     root = ET.fromstring('<root a="1"><child b="2"/></root>')
     walked = list(walk_element(root, root.tag))   # parser (recursive)
     model = Model()
     for path, attrib, child_counts, has_text in walked:
         model.merge_element(path, attrib, child_counts, has_text)   # model -> types
-    attribute_kind({"kind": "setting"})   # settings_index: stays traced
+    effective_labels({"labels": {"1": "A"}})   # settings_index: stays traced
 
     _flush_all()
     text = _debug_text(tmp_path)
@@ -435,5 +435,5 @@ def test_tracer_silences_schema_learning_enrichment_but_keeps_settings_index(
     assert "schema_learning.types" not in text
     # settings_index proves the tracer was live and enrichment silencing is
     # surgical, not a blanket schema_learning shutoff.
-    assert "> schema_learning.settings_index.attribute_kind" in text
-    assert "< schema_learning.settings_index.attribute_kind" in text
+    assert "> schema_learning.settings_index.effective_labels" in text
+    assert "< schema_learning.settings_index.effective_labels" in text

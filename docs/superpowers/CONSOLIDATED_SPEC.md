@@ -1,6 +1,6 @@
 # PGTP Editor — Consolidated Specification
 
-> **Status:** living document · **Last synthesized:** 2026-07-23
+> **Status:** living document · **Last synthesized:** 2026-07-27
 > **Source of truth:** this file is the single reconciled specification for PGTP Editor.
 > It is synthesized from the dated design specs under [`docs/superpowers/specs/`](specs/) using a
 > **latest-wins** rule: where a later spec overrode an earlier decision, only the later decision
@@ -22,7 +22,7 @@
 8. [Raw XML editor](#8-raw-xml-editor)
 9. [Editor ↔ Tree sync & Reparse](#9-editor--tree-sync--reparse)
 10. [Properties panel](#10-properties-panel)
-11. [Schema learning & labeling](#11-schema-learning--labeling)
+11. [Schema: curated XSD, learning & completion](#11-schema-curated-xsd-learning--completion)
 12. [Diff / Merge](#12-diff--merge)
 13. [Captions](#13-captions)
 14. [Columns](#14-columns)
@@ -178,12 +178,12 @@ pgtp_editor/
 │   ├── type_map.py    # pg-type → presentation rules + PAGE_DEFAULTS (parity source of truth)
 │   ├── from_table.py  # build_page/build_detail/build_lookup/serialize
 │   └── gap_summary.py
-├── schema_learning/   # vendored XSD-synthesis engine + storage + settings index
+├── schema_learning/   # curated-XSD schema source + vendored learning engine + settings index
 │   ├── model.py, parser.py (defusedxml), types.py, xsd_gen.py
-│   ├── storage.py     # schema_model_path / schema_xsd_path / team_repo_dir (AppData)
-│   ├── settings_index.py  # kind/labels/notes helpers, enum_hint, bitflag derivation, known_attributes/known_values
-│   ├── merge.py       # Qt-free model-to-model semantic merge (team sharing, §11)
-│   └── sync.py        # git subprocess transport: ensure_repo/publish_model/fetch_master/push_master (§11)
+│   ├── xsd_load.py    # Qt-free expat loader (DTD refused): curated.xsd → CuratedSchema (§11)
+│   ├── xsd_verify.py  # Qt-free expat dialect verifier: verify_curated(text) → list[Issue] (§11)
+│   ├── storage.py     # schema_model_path / curated_xsd_path / learned_xsd_path (AppData)
+│   └── settings_index.py  # enum_hint, sums (additive-value) derivation, known_attributes/known_values, unused_setting_attributes
 ├── db/                # PostgreSQL introspection & comparison (Qt-free logic)
 │   ├── config.py, introspect.py (psycopg lazy), compare.py, rename.py
 ├── analysis/
@@ -197,13 +197,16 @@ Key `ui/` modules: `main_window.py`, `center_stage.py`, `project_tree.py`, `xml_
 `xml_structure.py`, `code_editor.py`, `event_body.py`, `properties_panel.py`, `find_replace_bar.py`,
 `search.py`, `history.py`, `theme.py`, `toolbar_registry.py`, `customize_toolbar_dialog.py`,
 `diff_merge_panel.py`, `caption_management_panel.py`, `caption_find_replace_dialog.py`,
-`caption_scan.py`, `schema_viewer.py`, `annotate_popover.py`, `merge_conflicts_dialog.py`,
-`team_sync_dialog.py`, `db_check_panel.py`,
+`caption_scan.py`, `db_check_panel.py`,
 `connection_setup_dialog.py`, `table_references_panel.py`, `manual_panel.py`, `about.py`, `icons.py`.
+(Deleted with the curated-XSD pivot, §11: `schema_learning/sync.py`, `schema_learning/merge.py`,
+`ui/annotate_popover.py`, `ui/team_sync_dialog.py`, `ui/merge_conflicts_dialog.py`,
+`ui/schema_viewer.py`, `ui/schema_viewer_data.py`.)
 
 **Dependency rule:** `model/` touches lxml; nothing in `model/` or `ui/` depends on `diff/`; pure-logic
-modules (`search`, `history`, `caption_scan`, `settings_index`, `tier2`, `db/*`, `analysis/*`,
-`type_map`, `from_table`, `xml_structure`) are Qt-free and unit-testable without a `QApplication`.
+modules (`search`, `history`, `caption_scan`, `settings_index`, `xsd_load`, `xsd_verify`, `tier2`, `db/*`,
+`analysis/*`, `type_map`, `from_table`, `xml_structure`) are Qt-free and unit-testable without a
+`QApplication`.
 
 ---
 
@@ -276,15 +279,25 @@ reimplement.
 **Layout:** IDE-style docked panels. Left dock is a `QTabWidget` (`self.left_tabs`) hosting **Project
 tree**, **Contents** (manual), **Database Check**, and **Table references** tabs (the latter two hidden
 until invoked). Center is a tabbed `CenterStage` (Raw XML [default-visible working tab], Diff/Merge,
-Caption Management, Manual — non-Raw-XML tabs hidden until invoked). Bottom is a persistent
+Caption Management, Manual, Edit XSD — non-Raw-XML tabs hidden until invoked). Bottom is a persistent
 **Audit/Problems** panel (`QListWidget`) shared by `[Schema]`, `[Validate]`, `[Find]`, `[PHP]` lines.
 Right dock is the **Properties** panel.
 
 **Document state:** `_dirty` + `_set_dirty()` (title gets " *"); editor `textChanged` marks dirty;
-load/save/revert clears. `.bak` (single, overwritten, `shutil.copy2`) is written before overwriting an
+load/save/revert clears. **Theme toggles never dirty either document:** `XmlEditor.apply_theme_colors`
+sets an `_applying_theme` guard around its `rehighlight()` (which fires a spurious `textChanged` with
+no text actually changed); MainWindow's dirty handlers for **both** the Raw XML and Edit XSD editors
+consult `XmlEditor.is_applying_theme()` and no-op. `.bak` (single, overwritten, `shutil.copy2`) is written before overwriting an
 existing file on save — never on Save-As to a new path, never on a failed/no-op write.
 `_write_project_text(path)` writes editor `toPlainText()` as UTF-8 with `newline=""` (byte-preserving).
 `_current_project_path` is normalized to `str`.
+
+**Per-tab document routing** (curated-XSD pivot, §11): the Edit XSD tab hosts a second document with
+its **own dirty state** (tab-title `*` marker, independent of the project's `_dirty`). **Ctrl+S** and
+the Edit-menu Find/Replace actions (Find/Find Next/Find All/Replace/Replace All) route to the
+**active** center-stage tab's editor + `FindReplaceBar` — Raw XML when the Raw XML tab is active,
+curated.xsd when the Edit XSD tab is active. Project-level state (`.bak`, `_current_project_path`,
+reparse) is untouched by XSD-tab saves.
 
 - **File ▸ Close** (Ctrl+W): if dirty, 3-way Save/Discard/Cancel (`_confirm_close()`, test-seam
   `confirm=`); clears editor+tree, resets state.
@@ -365,7 +378,7 @@ suppresses Qt's Alt-drag). Other modifier combos fall through.
 
 **Right-click context menu:** `contextMenuEvent` first moves the caret to the actually-clicked
 document position (`_prepare_context_menu_at(doc_pos)`) before building the menu, so
-position-dependent entries (e.g. "Annotate value…", §11) reflect the clicked location rather than a
+position-dependent entries (e.g. "Go To XSD", §11) reflect the clicked location rather than a
 stale caret. **Selection right-click ▸ "Find"** prepends to the standard context menu when a selection
 exists; emits `find_selected_text(str)` → MainWindow reveals Raw XML + prefills the Find bar.
 **Line-wrap** toggle lives in the editor's right-click context menu (checkable), not the View menu.
@@ -419,6 +432,10 @@ editable, no write path). Header label + two-column (`Property`/`Value`) table +
 
 `show_node(node, kind)` dispatches on `"page"|"detail"|"column"|"event"` (else empty state) to a
 `RowSpec`-building pure function. `RowSpec{property_label, value, target_line, attr_name}`:
+
+**Curated-label display** (§11): an attribute row whose value has a label in the curated XSD (explicit
+`label="…"` or derived `sums` combination) renders the value as `value — label` (e.g.
+`phpDriver: 1 — php-psql`). Display-only; the row's navigate-on-click behavior is unchanged.
 - Page/Column: one row per `attrib` key, `target_line=node.sourceline`, `attr_name=key`.
 - Detail: `caption` → outer `sourceline`; every other key → `inner_sourceline` (None → row click is a
   no-op).
@@ -432,149 +449,166 @@ selects the `attr="…"` span (silent no-op on miss; never crash).
 
 ---
 
-## 11. Schema learning & labeling
+## 11. Schema: curated XSD, learning & completion
 
-Vendored XSD-synthesis engine feeds an ever-growing **per-user** schema `Model` from every opened
-`.pgtp`, used for hover hints and autocomplete. `defusedxml`-based, independent of `model/parser.py`.
+Two XSD files with strictly separated roles, plus the learning engine's private JSON state. **The
+hand-curated XSD is the official schema and the sole source feeding completion, hover hints, and the
+Properties panel.** The vendored learning engine keeps running, but only as a discovery aid.
 
-**Storage** (`schema_learning/storage.py`, `QStandardPaths.AppDataLocation`, injectable `base_dir`):
-`schema_model_path()`→`schema_model.json`, `schema_xsd_path()`→`schema.xsd`. **The per-user AppData
-model is the local source of truth** (not git-tracked; the team-sharing git repo below is a transport,
-not a second source of truth). `schema.xsd` is regenerated on every enrichment/annotation and is a
-**generated, read-only artifact — hand-edits to `schema.xsd` do not persist**.
+**Files** (`schema_learning/storage.py`, `QStandardPaths.AppDataLocation`, injectable `base_dir`):
 
-**Model:** `Model.paths[chain]["attributes"][attr]` where `chain` = slash-joined tag path from root
-(e.g. `PGTPProject/Pages/Page/Editor`, no indices). Each attribute entry carries engine-owned
-`type`/`values`/`overflowed`/`attr_seen_count` **plus** labeler-owned fields:
-- `labels: dict[value→label]` — per-value display labels;
-- `kind: "setting"|"content"|None` — Content = the attribute's values are not offered in completion;
-- `notes: dict[value→str]` — per-VALUE free-text structural consequences (e.g. "enables the
-  `<Watermark>` child tag");
-- `enum_mode: "bitflags"|None` — per-ATTRIBUTE flag: values are OR-combinable bit flags.
+| File | Path fn | Role |
+|---|---|---|
+| `curated.xsd` | `curated_xsd_path()` | **Official schema.** Hand-edited only (Edit XSD tab); never machine-written except the one-time bootstrap. Sole feed for completion / hover / Properties labels — **no learned fallback**. |
+| `learned.xsd` | `learned_xsd_path()` | Generated discovery artifact. Regenerated by auto-learning on File ▸ Open; a reference for newly observed elements/attributes/values; never feeds completion; never touches `curated.xsd`. |
+| `schema_model.json` | `schema_model_path()` | The learning engine's **private internal state** (counts, enum overflow). Feeds `learned.xsd` only. |
 
-The engine is purely additive and must never read/clear labeler-owned fields; readers use `.get(...)`.
-Enum overflow (`> ENUM_MAX_VALUES` → `overflowed=True, values=None`) leaves stale labels harmlessly.
+**One-time bootstrap:** on first run, if `curated.xsd` is absent, it is seeded from the current
+learned model **including existing labels**, emitted as `label="…"` attributes (`xsd_gen` gains a
+label-attribute emit mode). After that the app never writes it (Import XSD replaces it wholesale, by
+explicit user action).
 
-**Auto-enrich:** only **File ▸ Open** triggers it (appended to the end of `open_project_file` success
-path, wrapped in try/except → one `[Schema] Could not update…` audit line on failure). Reports via
-`_SCHEMA_REPORT_TEMPLATES` (`new_element`/`new_attribute`/`new_value`/`enum_overflow`/`now_optional`);
-> 20 events collapse to one summary line. Diff/Merge file pickers do **not** enrich.
+**Dialect** — plain XSD plus three extensions of ours. Nothing external consumes the file; **Verify
+checks our dialect, not W3C validity**:
 
-**settings_index.py** (Qt-free): `is_enum_candidate`, `attribute_kind`, `enum_hint(model, chain, attr)`
-(one-line hint for **settings** only, e.g. `editFormMode — 1 = modal · 2 = new page · 3 = inline`),
-`unused_setting_attributes` (kind-filtered), `known_attributes(model, chain, present)` (broad, **not**
-kind-filtered), `known_values(model, chain, attr)` (→ `[(value, label|None)]`). `known_values` returns
-the **union** of engine-observed values and labeler-added label keys — a value labeled before being
-observed, or dropped from `values` by enum overflow, still completes.
+- `label="…"` on `<xs:enumeration>` — the value's display meaning, e.g.
+  `<xs:enumeration value="1" label="php-psql"/>`.
+- `sums="true"` on `<xs:attribute>` — values are **additive**: the user labels only atomic values
+  (1, 2, 4, 8, …); the app **derives** every combination's label (`3 = A+B` … `7 = A+B+C`,
+  '+'-joined in ascending atomic order) for completion and hover. The Ctrl+Space value list offers
+  **all** combinations (2^n − 1 rows) with derived labels — **capped at
+  `settings_index.SUMS_MAX_ATOMS = 16` labeled atoms**: beyond 16, derivation is skipped entirely
+  (2^n growth would freeze the UI) and only explicit enumeration labels are shown; Verify flags the
+  attribute. An explicit enumeration row for a composite value overrides its derived label.
+- `hint="…"` on `<xs:attribute>` — free-form attribute with a described meaning but no fixed values
+  (no restriction block); the hint shows in hover; no value list in completion.
 
-**Bit-flags derivation** (pure, Qt-free, in `settings_index.py` or an adjacent module): when an
-attribute has `enum_mode == "bitflags"`, the user labels only the atomic power-of-two bits (1, 2, 4,
-8, …); a composite value's label is **derived** by bit decomposition (e.g. 5 → `"A+C"` from 1=`"A"`,
-4=`"C"`). An explicit label on a composite value overrides its derived label. Derivation tolerates
-enum overflow (`overflowed=True, values=None` → fall back to `labels` keys). Derived labels appear in
-the value-completion popup, the hover enum hint, and generated-XSD documentation — **except** that an
-overflowed attribute (`values=None`) emits the plain non-enumerated XSD attribute form with **no
-enumeration and no `xs:documentation` at all** (deliberate, test-pinned behavior: `xsd_gen` only emits
-the enumerated form when `not overflowed`); per-value **notes** appear in the hover hint and the XSD
-`xs:documentation` but **not** in the compact completion rows. `xsd_gen.py` includes derived bitflag
-labels and notes in `xs:documentation`.
+Curation of junk = **deleting enumeration rows**. There are no `kind`/`notes`/`enum_mode` concepts —
+the file's structure is the entire vocabulary. An `xs:attribute` without enumerations completes by
+name only.
 
-**Schema menu:** top-level "Schema" menu (between Diff/Merge and Tools — see consolidated menu):
-- **Annotate Value at Cursor** (Ctrl+L; also offered as a right-click context-menu action on an
-  attribute value in the XML editor) — the labeling surface; see "Annotation popover" below.
-- **Next Unlabeled Value** (Ctrl+Shift+L) — jumps the caret through the document's unlabeled
-  enum-candidate values in order.
-- **Publish My Annotations / Fetch Team Master / Merge Team Models… / Team Sync Settings…** — team
-  sharing, below.
-- **Open XSD** and **Open XSD Labels (JSON)** — read-only non-modal `SchemaViewerWindow` (`schema_viewer.py`,
-  a read-only `XmlEditor`).
+**Engine model (private):** `Model.paths[chain]["attributes"][attr]` where `chain` = slash-joined tag
+path from root (e.g. `PGTPProject/Pages/Page/Editor`, no indices). Attribute entries carry the
+engine-owned `type`/`values`/`overflowed`/`attr_seen_count` only — the former labeler-owned fields
+(`labels`/`kind`/`notes`/`enum_mode`) are gone. Enum overflow (`> ENUM_MAX_VALUES` →
+`overflowed=True, values=None`): in `learned.xsd` an overflowed attribute emits the plain
+non-enumerated XSD attribute form with no enumeration (test-pinned: `xsd_gen` only emits the
+enumerated form when `not overflowed`). Overflow never applies to `curated.xsd` — it is hand-owned.
 
-**Annotation popover** (the sole authoring surface for labeler-owned fields — there is no separate
-labeling dialog): invoked with the caret inside an attribute value (Ctrl+L or context menu); a compact
-popover anchored at the caret containing:
-- a read-only context header — element path chain, attribute name, and the value under the cursor
-  (all three resolved via the pure `attribute_value_at_position(text, pos)` resolver);
-- **Label** line edit, pre-filled with the existing label; Enter commits `labels[value]` on the
-  attribute entry and saves `schema_model.json`; an empty label removes the label;
-- **Bit-flags** checkbox — authors the per-attribute `enum_mode`;
-- **Note** optional line edit — authors the per-value `notes[value]`;
-- **Setting/Content** control — the authoring surface for the existing `kind` field (same semantics as
-  before; only the UI home changed).
+**Auto-learning** (unchanged trigger, new output): only **File ▸ Open** enriches (appended to the end
+of the `open_project_file` success path, wrapped in try/except → one `[Schema] Could not update…`
+audit line on failure). Reports via `_SCHEMA_REPORT_TEMPLATES`
+(`new_element`/`new_attribute`/`new_value`/`enum_overflow`/`now_optional`); > 20 events collapse to
+one summary line. Diff/Merge file pickers do **not** enrich. Enrichment updates `schema_model.json`
+and regenerates **`learned.xsd` only**.
 
-**Editor integration:**
-- **Hover** over an attribute name/value in an opening tag shows a `QToolTip` with `enum_hint(...)`
-  (settings only), including derived bitflag labels and per-value notes. Editor gets the model via
-  `set_schema_model(model)` (MainWindow passes the freshly enriched model; `None` disables). Pure
-  resolver `attribute_at_position(text,pos)`.
-- **Unlabeled-value discovery:** enum-candidate attribute values with no label get a subtle dotted
-  underline, rendered as its own named list through the §8 extra-selections infrastructure; the
-  **Next Unlabeled Value** command navigates between them.
-- **Right-click ▸ Add attribute ▸** submenu from `unused_setting_attributes` (kind-filtered); inserts
-  ` name=""` with caret between quotes via pure `insert_attribute(text, tag_open_pos, name)`.
+**Feeding pipeline:** `schema_learning/xsd_load.py` (Qt-free; streaming stdlib **expat** with a
+`StartDoctypeDeclHandler` that raises `XsdLoadError` — **DTDs refused**, the same defensive posture as
+defusedxml; the DTD-refusal message carries the offending line number, `line {n}: DTD declarations are
+not allowed in the curated XSD`) parses `curated.xsd` via `load_curated(text) → CuratedSchema`:
+
+```
+CuratedSchema{
+    model: Model,                                    # the existing in-memory Model shape
+    attribute_lines: dict[(chain, attr) → line],     # 1-based source lines, power Go To XSD
+    element_lines:   dict[chain → line],
+}
+```
+
+Tag matching is **prefix-agnostic** (`xs:attribute` vs any prefix — only the local name matters, since
+the user may use any namespace prefix in their curated file). Chains are built by a **type-reference
+walk** from top-level `<element name=… type=…>` roots through named `complexType` child elements, with
+a per-path **cycle guard** (`stack | {type_name}`): a recursive type stops, but a type reachable via
+two different paths yields **both** chains. An **inline (unnamed) `complexType`** pushes a `None` frame
+on the loader's type stack: attributes declared inside it land nowhere (they never leak into the
+enclosing named type), while attributes declared **after** it closes correctly belong to the enclosing
+named type again — Verify flags inline complexTypes as off-dialect. Per-attribute entries carry
+`type` (base mapped to boolean/integer/decimal/string with **prefix-agnostic local-part fallback** —
+`xsd:integer` still maps to integer, unknown bases default to string), `values`, `labels`,
+`use`, and optional `sums`/`hint`; unknown structures are silently ignored — dialect complaints are
+Verify's job, not the loader's. The loaded model feeds the `settings_index` query API — `known_attributes(model,
+chain, present)`, `known_values(model, chain, attr)` (→ `[(value, label|None)]`), `enum_hint(model,
+chain, attr)` (one-line hint, e.g. `editFormMode — 1 = modal · 2 = new page · 3 = inline`),
+`unused_setting_attributes` — and therefore the completion/hover code keep their contracts. Loaded at
+startup and on every Edit-XSD-tab save; handed to the editor via the existing
+`set_schema_model(model)` (`None` disables). Semantics under the dialect: for a `sums` attribute,
+`known_values` includes **all derived combinations**; `enum_hint` builds its hint from enumeration
+labels (explicit and derived) or the `hint="…"` text; `unused_setting_attributes` = attributes the
+curated schema knows for the chain that are absent from the tag — the old kind filter is gone: an
+attribute is completion-worthy iff it exists in `curated.xsd`. The `sums` derivation is pure and
+Qt-free in `settings_index.py` (composite label by decomposition into labeled atomic values; explicit
+enumeration row wins; skipped when the labeled atoms exceed `SUMS_MAX_ATOMS = 16`).
+
+**Disk-read guards:** every `curated.xsd` read catches **`OSError` and `UnicodeDecodeError`** (not just
+parse errors). Startup / reload (`_load_curated_schema`, which also catches `XsdLoadError`) emits the
+`[Schema] Curated XSD has XML errors: {error} — keeping last good schema` audit line and keeps the last
+good in-memory schema live; opening the Edit XSD tab or running Verify against the saved file shows a
+status-bar message (`Could not read curated.xsd: {error}`) and aborts.
+
+**Edit XSD tab** (center stage): **Schema ▸ Edit XSD** opens `curated.xsd` in a dedicated
+`CenterStage` tab — a second `XmlEditor` instance with its own `FindReplaceBar` (full
+find/replace/Find All parity with Raw XML). The tab owns its dirty state (tab-title marker); Ctrl+S
+and Edit-menu Find/Replace route to the **active** tab (per-tab document routing, §7). **Save** →
+write the file (UTF-8, `newline=""`) → re-parse via `xsd_load` → refresh completion/hover/Properties
+immediately → auto-run Verify report-only on the saved text. **Malformed XML on save:** the text is
+still written (user text is never lost), the audit line
+`[Schema] Curated XSD has XML errors: {error} — keeping last good schema` is emitted, and the last
+good in-memory schema stays live.
+
+**Bootstrap audit line:** the one-time seeding emits
+`[Schema] Bootstrapped curated.xsd from the learned schema (labels preserved)` (failure →
+`[Schema] Could not bootstrap curated.xsd: {error}`).
+
+**Go To XSD:** a **window-level `QAction`** (`Ctrl+L`, registered via `self.addAction(...)` on
+MainWindow — deliberately **not** a Schema-menu item, so the Schema menu keeps its exactly-four-items
+contract) plus a Raw XML editor right-click **"Go To XSD"** context-menu entry. It resolves the caret's
+attribute/element context (pure `attribute_at_position` / `attribute_value_at_position` resolvers),
+activates the Edit XSD tab, and navigates to the `<xs:attribute name="…">` definition line via
+`CuratedSchema.attribute_lines[(chain, attr)]`; if the attribute is absent, falls back to
+`element_lines[chain]` (the element's type definition); otherwise a status-bar message. Lines come
+from the **last successful parse** — navigation targets the saved file content, not unsaved tab edits.
+
+**Schema menu — exactly four items** (between Diff/Merge and Tools; see consolidated menu):
+- **Edit XSD** — open the tab.
+- **Verify XSD** — dialect rules via `schema_learning/xsd_verify.py::verify_curated(text) →
+  list[Issue{line, message, fatal}]` (streaming expat, prefix-agnostic). Checks as shipped:
+  **duplicate enumeration values** (per `xs:attribute`), **`label` off-enumeration** (`label="…"` on
+  any non-enumeration tag), **`sums` off-attribute** (`sums` on any non-attribute tag), **`hint`
+  off-attribute** (`hint` on any non-attribute tag), **unknown base type** (lenient: a base is accepted
+  with *any* prefix whose local part is one of boolean/integer/decimal/string), **unresolved type
+  references** (element `type=` naming no `complexType`), **duplicate type names**, **inline (unnamed)
+  `complexType`** ("not part of the dialect"), **sums attribute with no labeled atomic values**, and
+  **sums attribute exceeding the derivation cap** ("too many values for derivation
+  ({n} > 16)" when its enumeration count exceeds `SUMS_MAX_ATOMS`; both sums rules report at the
+  attribute's start line). Malformed XML or a DTD declaration → a **single fatal Issue**
+  (`XML error: …`, at the offending line). Issues are **sorted by line**. Menu action verifies the XSD tab's live
+  text when it has unsaved edits, else the saved `curated.xsd`; also auto-runs report-only on every
+  Edit-XSD-tab save and on import. Audit output: one clickable line per issue,
+  `[Schema] VERIFY line {n}: {message}` (line on `UserRole`, target `"xsd"` on `UserRole+1` — the same
+  item-data click convention Find All uses; click activates the Edit XSD tab at that line), or
+  `[Schema] VERIFY: no issues found.` when clean.
+- **Export XSD** — Save-As copy of `curated.xsd` (`shutil.copyfile`); refused with a status-bar
+  message while the XSD tab has unsaved edits ("save it first").
+- **Import XSD** — Open dialog → **verify the incoming file first** (hard refuse malformed XML with an
+  "Import Refused" dialog; non-fatal dialect warnings prompt a `QMessageBox.question` Yes/No
+  "Import With Warnings" confirm) → back up the current file as `curated.xsd.bak` → replace →
+  re-parse → refresh. Read failures catch **`OSError` and `UnicodeDecodeError`** → "Import Failed"
+  critical dialog; a write failure (`OSError`) → "Import Failed" as well. Success emits
+  `[Schema] Imported curated XSD from {name}`, with the suffix
+  `" (unsaved XSD tab edits were replaced)"` appended when the XSD tab was dirty, followed by the
+  verify report. Team sharing = plain file exchange via Export/Import.
+
+**Editor integration** (mechanics unchanged; source now exclusively `curated.xsd`):
+- **Hover** over an attribute name/value in an opening tag shows a `QToolTip` with `enum_hint(...)`,
+  including derived `sums` labels and `hint="…"` text. Pure resolver `attribute_at_position(text,pos)`.
+- **Right-click ▸ Add attribute ▸** submenu from `unused_setting_attributes`; inserts ` name=""` with
+  caret between quotes via pure `insert_attribute(text, insert_pos, name)`.
 - **Ctrl+Space autocomplete:** `_CompletionPopup(QListWidget)` (frameless, non-modal). Attribute stage
-  uses `known_attributes` (broad); on choose, inserts ` name=""` and, if `known_values` non-empty,
-  chains a value popup (displays `value` or `value = label`, inserts bare value; derived bitflag labels
-  shown like explicit ones). ↑/↓ navigate, Enter/Tab/click choose, Esc/focus-out cancel, printable
-  chars prefix-filter. Guarded by `not isReadOnly()` + model present + `enclosing_open_tag(...)`
-  resolving.
-
-**Team schema-model sharing** (temporary-by-design capability for the schema learning/writing period):
-- **Shared store:** a dedicated git repository containing **only** schema model JSONs —
-  `models/<username>.json` per user plus `master.json`. Accessed with a bundled/configured **deploy SSH
-  key scoped to that repo alone** (accepted risk for a temporary internal tool: the key can only touch
-  annotation data). The local clone lives under `<AppData>/team_schema_repo`
-  (`schema_learning/storage.py::team_repo_dir()`).
-- **Schema ▸ Team Sync Settings…** — opens `TeamSyncSettingsDialog`
-  (`ui/team_sync_dialog.py`): **Repository URL** + **SSH key path**, persisted in QSettings keys
-  `schema_sync/repo_url` / `schema_sync/key_path`. `load_sync_config(settings, base_dir=None)` builds
-  the sync config (repo URL, `team_repo_dir(base_dir)` clone dir, key path) for the actions below;
-  unconfigured sync → a status-bar hint pointing at this dialog.
-- **Schema ▸ Publish My Annotations** — commits and pushes the local user's model as
-  `models/<username>.json`, with a pull/rebase-retry loop underneath; per-user files avoid content
-  collisions.
-- **Schema ▸ Fetch Team Master** — pulls `master.json` and semantically merges it into the local model
-  (additive union for engine-owned fields; labels/kind/notes merged with conflict reporting), then
-  regenerates the local `schema.xsd`.
-- **Schema ▸ Merge Team Models…** (admin action) — folds all `models/*.json` into `master.json` via the
-  same semantic merge; interrupts **only** for genuine conflicts (same `(path, attribute, value)` with
-  two different labels — the user picks in `MergeConflictsDialog` (`ui/merge_conflicts_dialog.py`));
-  pushes the merged master. **Conflict provenance:** each conflict row's two options are labeled with
-  their true source — "master: X" only when X was genuinely master's prior value, otherwise
-  "<username>: X" for a label adopted from an earlier-merged user model in the same run (a provenance
-  map built in `main_window` via `_merge_user_model_with_provenance`; `MergeConflictsDialog` takes
-  optional `base_sources`/`incoming_sources` lists parallel to the conflicts).
-- **Merge engine** (`schema_learning/merge.py`, Qt-free, unit-testable without Qt or network):
-  `merge_models(base, incoming) → list[Conflict]` mutates `base` in place; `apply_resolution(model,
-  conflict, use_incoming)` writes the user's pick. Engine-owned fields merge via the existing additive
-  semantics (mirroring `Model.merge_element`), except `instance_count` and `attr_seen_count` are
-  **summed** — so "required" (seen count == instance count) survives the merge only when the attribute
-  was required on **both** sides. Labeler-owned fields (`labels`, `kind`, `notes`, `enum_mode`) merge
-  via union with **never-silent** conflict surfacing.
-  **Accepted limitation — sum-based count merge:** because `merge_models` sums
-  `instance_count`/`attr_seen_count`, repeated **Fetch Team Master** cycles re-add master's counts into
-  the local model (and a user's own observations, once published and folded into master, are re-counted
-  back through master) — counts inflate over time and drift from "observed in N real files".
-  Required-ness (`seen == instance`) is preserved whenever both sides agree, so there is **no silent
-  required/optional corruption**; but the counts must be read as heuristics, not exact observation
-  counts. Accepted for the temporary learning period (see endgame below); an exact fix would require
-  per-source count tracking, which is deliberately not built.
-- **Git transport** (`schema_learning/sync.py`, subprocess `git`, injectable `runner=` for fakes):
-  strictly **non-interactive** — when a deploy key is configured, the scoped `GIT_SSH_COMMAND` includes
-  `-o BatchMode=yes`; every git call additionally sets `GIT_TERMINAL_PROMPT=0` (belt-and-suspenders for
-  non-SSH prompts, e.g. credential helpers) and is bounded by a **120 s timeout**
-  (`_GIT_TIMEOUT_SECONDS`). Timeout or nonzero exit raises `SyncError` (carrying git's stderr) — a hung
-  prompt can never freeze the UI thread, which is where these actions run.
-  `ensure_repo` clones if absent else `pull --rebase`, setting a local commit identity
-  (`default_username()`); a pull failure is tolerated **only** for a brand-new empty remote, detected
-  **deterministically** via `git ls-remote --heads origin` (no branches → empty) — never by
-  stderr string matching. `publish_model`/`push_master` use per-file-scoped no-change detection
-  (`git status --porcelain -- <path>`) so an identical publish is a clean no-op (returns
-  `None`/`False`), and `_push_with_retry` (pull-rebase between attempts, 3 tries) absorbs races.
-- **Failure behavior:** no network, bad key, or merge abort leaves the local model untouched and
-  reports clearly via the existing `[Schema]` audit-line convention.
-- **Endgame (decision recorded; freeze mechanics not yet designed):** when the learning period closes,
-  a final merge produces the frozen master; the XSD generated from it is bundled into the app and the
-  learning/sharing period ends.
+  uses `known_attributes`; on choose, inserts ` name=""` and, if `known_values` non-empty, chains a
+  value popup (displays `value` or `value = label`, inserts bare value; derived `sums` labels shown
+  like explicit ones; a `hint` attribute offers no value list). ↑/↓ navigate, Enter/Tab/click choose,
+  Esc/focus-out cancel, printable chars prefix-filter. Guarded by `not isReadOnly()` + model present +
+  `enclosing_open_tag(...)` resolving.
 
 ---
 
@@ -710,8 +744,11 @@ returns focus. Replace-all rewrites all matches in one undo block (right-to-left
 `replace_current_selection(text)`.
 
 **Edit menu** (real actions): Find… (Ctrl+F), Find Next (F3), Find All (Ctrl+Shift+F), Replace…
-(Ctrl+R), Replace All (Ctrl+Alt+Return). Each handler reveals the Raw XML tab then delegates to the same
-`FindReplaceBar` method the button uses. (The old "Find & Replace…" Ctrl+H stub was removed.)
+(Ctrl+R), Replace All (Ctrl+Alt+Return). Each handler routes to the **active** center-stage editing
+tab's `FindReplaceBar` (Raw XML, or Edit XSD when that tab is active — §7 per-tab routing; when
+neither is active, Raw XML is revealed) and delegates to the same `FindReplaceBar` method the button
+uses. The Edit XSD tab hosts its own `FindReplaceBar` instance with full Find All parity. (The old
+"Find & Replace…" Ctrl+H stub was removed.)
 
 **Find All → Audit panel, streaming:** `_populate_find_all_results(term)` starts a chunked,
 `QTimer`-driven run (batch **200** matches/tick, snapshot text once, cancel any in-flight run). Items
@@ -911,9 +948,9 @@ Tools; "New Project" removed; line-wrap moved to editor context menu):
   Collapse All, ☐ Light Theme, ☑/☐ Find table reference.
 - **Bookmarks:** Toggle Bookmark (Ctrl+F2), Next Bookmark (F2), Previous Bookmark (Shift+F2), Clear All
   Bookmarks.
-- **Schema:** Annotate Value at Cursor (Ctrl+L; also editor context menu), Next Unlabeled Value
-  (Ctrl+Shift+L), Publish My Annotations, Fetch Team Master, Merge Team Models…, Team Sync Settings…,
-  Open XSD, Open XSD Labels (JSON).
+- **Schema:** Edit XSD, Verify XSD, Export XSD, Import XSD — exactly these four (§11). (Go To XSD is
+  **not** a menu item: it is a window-level Ctrl+L `QAction` added via `MainWindow.addAction` plus a
+  Raw XML editor context-menu entry.)
 - **Database:** Connection Setup…, Check: XML→Database, Check: Database→XML.
 - **Tools:** Manage Captions…, Caption Filter… (Ctrl+R in caption context), Reparse Raw XML into Tree,
   Validate Project, Compare/Merge Two Files…, Next/Previous Difference, Apply Changes to Target.
@@ -929,15 +966,14 @@ Toolbar default: Open, Save, Undo, Redo, Find, Validate, Generate (customizable)
 
 | Shortcut | Action | Context |
 |---|---|---|
-| Ctrl+O / Ctrl+S / Ctrl+Shift+S / Ctrl+W | Open / Save / Save As / Close | Window |
+| Ctrl+O / Ctrl+S / Ctrl+Shift+S / Ctrl+W | Open / Save / Save As / Close | Window (Save routes to the active center-stage tab: Raw XML or Edit XSD, §7) |
 | Ctrl+Z / Ctrl+Y | Undo / Redo (single step) | Window |
 | Ctrl+F / F3 / Ctrl+Shift+F | Find / Find Next / Find All | Window |
 | Ctrl+R / Ctrl+Alt+Return | Replace / Replace All | Window (caption: Ctrl+R = Caption Filter) |
 | Ctrl+Shift+B / Ctrl+Shift+A | Select Enclosing / Parent Block | Raw XML editor (menu-owned) |
 | Ctrl+click / Alt+click | Jump to matching tag / parent tag | Raw XML editor |
 | Ctrl+F2 / F2 / Shift+F2 | Toggle / Next / Previous Bookmark | Raw XML editor |
-| Ctrl+L | Annotate Value at Cursor (schema label popover) | Raw XML editor |
-| Ctrl+Shift+L | Next Unlabeled Value | Raw XML editor |
+| Ctrl+L | Go To XSD (jump to the attribute's definition in curated.xsd) | Window-level QAction (also in the Raw XML editor context menu) |
 | Ctrl+G | Go to line in XML | Caption grid |
 | Ctrl+Shift+B | Bracket-select | Code editor dialog |
 | Ctrl+S / Ctrl+W | Save / Cancel | Code editor dialog |
@@ -979,6 +1015,14 @@ is authoritative** (and is what appears in the body above).
 | 2026-07-21 | "Find Reused Tables" modal (`ReusedTablesWindow`) + `TableUsage.breadcrumbs` | Table References dock tab + `TableUsage.references: list[TableReference]`; modal deleted |
 | 2026-07-23 | Two-pane Annotate Schema Values dialog (`annotate_schema_values_dialog.py`) + Schema ▸ "Annotate Schema Values…" (2026-07-15) | Annotate-at-cursor popover in the XML editor (Ctrl+L / value context menu) authoring `labels`/`kind`/`notes`/`enum_mode` + unlabeled-value dotted underlines + Next Unlabeled Value navigation; dialog and menu action deleted |
 | 2026-07-23 | `known_values` = engine-observed values only | Union of engine-observed values and labeler-added label keys |
+| 2026-07-24 | Annotate-at-cursor popover (`ui/annotate_popover.py`, Ctrl+L, context-menu "Annotate value…") (2026-07-23) | Direct hand-editing of `curated.xsd` in the Edit XSD tab; popover deleted; **Ctrl+L reassigned to Go To XSD** |
+| 2026-07-24 | Unlabeled-value dotted underlines + Next Unlabeled Value (Ctrl+Shift+L) (2026-07-23) | Removed (curation happens in the XSD, not the document); Ctrl+Shift+L freed |
+| 2026-07-24 | Labeler-owned model fields `labels`/`kind`/`notes`/`enum_mode` + bitflag derivation in `settings_index` | XSD dialect `label=`/`sums=`/`hint=` on `curated.xsd`; additive-value derivation reimplemented against `sums`; `kind`/`notes` concepts dropped |
+| 2026-07-24 | Team schema-model sharing via git — `schema_learning/sync.py`, `schema_learning/merge.py`, `ui/team_sync_dialog.py`, `ui/merge_conflicts_dialog.py`, Schema ▸ Publish/Fetch/Merge/Team Sync Settings, `schema_sync/*` QSettings keys, `team_repo_dir`, the sum-based count-merge accepted-limitation | Schema ▸ **Export XSD / Import XSD** plain file exchange (verify-before-import, `curated.xsd.bak` backup) |
+| 2026-07-24 | Read-only `SchemaViewerWindow` + Schema ▸ Open XSD / Open XSD Labels (JSON) (`ui/schema_viewer.py`, `ui/schema_viewer_data.py`) | Editable **Edit XSD** center-stage tab (second `XmlEditor` + own `FindReplaceBar`) |
+| 2026-07-24 | "`schema.xsd` is a generated, read-only artifact — hand-edits do not persist"; per-user JSON model as local source of truth for completion | **Inverted:** `curated.xsd` is the official, hand-edited-only schema and sole completion/hover/Properties source; the generated-artifact role moves to `learned.xsd`; `schema_model.json` demoted to the engine's private state |
+| 2026-07-24 | Endgame "freeze master → bundle XSD into the app" (learning-period close-out) | Superseded — the curated XSD is official from day one; no learning-period endgame exists |
+| 2026-07-27 | Unbounded `sums` derivation — completion offers all 2^n − 1 combinations for any number of labeled atoms (2026-07-24) | Capped at `settings_index.SUMS_MAX_ATOMS = 16` labeled atoms: beyond that, derivation is skipped (explicit labels only, UI-freeze guard) and Verify flags the attribute |
 
 ---
 
@@ -999,9 +1043,6 @@ is authoritative** (and is what appears in the body above).
   (must fail gracefully).
 - **Fold re-scan performance** and `line_index` O(N²) — accepted for now; optimize only if profiling
   demands.
-- **Schema-model freeze mechanics:** the endgame (final merge → frozen master → XSD bundled into the
-  app, learning/sharing period ends) is a recorded decision, but the freeze mechanics are not yet
-  designed. (The "Next Unlabeled Value" shortcut is resolved: Ctrl+Shift+L.)
 
 ---
 

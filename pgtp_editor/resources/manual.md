@@ -21,8 +21,8 @@ Use **File ▸ Open** and pick a `.pgtp` file. The window has three areas:
   event handlers). More tabs share this dock: **Contents** (this manual's
   chapters), **Table references** (when you turn it on from the View menu), and,
   after you run a database check, **Database Check**.
-- **Center — Raw XML / Caption Management / Diff-Merge / Manual:** the working
-  area. It opens on **Raw XML**; the other tabs appear when you invoke them.
+- **Center — Raw XML / Caption Management / Diff-Merge / Edit XSD / Manual:** the
+  working area. It opens on **Raw XML**; the other tabs appear when you invoke them.
 - **Right — Properties:** a read-only inspector for whatever you select in the tree.
 
 When you open a file, the status bar shows a live message such as
@@ -33,7 +33,9 @@ busy feedback*.
 
 ### Saving, closing, reverting
 
-- **File ▸ Save** (Ctrl+S) writes back to the same file.
+- **File ▸ Save** (Ctrl+S) saves the **active tab**: the project file when you're
+  in Raw XML (or any project view), or the curated schema when the **Edit XSD**
+  tab is active (see *Schema Tools*).
 - **File ▸ Save As** (Ctrl+Shift+S) writes a copy to a new path.
 - **File ▸ Close** (Ctrl+W) closes the project; if you have unsaved changes it
   prompts you to **Save**, **Discard**, or **Cancel**.
@@ -88,6 +90,10 @@ The Properties panel shows the attributes of the selected node. It is a
 **read-only inspector** — it never writes to your file, so you can explore freely.
 Edit values in the Raw XML editor or the specialized panels.
 
+When a value's meaning is labelled in the curated schema (see *Schema Tools*),
+Properties shows the label next to the value — for example `phpDriver: 1 — php-psql`
+instead of a bare `1`.
+
 When you select a **Column**, Properties also shows its **visibility across the
 fixed representation lists**: List, View, Edit, Insert, QuickFilter, FilterBuilder,
 Print, Export, Compare, and MultiEdit. Each is shown as visible or hidden
@@ -122,25 +128,25 @@ The editor keeps a rolling history of up to ten XML snapshots.
 
 ### Schema-aware editing
 
-PGTP Editor learns the structure of `.pgtp` files from the projects you open and
-uses that knowledge to help you edit (see *Schema Tools*).
+PGTP Editor's editing help is driven by a hand-curated XSD schema — the file
+`curated.xsd` in the app's data folder (see *Schema Tools* for how to maintain
+it).
 
 - **Ctrl+Space** inside an opening tag lists the attributes the schema knows for
   that element; use the arrow keys and **Tab** (or Enter) to insert the chosen one
-  as `name=""`. When the attribute has known values, a second list appears so you
-  can pick the value too — each row shows `value = label` when the value has been
-  labelled, including labels derived for bit-flag sums, and the list also offers
-  values known only from their labels even if never yet seen in a file. Type to
-  narrow the list; **Esc** dismisses it.
-- **Right-click ▸ Add attribute ▸** lists the *settings* attributes the schema
-  knows for the current element that it doesn't already have — a quick way to add a
-  recognized setting.
-- **Hovering** an attribute value whose meaning has been labelled shows a tooltip
-  spelling it out, e.g. `editFormMode — 1 = modal · 2 = new page · 3 = inline`,
-  including any note attached to a value (shown in parentheses after its label).
-- Enum-like values that have **no label yet** are marked with a subtle **dotted
-  underline** — put the cursor on one and press **Ctrl+L** to label it (see
-  *Schema Tools*).
+  as `name=""`. When the attribute has enumerated values in the schema, a second
+  list appears so you can pick the value too — each row shows `value = label` when
+  the enumeration is labelled, including labels derived for bit-flag sums. An
+  attribute with no enumerations completes by name only. Type to narrow the list;
+  **Esc** dismisses it.
+- **Right-click ▸ Add attribute ▸** lists the attributes the schema knows for the
+  current element that it doesn't already have — a quick way to add a recognized
+  setting.
+- **Hovering** an attribute name or value shows a tooltip spelling out its
+  meaning, e.g. `editFormMode — 1 = modal · 2 = new page · 3 = inline`, or the
+  attribute's free-form hint text when it has one.
+- **Ctrl+L** (or right-click ▸ **Go To XSD**) jumps from the attribute under the
+  cursor to its definition in the **Edit XSD** tab (see *Schema Tools*).
 - **Ctrl+click** a tag to jump to its matching open/close tag; **Alt+click** to
   jump to the parent element's opening tag. The caret moves and scrolls into
   view; nothing is selected.
@@ -169,6 +175,9 @@ The search bar under the Raw XML editor provides:
   long search, and the status bar reports **"Found N items."**
 - **Replace** (Ctrl+R) and **Replace All** (Ctrl+Alt+Enter) — Replace All reports
   how many replacements it made in the status bar.
+
+The **Edit XSD** tab (see *Schema Tools*) has its own identical search bar; the
+shortcuts and the Edit menu act on whichever tab is active.
 
 ---
 
@@ -271,74 +280,86 @@ A shared modal drives searching and bulk editing:
 
 ## Schema Tools
 
-PGTP Editor learns the structure of `.pgtp` files from the projects you open
-(every **File ▸ Open** enriches the model) — the same knowledge that drives
-Ctrl+Space completion, the *Add attribute* menu, and value hovers in the Raw XML
-editor. The **Schema** menu is where you teach it what the values *mean*, and
-where you share that knowledge with your team.
+PGTP Editor's knowledge of the `.pgtp` format lives in one hand-edited file:
+**`curated.xsd`** in the app's data folder. It is the **official schema** and the
+*only* source feeding Ctrl+Space completion, the *Add attribute* menu, hover
+hints, and the value labels in the Properties panel. You maintain it yourself
+through the **Schema** menu, which has exactly four entries: **Edit XSD**,
+**Verify XSD**, **Export XSD**, and **Import XSD**.
 
-### Annotating a value
+Alongside it, the editor still **auto-learns** from every project you open:
+**File ▸ Open** scans the file and writes what it finds to a separate reference
+file, `learned.xsd`, announcing discoveries with `[Schema]` lines in the Audit
+panel (`NEW ELEMENT`, `NEW ATTRIBUTE`, `NEW ATTR VALUE`, …). Learned data **never
+appears in completion** — when something new looks worth keeping, open
+`learned.xsd`, find it, and add it to `curated.xsd` by hand. On first run,
+`curated.xsd` is seeded once from your previously learned data (existing value
+labels are preserved); after that the app never rewrites it behind your back.
 
-Place the cursor on an attribute value (or its name) in the Raw XML editor and
-choose **Schema ▸ Annotate Value at Cursor** (Ctrl+L), or right-click and pick
-**Annotate value…**. A compact popover opens at the cursor:
+### The XSD dialect
 
-- A read-only header shows what you're annotating: the element path, the
-  attribute, and the value under the cursor.
-- **Label** — the value's meaning (for example `1` = `modal`). Press **Enter** to
-  save; saving an empty label removes the label.
-- **Note** — optional free text for structural consequences (for example
-  "enables the `<Watermark>` child tag"). Notes appear in hover hints and in the
-  generated XSD, but not in the compact completion popup.
-- **Bit-flags** — check this when the attribute's values add up (3 = 1+2). You
-  then only label the atomic bits (1, 2, 4, 8, …); composite values get derived
-  labels automatically — with 1 = `A` and 4 = `C`, the value 5 shows as `A+C`.
-  An explicit label on a composite value overrides the derived one.
-- **Kind** — **Unclassified**, **Setting** (a fixed option), or **Content**
-  (file-specific data whose values are not offered in completion).
+`curated.xsd` is plain XSD plus three small extensions of ours:
 
-**Esc** cancels without saving. Annotating works even while the Raw XML editor is
-read-only in Caption Mode — it edits the learned schema, never your document. The
-attribute must already be in the learned schema; if it isn't (say you just
-hand-typed it), open the file via **File ▸ Open** so the engine learns it first.
+- **`label="…"` on `<xs:enumeration>`** — the value's display meaning, e.g.
+  `<xs:enumeration value="1" label="php-psql"/>`. Completion shows the row as
+  `value = label`; hover and Properties show the label too.
+- **`sums="true"` on `<xs:attribute>`** — for bit-flag attributes whose values
+  add up (3 = 1+2). Label only the atomic values (1, 2, 4, 8, …); every
+  combination completes with a derived label automatically — with 1 = `A` and
+  4 = `C`, the value 5 shows as `A+C`. An explicit enumeration row for a
+  composite value overrides its derived label.
+- **`hint="…"` on `<xs:attribute>`** — for free-form attributes with a meaning
+  worth describing but no fixed value set: no enumerations, hover shows the hint,
+  and completion offers no value list.
 
-### Finding unlabeled values
+Curation is ordinary editing: **delete an enumeration row** to remove a junk
+value from completion; an attribute with no enumerations at all completes by
+name only.
 
-Enum-like values that have no label yet get a subtle **dotted underline** in the
-Raw XML editor. **Schema ▸ Next Unlabeled Value** (Ctrl+Shift+L) selects the next
-one after the cursor, wrapping around at the end of the document — so you can work
-through a file labeling as you go.
+### Editing the schema (the Edit XSD tab)
 
-### Sharing annotations with your team
+**Schema ▸ Edit XSD** opens `curated.xsd` in a dedicated **Edit XSD** tab in the
+center area — a full editor with its own find/replace bar (Find, Find All,
+Replace, all the usual shortcuts). The tab keeps its own unsaved-changes marker
+(`Edit XSD *`), and **Ctrl+S saves whichever tab is active** — the project from
+Raw XML, the schema from Edit XSD.
 
-The learned schema model is per-user, but the Schema menu can synchronize
-annotations through a small dedicated git repository that holds only schema
-models:
+Saving the tab re-parses the schema and refreshes completion, hovers, and
+Properties labels **immediately**. If the XML is malformed, your text is still
+written to disk (nothing you typed is lost), the last good schema stays in
+effect, and a `[Schema]` line in the Audit panel reports the parse error.
 
-- **Team Sync Settings…** — set the **Repository URL** and the **SSH key path**
-  once.
-- **Publish My Annotations** — uploads your model to the team repository as
-  `models/<username>.json`.
-- **Fetch Team Master** — pulls the team's `master.json` and merges it into your
-  local model. Where your label disagrees with the master's, **your local label
-  wins**; each such conflict is listed in the Audit panel.
-- **Merge Team Models…** — the admin action: folds every user's model into
-  `master.json` and pushes it. When two users labeled the same value differently,
-  a **Merge Conflicts** dialog asks you to pick a side for each disagreement;
-  **Cancel** aborts the whole merge and nothing is pushed.
+### Go To XSD
 
-Failures (no network, a bad key, an aborted merge) always leave your local model
-untouched and report a `[Schema]` line in the Audit panel.
+To see (or fix) the schema behind an attribute you're looking at, put the cursor
+on it in the Raw XML editor and press **Ctrl+L**, or right-click ▸ **Go To XSD**.
+The Edit XSD tab opens with that attribute's `<xs:attribute name="…">` definition
+selected; if the attribute isn't defined there yet, it falls back to the
+enclosing element's type definition, and otherwise tells you in the status bar.
 
-### The generated XSD
+### Verifying
 
-- **Open XSD** — view the XSD generated from the learned model, including your
-  labels and notes as documentation.
-- **Open XSD Labels (JSON)** — view the raw model store behind the annotations.
+**Schema ▸ Verify XSD** checks the schema against the dialect rules — duplicate
+enumeration values, `label` in the wrong place, `sums` on the wrong element,
+unknown base types, unresolvable type references, and the like. Each finding is a
+clickable `[Schema] VERIFY` line in the Audit panel that opens the Edit XSD tab
+at the offending line. Verification also runs automatically (report-only) every
+time you save the Edit XSD tab. When the tab has unsaved edits, Verify checks the
+tab's live text; otherwise it checks the saved file.
 
-Both viewers are **read-only**: `schema.xsd` is a generated artifact, regenerated
-after every annotation — hand-edits to it do not persist. Annotations live in the
-schema model, not in the XSD.
+### Sharing the schema
+
+Team sharing is plain file exchange:
+
+- **Schema ▸ Export XSD** — Save-As a copy of `curated.xsd` to give to a
+  teammate. (If the Edit XSD tab has unsaved changes, save it first.)
+- **Schema ▸ Import XSD** — replace your schema with a file you received. The
+  incoming file is **verified first**: malformed XML is refused outright, and
+  dialect warnings are shown so you can decide whether to import anyway. Your
+  current schema is backed up as `curated.xsd.bak`, the file is replaced,
+  re-parsed, and completion refreshes immediately. If the Edit XSD tab had
+  unsaved edits, they are replaced by the imported text and the Audit panel says
+  so.
 
 ---
 
@@ -468,7 +489,7 @@ simply reads as busy instead of stalled.
 | Shortcut | Where | Action |
 |----------|-------|--------|
 | **Ctrl+O** | Global | Open a `.pgtp` file |
-| **Ctrl+S** | Global | Save |
+| **Ctrl+S** | Global | Save the active tab (project, or curated XSD from Edit XSD) |
 | **Ctrl+Shift+S** | Global | Save As |
 | **Ctrl+W** | Global | Close project |
 | **F1** | Global | Open the Manual |
@@ -476,17 +497,16 @@ simply reads as busy instead of stalled.
 | **F2** / **Shift+F2** | Raw XML | Next / previous bookmark |
 | **Ctrl+Z** / **Ctrl+Y** | Raw XML | Undo / redo (snapshot history) |
 | **Ctrl+Space** | Raw XML | Attribute / value completion |
-| **Ctrl+L** | Raw XML | Annotate value at cursor (schema label popover) |
-| **Ctrl+Shift+L** | Raw XML | Next unlabeled value |
+| **Ctrl+L** | Raw XML | Go To XSD (attribute's definition in the Edit XSD tab) |
 | **Ctrl+click** | Raw XML (mouse) | Jump to matching open/close tag |
 | **Alt+click** | Raw XML (mouse) | Jump to parent tag start |
 | **Ctrl+Shift+B** | Raw XML / Code Editor | Select enclosing block (caret to start) |
 | **Ctrl+Shift+A** | Raw XML | Select parent block |
-| **Ctrl+F** | Raw XML | Find |
-| **F3** | Raw XML | Find next |
-| **Ctrl+Shift+F** | Raw XML | Find all |
-| **Ctrl+R** | Raw XML | Replace |
-| **Ctrl+Alt+Enter** | Raw XML | Replace all |
+| **Ctrl+F** | Raw XML / Edit XSD | Find |
+| **F3** | Raw XML / Edit XSD | Find next |
+| **Ctrl+Shift+F** | Raw XML / Edit XSD | Find all |
+| **Ctrl+R** | Raw XML / Edit XSD | Replace |
+| **Ctrl+Alt+Enter** | Raw XML / Edit XSD | Replace all |
 | **Ctrl+F** | Caption Mode | Open Find/Filter |
 | **Ctrl+R** | Caption Mode | Open Replace |
 | **Ctrl+G** | Caption Mode | Go to line in Raw XML |
