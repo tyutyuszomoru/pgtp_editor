@@ -1,12 +1,12 @@
 # PGTP Editor — Consolidated Specification
 
-> **Status:** living document · **Last synthesized:** 2026-07-27
+> **Status:** living document · **Last synthesized:** 2026-07-29 (later revision)
 > **Source of truth:** this file is the single reconciled specification for PGTP Editor.
 > It is synthesized from the dated design specs under [`docs/superpowers/specs/`](specs/) using a
 > **latest-wins** rule: where a later spec overrode an earlier decision, only the later decision
-> is stated in the body, and the change is recorded in the [Supersession Ledger](#20-supersession-ledger).
+> is stated in the body, and the change is recorded in the [Supersession Ledger](#28-supersession-ledger).
 > Maintained by the **`spec-maintainer`** agent (`.claude/agents/spec-maintainer.md`) — see
-> [§27 Maintenance protocol](#27-maintenance-protocol).
+> [§31 Maintenance protocol](#31-maintenance-protocol).
 
 ---
 
@@ -29,16 +29,24 @@
 15. [Search, Find All & Table References](#15-search-find-all--table-references)
 16. [Validation](#16-validation)
 17. [Database](#17-database)
-18. [PHP generation (vendor) & Save](#18-php-generation-vendor--save)
-19. [re_phpgen — own generator & gap loop](#19-re_phpgen--own-generator--gap-loop)
-20. [In-app manual](#20-in-app-manual)
-21. [Debug mode](#21-debug-mode)
-22. [Consolidated menu bar](#22-consolidated-menu-bar)
-23. [Consolidated keyboard shortcuts](#23-consolidated-keyboard-shortcuts)
-24. [Supersession ledger](#24-supersession-ledger)
-25. [Open questions](#25-open-questions)
-26. [Testing policy](#26-testing-policy)
-27. [Maintenance protocol](#27-maintenance-protocol)
+18. [DDL versioning (standalone Postgres mode)](#18-ddl-versioning-standalone-postgres-mode) — *planned*
+    - [18.1 Routines & triggers browsing (DDL Explorer)](#181-routines--triggers-browsing-ddl-explorer) — *planned*
+    - [18.2 Projects, checkout & state markers](#182-projects-checkout--state-markers) — *planned*
+    - [18.3 Deploy workflow & schema diff/migration](#183-deploy-workflow--schema-diffmigration) — *planned*
+19. [PHP generation (vendor) & Save](#19-php-generation-vendor--save)
+20. [re_phpgen — own generator & gap loop](#20-re_phpgen--own-generator--gap-loop)
+    - [20.4 Production cutover](#204-production-cutover-target-design--not-yet-reached) — *planned*
+21. [Custom PHP editing](#21-custom-php-editing) — *planned*
+22. [Lint integration](#22-lint-integration) — *planned*
+23. [MCP integration](#23-mcp-integration) — *planned*
+24. [In-app manual](#24-in-app-manual)
+25. [Debug mode](#25-debug-mode)
+26. [Consolidated menu bar](#26-consolidated-menu-bar)
+27. [Consolidated keyboard shortcuts](#27-consolidated-keyboard-shortcuts)
+28. [Supersession ledger](#28-supersession-ledger)
+29. [Open questions](#29-open-questions)
+30. [Testing policy](#30-testing-policy)
+31. [Maintenance protocol](#31-maintenance-protocol)
 
 ---
 
@@ -46,15 +54,26 @@
 
 PGTP Editor is a **PySide6 (Qt6) desktop tool** for editing SQL Maestro PostgreSQL PHP Generator
 ("PHPGen" / the "vendor tool") `.pgtp` XML project files. It targets **`.pgtp` format version 22.8**.
+It also functions as a **standalone Postgres DDL-versioning tool** (§18) — usable with **zero `.pgtp`
+files involved** — sharing the app's existing DB connection, code editor, and diff infrastructure
+rather than being a separate product.
 
 **In scope:** parsing, viewing, structurally editing, diffing/merging, validating, and DB-checking
-`.pgtp` files; invoking the vendor generator; and (as a separate sub-project) reverse-engineering the
-vendor's `.pgtp`→`.php` transformation.
+`.pgtp` files; invoking the vendor generator; (as a separate sub-project) reverse-engineering the
+vendor's `.pgtp`→`.php` transformation; and — independent of `.pgtp` entirely — versioning PostgreSQL
+routine/trigger DDL against git with live-DB drift detection and reviewed deploy (§18). This last item
+is a deliberate broadening of the app's purpose beyond `.pgtp` editing: it was designed, and chosen to
+live **in this same app as an independent mode**, rather than as a separate tool/repo (the alternative
+modeled by `re_phpgen`, §20/§20.4) — see §18 for the rationale.
 
-**Hard boundary:** `.pgtp` → `.php` compilation is **strictly one-way and owned by vendor tooling**.
-PGTP Editor never edits or generates PHP as part of the editing workflow. (The `re_phpgen`
-sub-project, §19, reconstructs the transformation in a *separate repo* — it does not change editor
-behavior.)
+**Hard boundary (staged, with a named exit):** *today*, `.pgtp` → `.php` compilation is **one-way and
+owned by vendor tooling**; PGTP Editor never edits or generates PHP as part of the editing workflow.
+`re_phpgen` (§20) stays **gap-analysis-only**, invoked **read-only as a subprocess** — phpgen (the
+vendor CLI/GUI) remains the tool of record. This is not a permanent wall: `re_phpgen`'s **stated end
+goal is production replacement of the vendor generator**. The wall only opens once **all** of the
+falsifiable promotion criteria in §20.4 hold, and even then cutover is **per-project and explicit**
+(never silent, never automatic) — see §20.4 for the full criteria and cutover mechanism. phpgen remains
+available indefinitely afterward as the fallback/reference oracle.
 
 **Formally dropped features** (see ledger): Move/Copy of `Detail` blocks and Client read-only page
 generation — both superseded by the Raw XML editor's structural block-select + OS clipboard, which can
@@ -844,13 +863,224 @@ golden "freshly-added table" oracle; defaults are corpus-derived and **not yet f
 
 ---
 
-## 18. PHP generation (vendor) & Save
+## 18. DDL versioning (standalone Postgres mode)
+
+> **Status: target design, not yet implemented.** No `RoutineInfo`/`TriggerInfo`/`db/ddl_buffer.py`/
+> `DdlObjectSpan`/`db/routine_refs.py`/`db/schema_diff.py`/`db/schema_snapshot.py`/`db/migration_gen.py`
+> exist in the codebase yet; this section specifies the shape they must take when built, so the design
+> is settled before implementation starts.
+
+**Strategic framing.** This is **not** a feature bolted onto `.pgtp` editing — it is a standalone
+Postgres DDL-versioning mode, independent of phpgen/`.pgtp` entirely, usable with zero `.pgtp` files
+involved (§1). The project owner explicitly considered and **rejected** the `re_phpgen` precedent
+(§20/§20.4 — the one place in this codebase where genuinely independent tooling was split into a
+**separate repo**, invoked as a subprocess) for this workflow: DDL versioning stays **in the same app,
+as an independent mode**, directly sharing the app's existing DB connection (§17), code editor
+(`ui/code_editor.py::CodeEditor`, §8), and diff infrastructure (§12) — deliberately no
+subprocess/repo split. Consequently this section was pulled out of §17 as its own top-level section
+rather than left as a `§17.x` subsection: it broadens the app's stated purpose (§1), not just its
+Database menu. Generic DB introspection primitives it depends on (`RoutineInfo`/`TriggerInfo`/
+`DatabaseSchema.routines`/`.triggers`, §17) stay in §17, reused by both the pre-existing DB-check
+features and this workflow.
+
+Three parts, in dependency order: **§18.1** browses live routines/triggers in one synthesized buffer
+(unchanged in shape from the original DDL Explorer design); **§18.2** introduces the "project" concept,
+checkout-to-edit, and the `*`/`!` state markers; **§18.3** is the deploy workflow, which reuses §18.1's
+browsing UI and the diff/migration engine originally specified as a schema-compare-only tool.
+
+**Truth model (first-class design principle, not an implementation footnote): the database is the
+sole source of truth; git is a history/audit log only, never authoritative for "current state."**
+Consequence, stated explicitly: on every project load (§18.2), the tool re-verifies every local `ddl/`
+file against the live DB by fresh introspection — it never trusts git history, or any cached/prior-
+session state, as representing current DB state. State markers (§18.2) are recomputed fresh on every
+load, not persisted/cached across sessions.
+
+### 18.1 Routines & triggers browsing (DDL Explorer)
+
+Extends database introspection to routines and triggers, synthesizes them into one shared browsable
+buffer (the same architecture the app already trusts for its main document), and cross-references them
+into the XML. This subsection is the browsing substrate that §18.2's checkout-to-edit and §18.3's deploy
+workflow both build on directly — it is not a separate, self-contained feature.
+
+**Introspection (lives in §17, reused here):**
+
+- `db/introspect.py` gains: `RoutineInfo{schema, name, arg_types: list[str], return_type, language,
+  source, kind("function"|"procedure")}` sourced from `pg_proc` joined `pg_language`, with source text
+  via `pg_get_functiondef(oid)`; `TriggerInfo{schema, table, name, timing, events: list[str],
+  function_name, definition}` sourced from `pg_trigger` + `pg_get_triggerdef(oid)`. The existing
+  `DatabaseSchema` dataclass (`db/introspect.py`, currently only `.tables`) gains `.routines` and
+  `.triggers` fields.
+
+**One synthesized buffer, not per-object viewers — reuses the Raw XML editor's proven shape
+(`TagSpan`/§8 + `node_at_line`/§9: one shared text buffer, a structural span index over it, and a tree
+that navigates into it via line numbers) instead of opening a bespoke read-only viewer per routine or
+trigger:**
+
+- New pure module `db/ddl_buffer.py`: `build_ddl_text(schema: DatabaseSchema) → tuple[str,
+  list[DdlObjectSpan]]`. Synthesizes **one** text buffer concatenating every routine and trigger
+  definition, in deterministic order (schema, then kind — functions/procedures before triggers — then
+  name), each preceded by a banner comment anchoring its span (e.g.
+  `-- FUNCTION public.foo(integer) --`). `DdlObjectSpan{kind: "function"|"procedure"|"trigger", schema,
+  name, table: str|None (triggers only — the table it fires on), start_line, end_line}` plays the same
+  role for this buffer that `TagSpan` (§8, `ui/xml_structure.py`) plays for the Raw XML buffer and that
+  `node_at_line` (§9, `model/line_index.py`) plays for click-to-tree sync.
+- New **CenterStage tab**, `ui/ddl_editor_panel.py::EditorPanel(QWidget)`, hosting the synthesized
+  buffer in the **existing** `ui/code_editor.py::CodeEditor` widget under a **new `language="sql"`
+  mode** — a new SQL/plpgsql `_CodeHighlighter` keyword set added alongside the existing JS/PHP ones in
+  that same file (§8). Gets its own `FindReplaceBar` instance, following the same per-tab
+  document-routing precedent as the Edit XSD tab (§7/§15) and the planned Custom PHP tabs (§21).
+  This tab is **read-only, DB-sourced, live/synthesized** — the checked-out, editable form lives in
+  `ddl/*.sql` files (§18.2), edited in a separate tab type.
+- New left-dock tree tab, `ui/ddl_buffer_panel.py::BrowserPanel(QTreeWidget)`, built from the
+  `DdlObjectSpan` index — one shared buffer plus a structural tree index, the same relationship the Raw
+  XML tree bears to `xml_editor.py`. This is the tree that §18.2's `*`/`!` state markers render on.
+
+**Dual-grouped, cross-referenced tree — a deliberate design choice by the project owner:** a trigger
+appears in the tree in **both** of its relationship places, not just one:
+
+- **Tables** (top-level group): each table lists the triggers defined on it (via `TriggerInfo.table`).
+- **Functions & Procedures** (top-level group): each function/procedure additionally lists the triggers
+  that invoke it (reverse reference via `TriggerInfo.function_name`).
+- A trigger is therefore **two tree leaves pointing at the same underlying `DdlObjectSpan`** (same
+  buffer location) — clicking either jumps to the identical line in the `EditorPanel` tab. This mirrors
+  the existing Table References panel's precedent (§15, `TableUsage.references`) of showing the same
+  object from multiple relationship angles rather than forcing a single parent — it is **not** a novel
+  pattern, it already exists elsewhere in the app.
+- Click on any leaf in `BrowserPanel` (function, procedure, or either trigger occurrence) → reveal the
+  `EditorPanel` tab + `navigate_to_line(span.start_line)`, reusing the existing navigation API already
+  described in §8 ("Public navigation API") and used by Properties/captions/DB check/table
+  references/diff.
+
+**XML cross-references — a third relationship angle, unchanged in mechanism:**
+
+- `db/routine_refs.py`: cross-references routine/trigger names against the XML (event-handler bodies
+  via `EventNode.text`, and SQL-bearing attributes) via **best-effort name matching** — same "no false
+  confidence" ethos as `analysis/reused_tables.py` — producing `RoutineReference{routine_name, node,
+  kind, line}` so a DB-side routine can be traced to where the XML calls it. This is **approximate, not
+  guaranteed-complete**: it is name matching, not a SQL parser, and must not claim completeness it
+  cannot deliver. Unlike the table/function tree groupings (which navigate within the single DDL
+  buffer), this angle navigates **across** buffers — `EditorPanel` tab → Raw XML tab — two separate
+  documents, two separate `navigate_to_line` targets, not the same underlying span. This angle only
+  applies when a project has a linked `.pgtp` (§18.2) — it is meaningless in a `.pgtp`-free project.
+
+**Database menu** gains a "DDL Explorer" toggle alongside the existing three items (Connection Setup…,
+Check: XML→Database, Check: Database→XML).
+
+**Explicitly phase 2, not built alongside phase 1 read-only browsing:** DB-side write-back — editing a
+routine's source inline in the `EditorPanel` tab itself and pushing `CREATE OR REPLACE FUNCTION …`
+straight to the live DB, with the diff detected per `DdlObjectSpan`. This is distinct from — and not a
+prerequisite for — §18.2/§18.3's checkout/deploy workflow, which edits a separate `ddl/*.sql` file and
+never writes to `EditorPanel` itself. If/when phase-2 inline write-back is built, it would be gated
+behind a diff-preview + explicit confirm, all-or-nothing, mirroring the Diff/Merge Apply discipline
+(§12).
+
+### 18.2 Projects, checkout & state markers
+
+**"Project" — a new concept, distinct from a `.pgtp` file.** A project = a git repo containing:
+
+- A **committed** project JSON: project name, description, and **non-secret** connection metadata only
+  (host/port/database/user — explicitly **no password**).
+- A `ddl/` folder: **one file per DDL object** (function/procedure/trigger) — deliberately
+  file-per-object (not one big file) specifically so `git diff`/`git blame` work meaningfully per
+  object. This is the git-tracked, human-readable form of what's in `EditorPanel` (§18.1's single-buffer
+  read-only browsing view is the live/synthesized view; `ddl/*.sql` files are the versioned,
+  checked-out, editable form).
+- An **optional** link to a `.pgtp` file — a project may have **zero, one pre-existing, or one
+  newly-created** `.pgtp`. Not required, not assumed. (Only when a `.pgtp` link exists does §18.1's XML
+  cross-referencing angle apply.)
+
+**Password handling.** The plaintext password is explicitly **kept out of git**. Reuses the app's
+**existing** `db/config.py::ConnectionParams`/`save_connection` local-settings mechanism (§17) rather
+than inventing a new local-secrets file — but this **requires generalizing that store from
+single-global-connection to keyed-per-project** (by project path or a project id), since today
+(`db/config.py`, `_GROUP = "db"`, a single fixed QSettings group) it holds exactly one connection at a
+time regardless of which project or `.pgtp` file is open. This is a **required change to the existing
+`db/config.py`**, not a new parallel mechanism: `load_connection`/`save_connection` gain a project-key
+parameter (or an equivalent keyed-group scheme) so each DDL-versioning project's connection (host/port/
+database/user/password) persists independently.
+
+**Checkout-to-edit.** Right-click an object in `BrowserPanel` (§18.1) — or its span in `EditorPanel` —
+opens a new, single-object **editable** tab, a distinct tab type from the read-only `EditorPanel`,
+editing just that one `ddl/<schema>.<name>.sql` file. Saving writes to that local file **only** — it
+never touches the live DB directly (DB writes only happen via the reviewed §18.3 deploy step).
+
+**State markers — combinable, not a new third symbol.** Rendered on `BrowserPanel` (§18.1) tree items:
+
+- `*` = the local file has an unsaved-to-deploy edit (differs from the last-deployed reference for that
+  object).
+- `!` = the **live DB** has drifted from the last-deployed reference for that object.
+- These are **independent booleans that render together** when both are true (e.g. `*!`) — there is
+  **no separate third state/symbol** for "both." This is a deliberate embrace-drift philosophy: the
+  tool surfaces disagreement, it does not attempt to auto-resolve it.
+
+> **Open question — not yet resolved, do not silently pick an answer (also tracked in §29):** what
+> exactly is the "last-deployed reference" each marker compares against? One reasonable **candidate**
+> mechanism, offered as a starting point only: a lightweight per-project deploy manifest (e.g.
+> `.ddlproject/deployed.json`, git-tracked) recording, per DDL object, either a content-hash or the git
+> commit id that was actually deployed, written at the moment §18.3's deploy step succeeds. This is
+> **not a decision** — it needs explicit sign-off before implementation.
+
+Markers are recomputed **fresh on every project load** per the truth-model principle above — never
+cached or trusted from a prior session.
+
+### 18.3 Deploy workflow & schema diff/migration
+
+**Deploy workflow:**
+
+1. Locally `*`-flagged objects (§18.2) are candidates for a deploy bundle.
+2. **Any `!`-flagged object blocks deploy of the batch it's part of** — reuses the exact
+   ambiguity-gate/all-or-nothing discipline already established by Diff/Merge (§12: refuse the entire
+   batch naming each blocker, recovery = resolve then re-run) rather than inventing new machinery. Do
+   not let a stale local edit silently overwrite a live DB change that happened independently.
+3. Assembled into a single reviewed SQL bundle — **statement order is adjustable, content is not
+   editable there** (editing only happens in the single-object checkout tabs, §18.2). This is
+   explicitly **NOT** a second diff/generation engine — it invokes the **same** underlying
+   diff/assembly machinery specified below, just from an edit-driven entry point (comparing local
+   `ddl/` files against the last-deployed reference) rather than a schema-compare-driven entry point
+   (comparing two `DatabaseSchema` snapshots). **One diff/generation engine, two entry points** — there
+   are not two separate "assemble SQL" mechanisms.
+4. Once the bundle is approved: (a) commit/push to git with versioning — **explicit placeholder, not
+   designed, mechanism TBD** — and (b) execute against the live database. Reuses the existing "never
+   auto-execute DDL silently" non-goal below — this is a reviewed, explicit action, not automatic.
+
+**Schema diff & migration engine (shared by both entry points):**
+
+- New pure module `db/schema_diff.py` (mirrors `diff/differ.py`'s contract shape but is
+  DB-object-keyed, not XML-node-keyed): `SchemaDifference{kind: added|removed|changed, object_kind:
+  table|column|routine|trigger, identity: str, old_def, new_def}`; `diff_schemas(source:
+  DatabaseSchema, target: DatabaseSchema) → list[SchemaDifference]`.
+- `db/schema_snapshot.py`: `dump_schema`/`load_schema` — lets a live DB be diffed against a checked-in
+  JSON snapshot file, not only DB-to-DB, so a target/desired schema can be versioned.
+- `db/migration_gen.py::generate_migration(differences) → str` — ordered CREATE→ALTER→(guarded,
+  opt-in)DROP SQL text.
+- New viewer reusing `diff_merge_panel.py`'s split layout (change list + detail pane,
+  default-unchecked = skip — same review discipline as §12).
+- **Hard non-goal, stated explicitly:** this never auto-executes DDL against a live database from the
+  diff view. It only emits a reviewed `.sql` file (**"Save Migration As…"**) for the user's own deploy
+  path, or (§18.3 step 4) the explicit, reviewed deploy action above. Auto-apply of DDL is out of scope
+  — DDL against production is exactly the class of hard-to-reverse action this tool must not silently
+  automate.
+- **Database menu** gains **"Compare Schemas…"** (source/target: live connection or snapshot file) and
+  **"Save Schema Snapshot…"**.
+
+> **Open question — not yet resolved, do not silently pick an answer (also tracked in §29):** should
+> the schema-compare entry point above (comparing two full `DatabaseSchema` snapshots, live-vs-live or
+> live-vs-snapshot) be **reframed as this deploy workflow's schema-compare entry point** — i.e.
+> absorbed/merged into §18.3 as one mode of the same feature — or should it **remain a fully separate
+> sibling feature** that merely happens to share the diff core (`db/schema_diff.py`/
+> `db/migration_gen.py`)? Both are legitimate; this needs an explicit decision before implementing
+> either the deploy workflow or the schema-compare UI, since it affects whether they share one
+> "Compare Schemas…"-style entry surface or expose two.
+
+---
+
+## 19. PHP generation (vendor) & Save
 
 Implements §6.6. Shells out to the vendor generator; because the generator reads from disk, this also
 owns File Save / Save As.
 
 - `generation/config.py` (`generator_config.json` in AppData; injectable `generator_config_dir`):
-  `load_executable_path`/`save_executable_path` (`executable_path` key) and `re_phpgen_root` (§19).
+  `load_executable_path`/`save_executable_path` (`executable_path` key) and `re_phpgen_root` (§20).
 - `generation/runner.py`: `build_generate_command(exe, pgtp_path, output_folder)` (pure) →
   `[exe, pgtp_path, "-output", output_folder, "-generate"]`. `GeneratorRunner` wraps `QProcess`
   (`run(command, on_output, on_finished, cwd=None, extra_env=None)`, merged stderr; injectable).
@@ -863,7 +1093,7 @@ owns File Save / Save As.
 
 ---
 
-## 19. re_phpgen — own generator & gap loop
+## 20. re_phpgen — own generator & gap loop
 
 A **separate standalone repo** (`C:\Users\BotondZalai-RuzsicsP\Software dev\re_phpgen`, branch `master`)
 that reverse-engineers the vendor `.pgtp`→`.php` transformation. Design/spec/plan docs live in the
@@ -901,9 +1131,111 @@ runtime.
 > **Branch-model note:** the re-phpgen work was folded into `main` and the branch deleted 2026-07-20; the
 > project is now single-branch. Some re_phpgen spec headers still say `Branch: re-phpgen` (stale).
 
+### 20.4 Production cutover (target design — not yet reached)
+
+> **Status: target state, not yet implemented.** No promotion has happened; nothing described here
+> exists in the codebase yet. This subsection formalizes the exit criteria referenced by §1's staged
+> hard boundary.
+
+`re_phpgen`'s end goal is to **replace** the vendor generator for real deployments, not to remain a
+permanent gap-analysis-only tool. Promotion out of gap-analysis-only status requires **all three**
+falsifiable criteria to hold simultaneously — none is sufficient alone:
+
+1. **100% byte-parity** (post-normalization, `masked-skeleton-v1` comparison mode, §20) across the
+   **full 37-project corpus** — the gap-analysis JSON must show zero `missing`, zero `error`, and zero
+   residual-`diff` statuses for every page in every project.
+2. **Verified determinism** — a twice-generate diff (same project, same `re_phpgen` run twice) must be
+   empty. Currently unverified (§29 Open questions).
+3. **The 8 parked edge-case pages** (471/479 cap, §20/§29) are resolved (parity achieved) or explicitly
+   accepted as known-unsupported (documented, not silently dropped).
+
+**Cutover mechanism, once all three hold:** promotion is **per-project and explicit** — a deliberate
+user action via a new **Generation menu** action (name/placement TBD at implementation time, alongside
+the existing panGen/rePHPgen actions, §26) — never silent, never automatic based on crossing a parity
+percentage threshold. phpgen (vendor CLI/GUI) remains available **indefinitely** afterward as the
+fallback/reference oracle: parity regressions in `re_phpgen` output are caught by diffing against
+phpgen, never assumed away once cutover happens.
+
+**Deferred, not designed here:** once production cutover and/or the custom-PHP editing surface (new
+top-level section, below) exist, a minimal Git integration scoped to `re_phpgen`'s per-project output
+folder becomes a natural next step (status/commit/diff, subprocess-based) — see the forward-reference
+note in the "Custom PHP editing" section; no section number is spent on it yet.
+
 ---
 
-## 20. In-app manual
+## 21. Custom PHP editing
+
+> **Status: target design, not yet implemented.** Nothing in this section exists in the codebase yet
+> — this whole section is specification only, written ahead of build to keep the big picture clear.
+> Scope is deliberately narrow, in the owner's own words: *"php ide from my point of view is a rich
+> text editor like we already have, adding features one by one. the goal is to have something as
+> useful as notepad++."* This is **not** a new IDE architecture and **not** code intelligence/LSP —
+> it reuses the existing `ui/code_editor.py::CodeEditor` widget (already implemented; already does PHP
+> syntax highlighting for inline event-handler bodies, §8) as a general multi-file editor, with
+> features added incrementally.
+
+**Phase 1 (the "Notepad++" baseline):**
+- **File ▸ "Open PHP File…"** (+ drag-drop) opens any `.php`/text file in a new `CenterStage` tab
+  (closable, dirty-marked) — the same per-tab document routing precedent as the Edit XSD tab (§7).
+  Multiple files open concurrently as ordinary tabs. **No structural tie to a `.pgtp` project is
+  required at this level** — any file opens standalone, independent of whether a project is loaded.
+- Each tab hosts the **existing** `CodeEditor` in `language="php"` mode with its own
+  `FindReplaceBar` instance (same pattern as Edit XSD, §7/§15) and its own Ctrl+S/undo, independent of
+  the project document's dirty state.
+
+**Explicitly sequenced, incremental follow-ups** (named as the roadmap only — not designed in detail
+here; build one at a time, in this order, matching "adding features one by one"):
+1. **PHP folding** for `CodeEditor` — mirrors the Raw XML editor's folding (§8); `CodeEditor` currently
+   has none.
+2. **A file-tree dock tab** for a configured "custom code" folder (parallel to Project Tree, §7),
+   giving the scattered Gantt/print/loader-style files one browsable home instead of ad-hoc opening —
+   folder configured per-project, analogous to `Project@outputPath`.
+3. **Find in Files** across that folder — extends §15's search core to multi-file.
+
+**Explicit non-goal:** no code intelligence — no LSP, no parse-based autocomplete. This is a recorded
+scope decision, not a gap to eventually fill.
+
+**Forward reference (deferred, not designed here):** once this section and §20.4 (Production cutover)
+both exist, a minimal **Git integration** — status/commit/diff/pull/push, subprocess-based wrapper, not
+a full client — scoped to this section's custom-PHP folder and/or `re_phpgen`'s per-project output
+folder is the natural next step. Explicitly deferred; no section number spent on it yet.
+
+---
+
+## 22. Lint integration
+
+> **Status: target design, not yet implemented.** Depends on §21 (Custom PHP editing) existing first —
+> there is nothing to lint before a custom-PHP tab exists. Sequence this **after** §21 in any future
+> work, not concurrently with it.
+
+- Runs an external linter (`php -l`, optionally full `phpcs`) against the active custom-PHP tab's
+  content (§21), either on save (toggleable) or via **Tools ▸ "Lint Current File"**.
+- Executable path configured with the same pattern as `generation/config.py`'s `executable_path`
+  (§19): a new `lint_executable_path` key + a "Locate PHP Linter…" action.
+- Output feeds the existing Audit panel (§7) with a new `[Lint]` prefix, following the same
+  click-to-navigate convention as `[Validate]`/`[Find]`.
+- **Non-blocking:** advisory only — never prevents Save.
+
+---
+
+## 23. MCP integration
+
+> **Status: target design, not yet implemented.** No MCP server/adapter exists in the codebase yet.
+
+- An optional embedded MCP server, **off by default** (opt-in in Preferences) — it exposes project
+  data to any connected MCP client, so it must not be silent or default-on.
+- Exposes the app's already-Qt-free pure layers (`model/`, `diff/`, `db/`, `analysis/` — per §5's
+  existing dependency rule, these have no Qt dependency) as MCP tools via a thin adapter, with **no new
+  business logic**: e.g. `read_project(path)`, `list_pages(path)`, `get_node(path, identity)`,
+  `diff_projects(source, target)`, `list_db_tables(connection)`, `list_db_routines(connection)` (the
+  last two depend on §18.1 DDL Explorer existing).
+- Runs over **stdio**; started via **Tools ▸ "Start MCP Server"** or a `--mcp` CLI flag for headless
+  use. When the GUI is running it shares the currently-open in-memory model; running headless it
+  operates file-path-driven instead.
+
+---
+
+## 24. In-app manual
 
 English Markdown manual bundled at `pgtp_editor/resources/manual.md` (via
 `[tool.setuptools.package-data]`). `ui/manual_panel.py`: `load_manual_text()` (via `importlib.resources`),
@@ -915,7 +1247,7 @@ Offline, read-only (no editing/searching, single language).
 
 ---
 
-## 21. Debug mode
+## 25. Debug mode
 
 Activated by `--debug` or `PGTP_EDITOR_DEBUG=1`; `debuglog.setup(debug=)` runs **before** `QApplication`.
 Only new module: `debuglog.py`. Log dir `%LOCALAPPDATA%\MDS\PGTP Editor\logs\` (fallback
@@ -934,7 +1266,7 @@ Only new module: `debuglog.py`. Log dir `%LOCALAPPDATA%\MDS\PGTP Editor\logs\` (
 
 ---
 
-## 22. Consolidated menu bar
+## 26. Consolidated menu bar
 
 Final reconciled state (after all overrides — the original top-level "Diff/Merge" menu was folded into
 Tools; "New Project" removed; line-wrap moved to editor context menu):
@@ -962,7 +1294,7 @@ Toolbar default: Open, Save, Undo, Redo, Find, Validate, Generate (customizable)
 
 ---
 
-## 23. Consolidated keyboard shortcuts
+## 27. Consolidated keyboard shortcuts
 
 | Shortcut | Action | Context |
 |---|---|---|
@@ -981,7 +1313,7 @@ Toolbar default: Open, Save, Undo, Redo, Find, Validate, Generate (customizable)
 
 ---
 
-## 24. Supersession ledger
+## 28. Supersession ledger
 
 Chronological record of decisions where a later spec overrode an earlier one. **Only the later decision
 is authoritative** (and is what appears in the body above).
@@ -1023,10 +1355,15 @@ is authoritative** (and is what appears in the body above).
 | 2026-07-24 | "`schema.xsd` is a generated, read-only artifact — hand-edits do not persist"; per-user JSON model as local source of truth for completion | **Inverted:** `curated.xsd` is the official, hand-edited-only schema and sole completion/hover/Properties source; the generated-artifact role moves to `learned.xsd`; `schema_model.json` demoted to the engine's private state |
 | 2026-07-24 | Endgame "freeze master → bundle XSD into the app" (learning-period close-out) | Superseded — the curated XSD is official from day one; no learning-period endgame exists |
 | 2026-07-27 | Unbounded `sums` derivation — completion offers all 2^n − 1 combinations for any number of labeled atoms (2026-07-24) | Capped at `settings_index.SUMS_MAX_ATOMS = 16` labeled atoms: beyond that, derivation is skipped (explicit labels only, UI-freeze guard) and Verify flags the attribute |
+| 2026-07-29 | §1 "Hard boundary" as a **permanent, no-exit** wall — `.pgtp`→`.php` compilation strictly one-way and vendor-owned, with no stated path for `re_phpgen` (§20) to ever become the tool of record | **Staged** boundary with named exit criteria: the wall holds exactly as before *today* (`re_phpgen` stays gap-analysis-only, invoked read-only as a subprocess; phpgen remains tool of record), but `re_phpgen`'s stated end goal is production replacement of the vendor generator, gated by three falsifiable promotion criteria (100% byte-parity across the 37-project corpus, verified determinism, the 8 parked edge pages resolved-or-accepted) formalized in new §20.4 "Production cutover" (target design, not yet reached); cutover is per-project and explicit via a future Generation-menu action, never silent/automatic; phpgen remains available indefinitely as fallback/reference oracle |
+| 2026-07-29 | §17.1 DDL Explorer as `ui/ddl_explorer_panel.py::DdlExplorerPanel`, a tree grouped by kind only (Functions / Procedures / Triggers), with each leaf opening its own separate read-only source viewer (reusing `CodeEditor` per object) | Single synthesized DDL buffer (`db/ddl_buffer.py::build_ddl_text` + `DdlObjectSpan` index) hosted in one new `CodeEditor` tab under a new `language="sql"` mode, paired with a dual-grouped (Tables **and** Functions & Procedures) cross-referenced left-dock tree where triggers appear as two leaves pointing at the same span — reusing the Raw XML editor's `TagSpan`/`node_at_line` buffer-plus-span-index architecture (§8/§9) instead of per-object viewers |
+| 2026-07-29 | §1 scope: PGTP Editor described purely as a `.pgtp`-editing tool (plus its vendor-generation and re_phpgen sub-projects), with no standalone/DB-only usage mode | Scope explicitly **broadened**: PGTP Editor also functions as a **standalone Postgres DDL-versioning tool**, usable with zero `.pgtp` files, sharing the app's DB connection/code editor/diff infrastructure as an independent mode (not a separate repo, unlike the `re_phpgen` precedent) — new top-level §18 |
+| 2026-07-29 | §17.1 "Routines & triggers (DDL Explorer)" as a `§17.x` Database subsection, scoped to read-only browsing only, with phase-2 write-back sketched as inline `EditorPanel` DB push | **Relocated and reframed** as §18.1 "Routines & triggers browsing (DDL Explorer)" — a subsection of new top-level §18 "DDL versioning (standalone Postgres mode)" — now explicitly the shared browsing substrate for §18.2's checkout-to-edit and §18.3's deploy workflow, not a self-contained DB-menu feature; `RoutineInfo`/`TriggerInfo`/`DatabaseSchema.routines`/`.triggers` stay generic introspection in §17, reused by both the pre-existing DB-check features and the new §18 workflow |
+| 2026-07-29 | §17.2 "Schema diff & migration" as a standalone `§17.x` Database subsection (schema-compare-only entry point: live-vs-live or live-vs-snapshot `DatabaseSchema` diff, "Compare Schemas…"/"Save Schema Snapshot…") | **Relocated** into §18.3 "Deploy workflow & schema diff/migration" as the shared diff/migration engine (`db/schema_diff.py`/`db/schema_snapshot.py`/`db/migration_gen.py`) now also invoked from §18.3's edit-driven deploy entry point (comparing local `ddl/` files against the last-deployed reference) — **one diff/generation engine, two entry points**. Whether the original schema-compare entry point should be fully absorbed into §18.3 or remain a sibling feature sharing only the diff core is an **explicit open question** (§29), not resolved by this relocation |
 
 ---
 
-## 25. Open questions
+## 29. Open questions
 
 - **Ability-code numeric mapping** (`*AbilityMode`): integer→label mapping still unknown; derive
   empirically. No longer blocking — powers editor hover tooltips.
@@ -1043,10 +1380,21 @@ is authoritative** (and is what appears in the body above).
   (must fail gracefully).
 - **Fold re-scan performance** and `line_index` O(N²) — accepted for now; optimize only if profiling
   demands.
+- **§18.2 "last-deployed reference" mechanism (DDL versioning state markers):** what exactly the `*`/`!`
+  markers compare against is unresolved. Candidate starting point: a per-project deploy manifest (e.g.
+  `.ddlproject/deployed.json`, git-tracked) recording a content-hash or deployed git commit id per DDL
+  object, written when §18.3's deploy step succeeds — but this is a proposal, not a decision, and needs
+  explicit sign-off before implementation.
+- **§18.3 vs the original §17.2 schema-compare feature — absorb or keep sibling?** Whether the
+  schema-compare entry point (full `DatabaseSchema`-vs-`DatabaseSchema` diff, live-vs-live or
+  live-vs-snapshot) should be reframed as *part of* the DDL-versioning deploy workflow (§18.3) or should
+  remain a fully separate sibling feature that merely shares the diff core
+  (`db/schema_diff.py`/`db/migration_gen.py`) is unresolved. Affects whether they expose one shared
+  "Compare Schemas…"-style entry surface or two. Needs a decision before either is implemented.
 
 ---
 
-## 26. Testing policy
+## 30. Testing policy
 
 (Authoritative in [`CLAUDE.md`](../../CLAUDE.md); summarized here.)
 
@@ -1066,14 +1414,14 @@ is authoritative** (and is what appears in the body above).
 
 ---
 
-## 27. Maintenance protocol
+## 31. Maintenance protocol
 
 This document is maintained by the **`spec-maintainer`** agent (`.claude/agents/spec-maintainer.md`),
 which has two duties:
 
 1. **Keep this file in sync.** Whenever a new dated spec lands under `docs/superpowers/specs/` (or an
    existing one changes), the agent folds it in using latest-wins reconciliation, updates the affected
-   section(s), and appends a row to the [Supersession Ledger](#24-supersession-ledger) for any override.
+   section(s), and appends a row to the [Supersession Ledger](#28-supersession-ledger) for any override.
    It never leaves two contradictory statements in the body.
 2. **Gate brainstorming.** Whenever brainstorming runs for a new idea, the agent first locates where the
    idea belongs in this spec — flagging any existing feature that already covers most of it and any
