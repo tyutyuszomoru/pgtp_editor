@@ -34,8 +34,8 @@ busy feedback*.
 ### Saving, closing, reverting
 
 - **File ▸ Save** (Ctrl+S) saves the **active tab**: the project file when you're
-  in Raw XML (or any project view), or the curated schema when the **Edit XSD**
-  tab is active (see *Schema Tools*).
+  in Raw XML (or any project view), or the schema the XSD tab currently holds —
+  curated or auto — when that tab is active (see *Schema Tools*).
 - **File ▸ Save As** (Ctrl+Shift+S) writes a copy to a new path.
 - **File ▸ Close** (Ctrl+W) closes the project; if you have unsaved changes it
   prompts you to **Save**, **Discard**, or **Cancel**.
@@ -284,17 +284,24 @@ PGTP Editor's knowledge of the `.pgtp` format lives in one hand-edited file:
 **`curated.xsd`** in the app's data folder. It is the **official schema** and the
 *only* source feeding Ctrl+Space completion, the *Add attribute* menu, hover
 hints, and the value labels in the Properties panel. You maintain it yourself
-through the **Schema** menu, which has exactly four entries: **Edit XSD**,
-**Verify XSD**, **Export XSD**, and **Import XSD**.
+through the **Schema** menu, which has exactly five entries: **Edit XSD**,
+**Edit AutoXSD**, **Verify XSD**, **Export XSD**, and **Import XSD**.
 
 Alongside it, the editor still **auto-learns** from every project you open:
 **File ▸ Open** scans the file and writes what it finds to a separate reference
 file, `learned.xsd`, announcing discoveries with `[Schema]` lines in the Audit
 panel (`NEW ELEMENT`, `NEW ATTRIBUTE`, `NEW ATTR VALUE`, …). Learned data **never
-appears in completion** — when something new looks worth keeping, open
-`learned.xsd`, find it, and add it to `curated.xsd` by hand. On first run,
-`curated.xsd` is seeded once from your previously learned data (existing value
-labels are preserved); after that the app never rewrites it behind your back.
+appears in completion** — when something new looks worth keeping, open it with
+**Schema ▸ Edit AutoXSD** (see *Comparing against the auto-learned schema*),
+find it, and add it to `curated.xsd` by hand.
+
+On first run, when you don't yet have a `curated.xsd`, the app **seeds** it by
+copying the curated schema bundled with the editor (**Curated v1.2**, a real
+hand-commented starting schema). The seed happens only when the file is absent —
+`curated.xsd` is hand-owned, so the app never overwrites your edits behind your
+back. (If the bundled schema isn't packaged for some reason, the app falls back
+to generating a starter schema from your learned data, preserving any value
+labels.)
 
 ### The XSD dialect
 
@@ -318,22 +325,45 @@ name only.
 
 ### Editing the schema (the Edit XSD tab)
 
-**Schema ▸ Edit XSD** opens `curated.xsd` in a dedicated **Edit XSD** tab in the
+**Schema ▸ Edit XSD** opens `curated.xsd` in a dedicated editor tab in the
 center area — a full editor with its own find/replace bar (Find, Find All,
 Replace, all the usual shortcuts). The tab keeps its own unsaved-changes marker
 (`Edit XSD *`), and **Ctrl+S saves whichever tab is active** — the project from
-Raw XML, the schema from Edit XSD.
+Raw XML, the schema from the XSD tab.
 
-Saving the tab re-parses the schema and refreshes completion, hovers, and
+Saving the curated schema re-parses it and refreshes completion, hovers, and
 Properties labels **immediately**. If the XML is malformed, your text is still
 written to disk (nothing you typed is lost), the last good schema stays in
 effect, and a `[Schema]` line in the Audit panel reports the parse error.
+
+### Comparing against the auto-learned schema (Edit AutoXSD)
+
+**Schema ▸ Edit AutoXSD** opens the auto-learned discovery schema
+(`learned.xsd`) in the **same** center-stage editor tab. The tab title changes
+to **Edit AutoXSD** so you can always tell which schema you're looking at, and it
+keeps its own unsaved marker (`Edit AutoXSD *`). This lets you analyse and
+compare what auto-learning has discovered against your curated schema, so you can
+decide what's worth hand-adding to `curated.xsd`.
+
+**Save, Verify, Export, and Import all act on the schema the tab currently
+holds** — the curated schema or the auto schema, whichever is open. Saving the
+auto schema writes `learned.xsd` but does **not** re-feed completion (the
+auto-learned schema never feeds completion); only saving the curated schema
+refreshes completion.
+
+Switching between **Edit XSD** and **Edit AutoXSD** while you have unsaved edits
+prompts you to **Save**, **Discard**, or **Cancel** first. Re-opening the same
+schema keeps your unsaved edits and just reveals the tab. **Go To XSD**
+(Ctrl+L, below) always switches to the curated schema, whichever schema was
+last open.
 
 ### Go To XSD
 
 To see (or fix) the schema behind an attribute you're looking at, put the cursor
 on it in the Raw XML editor and press **Ctrl+L**, or right-click ▸ **Go To XSD**.
-The Edit XSD tab opens with that attribute's `<xs:attribute name="…">` definition
+This always opens the **curated** schema (the **Edit XSD** tab, switching away
+from Edit AutoXSD if that was open) with that attribute's
+`<xs:attribute name="…">` definition
 selected; if the attribute isn't defined there yet, it falls back to the
 enclosing element's type definition, and otherwise tells you in the status bar.
 
@@ -342,24 +372,28 @@ enclosing element's type definition, and otherwise tells you in the status bar.
 **Schema ▸ Verify XSD** checks the schema against the dialect rules — duplicate
 enumeration values, `label` in the wrong place, `sums` on the wrong element,
 unknown base types, unresolvable type references, and the like. Each finding is a
-clickable `[Schema] VERIFY` line in the Audit panel that opens the Edit XSD tab
-at the offending line. Verification also runs automatically (report-only) every
-time you save the Edit XSD tab. When the tab has unsaved edits, Verify checks the
-tab's live text; otherwise it checks the saved file.
+clickable `[Schema] VERIFY` line in the Audit panel that opens the XSD tab
+at the offending line. It checks **whichever schema the tab currently holds** —
+curated or auto. Verification also runs automatically (report-only) every time
+you save the tab. When the tab has unsaved edits, Verify checks the tab's live
+text; otherwise it checks the active schema's saved file.
 
 ### Sharing the schema
 
-Team sharing is plain file exchange:
+Team sharing is plain file exchange. Both actions target **whichever schema the
+XSD tab currently holds** — the curated schema, or the auto schema when the tab
+is in **Edit AutoXSD**.
 
-- **Schema ▸ Export XSD** — Save-As a copy of `curated.xsd` to give to a
-  teammate. (If the Edit XSD tab has unsaved changes, save it first.)
-- **Schema ▸ Import XSD** — replace your schema with a file you received. The
-  incoming file is **verified first**: malformed XML is refused outright, and
+- **Schema ▸ Export XSD** — Save-As a copy of the active schema to give to a
+  teammate. (If the tab has unsaved changes, save it first.)
+- **Schema ▸ Import XSD** — replace the active schema with a file you received.
+  The incoming file is **verified first**: malformed XML is refused outright, and
   dialect warnings are shown so you can decide whether to import anyway. Your
-  current schema is backed up as `curated.xsd.bak`, the file is replaced,
-  re-parsed, and completion refreshes immediately. If the Edit XSD tab had
-  unsaved edits, they are replaced by the imported text and the Audit panel says
-  so.
+  current schema is backed up alongside it (e.g. `curated.xsd.bak`) and the file
+  is replaced. When you imported the curated schema, it is re-parsed and
+  completion refreshes immediately; importing the auto schema does not touch
+  completion. If the tab had unsaved edits, they are replaced by the imported
+  text and the Audit panel says so.
 
 ---
 
@@ -489,7 +523,7 @@ simply reads as busy instead of stalled.
 | Shortcut | Where | Action |
 |----------|-------|--------|
 | **Ctrl+O** | Global | Open a `.pgtp` file |
-| **Ctrl+S** | Global | Save the active tab (project, or curated XSD from Edit XSD) |
+| **Ctrl+S** | Global | Save the active tab (project, or the open schema from the XSD tab) |
 | **Ctrl+Shift+S** | Global | Save As |
 | **Ctrl+W** | Global | Close project |
 | **F1** | Global | Open the Manual |
