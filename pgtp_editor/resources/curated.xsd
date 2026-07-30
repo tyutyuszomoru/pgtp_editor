@@ -1,0 +1,2384 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- PGTP Editor curated schema v1.2 -->
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" elementFormDefault="qualified">
+  <xs:element name="Project" type="Project_Type"/>
+  <xs:complexType name="Project_Type">
+    <xs:sequence>
+      <xs:element name="ConnectionOptions" type="Project_ConnectionOptions_Type" minOccurs="1" maxOccurs="1"/>
+      <xs:element name="ScriptConnectionOptions" type="Project_ScriptConnectionOptions_Type" minOccurs="1" maxOccurs="1"/>
+      <xs:element name="DataSources" type="Project_DataSources_Type" minOccurs="1" maxOccurs="1"/>
+      <xs:element name="Presentation" type="Project_Presentation_Type" minOccurs="1" maxOccurs="1"/>
+      <xs:element name="UserCSS" type="Project_UserCSS_Type" minOccurs="1" maxOccurs="1"/>
+      <xs:element name="PdfUserStyles" type="Project_PdfUserStyles_Type" minOccurs="1" maxOccurs="1"/>
+      <xs:element name="PrintUserStyles" type="Project_PrintUserStyles_Type" minOccurs="1" maxOccurs="1"/>
+      <xs:element name="UserJS" type="Project_UserJS_Type" minOccurs="1" maxOccurs="1"/>
+      <xs:element name="ExcludedPaths" type="Project_ExcludedPaths_Type" minOccurs="1" maxOccurs="1"/>
+      <xs:element name="DefaultPageProperties" type="Project_DefaultPageProperties_Type" minOccurs="1" maxOccurs="1"/>
+      <xs:element name="DefaultDataFormats" type="Project_DefaultDataFormats_Type" minOccurs="1" maxOccurs="1"/>
+    </xs:sequence>
+    <xs:attribute name="colorSchemeName" use="required" hint="Built in scheme names">
+      <xs:simpleType>
+        <xs:restriction base="xs:string">
+          <xs:enumeration value=""/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="copySystemFiles" use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:boolean">
+          <xs:enumeration value="true"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="edition" use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:string">
+          <xs:enumeration value="pro"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="generateModifiedDataOnly" use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:boolean">
+          <xs:enumeration value="true"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="localizationFileName" use="required" hint="Choose localization filename">
+      <xs:simpleType>
+        <xs:restriction base="xs:string">
+          <xs:enumeration value=""/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="outputFilesExtension" use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:string">
+          <xs:enumeration value="php"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="outputPath" use="required"  hint="Choose localization filename">
+      <xs:simpleType>
+        <xs:restriction base="xs:string">
+          <xs:enumeration value="C:\Users\lucal\OneDrive\Dokumentumok\tmp_phpgen"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="phpDriver" use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:integer">
+          <xs:enumeration value="0"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+  </xs:complexType>
+  <xs:complexType name="Project_ConnectionOptions_Type">
+    <xs:sequence>
+      <xs:element name="ssh_secure" type="Project_ConnectionOptions_ssh__secure_Type" minOccurs="1" maxOccurs="1"/>
+      <xs:element name="http_tunnel" type="Project_ConnectionOptions_http__tunnel_Type" minOccurs="1" maxOccurs="1"/>
+    </xs:sequence>
+    <xs:attribute name="client_encoding" use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:string">
+          <xs:enumeration value=""/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="database" use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:string">
+          <xs:enumeration value="tmp_phpgen"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="host" use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:string">
+          <xs:enumeration value="localhost"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="login" use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:string">
+          <xs:enumeration value="sdman"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="password" type="xs:string" use="required"/>
+    <xs:attribute name="port" use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:integer">
+          <xs:enumeration value="1111"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+  </xs:complexType>
+  <xs:complexType name="Project_ConnectionOptions_http__tunnel_Type">
+    <xs:sequence>
+      <xs:element name="http_proxy_server" type="Project_ConnectionOptions_http__tunnel_http__proxy__server_Type" minOccurs="1" maxOccurs="1"/>
+      <xs:element name="http_authentication" type="Project_ConnectionOptions_http__tunnel_http__authentication_Type" minOccurs="1" maxOccurs="1"/>
+    </xs:sequence>
+    <xs:attribute name="tunneling" use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:boolean">
+          <xs:enumeration value="false"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="url" use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:string">
+          <xs:enumeration value=""/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+  </xs:complexType>
+  <xs:complexType name="Project_ConnectionOptions_http__tunnel_http__authentication_Type">
+  </xs:complexType>
+  <xs:complexType name="Project_ConnectionOptions_http__tunnel_http__proxy__server_Type">
+    <xs:attribute name="port" use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:integer">
+          <xs:enumeration value="8080"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="use_proxy" use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:boolean">
+          <xs:enumeration value="false"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+  </xs:complexType>
+  <xs:complexType name="Project_ConnectionOptions_ssh__secure_Type">
+    <xs:attribute name="authentication_mode" use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:integer">
+          <xs:enumeration value="0"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="port" use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:integer">
+          <xs:enumeration value="22"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="secure" use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:boolean">
+          <xs:enumeration value="false"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+  </xs:complexType>
+  <xs:complexType name="Project_DataSources_Type">
+    <xs:sequence>
+      <xs:element name="DataSource" type="Project_DataSources_DataSource_Type" minOccurs="1" maxOccurs="unbounded"/>
+    </xs:sequence>
+  </xs:complexType>
+  <xs:complexType name="Project_DataSources_DataSource_Type">
+    <xs:attribute name="createTopLevelPage" use="optional">
+      <xs:simpleType>
+        <xs:restriction base="xs:boolean">
+          <xs:enumeration value="false"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="name" use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:string">
+          <xs:enumeration value="public.match"/>
+          <xs:enumeration value="public.player"/>
+          <xs:enumeration value="public.reference"/>
+          <xs:enumeration value="public.team"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+  </xs:complexType>
+  <xs:complexType name="Project_DefaultDataFormats_Type">
+    <xs:attribute name="DateFormat" use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:string">
+          <xs:enumeration value="Y-m-d"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="DateTimeFormat" use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:string">
+          <xs:enumeration value="Y-m-d H:i:s"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="DecimalSeparator" use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:string">
+          <xs:enumeration value="."/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="ThousandSeparator" use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:string">
+          <xs:enumeration value=","/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="firstDayOfWeek" use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:integer">
+          <xs:enumeration value="0" label="Sunday"/>
+          <xs:enumeration value="1" label="Monday"/>
+          <xs:enumeration value="2" label="Tuesday"/>
+          <xs:enumeration value="3" label="Wednesday"/>
+          <xs:enumeration value="4" label="Thursday"/>
+          <xs:enumeration value="5" label="Friday"/>
+          <xs:enumeration value="6" label="Saturday"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="numberAfterDecimal" use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:integer">
+          <xs:enumeration value="4"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+  </xs:complexType>
+  <xs:complexType name="Project_DefaultPageProperties_Type">
+    <xs:attribute name="NavigatorPosition" use="required" sums="true">
+      <xs:simpleType>
+        <xs:restriction base="xs:integer">
+          <xs:enumeration value="1" label="Top"/>
+            <xs:enumeration value="0" label="None"/>
+               <xs:enumeration value="2" label="Bottom"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="contentEncoding" use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:string">
+          <xs:enumeration value="UTF-8"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="deleteAbilityMode" use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:integer">
+          <xs:enumeration value="3" label="Enabled"/>
+          <xs:enumeration value="" label="Disable"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="deleteSelectedAbilityMode" use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:integer">
+           <xs:enumeration value="3" label="Enabled"/>
+          <xs:enumeration value="" label="Disable"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="exportAllRecordsAvailable" use="required" sums="true">
+      <xs:simpleType>
+        <xs:restriction base="xs:integer">
+            <xs:enumeration value="0" label="Nonselected"/>
+          <xs:enumeration value="1" label="PDF"/>
+          <xs:enumeration value="16" label="CSV"/>
+          <xs:enumeration value="2" label="Excel"/>     
+          <xs:enumeration value="4" label="Word"/>
+          <xs:enumeration value="8" label="Xml"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="exportRecordFromViewFormAvailable" use="required" sums="true">
+      <xs:simpleType>
+        <xs:restriction base="xs:integer">
+           <xs:enumeration value="0" label="Nonselected"/>
+          <xs:enumeration value="1" label="PDF"/>
+          <xs:enumeration value="16" label="CSV"/>
+          <xs:enumeration value="2" label="Excel"/>     
+          <xs:enumeration value="4" label="Word"/>
+          <xs:enumeration value="8" label="Xml"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="exportSelectedRecordsAvailable" use="required" sums="true">
+      <xs:simpleType>
+        <xs:restriction base="xs:integer">
+           <xs:enumeration value="0" label="Nonselected"/>
+          <xs:enumeration value="1" label="PDF"/>
+          <xs:enumeration value="16" label="CSV"/>
+          <xs:enumeration value="2" label="Excel"/>     
+          <xs:enumeration value="4" label="Word"/>
+          <xs:enumeration value="8" label="Xml"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="exportSingleRecordFromGridAvailable" use="required" sums="true">
+      <xs:simpleType>
+        <xs:restriction base="xs:integer">
+           <xs:enumeration value="0" label="Nonselected"/>
+          <xs:enumeration value="1" label="PDF"/>
+          <xs:enumeration value="16" label="CSV"/>
+          <xs:enumeration value="2" label="Excel"/>     
+          <xs:enumeration value="4" label="Word"/>
+          <xs:enumeration value="8" label="Xml"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="insertAbilityMode" use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:integer">
+          <xs:enumeration value="0" label="Disable"/>
+          <xs:enumeration value="1" label="Separated page"/>
+          <xs:enumeration value="2" label="Inline mode"/>
+          <xs:enumeration value="3" label="Modal window"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="printAvailable" use="required" sums="true">
+      <xs:simpleType>
+        <xs:restriction base="xs:integer">
+          <xs:enumeration value="0" label="Non selected"/>
+          <xs:enumeration value="1" label="All records from grid"/>
+          <xs:enumeration value="2" label="Singel record from grid"/>
+          <xs:enumeration value="4" label="Record from view form"/>
+          <xs:enumeration value="8" label="Selected records from grid"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="" use="required" hint="Sets the number of records displayed per page.">
+      <xs:simpleType>
+        <xs:restriction base="xs:integer">
+          <xs:enumeration value="20"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="showKeyColumnsImagesInGridHeader" use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:boolean">
+          <xs:enumeration value="false"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="useActionImages" use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:boolean">
+          <xs:enumeration value="true"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+  </xs:complexType>
+  <xs:complexType name="Project_ExcludedPaths_Type">
+  </xs:complexType>
+  <xs:complexType name="Project_PdfUserStyles_Type">
+  </xs:complexType>
+  <xs:complexType name="Project_Presentation_Type">
+    <xs:sequence>
+      <xs:element name="Pages" type="Project_Presentation_Pages_Type" minOccurs="1" maxOccurs="1"/>
+      <xs:element name="UserAuthorization" type="Project_Presentation_UserAuthorization_Type" minOccurs="1" maxOccurs="1"/>
+      <xs:element name="UserGrants" type="Project_Presentation_UserGrants_Type" minOccurs="1" maxOccurs="1"/>
+      <xs:element name="Header" type="Project_Presentation_Header_Type" minOccurs="1" maxOccurs="1"/>
+      <xs:element name="Footer" type="Project_Presentation_Footer_Type" minOccurs="1" maxOccurs="1"/>
+      <xs:element name="PHPOptions" type="Project_Presentation_PHPOptions_Type" minOccurs="1" maxOccurs="1"/>
+      <xs:element name="Groups" type="Project_Presentation_Groups_Type" minOccurs="1" maxOccurs="1"/>
+      <xs:element name="outgoingMailSettings" type="Project_Presentation_outgoingMailSettings_Type" minOccurs="1" maxOccurs="1"/>
+    </xs:sequence>
+    <xs:attribute name="disableMagicQuotesRuntime" use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:boolean">
+          <xs:enumeration value="false"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="showEnvironmentVariables" use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:boolean">
+          <xs:enumeration value="false"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="showExecutedQueries" use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:boolean">
+          <xs:enumeration value="false"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="showPHPErrorsAndWarnings" use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:boolean">
+          <xs:enumeration value="false"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+  </xs:complexType>
+  <xs:complexType name="Project_Presentation_Footer_Type">
+  </xs:complexType>
+  <xs:complexType name="Project_Presentation_Groups_Type">
+    <xs:sequence>
+      <xs:element name="Group" type="Project_Presentation_Groups_Group_Type" minOccurs="1" maxOccurs="1"/>
+    </xs:sequence>
+  </xs:complexType>
+  <xs:complexType name="Project_Presentation_Groups_Group_Type">
+    <xs:attribute name="caption" use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:string">
+          <xs:enumeration value="No group"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+  </xs:complexType>
+  <xs:complexType name="Project_Presentation_Header_Type">
+  </xs:complexType>
+  <xs:complexType name="Project_Presentation_PHPOptions_Type">
+  </xs:complexType>
+  <xs:complexType name="Project_Presentation_Pages_Type">
+    <xs:sequence>
+      <xs:element name="Page" type="Project_Presentation_Pages_Page_Type" minOccurs="1" maxOccurs="unbounded"/>
+    </xs:sequence>
+  </xs:complexType>
+  <!-- WARNING: child order varies across samples for Project/Presentation/Pages/Page; using first-observed order -->
+  <xs:complexType name="Project_Presentation_Pages_Page_Type">
+    <xs:sequence>
+      <xs:element name="BeforeGridText" type="Project_Presentation_Pages_Page_BeforeGridText_Type" minOccurs="1" maxOccurs="1"/>
+      <xs:element name="DetailedDescription" type="Project_Presentation_Pages_Page_DetailedDescription_Type" minOccurs="1" maxOccurs="1"/>
+      <xs:element name="ColumnPresentations" type="Project_Presentation_Pages_Page_ColumnPresentations_Type" minOccurs="1" maxOccurs="1"/>
+      <xs:element name="Columns" type="Project_Presentation_Pages_Page_Columns_Type" minOccurs="1" maxOccurs="1"/>
+      <xs:element name="Details" type="Project_Presentation_Pages_Page_Details_Type" minOccurs="1" maxOccurs="1"/>
+      <xs:element name="RssOptions" type="Project_Presentation_Pages_Page_RssOptions_Type" minOccurs="0" maxOccurs="1"/>
+      <xs:element name="MultiUploadColumnPresentation" type="Project_Presentation_Pages_Page_MultiUploadColumnPresentation_Type" minOccurs="0" maxOccurs="1"/>
+    </xs:sequence>
+    <xs:attribute name="NavigatorPosition" use="required" sums="true">
+      <xs:simpleType>
+        <xs:restriction base="xs:integer">
+          <xs:enumeration value="1" label="Top"/>
+           <xs:enumeration value="0" label="None"/>
+           <xs:enumeration value="2" label="Bottom"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="addSeparator" use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:boolean">
+          <xs:enumeration value="false"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="allowMultiUpload" use="optional">
+      <xs:simpleType>
+        <xs:restriction base="xs:boolean">
+          <xs:enumeration value="true"/>
+          <xs:enumeration value="false"/>         
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="askForFilterConditionBeforeDisplayData" use="optional">
+      <xs:simpleType>
+        <xs:restriction base="xs:boolean">
+          <xs:enumeration value="true"/>
+          <xs:enumeration value="false"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="borderedTable" use="optional">
+      <xs:simpleType>
+        <xs:restriction base="xs:boolean">
+          <xs:enumeration value="true"/>
+          <xs:enumeration value="false"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="caption" use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:string">
+          <xs:enumeration value="Match"/>
+          <xs:enumeration value="Player"/>
+          <xs:enumeration value="Reference"/>
+          <xs:enumeration value="Team"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="columnFilterAvailable" use="optional">
+      <xs:simpleType>
+        <xs:restriction base="xs:boolean">
+          <xs:enumeration value="true"/>
+          <xs:enumeration value="false"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="condensedTable" use="optional">
+      <xs:simpleType>
+        <xs:restriction base="xs:boolean">
+          <xs:enumeration value="true"/>
+          <xs:enumeration value="false"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="contentEncoding" use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:string">
+          <xs:enumeration value="UTF-8"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="copyAbilityMode" use="optional">
+      <xs:simpleType>
+        <xs:restriction base="xs:integer">
+          <xs:enumeration value="0" label="Disable"/>
+          <xs:enumeration value="1" label="Separated page"/>
+          <xs:enumeration value="2" label="Inline mode"/>
+          <xs:enumeration value="3" label="Modal window"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="deleteAbilityMode" use="optional">
+      <xs:simpleType>
+        <xs:restriction base="xs:integer">
+          <xs:enumeration value="3" label="Enabled"/>
+          <xs:enumeration value="" label="Disable"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="deleteSelectedAbilityMode" use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:integer">
+          <xs:enumeration value="3" label="Enabled"/>
+          <xs:enumeration value="" label="Disable"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="displaySetDefaultCheckBoxes" use="optional">
+      <xs:simpleType>
+        <xs:restriction base="xs:boolean">
+           <xs:enumeration value="true"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="editFormCaptionTemplate" use="optional">
+      <xs:simpleType>
+        <xs:restriction base="xs:string">
+          <xs:enumeration value="%team1_id%"/>
+          <xs:enumeration value="%team1_id%%id%"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="exportAllRecordsAvailable" use="required" sums="true">
+      <xs:simpleType>
+        <xs:restriction base="xs:integer">
+          <xs:enumeration value="0" label="Nonselected"/>
+          <xs:enumeration value="1" label="PDF"/>
+          <xs:enumeration value="16" label="CSV"/>
+          <xs:enumeration value="2" label="Excel"/>     
+          <xs:enumeration value="4" label="Word"/>
+          <xs:enumeration value="8" label="Xml"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="exportRecordFromViewFormAvailable" use="required" sums="true">
+      <xs:simpleType>
+        <xs:restriction base="xs:integer">
+           <xs:enumeration value="0" label="Nonselected"/>
+          <xs:enumeration value="1" label="PDF"/>
+          <xs:enumeration value="16" label="CSV"/>
+          <xs:enumeration value="2" label="Excel"/>     
+          <xs:enumeration value="4" label="Word"/>
+          <xs:enumeration value="8" label="Xml"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="exportSelectedRecordsAvailable" use="required" sums="true">
+      <xs:simpleType>
+        <xs:restriction base="xs:integer">
+          <xs:enumeration value="0" label="Nonselected"/>
+          <xs:enumeration value="1" label="PDF"/>
+          <xs:enumeration value="16" label="CSV"/>
+          <xs:enumeration value="2" label="Excel"/>     
+          <xs:enumeration value="4" label="Word"/>
+          <xs:enumeration value="8" label="Xml"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="exportSingleRecordFromGridAvailable" use="required" sums="true">
+      <xs:simpleType>
+        <xs:restriction base="xs:integer">
+           <xs:enumeration value="0" label="Nonselected"/>
+          <xs:enumeration value="1" label="PDF"/>
+          <xs:enumeration value="16" label="CSV"/>
+          <xs:enumeration value="2" label="Excel"/>     
+          <xs:enumeration value="4" label="Word"/>
+          <xs:enumeration value="8" label="Xml"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="fileName" use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:string">
+          <xs:enumeration value="match"/>
+          <xs:enumeration value="player"/>
+          <xs:enumeration value="reference"/>
+          <xs:enumeration value="team"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="filterBuilderAvailable" use="optional">
+      <xs:simpleType>
+        <xs:restriction base="xs:boolean">
+          <xs:enumeration value="false"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="hideSideBarByDefault" use="optional">
+      <xs:simpleType>
+        <xs:restriction base="xs:boolean">
+          <xs:enumeration value="true"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="highlightRowOnMouseHover" use="optional">
+      <xs:simpleType>
+        <xs:restriction base="xs:boolean">
+          <xs:enumeration value="true"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="horizontalFilterCondition" use="required" hint="You can modify it." >
+      <xs:simpleType>
+        <xs:restriction base="xs:string">
+          <xs:enumeration value=""/>
+          <xs:enumeration value="3 "/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="insertAbilityMode" use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:integer">
+          <xs:enumeration value="0" label="Disable"/>
+          <xs:enumeration value="1" label="Separated page"/>
+          <xs:enumeration value="2" label="Inline mode"/>
+          <xs:enumeration value="3" label="Modal window"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="numberByDataSource" use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:integer">
+          <xs:enumeration value="0"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="printAvailable" use="required" sums="true">
+      <xs:simpleType>
+        <xs:restriction base="xs:integer">
+          <xs:enumeration value="0" label="Non selected"/>
+          <xs:enumeration value="1" label="All records from grid"/>
+          <xs:enumeration value="2" label="Singel record from grid"/>
+          <xs:enumeration value="4" label="Record from view form"/>
+          <xs:enumeration value="8" label="Selected records from grid"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="quickSearchAvailable" use="optional">
+      <xs:simpleType>
+        <xs:restriction base="xs:boolean">
+          <xs:enumeration value="true"/>
+          <xs:enumeration value="false"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="recordsComparisionAvailable" use="optional">
+      <xs:simpleType>
+        <xs:restriction base="xs:boolean">
+          <xs:enumeration value="true"/>
+          <xs:enumeration value="false"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="recordsPerPage" use="optional" hint="You can modify it." >
+      <xs:simpleType>
+        <xs:restriction base="xs:integer">
+          <xs:enumeration value="19"/>
+          <xs:enumeration value="20"/>
+          <xs:enumeration value="48"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="refreshAvailable" use="optional">
+      <xs:simpleType>
+        <xs:restriction base="xs:boolean">
+          <xs:enumeration value="false"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="runtimeCustomizationAvailable" use="optional">
+      <xs:simpleType>
+        <xs:restriction base="xs:boolean">
+          <xs:enumeration value="false"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="selectionFilterAvailable" use="optional">
+      <xs:simpleType>
+        <xs:restriction base="xs:boolean">
+          <xs:enumeration value="false"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="shortCaption" use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:string">
+          <xs:enumeration value="Match"/>
+          <xs:enumeration value="Player"/>
+          <xs:enumeration value="Reference"/>
+          <xs:enumeration value="Team"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="showKeyColumnsImagesInGridHeader" use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:boolean">
+          <xs:enumeration value="false"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="showLineNumbers" use="optional">
+      <xs:simpleType>
+        <xs:restriction base="xs:boolean">
+          <xs:enumeration value="true"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="showSetNullCheckBox" use="optional">
+      <xs:simpleType>
+        <xs:restriction base="xs:boolean">
+          <xs:enumeration value="true"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="sortingByClickAvailable" use="optional">
+      <xs:simpleType>
+        <xs:restriction base="xs:boolean">
+          <xs:enumeration value="false"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="tableName" use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:string">
+          <xs:enumeration value="public.match"/>
+          <xs:enumeration value="public.player"/>
+          <xs:enumeration value="public.reference"/>
+          <xs:enumeration value="public.team"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="type" use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:string">
+          <xs:enumeration value="table"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="useActionImages" use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:boolean">
+          <xs:enumeration value="true"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="viewAbilityMode" use="optional">
+      <xs:simpleType>
+        <xs:restriction base="xs:integer">
+          <xs:enumeration value="0" label="Disable"/>
+          <xs:enumeration value="1" label="Separated page"/>
+          <xs:enumeration value="2" label="Inline mode"/>
+          <xs:enumeration value="3" label="Modal window"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="viewFormCaptionTemplate" use="optional">
+      <xs:simpleType>
+        <xs:restriction base="xs:string">
+          <xs:enumeration value="%id%"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+  </xs:complexType>
+  <xs:complexType name="Project_Presentation_Pages_Page_BeforeGridText_Type">
+  </xs:complexType>
+  <xs:complexType name="Project_Presentation_Pages_Page_ColumnPresentations_Type">
+    <xs:sequence>
+      <xs:element name="ColumnPresentation" type="Project_Presentation_Pages_Page_ColumnPresentations_ColumnPresentation_Type" minOccurs="1" maxOccurs="unbounded"/>
+    </xs:sequence>
+  </xs:complexType>
+  <!-- WARNING: child order varies across samples for Project/Presentation/Pages/Page/ColumnPresentations/ColumnPresentation; using first-observed order -->
+  <xs:complexType name="Project_Presentation_Pages_Page_ColumnPresentations_ColumnPresentation_Type">
+    <xs:sequence>
+      <xs:element name="ViewProperties" type="Project_Presentation_Pages_Page_ColumnPresentations_ColumnPresentation_ViewProperties_Type" minOccurs="1" maxOccurs="1"/>
+      <xs:element name="EditProperties" type="Project_Presentation_Pages_Page_ColumnPresentations_ColumnPresentation_EditProperties_Type" minOccurs="1" maxOccurs="1"/>
+      <xs:element name="Lookup" type="Project_Presentation_Pages_Page_ColumnPresentations_ColumnPresentation_Lookup_Type" minOccurs="0" maxOccurs="1"/>
+      <xs:element name="Hyperlink" type="Project_Presentation_Pages_Page_ColumnPresentations_ColumnPresentation_Hyperlink_Type" minOccurs="0" maxOccurs="1"/>
+      <xs:element name="Validators" type="Project_Presentation_Pages_Page_ColumnPresentations_ColumnPresentation_Validators_Type" minOccurs="0" maxOccurs="1"/>
+    </xs:sequence>
+    <xs:attribute name="canSetNull" use="optional">
+      <xs:simpleType>
+        <xs:restriction base="xs:boolean">
+          <xs:enumeration value="true"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="caption" type="xs:string" use="required"/>
+    <xs:attribute name="columnFilterOrderType" use="optional">
+      <xs:simpleType>
+        <xs:restriction base="xs:integer">
+          <xs:enumeration value="1" label="Descending"/>
+          <xs:enumeration value="" label="Ascending"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="editorHint" use="optional">
+      <xs:simpleType>
+        <xs:restriction base="xs:integer">
+          <xs:enumeration value="55"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="fieldName" type="xs:string" use="required"/>
+    <xs:attribute name="headerHint" use="optional">
+      <xs:simpleType>
+        <xs:restriction base="xs:string">
+          <xs:enumeration value="szia"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="numberOfValuesToDisplayForColumnFilter" use="optional">
+      <xs:simpleType>
+        <xs:restriction base="xs:integer">
+          <xs:enumeration value="1000"/>
+          <xs:enumeration value="1004"/>
+          <xs:enumeration value="23"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="readOnly" use="optional">
+      <xs:simpleType>
+        <xs:restriction base="xs:boolean">
+          <xs:enumeration value="true"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="selectedFilterOperators" use="required" sums="true">
+      <xs:simpleType>
+        <xs:restriction base="xs:integer">
+           <xs:enumeration value="1" label="Equal"/>
+           <xs:enumeration value="2" label="Does not equal"/>
+           <xs:enumeration value="4" label="Is great than"/>
+           <xs:enumeration value="8" label="Is greather than or equal to "/>
+           <xs:enumeration value="16" label="Is less than "/>
+          <xs:enumeration value="32" label="Is less than or equal to"/>
+          <xs:enumeration value="64" label="Is between "/>
+          <xs:enumeration value="128" label="Is not between "/>
+          <xs:enumeration value="256" label="Contains"/>
+          <xs:enumeration value="512" label="Does not contain"/>
+          <xs:enumeration value="1024" label="Begins with"/>
+          <xs:enumeration value="2048" label="Ends with"/>
+          <xs:enumeration value="4096" label="Is like"/>
+          <xs:enumeration value="8192" label="Is not like"/>
+          <xs:enumeration value="524288" label="Is blank"/>
+         <xs:enumeration value="1048576" label="Is not blank"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="showColumnFilter" use="optional">
+      <xs:simpleType>
+        <xs:restriction base="xs:boolean">
+          <xs:enumeration value="false"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="sortable" use="optional">
+      <xs:simpleType>
+        <xs:restriction base="xs:boolean">
+          <xs:enumeration value="false"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+  </xs:complexType>
+  <xs:complexType name="Project_Presentation_Pages_Page_ColumnPresentations_ColumnPresentation_EditProperties_Type">
+    <xs:sequence>
+      <xs:element name="Values" type="Project_Presentation_Pages_Page_ColumnPresentations_ColumnPresentation_EditProperties_Values_Type" minOccurs="0" maxOccurs="1"/>
+    </xs:sequence>
+    <xs:attribute name="dateTimeFormat" use="optional">
+      <xs:simpleType>
+        <xs:restriction base="xs:string">
+          <xs:enumeration value="Y-m-d"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="dateTimeKind" use="optional">
+      <xs:simpleType>
+        <xs:restriction base="xs:integer">
+          <xs:enumeration value="1"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="firstDayOfWeek" use="optional">
+      <xs:simpleType>
+        <xs:restriction base="xs:integer">
+          <xs:enumeration value="0" label="Sunday"/>
+          <xs:enumeration value="1" label="Monday"/>
+          <xs:enumeration value="2" label="Tuesday"/>
+          <xs:enumeration value="3" label="Wednesday"/>
+          <xs:enumeration value="4" label="Thursday"/>
+          <xs:enumeration value="5" label="Friday"/>
+          <xs:enumeration value="6" label="Saturday"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="mask" use="optional">
+      <xs:simpleType>
+        <xs:restriction base="xs:string">
+          <xs:enumeration value=""/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="maxLength" use="optional">
+      <xs:simpleType>
+        <xs:restriction base="xs:integer">
+          <xs:enumeration value="0"/>
+          <xs:enumeration value="2"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="type" use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:string">
+          <xs:enumeration value="comboBox"/>
+          <xs:enumeration value="Text"/>
+          <xs:enumeration value="Autocomplete"/>
+          <xs:enumeration value="RadioGroup"/>
+          <xs:enumeration value="CheckBox"/>
+          <xs:enumeration value="Toggle"/>
+          <xs:enumeration value="CheckBoxGroup"/>
+          <xs:enumeration value="MultipleSelect"/>
+          <xs:enumeration value="dateTime"/>
+          <xs:enumeration value="Time"/>
+          <xs:enumeration value="SpinEdit"/>
+          <xs:enumeration value="RangeEdit"/>
+          <xs:enumeration value="coloredit"/>
+          <xs:enumeration value="maskedit"/>
+          <xs:enumeration value="text Area"/>
+          <xs:enumeration value="Html Wysiwyg editor"/>
+          <xs:enumeration value="Password"/>
+         <xs:enumeration value="File upload"/>
+         <xs:enumeration value="Image upload"/>
+         <xs:enumeration value="Upload file to folder"/>
+         <xs:enumeration value="Upload image to folder"/>
+         <xs:enumeration value="Signature"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+  </xs:complexType>
+  <xs:complexType name="Project_Presentation_Pages_Page_ColumnPresentations_ColumnPresentation_EditProperties_Values_Type">
+    <xs:sequence>
+      <xs:element name="Value" type="Project_Presentation_Pages_Page_ColumnPresentations_ColumnPresentation_EditProperties_Values_Value_Type" minOccurs="1" maxOccurs="unbounded"/>
+    </xs:sequence>
+  </xs:complexType>
+  <xs:complexType name="Project_Presentation_Pages_Page_ColumnPresentations_ColumnPresentation_EditProperties_Values_Value_Type">
+    <xs:attribute name="caption" use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:string">
+          <xs:enumeration value="playing"/>
+          <xs:enumeration value="sick"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="name" use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:string">
+          <xs:enumeration value="playing"/>
+          <xs:enumeration value="sick"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+  </xs:complexType>
+  <xs:complexType name="Project_Presentation_Pages_Page_ColumnPresentations_ColumnPresentation_Hyperlink_Type">
+    <xs:attribute name="target" use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:string">
+          <xs:enumeration value=""/>
+          <xs:enumeration value="_parent"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="template" use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:string">
+          <xs:enumeration value="%id%"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+  </xs:complexType>
+  <xs:complexType name="Project_Presentation_Pages_Page_ColumnPresentations_ColumnPresentation_Lookup_Type">
+    <xs:attribute name="displayFieldName" use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:string">
+          <xs:enumeration value="teamname"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="linkFieldName" use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:string">
+          <xs:enumeration value="id"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="lookupFilter" use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:string">
+          <xs:enumeration value=""/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="lookupOrdering" use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:integer">
+          <xs:enumeration value="0"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="tableName" use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:string">
+          <xs:enumeration value="public.match"/>
+          <xs:enumeration value="public.player"/>
+          <xs:enumeration value="public.reference"/>
+          <xs:enumeration value="public.team"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="useLookupOrdering" use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:boolean">
+          <xs:enumeration value="true"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+  </xs:complexType>
+  <xs:complexType name="Project_Presentation_Pages_Page_ColumnPresentations_ColumnPresentation_Validators_Type">
+    <xs:sequence>
+      <xs:element name="EmailClientValidatorInfo" type="Project_Presentation_Pages_Page_ColumnPresentations_ColumnPresentation_Validators_EmailClientValidatorInfo_Type" minOccurs="1" maxOccurs="1"/>
+      <xs:element name="CreditCardClientValidatorInfo" type="Project_Presentation_Pages_Page_ColumnPresentations_ColumnPresentation_Validators_CreditCardClientValidatorInfo_Type" minOccurs="1" maxOccurs="1"/>
+      <xs:element name="NumberClientValidatorInfo" type="Project_Presentation_Pages_Page_ColumnPresentations_ColumnPresentation_Validators_NumberClientValidatorInfo_Type" minOccurs="1" maxOccurs="1"/>
+      <xs:element name="DigitsClientValidatorInfo" type="Project_Presentation_Pages_Page_ColumnPresentations_ColumnPresentation_Validators_DigitsClientValidatorInfo_Type" minOccurs="1" maxOccurs="1"/>
+      <xs:element name="UrlClientValidatorInfo" type="Project_Presentation_Pages_Page_ColumnPresentations_ColumnPresentation_Validators_UrlClientValidatorInfo_Type" minOccurs="1" maxOccurs="1"/>
+    </xs:sequence>
+  </xs:complexType>
+  <xs:complexType name="Project_Presentation_Pages_Page_ColumnPresentations_ColumnPresentation_Validators_CreditCardClientValidatorInfo_Type">
+    <xs:attribute name="enabled" use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:boolean">
+          <xs:enumeration value="true"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+  </xs:complexType>
+  <xs:complexType name="Project_Presentation_Pages_Page_ColumnPresentations_ColumnPresentation_Validators_DigitsClientValidatorInfo_Type">
+    <xs:attribute name="enabled" use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:boolean">
+          <xs:enumeration value="true"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+  </xs:complexType>
+  <xs:complexType name="Project_Presentation_Pages_Page_ColumnPresentations_ColumnPresentation_Validators_EmailClientValidatorInfo_Type">
+    <xs:attribute name="enabled" use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:boolean">
+          <xs:enumeration value="true"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+  </xs:complexType>
+  <xs:complexType name="Project_Presentation_Pages_Page_ColumnPresentations_ColumnPresentation_Validators_NumberClientValidatorInfo_Type">
+    <xs:attribute name="enabled" use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:boolean">
+          <xs:enumeration value="true"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+  </xs:complexType>
+  <xs:complexType name="Project_Presentation_Pages_Page_ColumnPresentations_ColumnPresentation_Validators_UrlClientValidatorInfo_Type">
+    <xs:attribute name="enabled" use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:boolean">
+          <xs:enumeration value="true"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+  </xs:complexType>
+  <xs:complexType name="Project_Presentation_Pages_Page_ColumnPresentations_ColumnPresentation_ViewProperties_Type">
+    <xs:sequence>
+      <xs:element name="Format" type="Project_Presentation_Pages_Page_ColumnPresentations_ColumnPresentation_ViewProperties_Format_Type" minOccurs="0" maxOccurs="1"/>
+    </xs:sequence>
+    <xs:attribute name="dateTimeKind" use="optional">
+      <xs:simpleType>
+        <xs:restriction base="xs:integer">
+          <xs:enumeration value="1"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="displayType" use="optional">
+      <xs:simpleType>
+        <xs:restriction base="xs:string">
+          <xs:enumeration value="image"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="offToggleCaption" use="optional">
+      <xs:simpleType>
+        <xs:restriction base="xs:string">
+          <xs:enumeration value="No"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="offToggleStyle" use="optional">
+      <xs:simpleType>
+        <xs:restriction base="xs:integer">
+          <xs:enumeration value="1"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="onToggleCaption" use="optional">
+      <xs:simpleType>
+        <xs:restriction base="xs:string">
+          <xs:enumeration value="Yes"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="onToggleStyle" use="optional">
+      <xs:simpleType>
+        <xs:restriction base="xs:integer">
+          <xs:enumeration value="0"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="size" use="optional">
+      <xs:simpleType>
+        <xs:restriction base="xs:integer">
+          <xs:enumeration value="1"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="type" use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:string">
+          <xs:enumeration value="Text"/>
+          <xs:enumeration value="Check box"/>
+          <xs:enumeration value="Toggle"/>
+          <xs:enumeration value="DateTime"/>
+         <xs:enumeration value="Image"/>
+          <xs:enumeration value="File download"/>
+         <xs:enumeration value="External file"/>
+         <xs:enumeration value="External image"/>
+        <xs:enumeration value="External audio"/>
+        <xs:enumeration value="External video"/>
+        <xs:enumeration value="Embedded video"/>
+        <xs:enumeration value="Barcode"/>
+         <xs:enumeration value="QR Code"/>
+          <xs:enumeration value="comboBox"/>
+          <xs:enumeration value="text"/>
+          <xs:enumeration value="Autocomplete"/>
+          <xs:enumeration value="RadioGroup"/>
+          <xs:enumeration value="CheckBox"/>
+          <xs:enumeration value="toggle"/>
+          <xs:enumeration value="CheckBoxGroup"/>
+          <xs:enumeration value="MultipleSelect"/>
+          <xs:enumeration value="dateTime"/>
+          <xs:enumeration value="Time"/>
+          <xs:enumeration value="SpinEdit"/>
+          <xs:enumeration value="RangeEdit"/>
+          <xs:enumeration value="coloredit"/>
+          <xs:enumeration value="maskedit"/>
+          <xs:enumeration value="text Area"/>
+          <xs:enumeration value="Html Wysiwyg editor"/>
+          <xs:enumeration value="Password"/>
+         <xs:enumeration value="File upload"/>
+         <xs:enumeration value="Image upload"/>
+         <xs:enumeration value="Upload file to folder"/>
+         <xs:enumeration value="Upload image to folder"/>
+         <xs:enumeration value="Signature"/>
+          <xs:enumeration value="dynamicCombobox"/>
+          <xs:enumeration value="textBox"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+  </xs:complexType>
+  <xs:complexType name="Project_Presentation_Pages_Page_ColumnPresentations_ColumnPresentation_ViewProperties_Format_Type">
+    <xs:attribute name="decimalSeparator" use="optional">
+      <xs:simpleType>
+        <xs:restriction base="xs:string">
+          <xs:enumeration value="."/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="numberAfterDecimal" use="optional">
+      <xs:simpleType>
+        <xs:restriction base="xs:integer">
+          <xs:enumeration value="2"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="thousandSeparator" use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:string">
+          <xs:enumeration value=","/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="type" use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:string">
+          <xs:enumeration value="number"/>
+
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+  </xs:complexType>
+  <xs:complexType name="Project_Presentation_Pages_Page_Columns_Type">
+    <xs:sequence>
+      <xs:element name="List" type="Project_Presentation_Pages_Page_Columns_List_Type" minOccurs="1" maxOccurs="1"/>
+      <xs:element name="View" type="Project_Presentation_Pages_Page_Columns_View_Type" minOccurs="1" maxOccurs="1"/>
+      <xs:element name="Edit" type="Project_Presentation_Pages_Page_Columns_Edit_Type" minOccurs="1" maxOccurs="1"/>
+      <xs:element name="Insert" type="Project_Presentation_Pages_Page_Columns_Insert_Type" minOccurs="1" maxOccurs="1"/>
+      <xs:element name="QuickFilter" type="Project_Presentation_Pages_Page_Columns_QuickFilter_Type" minOccurs="1" maxOccurs="1"/>
+      <xs:element name="FilterBuilder" type="Project_Presentation_Pages_Page_Columns_FilterBuilder_Type" minOccurs="1" maxOccurs="1"/>
+      <xs:element name="Print" type="Project_Presentation_Pages_Page_Columns_Print_Type" minOccurs="1" maxOccurs="1"/>
+      <xs:element name="Export" type="Project_Presentation_Pages_Page_Columns_Export_Type" minOccurs="1" maxOccurs="1"/>
+      <xs:element name="Compare" type="Project_Presentation_Pages_Page_Columns_Compare_Type" minOccurs="1" maxOccurs="1"/>
+      <xs:element name="MultiEdit" type="Project_Presentation_Pages_Page_Columns_MultiEdit_Type" minOccurs="1" maxOccurs="1"/>
+    </xs:sequence>
+  </xs:complexType>
+  <xs:complexType name="Project_Presentation_Pages_Page_Columns_Compare_Type">
+    <xs:sequence>
+      <xs:element name="Column" type="Project_Presentation_Pages_Page_Columns_Compare_Column_Type" minOccurs="1" maxOccurs="unbounded"/>
+    </xs:sequence>
+  </xs:complexType>
+  <xs:complexType name="Project_Presentation_Pages_Page_Columns_Compare_Column_Type">
+    <xs:attribute name="fieldName" type="xs:string" use="required"/>
+    <xs:attribute name="visible" use="optional">
+      <xs:simpleType>
+        <xs:restriction base="xs:boolean">
+          <xs:enumeration value="false"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+  </xs:complexType>
+  <xs:complexType name="Project_Presentation_Pages_Page_Columns_Edit_Type">
+    <xs:sequence>
+      <xs:element name="Column" type="Project_Presentation_Pages_Page_Columns_Edit_Column_Type" minOccurs="1" maxOccurs="unbounded"/>
+    </xs:sequence>
+  </xs:complexType>
+  <xs:complexType name="Project_Presentation_Pages_Page_Columns_Edit_Column_Type">
+    <xs:attribute name="fieldName" type="xs:string" use="required"/>
+    <xs:attribute name="visible" use="optional">
+      <xs:simpleType>
+        <xs:restriction base="xs:boolean">
+          <xs:enumeration value="false"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+  </xs:complexType>
+  <xs:complexType name="Project_Presentation_Pages_Page_Columns_Export_Type">
+    <xs:sequence>
+      <xs:element name="Column" type="Project_Presentation_Pages_Page_Columns_Export_Column_Type" minOccurs="1" maxOccurs="unbounded"/>
+    </xs:sequence>
+  </xs:complexType>
+  <xs:complexType name="Project_Presentation_Pages_Page_Columns_Export_Column_Type">
+    <xs:attribute name="fieldName" type="xs:string" use="required"/>
+    <xs:attribute name="visible" use="optional">
+      <xs:simpleType>
+        <xs:restriction base="xs:boolean">
+          <xs:enumeration value="false"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+  </xs:complexType>
+  <xs:complexType name="Project_Presentation_Pages_Page_Columns_FilterBuilder_Type">
+    <xs:sequence>
+      <xs:element name="Column" type="Project_Presentation_Pages_Page_Columns_FilterBuilder_Column_Type" minOccurs="1" maxOccurs="unbounded"/>
+    </xs:sequence>
+  </xs:complexType>
+  <xs:complexType name="Project_Presentation_Pages_Page_Columns_FilterBuilder_Column_Type">
+    <xs:attribute name="fieldName" type="xs:string" use="required"/>
+    <xs:attribute name="visible" use="optional">
+      <xs:simpleType>
+        <xs:restriction base="xs:boolean">
+          <xs:enumeration value="false"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+  </xs:complexType>
+  <xs:complexType name="Project_Presentation_Pages_Page_Columns_Insert_Type">
+    <xs:sequence>
+      <xs:element name="Column" type="Project_Presentation_Pages_Page_Columns_Insert_Column_Type" minOccurs="1" maxOccurs="unbounded"/>
+    </xs:sequence>
+  </xs:complexType>
+  <xs:complexType name="Project_Presentation_Pages_Page_Columns_Insert_Column_Type">
+    <xs:attribute name="fieldName" type="xs:string" use="required"/>
+    <xs:attribute name="visible" use="optional">
+      <xs:simpleType>
+        <xs:restriction base="xs:boolean">
+          <xs:enumeration value="false"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+  </xs:complexType>
+  <xs:complexType name="Project_Presentation_Pages_Page_Columns_List_Type">
+    <xs:sequence>
+      <xs:element name="Column" type="Project_Presentation_Pages_Page_Columns_List_Column_Type" minOccurs="1" maxOccurs="unbounded"/>
+    </xs:sequence>
+  </xs:complexType>
+  <xs:complexType name="Project_Presentation_Pages_Page_Columns_List_Column_Type">
+    <xs:attribute name="fieldName" type="xs:string" use="required"/>
+    <xs:attribute name="visible" use="optional">
+      <xs:simpleType>
+        <xs:restriction base="xs:boolean">
+          <xs:enumeration value="false"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+  </xs:complexType>
+  <xs:complexType name="Project_Presentation_Pages_Page_Columns_MultiEdit_Type">
+    <xs:sequence>
+      <xs:element name="Column" type="Project_Presentation_Pages_Page_Columns_MultiEdit_Column_Type" minOccurs="1" maxOccurs="unbounded"/>
+    </xs:sequence>
+  </xs:complexType>
+  <xs:complexType name="Project_Presentation_Pages_Page_Columns_MultiEdit_Column_Type">
+    <xs:attribute name="fieldName" type="xs:string" use="required"/>
+    <xs:attribute name="visible" use="optional">
+      <xs:simpleType>
+        <xs:restriction base="xs:boolean">
+          <xs:enumeration value="false"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+  </xs:complexType>
+  <xs:complexType name="Project_Presentation_Pages_Page_Columns_Print_Type">
+    <xs:sequence>
+      <xs:element name="Column" type="Project_Presentation_Pages_Page_Columns_Print_Column_Type" minOccurs="1" maxOccurs="unbounded"/>
+    </xs:sequence>
+  </xs:complexType>
+  <xs:complexType name="Project_Presentation_Pages_Page_Columns_Print_Column_Type">
+    <xs:attribute name="fieldName" type="xs:string" use="required"/>
+  </xs:complexType>
+  <xs:complexType name="Project_Presentation_Pages_Page_Columns_QuickFilter_Type">
+    <xs:sequence>
+      <xs:element name="Column" type="Project_Presentation_Pages_Page_Columns_QuickFilter_Column_Type" minOccurs="1" maxOccurs="unbounded"/>
+    </xs:sequence>
+  </xs:complexType>
+  <xs:complexType name="Project_Presentation_Pages_Page_Columns_QuickFilter_Column_Type">
+    <xs:attribute name="fieldName" type="xs:string" use="required"/>
+    <xs:attribute name="visible" use="optional">
+      <xs:simpleType>
+        <xs:restriction base="xs:boolean">
+          <xs:enumeration value="false"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+  </xs:complexType>
+  <xs:complexType name="Project_Presentation_Pages_Page_Columns_View_Type">
+    <xs:sequence>
+      <xs:element name="Column" type="Project_Presentation_Pages_Page_Columns_View_Column_Type" minOccurs="1" maxOccurs="unbounded"/>
+    </xs:sequence>
+  </xs:complexType>
+  <xs:complexType name="Project_Presentation_Pages_Page_Columns_View_Column_Type">
+    <xs:attribute name="fieldName" type="xs:string" use="required"/>
+    <xs:attribute name="visible" use="optional">
+      <xs:simpleType>
+        <xs:restriction base="xs:boolean">
+          <xs:enumeration value="false"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+  </xs:complexType>
+  <xs:complexType name="Project_Presentation_Pages_Page_DetailedDescription_Type">
+  </xs:complexType>
+  <xs:complexType name="Project_Presentation_Pages_Page_Details_Type">
+    <xs:sequence>
+      <xs:element name="Detail" type="Project_Presentation_Pages_Page_Details_Detail_Type" minOccurs="0" maxOccurs="unbounded"/>
+    </xs:sequence>
+  </xs:complexType>
+  <xs:complexType name="Project_Presentation_Pages_Page_Details_Detail_Type">
+    <xs:sequence>
+      <xs:element name="Page" type="Project_Presentation_Pages_Page_Details_Detail_Page_Type" minOccurs="1" maxOccurs="1"/>
+      <xs:element name="MasterForeignKeyColumnMap" type="Project_Presentation_Pages_Page_Details_Detail_MasterForeignKeyColumnMap_Type" minOccurs="1" maxOccurs="1"/>
+    </xs:sequence>
+    <xs:attribute name="caption" use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:string">
+          <xs:enumeration value="Match"/>
+          <xs:enumeration value="Player"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+  </xs:complexType>
+  <xs:complexType name="Project_Presentation_Pages_Page_Details_Detail_MasterForeignKeyColumnMap_Type">
+    <xs:sequence>
+      <xs:element name="FieldMap" type="Project_Presentation_Pages_Page_Details_Detail_MasterForeignKeyColumnMap_FieldMap_Type" minOccurs="1" maxOccurs="1"/>
+    </xs:sequence>
+  </xs:complexType>
+  <xs:complexType name="Project_Presentation_Pages_Page_Details_Detail_MasterForeignKeyColumnMap_FieldMap_Type">
+    <xs:attribute name="foreginColumnName" use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:string">
+          <xs:enumeration value="team1_id"/>
+          <xs:enumeration value="team2_id"/>
+          <xs:enumeration value="team_id"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="masterColumnName" use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:string">
+          <xs:enumeration value="id"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+  </xs:complexType>
+  <xs:complexType name="Project_Presentation_Pages_Page_Details_Detail_Page_Type">
+    <xs:sequence>
+      <xs:element name="BeforeGridText" type="Project_Presentation_Pages_Page_Details_Detail_Page_BeforeGridText_Type" minOccurs="1" maxOccurs="1"/>
+      <xs:element name="DetailedDescription" type="Project_Presentation_Pages_Page_Details_Detail_Page_DetailedDescription_Type" minOccurs="1" maxOccurs="1"/>
+      <xs:element name="ColumnPresentations" type="Project_Presentation_Pages_Page_Details_Detail_Page_ColumnPresentations_Type" minOccurs="1" maxOccurs="1"/>
+      <xs:element name="Columns" type="Project_Presentation_Pages_Page_Details_Detail_Page_Columns_Type" minOccurs="1" maxOccurs="1"/>
+      <xs:element name="Details" type="Project_Presentation_Pages_Page_Details_Detail_Page_Details_Type" minOccurs="1" maxOccurs="1"/>
+    </xs:sequence>
+    <xs:attribute name="NavigatorPosition" use="required" sums="true">
+      <xs:simpleType>
+        <xs:restriction base="xs:integer">
+          <xs:enumeration value="1" label="Top"/>
+            <xs:enumeration value="0" label="None"/>
+               <xs:enumeration value="2" label="Bottom"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="addSeparator" use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:boolean">
+          <xs:enumeration value="false"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="caption" use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:string">
+          <xs:enumeration value="Match"/>
+          <xs:enumeration value="Player"/>
+          <xs:enumeration value="Public.Refernce"/>
+          <xs:enumeration value="Team"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="contentEncoding" use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:string">
+          <xs:enumeration value="UTF-8"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="deleteAbilityMode" use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:integer">
+          <xs:enumeration value="3" label="Enabled"/>
+          <xs:enumeration value="" label="Disable"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="deleteSelectedAbilityMode" use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:integer">
+          <xs:enumeration value="3" label="Enabled"/>
+          <xs:enumeration value="" label="Disable"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="exportAllRecordsAvailable" use="required" sums="true">
+      <xs:simpleType>
+        <xs:restriction base="xs:integer">
+            <xs:enumeration value="0" label="Nonselected"/>
+          <xs:enumeration value="1" label="PDF"/>
+          <xs:enumeration value="16" label="CSV"/>
+          <xs:enumeration value="2" label="Excel"/>     
+          <xs:enumeration value="4" label="Word"/>
+          <xs:enumeration value="8" label="Xml"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="exportRecordFromViewFormAvailable" use="required" sums="true">
+      <xs:simpleType>
+        <xs:restriction base="xs:integer">
+            <xs:enumeration value="0" label="Nonselected"/>
+          <xs:enumeration value="1" label="PDF"/>
+          <xs:enumeration value="16" label="CSV"/>
+          <xs:enumeration value="2" label="Excel"/>     
+          <xs:enumeration value="4" label="Word"/>
+          <xs:enumeration value="8" label="Xml"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="exportSelectedRecordsAvailable" use="required" sums="true">
+      <xs:simpleType>
+        <xs:restriction base="xs:integer">
+          <xs:enumeration value="0" label="Nonselected"/>
+          <xs:enumeration value="1" label="PDF"/>
+          <xs:enumeration value="16" label="CSV"/>
+          <xs:enumeration value="2" label="Excel"/>     
+          <xs:enumeration value="4" label="Word"/>
+          <xs:enumeration value="8" label="Xml"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="exportSingleRecordFromGridAvailable" use="required" sums="true">
+      <xs:simpleType>
+        <xs:restriction base="xs:integer">
+           <xs:enumeration value="0" label="Nonselected"/>
+          <xs:enumeration value="1" label="PDF"/>
+          <xs:enumeration value="16" label="CSV"/>
+          <xs:enumeration value="2" label="Excel"/>     
+          <xs:enumeration value="4" label="Word"/>
+          <xs:enumeration value="8" label="Xml"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="fileName" use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:string">
+          <xs:enumeration value="match"/>
+          <xs:enumeration value="player"/>
+          <xs:enumeration value="team"/>
+          <xs:enumeration value="puplic.reference"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="horizontalFilterCondition" use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:string">
+          <xs:enumeration value=""/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="insertAbilityMode" use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:integer">
+       <xs:enumeration value="0" label="Disable"/>
+          <xs:enumeration value="1" label="Separated page"/>
+          <xs:enumeration value="2" label="Inline mode"/>
+          <xs:enumeration value="3" label="Modal window"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="numberByDataSource" use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:integer">
+          <xs:enumeration value="0"/>
+          <xs:enumeration value="1"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="printAvailable" use="required" sums="true">
+      <xs:simpleType>
+        <xs:restriction base="xs:integer">
+          <xs:enumeration value="0" label="Non selected"/>
+          <xs:enumeration value="1" label="All records from grid"/>
+          <xs:enumeration value="2" label="Singel record from grid"/>
+          <xs:enumeration value="4" label="Record from view form"/>
+          <xs:enumeration value="8" label="Selected records from grid"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="recordsPerPage" use="required" hint="You can modify it." >
+      <xs:simpleType>
+        <xs:restriction base="xs:integer">
+          <xs:enumeration value="20"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="shortCaption" use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:string">
+          <xs:enumeration value="Match"/>
+          <xs:enumeration value="Player"/>
+          <xs:enumeration value="Team"/>
+          <xs:enumeration value="Publik.Reference"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="showKeyColumnsImagesInGridHeader" use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:boolean">
+          <xs:enumeration value="false"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="tableName" use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:string">
+          <xs:enumeration value="public.match"/>
+          <xs:enumeration value="public.player"/>
+          <xs:enumeration value="public.reference"/>
+          <xs:enumeration value="public.team"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="useActionImages" use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:boolean">
+          <xs:enumeration value="true"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+  </xs:complexType>
+  <xs:complexType name="Project_Presentation_Pages_Page_Details_Detail_Page_BeforeGridText_Type">
+  </xs:complexType>
+  <xs:complexType name="Project_Presentation_Pages_Page_Details_Detail_Page_ColumnPresentations_Type">
+    <xs:sequence>
+      <xs:element name="ColumnPresentation" type="Project_Presentation_Pages_Page_Details_Detail_Page_ColumnPresentations_ColumnPresentation_Type" minOccurs="1" maxOccurs="unbounded"/>
+    </xs:sequence>
+  </xs:complexType>
+  <!-- WARNING: child order varies across samples for Project/Presentation/Pages/Page/Details/Detail/Page/ColumnPresentations/ColumnPresentation; using first-observed order -->
+  <xs:complexType name="Project_Presentation_Pages_Page_Details_Detail_Page_ColumnPresentations_ColumnPresentation_Type">
+    <xs:sequence>
+      <xs:element name="ViewProperties" type="Project_Presentation_Pages_Page_Details_Detail_Page_ColumnPresentations_ColumnPresentation_ViewProperties_Type" minOccurs="1" maxOccurs="1"/>
+      <xs:element name="EditProperties" type="Project_Presentation_Pages_Page_Details_Detail_Page_ColumnPresentations_ColumnPresentation_EditProperties_Type" minOccurs="1" maxOccurs="1"/>
+      <xs:element name="Lookup" type="Project_Presentation_Pages_Page_Details_Detail_Page_ColumnPresentations_ColumnPresentation_Lookup_Type" minOccurs="0" maxOccurs="1"/>
+    </xs:sequence>
+    <xs:attribute name="canSetNull" use="optional">
+      <xs:simpleType>
+        <xs:restriction base="xs:boolean">
+          <xs:enumeration value="true"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="caption" type="xs:string" use="required"/>
+    <xs:attribute name="fieldName" type="xs:string" use="required"/>
+    <xs:attribute name="selectedFilterOperators" use="required" sums="true">
+      <xs:simpleType>
+        <xs:restriction base="xs:integer">
+           <xs:enumeration value="1" label="Equal"/>
+           <xs:enumeration value="2" label="Does not equal"/>
+           <xs:enumeration value="4" label="Is great than"/>
+           <xs:enumeration value="8" label="Is greather than or equal to "/>
+           <xs:enumeration value="16" label="Is less than "/>
+          <xs:enumeration value="32" label="Is less than or equal to"/>
+          <xs:enumeration value="64" label="Is between "/>
+          <xs:enumeration value="128" label="Is not between "/>
+          <xs:enumeration value="256" label="Contains"/>
+          <xs:enumeration value="512" label="Does not contain"/>
+          <xs:enumeration value="1024" label="Begins with"/>
+          <xs:enumeration value="2048" label="Ends with"/>
+          <xs:enumeration value="4096" label="Is like"/>
+          <xs:enumeration value="8192" label="Is not like"/>
+          <xs:enumeration value="524288" label="Is blank"/>
+         <xs:enumeration value="1048576" label="Is not blank"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="showColumnFilter" use="optional">
+      <xs:simpleType>
+        <xs:restriction base="xs:boolean">
+          <xs:enumeration value="false"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+  </xs:complexType>
+  <xs:complexType name="Project_Presentation_Pages_Page_Details_Detail_Page_ColumnPresentations_ColumnPresentation_EditProperties_Type">
+    <xs:sequence>
+      <xs:element name="Values" type="Project_Presentation_Pages_Page_Details_Detail_Page_ColumnPresentations_ColumnPresentation_EditProperties_Values_Type" minOccurs="0" maxOccurs="1"/>
+    </xs:sequence>
+    <xs:attribute name="dateTimeFormat" use="optional">
+      <xs:simpleType>
+        <xs:restriction base="xs:string">
+          <xs:enumeration value="Y-m-d"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="dateTimeKind" use="optional">
+      <xs:simpleType>
+        <xs:restriction base="xs:integer">
+          <xs:enumeration value="1"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="firstDayOfWeek" use="optional">
+      <xs:simpleType>
+        <xs:restriction base="xs:integer">
+          <xs:enumeration value="0" label="Sunday"/>
+          <xs:enumeration value="1" label="Monday"/>
+          <xs:enumeration value="2" label="Tuesday"/>
+          <xs:enumeration value="3" label="Wednesday"/>
+          <xs:enumeration value="4" label="Thursday"/>
+          <xs:enumeration value="5" label="Friday"/>
+          <xs:enumeration value="6" label="Saturday"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="maxLength" use="optional">
+      <xs:simpleType>
+        <xs:restriction base="xs:integer">
+          <xs:enumeration value="0"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="type" use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:string">
+          <xs:enumeration value="comboBox"/>
+          <xs:enumeration value="Text"/>
+          <xs:enumeration value="Autocomplete"/>
+          <xs:enumeration value="RadioGroup"/>
+          <xs:enumeration value="CheckBox"/>
+          <xs:enumeration value="Toggle"/>
+          <xs:enumeration value="CheckBoxGroup"/>
+          <xs:enumeration value="MultipleSelect"/>
+          <xs:enumeration value="dateTime"/>
+          <xs:enumeration value="Time"/>
+          <xs:enumeration value="SpinEdit"/>
+          <xs:enumeration value="RangeEdit"/>
+          <xs:enumeration value="coloredit"/>
+          <xs:enumeration value="maskedit"/>
+          <xs:enumeration value="text Area"/>
+          <xs:enumeration value="Html Wysiwyg editor"/>
+          <xs:enumeration value="Password"/>
+         <xs:enumeration value="File upload"/>
+         <xs:enumeration value="Image upload"/>
+         <xs:enumeration value="Upload file to folder"/>
+         <xs:enumeration value="Upload image to folder"/>
+         <xs:enumeration value="Signature"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+  </xs:complexType>
+  <xs:complexType name="Project_Presentation_Pages_Page_Details_Detail_Page_ColumnPresentations_ColumnPresentation_EditProperties_Values_Type">
+    <xs:sequence>
+      <xs:element name="Value" type="Project_Presentation_Pages_Page_Details_Detail_Page_ColumnPresentations_ColumnPresentation_EditProperties_Values_Value_Type" minOccurs="1" maxOccurs="unbounded"/>
+    </xs:sequence>
+  </xs:complexType>
+  <xs:complexType name="Project_Presentation_Pages_Page_Details_Detail_Page_ColumnPresentations_ColumnPresentation_EditProperties_Values_Value_Type">
+    <xs:attribute name="caption" use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:string">
+          <xs:enumeration value="playing"/>
+          <xs:enumeration value="sick"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="name" use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:string">
+          <xs:enumeration value="playing"/>
+          <xs:enumeration value="sick"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+  </xs:complexType>
+  <xs:complexType name="Project_Presentation_Pages_Page_Details_Detail_Page_ColumnPresentations_ColumnPresentation_Lookup_Type">
+    <xs:attribute name="displayFieldName" use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:string">
+          <xs:enumeration value="teamname"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="linkFieldName" use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:string">
+          <xs:enumeration value="id"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="lookupFilter" use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:string">
+          <xs:enumeration value=""/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="lookupOrdering" use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:integer">
+          <xs:enumeration value="0"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="tableName" use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:string">
+          <xs:enumeration value="public.match"/>
+          <xs:enumeration value="public.player"/>
+          <xs:enumeration value="public.reference"/>
+          <xs:enumeration value="public.team"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="useLookupOrdering" use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:boolean">
+          <xs:enumeration value="true"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+  </xs:complexType>
+  <xs:complexType name="Project_Presentation_Pages_Page_Details_Detail_Page_ColumnPresentations_ColumnPresentation_ViewProperties_Type">
+    <xs:sequence>
+      <xs:element name="Format" type="Project_Presentation_Pages_Page_Details_Detail_Page_ColumnPresentations_ColumnPresentation_ViewProperties_Format_Type" minOccurs="0" maxOccurs="1"/>
+    </xs:sequence>
+    <xs:attribute name="dateTimeKind" use="optional">
+      <xs:simpleType>
+        <xs:restriction base="xs:integer">
+          <xs:enumeration value="1"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="type" use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:string">
+          <xs:enumeration value="Text"/>
+          <xs:enumeration value="Check box"/>
+          <xs:enumeration value="Toggle"/>
+          <xs:enumeration value="DateTime"/>
+         <xs:enumeration value="Image"/>
+          <xs:enumeration value="File download"/>
+         <xs:enumeration value="External file"/>
+         <xs:enumeration value="External image"/>
+        <xs:enumeration value="External audio"/>
+        <xs:enumeration value="External video"/>
+        <xs:enumeration value="Embedded video"/>
+        <xs:enumeration value="Barcode"/>
+         <xs:enumeration value="QR Code"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+  </xs:complexType>
+  <xs:complexType name="Project_Presentation_Pages_Page_Details_Detail_Page_ColumnPresentations_ColumnPresentation_ViewProperties_Format_Type">
+    <xs:attribute name="thousandSeparator" use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:string">
+          <xs:enumeration value=","/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="type" use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:string">
+          <xs:enumeration value="number"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+  </xs:complexType>
+  <xs:complexType name="Project_Presentation_Pages_Page_Details_Detail_Page_Columns_Type">
+    <xs:sequence>
+      <xs:element name="List" type="Project_Presentation_Pages_Page_Details_Detail_Page_Columns_List_Type" minOccurs="1" maxOccurs="1"/>
+      <xs:element name="View" type="Project_Presentation_Pages_Page_Details_Detail_Page_Columns_View_Type" minOccurs="1" maxOccurs="1"/>
+      <xs:element name="Edit" type="Project_Presentation_Pages_Page_Details_Detail_Page_Columns_Edit_Type" minOccurs="1" maxOccurs="1"/>
+      <xs:element name="Insert" type="Project_Presentation_Pages_Page_Details_Detail_Page_Columns_Insert_Type" minOccurs="1" maxOccurs="1"/>
+      <xs:element name="QuickFilter" type="Project_Presentation_Pages_Page_Details_Detail_Page_Columns_QuickFilter_Type" minOccurs="1" maxOccurs="1"/>
+      <xs:element name="FilterBuilder" type="Project_Presentation_Pages_Page_Details_Detail_Page_Columns_FilterBuilder_Type" minOccurs="1" maxOccurs="1"/>
+      <xs:element name="Print" type="Project_Presentation_Pages_Page_Details_Detail_Page_Columns_Print_Type" minOccurs="1" maxOccurs="1"/>
+      <xs:element name="Export" type="Project_Presentation_Pages_Page_Details_Detail_Page_Columns_Export_Type" minOccurs="1" maxOccurs="1"/>
+      <xs:element name="Compare" type="Project_Presentation_Pages_Page_Details_Detail_Page_Columns_Compare_Type" minOccurs="1" maxOccurs="1"/>
+      <xs:element name="MultiEdit" type="Project_Presentation_Pages_Page_Details_Detail_Page_Columns_MultiEdit_Type" minOccurs="1" maxOccurs="1"/>
+    </xs:sequence>
+  </xs:complexType>
+  <xs:complexType name="Project_Presentation_Pages_Page_Details_Detail_Page_Columns_Compare_Type">
+    <xs:sequence>
+      <xs:element name="Column" type="Project_Presentation_Pages_Page_Details_Detail_Page_Columns_Compare_Column_Type" minOccurs="1" maxOccurs="unbounded"/>
+    </xs:sequence>
+  </xs:complexType>
+  <xs:complexType name="Project_Presentation_Pages_Page_Details_Detail_Page_Columns_Compare_Column_Type">
+    <xs:attribute name="fieldName" type="xs:string" use="required"/>
+    <xs:attribute name="visible" use="optional">
+      <xs:simpleType>
+        <xs:restriction base="xs:boolean">
+          <xs:enumeration value="false"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+  </xs:complexType>
+  <xs:complexType name="Project_Presentation_Pages_Page_Details_Detail_Page_Columns_Edit_Type">
+    <xs:sequence>
+      <xs:element name="Column" type="Project_Presentation_Pages_Page_Details_Detail_Page_Columns_Edit_Column_Type" minOccurs="1" maxOccurs="unbounded"/>
+    </xs:sequence>
+  </xs:complexType>
+  <xs:complexType name="Project_Presentation_Pages_Page_Details_Detail_Page_Columns_Edit_Column_Type">
+    <xs:attribute name="fieldName" type="xs:string" use="required"/>
+    <xs:attribute name="visible" use="optional">
+      <xs:simpleType>
+        <xs:restriction base="xs:boolean">
+          <xs:enumeration value="false"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+  </xs:complexType>
+  <xs:complexType name="Project_Presentation_Pages_Page_Details_Detail_Page_Columns_Export_Type">
+    <xs:sequence>
+      <xs:element name="Column" type="Project_Presentation_Pages_Page_Details_Detail_Page_Columns_Export_Column_Type" minOccurs="1" maxOccurs="unbounded"/>
+    </xs:sequence>
+  </xs:complexType>
+  <xs:complexType name="Project_Presentation_Pages_Page_Details_Detail_Page_Columns_Export_Column_Type">
+    <xs:attribute name="fieldName" type="xs:string" use="required"/>
+  </xs:complexType>
+  <xs:complexType name="Project_Presentation_Pages_Page_Details_Detail_Page_Columns_FilterBuilder_Type">
+    <xs:sequence>
+      <xs:element name="Column" type="Project_Presentation_Pages_Page_Details_Detail_Page_Columns_FilterBuilder_Column_Type" minOccurs="1" maxOccurs="unbounded"/>
+    </xs:sequence>
+  </xs:complexType>
+  <xs:complexType name="Project_Presentation_Pages_Page_Details_Detail_Page_Columns_FilterBuilder_Column_Type">
+    <xs:attribute name="fieldName" type="xs:string" use="required"/>
+  </xs:complexType>
+  <xs:complexType name="Project_Presentation_Pages_Page_Details_Detail_Page_Columns_Insert_Type">
+    <xs:sequence>
+      <xs:element name="Column" type="Project_Presentation_Pages_Page_Details_Detail_Page_Columns_Insert_Column_Type" minOccurs="1" maxOccurs="unbounded"/>
+    </xs:sequence>
+  </xs:complexType>
+  <xs:complexType name="Project_Presentation_Pages_Page_Details_Detail_Page_Columns_Insert_Column_Type">
+    <xs:attribute name="fieldName" type="xs:string" use="required"/>
+    <xs:attribute name="visible" use="optional">
+      <xs:simpleType>
+        <xs:restriction base="xs:boolean">
+          <xs:enumeration value="false"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+  </xs:complexType>
+  <xs:complexType name="Project_Presentation_Pages_Page_Details_Detail_Page_Columns_List_Type">
+    <xs:sequence>
+      <xs:element name="Column" type="Project_Presentation_Pages_Page_Details_Detail_Page_Columns_List_Column_Type" minOccurs="1" maxOccurs="unbounded"/>
+    </xs:sequence>
+  </xs:complexType>
+  <xs:complexType name="Project_Presentation_Pages_Page_Details_Detail_Page_Columns_List_Column_Type">
+    <xs:attribute name="fieldName" type="xs:string" use="required"/>
+  </xs:complexType>
+  <xs:complexType name="Project_Presentation_Pages_Page_Details_Detail_Page_Columns_MultiEdit_Type">
+    <xs:sequence>
+      <xs:element name="Column" type="Project_Presentation_Pages_Page_Details_Detail_Page_Columns_MultiEdit_Column_Type" minOccurs="1" maxOccurs="unbounded"/>
+    </xs:sequence>
+  </xs:complexType>
+  <xs:complexType name="Project_Presentation_Pages_Page_Details_Detail_Page_Columns_MultiEdit_Column_Type">
+    <xs:attribute name="fieldName" type="xs:string" use="required"/>
+    <xs:attribute name="visible" use="optional">
+      <xs:simpleType>
+        <xs:restriction base="xs:boolean">
+          <xs:enumeration value="false"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+  </xs:complexType>
+  <xs:complexType name="Project_Presentation_Pages_Page_Details_Detail_Page_Columns_Print_Type">
+    <xs:sequence>
+      <xs:element name="Column" type="Project_Presentation_Pages_Page_Details_Detail_Page_Columns_Print_Column_Type" minOccurs="1" maxOccurs="unbounded"/>
+    </xs:sequence>
+  </xs:complexType>
+  <xs:complexType name="Project_Presentation_Pages_Page_Details_Detail_Page_Columns_Print_Column_Type">
+    <xs:attribute name="fieldName" type="xs:string" use="required"/>
+  </xs:complexType>
+  <xs:complexType name="Project_Presentation_Pages_Page_Details_Detail_Page_Columns_QuickFilter_Type">
+    <xs:sequence>
+      <xs:element name="Column" type="Project_Presentation_Pages_Page_Details_Detail_Page_Columns_QuickFilter_Column_Type" minOccurs="1" maxOccurs="unbounded"/>
+    </xs:sequence>
+  </xs:complexType>
+  <xs:complexType name="Project_Presentation_Pages_Page_Details_Detail_Page_Columns_QuickFilter_Column_Type">
+    <xs:attribute name="fieldName" type="xs:string" use="required"/>
+  </xs:complexType>
+  <xs:complexType name="Project_Presentation_Pages_Page_Details_Detail_Page_Columns_View_Type">
+    <xs:sequence>
+      <xs:element name="Column" type="Project_Presentation_Pages_Page_Details_Detail_Page_Columns_View_Column_Type" minOccurs="1" maxOccurs="unbounded"/>
+    </xs:sequence>
+  </xs:complexType>
+  <xs:complexType name="Project_Presentation_Pages_Page_Details_Detail_Page_Columns_View_Column_Type">
+    <xs:attribute name="fieldName" type="xs:string" use="required"/>
+  </xs:complexType>
+  <xs:complexType name="Project_Presentation_Pages_Page_Details_Detail_Page_DetailedDescription_Type">
+  </xs:complexType>
+  <xs:complexType name="Project_Presentation_Pages_Page_Details_Detail_Page_Details_Type">
+  </xs:complexType>
+  <xs:complexType name="Project_Presentation_Pages_Page_MultiUploadColumnPresentation_Type">
+    <xs:sequence>
+      <xs:element name="Properties" type="Project_Presentation_Pages_Page_MultiUploadColumnPresentation_Properties_Type" minOccurs="1" maxOccurs="1"/>
+    </xs:sequence>
+    <xs:attribute name="caption" use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:string">
+          <xs:enumeration value=""/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="fieldName" use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:string">
+          <xs:enumeration value="id"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+  </xs:complexType>
+  <xs:complexType name="Project_Presentation_Pages_Page_MultiUploadColumnPresentation_Properties_Type">
+    <xs:attribute name="allowedFileExtensions" use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:string">
+          <xs:enumeration value=""/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="allowedFileTypes" use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:integer">
+          <xs:enumeration value="0"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="directoryToUpload" use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:string">
+          <xs:enumeration value=""/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="directoryToUploadThumbnailTemplate" use="optional">
+      <xs:simpleType>
+        <xs:restriction base="xs:string">
+          <xs:enumeration value=""/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="fieldNameToSaveThumbnailPath" use="optional">
+      <xs:simpleType>
+        <xs:restriction base="xs:string">
+          <xs:enumeration value="id"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="fileNameTemplate" use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:string">
+          <xs:enumeration value="%original_file_name%"/>
+          <xs:enumeration value="%original_file_extension%"/>
+          <xs:enumeration value="%file_size%"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="generateRandomFileName" use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:boolean">
+          <xs:enumeration value="false"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="generateRandomThumbnailFileName" use="optional">
+      <xs:simpleType>
+        <xs:restriction base="xs:boolean">
+          <xs:enumeration value="true"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="replaceFilesIfExists" use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:boolean">
+          <xs:enumeration value="true"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="resizeHeight" use="optional">
+      <xs:simpleType>
+        <xs:restriction base="xs:integer">
+          <xs:enumeration value="0"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="resizeWidth" use="optional">
+      <xs:simpleType>
+        <xs:restriction base="xs:integer">
+          <xs:enumeration value="0"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="storeFileNameOnly" use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:boolean">
+          <xs:enumeration value="true"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="thumbnailFileNameTemplate" use="optional">
+      <xs:simpleType>
+        <xs:restriction base="xs:string">
+          <xs:enumeration value=""/>
+          <xs:enumeration value="%original_file_name%"/>
+          <xs:enumeration value="%original_file_extension%"/>
+          <xs:enumeration value="%file_size%"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="thumbnailResizeType" use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:integer">
+          <xs:enumeration value="0" label=""/>
+          <xs:enumeration value="1" label="fit by height"/>
+          <xs:enumeration value="2" label="Fit by width"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+  </xs:complexType>
+  <xs:complexType name="Project_Presentation_Pages_Page_RssOptions_Type">
+    <xs:attribute name="channelDescription" use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:string">
+          <xs:enumeration value=""/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="channelLink" use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:string">
+          <xs:enumeration value=""/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="channelTitle" use="required" hint="Sets and validates the channel title.">
+      <xs:simpleType>
+        <xs:restriction base="xs:string">
+          <xs:enumeration value=""/>
+          <xs:enumeration value="gtrbrgt"/>
+          <xs:enumeration value="szia"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="itemCount" use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:integer">
+          <xs:enumeration value="30"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="itemDescriptionTemplate" use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:string">
+          	<xs:enumeration value=""/>
+          	<xs:enumeration value="%id%"/>
+	<xs:enumeration value="%team1_id%"/>
+	<xs:enumeration value="%team2_id%"/>
+	<xs:enumeration value="%referee_id%"/>
+	<xs:enumeration value="%matchdate%"/>
+	<xs:enumeration value="%goal_team1%"/>
+	<xs:enumeration value="%goal_team2%"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="itemLinkTemplate" use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:string">
+          	<xs:enumeration value=""/>
+	<xs:enumeration value="%id%"/>
+	<xs:enumeration value="%team1_id%"/>
+	<xs:enumeration value="%team2_id%"/>
+	<xs:enumeration value="%referee_id%"/>
+	<xs:enumeration value="%matchdate%"/>
+	<xs:enumeration value="%goal_team1%"/>
+	<xs:enumeration value="%goal_team2%"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="itemPublicationDateFieldName" use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:string">
+          <xs:enumeration value=""/>
+          <xs:enumeration value="id"/>
+          <xs:enumeration value="team1_id"/>
+          <xs:enumeration value="team2_id"/>
+          <xs:enumeration value="referee_id"/>
+          <xs:enumeration value="matchdate"/>
+          <xs:enumeration value="goal_team1"/>
+          <xs:enumeration value="goal_team2"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="itemTitleTemplate" use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:string">
+          	<xs:enumeration value=""/>
+	<xs:enumeration value="%id%"/>
+	<xs:enumeration value="%team1_id%"/>
+	<xs:enumeration value="%team2_id%"/>
+	<xs:enumeration value="%referee_id%"/>
+	<xs:enumeration value="%matchdate%"/>
+	<xs:enumeration value="%goal_team1%"/>
+	<xs:enumeration value="%goal_team2%"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="orderByFieldName" use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:string">
+          <xs:enumeration value=""/>
+          <xs:enumeration value="id"/>
+          <xs:enumeration value="team1_id"/>
+          <xs:enumeration value="team2_id"/>
+          <xs:enumeration value="referee_id"/>
+          <xs:enumeration value="matchdate"/>
+          <xs:enumeration value="goal_team1"/>
+          <xs:enumeration value="goal_team2"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="orderType" use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:integer">
+          <xs:enumeration value="1"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+  </xs:complexType>
+  <xs:complexType name="Project_Presentation_UserAuthorization_Type">
+  </xs:complexType>
+  <xs:complexType name="Project_Presentation_UserGrants_Type">
+  </xs:complexType>
+  <xs:complexType name="Project_Presentation_outgoingMailSettings_Type">
+    <xs:attribute name="fromEmail" use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:string">
+          <xs:enumeration value=""/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="fromName" use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:string">
+          <xs:enumeration value=""/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="mailer" use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:integer">
+          <xs:enumeration value="0"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+  </xs:complexType>
+  <xs:complexType name="Project_PrintUserStyles_Type">
+  </xs:complexType>
+  <xs:complexType name="Project_ScriptConnectionOptions_Type">
+    <xs:sequence>
+      <xs:element name="ssh_secure" type="Project_ScriptConnectionOptions_ssh__secure_Type" minOccurs="1" maxOccurs="1"/>
+      <xs:element name="http_tunnel" type="Project_ScriptConnectionOptions_http__tunnel_Type" minOccurs="1" maxOccurs="1"/>
+    </xs:sequence>
+    <xs:attribute name="client_encoding" use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:string">
+          <xs:enumeration value=""/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="database" use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:string">
+          <xs:enumeration value="tmp_phpgen"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="host" use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:string">
+          <xs:enumeration value="localhost"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="login" use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:string">
+          <xs:enumeration value="sdman"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="password" type="xs:string" use="required"/>
+    <xs:attribute name="port" use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:integer">
+          <xs:enumeration value="1111"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+  </xs:complexType>
+  <xs:complexType name="Project_ScriptConnectionOptions_http__tunnel_Type">
+    <xs:sequence>
+      <xs:element name="http_proxy_server" type="Project_ScriptConnectionOptions_http__tunnel_http__proxy__server_Type" minOccurs="1" maxOccurs="1"/>
+      <xs:element name="http_authentication" type="Project_ScriptConnectionOptions_http__tunnel_http__authentication_Type" minOccurs="1" maxOccurs="1"/>
+    </xs:sequence>
+    <xs:attribute name="tunneling" use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:boolean">
+          <xs:enumeration value="false"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="url" use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:string">
+          <xs:enumeration value=""/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+  </xs:complexType>
+  <xs:complexType name="Project_ScriptConnectionOptions_http__tunnel_http__authentication_Type">
+  </xs:complexType>
+  <xs:complexType name="Project_ScriptConnectionOptions_http__tunnel_http__proxy__server_Type">
+    <xs:attribute name="port" use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:integer">
+          <xs:enumeration value="8080"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="use_proxy" use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:boolean">
+          <xs:enumeration value="false"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+  </xs:complexType>
+  <xs:complexType name="Project_ScriptConnectionOptions_ssh__secure_Type">
+    <xs:attribute name="authentication_mode" use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:integer">
+          <xs:enumeration value="0"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="port" use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:integer">
+          <xs:enumeration value="22"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="secure" use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:boolean">
+          <xs:enumeration value="false"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+  </xs:complexType>
+  <xs:complexType name="Project_UserCSS_Type">
+  </xs:complexType>
+  <xs:complexType name="Project_UserJS_Type">
+  </xs:complexType>
+</xs:schema>
