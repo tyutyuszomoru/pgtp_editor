@@ -164,6 +164,8 @@ def test_parse_failure_appends_no_schema_audit_entry(qtbot, tmp_path):
     broken_path = tmp_path / "broken.pgtp"
     broken_path.write_text(MALFORMED_PGTP, encoding="utf-8")
 
+    # The one-time bundled-seed audit line from __init__ is not under test here.
+    window.audit_panel.clear()
     with patch("pgtp_editor.ui.main_window.QMessageBox.critical"):
         window.open_project_file(str(broken_path))
 
@@ -182,6 +184,7 @@ def test_report_schema_events_with_exactly_20_events_prints_one_line_each(qtbot,
         for i in range(20)
     ]
 
+    window.audit_panel.clear()  # drop the __init__ bundled-seed line
     window._report_schema_events(events, str(source_path))
 
     assert window.audit_panel.count() == 20
@@ -206,6 +209,7 @@ def test_report_schema_events_with_21_events_collapses_to_summary_line(qtbot, tm
         for i in range(21)
     ]
 
+    window.audit_panel.clear()  # drop the __init__ bundled-seed line
     window._report_schema_events(events, str(source_path))
 
     assert window.audit_panel.count() == 1

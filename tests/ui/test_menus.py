@@ -248,6 +248,7 @@ def test_schema_menu_contents(qtbot):
     assert menu is not None
     assert action_labels(menu) == [
         "Edit XSD",
+        "Edit AutoXSD",
         "Verify XSD",
         "Export XSD",
         "Import XSD",
@@ -268,7 +269,7 @@ def test_schema_menu_actions_are_always_enabled(qtbot):
     window = MainWindow()
     qtbot.addWidget(window)
     menu = find_top_menu(window, "Schema")
-    for label in ("Edit XSD", "Verify XSD", "Export XSD", "Import XSD"):
+    for label in ("Edit XSD", "Edit AutoXSD", "Verify XSD", "Export XSD", "Import XSD"):
         assert find_action(menu, label).isEnabled() is True
 
 
