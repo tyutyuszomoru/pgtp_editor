@@ -24,11 +24,23 @@ import pytest
 
 from pgtp_editor.schema_learning.model import Model
 from pgtp_editor.schema_learning.storage import (
+    CURATED_BUNDLED_VERSION,
+    bundled_curated_xsd_text,
     curated_xsd_path,
     learned_xsd_path,
     schema_model_path,
 )
+from pgtp_editor.ui import main_window as main_window_module
 from pgtp_editor.ui.main_window import MainWindow
+
+
+def _unseed(window):
+    """Drop the curated.xsd that MainWindow.__init__ seeds from the bundled
+    resource, plus the live schema, so a test can exercise a clean slate."""
+    path = curated_xsd_path(window._schema_storage_dir)
+    if path.exists():
+        path.unlink()
+    window._curated_schema = None
 
 _CURATED = """<?xml version="1.0" encoding="UTF-8"?>
 <xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
@@ -76,19 +88,62 @@ def test_malformed_curated_keeps_last_good(window):
     assert any("Curated XSD has XML errors" in line for line in items)
 
 
-def test_bootstrap_seeds_curated_from_learned_model(window):
+def test_init_seeds_curated_from_bundled_and_audits_version(window):
+    """MainWindow.__init__ runs the one-time bootstrap: with the app-bundled
+    Curated v1.2 resource present, curated.xsd is seeded by copying it
+    verbatim and an audit line names the bundled schema + version."""
+    path = curated_xsd_path(window._schema_storage_dir)
+    assert path.exists()
+    assert path.read_text(encoding="utf-8") == bundled_curated_xsd_text()
+    items = [window.audit_panel.item(i).text() for i in range(window.audit_panel.count())]
+    assert any(
+        "bundled" in line.lower() and CURATED_BUNDLED_VERSION in line for line in items
+    )
+    # and the seeded file feeds completion (curated schema is live)
+    assert window._curated_schema is not None
+
+
+def test_bootstrap_seeds_from_bundled_when_curated_absent(window):
+    _unseed(window)
+    window._ensure_curated_bootstrap()
+    path = curated_xsd_path(window._schema_storage_dir)
+    assert path.exists()
+    assert path.read_text(encoding="utf-8") == bundled_curated_xsd_text()
+
+
+def test_bootstrap_is_noop_when_curated_exists(window):
+    _seed_curated(window)  # a hand-owned curated.xsd already on disk
+    before = curated_xsd_path(window._schema_storage_dir).read_text(encoding="utf-8")
+    window._ensure_curated_bootstrap()
+    after = curated_xsd_path(window._schema_storage_dir).read_text(encoding="utf-8")
+    assert after == before  # never overwrites an existing curated.xsd
+
+
+def test_bootstrap_falls_back_to_learned_model_when_no_bundled(window, monkeypatch):
+    """When the bundled resource is unavailable but a learned schema_model.json
+    exists, bootstrap still generates curated.xsd from that model (old path)."""
+    _unseed(window)
+    monkeypatch.setattr(main_window_module, "bundled_curated_xsd_text", lambda: None)
     model = Model()
     model.merge_element("Root", {"a": "1"}, {}, False)
     model_path = schema_model_path(window._schema_storage_dir)
     model_path.parent.mkdir(parents=True, exist_ok=True)
     model.save(model_path)
+
     window._ensure_curated_bootstrap()
+
     text = curated_xsd_path(window._schema_storage_dir).read_text(encoding="utf-8")
     assert "<xs:schema" in text and 'name="a"' in text
-    # second call must not rewrite (hand-owned after bootstrap)
-    curated_xsd_path(window._schema_storage_dir).write_text(text + "<!-- edited -->", encoding="utf-8")
+    items = [window.audit_panel.item(i).text() for i in range(window.audit_panel.count())]
+    assert any("Bootstrapped curated.xsd" in line for line in items)
+
+
+def test_bootstrap_noop_when_no_bundled_and_no_model(window, monkeypatch):
+    _unseed(window)
+    monkeypatch.setattr(main_window_module, "bundled_curated_xsd_text", lambda: None)
+    assert not schema_model_path(window._schema_storage_dir).exists()
     window._ensure_curated_bootstrap()
-    assert curated_xsd_path(window._schema_storage_dir).read_text(encoding="utf-8").endswith("<!-- edited -->")
+    assert not curated_xsd_path(window._schema_storage_dir).exists()
 
 
 def test_enrichment_writes_learned_only_and_keeps_curated_feed(window, tmp_path):
@@ -107,11 +162,14 @@ def test_enrichment_writes_learned_only_and_keeps_curated_feed(window, tmp_path)
     assert "PGTPProject/New" not in model.paths
 
 
-def test_first_run_enrichment_bootstraps_and_feeds_editor(window, tmp_path):
-    """End-to-end first run: no curated.xsd and no learned model exist yet.
-    Enriching from an opened project must learn the model, bootstrap
-    curated.xsd from it (one-time seed), and feed the editor's completion
-    model from that fresh curated.xsd (spec §11)."""
+def test_first_run_enrichment_bootstraps_and_feeds_editor(window, tmp_path, monkeypatch):
+    """End-to-end first run with NO bundled resource available: no curated.xsd
+    and no learned model exist yet. Enriching from an opened project must learn
+    the model, bootstrap curated.xsd from it (one-time seed via the learned
+    fallback path), and feed the editor's completion model from that fresh
+    curated.xsd (spec §11)."""
+    monkeypatch.setattr(main_window_module, "bundled_curated_xsd_text", lambda: None)
+    _unseed(window)
     assert not curated_xsd_path(window._schema_storage_dir).exists()
     assert not schema_model_path(window._schema_storage_dir).exists()
     assert window._curated_schema is None

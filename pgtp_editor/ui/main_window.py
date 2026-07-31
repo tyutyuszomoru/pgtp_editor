@@ -77,6 +77,8 @@ from pgtp_editor.model.parser import (
 from pgtp_editor.schema_learning.model import Model
 from pgtp_editor.schema_learning.parser import walk_document
 from pgtp_editor.schema_learning.storage import (
+    CURATED_BUNDLED_VERSION,
+    bundled_curated_xsd_text,
     curated_xsd_path,
     learned_xsd_path,
     schema_model_path,
@@ -137,6 +139,13 @@ _VALIDATION_PREFIX = "[Validate] "
 _GENERATOR_OUTPUT_PREFIX = "[PHP] "
 
 _FIND_ALL_BATCH = 200
+
+# Placeholder shown in the Edit-XSD tab when its backing file does not exist yet.
+_EMPTY_XSD_SKELETON = (
+    '<?xml version="1.0" encoding="UTF-8"?>\n'
+    '<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" '
+    'elementFormDefault="qualified">\n</xs:schema>\n'
+)
 
 _SCHEMA_REPORT_TEMPLATES = {
     "new_element": "[Schema] NEW ELEMENT: {path} (first seen in {source})",
@@ -389,6 +398,10 @@ class MainWindow(QMainWindow):
         # straight back into the editor rather than through _undo/_redo.
         self._xsd_dirty = False
         self._xsd_loading = False
+        # Which schema the shared Edit-XSD tab currently holds: "curated"
+        # (Schema ▸ Edit XSD) or "learned" (Schema ▸ Edit AutoXSD). Save /
+        # Verify / Export / Import all act on the active mode (spec §11).
+        self._xsd_mode = "curated"
         stage = self.center_stage
         stage.xsd_editor.textChanged.connect(self._on_xsd_text_changed)
         stage.xsd_editor.undo_requested.connect(stage.xsd_editor.undo)
@@ -451,12 +464,30 @@ class MainWindow(QMainWindow):
         return True
 
     def _ensure_curated_bootstrap(self) -> None:
-        """One-time seed: if curated.xsd is absent but the learning engine
-        has state, emit it (labels as label="…" attributes). Never runs when
-        the file exists — curated.xsd is hand-owned (spec §11)."""
+        """One-time seed of the user's curated.xsd when it is absent — never
+        overwrites an existing file (curated.xsd is hand-owned, spec §11).
+        Prefers copying the schema bundled with the app (Curated v1.2); falls
+        back to generating one from the learning engine's state only when no
+        bundled resource is present."""
         curated = curated_xsd_path(self._schema_storage_dir)
         if curated.exists():
             return
+
+        bundled = bundled_curated_xsd_text()
+        if bundled is not None:
+            try:
+                curated.parent.mkdir(parents=True, exist_ok=True)
+                curated.write_text(bundled, encoding="utf-8")
+            except OSError as exc:
+                self.audit_panel.addItem(f"[Schema] Could not seed curated.xsd: {exc}")
+                return
+            self.audit_panel.addItem(
+                f"[Schema] Seeded curated.xsd from the bundled schema "
+                f"(v{CURATED_BUNDLED_VERSION})"
+            )
+            return
+
+        # Fallback: no bundled resource — generate from the learned model.
         model_path = schema_model_path(self._schema_storage_dir)
         if not model_path.exists():
             return
@@ -484,34 +515,70 @@ class MainWindow(QMainWindow):
     def _set_xsd_dirty(self, dirty: bool) -> None:
         self._xsd_dirty = dirty
         stage = self.center_stage
-        stage.setTabText(stage.xsd_tab_index, "Edit XSD *" if dirty else "Edit XSD")
+        base = self._xsd_tab_label(self._xsd_mode)
+        stage.setTabText(stage.xsd_tab_index, f"{base} *" if dirty else base)
+
+    @staticmethod
+    def _xsd_tab_label(mode: str) -> str:
+        """Tab title for the Edit-XSD tab in each mode (spec §11)."""
+        return "Edit AutoXSD" if mode == "learned" else "Edit XSD"
+
+    def _xsd_path_for_mode(self, mode: str) -> Path:
+        """The on-disk file backing each Edit-XSD mode: the hand-curated
+        schema, or the auto-learned discovery artifact (spec §11)."""
+        if mode == "learned":
+            return learned_xsd_path(self._schema_storage_dir)
+        return curated_xsd_path(self._schema_storage_dir)
 
     def _open_edit_xsd(self) -> None:
-        """Schema ▸ Edit XSD: load curated.xsd into the XSD tab (unless the
-        tab already holds unsaved edits) and switch to it."""
+        """Schema ▸ Edit XSD: open the hand-curated schema in the XSD tab."""
+        self._open_xsd("curated")
+
+    def _open_edit_auto_xsd(self) -> None:
+        """Schema ▸ Edit AutoXSD: open the auto-learned schema (learned.xsd)
+        in the same tab so it can be analysed against the curated one."""
+        self._open_xsd("learned")
+
+    def _open_xsd(self, mode: str) -> None:
+        """Load the XSD file for `mode` ("curated" | "learned") into the shared
+        Edit-XSD tab and switch to it. Unsaved edits in the current mode are
+        preserved when re-opening the same mode; switching to the other mode
+        prompts save/discard/cancel first (spec §11)."""
         stage = self.center_stage
-        if not self._xsd_dirty:
-            path = curated_xsd_path(self._schema_storage_dir)
-            if path.exists():
-                try:
-                    text = path.read_text(encoding="utf-8")
-                except (OSError, UnicodeDecodeError) as exc:
-                    self.statusBar().showMessage(
-                        f"Could not read curated.xsd: {exc}", 5000
-                    )
+        if self._xsd_dirty and mode != self._xsd_mode:
+            choice = self._confirm_close_xsd()
+            if choice == "cancel":
+                return
+            if choice == "save":
+                self._save_xsd()
+                if self._xsd_dirty:
+                    # Save failed (e.g. disk error): don't drop the edits.
                     return
-            else:
-                text = (
-                    '<?xml version="1.0" encoding="UTF-8"?>\n'
-                    '<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" '
-                    'elementFormDefault="qualified">\n</xs:schema>\n'
-                )
-            self._xsd_loading = True
+        elif self._xsd_dirty and mode == self._xsd_mode:
+            # Same schema, unsaved edits: keep them; just reveal the tab.
+            stage.show_edit_xsd()
+            return
+
+        path = self._xsd_path_for_mode(mode)
+        if path.exists():
             try:
-                stage.xsd_editor.setPlainText(text)
-            finally:
-                self._xsd_loading = False
-            self._set_xsd_dirty(False)
+                text = path.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError) as exc:
+                self.statusBar().showMessage(f"Could not read {path.name}: {exc}", 5000)
+                return
+        else:
+            text = _EMPTY_XSD_SKELETON
+            if mode == "learned":
+                self.statusBar().showMessage(
+                    "No auto-learned schema yet — open a .pgtp to build it.", 5000
+                )
+        self._xsd_mode = mode
+        self._xsd_loading = True
+        try:
+            stage.xsd_editor.setPlainText(text)
+        finally:
+            self._xsd_loading = False
+        self._set_xsd_dirty(False)
         stage.show_edit_xsd()
 
     def _goto_xsd_at_cursor(self) -> None:
@@ -545,48 +612,57 @@ class MainWindow(QMainWindow):
         self._open_edit_xsd()
         self.center_stage.xsd_editor.navigate_to_line(line)
 
-    def _save_curated_xsd(self) -> None:
-        """Save the XSD tab. The text is ALWAYS written (user text is never
-        lost); a malformed file keeps the last good schema live (spec §11)."""
-        path = curated_xsd_path(self._schema_storage_dir)
+    def _save_xsd(self) -> None:
+        """Save the Edit-XSD tab to whichever schema it currently holds
+        (curated or auto). The text is ALWAYS written (user text is never
+        lost); a malformed file keeps the last good schema live. Saving the
+        curated schema re-feeds completion; saving the auto schema does not
+        (learned.xsd never feeds completion, spec §11)."""
+        mode = self._xsd_mode
+        path = self._xsd_path_for_mode(mode)
+        text = self.center_stage.xsd_editor.toPlainText()
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(
-                self.center_stage.xsd_editor.toPlainText(), encoding="utf-8", newline=""
-            )
+            path.write_text(text, encoding="utf-8", newline="")
         except OSError as exc:
             QMessageBox.critical(self, "Save Failed", f"Could not save:\n\n{exc}")
             return
         self._set_xsd_dirty(False)
-        self.statusBar().showMessage("Saved curated.xsd", 5000)
-        self._load_curated_schema()
-        self._report_verify_issues(verify_curated(self.center_stage.xsd_editor.toPlainText()))
+        self.statusBar().showMessage(f"Saved {path.name}", 5000)
+        if mode == "curated":
+            self._load_curated_schema()
+        self._report_verify_issues(verify_curated(text))
 
     def _verify_xsd(self) -> None:
-        """Schema ▸ Verify XSD: check dialect rules against whatever the
-        user is currently looking at -- the XSD tab's live text when it has
-        unsaved edits, otherwise the saved curated.xsd on disk."""
+        """Schema ▸ Verify XSD: check dialect rules against whatever the user
+        is currently looking at -- the Edit-XSD tab's live text when it has
+        unsaved edits, otherwise the active mode's saved file on disk."""
         stage = self.center_stage
         if self._xsd_dirty:
             text = stage.xsd_editor.toPlainText()
         else:
-            path = curated_xsd_path(self._schema_storage_dir)
+            path = self._xsd_path_for_mode(self._xsd_mode)
             if not path.exists():
-                self.statusBar().showMessage("No curated XSD yet.", 5000)
+                self.statusBar().showMessage(
+                    f"No {self._xsd_tab_label(self._xsd_mode)} file yet.", 5000
+                )
                 return
             try:
                 text = path.read_text(encoding="utf-8")
             except (OSError, UnicodeDecodeError) as exc:
-                self.statusBar().showMessage(
-                    f"Could not read curated.xsd: {exc}", 5000
-                )
+                self.statusBar().showMessage(f"Could not read {path.name}: {exc}", 5000)
                 return
         self._report_verify_issues(verify_curated(text))
 
     def _export_xsd(self) -> None:
-        source = curated_xsd_path(self._schema_storage_dir)
+        """Schema ▸ Export XSD: copy the active mode's saved file to a chosen
+        destination (curated.xsd or learned.xsd, per the open tab)."""
+        mode = self._xsd_mode
+        source = self._xsd_path_for_mode(mode)
         if not source.exists():
-            self.statusBar().showMessage("No curated XSD yet.", 5000)
+            self.statusBar().showMessage(
+                f"No {self._xsd_tab_label(mode)} file yet.", 5000
+            )
             return
         if self._xsd_dirty:
             self.statusBar().showMessage(
@@ -594,7 +670,7 @@ class MainWindow(QMainWindow):
             )
             return
         dest, _filter = QFileDialog.getSaveFileName(
-            self, "Export XSD", "curated.xsd", "XSD files (*.xsd)"
+            self, "Export XSD", source.name, "XSD files (*.xsd)"
         )
         if not dest:
             return
@@ -606,9 +682,11 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(f"Exported to {Path(dest).name}", 5000)
 
     def _import_xsd(self) -> None:
-        """Replace curated.xsd with a teammate's file: verify first (hard
-        refuse malformed XML; dialect warnings importable), back up, replace,
-        re-parse (spec §11)."""
+        """Schema ▸ Import XSD: replace the active mode's file with an external
+        one -- verify first (hard refuse malformed XML; dialect warnings
+        importable), back up, replace, then re-feed completion when the active
+        mode is curated (spec §11)."""
+        mode = self._xsd_mode
         source, _filter = QFileDialog.getOpenFileName(
             self, "Import XSD", "", "XSD files (*.xsd);;All files (*)"
         )
@@ -635,7 +713,7 @@ class MainWindow(QMainWindow):
             if answer != QMessageBox.StandardButton.Yes:
                 return
         tab_was_dirty = self._xsd_dirty
-        target = curated_xsd_path(self._schema_storage_dir)
+        target = self._xsd_path_for_mode(mode)
         try:
             target.parent.mkdir(parents=True, exist_ok=True)
             if target.exists():
@@ -645,7 +723,8 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Import Failed", f"Could not write:\n\n{exc}")
             return
         self._set_xsd_dirty(False)
-        self._load_curated_schema()
+        if mode == "curated":
+            self._load_curated_schema()
         stage = self.center_stage
         if stage.xsd_editor.toPlainText():
             self._xsd_loading = True
@@ -653,7 +732,8 @@ class MainWindow(QMainWindow):
                 stage.xsd_editor.setPlainText(text)
             finally:
                 self._xsd_loading = False
-        notice = f"[Schema] Imported curated XSD from {Path(source).name}"
+        label = self._xsd_tab_label(mode)
+        notice = f"[Schema] Imported {label} from {Path(source).name}"
         if tab_was_dirty:
             notice += " (unsaved XSD tab edits were replaced)"
         self.audit_panel.addItem(notice)
@@ -663,7 +743,9 @@ class MainWindow(QMainWindow):
         """Append Verify XSD results to the audit panel. Each issue line is
         clickable -- routed through _on_audit_item_clicked's existing
         (line, target) UserRole/UserRole+1 convention (see _find_all_step),
-        with target "xsd" so the click opens the Edit XSD tab at that line."""
+        with target "xsd" so the click opens the Edit XSD tab at that line.
+        The active XSD mode is stashed in UserRole+2 so the click re-opens the
+        schema the issue was found in (curated vs auto)."""
         if not issues:
             self.audit_panel.addItem("[Schema] VERIFY: no issues found.")
             return
@@ -671,13 +753,14 @@ class MainWindow(QMainWindow):
             item = QListWidgetItem(f"[Schema] VERIFY line {issue.line}: {issue.message}")
             item.setData(Qt.ItemDataRole.UserRole, issue.line)
             item.setData(Qt.ItemDataRole.UserRole + 1, "xsd")
+            item.setData(Qt.ItemDataRole.UserRole + 2, self._xsd_mode)
             self.audit_panel.addItem(item)
 
     def _save_active_tab(self) -> None:
         """Ctrl+S / File ▸ Save routes to the active center-stage tab."""
         stage = self.center_stage
         if stage.currentIndex() == stage.xsd_tab_index:
-            self._save_curated_xsd()
+            self._save_xsd()
         else:
             self._save_project()
 
@@ -741,7 +824,7 @@ class MainWindow(QMainWindow):
                 event.ignore()
                 return
             if confirm == "save":
-                self._save_curated_xsd()
+                self._save_xsd()
                 if self._xsd_dirty:
                     # Save failed (e.g. disk error) -- don't discard changes.
                     event.ignore()
@@ -1353,11 +1436,16 @@ class MainWindow(QMainWindow):
             return  # schema entry or the [Find] summary line: no-op
         target = item.data(Qt.ItemDataRole.UserRole + 1)
         if target == "xsd":
-            # _open_edit_xsd loads curated.xsd from disk into the tab when it
-            # isn't already open with unsaved edits (e.g. a Verify XSD run
-            # against the saved file, before the tab has ever been opened),
-            # then switches to it -- same as clicking Schema > Edit XSD.
-            self._open_edit_xsd()
+            # Verify XSD lines carry the mode they were found in (UserRole+2);
+            # re-open that schema so the line number matches the right file
+            # (same load-from-disk-if-clean behavior as Schema > Edit XSD /
+            # Edit AutoXSD). Find-All-in-XSD lines have no mode tag -- they
+            # target whatever the tab already shows, so just reveal it.
+            mode = item.data(Qt.ItemDataRole.UserRole + 2)
+            if mode:
+                self._open_xsd(mode)
+            else:
+                self.center_stage.show_edit_xsd()
             self.center_stage.xsd_editor.navigate_to_line(line)
             return
         self.center_stage.setCurrentIndex(self.center_stage.raw_xml_tab_index)
@@ -2199,6 +2287,8 @@ class MainWindow(QMainWindow):
         menu = self.menuBar().addMenu("Schema")
         edit_action = menu.addAction("Edit XSD")
         edit_action.triggered.connect(self._open_edit_xsd)
+        edit_auto_action = menu.addAction("Edit AutoXSD")
+        edit_auto_action.triggered.connect(self._open_edit_auto_xsd)
         verify_action = menu.addAction("Verify XSD")
         verify_action.triggered.connect(self._verify_xsd)
         export_action = menu.addAction("Export XSD")
@@ -2206,7 +2296,8 @@ class MainWindow(QMainWindow):
         import_action = menu.addAction("Import XSD")
         import_action.triggered.connect(self._import_xsd)
         # "Go To XSD" (Ctrl+L) lives as a window-level action, not a menu
-        # entry -- the Schema menu contract is exactly these four items.
+        # entry -- the Schema menu proper is Edit XSD / Edit AutoXSD / Verify /
+        # Export / Import.
         goto_xsd_action = QAction("Go To XSD", self)
         goto_xsd_action.setShortcut(QKeySequence("Ctrl+L"))
         goto_xsd_action.triggered.connect(self._goto_xsd_at_cursor)

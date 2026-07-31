@@ -50,6 +50,16 @@ def _seed(window, text=_MINIMAL):
     return path
 
 
+def _unseed(window):
+    """Remove the curated.xsd the one-time bundled bootstrap seeded during
+    MainWindow.__init__, so a test can exercise the truly-absent-file path."""
+    path = curated_xsd_path(window._schema_storage_dir)
+    if path.exists():
+        path.unlink()
+    window._curated_schema = None
+    return path
+
+
 def test_open_edit_xsd_loads_file_into_tab(window):
     _seed(window)
     window._open_edit_xsd()
@@ -68,7 +78,7 @@ def test_editing_marks_dirty_and_save_reparses(window):
     # setPlainText fires textChanged -> dirty
     assert window._xsd_dirty is True
     assert stage.tabText(stage.xsd_tab_index) == "Edit XSD *"
-    window._save_curated_xsd()
+    window._save_xsd()
     assert window._xsd_dirty is False
     assert 'name="b"' in path.read_text(encoding="utf-8")
     model = stage.xml_editor.schema_model()
@@ -81,7 +91,7 @@ def test_malformed_save_still_writes_and_keeps_last_good(window):
     window._load_curated_schema()
     good_model = window.center_stage.xml_editor.schema_model()
     window.center_stage.xsd_editor.setPlainText("<broken")
-    window._save_curated_xsd()
+    window._save_xsd()
     assert path.read_text(encoding="utf-8") == "<broken"   # text never lost
     assert window.center_stage.xml_editor.schema_model() is good_model
 
@@ -257,7 +267,7 @@ def test_save_auto_verifies_report_only(window):
     _seed(window)
     window._open_edit_xsd()
     window.center_stage.xsd_editor.setPlainText(_MINIMAL)
-    window._save_curated_xsd()
+    window._save_xsd()
     texts = [window.audit_panel.item(i).text() for i in range(window.audit_panel.count())]
     assert any(t.startswith("[Schema] VERIFY") for t in texts)
 
@@ -329,7 +339,7 @@ def test_import_with_dirty_tab_includes_notice(window, monkeypatch, tmp_path):
 
     # Audit log should mention the tab was replaced
     audit_items = [window.audit_panel.item(i).text() for i in range(window.audit_panel.count())]
-    import_items = [t for t in audit_items if "Imported curated XSD" in t]
+    import_items = [t for t in audit_items if "Imported Edit XSD" in t]
     assert import_items
     assert "(unsaved XSD tab edits were replaced)" in import_items[0]
 
@@ -397,6 +407,7 @@ def test_import_with_warnings_ask_user_accept(window, monkeypatch, tmp_path):
 def test_open_edit_xsd_without_file_loads_empty_skeleton(window):
     """First run, before any curated.xsd exists: Edit XSD opens an empty
     xs:schema skeleton instead of erroring on the missing file."""
+    _unseed(window)
     window._open_edit_xsd()
     stage = window.center_stage
     assert stage.currentIndex() == stage.xsd_tab_index
@@ -409,8 +420,9 @@ def test_open_edit_xsd_without_file_loads_empty_skeleton(window):
 def test_verify_without_curated_shows_status(window):
     """Verify XSD with a clean tab and no curated.xsd on disk: status
     message, no VERIFY audit lines."""
+    _unseed(window)
     window._verify_xsd()
-    assert "No curated XSD yet." in window.statusBar().currentMessage()
+    assert "No Edit XSD file yet." in window.statusBar().currentMessage()
     texts = [window.audit_panel.item(i).text() for i in range(window.audit_panel.count())]
     assert not any(t.startswith("[Schema] VERIFY") for t in texts)
 
@@ -460,13 +472,14 @@ def test_clicking_verify_issue_with_dirty_tab_preserves_edits(window):
 
 
 def test_export_without_curated_shows_status_and_no_dialog(window, monkeypatch):
+    _unseed(window)
     dialog_calls = []
     monkeypatch.setattr(
         main_window_module.QFileDialog, "getSaveFileName",
         staticmethod(lambda *a, **k: dialog_calls.append(a) or ("", "")),
     )
     window._export_xsd()
-    assert "No curated XSD yet." in window.statusBar().currentMessage()
+    assert "No Edit XSD file yet." in window.statusBar().currentMessage()
     assert not dialog_calls
 
 
@@ -570,7 +583,7 @@ def test_save_write_oserror_shows_critical_and_keeps_dirty(window, monkeypatch):
         main_window_module.QMessageBox, "critical",
         staticmethod(lambda *a, **k: criticals.append(a)),
     )
-    window._save_curated_xsd()
+    window._save_xsd()
     assert criticals
     assert "Save Failed" in criticals[0][1]
     assert window._xsd_dirty is True
