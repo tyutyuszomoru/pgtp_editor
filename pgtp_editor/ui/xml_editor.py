@@ -27,7 +27,7 @@ from __future__ import annotations
 import re
 from bisect import bisect_right
 
-from PySide6.QtCore import QEvent, QPoint, QRect, QSize, Qt, Signal
+from PySide6.QtCore import QEvent, QPoint, QRect, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import (
     QColor,
     QFont,
@@ -632,6 +632,9 @@ class XmlEditor(QPlainTextEdit):
         # otherwise be indistinguishable from a real edit to MainWindow's
         # dirty-tracking handlers; they check is_applying_theme() and no-op.
         self._applying_theme = False
+        # True while a deferred step-2 rehighlight (BUG-013) is queued, so
+        # several palette-change events in one toggle coalesce into one.
+        self._theme_rehighlight_pending = False
         self._gutter_bg_color = QColor("#2b2b2b")
         self._gutter_fg_color = QColor("#858585")
         self._current_line_color = QColor("#2d2d30")
@@ -757,26 +760,41 @@ class XmlEditor(QPlainTextEdit):
             self._highlighter.set_colors(
                 tag="#569cd6", attr_name="#9cdcfe", string="#ce9178"
             )
-        # rehighlight() re-applies character formats over the whole document,
-        # which Qt reports through the same contentsChanged/textChanged path
-        # as a real edit -- with no text actually changing. Left unguarded, a
-        # theme toggle would spuriously mark a clean document (dirty tracking
-        # lives in MainWindow, keyed off textChanged) as having unsaved edits.
-        # Rather than blocking signals (which would also swallow this editor's
-        # own textChanged-driven bookkeeping, e.g. structure rescan / code-
-        # region refresh), set a small guard flag MainWindow's dirty handlers
-        # check via is_applying_theme() and early-return on.
-        self._applying_theme = True
-        try:
-            self._highlighter.rehighlight()
-        finally:
-            self._applying_theme = False
         # Rebuild the extra-selection layers so their stored per-selection
         # colors pick up the new values (they cache the color at build time).
         self._refresh_code_region_selections()
         self._update_matching_tag_highlight()
         self._highlight_current_line()
         self._gutter.update()
+        # Two-step theme change (BUG-013): the app-wide coloring (palette +
+        # QSS re-polish) paints FIRST; the whole-document syntax rehighlight
+        # -- ~1.5s on a multi-MB .pgtp, the dominant per-toggle cost -- runs
+        # as a single deferred call after the app coloring has returned, so
+        # the theme flip is visible immediately and the text recolors as a
+        # visible second step. Coalesced: several palette-change events in
+        # one toggle schedule only one rehighlight.
+        if not self._theme_rehighlight_pending:
+            self._theme_rehighlight_pending = True
+            QTimer.singleShot(0, self._rehighlight_for_theme)
+
+    def _rehighlight_for_theme(self) -> None:
+        """Step 2 of the theme change: re-apply character formats over the
+        whole document with the colors apply_theme_colors already swapped in.
+
+        rehighlight() reports through the same contentsChanged/textChanged
+        path as a real edit -- with no text actually changing. Left
+        unguarded, a theme toggle would spuriously mark a clean document
+        (dirty tracking lives in MainWindow, keyed off textChanged) as having
+        unsaved edits. Rather than blocking signals (which would also swallow
+        this editor's own textChanged-driven bookkeeping, e.g. structure
+        rescan / code-region refresh), set a small guard flag MainWindow's
+        dirty handlers check via is_applying_theme() and early-return on."""
+        self._theme_rehighlight_pending = False
+        self._applying_theme = True
+        try:
+            self._highlighter.rehighlight()
+        finally:
+            self._applying_theme = False
 
     def changeEvent(self, event) -> None:
         super().changeEvent(event)
