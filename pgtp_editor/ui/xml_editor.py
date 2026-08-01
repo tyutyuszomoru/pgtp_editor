@@ -635,6 +635,11 @@ class XmlEditor(QPlainTextEdit):
         # True while a deferred step-2 rehighlight (BUG-013) is queued, so
         # several palette-change events in one toggle coalesce into one.
         self._theme_rehighlight_pending = False
+        # Step-2 background sweep state (BUG-013): the timer that re-formats
+        # _THEME_SWEEP_BLOCKS_PER_TICK blocks per event-loop turn, and the
+        # next block number it resumes from. Timer created on first use.
+        self._theme_sweep_timer: QTimer | None = None
+        self._theme_sweep_block = 0
         self._gutter_bg_color = QColor("#2b2b2b")
         self._gutter_fg_color = QColor("#858585")
         self._current_line_color = QColor("#2d2d30")
@@ -777,24 +782,68 @@ class XmlEditor(QPlainTextEdit):
             self._theme_rehighlight_pending = True
             QTimer.singleShot(0, self._rehighlight_for_theme)
 
-    def _rehighlight_for_theme(self) -> None:
-        """Step 2 of the theme change: re-apply character formats over the
-        whole document with the colors apply_theme_colors already swapped in.
+    # Blocks re-formatted per event-loop turn during the step-2 sweep. Small
+    # enough that each turn stays well under a frame, large enough that even
+    # a huge .pgtp finishes in a couple of seconds of BACKGROUND sweeping
+    # while the UI keeps responding.
+    _THEME_SWEEP_BLOCKS_PER_TICK = 400
 
-        rehighlight() reports through the same contentsChanged/textChanged
-        path as a real edit -- with no text actually changing. Left
-        unguarded, a theme toggle would spuriously mark a clean document
-        (dirty tracking lives in MainWindow, keyed off textChanged) as having
-        unsaved edits. Rather than blocking signals (which would also swallow
-        this editor's own textChanged-driven bookkeeping, e.g. structure
-        rescan / code-region refresh), set a small guard flag MainWindow's
-        dirty handlers check via is_applying_theme() and early-return on."""
+    def _rehighlight_for_theme(self) -> None:
+        """Step 2 of the theme change: re-apply character formats with the
+        colors apply_theme_colors already swapped in -- visible region first
+        (so what's on screen recolors together with the app chrome), then the
+        rest of the document swept a fixed number of blocks per event-loop
+        turn so a multi-MB document never freezes the UI (BUG-013: a single
+        synchronous rehighlight() blocked ~1.5s+).
+
+        rehighlightBlock() reports through the same textChanged path as a
+        real edit -- with no text actually changing. The _applying_theme
+        guard wraps every batch: MainWindow's dirty handlers check
+        is_applying_theme() and no-op, and this editor's own textChanged
+        bookkeeping (_rescan_structure/_refresh_code_region_selections)
+        skips format-only batches the same way -- otherwise every sweep turn
+        would trigger a full-document structure rescan."""
         self._theme_rehighlight_pending = False
+        # Recolor what the user is actually looking at, immediately.
         self._applying_theme = True
         try:
-            self._highlighter.rehighlight()
+            block = self.firstVisibleBlock()
+            bottom = self.viewport().rect().bottom()
+            while block.isValid():
+                geo = self.blockBoundingGeometry(block).translated(self.contentOffset())
+                if geo.top() > bottom:
+                    break
+                self._highlighter.rehighlightBlock(block)
+                block = block.next()
         finally:
             self._applying_theme = False
+        # Sweep the rest from the top, one batch per event-loop turn. A new
+        # theme change while a sweep is running restarts it from block 0 with
+        # the new colors (apply_theme_colors always schedules a fresh step 2,
+        # and _theme_sweep_block resets here).
+        self._theme_sweep_block = 0
+        if self._theme_sweep_timer is None:
+            self._theme_sweep_timer = QTimer(self)
+            self._theme_sweep_timer.setInterval(0)
+            self._theme_sweep_timer.timeout.connect(self._theme_sweep_tick)
+        self._theme_sweep_timer.start()
+
+    def _theme_sweep_tick(self) -> None:
+        doc = self.document()
+        block = doc.findBlockByNumber(self._theme_sweep_block)
+        self._applying_theme = True
+        try:
+            remaining = self._THEME_SWEEP_BLOCKS_PER_TICK
+            while block.isValid() and remaining > 0:
+                self._highlighter.rehighlightBlock(block)
+                block = block.next()
+                remaining -= 1
+        finally:
+            self._applying_theme = False
+        if block.isValid():
+            self._theme_sweep_block = block.blockNumber()
+        else:
+            self._theme_sweep_timer.stop()
 
     def changeEvent(self, event) -> None:
         super().changeEvent(event)
@@ -810,6 +859,12 @@ class XmlEditor(QPlainTextEdit):
             self.apply_theme_colors(light)
 
     def _rescan_structure(self) -> None:
+        # Format-only rehighlight batches (theme step-2 sweep, BUG-013) fire
+        # textChanged without any character changing -- the spans cannot
+        # differ, so skip the full-document copy + scan. Consumers'
+        # revision guards lazily rescan later if the revision moved.
+        if self._applying_theme:
+            return
         self._spans_text = self.toPlainText()
         self._spans = xml_structure.scan(self._spans_text)
         self._spans_revision = self.document().revision()
@@ -968,6 +1023,12 @@ class XmlEditor(QPlainTextEdit):
         through its close-tag line (inclusive) with a subdued full-width
         background band + monospace font. Purely visual, so it is safe when the
         editor is read-only (Caption Mode)."""
+        # Skip format-only rehighlight batches (theme step-2 sweep, BUG-013):
+        # no text changed, so the ranges are identical -- and
+        # apply_theme_colors calls this explicitly (outside the guard) for
+        # the color swap, so the recolor still happens exactly once.
+        if self._applying_theme:
+            return
         text = self.toPlainText()
         document = self.document()
         selections: list[QTextEdit.ExtraSelection] = []
