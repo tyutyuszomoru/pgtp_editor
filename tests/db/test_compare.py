@@ -16,6 +16,14 @@ def _col(field_name):
     return ColumnNode(identity=field_name, attrib={"fieldName": field_name})
 
 
+def _calc_col(field_name):
+    # BUG-006: a generator-computed column with no physical DB counterpart.
+    return ColumnNode(
+        identity=field_name,
+        attrib={"fieldName": field_name, "isCalculated": "true"},
+    )
+
+
 def _make_project():
     # Page bound to pr.a with columns id, name.
     # Nested detail bound to pr.b with column b_id.
@@ -59,8 +67,13 @@ def _make_schema():
 
 
 def test_xml_table_columns_unions_and_recurses():
+    # BUG-006: field names now map to their is_calculated flag (all False
+    # here); name membership (`in`) still works as before.
     cols = xml_table_columns(_make_project())
-    assert cols == {"pr.a": {"id", "name", "extra"}, "pr.b": {"b_id"}}
+    assert cols == {
+        "pr.a": {"id": False, "name": False, "extra": False},
+        "pr.b": {"b_id": False},
+    }
 
 
 def test_xml_table_columns_skips_empty_names():
@@ -102,6 +115,114 @@ def test_check_xml_against_db_directions():
     assert b.invocations == 1
     # Columns under a missing table are all ok=False with no info.
     assert all(c.ok is False and c.info is None for c in b.columns)
+
+
+# -- calculated columns (BUG-006) -----------------------------------------
+
+
+def test_xml_table_columns_carries_calculated_flag():
+    project = ProjectModel(
+        pages=[
+            PageNode(
+                identity="p",
+                attrib={"tableName": "pr.a"},
+                columns=[_col("id"), _calc_col("total")],
+            )
+        ]
+    )
+    assert xml_table_columns(project) == {"pr.a": {"id": False, "total": True}}
+
+
+def test_xml_table_columns_ors_calculated_across_union():
+    # One page marks the field calculated, another references the same field
+    # without the attribute → still calculated (OR precedence), regardless of
+    # page order.
+    calc_first = ProjectModel(
+        pages=[
+            PageNode(identity="p1", attrib={"tableName": "pr.a"},
+                     columns=[_calc_col("total")]),
+            PageNode(identity="p2", attrib={"tableName": "pr.a"},
+                     columns=[_col("total")]),
+        ]
+    )
+    plain_first = ProjectModel(
+        pages=[
+            PageNode(identity="p1", attrib={"tableName": "pr.a"},
+                     columns=[_col("total")]),
+            PageNode(identity="p2", attrib={"tableName": "pr.a"},
+                     columns=[_calc_col("total")]),
+        ]
+    )
+    assert xml_table_columns(calc_first) == {"pr.a": {"total": True}}
+    assert xml_table_columns(plain_first) == {"pr.a": {"total": True}}
+
+
+def test_xml_table_columns_calculated_in_nested_detail():
+    project = ProjectModel(
+        pages=[
+            PageNode(
+                identity="p",
+                attrib={"tableName": "pr.a"},
+                columns=[_col("id")],
+                details=[
+                    DetailNode(
+                        identity="d",
+                        attrib={"tableName": "pr.b"},
+                        columns=[_calc_col("derived")],
+                    )
+                ],
+            )
+        ]
+    )
+    assert xml_table_columns(project)["pr.b"] == {"derived": True}
+
+
+def test_check_xml_against_db_flags_calculated_columns():
+    project = ProjectModel(
+        pages=[
+            PageNode(
+                identity="p",
+                attrib={"tableName": "pr.a"},
+                # "total" is calculated and has no DB column; "name" is
+                # calculated but shadows a real DB column; "id" is plain.
+                columns=[_col("id"), _calc_col("total"), _calc_col("name")],
+            )
+        ]
+    )
+    checks = check_xml_against_db(project, _make_schema())
+    a_cols = {c.name: c for c in checks[0].columns}
+
+    assert a_cols["id"].is_calculated is False
+    assert a_cols["id"].ok is True
+
+    # `ok` stays "does a matching DB column literally exist" (informational);
+    # is_calculated is carried alongside for consumers to override with.
+    assert a_cols["total"].is_calculated is True
+    assert a_cols["total"].ok is False
+    assert a_cols["total"].info is None
+
+    assert a_cols["name"].is_calculated is True
+    assert a_cols["name"].ok is True
+    assert a_cols["name"].info is not None
+
+
+def test_check_db_against_xml_never_flags_calculated():
+    # DB→XML iterates real DB columns; a calculated XML column with no DB
+    # counterpart never appears, and DB rows default to is_calculated=False.
+    project = ProjectModel(
+        pages=[
+            PageNode(
+                identity="p",
+                attrib={"tableName": "pr.a"},
+                columns=[_col("id"), _calc_col("total")],
+            )
+        ]
+    )
+    checks = check_db_against_xml(project, _make_schema())
+    a = next(c for c in checks if c.name == "pr.a")
+    names = [c.name for c in a.columns]
+    assert "total" not in names
+    assert all(c.is_calculated is False for c in a.columns)
 
 
 def test_check_db_against_xml_directions():

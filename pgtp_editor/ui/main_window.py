@@ -1952,15 +1952,26 @@ class MainWindow(QMainWindow):
     def _build_view_menu(self):
         menu = self.menuBar().addMenu("View")
 
+        # The three dock actions are wired BOTH ways (BUG-007): toggled drives
+        # dock.setVisible, and the dock's visibilityChanged drives setChecked,
+        # so closing a dock via its title-bar ✕ (or any programmatic
+        # hide/show) keeps the menu checkbox honest. No recursion guard is
+        # needed: QAction.toggled and QDockWidget.visibilityChanged only fire
+        # on actual state changes, so the pair settles immediately (same Qt
+        # signal-coalescing the Manual tab sync in center_stage relies on).
         tree_action = menu.addAction("Project Tree")
         tree_action.setCheckable(True)
         tree_action.setChecked(True)
         tree_action.toggled.connect(self.tree_dock.setVisible)
+        self.tree_dock.visibilityChanged.connect(tree_action.setChecked)
+        self._tree_action = tree_action
 
         properties_action = menu.addAction("Properties Panel")
         properties_action.setCheckable(True)
         properties_action.setChecked(True)
         properties_action.toggled.connect(self.properties_dock.setVisible)
+        self.properties_dock.visibilityChanged.connect(properties_action.setChecked)
+        self._properties_action = properties_action
 
         table_refs_action = menu.addAction("Find table reference")
         table_refs_action.setCheckable(True)
@@ -1972,6 +1983,8 @@ class MainWindow(QMainWindow):
         audit_action.setCheckable(True)
         audit_action.setChecked(True)
         audit_action.toggled.connect(self.audit_dock.setVisible)
+        self.audit_dock.visibilityChanged.connect(audit_action.setChecked)
+        self._audit_action = audit_action
 
         self._raw_xml_panel_action = menu.addAction("Raw XML Panel")
         self._raw_xml_panel_action.setCheckable(True)

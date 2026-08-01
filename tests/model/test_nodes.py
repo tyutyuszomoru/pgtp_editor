@@ -137,3 +137,28 @@ def test_column_node_accepts_representations():
     reps = [RepresentationVisibility(name="List", visible=True, sourceline=10)]
     col = ColumnNode(identity="c", attrib={"fieldName": "c"}, representations=reps)
     assert col.representations is reps
+
+
+# -- is_calculated (BUG-006) ---------------------------------------------
+
+
+def test_column_node_is_calculated_true():
+    col = ColumnNode(
+        identity="c", attrib={"fieldName": "c", "isCalculated": "true"}
+    )
+    assert col.is_calculated is True
+
+
+def test_column_node_is_calculated_absent_is_false():
+    col = ColumnNode(identity="c", attrib={"fieldName": "c"})
+    assert col.is_calculated is False
+
+
+def test_column_node_is_calculated_only_lowercase_true():
+    # PHP Generator emits lowercase true/false strings; anything else is
+    # not the calculated flag (same convention as visible="false").
+    for value in ("false", "True", "TRUE", "1", ""):
+        col = ColumnNode(
+            identity="c", attrib={"fieldName": "c", "isCalculated": value}
+        )
+        assert col.is_calculated is False, value

@@ -20,8 +20,11 @@ Renders one direction's `TableCheck`/`ColumnCheck` list: table rows carry a
 ``(T|V|M)`` kind prefix and an ``(×N)`` invocation count; column rows show the
 DB datatype, PK underline, ``(fk)``, ``NOT NULL`` and ``DEFAULT`` metadata. A
 green ``✓`` / red ``✗`` marker (glyph + colored foreground so it reads in both
-themes) flags each row. A "Show only mismatches" checkbox re-filters to
-``ok=False`` rows; the header's mismatch count is independent of the filter.
+themes) flags each row; calculated XML columns (``isCalculated="true"``,
+BUG-006) get an orange ``~`` instead — they legitimately have no physical DB
+counterpart, so they are never counted or filtered as mismatches. A "Show only
+mismatches" checkbox re-filters to ``ok=False`` (non-calculated) rows; the
+header's mismatch count is independent of the filter.
 
 Non-modal and test-driven: the tree, header label and checkbox are exposed, and
 `contextual_rename` / the double-click handler emit the two signals directly (no
@@ -42,6 +45,7 @@ from PySide6.QtWidgets import (
 
 _OK_COLOR = QColor("#1a9e1a")
 _BAD_COLOR = QColor("#d02020")
+_CALC_COLOR = QColor("#d08a1a")
 _KIND_PREFIX = {"table": "(T) ", "view": "(V) ", "matview": "(M) "}
 _DIRECTION_LABEL = {
     "xml_to_db": "XML → Database",
@@ -93,7 +97,10 @@ class DbCheckPanel(QWidget):
         for table in self._table_checks:
             if not table.ok:
                 count += 1
-            count += sum(1 for column in table.columns if not column.ok)
+            count += sum(
+                1 for column in table.columns
+                if not column.ok and not column.is_calculated
+            )
         return count
 
     def _update_header(self) -> None:
@@ -108,7 +115,11 @@ class DbCheckPanel(QWidget):
         only_mismatches = self.filter_checkbox.isChecked()
         self.tree.clear()
         for table in self._table_checks:
-            mismatch_columns = [c for c in table.columns if not c.ok]
+            # Calculated columns are never mismatches (BUG-006): excluded from
+            # the mismatch-only view entirely, matching the header count.
+            mismatch_columns = [
+                c for c in table.columns if not c.ok and not c.is_calculated
+            ]
             if only_mismatches and table.ok and not mismatch_columns:
                 continue
             visible_columns = mismatch_columns if only_mismatches else table.columns
@@ -126,11 +137,22 @@ class DbCheckPanel(QWidget):
         text = f"{marker} {prefix}{table.name} (×{table.invocations})"
         item = QTreeWidgetItem([text])
         item.setForeground(0, QBrush(_OK_COLOR if table.ok else _BAD_COLOR))
-        item.setData(0, Qt.ItemDataRole.UserRole, ("table", table.name, table.ok))
+        # Uniform (kind, name, ok, is_calculated) 4-tuple with the column
+        # items so every unpack site reads one shape; tables are never
+        # calculated.
+        item.setData(0, Qt.ItemDataRole.UserRole, ("table", table.name, table.ok, False))
         return item
 
     def _make_column_item(self, column) -> QTreeWidgetItem:
-        marker = "✓" if column.ok else "✗"
+        # Three-way state (BUG-006): calculated overrides ok for display —
+        # a calculated column has no physical DB counterpart by design, so
+        # it is orange-informational, never a red mismatch.
+        if column.is_calculated:
+            marker, color = "~", _CALC_COLOR
+        elif column.ok:
+            marker, color = "✓", _OK_COLOR
+        else:
+            marker, color = "✗", _BAD_COLOR
         parts = [marker, column.name]
         info = column.info
         if info is not None:
@@ -142,8 +164,12 @@ class DbCheckPanel(QWidget):
             if info.default:
                 parts.append(f"DEFAULT {info.default}")
         item = QTreeWidgetItem([" ".join(parts)])
-        item.setForeground(0, QBrush(_OK_COLOR if column.ok else _BAD_COLOR))
-        item.setData(0, Qt.ItemDataRole.UserRole, ("column", column.name, column.ok))
+        item.setForeground(0, QBrush(color))
+        item.setData(
+            0,
+            Qt.ItemDataRole.UserRole,
+            ("column", column.name, column.ok, column.is_calculated),
+        )
         if info is not None and info.is_pk:
             font = item.font(0)
             font.setUnderline(True)
@@ -156,7 +182,7 @@ class DbCheckPanel(QWidget):
         data = item.data(0, Qt.ItemDataRole.UserRole)
         if not data:
             return
-        kind, name, _ok = data
+        kind, name, _ok, _is_calculated = data
         self.jump_requested.emit(kind, name)
 
     def contextual_rename(self, item: QTreeWidgetItem) -> None:
@@ -166,8 +192,10 @@ class DbCheckPanel(QWidget):
         data = item.data(0, Qt.ItemDataRole.UserRole)
         if not data:
             return
-        kind, name, ok = data
-        if ok:
+        kind, name, ok, is_calculated = data
+        if ok or is_calculated:
+            # Calculated columns (BUG-006) have no DB-side name to reconcile —
+            # offering "Rename in XML…" for one would be nonsensical.
             return
         self.rename_requested.emit(kind, name)
 
@@ -188,7 +216,7 @@ class DbCheckPanel(QWidget):
         data = item.data(0, Qt.ItemDataRole.UserRole)
         if not data:
             return []
-        kind, _name, _ok = data
+        kind, _name, _ok, _is_calculated = data
         if kind != "table":
             return []
         return list(self._CREATE_ACTIONS)
@@ -198,7 +226,7 @@ class DbCheckPanel(QWidget):
         data = item.data(0, Qt.ItemDataRole.UserRole)
         if not data:
             return
-        _kind, name, _ok = data
+        _kind, name, _ok, _is_calculated = data
         self.create_requested.emit(what, name)
 
     def _on_context_menu(self, pos) -> None:  # pragma: no cover - GUI popup
@@ -219,8 +247,8 @@ class DbCheckPanel(QWidget):
         data = item.data(0, Qt.ItemDataRole.UserRole)
         if not data or self._direction != "xml_to_db":
             return
-        kind, _name, ok = data
-        if ok:
+        kind, _name, ok, is_calculated = data
+        if ok or is_calculated:
             return
         menu = QMenu(self.tree)
         action = menu.addAction(f"Rename {kind} in XML…")

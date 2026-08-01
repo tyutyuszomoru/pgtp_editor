@@ -422,13 +422,20 @@ the project's values next time.
 
 - **Check: XML → Database** verifies every table and column the project references
   actually exists in the database. Results appear in the **Database Check** tab in
-  the left dock as a tree with green/red ticks. Each table shows its kind —
-  `(T)` table, `(V)` view, `(M)` materialized view — and how many times the project
-  references it `(×N)`; each column shows its datatype, primary keys are underlined,
-  foreign keys are marked `(fk)`, and nullability/defaults are noted. A
-  **show-only-mismatches** toggle and a count help you focus. **Double-click** a
-  result to jump to its place in the XML. If a table isn't found, you can rename it
-  (a project-wide replace) and re-run the check.
+  the left dock as a tree: a green **✓** marks a match and a red **✗** a mismatch.
+  Each table shows its kind — `(T)` table, `(V)` view, `(M)` materialized view — and
+  how many times the project references it `(×N)`; each column shows its datatype,
+  primary keys are underlined, foreign keys are marked `(fk)`, and
+  nullability/defaults are noted. **Calculated columns** (marked
+  `isCalculated="true"` in the XML) are generator-computed and have no physical
+  database column by design, so they are shown with an orange **~** instead of a red
+  ✗ — they don't count as mismatches. A **Show only mismatches** checkbox and a
+  mismatch count in the header help you focus; calculated columns are excluded from
+  both (the filter hides them entirely). **Double-click** a result — including a
+  calculated column — to jump to its place in the XML. If a table or column isn't
+  found, right-click it for **Rename table/column in XML…** (a project-wide
+  replace) and re-run the check; the action isn't offered for calculated columns,
+  since there is nothing database-side to reconcile.
 - **Check: Database → XML** is the reverse: it lists tables and columns that exist
   in the database but the project doesn't reference.
 
@@ -519,8 +526,11 @@ simply reads as busy instead of stalled.
   not follow your operating system's light/dark setting. Toolbar icons re-tint to
   stay legible in either theme, and your choice is remembered across restarts.
 - The **View** menu toggles each panel: **Project Tree**, **Properties Panel**,
-  **Audit/Problems Panel**, and **Raw XML Panel**. **View ▸ Find table reference**
-  toggles the **Table references** tab (see *Table References*).
+  **Audit/Problems Panel**, and **Raw XML Panel**. Each checkbox always reflects
+  whether its panel is currently visible — closing a panel with the ✕ on its own
+  title bar unchecks the menu entry too, and re-checking it brings the panel
+  back. **View ▸ Find table reference** toggles the **Table references** tab
+  (see *Table References*).
 - **View ▸ Customize Toolbar…** chooses which actions appear on the icon toolbar.
 - Your window size and position, dock layout, theme, and toolbar arrangement are
   remembered between sessions.

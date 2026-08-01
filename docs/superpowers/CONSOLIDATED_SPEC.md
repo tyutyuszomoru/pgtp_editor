@@ -248,7 +248,9 @@ retained reference to its live `lxml` element (for write-back):
   precedence (`merged_attrib.update(inner_page_el.attrib)`).
 - `ColumnNode` — identity = parent + `fieldName`; `attrib`, `sourceline`, `element`; four optional
   presentation children as `ChildElement | None`: `format`, `lookup`, `view_properties`,
-  `edit_properties`; and `representations: list[RepresentationVisibility]`.
+  `edit_properties`; and `representations: list[RepresentationVisibility]`. Typed property
+  `is_calculated` → `attrib.get("isCalculated") == "true"` (lowercase-string boolean convention,
+  same as `visible="false"`); consumed by the DB check (§17).
 - `EventNode` — identity = parent + handler tag; `{tag_name, side("C"/"S"), text, sourceline, element}`.
 - `ChildElement` — `{attrib, sourceline, element}`; does not descend into its own children.
 - `RepresentationVisibility` — `{name, visible: bool|None, sourceline: int|None}`.
@@ -892,7 +894,16 @@ the **password is never read from XML** (obfuscated there) — entered by the us
   returns `(ok, message)`, never raises.
 - `db/compare.py` (pure): `check_xml_against_db` (XML→DB) and `check_db_against_xml` (DB→XML) →
   `TableCheck{name, ok, kind, invocations, columns:[ColumnCheck]}`; reuses `analysis/reused_tables.py`
-  traversal.
+  traversal. `ColumnCheck{name, ok, info: ColumnInfo|None = None, is_calculated: bool = False}` —
+  `is_calculated` (last, defaulted, so `check_db_against_xml`'s constructions need no change) carries
+  the XML-side `isCalculated="true"` flag via `ColumnNode.is_calculated` (§6). `xml_table_columns`
+  returns `dict[str, dict[str, bool]]` (`tableName` → `fieldName` → is_calculated), **OR-unioned**
+  across pages/details bound to the same table (calculated anywhere it appears → calculated); name
+  membership (`in`) still works for callers needing only the field-name set. `ok` deliberately stays
+  "does a matching DB column literally exist" (informational — a calculated column can shadow a real
+  DB column, yielding `ok=True` **and** `is_calculated=True`); consumers treat `is_calculated` as
+  **overriding** `ok` for mismatch display/counting. `check_db_against_xml` is unchanged
+  (membership-only use of `xml_table_columns`).
 - `db/rename.py` (pure): `rename_field(text, old, new)` / `rename_table(...)` = literal global
   attribute replace.
 
@@ -900,9 +911,16 @@ the **password is never read from XML** (obfuscated there) — entered by the us
 `ConnectionSetupDialog` (host/port/database/user, password EchoMode.Password, Test + status, plaintext
 caveat; API `set_params`/`params()`/`test()`). `DbCheckPanel` (header: direction + `user@host:port/db` +
 mismatch count; "Show only mismatches" toggle; `QTreeWidget` with `(T)`/`(V)`/`(M)` prefixes, `(×N)`
-invocation counts, datatypes, PK underline, `(fk)`, ✓/✗ glyphs). Signals `rename_requested(kind, old)`
-(XML→DB not-found nodes), `jump_requested(kind, name)` (double-click → Raw XML), and
-`create_requested(kind, name)` (DB→XML table nodes). Added to `left_tabs` as a hidden tab.
+invocation counts, datatypes, PK underline, `(fk)`). **Three-way column glyph/color convention:**
+calculated (`ColumnCheck.is_calculated`) → orange `~` (`_CALC_COLOR = QColor("#d08a1a")`); else
+`ok` → green ✓ (`_OK_COLOR`); else red ✗ (`_BAD_COLOR`). Calculated columns are **never counted as
+mismatches** — excluded from the header mismatch count and hidden under "Show only mismatches" —
+and rename is gated off for them (both the contextual-rename path and the context menu skip
+calculated columns, alongside `ok` ones). Tree items carry a uniform 4-tuple UserRole payload
+`(kind, name, ok, is_calculated)` on both table and column items (tables always `False`). Signals
+`rename_requested(kind, old)` (XML→DB not-found, non-calculated nodes), `jump_requested(kind, name)`
+(double-click → Raw XML), and `create_requested(kind, name)` (DB→XML table nodes). Added to
+`left_tabs` as a hidden tab.
 
 **Reparse refreshes an open DB Check** against the **cached schema** (`_last_db_schema` /
 `_last_db_check_direction` / `_last_db_summary`), no live re-query — via `_populate_db_check(...)` and

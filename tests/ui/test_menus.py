@@ -205,6 +205,81 @@ def test_toggling_properties_panel_hides_dock(qtbot):
     assert window.properties_dock.isVisible() is False
 
 
+def test_closing_dock_directly_unchecks_view_action(qtbot):
+    # BUG-007: closing a dock via its own title-bar ✕ (== close()/hide())
+    # must uncheck the matching View-menu action — the wiring is
+    # bidirectional, not just action → dock.
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window.show()
+    view_menu = find_top_menu(window, "View")
+    for dock, label in (
+        (window.tree_dock, "Project Tree"),
+        (window.properties_dock, "Properties Panel"),
+        (window.audit_dock, "Audit/Problems Panel"),
+    ):
+        assert find_action(view_menu, label).isChecked() is True
+        dock.close()
+        assert find_action(view_menu, label).isChecked() is False
+
+
+def test_reshowing_dock_rechecks_view_action(qtbot):
+    # visibilityChanged fires both ways (BUG-007): re-showing the dock
+    # programmatically re-checks the action too.
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window.show()
+    view_menu = find_top_menu(window, "View")
+    for dock, label in (
+        (window.tree_dock, "Project Tree"),
+        (window.properties_dock, "Properties Panel"),
+        (window.audit_dock, "Audit/Problems Panel"),
+    ):
+        dock.close()
+        assert find_action(view_menu, label).isChecked() is False
+        dock.show()
+        assert find_action(view_menu, label).isChecked() is True
+        assert dock.isVisible() is True
+
+
+def test_view_action_reopens_dock_after_direct_close(qtbot):
+    # BUG-007 recovery path: after the user closes a dock via its title-bar ✕
+    # (action now unchecked), triggering the View-menu action must re-show
+    # the dock and re-check itself.
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window.show()
+    view_menu = find_top_menu(window, "View")
+    for dock, label in (
+        (window.tree_dock, "Project Tree"),
+        (window.properties_dock, "Properties Panel"),
+        (window.audit_dock, "Audit/Problems Panel"),
+    ):
+        dock.close()
+        action = find_action(view_menu, label)
+        assert action.isChecked() is False
+        action.trigger()
+        assert dock.isVisible() is True
+        assert action.isChecked() is True
+
+
+def test_dock_action_round_trip_does_not_oscillate(qtbot):
+    # The bidirectional wiring must settle (Qt only emits toggled /
+    # visibilityChanged on real state changes): toggling the action off and
+    # on again leaves dock and checkbox in agreement.
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window.show()
+    view_menu = find_top_menu(window, "View")
+    action = find_action(view_menu, "Project Tree")
+    action.trigger()  # off
+    assert window.tree_dock.isVisible() is False
+    assert action.isChecked() is False
+    action.trigger()  # on again
+    assert window.tree_dock.isVisible() is True
+    assert action.isChecked() is True
+
+
 def test_toggling_raw_xml_panel_hides_and_shows_tab(qtbot):
     window = MainWindow()
     qtbot.addWidget(window)
