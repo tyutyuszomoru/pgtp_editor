@@ -332,8 +332,20 @@ redo tail on a new push. Editor `textChanged` is debounced (~400 ms QTimer) and 
 apply is guarded by a `_restoring` flag. **Ctrl+Z**/**Ctrl+Y** single-step; Edit ▸ Undo/Redo open a
 non-modal newest-first `QListWidget` jump popup.
 
-**Theme:** View ▸ "Light Theme" checkable toggles default vs `light_palette()` on the app; persisted in
-`QSettings("MDS","PGTP Editor")`, re-applied at startup.
+**Theme** (`ui/theme.py`): View ▸ "Light Theme" checkable toggles between **two explicit, symmetric,
+platform-independent themes** — there is no third "restore the native/OS style+palette" state.
+`light_palette()` and `dark_palette()` are pure functions (build and return a fresh `QPalette`,
+mutating nothing) each setting a **complete** role set — every role the app surfaces, including
+`Link`/`LinkVisited` (navy on light, light-cyan on dark, so About-box hyperlinks read on both) and an
+explicit Disabled color group so greyed-out controls stay legible under Fusion. Light = white/near-white
+backgrounds with dark text; dark = dark Window/Base with light text. `apply_theme(app, light: bool)` is
+the only function that mutates the running QApplication: it **always** sets the Fusion style (Fusion
+honors QPalette fully; many native styles largely ignore it) and applies `light_palette()` when `light`
+is true, `dark_palette()` otherwise. Persisted as QSettings bool `"lightTheme"` in
+`QSettings("MDS","PGTP Editor")`; `MainWindow._restore_theme` applies the persisted theme
+**unconditionally at startup for both states** (no startup capture of a default palette/style key
+exists). Toolbar icons are re-tinted (`_refresh_toolbar_icons`) on every theme change and on startup
+restore. Tests assert palette roles rather than pixels.
 
 **Window-state persistence:** `closeEvent` saves `saveGeometry()`/`saveState()` to QSettings; restored
 on construction (default size on a fresh install). Tests use a temp QSettings scope.
@@ -1453,6 +1465,7 @@ is authoritative** (and is what appears in the body above).
 | 2026-07-30 | `curated.xsd` seeded on first run by **generating from the learned model** (2026-07-24) | Seeded by **copying the bundled `resources/curated.xsd` (Curated v1.2)**; learned-model generation is now the **fallback** used only when no bundled resource exists |
 | 2026-07-30 | Single-purpose curated-only **Edit XSD** tab; **Schema menu = exactly these four** (Edit XSD, Verify, Export, Import); Verify/Export/Import curated-only (2026-07-24) | **Mode-aware** Edit XSD / Edit AutoXSD tab (`_xsd_mode ∈ {"curated","learned"}`, opens `learned.xsd` for analysis); Verify/Export/Import act on the **active XSD**; **Schema menu has five items** (Edit XSD, Edit AutoXSD, Verify, Export, Import) |
 | 2026-08-01 | Edit XSD / Edit AutoXSD tab had **no close affordance at all** once revealed (only Raw XML/other-tab clicks or app close ended it; BUG-001) | **Closable** via tab-bar ✕ (`CenterStage.xsd_close_requested` → `MainWindow._on_xsd_close_requested`), reusing the existing `_confirm_close_xsd()` Save/Discard/Cancel prompt; hides via `hide_edit_xsd()` and falls back to Raw XML |
+| 2026-08-01 | "Light Theme" **off** = restore the native/OS style+palette captured at startup (`_default_palette`/`_default_style_key`; `apply_theme(app, light, default_palette, default_style)`), with `_restore_theme` a no-op when `lightTheme` was False — dark only "worked" on the one native-dark platform (Windows) it was built on (BUG-004) | Symmetric explicit themes (commit 7ec792f): new pure `dark_palette()` mirroring `light_palette()`'s complete role coverage; `apply_theme(app, light: bool)` always sets Fusion + one of the two palettes; startup capture removed and `_restore_theme` applies the persisted theme unconditionally for both states; QSettings bool `"lightTheme"` unchanged |
 
 ---
 

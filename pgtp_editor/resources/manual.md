@@ -513,7 +513,11 @@ simply reads as busy instead of stalled.
 
 ## Appearance & Layout
 
-- **View ▸ Light Theme** toggles between the light and dark themes.
+- **View ▸ Light Theme** is a checkable toggle between the editor's two themes:
+  checked applies the light theme, unchecked applies the dark theme. Both are the
+  editor's own color schemes and look the same on every platform — the app does
+  not follow your operating system's light/dark setting. Toolbar icons re-tint to
+  stay legible in either theme, and your choice is remembered across restarts.
 - The **View** menu toggles each panel: **Project Tree**, **Properties Panel**,
   **Audit/Problems Panel**, and **Raw XML Panel**. **View ▸ Find table reference**
   toggles the **Table references** tab (see *Table References*).
