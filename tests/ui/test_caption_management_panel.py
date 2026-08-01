@@ -7,7 +7,9 @@ from pgtp_editor.ui.caption_management_panel import (
     CaptionManagementPanel,
     NULL_SENTINEL,
     _CHANGED_BACKGROUND,
+    _CHANGED_FOREGROUND,
     _INCONSISTENT_BACKGROUND,
+    _INCONSISTENT_FOREGROUND,
     _FILTER_HEADER_FOREGROUND,
     _CHANGED_COLUMN,
     _LINE_COLUMN,
@@ -160,6 +162,10 @@ def _background(panel, row):
     return panel._model.index(row, 0).data(Qt.ItemDataRole.BackgroundRole)
 
 
+def _foreground(panel, row):
+    return panel._model.index(row, 0).data(Qt.ItemDataRole.ForegroundRole)
+
+
 def test_changed_row_gets_changed_background(qtbot):
     panel = CaptionManagementPanel()
     qtbot.addWidget(panel)
@@ -209,6 +215,95 @@ def test_consistent_unchanged_row_has_no_background(qtbot):
     )
     assert _background(panel, 0) is None
     assert _background(panel, 1) is None
+
+
+def test_changed_row_gets_changed_foreground(qtbot):
+    """BUG-005: a matching foreground must accompany the changed tint so its
+    text stays readable against the dark background under any theme."""
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    panel.load_entries(_sample_entries())
+    _set_new_value(panel, 0, "Homepage")
+    assert _foreground(panel, 0) == _CHANGED_FOREGROUND
+
+
+def test_inconsistent_row_gets_inconsistent_foreground(qtbot):
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    panel.load_entries(
+        [
+            _entry(2, "Page", "acct", "caption", "Account"),
+            _entry(9, "Detail", "acct", "caption", "Accounts"),
+        ]
+    )
+    assert _foreground(panel, 0) == _INCONSISTENT_FOREGROUND
+    assert _foreground(panel, 1) == _INCONSISTENT_FOREGROUND
+
+
+def test_changed_foreground_beats_inconsistency_foreground(qtbot):
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    panel.load_entries(
+        [
+            _entry(2, "Page", "acct", "caption", "Account"),
+            _entry(9, "Detail", "acct", "caption", "Accounts"),
+        ]
+    )
+    _set_new_value(panel, 0, "AccountX")
+    assert _foreground(panel, 0) == _CHANGED_FOREGROUND
+    assert _foreground(panel, 1) == _INCONSISTENT_FOREGROUND
+
+
+def test_consistent_unchanged_row_has_no_foreground(qtbot):
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    panel.load_entries(
+        [
+            _entry(2, "Page", "acct", "caption", "Account"),
+            _entry(9, "Detail", "acct", "caption", "Account"),
+        ]
+    )
+    assert _foreground(panel, 0) is None
+    assert _foreground(panel, 1) is None
+
+
+def test_group_of_three_plus_inconsistent_rows_all_get_foreground(qtbot):
+    """BUG-005: _recompute_inconsistency's group-of-3+ case (not just pairs)
+    must still resolve the matching foreground for every divergent member of
+    the group."""
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    panel.load_entries(_unify_entries())  # 3-row "wbs" group + 1-row "cost" group
+    assert _foreground(panel, 0) == _INCONSISTENT_FOREGROUND
+    assert _foreground(panel, 1) == _INCONSISTENT_FOREGROUND
+    assert _foreground(panel, 2) == _INCONSISTENT_FOREGROUND
+    # The unrelated single-row "cost" group is consistent by itself.
+    assert _foreground(panel, 3) is None
+
+
+def test_unify_reverts_foreground_to_none_once_group_becomes_consistent(qtbot):
+    """BUG-005 + BUG-003-adjacent regression: a row that WAS inconsistent-
+    tinted must have its foreground revert to None (not linger as the warm
+    tint) once its group becomes fully consistent -- exercised through the
+    batched set_new_values path (unify_from_row), matching how the app's
+    Unify action actually mutates rows."""
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    panel.load_entries(_unify_entries())
+    assert _foreground(panel, 1) == _INCONSISTENT_FOREGROUND
+    assert _foreground(panel, 2) == _INCONSISTENT_FOREGROUND
+
+    panel.unify_from_row(0)  # unifies rows 1 and 2 onto row 0's value "WBS ID"
+
+    # Rows 1/2 now carry a non-empty New Value equal to the group's target, so
+    # the whole "wbs" group's effective values agree -> no longer inconsistent.
+    # Changed rows get the changed tint, not None -- row 0 (the unify source)
+    # was never written and has no New Value, so it must now show NO tint at
+    # all (neither warm nor cool) since its group is consistent again.
+    assert _foreground(panel, 0) is None
+    assert _background(panel, 0) is None
+    assert _foreground(panel, 1) == _CHANGED_FOREGROUND
+    assert _foreground(panel, 2) == _CHANGED_FOREGROUND
 
 
 # -- Insert NULL action -----------------------------------------------------
@@ -1007,7 +1102,7 @@ def test_set_new_values_emits_data_changed_once(qtbot):
     )
     panel._model.set_new_values({0: "A", 2: "B"})
     assert len(emissions) == 1
-    tl, br, _roles = emissions[0]
+    tl, br, roles = emissions[0]
     # Spans the whole grid.
     assert (tl.row(), tl.column()) == (0, _CHANGED_COLUMN)
     assert (br.row(), br.column()) == (
@@ -1016,6 +1111,26 @@ def test_set_new_values_emits_data_changed_once(qtbot):
     )
     assert panel._model.new_value_at(0) == "A"
     assert panel._model.new_value_at(2) == "B"
+    # BUG-005: ForegroundRole must ride alongside BackgroundRole so a row
+    # transitioning into/out of a tinted state repaints its text color too.
+    assert Qt.ItemDataRole.ForegroundRole in roles
+    assert Qt.ItemDataRole.BackgroundRole in roles
+
+
+def test_single_edit_data_changed_includes_foreground_role(qtbot):
+    """Same BUG-005 requirement, but for the singular setData/_emit_row_changed
+    path (_set_new_value) rather than the batched set_new_values path above."""
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    panel.load_entries(_sample_entries())
+    emissions = []
+    panel._model.dataChanged.connect(
+        lambda tl, br, roles: emissions.append(roles)
+    )
+    _set_new_value(panel, 0, "Homepage")
+    background_roles = [roles for roles in emissions if Qt.ItemDataRole.BackgroundRole in roles]
+    assert background_roles  # the whole-grid background repaint emission happened
+    assert Qt.ItemDataRole.ForegroundRole in background_roles[0]
 
 
 # -- sort-active proxy->source mapping under bulk ops -----------------------

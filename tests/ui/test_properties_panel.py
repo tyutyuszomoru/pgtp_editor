@@ -26,6 +26,13 @@ class _RecordingXmlEditorStub:
     def select_range_on_line(self, line: int, start: int, end: int) -> None:
         self.select_range_calls.append((line, start, end))
 
+    def resolve_attribute_at(self, pos: int):
+        """Stub for the cache-aware resolver PropertiesPanel._display_value
+        now calls (BUG-003) -- unreached by these navigation-only tests
+        (guarded behind schema_model is not None), but kept in the duck-typed
+        contract so it stays obvious and doesn't silently drift."""
+        return None
+
 
 def _page_node():
     return PageNode(
@@ -260,6 +267,51 @@ def test_attribute_row_shows_curated_label(qtbot):
         identity = "x"
 
     panel.show_node(_Node(), "page")
+    assert panel.table.item(0, 1).text() == "1 — php-psql"
+
+
+def test_display_value_reuses_editor_cache_instead_of_rescanning(qtbot, monkeypatch):
+    """BUG-003 regression: repopulating Properties for the same unchanged
+    document must not re-scan the whole document per row/call -- it should
+    reuse XmlEditor's already-fresh `_spans` cache via `resolve_attribute_at`
+    instead of calling the free-function scanner directly on a fresh
+    `toPlainText()` copy."""
+    from pgtp_editor.schema_learning.model import Model
+    from pgtp_editor.ui import xml_structure
+    from pgtp_editor.ui.xml_editor import XmlEditor
+
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    editor.setPlainText('<Root>\n  <Page phpDriver="1"/>\n</Root>')
+    model = Model()
+    model.paths = {"Root/Page": {
+        "attributes": {"phpDriver": {
+            "type": "integer", "values": ["0", "1"], "overflowed": False,
+            "attr_seen_count": 1, "labels": {"1": "php-psql"}, "use": "optional",
+        }},
+        "children": {}, "instance_count": 1, "order": [],
+        "order_stable": True, "has_text": False,
+    }}
+    panel = PropertiesPanel(editor)
+    qtbot.addWidget(panel)
+    panel.set_schema_model(model)
+
+    class _Node:
+        sourceline = 2
+        attrib = {"phpDriver": "1"}
+        file_name = "x"
+        identity = "x"
+
+    scan_calls = []
+    real_scan = xml_structure.scan
+    monkeypatch.setattr(xml_structure, "scan", lambda text: scan_calls.append(text) or real_scan(text))
+
+    panel.show_node(_Node(), "page")   # first population: the initial setPlainText already scanned once
+    calls_after_first = len(scan_calls)
+    panel.show_node(_Node(), "page")   # second population, document unchanged: must NOT scan again
+    panel.show_node(_Node(), "page")   # and a third time, for good measure
+
+    assert len(scan_calls) == calls_after_first
     assert panel.table.item(0, 1).text() == "1 — php-psql"
 
 

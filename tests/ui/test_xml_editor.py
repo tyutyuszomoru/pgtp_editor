@@ -1314,4 +1314,75 @@ def test_next_bookmark_ignores_out_of_range_after_edit(qtbot):
     editor.setPlainText("a\nb\nc")
     editor.toggle_bookmark(999)  # points past EOF
     # navigation must not crash even though the block is invalid
-    editor.goto_next_bookmark()
+
+
+# -- resolve_attribute_at (BUG-003) -----------------------------------------
+
+
+def test_resolve_attribute_at_matches_uncached_free_function(qtbot):
+    """The cache-aware entry point must resolve to the same (tag_chain, attr)
+    the uncached free function would, for a position that IS on an attribute."""
+    from pgtp_editor.ui.xml_editor import attribute_at_position
+
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    text = '<Root>\n  <Page phpDriver="1"/>\n</Root>'
+    editor.setPlainText(text)
+    pos = text.index('"1"') + 1  # inside the attribute value
+
+    assert editor.resolve_attribute_at(pos) == attribute_at_position(text, pos)
+    assert editor.resolve_attribute_at(pos) == ("Root/Page", "phpDriver")
+
+
+def test_resolve_attribute_at_rescans_after_document_changes(qtbot):
+    """BUG-003: resolve_attribute_at must not serve a stale cache when the
+    document changed since the last scan -- it should force a rescan (mirrors
+    the guard in _update_matching_tag_highlight) rather than only ever
+    resolving positions valid at the time of the *first* scan."""
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    editor.setPlainText('<Root>\n  <Page phpDriver="1"/>\n</Root>')
+    revision_after_first_scan = editor._spans_revision
+
+    # Prime the cache by resolving once against the original document.
+    first_text = editor.toPlainText()
+    first_pos = first_text.index('"1"') + 1
+    assert editor.resolve_attribute_at(first_pos) == ("Root/Page", "phpDriver")
+
+    # Mutate the document -- this bumps document().revision() but does NOT by
+    # itself call _rescan_structure() until textChanged's connected slot runs;
+    # resolve_attribute_at must still notice the staleness and rescan rather
+    # than resolving against the old cached text/spans.
+    editor.setPlainText('<Root>\n  <Detail elementCaption="new"/>\n</Root>')
+    assert editor.document().revision() != revision_after_first_scan
+
+    new_text = editor.toPlainText()
+    new_pos = new_text.index('"new"') + 1
+    resolved = editor.resolve_attribute_at(new_pos)
+    assert resolved == ("Root/Detail", "elementCaption")
+    # And the stale position from the old document must not accidentally
+    # resolve to a leftover span from the previous scan.
+    assert editor._spans_text == new_text
+
+
+def test_resolve_attribute_at_none_when_not_on_attribute(qtbot):
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    text = "<Root>\n  <Page/>\n</Root>"
+    editor.setPlainText(text)
+    assert editor.resolve_attribute_at(0) is None
+
+
+def test_attribute_at_position_default_spans_none_still_scans_from_scratch(qtbot):
+    """Every existing caller that omits `spans=` (e.g. request_goto_xsd) must
+    keep working exactly as before -- the optional third parameter must not
+    change behavior for callers that don't pass it."""
+    from pgtp_editor.ui.xml_editor import (
+        attribute_at_position,
+        attribute_value_at_position,
+    )
+
+    text = '<Root>\n  <Page phpDriver="1"/>\n</Root>'
+    pos = text.index('"1"') + 1
+    assert attribute_at_position(text, pos) == ("Root/Page", "phpDriver")
+    assert attribute_value_at_position(text, pos) == ("Root/Page", "phpDriver", "1")

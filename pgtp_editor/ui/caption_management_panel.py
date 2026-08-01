@@ -87,8 +87,14 @@ _FILTER_HEADER_FOREGROUND = QColor("#4fc3f7")
 
 # Warm tint for rows whose (anchor, attribute) group has divergent values.
 _INCONSISTENT_BACKGROUND = QColor("#3a2f1d")
+_INCONSISTENT_FOREGROUND = QColor("#f0e6d2")
 # Cool tint for changed rows (New Value non-empty). Wins over inconsistency.
 _CHANGED_BACKGROUND = QColor("#26343a")
+_CHANGED_FOREGROUND = QColor("#dceaf0")
+# Both backgrounds are dark regardless of app theme (BUG-005): they are paired
+# with an explicit near-white foreground rather than left to the palette's
+# default text role, which is near-black under Light Theme and would be
+# unreadable against these tints.
 
 
 class _CaptionTableModel(QAbstractTableModel):
@@ -165,6 +171,7 @@ class _CaptionTableModel(QAbstractTableModel):
                 Qt.ItemDataRole.DisplayRole,
                 Qt.ItemDataRole.EditRole,
                 Qt.ItemDataRole.BackgroundRole,
+                Qt.ItemDataRole.ForegroundRole,
             ],
         )
 
@@ -240,6 +247,11 @@ class _CaptionTableModel(QAbstractTableModel):
                 return _CHANGED_BACKGROUND  # changed wins over inconsistency
             if self._is_inconsistent(row):
                 return _INCONSISTENT_BACKGROUND
+        if role == Qt.ItemDataRole.ForegroundRole:
+            if self._new_values[row]:
+                return _CHANGED_FOREGROUND
+            if self._is_inconsistent(row):
+                return _INCONSISTENT_FOREGROUND
         return None
 
     def flags(self, index):
@@ -267,7 +279,9 @@ class _CaptionTableModel(QAbstractTableModel):
         self.dataChanged.emit(left, right, [Qt.ItemDataRole.DisplayRole])
         top = self.index(0, 0)
         bottom = self.index(self.rowCount() - 1, self.columnCount() - 1)
-        self.dataChanged.emit(top, bottom, [Qt.ItemDataRole.BackgroundRole])
+        self.dataChanged.emit(
+            top, bottom, [Qt.ItemDataRole.BackgroundRole, Qt.ItemDataRole.ForegroundRole]
+        )
 
     # -- inconsistency ------------------------------------------------------
 

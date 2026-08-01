@@ -78,17 +78,17 @@ _ATTR_PAIR_RE = re.compile(
 )
 
 
-def attribute_at_position(text: str, pos: int):
+def attribute_at_position(text: str, pos: int, spans: list[xml_structure.TagSpan] | None = None):
     """Resolve a document character position to ``(tag_chain, attr)`` --
     see attribute_value_at_position, which this delegates to."""
-    resolved = attribute_value_at_position(text, pos)
+    resolved = attribute_value_at_position(text, pos, spans)
     if resolved is None:
         return None
     tag_chain, attr, _value = resolved
     return tag_chain, attr
 
 
-def attribute_value_at_position(text: str, pos: int):
+def attribute_value_at_position(text: str, pos: int, spans: list[xml_structure.TagSpan] | None = None):
     """Resolve a document character position to ``(tag_chain, attr, value)``
     when it falls on an attribute (name token or quoted value) inside an
     *opening* tag; otherwise return ``None``. ``value`` is the attribute's
@@ -101,11 +101,16 @@ def attribute_value_at_position(text: str, pos: int):
     second XML scanner, so open/close/self-closing bookkeeping stays in one
     place.
 
+    ``spans``: an already-scanned span list for ``text`` (e.g. an editor's
+    cached ``self._spans``) to skip a redundant ``xml_structure.scan(text)``
+    call -- pass None (the default) to scan from scratch.
+
     Returns ``None`` when the position is over the tag name, in whitespace
     between tokens, inside a close tag, in text content, or outside every
     element.
     """
-    spans = xml_structure.scan(text)
+    if spans is None:
+        spans = xml_structure.scan(text)
 
     # The span the position is in is the innermost one whose *opening* tag
     # delimiters cover pos (self-closing tags included). A close tag's own
@@ -1125,6 +1130,7 @@ class XmlEditor(QPlainTextEdit):
         cursor = QTextCursor(block)
         cursor.setPosition(block.position() + start)
         cursor.setPosition(block.position() + end, QTextCursor.MoveMode.KeepAnchor)
+
         self.setTextCursor(cursor)
         self.centerCursor()
 
@@ -1132,6 +1138,17 @@ class XmlEditor(QPlainTextEdit):
         selection.format.setBackground(self._navigation_highlight_color)
         selection.cursor = cursor
         self._set_oneshot_selection(selection)
+
+    def resolve_attribute_at(self, pos: int):
+        """Cache-aware ``(tag_chain, attr)`` resolution at document position
+        `pos` -- the entry point PropertiesPanel/hover-hint callers should use
+        instead of the module-level `attribute_at_position(toPlainText(), pos)`,
+        which always re-scans the whole document. Same staleness guard as
+        `_update_matching_tag_highlight`: rescan only if the document changed
+        since the cache was last built."""
+        if self.document().revision() != self._spans_revision:
+            self._rescan_structure()
+        return attribute_at_position(self._spans_text, pos, self._spans)
 
     def replace_current_selection(self, text: str) -> None:
         """Replace the current selection's text with `text` as a single undo
@@ -1535,7 +1552,7 @@ class XmlEditor(QPlainTextEdit):
         attribute, or enum_hint yields nothing."""
         if self._schema_model is None:
             return None
-        resolved = attribute_at_position(self.toPlainText(), char_pos)
+        resolved = self.resolve_attribute_at(char_pos)
         if resolved is None:
             return None
         tag_chain, attr = resolved

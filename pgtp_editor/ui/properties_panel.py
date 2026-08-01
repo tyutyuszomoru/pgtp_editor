@@ -123,7 +123,6 @@ from PySide6.QtWidgets import (
 )
 
 from pgtp_editor.schema_learning.settings_index import value_label
-from pgtp_editor.ui.xml_editor import attribute_at_position
 
 _READ_ONLY_HINT = "Read-only — click a row to edit in the XML editor"
 
@@ -213,9 +212,7 @@ class PropertiesPanel(QWidget):
         block = self._xml_editor.document().findBlockByNumber(spec.target_line - 1)
         if not block.isValid():
             return spec.value
-        resolved = attribute_at_position(
-            self._xml_editor.toPlainText(), block.position() + index + 1
-        )
+        resolved = self._xml_editor.resolve_attribute_at(block.position() + index + 1)
         if resolved is None:
             return spec.value
         chain, attr = resolved
