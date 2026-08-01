@@ -1372,7 +1372,7 @@ deviates from the parented-timer plan above.
 ---
 
 ## BUG-015: Typing in the Raw XML editor is painfully slow — every keystroke/newline runs a full-document rescan synchronously
-**Status:** OPEN
+**Status:** RESOLVED (bd788f0) — user-verified. Debounced both `textChanged` handlers behind a parented single-shot timer, PLUS stopped `_update_matching_tag_highlight` (on `cursorPositionChanged`, which fires per keystroke since typing moves the caret) from rescanning when it finds the cache stale — without that second half the scan simply moved to the cursor path and the debounce would have achieved nothing. Guards: `setPlainText` rescans synchronously; `_toggle_fold` flushes first (NOT `_foldable_region_starting_at`, which the gutter paints through). Measured 216.1 → 2.0 ms/char plain typing on a 1 MB document. Residual unterminated-quote cost split out as BUG-016.
 **Reported:** 2026-08-01
 **Report (verbatim):** "xml editing is painfully slow. every time I hit enter, or I enter a character, it just waits and waits.... something should be separated from automatically running on each keystroke or new line... this is horrible"
 
