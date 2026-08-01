@@ -945,7 +945,7 @@ choice.
 ---
 
 ## BUG-011: Database Check tab (XML→DB / DB→XML) stays open after the .pgtp project is closed
-**Status:** OPEN
+**Status:** RESOLVED (28203d8)
 **Reported:** 2026-08-01
 **Report (verbatim):** "when I close a pgpt file the database check windows (both xml->db and db->xml) should also close"
 
@@ -1105,5 +1105,86 @@ appears in any failing set.
 timing strategy; `async_task.py`'s documented behavior is unchanged. (The module docstring inside
 `tests/ui/test_async_task.py` describing the waitSignal approach should be updated as part of the
 fix, but that is a test file, not the spec.)
+
+---
+
+## BUG-013: Theme toggle hangs the UI for ~1s+ on each switch
+**Status:** OPEN
+**Reported:** 2026-08-01
+**Report (verbatim):** "the theme change is very slow and hangs the app for a second or more"
+
+**Root cause:** `pgtp_editor/ui/theme.py`, `apply_theme(app, light)` (lines 121-136). The freeze is the
+combined synchronous cost of the three app-wide mutations in this function plus the per-editor rehighlight
+they trigger, all on the UI thread:
+
+1. **App-wide QSS re-parse + full re-polish (dominant, repeatable cost).** `app.setStyleSheet(_dark_stylesheet())`
+   (line 136) hands Qt the ~54 KB QDarkStyleSheet string. Setting a stylesheet on the `QApplication` forces
+   Qt to re-parse the entire QSS and then unpolish/re-polish **every widget in the whole application tree**
+   synchronously. On a populated main window (tree view, properties dock, two code editors, toolbar, menus,
+   docks) this is the O(widgets) × O(QSS-rules) step that stalls the event loop. This happens on *every*
+   toggle, in both directions (dark→ applies the 54 KB sheet; light→ sets `""`, which still triggers a
+   full app-wide re-polish to strip the old sheet). The QSS *text* itself is already cached
+   (`_dark_qss_cache` in `_dark_stylesheet()`, lines 100-118 — verified: first `qdarkstyle.load_stylesheet`
+   is ~107 ms, subsequent calls ~0.3 ms), so re-reading from disk is **not** the cause; the cost is Qt
+   applying the sheet, not building the string.
+2. **`app.setPalette(...)` (line 135)** also emits `ApplicationPaletteChange` to every widget — a second
+   full-tree walk.
+3. **Two full-document rehighlights.** The palette change delivers `ApplicationPaletteChange` to **both**
+   `XmlEditor` instances (`center_stage.xml_editor` and `center_stage.xsd_editor`, created at
+   `pgtp_editor/ui/center_stage.py:54,66`). Each editor's `changeEvent`
+   (`pgtp_editor/ui/xml_editor.py:781-792`) calls `apply_theme_colors(light)`, which runs
+   `self._highlighter.rehighlight()` over the **entire document** (`xml_editor.py:771`) plus rebuilds all
+   extra-selection layers. For a large `.pgtp` XML document this whole-document reformat is itself a
+   noticeable synchronous cost, paid twice, on every toggle. `_refresh_toolbar_icons()`
+   (`main_window.py:839,867`) re-tints toolbar icons on top of that but is comparatively minor.
+
+**Proposed fix:** Reduce the per-toggle work; the string cache is fine, the *application* of it is the
+problem. Concrete options for the resolver, in preference order:
+
+- **(A) Stop swapping the whole 54 KB app stylesheet on every toggle; scope the dark-only styling to the
+  small piece that actually needs QSS.** BUG-010 adopted the full QDarkStyleSheet only to fix dark
+  checkable-menu indicators (see that entry and `_dark_stylesheet()`'s docstring, `theme.py:105-118`). If
+  the sole widget class that Fusion+palette renders wrong in dark mode is the menu indicator, replace the
+  54 KB app-wide sheet with a tiny targeted `QMenu::indicator` QSS (a few hundred bytes) applied via
+  `app.setStyleSheet(...)`. A tiny sheet still forces a re-polish but parses instantly and matches far
+  fewer widgets. **This directly overlaps BUG-010's proposed fix — coordinate: BUG-010 and BUG-013 should
+  be resolved together, since both rewrite the `app.setStyleSheet` line in `apply_theme()`. The ideal
+  combined outcome is one small `QMenu::indicator` sheet that satisfies BUG-010 without the multi-hundred-ms
+  cost of the full QDarkStyleSheet.** If the resolver decides the full QDarkStyleSheet is genuinely needed
+  for broader dark-mode fidelity, this option is off the table and (B)/(C) apply instead.
+- **(B) Avoid the redundant re-polish when the theme is unchanged.** Track the currently-applied theme
+  (e.g. a module-level `_current_light: bool | None` in `theme.py`, or a flag on the app) and early-return
+  from `apply_theme` when `light` already matches the applied state, so `_restore_theme` at startup and any
+  redundant toggle don't pay the cost. (Guard against the first call where nothing is applied yet.)
+- **(C) Cut the double whole-document rehighlight.** The two `XmlEditor`s each rehighlight the full
+  document from `changeEvent`. Consider limiting rehighlight to the visible viewport, or skipping
+  rehighlight for the editor whose tab is not currently visible and deferring it until that tab is shown.
+  Gotcha: `apply_theme_colors` must still run so the editor's cached colors update; only the
+  `self._highlighter.rehighlight()` call (xml_editor.py:771) is the expensive part that can be deferred.
+  Preserve the `_applying_theme` guard (`xml_editor.py:769-773`) exactly — it is what stops a theme toggle
+  from spuriously dirtying a clean document (`is_applying_theme()` is consulted in
+  `main_window.py:519,976`); do not regress that (spec §note at CONSOLIDATED_SPEC.md:313-316).
+
+Whatever combination is chosen, keep `apply_theme()` as the single mutation point (per its docstring and
+CONSOLIDATED_SPEC §Theme, lines 342-352) and keep the light↔dark round-trip leaving no stale QSS behind.
+
+**Test impact:** Existing coverage — `tests/ui/test_theme.py` (pure `light_palette()`/`dark_palette()`/
+`apply_theme()` unit tests, style/palette/stylesheet assertions), `tests/ui/test_main_window_theme.py`
+(toggle wiring), `tests/ui/test_xml_editor_theme.py` (`apply_theme_colors`/`changeEvent`/rehighlight
+behavior). Extend, don't duplicate. New cases needed depending on the chosen fix: if (A), assert the dark
+stylesheet is now small/targeted (contains `QMenu::indicator`, does not contain full-QDarkStyleSheet
+markers) and light clears it — this must be reconciled with BUG-010's proposed assertions so the two don't
+contradict. If (B), assert a second `apply_theme(app, light)` with the same `light` is a no-op (e.g. does
+not re-emit / does not re-set the stylesheet) and that startup `_restore_theme` still applies exactly once.
+If (C), assert the non-visible editor defers its rehighlight and that both editors end in the correct
+color state after their tab is shown, and re-assert the clean-document-stays-clean invariant across a
+toggle for both editors.
+
+**Spec impact:** The full-QDarkStyleSheet dark QSS is an intentional, spec-documented decision
+(CONSOLIDATED_SPEC.md §7 dependency table line 165: "Dark theme QSS | QDarkStyleSheet via `qdarkstyle` …",
+and §Theme lines 342-352). If the fix takes option (A) and replaces the full QDarkStyleSheet with a small
+targeted menu-indicator sheet, that diverges from the documented dependency/behavior — flag for
+`spec-maintainer` after the fix lands (and coordinate with BUG-010, which touches the same spec area).
+If only (B)/(C) are taken (full QDarkStyleSheet retained), no spec change is needed.
 
 ---
