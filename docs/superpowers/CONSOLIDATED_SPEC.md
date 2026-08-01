@@ -402,6 +402,18 @@ Folding only hides rendering — the character stream is intact, so copy/cut of 
 **Gutter (`_EditorGutter`)** — three zones: left **bookmark strip**, line-number area, fold-glyph zone.
 Click in the bookmark strip toggles that line's bookmark; click on a fold triangle toggles the fold.
 
+**Shared gutter / bookmark / fold base (extracted, reused by the DDL editor — §18.1):** the gutter
+(`_EditorGutter`), the bookmark set + `toggle_bookmark`/`bookmarked_lines`/`next_bookmark`/`prev_bookmark`
+(all **block-number based**, hence generic), and the **fold-state** machinery (`_fold_state`,
+`_toggle_fold`, `_is_line_hidden_by_other_collapsed_fold`) are **generic to any `QPlainTextEdit`** and
+are extracted into a **shared base (base class or mixin)** used by **both** `XmlEditor` and the DDL
+`CodeEditor` (§18.1). Only the **foldable-region provider is pluggable**: the base calls a
+provider method that returns `(first_contained_block, last_contained_block)` for the region starting on a
+given block. `XmlEditor` supplies the **XML-span** provider (`_foldable_region_starting_at` over `_spans`/
+`TagSpan`); the DDL editor supplies a **DDL-object** provider driven by the `DdlObjectSpan` index (one
+foldable region per object body, banner→`end_line`). This deliberately avoids a second, near-duplicate
+gutter implementation — there is exactly **one** gutter/bookmark/fold implementation in the codebase.
+
 **Auto-indent / auto-close:** Enter inherits leading whitespace, +2 spaces when just after an opening
 tag's `>`. Typing `<`→`<>`, `"`/`'` after `=`→ paired quotes, `>` completing an opening tag inserts
 `</name>`; type-through when the next char is the auto-inserted one.
@@ -455,8 +467,13 @@ numbers), auto-close + selection-wrap for `()[]{}`/quotes, **Ctrl+Shift+B** brac
 uses `_SQL_KEYWORDS` (stored lowercase; matching is **case-insensitive** — `pg_get_functiondef` emits
 uppercase, hand-written bodies vary), `--` line comments, single-quoted strings with `''` doubling
 (double-quoted text is an identifier, left unstyled), and the shared `/* */` block comments.
-`CodeEditor` also exposes `navigate_to_line(line)` (1-based, caret + `centerCursor` — the same public
-navigation entry point `XmlEditor` exposes, used by the BrowserPanel → EditorPanel jump, §18.1) and
+`CodeEditor` also exposes `navigate_to_line(line)` (1-based; the same public navigation entry point
+`XmlEditor` exposes, used by the BrowserPanel → EditorPanel jump, §18.1). In its **`language="sql"` DDL
+mode** navigation is **top-aligned** (the target line lands at the top of the viewport, not centered) —
+overriding the earlier `centerCursor()` — so a clicked DDL object's banner sits at the top with its body
+below (§18.1); `XmlEditor.navigate_to_line` stays centered. The DDL `CodeEditor` also carries the shared
+gutter/bookmark/fold base (line-number gutter, line bookmarks, code folding per DDL-object body) and a
+**4-character tab stop** (§18.1). `CodeEditor` also exposes
 `replace_current_selection(text)` (FindReplaceBar's Replace contract, mirroring `XmlEditor`), which
 **no-ops on a read-only editor** — `QTextCursor` edits bypass `setReadOnly`, so this guard is what
 actually protects read-only DDL buffers. `CodeEditorDialog(QDialog)` hosts it with
@@ -978,10 +995,20 @@ golden "freshly-added table" oracle; defaults are corpus-derived and **not yet f
 > `ui/ddl_buffer_panel.py::BrowserPanel`, `ui/ddl_editor_panel.py::EditorPanel` (the CenterStage
 > "DDL Explorer" tab), the `language="sql"` highlighter mode in `ui/code_editor.py` (§8), the
 > Database-menu "DDL Explorer" checkable toggle, and the full main-window wiring (hidden left-dock
-> "DDL Objects" tab, `navigate_requested` navigation, async fetch). Still not built:
-> `db/routine_refs.py` (XML cross-referencing), and `db/schema_diff.py`/`db/schema_snapshot.py`/
-> `db/migration_gen.py` (§18.3); those parts of this section remain target design, settled before
-> implementation starts.
+> "DDL Objects" tab, `navigate_requested` navigation, async fetch).
+>
+> **A settled batch of §18.1 enhancements (2026-08-01) is specified below but not yet in the code**
+> (design settled ahead of implementation): (a) editor affordances on the DDL `EditorPanel` — a
+> line-number gutter, line bookmarks, and code folding via a **shared base extracted from `XmlEditor`**
+> with a pluggable foldable-region provider (§8); (b) a **4-character** editor tab stop; (c) the revised
+> BrowserPanel tree presentation — fully-qualified `schema.name`, the three-way `[F]`/`[P]`/`[T]` marker,
+> per-argument `name (type)` children (requiring `RoutineInfo.args`), and composite trigger leaves with
+> bracketed timing/event indicators; and (d) **top-aligned** DDL navigation. See the Supersession Ledger
+> (§28) for each override.
+>
+> Still not built: `db/routine_refs.py` (XML cross-referencing), and `db/schema_diff.py`/
+> `db/schema_snapshot.py`/`db/migration_gen.py` (§18.3); those parts of this section remain target
+> design, settled before implementation starts.
 
 **Strategic framing.** This is **not** a feature bolted onto `.pgtp` editing — it is a standalone
 Postgres DDL-versioning mode, independent of phpgen/`.pgtp` entirely, usable with zero `.pgtp` files
@@ -1017,9 +1044,17 @@ workflow both build on directly — it is not a separate, self-contained feature
 
 **Introspection (lives in §17, reused here) — implemented:**
 
-- `db/introspect.py` has: `RoutineInfo{schema, name, arg_types: list[str], return_type, language,
-  source, kind("function"|"procedure")}` sourced from `pg_proc` joined `pg_language`, with source text
-  via `pg_get_functiondef(oid)`; `TriggerInfo{schema, table, name, timing, events: list[str],
+- `db/introspect.py` has: `RoutineInfo{schema, name, arg_types: list[str], **args: list[tuple[str, str]]
+  (input argument name+type pairs, in declared order)**, return_type, language, source,
+  kind("function"|"procedure")}` sourced from `pg_proc` joined `pg_language`, with source text
+  via `pg_get_functiondef(oid)`. `arg_types` (types only) is **retained** — it still feeds
+  `build_ddl_text`'s banner comment (`-- FUNCTION schema.name(argtypes) --`); the new `args` field adds
+  the **argument names** the BrowserPanel tree needs (see tree presentation below). The introspection
+  query sources input-argument name+type pairs in declared order (implementation chooses the exact
+  `pg_catalog` mechanism — e.g. `pg_get_function_arguments`, or `proargnames`/`proargtypes`/`proargmodes`
+  correlated positionally; spec stays at the design level: name+type pairs, declared order, **IN/INOUT
+  input arguments only**). A routine with zero input arguments has `args == []`. `TriggerInfo{schema,
+  table, name, timing, events: list[str],
   function_name, definition}` sourced from `pg_trigger` + `pg_get_triggerdef(oid)` (trigger
   timing/events decoded from the raw `pg_trigger.tgtype` bitmask by `_decode_trigger_type`, in Python
   rather than SQL, so the mapping is unit-testable without a live database). The `DatabaseSchema`
@@ -1062,6 +1097,28 @@ trigger:**
   read-only editors, the guard that actually protects the buffer since `QTextCursor` edits bypass
   `setReadOnly`) — the checked-out, editable form lives in `ddl/*.sql` files (§18.2), edited in a
   separate tab type.
+- **Editor affordances (parity with the Raw XML editor's `XmlEditor`, via a shared base — §8):** the
+  DDL `CodeEditor` gains the **same three affordances `XmlEditor` has**: (i) a **line-number gutter**,
+  (ii) **line bookmarks**, and (iii) **code folding**. These are provided by a **shared
+  gutter/bookmark/fold base extracted from `XmlEditor`** (see §8 for the extraction), so there is **one**
+  gutter/bookmark/fold implementation used by both editors — never a second parallel gutter. The base
+  supplies the generic, block-number-based gutter + bookmark set + fold-state machinery; the
+  **foldable-region provider is pluggable**. For the DDL buffer the foldable regions are **one per DDL
+  object body** — the object's `DdlObjectSpan` banner line (`start_line`) through its `end_line` — which
+  `EditorPanel` already holds from the `build_ddl_text` span list (folding a DDL object collapses its
+  source under the banner). `XmlEditor` keeps its **XML-span** fold provider (`_foldable_region_starting_at`
+  over `_spans`/`TagSpan`, §8).
+- **Tab stop = 4 characters.** The DDL editor sets its tab-stop distance to **4 character widths**
+  (`setTabStopDistance(4 × mono-char-width)`), overriding Qt's monospace default (~8–11 chars) so
+  `pg_get_functiondef`'s tab-indented bodies read at a sane width.
+- **Top-aligned navigation.** `EditorPanel.navigate_to_line(line)` scrolls so the target line lands at
+  the **top** of the editor viewport (not centered) — the first line of the clicked DDL object's banner
+  sits at the top edge, so the whole object is visible below it. This is **DDL-editor-specific**: it does
+  **not** change `XmlEditor.navigate_to_line`, which stays **centered** (its Properties/tree-jump callers
+  expect centering). Implementation-wise the DDL `CodeEditor.navigate_to_line` (§8) is what changes from
+  `centerCursor()` to a top-alignment scroll (e.g. moving the target block to the top via the vertical
+  scrollbar / `setTextCursor` + top-of-viewport positioning); `XmlEditor._scroll_and_highlight_whole_line`
+  keeps `centerCursor()`.
 - **Implemented:** left-dock tree tab `ui/ddl_buffer_panel.py::BrowserPanel(QWidget)` — a `QWidget`
   wrapping an internal `self.tree = QTreeWidget()` (composition), matching this codebase's real
   convention for left-dock panels (`TableReferencesPanel`, `DbCheckPanel` — both `QWidget` subclasses
@@ -1087,7 +1144,67 @@ appears in the tree in **both** of its relationship places, not just one:
 - Click on any leaf in `BrowserPanel` (function, procedure, or either trigger occurrence) → reveal the
   `EditorPanel` tab + `navigate_to_line(span.start_line)`, reusing the existing navigation API already
   described in §8 ("Public navigation API") and used by Properties/captions/DB check/table
-  references/diff.
+  references/diff. DDL navigation is **top-aligned** (the object's first line lands at the top of the
+  viewport — see EditorPanel navigation below), not centered.
+
+**Tree presentation (`BrowserPanel._build_routines_branch` / `_build_tables_branch` /
+`_add_trigger_leaf`) — the exact rendered labels:**
+
+*Routine node (Functions & Procedures branch)* — top line = the **fully-qualified** name
+`schema.name`, a **three-way** marker, and — only for a routine with **zero** input arguments — an empty
+`()`:
+
+| Kind | Marker | Condition |
+|---|---|---|
+| Procedure | `[P]` | `kind == "procedure"` |
+| Trigger function | `[T]` | `kind == "function"` and `return_type == "trigger"` |
+| Function | `[F]` | any other `kind == "function"` |
+
+- A routine **with** input arguments (`args` non-empty) renders its top line as `schema.name [marker]`
+  (**no** parenthesised argument list on the top line) and lists **one second-level child per input
+  argument**, in declared order, labeled `name (type)`.
+- A routine with **zero** input arguments (`args == []`) renders its top line as `schema.name() [marker]`
+  (empty parens) and has **no** argument-child nodes.
+- (Note: the top-line arg-list omission is a **tree-label** decision only; `build_ddl_text`'s banner
+  comment in the buffer still carries the full `(argtypes)` from `arg_types` — §18.1 buffer, unchanged.)
+
+*Trigger leaf* — used in **both** the Tables branch and the Functions & Procedures branch — the label is
+the **composite** name `schema.table.triggername` followed by a **timing indicator** then **one event
+indicator per event**, each bracketed:
+
+| Timing | Letter | | Event | Letter |
+|---|---|---|---|---|
+| before | `[B]` | | insert | `[I]` |
+| after | `[A]` | | update | `[U]` |
+| instead of | `[I]` | | delete | `[D]` |
+| | | | truncate | `[T]` |
+
+Events render in the introspected order of `TriggerInfo.events` (`_decode_trigger_type` yields
+insert → update → delete → truncate order). Example: a `BEFORE DELETE` trigger → `[B][D]`; an
+`AFTER INSERT OR UPDATE` trigger → `[A][I][U]`. (The timing letter `[I]` "instead of" and the event
+letter `[I]` "insert" collide as glyphs but never within one label position — timing is always the
+first bracket, events follow; the composite `schema.table.triggername` prefix disambiguates in
+practice.)
+
+**Worked examples (reproduce exactly):**
+
+Regular function with args — `CREATE OR REPLACE FUNCTION public.get_working_days_in_month(year integer,
+month integer) RETURNS integer`:
+
+```
+public.get_working_days_in_month [F]
+├─ year (integer)
+└─ month (integer)
+```
+
+Trigger function (no args, `RETURNS trigger`) plus its trigger — `CREATE OR REPLACE FUNCTION
+public.dont_delete_standards() RETURNS trigger` and `CREATE TRIGGER dont_delete_model_users BEFORE
+DELETE ON public.phpgen_users FOR EACH ROW EXECUTE FUNCTION dont_delete_standards()`:
+
+```
+public.dont_delete_standards() [T]
+└─ public.phpgen_users.dont_delete_model_users [B][D]
+```
 
 **XML cross-references — a third relationship angle, still not implemented (the one remaining §18.1
 piece), unchanged in mechanism:**
@@ -1548,6 +1665,11 @@ is authoritative** (and is what appears in the body above).
 | 2026-07-30 | Single-purpose curated-only **Edit XSD** tab; **Schema menu = exactly these four** (Edit XSD, Verify, Export, Import); Verify/Export/Import curated-only (2026-07-24) | **Mode-aware** Edit XSD / Edit AutoXSD tab (`_xsd_mode ∈ {"curated","learned"}`, opens `learned.xsd` for analysis); Verify/Export/Import act on the **active XSD**; **Schema menu has five items** (Edit XSD, Edit AutoXSD, Verify, Export, Import) |
 | 2026-08-01 | Edit XSD / Edit AutoXSD tab had **no close affordance at all** once revealed (only Raw XML/other-tab clicks or app close ended it; BUG-001) | **Closable** via tab-bar ✕ (`CenterStage.xsd_close_requested` → `MainWindow._on_xsd_close_requested`), reusing the existing `_confirm_close_xsd()` Save/Discard/Cancel prompt; hides via `hide_edit_xsd()` and falls back to Raw XML |
 | 2026-08-01 | "Light Theme" **off** = restore the native/OS style+palette captured at startup (`_default_palette`/`_default_style_key`; `apply_theme(app, light, default_palette, default_style)`), with `_restore_theme` a no-op when `lightTheme` was False — dark only "worked" on the one native-dark platform (Windows) it was built on (BUG-004) | Symmetric explicit themes (commit 7ec792f): new pure `dark_palette()` mirroring `light_palette()`'s complete role coverage; `apply_theme(app, light: bool)` always sets Fusion + one of the two palettes; startup capture removed and `_restore_theme` applies the persisted theme unconditionally for both states; QSettings bool `"lightTheme"` unchanged |
+| 2026-08-01 | §18.1 `RoutineInfo` carried argument **types only** (`arg_types: list[str]`), no argument names | `RoutineInfo` gains `args: list[tuple[str, str]]` (input argument **name+type pairs**, declared order, IN/INOUT only); the introspection query sources argument names; `arg_types` retained for `build_ddl_text`'s banner |
+| 2026-08-01 | §18.1 BrowserPanel routine top-line = bare `name(argtypes)  [marker]` with a **binary** marker (`[F]` function / `[P]` procedure); no per-argument children | Top-line = **fully-qualified** `schema.name` with a **three-way** marker (`[P]` procedure / `[T]` trigger-function `return_type=="trigger"` / `[F]` other function); a routine **with** inputs lists each as a `name (type)` second-level child and carries **no** parens on the top line; a **zero-input** routine shows empty `()` on the top line and no children |
+| 2026-08-01 | §18.1 BrowserPanel trigger leaf = `name  (timing/events) on table` (Tables branch) / `name  (timing/events) → function` (Functions branch) | Composite `schema.table.triggername` + bracketed **timing indicator** (`[B]`before / `[A]`after / `[I]`instead of) + **one bracketed event indicator per event** (`[I]`insert / `[U]`update / `[D]`delete / `[T]`truncate), e.g. `[B][D]`, in both branches |
+| 2026-08-01 | §18.1 DDL `EditorPanel`/`CodeEditor` navigation **centered** (`CodeEditor.navigate_to_line` used `centerCursor()`) | DDL navigation **top-aligned** — the object's first line lands at the top of the viewport; DDL-editor-specific, `XmlEditor.navigate_to_line` stays **centered** (its Properties/tree-jump callers expect centering) |
+| 2026-08-01 | §8 gutter / bookmarks / folding existed **only** on `XmlEditor`; DDL `EditorPanel`'s `CodeEditor` had none (no gutter/line-numbers/bookmarks/folding, Qt-mono default tab stop) | Generic gutter + bookmark + fold-**state** machinery **extracted into a shared base (class/mixin)** with a **pluggable foldable-region provider**, used by **both** `XmlEditor` (XML-span provider) and the DDL editor (DDL-object provider over the `DdlObjectSpan` index); DDL editor also gains a **4-character tab stop** — one gutter implementation, never a parallel second |
 | 2026-08-01 | Dark theme = Fusion + `dark_palette()` **palette-only** (the BUG-004 fix above, same date) — Fusion+palette alone rendered checkable menu indicators outlined near-black on the dark menu background (BUG-010) | Dark = Fusion + `dark_palette()` **+ the QDarkStyleSheet dark QSS** (`qdarkstyle>=3.2`, new runtime dependency, MIT-credited in About); light **always** clears the stylesheet (`app.setStyleSheet("")`) so round-trips leave no stale QSS; the palette stays applied beneath the QSS for palette-reading custom widgets; side effect: `app.style().objectName()` is empty in dark mode (`QStyleSheetStyle` wrapping) |
 
 ---
