@@ -70,8 +70,15 @@ from pgtp_editor.ui.editor_gutter import (  # noqa: F401  (re-exported names)
 )
 from pgtp_editor.ui.event_body import event_body_line_ranges
 
-STATE_NORMAL = 0
-STATE_IN_UNCLOSED_STRING = 1
+STATE_NORMAL = 0  # in text content, outside any tag
+STATE_IN_UNCLOSED_STRING = 1  # inside a double-quoted attribute value
+STATE_IN_TAG = 2  # inside <...>, not inside a quoted value
+STATE_IN_SINGLE_QUOTED = 3  # inside a single-quoted attribute value
+# The only characters that can change the highlighter's block state. Matching
+# just these with one C-speed regex pass keeps the per-block scan cheap
+# (BUG-016) -- the Python loop then runs over a handful of matches per line
+# instead of every character.
+_STATE_CHARS_RE = re.compile(r"""[<>"']""")
 
 _TAG_OPEN_RE = re.compile(r"</?[A-Za-z_][\w.-]*")
 _TAG_CLOSE_RE = re.compile(r"/?>")
@@ -311,16 +318,68 @@ class XmlSyntaxHighlighter(QSyntaxHighlighter):
         self._attr_name_format.setForeground(QColor(attr_name))
         self._string_format.setForeground(QColor(string))
 
+    # Quote handling is TAG-AWARE (BUG-016). The old rule -- "this block ends
+    # inside a string if the number of '\"' on it is odd" -- ignored whether a
+    # quote could delimit anything at all, so a single quote typed in text
+    # content flipped this block's state, which flipped the next block's, and
+    # so on with the parity never re-synchronising: Qt cascaded a re-highlight
+    # to the END OF THE DOCUMENT on every parity-flipping keystroke (measured:
+    # one '\"' = 5,972 highlightBlock calls / 45ms on a 6k-block file). In XML a
+    # quote only opens an attribute value INSIDE a tag; in text content -- where
+    # .pgtp keeps its PHP event-handler bodies, full of quotes and apostrophes
+    # -- quotes are ordinary characters and must not change the state at all.
+
+    def _end_state(self, text: str, state: int) -> int:
+        """The block state at the end of `text`, entering it in `state`."""
+        for match in _STATE_CHARS_RE.finditer(text):
+            char = match.group()
+            if state == STATE_NORMAL:
+                if char == "<":
+                    state = STATE_IN_TAG
+            elif state == STATE_IN_TAG:
+                if char == ">":
+                    state = STATE_NORMAL
+                elif char == '"':
+                    state = STATE_IN_UNCLOSED_STRING
+                elif char == "'":
+                    state = STATE_IN_SINGLE_QUOTED
+            else:  # inside a quoted attribute value
+                closing = '"' if state == STATE_IN_UNCLOSED_STRING else "'"
+                if char == closing:
+                    state = STATE_IN_TAG
+                elif char == "<":
+                    # RESYNC (the rule that actually bounds the cascade): a raw
+                    # '<' cannot appear inside a well-formed attribute value
+                    # (it must be &lt;), so seeing one means our state is wrong
+                    # and a tag starts here. Without this, an unterminated quote
+                    # inside a tag still flips every following block's state to
+                    # EOF; with it the very next tag snaps the state back and
+                    # the cascade stops after a block or two. Cost: a raw '<'
+                    # typed inside an attribute value ends its highlighting
+                    # early -- acceptable, since that document is invalid XML
+                    # anyway and it self-corrects once escaped or closed.
+                    state = STATE_IN_TAG
+        return state
+
+    def _continued_string_end(self, text: str, quote: str) -> int:
+        """Index just past a string continued from the previous block: past its
+        closing `quote`, at a raw '<' (the resync above), or end of line."""
+        for index, char in enumerate(text):
+            if char == quote:
+                return index + 1
+            if char == "<":
+                return index
+        return len(text)
+
     def highlightBlock(self, text: str) -> None:
+        state = self.previousBlockState()
+        if state not in (STATE_IN_TAG, STATE_IN_UNCLOSED_STRING, STATE_IN_SINGLE_QUOTED):
+            state = STATE_NORMAL  # includes -1, Qt's "no previous block"
         start = 0
-        if self.previousBlockState() == STATE_IN_UNCLOSED_STRING:
-            close_at = text.find('"')
-            if close_at == -1:
-                self.setFormat(0, len(text), self._string_format)
-                self.setCurrentBlockState(STATE_IN_UNCLOSED_STRING)
-                return
-            self.setFormat(0, close_at + 1, self._string_format)
-            start = close_at + 1
+        if state in (STATE_IN_UNCLOSED_STRING, STATE_IN_SINGLE_QUOTED):
+            quote = '"' if state == STATE_IN_UNCLOSED_STRING else "'"
+            start = self._continued_string_end(text, quote)
+            self.setFormat(0, start, self._string_format)
 
         for match in _TAG_OPEN_RE.finditer(text, start):
             self.setFormat(match.start(), match.end() - match.start(), self._tag_format)
@@ -331,14 +390,7 @@ class XmlSyntaxHighlighter(QSyntaxHighlighter):
         for match in _ATTR_VALUE_RE.finditer(text, start):
             self.setFormat(match.start(), match.end() - match.start(), self._string_format)
 
-        if _has_unterminated_quote(text, start):
-            self.setCurrentBlockState(STATE_IN_UNCLOSED_STRING)
-        else:
-            self.setCurrentBlockState(STATE_NORMAL)
-
-
-def _has_unterminated_quote(text: str, start: int) -> bool:
-    return text.count('"', start) % 2 == 1
+        self.setCurrentBlockState(self._end_state(text, state))
 
 
 def _cursor_immediately_after_open_tag(line_text: str, position_in_line: int, tag_name: str) -> bool:

@@ -395,13 +395,75 @@ auto-indent/auto-close, structural selection, tag navigation, bookmarks, and eve
 `enclosing_tag_span(text,pos)` / `enclosing_tag_span_from_spans(spans,pos)`, `parent_tag_span`,
 `matching_tag_target`, `parent_tag_target`, `closing_tag_start` (public).
 
-**Highlighting:** four categories (delimiters/names, attribute names, values, text); unclosed-quote
-state propagated across blocks via Qt block state.
+**Highlighting** (`XmlSyntaxHighlighter`): four categories (delimiters/names, attribute names, values,
+text), applied by the unchanged module regexes `_TAG_OPEN_RE` / `_TAG_CLOSE_RE` / `_ATTR_NAME_RE` /
+`_ATTR_VALUE_RE`; **quoted-value state is propagated across blocks via Qt block state, and that state is
+tag-aware** (BUG-016).
 
-**Folding:** driven by `scan()` re-run on `textChanged`; one foldable region per multi-line
-non-self-closing span; `QTextBlock.setVisible()`; `_fold_state: dict[int,bool]`; reset on `setPlainText`.
-Folding only hides rendering — the character stream is intact, so copy/cut of a folded block yields the
-**full** underlying text (a hard requirement; tested with nested folds).
+- **Four block states**, module-level constants in `ui/xml_editor.py`: `STATE_NORMAL = 0` (text content,
+  outside any tag), `STATE_IN_UNCLOSED_STRING = 1` (inside a double-quoted attribute value),
+  `STATE_IN_TAG = 2` (inside `<…>`, not inside a value), `STATE_IN_SINGLE_QUOTED = 3` (inside a
+  single-quoted attribute value). `highlightBlock` coerces any other `previousBlockState()` (including
+  Qt's `-1`) to `STATE_NORMAL`.
+- The end state is computed by the method `XmlSyntaxHighlighter._end_state(text, state)`, which iterates
+  **only the state-changing characters** found by the module regex
+  `_STATE_CHARS_RE = re.compile(r"""[<>"']""")` — one C-speed pass yields a handful of matches per line
+  instead of a Python loop over every character.
+- **A quote only opens a value INSIDE a tag.** In text content — where `.pgtp` keeps its PHP
+  event-handler bodies, full of quotes and apostrophes — quotes are ordinary characters and never change
+  the propagated state. (Inline `"…"` pairs in text content are still string-colored by
+  `_ATTR_VALUE_RE`; only the *propagated state* is tag-aware.)
+- **Resync rule (the rule that bounds the cascade):** while inside a quoted value, a raw `<` resyncs the
+  state to `STATE_IN_TAG`, because `<` cannot appear inside a well-formed attribute value (it must be
+  `&lt;`). Without it an unterminated quote inside a tag still flips every following block's state to
+  EOF; with it the next tag snaps the state back and the cascade stops after a block or two. Documented
+  trade-off: a raw `<` typed inside an attribute value ends that value's highlighting early — acceptable,
+  since such a document is invalid XML and it self-corrects once the quote is closed or the `<` escaped.
+- A value continued from the previous block is coloured up to `_continued_string_end(text, quote)` — past
+  the closing quote, at a raw `<` (the same resync), or end of line — and the four formatting regexes are
+  then applied **from that offset on**.
+- `_end_state` and `_continued_string_end` are **methods on `XmlSyntaxHighlighter`, deliberately** (not
+  module functions), so `debuglog.py`'s `("ui.xml_editor", "XmlSyntaxHighlighter.")` qualname-prefix
+  flood exclusion keeps covering them.
+- Superseded: the old rule was `_has_unterminated_quote(text, start)` = *odd count of `"` on the line*.
+  Parity never re-synchronised, so one parity-flipping `"` flipped every following block's state in turn
+  and Qt cascaded a re-highlight **to the end of the document** on every such keystroke (measured: 5,972
+  `highlightBlock` calls / 45 ms on a 6,002-block file). That helper no longer exists.
+
+**Debounced structure rescan** (BUG-015). The structure rescan (`_rescan_structure`) and the
+code-region rebuild (`_refresh_code_region_selections`) are each **O(document)** — a full
+`toPlainText()` copy plus a whole-document pass — and are **no longer connected to `textChanged`
+directly**. Both run behind a **parented single-shot** `self._rescan_timer = QTimer(self)` with
+`_RESCAN_DEBOUNCE_MS = 250` (same debounce shape as MainWindow's ~400 ms snapshot-history timer, §7, and
+the 400 ms auto-parse timer, §9). Never `QTimer.singleShot` — an unparented timer fires on an
+already-deleted editor (BUG-014).
+
+- `textChanged` → `_on_text_changed_schedule_rescan()`, which absorbs the `_applying_theme` skip
+  (format-only theme sweeps change no characters, so spans/code-regions cannot differ — nothing is even
+  scheduled) and otherwise (re)starts the timer.
+- `_rescan_now()` executes the work in order: structure → code regions → matching-tag highlight →
+  `self._gutter.update()` (fold glyphs are derived from `_spans`).
+- Measured on a 1 MB / 21,002-block document: plain typing **216.1 → 2.0 ms per character**.
+- **`_update_matching_tag_highlight` (on `cursorPositionChanged`) must NOT rescan when it finds `_spans`
+  stale** — it **suppresses** the matching-tag highlight (clears `_matching_tag_selections`, refreshes,
+  returns) and lets `_rescan_now` re-invoke it a few hundred ms later. This is load-bearing: typing moves
+  the caret, so a rescan-if-stale on the cursor path would have run the full scan per keystroke and
+  defeated the debounce entirely. It is also the correct rendering: while stale, the cached spans' offsets
+  refer to the **pre-edit** text, so highlighting from them would paint a visibly wrong range — worse
+  than none.
+- **Two consumers must see exact structure and therefore bypass the debounce:** `setPlainText` is
+  overridden to call `_rescan_now()` **synchronously** (a document *swap* — file load, revert, rename
+  write-through — whose callers read spans/fold regions/code regions immediately), and `_toggle_fold` is
+  overridden to call `_flush_pending_rescan()` (runs `_rescan_now()` only if the timer is active) before
+  deferring to the shared mixin. **Design constraint / non-obvious trap:** the flush deliberately does
+  **not** live in `_foldable_region_starting_at` — the gutter's `paintEvent` calls that hook for every
+  visible block, so rescanning there would fire on every repaint (i.e. every keystroke) and silently undo
+  the whole debounce.
+
+**Folding:** driven by the (debounced) `scan()` results cached in `_spans`; one foldable region per
+multi-line non-self-closing span; `QTextBlock.setVisible()`; `_fold_state: dict[int,bool]`; reset on
+`setPlainText`. Folding only hides rendering — the character stream is intact, so copy/cut of a folded
+block yields the **full** underlying text (a hard requirement; tested with nested folds).
 
 **Gutter (`_EditorGutter`, `ui/editor_gutter.py`)** — three zones left to right: a 12px **bookmark strip**
 (`_BOOKMARK_STRIP_WIDTH = 12`), a 16px **fold-glyph zone** (`_FOLD_GLYPH_WIDTH = 16`), then the
@@ -469,8 +531,10 @@ is reimplemented in terms of `navigate_to_line`.
   hit-testing — so they work with folded content.
 
 **Matching-tag highlight & navigation:** on `cursorPositionChanged`, both the opening and closing tag
-of the enclosing element are highlighted (self-closing → none), using cached spans kept fresh on
-`textChanged` (revision-guarded). **Ctrl+click** jumps between matching open/close tags; **Alt+click**
+of the enclosing element are highlighted (self-closing → none), using the revision-guarded `_spans`
+cache — which is refreshed by the **debounced** rescan above, so while the cache is stale the highlight
+is **suppressed rather than recomputed** (see "Debounced structure rescan"). **Ctrl+click** jumps
+between matching open/close tags; **Alt+click**
 jumps to the parent element's open tag (both move caret + scroll, no selection; `event.accept()`
 suppresses Qt's Alt-drag). Other modifier combos fall through.
 
@@ -1919,6 +1983,8 @@ is authoritative** (and is what appears in the body above).
 | 2026-08-01 | §8 gutter / bookmarks / folding existed **only** on `XmlEditor`; DDL `EditorPanel`'s `CodeEditor` had none (no gutter/line-numbers/bookmarks/folding, Qt-mono default tab stop) | Generic gutter + bookmark + fold-**state** machinery **extracted into a shared base** — realized as the mixin `GutterBookmarkFoldMixin` in the new module `ui/editor_gutter.py` — with a **pluggable foldable-region provider**, used by **both** `XmlEditor` (XML-span provider) and the DDL editor (DDL-object provider over the `DdlObjectSpan` index); DDL editor also gains a **4-character tab stop** — one gutter implementation, never a parallel second |
 | 2026-08-01 | §8 gutter + line bookmarks were **Raw-XML-only** — the "Edit code…" JS/PHP event-handler editor (`CodeEditorDialog`/`CodeEditor`) had no gutter, no line numbers and no bookmarks | The shared `GutterBookmarkFoldMixin` (`ui/editor_gutter.py`) sits on **`CodeEditor` itself**, so **every** code editor — including the JS/PHP event-handler dialogs — now shows the line-number gutter and supports line bookmarks (folding inert there: no regions installed). Surfaced as a side effect of the extraction and **explicitly kept by the project owner** rather than gated per language: line numbers in a code editor are conventional, and gating would add a second code path. Bookmarks stay **session-only, per-document**, and the Bookmarks menu/shortcuts remain bound to the Raw XML editor only |
 | 2026-08-01 | Dark theme = Fusion + `dark_palette()` **palette-only** (the BUG-004 fix above, same date) — Fusion+palette alone rendered checkable menu indicators outlined near-black on the dark menu background (BUG-010) | Dark = Fusion + `dark_palette()` **+ the QDarkStyleSheet dark QSS** (`qdarkstyle>=3.2`, new runtime dependency, MIT-credited in About); light **always** clears the stylesheet (`app.setStyleSheet("")`) so round-trips leave no stale QSS; the palette stays applied beneath the QSS for palette-reading custom widgets; side effect: `app.style().objectName()` is empty in dark mode (`QStyleSheetStyle` wrapping) |
+| 2026-08-01 | §8 `XmlEditor` ran the O(document) structure rescan (`_rescan_structure`) and code-region rebuild (`_refresh_code_region_selections`) **synchronously on every `textChanged`** — i.e. a full `toPlainText()` copy + whole-document pass per keystroke — and `_update_matching_tag_highlight` **rescanned when it found `_spans` stale** on `cursorPositionChanged` (BUG-015) | Both rescans **debounced** behind a parented single-shot `self._rescan_timer = QTimer(self)`, `_RESCAN_DEBOUNCE_MS = 250`, scheduled by `_on_text_changed_schedule_rescan` (which absorbs the `_applying_theme` skip) and executed by `_rescan_now()` (structure → code regions → matching-tag highlight → gutter repaint); `_update_matching_tag_highlight` now **suppresses** the highlight when spans are stale instead of rescanning (a rescan there would run per keystroke via the caret and defeat the debounce; stale offsets would paint a wrong range anyway); two exact-structure carve-outs bypass the debounce — `setPlainText` calls `_rescan_now()` synchronously (document swap) and `_toggle_fold` calls `_flush_pending_rescan()` first, with the flush deliberately **not** in `_foldable_region_starting_at` (the gutter `paintEvent` calls it per visible block). Measured 216.1 → 2.0 ms per typed character on a 1 MB / 21,002-block document |
+| 2026-08-01 | §8 `XmlSyntaxHighlighter` block state = **odd-`"`-parity per line** (`_has_unterminated_quote(text, start)`), never re-synchronising, so one parity-flipping `"` cascaded a Qt re-highlight to the **end of the document** on every such keystroke (5,972 `highlightBlock` calls / 45 ms on a 6,002-block file; BUG-016) | **Tag-aware four-state machine** — `STATE_NORMAL`/`STATE_IN_UNCLOSED_STRING`/`STATE_IN_TAG`/`STATE_IN_SINGLE_QUOTED` computed by the method `XmlSyntaxHighlighter._end_state(text, state)` over the state-changing characters matched by `_STATE_CHARS_RE = [<>"']` — where a quote only opens a value **inside a tag** (quotes in text content, i.e. PHP handler bodies, are inert), plus the **`<` resync rule**: a raw `<` inside a quoted value snaps the state back to `STATE_IN_TAG`, bounding the cascade to a block or two (trade-off: a raw `<` inside an attribute value ends that value's highlighting early — the document is invalid XML anyway and it self-corrects). `_has_unterminated_quote` deleted; continuation handled by `_continued_string_end(text, quote)`; helpers kept as **methods** so `debuglog.py`'s `("ui.xml_editor", "XmlSyntaxHighlighter.")` flood exclusion still covers them |
 
 ---
 

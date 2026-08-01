@@ -1621,3 +1621,118 @@ def test_xml_editor_folding_still_keeps_the_character_stream_intact(qtbot):
     editor._toggle_fold(editor.document().findBlockByNumber(1))
     assert editor.document().findBlockByNumber(2).isVisible() is False
     assert editor.toPlainText() == text
+
+
+# --- BUG-016: the quote-parity block-state cascade ---------------------------
+
+
+def _count_highlight_calls(monkeypatch):
+    """Patch highlightBlock ON THE CLASS (before any editor is built) and
+    return the call counter."""
+    import pgtp_editor.ui.xml_editor as module
+
+    calls = {"n": 0}
+    real = module.XmlSyntaxHighlighter.highlightBlock
+
+    def counting(self, text):
+        calls["n"] += 1
+        return real(self, text)
+
+    monkeypatch.setattr(module.XmlSyntaxHighlighter, "highlightBlock", counting)
+    return calls
+
+
+def test_quote_in_text_content_does_not_rehighlight_the_document(qtbot, monkeypatch):
+    """THE BUG-016 regression test. `_has_unterminated_quote` used to flip this
+    block's state on ANY odd quote count, so one '"' typed in text content
+    flipped every following block's state in turn and Qt cascaded a
+    re-highlight to EOF (measured: 5,972 calls / 45ms on a 6k-block file).
+    A quote in text content cannot delimit anything in XML, so it must not
+    change the state -- only the edited block re-highlights."""
+    calls = _count_highlight_calls(monkeypatch)
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    editor.setPlainText(
+        "<Root>\n" + "\n".join(f"  <A id='{i}'>text {i}</A>" for i in range(300)) + "\n</Root>"
+    )
+
+    cursor = editor.textCursor()
+    cursor.setPosition(editor.document().findBlockByNumber(5).position() + 3)
+    editor.setTextCursor(cursor)
+    calls["n"] = 0
+    editor.insertPlainText('"')
+
+    assert calls["n"] <= 2, (
+        f"typing one quote re-highlighted {calls['n']} blocks -- the block-state "
+        "cascade is unbounded again (BUG-016)"
+    )
+
+
+def test_unterminated_quote_inside_a_tag_resyncs_at_the_next_tag(qtbot, monkeypatch):
+    """An unterminated quote INSIDE a tag legitimately continues onto the next
+    line, but must not keep flipping state to EOF: the raw '<' that opens the
+    next tag resyncs the state (a '<' cannot occur inside a well-formed
+    attribute value), so the cascade stops after a block or two."""
+    calls = _count_highlight_calls(monkeypatch)
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    text = "<Root>\n" + "\n".join(f'  <A id="{i}"/>' for i in range(300)) + "\n</Root>"
+    editor.setPlainText(text)
+
+    cursor = editor.textCursor()
+    cursor.setPosition(text.index('id="0"') + len("id="))
+    editor.setTextCursor(cursor)
+    calls["n"] = 0
+    editor.insertPlainText('"')  # now an unterminated quote inside the tag
+
+    assert calls["n"] <= 4, f"cascade not bounded by the resync: {calls['n']} blocks"
+
+
+def test_apostrophes_in_event_handler_body_do_not_string_ify_the_rest(qtbot):
+    """.pgtp keeps PHP event-handler bodies in TEXT CONTENT, full of quotes and
+    apostrophes. Those must not open an attribute value -- before BUG-016 they
+    flipped the state and mis-colored everything after them."""
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    text = (
+        "<OnBeforeInsert>\n"
+        "$name = 'it\\'s';\n"
+        "$sql = \"SELECT 1\";\n"
+        "</OnBeforeInsert>\n"
+        '<Page id="p"/>'
+    )
+    editor.setPlainText(text)
+
+    tag_color = editor._highlighter._tag_format.foreground().color()
+    assert _format_at(editor, text.index("<Page")).foreground().color() == tag_color
+
+
+def test_end_state_transitions_are_tag_aware(qtbot):
+    """The state machine itself: quotes only delimit inside a tag, and a raw
+    '<' inside a quoted value resyncs."""
+    from pgtp_editor.ui.xml_editor import (
+        STATE_IN_SINGLE_QUOTED,
+        STATE_IN_TAG,
+        STATE_IN_UNCLOSED_STRING,
+        STATE_NORMAL,
+    )
+
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    end_state = editor._highlighter._end_state
+
+    # Text content: quotes and apostrophes are ordinary characters.
+    assert end_state('say "hi', STATE_NORMAL) == STATE_NORMAL
+    assert end_state("it's", STATE_NORMAL) == STATE_NORMAL
+    # Inside a tag they open a value; the matching quote closes it.
+    assert end_state('<A b="x', STATE_NORMAL) == STATE_IN_UNCLOSED_STRING
+    assert end_state("<A b='x", STATE_NORMAL) == STATE_IN_SINGLE_QUOTED
+    assert end_state('<A b="x"', STATE_NORMAL) == STATE_IN_TAG
+    assert end_state('<A b="x"/>', STATE_NORMAL) == STATE_NORMAL
+    # A double quote does not close a single-quoted value, and vice versa.
+    assert end_state("\"", STATE_IN_SINGLE_QUOTED) == STATE_IN_SINGLE_QUOTED
+    assert end_state("'", STATE_IN_UNCLOSED_STRING) == STATE_IN_UNCLOSED_STRING
+    # Resync: a raw '<' cannot be inside a well-formed value.
+    assert end_state('  <B c="d"/>', STATE_IN_UNCLOSED_STRING) == STATE_NORMAL
+    # A tag left open at end of line keeps quote tracking on the next line.
+    assert end_state("<A", STATE_NORMAL) == STATE_IN_TAG
