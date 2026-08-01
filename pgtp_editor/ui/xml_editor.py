@@ -25,6 +25,7 @@ access.
 from __future__ import annotations
 
 import re
+from bisect import bisect_right
 
 from PySide6.QtCore import QEvent, QPoint, QRect, QSize, Qt, Signal
 from PySide6.QtGui import (
@@ -116,23 +117,12 @@ def attribute_value_at_position(text: str, pos: int, spans: list[xml_structure.T
     # delimiters cover pos (self-closing tags included). A close tag's own
     # '</name>' is not an open-tag region, so positions there resolve to no
     # span and return None -- the desired behavior.
-    # xml_structure's tag regex uses [^<>], so it truncates an opening tag at
-    # the first '>' even when that '>' is inside a quoted attribute value. Its
-    # open_start (and name/chain bookkeeping) is still reliable, so we take the
-    # candidate span from open_start but recompute the tag's true '>' end here,
-    # respecting quotes, to stay robust to '>' inside values.
-    containing = None
-    for span in spans:
-        real_open_end = _opening_tag_end(text, span.open_start)
-        if real_open_end is None:
-            continue
-        if span.open_start <= pos < real_open_end and (
-            containing is None or span.depth > containing.depth
-        ):
-            containing = span
-            containing_open_end = real_open_end
-    if containing is None:
+    containing_pair = _containing_open_tag(
+        text, sorted(spans, key=lambda s: s.open_start), None, pos
+    )
+    if containing_pair is None:
         return None
+    containing, containing_open_end = containing_pair
 
     pair = _attribute_pair_at(text, containing.open_start, containing_open_end, pos)
     if pair is None:
@@ -149,6 +139,41 @@ def attribute_value_at_position(text: str, pos: int, spans: list[xml_structure.T
         walker = parent
     tag_chain = "/".join(reversed(names))
     return tag_chain, attr, value
+
+
+def _containing_open_tag(text, spans_sorted, open_starts, pos):
+    """Innermost span whose *opening* tag covers ``pos`` as a
+    ``(span, real_open_end)`` pair, or None.
+
+    ``spans_sorted`` must be ordered by ``open_start``; ``open_starts`` is the
+    matching pre-extracted key list for bisect (pass None to derive it here).
+
+    xml_structure's tag regex uses [^<>], so it truncates an opening tag at
+    the first '>' even when that '>' is inside a quoted attribute value. Its
+    open_start (and name/chain bookkeeping) is still reliable, so candidates
+    come from open_start but the tag's true '>' end is recomputed here
+    (``_opening_tag_end``, quote-aware) to stay robust to '>' inside values.
+
+    Instead of the old full pass over every span (O(n) text scans per call --
+    the BUG-008 hot spot), walk BACKWARDS from the last span opening at or
+    before ``pos``: the first span (i.e. largest open_start) whose real
+    opening tag covers ``pos`` is the innermost one. The walk stops at the
+    first span that closed at or before ``pos`` -- an element that ended
+    before ``pos`` cannot contain it, and neither can anything opened earlier
+    (its ancestors' opening tags end before this element even opened) -- so
+    the walk is O(depth)-ish, not O(n), for well-formed nesting.
+    """
+    if open_starts is None:
+        open_starts = [s.open_start for s in spans_sorted]
+    for i in range(bisect_right(open_starts, pos) - 1, -1, -1):
+        span = spans_sorted[i]
+        span_end = span.close_end if span.close_end is not None else span.open_end
+        if span_end <= pos and span.close_end is not None:
+            break
+        real_open_end = _opening_tag_end(text, span.open_start)
+        if real_open_end is not None and span.open_start <= pos < real_open_end:
+            return span, real_open_end
+    return None
 
 
 def enclosing_open_tag(text: str, pos: int):
@@ -644,6 +669,13 @@ class XmlEditor(QPlainTextEdit):
         self._spans: list[xml_structure.TagSpan] = []
         self._spans_text: str = ""
         self._spans_revision: int | None = None
+        # Lazy attribute-resolution index over _spans (BUG-008): parent map +
+        # spans sorted by open_start (+ the open_start keys for bisect). Built
+        # only when resolve_attribute_at actually runs, NOT in
+        # _rescan_structure -- rescans happen per keystroke and must not pay
+        # the O(n log n) index cost for a feature that may never be used in
+        # that revision. Invalidated whenever _spans is rebuilt.
+        self._resolution_index: tuple | None = None
         self._nav_click_handled = False
         self.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
         self.blockCountChanged.connect(self._update_gutter_width)
@@ -763,6 +795,7 @@ class XmlEditor(QPlainTextEdit):
         self._spans_text = self.toPlainText()
         self._spans = xml_structure.scan(self._spans_text)
         self._spans_revision = self.document().revision()
+        self._resolution_index = None  # spans changed; rebuild lazily (BUG-008)
 
     def _foldable_region_starting_at(self, block):
         """Return (first_contained_block_number, last_contained_block_number)
@@ -1145,10 +1178,56 @@ class XmlEditor(QPlainTextEdit):
         instead of the module-level `attribute_at_position(toPlainText(), pos)`,
         which always re-scans the whole document. Same staleness guard as
         `_update_matching_tag_highlight`: rescan only if the document changed
-        since the cache was last built."""
+        since the cache was last built.
+
+        BUG-008: resolution runs O(log n + depth) against a lazily built,
+        revision-guarded index (spans sorted by open_start for bisect + a
+        build_parent_map ancestor map) instead of the module function's
+        per-call full-span pass and per-level parent_tag_span scans --
+        PropertiesPanel calls this once per attribute row on every tree
+        selection, so the per-call cost is what makes selection feel instant
+        vs. frozen on ~37k-tag documents."""
         if self.document().revision() != self._spans_revision:
             self._rescan_structure()
-        return attribute_at_position(self._spans_text, pos, self._spans)
+        if self._resolution_index is None:
+            spans_sorted = sorted(self._spans, key=lambda s: s.open_start)
+            self._resolution_index = (
+                spans_sorted,
+                [s.open_start for s in spans_sorted],
+                xml_structure.build_parent_map(self._spans),
+            )
+        spans_sorted, open_starts, parent_map = self._resolution_index
+
+        containing_pair = _containing_open_tag(
+            self._spans_text, spans_sorted, open_starts, pos
+        )
+        if containing_pair is None:
+            return None
+        containing, containing_open_end = containing_pair
+        pair = _attribute_pair_at(
+            self._spans_text, containing.open_start, containing_open_end, pos
+        )
+        if pair is None:
+            return None
+        attr, _value = pair
+
+        names = [containing.name]
+        walker = containing
+        while walker is not None:
+            parent = parent_map.get(id(walker))
+            # A '>' inside a quoted attribute value leaves that tag's span
+            # unclosed (close_end=None), and build_parent_map keeps such a
+            # span on its ancestor stack forever -- polluting every later
+            # element's chain with a false ancestor. A real parent is exactly
+            # one depth level up (the same filter parent_tag_span applies),
+            # so climb past any ancestor at the wrong depth.
+            while parent is not None and parent.depth != walker.depth - 1:
+                parent = parent_map.get(id(parent))
+            if parent is None:
+                break
+            names.append(parent.name)
+            walker = parent
+        return "/".join(reversed(names)), attr
 
     def replace_current_selection(self, text: str) -> None:
         """Replace the current selection's text with `text` as a single undo

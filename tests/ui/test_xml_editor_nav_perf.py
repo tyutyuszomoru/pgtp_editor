@@ -145,3 +145,91 @@ def test_cursor_navigation_does_not_copy_document_text(qtbot):
         "highlight must reuse the cached document text, not re-copy the "
         "whole document on every cursor move"
     )
+
+
+def test_properties_population_uses_indexed_resolution_not_per_row_walks(qtbot, monkeypatch):
+    """BUG-008 regression. PropertiesPanel.show_node with a curated schema
+    model injected (without one the slow path never runs -- _display_value
+    short-circuits) calls XmlEditor.resolve_attribute_at once per attribute
+    row. That used to cost, PER ROW, a full pass over every span plus one
+    O(n) xml_structure.parent_tag_span scan per ancestor level. The fix
+    resolves against a lazy per-revision index (spans sorted by open_start +
+    build_parent_map), so populating a many-row node must:
+      - never call xml_structure.scan (spans cache already fresh),
+      - never call xml_structure.parent_tag_span (parent map instead),
+      - call xml_structure.build_parent_map exactly ONCE per document
+        revision, no matter how many rows resolve (and reuse it across
+        repeated show_node calls on the unchanged document)."""
+    from pgtp_editor.schema_learning.model import Model
+    from pgtp_editor.ui.properties_panel import PropertiesPanel
+
+    counts = {"scan": 0, "parent_tag_span": 0, "build_parent_map": 0}
+    for name in counts:
+        real = getattr(xml_structure, name)
+
+        def counting(*args, _real=real, _name=name):
+            counts[_name] += 1
+            return _real(*args)
+
+        monkeypatch.setattr(xml_structure, name, counting)
+
+    attrs = {f"attr{i:02d}": str(i) for i in range(30)}
+    attr_text = " ".join(f'{k}="{v}"' for k, v in attrs.items())
+    filler = "\n".join(f"  <Row{i} x=\"{i}\"/>" for i in range(50))
+    text = f"<Root>\n  <Page {attr_text}/>\n{filler}\n</Root>"
+
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    editor.setPlainText(text)  # textChanged -> _rescan_structure (scans once)
+
+    model = Model()
+    model.paths = {"Root/Page": {
+        "attributes": {"attr00": {
+            "type": "integer", "values": ["0"], "overflowed": False,
+            "attr_seen_count": 1, "labels": {"0": "zero"}, "use": "optional",
+        }},
+        "children": {}, "instance_count": 1, "order": [],
+        "order_stable": True, "has_text": False,
+    }}
+    panel = PropertiesPanel(editor)
+    qtbot.addWidget(panel)
+    panel.set_schema_model(model)
+
+    class _Node:
+        sourceline = 2
+        attrib = attrs
+        file_name = "x"
+        identity = "x"
+
+    counts.update(scan=0, parent_tag_span=0, build_parent_map=0)  # post-load baseline
+    panel.show_node(_Node(), "page")
+
+    assert panel.table.rowCount() == 30
+    # Labels still resolve correctly through the indexed path (display
+    # contract unchanged -- gotcha 3 in the queue entry).
+    assert panel.table.item(0, 1).text() == "0 — zero"
+    assert panel.table.item(1, 1).text() == "1"
+
+    assert counts["scan"] == 0, "populating Properties re-scanned the document"
+    assert counts["parent_tag_span"] == 0, (
+        "indexed resolution must use the parent map, not per-level "
+        "parent_tag_span scans"
+    )
+    assert counts["build_parent_map"] == 1, (
+        "the resolution index must be built exactly once per revision, "
+        "not per attribute row"
+    )
+
+    # Re-populating on the SAME unchanged document reuses the index outright.
+    panel.show_node(_Node(), "page")
+    panel.show_node(_Node(), "page")
+    assert counts["scan"] == 0
+    assert counts["parent_tag_span"] == 0
+    assert counts["build_parent_map"] == 1
+
+    # After an edit the index is rebuilt exactly once for the new revision
+    # (a rescan of the changed document is expected and allowed).
+    editor.setPlainText(text.replace('attr00="0"', 'attr00="0" extra="e"'))
+    panel.show_node(_Node(), "page")
+    assert counts["parent_tag_span"] == 0
+    assert counts["build_parent_map"] == 2

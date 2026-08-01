@@ -1386,3 +1386,145 @@ def test_attribute_at_position_default_spans_none_still_scans_from_scratch(qtbot
     pos = text.index('"1"') + 1
     assert attribute_at_position(text, pos) == ("Root/Page", "phpDriver")
     assert attribute_value_at_position(text, pos) == ("Root/Page", "phpDriver", "1")
+
+
+# -- resolve_attribute_at indexed path (BUG-008) -----------------------------
+#
+# BUG-008 replaced resolve_attribute_at's per-call full-span walk (and its
+# per-level parent_tag_span scans) with a lazily built, revision-guarded
+# index (bisect over spans sorted by open_start + build_parent_map). These
+# tests pin the indexed path to the from-scratch free function: for EVERY
+# kind of position the two must return identical results.
+
+_BUG008_TEXT = (
+    "<Root>\n"
+    "  <Pages>\n"
+    '    <Page fileName="dev_equipment" tableName="pr.equipment">\n'
+    '      <Editor caption="a > b" raw="x>y" other="z"/>\n'
+    "      text content here\n"
+    "    </Page>\n"
+    '    <Page fileName="second"/>\n'
+    "  </Pages>\n"
+    "</Root>"
+)
+
+
+def _bug008_editor(qtbot):
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    editor.setPlainText(_BUG008_TEXT)
+    return editor
+
+
+def test_resolve_attribute_at_indexed_matches_free_function_on_attributes(qtbot):
+    """Equivalence on positions that ARE on an attribute: name token, quoted
+    value, deep nesting, and -- the robustness quirk -- an attribute that sits
+    AFTER a '>' inside another attribute's quoted value in the same tag (the
+    scanner's regex truncates the opening tag at that '>'; the quote-aware
+    _opening_tag_end recompute must keep resolving past it)."""
+    from pgtp_editor.ui.xml_editor import attribute_at_position
+
+    editor = _bug008_editor(qtbot)
+    text = _BUG008_TEXT
+    cases = [
+        # (position, expected (tag_chain, attr))
+        (text.index("fileName"), ("Root/Pages/Page", "fileName")),  # attr name token
+        (text.index('"pr.equipment"') + 3, ("Root/Pages/Page", "tableName")),  # quoted value
+        (text.index("caption"), ("Root/Pages/Page/Editor", "caption")),  # deep nesting
+        (text.index('"a > b"') + 3, ("Root/Pages/Page/Editor", "caption")),  # value w/ '>'
+        (text.index('"x>y"') + 2, ("Root/Pages/Page/Editor", "raw")),  # ON the quoted '>'
+        (text.index('other="z"'), ("Root/Pages/Page/Editor", "other")),  # after the '>' value
+    ]
+    for pos, expected in cases:
+        from_scratch = attribute_at_position(text, pos)
+        indexed = editor.resolve_attribute_at(pos)
+        assert indexed == from_scratch == expected, f"mismatch at position {pos}"
+
+
+def test_resolve_attribute_at_chain_unpolluted_by_earlier_gt_truncated_span(qtbot):
+    """The scanner truncates `<Editor caption="a > b" .../>` at the '>' inside
+    the quoted value, so its span is recorded as unclosed (close_end=None).
+    The pre-BUG-008 ancestor walk (parent_tag_span, depth-filtered) skipped
+    such a bogus span when resolving a LATER sibling element's attribute; the
+    indexed path must do the same -- the second <Page>'s tag_chain must not
+    inherit the phantom still-open Editor as an ancestor, and must equal the
+    from-scratch free function's result."""
+    from pgtp_editor.ui.xml_editor import attribute_at_position
+
+    editor = _bug008_editor(qtbot)
+    text = _BUG008_TEXT
+    pos = text.index('"second"') + 1
+    from_scratch = attribute_at_position(text, pos)
+    assert from_scratch == ("Root/Pages/Page", "fileName")  # pre-fix behavior
+    assert editor.resolve_attribute_at(pos) == from_scratch
+
+
+def test_resolve_attribute_at_chain_unpolluted_by_multiple_truncated_spans(qtbot):
+    """Two CONSECUTIVE '>'-truncated (unclosed) spans inside a properly closed
+    element leave TWO bogus ancestors stuck on build_parent_map's stack, at
+    depths that no longer line up with the later sibling's walk. The depth
+    filter in the indexed chain walk must climb past BOTH in sequence, matching
+    the from-scratch free function's parent_tag_span behavior."""
+    from pgtp_editor.ui.xml_editor import attribute_at_position
+
+    text = (
+        "<Root>\n"
+        "  <Pages>\n"
+        '    <Page fileName="first">\n'
+        '      <E1 caption="a > b" raw="q"/>\n'
+        '      <E2 note="c > d" other="w"/>\n'
+        "    </Page>\n"
+        '    <Page fileName="second"/>\n'
+        "  </Pages>\n"
+        "</Root>"
+    )
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    editor.setPlainText(text)
+    pos = text.index('"second"') + 1
+    from_scratch = attribute_at_position(text, pos)
+    assert from_scratch == ("Root/Pages/Page", "fileName")
+    assert editor.resolve_attribute_at(pos) == from_scratch
+
+
+def test_resolve_attribute_at_indexed_matches_free_function_on_non_attributes(qtbot):
+    """Equivalence on positions that must resolve to None from BOTH paths:
+    tag name, text content, close tag, whitespace between tokens, document
+    edges."""
+    from pgtp_editor.ui.xml_editor import attribute_at_position
+
+    editor = _bug008_editor(qtbot)
+    text = _BUG008_TEXT
+    positions = [
+        0,  # document start, on '<'
+        text.index("Pages"),  # tag name token
+        text.index("text content here") + 4,  # text content
+        text.index("</Page>") + 3,  # inside a close tag
+        text.index(' tableName'),  # whitespace between attributes
+        len(text) - 1,  # inside the root close tag
+    ]
+    for pos in positions:
+        assert attribute_at_position(text, pos) is None, f"fixture bug at {pos}"
+        assert editor.resolve_attribute_at(pos) is None, f"mismatch at position {pos}"
+
+
+def test_resolve_attribute_at_index_invalidated_by_edit(qtbot):
+    """BUG-008 staleness: resolving builds the lazy index; a subsequent edit
+    must invalidate it so the next resolve runs against fresh spans (revision
+    guard + _resolution_index reset), returning the NEW document's result and
+    still matching the from-scratch free function."""
+    from pgtp_editor.ui.xml_editor import attribute_at_position
+
+    editor = _bug008_editor(qtbot)
+    pos = _BUG008_TEXT.index("fileName")
+    assert editor.resolve_attribute_at(pos) == ("Root/Pages/Page", "fileName")
+    assert editor._resolution_index is not None  # index was built lazily
+
+    new_text = '<Root>\n  <Detail elementCaption="new"/>\n</Root>'
+    editor.setPlainText(new_text)  # textChanged -> _rescan_structure
+    assert editor._resolution_index is None  # spans rebuilt -> index dropped
+
+    new_pos = new_text.index('"new"') + 1
+    resolved = editor.resolve_attribute_at(new_pos)
+    assert resolved == ("Root/Detail", "elementCaption")
+    assert resolved == attribute_at_position(new_text, new_pos)
