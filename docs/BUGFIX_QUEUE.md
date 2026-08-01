@@ -333,7 +333,7 @@ not a divergence from a documented design decision.
 
 ## BUG-004: Light/Dark theme toggle has almost no visible effect app-wide
 
-**Status:** OPEN
+**Status:** RESOLVED (e2a8c14)
 **Reported:** 2026-08-01
 **Report (verbatim):** "light mode / dark mode doesn't work at all"
 
@@ -702,5 +702,82 @@ sync behavior anywhere (grepped for "View menu", "QDockWidget", "toggleViewActio
 is an undocumented implementation gap, not a divergence from a stated design decision. No spec-maintainer
 follow-up needed unless the fix introduces new user-facing behavior worth calling out (unlikely — this
 just makes existing documented checkboxes accurate).
+
+---
+
+## BUG-008: Project-tree selection → Properties panel is very slow on large projects
+**Status:** OPEN
+**Reported:** 2026-08-01
+**Report (verbatim):** "Project tree selection to property showing is very slow"
+
+**Root cause:** The slow step is building the Properties panel value cells, not the tree signal itself.
+Selecting a tree node fires `ProjectTreePanel._on_current_item_changed`
+(`pgtp_editor/ui/project_tree.py:74`) → `MainWindow._on_tree_selection_changed`
+(`pgtp_editor/ui/main_window.py:1045`) → `PropertiesPanel.show_node`
+(`pgtp_editor/ui/properties_panel.py:187`) → `_populate_table` (line 226), which calls
+`_display_value(row_spec)` (line 231) **once per attribute row**.
+
+`PropertiesPanel._display_value` (`properties_panel.py:200`) — only when a curated schema model has been
+injected via `set_schema_model` (wired at `main_window.py:454` after schema load; when the model is
+`None` the whole label path is skipped and selection is fast) — does, per row:
+`self._xml_editor.resolve_attribute_at(...)` (line 215). `XmlEditor.resolve_attribute_at`
+(`pgtp_editor/ui/xml_editor.py:1142`) delegates to the module-level
+`attribute_value_at_position(text, pos, spans)` (`xml_editor.py:91`). Even though the `spans` list is
+cached and revision-guarded (so `scan()` is not re-run), `attribute_value_at_position` itself is O(N) in
+the number of spans **per call**:
+- a full linear pass over every span computing `_opening_tag_end` (char-by-char text scan) to find the
+  containing span (`xml_editor.py:125-133`), then
+- an ancestor walk that calls `xml_structure.parent_tag_span` repeatedly (`xml_editor.py:143-149`);
+  `parent_tag_span` (`xml_structure.py:188`) is itself an O(N) linear scan over all spans per step.
+
+So one node selection costs roughly O(rows × N × avg_tag_len). On a large `.pgtp` (the codebase already
+cites `dev_Ferrara` at ~37k tags in the `build_parent_map` docstring at `xml_structure.py:213-224`) this
+is the same O(n²)-per-operation hazard that `build_parent_map` was introduced to kill — but the
+Properties-label path never adopted it and re-derives the containing span and full ancestor chain from
+scratch for every attribute row. This is a direct sibling of BUG-003 (Table-references click slowness):
+same cause family (per-item full-document structural re-derivation), same fix direction (reuse a cached,
+precomputed structure).
+
+**Proposed fix:** Make the per-row attribute resolution reuse precomputed structure instead of
+re-scanning all spans per row. Concrete shape:
+- In `XmlEditor` (`pgtp_editor/ui/xml_editor.py`), build a parent map alongside the existing `_spans`
+  cache: extend `_rescan_structure` (line 762) to also store
+  `self._spans_parent_map = xml_structure.build_parent_map(self._spans)` (helper already exists at
+  `xml_structure.py:213`, O(n log n) single pass). Keep it under the same `_spans_revision` guard so it
+  invalidates with the spans.
+- Rework `attribute_value_at_position` / the `resolve_attribute_at` path so the ancestor walk uses the
+  parent map (`parent_map[id(span)]`) instead of calling `parent_tag_span` per level. The containing-span
+  lookup at `xml_editor.py:125-133` should reuse the same containing-span logic the cached cursor path
+  already uses (`enclosing_tag_span_from_spans`, `xml_structure.py:147`) rather than its own O(N) loop —
+  note the quirk in the current loop that recomputes the real `>` via `_opening_tag_end` to be robust to
+  `>` inside quoted values; preserve that robustness (either fold it into the shared helper or keep a
+  quote-aware containing lookup) so behavior does not regress on tags with `>` in attribute values.
+- Alternatively/additionally, memoize per `show_node` call: within one `_populate_table`, all attribute
+  rows of a Page/Column resolve to the **same** element (same `target_line`/tag), so the
+  `(tag_chain)` ancestor resolution can be computed once per distinct `target_line` and reused across that
+  node's rows instead of once per row. This alone removes most of the cost even before the parent-map
+  change and is the lowest-risk first step.
+- Gotchas: (1) the label path only runs when `set_schema_model` has been given a non-`None` model, so any
+  perf test must inject a schema model to reproduce — otherwise `_display_value` short-circuits at
+  `properties_panel.py:201` and looks fast. (2) `resolve_attribute_at` must keep its revision guard so a
+  parent map isn't served stale after an edit. (3) Do not change the displayed strings — this is a pure
+  performance fix; `value_label` output and navigate-on-click behavior must be identical.
+
+**Test impact:** Existing coverage: `tests/ui/test_properties_panel.py` and
+`tests/ui/test_properties_panel_rows.py` (Properties row-building + display, including label decoration);
+`tests/ui/test_xml_editor_nav_perf.py` (the established "no rescan / no full-document copy per operation"
+regression pattern — extend, don't duplicate); `tests/ui/test_xml_structure.py` (spans / `parent_tag_span`
+/ `build_parent_map`). New cases needed: (a) a perf regression test in the `nav_perf` style asserting that
+`PropertiesPanel.show_node` on a node with many attribute rows, **with a schema model injected**, does not
+call `xml_structure.scan` and does not perform O(rows) full-span ancestor walks (e.g. count
+`parent_tag_span`/`scan` calls, or assert calls are bounded by distinct target lines rather than row
+count); (b) an equivalence test that the parent-map-backed `resolve_attribute_at` returns exactly the same
+`(tag_chain, attr)` as the from-scratch `attribute_at_position(text, pos)` for representative positions,
+including a tag with a `>` inside a quoted attribute value.
+
+**Spec impact:** none — `CONSOLIDATED_SPEC.md` §10 (Properties panel) and §11 (curated-label display)
+specify the label decoration as "display-only" with unchanged navigate-on-click behavior; this is purely a
+performance fix within that contract. No divergence from a stated decision, so no spec-maintainer
+follow-up unless the fix changes user-visible behavior (it should not).
 
 ---
