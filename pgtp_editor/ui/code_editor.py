@@ -49,6 +49,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
+from pgtp_editor.sql.keywords import SQL_KEYWORDS
 from pgtp_editor.ui.editor_gutter import GutterBookmarkFoldMixin
 
 # Keyword lists kept as Qt-free module constants (unit-tested for existence /
@@ -77,21 +78,11 @@ _PHP_KEYWORDS = frozenset(
 # SQL / plpgsql (spec §18.1: the DDL Explorer's synthesized buffer). Stored
 # lowercase; SQL keyword matching is case-insensitive (pg_get_functiondef
 # emits uppercase CREATE OR REPLACE FUNCTION..., hand-written bodies vary).
-_SQL_KEYWORDS = frozenset(
-    """
-    add all alter and any array as asc begin between by call cascade case cast
-    check column commit constraint create cross declare default delete
-    desc distinct do drop else elsif end except execute exists exception fetch
-    for foreign from full function grant group having if immutable in index
-    inner insert instead into is join key language leakproof left like limit
-    loop not null of offset on or order out outer perform primary procedure
-    raise references replace restrict return returning returns revoke right
-    rollback row rows security select sequence set stable strict table then to
-    trigger truncate union unique update using values view volatile when where
-    while with
-    true false
-    """.split()
-)
+# The set itself lives in the Qt-free `sql/` core (§18.4) so the highlighter and
+# the selection formatter share ONE dialect source without dragging Qt into that
+# core -- ui depends on core, never the other way round. Same object, so
+# `_highlighter._keywords is _SQL_KEYWORDS` still holds.
+_SQL_KEYWORDS = SQL_KEYWORDS
 
 # Opener -> closer pairs for auto-close / selection-wrap.
 _BRACKET_PAIRS = {"(": ")", "[": "]", "{": "}"}

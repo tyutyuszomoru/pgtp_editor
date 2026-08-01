@@ -35,7 +35,7 @@
     - [18.1 Routines & triggers browsing (DDL Explorer)](#181-routines--triggers-browsing-ddl-explorer) — *implemented (except XML cross-refs)*
     - [18.2 Projects, checkout & state markers](#182-projects-checkout--state-markers) — *planned*
     - [18.3 Deploy workflow & schema diff/migration](#183-deploy-workflow--schema-diffmigration) — *planned*
-    - [18.4 SQL/plpgsql selection formatter](#184-sqlplpgsql-selection-formatter) — *planned*
+    - [18.4 SQL/plpgsql selection formatter](#184-sqlplpgsql-selection-formatter) — *core implemented 2026-08-01; still no UI consumer*
 19. [PHP generation (vendor) & Save](#19-php-generation-vendor--save)
 20. [re_phpgen — own generator & gap loop](#20-re_phpgen--own-generator--gap-loop)
     - [20.4 Production cutover](#204-production-cutover-target-design--not-yet-reached) — *planned*
@@ -215,8 +215,12 @@ pgtp_editor/
 │   └── reused_tables.py   # collect_table_usages → TableUsage/TableReference
 ├── validation/
 │   └── tier2.py       # validate_project → list[ValidationIssue]
-├── sql/               # SQL/plpgsql selection formatter (Qt-free) — §18.4, target design, not yet built
-│   └── formatter.py   # (name TBD) format_selection(text) → FormatResult; tokenizer + nesting-depth reindenter
+├── sql/               # SQL/plpgsql selection formatter core (Qt-free) — §18.4
+│   ├── __init__.py    # façade: format_selection / FormatResult / Issue / SQL_KEYWORDS (test-pinned __all__)
+│   ├── keywords.py    # SQL_KEYWORDS — the ONE dialect source, shared with ui/code_editor.py's highlighter
+│   ├── issues.py      # Issue{message, start, end, start_line/col, end_line/col, fatal} (+ .line alias)
+│   ├── tokenizer.py   # Token + tokenize(text) → list[Token] (verbatim, never raises)
+│   └── formatter.py   # format_selection(text, *, indent_unit="    ") → FormatResult; _Reindenter frame walk
 └── ui/                # all PySide6 widgets (see below)
 ```
 
@@ -234,8 +238,12 @@ Key `ui/` modules: `main_window.py`, `center_stage.py`, `project_tree.py`, `xml_
 
 **Dependency rule:** `model/` touches lxml; nothing in `model/` or `ui/` depends on `diff/`; pure-logic
 modules (`search`, `history`, `caption_scan`, `settings_index`, `xsd_load`, `xsd_verify`, `tier2`, `db/*`,
-`analysis/*`, `type_map`, `from_table`, `xml_structure`, `sql/*` — §18.4, target design) are Qt-free and
-unit-testable without a `QApplication`.
+`analysis/*`, `type_map`, `from_table`, `xml_structure`, `sql/*`) are Qt-free and unit-testable without a
+`QApplication`. The arrow points **ui → core, never core → ui**: `sql/` is the live, test-enforced
+precedent — `ui/code_editor.py` imports `SQL_KEYWORDS` from `sql/keywords.py`, never the reverse, and
+`tests/sql/test_package_purity.py` pins it (static AST scan for `PySide6`/DB/network/`pgtp_editor.ui`/
+`pgtp_editor.db` imports **plus** a fresh-interpreter subprocess check that importing `pgtp_editor.sql`
+loads no Qt module at all) — §18.4.
 
 ---
 
@@ -623,9 +631,14 @@ numbers), auto-close + selection-wrap for `()[]{}`/quotes, **Ctrl+Shift+B** brac
 uses `_SQL_KEYWORDS` (stored lowercase; matching is **case-insensitive** — `pg_get_functiondef` emits
 uppercase, hand-written bodies vary), `--` line comments, single-quoted strings with `''` doubling
 (double-quoted text is an identifier, left unstyled), and the shared `/* */` block comments.
-`_SQL_KEYWORDS` is also the planned **shared dialect source** for the SQL/plpgsql selection formatter
-core (§18.4, target design, not yet implemented) — the highlighter and that future formatter are meant
-to never disagree on what counts as a keyword.
+That keyword set is **not defined in `ui/`**: it lives in the Qt-free core as
+`pgtp_editor/sql/keywords.py::SQL_KEYWORDS` (a `frozenset` of 115 lowercase members) and
+`code_editor.py` does `from pgtp_editor.sql.keywords import SQL_KEYWORDS` then binds
+`_SQL_KEYWORDS = SQL_KEYWORDS` — a plain re-bind of the **same object**, so the existing
+`_highlighter._keywords is _SQL_KEYWORDS` assertions still hold. It is therefore the **one shared
+dialect source** for both the highlighter and the SQL/plpgsql selection formatter (§18.4): extend the
+dialect in `sql/keywords.py` and both consumers see it, and the two can never disagree on what counts as
+a keyword.
 `CodeEditor` also exposes `navigate_to_line(line)` (1-based; the same public navigation entry point
 `XmlEditor` exposes, used by the BrowserPanel → EditorPanel jump, §18.1). In its **`language="sql"` DDL
 mode** navigation is **top-aligned** (the target line lands at the top of the viewport, not centered) —
@@ -1228,10 +1241,13 @@ golden "freshly-added table" oracle; defaults are corpus-derived and **not yet f
 > `db/schema_snapshot.py`/`db/migration_gen.py` (§18.3); those parts of this section remain target
 > design, settled before implementation starts.
 >
-> **§18.4 (2026-08-01, settled design, not yet implemented)** specifies a reusable, Qt-free
-> **SQL/plpgsql selection formatter** (hand-built tokenizer + nesting-depth reindenter — indentation and
-> line breaks only). It has **no consumer yet**: it is scoped as a standalone core, to be wired into a
-> future editable DDL Editor surface (making §18.1's `EditorPanel` editable, itself not yet designed).
+> **§18.4's SQL/plpgsql selection formatter core is implemented (2026-08-01) but still has no UI
+> consumer.** The Qt-free package `pgtp_editor/sql/` (`__init__.py`/`keywords.py`/`issues.py`/
+> `tokenizer.py`/`formatter.py`) and its mirror `tests/sql/` exist and are green; **nothing calls
+> `format_selection` yet**. The keyboard shortcut is still **TBD** (so §26/§27 gain no entry), the
+> editable DDL Editor surface it is meant to serve (making §18.1's read-only `EditorPanel` editable) is
+> still **undesigned and out of scope**, and the Audit-panel reporting path is a **contract only, not
+> wiring**.
 
 **Strategic framing.** This is **not** a feature bolted onto `.pgtp` editing — it is a standalone
 Postgres DDL-versioning mode, independent of phpgen/`.pgtp` entirely, usable with zero `.pgtp` files
@@ -1314,8 +1330,9 @@ trigger:**
   `node_at_line` (§9, `model/line_index.py`) plays for click-to-tree sync.
 - **Implemented:** CenterStage tab `ui/ddl_editor_panel.py::EditorPanel(QWidget)` hosts the
   synthesized buffer in the **existing** `ui/code_editor.py::CodeEditor` widget under its
-  **`language="sql"` mode** — the SQL/plpgsql `_CodeHighlighter` keyword set (`_SQL_KEYWORDS`,
-  case-insensitive matching, `--` line comments, `''`-doubled single-quote strings, `/* */` block
+  **`language="sql"` mode** — the SQL/plpgsql `_CodeHighlighter` branch (case-insensitive
+  `_SQL_KEYWORDS` matching — the keyword set itself lives in the Qt-free `sql/keywords.py`, §18.4 —
+  `--` line comments, `''`-doubled single-quote strings, `/* */` block
   comments) added alongside the existing JS/PHP ones in that same file (§8). Has its own
   `FindReplaceBar` instance, following the same per-tab document-routing precedent as the Edit XSD tab
   (§7/§15) and the planned Custom PHP tabs (§21). The tab sits in `CenterStage` between Edit XSD and
@@ -1612,13 +1629,15 @@ cached or trusted from a prior session.
 
 ### 18.4 SQL/plpgsql selection formatter
 
-> **Status: target design (settled 2026-08-01), not yet implemented.** Scoped as a standalone,
-> Qt-free formatter **core only** — it has **no UI consumer yet**. It is not wired into anything: the
-> keyboard shortcut that will trigger it is **TBD** (no binding chosen), and the DDL Editor surface it is
-> meant to serve (making §18.1's currently read-only `EditorPanel`/`ui/ddl_editor_panel.py` editable) is
-> itself **not designed** — building that editor is explicitly **out of scope** of this subsection and is
-> future work tracked separately. This subsection specifies only the formatter's algorithm, refusal
-> contract, and module shape, so that whoever designs the DDL Editor has a ready-made core to call.
+> **Status: core implemented 2026-08-01 (`pgtp_editor/sql/`, `tests/sql/`); still no UI consumer.**
+> Scoped as a standalone, Qt-free formatter **core only**, and it is still **not wired into anything**:
+> nothing calls `format_selection`, the keyboard shortcut that will trigger it is **TBD** (no binding
+> chosen, so §26/§27 gain no entry), and the DDL Editor surface it is meant to serve (making §18.1's
+> currently read-only `EditorPanel`/`ui/ddl_editor_panel.py` editable) is itself **still not designed** —
+> building that editor is explicitly **out of scope** of this subsection and is future work tracked
+> separately. There is **no auto-format mode**, **no "Lint Selection" action**, and **no rule catalog**
+> beyond the tokenize/balance floor. The Audit-panel reporting path below is a **contract** (the `Issue`
+> span exists so a future host can underline the offending construct), **not wiring**.
 
 **Problem framing.** Once a future DDL Editor makes plpgsql function/trigger bodies hand-editable,
 "uniformity" for that editing means **consistent indentation and line breaks only** — not keyword
@@ -1632,8 +1651,9 @@ the formatter that enforces that narrow notion of uniformity.
   edit and **no** format-on-save, and — unlike Auto Parse XML (§9, off-by-default but togglable) — this
   formatter has **no auto-mode at all**: the user explicitly rejected an auto-mode as "intrusive and
   counterintuitive" during design. Do not add one without a fresh design decision superseding this one.
-- Operates on **arbitrary selections** — a complete statement, a bare fragment, or a chunk of plpgsql
-  control-flow (e.g. a `BEGIN...END` block) — not necessarily a whole function or trigger body.
+- Operates on **arbitrary selections** — a complete statement, a bare fragment (`where a = 1`,
+  `order by a, b`, `, b, c`, even `;` alone all format), or a chunk of plpgsql control-flow (e.g. a
+  `BEGIN...END` block) — not necessarily a whole function or trigger body.
 - There is **no "Lint Selection" action** and **no rule catalog** beyond the tokenize/balance floor
   described below (no keyword-casing rule, no comma-style rule, nothing semantic). If future prose
   anywhere implies otherwise, that implication is wrong per this design.
@@ -1645,13 +1665,130 @@ structure (`BEGIN`/`END`, `IF`/`ELSIF`/`END IF`, `LOOP`/`END LOOP`, `CASE`/`WHEN
 **whitespace and line breaks only** — keyword casing, identifier casing, comma placement/style, and
 literal values are never touched.
 
-Reuses **`_SQL_KEYWORDS`** — the lowercase, case-insensitive-matched keyword set already defined in
-`pgtp_editor/ui/code_editor.py` (~lines 80–94) and consumed by `_CodeHighlighter`'s `language="sql"`
-mode (§8, the DDL Explorer's `CodeEditor` highlighter) — as the **shared dialect source**, extended with
-plpgsql block keywords (`begin`/`end`/`if`/`elsif`/`loop`/`case`/`when`, already present in
-`_SQL_KEYWORDS`; any additional block keywords the tokenizer needs should be added to that same shared
-set rather than duplicated locally) so the highlighter and the formatter never disagree on what counts
-as a keyword.
+**Module shape (five modules, Qt-free, no DB/network I/O; `tests/sql/` mirrors it):** the package
+**`pgtp_editor/sql/`** (name follows the existing `db/`/`schema_learning/`/`analysis/`/`diff/` convention
+of §5's layout) contains `keywords.py` (dialect set) → `tokenizer.py` (`Token`, `tokenize`) →
+`formatter.py` (`FormatResult`, `format_selection`, the private `_Reindenter`) + `issues.py` (`Issue`),
+with `__init__.py` as the façade.
+
+**Public API:**
+
+| Symbol | Shape |
+|---|---|
+| `format_selection` | `format_selection(text: str, *, indent_unit: str = DEFAULT_INDENT_UNIT) -> FormatResult` (`DEFAULT_INDENT_UNIT = "    "`, four spaces) |
+| `FormatResult` | `@dataclass FormatResult{ok: bool, text: str, issues: list[Issue]}` — on refusal `ok=False` and `text` is the input **verbatim**, so even a caller that ignores `ok` cannot corrupt the selection |
+| `Issue` | `@dataclass(frozen=True) Issue{message, start, end, start_line, start_col, end_line, end_col, fatal=True}` + property `line == start_line` |
+| `tokenize` | `tokenize(text: str) -> list[Token]` — public on `pgtp_editor/sql/tokenizer.py` (lossless, verbatim, **never raises**) |
+| `SQL_KEYWORDS` | the shared dialect set (see below) |
+
+`sql/__init__.py`'s `__all__` is exactly `{"format_selection", "FormatResult", "Issue",
+"SQL_KEYWORDS"}` and that surface is **test-pinned**; `tokenize`/`Token` are reached through
+`pgtp_editor.sql.tokenizer` rather than the façade.
+
+`Issue` **mirrors and extends** `schema_learning/xsd_verify.py`'s `Issue{line, message, fatal}` (§11):
+same `message`/`fatal` framing, plus a precise span — 0-based `start`/`end` character offsets into the
+input and 1-based `start_line`/`start_col`/`end_line`/`end_col` (`end_col` exclusive) — because this
+feature must underline the exact offending construct, not just flag a line. `line` is kept as an alias of
+`start_line` so the shape reads as a strict superset. This is a **pattern extension, not a shared
+class**: `xsd_verify.Issue` is untouched and `sql.Issue` is a distinct type in the pure `sql/` package.
+
+**Shared dialect source — `SQL_KEYWORDS` lives in the core, not in `ui/`:** the lowercase,
+case-insensitively-matched keyword set is defined in **`pgtp_editor/sql/keywords.py::SQL_KEYWORDS`** (a
+`frozenset` of 115 members: the highlighter's original §18.1 set plus the plpgsql control keywords the
+tokenizer/block tracker need — `elseif`, `elsif`, `exit`, `continue`, `foreach`, `reverse`, `intersect`,
+`while`), and `ui/code_editor.py` binds `_SQL_KEYWORDS = SQL_KEYWORDS` for `_CodeHighlighter`'s
+`language="sql"` mode (§8). It is still exactly **one** source of truth shared by highlighter and
+formatter — but on the correct side of §5's dependency arrow: `sql/` must be Qt-free, so importing the
+set *from* `ui/` would have inverted **core must never import ui** (see the Supersession Ledger, §28).
+Extend the dialect in `sql/keywords.py`; both consumers see it. `Token.keyword` is a **view** (lowercased
+text when it is in the set, else `None`) — never a rewrite; `Token.text` stays verbatim.
+
+**Tokenizer (`sql/tokenizer.py`) — lexical only, no grammar:** kinds are plain string constants
+(`whitespace`, `newline`, `line_comment`, `block_comment`, `string`, `quoted_ident`, `dollar_string`,
+`number`, `word`, `punct`), matching the codebase's existing `kind: str` convention (`db/ddl_buffer.py`).
+`Token{kind, text, start, end, start_line, start_col, end_line, end_col, unterminated, tag}` with
+`is_trivia`/`is_opaque`/`keyword`/`is_keyword`/`lowered` views. `OPAQUE_KINDS` = comments, strings,
+quoted identifiers, dollar-quoted bodies: their **content is opaque and is never reindented or
+line-broken internally**. Postgres specifics: `''`/`""` doubling is an escape (not a terminator), `E'…'`
+additionally honors `\'`, `/* */` **nests**, `$$…$$`/`$tag$…$tag$` bodies are one token (`tag` recorded,
+`""` for a bare `$$`), and an unterminated opaque region is **not** an exception — it becomes one token
+with `unterminated=True` spanning from its opener to end-of-input, so the formatter can refuse with that
+exact span.
+
+**Unicode-aware identifiers and all three line endings** are guarantees, not incidentals (both came from
+bugs found and fixed during verification):
+
+- Word start/continue follow PostgreSQL's unquoted-identifier rule via `str.isalpha()` / `str.isalnum()`
+  (`_` a start char, `_` and `$` continuation chars), so **accented identifiers are never split**
+  (`ügyfél_száma` is one `word`). Splitting them let the reindenter insert spaces *inside* an identifier
+  and corrupt the SQL.
+- `\r\n`, a lone `\n` and a lone `\r` each count as **exactly one** line break for `Issue`/`Token`
+  line/column bookkeeping (including a `\r\n` straddling two scan chunks), and dominant-EOL detection
+  recognizes **CR-only** text — otherwise every span in classic-Mac text would point at the wrong line.
+
+**Glue rules the tokenizer/spacer must honor** (a naive lexer plus "one space between tokens" would
+change meaning, not just layout — the formatter only ever inserts single spaces between tokens, so
+anything that must not be separated is kept as one unit or has its space suppressed):
+
+| Construct | Rule |
+|---|---|
+| `::`, `:=`, `->>`, `#>>`, `#>`, `<=`, `<>`, `!=`, `\|\|`, `..`, `@>`, `<@`, `&&`, `~*`, `!~`, `^@`, … | multi-character operators are **one** `punct` token (longest match first) |
+| `a.b`, `a::text`, `a, b` | no space around `.` / `::`; none before `,` `;` `)` `]` |
+| `col%TYPE` / `col%ROWTYPE` | `%` glues when followed by `type`/`rowtype`; otherwise it is the modulo operator and keeps its spaces (`a % b`) |
+| `$1` | positional parameter is one `word` token (`$ 1` is not valid SQL); a `$` opening a dollar-quote is tested first |
+| `E'…'`, `U&'…'`, `B'…'`, `X'…'` | the prefix is glued to the opening quote (part of the `string` token); backslash escapes are honored only for the single-char `E`/`e` form |
+| `1..10` | the `..` is the plpgsql range operator, never a fractional point |
+| `f(x)`, `count(*)`, `"Q"(1)`, `f(a)(b)` | `(` glues to a preceding **non-keyword** word / quoted ident / `)` / `]` — but `in (1, 2)` and `values (1)` keep the space |
+| `array[1]`, `a[i]`, `a[1][2]` | a subscript `[` always glues to its target (word, quoted ident, string, `)` or `]`) |
+| unary `-`/`+` | glues to its operand when the token **before the sign** is an opener/operator/comma/keyword (`= -1`, `(-1)`, `, -1`, `select -1`); `a - 1` and `count(*) - 1` stay binary |
+
+**Reindenter (`sql/formatter.py::_Reindenter`) — one frame stack does both indentation and balance,** so
+there is a single implementation of "how deep are we". Frames: `root`, `paren`/`bracket`, the block
+frames `begin`/`if`/`loop`/`case` (balance-relevant), and the soft frames `declare`/`when` (indent-only,
+popped implicitly, never a refusal reason). It walks the significant tokens once (whitespace dropped,
+each token carrying how many newlines preceded it), so deep nesting cannot blow the stack.
+
+- **Indent** = `indent_unit` (default **4 spaces**) × open frames, with `exception` and a *statement*
+  `else`/`elsif`/`elseif` **dedented one level** so they sit at their block's own level (in a `CASE`
+  **expression** an `else` instead pops the branch's soft `when` frame, which aligns it with the `when`s),
+  and **+1 level** for clause-continuation lines (a line continuing an open
+  `select`/`from`/`where`/… clause at this nesting level).
+- **Line breaks** happen before clause starters (`select from where group having order limit offset
+  union except intersect join on values set returning with`), before block keywords
+  (`begin declare exception else elsif elseif end when`), after `begin`/`declare`/`loop`/`exception`
+  headers, after `;`, and after a `--` line comment (anything appended to it would be commented out). A
+  JOIN phrase breaks **once**, before its first prefix word (`left outer join` stays on one line, and
+  only when a `join` actually follows within three tokens).
+- **Author line breaks are preserved wherever no rule applies.** A newline the author put in the source
+  is honored, so hand-chosen layout — including **leading-comma style** — survives: this is how "never
+  change comma placement or style" is honored while still line-breaking structurally. Blank lines between
+  statements are **preserved but capped at one**, and leading blank lines are dropped.
+- **`CASE` bodies stay on the `then` line** (expression-friendly: `when 1 then 'a'` is one line). Only a
+  **statement** context — the nearest enclosing block being an `IF`, or a `BEGIN`'s `EXCEPTION` part —
+  makes `then`/`else` force a break so the body starts on the next line.
+- **Layout preservation:** the base indentation of the selection's **first content line** is re-applied
+  to every emitted line (so a formatted block stays where it sat in the host document; tabs included);
+  the **dominant EOL** (`\r\n` / `\n` / lone `\r`, ties → `\n`) is preserved; a trailing newline is
+  preserved (and its absence too). **Empty / whitespace-only input is returned untouched with `ok=True`**
+  (nothing to format, nothing to refuse).
+- **Guaranteed invariants (test-pinned over a realistic corpus, an adversarial set and seeded fuzz):**
+  the output's non-whitespace token texts equal the input's, in order, and only whitespace differs
+  (`"".join(out.split()) == "".join(in.split())`); keyword casing, identifier casing, comma placement and
+  literal values are never touched; formatting is **deterministic and idempotent**
+  (`fmt(fmt(x)) == fmt(x)`, for any `indent_unit`); no input raises or stalls.
+
+**False-positive guards (ordinary DDL must not hit the refusal gate).** These are load-bearing: without
+them, everyday statements would be read as unbalanced plpgsql.
+
+| Construct | Interpretation |
+|---|---|
+| `DROP TABLE IF EXISTS t;` / `CREATE … IF NOT EXISTS` | `IF` is a modifier, **not** a block opener |
+| `BEGIN;` and `BEGIN TRANSACTION\|WORK\|ISOLATION …` | transaction control, **not** a plpgsql block — and a later bare `END;` at root level is then accepted instead of reported as unmatched |
+| `DECLARE c CURSOR FOR …` (inline `CURSOR` before the next `;`) | a **statement**; a `DECLARE` that *ends its line* opens a plpgsql declaration section (told apart by layout), and that section's frame is popped by its `BEGIN` |
+| `EXCEPTION` | **dedents** and marks the enclosing `BEGIN`'s exception part; it does **not** open a block |
+| `END IF` / `END LOOP` / `END CASE` | two-token closers — the `if`/`loop`/`case` after `end` is never an opener, and never starts a new line |
+| bare `LOOP` vs `FOR … LOOP` / `WHILE … LOOP` | a bare `LOOP` (at start, after `;`, or after `then`/`begin`/`else`/`exception`/`loop`/`declare`) opens a block on its own line; a loop **header** keeps its `LOOP` on the header line |
+| `EXIT WHEN done` / `RAISE … WHEN` | ordinary statement tails — `WHEN` only opens an indented branch inside a `CASE` or an `EXCEPTION` part |
 
 **Why build instead of adopt a library (record the investigation, not just the conclusion):**
 
@@ -1669,34 +1806,33 @@ this feature — not a compromise forced by time pressure.
 
 **Safety / refusal behavior — the only gate, unconditional:**
 
-Formatting proceeds whenever the selection can be confidently tokenized and its blocks/parens are
-balanced. If it cannot — an unmatched `BEGIN`/`IF`/paren, or the selection boundary splits a string
-literal or a `$$...$$` dollar-quote in half — the formatter **refuses entirely**: the selection is left
-**completely unchanged**, nothing is guessed or partially applied. This is the project's existing "never
-a silent wrong result" ethos (cf. Diff/Merge's ambiguity gate, §12) applied here. This tokenize/balance
-refusal is **unconditional and the only thing that blocks formatting** — there is no separate semantic or
-lint gate layered on top (see the explicit exclusions below).
+Formatting proceeds whenever the selection can be confidently tokenized and its parens/brackets/blocks
+are balanced. If it cannot — an unmatched `BEGIN`/`IF`/`LOOP`/`CASE`/`END`, a stray or unmatched
+paren/bracket, a wrong closer (`if … end loop;`), or a selection boundary that splits a string literal,
+quoted identifier, `/* */` block comment or `$$…$$` dollar-quote in half — the formatter **refuses
+entirely**: `ok=False`, `text` is the input **verbatim** (so the selection is left completely unchanged
+even for a caller that ignores `ok`), and `issues` is non-empty with every entry `fatal=True`. Nothing is
+guessed or partially applied. This is the project's existing "never a silent wrong result" ethos (cf.
+Diff/Merge's ambiguity gate, §12) applied here. This tokenize/balance refusal is **unconditional and the
+only thing that blocks formatting** — there is no separate semantic or lint gate layered on top (see the
+explicit exclusions below). Clause-level incompleteness is *not* a refusal reason: a bare fragment
+(`where a = 1`, `and x = 2`) is a legitimate selection.
 
-On refusal, the formatter reports through the **Audit panel** (§7 — confirmed as the app's single output
-surface for all actions, already used by `[Schema]`/`[Validate]`/`[Find]`/`[PHP]`-prefixed lines) with a
-**precise start/end position** (offset or line+column start/end), not just a line number, so the hosting
-editor can underline the exact span where tokenization broke down (e.g. the specific unmatched `BEGIN`)
-rather than flag the whole line.
-
-**Architecture:**
-
-- New pure, Qt-free core package **`pgtp_editor/sql/`** (name chosen to follow the existing
-  `db/`/`schema_learning/`/`analysis/`/`diff/` convention of §5's package layout; does not exist yet),
-  mirrored by `tests/sql/`. No Qt imports, no DB/network I/O of any kind — consistent with the
-  Qt-free/DB-free pure-logic modules already listed in §5's dependency rule.
-- Primary entry point shape: `format_selection(text: str) -> FormatResult`, where `FormatResult` is
-  either the reformatted text or a refusal carrying one or more `Issue`-like objects.
-- `Issue` here **mirrors, and explicitly extends, the existing `Issue{line, message, fatal}` shape** from
-  `pgtp_editor/schema_learning/xsd_verify.py` (`verify_curated(text) -> list[Issue]`, §11) — same
-  `message`/`fatal` framing — but adds **start/end** position (offset or line+column start/end) since
-  this feature must underline a span, not just flag a line; `xsd_verify`'s shape does not carry that
-  today. This is a **pattern extension**, not a copy: `xsd_verify.Issue` itself is unchanged by this
-  design; §18.4's `Issue`-like type is a distinct type in `pgtp_editor/sql/`, not a shared class.
+- **All refusals are reported, sorted by offset** (`(start, end)`). An unclosed `IF` inside an unclosed
+  `BEGIN` yields **two** issues; each carries the **opener's** span (the `begin`, the `if`, the `(`) or
+  the offending closer's span (`end if`, `)`), with the line/column repeated in the message text
+  (verbatim shape: `Unmatched IF -- no matching END IF in the selection (line 2, column 3).`). A wrong
+  closer is reported **once**, against the opener, naming what was found instead
+  (`... -- found END loop instead ...`).
+- **Exception:** an unterminated string / quoted identifier / dollar-quote / block comment is reported
+  **alone** and short-circuits **before** the balance walk, because any balance conclusion drawn past a
+  broken quote is unreliable.
+- **Reporting contract (not wiring):** on refusal, the host is expected to report through the **Audit
+  panel** (§7 — the app's single output surface for all actions, already used by
+  `[Schema]`/`[Validate]`/`[Find]`/`[PHP]`-prefixed lines) using the `Issue` span so the exact construct
+  can be underlined (e.g. the specific unmatched `BEGIN`) rather than the whole line flagged. **No such
+  consumer exists yet**, and no audit prefix has been chosen; the span is carried precisely so one can be
+  added without touching the core.
 
 **Explicitly out of scope of this subsection (deferred/future, not designed here):**
 
@@ -1704,7 +1840,7 @@ rather than flag the whole line.
    `EditorPanel`/`ui/ddl_editor_panel.py` editable) — this subsection covers only the reusable formatter
    core and its keyboard-shortcut trigger *contract* (shortcut TBD). Wiring `format_selection` into a
    real editing surface, and choosing the concrete shortcut, is future work once that editor exists. As
-   of this subsection the formatter has **no consumer**.
+   of today the formatter core is shipped and tested but has **no consumer**.
 2. **Semantic/existence linting** (verifying that referenced tables/columns/functions actually exist) is
    a **separate, explicitly deferred idea** — not designed here and not part of `format_selection`'s
    refusal gate. It is expected to become its own forthcoming specification built around restoring a
@@ -2038,6 +2174,8 @@ is authoritative** (and is what appears in the body above).
 | 2026-08-01 | §8 gutter / bookmarks / folding existed **only** on `XmlEditor`; DDL `EditorPanel`'s `CodeEditor` had none (no gutter/line-numbers/bookmarks/folding, Qt-mono default tab stop) | Generic gutter + bookmark + fold-**state** machinery **extracted into a shared base** — realized as the mixin `GutterBookmarkFoldMixin` in the new module `ui/editor_gutter.py` — with a **pluggable foldable-region provider**, used by **both** `XmlEditor` (XML-span provider) and the DDL editor (DDL-object provider over the `DdlObjectSpan` index); DDL editor also gains a **4-character tab stop** — one gutter implementation, never a parallel second |
 | 2026-08-01 | §8 gutter + line bookmarks were **Raw-XML-only** — the "Edit code…" JS/PHP event-handler editor (`CodeEditorDialog`/`CodeEditor`) had no gutter, no line numbers and no bookmarks | The shared `GutterBookmarkFoldMixin` (`ui/editor_gutter.py`) sits on **`CodeEditor` itself**, so **every** code editor — including the JS/PHP event-handler dialogs — now shows the line-number gutter and supports line bookmarks (folding inert there: no regions installed). Surfaced as a side effect of the extraction and **explicitly kept by the project owner** rather than gated per language: line numbers in a code editor are conventional, and gating would add a second code path. Bookmarks stay **session-only, per-document**; the "Edit code…" `CodeEditorDialog` is a dialog rather than a center-stage tab, so the Bookmarks menu does not reach it (its gutter strip stays mouse-only) |
 | 2026-08-01 | The Bookmarks menu/shortcuts remained bound to the **Raw XML editor only** (the row above, same date) | **Per-tab dispatch:** `_build_bookmarks_menu` captures no editor; each of the four actions resolves its target at **trigger** time via `main_window.py::_active_bookmark_editor()` — Edit XSD tab → `stage.xsd_editor`, DDL Explorer tab → `stage.ddl_editor_panel.editor`, any other tab → `stage.xml_editor` — mirroring `_active_find_bar` but **without** its `_reveal_raw_xml_tab()` side effect (toggling a bookmark must never switch tabs). The `CodeEditorDialog` remains out of the menu's reach |
+| 2026-08-01 | §18.4 formatter reuses **`_SQL_KEYWORDS` imported from `pgtp_editor/ui/code_editor.py`** as its shared dialect source (settled design, same date) | **Relocated, not imported:** the set lives in the Qt-free core as `pgtp_editor/sql/keywords.py::SQL_KEYWORDS` (a `frozenset` of 115 lowercase members; added `elseif`, `elsif`, `exit`, `continue`, `foreach`, `reverse`, `intersect`, `while`) and `ui/code_editor.py` binds `_SQL_KEYWORDS = SQL_KEYWORDS` (same object, so `_highlighter._keywords is _SQL_KEYWORDS` still holds). Importing from `ui/` would have inverted §5's dependency rule (core must never import ui; `sql/` must stay Qt-free, now test-enforced by `tests/sql/test_package_purity.py`) — still exactly one shared source of truth for the highlighter's `language="sql"` mode and the formatter, just on the correct side of the arrow |
+| 2026-08-01 | §18.4 module shape sketched in §5's tree as a single `sql/formatter.py` ("name TBD") with entry point `format_selection(text) -> FormatResult` and a `FormatResult` that "is either the reformatted text or a refusal" (settled design, same date) | **Five modules** as shipped — `sql/__init__.py` façade + `keywords.py`/`issues.py`/`tokenizer.py`/`formatter.py` — with `format_selection(text: str, *, indent_unit: str = "    ") -> FormatResult`, `FormatResult(ok, text, issues)` whose `text` on refusal is the input **verbatim** (an `ok`-ignoring caller cannot corrupt the selection), frozen `Issue(message, start, end, start_line, start_col, end_line, end_col, fatal=True)` with `.line == start_line` for `xsd_verify.Issue` parity, and a public `tokenize(text) -> list[Token]` on `sql/tokenizer.py` (the façade's `__all__` stays the four documented names) |
 | 2026-08-01 | Dark theme = Fusion + `dark_palette()` **palette-only** (the BUG-004 fix above, same date) — Fusion+palette alone rendered checkable menu indicators outlined near-black on the dark menu background (BUG-010) | Dark = Fusion + `dark_palette()` **+ the QDarkStyleSheet dark QSS** (`qdarkstyle>=3.2`, new runtime dependency, MIT-credited in About); light **always** clears the stylesheet (`app.setStyleSheet("")`) so round-trips leave no stale QSS; the palette stays applied beneath the QSS for palette-reading custom widgets; side effect: `app.style().objectName()` is empty in dark mode (`QStyleSheetStyle` wrapping) |
 | 2026-08-01 | §8 `XmlEditor` ran the O(document) structure rescan (`_rescan_structure`) and code-region rebuild (`_refresh_code_region_selections`) **synchronously on every `textChanged`** — i.e. a full `toPlainText()` copy + whole-document pass per keystroke — and `_update_matching_tag_highlight` **rescanned when it found `_spans` stale** on `cursorPositionChanged` (BUG-015) | Both rescans **debounced** behind a parented single-shot `self._rescan_timer = QTimer(self)`, `_RESCAN_DEBOUNCE_MS = 250`, scheduled by `_on_text_changed_schedule_rescan` (which absorbs the `_applying_theme` skip) and executed by `_rescan_now()` (structure → code regions → matching-tag highlight → gutter repaint); `_update_matching_tag_highlight` now **suppresses** the highlight when spans are stale instead of rescanning (a rescan there would run per keystroke via the caret and defeat the debounce; stale offsets would paint a wrong range anyway); two exact-structure carve-outs bypass the debounce — `setPlainText` calls `_rescan_now()` synchronously (document swap) and `_toggle_fold` calls `_flush_pending_rescan()` first, with the flush deliberately **not** in `_foldable_region_starting_at` (the gutter `paintEvent` calls it per visible block). Measured 216.1 → 2.0 ms per typed character on a 1 MB / 21,002-block document |
 | 2026-08-01 | §8 `XmlSyntaxHighlighter` block state = **odd-`"`-parity per line** (`_has_unterminated_quote(text, start)`), never re-synchronising, so one parity-flipping `"` cascaded a Qt re-highlight to the **end of the document** on every such keystroke (5,972 `highlightBlock` calls / 45 ms on a 6,002-block file; BUG-016) | **Tag-aware four-state machine** — `STATE_NORMAL`/`STATE_IN_UNCLOSED_STRING`/`STATE_IN_TAG`/`STATE_IN_SINGLE_QUOTED` computed by the method `XmlSyntaxHighlighter._end_state(text, state)` over the state-changing characters matched by `_STATE_CHARS_RE = [<>"']` — where a quote only opens a value **inside a tag** (quotes in text content, i.e. PHP handler bodies, are inert), plus the **`<` resync rule**: a raw `<` inside a quoted value snaps the state back to `STATE_IN_TAG`, bounding the cascade to a block or two (trade-off: a raw `<` inside an attribute value ends that value's highlighting early — the document is invalid XML anyway and it self-corrects). `_has_unterminated_quote` deleted; continuation handled by `_continued_string_end(text, quote)`; helpers kept as **methods** so `debuglog.py`'s `("ui.xml_editor", "XmlSyntaxHighlighter.")` flood exclusion still covers them |
@@ -2067,6 +2205,11 @@ is authoritative** (and is what appears in the body above).
   (must fail gracefully).
 - **Fold re-scan performance** and `line_index` O(N²) — accepted for now; optimize only if profiling
   demands.
+- **§18.4 formatter host, shortcut and audit prefix:** the implemented `sql/` core has **no consumer**.
+  Which editing surface calls it (the still-undesigned editable DDL Editor is the intended one), which
+  keyboard shortcut triggers it (hence no §26/§27 entry), and which Audit-panel prefix its refusals use
+  are all **deliberately unresolved** — pending the DDL Editor design, not an oversight. **Not open:**
+  whether an auto-format mode exists — it does **not**, by explicit decision (§18.4).
 
 ---
 

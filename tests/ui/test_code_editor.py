@@ -69,6 +69,28 @@ def test_sql_keyword_list_exists_and_is_nontrivial():
     assert all(kw == kw.lower() for kw in _SQL_KEYWORDS)
 
 
+def test_sql_keywords_are_the_shared_dialect_source_from_the_sql_package():
+    """§18.4: the highlighter and the formatter must never disagree.
+
+    `_SQL_KEYWORDS` now only re-binds `pgtp_editor.sql.keywords.SQL_KEYWORDS`;
+    a copy here (or a second literal set) would let the two drift apart.
+    """
+    from pgtp_editor.sql.keywords import SQL_KEYWORDS
+
+    assert _SQL_KEYWORDS is SQL_KEYWORDS
+
+
+def test_the_formatter_sees_the_same_keywords_the_highlighter_highlights():
+    from pgtp_editor.sql.tokenizer import tokenize
+
+    for word in ("select", "BEGIN", "End", "if", "loop", "case", "when", "declare"):
+        assert word.lower() in _SQL_KEYWORDS, word
+        assert tokenize(word)[0].is_keyword, word
+    for word in ("my_table", "ügyfél", "v_count"):
+        assert word.lower() not in _SQL_KEYWORDS, word
+        assert not tokenize(word)[0].is_keyword, word
+
+
 # ---------------------------------------------------------------------------
 # Widget: CodeEditor construction.
 # ---------------------------------------------------------------------------
