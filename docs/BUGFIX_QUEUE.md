@@ -500,7 +500,7 @@ not a requirement.
 ---
 
 ## BUG-006: Calculated columns (`isCalculated="true"`) are flagged as mismatches in XML→Database check
-**Status:** OPEN
+**Status:** RESOLVED (44a2bbe)
 **Reported:** 2026-08-01
 **Report (verbatim):** "when a calculated column is created in the xml (<ColumnPresentation fieldName="**" isCalculated="true" it should not show up as mismatch, but with a different symbol, orange and not as mismatch."
 
@@ -624,7 +624,7 @@ in §17.
 ---
 
 ## BUG-007: View-menu dock checkboxes don't uncheck when the dock is closed via its own title-bar ✕
-**Status:** OPEN
+**Status:** RESOLVED (44a2bbe)
 **Reported:** 2026-08-01
 **Report (verbatim):** "when I close the BrowserPane, in the View the checkbox is not changing (appears
 to be still open). Closing the BrowserPane must set all BrowserPane panels checkbox not checked"
@@ -861,5 +861,139 @@ omission rather than a documented decision. After the fix lands, flag `spec-main
 note recording the app-icon + `.desktop`/`desktopFileName` identity convention (icon resource location,
 `setDesktopFileName("pgtp-editor")`, and the KDE taskbar association) so it isn't accidentally dropped in
 future packaging changes.
+
+---
+
+## BUG-010: Dark-theme View-menu checkable indicators are invisible (dark box on dark menu)
+**Status:** OPEN
+**Reported:** 2026-08-01
+**Report (verbatim):** "in dark theme the checkbox borders are dark so it's invisible"
+
+**Root cause:** `pgtp_editor/ui/theme.py`, `dark_palette()` / `apply_theme()` (lines 63-110). The
+theme is **palette-only under the Fusion style** — there is no QSS anywhere in the app that styles menu
+checkable indicators (`grep` for `setStyleSheet` in `ui/main_window.py` finds only an unrelated
+`_debug_label` at line 348; `theme.py` sets no stylesheet). The View menu's checkable actions are
+plain `QAction.setCheckable(True)` items built in `MainWindow._build_view_menu()`
+(`pgtp_editor/ui/main_window.py:1952-2006`: "Project Tree", "Properties Panel", "Find table reference",
+"Audit/Problems Panel", "Raw XML Panel", "Light Theme"). Under Fusion, a checkable menu action that has
+**no icon** is drawn as a small framed checkbox-style indicator; Fusion derives that indicator's frame
+outline from the `Window`/`Button` palette roles darkened (the Fusion `CE_MenuItem` /
+`PE_IndicatorCheckBox` path outlines with `palette.window()/button()` darkened toward black). In the
+dark palette `Window` is `#2B2B2B` and `Button` is `#3A3A3A`, so the darkened outline is essentially
+black on the ~`#2B2B2B` dark menu background → the empty (unchecked) indicator box is invisible. The
+dark palette sets no role (e.g. `Mid`/`Dark`/`Light`) that would push the indicator outline lighter, so
+there is currently no lever to make it visible. Light theme is unaffected because its `Window`/`Button`
+are light, so the darkened outline reads fine. This is purely a dark-theme rendering gap, not a bug in
+the menu/toggle logic (the actions themselves are correct and their checked/unchecked state is honest —
+see BUG-007).
+
+**Proposed fix:** Give the dark theme a visible menu-indicator outline. Two viable shapes; prefer (A)
+for surgical scope, keep it inside `theme.py` so `apply_theme()` stays the single mutation point:
+
+- **(A) Targeted QSS applied alongside the dark palette (recommended).** In
+  `pgtp_editor/ui/theme.py`, extend `apply_theme(app, light)` so that after `app.setPalette(...)` it
+  also sets an app-level stylesheet that styles the menu indicator for the dark case and clears it for
+  light:
+  - Add a small module constant, e.g. `_DARK_MENU_QSS`, styling
+    `QMenu::indicator { border: 1px solid #8A8A8A; }` (a mid-grey border that reads on `#2B2B2B`),
+    plus `QMenu::indicator:checked` giving a visible checked fill/glyph background (e.g.
+    `background-color: #6CB6FF;` — reuse the dark `Link`/highlight-ish blue already in the palette so
+    checked vs. unchecked is unambiguous), and matching `:unchecked` with a transparent/base fill so the
+    box outline shows. Keep radius/size defaults; do NOT restyle text/background colors of the menu
+    (leave those to the palette) to avoid regressing the rest of the dark theme.
+  - In `apply_theme`: `app.setStyleSheet(_DARK_MENU_QSS if not light else "")`. Gotcha: use
+    `app.setStyleSheet` (application-global) so it covers every `QMenu`, and **always assign both
+    branches** (set empty string in light mode) so toggling light↔dark doesn't leave stale dark QSS
+    applied — mirror the symmetric-by-construction intent of the BUG-004 palette code. Second gotcha: a
+    non-empty app stylesheet can suppress some Fusion palette rendering; keep the QSS scoped to
+    `QMenu::indicator` (and `QMenu::indicator` sub-states) only — do not add bare `QMenu {...}` rules.
+  - Note `apply_theme` is called from `MainWindow._restore_theme` (main_window.py:812) and
+    `_on_light_theme_toggled` (main_window.py:842); both go through `apply_theme`, so no caller changes
+    are needed — the fix lands centrally.
+
+- **(B) Palette-only alternative (no QSS).** If the maintainer wants to keep the theme strictly
+  palette-driven, set the Fusion-consulted frame roles in `dark_palette()` to lighter values —
+  `palette.setColor(role.Mid, QColor(0x5A,0x5A,0x5A))`, `role.Dark`, and `role.Light` — tuned so the
+  indicator outline lifts off the background. This is harder to get pixel-right across Fusion's many
+  uses of those roles (they also affect frames/grooves elsewhere), so (A) is preferred; mention (B) only
+  as fallback if the QSS approach regresses other menu rendering.
+
+**Test impact:** Existing coverage: `tests/ui/test_theme.py` (pure `light_palette()`/`dark_palette()` +
+`apply_theme` style/palette assertions) and `tests/ui/test_main_window_theme.py`. Extend
+`tests/ui/test_theme.py` rather than adding a new file. New case(s):
+(1) after `apply_theme(app, False)`, assert the app has a non-empty stylesheet that mentions
+`QMenu::indicator` (and, if approach A, an explicit border color) — e.g.
+`assert "QMenu::indicator" in app.stylesheet()`;
+(2) after `apply_theme(app, True)`, assert the menu-indicator QSS is cleared
+(`assert "QMenu::indicator" not in app.styleSheet()`), proving the light↔dark round-trip leaves no stale
+dark QSS. Reuse the existing `_reset_app_palette` fixture and extend it to also save/restore
+`app.styleSheet()` so the app-global stylesheet can't leak into later UI tests (important: several
+`tests/ui/` tests assert default rendering). If approach B is chosen instead, add palette-role
+assertions on `dark_palette()` (`Mid`/`Dark`/`Light` lighter than `Window`) rather than stylesheet
+assertions.
+
+**Spec impact:** Diverges in spirit from `CONSOLIDATED_SPEC.md` §Theme (`ui/theme.py`, around line 337)
+which currently describes the theme as **two explicit palettes under Fusion** with no mention of any
+stylesheet. If approach (A) is taken, the theme is no longer strictly palette-only, so flag
+`spec-maintainer` after the fix lands to note that the dark theme additionally applies a minimal
+`QMenu::indicator` stylesheet (and that it is cleared in light mode) so menu checkable indicators stay
+visible on dark backgrounds. If approach (B) is taken, update the §Theme role list to include the
+`Mid`/`Dark`/`Light` roles the dark palette now sets. Not a pre-existing intentional decision — the
+invisible indicator is an unnoticed side effect of the BUG-004 dark-palette work, not a documented
+choice.
+
+---
+
+## BUG-011: Database Check tab (XML→DB / DB→XML) stays open after the .pgtp project is closed
+**Status:** OPEN
+**Reported:** 2026-08-01
+**Report (verbatim):** "when I close a pgpt file the database check windows (both xml->db and db->xml) should also close"
+
+**Root cause:** `pgtp_editor/ui/main_window.py`, `MainWindow._close_project()` (starts line 1790). The
+Database Check surface is NOT a separate window/dialog — both directions share a single hidden tab in the
+left tab bar. `self.db_check_panel = DbCheckPanel()` is added to `self.left_tabs` at `db_check_tab_index`
+(lines 243-247), created hidden and revealed by `_reveal_db_check_tab()` (line 2385:
+`self.left_tabs.setTabVisible(self.db_check_tab_index, True)`). A run via `_run_db_check(direction)`
+(line 2400) populates the panel and caches three project-tied attributes on the window:
+`_last_db_check_direction` (lines 203, 2433), `_last_db_schema` (lines 207, 2434), and
+`_last_db_summary` (line 208). `_close_project()` clears the editor, project tree, `_current_project`,
+`_current_project_path`, and `_history` (lines 1816-1827) but never touches the db-check tab or its
+caches. So after closing the file the Database Check tab stays visible showing stale results from the
+now-closed project, and the caches still point at the old project — `_refresh_db_check_if_open()`
+(line 1550) and the rename re-run at line 2539 would then operate on the closed project's stale state.
+
+**Proposed fix:** In `MainWindow._close_project()`, on the committed-close path only — after
+`self._set_dirty(False)` (line 1827) and before the `_log.info("file: close ...")` at line 1828, which
+is below the `cancel`/cancelled-save early `return`s at lines 1805-1814 — hide the tab and reset the
+caches:
+- `self.left_tabs.setTabVisible(self.db_check_tab_index, False)` — mirror the hide used at construction
+  (line 247) and by other project-tied left-tabs closed elsewhere (`table_refs_tab_index` at line 1083,
+  `ddl_browser_tab_index` at line 2511). Hiding the tab is the established "close this project-tied
+  left-tab surface" gesture; this is the pattern to reuse, not a new window-close path.
+- Reset the three caches so a later reparse/rename can't act on the closed project:
+  `self._last_db_check_direction = None`, `self._last_db_schema = None`, `self._last_db_summary = None`
+  (matching their initial values at lines 203-208).
+- Panel contents: `DbCheckPanel` (`pgtp_editor/ui/db_check_panel.py`) exposes
+  `set_result(direction, table_checks, connection_summary)` (line 88) but no `clear()`. Hiding the tab
+  plus nulling the caches is sufficient for the reported symptom, so do NOT reach into the panel's
+  widgets from the window; if a clean-slate is wanted, add a small `clear()` method to `DbCheckPanel`
+  and call it. Gotchas: place the teardown strictly on the committed-close path so cancelling a close
+  does not wipe the still-open project's tab; and leave `_revert_project()` (line 1830) alone — it keeps
+  the project loaded and should NOT hide the tab.
+
+**Test impact:** `tests/ui/test_db_check_wiring.py` already drives `_run_db_check` synchronously via a
+`run_async` stand-in (`test_run_db_check_xml_to_db_populates_and_reveals`, line 77, asserts
+`window.left_tabs.isTabVisible(window.db_check_tab_index)` and `window._last_db_check_direction`). Add a
+case there (or in `tests/ui/test_main_window.py` beside the existing close-project tests): run a db check
+so the tab is visible, call `window._close_project(confirm="discard")` (or on a clean buffer), then
+assert `not window.left_tabs.isTabVisible(window.db_check_tab_index)` and that
+`_last_db_check_direction` / `_last_db_schema` / `_last_db_summary` are all `None`. Add a guard case that
+a CANCELLED close (`confirm="cancel"` on a dirty buffer) leaves the tab visible and caches intact.
+Monkeypatch the close-confirm prompt per the modal-call policy.
+
+**Spec impact:** none found — the Database Check section of `docs/superpowers/CONSOLIDATED_SPEC.md` does
+not specify the db-check tab as intentionally persistent across project close, so this is a plain
+omission rather than an intentional decision being overridden. If the resolver adds a spec line stating
+the tab is torn down on project close, flag it for spec-maintainer after the fix lands.
 
 ---
