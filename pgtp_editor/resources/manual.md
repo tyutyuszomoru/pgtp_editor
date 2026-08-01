@@ -468,6 +468,32 @@ brings the tab back as usual.
 
 The password is stored with the connection settings and is never written to any log.
 
+### Creating pages, details, and lookups from a table
+
+After a **Check: Database → XML** run, **right-click a table or view row** (not a
+column row) in the results tree to synthesize project XML from that table's live
+schema:
+
+- **Create new page from this table** builds a complete `<Page>` — column
+  presentations, captions, and view/edit types derived from the database column
+  types — and inserts it into the Raw XML buffer just before `</Pages>`, then
+  switches to the Raw XML tab with the new page selected. If the project already
+  has a page for that table (or a page with the same `fileName`), a confirmation
+  asks whether to create another one anyway with a de-duplicated `fileName`.
+- **Create new detail from this table…** builds a `<Detail>` fragment (a nested
+  page plus a master/foreign-key column map, filled in automatically when the
+  table has exactly one foreign key, otherwise left as empty placeholders) and
+  **copies it to the clipboard** — paste it into the `<Details>` block of the
+  target page.
+- **Create new lookup from this table…** builds a `<Lookup>` element (link field
+  = the table's single primary key; display field = the first text-like non-key
+  column, best effort) and **copies it to the clipboard** — paste it into the
+  target column.
+
+These actions are offered only in the **Database → XML** direction, because they
+need the schema captured by the last check; if that schema is no longer available,
+the status bar asks you to run a Database check first.
+
 ---
 
 ## DDL Explorer
