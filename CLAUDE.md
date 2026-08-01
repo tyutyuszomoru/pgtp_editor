@@ -59,6 +59,22 @@
 - If the manual-maintainer reports manual-vs-reality drift or a broken Contents
   tree it cannot resolve, fix it in the main session and re-dispatch until clean.
 
+## Bug report triage (parallel workflow, opt-in)
+
+- **When the user hands over a bug report while other implementation work is
+  in progress**, dispatch the `bug-triager` subagent
+  (`.claude/agents/bug-triager.md`) with `run_in_background: true` instead of
+  interrupting the current work. It investigates the report read-only and
+  appends a root-caused, ready-to-implement proposal to
+  `docs/BUGFIX_QUEUE.md` — it never edits `pgtp_editor/`, `tests/`, or specs,
+  so it cannot conflict with whatever the main session is mid-editing.
+  Dispatch one instance per report; several can be in flight at once.
+- **When the user asks to resolve the queue** (typically once the main
+  implementation task has wrapped up), read `docs/BUGFIX_QUEUE.md`, implement
+  each `OPEN` entry, run the feature-tester / manual-maintainer / spec
+  policies above as usual, then flip that entry's `Status` line to
+  `RESOLVED (<commit>)` in place rather than deleting it.
+
 ## Test environment
 
 - Use the system `python` — the project is installed editable there with
