@@ -4,7 +4,7 @@ does so automatically when the application palette flips."""
 from PySide6.QtCore import QEvent
 from PySide6.QtGui import QColor, QPalette
 
-from pgtp_editor.ui.theme import light_palette
+from pgtp_editor.ui.theme import apply_theme, light_palette
 from pgtp_editor.ui.xml_editor import XmlEditor
 
 
@@ -42,6 +42,26 @@ def test_palette_change_to_light_flips_editor(qtbot):
     editor.changeEvent(QEvent(QEvent.Type.ApplicationPaletteChange))
     assert editor._gutter_bg_color == QColor("#f0f0f0")
     assert editor._highlighter._tag_format.foreground().color() == QColor("#0000ff")
+
+
+def test_app_wide_apply_theme_flips_editor_both_ways(qtbot, qapp):
+    """BUG-010 integration: the real apply_theme() path (Fusion + palette +,
+    in dark mode, the app-global QDarkStyleSheet QSS) still drives XmlEditor's
+    palette-keyed changeEvent -- the QSS must not break the editor's
+    Base-lightness detection in either direction. Uses genuine Qt event
+    delivery (app.setPalette/setStyleSheet), not a hand-built QEvent."""
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+
+    apply_theme(qapp, True)
+    qapp.processEvents()
+    assert editor._gutter_bg_color == QColor("#f0f0f0")
+    assert editor._highlighter._tag_format.foreground().color() == QColor("#0000ff")
+
+    apply_theme(qapp, False)
+    qapp.processEvents()
+    assert editor._gutter_bg_color == QColor("#2b2b2b")
+    assert editor._highlighter._tag_format.foreground().color() == QColor("#569cd6")
 
 
 def test_palette_change_to_dark_keeps_dark(qtbot):

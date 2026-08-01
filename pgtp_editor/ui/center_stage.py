@@ -17,6 +17,7 @@ from PySide6.QtCore import Signal
 from PySide6.QtWidgets import QTabBar, QTabWidget, QVBoxLayout, QWidget
 
 from pgtp_editor.ui.caption_management_panel import CaptionManagementPanel
+from pgtp_editor.ui.ddl_editor_panel import EditorPanel
 from pgtp_editor.ui.diff_merge_panel import DiffMergePanel
 from pgtp_editor.ui.find_replace_bar import FindReplaceBar
 from pgtp_editor.ui.manual_panel import ManualPanel
@@ -32,6 +33,13 @@ class CenterStage(QTabWidget):
     # MainWindow's unsaved-changes prompt first (mirrors mode-switching and
     # app-close), so this signals intent rather than hiding the tab directly.
     xsd_close_requested = Signal()
+
+    # Emitted when the DDL Explorer tab is revealed (True) or hidden (False),
+    # so the Database-menu toggle stays in lockstep (same pattern as
+    # manual_visibility_changed; see BUG-007 for why one-way wiring is not
+    # enough). The tab is read-only (spec §18.1), so its ✕ hides directly —
+    # no dirty prompt, unlike Edit XSD.
+    ddl_explorer_visibility_changed = Signal(bool)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -65,6 +73,11 @@ class CenterStage(QTabWidget):
         xsd_layout.addWidget(self.xsd_find_replace_bar)
         self.xsd_tab_index = self.addTab(self.xsd_tab, "Edit XSD")
 
+        # DDL Explorer tab (spec §18.1): the one synthesized routine/trigger
+        # buffer, read-only. Hidden until Database ▸ DDL Explorer reveals it.
+        self.ddl_editor_panel = EditorPanel()
+        self.ddl_tab_index = self.addTab(self.ddl_editor_panel, "DDL Explorer")
+
         self.manual_panel = ManualPanel()
         self.manual_tab_index = self.addTab(self.manual_panel, "Manual")
 
@@ -74,6 +87,7 @@ class CenterStage(QTabWidget):
         self.setTabVisible(self.caption_management_tab_index, False)
         self.setTabVisible(self.raw_xml_tab_index, True)
         self.setTabVisible(self.xsd_tab_index, False)
+        self.setTabVisible(self.ddl_tab_index, False)
         self.setTabVisible(self.manual_tab_index, False)
         self.setCurrentIndex(self.raw_xml_tab_index)
 
@@ -84,7 +98,7 @@ class CenterStage(QTabWidget):
         # sides.
         self.setTabsClosable(True)
         bar = self.tabBar()
-        _closable = (self.manual_tab_index, self.xsd_tab_index)
+        _closable = (self.manual_tab_index, self.xsd_tab_index, self.ddl_tab_index)
         for index in range(self.count()):
             if index not in _closable:
                 bar.setTabButton(index, QTabBar.ButtonPosition.RightSide, None)
@@ -96,6 +110,10 @@ class CenterStage(QTabWidget):
             self.hide_manual()
         elif index == self.xsd_tab_index:
             self.xsd_close_requested.emit()
+        elif index == self.ddl_tab_index:
+            # Read-only tab: nothing to prompt for, hide directly (unlike
+            # Edit XSD, which routes through MainWindow's dirty check).
+            self.hide_ddl_explorer()
 
     def set_raw_xml_tab_visible(self, visible):
         self.setTabVisible(self.raw_xml_tab_index, visible)
@@ -123,6 +141,19 @@ class CenterStage(QTabWidget):
         self.setTabVisible(self.xsd_tab_index, False)
         if self.currentIndex() == self.xsd_tab_index:
             self.setCurrentIndex(self.raw_xml_tab_index)
+
+    def show_ddl_explorer(self):
+        self.setTabVisible(self.ddl_tab_index, True)
+        self.setCurrentIndex(self.ddl_tab_index)
+        self.ddl_explorer_visibility_changed.emit(True)
+
+    def hide_ddl_explorer(self):
+        """Hide the DDL Explorer tab and return to Raw XML (the ✕ close
+        action), mirroring `hide_manual`."""
+        self.setTabVisible(self.ddl_tab_index, False)
+        if self.currentIndex() == self.ddl_tab_index:
+            self.setCurrentIndex(self.raw_xml_tab_index)
+        self.ddl_explorer_visibility_changed.emit(False)
 
     def enter_caption_mode(self):
         """Keep Raw XML visible but read-only, and reveal + switch to Caption

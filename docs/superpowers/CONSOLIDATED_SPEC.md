@@ -30,7 +30,7 @@
 16. [Validation](#16-validation)
 17. [Database](#17-database)
 18. [DDL versioning (standalone Postgres mode)](#18-ddl-versioning-standalone-postgres-mode) — *planned*
-    - [18.1 Routines & triggers browsing (DDL Explorer)](#181-routines--triggers-browsing-ddl-explorer) — *planned*
+    - [18.1 Routines & triggers browsing (DDL Explorer)](#181-routines--triggers-browsing-ddl-explorer) — *implemented (except XML cross-refs)*
     - [18.2 Projects, checkout & state markers](#182-projects-checkout--state-markers) — *planned*
     - [18.3 Deploy workflow & schema diff/migration](#183-deploy-workflow--schema-diffmigration) — *planned*
 19. [PHP generation (vendor) & Save](#19-php-generation-vendor--save)
@@ -162,9 +162,11 @@ no longer blocks any feature).
 | DB | `psycopg` v3 (`psycopg[binary]`) via `pg_catalog` |
 | Diff | custom domain-aware structural differ (identity-keyed, not line-based) |
 | Code editor | custom, built on `QPlainTextEdit` |
+| Dark theme QSS | QDarkStyleSheet via `qdarkstyle>=3.2` (MIT) — dark mode only; light clears the stylesheet (§7) |
 
 **Licensing:** project is **GPL-3.0**. About box credits BoomslangXML (conceptual prior art),
-QCodeEditor (MIT, ported). Authors: **Botond Zalai-Ruzsics** and **MDS — Maintenance Data Services**
+QCodeEditor (MIT, ported), and QDarkStyleSheet (Colin Duquesnoy, MIT — the dark theme's QSS via the
+`qdarkstyle` package, §7). Authors: **Botond Zalai-Ruzsics** and **MDS — Maintenance Data Services**
 (https://maint-data.com). Not affiliated with / endorsed by SQL Maestro Group; as-is, no warranty.
 (SuperNano credit removed.)
 
@@ -205,6 +207,7 @@ pgtp_editor/
 │   └── settings_index.py  # enum_hint, sums (additive-value) derivation, known_attributes/known_values, unused_setting_attributes
 ├── db/                # PostgreSQL introspection & comparison (Qt-free logic)
 │   ├── config.py, introspect.py (psycopg lazy), compare.py, rename.py
+│   └── ddl_buffer.py  # build_ddl_text(schema) → (text, [DdlObjectSpan]) — DDL Explorer buffer (§18.1)
 ├── analysis/
 │   └── reused_tables.py   # collect_table_usages → TableUsage/TableReference
 ├── validation/
@@ -217,7 +220,8 @@ Key `ui/` modules: `main_window.py`, `center_stage.py`, `project_tree.py`, `xml_
 `search.py`, `history.py`, `theme.py`, `toolbar_registry.py`, `customize_toolbar_dialog.py`,
 `diff_merge_panel.py`, `caption_management_panel.py`, `caption_find_replace_dialog.py`,
 `caption_scan.py`, `db_check_panel.py`,
-`connection_setup_dialog.py`, `table_references_panel.py`, `manual_panel.py`, `about.py`, `icons.py`.
+`connection_setup_dialog.py`, `table_references_panel.py`, `ddl_editor_panel.py`,
+`ddl_buffer_panel.py`, `manual_panel.py`, `about.py`, `icons.py`.
 (Deleted with the curated-XSD pivot, §11: `schema_learning/sync.py`, `schema_learning/merge.py`,
 `ui/annotate_popover.py`, `ui/team_sync_dialog.py`, `ui/merge_conflicts_dialog.py`,
 `ui/schema_viewer.py`, `ui/schema_viewer_data.py`.)
@@ -298,9 +302,10 @@ reimplement.
 ## 7. App shell
 
 **Layout:** IDE-style docked panels. Left dock is a `QTabWidget` (`self.left_tabs`) hosting **Project
-tree**, **Contents** (manual), **Database Check**, and **Table references** tabs (the latter two hidden
-until invoked). Center is a tabbed `CenterStage` (Raw XML [default-visible working tab], Diff/Merge,
-Caption Management, Manual, Edit XSD — non-Raw-XML tabs hidden until invoked). Bottom is a persistent
+tree**, **Contents** (manual), **Database Check**, **Table references**, and **DDL Objects** (§18.1)
+tabs (the latter three hidden until invoked). Center is a tabbed `CenterStage` (Raw XML
+[default-visible working tab], Diff/Merge, Caption Management, Manual, Edit XSD, DDL Explorer —
+non-Raw-XML tabs hidden until invoked). Bottom is a persistent
 **Audit/Problems** panel (`QListWidget`) shared by `[Schema]`, `[Validate]`, `[Find]`, `[PHP]` lines.
 Right dock is the **Properties** panel.
 
@@ -343,7 +348,22 @@ explicit Disabled color group so greyed-out controls stay legible under Fusion. 
 backgrounds with dark text; dark = dark Window/Base with light text. `apply_theme(app, light: bool)` is
 the only function that mutates the running QApplication: it **always** sets the Fusion style (Fusion
 honors QPalette fully; many native styles largely ignore it) and applies `light_palette()` when `light`
-is true, `dark_palette()` otherwise. Persisted as QSettings bool `"lightTheme"` in
+is true, `dark_palette()` otherwise — and (BUG-010) sets the application stylesheet: **dark
+additionally applies the QDarkStyleSheet dark QSS** (the `qdarkstyle` package,
+`qdarkstyle.load_stylesheet(qt_api="pyside6")`, lazily loaded and cached in module-global
+`_dark_qss_cache` via `_dark_stylesheet()` — qdarkstyle warns if loaded before a `QApplication`
+exists), while **light always assigns the empty stylesheet** (`app.setStyleSheet("")`) so a
+light↔dark round-trip never leaves stale dark QSS behind. Dark is therefore no longer palette-only:
+Fusion + `dark_palette()` alone rendered checkable menu indicators outlined near-black on the dark
+menu background (Fusion derives the indicator frame from darkened Window/Button roles); the
+maintained stylesheet styles `QMenu::indicator` and every other widget consistently.
+`dark_palette()` is still applied **beneath** the QSS because palette-reading custom widgets
+(`XmlEditor.apply_theme_colors` keys off the palette's Base lightness) and any
+non-stylesheet-covered rendering must agree with the stylesheet's dark look. Known side effect: an
+app-level QSS wraps the active style in `QStyleSheetStyle`, so `app.style().objectName()` is empty
+in dark mode (tests must not assert `"fusion"` there). `qdarkstyle>=3.2` is a runtime dependency
+(pyproject + requirements.txt); the About box credits QDarkStyleSheet (Colin Duquesnoy, MIT).
+Persisted as QSettings bool `"lightTheme"` in
 `QSettings("MDS","PGTP Editor")`; `MainWindow._restore_theme` applies the persisted theme
 **unconditionally at startup for both states** (no startup capture of a default palette/style key
 exists). Toolbar icons are re-tinted (`_refresh_toolbar_icons`) on every theme change and on startup
@@ -429,10 +449,18 @@ context action opens `CodeEditorDialog` (below) with the body and `language_for_
 pure `replace_event_body(text, start_line, new_code)` swaps inner content preserving tags/indentation.
 
 **Code editor** (`ui/code_editor.py`): `CodeEditor(QPlainTextEdit, language)` — monospace,
-per-language `_CodeHighlighter` (JS / PHP keyword sets, strings, `//`+`#` line comments, `/* */`,
+per-language `_CodeHighlighter` (JS / PHP / SQL keyword sets, strings, `//`+`#` line comments, `/* */`,
 numbers), auto-close + selection-wrap for `()[]{}`/quotes, **Ctrl+Shift+B** bracket-select via pure
-`enclosing_bracket_span(text,pos)`. `CodeEditorDialog(QDialog)` hosts it with `saved(str)`/`cancelled`
-signals, **Ctrl+S** save / **Ctrl+W** cancel; never `.exec()` in tests.
+`enclosing_bracket_span(text,pos)`. The **`language="sql"`** mode (added for the DDL Explorer, §18.1)
+uses `_SQL_KEYWORDS` (stored lowercase; matching is **case-insensitive** — `pg_get_functiondef` emits
+uppercase, hand-written bodies vary), `--` line comments, single-quoted strings with `''` doubling
+(double-quoted text is an identifier, left unstyled), and the shared `/* */` block comments.
+`CodeEditor` also exposes `navigate_to_line(line)` (1-based, caret + `centerCursor` — the same public
+navigation entry point `XmlEditor` exposes, used by the BrowserPanel → EditorPanel jump, §18.1) and
+`replace_current_selection(text)` (FindReplaceBar's Replace contract, mirroring `XmlEditor`), which
+**no-ops on a read-only editor** — `QTextCursor` edits bypass `setReadOnly`, so this guard is what
+actually protects read-only DDL buffers. `CodeEditorDialog(QDialog)` hosts it with
+`saved(str)`/`cancelled` signals, **Ctrl+S** save / **Ctrl+W** cancel; never `.exec()` in tests.
 
 **Tier-1 fallback:** on `PgtpParseError`, `_handle_parse_failure` keeps the `QMessageBox.critical`
 dialog **and** re-reads the file, `setPlainText`, `highlight_error_line(exc.line)`, reveals + checks +
@@ -601,8 +629,8 @@ The tab owns its dirty state; Ctrl+S and Edit-menu Find/Replace route to the **a
 document routing, §7). **Switching modes** (Edit XSD ↔ Edit AutoXSD) while the tab has unsaved edits
 prompts the same three-way **Save/Discard/Cancel** used by `closeEvent`.
 
-The tab is **closable** via a tab-bar ✕ (alongside Manual; Diff/Merge, Caption Management, and Raw XML
-remain structural/non-closable, toggled only by their own entry points). Clicking it emits
+The tab is **closable** via a tab-bar ✕ (alongside Manual and DDL Explorer; Diff/Merge, Caption
+Management, and Raw XML remain structural/non-closable, toggled only by their own entry points). Clicking it emits
 `CenterStage.xsd_close_requested`, handled by `MainWindow._on_xsd_close_requested`, which reuses the
 **same** `_confirm_close_xsd()` Save/Discard/Cancel prompt already used for mode-switching and
 `closeEvent` — no separate confirmation dialog. On discard, on a clean tab, or after a successful
@@ -907,7 +935,8 @@ the **password is never read from XML** (obfuscated there) — entered by the us
 - `db/rename.py` (pure): `rename_field(text, old, new)` / `rename_table(...)` = literal global
   attribute replace.
 
-**UI:** **Database** menu (Connection Setup…, Check: XML→Database, Check: Database→XML).
+**UI:** **Database** menu (Connection Setup…, Check: XML→Database, Check: Database→XML, and — after a
+separator — the checkable **DDL Explorer** toggle, §18.1).
 `ConnectionSetupDialog` (host/port/database/user, password EchoMode.Password, Test + status, plaintext
 caveat; API `set_params`/`params()`/`test()`). `DbCheckPanel` (header: direction + `user@host:port/db` +
 mismatch count; "Show only mismatches" toggle; `QTreeWidget` with `(T)`/`(V)`/`(M)` prefixes, `(×N)`
@@ -942,16 +971,17 @@ golden "freshly-added table" oracle; defaults are corpus-derived and **not yet f
 
 ## 18. DDL versioning (standalone Postgres mode)
 
-> **Status: §18.1 read-only browsing is implemented and tested; §18.2/§18.3 remain target design, not
-> yet implemented.** `RoutineInfo`/`TriggerInfo`/`DatabaseSchema.routines`/`.triggers`
-> (`db/introspect.py`), `db/ddl_buffer.py`/`DdlObjectSpan`, and `ui/ddl_buffer_panel.py::BrowserPanel`
-> exist in the codebase now, exactly as specified below. Not yet built: `ui/ddl_editor_panel.py::EditorPanel`
-> (the CenterStage SQL buffer tab), the `language="sql"` highlighter mode in `ui/code_editor.py`,
-> `db/routine_refs.py` (XML cross-referencing), the Database-menu "DDL Explorer" toggle, and any
-> left-dock/main-window wiring of `BrowserPanel` — its `navigate_requested` signal is real and tested but
-> currently has no listener in the running app. `db/schema_diff.py`/`db/schema_snapshot.py`/
-> `db/migration_gen.py` (§18.3) do not exist yet; this section specifies the shape the remaining pieces
-> must take when built, so the design is settled before implementation starts.
+> **Status: §18.1 read-only browsing is fully implemented, wired, and tested — with the single
+> exception of the XML cross-referencing angle; §18.2/§18.3 remain target design, not yet
+> implemented.** Shipped exactly as specified below: `RoutineInfo`/`TriggerInfo`/
+> `DatabaseSchema.routines`/`.triggers` (`db/introspect.py`), `db/ddl_buffer.py`/`DdlObjectSpan`,
+> `ui/ddl_buffer_panel.py::BrowserPanel`, `ui/ddl_editor_panel.py::EditorPanel` (the CenterStage
+> "DDL Explorer" tab), the `language="sql"` highlighter mode in `ui/code_editor.py` (§8), the
+> Database-menu "DDL Explorer" checkable toggle, and the full main-window wiring (hidden left-dock
+> "DDL Objects" tab, `navigate_requested` navigation, async fetch). Still not built:
+> `db/routine_refs.py` (XML cross-referencing), and `db/schema_diff.py`/`db/schema_snapshot.py`/
+> `db/migration_gen.py` (§18.3); those parts of this section remain target design, settled before
+> implementation starts.
 
 **Strategic framing.** This is **not** a feature bolted onto `.pgtp` editing — it is a standalone
 Postgres DDL-versioning mode, independent of phpgen/`.pgtp` entirely, usable with zero `.pgtp` files
@@ -1015,22 +1045,33 @@ trigger:**
   name, table: str|None (triggers only — the table it fires on), start_line, end_line}` plays the same
   role for this buffer that `TagSpan` (§8, `ui/xml_structure.py`) plays for the Raw XML buffer and that
   `node_at_line` (§9, `model/line_index.py`) plays for click-to-tree sync.
-- **Not yet implemented:** CenterStage tab `ui/ddl_editor_panel.py::EditorPanel(QWidget)`, to host the
-  synthesized buffer in the **existing** `ui/code_editor.py::CodeEditor` widget under a **new
-  `language="sql"` mode** — a new SQL/plpgsql `_CodeHighlighter` keyword set added alongside the
-  existing JS/PHP ones in that same file (§8). Gets its own `FindReplaceBar` instance, following the
-  same per-tab document-routing precedent as the Edit XSD tab (§7/§15) and the planned Custom PHP tabs
-  (§21). This tab is **read-only, DB-sourced, live/synthesized** — the checked-out, editable form lives
-  in `ddl/*.sql` files (§18.2), edited in a separate tab type.
+- **Implemented:** CenterStage tab `ui/ddl_editor_panel.py::EditorPanel(QWidget)` hosts the
+  synthesized buffer in the **existing** `ui/code_editor.py::CodeEditor` widget under its
+  **`language="sql"` mode** — the SQL/plpgsql `_CodeHighlighter` keyword set (`_SQL_KEYWORDS`,
+  case-insensitive matching, `--` line comments, `''`-doubled single-quote strings, `/* */` block
+  comments) added alongside the existing JS/PHP ones in that same file (§8). Has its own
+  `FindReplaceBar` instance, following the same per-tab document-routing precedent as the Edit XSD tab
+  (§7/§15) and the planned Custom PHP tabs (§21). The tab sits in `CenterStage` between Edit XSD and
+  Manual (`ddl_tab_index`, hidden by default), and is **closable** via a tab-bar ✕ that hides it
+  directly (`hide_ddl_explorer()`) — read-only, so unlike Edit XSD there is no dirty prompt to route
+  through. `CenterStage` exposes `show_ddl_explorer()`/`hide_ddl_explorer()` and a
+  `ddl_explorer_visibility_changed = Signal(bool)`. API: `EditorPanel.set_ddl_text(text)` (a fresh
+  `build_ddl_text` result) and `EditorPanel.navigate_to_line(line)` (delegates to
+  `CodeEditor.navigate_to_line`, §8, then focuses the editor). This tab is **read-only, DB-sourced,
+  live/synthesized** (`editor.setReadOnly(True)`; `CodeEditor.replace_current_selection` no-ops on
+  read-only editors, the guard that actually protects the buffer since `QTextCursor` edits bypass
+  `setReadOnly`) — the checked-out, editable form lives in `ddl/*.sql` files (§18.2), edited in a
+  separate tab type.
 - **Implemented:** left-dock tree tab `ui/ddl_buffer_panel.py::BrowserPanel(QWidget)` — a `QWidget`
   wrapping an internal `self.tree = QTreeWidget()` (composition), matching this codebase's real
   convention for left-dock panels (`TableReferencesPanel`, `DbCheckPanel` — both `QWidget` subclasses
   wrapping an internal tree), not literal `QTreeWidget` subclassing. Built from the `DdlObjectSpan`
   index via `set_schema(schema, spans)` — one shared buffer plus a structural tree index, the same
   relationship the Raw XML tree bears to `xml_editor.py`. Emits `navigate_requested(line: int)` on leaf
-  click; not yet wired to anything (no `EditorPanel` exists yet to listen, and there is no
-  main-window/Database-menu registration). This is the tree that §18.2's `*`/`!` state markers will
-  render on.
+  click, wired in MainWindow to `_on_ddl_navigate_requested(line)` → activate the center DDL Explorer
+  tab + `EditorPanel.navigate_to_line(line)`. Lives in a hidden `left_tabs` tab titled **"DDL
+  Objects"** (`ddl_browser_tab_index`), revealed/hidden in lockstep with the center tab. This is the
+  tree that §18.2's `*`/`!` state markers will render on.
 
 **Dual-grouped, cross-referenced tree — a deliberate design choice by the project owner:** a trigger
 appears in the tree in **both** of its relationship places, not just one:
@@ -1048,7 +1089,8 @@ appears in the tree in **both** of its relationship places, not just one:
   described in §8 ("Public navigation API") and used by Properties/captions/DB check/table
   references/diff.
 
-**XML cross-references — a third relationship angle, not yet implemented, unchanged in mechanism:**
+**XML cross-references — a third relationship angle, still not implemented (the one remaining §18.1
+piece), unchanged in mechanism:**
 
 - `db/routine_refs.py` (does not exist yet): cross-references routine/trigger names against the XML (event-handler bodies
   via `EventNode.text`, and SQL-bearing attributes) via **best-effort name matching** — same "no false
@@ -1060,9 +1102,30 @@ appears in the tree in **both** of its relationship places, not just one:
   documents, two separate `navigate_to_line` targets, not the same underlying span. This angle only
   applies when a project has a linked `.pgtp` (§18.2) — it is meaningless in a `.pgtp`-free project.
 
-**Database menu — not yet wired:** will gain a "DDL Explorer" toggle alongside the existing three items
-(Connection Setup…, Check: XML→Database, Check: Database→XML). No such menu entry exists yet; nothing in
-the running app currently instantiates `BrowserPanel` or listens to its `navigate_requested` signal.
+**Database menu & main-window wiring — implemented:**
+
+- The Database menu gains a **checkable "DDL Explorer" toggle** (`self._ddl_explorer_action`), after a
+  separator following the existing three items (Connection Setup…, Check: XML→Database,
+  Check: Database→XML). Toggle on → `_open_ddl_explorer()`; toggle off →
+  `center_stage.hide_ddl_explorer()`.
+- **Bidirectional lockstep** (the BUG-007 lesson — the tab has its own ✕):
+  `CenterStage.ddl_explorer_visibility_changed(bool)` drives
+  `_on_ddl_explorer_visibility_changed(visible)`, which shows/hides the left "DDL Objects" tab (making
+  the tree dock visible and current when shown) **and** re-syncs the menu action's checked state, so
+  closing via the tab ✕ unchecks the menu and vice versa.
+- **Async fetch:** `_open_ddl_explorer()` runs `_fetch_ddl_schema(params)` (an **injectable seam** —
+  a one-line wrapper around `fetch_routines_and_triggers(params)`, mirroring `_fetch_db_schema`; tests
+  patch it to return a canned `DatabaseSchema`) through the shared `self._run_async` threadpool seam
+  (the same off-thread executor the Database Check fetch uses, so a slow/dead host never freezes the
+  window). On result: `build_ddl_text(schema)` → `EditorPanel.set_ddl_text(text)` +
+  `BrowserPanel.set_schema(schema, spans)` + `show_ddl_explorer()` + a status-bar summary
+  (`DDL Explorer: N routine(s), M trigger(s).`).
+- **Standalone-mode friendly (§18):** connection params come from
+  `seed_params(tree, self._settings)` where `tree` is the current project's lxml tree **or `None`**
+  when no `.pgtp` is open — no project is required, only a configured connection. Missing host →
+  status-bar message ("No database connection configured — set one up first."), uncheck the toggle,
+  and open Connection Setup. Fetch error → status-bar message (`DDL Explorer failed: {exc}`) + uncheck
+  the toggle. Params are logged redacted (`debuglog.redacted`).
 
 **Explicitly phase 2, not built alongside phase 1 read-only browsing:** DB-side write-back — editing a
 routine's source inline in the `EditorPanel` tab itself and pushing `CREATE OR REPLACE FUNCTION …`
@@ -1346,7 +1409,7 @@ folder is the natural next step. Explicitly deferred; no section number spent on
   existing dependency rule, these have no Qt dependency) as MCP tools via a thin adapter, with **no new
   business logic**: e.g. `read_project(path)`, `list_pages(path)`, `get_node(path, identity)`,
   `diff_projects(source, target)`, `list_db_tables(connection)`, `list_db_routines(connection)` (the
-  last two depend on §18.1 DDL Explorer existing).
+  last two build on §18.1's DDL Explorer introspection, which now exists).
 - Runs over **stdio**; started via **Tools ▸ "Start MCP Server"** or a `--mcp` CLI flag for headless
   use. When the GUI is running it shares the currently-open in-memory model; running headless it
   operates file-path-driven instead.
@@ -1402,7 +1465,8 @@ Tools; "New Project" removed; line-wrap moved to editor context menu):
   Export / Import act on the **active XSD** (curated or learned, per `_xsd_mode`), not curated-only.
   (Go To XSD is **not** a menu item: it is a window-level Ctrl+L `QAction` added via
   `MainWindow.addAction` plus a Raw XML editor context-menu entry; it always forces curated mode.)
-- **Database:** Connection Setup…, Check: XML→Database, Check: Database→XML.
+- **Database:** Connection Setup…, Check: XML→Database, Check: Database→XML, ☐ DDL Explorer
+  (checkable toggle after a separator, §18.1; kept in lockstep with the center tab's ✕).
 - **Tools:** Manage Captions…, Caption Filter… (Ctrl+R in caption context), Reparse Raw XML into Tree,
   Validate Project, Compare/Merge Two Files…, Next/Previous Difference, Apply Changes to Target.
 - **Generation:** Locate PHP Generator Executable…, Generate PHP…, Open Output Folder, panGen (Generate
@@ -1484,6 +1548,7 @@ is authoritative** (and is what appears in the body above).
 | 2026-07-30 | Single-purpose curated-only **Edit XSD** tab; **Schema menu = exactly these four** (Edit XSD, Verify, Export, Import); Verify/Export/Import curated-only (2026-07-24) | **Mode-aware** Edit XSD / Edit AutoXSD tab (`_xsd_mode ∈ {"curated","learned"}`, opens `learned.xsd` for analysis); Verify/Export/Import act on the **active XSD**; **Schema menu has five items** (Edit XSD, Edit AutoXSD, Verify, Export, Import) |
 | 2026-08-01 | Edit XSD / Edit AutoXSD tab had **no close affordance at all** once revealed (only Raw XML/other-tab clicks or app close ended it; BUG-001) | **Closable** via tab-bar ✕ (`CenterStage.xsd_close_requested` → `MainWindow._on_xsd_close_requested`), reusing the existing `_confirm_close_xsd()` Save/Discard/Cancel prompt; hides via `hide_edit_xsd()` and falls back to Raw XML |
 | 2026-08-01 | "Light Theme" **off** = restore the native/OS style+palette captured at startup (`_default_palette`/`_default_style_key`; `apply_theme(app, light, default_palette, default_style)`), with `_restore_theme` a no-op when `lightTheme` was False — dark only "worked" on the one native-dark platform (Windows) it was built on (BUG-004) | Symmetric explicit themes (commit 7ec792f): new pure `dark_palette()` mirroring `light_palette()`'s complete role coverage; `apply_theme(app, light: bool)` always sets Fusion + one of the two palettes; startup capture removed and `_restore_theme` applies the persisted theme unconditionally for both states; QSettings bool `"lightTheme"` unchanged |
+| 2026-08-01 | Dark theme = Fusion + `dark_palette()` **palette-only** (the BUG-004 fix above, same date) — Fusion+palette alone rendered checkable menu indicators outlined near-black on the dark menu background (BUG-010) | Dark = Fusion + `dark_palette()` **+ the QDarkStyleSheet dark QSS** (`qdarkstyle>=3.2`, new runtime dependency, MIT-credited in About); light **always** clears the stylesheet (`app.setStyleSheet("")`) so round-trips leave no stale QSS; the palette stays applied beneath the QSS for palette-reading custom widgets; side effect: `app.style().objectName()` is empty in dark mode (`QStyleSheetStyle` wrapping) |
 
 ---
 

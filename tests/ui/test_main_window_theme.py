@@ -53,7 +53,10 @@ def test_toggle_light_off_applies_real_dark_palette(qtbot, _reset_app_theme):
     window._on_light_theme_toggled(False)
 
     app = QApplication.instance()
-    assert app.style().objectName().lower() == "fusion"
+    # Dark mode wraps the style in QStyleSheetStyle (empty objectName) via the
+    # qdarkstyle QSS (BUG-010) -- assert the dark state through stylesheet +
+    # palette instead of the style name.
+    assert app.styleSheet()
     for role in (QPalette.ColorRole.Window, QPalette.ColorRole.WindowText):
         assert app.palette().color(role).rgb() == dark_palette().color(role).rgb()
 
@@ -68,7 +71,7 @@ def test_fresh_window_defaults_to_explicit_dark_palette(qtbot, _reset_app_theme)
 
     app = QApplication.instance()
     assert window._light_theme_action.isChecked() is False
-    assert app.style().objectName().lower() == "fusion"
+    assert app.styleSheet()  # dark QSS applied (see note above)
     assert app.palette().color(QPalette.ColorRole.Window).rgb() == dark_palette().color(
         QPalette.ColorRole.Window
     ).rgb()

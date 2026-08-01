@@ -9,6 +9,7 @@ dependencies = [
     "lxml>=5.0",
     "defusedxml>=0.7",
     "psycopg[binary]>=3.1",
+    "qdarkstyle>=3.2",
 ]
 
 [project.optional-dependencies]

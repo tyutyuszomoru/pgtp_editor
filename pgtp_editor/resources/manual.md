@@ -19,10 +19,12 @@ Use **File ▸ Open** and pick a `.pgtp` file. The window has three areas:
 
 - **Left — Project Tree:** the structure of your project (pages, details, columns,
   event handlers). More tabs share this dock: **Contents** (this manual's
-  chapters), **Table references** (when you turn it on from the View menu), and,
-  after you run a database check, **Database Check**.
-- **Center — Raw XML / Caption Management / Diff-Merge / Edit XSD / Manual:** the
-  working area. It opens on **Raw XML**; the other tabs appear when you invoke them.
+  chapters), **Table references** (when you turn it on from the View menu),
+  **Database Check** (after you run a database check), and **DDL Objects** (while
+  the DDL Explorer is on — see *DDL Explorer*).
+- **Center — Raw XML / Caption Management / Diff-Merge / Edit XSD / DDL Explorer /
+  Manual:** the working area. It opens on **Raw XML**; the other tabs appear when
+  you invoke them.
 - **Right — Properties:** a read-only inspector for whatever you select in the tree.
 
 When you open a file, the status bar shows a live message such as
@@ -440,6 +442,36 @@ the project's values next time.
   in the database but the project doesn't reference.
 
 The password is stored with the connection settings and is never written to any log.
+
+---
+
+## DDL Explorer
+
+**Database ▸ DDL Explorer** is a checkable toggle that shows your database's
+server-side code — every function, procedure, and trigger — inside the editor.
+It needs only a database connection: you can use it with **no `.pgtp` file open
+at all**. If no connection is configured yet, **Connection Setup…** opens
+automatically; save a connection, then toggle the explorer again.
+
+Turning it on fetches all routines and triggers from the connected PostgreSQL
+database and reveals two tabs at once:
+
+- **Center — DDL Explorer:** every definition in a single **read-only**,
+  SQL-highlighted buffer. Each object is preceded by a banner comment (e.g.
+  `-- FUNCTION public.foo(integer) --`) so you can always tell where you are.
+  The buffer is a live snapshot of the database and cannot be edited.
+- **Left dock — DDL Objects:** a tree of the same objects, grouped from two
+  angles. Under **Tables**, each table lists the triggers defined on it; under
+  **Functions & Procedures**, each function or procedure lists the triggers that
+  call it. A trigger therefore appears in **both** places — either entry points
+  at the same definition. **Click** any leaf to jump the DDL Explorer buffer
+  straight to that object's banner line.
+
+Close the explorer with the **✕** on the DDL Explorer tab or by unchecking
+**Database ▸ DDL Explorer** — both hide the two tabs together, and the menu
+checkbox always reflects whether the explorer is currently visible. The status
+bar reports how many routines and triggers were loaded; if the fetch fails, it
+shows the error and the toggle unchecks itself.
 
 ---
 

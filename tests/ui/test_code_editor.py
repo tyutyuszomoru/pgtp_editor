@@ -8,6 +8,7 @@ from pgtp_editor.ui.code_editor import (
     _CodeHighlighter,
     _JS_KEYWORDS,
     _PHP_KEYWORDS,
+    _SQL_KEYWORDS,
     enclosing_bracket_span,
 )
 
@@ -57,6 +58,15 @@ def test_keyword_lists_exist_and_are_nontrivial():
     assert len(_PHP_KEYWORDS) > 5
     assert "function" in _JS_KEYWORDS
     assert "function" in _PHP_KEYWORDS
+
+
+def test_sql_keyword_list_exists_and_is_nontrivial():
+    assert len(_SQL_KEYWORDS) > 20
+    for kw in ("select", "insert", "update", "delete", "trigger", "function",
+               "begin", "end", "returns", "language"):
+        assert kw in _SQL_KEYWORDS, kw
+    # Stored lowercase by contract (matching lowercases the candidate word).
+    assert all(kw == kw.lower() for kw in _SQL_KEYWORDS)
 
 
 # ---------------------------------------------------------------------------
@@ -199,6 +209,151 @@ def test_highlighter_php_variable_gets_format(qtbot):
     editor.setPlainText(text)
     var_format = _format_at(editor, text.index("$var"))
     assert var_format.foreground().color().isValid()
+
+
+# ---------------------------------------------------------------------------
+# Widget: SQL language mode (spec §18.1 -- the DDL Explorer buffer).
+# ---------------------------------------------------------------------------
+
+def _sql_editor(qtbot, text):
+    editor = CodeEditor("sql")
+    qtbot.addWidget(editor)
+    editor.setPlainText(text)
+    return editor
+
+
+def test_sql_highlighter_selected_for_sql_language(qtbot):
+    editor = CodeEditor("sql")
+    qtbot.addWidget(editor)
+    assert editor._highlighter._keywords is _SQL_KEYWORDS
+
+
+def test_sql_keyword_matching_is_case_insensitive(qtbot):
+    # pg_get_functiondef emits uppercase; hand-written bodies vary.
+    text = "SELECT id FROM t WHERE Select_col = 1; select 2;"
+    editor = _sql_editor(qtbot, text)
+    kw_color = editor._highlighter._keyword_format.foreground().color()
+    assert _format_at(editor, text.index("SELECT")).foreground().color() == kw_color
+    assert _format_at(editor, text.index("select 2")).foreground().color() == kw_color
+    # A plain identifier is not keyword-colored.
+    assert _format_at(editor, text.index("id")).foreground().color() != kw_color
+
+
+def test_sql_uppercase_keyword_not_highlighted_in_js_mode(qtbot):
+    # Case-insensitivity is SQL-specific: JS keeps exact-case matching.
+    text = "RETURN x; return x;"
+    editor = CodeEditor("js")
+    qtbot.addWidget(editor)
+    editor.setPlainText(text)
+    kw_color = editor._highlighter._keyword_format.foreground().color()
+    assert _format_at(editor, 0).foreground().color() != kw_color  # RETURN
+    assert _format_at(editor, text.index("return")).foreground().color() == kw_color
+
+
+def test_sql_double_dash_line_comment(qtbot):
+    text = "SELECT 1; -- FUNCTION pr.calc_total(integer) --"
+    editor = _sql_editor(qtbot, text)
+    comment_color = editor._highlighter._comment_format.foreground().color()
+    dash = text.index("--")
+    # Everything from '--' to end-of-line is comment-formatted, keywords included.
+    for pos in (dash, text.index("FUNCTION"), len(text) - 1):
+        assert _format_at(editor, pos).foreground().color() == comment_color, pos
+    assert _format_at(editor, 0).foreground().color() != comment_color
+
+
+def test_sql_double_dash_is_not_a_comment_in_js_or_php(qtbot):
+    for language in ("js", "php"):
+        editor = CodeEditor(language)
+        qtbot.addWidget(editor)
+        text = "x -- y"
+        editor.setPlainText(text)
+        comment_color = editor._highlighter._comment_format.foreground().color()
+        assert _format_at(editor, text.index("--")).foreground().color() != comment_color
+
+
+def test_sql_string_with_doubled_quote_is_one_string(qtbot):
+    text = "SELECT 'it''s' AS v"
+    editor = _sql_editor(qtbot, text)
+    string_color = editor._highlighter._string_format.foreground().color()
+    # The doubled '' does NOT terminate the string: 's' after it is inside.
+    assert _format_at(editor, text.index("it")).foreground().color() == string_color
+    assert _format_at(editor, text.index("''s") + 2).foreground().color() == string_color
+    # AS, after the closing quote, is back to keyword-land, not string.
+    assert _format_at(editor, text.index("AS")).foreground().color() != string_color
+
+
+def test_sql_backslash_does_not_escape_quote(qtbot):
+    # SQL has no backslash escapes: '\' closes at the second quote.
+    text = r"SELECT 'a\' , x"
+    editor = _sql_editor(qtbot, text)
+    string_color = editor._highlighter._string_format.foreground().color()
+    assert _format_at(editor, text.index("a")).foreground().color() == string_color
+    # x is OUTSIDE the string (in js the \' would keep the string open).
+    assert _format_at(editor, text.index("x")).foreground().color() != string_color
+
+
+def test_sql_double_quoted_identifier_is_not_string_styled(qtbot):
+    # Double quotes delimit identifiers in SQL, not strings -- the string
+    # format must not apply to them (in js the same text WOULD be a string).
+    text = 'SELECT "MyColumn" FROM t'
+    editor = _sql_editor(qtbot, text)
+    string_color = editor._highlighter._string_format.foreground().color()
+    quoted = _format_at(editor, text.index("MyColumn")).foreground().color()
+    assert quoted != string_color
+
+
+def test_sql_block_comment_still_works(qtbot):
+    text = "SELECT /* FROM */ 1"
+    editor = _sql_editor(qtbot, text)
+    comment_color = editor._highlighter._comment_format.foreground().color()
+    assert _format_at(editor, text.index("FROM")).foreground().color() == comment_color
+    assert _format_at(editor, 0).foreground().color() != comment_color
+
+
+# ---------------------------------------------------------------------------
+# Widget: navigate_to_line / replace_current_selection (§18.1 additions).
+# ---------------------------------------------------------------------------
+
+def test_navigate_to_line_moves_caret_to_one_based_line(qtbot):
+    editor = _sql_editor(qtbot, "line one\nline two\nline three\nline four")
+    editor.navigate_to_line(3)
+    assert editor.textCursor().blockNumber() == 2  # 0-based block for line 3
+    assert editor.textCursor().block().text() == "line three"
+
+
+def test_navigate_to_line_clamps_below_one_to_first_line(qtbot):
+    editor = _sql_editor(qtbot, "first\nsecond")
+    editor.navigate_to_line(0)
+    assert editor.textCursor().blockNumber() == 0
+
+
+def test_replace_current_selection_replaces_when_editable(qtbot):
+    editor = _sql_editor(qtbot, "hello world")
+    cursor = editor.textCursor()
+    cursor.setPosition(0)
+    cursor.setPosition(5, QTextCursor.MoveMode.KeepAnchor)
+    editor.setTextCursor(cursor)
+    editor.replace_current_selection("goodbye")
+    assert editor.toPlainText() == "goodbye world"
+
+
+def test_replace_current_selection_no_selection_is_noop(qtbot):
+    editor = _sql_editor(qtbot, "hello world")
+    editor.replace_current_selection("goodbye")
+    assert editor.toPlainText() == "hello world"
+
+
+def test_replace_current_selection_read_only_guard(qtbot):
+    # QTextCursor edits bypass setReadOnly -- the explicit guard is what
+    # protects the read-only DDL buffer (§18.1).
+    editor = _sql_editor(qtbot, "hello world")
+    editor.setReadOnly(True)
+    cursor = editor.textCursor()
+    cursor.setPosition(0)
+    cursor.setPosition(5, QTextCursor.MoveMode.KeepAnchor)
+    editor.setTextCursor(cursor)
+    editor.replace_current_selection("goodbye")
+    assert editor.toPlainText() == "hello world"
 
 
 # ---------------------------------------------------------------------------

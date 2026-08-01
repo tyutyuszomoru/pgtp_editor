@@ -21,8 +21,13 @@ from PySide6.QtGui import QPalette
 def _reset_app_style_and_palette(qapp):
     original_style = qapp.style().objectName()
     original_palette = QPalette(qapp.palette())
+    # The dark theme also sets an app-global stylesheet (BUG-010's
+    # QMenu::indicator QSS) -- restore it too, or a dark-theme test would
+    # leak menu styling into every later widget test.
+    original_stylesheet = qapp.styleSheet()
     try:
         yield
     finally:
         qapp.setStyle(original_style)
         qapp.setPalette(original_palette)
+        qapp.setStyleSheet(original_stylesheet)

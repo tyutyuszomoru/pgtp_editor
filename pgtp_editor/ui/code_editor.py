@@ -71,6 +71,25 @@ _PHP_KEYWORDS = frozenset(
     """.split()
 )
 
+# SQL / plpgsql (spec §18.1: the DDL Explorer's synthesized buffer). Stored
+# lowercase; SQL keyword matching is case-insensitive (pg_get_functiondef
+# emits uppercase CREATE OR REPLACE FUNCTION..., hand-written bodies vary).
+_SQL_KEYWORDS = frozenset(
+    """
+    add all alter and any array as asc begin between by call cascade case cast
+    check column commit constraint create cross declare default delete
+    desc distinct do drop else elsif end except execute exists exception fetch
+    for foreign from full function grant group having if immutable in index
+    inner insert instead into is join key language leakproof left like limit
+    loop not null of offset on or order out outer perform primary procedure
+    raise references replace restrict return returning returns revoke right
+    rollback row rows security select sequence set stable strict table then to
+    trigger truncate union unique update using values view volatile when where
+    while with
+    true false
+    """.split()
+)
+
 # Opener -> closer pairs for auto-close / selection-wrap.
 _BRACKET_PAIRS = {"(": ")", "[": "]", "{": "}"}
 _QUOTES = {"'", '"'}
@@ -130,7 +149,12 @@ class _CodeHighlighter(QSyntaxHighlighter):
     def __init__(self, document, language: str):
         super().__init__(document)
         self._language = language
-        self._keywords = _JS_KEYWORDS if language == "js" else _PHP_KEYWORDS
+        if language == "js":
+            self._keywords = _JS_KEYWORDS
+        elif language == "sql":
+            self._keywords = _SQL_KEYWORDS
+        else:
+            self._keywords = _PHP_KEYWORDS
 
         self._keyword_format = QTextCharFormat()
         self._keyword_format.setForeground(QColor("#569cd6"))
@@ -149,12 +173,20 @@ class _CodeHighlighter(QSyntaxHighlighter):
 
         self._keyword_re = re.compile(r"\b[A-Za-z_]\w*\b")
         self._number_re = re.compile(r"\b\d+(?:\.\d+)?\b")
-        self._string_re = re.compile(r"'(?:\\.|[^'\\])*'|\"(?:\\.|[^\"\\])*\"")
+        if language == "sql":
+            # SQL strings escape a quote by doubling it (''), not backslash;
+            # double-quoted text is an identifier, left unstyled.
+            self._string_re = re.compile(r"'(?:''|[^'])*'")
+        else:
+            self._string_re = re.compile(r"'(?:\\.|[^'\\])*'|\"(?:\\.|[^\"\\])*\"")
         self._variable_re = re.compile(r"\$[A-Za-z_]\w*")
-        # Line comment: '//' always; '#' additionally for PHP.
-        self._line_comment_re = (
-            re.compile(r"(//|#).*") if language == "php" else re.compile(r"//.*")
-        )
+        # Line comment: '--' for SQL; '//' otherwise, '#' additionally for PHP.
+        if language == "sql":
+            self._line_comment_re = re.compile(r"--.*")
+        elif language == "php":
+            self._line_comment_re = re.compile(r"(//|#).*")
+        else:
+            self._line_comment_re = re.compile(r"//.*")
 
     def highlightBlock(self, text: str) -> None:
         # Continuation of a block comment from a previous line.
@@ -174,9 +206,11 @@ class _CodeHighlighter(QSyntaxHighlighter):
         for m in self._number_re.finditer(text, start):
             self.setFormat(m.start(), m.end() - m.start(), self._number_format)
 
-        # Keywords / identifiers.
+        # Keywords / identifiers. SQL keywords match case-insensitively
+        # (pg_get_functiondef emits uppercase; hand-written bodies vary).
         for m in self._keyword_re.finditer(text, start):
-            if m.group() in self._keywords:
+            word = m.group().lower() if self._language == "sql" else m.group()
+            if word in self._keywords:
                 self.setFormat(m.start(), m.end() - m.start(), self._keyword_format)
 
         # PHP variables ($foo).
@@ -209,8 +243,8 @@ class _CodeHighlighter(QSyntaxHighlighter):
 
 
 class CodeEditor(QPlainTextEdit):
-    """QPlainTextEdit tuned for editing a single event-handler body in one
-    language ("js" | "php")."""
+    """QPlainTextEdit tuned for editing a single code body in one language
+    ("js" | "php" | "sql")."""
 
     def __init__(self, language: str, parent=None):
         super().__init__(parent)
@@ -230,6 +264,28 @@ class CodeEditor(QPlainTextEdit):
         # editor inserted, never an arbitrary pre-existing one.
         self._auto_closed_cursors: list[QTextCursor] = []
 
+
+    def navigate_to_line(self, line: int) -> None:
+        """Move the caret to `line` (1-based) and center it -- the same
+        public navigation entry point XmlEditor exposes (§8), used by the
+        DDL Explorer's BrowserPanel → EditorPanel jump (§18.1)."""
+        block = self.document().findBlockByNumber(max(0, line - 1))
+        cursor = QTextCursor(block)
+        self.setTextCursor(cursor)
+        self.centerCursor()
+
+    def replace_current_selection(self, text: str) -> None:
+        """Replace the current selection with `text` (FindReplaceBar's
+        Replace contract, mirroring XmlEditor). No-op without a selection and
+        on a read-only editor -- QTextCursor edits bypass setReadOnly, so the
+        guard here is what actually protects read-only DDL buffers (§18.1)."""
+        if self.isReadOnly():
+            return
+        cursor = self.textCursor()
+        if not cursor.hasSelection():
+            return
+        cursor.insertText(text)
+        self.setTextCursor(cursor)
 
     def select_enclosing_brackets(self) -> None:
         """Ctrl+Shift+B: select the inner span of the innermost bracket pair

@@ -99,12 +99,15 @@ from pgtp_editor.ui.manual_panel import (
 )
 from pgtp_editor.db.config import save_connection, seed_params
 from pgtp_editor.db.compare import check_db_against_xml, check_xml_against_db
+from pgtp_editor.db.ddl_buffer import build_ddl_text
+from pgtp_editor.db.introspect import fetch_routines_and_triggers
 from pgtp_editor.db.introspect import fetch_schema as db_fetch_schema
 from pgtp_editor.db.introspect import test_connection as db_test_connection
 from pgtp_editor.db.rename import rename_field, rename_table
 from pgtp_editor.ui.async_task import run_async
 from pgtp_editor.ui.connection_setup_dialog import ConnectionSetupDialog
 from pgtp_editor.ui.db_check_panel import DbCheckPanel
+from pgtp_editor.ui.ddl_buffer_panel import BrowserPanel
 from pgtp_editor.ui.code_editor import CodeEditorDialog
 from pgtp_editor.ui.customize_toolbar_dialog import CustomizeToolbarDialog
 from pgtp_editor.ui.history import SnapshotHistory
@@ -245,6 +248,17 @@ class MainWindow(QMainWindow):
         self.db_check_panel.rename_requested.connect(self._on_db_rename_requested)
         self.db_check_panel.jump_requested.connect(self._on_db_jump_requested)
         self.db_check_panel.create_requested.connect(self._on_db_create_requested)
+        # The DDL Explorer's object tree rides in its own hidden tab (spec
+        # §18.1), revealed together with the center DDL Explorer tab by the
+        # Database > "DDL Explorer" toggle (mirrors the Database Check tab).
+        self.ddl_browser_panel = BrowserPanel()
+        self.ddl_browser_tab_index = self.left_tabs.addTab(
+            self.ddl_browser_panel, "DDL Objects"
+        )
+        self.left_tabs.setTabVisible(self.ddl_browser_tab_index, False)
+        self.ddl_browser_panel.navigate_requested.connect(
+            self._on_ddl_navigate_requested
+        )
         # Table references ride in their own hidden tab, revealed by the
         # View > "Find table reference" toggle (mirrors the Database Check tab).
         self.table_refs_panel = TableReferencesPanel()
@@ -276,6 +290,9 @@ class MainWindow(QMainWindow):
             self._on_manual_visibility_changed
         )
         self.center_stage.xsd_close_requested.connect(self._on_xsd_close_requested)
+        self.center_stage.ddl_explorer_visibility_changed.connect(
+            self._on_ddl_explorer_visibility_changed
+        )
         try:
             manual_text = load_manual_text()
         except Exception as exc:  # pragma: no cover - packaging safety net
@@ -772,10 +789,15 @@ class MainWindow(QMainWindow):
 
     def _active_find_bar(self):
         """The FindReplaceBar of the active editor tab; defaults to the Raw
-        XML bar (revealing that tab) when neither editor tab is active."""
+        XML bar (revealing that tab) when no editor tab is active."""
         stage = self.center_stage
         if stage.currentIndex() == stage.xsd_tab_index:
             return stage.xsd_find_replace_bar
+        if stage.currentIndex() == stage.ddl_tab_index:
+            # The DDL Explorer buffer has its own bar (spec §18.1, per-tab
+            # document routing) -- without this branch Ctrl+F on the DDL tab
+            # used to bounce the user back to Raw XML.
+            return stage.ddl_editor_panel.find_replace_bar
         self._reveal_raw_xml_tab()
         return stage.find_replace_bar
 
@@ -2323,6 +2345,14 @@ class MainWindow(QMainWindow):
         check_xml_action.triggered.connect(lambda: self._run_db_check("xml_to_db"))
         check_db_action = menu.addAction("Check: Database → XML")
         check_db_action.triggered.connect(lambda: self._run_db_check("db_to_xml"))
+        menu.addSeparator()
+        # DDL Explorer (spec §18.1): checkable toggle, kept in lockstep with
+        # the center tab's real visibility via ddl_explorer_visibility_changed
+        # (bidirectional per the BUG-007 lesson — the tab has its own ✕).
+        self._ddl_explorer_action = menu.addAction("DDL Explorer")
+        self._ddl_explorer_action.setCheckable(True)
+        self._ddl_explorer_action.setChecked(False)
+        self._ddl_explorer_action.toggled.connect(self._on_ddl_explorer_toggled)
 
     def _open_connection_setup(self):
         tree = (
@@ -2422,6 +2452,78 @@ class MainWindow(QMainWindow):
             on_result=on_result,
             on_error=on_error,
         )
+
+    # -- DDL Explorer (spec §18.1) --------------------------------------------
+
+    def _fetch_ddl_schema(self, params):
+        """Introspect routines & triggers. Injectable seam — tests patch this
+        to return a canned `DatabaseSchema` (mirrors `_fetch_db_schema`)."""
+        return fetch_routines_and_triggers(params)
+
+    def _on_ddl_explorer_toggled(self, checked):
+        if checked:
+            self._open_ddl_explorer()
+        else:
+            self.center_stage.hide_ddl_explorer()
+
+    def _open_ddl_explorer(self):
+        """Fetch routines/triggers and reveal the DDL Explorer (center buffer
+        tab + left "DDL Objects" tree). Standalone-mode friendly (§18): no
+        `.pgtp` project is required — only a configured connection."""
+        tree = (
+            self._current_project.tree
+            if self._current_project is not None
+            else None
+        )
+        params = seed_params(tree, self._settings)
+        if not params.host:
+            self.statusBar().showMessage(
+                "No database connection configured — set one up first.", 5000
+            )
+            self._ddl_explorer_action.setChecked(False)
+            self._open_connection_setup()
+            return
+        self.statusBar().showMessage("Loading routines & triggers…")
+        _log.info("db: ddl explorer load started %s", debuglog.redacted(params))
+
+        def on_result(schema):
+            text, spans = build_ddl_text(schema)
+            self.center_stage.ddl_editor_panel.set_ddl_text(text)
+            self.ddl_browser_panel.set_schema(schema, spans)
+            self.center_stage.show_ddl_explorer()
+            self.statusBar().showMessage(
+                f"DDL Explorer: {len(schema.routines)} routine(s), "
+                f"{len(schema.triggers)} trigger(s).",
+                5000,
+            )
+            _log.info("db: ddl explorer load finished")
+
+        def on_error(exc):
+            _log.info("db: ddl explorer load failed %s", exc)
+            self.statusBar().showMessage(f"DDL Explorer failed: {exc}", 8000)
+            self._ddl_explorer_action.setChecked(False)
+
+        self._run_async(
+            lambda: self._fetch_ddl_schema(params),
+            on_result=on_result,
+            on_error=on_error,
+        )
+
+    def _on_ddl_explorer_visibility_changed(self, visible):
+        """Keep the left "DDL Objects" tree tab and the Database-menu toggle
+        in lockstep with the center tab (Contents-rides-with-Manual pattern;
+        bidirectional per BUG-007 — the tab has its own ✕)."""
+        self.left_tabs.setTabVisible(self.ddl_browser_tab_index, visible)
+        if visible:
+            self.tree_dock.setVisible(True)
+            self.left_tabs.setCurrentWidget(self.ddl_browser_panel)
+        self._ddl_explorer_action.setChecked(visible)
+
+    def _on_ddl_navigate_requested(self, line):
+        """Leaf click in the DDL Objects tree → jump the DDL buffer tab to the
+        object's banner line (two tree leaves may share one span, §18.1)."""
+        self.center_stage.setCurrentIndex(self.center_stage.ddl_tab_index)
+        self.center_stage.ddl_editor_panel.navigate_to_line(line)
 
     def _on_db_rename_requested(self, kind, old):
         new = self._prompt_rename(old)

@@ -97,14 +97,40 @@ def dark_palette() -> QPalette:
     return palette
 
 
+# Cached QDarkStyleSheet text (BUG-010). Loaded lazily -- qdarkstyle warns if
+# loaded before a QApplication exists, and apply_theme always runs with one.
+_dark_qss_cache: str | None = None
+
+
+def _dark_stylesheet() -> str:
+    """The QDarkStyleSheet dark QSS (github.com/ColinDuquesnoy/QDarkStyleSheet,
+    the `qdarkstyle` package) -- adopted for BUG-010: Fusion + palette alone
+    left checkable menu indicators outlined near-black on the dark menu
+    background (Fusion derives the indicator frame from darkened Window/
+    Button roles). Rather than hand-tuning per-widget QSS, the maintained
+    dark stylesheet styles menus (QMenu::indicator included) and every other
+    widget consistently."""
+    global _dark_qss_cache
+    if _dark_qss_cache is None:
+        import qdarkstyle
+
+        _dark_qss_cache = qdarkstyle.load_stylesheet(qt_api="pyside6")
+    return _dark_qss_cache
+
+
 def apply_theme(app, light: bool) -> None:
-    """Apply the light or dark theme -- both explicit, complete QPalettes
-    under the Fusion style, which honors QPalette fully (many native styles,
-    e.g. Windows's, largely ignore it -- see the docstrings above).
+    """Apply the light or dark theme. Light: Fusion + ``light_palette()``,
+    no stylesheet. Dark: Fusion + ``dark_palette()`` + the QDarkStyleSheet
+    QSS (BUG-010).
 
     Symmetric by construction (BUG-004 fix): there is no third "restore
-    whatever the native/OS style renders" state. ``light`` True/False always
-    applies ``light_palette()``/``dark_palette()`` respectively, so both
-    states are equally real, tested, and platform-independent."""
+    whatever the native/OS style renders" state; both states are real,
+    tested, and platform-independent. ``dark_palette()`` is still applied
+    under the dark QSS because palette-reading custom widgets (XmlEditor's
+    ``apply_theme_colors`` keys off its palette's Base lightness) and any
+    non-stylesheet-covered rendering must agree with the stylesheet's dark
+    look. The light case ALWAYS assigns the empty stylesheet so a
+    light<->dark round-trip never leaves stale dark QSS behind."""
     app.setStyle("Fusion")
     app.setPalette(light_palette() if light else dark_palette())
+    app.setStyleSheet("" if light else _dark_stylesheet())
