@@ -706,7 +706,7 @@ just makes existing documented checkboxes accurate).
 ---
 
 ## BUG-008: Project-tree selection → Properties panel is very slow on large projects
-**Status:** OPEN
+**Status:** RESOLVED (75b4052)
 **Reported:** 2026-08-01
 **Report (verbatim):** "Project tree selection to property showing is very slow"
 
