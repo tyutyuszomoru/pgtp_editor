@@ -865,7 +865,7 @@ future packaging changes.
 ---
 
 ## BUG-010: Dark-theme View-menu checkable indicators are invisible (dark box on dark menu)
-**Status:** OPEN
+**Status:** RESOLVED (cb9fdc8) — resolved via QDarkStyleSheet adoption (user's chosen direction), not the entry's option A/B
 **Reported:** 2026-08-01
 **Report (verbatim):** "in dark theme the checkbox borders are dark so it's invisible"
 
@@ -995,5 +995,115 @@ Monkeypatch the close-confirm prompt per the modal-call policy.
 not specify the db-check tab as intentionally persistent across project close, so this is a plain
 omission rather than an intentional decision being overridden. If the resolver adds a spec line stating
 the tab is torn down on project close, flag it for spec-maintainer after the fix lands.
+
+---
+
+## BUG-012: test_run_async_delivers_result_via_real_pool flakes under pytest-xdist `-n 10` (connect-after-emit race in the test itself)
+**Status:** RESOLVED (cb9fdc8)
+**Reported:** 2026-08-01
+**Report (verbatim):** "tests/ui/test_async_task.py::test_run_async_delivers_result_via_real_pool is flaky under parallel pytest (-n 10 via pytest-xdist): it fails intermittently in full-suite parallel runs but passes serially and in isolation. Reproduced on the committed baseline (commit c19d0b2) with `QT_QPA_PLATFORM=offscreen venv/bin/python -m pytest -q -n 10` — so it is NOT caused by any working-tree change. The same parallel runs occasionally also fail tests/ui/test_main_window.py caption-mode selection tests (e.g. test_enter_caption_mode_for_field_selects_row, empty selectedRows() under load) — possibly the same load-dependent class. The failing set varies run to run. This flake was also noted in older docs/TEST_LOG.md entries as a pre-existing single-run flake even in serial full-suite runs. Context: the project just adopted `-n 10` as the standard commit-time gate, so a load-sensitive test now fails gates regularly and needs a real fix (deflake the test properly — e.g. generous qtbot.waitUntil deadlines instead of tight timing assumptions, or serializing the real-threadpool test — NOT blind retries)."
+
+**Root cause:** `tests/ui/test_async_task.py::test_run_async_delivers_result_via_real_pool`
+(lines 34–42) — the test's own structure, NOT the production code in
+`pgtp_editor/ui/async_task.py` (which is correct: `run_async` connects `on_result` and the
+`_INFLIGHT` release slot BEFORE `pool.start(task)` at `async_task.py:90–104`, so the production
+delivery path has no race).
+
+The test does:
+
+```python
+task = run_async(lambda: 21 * 2, on_result=results.append)   # line 39: pool.start() already ran
+with qtbot.waitSignal(task.signals.result, timeout=3000):    # line 40: spy connects HERE
+    pass
+```
+
+`qtbot.waitSignal(...)` connects its spy slot when the `SignalBlocker` is constructed — i.e.
+**after** `run_async()` has already started the worker on the global `QThreadPool`. The worker's
+callable is trivial (`21 * 2`), so the worker frequently finishes and emits
+`task.signals.result` on the worker thread within microseconds of `start()`. Qt signal emission
+delivers only to connections that exist at emit time — a queued connection made *after* the emit
+receives nothing. So whenever the pytest process's main thread is descheduled between line 39
+returning and line 40 connecting the spy (rare when the machine is idle, routine when `-n 10`
+xdist floods all cores), the worker emits into a connection set that does not yet include the
+spy: `results.append` (connected inside `run_async`, before start) still fires — but the spy
+never does, and `waitSignal` times out after 3000 ms and raises `TimeoutError` (pytest-qt default
+`raising=True`). That exactly matches every observed symptom: passes serially/in isolation,
+fails intermittently under `-n 10` load, was already noted as an occasional single-run flake in
+older `docs/TEST_LOG.md` entries (the race window exists even without xdist, just far smaller).
+
+**Reproduced deterministically** during triage with a scratch script that mimics the test but
+inserts a 50 ms sleep between `run_async()` returning and the spy connecting (simulating the GUI
+thread being descheduled under load): `results == [42]` (before-start connection delivered) while
+the after-emit spy connection received nothing — i.e. `waitSignal` would time out. One clean
+full-suite `-n 10` run during triage also confirmed the failure is intermittent, not constant.
+
+The sibling tests in the same file are already race-free by construction:
+`test_run_async_delivers_even_without_caller_reference` (line 45) and
+`test_inflight_set_is_empty_after_delivery` (line 57) use
+`qtbot.waitUntil(lambda: results == [...], timeout=3000)`, which polls a condition fed by the
+connection `run_async` itself made before `start()` — immune to this race by design.
+
+**Proposed fix:** In `tests/ui/test_async_task.py`, rewrite
+`test_run_async_delivers_result_via_real_pool` (lines 34–42) to stop connecting anything to the
+task's signals after the pool has started — use the same `waitUntil` pattern its two sibling
+real-pool tests already use:
+
+```python
+def test_run_async_delivers_result_via_real_pool(qtbot):
+    results = []
+    run_async(lambda: 21 * 2, on_result=results.append)
+    qtbot.waitUntil(lambda: results == [42], timeout=5000)
+```
+
+Details and gotchas:
+- `qtbot.waitUntil` spins the event loop while polling, so the queued `results.append` delivery
+  (whose connection predates `pool.start`) is processed; there is no window in which anything can
+  be missed. A generous 5000 ms deadline is fine — it is an upper bound, not a sleep; the test
+  still completes in milliseconds normally.
+- Do NOT keep the `with qtbot.waitSignal(task.signals.result, ...)` form, and do not "fix" it by
+  constructing the blocker before calling `run_async` — the signal lives on the `_Task` that
+  `run_async` creates, so the spy cannot be connected before the pool starts without
+  restructuring (e.g. building a `_Task` manually, connecting, then `pool.start(task)` yourself),
+  which would no longer exercise `run_async` end to end. `waitUntil` on `results` is both simpler
+  and exercises the real production delivery path (`on_result` connected inside `run_async`).
+- Holding the returned `task` reference is no longer needed for GC safety — `_INFLIGHT`
+  (`async_task.py:49, 102`) retains the task until delivery, and
+  `test_run_async_delivers_even_without_caller_reference` explicitly proves that. Dropping the
+  variable also removes the now-obsolete comment at lines 36–38; update the module docstring
+  (lines 5–8: "waiting on the signal and holding the returned task") to match the new shape.
+- No production code change: `pgtp_editor/ui/async_task.py` is correct as-is. Do not add retries,
+  and do not serialize/isolate the test via xdist grouping — the fix above removes the race
+  outright, which is strictly better than scheduling around it.
+
+Secondary observation — the caption-mode failures mentioned in the report
+(`tests/ui/test_main_window.py::test_enter_caption_mode_for_field_selects_row`, empty
+`selectedRows()`) are explicitly NOT root-caused by this entry, and I could not find the code
+path that would make them load-sensitive: that test's entire path is synchronous with no event
+processing between action and assertion (`MainWindow.enter_caption_mode_for_field`
+(`main_window.py:2210`) → `_enter_caption_mode` (line 2171, synchronous `scan_captions` +
+`load_entries`) → `CaptionManagementPanel.filter_to_field` → `_select_first_visible_row`
+(`caption_management_panel.py:948–955`, plain `QSortFilterProxyModel` predicate +
+`QTableView.selectRow`) — no timers, no threadpool, no queued signals). A purely synchronous test
+cannot flake on thread timing, so it is most likely a different failure class: candidates are an
+xdist **worker crash** (xdist reports whatever tests the crashed worker was running as failures,
+producing a varying failing set — check the failure output for "worker gwN crashed" vs. a real
+assertion traceback) or cross-test in-process interference from whatever else that worker ran
+first (ordering varies per run under xdist). Recommendation for the resolver: fix the async test
+per above, then re-run the `-n 10` full suite several times; if caption-mode failures persist,
+capture the exact failure output (assertion vs. worker crash, plus `PYTEST_XDIST_WORKER` test
+schedule) and file a separate bug report with it rather than guessing here.
+
+**Test impact:** The fix IS a test change — `tests/ui/test_async_task.py` only (rewrite one test,
+touch the module docstring/comments as noted). No production code changes, so no other test files
+are affected; `pgtp_editor/ui/async_task.py`'s behavior is already fully covered by the other
+four tests in the same file, which need no changes. After the fix, validate by running the full
+suite with `-n 10` several times (the triage repro command:
+`QT_QPA_PLATFORM=offscreen venv/bin/python -m pytest -q -n 10`) and confirm this test no longer
+appears in any failing set.
+
+**Spec impact:** none — `docs/superpowers/CONSOLIDATED_SPEC.md` does not document test-suite
+timing strategy; `async_task.py`'s documented behavior is unchanged. (The module docstring inside
+`tests/ui/test_async_task.py` describing the waitSignal approach should be updated as part of the
+fix, but that is a test file, not the spec.)
 
 ---
