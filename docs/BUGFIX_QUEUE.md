@@ -1109,7 +1109,9 @@ fix, but that is a test file, not the spec.)
 ---
 
 ## BUG-013: Theme toggle hangs the UI for ~1s+ on each switch
-**Status:** OPEN
+**Status:** RESOLVED (1c2a6b6, 06f8859) — resolved via proposed option (C): two-step theme change (app
+colors flip instantly, document rehighlight follows) plus batching the rehighlight sweep so large
+documents don't freeze the UI
 **Reported:** 2026-08-01
 **Report (verbatim):** "the theme change is very slow and hangs the app for a second or more"
 
@@ -1186,5 +1188,185 @@ and §Theme lines 342-352). If the fix takes option (A) and replaces the full QD
 targeted menu-indicator sheet, that diverges from the documented dependency/behavior — flag for
 `spec-maintainer` after the fix lands (and coordinate with BUG-010, which touches the same spec area).
 If only (B)/(C) are taken (full QDarkStyleSheet retained), no spec change is needed.
+
+---
+## BUG-014: Unparented `QTimer.singleShot` in `apply_theme_colors` fires on a deleted `XmlEditor` — 7 Find-All tests fail with "Internal C++ object (XmlEditor) already deleted"
+
+**Status:** RESOLVED (5b84144) — kickoff switched to a `QTimer(self)`-parented single-shot timer (`_theme_kickoff_timer`); ~QWidget cancels a pending tick. Regression test `test_deferred_theme_rehighlight_does_not_fire_on_deleted_editor`; full suite 1809 passed.
+**Reported:** 2026-08-01
+**Report (verbatim):** "7 tests fail in `tests/ui/test_main_window.py`, all in the Find-All group:
+`test_find_all_restart_does_not_leak_a_second_timer`,
+`test_find_all_populates_audit_panel_with_line_items_and_summary`,
+`test_find_all_clears_only_prior_find_entries`, `test_clicking_find_result_navigates_editor_to_line`,
+`test_clicking_summary_line_is_a_noop`, `test_find_all_via_menu_populates_audit_panel`,
+`test_find_all_streaming_completes_and_reports_final_count`. Each fails with pytest-qt's `CALL ERROR:
+Exceptions caught in Qt event loop`, repeated many times, always the same traceback:
+`File "pgtp_editor/ui/xml_editor.py", line 658, in _rehighlight_for_theme / block =
+self.firstVisibleBlock() / RuntimeError: libshiboken: Internal C++ object (XmlEditor) already deleted.`
+Reproduce: `QT_QPA_PLATFORM=offscreen ./venv/bin/python -m pytest -q -n 10`. A serial run dies instead
+with a pytest-timeout 60s `Timeout` in the same code path, in `tests/ui/conftest.py`'s
+`_reset_app_style_and_palette` teardown at `qapp.setStyle(...)`. Verified pre-existing at clean HEAD
+(687c4b1): 7 failed / 1717 passed with the DDL work stashed, same 7 with it applied — not caused by the
+in-flight DDL Explorer work."
+
+**Root cause:** Confirmed as reported, with the scheduling site pinned down more precisely.
+
+`pgtp_editor/ui/xml_editor.py:629-631` (end of `XmlEditor.apply_theme_colors`, added by the BUG-013 fix
+`1c2a6b6`):
+
+```python
+if not self._theme_rehighlight_pending:
+    self._theme_rehighlight_pending = True
+    QTimer.singleShot(0, self._rehighlight_for_theme)
+```
+
+`QTimer.singleShot(msec, callable)` creates an **unparented, internally-owned** single-shot timer held by
+Qt's global timer machinery; the bound method `self._rehighlight_for_theme` keeps only the *Python*
+wrapper alive, which does nothing to keep the underlying C++ `XmlEditor` alive and does nothing to cancel
+the timer when the C++ object is destroyed. This is exactly the parenting that
+`self._theme_sweep_timer = QTimer(self)` (`xml_editor.py:673-677`) *does* have: that timer is a child of
+the editor, so `~QWidget` destroys it and its pending 0ms tick with it. The `singleShot` escapes that
+lifetime binding. Same escape as `main_window.py:1339`'s `self._find_all_timer = QTimer(self)` avoids by
+parenting.
+
+Firing path, end to end:
+
+1. Every `MainWindow()` construction runs `_restore_theme` (`main_window.py:446` → `831-839`), which calls
+   `apply_theme(QApplication.instance(), light)` **unconditionally** (BUG-004). That posts
+   `ApplicationPaletteChange` to every live widget.
+2. Each live `XmlEditor` — there are two per window, `center_stage.xml_editor` and
+   `center_stage.xsd_editor` (`pgtp_editor/ui/center_stage.py:54,66`) — handles it in `changeEvent`
+   (`xml_editor.py:696-707`) and calls `apply_theme_colors`, which schedules the `singleShot`.
+3. The overwhelming majority of `tests/ui` tests never spin a Qt event loop, so the 0ms singleShot never
+   gets a chance to fire during the test. `qtbot`'s teardown deletes the `MainWindow` (and with it the C++
+   `XmlEditor`s). The queued singleShot survives — it is not a child of anything that was deleted.
+4. The next test that *does* spin the event loop drains that queue. `_rehighlight_for_theme`
+   (`xml_editor.py:639`) runs against a `self` whose C++ side is gone, and the first attribute touch,
+   `self.firstVisibleBlock()` at line 658, raises `RuntimeError: Internal C++ object (XmlEditor) already
+   deleted`. pytest-qt attributes any exception raised inside the event loop to whichever test's loop is
+   spinning, so the exception is charged to the *innocent* test.
+
+**The Find-All tests are victims, not the cause — confirmed by reading the tests.** The 7 failing tests
+are precisely the Find-All tests that call `qtbot.waitUntil(..., timeout=5000)`
+(`tests/ui/test_main_window.py:377, 398, 417, 449, 469, 498, 562`) or otherwise spin the loop — i.e. the
+only tests in the file that give the stale queue a chance to drain. The Find-All tests in the same group
+that drive the streaming timer *manually* without spinning the loop —
+`test_find_all_stop_keeps_partial_results` (`:511`, calls `window._find_all_timer.stop()` then
+`window._find_all_step()` directly) and `test_find_all_live_count_status_after_a_batch` (`:538`, same
+pattern) — **pass**. That split is the fingerprint of a victim, not a culprit: nothing in
+`_populate_find_all_results` / `_find_all_step` / `_finish_find_all` (`main_window.py:1319-1394`) touches
+theming or schedules a rehighlight. Under `-n 10` the exact victim set is a scheduling artifact of which
+worker happens to run a loop-spinning test after a loop-less one; it is stable here only because the
+Find-All tests are the loop-spinning cluster in this file.
+
+**`tests/ui/conftest.py`'s autouse `_reset_app_style_and_palette` is a contributor but not the bug, and
+must not be weakened.** Its `qapp.setStyle(original_style)` / `setPalette(original_palette)` teardown does
+deliver palette/style change events, and any `XmlEditor` still alive at that moment schedules another
+`singleShot` — same leak, one more source. But the fixture is legitimate and load-bearing (its docstring
+explains it exists to stop BUG-004's app-global theme mutation leaking into `test_menus.py`); the leak is
+production-side. Note also that fixture teardown ordering makes this a *secondary* source: the autouse
+fixture is set up before `qtbot`, so it is finalized after `qtbot` has already deleted the test's widgets
+— in a well-behaved test the editors are gone by then. The dominant source is step 1-3 above (construction
+schedules, test never spins, teardown deletes).
+
+**Serial-run 60s timeout at `qapp.setStyle(...)`:** same defect compounding, not a separate one. Serially
+all tests share one process, so the queue of orphaned singleShots (plus, for editors that *are* alive,
+their 0ms `_theme_sweep_timer` repeat ticks) grows monotonically; a `setStyle` re-polish inside a teardown
+processes/queues that backlog and blows the 60s pytest-timeout. Treat as expected-to-resolve-with-the-fix
+and re-verify serially after the fix rather than as an independent item.
+
+**`_theme_sweep_tick` has the same class of exposure but is already protected**, because
+`_theme_sweep_timer` is `QTimer(self)` (parented, `xml_editor.py:674`) — destroyed with the editor, so its
+`timeout` can never fire post-mortem. It is the *only* other deferred callback added by the BUG-013
+commits (`1c2a6b6`, `06f8859`). Verified: `QTimer.singleShot` appears exactly once in the whole
+`pgtp_editor/` package — `xml_editor.py:631`. Every other `QTimer` in production is parented
+(`main_window.py:397` `_snapshot_timer = QTimer(self)`, `main_window.py:1339` `_find_all_timer =
+QTimer(self)`, `xml_editor.py:674` `_theme_sweep_timer = QTimer(self)`). So the codebase's **existing,
+consistent convention is a parented `QTimer`**, and line 631 is the single deviation.
+
+**Proposed fix:** Replace the unparented `singleShot` with a parented single-shot `QTimer`, matching the
+convention already used three times in this codebase (including twice in the same method chain). In
+`pgtp_editor/ui/xml_editor.py`:
+
+1. In `XmlEditor.__init__`, next to the existing BUG-013 state at lines ~500-507, add
+   `self._theme_rehighlight_timer: QTimer | None = None` alongside `_theme_rehighlight_pending` /
+   `_theme_sweep_timer` (created lazily on first use, exactly like `_theme_sweep_timer` is at
+   `xml_editor.py:673-677` — keep the two consistent).
+2. In `apply_theme_colors` (lines 629-631) replace the `QTimer.singleShot(0, ...)` call with:
+
+   ```python
+   if not self._theme_rehighlight_pending:
+       self._theme_rehighlight_pending = True
+       if self._theme_rehighlight_timer is None:
+           self._theme_rehighlight_timer = QTimer(self)   # parented: dies with the editor
+           self._theme_rehighlight_timer.setSingleShot(True)
+           self._theme_rehighlight_timer.setInterval(0)
+           self._theme_rehighlight_timer.timeout.connect(self._rehighlight_for_theme)
+       self._theme_rehighlight_timer.start()
+   ```
+
+   Update the BUG-013 comment block above it (lines 622-628) to say why the timer is parented, so the next
+   reader does not "simplify" it back into a `singleShot`.
+
+Why this option over the alternatives (state the reason in the code comment):
+
+- **Parented `QTimer` (chosen).** Zero-cost, matches `_theme_sweep_timer` five lines away and
+  `_find_all_timer`; the timer is destroyed by `~QWidget` so the callback provably cannot run
+  post-destruction. Also fixes the leak at the source rather than catching its symptom, which is what the
+  serial-run timeout needs.
+- **`shiboken6.isValid(self)` guard at the top of `_rehighlight_for_theme`.** Rejected as the primary fix:
+  it silences the traceback but the orphaned timers still queue and still get drained, so the serial-run
+  backlog/timeout is not addressed; and `shiboken6` is not currently imported anywhere in `pgtp_editor/`
+  (only mentioned in a comment in `tests/ui/_menu_helpers.py:20`), so it would introduce a new
+  convention. Acceptable only as belt-and-braces on top of (1), not instead of it.
+- **`destroyed` disconnect.** More machinery than parenting, and parenting is what `destroyed`-based
+  cleanup is trying to emulate. Reject.
+
+Gotchas for the implementer:
+
+- **Keep the coalescing semantics exactly as they are.** `_theme_rehighlight_pending` is cleared at the
+  top of `_rehighlight_for_theme` (`xml_editor.py:654`); with a restartable single-shot timer, calling
+  `.start()` on an already-running timer restarts it, but the `_theme_rehighlight_pending` guard means
+  `.start()` is only reached when no rehighlight is queued — preserve that guard, don't drop it as
+  "redundant."
+- **Do not change the two-step behavior itself.** BUG-013's whole point is that step 1 (app coloring)
+  paints before step 2 (document rehighlight); the deferral must stay a real deferral (interval 0,
+  single-shot) — do not make it synchronous.
+- **Preserve the `_applying_theme` guard** (`xml_editor.py:656-667`, `679-694`, consulted via
+  `is_applying_theme()` at `main_window.py:519,976` and in `_rescan_structure` /
+  `_refresh_code_region_selections`) untouched — regressing it would spuriously dirty clean documents on a
+  theme toggle.
+- **Do not "fix" this in `tests/ui/conftest.py`** by weakening or removing the autouse style/palette reset;
+  see the analysis above.
+
+**Test impact:** Existing coverage to extend, not duplicate:
+
+- `tests/ui/test_xml_editor_theme.py` — the natural home. It already covers
+  `apply_theme_colors` / `changeEvent` / the BUG-013 deferred rehighlight. Add: (a) a test that
+  constructs an `XmlEditor` (or a `MainWindow`), triggers a theme apply so a rehighlight is queued, deletes
+  the widget **without** spinning the loop (`widget.deleteLater()` + `sip`/shiboken-safe teardown, or
+  `qtbot`-owned widget torn down explicitly), then spins the loop (`qtbot.wait(10)` /
+  `QApplication.processEvents()`) and asserts **no exception reaches the event loop** — with the bug, this
+  reproduces the `RuntimeError` directly and attributes it to the right test; (b) a structural assertion
+  that the rehighlight timer is a child of the editor (`timer.parent() is editor`), which is what makes the
+  behavior true by construction and guards against a regression back to `singleShot`.
+- `tests/ui/test_main_window.py` — the 7 failing Find-All tests should simply go green again; they need
+  **no changes**, and no new Find-All test should be added for this, since Find-All is not implicated.
+  `test_find_all_restart_does_not_leak_a_second_timer` (`:550`) is about `_find_all_timer` identity across
+  restarts (`main_window.py:1339` / `_cancel_find_all_timer`, `:1385`) — a genuinely different timer and a
+  different concern; **do not** graft the theme-timer assertion onto it. Its structural sibling for the
+  theme timer belongs in `tests/ui/test_xml_editor_theme.py` per (b) above.
+- Verification runs the resolver should do: the reported repro `QT_QPA_PLATFORM=offscreen
+  ./venv/bin/python -m pytest -q -n 10` (expect the 7 to go green) **and** a serial `QT_QPA_PLATFORM=offscreen
+  ./venv/bin/python -m pytest -q` to confirm the 60s teardown timeout at `qapp.setStyle(...)` is gone. Use
+  `./venv/bin/python` on this Linux box, not bare `python`.
+
+**Spec impact:** None expected. The deferred two-step + batched-sweep theme rehighlight is BUG-013's
+documented behavior (CONSOLIDATED_SPEC §Theme, and the clean-document-stays-clean note at
+CONSOLIDATED_SPEC.md:313-316); this fix changes only the *ownership* of the timer that carries out step 2,
+not any user-visible behavior or design decision, so nothing in the spec is contradicted. Nothing in
+CONSOLIDATED_SPEC.md documents `singleShot` or timer parenting as an intentional choice — this is an
+implementation defect, not a spec'd behavior. No `spec-maintainer` follow-up needed unless the resolver
+deviates from the parented-timer plan above.
 
 ---
