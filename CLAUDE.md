@@ -34,8 +34,9 @@
   spec/plan paths under `docs/superpowers/`, and the changed files. A feature
   without a green feature-tester run and a `docs/TEST_LOG.md` entry is not done.
 - **Run tests frequently while implementing, not just at the end.** After each
-  meaningful change, run the targeted tests for the area you touched:
-  `$env:QT_QPA_PLATFORM='offscreen'; python -m pytest tests\<area>\ -q`
+  meaningful change, run the targeted tests for the area you touched
+  (`… -m pytest tests/<area> -q` — see **Test environment** below for the
+  interpreter and the offscreen setting on your platform).
 - **Test passing is recorded in the repo.** `docs/TEST_LOG.md` is the append-only
   record; the feature-tester agent owns appending to it. Commit the log entry
   together with the feature (or with its tests).
@@ -77,10 +78,32 @@
 
 ## Test environment
 
-- Use the system `python` — the project is installed editable there with
-  pytest/pytest-qt. The repo's `venv\` directory is a bare leftover without
-  pytest; do not use it.
-- Full suite: `$env:QT_QPA_PLATFORM='offscreen'; python -m pytest -q`
+Development happens on **both Windows and Linux**, and the two differ in which
+interpreter has the test dependencies. Always confirm which one works in the
+current checkout before concluding anything about a failure:
+
+```
+python -c "import pytest, PySide6"          # Windows: usually the system python
+venv/bin/python -c "import pytest, PySide6" # Linux: usually the repo venv
+```
+
+- **Interpreter.** On Windows the project is typically installed editable into
+  the **system `python`** and the repo's `venv\` is a bare leftover without
+  pytest. On Linux it is the reverse: the system `python` has no pytest and the
+  repo's **`venv/bin/python`** carries pytest/pytest-qt/pytest-xdist. Use
+  whichever import check above succeeds — do not assume.
+- **Offscreen platform.** Qt must run headless, via the `QT_QPA_PLATFORM`
+  environment variable set to `offscreen`. Set it the way your shell does:
+  - PowerShell: `$env:QT_QPA_PLATFORM='offscreen'; python -m pytest -q -n 10`
+  - bash/zsh:   `QT_QPA_PLATFORM=offscreen venv/bin/python -m pytest -q -n 10`
+- **Full suite runs in parallel.** `-n 10` (pytest-xdist, a declared dev
+  dependency) takes ~2.5 min; serially the same suite takes ~8 min and can
+  additionally produce spurious per-test `Timeout` failures from pytest-timeout
+  that do NOT reproduce under `-n 10`. Never diagnose those as code regressions
+  — re-run in parallel first. Adjust the worker count to the machine.
+- **Never pipe a suite run through `tail`** — it discards the failing test's
+  name, which is the one thing you need. Filter with
+  `grep -E "passed|failed|^FAILED"` (or `Select-String`) instead.
 - Tests mirror the package layout: `pgtp_editor/<area>/foo.py` →
   `tests/<area>/test_foo.py`. Never let a test reach an un-patched modal Qt call
   (`QDialog.exec`, `QMessageBox.*`, `QFileDialog.*`) — monkeypatch them.
