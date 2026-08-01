@@ -1370,3 +1370,179 @@ implementation defect, not a spec'd behavior. No `spec-maintainer` follow-up nee
 deviates from the parented-timer plan above.
 
 ---
+
+## BUG-015: Typing in the Raw XML editor is painfully slow — every keystroke/newline runs a full-document rescan synchronously
+**Status:** OPEN
+**Reported:** 2026-08-01
+**Report (verbatim):** "xml editing is painfully slow. every time I hit enter, or I enter a character, it just waits and waits.... something should be separated from automatically running on each keystroke or new line... this is horrible"
+
+**Root cause:** `pgtp_editor/ui/xml_editor.py`, in `XmlEditor.__init__` (lines 562-563), the editor wires **two** O(document) handlers directly to its own `textChanged` signal, both of which run **inline and synchronously on every keystroke** with no debounce:
+
+- `self.textChanged.connect(self._rescan_structure)` (line 562). `_rescan_structure` (lines 721-731) calls `self.toPlainText()` — a full copy of the entire multi-MB document (line 728) — then `xml_structure.scan(self._spans_text)` (line 729), which regex-`finditer`s over the whole document (`xml_structure.py:51-57`, `_TAG_RE.finditer(text)`). On a ~37k-tag `.pgtp` file this is a full document copy + full-document regex pass **per character typed and per Enter**. This is exactly the same class of O(document) per-edit cost that BUG-003 and BUG-008 removed from the cursor-move / properties paths, but it remains on the text-*edit* path.
+- `self.textChanged.connect(self._refresh_code_region_selections)` (line 563). `_refresh_code_region_selections` (lines 775-806) **also** calls `self.toPlainText()` (line 787, a second full-document copy) then `event_body_line_ranges(text)` (`event_body.py:121-147`, which walks the whole document via `_iter_handler_spans`), then builds one `QTextEdit.ExtraSelection` per line of every event-handler body and pushes them all via `_refresh_extra_selections` (line 806). Two full-document scans + a full selection rebuild, again per keystroke.
+
+Both handlers already correctly skip the format-only theme-sweep case via the `self._applying_theme` guard (lines 726, 785), so that path is fine — the cost is purely on genuine user edits. The `QSyntaxHighlighter` (`XmlSyntaxHighlighter`, line 294) is **not** the culprit: Qt re-highlights only the changed block(s) on edit via `highlightBlock` (line 314), not the whole document. The `MainWindow._on_editor_text_changed` handler (`main_window.py:989-1002`) is also **not** the culprit: it is already debounced (`self._snapshot_timer.start()`) and otherwise only flips a dirty flag. The entire per-keystroke stall is the two un-debounced `XmlEditor` handlers above.
+
+**Proposed fix:** Debounce both heavy `textChanged` handlers behind a short single-shot `QTimer` that restarts on each edit, so the full-document rescan + code-region rebuild run only once after the user pauses typing (~150-300 ms), instead of on every keystroke. Concretely, in `pgtp_editor/ui/xml_editor.py`:
+
+1. In `__init__`, create a parented single-shot timer (follow the codebase convention — `QTimer(self)`, `setSingleShot(True)`, `setInterval(...)` — exactly like `MainWindow._snapshot_timer` at `main_window.py:397` and the `_theme_sweep_timer` at `xml_editor.py:674`; do **not** use unparented `QTimer.singleShot`, that was BUG-014). Name it e.g. `self._rescan_timer`.
+2. Replace the two direct connections at lines 562-563 with a single slot connected to `textChanged` that (a) still respects the `_applying_theme` guard and simply `return`s during theme sweeps, and (b) otherwise calls `self._rescan_timer.start()`. Connect the timer's `timeout` to a new `_rescan_now` slot that calls `self._rescan_structure()` then `self._refresh_code_region_selections()` in that order (structure first, since `_refresh_code_region_selections` and downstream consumers rely on fresh `_spans`).
+3. **Gotcha — cache staleness within the debounce window (critical).** `_spans` / `_spans_text` / `_spans_revision` will now be momentarily stale between an edit and the timer firing. Consumers already have a revision guard for exactly this: `_update_matching_tag_highlight` (line ~847) and `resolve_attribute_at` (line ~1025) both call `self._rescan_structure()` on demand when `self._spans_revision != self.document().revision()`. **Verify every reader of `_spans` either goes through that revision-guarded lazy rescan or tolerates a stale cache for a few hundred ms.** `_foldable_region_starting_at` (line 733) reads `self._spans` with no guard — folding a region the instant after an edit could use stale spans; either add the same revision-guarded lazy rescan there, or accept that folding right after an edit may lag by the debounce interval (folding is a deliberate user action, so a lazy rescan-on-demand is the safer choice).
+4. **Gotcha — the initial-load path must stay synchronous.** The `__init__` tail (lines 589-591) calls `_rescan_structure()` / `_refresh_code_region_selections()` directly; keep those direct calls so a freshly loaded document has correct spans and code-region styling immediately (do not route the initial population through the debounce timer). Same for any programmatic `setPlainText` path (e.g. revert/undo apply) that expects spans to be fresh synchronously — if such a caller exists, have it call `_rescan_now()` (or the two methods) directly rather than waiting on the timer.
+5. **Gotcha — flush on focus-out / before consumers that must be exact.** If any feature reads code-region selections or spans in a way that must never be stale (e.g. "Edit code..." via `event_body_start_line_at_cursor`, line 808, which independently re-derives from `toPlainText()` so is self-sufficient; double-check), consider flushing the pending timer (`if self._rescan_timer.isActive(): self._rescan_timer.stop(); self._rescan_now()`) at that entry point. `event_body_start_line_at_cursor` already recomputes from scratch, so it is safe as-is; this note is for any future consumer.
+
+**Test impact:** Existing coverage: `tests/ui/test_xml_editor_nav_perf.py` is the closest sibling — its `test_cursor_navigation_does_not_rescan_document` / `_does_not_copy_document_text` (lines 56-147) count `xml_structure.scan` / `toPlainText` calls on the **cursor-move** path and must stay green (this fix does not touch cursor moves). Extend this file (do not duplicate) with the edit-path analogue: a test that types several characters in quick succession without spinning the debounce timer to fire, asserts `scan` is called **0 or 1** times (not once per keystroke), then fires the timer (or `qtbot.wait`s past the interval) and asserts exactly one rescan ran. Add a companion asserting `_spans` is refreshed after the timer fires and that the revision-guarded lazy path in `_update_matching_tag_highlight` still returns correct results *during* the stale window (cursor move between edit and timer-fire must not show a wrong matching-tag highlight). `tests/ui/test_xml_editor.py` (folding, structure) and `tests/ui/test_xml_editor_annotate.py` / `test_xml_editor_add_attribute.py` (which mutate text and then read spans/selections) may need a `_rescan_now()`/timer-flush call inserted after their programmatic edits if they currently rely on spans being fresh synchronously post-`textChanged`; audit those for the stale-cache assumption when implementing. The structural test (timer is `QTimer(self)`, single-shot, parented to the editor — guarding against a regression to unparented `singleShot`, cf. BUG-014) belongs alongside the perf test.
+
+**Spec impact:** Diverges from CONSOLIDATED_SPEC §"Lenient scanner"/"Folding" (CONSOLIDATED_SPEC.md:392-404), which currently documents folding as "driven by `scan()` re-run on `textChanged`" (line 401) and the dirty-tracking/history debounce at :342 — i.e. the spec presently describes the rescan as running *on* `textChanged`, synchronously. After the fix it runs on a debounced timer keyed off `textChanged`. Flag for `spec-maintainer` after the fix lands so §Folding/§Scanner note the debounce (mirroring the existing "`textChanged` is debounced (~400 ms QTimer)" wording already used for the snapshot history at :342 and the auto-parse timer at :599-600). Do not edit the spec as part of this fix.
+
+---
+
+## BUG-016: Every parity-flipping `"` keystroke in the Raw XML editor re-highlights the whole document (unbounded block-state cascade)
+**Status:** OPEN
+**Reported:** 2026-08-01
+**Report (verbatim):** "Typing inside an unterminated/unclosed double quote in the Raw XML editor is still slow on large documents — about 123 ms per keystroke on a ~1 MB / 21,000-line .pgtp, versus ~2 ms/char for plain typing. Discovered while fixing BUG-015 (which debounced the O(document) structure rescan and code-region rebuild; that fix is in place and verified, taking plain typing from 216 ms/char to 2.0 ms/char). This residual is a DIFFERENT root cause and was explicitly mis-attributed in BUG-015's triage, which claimed 'The QSyntaxHighlighter is NOT the culprit: Qt re-highlights only the changed block(s) on edit'. Profiling after the BUG-015 fix shows otherwise: XmlSyntaxHighlighter.highlightBlock ran 41,927 times for 25 keystrokes (~1,677 blocks re-highlighted per character), dominating the remaining profile (cumtime 0.87s of a ~1.0s run), with 260,616 setFormat calls and 155,732 regex finditer calls. [...] Hypothesis to verify: the highlighter tracks an unterminated-quote/string state across blocks via setCurrentBlockState/previousBlockState [...] Investigate whether the cascade is genuinely required for correct XML highlighting [...] and whether the cross-block state can be bounded [...] Assess the visual-correctness risk of any change to the block-state semantics and note which existing tests cover multi-line attribute values and string highlighting."
+
+**Root cause:** Confirmed — the report's hypothesis is correct, and the mechanism is now measured, not assumed.
+
+`pgtp_editor/ui/xml_editor.py:314-341`, `XmlSyntaxHighlighter.highlightBlock` + the module-level helper
+`_has_unterminated_quote` (`:340-341`). The cross-block state is decided by a **pure double-quote parity
+count over the line**:
+
+```python
+def _has_unterminated_quote(text: str, start: int) -> bool:
+    return text.count('"', start) % 2 == 1
+```
+
+`highlightBlock` sets `STATE_IN_UNCLOSED_STRING` (=1, `:74`) whenever that parity is odd (`:334-337`), and
+when the *previous* block carried that state it consumes text up to the next `"` as string, re-setting the
+state if none is found (`:316-323`).
+
+Why that is O(document) per keystroke: Qt's `QSyntaxHighlighterPrivate::reformatBlocks` keeps a
+`forceHighlightOfNextBlock` flag and continues past the edited block **for as long as each block's
+`userState()` differs from what it was before**. With parity semantics, flipping the parity of one line
+flips the computed state of *every* following line (a line with zero quotes that starts in state 1 stays in
+state 1, where it previously was 0; a line with two quotes starting in state 1 ends in state 1 as well —
+parity never re-synchronises). So one `"` keystroke cascades to EOF, and typing the closing `"` cascades to
+EOF a second time.
+
+Measured on this repo (synthetic 12,000-block document, `QT_QPA_PLATFORM=offscreen`, `venv/bin/python`,
+`app.processEvents()` per char, `highlightBlock` call-counted):
+
+| action | ms/char | `highlightBlock` calls/char |
+|---|---|---|
+| plain chars in text content | 0.3 | 1 |
+| typing one `"` in text content (opens the state) | **187.4** | **11,999** (= whole document) |
+| plain chars typed while the quote is left open | 0.3 | 1 |
+| `ab"cd` typed inside an attribute value (parity toggles twice) | 17.8 | 1,201 |
+
+So the per-character average the reporter measured (123 ms) is the amortised cost of the full-document
+cascades triggered by the parity-flipping characters, exactly as hypothesised.
+
+Two further findings that shape the fix:
+
+1. **The cascade is not required for correct XML highlighting — the current semantics are actually
+   *wrong*.** In XML a `"` delimits an attribute value **only inside a tag**; in text content it is an
+   ordinary character. In `.pgtp` files event-handler bodies are stored as XML-escaped **plain text
+   content** (`pgtp_editor/ui/event_body.py:19-27` — "NOT CDATA", `<`/`>` stored as `&lt;`/`&gt;`), i.e.
+   PHP source full of `"` characters that today are treated as attribute-value delimiters. A single
+   odd-quoted PHP line would today paint the entire rest of the document as a string.
+2. **Real documents never carry the state at rest**, so this is purely a mid-typing cost, not a rendering
+   defect users see at rest: over `tests/sample/ERP_i01-r02_italian.pgtp` (42,504 lines, 2.5 MB) there are
+   **0** odd-quoted lines and 0 lines that end carrying `STATE_IN_UNCLOSED_STRING`. The state only ever
+   goes non-zero while the user is mid-way through typing an attribute value — which is precisely the
+   reported scenario.
+
+Also relevant, and *not* the cause: `pgtp_editor/ui/code_editor.py:194-206` (`_STATE_IN_BLOCK_COMMENT`)
+uses the same cross-block-state pattern but is naturally bounded, because `*/` re-synchronises the state
+and unterminated `/*` is rare — so it is a fine sibling precedent for *having* a block state, just not for
+parity-based state.
+
+**Proposed fix:** Replace the parity heuristic in `XmlSyntaxHighlighter.highlightBlock` with a small,
+XML-aware, single-pass character state machine whose state re-synchronises within a line or two, so Qt's
+cascade terminates almost immediately. All in `pgtp_editor/ui/xml_editor.py`.
+
+1. Replace the two-value state (`STATE_NORMAL`/`STATE_IN_UNCLOSED_STRING`, `:73-74`) with four:
+   `OUT` (text content) `= 0`, `IN_TAG` `= 1`, `IN_DQ` (inside a double-quoted attribute value) `= 2`,
+   `IN_SQ` (single-quoted value) `= 3`. Keep `STATE_NORMAL = 0` as the name for `OUT` if you prefer minimal
+   churn, but do **not** keep `STATE_IN_UNCLOSED_STRING = 1` meaning "in string" — value 1 must become
+   `IN_TAG` or the semantics get confusing. Normalise `previousBlockState() == -1` (first block / Qt's
+   "no state") to `OUT`.
+2. Rewrite `highlightBlock` as one left-to-right pass over `text` carrying that state:
+   - `OUT`: only `<` matters → `IN_TAG`. **Quotes in text content are ignored for state purposes.**
+   - `IN_TAG`: `"` → `IN_DQ` (record string start), `'` → `IN_SQ`, `>` → `OUT`, `<` → **resync** (stay
+     `IN_TAG`, restart the tag here).
+   - `IN_DQ`/`IN_SQ`: matching quote → `IN_TAG` (emit `_string_format` over the run); `<` → **resync** to
+     `IN_TAG` (drop the string).
+   - At end of line, if a string run is open, format to end of line and carry the state.
+3. **The `<` resync rule is what bounds the cascade** and it is XML-legal: a raw `<` can never occur inside
+   a tag or inside an attribute value (it must be `&lt;`), so encountering one proves the carried state is
+   bogus. In a `.pgtp` the next raw `<` is at most a line or two away, so the state returns to its previous
+   value and Qt stops. Prototype measured in this repo on the same 12,000-block document:
+   quote in text content **1** block re-highlighted (was 11,999), `ab"cd` inside an attribute value **1**
+   block/char (was 1,201), single `"` inside a tag **3** blocks (was 11,999) — 0.2-0.4 ms/char across the
+   board. Do not skip the resync rule; without it the tag-aware machine alone still cascades to EOF
+   (verified: an unterminated attribute quote followed by PHP lines with balanced quotes keeps flipping
+   state forever, exactly like parity).
+4. **Optional hardening (recommended, cheap):** even with the resync, a carried `IN_DQ` can run to the end
+   of a very long handler body that contains no raw `<` (bodies escape `<` as `&lt;`). If you want a hard
+   bound, cap propagation at N blocks (e.g. 500) by encoding a countdown in the block state
+   (`state | (remaining << 4)`) and forcing `OUT` at 0. Only add this if you also add a test for it —
+   otherwise the resync rule is sufficient for the reported document shapes.
+5. **Keep the tag/attribute-name colouring.** The prototype above only proved the state machine; the real
+   implementation must still apply `_tag_format` to `<name`/`</name`/`>` /`/>` and `_attr_name_format` to
+   `name=` tokens. Easiest low-risk shape: use the state machine to determine the state *and* the
+   `[start, end)` spans that are inside tags, then run the existing `_TAG_OPEN_RE` / `_TAG_CLOSE_RE` /
+   `_ATTR_NAME_RE` (`:76-79`) **within the in-tag spans only**, instead of over the whole line.
+6. **Visual-correctness decision to make explicitly (call it out in the commit message):** under the new
+   semantics, quoted runs in *text content* (PHP string literals in event bodies) are no longer painted
+   with `_string_format`. If preserving today's look matters, keep a purely **line-local**
+   `_ATTR_VALUE_RE` (`:79`, `"[^"]*"`) pass over the `OUT` portions of the line — line-local means no block
+   state is set from it, so it cannot cascade. This is the recommended compromise: identical appearance at
+   rest, no cross-block cost. (Note that event-handler bodies also get their own background styling via
+   `_refresh_code_region_selections`, so the loss would be modest either way.)
+7. Delete `_has_unterminated_quote` (`:340-341`) once unused — grep confirms it has no other caller in
+   `pgtp_editor/` and no test references it.
+8. **Gotcha — `--debug` tracing.** `pgtp_editor/debuglog.py:284` silences the hot path with the prefix pair
+   `("ui.xml_editor", "XmlSyntaxHighlighter.")`, which is a **qualname prefix**: new helpers must be
+   **methods on `XmlSyntaxHighlighter`** to stay excluded. A new module-level helper function (as
+   `_has_unterminated_quote` is today — it is *not* covered by that exclusion) would flood the debug log on
+   every block. `tests/test_debuglog.py:205-215` asserts `XmlSyntaxHighlighter.highlightBlock` is excluded,
+   so keep the class and method names.
+9. **Out of scope for this entry:** the reporter's other residuals (newlines 14.1 ms/char, attribute-with-
+   quotes 28.6 ms/char) are only partly explained by this cascade; re-measure after the fix and file
+   separately if anything remains.
+
+**Test impact:** Existing coverage lives in `tests/ui/test_xml_editor.py` — extend it, do not duplicate:
+
+- `test_highlighter_is_attached_to_document` (`:47`), `test_tag_name_and_attribute_name_get_distinct_formats`
+  (`:54`) — must stay green; they pin tag vs. attr-name vs. attr-value colours via the `_format_at` helper
+  (`:31-43`), which is the tool to reuse for any new assertion.
+- `test_unclosed_quote_propagates_string_format_to_next_line` (`:69-77`) and
+  `test_closing_the_quote_reverts_second_line_format` (`:80-95`) are **the** multi-line-attribute-value
+  tests, and they are the behavioural contract for the block state. Both use
+  `'<Page fileName="unterminated\nsecond line ordinary text'` — i.e. the unterminated quote is **inside an
+  open tag**, so both still pass under the proposed machine (verified by inspection of the state
+  transitions: line 2 starts `IN_DQ`, has no `"` and no `<`, so it stays string-formatted). Do not weaken
+  them.
+- New cases needed: (a) a quote in **text content** does *not* propagate string format to the next line
+  (the semantics change — this is the new contract, and it is the case that used to cost 12k re-highlights);
+  (b) a `<` on a following line **resyncs** the state — given `<A x="\n<B/>\ntail text`, `tail text` must
+  *not* be string-formatted; (c) a perf/structural regression test in the spirit of
+  `tests/ui/test_xml_editor_nav_perf.py` (BUG-015's home for edit-path counting): build a document of a few
+  thousand blocks, monkeypatch/count `XmlSyntaxHighlighter.highlightBlock` (patch the **class attribute
+  before constructing the editor** — patching after construction does not take effect for the already-bound
+  PySide6 virtual, which cost time during this triage), type a single `"`, and assert the call count is a
+  small constant (say `< 50`) rather than ~`blockCount()`. That test fails loudly today (11,999) and is the
+  durable guard.
+- Run with `QT_QPA_PLATFORM=offscreen ./venv/bin/python -m pytest tests/ui/test_xml_editor.py -q` while
+  iterating (system `python` has no pytest on this box), then the full suite with `-n 10` at commit time.
+
+**Spec impact:** Diverges from CONSOLIDATED_SPEC §8 "Raw XML editor", `CONSOLIDATED_SPEC.md:398-399`, which
+documents the current design verbatim: "**Highlighting:** four categories (delimiters/names, attribute
+names, values, text); unclosed-quote state propagated across blocks via Qt block state." That sentence
+describes the buggy parity propagation as intended behavior, so it must be rewritten after the fix lands
+(new wording along the lines of: tag-aware block state — `OUT`/`IN_TAG`/`IN_DQ`/`IN_SQ` — with a raw `<`
+forcing a resync so cross-block propagation is bounded; quotes in text content are not attribute
+delimiters). Flag for `spec-maintainer` **after** the fix lands; do not edit the spec as part of the fix.
+
+---
