@@ -1830,6 +1830,16 @@ class MainWindow(QMainWindow):
         # into the emptied editor.
         self._history.clear()
         self._set_dirty(False)
+        # Database Check results are project-tied (BUG-011): hide the tab and
+        # drop the cached direction/schema/summary so a later reparse or
+        # rename re-run can't act on the closed project's stale state. Only
+        # here on the committed-close path -- a cancelled close (returns
+        # above) must leave the still-open project's tab alone, and
+        # _revert_project keeps the project loaded so it doesn't tear down.
+        self.left_tabs.setTabVisible(self.db_check_tab_index, False)
+        self._last_db_check_direction = None
+        self._last_db_schema = None
+        self._last_db_summary = None
         _log.info("file: close outcome=%s", outcome)
 
     def _revert_project(self) -> None:

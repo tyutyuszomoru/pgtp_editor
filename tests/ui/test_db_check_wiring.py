@@ -85,6 +85,106 @@ def test_run_db_check_xml_to_db_populates_and_reveals(qtbot):
     assert window._last_db_check_direction == "xml_to_db"
 
 
+def test_close_project_hides_db_check_tab_and_clears_caches(qtbot):
+    # BUG-011: the Database Check results are project-tied -- committing a
+    # close hides the tab and drops the cached direction/schema/summary.
+    window = _window_with_project(qtbot)
+    window._run_db_check("xml_to_db")
+    assert window.left_tabs.isTabVisible(window.db_check_tab_index)
+
+    window._close_project(confirm="discard")
+
+    assert not window.left_tabs.isTabVisible(window.db_check_tab_index)
+    assert window._last_db_check_direction is None
+    assert window._last_db_schema is None
+    assert window._last_db_summary is None
+
+
+def test_close_clean_buffer_hides_db_check_tab_and_clears_caches(qtbot):
+    # BUG-011 gap: closing a CLEAN buffer (confirm=None, treated as discard)
+    # is also a committed close and must tear down the db-check surface.
+    window = _window_with_project(qtbot)
+    window._run_db_check("xml_to_db")
+    window._set_dirty(False)
+    assert window.left_tabs.isTabVisible(window.db_check_tab_index)
+
+    window._close_project()  # clean: no confirm seam consulted, no modal
+
+    assert not window.left_tabs.isTabVisible(window.db_check_tab_index)
+    assert window._last_db_check_direction is None
+    assert window._last_db_schema is None
+    assert window._last_db_summary is None
+
+
+def test_close_via_successful_save_hides_db_check_tab(qtbot):
+    # BUG-011 gap: confirm="save" with a save that succeeds (dirty -> False)
+    # commits the close and tears down the db-check surface.
+    window = _window_with_project(qtbot)
+    window._run_db_check("xml_to_db")
+    window._set_dirty(True)
+    window._save_project = lambda: window._set_dirty(False)  # save succeeds
+
+    window._close_project(confirm="save")
+
+    assert not window.left_tabs.isTabVisible(window.db_check_tab_index)
+    assert window._last_db_check_direction is None
+    assert window._last_db_schema is None
+    assert window._last_db_summary is None
+
+
+def test_close_via_cancelled_save_keeps_db_check_tab_and_caches(qtbot):
+    # BUG-011 gap: confirm="save" whose save is cancelled (dirty stays True,
+    # e.g. Save-As dialog dismissed) aborts the close -- the still-open
+    # project's tab and caches must survive.
+    window = _window_with_project(qtbot)
+    window._run_db_check("xml_to_db")
+    window._set_dirty(True)
+    window._save_project = lambda: None  # save cancelled: stays dirty
+
+    window._close_project(confirm="save")
+
+    assert window._dirty is True  # close aborted
+    assert window.left_tabs.isTabVisible(window.db_check_tab_index)
+    assert window._last_db_check_direction == "xml_to_db"
+    assert window._last_db_schema is not None
+    assert window._last_db_summary is not None
+
+
+def test_fresh_db_check_after_close_reveals_and_repopulates(qtbot):
+    # BUG-011 gap: after close-teardown, opening a new project and running a
+    # fresh check re-reveals the tab and repopulates the panel + caches.
+    window = _window_with_project(qtbot)
+    window._run_db_check("xml_to_db")
+    window._close_project(confirm="discard")
+    assert not window.left_tabs.isTabVisible(window.db_check_tab_index)
+
+    # "Open" a new project (same seams as _window_with_project).
+    window._current_project = _project()
+    window.center_stage.xml_editor.setPlainText(_RAW_XML)
+    window._run_db_check("db_to_xml")
+
+    assert window.left_tabs.isTabVisible(window.db_check_tab_index)
+    assert window.db_check_panel.tree.topLevelItemCount() >= 1
+    assert window._last_db_check_direction == "db_to_xml"
+    assert window._last_db_schema is not None
+    assert window._last_db_summary == "u@h:5432/d"
+
+
+def test_cancelled_close_leaves_db_check_tab_and_caches(qtbot):
+    # A cancelled close must leave the still-open project's tab and caches
+    # alone (BUG-011 gotcha: teardown only on the committed-close path).
+    window = _window_with_project(qtbot)
+    window._run_db_check("xml_to_db")
+    window._set_dirty(True)  # dirty so the confirm seam is consulted
+
+    window._close_project(confirm="cancel")
+
+    assert window.left_tabs.isTabVisible(window.db_check_tab_index)
+    assert window._last_db_check_direction == "xml_to_db"
+    assert window._last_db_schema is not None
+    assert window._last_db_summary is not None
+
+
 def test_run_db_check_db_to_xml_populates(qtbot):
     window = _window_with_project(qtbot)
     window._run_db_check("db_to_xml")

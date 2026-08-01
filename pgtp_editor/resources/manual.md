@@ -441,6 +441,11 @@ the project's values next time.
 - **Check: Database → XML** is the reverse: it lists tables and columns that exist
   in the database but the project doesn't reference.
 
+Results are tied to the project they were checked against: **File ▸ Close** closes
+the **Database Check** tab and discards its results (cancelling the close, or
+**File ▸ Revert**, leaves them in place). Running a check on the next project
+brings the tab back as usual.
+
 The password is stored with the connection settings and is never written to any log.
 
 ---
