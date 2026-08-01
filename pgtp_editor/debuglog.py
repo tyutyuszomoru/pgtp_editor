@@ -270,7 +270,12 @@ _depth = threading.local()
 # "" qualname prefix = the whole module. Extend as flooding is observed.
 _EXCLUSIONS: list[tuple[str, str]] = [
     ("ui.xml_editor", "XmlEditor.paintEvent"),
-    ("ui.xml_editor", "_EditorGutter."),
+    # The gutter/bookmark/fold base lives in ui/editor_gutter.py (§8) and is
+    # shared by XmlEditor AND every CodeEditor (DDL tab, "Edit code..."
+    # dialogs) -- so its paint/mouse hot paths flood even harder than when it
+    # was XmlEditor-only. Exclusion is keyed on the module derived from
+    # co_filename, so this MUST name editor_gutter, not xml_editor.
+    ("ui.editor_gutter", ""),
     ("ui.xml_editor", "XmlEditor._draw_"),
     ("ui.xml_editor", "XmlEditor.line_number_area"),
     ("ui.xml_editor", "XmlEditor.blockCount"),

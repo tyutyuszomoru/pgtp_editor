@@ -430,3 +430,375 @@ def test_dialog_without_parent_uses_minimum_size(qtbot):
     # No parent to size against: at least the usable minimum.
     assert dialog.minimumWidth() == 480
     assert dialog.minimumHeight() == 320
+
+
+# --- Shared gutter / bookmark / fold base (spec §8, §18.1) -----------------
+
+
+def test_code_editor_and_xml_editor_share_one_gutter_implementation(qtbot):
+    """The hard requirement from §8: exactly ONE gutter/bookmark/fold
+    implementation, carried by both editors -- never a second parallel gutter."""
+    from pgtp_editor.ui.editor_gutter import _EditorGutter, GutterBookmarkFoldMixin
+    from pgtp_editor.ui.xml_editor import XmlEditor
+
+    code = CodeEditor(language="sql")
+    qtbot.addWidget(code)
+    xml = XmlEditor()
+    qtbot.addWidget(xml)
+
+    assert isinstance(code, GutterBookmarkFoldMixin)
+    assert isinstance(xml, GutterBookmarkFoldMixin)
+    assert type(code._gutter) is _EditorGutter
+    assert type(xml._gutter) is _EditorGutter
+    # Same functions, not copies.
+    assert type(code).toggle_bookmark is type(xml).toggle_bookmark
+    assert type(code)._toggle_fold is type(xml)._toggle_fold
+
+
+def test_code_editor_has_a_gutter_reserving_viewport_margin(qtbot):
+    editor = CodeEditor(language="sql")
+    qtbot.addWidget(editor)
+    editor.setPlainText("\n".join(f"line {i}" for i in range(200)))
+    assert editor._gutter_width() > 0
+    assert editor.viewportMargins().left() == editor._gutter_width()
+
+
+def test_code_editor_bookmarks_toggle_and_cycle(qtbot):
+    editor = CodeEditor(language="sql")
+    qtbot.addWidget(editor)
+    editor.setPlainText("a\nb\nc\nd\n")
+    editor.toggle_bookmark(1)
+    editor.toggle_bookmark(3)
+    assert editor.bookmarked_lines() == [1, 3]
+    assert editor.next_bookmark(1) == 3
+    assert editor.next_bookmark(3) == 1  # wraps
+    assert editor.prev_bookmark(1) == 3  # wraps
+    editor.toggle_bookmark(1)
+    assert editor.bookmarked_lines() == [3]
+    editor.clear_bookmarks()
+    assert editor.bookmarked_lines() == []
+
+
+def test_code_editor_setplaintext_resets_bookmarks_and_folds(qtbot):
+    editor = CodeEditor(language="sql")
+    qtbot.addWidget(editor)
+    editor.setPlainText("a\nb\nc\n")
+    editor.toggle_bookmark(1)
+    editor.set_fold_regions([(0, 1, 2)])
+    editor._toggle_fold(editor.document().findBlockByNumber(0))
+    assert editor._fold_state == {0: True}
+    editor.setPlainText("x\ny\n")
+    assert editor.bookmarked_lines() == []
+    assert editor._fold_state == {}
+
+
+def test_code_editor_folds_only_the_regions_it_was_given(qtbot):
+    editor = CodeEditor(language="sql")
+    qtbot.addWidget(editor)
+    editor.setPlainText("head\nbody1\nbody2\ntail\n")
+    document = editor.document()
+    # Nothing foldable until regions are installed.
+    assert editor._foldable_region_starting_at(document.findBlockByNumber(0)) is None
+    editor.set_fold_regions([(0, 1, 2)])
+    assert editor._foldable_region_starting_at(document.findBlockByNumber(0)) == (1, 2)
+    assert editor._foldable_region_starting_at(document.findBlockByNumber(1)) is None
+
+    editor._toggle_fold(document.findBlockByNumber(0))
+    assert document.findBlockByNumber(0).isVisible() is True  # trigger line stays
+    assert document.findBlockByNumber(1).isVisible() is False
+    assert document.findBlockByNumber(2).isVisible() is False
+    assert document.findBlockByNumber(3).isVisible() is True
+    # Folding only hides rendering: the character stream is intact.
+    assert editor.toPlainText() == "head\nbody1\nbody2\ntail\n"
+
+    editor._toggle_fold(document.findBlockByNumber(0))
+    assert document.findBlockByNumber(1).isVisible() is True
+
+
+def test_js_code_editor_has_the_gutter_but_nothing_foldable(qtbot):
+    editor = CodeEditor(language="js")
+    qtbot.addWidget(editor)
+    editor.setPlainText("function f() {\n  return 1;\n}\n")
+    assert editor._gutter is not None
+    assert editor._foldable_region_starting_at(editor.document().findBlockByNumber(0)) is None
+
+
+# --- Tab stop (§18.1) ------------------------------------------------------
+
+
+def test_sql_mode_uses_a_four_character_tab_stop(qtbot):
+    editor = CodeEditor(language="sql")
+    qtbot.addWidget(editor)
+    expected = 4 * editor.fontMetrics().horizontalAdvance(" ")
+    assert editor.tabStopDistance() == expected
+
+
+def test_non_sql_modes_keep_qt_default_tab_stop(qtbot):
+    """Scoped to the DDL/sql mode: JS/PHP event bodies are untouched."""
+    sql = CodeEditor(language="sql")
+    qtbot.addWidget(sql)
+    js = CodeEditor(language="js")
+    qtbot.addWidget(js)
+    assert js.tabStopDistance() != sql.tabStopDistance()
+
+
+# --- Top-aligned vs centered navigation (§18.1) ----------------------------
+
+
+def _tall_editor(qtbot, language):
+    editor = CodeEditor(language=language)
+    qtbot.addWidget(editor)
+    editor.setPlainText("\n".join(f"line {i}" for i in range(1, 401)))
+    editor.resize(400, 200)
+    editor.show()
+    qtbot.waitExposed(editor)
+    return editor
+
+
+def test_sql_navigate_to_line_puts_the_target_at_the_top(qtbot):
+    editor = _tall_editor(qtbot, "sql")
+    editor.navigate_to_line(100)
+    assert editor.textCursor().blockNumber() == 99
+    # Scrollbar counts visible blocks: the target block is the first one shown.
+    assert editor.verticalScrollBar().value() == 99
+
+
+def test_non_sql_navigate_to_line_stays_centered(qtbot):
+    editor = _tall_editor(qtbot, "js")
+    editor.navigate_to_line(100)
+    assert editor.textCursor().blockNumber() == 99
+    # Centered: the target sits roughly mid-viewport, so the first visible
+    # block is well ABOVE it.
+    assert editor.verticalScrollBar().value() < 99
+
+
+def test_xml_editor_navigate_to_line_stays_centered(qtbot):
+    """XmlEditor's Properties/tree-jump callers depend on centering (§18.1)."""
+    from pgtp_editor.ui.xml_editor import XmlEditor
+
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    editor.setPlainText("\n".join(f"<T{i}/>" for i in range(1, 401)))
+    editor.resize(400, 200)
+    editor.show()
+    qtbot.waitExposed(editor)
+    editor.navigate_to_line(100)
+    assert editor.textCursor().blockNumber() == 99
+    assert editor.verticalScrollBar().value() < 99
+
+
+def test_sql_navigate_near_end_of_document_clamps_instead_of_failing(qtbot):
+    editor = _tall_editor(qtbot, "sql")
+    editor.navigate_to_line(400)
+    bar = editor.verticalScrollBar()
+    assert bar.value() == bar.maximum()
+    assert editor.textCursor().blockNumber() == 399
+
+
+# --- The shared gutter's mouse zones, on a CodeEditor host (§8) ------------
+
+from PySide6.QtCore import QEvent as _QEvent_g, QPoint as _QPoint_g  # noqa: E402
+from PySide6.QtGui import QMouseEvent as _QMouseEvent_g  # noqa: E402
+
+from pgtp_editor.ui.editor_gutter import (  # noqa: E402
+    _BOOKMARK_STRIP_WIDTH as _STRIP_W,
+    _FOLD_GLYPH_WIDTH as _FOLD_W,
+)
+
+
+def _gutter_editor(qtbot):
+    editor = CodeEditor(language="sql")
+    qtbot.addWidget(editor)
+    editor.resize(400, 300)
+    editor.show()
+    editor.setPlainText("-- BANNER --\nbody1\nbody2\ntail\n")
+    editor.set_fold_regions([(0, 1, 2)])
+    return editor
+
+
+def _click_gutter(editor, x, block_number):
+    block = editor.document().findBlockByNumber(block_number)
+    top = editor.blockBoundingGeometry(block).translated(editor.contentOffset()).top()
+    event = _QMouseEvent_g(
+        _QEvent_g.Type.MouseButtonPress,
+        _QPoint_g(x, int(top) + 2),
+        Qt.MouseButton.LeftButton,
+        Qt.MouseButton.LeftButton,
+        Qt.KeyboardModifier.NoModifier,
+    )
+    editor._gutter.mousePressEvent(event)
+
+
+def test_code_editor_gutter_click_in_bookmark_strip_toggles_bookmark(qtbot):
+    editor = _gutter_editor(qtbot)
+    _click_gutter(editor, 2, 2)
+    assert editor.bookmarked_lines() == [2]
+    _click_gutter(editor, 2, 2)
+    assert editor.bookmarked_lines() == []
+
+
+def test_code_editor_gutter_click_in_fold_zone_toggles_fold(qtbot):
+    editor = _gutter_editor(qtbot)
+    _click_gutter(editor, _STRIP_W + _FOLD_W // 2, 0)
+    assert editor.document().findBlockByNumber(1).isVisible() is False
+    assert editor.document().findBlockByNumber(3).isVisible() is True
+    assert editor.bookmarked_lines() == []
+
+
+def test_code_editor_gutter_click_on_line_number_is_a_no_op(qtbot):
+    editor = _gutter_editor(qtbot)
+    _click_gutter(editor, _STRIP_W + _FOLD_W + 2, 0)
+    assert editor.bookmarked_lines() == []
+    assert editor.document().findBlockByNumber(1).isVisible() is True
+
+
+def test_code_editor_gutter_paints_with_bookmark_and_fold_glyph(qtbot):
+    """Exercise the shared paintEvent through the CodeEditor host: bookmark
+    tag + fold chevron, collapsed and expanded."""
+    from PySide6.QtGui import QPixmap
+
+    editor = _gutter_editor(qtbot)
+    editor.toggle_bookmark(1)
+    pixmap = QPixmap(editor._gutter.size())
+    editor._gutter.render(pixmap)
+    editor._toggle_fold(editor.document().findBlockByNumber(0))
+    editor._gutter.render(pixmap)  # collapsed chevron path
+    assert editor._fold_state == {0: True}
+
+
+def test_code_editor_gutter_theme_colors_follow_the_palette(qtbot):
+    from PySide6.QtGui import QColor, QPalette
+
+    from pgtp_editor.ui.editor_gutter import (
+        _GUTTER_COLORS_DARK,
+        _GUTTER_COLORS_LIGHT,
+    )
+
+    editor = CodeEditor(language="sql")
+    qtbot.addWidget(editor)
+    palette = editor.palette()
+    palette.setColor(QPalette.ColorRole.Base, QColor("#ffffff"))
+    editor.setPalette(palette)
+    editor._apply_gutter_theme_colors(editor._palette_is_light())
+    assert editor._gutter_bg_color.name() == QColor(_GUTTER_COLORS_LIGHT[0]).name()
+
+    palette.setColor(QPalette.ColorRole.Base, QColor("#101010"))
+    editor.setPalette(palette)
+    editor._apply_gutter_theme_colors(editor._palette_is_light())
+    assert editor._gutter_bg_color.name() == QColor(_GUTTER_COLORS_DARK[0]).name()
+
+
+def test_code_editor_palette_change_event_repaints_the_gutter(qtbot):
+    """changeEvent guards on the gutter existing (it can fire during base
+    construction) and otherwise re-applies the theme colors."""
+    from PySide6.QtGui import QColor, QPalette
+
+    from pgtp_editor.ui.editor_gutter import _GUTTER_COLORS_LIGHT
+
+    editor = CodeEditor(language="sql")
+    qtbot.addWidget(editor)
+    palette = editor.palette()
+    palette.setColor(QPalette.ColorRole.Base, QColor("#fafafa"))
+    editor.setPalette(palette)  # emits a PaletteChange changeEvent
+    assert editor._gutter_bg_color.name() == QColor(_GUTTER_COLORS_LIGHT[0]).name()
+
+
+def test_set_fold_regions_replaces_the_previous_set_and_drops_fold_state(qtbot):
+    editor = CodeEditor(language="sql")
+    qtbot.addWidget(editor)
+    editor.setPlainText("a\nb\nc\nd\ne\n")
+    editor.set_fold_regions([(0, 1, 2)])
+    editor._toggle_fold(editor.document().findBlockByNumber(0))
+    assert editor._fold_state == {0: True}
+
+    editor.set_fold_regions([(2, 3, 4)])
+    assert editor._fold_state == {}
+    document = editor.document()
+    assert editor._foldable_region_starting_at(document.findBlockByNumber(0)) is None
+    assert editor._foldable_region_starting_at(document.findBlockByNumber(2)) == (3, 4)
+
+
+def test_set_fold_regions_accepts_an_empty_iterable(qtbot):
+    editor = CodeEditor(language="sql")
+    qtbot.addWidget(editor)
+    editor.setPlainText("a\nb\n")
+    editor.set_fold_regions([(0, 1, 1)])
+    editor.set_fold_regions([])
+    assert editor._foldable_region_starting_at(editor.document().findBlockByNumber(0)) is None
+
+
+def test_toggle_fold_on_a_non_region_block_is_a_no_op(qtbot):
+    editor = CodeEditor(language="sql")
+    qtbot.addWidget(editor)
+    editor.setPlainText("a\nb\nc\n")
+    editor.set_fold_regions([(0, 1, 2)])
+    editor._toggle_fold(editor.document().findBlockByNumber(1))
+    assert editor._fold_state == {}
+    assert editor.document().findBlockByNumber(2).isVisible() is True
+
+
+def test_independent_regions_fold_and_expand_without_disturbing_siblings(qtbot):
+    """Two sibling DDL objects: folding both then expanding one must leave the
+    other collapsed (the _is_line_hidden_by_other_collapsed_fold contract)."""
+    editor = CodeEditor(language="sql")
+    qtbot.addWidget(editor)
+    editor.setPlainText("\n".join(f"L{i}" for i in range(8)) + "\n")
+    editor.set_fold_regions([(0, 1, 3), (4, 5, 7)])
+    document = editor.document()
+    editor._toggle_fold(document.findBlockByNumber(0))
+    editor._toggle_fold(document.findBlockByNumber(4))
+    assert [document.findBlockByNumber(i).isVisible() for i in range(8)] == [
+        True, False, False, False, True, False, False, False
+    ]
+
+    editor._toggle_fold(document.findBlockByNumber(0))
+    assert [document.findBlockByNumber(i).isVisible() for i in range(8)] == [
+        True, True, True, True, True, False, False, False
+    ]
+
+
+def test_sql_navigate_to_line_accounts_for_folded_blocks_above(qtbot):
+    """The scrollbar counts VISIBLE blocks, so a collapsed region above the
+    target must not make the top-alignment overshoot."""
+    editor = _tall_editor(qtbot, "sql")
+    editor.set_fold_regions([(0, 1, 49)])
+    editor._toggle_fold(editor.document().findBlockByNumber(0))
+    editor.navigate_to_line(100)
+    # 49 hidden blocks above the target -> 99 - 49 visible blocks precede it.
+    assert editor.verticalScrollBar().value() == 50
+    assert editor.textCursor().blockNumber() == 99
+
+
+def test_sql_navigate_to_line_clamps_a_line_below_zero(qtbot):
+    editor = _tall_editor(qtbot, "sql")
+    editor.navigate_to_line(0)
+    assert editor.textCursor().blockNumber() == 0
+    assert editor.verticalScrollBar().value() == 0
+
+
+def test_event_handler_dialog_editor_also_carries_the_gutter(qtbot):
+    """Deliberate, user-approved side effect of putting the shared base on
+    CodeEditor: the JS/PHP "Edit code..." dialog gains a line-number gutter
+    and bookmarks too (folding stays inert -- no regions are installed)."""
+    dialog = CodeEditorDialog(language="js")
+    qtbot.addWidget(dialog)
+    dialog.set_code("function f() {\n  return 1;\n}\n")
+    editor = dialog._editor
+    assert editor.viewportMargins().left() == editor._gutter_width()
+    editor.toggle_bookmark(1)
+    assert editor.bookmarked_lines() == [1]
+    assert editor._foldable_region_starting_at(editor.document().findBlockByNumber(0)) is None
+
+
+def test_event_handler_dialog_still_saves_its_text_with_the_gutter_present(qtbot):
+    """Regression guard: the mixin sits ahead of QPlainTextEdit in the MRO
+    (setPlainText/resizeEvent overrides) -- the dialog's save contract is
+    unaffected."""
+    dialog = CodeEditorDialog(language="php")
+    qtbot.addWidget(dialog)
+    dialog.set_code("<?php echo 1;")
+    saved = []
+    dialog.saved.connect(saved.append)
+    dialog.set_code("<?php echo 2;")
+    dialog.save()
+    assert saved == ["<?php echo 2;"]

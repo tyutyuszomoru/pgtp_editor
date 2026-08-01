@@ -1,6 +1,7 @@
 """XmlEditor light/dark theming: the editor swaps its gutter, current-line,
 highlight and syntax colors between a dark set (default) and a light set, and
 does so automatically when the application palette flips."""
+import shiboken6
 from PySide6.QtCore import QEvent
 from PySide6.QtGui import QColor, QPalette
 
@@ -73,3 +74,30 @@ def test_palette_change_to_dark_keeps_dark(qtbot):
     editor.changeEvent(QEvent(QEvent.Type.ApplicationPaletteChange))
     assert editor._gutter_bg_color == QColor("#2b2b2b")
     assert editor._highlighter._tag_format.foreground().color() == QColor("#569cd6")
+
+
+def test_deferred_theme_rehighlight_does_not_fire_on_deleted_editor(qtbot, qapp):
+    """BUG-014: apply_theme_colors defers step-2 rehighlight to the next
+    event-loop turn. The kickoff timer must be PARENTED to the editor so a
+    widget destroyed between the toggle and that turn cancels the pending
+    tick -- an unparented QTimer.singleShot fired _rehighlight_for_theme on
+    an already-deleted C++ XmlEditor (RuntimeError: Internal C++ object
+    already deleted), caught by pytest-qt's event-loop hook (which is exactly
+    how this surfaced as the Find-All tests' failures). With the parented
+    timer this test's processEvents raises nothing."""
+    editor = XmlEditor()
+    editor.setPlainText("<a b='c'/>\n<d/>\n")
+    # The kickoff timer is a child of the editor, so ~QObject cancels it.
+    assert editor._theme_kickoff_timer.parent() is editor
+
+    editor.apply_theme_colors(True)  # schedules the deferred step-2 kickoff
+    assert editor._theme_rehighlight_pending is True
+
+    # Force-delete the C++ object immediately, before the queued 0ms tick can
+    # run -- the deterministic analog of a parent widget being torn down
+    # mid-toggle. A parented timer dies with it; an unparented singleShot
+    # would survive and fire _rehighlight_for_theme on the dead editor.
+    shiboken6.delete(editor)
+    assert not shiboken6.isValid(editor)
+    qapp.processEvents()  # bug: RuntimeError in the loop -> pytest-qt fails
+    qapp.processEvents()

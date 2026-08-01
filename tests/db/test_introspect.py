@@ -17,6 +17,7 @@ from pgtp_editor.db.introspect import (
     TableInfo,
     TriggerInfo,
     _decode_trigger_type,
+    _input_args,
     fetch_routines_and_triggers,
     fetch_schema,
 )
@@ -197,6 +198,133 @@ def test_fetch_schema_start_log_is_redacted(caplog):
 # --- Routines & triggers (§18.1 DDL Explorer) -------------------------------
 
 
+def test_input_args_all_in_modes_null_is_the_common_case():
+    """Postgres leaves proargmodes NULL when every argument is IN -- the
+    overwhelmingly common case. An absent mode must read as IN, and names
+    line up positionally with types."""
+    assert _input_args(["integer", "integer"], ["year", "month"], None) == [
+        ("year", "integer"),
+        ("month", "integer"),
+    ]
+
+
+def test_input_args_zero_arguments():
+    assert _input_args([], None, None) == []
+    assert _input_args(None, None, None) == []
+
+
+def test_input_args_drops_out_arguments_but_keeps_inout():
+    """With OUT args present, proargmodes/proargnames/proallargtypes all
+    align over ALL args -- only i (IN) and b (INOUT) are input arguments."""
+    result = _input_args(
+        ["integer", "text", "numeric"],
+        ["in_id", "out_label", "both_qty"],
+        ["i", "o", "b"],
+    )
+    assert result == [("in_id", "integer"), ("both_qty", "numeric")]
+
+
+def test_input_args_drops_table_mode():
+    result = _input_args(
+        ["integer", "text"],
+        ["real_arg", "table_col"],
+        ["i", "t"],
+    )
+    assert result == [("real_arg", "integer")]
+
+
+def test_input_args_unnamed_arguments_yield_empty_name():
+    """proargnames is NULL when no argument is named; individual entries can
+    also be empty for a partially-named signature."""
+    assert _input_args(["integer"], None, None) == [("", "integer")]
+    assert _input_args(["integer", "text"], ["", "named"], None) == [
+        ("", "integer"),
+        ("named", "text"),
+    ]
+
+
+def test_input_args_tolerates_short_name_and_mode_arrays():
+    """Defensive: a names/modes array shorter than the type array must not
+    IndexError -- missing entries degrade to unnamed / IN."""
+    assert _input_args(["integer", "text"], ["only_first"], None) == [
+        ("only_first", "integer"),
+        ("", "text"),
+    ]
+    assert _input_args(["integer", "text"], None, ["i"]) == [
+        ("", "integer"),
+        ("", "text"),
+    ]
+
+
+def test_input_args_all_out_arguments_yield_no_inputs():
+    """An OUT-only signature (`f(OUT a int, OUT b text)`) is a zero-input
+    routine as far as the tree is concerned -- §18.1's `args == []` case."""
+    assert _input_args(["integer", "text"], ["a", "b"], ["o", "o"]) == []
+
+
+def test_input_args_keeps_variadic_mode():
+    """VARIADIC ('v') IS an input argument -- the caller passes it -- so it
+    must appear among the pairs. Dropping it (as an over-literal reading of
+    "IN/INOUT only" first did) silently hid the trailing parameter of e.g.
+    `f(fixed int, VARIADIC rest text[])` from the tree."""
+    assert _input_args(
+        ["integer", "text[]"], ["fixed", "rest"], ["i", "v"]
+    ) == [("fixed", "integer"), ("rest", "text[]")]
+
+
+def test_input_args_empty_mode_entry_reads_as_in():
+    """A falsy per-entry mode (NULL inside the array) degrades to IN rather
+    than silently dropping a real input argument."""
+    assert _input_args(["integer", "text"], ["a", "b"], [None, ""]) == [
+        ("a", "integer"),
+        ("b", "text"),
+    ]
+
+
+def test_input_args_ignores_names_and_modes_beyond_the_type_array():
+    """The type array is the spine: longer names/modes arrays cannot invent
+    extra arguments."""
+    assert _input_args(
+        ["integer"], ["a", "ghost", "phantom"], ["i", "i", "o"]
+    ) == [("a", "integer")]
+
+
+def test_input_args_preserves_declared_order_with_out_args_interleaved():
+    """proallargtypes/proargnames/proargmodes are positionally parallel over
+    ALL arguments -- dropping an OUT must not shift later names onto the
+    wrong types."""
+    assert _input_args(
+        ["integer", "text", "boolean", "numeric"],
+        ["first", "out_mid", "second", "third"],
+        ["i", "o", "b", "i"],
+    ) == [("first", "integer"), ("second", "boolean"), ("third", "numeric")]
+
+
+def test_input_args_returns_a_fresh_list_each_call():
+    """No shared mutable default leaking between RoutineInfo instances."""
+    one = _input_args(["integer"], ["a"], None)
+    two = _input_args(["integer"], ["a"], None)
+    assert one == two
+    assert one is not two
+
+
+def test_routine_info_args_defaults_to_empty_list():
+    """Backward compatibility: `args` is additive, existing construction
+    sites that never pass it still work and get []."""
+    routine = RoutineInfo(schema="s", name="n")
+    assert routine.args == []
+    assert RoutineInfo(schema="s", name="other").args is not routine.args
+
+
+def test_routines_sql_sources_names_and_modes():
+    """The widened query must actually select the two catalog columns the
+    correlation depends on (§18.1)."""
+    routines_sql = ROUTINE_TRIGGER_SQL[0]
+    assert "proargnames" in routines_sql
+    assert "proargmodes" in routines_sql
+    assert "proallargtypes" in routines_sql
+
+
 def test_decode_trigger_type_before_insert_update():
     # BEFORE(2) | INSERT(4) | UPDATE(16) = 22
     timing, events = _decode_trigger_type(2 | 4 | 16)
@@ -250,9 +378,17 @@ def test_decode_trigger_type_before_with_no_event_bits():
 
 
 def _canned_routine_trigger_runner():
+    # Columns: schema, name, prokind, return_type, language, source,
+    # arg_types (IN-only, banner), all_arg_types, proargnames, proargmodes.
     routine_rows = [
-        ("pr", "calc_total", "f", "numeric", "plpgsql", "CREATE FUNCTION ...", ["integer"]),
-        ("pr", "do_thing", "p", "void", "plpgsql", "CREATE PROCEDURE ...", []),
+        (
+            "pr", "calc_total", "f", "numeric", "plpgsql", "CREATE FUNCTION ...",
+            ["integer"], ["integer"], ["amount"], None,
+        ),
+        (
+            "pr", "do_thing", "p", "void", "plpgsql", "CREATE PROCEDURE ...",
+            [], [], None, None,
+        ),
     ]
     trigger_rows = [
         ("pr", "equipment", "trg_audit", 2 | 4 | 16, "audit_log", "CREATE TRIGGER ..."),
@@ -281,6 +417,7 @@ def test_fetch_routines_and_triggers_builds_routines_keyed_by_schema_name():
     assert routine == RoutineInfo(
         schema="pr", name="calc_total", arg_types=["integer"], return_type="numeric",
         language="plpgsql", source="CREATE FUNCTION ...", kind="function",
+        args=[("amount", "integer")],
     )
     assert schema.routines["pr.do_thing"].kind == "procedure"
 
@@ -301,6 +438,28 @@ def test_fetch_routines_and_triggers_leaves_tables_empty():
     runner, _ = _canned_routine_trigger_runner()
     schema = fetch_routines_and_triggers(_PARAMS, runner=runner)
     assert schema.tables == {}
+
+
+def test_fetch_routines_and_triggers_correlates_out_args_end_to_end():
+    """Through the real row-unpacking path: a routine with an OUT argument
+    keeps its banner `arg_types` (IN-only) AND gets IN/INOUT-only `args`."""
+    routine_rows = [
+        (
+            "pr", "split_name", "f", "record", "plpgsql", "CREATE FUNCTION ...",
+            ["text"],                      # arg_types -- banner, IN only
+            ["text", "text", "text"],      # all_arg_types -- IN + 2 OUT
+            ["full", "given", "family"],
+            ["i", "o", "o"],
+        ),
+    ]
+
+    def runner(_params, _sql_list):
+        return [routine_rows, []]
+
+    schema = fetch_routines_and_triggers(_PARAMS, runner=runner)
+    routine = schema.routines["pr.split_name"]
+    assert routine.args == [("full", "text")]
+    assert routine.arg_types == ["text"]  # banner signature untouched
 
 
 def test_fetch_routines_and_triggers_start_log_is_redacted(caplog):

@@ -511,3 +511,88 @@ def test_clear_all_bookmarks_action(qtbot):
     menu = find_top_menu(window, "Bookmarks")
     find_action(menu, "Clear All Bookmarks").trigger()
     assert editor.bookmarked_lines() == []
+
+
+# -- Bookmarks menu follows the active editor tab (§8) -----------------------
+
+
+def _activate_ddl_tab(window):
+    stage = window.center_stage
+    stage.show_ddl_explorer()
+    stage.setCurrentIndex(stage.ddl_tab_index)
+    return stage.ddl_editor_panel.editor
+
+
+def test_bookmark_actions_target_the_active_ddl_editor(qtbot):
+    """The four Bookmarks actions resolve their editor at trigger time, so on
+    the DDL Explorer tab they act on the DDL buffer -- not on Raw XML, which
+    they used to be bound to permanently."""
+    window = MainWindow()
+    qtbot.addWidget(window)
+    raw = window.center_stage.xml_editor
+    raw.setPlainText("x\ny\nz")
+    ddl = _activate_ddl_tab(window)
+    ddl.setPlainText("a\nb\nc\nd")
+    cursor = ddl.textCursor()
+    cursor.setPosition(ddl.document().findBlockByNumber(2).position())
+    ddl.setTextCursor(cursor)
+
+    menu = find_top_menu(window, "Bookmarks")
+    find_action(menu, "Toggle Bookmark").trigger()
+
+    assert ddl.bookmarked_lines() == [2]
+    assert raw.bookmarked_lines() == []  # Raw XML untouched
+
+
+def test_bookmark_navigation_and_clear_follow_the_active_tab(qtbot):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    ddl = _activate_ddl_tab(window)
+    ddl.setPlainText("a\nb\nc\nd\ne")
+    for n in (1, 3):
+        ddl.toggle_bookmark(n)
+    cursor = ddl.textCursor()
+    cursor.setPosition(ddl.document().findBlockByNumber(0).position())
+    ddl.setTextCursor(cursor)
+    menu = find_top_menu(window, "Bookmarks")
+
+    find_action(menu, "Next Bookmark").trigger()
+    assert ddl.textCursor().blockNumber() == 1
+
+    find_action(menu, "Clear All Bookmarks").trigger()
+    assert ddl.bookmarked_lines() == []
+
+
+def test_bookmark_actions_target_the_active_xsd_editor(qtbot):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    stage = window.center_stage
+    stage.show_edit_xsd()
+    stage.setCurrentIndex(stage.xsd_tab_index)
+    xsd = stage.xsd_editor
+    xsd.setPlainText("a\nb\nc")
+    cursor = xsd.textCursor()
+    cursor.setPosition(xsd.document().findBlockByNumber(1).position())
+    xsd.setTextCursor(cursor)
+
+    find_action(find_top_menu(window, "Bookmarks"), "Toggle Bookmark").trigger()
+
+    assert xsd.bookmarked_lines() == [1]
+    assert window.center_stage.xml_editor.bookmarked_lines() == []
+    # setPlainText marked the XSD tab dirty; silence the teardown close prompt
+    # so it never reaches a real modal (CLAUDE.md testing policy).
+    window._confirm_close_xsd = lambda: "discard"
+
+
+def test_bookmark_actions_do_not_switch_tabs(qtbot):
+    """Toggling a bookmark must never yank the user to another tab -- unlike
+    the Find bar's routing, which deliberately reveals Raw XML."""
+    window = MainWindow()
+    qtbot.addWidget(window)
+    ddl = _activate_ddl_tab(window)
+    ddl.setPlainText("a\nb")
+    before = window.center_stage.currentIndex()
+
+    find_action(find_top_menu(window, "Bookmarks"), "Toggle Bookmark").trigger()
+
+    assert window.center_stage.currentIndex() == before

@@ -283,3 +283,85 @@ def test_reopen_after_close_refetches_and_repopulates(qtbot, tmp_path):
     assert fetches == [1, 1]  # a fresh live fetch per reveal
     assert window.center_stage.isTabVisible(window.center_stage.ddl_tab_index)
     assert window.left_tabs.isTabVisible(window.ddl_browser_tab_index)
+
+
+# ---------------------------------------------------------------------------
+# Fold regions ride along with the buffer (§18.1 shared fold base).
+# ---------------------------------------------------------------------------
+
+def test_opening_installs_one_fold_region_per_object_in_the_editor(qtbot, tmp_path):
+    """MainWindow passes build_ddl_text's spans to set_ddl_text, so every
+    object in the freshly-fetched buffer is foldable under its banner."""
+    from pgtp_editor.db.ddl_buffer import build_ddl_text
+
+    window = _window(qtbot, tmp_path)
+    window._ddl_explorer_action.setChecked(True)
+
+    _text, spans = build_ddl_text(_schema())
+    editor = window.center_stage.ddl_editor_panel.editor
+    document = editor.document()
+    foldable = {
+        block
+        for block in range(document.blockCount())
+        if editor._foldable_region_starting_at(document.findBlockByNumber(block))
+        is not None
+    }
+    assert foldable == {span.start_line - 1 for span in spans}
+    assert len(foldable) == 3  # 2 routines + 1 trigger
+
+
+def test_reopening_reinstalls_fold_regions_for_the_new_buffer(qtbot, tmp_path):
+    """A re-fetch replaces the buffer; stale fold state/regions from the
+    previous buffer must not survive into the new one."""
+    window = _window(qtbot, tmp_path)
+    window._ddl_explorer_action.setChecked(True)
+    editor = window.center_stage.ddl_editor_panel.editor
+    first_banner = editor.document().findBlockByNumber(0)
+    editor._toggle_fold(first_banner)
+    assert editor._fold_state
+
+    window.center_stage.tabCloseRequested.emit(window.center_stage.ddl_tab_index)
+    window._ddl_explorer_action.setChecked(True)
+
+    editor = window.center_stage.ddl_editor_panel.editor
+    assert editor._fold_state == {}
+    document = editor.document()
+    assert all(document.findBlockByNumber(i).isVisible() for i in range(document.blockCount()))
+    assert editor._foldable_region_starting_at(document.findBlockByNumber(0)) is not None
+
+
+def test_clicking_a_leaf_scrolls_that_banner_to_the_top(qtbot, tmp_path):
+    """The BrowserPanel → EditorPanel jump is top-aligned (§18.1), not
+    centered: the clicked object's banner is the first visible line."""
+    window = _window(qtbot, tmp_path)
+    # Long bodies, so the buffer actually overflows the viewport and the
+    # scroll target is not clamped to the top of the document.
+    from dataclasses import replace
+
+    base = _schema()
+    long_schema = DatabaseSchema(
+        routines={
+            key: replace(
+                routine,
+                source="\n".join(f"  -- {routine.name} line {i}" for i in range(60)),
+            )
+            for key, routine in base.routines.items()
+        },
+        triggers=base.triggers,
+    )
+    window._fetch_ddl_schema = lambda params: long_schema
+    window._ddl_explorer_action.setChecked(True)
+    editor = window.center_stage.ddl_editor_panel.editor
+    editor.resize(400, 60)
+    window.show()
+    qtbot.waitExposed(window)
+
+    panel = window.ddl_browser_panel
+    routines_root = panel.tree.topLevelItem(1)
+    calc_total_item = next(
+        routines_root.child(i) for i in range(routines_root.childCount())
+        if "calc_total" in routines_root.child(i).text(0)
+    )
+    panel._on_item_clicked(calc_total_item, 0)
+
+    assert editor.firstVisibleBlock().text() == "-- FUNCTION pr.calc_total(integer) --"

@@ -1528,3 +1528,64 @@ def test_resolve_attribute_at_index_invalidated_by_edit(qtbot):
     resolved = editor.resolve_attribute_at(new_pos)
     assert resolved == ("Root/Detail", "elementCaption")
     assert resolved == attribute_at_position(new_text, new_pos)
+
+
+def test_xml_editor_supplies_its_own_xml_span_fold_provider(qtbot):
+    """The shared base (§8) folds nothing by default; XmlEditor plugs in the
+    XML-span provider over _spans/TagSpan."""
+    from pgtp_editor.ui.editor_gutter import GutterBookmarkFoldMixin
+    from pgtp_editor.ui.xml_editor import XmlEditor as _XmlEditor
+
+    assert (
+        _XmlEditor._foldable_region_starting_at
+        is not GutterBookmarkFoldMixin._foldable_region_starting_at
+    )
+    editor = _XmlEditor()
+    qtbot.addWidget(editor)
+    editor.setPlainText("<Root>\n  <A/>\n</Root>\n")
+    region = editor._foldable_region_starting_at(editor.document().findBlockByNumber(0))
+    assert region == (1, 1)  # the <A/> line only; open/close lines excluded
+
+
+def test_xml_editor_reexports_the_shared_gutter_symbols(qtbot):
+    """xml_editor re-exports the extracted names so existing importers keep
+    working -- and they are the SAME objects, not copies (§8: exactly one
+    gutter implementation)."""
+    from pgtp_editor.ui import editor_gutter, xml_editor as xml_editor_module
+
+    assert xml_editor_module._EditorGutter is editor_gutter._EditorGutter
+    assert xml_editor_module._BOOKMARK_STRIP_WIDTH is editor_gutter._BOOKMARK_STRIP_WIDTH
+    assert xml_editor_module._FOLD_GLYPH_WIDTH is editor_gutter._FOLD_GLYPH_WIDTH
+
+
+def test_xml_editor_gutter_and_bookmark_methods_come_from_the_shared_mixin(qtbot):
+    """The extraction moved the implementation out; XmlEditor must not have
+    re-declared its own copy of any of it."""
+    from pgtp_editor.ui.editor_gutter import GutterBookmarkFoldMixin
+    from pgtp_editor.ui.xml_editor import XmlEditor as _XmlEditor
+
+    for name in (
+        "toggle_bookmark",
+        "bookmarked_lines",
+        "next_bookmark",
+        "prev_bookmark",
+        "clear_bookmarks",
+        "_toggle_fold",
+        "_is_line_hidden_by_other_collapsed_fold",
+        "_gutter_width",
+        "_apply_gutter_theme_colors",
+    ):
+        assert name not in vars(_XmlEditor), f"{name} re-declared on XmlEditor"
+        assert getattr(_XmlEditor, name) is getattr(GutterBookmarkFoldMixin, name)
+
+
+def test_xml_editor_folding_still_keeps_the_character_stream_intact(qtbot):
+    """§8's hard requirement, re-asserted after the extraction: folding hides
+    rendering only -- the text is fully present."""
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    text = "<Page>\n  <Detail>\n    content\n  </Detail>\n</Page>\n"
+    editor.setPlainText(text)
+    editor._toggle_fold(editor.document().findBlockByNumber(1))
+    assert editor.document().findBlockByNumber(2).isVisible() is False
+    assert editor.toPlainText() == text

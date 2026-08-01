@@ -33,6 +33,7 @@
     - [18.1 Routines & triggers browsing (DDL Explorer)](#181-routines--triggers-browsing-ddl-explorer) — *implemented (except XML cross-refs)*
     - [18.2 Projects, checkout & state markers](#182-projects-checkout--state-markers) — *planned*
     - [18.3 Deploy workflow & schema diff/migration](#183-deploy-workflow--schema-diffmigration) — *planned*
+    - [18.4 SQL/plpgsql selection formatter](#184-sqlplpgsql-selection-formatter) — *planned*
 19. [PHP generation (vendor) & Save](#19-php-generation-vendor--save)
 20. [re_phpgen — own generator & gap loop](#20-re_phpgen--own-generator--gap-loop)
     - [20.4 Production cutover](#204-production-cutover-target-design--not-yet-reached) — *planned*
@@ -212,11 +213,14 @@ pgtp_editor/
 │   └── reused_tables.py   # collect_table_usages → TableUsage/TableReference
 ├── validation/
 │   └── tier2.py       # validate_project → list[ValidationIssue]
+├── sql/               # SQL/plpgsql selection formatter (Qt-free) — §18.4, target design, not yet built
+│   └── formatter.py   # (name TBD) format_selection(text) → FormatResult; tokenizer + nesting-depth reindenter
 └── ui/                # all PySide6 widgets (see below)
 ```
 
 Key `ui/` modules: `main_window.py`, `center_stage.py`, `project_tree.py`, `xml_editor.py`,
-`xml_structure.py`, `code_editor.py`, `event_body.py`, `properties_panel.py`, `find_replace_bar.py`,
+`xml_structure.py`, `editor_gutter.py` (the one shared gutter/bookmark/fold implementation, §8),
+`code_editor.py`, `event_body.py`, `properties_panel.py`, `find_replace_bar.py`,
 `search.py`, `history.py`, `theme.py`, `toolbar_registry.py`, `customize_toolbar_dialog.py`,
 `diff_merge_panel.py`, `caption_management_panel.py`, `caption_find_replace_dialog.py`,
 `caption_scan.py`, `db_check_panel.py`,
@@ -228,8 +232,8 @@ Key `ui/` modules: `main_window.py`, `center_stage.py`, `project_tree.py`, `xml_
 
 **Dependency rule:** `model/` touches lxml; nothing in `model/` or `ui/` depends on `diff/`; pure-logic
 modules (`search`, `history`, `caption_scan`, `settings_index`, `xsd_load`, `xsd_verify`, `tier2`, `db/*`,
-`analysis/*`, `type_map`, `from_table`, `xml_structure`) are Qt-free and unit-testable without a
-`QApplication`.
+`analysis/*`, `type_map`, `from_table`, `xml_structure`, `sql/*` — §18.4, target design) are Qt-free and
+unit-testable without a `QApplication`.
 
 ---
 
@@ -399,20 +403,48 @@ non-self-closing span; `QTextBlock.setVisible()`; `_fold_state: dict[int,bool]`;
 Folding only hides rendering — the character stream is intact, so copy/cut of a folded block yields the
 **full** underlying text (a hard requirement; tested with nested folds).
 
-**Gutter (`_EditorGutter`)** — three zones: left **bookmark strip**, line-number area, fold-glyph zone.
-Click in the bookmark strip toggles that line's bookmark; click on a fold triangle toggles the fold.
+**Gutter (`_EditorGutter`, `ui/editor_gutter.py`)** — three zones left to right: a 12px **bookmark strip**
+(`_BOOKMARK_STRIP_WIDTH = 12`), a 16px **fold-glyph zone** (`_FOLD_GLYPH_WIDTH = 16`), then the
+right-aligned **line-number area**. `mousePressEvent` routes by `event.position().x()`: a click in the
+bookmark strip toggles that line's bookmark (`self._editor.toggle_bookmark(block.blockNumber())`), a
+click in the fold zone toggles that line's fold (`self._editor._toggle_fold(block)`); a **single** click
+in the line-number zone is a no-op.
 
-**Shared gutter / bookmark / fold base (extracted, reused by the DDL editor — §18.1):** the gutter
-(`_EditorGutter`), the bookmark set + `toggle_bookmark`/`bookmarked_lines`/`next_bookmark`/`prev_bookmark`
-(all **block-number based**, hence generic), and the **fold-state** machinery (`_fold_state`,
-`_toggle_fold`, `_is_line_hidden_by_other_collapsed_fold`) are **generic to any `QPlainTextEdit`** and
-are extracted into a **shared base (base class or mixin)** used by **both** `XmlEditor` and the DDL
-`CodeEditor` (§18.1). Only the **foldable-region provider is pluggable**: the base calls a
-provider method that returns `(first_contained_block, last_contained_block)` for the region starting on a
-given block. `XmlEditor` supplies the **XML-span** provider (`_foldable_region_starting_at` over `_spans`/
-`TagSpan`); the DDL editor supplies a **DDL-object** provider driven by the `DdlObjectSpan` index (one
-foldable region per object body, banner→`end_line`). This deliberately avoids a second, near-duplicate
-gutter implementation — there is exactly **one** gutter/bookmark/fold implementation in the codebase.
+**Target design, not yet implemented — double-click on the line number also toggles a bookmark**
+(settled 2026-08-01; a second, larger click target for the same toggle, alongside the existing 12px
+strip): the block-lookup loop currently duplicated inside `mousePressEvent` is to be extracted into a
+shared helper `_EditorGutter._block_at_y(click_y) -> QTextBlock | None`; a new `mouseDoubleClickEvent`
+handler then checks `event.position().x() >= _BOOKMARK_STRIP_WIDTH + _FOLD_GLYPH_WIDTH` (i.e. the
+line-number zone), and if so calls `toggle_bookmark` on `_block_at_y(event.position().y())` and repaints
+the gutter. Purely additive: the single-click no-op in the line-number zone is unchanged.
+
+**Shared gutter / bookmark / fold base (implemented — `ui/editor_gutter.py`, reused by every
+`CodeEditor` incl. the DDL editor, §18.1):** the gutter (`_EditorGutter`), the bookmark set +
+`toggle_bookmark`/`bookmarked_lines`/`next_bookmark`/`prev_bookmark`/`clear_bookmarks` (all
+**block-number based**, hence generic), the **fold-state** machinery (`_fold_state`, `_toggle_fold`,
+`_is_line_hidden_by_other_collapsed_fold`), the gutter width/geometry plumbing and the theme-aware
+gutter colors (`_GUTTER_COLORS_DARK`/`_GUTTER_COLORS_LIGHT`, `_apply_gutter_theme_colors`) are **generic
+to any `QPlainTextEdit`** and live in the **new module `ui/editor_gutter.py`** — a separate module
+rather than a base inside `xml_editor.py`, so `code_editor.py` need not import from the ~1900-line
+XML-specific module.
+
+- The shared piece is a **mixin**, `GutterBookmarkFoldMixin`, not a base class: hosts declare it
+  **before** `QPlainTextEdit` (`class XmlEditor(GutterBookmarkFoldMixin, QPlainTextEdit)`, likewise
+  `CodeEditor`) so the mixin's `setPlainText`/`resizeEvent` sit ahead of Qt's in the MRO.
+- The mixin deliberately has **no `__init__`**; each host calls `_init_gutter_bookmarks_folding()`
+  explicitly from its own `__init__` after `super().__init__(parent)`. This is why no existing
+  constructor ordering had to be inverted.
+- Only the **foldable-region provider is pluggable**: the mixin calls
+  `_foldable_region_starting_at(block)` → `(first_contained_block, last_contained_block)` (0-based) or
+  `None`; the mixin's default folds nothing. `XmlEditor` overrides it with the **XML-span** provider
+  (over `_spans`/`TagSpan`); `CodeEditor` overrides it with a lookup into regions installed from outside
+  via `set_fold_regions(regions)` (see §8 "Code editor" below and §18.1).
+- `ui/xml_editor.py` **re-exports** `_EditorGutter`, `_BOOKMARK_STRIP_WIDTH` and `_FOLD_GLYPH_WIDTH` so
+  pre-existing importers (and tests) keep working unchanged, and re-declares **none** of the nine moved
+  methods.
+
+There is exactly **one** `class _EditorGutter` and **one** gutter `paintEvent` in the package — never a
+second, near-duplicate gutter.
 
 **Auto-indent / auto-close:** Enter inherits leading whitespace, +2 spaces when just after an opening
 tag's `>`. Typing `<`→`<>`, `"`/`'` after `=`→ paired quotes, `>` completing an opening tag inserts
@@ -449,31 +481,80 @@ stale caret. **Selection right-click ▸ "Find"** prepends to the standard conte
 exists; emits `find_selected_text(str)` → MainWindow reveals Raw XML + prefills the Find bar.
 **Line-wrap** toggle lives in the editor's right-click context menu (checkable), not the View menu.
 
-**Bookmarks** (session-only, Raw-XML-only): `self._bookmarks: set[int]` (block numbers), reset wherever
-`_fold_state` resets; `toggle_bookmark`, `bookmarked_lines`, `next_bookmark`/`prev_bookmark` (wrap),
-`clear_bookmarks`, plus cursor-line wrappers. Rendered as an accent-colored rounded tag in the gutter
-strip (theme-aware). **Bookmarks menu:** Toggle (Ctrl+F2), Next (F2), Previous (Shift+F2), Clear All.
-Out-of-range block numbers are ignored defensively. No persistence, no list panel, no names.
+**Bookmarks** (session-only, per-document; carried by **every** editor that mixes in
+`GutterBookmarkFoldMixin` — `XmlEditor` *and* every `CodeEditor`, see "Gutter on every code editor"
+below): `self._bookmarks: set[int]` (block numbers), reset on
+`setPlainText`; `toggle_bookmark(block_number)`, `bookmarked_lines()` (sorted ascending),
+`next_bookmark(from_line)`/`prev_bookmark(from_line)` (nearest strictly-after/-before, wrap-around,
+`None` when empty), `clear_bookmarks()`, plus cursor-line wrappers `toggle_bookmark_at_cursor()` and
+`goto_next_bookmark()`/`goto_prev_bookmark()` (center the target line). Rendered by
+`_EditorGutter._draw_bookmark_tag` as an accent-colored (`_bookmark_color()`, theme-aware) rounded tag
+in the gutter's bookmark strip — toggled by a single click in the strip, and (target design, not yet
+implemented — see above) by a double-click in the line-number zone. **Bookmarks menu**
+(`main_window.py::_build_bookmarks_menu`, top-level menu bar, between Tools and Generation — §26): Toggle
+Bookmark (Ctrl+F2 → `toggle_bookmark_at_cursor`), Next Bookmark (F2 → `goto_next_bookmark`), Previous
+Bookmark (Shift+F2 → `goto_prev_bookmark`), separator, Clear All Bookmarks (no shortcut →
+`clear_bookmarks`). **The menu follows the active editor tab** (settled 2026-08-01): `_build_bookmarks_menu`
+captures **no** editor at build time; each of the four actions is connected to a lambda that resolves its
+target at **trigger** time via `main_window.py::_active_bookmark_editor()` — Edit XSD tab →
+`stage.xsd_editor`, DDL Explorer tab → `stage.ddl_editor_panel.editor`, any other tab → `stage.xml_editor`.
+This mirrors `_active_find_bar`'s per-tab dispatch with **one deliberate difference: it does NOT reveal /
+switch to the Raw XML tab** as a fallback side effect (`_active_find_bar` calls `_reveal_raw_xml_tab()`;
+this must not), because toggling a bookmark may never yank the user to a different tab; a non-editor tab
+simply falls back to the Raw XML editor. The dispatch is the *only* thing needed, because
+`GutterBookmarkFoldMixin` puts the identical bookmark API on all three editors. The **"Edit code…"
+`CodeEditorDialog` is a separate dialog, not a center-stage tab**, so the main window's Bookmarks menu does
+not reach it — its gutter bookmark strip stays mouse-only. Out-of-range block numbers
+are ignored defensively. No persistence, no list panel, no names.
+
+**Bookmarks menu is disabled during Caption Mode** (target design, not yet implemented; settled
+2026-08-01 — see §13): `_build_bookmarks_menu` is to store the menu as `self._bookmarks_menu` and each
+of its four actions as attributes, so `_enter_caption_mode`/`_close_caption_mode` can `setEnabled(False
+/ True)` the menu **and every child action together** — disabling only the `QMenu` grays out the
+menu-bar entry but does not disable the actions' keyboard shortcuts in Qt (the same reason
+`_editor_find_action`/`_editor_replace_action` are disabled individually today, not just their menu).
+**Gutter bookmark toggling (single-click strip and the planned double-click on the line number) is
+explicitly NOT gated by Caption Mode** and stays usable — bookmarks are a UI overlay independent of the
+read-only editing state; only the Bookmarks menu (and therefore its shortcuts) is gated.
 
 **Event-handler code styling & editing:** event-body line ranges (`event_body_line_ranges(text)`) get a
 distinct background + monospace and work read-only (Caption Mode). A gutter marker / "Edit code…"
 context action opens `CodeEditorDialog` (below) with the body and `language_for_side(side)`; on save,
 pure `replace_event_body(text, start_line, new_code)` swaps inner content preserving tags/indentation.
 
-**Code editor** (`ui/code_editor.py`): `CodeEditor(QPlainTextEdit, language)` — monospace,
+**Code editor** (`ui/code_editor.py`): `CodeEditor(GutterBookmarkFoldMixin, QPlainTextEdit, language)` — monospace,
 per-language `_CodeHighlighter` (JS / PHP / SQL keyword sets, strings, `//`+`#` line comments, `/* */`,
 numbers), auto-close + selection-wrap for `()[]{}`/quotes, **Ctrl+Shift+B** bracket-select via pure
 `enclosing_bracket_span(text,pos)`. The **`language="sql"`** mode (added for the DDL Explorer, §18.1)
 uses `_SQL_KEYWORDS` (stored lowercase; matching is **case-insensitive** — `pg_get_functiondef` emits
 uppercase, hand-written bodies vary), `--` line comments, single-quoted strings with `''` doubling
 (double-quoted text is an identifier, left unstyled), and the shared `/* */` block comments.
+`_SQL_KEYWORDS` is also the planned **shared dialect source** for the SQL/plpgsql selection formatter
+core (§18.4, target design, not yet implemented) — the highlighter and that future formatter are meant
+to never disagree on what counts as a keyword.
 `CodeEditor` also exposes `navigate_to_line(line)` (1-based; the same public navigation entry point
 `XmlEditor` exposes, used by the BrowserPanel → EditorPanel jump, §18.1). In its **`language="sql"` DDL
 mode** navigation is **top-aligned** (the target line lands at the top of the viewport, not centered) —
 overriding the earlier `centerCursor()` — so a clicked DDL object's banner sits at the top with its body
-below (§18.1); `XmlEditor.navigate_to_line` stays centered. The DDL `CodeEditor` also carries the shared
-gutter/bookmark/fold base (line-number gutter, line bookmarks, code folding per DDL-object body) and a
-**4-character tab stop** (§18.1). `CodeEditor` also exposes
+below (§18.1); every other language keeps `centerCursor()`, and `XmlEditor.navigate_to_line` stays
+centered. Top-alignment is `_scroll_line_to_top(block)`: it drives the **vertical scrollbar**, whose
+values count **visible** blocks in a `QPlainTextEdit` (via `_visible_block_offset`), so a *collapsed
+fold above the target does not overshoot*, and it clamps to `[bar.minimum(), bar.maximum()]` so a target
+near EOF simply scrolls to the bottom rather than being rejected. A **4-character tab stop**
+(`_SQL_TAB_STOP_CHARS = 4`, `setTabStopDistance(4 × mono-char-advance)`) is likewise applied **only** when
+`language == "sql"` (§18.1).
+
+**Gutter on every code editor (deliberate, 2026-08-01).** Because the shared mixin sits on `CodeEditor`
+itself rather than on a DDL-only subclass, the **JS/PHP "Edit code…" event-handler dialogs
+(`CodeEditorDialog`) also get the line-number gutter and line bookmarks**. Folding is **inert** there:
+no host installs fold regions, `_fold_regions` stays empty, and the default provider returns `None`, so
+the fold zone simply never draws a glyph. This side effect was surfaced to the project owner, who
+**explicitly chose to keep it** rather than gate the mixin per language: line numbers in a code editor
+are conventional, and gating would add a second code path through the one gutter implementation.
+Foldable regions are installed from outside via `CodeEditor.set_fold_regions(regions)` — an iterable of
+`(start_block, first_contained_block, last_contained_block)` triples, all **0-based** — which replaces
+any previous set and **drops `_fold_state`** (old block numbers no longer mean anything). `CodeEditor`
+also exposes
 `replace_current_selection(text)` (FindReplaceBar's Replace contract, mirroring `XmlEditor`), which
 **no-ops on a read-only editor** — `QTextCursor` edits bypass `setReadOnly`, so this guard is what
 actually protects read-only DDL buffers. `CodeEditorDialog(QDialog)` hosts it with
@@ -496,11 +577,35 @@ selects the Raw XML tab. Does not update `_current_project`/path or repopulate t
   no re-entrancy guard.
 - **Double-click a tree node** → reveal Raw XML + `navigate_to_line(node.sourceline)`. Single click →
   Properties only.
-- **Reparse** — **Tools ▸ "Reparse Raw XML into Tree"**: `load_project_from_text(editor_text)`; on
-  success repopulate tree + set `_current_project` + clear Properties; on `PgtpParseError`,
-  `QMessageBox.critical` + `highlight_error_line`, **preserving** the existing model/tree (does not
-  re-read file or touch the path). Reparse is the explicit resync after manual edits, caption apply,
-  code write-back, or create-from-table insertion.
+- **Reparse** — `_reparse_raw_xml(silent: bool = False)`: `load_project_from_text(editor_text)`; on
+  success (shared by every caller, manual or automatic) repopulate tree, set `_current_project`, refresh
+  the Table References panel if visible, clear Properties, show a status-bar confirmation, and refresh
+  the Database Check panel if open (`_refresh_db_check_if_open`). On `PgtpParseError` the two modes
+  diverge, both **preserving** the existing model/tree (neither re-reads the file nor touches the path):
+  - `silent=False` (**Tools ▸ "Reparse Raw XML into Tree"**, the manual, explicit path) —
+    `_handle_reparse_failure`: `QMessageBox.critical` + `highlight_error_line` jump to the error line.
+  - `silent=True` (**auto-parse**, below) — no modal, no cursor jump; a transient status-bar message
+    only ("Auto-parse: XML not well-formed yet — tree not updated"), leaving the tree in its last-good
+    state.
+
+  Reparse is the resync after manual edits, caption apply, code write-back, or create-from-table
+  insertion — either explicitly triggered or, when auto-parse is enabled, automatically debounced off
+  editor changes.
+
+**Auto-parse XML** (Edit ▸ "Auto Parse XML", checkable, **off by default**, in-memory only — no
+QSettings persistence, so it always starts unchecked on launch): when enabled, the app listens to
+`XmlEditor.blockCountChanged` (a `QPlainTextEdit` signal that fires once whenever the document's line
+count changes — Enter, multi-line paste, Ctrl+X, or Delete/Backspace joining lines — not once per line)
+and, after a 400 ms debounce (`self._auto_parse_timer`, a singleShot `QTimer` mirroring the existing
+`_snapshot_timer` debounce used for undo/redo history, §7), calls `_reparse_raw_xml(silent=True)`. The
+timer restarts on each successive `blockCountChanged` firing (e.g. a held-down key), so it fires once
+after the burst of edits settles rather than on every keystroke. Both the signal handler
+(`_on_editor_block_count_changed`) and the debounced callback (`_auto_parse_now`) no-op whenever
+`self._loading or self._restoring` is true or the toggle is off — the same guard flags that already gate
+snapshot-history capture, so auto-parse never fires during programmatic text sets (file open, revert,
+undo/redo restore). No Caption Mode gating is needed: the Raw XML editor is read-only while in Caption
+Mode, so `blockCountChanged` cannot fire from user typing there. The manual Tools-menu action is
+unaffected by the toggle and always uses `silent=False`.
 
 ---
 
@@ -828,6 +933,13 @@ read-only)"; edit attempts flash a hint via a new `read_only_edit_attempted` sig
 Management tab, `scan_captions` the snapshot, `load_entries`. Apply computes
 `apply_caption_edits(snapshot, changed_edits)` into the Raw XML buffer **in memory only** (no disk, no
 `.bak`, no auto-reparse); the snapshot updates so line numbers stay valid. Close restores editing mode.
+`_enter_caption_mode`/`_close_caption_mode` gate individual `QAction`s (never just their parent menu, so
+the underlying keyboard shortcut is actually disabled too): today the Raw XML editor's Find…/Replace…
+actions (`_editor_find_action`/`_editor_replace_action`); target design (2026-08-01, not yet
+implemented, §8) extends the same pattern to the **Bookmarks menu and its four actions**
+(`self._bookmarks_menu` + Toggle/Next/Previous/Clear All), since Caption Mode's read-only editor makes
+line-anchored bookmark navigation ambiguous alongside caption-grid navigation — but **not** to gutter
+bookmark toggling itself, which stays a click-driven overlay independent of read-only state.
 
 ---
 
@@ -997,18 +1109,24 @@ golden "freshly-added table" oracle; defaults are corpus-derived and **not yet f
 > Database-menu "DDL Explorer" checkable toggle, and the full main-window wiring (hidden left-dock
 > "DDL Objects" tab, `navigate_requested` navigation, async fetch).
 >
-> **A settled batch of §18.1 enhancements (2026-08-01) is specified below but not yet in the code**
-> (design settled ahead of implementation): (a) editor affordances on the DDL `EditorPanel` — a
-> line-number gutter, line bookmarks, and code folding via a **shared base extracted from `XmlEditor`**
-> with a pluggable foldable-region provider (§8); (b) a **4-character** editor tab stop; (c) the revised
-> BrowserPanel tree presentation — fully-qualified `schema.name`, the three-way `[F]`/`[P]`/`[T]` marker,
-> per-argument `name (type)` children (requiring `RoutineInfo.args`), and composite trigger leaves with
-> bracketed timing/event indicators; and (d) **top-aligned** DDL navigation. See the Supersession Ledger
-> (§28) for each override.
+> **The 2026-08-01 §18.1 enhancement batch is also implemented and verified** (it was specified here
+> ahead of implementation and has now landed): (a) editor affordances on the DDL `EditorPanel` — the
+> line-number gutter, line bookmarks and code folding, via the **shared `GutterBookmarkFoldMixin` in the
+> new module `ui/editor_gutter.py`** with its pluggable foldable-region provider (§8); (b) the
+> **4-character** tab stop; (c) the revised BrowserPanel tree presentation — fully-qualified
+> `schema.name`, the three-way `[F]`/`[P]`/`[T]` marker, per-argument `name (type)` children (backed by
+> the new `RoutineInfo.args`), and composite trigger leaves with bracketed timing/event indicators; and
+> (d) **top-aligned** DDL navigation. See the Supersession Ledger (§28) for each override.
 >
-> Still not built: `db/routine_refs.py` (XML cross-referencing), and `db/schema_diff.py`/
+> Still not built: `db/routine_refs.py` (XML cross-referencing — **the one remaining §18.1 piece**), and
+> `db/schema_diff.py`/
 > `db/schema_snapshot.py`/`db/migration_gen.py` (§18.3); those parts of this section remain target
 > design, settled before implementation starts.
+>
+> **§18.4 (2026-08-01, settled design, not yet implemented)** specifies a reusable, Qt-free
+> **SQL/plpgsql selection formatter** (hand-built tokenizer + nesting-depth reindenter — indentation and
+> line breaks only). It has **no consumer yet**: it is scoped as a standalone core, to be wired into a
+> future editable DDL Editor surface (making §18.1's `EditorPanel` editable, itself not yet designed).
 
 **Strategic framing.** This is **not** a feature bolted onto `.pgtp` editing — it is a standalone
 Postgres DDL-versioning mode, independent of phpgen/`.pgtp` entirely, usable with zero `.pgtp` files
@@ -1045,15 +1163,24 @@ workflow both build on directly — it is not a separate, self-contained feature
 **Introspection (lives in §17, reused here) — implemented:**
 
 - `db/introspect.py` has: `RoutineInfo{schema, name, arg_types: list[str], **args: list[tuple[str, str]]
-  (input argument name+type pairs, in declared order)**, return_type, language, source,
+  (input argument name+type pairs — IN/INOUT/VARIADIC — in declared order)**, return_type, language, source,
   kind("function"|"procedure")}` sourced from `pg_proc` joined `pg_language`, with source text
   via `pg_get_functiondef(oid)`. `arg_types` (types only) is **retained** — it still feeds
-  `build_ddl_text`'s banner comment (`-- FUNCTION schema.name(argtypes) --`); the new `args` field adds
-  the **argument names** the BrowserPanel tree needs (see tree presentation below). The introspection
-  query sources input-argument name+type pairs in declared order (implementation chooses the exact
-  `pg_catalog` mechanism — e.g. `pg_get_function_arguments`, or `proargnames`/`proargtypes`/`proargmodes`
-  correlated positionally; spec stays at the design level: name+type pairs, declared order, **IN/INOUT
-  input arguments only**). A routine with zero input arguments has `args == []`. `TriggerInfo{schema,
+  `build_ddl_text`'s banner comment (`-- FUNCTION schema.name(argtypes) --`); the `args` field adds
+  the **argument names** the BrowserPanel tree needs (see tree presentation below).
+  `_ROUTINES_SQL` was widened to select, alongside the existing `proargtypes`-derived `arg_types`:
+  `COALESCE(p.proallargtypes, p.proargtypes::oid[])` run through `format_type` (ordinality-preserved),
+  `p.proargnames`, and `p.proargmodes::text[]`. Those three **parallel arrays are correlated in Python**
+  by the pure helper `_input_args(all_arg_types, arg_names, arg_modes) -> list[tuple[str, str]]` —
+  deliberately not in SQL, for the **same reason `_decode_trigger_type` is in Python: the correlation is
+  unit-testable without a live database**. Rules: an absent/NULL `proargmodes` reads as all-IN (Postgres
+  omits it in the common case); the kept modes are exactly the **arguments the caller passes in** —
+  `_INPUT_ARG_MODES = frozenset("ibv")`, i.e. `i` (IN), `b` (INOUT) and `v` (**VARIADIC**) — while `o`
+  (OUT) and `t` (TABLE) entries, which are outputs, are dropped. VARIADIC is kept deliberately: a
+  variadic parameter is supplied by the caller, so excluding it silently hid a real parameter of e.g.
+  `f(fixed int, VARIADIC rest text[])` from the tree.
+  An unnamed argument yields `""` as its name; a routine with zero input arguments has
+  `args == []`. `TriggerInfo{schema,
   table, name, timing, events: list[str],
   function_name, definition}` sourced from `pg_trigger` + `pg_get_triggerdef(oid)` (trigger
   timing/events decoded from the raw `pg_trigger.tgtype` bitmask by `_decode_trigger_type`, in Python
@@ -1090,35 +1217,37 @@ trigger:**
   Manual (`ddl_tab_index`, hidden by default), and is **closable** via a tab-bar ✕ that hides it
   directly (`hide_ddl_explorer()`) — read-only, so unlike Edit XSD there is no dirty prompt to route
   through. `CenterStage` exposes `show_ddl_explorer()`/`hide_ddl_explorer()` and a
-  `ddl_explorer_visibility_changed = Signal(bool)`. API: `EditorPanel.set_ddl_text(text)` (a fresh
-  `build_ddl_text` result) and `EditorPanel.navigate_to_line(line)` (delegates to
+  `ddl_explorer_visibility_changed = Signal(bool)`. API: `EditorPanel.set_ddl_text(text, spans=None)`
+  (a fresh `build_ddl_text` result — text plus its `DdlObjectSpan` list, which drives the fold regions,
+  below) and `EditorPanel.navigate_to_line(line)` (delegates to
   `CodeEditor.navigate_to_line`, §8, then focuses the editor). This tab is **read-only, DB-sourced,
   live/synthesized** (`editor.setReadOnly(True)`; `CodeEditor.replace_current_selection` no-ops on
   read-only editors, the guard that actually protects the buffer since `QTextCursor` edits bypass
   `setReadOnly`) — the checked-out, editable form lives in `ddl/*.sql` files (§18.2), edited in a
   separate tab type.
-- **Editor affordances (parity with the Raw XML editor's `XmlEditor`, via a shared base — §8):** the
-  DDL `CodeEditor` gains the **same three affordances `XmlEditor` has**: (i) a **line-number gutter**,
-  (ii) **line bookmarks**, and (iii) **code folding**. These are provided by a **shared
-  gutter/bookmark/fold base extracted from `XmlEditor`** (see §8 for the extraction), so there is **one**
-  gutter/bookmark/fold implementation used by both editors — never a second parallel gutter. The base
-  supplies the generic, block-number-based gutter + bookmark set + fold-state machinery; the
-  **foldable-region provider is pluggable**. For the DDL buffer the foldable regions are **one per DDL
-  object body** — the object's `DdlObjectSpan` banner line (`start_line`) through its `end_line` — which
-  `EditorPanel` already holds from the `build_ddl_text` span list (folding a DDL object collapses its
-  source under the banner). `XmlEditor` keeps its **XML-span** fold provider (`_foldable_region_starting_at`
-  over `_spans`/`TagSpan`, §8).
-- **Tab stop = 4 characters.** The DDL editor sets its tab-stop distance to **4 character widths**
-  (`setTabStopDistance(4 × mono-char-width)`), overriding Qt's monospace default (~8–11 chars) so
-  `pg_get_functiondef`'s tab-indented bodies read at a sane width.
-- **Top-aligned navigation.** `EditorPanel.navigate_to_line(line)` scrolls so the target line lands at
-  the **top** of the editor viewport (not centered) — the first line of the clicked DDL object's banner
-  sits at the top edge, so the whole object is visible below it. This is **DDL-editor-specific**: it does
-  **not** change `XmlEditor.navigate_to_line`, which stays **centered** (its Properties/tree-jump callers
-  expect centering). Implementation-wise the DDL `CodeEditor.navigate_to_line` (§8) is what changes from
-  `centerCursor()` to a top-alignment scroll (e.g. moving the target block to the top via the vertical
-  scrollbar / `setTextCursor` + top-of-viewport positioning); `XmlEditor._scroll_and_highlight_whole_line`
-  keeps `centerCursor()`.
+- **Implemented — editor affordances (parity with the Raw XML editor's `XmlEditor`, via the shared
+  mixin — §8):** the DDL `CodeEditor` carries the **same three affordances `XmlEditor` has**: (i) a
+  **line-number gutter**, (ii) **line bookmarks**, and (iii) **code folding**, all from
+  `ui/editor_gutter.py::GutterBookmarkFoldMixin` (see §8) — **one** gutter/bookmark/fold implementation
+  used by both editors, never a second parallel gutter. The mixin supplies the generic,
+  block-number-based gutter + bookmark set + fold-state machinery; the **foldable-region provider is
+  pluggable**. For the DDL buffer the foldable regions are **one per DDL object body**:
+  `ddl_editor_panel.py::_fold_regions_for_spans(spans)` (pure) translates each `DdlObjectSpan` into the
+  triple `(start_line - 1, start_line, end_line - 1)` — fold triggered on the **banner** block,
+  containing the **body only**, so the banner stays visible when collapsed; a span with
+  `end_line <= start_line` contributes **no** region. `EditorPanel.set_ddl_text(text, spans=None)` takes
+  that span list alongside the text and installs the regions via `CodeEditor.set_fold_regions`; passing
+  `None`/`[]` simply leaves nothing foldable. `XmlEditor` keeps its **XML-span** fold provider
+  (`_foldable_region_starting_at` over `_spans`/`TagSpan`, §8).
+- **Implemented — tab stop = 4 characters.** `CodeEditor` sets `setTabStopDistance(4 × mono-char
+  advance)` (`_SQL_TAB_STOP_CHARS = 4`) when `language == "sql"`, overriding Qt's monospace default
+  (~8–11 chars) so `pg_get_functiondef`'s tab-indented bodies read at a sane width.
+- **Implemented — top-aligned navigation.** `EditorPanel.navigate_to_line(line)` scrolls so the target
+  line lands at the **top** of the editor viewport (not centered) — the clicked DDL object's banner sits
+  at the top edge, so the whole object is visible below it. This is **DDL-specific**: gated on
+  `language == "sql"` inside `CodeEditor.navigate_to_line`, so JS/PHP `CodeEditor`s and
+  `XmlEditor.navigate_to_line` all keep `centerCursor()` (Properties/tree-jump callers expect
+  centering). See §8 for `_scroll_line_to_top`'s visible-block counting and scrollbar clamping.
 - **Implemented:** left-dock tree tab `ui/ddl_buffer_panel.py::BrowserPanel(QWidget)` — a `QWidget`
   wrapping an internal `self.tree = QTreeWidget()` (composition), matching this codebase's real
   convention for left-dock panels (`TableReferencesPanel`, `DbCheckPanel` — both `QWidget` subclasses
@@ -1148,7 +1277,8 @@ appears in the tree in **both** of its relationship places, not just one:
   viewport — see EditorPanel navigation below), not centered.
 
 **Tree presentation (`BrowserPanel._build_routines_branch` / `_build_tables_branch` /
-`_add_trigger_leaf`) — the exact rendered labels:**
+`_add_trigger_leaf`) — implemented; the exact rendered labels (both worked examples below are
+test-asserted byte-for-byte):**
 
 *Routine node (Functions & Procedures branch)* — top line = the **fully-qualified** name
 `schema.name`, a **three-way** marker, and — only for a routine with **zero** input arguments — an empty
@@ -1167,6 +1297,11 @@ appears in the tree in **both** of its relationship places, not just one:
   (empty parens) and has **no** argument-child nodes.
 - (Note: the top-line arg-list omission is a **tree-label** decision only; `build_ddl_text`'s banner
   comment in the buffer still carries the full `(argtypes)` from `arg_types` — §18.1 buffer, unchanged.)
+- **Argument child leaves carry no span** (`_SPAN_ROLE` unset), so clicking one navigates nowhere —
+  `_on_item_clicked` only emits `navigate_requested` when the clicked item has a span. Routine leaves
+  and both trigger occurrences carry theirs.
+- **Child order under a routine:** argument leaves first (declared order), then the triggers that invoke
+  the routine, **sorted by trigger name**. Routines themselves are sorted by `(schema, name)`.
 
 *Trigger leaf* — used in **both** the Tables branch and the Functions & Procedures branch — the label is
 the **composite** name `schema.table.triggername` followed by a **timing indicator** then **one event
@@ -1234,7 +1369,7 @@ piece), unchanged in mechanism:**
   a one-line wrapper around `fetch_routines_and_triggers(params)`, mirroring `_fetch_db_schema`; tests
   patch it to return a canned `DatabaseSchema`) through the shared `self._run_async` threadpool seam
   (the same off-thread executor the Database Check fetch uses, so a slow/dead host never freezes the
-  window). On result: `build_ddl_text(schema)` → `EditorPanel.set_ddl_text(text)` +
+  window). On result: `text, spans = build_ddl_text(schema)` → `EditorPanel.set_ddl_text(text, spans)` +
   `BrowserPanel.set_schema(schema, spans)` + `show_ddl_explorer()` + a status-bar summary
   (`DDL Explorer: N routine(s), M trigger(s).`).
 - **Standalone-mode friendly (§18):** connection params come from
@@ -1369,6 +1504,114 @@ cached or trusted from a prior session.
 > - **Rejected alternative:** a single unified Compare/Deploy screen. Rejected because it would either
 >   overload the simple compare tool with project/git machinery it doesn't need, or dilute the deploy
 >   workflow's guardrails into a generic diff viewer.
+
+### 18.4 SQL/plpgsql selection formatter
+
+> **Status: target design (settled 2026-08-01), not yet implemented.** Scoped as a standalone,
+> Qt-free formatter **core only** — it has **no UI consumer yet**. It is not wired into anything: the
+> keyboard shortcut that will trigger it is **TBD** (no binding chosen), and the DDL Editor surface it is
+> meant to serve (making §18.1's currently read-only `EditorPanel`/`ui/ddl_editor_panel.py` editable) is
+> itself **not designed** — building that editor is explicitly **out of scope** of this subsection and is
+> future work tracked separately. This subsection specifies only the formatter's algorithm, refusal
+> contract, and module shape, so that whoever designs the DDL Editor has a ready-made core to call.
+
+**Problem framing.** Once a future DDL Editor makes plpgsql function/trigger bodies hand-editable,
+"uniformity" for that editing means **consistent indentation and line breaks only** — not keyword
+casing, not identifier casing, not comma placement/style, not literal values. This subsection defines
+the formatter that enforces that narrow notion of uniformity.
+
+**Trigger & scope — explicit-only, no auto-mode, full stop:**
+
+- Invoked **only** by an explicit keyboard shortcut (exact binding **TBD** at implementation time) on
+  the current text **selection** in whatever editor eventually hosts it. There is **no** auto-format-on-
+  edit and **no** format-on-save, and — unlike Auto Parse XML (§9, off-by-default but togglable) — this
+  formatter has **no auto-mode at all**: the user explicitly rejected an auto-mode as "intrusive and
+  counterintuitive" during design. Do not add one without a fresh design decision superseding this one.
+- Operates on **arbitrary selections** — a complete statement, a bare fragment, or a chunk of plpgsql
+  control-flow (e.g. a `BEGIN...END` block) — not necessarily a whole function or trigger body.
+- There is **no "Lint Selection" action** and **no rule catalog** beyond the tokenize/balance floor
+  described below (no keyword-casing rule, no comma-style rule, nothing semantic). If future prose
+  anywhere implies otherwise, that implication is wrong per this design.
+
+**Core algorithm — hand-built tokenizer + nesting-depth reindenter, not an adopted library:**
+
+Covers both plain-SQL clause structure (`SELECT`/`FROM`/`WHERE`/`JOIN`, paren depth) and plpgsql block
+structure (`BEGIN`/`END`, `IF`/`ELSIF`/`END IF`, `LOOP`/`END LOOP`, `CASE`/`WHEN`/`END`). Reindents
+**whitespace and line breaks only** — keyword casing, identifier casing, comma placement/style, and
+literal values are never touched.
+
+Reuses **`_SQL_KEYWORDS`** — the lowercase, case-insensitive-matched keyword set already defined in
+`pgtp_editor/ui/code_editor.py` (~lines 80–94) and consumed by `_CodeHighlighter`'s `language="sql"`
+mode (§8, the DDL Explorer's `CodeEditor` highlighter) — as the **shared dialect source**, extended with
+plpgsql block keywords (`begin`/`end`/`if`/`elsif`/`loop`/`case`/`when`, already present in
+`_SQL_KEYWORDS`; any additional block keywords the tokenizer needs should be added to that same shared
+set rather than duplicated locally) so the highlighter and the formatter never disagree on what counts
+as a keyword.
+
+**Why build instead of adopt a library (record the investigation, not just the conclusion):**
+
+| Candidate | Why ruled out |
+|---|---|
+| `sqlparse` | Token-based reformat, historically fragile around dollar-quoted (`$$...$$`) bodies. |
+| `sqlfluff` | Confirmed via its own issue tracker (github.com/sqlfluff/sqlfluff #5864, "Linting doesn't work over plpgsql blocks") that it does not lint or fix inside plpgsql blocks. |
+| `sqlglot` | Pure Python, real Postgres dialect + pretty-printer, but treats dollar-quoted bodies as **opaque string literals by design** — a generic SQL grammar can't safely reformat procedural plpgsql it doesn't model. Since selections here may themselves **be** plpgsql control-flow fragments (not just whole statements with an opaque body), this blocks the actual use case, not just an edge case. |
+| `pgFormatter` / `pg_format` | The one mainstream tool with genuine plpgsql-aware reindentation (`BEGIN`/`END`, `IF`/`THEN`, loops) — but it's a **Perl CPAN module**. Ruled out on cross-platform packaging grounds: bundling/requiring a Perl runtime for a PySide6 desktop app distributed to Windows users is a real distribution liability, not hypothetical. |
+| `pylintsql` (github.com/growdashtech/pylintsql) | Investigated because directly referenced during design. Wrong shape entirely: a thin CLI wrapper that scans `--sql`-marked strings inside **Python source files** and runs them through SQLFluff, project-wide — not an in-process function over an editor selection. Also inherits SQLFluff's same plpgsql-block limitation. Not used. |
+
+**Conclusion:** no existing Python-ecosystem library handles plpgsql block reindentation, so a narrow
+hand-built tokenizer (indentation/line-breaks only, not a full semantic parser) is the correct scope for
+this feature — not a compromise forced by time pressure.
+
+**Safety / refusal behavior — the only gate, unconditional:**
+
+Formatting proceeds whenever the selection can be confidently tokenized and its blocks/parens are
+balanced. If it cannot — an unmatched `BEGIN`/`IF`/paren, or the selection boundary splits a string
+literal or a `$$...$$` dollar-quote in half — the formatter **refuses entirely**: the selection is left
+**completely unchanged**, nothing is guessed or partially applied. This is the project's existing "never
+a silent wrong result" ethos (cf. Diff/Merge's ambiguity gate, §12) applied here. This tokenize/balance
+refusal is **unconditional and the only thing that blocks formatting** — there is no separate semantic or
+lint gate layered on top (see the explicit exclusions below).
+
+On refusal, the formatter reports through the **Audit panel** (§7 — confirmed as the app's single output
+surface for all actions, already used by `[Schema]`/`[Validate]`/`[Find]`/`[PHP]`-prefixed lines) with a
+**precise start/end position** (offset or line+column start/end), not just a line number, so the hosting
+editor can underline the exact span where tokenization broke down (e.g. the specific unmatched `BEGIN`)
+rather than flag the whole line.
+
+**Architecture:**
+
+- New pure, Qt-free core package **`pgtp_editor/sql/`** (name chosen to follow the existing
+  `db/`/`schema_learning/`/`analysis/`/`diff/` convention of §5's package layout; does not exist yet),
+  mirrored by `tests/sql/`. No Qt imports, no DB/network I/O of any kind — consistent with the
+  Qt-free/DB-free pure-logic modules already listed in §5's dependency rule.
+- Primary entry point shape: `format_selection(text: str) -> FormatResult`, where `FormatResult` is
+  either the reformatted text or a refusal carrying one or more `Issue`-like objects.
+- `Issue` here **mirrors, and explicitly extends, the existing `Issue{line, message, fatal}` shape** from
+  `pgtp_editor/schema_learning/xsd_verify.py` (`verify_curated(text) -> list[Issue]`, §11) — same
+  `message`/`fatal` framing — but adds **start/end** position (offset or line+column start/end) since
+  this feature must underline a span, not just flag a line; `xsd_verify`'s shape does not carry that
+  today. This is a **pattern extension**, not a copy: `xsd_verify.Issue` itself is unchanged by this
+  design; §18.4's `Issue`-like type is a distinct type in `pgtp_editor/sql/`, not a shared class.
+
+**Explicitly out of scope of this subsection (deferred/future, not designed here):**
+
+1. **The DDL Editor UI surface itself** (a future §18.2/§18.3-adjacent enhancement to §18.1, making
+   `EditorPanel`/`ui/ddl_editor_panel.py` editable) — this subsection covers only the reusable formatter
+   core and its keyboard-shortcut trigger *contract* (shortcut TBD). Wiring `format_selection` into a
+   real editing surface, and choosing the concrete shortcut, is future work once that editor exists. As
+   of this subsection the formatter has **no consumer**.
+2. **Semantic/existence linting** (verifying that referenced tables/columns/functions actually exist) is
+   a **separate, explicitly deferred idea** — not designed here and not part of `format_selection`'s
+   refusal gate. It is expected to become its own forthcoming specification built around restoring a
+   schema-only scratch PostgreSQL database and the `okbob/plpgsql_check` extension
+   (github.com/okbob/plpgsql_check — 771 stars, actively maintained, supports PostgreSQL 14–18, checks
+   already-created functions/triggers via `plpgsql_check_function()`/`plpgsql_check_function_tb()`
+   returning `lineno`/`position`/`sqlstate`/`message`). This is a forward pointer only, so a reader does
+   not wonder where "the linter" went — none of that mechanism is designed or committed to by this
+   subsection.
+3. To restate plainly: there is **no** "Lint Selection" action, **no** rule catalog beyond the
+   tokenize/balance floor, and **no** auto-format mode. Any of these appearing designed elsewhere in this
+   document would be drift from this settled decision.
 
 ---
 
@@ -1573,11 +1816,14 @@ Tools; "New Project" removed; line-wrap moved to editor context menu):
   Exit.
 - **Edit:** Undo (Ctrl+Z), Redo (Ctrl+Y), Cut/Copy/Paste/Delete, Find… (Ctrl+F), Find Next (F3), Find All
   (Ctrl+Shift+F), Replace… (Ctrl+R), Replace All (Ctrl+Alt+Return), Select Enclosing Block (Ctrl+Shift+B),
-  Select Parent Block (Ctrl+Shift+A), Preferences.
+  Select Parent Block (Ctrl+Shift+A), ☐ Auto Parse XML (§9; unchecked by default, in-memory only),
+  Preferences.
 - **View:** ☑ Project Tree, ☑ Properties, ☑ Audit, ☑ Raw XML Panel (checked by default), Expand All,
   Collapse All, ☐ Light Theme, ☑/☐ Find table reference.
 - **Bookmarks:** Toggle Bookmark (Ctrl+F2), Next Bookmark (F2), Previous Bookmark (Shift+F2), Clear All
-  Bookmarks.
+  Bookmarks. Between Tools and Generation. Target design (2026-08-01, not yet implemented, §8/§13): the
+  whole menu and its four actions are disabled together while Caption Mode is active (gutter bookmark
+  toggling stays usable).
 - **Schema:** Edit XSD, Edit AutoXSD, Verify XSD, Export XSD, Import XSD — five items (§11). Verify /
   Export / Import act on the **active XSD** (curated or learned, per `_xsd_mode`), not curated-only.
   (Go To XSD is **not** a menu item: it is a window-level Ctrl+L `QAction` added via
@@ -1604,7 +1850,8 @@ Toolbar default: Open, Save, Undo, Redo, Find, Validate, Generate (customizable)
 | Ctrl+R / Ctrl+Alt+Return | Replace / Replace All | Window (caption: Ctrl+R = Caption Filter) |
 | Ctrl+Shift+B / Ctrl+Shift+A | Select Enclosing / Parent Block | Raw XML editor (menu-owned) |
 | Ctrl+click / Alt+click | Jump to matching tag / parent tag | Raw XML editor |
-| Ctrl+F2 / F2 / Shift+F2 | Toggle / Next / Previous Bookmark | Raw XML editor |
+| Ctrl+F2 / F2 / Shift+F2 | Toggle / Next / Previous Bookmark | Raw XML editor (Bookmarks menu; disabled in Caption Mode, §13 — target design 2026-08-01) |
+| double-click (line-number gutter zone) | Toggle bookmark on that line | Raw XML editor gutter (target design 2026-08-01, not yet implemented, §8 — additive alongside the existing single-click 12px bookmark strip; NOT gated by Caption Mode) |
 | Ctrl+L | Go To XSD (jump to the attribute's definition in curated.xsd; always forces curated mode) | Window-level QAction (also in the Raw XML editor context menu) |
 | Ctrl+G | Go to line in XML | Caption grid |
 | Ctrl+Shift+B | Bracket-select | Code editor dialog |
@@ -1669,7 +1916,8 @@ is authoritative** (and is what appears in the body above).
 | 2026-08-01 | §18.1 BrowserPanel routine top-line = bare `name(argtypes)  [marker]` with a **binary** marker (`[F]` function / `[P]` procedure); no per-argument children | Top-line = **fully-qualified** `schema.name` with a **three-way** marker (`[P]` procedure / `[T]` trigger-function `return_type=="trigger"` / `[F]` other function); a routine **with** inputs lists each as a `name (type)` second-level child and carries **no** parens on the top line; a **zero-input** routine shows empty `()` on the top line and no children |
 | 2026-08-01 | §18.1 BrowserPanel trigger leaf = `name  (timing/events) on table` (Tables branch) / `name  (timing/events) → function` (Functions branch) | Composite `schema.table.triggername` + bracketed **timing indicator** (`[B]`before / `[A]`after / `[I]`instead of) + **one bracketed event indicator per event** (`[I]`insert / `[U]`update / `[D]`delete / `[T]`truncate), e.g. `[B][D]`, in both branches |
 | 2026-08-01 | §18.1 DDL `EditorPanel`/`CodeEditor` navigation **centered** (`CodeEditor.navigate_to_line` used `centerCursor()`) | DDL navigation **top-aligned** — the object's first line lands at the top of the viewport; DDL-editor-specific, `XmlEditor.navigate_to_line` stays **centered** (its Properties/tree-jump callers expect centering) |
-| 2026-08-01 | §8 gutter / bookmarks / folding existed **only** on `XmlEditor`; DDL `EditorPanel`'s `CodeEditor` had none (no gutter/line-numbers/bookmarks/folding, Qt-mono default tab stop) | Generic gutter + bookmark + fold-**state** machinery **extracted into a shared base (class/mixin)** with a **pluggable foldable-region provider**, used by **both** `XmlEditor` (XML-span provider) and the DDL editor (DDL-object provider over the `DdlObjectSpan` index); DDL editor also gains a **4-character tab stop** — one gutter implementation, never a parallel second |
+| 2026-08-01 | §8 gutter / bookmarks / folding existed **only** on `XmlEditor`; DDL `EditorPanel`'s `CodeEditor` had none (no gutter/line-numbers/bookmarks/folding, Qt-mono default tab stop) | Generic gutter + bookmark + fold-**state** machinery **extracted into a shared base** — realized as the mixin `GutterBookmarkFoldMixin` in the new module `ui/editor_gutter.py` — with a **pluggable foldable-region provider**, used by **both** `XmlEditor` (XML-span provider) and the DDL editor (DDL-object provider over the `DdlObjectSpan` index); DDL editor also gains a **4-character tab stop** — one gutter implementation, never a parallel second |
+| 2026-08-01 | §8 gutter + line bookmarks were **Raw-XML-only** — the "Edit code…" JS/PHP event-handler editor (`CodeEditorDialog`/`CodeEditor`) had no gutter, no line numbers and no bookmarks | The shared `GutterBookmarkFoldMixin` (`ui/editor_gutter.py`) sits on **`CodeEditor` itself**, so **every** code editor — including the JS/PHP event-handler dialogs — now shows the line-number gutter and supports line bookmarks (folding inert there: no regions installed). Surfaced as a side effect of the extraction and **explicitly kept by the project owner** rather than gated per language: line numbers in a code editor are conventional, and gating would add a second code path. Bookmarks stay **session-only, per-document**, and the Bookmarks menu/shortcuts remain bound to the Raw XML editor only |
 | 2026-08-01 | Dark theme = Fusion + `dark_palette()` **palette-only** (the BUG-004 fix above, same date) — Fusion+palette alone rendered checkable menu indicators outlined near-black on the dark menu background (BUG-010) | Dark = Fusion + `dark_palette()` **+ the QDarkStyleSheet dark QSS** (`qdarkstyle>=3.2`, new runtime dependency, MIT-credited in About); light **always** clears the stylesheet (`app.setStyleSheet("")`) so round-trips leave no stale QSS; the palette stays applied beneath the QSS for palette-reading custom widgets; side effect: `app.style().objectName()` is empty in dark mode (`QStyleSheetStyle` wrapping) |
 
 ---

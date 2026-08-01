@@ -801,6 +801,25 @@ class MainWindow(QMainWindow):
         self._reveal_raw_xml_tab()
         return stage.find_replace_bar
 
+    def _active_bookmark_editor(self):
+        """The editor the Bookmarks menu/shortcuts act on: whichever editor
+        tab is active (§8). Every editor carries the same bookmark API from
+        the shared gutter base (`ui/editor_gutter.py`), so this dispatch is
+        the only thing needed to make the menu follow focus -- it mirrors
+        `_active_find_bar`'s per-tab routing.
+
+        Unlike `_active_find_bar` this deliberately does NOT reveal the Raw
+        XML tab as a side effect: toggling a bookmark must never yank the
+        user to a different tab. Any non-editor tab falls back to the Raw XML
+        editor, where bookmarks lived before the DDL Explorer existed.
+        """
+        stage = self.center_stage
+        if stage.currentIndex() == stage.xsd_tab_index:
+            return stage.xsd_editor
+        if stage.currentIndex() == stage.ddl_tab_index:
+            return stage.ddl_editor_panel.editor
+        return stage.xml_editor
+
     def _confirm_close_xsd(self) -> str:
         """Ask the user how to resolve unsaved Edit XSD changes before
         closing. Returns "save", "discard", or "cancel". Split out (mirroring
@@ -2498,7 +2517,7 @@ class MainWindow(QMainWindow):
 
         def on_result(schema):
             text, spans = build_ddl_text(schema)
-            self.center_stage.ddl_editor_panel.set_ddl_text(text)
+            self.center_stage.ddl_editor_panel.set_ddl_text(text, spans)
             self.ddl_browser_panel.set_schema(schema, spans)
             self.center_stage.show_ddl_explorer()
             self.statusBar().showMessage(
@@ -2700,24 +2719,36 @@ class MainWindow(QMainWindow):
         apply_action.triggered.connect(self._apply_changes_to_target)
 
     def _build_bookmarks_menu(self):
+        # Each action resolves the target editor at TRIGGER time via
+        # _active_bookmark_editor, not at build time -- the shared gutter base
+        # (§8) puts the same bookmark API on the Raw XML, Edit XSD and DDL
+        # Explorer editors, so the menu follows whichever is active instead of
+        # being bound to Raw XML forever.
         menu = self.menuBar().addMenu("Bookmarks")
-        editor = self.center_stage.xml_editor
 
         toggle_action = menu.addAction("Toggle Bookmark")
         toggle_action.setShortcut("Ctrl+F2")
-        toggle_action.triggered.connect(editor.toggle_bookmark_at_cursor)
+        toggle_action.triggered.connect(
+            lambda: self._active_bookmark_editor().toggle_bookmark_at_cursor()
+        )
 
         next_action = menu.addAction("Next Bookmark")
         next_action.setShortcut("F2")
-        next_action.triggered.connect(editor.goto_next_bookmark)
+        next_action.triggered.connect(
+            lambda: self._active_bookmark_editor().goto_next_bookmark()
+        )
 
         prev_action = menu.addAction("Previous Bookmark")
         prev_action.setShortcut("Shift+F2")
-        prev_action.triggered.connect(editor.goto_prev_bookmark)
+        prev_action.triggered.connect(
+            lambda: self._active_bookmark_editor().goto_prev_bookmark()
+        )
 
         menu.addSeparator()
         clear_action = menu.addAction("Clear All Bookmarks")
-        clear_action.triggered.connect(editor.clear_bookmarks)
+        clear_action.triggered.connect(
+            lambda: self._active_bookmark_editor().clear_bookmarks()
+        )
 
     def _build_generation_menu(self):
         menu = self.menuBar().addMenu("Generation")

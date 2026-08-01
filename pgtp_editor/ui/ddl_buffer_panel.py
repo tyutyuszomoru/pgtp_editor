@@ -39,6 +39,19 @@ from pgtp_editor.db.introspect import DatabaseSchema
 
 _SPAN_ROLE = Qt.ItemDataRole.UserRole
 
+_TIMING_LETTERS = {"before": "B", "after": "A", "instead of": "I"}
+_EVENT_LETTERS = {"insert": "I", "update": "U", "delete": "D", "truncate": "T"}
+
+
+def _routine_marker(routine) -> str:
+    """Three-way routine marker (§18.1): ``P``rocedure, ``T``rigger
+    function (a function returning ``trigger``), or plain ``F``unction."""
+    if routine.kind == "procedure":
+        return "P"
+    if routine.return_type == "trigger":
+        return "T"
+    return "F"
+
 
 class BrowserPanel(QWidget):
     navigate_requested = Signal(int)  # 1-based line in the EditorPanel buffer
@@ -82,7 +95,7 @@ class BrowserPanel(QWidget):
             tables_root.addChild(table_item)
             for trigger in triggers:
                 span = span_by_trigger.get((trigger.schema, trigger.table, trigger.name))
-                self._add_trigger_leaf(table_item, trigger, span, show_table=False)
+                self._add_trigger_leaf(table_item, trigger, span)
 
     def _build_routines_branch(self, schema: DatabaseSchema, span_by_routine, span_by_trigger) -> None:
         triggers_by_function: dict[tuple[str, str], list] = {}
@@ -94,13 +107,24 @@ class BrowserPanel(QWidget):
         routines_root = QTreeWidgetItem(["Functions & Procedures"])
         self.tree.addTopLevelItem(routines_root)
         for routine in sorted(schema.routines.values(), key=lambda r: (r.schema, r.name)):
-            marker = "F" if routine.kind == "function" else "P"
-            args = ", ".join(routine.arg_types)
-            routine_item = QTreeWidgetItem([f"{routine.name}({args})  [{marker}]"])
+            marker = _routine_marker(routine)
+            qualified = f"{routine.schema}.{routine.name}"
+            # Only a zero-argument routine carries the empty "()" on its top
+            # line; a routine with input args lists them as child leaves
+            # instead of a parenthesised signature (§18.1).
+            label = (
+                f"{qualified} [{marker}]" if routine.args else f"{qualified}() [{marker}]"
+            )
+            routine_item = QTreeWidgetItem([label])
             span = span_by_routine.get((routine.schema, routine.name))
             if span is not None:
                 routine_item.setData(0, _SPAN_ROLE, span)
             routines_root.addChild(routine_item)
+
+            for arg_name, arg_type in routine.args:
+                # Argument leaves are pure labels -- no span, so clicking one
+                # navigates nowhere.
+                routine_item.addChild(QTreeWidgetItem([f"{arg_name} ({arg_type})"]))
 
             calling_triggers = sorted(
                 triggers_by_function.get((routine.schema, routine.name), []),
@@ -110,14 +134,16 @@ class BrowserPanel(QWidget):
                 trigger_span = span_by_trigger.get(
                     (trigger.schema, trigger.table, trigger.name)
                 )
-                self._add_trigger_leaf(routine_item, trigger, trigger_span, show_table=True)
+                self._add_trigger_leaf(routine_item, trigger, trigger_span)
 
-    def _add_trigger_leaf(self, parent: QTreeWidgetItem, trigger, span, *, show_table: bool) -> None:
-        events = ",".join(trigger.events)
-        if show_table:
-            label = f"{trigger.name}  ({trigger.timing}/{events}) on {trigger.table}"
-        else:
-            label = f"{trigger.name}  ({trigger.timing}/{events}) → {trigger.function_name}"
+    def _add_trigger_leaf(self, parent: QTreeWidgetItem, trigger, span) -> None:
+        """Composite trigger label, identical in both branches (§18.1):
+        ``schema.table.name`` + timing indicator + one indicator per event."""
+        timing = _TIMING_LETTERS.get(trigger.timing, "?")
+        events = "".join(
+            f"[{_EVENT_LETTERS.get(event, '?')}]" for event in trigger.events
+        )
+        label = f"{trigger.schema}.{trigger.table}.{trigger.name} [{timing}]{events}"
         leaf = QTreeWidgetItem([label])
         if span is not None:
             leaf.setData(0, _SPAN_ROLE, span)

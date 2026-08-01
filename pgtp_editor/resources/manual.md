@@ -157,13 +157,19 @@ it).
 
 ## Bookmarks
 
-Bookmarks let you mark lines in the Raw XML editor and jump between them. They live
-for the current session and are not written to the file.
+Bookmarks let you mark lines and jump between them. They live for the current
+session and are not written to the file.
 
 - **Ctrl+F2** (or clicking the bookmark strip in the gutter) toggles a bookmark on
   the current line; a tag marker appears in the strip.
 - **F2** / **Shift+F2** jump to the next / previous bookmark.
 - The **Bookmarks** menu holds the same actions plus **Clear All Bookmarks**.
+
+The **Bookmarks** menu and its shortcuts act on the **Raw XML** editor. The same
+bookmark strip is also available in the **DDL Explorer** tab and in the
+**Edit code…** dialog — there you set and clear bookmarks by clicking the strip
+in the gutter, and each editor keeps its own set. Loading a new document into an
+editor clears its bookmarks.
 
 ---
 
@@ -202,6 +208,9 @@ The Code Editor is a modal window with:
 
 - **Syntax highlighting** — JavaScript for client-side handlers, PHP for
   server-side handlers.
+- A **line-number gutter**, with a bookmark strip at its left edge: click it to
+  mark a line while you work through a long handler (see *Bookmarks*). There is
+  nothing to fold in a code body, so the gutter shows no fold chevrons here.
 - **Auto-close** for `()`, `[]`, `{}`, `''`, and `""` — the caret lands between the
   pair, and typing the matching closer "types through" it.
 - **Selection-wrap** — with text selected, typing a bracket or quote wraps the
@@ -469,8 +478,53 @@ database and reveals two tabs at once:
   angles. Under **Tables**, each table lists the triggers defined on it; under
   **Functions & Procedures**, each function or procedure lists the triggers that
   call it. A trigger therefore appears in **both** places — either entry points
-  at the same definition. **Click** any leaf to jump the DDL Explorer buffer
-  straight to that object's banner line.
+  at the same definition. **Click** any object to jump the DDL Explorer buffer
+  straight to it.
+
+### Reading the DDL Objects tree
+
+Routines under **Functions & Procedures** are listed by their fully-qualified
+`schema.name`, followed by a marker telling you what kind of routine it is:
+
+- **`[F]`** — a plain function.
+- **`[P]`** — a procedure.
+- **`[T]`** — a trigger function, i.e. a function that returns `trigger`.
+
+A routine's **input arguments are listed as child rows**, one per argument, in
+the form `name (type)`. A routine that takes no arguments carries an empty pair
+of parentheses on its own row instead — for example
+`public.dont_delete_standards() [T]`. Argument rows are labels only: clicking
+one doesn't navigate anywhere.
+
+Triggers are shown by their composite name `schema.table.triggername`, followed
+by bracketed indicators — the timing first, then one per event:
+
+- Timing: **`[B]`** before, **`[A]`** after, **`[I]`** instead of.
+- Events: **`[I]`** insert, **`[U]`** update, **`[D]`** delete, **`[T]`** truncate.
+
+So a BEFORE DELETE trigger reads `[B][D]`, and an AFTER INSERT OR UPDATE trigger
+reads `[A][I][U]`. The label is identical in both branches of the tree, so you
+recognize the same trigger whether you found it under its table or under the
+function it calls.
+
+### Working in the DDL tab
+
+The DDL Explorer buffer is read-only, but it is a real editor view with the same
+navigation comforts as the Raw XML editor:
+
+- **Line numbers** in the gutter.
+- **Folding per DDL object:** a chevron on each object's banner comment line
+  collapses that object's body away, leaving the banner visible — handy for
+  skimming a long database's worth of definitions.
+- **Bookmarks:** click the bookmark strip at the left edge of the gutter to mark
+  a line (see *Bookmarks*).
+- **Find** and the rest of the search bar work on this tab's own buffer.
+
+Clicking an object in the DDL Objects tree scrolls it to the **top** of the DDL
+Explorer tab, so the whole definition is visible below its banner. (The Raw XML
+editor centers its jump targets instead.) Tab indentation in this tab is shown
+4 characters wide, which keeps `pg_get_functiondef`'s tab-indented bodies
+readable.
 
 Close the explorer with the **✕** on the DDL Explorer tab or by unchecking
 **Database ▸ DDL Explorer** — both hide the two tabs together, and the menu

@@ -68,3 +68,305 @@ def test_find_replace_bar_replace_cannot_edit_the_read_only_buffer(qtbot):
     panel.editor.setTextCursor(cursor)
     panel.editor.replace_current_selection("VANDALIZED")
     assert panel.editor.toPlainText() == _TEXT
+
+
+# --- Shared fold base, DDL-object provider (spec §8 / §18.1) ---------------
+
+
+def _schema_with_two_objects():
+    from pgtp_editor.db.introspect import DatabaseSchema, RoutineInfo, TriggerInfo
+
+    return DatabaseSchema(
+        tables={},
+        routines={
+            "pr.calc_total": RoutineInfo(
+                schema="pr",
+                name="calc_total",
+                kind="function",
+                arg_types=["integer"],
+                args=[],
+                source=(
+                    "CREATE FUNCTION pr.calc_total(a integer) RETURNS numeric AS $$\n"
+                    "BEGIN\n"
+                    "  RETURN a * 2;\n"
+                    "END;\n"
+                    "$$ LANGUAGE plpgsql;"
+                ),
+            )
+        },
+        triggers={
+            "pr.t_audit": TriggerInfo(
+                schema="pr",
+                table="orders",
+                name="t_audit",
+                timing="AFTER",
+                events=["INSERT"],
+                function_name="pr.audit",
+                definition="CREATE TRIGGER t_audit AFTER INSERT ON pr.orders\n  EXECUTE FUNCTION pr.audit();",
+            )
+        },
+    )
+
+
+def test_panel_editor_carries_the_shared_gutter_bookmark_fold_base(qtbot):
+    from pgtp_editor.ui.editor_gutter import _EditorGutter, GutterBookmarkFoldMixin
+
+    panel = EditorPanel()
+    qtbot.addWidget(panel)
+    assert isinstance(panel.editor, GutterBookmarkFoldMixin)
+    assert type(panel.editor._gutter) is _EditorGutter
+    panel.set_ddl_text(_TEXT)
+    panel.editor.toggle_bookmark(2)
+    assert panel.editor.bookmarked_lines() == [2]
+
+
+def test_set_ddl_text_installs_one_fold_region_per_ddl_object(qtbot):
+    from pgtp_editor.db.ddl_buffer import build_ddl_text
+
+    text, spans = build_ddl_text(_schema_with_two_objects())
+    panel = EditorPanel()
+    qtbot.addWidget(panel)
+    panel.set_ddl_text(text, spans)
+
+    assert len(spans) == 2
+    document = panel.editor.document()
+    for span in spans:
+        banner_block = document.findBlockByNumber(span.start_line - 1)
+        assert banner_block.text().startswith("-- ")  # the banner line
+        region = panel.editor._foldable_region_starting_at(banner_block)
+        # Contained = the object's BODY: banner+1 .. end_line (1-based),
+        # i.e. start_line .. end_line-1 as 0-based block numbers.
+        assert region == (span.start_line, span.end_line - 1)
+    # Exactly one region per object; no others anywhere in the buffer.
+    starts = {block for block in range(document.blockCount())
+              if panel.editor._foldable_region_starting_at(
+                  document.findBlockByNumber(block)) is not None}
+    assert starts == {span.start_line - 1 for span in spans}
+
+
+def test_folding_a_ddl_object_collapses_its_body_under_the_banner(qtbot):
+    from pgtp_editor.db.ddl_buffer import build_ddl_text
+
+    text, spans = build_ddl_text(_schema_with_two_objects())
+    panel = EditorPanel()
+    qtbot.addWidget(panel)
+    panel.set_ddl_text(text, spans)
+
+    document = panel.editor.document()
+    first = spans[0]
+    banner_block = document.findBlockByNumber(first.start_line - 1)
+    panel.editor._toggle_fold(banner_block)
+
+    assert banner_block.isVisible() is True  # the banner stays
+    for line in range(first.start_line, first.end_line):  # 0-based body blocks
+        assert document.findBlockByNumber(line).isVisible() is False
+    # The other object is untouched.
+    second = spans[1]
+    assert document.findBlockByNumber(second.start_line).isVisible() is True
+    # Folding only hides rendering; the character stream is intact.
+    assert panel.editor.toPlainText() == text
+
+    panel.editor._toggle_fold(banner_block)
+    for line in range(first.start_line, first.end_line):
+        assert document.findBlockByNumber(line).isVisible() is True
+
+
+def test_set_ddl_text_without_spans_leaves_nothing_foldable(qtbot):
+    panel = EditorPanel()
+    qtbot.addWidget(panel)
+    panel.set_ddl_text(_TEXT)
+    document = panel.editor.document()
+    assert all(
+        panel.editor._foldable_region_starting_at(document.findBlockByNumber(i)) is None
+        for i in range(document.blockCount())
+    )
+
+
+def test_panel_editor_uses_a_four_character_tab_stop(qtbot):
+    panel = EditorPanel()
+    qtbot.addWidget(panel)
+    assert panel.editor.tabStopDistance() == 4 * panel.editor.fontMetrics().horizontalAdvance(" ")
+
+
+def test_panel_navigate_to_line_puts_the_banner_at_the_top(qtbot):
+    panel = EditorPanel()
+    qtbot.addWidget(panel)
+    panel.set_ddl_text("\n".join(f"line {i}" for i in range(1, 401)))
+    panel.editor.resize(400, 200)
+    panel.show()
+    qtbot.waitExposed(panel)
+    panel.navigate_to_line(100)
+    assert panel.editor.textCursor().blockNumber() == 99
+    assert panel.editor.verticalScrollBar().value() == 99
+
+
+# --- _fold_regions_for_spans, pure (§18.1) --------------------------------
+
+
+def test_fold_regions_for_spans_translates_banner_to_end_line():
+    from pgtp_editor.db.ddl_buffer import DdlObjectSpan
+    from pgtp_editor.ui.ddl_editor_panel import _fold_regions_for_spans
+
+    spans = [
+        DdlObjectSpan(kind="function", schema="pr", name="f", table=None,
+                      start_line=1, end_line=6),
+        DdlObjectSpan(kind="trigger", schema="pr", name="t", table="orders",
+                      start_line=8, end_line=10),
+    ]
+    # (start_block, first_contained_block, last_contained_block), 0-based.
+    assert _fold_regions_for_spans(spans) == [(0, 1, 5), (7, 8, 9)]
+
+
+def test_fold_regions_for_spans_skips_a_span_with_no_body():
+    """Defensive: a span whose end_line does not exceed its banner line has
+    nothing to collapse and contributes no region."""
+    from pgtp_editor.db.ddl_buffer import DdlObjectSpan
+    from pgtp_editor.ui.ddl_editor_panel import _fold_regions_for_spans
+
+    spans = [
+        DdlObjectSpan(kind="function", schema="pr", name="f", table=None,
+                      start_line=3, end_line=3),
+        DdlObjectSpan(kind="function", schema="pr", name="g", table=None,
+                      start_line=5, end_line=4),
+    ]
+    assert _fold_regions_for_spans(spans) == []
+
+
+def test_fold_regions_for_spans_of_a_one_line_body():
+    """The real minimum from build_ddl_text: a single-line definition still
+    folds (banner + exactly one contained line)."""
+    from pgtp_editor.db.ddl_buffer import build_ddl_text
+    from pgtp_editor.db.introspect import DatabaseSchema, TriggerInfo
+    from pgtp_editor.ui.ddl_editor_panel import _fold_regions_for_spans
+
+    schema = DatabaseSchema(
+        triggers={
+            "pr.orders.t": TriggerInfo(
+                schema="pr", table="orders", name="t", timing="after",
+                events=["insert"], function_name="fn",
+                definition="CREATE TRIGGER t AFTER INSERT ON pr.orders;",
+            ),
+        },
+    )
+    _, spans = build_ddl_text(schema)
+    assert _fold_regions_for_spans(spans) == [(0, 1, 1)]
+
+
+# --- Fold behaviour across sibling objects, in the panel -------------------
+
+
+def test_folding_one_object_leaves_the_other_collapsed_state_alone(qtbot):
+    from pgtp_editor.db.ddl_buffer import build_ddl_text
+
+    text, spans = build_ddl_text(_schema_with_two_objects())
+    panel = EditorPanel()
+    qtbot.addWidget(panel)
+    panel.set_ddl_text(text, spans)
+    document = panel.editor.document()
+
+    first, second = spans[0], spans[1]
+    panel.editor._toggle_fold(document.findBlockByNumber(first.start_line - 1))
+    panel.editor._toggle_fold(document.findBlockByNumber(second.start_line - 1))
+    assert all(
+        document.findBlockByNumber(line).isVisible() is False
+        for line in range(second.start_line, second.end_line)
+    )
+
+    # Expanding the FIRST object must not reveal the still-collapsed second.
+    panel.editor._toggle_fold(document.findBlockByNumber(first.start_line - 1))
+    assert all(
+        document.findBlockByNumber(line).isVisible() is True
+        for line in range(first.start_line, first.end_line)
+    )
+    assert all(
+        document.findBlockByNumber(line).isVisible() is False
+        for line in range(second.start_line, second.end_line)
+    )
+    assert panel.editor.toPlainText() == text  # character stream intact
+
+
+def test_reloading_the_buffer_resets_folds_and_reinstalls_regions(qtbot):
+    from pgtp_editor.db.ddl_buffer import build_ddl_text
+
+    text, spans = build_ddl_text(_schema_with_two_objects())
+    panel = EditorPanel()
+    qtbot.addWidget(panel)
+    panel.set_ddl_text(text, spans)
+    panel.editor._toggle_fold(panel.editor.document().findBlockByNumber(spans[0].start_line - 1))
+    assert panel.editor._fold_state
+
+    panel.set_ddl_text(text, spans)  # a fresh introspection result
+    assert panel.editor._fold_state == {}
+    document = panel.editor.document()
+    assert all(document.findBlockByNumber(i).isVisible() for i in range(document.blockCount()))
+    assert (
+        panel.editor._foldable_region_starting_at(
+            document.findBlockByNumber(spans[0].start_line - 1)
+        )
+        is not None
+    )
+
+
+def test_reloading_without_spans_clears_the_previous_fold_regions(qtbot):
+    from pgtp_editor.db.ddl_buffer import build_ddl_text
+
+    text, spans = build_ddl_text(_schema_with_two_objects())
+    panel = EditorPanel()
+    qtbot.addWidget(panel)
+    panel.set_ddl_text(text, spans)
+    panel.set_ddl_text(_TEXT)  # no spans this time
+    document = panel.editor.document()
+    assert all(
+        panel.editor._foldable_region_starting_at(document.findBlockByNumber(i)) is None
+        for i in range(document.blockCount())
+    )
+
+
+def test_bookmarks_survive_folding_and_reset_on_reload(qtbot):
+    from pgtp_editor.db.ddl_buffer import build_ddl_text
+
+    text, spans = build_ddl_text(_schema_with_two_objects())
+    panel = EditorPanel()
+    qtbot.addWidget(panel)
+    panel.set_ddl_text(text, spans)
+    panel.editor.toggle_bookmark(spans[0].start_line)  # a body line
+    panel.editor._toggle_fold(panel.editor.document().findBlockByNumber(spans[0].start_line - 1))
+    assert panel.editor.bookmarked_lines() == [spans[0].start_line]
+
+    panel.set_ddl_text(text, spans)
+    assert panel.editor.bookmarked_lines() == []
+
+
+def test_navigate_to_line_focuses_the_editor(qtbot):
+    panel = EditorPanel()
+    qtbot.addWidget(panel)
+    panel.set_ddl_text(_TEXT)
+    panel.show()
+    qtbot.waitExposed(panel)
+    panel.navigate_to_line(3)
+    # focusWidget() rather than hasFocus(): offscreen windows are never
+    # activated, but the in-window focus target is still recorded.
+    assert panel.focusWidget() is panel.editor
+    assert panel.editor.textCursor().blockNumber() == 2
+
+
+def test_navigate_to_a_span_puts_that_objects_banner_at_the_top(qtbot):
+    """End-to-end of the BrowserPanel jump: the clicked object's banner line
+    is the first visible line, with its body below (§18.1)."""
+    from pgtp_editor.db.ddl_buffer import build_ddl_text
+
+    text, spans = build_ddl_text(_schema_with_two_objects())
+    padded = text + "\n".join(f"-- filler {i}" for i in range(200))
+    panel = EditorPanel()
+    qtbot.addWidget(panel)
+    panel.set_ddl_text(padded, spans)
+    panel.editor.resize(400, 120)
+    panel.show()
+    qtbot.waitExposed(panel)
+
+    second = spans[1]
+    panel.navigate_to_line(second.start_line)
+    assert panel.editor.verticalScrollBar().value() == second.start_line - 1
+    first_visible = panel.editor.firstVisibleBlock()
+    assert first_visible.blockNumber() == second.start_line - 1
+    assert first_visible.text().startswith("-- TRIGGER ")

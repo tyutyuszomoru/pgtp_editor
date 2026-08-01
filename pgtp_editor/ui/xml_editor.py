@@ -17,26 +17,29 @@
 
 Built as a PySide6 port of QCodeEditor's approach (see pgtp_editor/ui/about.py
 for the OSS credit). Composed of three cooperating pieces: XmlSyntaxHighlighter
-(syntax coloring with unclosed-quote propagation), _EditorGutter (line numbers
-and fold markers), and folding/auto-indent/auto-close behavior implemented
-directly as XmlEditor methods, since those need direct QTextCursor/QTextBlock
-access.
+(syntax coloring with unclosed-quote propagation), the shared
+gutter/bookmark/fold base (``ui/editor_gutter.py`` -- ``_EditorGutter`` plus
+``GutterBookmarkFoldMixin``, also carried by the DDL ``CodeEditor``, §8/§18.1),
+and auto-indent/auto-close behavior implemented directly as XmlEditor methods,
+since those need direct QTextCursor/QTextBlock access.
+
+The only fold piece that stays here is the XML-span foldable-region *provider*
+(``_foldable_region_starting_at`` over ``_spans``/``TagSpan``), which the
+shared base calls.
 """
 from __future__ import annotations
 
 import re
 from bisect import bisect_right
 
-from PySide6.QtCore import QEvent, QPoint, QRect, QSize, Qt, QTimer, Signal
+from PySide6.QtCore import QEvent, QPoint, Qt, QTimer, Signal
 from PySide6.QtGui import (
     QColor,
     QFont,
     QFontDatabase,
     QKeyEvent,
     QKeySequence,
-    QPainter,
     QPalette,
-    QPen,
     QSyntaxHighlighter,
     QTextCharFormat,
     QTextCursor,
@@ -50,7 +53,6 @@ from PySide6.QtWidgets import (
     QPlainTextEdit,
     QTextEdit,
     QToolTip,
-    QWidget,
 )
 
 from pgtp_editor.schema_learning.settings_index import (
@@ -60,6 +62,12 @@ from pgtp_editor.schema_learning.settings_index import (
     unused_setting_attributes,
 )
 from pgtp_editor.ui import xml_structure
+from pgtp_editor.ui.editor_gutter import (  # noqa: F401  (re-exported names)
+    _BOOKMARK_STRIP_WIDTH,
+    _EditorGutter,
+    _FOLD_GLYPH_WIDTH,
+    GutterBookmarkFoldMixin,
+)
 from pgtp_editor.ui.event_body import event_body_line_ranges
 
 STATE_NORMAL = 0
@@ -283,17 +291,6 @@ def _attribute_pair_at(text: str, open_start: int, open_end: int, pos: int):
             return match.group(1), match.group(2)[1:-1]
     return None
 
-# Fixed horizontal allowance reserved for the fold-triangle glyph, added on
-# top of the digit-count-dependent width for line numbers.
-_FOLD_GLYPH_WIDTH = 16
-
-# Fixed horizontal allowance reserved on the LEFT of the gutter for the
-# bookmark strip (where the rounded bookmark tags are drawn / clicked to
-# toggle). Sits left of the fold zone and the line numbers, which both shift
-# right by this amount.
-_BOOKMARK_STRIP_WIDTH = 12
-
-
 class XmlSyntaxHighlighter(QSyntaxHighlighter):
     def __init__(self, document):
         super().__init__(document)
@@ -357,137 +354,6 @@ def _closing_tag_start(text: str, span: xml_structure.TagSpan) -> int | None:
     """Delegates to xml_structure.closing_tag_start (kept as a module-local
     name for the highlight call site)."""
     return xml_structure.closing_tag_start(text, span)
-
-
-class _EditorGutter(QWidget):
-    """Line-number and fold-marker gutter, the standard QPlainTextEdit
-    side-widget pattern (Qt's "Code Editor Example")."""
-
-    def __init__(self, editor: "XmlEditor"):
-        super().__init__(editor)
-        self._editor = editor
-
-    def sizeHint(self) -> QSize:
-        return QSize(self._editor._gutter_width(), 0)
-
-    def paintEvent(self, event) -> None:
-        painter = QPainter(self)
-        painter.fillRect(event.rect(), self._editor._gutter_bg_color)
-
-        block = self._editor.firstVisibleBlock()
-        block_number = block.blockNumber()
-        top = self._editor.blockBoundingGeometry(block).translated(
-            self._editor.contentOffset()
-        ).top()
-        bottom = top + self._editor.blockBoundingRect(block).height()
-
-        # Three zones, left to right: the bookmark strip
-        # [0, _BOOKMARK_STRIP_WIDTH), the fold zone
-        # [_BOOKMARK_STRIP_WIDTH, _BOOKMARK_STRIP_WIDTH + _FOLD_GLYPH_WIDTH),
-        # and the line-number area (right-aligned against the gutter's right
-        # edge). The fold glyph and numbers both shift right by the strip width.
-        number_x = _BOOKMARK_STRIP_WIDTH + _FOLD_GLYPH_WIDTH
-        line_number_width = self.width() - number_x
-
-        while block.isValid() and top <= event.rect().bottom():
-            if block.isVisible() and bottom >= event.rect().top():
-                number_text = str(block_number + 1)
-                painter.setPen(self._editor._gutter_fg_color)
-                painter.drawText(
-                    number_x,
-                    int(top),
-                    line_number_width,
-                    self._editor.fontMetrics().height(),
-                    Qt.AlignmentFlag.AlignRight,
-                    number_text,
-                )
-
-                if block_number in self._editor._bookmarks:
-                    self._draw_bookmark_tag(painter, int(top))
-
-                if self._editor._foldable_region_starting_at(block) is not None:
-                    collapsed = self._editor._fold_state.get(block_number, False)
-                    self._draw_fold_glyph(painter, int(top), collapsed)
-
-            block = block.next()
-            top = bottom
-            bottom = top + self._editor.blockBoundingRect(block).height()
-            block_number += 1
-
-    def _draw_bookmark_tag(self, painter: QPainter, top: int) -> None:
-        """Draw a small filled rounded tag in the bookmark strip, vertically
-        centered on the line, in the palette's Highlight accent (theme-aware,
-        no border, antialiased)."""
-        line_height = self._editor.fontMetrics().height()
-        tag_w = _BOOKMARK_STRIP_WIDTH - 4
-        tag_h = max(4, min(line_height - 6, _BOOKMARK_STRIP_WIDTH))
-        x = 2
-        y = top + (line_height - tag_h) // 2
-        radius = max(1, tag_h // 4)
-        painter.save()
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(self._editor._bookmark_color())
-        painter.drawRoundedRect(QRect(x, y, tag_w, tag_h), radius, radius)
-        painter.restore()
-
-    def _draw_fold_glyph(self, painter: QPainter, top: int, collapsed: bool) -> None:
-        line_height = self._editor.fontMetrics().height()
-        glyph_size = min(_FOLD_GLYPH_WIDTH - 6, line_height - 6)
-        half = max(2, glyph_size // 2)
-        depth = max(1, half // 2)  # how far the chevron's tip protrudes
-        cx = _BOOKMARK_STRIP_WIDTH + _FOLD_GLYPH_WIDTH // 2
-        cy = top + line_height // 2
-        # A fine, unfilled chevron (technical arrow) rather than a filled triangle.
-        pen = QPen(self._editor._gutter_fg_color)
-        pen.setWidthF(1.3)
-        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
-        pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
-        painter.setPen(pen)
-        painter.setBrush(Qt.BrushStyle.NoBrush)
-        painter.save()
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-        if collapsed:
-            # Right-pointing chevron ">"
-            painter.drawLine(cx - depth, cy - half, cx + depth, cy)
-            painter.drawLine(cx + depth, cy, cx - depth, cy + half)
-        else:
-            # Down-pointing chevron "v"
-            painter.drawLine(cx - half, cy - depth, cx, cy + depth)
-            painter.drawLine(cx, cy + depth, cx + half, cy - depth)
-        painter.restore()
-
-    def mousePressEvent(self, event) -> None:
-        click_x = event.position().x()
-        # Zone routing: bookmark strip toggles the clicked line's bookmark;
-        # fold zone keeps the existing fold toggle; a click in the line-number
-        # area does nothing (as before).
-        in_bookmark_strip = click_x < _BOOKMARK_STRIP_WIDTH
-        in_fold_zone = (
-            _BOOKMARK_STRIP_WIDTH
-            <= click_x
-            < _BOOKMARK_STRIP_WIDTH + _FOLD_GLYPH_WIDTH
-        )
-        if not (in_bookmark_strip or in_fold_zone):
-            return
-        block = self._editor.firstVisibleBlock()
-        top = self._editor.blockBoundingGeometry(block).translated(
-            self._editor.contentOffset()
-        ).top()
-        bottom = top + self._editor.blockBoundingRect(block).height()
-        click_y = event.position().y()
-
-        while block.isValid() and top <= click_y:
-            if block.isVisible() and top <= click_y < bottom:
-                if in_bookmark_strip:
-                    self._editor.toggle_bookmark(block.blockNumber())
-                else:
-                    self._editor._toggle_fold(block)
-                self.update()
-                return
-            block = block.next()
-            top = bottom
-            bottom = top + self._editor.blockBoundingRect(block).height()
 
 
 class _CompletionPopup(QListWidget):
@@ -584,7 +450,7 @@ class _CompletionPopup(QListWidget):
         super().keyPressEvent(event)
 
 
-class XmlEditor(QPlainTextEdit):
+class XmlEditor(GutterBookmarkFoldMixin, QPlainTextEdit):
     line_clicked = Signal(int)  # 1-based line of a left-mouse click in the text
     # Emitted when a text-modifying key is pressed while the editor is
     # read-only (Caption Mode). The base already blocks the edit; this signal
@@ -616,12 +482,11 @@ class XmlEditor(QPlainTextEdit):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._highlighter = XmlSyntaxHighlighter(self.document())
-        self._gutter = _EditorGutter(self)
-        self._fold_state: dict[int, bool] = {}
-        # Session/file-scoped line bookmarks, tracked by block number. Reset
-        # alongside _fold_state on every setPlainText (a new file loaded), so
-        # bookmarks never drift from external edits or leak across documents.
-        self._bookmarks: set[int] = set()
+        # Shared gutter/bookmark/fold base (§8). Set up here -- immediately
+        # after the highlighter -- so changeEvent's `hasattr(_highlighter)`
+        # guard keeps covering an early ApplicationPaletteChange: by the time
+        # that guard passes, _gutter and the fold/bookmark state exist too.
+        self._init_gutter_bookmarks_folding()
         # Theme-aware colors. These default to the DARK set; apply_theme_colors
         # swaps the whole set to the LIGHT variant (and back) and is driven
         # automatically off ApplicationPaletteChange in changeEvent, so the
@@ -635,13 +500,21 @@ class XmlEditor(QPlainTextEdit):
         # True while a deferred step-2 rehighlight (BUG-013) is queued, so
         # several palette-change events in one toggle coalesce into one.
         self._theme_rehighlight_pending = False
+        # Kickoff timer for the deferred step-2 rehighlight (BUG-014): PARENTED
+        # to self so ~QWidget cancels a still-pending 0ms tick. An unparented
+        # QTimer.singleShot(0, self._rehighlight_for_theme) escapes the
+        # editor's lifetime and fires _rehighlight_for_theme on an
+        # already-deleted C++ XmlEditor (e.g. a widget torn down between a
+        # theme toggle and the next event-loop turn).
+        self._theme_kickoff_timer = QTimer(self)
+        self._theme_kickoff_timer.setSingleShot(True)
+        self._theme_kickoff_timer.setInterval(0)
+        self._theme_kickoff_timer.timeout.connect(self._rehighlight_for_theme)
         # Step-2 background sweep state (BUG-013): the timer that re-formats
         # _THEME_SWEEP_BLOCKS_PER_TICK blocks per event-loop turn, and the
         # next block number it resumes from. Timer created on first use.
         self._theme_sweep_timer: QTimer | None = None
         self._theme_sweep_block = 0
-        self._gutter_bg_color = QColor("#2b2b2b")
-        self._gutter_fg_color = QColor("#858585")
         self._current_line_color = QColor("#2d2d30")
         self._error_line_color = QColor("#5a1d1d")
         self._navigation_highlight_color = QColor("#264f78")
@@ -686,8 +559,6 @@ class XmlEditor(QPlainTextEdit):
         self._resolution_index: tuple | None = None
         self._nav_click_handled = False
         self.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
-        self.blockCountChanged.connect(self._update_gutter_width)
-        self.updateRequest.connect(self._update_gutter_on_scroll)
         self.textChanged.connect(self._rescan_structure)
         self.textChanged.connect(self._refresh_code_region_selections)
         self.cursorPositionChanged.connect(self._highlight_current_line)
@@ -715,19 +586,9 @@ class XmlEditor(QPlainTextEdit):
         # once; guards the disconnect calls in _rewire_popup so a fresh popup
         # doesn't log a PySide6 RuntimeWarning for disconnecting nothing.
         self._popup_wired = False
-        self._update_gutter_width(0)
         self._rescan_structure()
         self._refresh_code_region_selections()
         self._highlight_current_line()
-
-    def setPlainText(self, text: str) -> None:
-        super().setPlainText(text)
-        # Folding state is per-document-instance; a fresh setPlainText call
-        # (a new file loaded into this editor) starts fully unfolded.
-        self._fold_state = {}
-        # Bookmarks share the fold-state lifecycle: a new document starts with
-        # no bookmarks (session/file-scoped, see __init__).
-        self._bookmarks = set()
 
     def is_applying_theme(self) -> bool:
         """True only while apply_theme_colors's rehighlight() is in flight.
@@ -743,9 +604,8 @@ class XmlEditor(QPlainTextEdit):
         shows immediately -- gutter, current-line band, matching-tag spans and
         code-region backgrounds all recolor at once. Wired to run automatically
         on ApplicationPaletteChange via changeEvent."""
+        self._apply_gutter_theme_colors(light)
         if light:
-            self._gutter_bg_color = QColor("#f0f0f0")
-            self._gutter_fg_color = QColor("#888888")
             self._current_line_color = QColor("#eef1f7")
             self._error_line_color = QColor("#f7d4d4")
             self._navigation_highlight_color = QColor("#cfe0ff")
@@ -755,8 +615,6 @@ class XmlEditor(QPlainTextEdit):
                 tag="#0000ff", attr_name="#e50000", string="#a31515"
             )
         else:
-            self._gutter_bg_color = QColor("#2b2b2b")
-            self._gutter_fg_color = QColor("#858585")
             self._current_line_color = QColor("#2d2d30")
             self._error_line_color = QColor("#5a1d1d")
             self._navigation_highlight_color = QColor("#264f78")
@@ -780,7 +638,9 @@ class XmlEditor(QPlainTextEdit):
         # one toggle schedule only one rehighlight.
         if not self._theme_rehighlight_pending:
             self._theme_rehighlight_pending = True
-            QTimer.singleShot(0, self._rehighlight_for_theme)
+            # Parented single-shot timer, not QTimer.singleShot (BUG-014): the
+            # unparented form fires on an already-deleted editor.
+            self._theme_kickoff_timer.start()
 
     # Blocks re-formatted per event-loop turn during the step-2 sweep. Small
     # enough that each turn stays well under a frame, large enough that even
@@ -888,111 +748,6 @@ class XmlEditor(QPlainTextEdit):
                 continue  # single-line element: nothing to fold
             return open_line + 1, close_line - 1
         return None
-
-    def _toggle_fold(self, block) -> None:
-        region = self._foldable_region_starting_at(block)
-        if region is None:
-            return
-        first_contained, last_contained = region
-        block_number = block.blockNumber()
-        currently_collapsed = self._fold_state.get(block_number, False)
-        new_visible = currently_collapsed  # if collapsed, expand; else collapse
-        for line_number in range(first_contained, last_contained + 1):
-            contained_block = self.document().findBlockByNumber(line_number)
-            if new_visible and self._is_line_hidden_by_other_collapsed_fold(
-                line_number, exclude_block_number=block_number
-            ):
-                # Expanding this region must not reveal lines that belong to
-                # a separate, still-collapsed nested fold (e.g. re-expanding
-                # an outer element after its inner child was independently
-                # collapsed and never re-expanded).
-                continue
-            contained_block.setVisible(new_visible)
-        self._fold_state[block_number] = not currently_collapsed
-        self.document().markContentsDirty(block.position(), self.document().characterCount() - block.position())
-        self.viewport().update()
-
-    def _is_line_hidden_by_other_collapsed_fold(self, line_number: int, exclude_block_number: int) -> bool:
-        for other_block_number, collapsed in self._fold_state.items():
-            if other_block_number == exclude_block_number or not collapsed:
-                continue
-            other_block = self.document().findBlockByNumber(other_block_number)
-            other_region = self._foldable_region_starting_at(other_block)
-            if other_region is None:
-                continue
-            other_first, other_last = other_region
-            if other_first <= line_number <= other_last:
-                return True
-        return False
-
-    # --- Bookmarks ---------------------------------------------------------
-    def toggle_bookmark(self, block_number: int) -> None:
-        """Add or remove a bookmark on ``block_number`` (0-based line index)
-        and repaint the gutter so the tag appears/disappears immediately."""
-        if block_number in self._bookmarks:
-            self._bookmarks.discard(block_number)
-        else:
-            self._bookmarks.add(block_number)
-        self._gutter.update()
-
-    def bookmarked_lines(self) -> list[int]:
-        """Bookmarked block numbers in ascending order."""
-        return sorted(self._bookmarks)
-
-    def next_bookmark(self, from_line: int) -> int | None:
-        """Smallest bookmark strictly greater than ``from_line``, wrapping to
-        the smallest bookmark overall; ``None`` when there are no bookmarks."""
-        ordered = self.bookmarked_lines()
-        if not ordered:
-            return None
-        for line in ordered:
-            if line > from_line:
-                return line
-        return ordered[0]
-
-    def prev_bookmark(self, from_line: int) -> int | None:
-        """Largest bookmark strictly less than ``from_line``, wrapping to the
-        largest bookmark overall; ``None`` when there are no bookmarks."""
-        ordered = self.bookmarked_lines()
-        if not ordered:
-            return None
-        for line in reversed(ordered):
-            if line < from_line:
-                return line
-        return ordered[-1]
-
-    def clear_bookmarks(self) -> None:
-        """Remove every bookmark and repaint the gutter."""
-        self._bookmarks = set()
-        self._gutter.update()
-
-    def toggle_bookmark_at_cursor(self) -> None:
-        """Toggle a bookmark on the line the text cursor currently sits on."""
-        self.toggle_bookmark(self.textCursor().blockNumber())
-
-    def goto_next_bookmark(self) -> None:
-        """Move the cursor to the next bookmark after the current line (with
-        wrap-around) and center it. No-op when there are no bookmarks."""
-        target = self.next_bookmark(self.textCursor().blockNumber())
-        if target is not None:
-            self._goto_bookmark_line(target)
-
-    def goto_prev_bookmark(self) -> None:
-        """Move the cursor to the previous bookmark before the current line
-        (with wrap-around) and center it. No-op when there are no bookmarks."""
-        target = self.prev_bookmark(self.textCursor().blockNumber())
-        if target is not None:
-            self._goto_bookmark_line(target)
-
-    def _goto_bookmark_line(self, block_number: int) -> None:
-        """Move the cursor to ``block_number`` (0-based) and center it. Guards
-        against out-of-range bookmarks that may point past EOF after edits."""
-        block = self.document().findBlockByNumber(block_number)
-        if not block.isValid():
-            return
-        cursor = QTextCursor(block)
-        self.setTextCursor(cursor)
-        self.centerCursor()
 
     def _refresh_extra_selections(self) -> None:
         """The single place XmlEditor calls setExtraSelections. Combines
@@ -1873,37 +1628,3 @@ class XmlEditor(QPlainTextEdit):
         ):
             extra_indent = "  "
         cursor.insertText("\n" + leading_ws + extra_indent)
-
-    def _bookmark_color(self) -> QColor:
-        """The bookmark tag's fill, derived from the palette's Highlight role
-        so it reads in both Light and Dark themes. Recomputed on each paint,
-        so it tracks palette changes with no cache to invalidate."""
-        return self.palette().color(QPalette.ColorRole.Highlight)
-
-    def _gutter_width(self) -> int:
-        digits = len(str(max(1, self.blockCount())))
-        digit_width = self.fontMetrics().horizontalAdvance("9")
-        return (
-            digits * digit_width
-            + _BOOKMARK_STRIP_WIDTH
-            + _FOLD_GLYPH_WIDTH
-            + 6
-        )
-
-    def _update_gutter_width(self, _new_block_count: int) -> None:
-        self.setViewportMargins(self._gutter_width(), 0, 0, 0)
-
-    def _update_gutter_on_scroll(self, rect, dy: int) -> None:
-        if dy:
-            self._gutter.scroll(0, dy)
-        else:
-            self._gutter.update(0, rect.y(), self._gutter.width(), rect.height())
-        if rect.contains(self.viewport().rect()):
-            self._update_gutter_width(0)
-
-    def resizeEvent(self, event) -> None:
-        super().resizeEvent(event)
-        contents_rect = self.contentsRect()
-        self._gutter.setGeometry(
-            QRect(contents_rect.left(), contents_rect.top(), self._gutter_width(), contents_rect.height())
-        )

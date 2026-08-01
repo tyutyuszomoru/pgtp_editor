@@ -32,6 +32,24 @@ from pgtp_editor.ui.code_editor import CodeEditor
 from pgtp_editor.ui.find_replace_bar import FindReplaceBar
 
 
+def _fold_regions_for_spans(spans) -> list[tuple[int, int, int]]:
+    """Translate `DdlObjectSpan`s into the shared fold base's
+    ``(start_block, first_contained_block, last_contained_block)`` triples
+    (0-based block numbers) -- the DDL-object foldable-region provider (§18.1).
+
+    A span's `start_line` is the object's 1-based BANNER line and `end_line`
+    the last line of its source. The fold is triggered on the banner block and
+    contains the body only, so the banner stays visible when collapsed. Spans
+    with no body (`end_line <= start_line`) contribute no region.
+    """
+    regions: list[tuple[int, int, int]] = []
+    for span in spans:
+        if span.end_line <= span.start_line:
+            continue  # nothing below the banner to fold
+        regions.append((span.start_line - 1, span.start_line, span.end_line - 1))
+    return regions
+
+
 class EditorPanel(QWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -47,9 +65,16 @@ class EditorPanel(QWidget):
         layout.addWidget(self.editor)
         layout.addWidget(self.find_replace_bar)
 
-    def set_ddl_text(self, text: str) -> None:
-        """Replace the synthesized buffer (a fresh `build_ddl_text` result)."""
+    def set_ddl_text(self, text: str, spans=None) -> None:
+        """Replace the synthesized buffer (a fresh `build_ddl_text` result).
+
+        `spans` is that call's `DdlObjectSpan` list; it drives the shared fold
+        base's foldable regions (§18.1) -- ONE region per DDL object body, from
+        the object's banner line (`start_line`) through its `end_line`, so
+        folding an object collapses its source under its banner. Passing None
+        (or an empty list) simply leaves nothing foldable."""
         self.editor.setPlainText(text)
+        self.editor.set_fold_regions(_fold_regions_for_spans(spans or []))
 
     def navigate_to_line(self, line: int) -> None:
         """Jump to `line` (1-based) — BrowserPanel's `navigate_requested`

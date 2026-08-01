@@ -29,13 +29,14 @@ from __future__ import annotations
 
 import re
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QEvent, Qt, Signal
 from PySide6.QtGui import (
     QColor,
     QFont,
     QFontDatabase,
     QKeyEvent,
     QKeySequence,
+    QPalette,
     QShortcut,
     QSyntaxHighlighter,
     QTextCharFormat,
@@ -47,6 +48,8 @@ from PySide6.QtWidgets import (
     QPlainTextEdit,
     QVBoxLayout,
 )
+
+from pgtp_editor.ui.editor_gutter import GutterBookmarkFoldMixin
 
 # Keyword lists kept as Qt-free module constants (unit-tested for existence /
 # non-triviality); the highlighter consumes them below.
@@ -242,9 +245,21 @@ class _CodeHighlighter(QSyntaxHighlighter):
                 self.setFormat(block_open, block_close + 2 - block_open, self._comment_format)
 
 
-class CodeEditor(QPlainTextEdit):
+class CodeEditor(GutterBookmarkFoldMixin, QPlainTextEdit):
     """QPlainTextEdit tuned for editing a single code body in one language
-    ("js" | "php" | "sql")."""
+    ("js" | "php" | "sql").
+
+    Carries the shared gutter/bookmark/fold base (`ui/editor_gutter.py`, §8) --
+    the same one `XmlEditor` uses, never a second parallel gutter. Foldable
+    regions are supplied from outside via `set_fold_regions`; for the DDL
+    Explorer's "sql" buffer `EditorPanel` derives them from the `DdlObjectSpan`
+    index (one region per object body, banner → `end_line`, §18.1).
+    """
+
+    # Tab-stop width, in characters, for the DDL/"sql" mode (§18.1): Qt's
+    # monospace default is ~8-11 characters, which makes pg_get_functiondef's
+    # tab-indented bodies unreadably wide.
+    _SQL_TAB_STOP_CHARS = 4
 
     def __init__(self, language: str, parent=None):
         super().__init__(parent)
@@ -255,8 +270,18 @@ class CodeEditor(QPlainTextEdit):
         font.setFixedPitch(True)
         self.setFont(font)
         self.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
+        if language == "sql":
+            self.setTabStopDistance(
+                self._SQL_TAB_STOP_CHARS
+                * self.fontMetrics().horizontalAdvance(" ")
+            )
 
         self._highlighter = _CodeHighlighter(self.document(), language)
+
+        # Foldable regions, keyed by the 0-based block number the region starts
+        # on -> (first_contained_block, last_contained_block). Empty by default,
+        # so js/php code bodies simply have nothing to fold.
+        self._fold_regions: dict[int, tuple[int, int]] = {}
 
         # Closer characters this editor auto-inserted, tracked as QTextCursors
         # so their positions self-adjust across later edits. Consulted by the
@@ -264,15 +289,81 @@ class CodeEditor(QPlainTextEdit):
         # editor inserted, never an arbitrary pre-existing one.
         self._auto_closed_cursors: list[QTextCursor] = []
 
+        self._init_gutter_bookmarks_folding()
+        self._apply_gutter_theme_colors(self._palette_is_light())
+
+    # --- Shared gutter/bookmark/fold base hooks (§8) -----------------------
+    def set_fold_regions(self, regions) -> None:
+        """Install this editor's foldable regions: an iterable of
+        ``(start_block, first_contained_block, last_contained_block)`` triples
+        (all 0-based block numbers). Replaces any previous set and drops the
+        fold state, since the old block numbers no longer mean anything."""
+        self._fold_regions = {
+            int(start): (int(first), int(last)) for start, first, last in regions
+        }
+        self._fold_state = {}
+
+    def _foldable_region_starting_at(self, block):
+        """The pluggable foldable-region provider the shared base calls."""
+        if not block.isValid():
+            return None
+        return self._fold_regions.get(block.blockNumber())
+
+    def _palette_is_light(self) -> bool:
+        return self.palette().color(QPalette.ColorRole.Base).lightness() > 128
+
+    def changeEvent(self, event) -> None:
+        super().changeEvent(event)
+        if event.type() in (
+            QEvent.Type.ApplicationPaletteChange,
+            QEvent.Type.PaletteChange,
+        ):
+            # Can fire during base-class construction, before the gutter exists.
+            if hasattr(self, "_gutter"):
+                self._apply_gutter_theme_colors(self._palette_is_light())
 
     def navigate_to_line(self, line: int) -> None:
-        """Move the caret to `line` (1-based) and center it -- the same
-        public navigation entry point XmlEditor exposes (§8), used by the
-        DDL Explorer's BrowserPanel → EditorPanel jump (§18.1)."""
+        """Move the caret to `line` (1-based) -- the same public navigation
+        entry point XmlEditor exposes (§8), used by the DDL Explorer's
+        BrowserPanel → EditorPanel jump (§18.1).
+
+        In the "sql" / DDL mode the target line is scrolled to the **TOP** of
+        the viewport rather than centered, so a clicked DDL object's banner
+        sits at the top edge with its whole body visible below (§18.1).
+        `XmlEditor.navigate_to_line` stays centered -- its Properties/tree-jump
+        callers expect centering.
+        """
         block = self.document().findBlockByNumber(max(0, line - 1))
         cursor = QTextCursor(block)
         self.setTextCursor(cursor)
-        self.centerCursor()
+        if self._language == "sql":
+            self._scroll_line_to_top(block)
+        else:
+            self.centerCursor()
+
+    def _scroll_line_to_top(self, block) -> None:
+        """Scroll so ``block`` sits at the top of the viewport. Uses the
+        vertical scrollbar (which counts VISIBLE blocks in a QPlainTextEdit),
+        clamped to the bar's range so a target near EOF just scrolls to the
+        bottom instead of being rejected."""
+        self.ensureCursorVisible()
+        bar = self.verticalScrollBar()
+        if bar is None:
+            return
+        target = self._visible_block_offset(block)
+        bar.setValue(max(bar.minimum(), min(target, bar.maximum())))
+
+    def _visible_block_offset(self, block) -> int:
+        """Number of VISIBLE blocks before ``block`` -- the scrollbar value
+        that puts it at the top. Folded (hidden) blocks do not take a scroll
+        step, so a plain blockNumber() would overshoot."""
+        offset = 0
+        walker = self.document().firstBlock()
+        while walker.isValid() and walker.blockNumber() < block.blockNumber():
+            if walker.isVisible():
+                offset += 1
+            walker = walker.next()
+        return offset
 
     def replace_current_selection(self, text: str) -> None:
         """Replace the current selection with `text` (FindReplaceBar's

@@ -72,6 +72,11 @@ class RoutineInfo:
     language: str = ""
     source: str = ""  # full CREATE [OR REPLACE] FUNCTION/PROCEDURE text
     kind: str = "function"  # "function" | "procedure"
+    # Input (IN/INOUT) argument (name, type) pairs in declared order -- what
+    # the BrowserPanel tree lists as child leaves. `arg_types` above stays the
+    # types-only call signature that build_ddl_text's banner comment uses.
+    # A routine with no input arguments has `args == []`.
+    args: list[tuple[str, str]] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -178,7 +183,16 @@ SELECT n.nspname, p.proname, p.prokind,
             FROM unnest(p.proargtypes) WITH ORDINALITY AS a(oid, ord)
             JOIN pg_catalog.pg_type t ON t.oid = a.oid),
            ARRAY[]::text[]
-       )
+       ),
+       COALESCE(
+           (SELECT array_agg(pg_catalog.format_type(t.oid, NULL) ORDER BY a.ord)
+            FROM unnest(COALESCE(p.proallargtypes, p.proargtypes::oid[]))
+                 WITH ORDINALITY AS a(oid, ord)
+            JOIN pg_catalog.pg_type t ON t.oid = a.oid),
+           ARRAY[]::text[]
+       ),
+       p.proargnames,
+       p.proargmodes::text[]
 FROM pg_catalog.pg_proc p
 JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
 JOIN pg_catalog.pg_language l ON l.oid = p.prolang
@@ -209,6 +223,46 @@ _TRIGGER_DELETE = 1 << 3
 _TRIGGER_UPDATE = 1 << 4
 _TRIGGER_TRUNCATE = 1 << 5
 _TRIGGER_INSTEAD = 1 << 6
+
+
+# pg_proc.proargmodes values that denote an argument the CALLER passes in:
+# i=IN, b=INOUT, v=VARIADIC. (o=OUT and t=TABLE are outputs.)
+_INPUT_ARG_MODES = frozenset("ibv")
+
+
+def _input_args(
+    all_arg_types: list[str] | None,
+    arg_names: list[str] | None,
+    arg_modes: list[str] | None,
+) -> list[tuple[str, str]]:
+    """Correlate ``pg_proc``'s parallel argument arrays into input-argument
+    ``(name, type)`` pairs in declared order (§18.1).
+
+    ``all_arg_types`` is ``COALESCE(proallargtypes, proargtypes)`` already
+    run through ``format_type``; ``arg_names`` is ``proargnames``;
+    ``arg_modes`` is ``proargmodes``. Postgres leaves ``proargmodes`` NULL
+    when every argument is IN (the common case) -- an absent mode therefore
+    reads as IN. Returns the modes that are genuinely *input* arguments:
+    IN (``i``), INOUT (``b``) and VARIADIC (``v``) -- a variadic parameter is
+    passed in by the caller, so omitting it would silently hide a real
+    parameter from the tree. OUT (``o``) and TABLE (``t``) entries are
+    dropped. An unnamed argument yields ``""`` for its name.
+
+    Kept in Python (like ``_decode_trigger_type``) so the correlation is
+    unit-testable without a live database.
+    """
+    pairs: list[tuple[str, str]] = []
+    for index, type_name in enumerate(all_arg_types or []):
+        mode = "i"
+        if arg_modes and index < len(arg_modes) and arg_modes[index]:
+            mode = arg_modes[index]
+        if mode not in _INPUT_ARG_MODES:
+            continue
+        name = ""
+        if arg_names and index < len(arg_names) and arg_names[index]:
+            name = arg_names[index]
+        pairs.append((name, type_name))
+    return pairs
 
 
 def _decode_trigger_type(tgtype: int) -> tuple[str, list[str]]:
@@ -334,7 +388,18 @@ def fetch_routines_and_triggers(
     routine_rows, trigger_rows = runner(params, list(ROUTINE_TRIGGER_SQL))
 
     routines: dict[str, RoutineInfo] = {}
-    for schema_name, name, prokind, return_type, language, source, arg_types in routine_rows:
+    for (
+        schema_name,
+        name,
+        prokind,
+        return_type,
+        language,
+        source,
+        arg_types,
+        all_arg_types,
+        arg_names,
+        arg_modes,
+    ) in routine_rows:
         routines[f"{schema_name}.{name}"] = RoutineInfo(
             schema=schema_name,
             name=name,
@@ -343,6 +408,7 @@ def fetch_routines_and_triggers(
             language=language,
             source=source,
             kind="function" if prokind == "f" else "procedure",
+            args=_input_args(all_arg_types, arg_names, arg_modes),
         )
 
     triggers: dict[str, TriggerInfo] = {}
