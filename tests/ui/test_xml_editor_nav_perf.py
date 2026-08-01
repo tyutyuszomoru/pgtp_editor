@@ -93,15 +93,24 @@ def test_cursor_navigation_does_not_rescan_document(qtbot, monkeypatch):
         "must use the cached spans, not re-scan on every cursor move"
     )
 
-    # A real edit (textChanged) is expected to trigger at least one rescan
-    # (exactly how many depends on other textChanged-driven features, e.g.
-    # auto-indent/auto-close, which is out of scope for this fix).
+    # A real edit no longer rescans INLINE (BUG-015): the structure rescan is
+    # debounced, so the keystroke itself must add no scan at all. (Before
+    # BUG-015 this asserted `after_edit > baseline` -- an immediate rescan per
+    # keystroke, which is exactly the stall that made typing unusable.)
     cursor = editor.textCursor()
     cursor.movePosition(QTextCursor.MoveOperation.End)
     editor.setTextCursor(cursor)
     qtbot.keyClick(editor, Qt.Key.Key_X)
+    assert calls["n"] == baseline, (
+        "a keystroke rescanned the document inline -- the rescan must be "
+        "debounced (BUG-015)"
+    )
+    assert editor._rescan_timer.isActive()
+
+    # ...and lands exactly once when the debounce fires.
+    editor._rescan_now()
     after_edit = calls["n"]
-    assert after_edit > baseline
+    assert after_edit == baseline + 1
 
     # Subsequent navigation still must not rescan.
     for offset in (2, 4, 6):
@@ -233,3 +242,112 @@ def test_properties_population_uses_indexed_resolution_not_per_row_walks(qtbot, 
     panel.show_node(_Node(), "page")
     assert counts["parent_tag_span"] == 0
     assert counts["build_parent_map"] == 2
+
+
+# --- BUG-015: typing must not run the O(document) work per keystroke --------
+
+
+def test_typing_a_burst_coalesces_into_a_single_rescan(qtbot, monkeypatch):
+    """THE BUG-015 regression test. Every keystroke used to run BOTH
+    _rescan_structure (full toPlainText copy + full-document scan) and
+    _refresh_code_region_selections (a second full copy + handler walk)
+    inline, which is what made typing in a large .pgtp "painfully slow".
+    A burst of keystrokes must now schedule ONE debounced rescan, not one
+    per character."""
+    scans = {"n": 0}
+    real_scan = xml_structure.scan
+
+    def counting_scan(text):
+        scans["n"] += 1
+        return real_scan(text)
+
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    editor.setPlainText("<Page>\n  <Row>x</Row>\n</Page>")
+    # Patch only AFTER the synchronous load-time rescan.
+    monkeypatch.setattr(xml_editor_module.xml_structure, "scan", counting_scan)
+
+    cursor = editor.textCursor()
+    cursor.movePosition(QTextCursor.MoveOperation.End)
+    editor.setTextCursor(cursor)
+    for _ in range(20):
+        qtbot.keyClick(editor, Qt.Key.Key_A)
+
+    assert scans["n"] == 0, "typing rescanned inline; the debounce is not working"
+    assert editor._rescan_timer.isActive()
+
+    editor._rescan_now()  # the debounce firing
+    assert scans["n"] == 1, "the debounced rescan must run exactly once for the burst"
+    assert editor._spans_revision == editor.document().revision()
+
+
+def test_cursor_moves_during_the_debounce_window_do_not_rescan(qtbot, monkeypatch):
+    """The subtle half of BUG-015: typing also moves the caret, so
+    cursorPositionChanged fires per keystroke. _update_matching_tag_highlight
+    used to rescan whenever it found the span cache stale -- which, once the
+    rescan is debounced, is true after EVERY keystroke. That would have kept
+    the full-document scan running per character through the cursor path and
+    silently defeated the whole fix. While stale it must suppress the
+    highlight instead of rescanning."""
+    scans = {"n": 0}
+    real_scan = xml_structure.scan
+
+    def counting_scan(text):
+        scans["n"] += 1
+        return real_scan(text)
+
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    text = "<Page>\n  <Detail>x</Detail>\n</Page>"
+    editor.setPlainText(text)
+    monkeypatch.setattr(xml_editor_module.xml_structure, "scan", counting_scan)
+
+    # One edit -> cache is now stale with the rescan still pending.
+    cursor = editor.textCursor()
+    cursor.movePosition(QTextCursor.MoveOperation.End)
+    editor.setTextCursor(cursor)
+    qtbot.keyClick(editor, Qt.Key.Key_Z)
+    assert editor._rescan_timer.isActive()
+
+    # Move the caret around inside that stale window: still no rescan, and the
+    # matching-tag highlight is suppressed rather than drawn from stale
+    # offsets (which would paint a visibly wrong range).
+    for offset in (3, 8, 12, 20):
+        cursor = editor.textCursor()
+        cursor.setPosition(offset)
+        editor.setTextCursor(cursor)
+    assert scans["n"] == 0
+    assert editor._matching_tag_selections == []
+
+    # Once the debounce lands, the highlight comes back correctly.
+    editor._rescan_now()
+    cursor = editor.textCursor()
+    cursor.setPosition(text.index("<Detail>") + 1)
+    editor.setTextCursor(cursor)
+    assert len(editor._matching_tag_selections) == 2
+
+
+def test_rescan_timer_is_parented_and_single_shot(qtbot):
+    """Guards against a regression to unparented QTimer.singleShot, which
+    fires on a deleted editor (BUG-014)."""
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    assert editor._rescan_timer.parent() is editor
+    assert editor._rescan_timer.isSingleShot()
+
+
+def test_set_plain_text_rescans_synchronously(qtbot):
+    """Loading/replacing a document must leave spans fresh IMMEDIATELY --
+    callers (file open, revert, rename write-through) read spans, fold
+    regions and code regions straight after. Only incremental typing is
+    debounced."""
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    editor.setPlainText("<Root>\n  <A>x</A>\n</Root>")
+
+    assert editor._rescan_timer.isActive() is False
+    assert editor._spans_revision == editor.document().revision()
+    assert editor._spans  # populated, not waiting on the debounce
+    assert editor._foldable_region_starting_at(
+        editor.document().findBlockByNumber(0)
+    ) == (1, 1)

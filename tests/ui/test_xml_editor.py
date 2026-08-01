@@ -1570,13 +1570,45 @@ def test_xml_editor_gutter_and_bookmark_methods_come_from_the_shared_mixin(qtbot
         "next_bookmark",
         "prev_bookmark",
         "clear_bookmarks",
-        "_toggle_fold",
         "_is_line_hidden_by_other_collapsed_fold",
         "_gutter_width",
         "_apply_gutter_theme_colors",
     ):
         assert name not in vars(_XmlEditor), f"{name} re-declared on XmlEditor"
         assert getattr(_XmlEditor, name) is getattr(GutterBookmarkFoldMixin, name)
+
+    # _toggle_fold is the ONE deliberate exception (BUG-015): XmlEditor wraps
+    # it to flush the debounced structure rescan first, so folding never acts
+    # on stale spans. It must stay a thin wrapper that DELEGATES -- never a
+    # re-implementation.
+    import inspect
+
+    source = inspect.getsource(_XmlEditor._toggle_fold)
+    assert "_flush_pending_rescan" in source
+    assert "super()._toggle_fold(block)" in source
+
+
+def test_folding_right_after_an_edit_flushes_the_debounced_rescan(qtbot):
+    """BUG-015 correctness guard: the structure rescan is debounced, but
+    folding is a deliberate action that must act on EXACT spans. Folding a
+    region created by an edit that the debounce hasn't processed yet must
+    still work -- _toggle_fold flushes first."""
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    editor.setPlainText("<Root>\n</Root>\n")
+
+    # Type a foldable element in; the rescan is still pending afterwards.
+    cursor = editor.textCursor()
+    cursor.setPosition(len("<Root>\n"))
+    editor.setTextCursor(cursor)
+    editor.insertPlainText("  <A>\n    x\n  </A>\n")
+    assert editor._rescan_timer.isActive()  # debounce pending, spans stale
+
+    # Folding the just-typed <A> must still find its region.
+    block = editor.document().findBlockByNumber(1)
+    editor._toggle_fold(block)
+    assert editor._rescan_timer.isActive() is False  # flushed
+    assert editor._fold_state.get(1) is True
 
 
 def test_xml_editor_folding_still_keeps_the_character_stream_intact(qtbot):

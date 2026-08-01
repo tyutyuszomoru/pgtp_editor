@@ -559,8 +559,19 @@ class XmlEditor(GutterBookmarkFoldMixin, QPlainTextEdit):
         self._resolution_index: tuple | None = None
         self._nav_click_handled = False
         self.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
-        self.textChanged.connect(self._rescan_structure)
-        self.textChanged.connect(self._refresh_code_region_selections)
+        # Structure rescan + code-region rebuild are DEBOUNCED (BUG-015).
+        # Both are O(document) -- a full toPlainText() copy plus a
+        # whole-document regex/handler walk each -- and running them inline
+        # on textChanged meant every single keystroke and Enter paid that
+        # cost on a multi-MB .pgtp ("painfully slow", the reported symptom).
+        # They now run once after the user pauses. Parented QTimer(self),
+        # never QTimer.singleShot -- an unparented one fires on a deleted
+        # editor (BUG-014).
+        self._rescan_timer = QTimer(self)
+        self._rescan_timer.setSingleShot(True)
+        self._rescan_timer.setInterval(self._RESCAN_DEBOUNCE_MS)
+        self._rescan_timer.timeout.connect(self._rescan_now)
+        self.textChanged.connect(self._on_text_changed_schedule_rescan)
         self.cursorPositionChanged.connect(self._highlight_current_line)
         self.cursorPositionChanged.connect(self._update_matching_tag_highlight)
 
@@ -589,6 +600,65 @@ class XmlEditor(GutterBookmarkFoldMixin, QPlainTextEdit):
         self._rescan_structure()
         self._refresh_code_region_selections()
         self._highlight_current_line()
+
+    # Idle gap after the last edit before the O(document) structure rescan +
+    # code-region rebuild run (BUG-015). Short enough to feel immediate on a
+    # typing pause, long enough that a burst of keystrokes coalesces into one
+    # rescan. Same debounce shape as MainWindow's snapshot/auto-parse timers.
+    _RESCAN_DEBOUNCE_MS = 250
+
+    def _on_text_changed_schedule_rescan(self) -> None:
+        """textChanged slot: (re)start the debounce instead of rescanning
+        inline (BUG-015). Format-only theme sweeps change no characters, so
+        the spans/code-regions cannot differ -- skip them entirely rather
+        than scheduling pointless work (this guard used to live inside the
+        two handlers themselves)."""
+        if self._applying_theme:
+            return
+        self._rescan_timer.start()
+
+    def _rescan_now(self) -> None:
+        """Run the debounced work immediately: structure first (code regions
+        and the matching-tag highlight both read fresh `_spans`), then the
+        code-region rebuild, then repaint the layers that were showing stale
+        or suppressed state during the debounce window -- the matching-tag
+        highlight (suppressed while stale, see _update_matching_tag_highlight)
+        and the gutter (fold glyphs are derived from `_spans`)."""
+        self._rescan_timer.stop()
+        self._rescan_structure()
+        self._refresh_code_region_selections()
+        self._update_matching_tag_highlight()
+        self._gutter.update()
+
+    def _flush_pending_rescan(self) -> None:
+        """Force the debounced rescan to complete NOW if one is pending.
+        Call this from any deliberate user action that must see exact
+        structure (e.g. folding) rather than up-to-`_RESCAN_DEBOUNCE_MS`-old
+        spans. Cheap no-op when nothing is pending."""
+        if self._rescan_timer.isActive():
+            self._rescan_now()
+
+    def setPlainText(self, text: str) -> None:
+        """Load/replace the whole document. Unlike incremental typing this is
+        a document SWAP whose structure must be correct immediately (BUG-015
+        gotcha): callers load a file, revert, or write a rename through the
+        buffer and then read spans / fold regions / code regions / the
+        matching-tag highlight straight away. So run the debounced work
+        synchronously here rather than leaving it `_RESCAN_DEBOUNCE_MS` in the
+        future. Costs one scan per load, which a load already pays for in the
+        document copy anyway -- the debounce exists for per-keystroke edits."""
+        super().setPlainText(text)
+        self._rescan_now()
+
+    def _toggle_fold(self, block) -> None:
+        """Folding is a deliberate user action and must act on exact spans --
+        flush any pending debounced rescan first (BUG-015), then defer to the
+        shared gutter mixin. NOTE: the flush belongs here, NOT inside
+        `_foldable_region_starting_at`: the gutter's paintEvent calls that
+        hook for every visible block, so rescanning there would fire on every
+        repaint (i.e. every keystroke) and silently undo the whole debounce."""
+        self._flush_pending_rescan()
+        super()._toggle_fold(block)
 
     def is_applying_theme(self) -> bool:
         """True only while apply_theme_colors's rehighlight() is in flight.
@@ -837,14 +907,24 @@ class XmlEditor(GutterBookmarkFoldMixin, QPlainTextEdit):
         return cursor
 
     def _update_matching_tag_highlight(self) -> None:
-        # Use the cached spans (kept fresh by _rescan_structure on every
-        # textChanged) instead of rescanning the whole document on every
-        # cursor move -- see the _spans/_spans_revision comment in __init__.
-        # textChanged is expected to fire before cursorPositionChanged, but
-        # that ordering isn't contractual, so defensively rescan if the
-        # cache is stale relative to the document's current revision.
+        # Use the cached spans instead of rescanning the whole document on
+        # every cursor move -- see the _spans/_spans_revision comment in
+        # __init__.
+        #
+        # BUG-015: this must NOT rescan when the cache is stale. Typing moves
+        # the caret, so cursorPositionChanged fires on every keystroke; a
+        # rescan-if-stale here would run the full-document scan per character
+        # and completely defeat the textChanged debounce (this path, not
+        # textChanged, was the remaining per-keystroke stall). While the cache
+        # is stale the cached spans' character offsets refer to the PRE-edit
+        # text, so highlighting from them would paint a visibly wrong range --
+        # worse than none. Clear the highlight and return; _rescan_now
+        # re-invokes this once the debounced rescan lands, a few hundred ms
+        # later, and the correct highlight appears then.
         if self.document().revision() != self._spans_revision:
-            self._rescan_structure()
+            self._matching_tag_selections = []
+            self._refresh_extra_selections()
+            return
         # By the revision invariant just enforced, _spans_text is identical
         # to what toPlainText() would return -- but without re-copying the
         # whole document on every cursor move.

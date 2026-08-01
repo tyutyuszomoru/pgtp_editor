@@ -452,7 +452,14 @@ def test_code_editor_and_xml_editor_share_one_gutter_implementation(qtbot):
     assert type(xml._gutter) is _EditorGutter
     # Same functions, not copies.
     assert type(code).toggle_bookmark is type(xml).toggle_bookmark
-    assert type(code)._toggle_fold is type(xml)._toggle_fold
+    # CodeEditor uses the mixin's fold implementation verbatim. XmlEditor wraps
+    # it (BUG-015: flush the debounced structure rescan so folding never acts
+    # on stale spans) but must DELEGATE to that same one implementation via
+    # super() -- a thin wrapper is fine, a re-implementation is not.
+    import inspect
+
+    assert type(code)._toggle_fold is GutterBookmarkFoldMixin._toggle_fold
+    assert "super()._toggle_fold(block)" in inspect.getsource(type(xml)._toggle_fold)
 
 
 def test_code_editor_has_a_gutter_reserving_viewport_margin(qtbot):
