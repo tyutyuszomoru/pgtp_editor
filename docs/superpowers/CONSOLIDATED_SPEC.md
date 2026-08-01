@@ -1013,12 +1013,23 @@ never touches the live DB directly (DB writes only happen via the reviewed §18.
   **no separate third state/symbol** for "both." This is a deliberate embrace-drift philosophy: the
   tool surfaces disagreement, it does not attempt to auto-resolve it.
 
-> **Open question — not yet resolved, do not silently pick an answer (also tracked in §29):** what
-> exactly is the "last-deployed reference" each marker compares against? One reasonable **candidate**
-> mechanism, offered as a starting point only: a lightweight per-project deploy manifest (e.g.
-> `.ddlproject/deployed.json`, git-tracked) recording, per DDL object, either a content-hash or the git
-> commit id that was actually deployed, written at the moment §18.3's deploy step succeeds. This is
-> **not a decision** — it needs explicit sign-off before implementation.
+> **Settled: "last-deployed reference" = a git-tracked deploy manifest, target design.** A per-project
+> deploy manifest (`.ddlproject/deployed.json`, git-tracked — non-secret provenance data) records, per
+> DDL object, **both** a content-hash and a deployed commit id, with distinct roles:
+>
+> - **Content-hash** — the mechanism actually used for all drift comparisons: `*` = hash(local `ddl/`
+>   file) != stored hash; `!` = hash(live DB introspected definition) != stored hash. This keeps the
+>   correctness-critical comparison independent of git plumbing entirely — no shelling out to git, no
+>   dependency on history staying intact — consistent with the "database is truth, git is history only"
+>   principle stated above.
+> - **Deployed commit id** — stored purely for human traceability ("this object was deployed as of
+>   commit X"), not consulted by the comparison logic itself.
+> - Implementation requirement: the hash must be computed the **same way** in all three places it's
+>   used (local file content, live DB introspection via `pg_get_functiondef`/`pg_get_triggerdef`, and
+>   the stored reference), so formatting/whitespace normalization doesn't produce false drift.
+> - The manifest is written atomically at the moment §18.3's deploy step succeeds, alongside the git
+>   commit of the deploy itself, and is git-tracked so "last-deployed" state travels correctly across
+>   machines/clones rather than living only in one local session.
 
 Markers are recomputed **fresh on every project load** per the truth-model principle above — never
 cached or trusted from a prior session.
@@ -1063,14 +1074,23 @@ cached or trusted from a prior session.
 - **Database menu** gains **"Compare Schemas…"** (source/target: live connection or snapshot file) and
   **"Save Schema Snapshot…"**.
 
-> **Open question — not yet resolved, do not silently pick an answer (also tracked in §29):** should
-> the schema-compare entry point above (comparing two full `DatabaseSchema` snapshots, live-vs-live or
-> live-vs-snapshot) be **reframed as this deploy workflow's schema-compare entry point** — i.e.
-> absorbed/merged into §18.3 as one mode of the same feature — or should it **remain a fully separate
-> sibling feature** that merely happens to share the diff core (`db/schema_diff.py`/
-> `db/migration_gen.py`)? Both are legitimate; this needs an explicit decision before implementing
-> either the deploy workflow or the schema-compare UI, since it affects whether they share one
-> "Compare Schemas…"-style entry surface or expose two.
+> **Settled: separate commands, one shared engine, target design.** The schema-compare entry point
+> above stays a **fully separate sibling command**, not absorbed into the deploy workflow's UI — the
+> "one diff/generation engine, two entry points" framing already stated above was correct all along;
+> what was actually undecided was the UI surface, not the engine:
+>
+> - **`Database ▸ "Compare Schemas…"`** stays its own lightweight, **no-project-required** command
+>   (live-vs-live, live-vs-snapshot) — useful even with zero DDL-versioning projects involved (e.g.
+>   comparing staging vs. prod ad hoc).
+> - The DDL-versioning project's **`Deploy`** command (§18.3 steps 1–4 above) is a separate, dedicated
+>   flow — it carries the checkout-awareness, the `!`-blocks-batch ambiguity gate, and the git-commit
+>   step that a generic compare tool should not be burdened with.
+> - Both commands invoke the **same** `db/schema_diff.py`/`db/migration_gen.py` engine underneath — no
+>   duplicated diff/generation logic, just two distinct entry points with two distinct UIs suited to
+>   their two distinct audiences/guardrails.
+> - **Rejected alternative:** a single unified Compare/Deploy screen. Rejected because it would either
+>   overload the simple compare tool with project/git machinery it doesn't need, or dilute the deploy
+>   workflow's guardrails into a generic diff viewer.
 
 ---
 
@@ -1360,6 +1380,7 @@ is authoritative** (and is what appears in the body above).
 | 2026-07-29 | §1 scope: PGTP Editor described purely as a `.pgtp`-editing tool (plus its vendor-generation and re_phpgen sub-projects), with no standalone/DB-only usage mode | Scope explicitly **broadened**: PGTP Editor also functions as a **standalone Postgres DDL-versioning tool**, usable with zero `.pgtp` files, sharing the app's DB connection/code editor/diff infrastructure as an independent mode (not a separate repo, unlike the `re_phpgen` precedent) — new top-level §18 |
 | 2026-07-29 | §17.1 "Routines & triggers (DDL Explorer)" as a `§17.x` Database subsection, scoped to read-only browsing only, with phase-2 write-back sketched as inline `EditorPanel` DB push | **Relocated and reframed** as §18.1 "Routines & triggers browsing (DDL Explorer)" — a subsection of new top-level §18 "DDL versioning (standalone Postgres mode)" — now explicitly the shared browsing substrate for §18.2's checkout-to-edit and §18.3's deploy workflow, not a self-contained DB-menu feature; `RoutineInfo`/`TriggerInfo`/`DatabaseSchema.routines`/`.triggers` stay generic introspection in §17, reused by both the pre-existing DB-check features and the new §18 workflow |
 | 2026-07-29 | §17.2 "Schema diff & migration" as a standalone `§17.x` Database subsection (schema-compare-only entry point: live-vs-live or live-vs-snapshot `DatabaseSchema` diff, "Compare Schemas…"/"Save Schema Snapshot…") | **Relocated** into §18.3 "Deploy workflow & schema diff/migration" as the shared diff/migration engine (`db/schema_diff.py`/`db/schema_snapshot.py`/`db/migration_gen.py`) now also invoked from §18.3's edit-driven deploy entry point (comparing local `ddl/` files against the last-deployed reference) — **one diff/generation engine, two entry points**. Whether the original schema-compare entry point should be fully absorbed into §18.3 or remain a sibling feature sharing only the diff core is an **explicit open question** (§29), not resolved by this relocation |
+| 2026-07-29 | Both mechanisms left as explicit open questions pending owner sign-off (§18.2 "last-deployed reference" mechanism; §18.3 vs. original §17.2 schema-compare — absorb or sibling) | Settled, target design: **content-hash + commit-id git-tracked deploy manifest** (`.ddlproject/deployed.json`) as the last-deployed reference, hash-based drift comparison independent of git plumbing (§18.2); **separate `Compare Schemas…`/`Deploy` commands sharing one `db/schema_diff.py`/`db/migration_gen.py` engine**, unified screen explicitly rejected (§18.3) |
 
 ---
 
@@ -1380,17 +1401,6 @@ is authoritative** (and is what appears in the body above).
   (must fail gracefully).
 - **Fold re-scan performance** and `line_index` O(N²) — accepted for now; optimize only if profiling
   demands.
-- **§18.2 "last-deployed reference" mechanism (DDL versioning state markers):** what exactly the `*`/`!`
-  markers compare against is unresolved. Candidate starting point: a per-project deploy manifest (e.g.
-  `.ddlproject/deployed.json`, git-tracked) recording a content-hash or deployed git commit id per DDL
-  object, written when §18.3's deploy step succeeds — but this is a proposal, not a decision, and needs
-  explicit sign-off before implementation.
-- **§18.3 vs the original §17.2 schema-compare feature — absorb or keep sibling?** Whether the
-  schema-compare entry point (full `DatabaseSchema`-vs-`DatabaseSchema` diff, live-vs-live or
-  live-vs-snapshot) should be reframed as *part of* the DDL-versioning deploy workflow (§18.3) or should
-  remain a fully separate sibling feature that merely shares the diff core
-  (`db/schema_diff.py`/`db/migration_gen.py`) is unresolved. Affects whether they expose one shared
-  "Compare Schemas…"-style entry surface or two. Needs a decision before either is implemented.
 
 ---
 
