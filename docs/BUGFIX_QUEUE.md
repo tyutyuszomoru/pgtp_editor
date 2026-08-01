@@ -781,3 +781,85 @@ performance fix within that contract. No divergence from a stated decision, so n
 follow-up unless the fix changes user-visible behavior (it should not).
 
 ---
+
+## BUG-009: Linux/KDE shows a generic "W" placeholder icon instead of the app icon (taskbar + title-bar)
+**Status:** OPEN
+**Reported:** 2026-08-01
+**Report (verbatim):** "application icon in linux kde is a W instead of the application's own icon both in the taskbar and in the window's corner"
+
+**Root cause:** The application never sets a window/application icon and never establishes a
+desktop-file/WM_CLASS identity, so on KDE (Wayland and X11) the window falls back to the compositor's
+generic placeholder (the "W" glyph). Concretely:
+- `pgtp_editor/main.py`, `main()` (lines ~43-88): creates `QApplication(sys.argv)` (line 67) and shows
+  `MainWindow` but never calls `QApplication.setWindowIcon(...)`, `QApplication.setApplicationName(...)`,
+  `QApplication.setApplicationDisplayName(...)`, `QApplication.setOrganizationName(...)`, or
+  `QApplication.setDesktopFileName(...)`. (The `QSettings` on lines 53-58 uses "MDS"/"PGTP Editor" but
+  that never propagates to the `QApplication` identity.)
+- `pgtp_editor/ui/main_window.py` sets `setWindowTitle("PGTP Editor")` (line 211) but never
+  `setWindowIcon(...)`. A grep across `pgtp_editor/` confirms there is **no** `setWindowIcon` /
+  `setDesktopFileName` / `setApplicationName` call anywhere.
+- No brand icon ships inside the importable package. The only app icon in the repo is
+  `docs/pgtpeditor.ico` (MS Windows .ico, 16x16 + 32x32), which lives **outside** `pgtp_editor/` and is
+  **not** listed in `pyproject.toml`'s package data (line 29 ships only `resources/*.md`, `resources/*.xsd`,
+  `resources/icons/breeze/*`), so it is not available at runtime from an installed wheel. There is no
+  PNG/SVG app icon under `pgtp_editor/resources/` and no `.desktop` file anywhere in the repo.
+
+On KDE, the taskbar icon is resolved by matching the window's WM_CLASS / `desktopFileName` against an
+installed `.desktop` file; with neither a `setWindowIcon` (which drives the in-window/title-bar corner
+icon and is also used as the taskbar fallback) nor a `desktopFileName`, KDE has nothing to match and shows
+the generic placeholder.
+
+**Proposed fix:** Two coordinated parts.
+1. **Ship a real brand icon inside the package and set it at startup.** Add an app icon under
+   `pgtp_editor/resources/` — prefer a scalable `app_icon.svg` plus/or a multi-size `pgtpeditor.png`
+   (256x256 recommended; can be rendered from the existing `docs/pgtpeditor.ico`). Add its glob to the
+   `[tool.setuptools.package-data]` `"pgtp_editor"` list in `pyproject.toml` (line 29) so it ships in the
+   wheel (e.g. add `"resources/app_icon.svg"` / `"resources/*.png"`). In `pgtp_editor/main.py` `main()`,
+   right after `app = QApplication(sys.argv)` (line 67) and **before** `MainWindow(...)`/`window.show()`,
+   set the application identity and icon:
+   - `QApplication.setApplicationName("PGTP Editor")` and
+     `QApplication.setOrganizationName("MDS")` (match the existing `QSettings` "MDS"/"PGTP Editor" scope on
+     lines 53-58 for consistency), plus `QApplication.setApplicationDisplayName("PGTP Editor")`.
+   - `QApplication.setDesktopFileName("pgtp-editor")` (must match the `.desktop` file's basename from part
+     2 — this is what KDE/Wayland keys the taskbar icon off; getting the name wrong silently reverts to the
+     placeholder).
+   - Build the icon via a resource-path helper. Use `importlib.resources`
+     (`importlib.resources.files("pgtp_editor.resources") / "app_icon.svg"`) or a
+     `Path(__file__).parent / "resources" / "app_icon.svg"` lookup, wrap it in `QIcon`, and call
+     `app.setWindowIcon(icon)`. Follow the existing resource-loading convention in
+     `pgtp_editor/ui/icons.py` (which already loads vendored SVGs from `resources/icons/breeze/`) rather
+     than inventing a new path scheme. Guard against a missing file (skip silently if the icon can't be
+     loaded) so startup never crashes on a partial install.
+   - Optionally also call `window.setWindowIcon(icon)` in `MainWindow.__init__` (near the
+     `setWindowTitle("PGTP Editor")` on line 211) as a belt-and-braces fallback, but the `QApplication`-level
+     call is normally sufficient and is the primary fix.
+2. **Ship a Linux `.desktop` file so KDE can associate the taskbar icon.** Add a
+   `pgtp-editor.desktop` (basename must equal the `setDesktopFileName` argument, i.e. `pgtp-editor`) with
+   at minimum `Exec=`, `Icon=pgtp-editor`, `Name=PGTP Editor`, `Type=Application`, and a `Categories=`
+   line. Install the icon into the hicolor theme (e.g.
+   `share/icons/hicolor/scalable/apps/pgtp-editor.svg` and/or `.../256x256/apps/pgtp-editor.png`) so the
+   `Icon=pgtp-editor` name resolves. Decide where this lives (a `packaging/linux/` dir plus install notes,
+   or `data_files` in `pyproject.toml`); a pip install alone won't place a `.desktop` in
+   `~/.local/share/applications`, so document/automate the install step. Gotchas: the `.desktop` basename,
+   the `setDesktopFileName` string, and the `Icon=` name must all agree; on Wayland specifically the
+   `desktopFileName`↔`.desktop` match is what fixes the taskbar (the in-window corner icon comes from
+   `setWindowIcon`).
+
+**Test impact:** No existing test covers app-icon / desktop identity (this is startup wiring in
+`pgtp_editor/main.py`, which is largely untested; there is no `tests/test_main.py`). New case(s) needed: a
+small unit test (e.g. `tests/test_main_icon.py`, or a new `tests/ui/` test) that, under
+`QT_QPA_PLATFORM=offscreen`, invokes the startup wiring and asserts (a)
+`QApplication.instance().windowIcon()` is non-null (`isNull()` is False) and (b)
+`QApplication.applicationName()` / `QApplication.desktopFileName()` are set to the expected values. If the
+icon-setting logic is factored into a helper (e.g. `apply_app_identity(app)` in `main.py`), test that
+helper directly to avoid running the full event loop. Also add a packaging sanity check that the icon
+resource is included in `package-data` (can be asserted by importing it via `importlib.resources`).
+
+**Spec impact:** none found — `CONSOLIDATED_SPEC.md` describes the PySide6/Qt6 desktop app (§ around line
+55) but has no section on application-icon / desktop-file / branding behavior, so the current absence is an
+omission rather than a documented decision. After the fix lands, flag `spec-maintainer` to add a short
+note recording the app-icon + `.desktop`/`desktopFileName` identity convention (icon resource location,
+`setDesktopFileName("pgtp-editor")`, and the KDE taskbar association) so it isn't accidentally dropped in
+future packaging changes.
+
+---
