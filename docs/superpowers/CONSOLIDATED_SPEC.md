@@ -587,6 +587,15 @@ The tab owns its dirty state; Ctrl+S and Edit-menu Find/Replace route to the **a
 document routing, §7). **Switching modes** (Edit XSD ↔ Edit AutoXSD) while the tab has unsaved edits
 prompts the same three-way **Save/Discard/Cancel** used by `closeEvent`.
 
+The tab is **closable** via a tab-bar ✕ (alongside Manual; Diff/Merge, Caption Management, and Raw XML
+remain structural/non-closable, toggled only by their own entry points). Clicking it emits
+`CenterStage.xsd_close_requested`, handled by `MainWindow._on_xsd_close_requested`, which reuses the
+**same** `_confirm_close_xsd()` Save/Discard/Cancel prompt already used for mode-switching and
+`closeEvent` — no separate confirmation dialog. On discard, on a clean tab, or after a successful
+close-time save, `CenterStage.hide_edit_xsd()` hides the tab (mirroring `hide_manual()`) and the view
+falls back to Raw XML; on cancel the tab stays open, visible, and dirty; a save failure during the
+close-time save also leaves the tab open.
+
 **Save / Verify / Export / Import act on the currently-open XSD** (the file the tab holds in its
 current mode):
 
@@ -627,10 +636,14 @@ from the **last successful parse** — navigation targets the saved file content
   off-attribute** (`hint` on any non-attribute tag), **unknown base type** (lenient: a base is accepted
   with *any* prefix whose local part is one of boolean/integer/decimal/string), **unresolved type
   references** (element `type=` naming no `complexType`), **duplicate type names**, **inline (unnamed)
-  `complexType`** ("not part of the dialect"), **sums attribute with no labeled atomic values**, and
+  `complexType`** ("not part of the dialect"), **sums attribute with no labeled atomic values**,
   **sums attribute exceeding the derivation cap** ("too many values for derivation
   ({n} > 16)" when its enumeration count exceeds `SUMS_MAX_ATOMS`; both sums rules report at the
-  attribute's start line). Malformed XML or a DTD declaration → a **single fatal Issue**
+  attribute's start line), and **duplicate attribute name within one `complexType`** (a second
+  `xs:attribute name="…"` inside the same `complexType` silently overwrote the first before this check
+  existed; the seen-names set resets on every `complexType` start since complexTypes never nest in this
+  dialect; reports at the line of the second/overwriting occurrence,
+  `"duplicate attribute name '{name}' in this complexType"`). Malformed XML or a DTD declaration → a **single fatal Issue**
   (`XML error: …`, at the offending line). Issues are **sorted by line**. Menu action verifies the
   **active XSD** (curated or learned, per `_xsd_mode`): the XSD tab's live text when it has unsaved
   edits, else the saved file for the current mode; also auto-runs report-only on every Edit-XSD-tab
@@ -1439,6 +1452,7 @@ is authoritative** (and is what appears in the body above).
 | 2026-07-29 | Both mechanisms left as explicit open questions pending owner sign-off (§18.2 "last-deployed reference" mechanism; §18.3 vs. original §17.2 schema-compare — absorb or sibling) | Settled, target design: **content-hash + commit-id git-tracked deploy manifest** (`.ddlproject/deployed.json`) as the last-deployed reference, hash-based drift comparison independent of git plumbing (§18.2); **separate `Compare Schemas…`/`Deploy` commands sharing one `db/schema_diff.py`/`db/migration_gen.py` engine**, unified screen explicitly rejected (§18.3) |
 | 2026-07-30 | `curated.xsd` seeded on first run by **generating from the learned model** (2026-07-24) | Seeded by **copying the bundled `resources/curated.xsd` (Curated v1.2)**; learned-model generation is now the **fallback** used only when no bundled resource exists |
 | 2026-07-30 | Single-purpose curated-only **Edit XSD** tab; **Schema menu = exactly these four** (Edit XSD, Verify, Export, Import); Verify/Export/Import curated-only (2026-07-24) | **Mode-aware** Edit XSD / Edit AutoXSD tab (`_xsd_mode ∈ {"curated","learned"}`, opens `learned.xsd` for analysis); Verify/Export/Import act on the **active XSD**; **Schema menu has five items** (Edit XSD, Edit AutoXSD, Verify, Export, Import) |
+| 2026-08-01 | Edit XSD / Edit AutoXSD tab had **no close affordance at all** once revealed (only Raw XML/other-tab clicks or app close ended it; BUG-001) | **Closable** via tab-bar ✕ (`CenterStage.xsd_close_requested` → `MainWindow._on_xsd_close_requested`), reusing the existing `_confirm_close_xsd()` Save/Discard/Cancel prompt; hides via `hide_edit_xsd()` and falls back to Raw XML |
 
 ---
 

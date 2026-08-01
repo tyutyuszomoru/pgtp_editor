@@ -275,6 +275,7 @@ class MainWindow(QMainWindow):
         self.center_stage.manual_visibility_changed.connect(
             self._on_manual_visibility_changed
         )
+        self.center_stage.xsd_close_requested.connect(self._on_xsd_close_requested)
         try:
             manual_text = load_manual_text()
         except Exception as exc:  # pragma: no cover - packaging safety net
@@ -580,6 +581,21 @@ class MainWindow(QMainWindow):
             self._xsd_loading = False
         self._set_xsd_dirty(False)
         stage.show_edit_xsd()
+
+    def _on_xsd_close_requested(self) -> None:
+        """Edit XSD tab ✕ clicked. Reuses `_confirm_close_xsd`'s save/discard/
+        cancel prompt (same pattern as `_open_xsd`/`closeEvent`) when dirty;
+        never invents a second confirmation path."""
+        if self._xsd_dirty:
+            choice = self._confirm_close_xsd()
+            if choice == "cancel":
+                return
+            if choice == "save":
+                self._save_xsd()
+                if self._xsd_dirty:
+                    # Save failed (e.g. disk error): don't drop the edits.
+                    return
+        self.center_stage.hide_edit_xsd()
 
     def _goto_xsd_at_cursor(self) -> None:
         """Ctrl+L / context-menu "Go To XSD": resolve the caret in the Raw

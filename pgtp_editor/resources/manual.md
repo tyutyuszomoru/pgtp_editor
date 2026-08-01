@@ -331,6 +331,11 @@ Replace, all the usual shortcuts). The tab keeps its own unsaved-changes marker
 (`Edit XSD *`), and **Ctrl+S saves whichever tab is active** — the project from
 Raw XML, the schema from the XSD tab.
 
+Click the tab's **✕** to close it and return to Raw XML. With no unsaved edits
+it closes right away; with unsaved edits it prompts you to **Save**,
+**Discard**, or **Cancel** first — the same prompt used when switching between
+Edit XSD and Edit AutoXSD (below) or closing the app with unsaved schema edits.
+
 Saving the curated schema re-parses it and refreshes completion, hovers, and
 Properties labels **immediately**. If the XML is malformed, your text is still
 written to disk (nothing you typed is lost), the last good schema stays in

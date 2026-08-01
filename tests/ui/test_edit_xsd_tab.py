@@ -146,6 +146,130 @@ def test_close_event_xsd_dirty_save_writes_and_closes(window, monkeypatch):
     assert 'name="b"' in path.read_text(encoding="utf-8")
 
 
+def test_xsd_tab_close_button_no_unsaved_changes_hides_directly(window):
+    """BUG-001: clicking the Edit XSD tab's ✕ with no unsaved changes hides
+    it and switches to Raw XML without any prompt."""
+    _seed(window)
+    window._open_edit_xsd()
+    stage = window.center_stage
+    assert stage.currentIndex() == stage.xsd_tab_index
+
+    stage.tabCloseRequested.emit(stage.xsd_tab_index)
+
+    assert stage.isTabVisible(stage.xsd_tab_index) is False
+    assert stage.currentIndex() == stage.raw_xml_tab_index
+
+
+def test_xsd_tab_close_button_dirty_discard_hides_without_saving(window, monkeypatch):
+    path = _seed(window)
+    window._open_edit_xsd()
+    stage = window.center_stage
+    stage.xsd_editor.setPlainText(_MINIMAL + "<!-- x -->")
+    assert window._xsd_dirty is True
+    monkeypatch.setattr(window, "_confirm_close_xsd", lambda: "discard")
+
+    stage.tabCloseRequested.emit(stage.xsd_tab_index)
+
+    assert stage.isTabVisible(stage.xsd_tab_index) is False
+    assert stage.currentIndex() == stage.raw_xml_tab_index
+    assert path.read_text(encoding="utf-8") == _MINIMAL  # discarded, not written
+
+
+def test_xsd_tab_close_button_dirty_save_writes_and_hides(window, monkeypatch):
+    path = _seed(window)
+    window._open_edit_xsd()
+    stage = window.center_stage
+    stage.xsd_editor.setPlainText(_MINIMAL.replace('name="a"', 'name="b"'))
+    monkeypatch.setattr(window, "_confirm_close_xsd", lambda: "save")
+
+    stage.tabCloseRequested.emit(stage.xsd_tab_index)
+
+    assert window._xsd_dirty is False
+    assert 'name="b"' in path.read_text(encoding="utf-8")
+    assert stage.isTabVisible(stage.xsd_tab_index) is False
+    assert stage.currentIndex() == stage.raw_xml_tab_index
+
+
+def test_xsd_tab_close_button_dirty_cancel_leaves_tab_open_and_dirty(window, monkeypatch):
+    _seed(window)
+    window._open_edit_xsd()
+    stage = window.center_stage
+    stage.xsd_editor.setPlainText(_MINIMAL + "<!-- x -->")
+    monkeypatch.setattr(window, "_confirm_close_xsd", lambda: "cancel")
+
+    stage.tabCloseRequested.emit(stage.xsd_tab_index)
+
+    assert window._xsd_dirty is True
+    assert stage.isTabVisible(stage.xsd_tab_index) is True
+    assert stage.currentIndex() == stage.xsd_tab_index
+    assert stage.tabText(stage.xsd_tab_index) == "Edit XSD *"
+    window._confirm_close_xsd = lambda: "discard"  # silence teardown close prompt
+
+
+def test_xsd_tab_close_button_save_failure_keeps_tab_open(window, monkeypatch):
+    """A disk error during the close-time save must not drop the tab or the
+    unsaved edits (mirrors closeEvent's same guard)."""
+    _seed(window)
+    window._open_edit_xsd()
+    stage = window.center_stage
+    stage.xsd_editor.setPlainText(_MINIMAL + "<!-- x -->")
+    monkeypatch.setattr(window, "_confirm_close_xsd", lambda: "save")
+
+    def _boom(self, *a, **k):
+        raise OSError("read-only filesystem")
+    monkeypatch.setattr(main_window_module.Path, "write_text", _boom)
+    monkeypatch.setattr(
+        main_window_module.QMessageBox, "critical", staticmethod(lambda *a, **k: None)
+    )
+
+    stage.tabCloseRequested.emit(stage.xsd_tab_index)
+
+    assert window._xsd_dirty is True
+    assert stage.isTabVisible(stage.xsd_tab_index) is True
+    window._confirm_close_xsd = lambda: "discard"  # silence teardown close prompt
+
+
+def test_xsd_tab_close_button_works_in_learned_mode(window, monkeypatch):
+    """BUG-001's fix must not be curated-mode-only: Edit AutoXSD (mode
+    "learned") shares the same xsd_tab_index/xsd_close_requested wiring, so
+    the ✕ has to route through the identical dirty-check flow there too."""
+    from pgtp_editor.schema_learning.storage import learned_xsd_path
+
+    learned_path = learned_xsd_path(window._schema_storage_dir)
+    learned_path.parent.mkdir(parents=True, exist_ok=True)
+    learned_path.write_text(_MINIMAL, encoding="utf-8")
+    window._open_edit_auto_xsd()
+    stage = window.center_stage
+    assert window._xsd_mode == "learned"
+    assert stage.tabText(stage.xsd_tab_index) == "Edit AutoXSD"
+    stage.xsd_editor.setPlainText(_MINIMAL + "<!-- x -->")
+    assert window._xsd_dirty is True
+    monkeypatch.setattr(window, "_confirm_close_xsd", lambda: "discard")
+
+    stage.tabCloseRequested.emit(stage.xsd_tab_index)
+
+    assert stage.isTabVisible(stage.xsd_tab_index) is False
+    assert stage.currentIndex() == stage.raw_xml_tab_index
+    assert learned_path.read_text(encoding="utf-8") == _MINIMAL  # discarded, not written
+
+
+def test_xsd_tab_close_when_not_current_tab_does_not_steal_focus(window):
+    """Regression for CenterStage.hide_edit_xsd's not-current guard, driven
+    through the full MainWindow close flow rather than CenterStage directly:
+    switching away from the Edit XSD tab before closing it must not force
+    focus back onto it or onto Raw XML."""
+    _seed(window)
+    window._open_edit_xsd()
+    stage = window.center_stage
+    stage.setCurrentIndex(stage.raw_xml_tab_index)
+    assert stage.isTabVisible(stage.xsd_tab_index) is True
+
+    window._on_xsd_close_requested()
+
+    assert stage.isTabVisible(stage.xsd_tab_index) is False
+    assert stage.currentIndex() == stage.raw_xml_tab_index  # already there, unchanged
+
+
 def test_theme_toggle_does_not_mark_dirty(window):
     """Regression: apply_theme_colors's rehighlight() must not be mistaken
     for a real edit by either editor's dirty tracking (see

@@ -28,6 +28,11 @@ class CenterStage(QTabWidget):
     # main window can keep the left-dock Contents tab in lockstep with it.
     manual_visibility_changed = Signal(bool)
 
+    # Emitted when the Edit XSD tab's ✕ is clicked. Closing must go through
+    # MainWindow's unsaved-changes prompt first (mirrors mode-switching and
+    # app-close), so this signals intent rather than hiding the tab directly.
+    xsd_close_requested = Signal()
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.diff_merge_panel = DiffMergePanel()
@@ -72,12 +77,16 @@ class CenterStage(QTabWidget):
         self.setTabVisible(self.manual_tab_index, False)
         self.setCurrentIndex(self.raw_xml_tab_index)
 
-        # Only the Manual tab is closable (a ✕ that hides it again). The other
-        # tabs are structural, so strip their close buttons on both sides.
+        # The Manual and Edit XSD tabs are closable (a ✕ that hides them
+        # again). The other tabs (Diff/Merge, Caption Management, Raw XML)
+        # are structural -- they're toggled by their own entry points, not by
+        # this tab-close mechanism -- so strip their close buttons on both
+        # sides.
         self.setTabsClosable(True)
         bar = self.tabBar()
+        _closable = (self.manual_tab_index, self.xsd_tab_index)
         for index in range(self.count()):
-            if index != self.manual_tab_index:
+            if index not in _closable:
                 bar.setTabButton(index, QTabBar.ButtonPosition.RightSide, None)
                 bar.setTabButton(index, QTabBar.ButtonPosition.LeftSide, None)
         self.tabCloseRequested.connect(self._on_tab_close_requested)
@@ -85,6 +94,8 @@ class CenterStage(QTabWidget):
     def _on_tab_close_requested(self, index):
         if index == self.manual_tab_index:
             self.hide_manual()
+        elif index == self.xsd_tab_index:
+            self.xsd_close_requested.emit()
 
     def set_raw_xml_tab_visible(self, visible):
         self.setTabVisible(self.raw_xml_tab_index, visible)
@@ -104,6 +115,14 @@ class CenterStage(QTabWidget):
         if self.currentIndex() == self.manual_tab_index:
             self.setCurrentIndex(self.raw_xml_tab_index)
         self.manual_visibility_changed.emit(False)
+
+    def hide_edit_xsd(self):
+        """Hide the Edit XSD tab and return to Raw XML (the ✕ close action),
+        mirroring `hide_manual`. Called only after MainWindow has resolved any
+        unsaved-changes prompt -- never directly from `_on_tab_close_requested`."""
+        self.setTabVisible(self.xsd_tab_index, False)
+        if self.currentIndex() == self.xsd_tab_index:
+            self.setCurrentIndex(self.raw_xml_tab_index)
 
     def enter_caption_mode(self):
         """Keep Raw XML visible but read-only, and reveal + switch to Caption
