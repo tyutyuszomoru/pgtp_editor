@@ -1546,3 +1546,160 @@ forcing a resync so cross-block propagation is bounded; quotes in text content a
 delimiters). Flag for `spec-maintainer` **after** the fix lands; do not edit the spec as part of the fix.
 
 ---
+## BUG-017: Parallel-only suite flake (and hard segfaults): monkeypatching the virtual `XmlSyntaxHighlighter.highlightBlock` on the class leaves a dangling PySide override that BUG-013's theme sweep later calls in unrelated tests
+**Status:** OPEN
+**Reported:** 2026-08-02
+**Report (verbatim):** "Under the full-suite parallel gate (`QT_QPA_PLATFORM=offscreen venv/bin/python -m
+pytest -q -n 10`), roughly 2 runs in 3 produce: `FAILED
+tests/ui/test_xml_editor_theme.py::test_app_wide_apply_theme_flips_editor_both_ways` +
+`ERROR tests/ui/test_xml_structure.py::<varying test>` (1 failed, 2407 passed, 32 skipped, 2 errors). The
+FAILED test is stable across runs; the ERRORed `test_xml_structure.py` tests VARY between runs. Runs clean
+in isolation and does not reproduce serially. The captured traceback points at
+`pgtp_editor/ui/xml_editor.py` in `_theme_sweep_tick`, at the `self._highlighter.rehighlightBlock(block)`
+call, raising a masked `TypeError: Error calling Python override of
+QSyntaxHighlighter::highlightBlock()`. The real underlying exception is hidden — recovering it is
+valuable. Suspected: a BUG-013 theme sweep started by the theme test is still pending when that test ends
+and later fires during another test, plausibly triggered by conftest's autouse `qapp.setStyle()`
+teardown."
+
+**Root cause:** Two independent facts combine; **only the first is a defect**, the second is what fires it.
+
+**(1) The defect — a dangling PySide virtual-override pointer, created by a TEST.**
+`tests/ui/test_xml_editor.py:1629-1642`, `_count_highlight_calls()`, does
+`monkeypatch.setattr(module.XmlSyntaxHighlighter, "highlightBlock", counting)` — it replaces a **virtual
+method on a Shiboken (PySide6) class**. PySide6 binds the Python override **per instance, at construction
+time**, not per call. Verified directly (probe, PySide6 6.11): an `XmlEditor` built *before* the patch
+counts 0 calls through `counting`; one built *during* the patch counts every call. When
+`monkeypatch.undo()` runs at teardown and the `counting` closure is garbage-collected, every highlighter
+instance constructed while the patch was live keeps pointing at the **freed function object**. The next
+`rehighlight()`/`rehighlightBlock()` on such an instance calls through that dangling pointer:
+  * if the freed memory now holds some other 0-argument callable, PySide reports exactly the masked error
+    from the report — the real exception is `<that callable>() takes 0 positional arguments but 2 were
+    given` (`self`, `text`). **Recovered verbatim from a repro run:**
+    `TypeError: Error calling Python override of QSyntaxHighlighter::highlightBlock():
+    pytest_timeout_set_timer.<locals>.cancel() takes 0 positional arguments but 2 were given`
+    (an unrelated pytest-timeout closure that happened to land in the freed slot; a standalone probe that
+    churns the allocator produced `<lambda>() takes 0 positional arguments but 2 were given` instead —
+    the name is whatever occupies the freed memory, which is why it looks nonsensical);
+  * if it holds something that is not a callable at all, the process **segfaults** —
+    `Fatal Python error: Segmentation fault` with a native stack through
+    `QSyntaxHighlighter::rehighlightBlock` ← `QTimer::timeout`. Reproduced repeatably (exit 139).
+  The traceback frame Qt/pytest-qt reports for this error is arbitrary (seen at
+  `xml_editor.py:820` in `_theme_sweep_tick`, and at `editor_gutter.py:380` in
+  `_update_gutter_on_scroll`) — it is the frame the interpreter happened to be in, not the culprit. Do not
+  chase `editor_gutter.py` or `xml_structure`.
+
+**(2) The amplifier — theme sweeps keep running on leaked editors, in other tests.** Not a defect, but it
+is why a dormant dangling pointer fires in unrelated tests and why the victims shift:
+  * pytest-qt's teardown (`qtbot.py:_close_widgets` → `w.close(); w.deleteLater()` +
+    `plugin.py:_process_events`) does **not** actually destroy the C++ widget: `processEvents()` at loop
+    level 0 does not deliver `DeferredDelete`. Verified by probe — after
+    `close()+deleteLater()+processEvents()`, `shiboken6.isValid(editor)` is still `True`. Editors from
+    earlier tests stay alive for a long time.
+  * `tests/ui/conftest.py`'s autouse `_reset_app_style_and_palette` teardown (`qapp.setStyle` /
+    `setPalette` / `setStyleSheet`) delivers `ApplicationPaletteChange` to every one of those leaked
+    editors → `XmlEditor.changeEvent` (`xml_editor.py:830-841`) → `apply_theme_colors` →
+    `_theme_kickoff_timer` → `_rehighlight_for_theme` (`xml_editor.py:773-811`) → `_theme_sweep_timer` →
+    `_theme_sweep_tick` (`xml_editor.py:813-828`), 400 blocks per event-loop turn, spilling into whatever
+    test's `processEvents()` spins next. Measured with an instrumented full-suite run: **10,731 sweep
+    ticks whose sweep was started in a different test than the one it ticked in.**
+  The stable victim is `test_app_wide_apply_theme_flips_editor_both_ways` because it is the one test that
+  explicitly calls `qapp.processEvents()` twice (`tests/ui/test_xml_editor_theme.py:58,63`); the varying
+  `test_xml_structure.py` victims are simply whichever fast, neighbouring tests' SETUP/TEARDOWN
+  `_process_events()` spun the loop next in that xdist worker — hence "shifting victim set" and the
+  parallel-only, ~2-in-3 flakiness (which reused memory lands in the freed slot is chance).
+
+**Confirmed reproduction — deterministic, no `-n` needed** (the report's "does not reproduce serially" was
+a file-selection artifact, not a parallelism requirement):
+```
+QT_QPA_PLATFORM=offscreen venv/bin/python -m pytest tests/ui/test_xml_editor.py \
+    tests/ui/test_xml_editor_theme.py -q
+# -> 1 failed, 107 passed, 2 errors  (exactly the reported shape)
+QT_QPA_PLATFORM=offscreen venv/bin/python -m pytest tests/ui/test_xml_editor.py \
+    tests/ui/test_xml_editor_nav_perf.py tests/ui/test_xml_editor_theme.py \
+    tests/ui/test_xml_structure.py -q
+# -> Fatal Python error: Segmentation fault (exit 139), 3/3 runs
+```
+Deselecting only the two BUG-016 tests that call `_count_highlight_calls`
+(`test_quote_in_text_content_does_not_rehighlight_the_document`,
+`test_unterminated_quote_inside_a_tag_resyncs_at_the_next_tag`) makes the first command green
+(108 passed) — proving those two tests are the source.
+
+**User impact: NONE — this is strictly a test artifact, with evidence.** Nothing in `pgtp_editor/` ever
+reassigns `highlightBlock`; the dangling override can only be created by that test helper. The candidate
+production paths in the report were probed explicitly and are all safe: with a sweep in flight
+(`_theme_sweep_block == 400` of a 3000-line document), each of `setPlainText(shorter text)`, `clear()`,
+`close()+deleteLater()`, and `shiboken6.delete(editor)` completes with **no exception** — a shorter
+document just makes `findBlockByNumber` return an invalid block and `_theme_sweep_tick` stops the timer
+(`xml_editor.py:825-828`), and the parented timers die with the editor (BUG-014's fix). So "theme toggled
+while a document is replaced" and "project closed mid-sweep" are **not** user-facing failures. Priority is
+therefore "unblock the parallel gate", not "urgent user-facing crash".
+
+**Proposed fix:**
+
+1. **(Required — this is the actual fix.)** In `tests/ui/test_xml_editor.py`, rewrite
+   `_count_highlight_calls(monkeypatch)` (lines 1629-1642) so it **never sets an attribute on the
+   Shiboken class**. Patch the *module name* the editor constructs from instead, with a real Python
+   subclass:
+   ```python
+   def _count_highlight_calls(monkeypatch):
+       import pgtp_editor.ui.xml_editor as module
+       calls = {"n": 0}
+
+       class _CountingHighlighter(module.XmlSyntaxHighlighter):
+           def highlightBlock(self, text):
+               calls["n"] += 1
+               super().highlightBlock(text)
+
+       monkeypatch.setattr(module, "XmlSyntaxHighlighter", _CountingHighlighter)
+       return calls
+   ```
+   `XmlEditor.__init__` builds its highlighter via `XmlSyntaxHighlighter(self.document())`
+   (`xml_editor.py:536`), a module-global lookup, so editors created inside the test get the subclass and
+   editors created outside are untouched. The override lives in the subclass's own `__dict__` and the
+   instance keeps its type alive, so undoing the patch cannot leave a dangling pointer. **Gotchas:** the
+   helper must still be called *before* the editor is constructed (keep that docstring note — it is now
+   load-bearing for a different reason: the module lookup happens in `__init__`); use
+   `super().highlightBlock(text)`, not a captured `real(self, text)`; and the two call sites' assertions
+   (`calls["n"] <= 2` / `<= 4`) stay as-is.
+2. **(Strongly recommended, cheap.)** Add a positive assertion to both BUG-016 tests that the counter
+   actually observed *something* (e.g. `calls["n"] >= 1` measured over the initial `setPlainText`, before
+   the counter is reset to 0) — the current `<=` assertions pass vacuously if the patch ever stops taking
+   effect, which is exactly how a broken counting hook could hide.
+3. **(Optional, defense in depth, production code.)** The cross-test sweep storm is legitimate waste even
+   without the dangling pointer (10k+ ticks per suite run). Consider, in `pgtp_editor/ui/xml_editor.py`:
+   stop `_theme_sweep_timer` and reset `_theme_sweep_block` at the top of `setPlainText` (line 693) before
+   `super().setPlainText(text)` — the document being swept no longer exists in any meaningful sense — and
+   optionally skip the sweep for an editor that `not self.isVisible()`, restarting it from `showEvent`.
+   **Gotcha:** an `isVisible()` guard would break
+   `tests/ui/test_xml_editor_theme.py::test_deferred_theme_rehighlight_does_not_fire_on_deleted_editor`,
+   which asserts `_theme_rehighlight_pending is True` on a never-shown editor, and would change
+   BUG-013's documented two-stage behavior — if it is taken, it needs its own spec pass (see below). The
+   flake is fixed by (1) alone; do not let (3) block it.
+4. **Do NOT** "fix" this by suppressing the symptom (try/except around `rehighlightBlock`, or stopping the
+   sweep on error) — the underlying condition is a use-after-free that also segfaults.
+
+**Test impact:** The change is in `tests/ui/test_xml_editor.py` itself (the BUG-016 group, lines
+1626-1689) — extend it, do not add a parallel file. Verify with the two deterministic commands above
+(expect `108 passed` and no segfault) and then the full parallel gate,
+`QT_QPA_PLATFORM=offscreen venv/bin/python -m pytest -q -n 10`, run **at least three times** since the
+original failure was ~2-in-3. Related existing files that must stay green and need no change:
+`tests/ui/test_xml_editor_theme.py` (the stable victim; its 6 tests already cover the two-stage sweep and
+BUG-014's parented kickoff), `tests/ui/test_xml_structure.py` (innocent victims),
+`tests/ui/test_xml_editor_nav_perf.py` (patches `xml_structure.scan` — a plain module attribute, which is
+safe; leave it alone). New case worth adding to `tests/ui/test_xml_editor.py`: a guard that the counting
+helper does not touch the Shiboken class, e.g. capture `orig = module.XmlSyntaxHighlighter.highlightBlock`
+before calling the helper and assert it is unchanged afterwards **and** that
+`type(editor._highlighter) is not module.XmlSyntaxHighlighter` (i.e. counting really goes through a
+subclass). If fix (3) is taken, add to `tests/ui/test_xml_editor_theme.py`: after starting a sweep,
+`editor.setPlainText("<a/>")` leaves `editor._theme_sweep_timer.isActive() is False` and
+`_theme_sweep_block == 0`.
+
+**Spec impact:** None for fixes (1)/(2) — CONSOLIDATED_SPEC §"Document state" (lines 337-351) describes
+the two-stage theme rehighlight exactly as implemented, and nothing there is contradicted; the bug is a
+test-harness use-after-free. If optional fix (3) is taken (sweep stopped on `setPlainText`, and/or
+deferred while the editor is hidden), that **does** diverge from those lines and from the Supersession
+Ledger row dated 2026-08-01 for BUG-013 (line 2182) — flag for `spec-maintainer` after the fix lands; do
+not edit the spec as part of the fix.
+
+---
