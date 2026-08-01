@@ -1,6 +1,6 @@
 # PGTP Editor — Consolidated Specification
 
-> **Status:** living document · **Last synthesized:** 2026-07-30
+> **Status:** living document · **Last synthesized:** 2026-08-01
 > **Source of truth:** this file is the single reconciled specification for PGTP Editor.
 > It is synthesized from the dated design specs under [`docs/superpowers/specs/`](specs/) using a
 > **latest-wins** rule: where a later spec overrode an earlier decision, only the later decision
@@ -899,10 +899,16 @@ golden "freshly-added table" oracle; defaults are corpus-derived and **not yet f
 
 ## 18. DDL versioning (standalone Postgres mode)
 
-> **Status: target design, not yet implemented.** No `RoutineInfo`/`TriggerInfo`/`db/ddl_buffer.py`/
-> `DdlObjectSpan`/`db/routine_refs.py`/`db/schema_diff.py`/`db/schema_snapshot.py`/`db/migration_gen.py`
-> exist in the codebase yet; this section specifies the shape they must take when built, so the design
-> is settled before implementation starts.
+> **Status: §18.1 read-only browsing is implemented and tested; §18.2/§18.3 remain target design, not
+> yet implemented.** `RoutineInfo`/`TriggerInfo`/`DatabaseSchema.routines`/`.triggers`
+> (`db/introspect.py`), `db/ddl_buffer.py`/`DdlObjectSpan`, and `ui/ddl_buffer_panel.py::BrowserPanel`
+> exist in the codebase now, exactly as specified below. Not yet built: `ui/ddl_editor_panel.py::EditorPanel`
+> (the CenterStage SQL buffer tab), the `language="sql"` highlighter mode in `ui/code_editor.py`,
+> `db/routine_refs.py` (XML cross-referencing), the Database-menu "DDL Explorer" toggle, and any
+> left-dock/main-window wiring of `BrowserPanel` — its `navigate_requested` signal is real and tested but
+> currently has no listener in the running app. `db/schema_diff.py`/`db/schema_snapshot.py`/
+> `db/migration_gen.py` (§18.3) do not exist yet; this section specifies the shape the remaining pieces
+> must take when built, so the design is settled before implementation starts.
 
 **Strategic framing.** This is **not** a feature bolted onto `.pgtp` editing — it is a standalone
 Postgres DDL-versioning mode, independent of phpgen/`.pgtp` entirely, usable with zero `.pgtp` files
@@ -936,21 +942,29 @@ buffer (the same architecture the app already trusts for its main document), and
 into the XML. This subsection is the browsing substrate that §18.2's checkout-to-edit and §18.3's deploy
 workflow both build on directly — it is not a separate, self-contained feature.
 
-**Introspection (lives in §17, reused here):**
+**Introspection (lives in §17, reused here) — implemented:**
 
-- `db/introspect.py` gains: `RoutineInfo{schema, name, arg_types: list[str], return_type, language,
+- `db/introspect.py` has: `RoutineInfo{schema, name, arg_types: list[str], return_type, language,
   source, kind("function"|"procedure")}` sourced from `pg_proc` joined `pg_language`, with source text
   via `pg_get_functiondef(oid)`; `TriggerInfo{schema, table, name, timing, events: list[str],
-  function_name, definition}` sourced from `pg_trigger` + `pg_get_triggerdef(oid)`. The existing
-  `DatabaseSchema` dataclass (`db/introspect.py`, currently only `.tables`) gains `.routines` and
-  `.triggers` fields.
+  function_name, definition}` sourced from `pg_trigger` + `pg_get_triggerdef(oid)` (trigger
+  timing/events decoded from the raw `pg_trigger.tgtype` bitmask by `_decode_trigger_type`, in Python
+  rather than SQL, so the mapping is unit-testable without a live database). The `DatabaseSchema`
+  dataclass (`db/introspect.py`) has `.routines` and `.triggers` fields alongside `.tables`
+  (backward-compatible, all default to empty).
+- Fetched by `fetch_routines_and_triggers(params, runner=run_queries) -> DatabaseSchema`
+  (`ROUTINE_TRIGGER_SQL` = `[_ROUTINES_SQL, _TRIGGERS_SQL]`) — a **separate fetch path from
+  `fetch_schema`**, not merged into it: an implementation choice to avoid touching `fetch_schema`'s
+  existing 3-query contract and its tests, since the DB Check features never need routine/trigger data.
+  The `DatabaseSchema` it returns always has an empty `.tables`; only `.routines`/`.triggers` are
+  populated.
 
 **One synthesized buffer, not per-object viewers — reuses the Raw XML editor's proven shape
 (`TagSpan`/§8 + `node_at_line`/§9: one shared text buffer, a structural span index over it, and a tree
 that navigates into it via line numbers) instead of opening a bespoke read-only viewer per routine or
 trigger:**
 
-- New pure module `db/ddl_buffer.py`: `build_ddl_text(schema: DatabaseSchema) → tuple[str,
+- **Implemented:** pure module `db/ddl_buffer.py`: `build_ddl_text(schema: DatabaseSchema) → tuple[str,
   list[DdlObjectSpan]]`. Synthesizes **one** text buffer concatenating every routine and trigger
   definition, in deterministic order (schema, then kind — functions/procedures before triggers — then
   name), each preceded by a banner comment anchoring its span (e.g.
@@ -958,16 +972,22 @@ trigger:**
   name, table: str|None (triggers only — the table it fires on), start_line, end_line}` plays the same
   role for this buffer that `TagSpan` (§8, `ui/xml_structure.py`) plays for the Raw XML buffer and that
   `node_at_line` (§9, `model/line_index.py`) plays for click-to-tree sync.
-- New **CenterStage tab**, `ui/ddl_editor_panel.py::EditorPanel(QWidget)`, hosting the synthesized
-  buffer in the **existing** `ui/code_editor.py::CodeEditor` widget under a **new `language="sql"`
-  mode** — a new SQL/plpgsql `_CodeHighlighter` keyword set added alongside the existing JS/PHP ones in
-  that same file (§8). Gets its own `FindReplaceBar` instance, following the same per-tab
-  document-routing precedent as the Edit XSD tab (§7/§15) and the planned Custom PHP tabs (§21).
-  This tab is **read-only, DB-sourced, live/synthesized** — the checked-out, editable form lives in
-  `ddl/*.sql` files (§18.2), edited in a separate tab type.
-- New left-dock tree tab, `ui/ddl_buffer_panel.py::BrowserPanel(QTreeWidget)`, built from the
-  `DdlObjectSpan` index — one shared buffer plus a structural tree index, the same relationship the Raw
-  XML tree bears to `xml_editor.py`. This is the tree that §18.2's `*`/`!` state markers render on.
+- **Not yet implemented:** CenterStage tab `ui/ddl_editor_panel.py::EditorPanel(QWidget)`, to host the
+  synthesized buffer in the **existing** `ui/code_editor.py::CodeEditor` widget under a **new
+  `language="sql"` mode** — a new SQL/plpgsql `_CodeHighlighter` keyword set added alongside the
+  existing JS/PHP ones in that same file (§8). Gets its own `FindReplaceBar` instance, following the
+  same per-tab document-routing precedent as the Edit XSD tab (§7/§15) and the planned Custom PHP tabs
+  (§21). This tab is **read-only, DB-sourced, live/synthesized** — the checked-out, editable form lives
+  in `ddl/*.sql` files (§18.2), edited in a separate tab type.
+- **Implemented:** left-dock tree tab `ui/ddl_buffer_panel.py::BrowserPanel(QWidget)` — a `QWidget`
+  wrapping an internal `self.tree = QTreeWidget()` (composition), matching this codebase's real
+  convention for left-dock panels (`TableReferencesPanel`, `DbCheckPanel` — both `QWidget` subclasses
+  wrapping an internal tree), not literal `QTreeWidget` subclassing. Built from the `DdlObjectSpan`
+  index via `set_schema(schema, spans)` — one shared buffer plus a structural tree index, the same
+  relationship the Raw XML tree bears to `xml_editor.py`. Emits `navigate_requested(line: int)` on leaf
+  click; not yet wired to anything (no `EditorPanel` exists yet to listen, and there is no
+  main-window/Database-menu registration). This is the tree that §18.2's `*`/`!` state markers will
+  render on.
 
 **Dual-grouped, cross-referenced tree — a deliberate design choice by the project owner:** a trigger
 appears in the tree in **both** of its relationship places, not just one:
@@ -985,9 +1005,9 @@ appears in the tree in **both** of its relationship places, not just one:
   described in §8 ("Public navigation API") and used by Properties/captions/DB check/table
   references/diff.
 
-**XML cross-references — a third relationship angle, unchanged in mechanism:**
+**XML cross-references — a third relationship angle, not yet implemented, unchanged in mechanism:**
 
-- `db/routine_refs.py`: cross-references routine/trigger names against the XML (event-handler bodies
+- `db/routine_refs.py` (does not exist yet): cross-references routine/trigger names against the XML (event-handler bodies
   via `EventNode.text`, and SQL-bearing attributes) via **best-effort name matching** — same "no false
   confidence" ethos as `analysis/reused_tables.py` — producing `RoutineReference{routine_name, node,
   kind, line}` so a DB-side routine can be traced to where the XML calls it. This is **approximate, not
@@ -997,8 +1017,9 @@ appears in the tree in **both** of its relationship places, not just one:
   documents, two separate `navigate_to_line` targets, not the same underlying span. This angle only
   applies when a project has a linked `.pgtp` (§18.2) — it is meaningless in a `.pgtp`-free project.
 
-**Database menu** gains a "DDL Explorer" toggle alongside the existing three items (Connection Setup…,
-Check: XML→Database, Check: Database→XML).
+**Database menu — not yet wired:** will gain a "DDL Explorer" toggle alongside the existing three items
+(Connection Setup…, Check: XML→Database, Check: Database→XML). No such menu entry exists yet; nothing in
+the running app currently instantiates `BrowserPanel` or listens to its `navigate_requested` signal.
 
 **Explicitly phase 2, not built alongside phase 1 read-only browsing:** DB-side write-back — editing a
 routine's source inline in the `EditorPanel` tab itself and pushing `CREATE OR REPLACE FUNCTION …`

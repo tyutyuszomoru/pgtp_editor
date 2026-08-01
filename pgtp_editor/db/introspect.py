@@ -62,8 +62,36 @@ class TableInfo:
 
 
 @dataclass(frozen=True)
+class RoutineInfo:
+    """A function or procedure, sourced from ``pg_proc`` (§18.1)."""
+
+    schema: str
+    name: str
+    arg_types: list[str] = field(default_factory=list)
+    return_type: str | None = None
+    language: str = ""
+    source: str = ""  # full CREATE [OR REPLACE] FUNCTION/PROCEDURE text
+    kind: str = "function"  # "function" | "procedure"
+
+
+@dataclass(frozen=True)
+class TriggerInfo:
+    """A trigger, sourced from ``pg_trigger`` (§18.1)."""
+
+    schema: str
+    table: str
+    name: str
+    timing: str  # "before" | "after" | "instead of"
+    events: list[str] = field(default_factory=list)  # "insert"/"update"/"delete"/"truncate"
+    function_name: str = ""
+    definition: str = ""  # full CREATE TRIGGER text
+
+
+@dataclass(frozen=True)
 class DatabaseSchema:
     tables: dict[str, TableInfo] = field(default_factory=dict)
+    routines: dict[str, RoutineInfo] = field(default_factory=dict)
+    triggers: dict[str, TriggerInfo] = field(default_factory=dict)
 
     def has_table(self, name: str) -> bool:
         return name in self.tables
@@ -133,6 +161,74 @@ WHERE con.contype IN ('p', 'f')
 SCHEMA_SQL: list[str] = [_RELATIONS_SQL, _COLUMNS_SQL, _CONSTRAINTS_SQL]
 
 _KIND_BY_RELKIND = {"r": "table", "p": "table", "v": "view", "m": "matview"}
+
+# --- Routines & triggers (§18.1 DDL Explorer) -------------------------------
+# A separate query pair from SCHEMA_SQL/fetch_schema above -- routines/triggers
+# are only needed by the DDL Explorer, not by the existing DB Check features,
+# so this stays an independent fetch rather than growing fetch_schema's
+# established 3-query contract.
+
+_ROUTINES_SQL = """
+SELECT n.nspname, p.proname, p.prokind,
+       pg_catalog.format_type(p.prorettype, NULL),
+       l.lanname,
+       pg_catalog.pg_get_functiondef(p.oid),
+       COALESCE(
+           (SELECT array_agg(pg_catalog.format_type(t.oid, NULL) ORDER BY a.ord)
+            FROM unnest(p.proargtypes) WITH ORDINALITY AS a(oid, ord)
+            JOIN pg_catalog.pg_type t ON t.oid = a.oid),
+           ARRAY[]::text[]
+       )
+FROM pg_catalog.pg_proc p
+JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+JOIN pg_catalog.pg_language l ON l.oid = p.prolang
+WHERE p.prokind IN ('f', 'p')
+  AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+  AND n.nspname NOT LIKE 'pg_toast%'
+"""
+
+_TRIGGERS_SQL = """
+SELECT n.nspname, c.relname, t.tgname, t.tgtype, p.proname,
+       pg_catalog.pg_get_triggerdef(t.oid)
+FROM pg_catalog.pg_trigger t
+JOIN pg_catalog.pg_class c ON c.oid = t.tgrelid
+JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+JOIN pg_catalog.pg_proc p ON p.oid = t.tgfoid
+WHERE NOT t.tgisinternal
+  AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+  AND n.nspname NOT LIKE 'pg_toast%'
+"""
+
+ROUTINE_TRIGGER_SQL: list[str] = [_ROUTINES_SQL, _TRIGGERS_SQL]
+
+# pg_trigger.tgtype bit flags (see Postgres's trigger.h) -- decoded in Python
+# rather than in SQL so the mapping is unit-testable without a live database.
+_TRIGGER_BEFORE = 1 << 1
+_TRIGGER_INSERT = 1 << 2
+_TRIGGER_DELETE = 1 << 3
+_TRIGGER_UPDATE = 1 << 4
+_TRIGGER_TRUNCATE = 1 << 5
+_TRIGGER_INSTEAD = 1 << 6
+
+
+def _decode_trigger_type(tgtype: int) -> tuple[str, list[str]]:
+    """Return ``(timing, events)`` decoded from a raw ``pg_trigger.tgtype`` bitmask."""
+    if tgtype & _TRIGGER_INSTEAD:
+        timing = "instead of"
+    elif tgtype & _TRIGGER_BEFORE:
+        timing = "before"
+    else:
+        timing = "after"
+    events: list[str] = []
+    if tgtype & _TRIGGER_INSERT:
+        events.append("insert")
+    if tgtype & _TRIGGER_UPDATE:
+        events.append("update")
+    if tgtype & _TRIGGER_DELETE:
+        events.append("delete")
+    if tgtype & _TRIGGER_TRUNCATE:
+        events.append("truncate")
+    return timing, events
 
 
 def run_queries(
@@ -222,6 +318,54 @@ def fetch_schema(params: ConnectionParams, runner: Runner = run_queries) -> Data
         "db: fetch_schema finished %.3fs tables=%d", elapsed, len(tables)
     )
     return DatabaseSchema(tables=tables)
+
+
+def fetch_routines_and_triggers(
+    params: ConnectionParams, runner: Runner = run_queries
+) -> DatabaseSchema:
+    """Introspect functions/procedures + triggers into a `DatabaseSchema`.
+
+    Independent of `fetch_schema`: the returned schema's `.tables` is always
+    empty -- only `.routines`/`.triggers` are populated. Used by the DDL
+    Explorer (§18.1), which has no need for table/column data.
+    """
+    _log.info("db: fetch_routines_and_triggers started %s", debuglog.redacted(params))
+    started = time.monotonic()
+    routine_rows, trigger_rows = runner(params, list(ROUTINE_TRIGGER_SQL))
+
+    routines: dict[str, RoutineInfo] = {}
+    for schema_name, name, prokind, return_type, language, source, arg_types in routine_rows:
+        routines[f"{schema_name}.{name}"] = RoutineInfo(
+            schema=schema_name,
+            name=name,
+            arg_types=list(arg_types or []),
+            return_type=return_type,
+            language=language,
+            source=source,
+            kind="function" if prokind == "f" else "procedure",
+        )
+
+    triggers: dict[str, TriggerInfo] = {}
+    for schema_name, table_name, name, tgtype, function_name, definition in trigger_rows:
+        timing, events = _decode_trigger_type(tgtype)
+        triggers[f"{schema_name}.{table_name}.{name}"] = TriggerInfo(
+            schema=schema_name,
+            table=table_name,
+            name=name,
+            timing=timing,
+            events=events,
+            function_name=function_name,
+            definition=definition,
+        )
+
+    elapsed = time.monotonic() - started
+    _log.info(
+        "db: fetch_routines_and_triggers finished %.3fs routines=%d triggers=%d",
+        elapsed,
+        len(routines),
+        len(triggers),
+    )
+    return DatabaseSchema(routines=routines, triggers=triggers)
 
 
 def test_connection(params: ConnectionParams, runner: Runner = run_queries) -> tuple[bool, str]:

@@ -9,10 +9,15 @@ import logging
 
 from pgtp_editor.db.config import ConnectionParams
 from pgtp_editor.db.introspect import (
+    ROUTINE_TRIGGER_SQL,
     SCHEMA_SQL,
     ColumnInfo,
     DatabaseSchema,
+    RoutineInfo,
     TableInfo,
+    TriggerInfo,
+    _decode_trigger_type,
+    fetch_routines_and_triggers,
     fetch_schema,
 )
 from pgtp_editor.db.introspect import test_connection as check_connection
@@ -162,10 +167,146 @@ def test_dataclasses_and_schema_helpers():
     assert schema.column("s.t", "c") is col
 
 
+def test_database_schema_tables_only_construction_defaults_routines_and_triggers_empty():
+    """Pre-existing callers throughout the codebase (generation/*, db/compare
+    tests) construct `DatabaseSchema` positionally or with only `tables=` --
+    the new `.routines`/`.triggers` fields must not break that contract."""
+    table = TableInfo("s.t", "table", [])
+
+    positional = DatabaseSchema({"s.t": table})
+    keyword = DatabaseSchema(tables={"s.t": table})
+    no_args = DatabaseSchema()
+
+    for schema in (positional, keyword, no_args):
+        assert schema.routines == {}
+        assert schema.triggers == {}
+    assert positional.tables == {"s.t": table}
+    assert keyword.tables == {"s.t": table}
+    assert no_args.tables == {}
+
+
 def test_fetch_schema_start_log_is_redacted(caplog):
     runner, _ = _canned_runner()
     with caplog.at_level(logging.INFO, logger="pgtp_editor.db.introspect"):
         fetch_schema(_PARAMS, runner=runner)
+    messages = [r.message for r in caplog.records]
+    assert any("password=***" in m for m in messages)
+    assert not any(_PARAMS.password in m for m in messages)
+
+
+# --- Routines & triggers (§18.1 DDL Explorer) -------------------------------
+
+
+def test_decode_trigger_type_before_insert_update():
+    # BEFORE(2) | INSERT(4) | UPDATE(16) = 22
+    timing, events = _decode_trigger_type(2 | 4 | 16)
+    assert timing == "before"
+    assert events == ["insert", "update"]
+
+
+def test_decode_trigger_type_defaults_to_after_when_before_bit_unset():
+    # AFTER DELETE: no BEFORE(2), no INSTEAD(64) bit -- DELETE(8) only.
+    timing, events = _decode_trigger_type(8)
+    assert timing == "after"
+    assert events == ["delete"]
+
+
+def test_decode_trigger_type_instead_of():
+    timing, _events = _decode_trigger_type(64)
+    assert timing == "instead of"
+
+
+def test_decode_trigger_type_truncate():
+    _timing, events = _decode_trigger_type(32)
+    assert events == ["truncate"]
+
+
+def test_decode_trigger_type_no_bits_set_yields_after_and_no_events():
+    timing, events = _decode_trigger_type(0)
+    assert timing == "after"
+    assert events == []
+
+
+def test_decode_trigger_type_all_four_events_preserve_canonical_order():
+    # INSERT(4) | UPDATE(16) | DELETE(8) | TRUNCATE(32), passed out of order.
+    timing, events = _decode_trigger_type(32 | 4 | 16 | 8)
+    assert timing == "after"
+    assert events == ["insert", "update", "delete", "truncate"]
+
+
+def test_decode_trigger_type_instead_of_takes_precedence_over_before_bit():
+    # Not a real Postgres combination (INSTEAD OF triggers can't be BEFORE/AFTER
+    # qualified), but the decoder is a pure bitmask function -- pin its
+    # precedence rule (INSTEAD checked first) so a future refactor can't
+    # silently flip it.
+    timing, _events = _decode_trigger_type(64 | 2)
+    assert timing == "instead of"
+
+
+def test_decode_trigger_type_before_with_no_event_bits():
+    timing, events = _decode_trigger_type(2)
+    assert timing == "before"
+    assert events == []
+
+
+def _canned_routine_trigger_runner():
+    routine_rows = [
+        ("pr", "calc_total", "f", "numeric", "plpgsql", "CREATE FUNCTION ...", ["integer"]),
+        ("pr", "do_thing", "p", "void", "plpgsql", "CREATE PROCEDURE ...", []),
+    ]
+    trigger_rows = [
+        ("pr", "equipment", "trg_audit", 2 | 4 | 16, "audit_log", "CREATE TRIGGER ..."),
+    ]
+    calls = []
+
+    def runner(params, sql_list):
+        calls.append((params, list(sql_list)))
+        return [routine_rows, trigger_rows]
+
+    return runner, calls
+
+
+def test_fetch_routines_and_triggers_passes_routine_trigger_sql():
+    runner, calls = _canned_routine_trigger_runner()
+    fetch_routines_and_triggers(_PARAMS, runner=runner)
+    assert len(calls) == 1
+    assert calls[0][1] == ROUTINE_TRIGGER_SQL
+
+
+def test_fetch_routines_and_triggers_builds_routines_keyed_by_schema_name():
+    runner, _ = _canned_routine_trigger_runner()
+    schema = fetch_routines_and_triggers(_PARAMS, runner=runner)
+
+    routine = schema.routines["pr.calc_total"]
+    assert routine == RoutineInfo(
+        schema="pr", name="calc_total", arg_types=["integer"], return_type="numeric",
+        language="plpgsql", source="CREATE FUNCTION ...", kind="function",
+    )
+    assert schema.routines["pr.do_thing"].kind == "procedure"
+
+
+def test_fetch_routines_and_triggers_builds_triggers_keyed_by_schema_table_name():
+    runner, _ = _canned_routine_trigger_runner()
+    schema = fetch_routines_and_triggers(_PARAMS, runner=runner)
+
+    trigger = schema.triggers["pr.equipment.trg_audit"]
+    assert trigger == TriggerInfo(
+        schema="pr", table="equipment", name="trg_audit", timing="before",
+        events=["insert", "update"], function_name="audit_log",
+        definition="CREATE TRIGGER ...",
+    )
+
+
+def test_fetch_routines_and_triggers_leaves_tables_empty():
+    runner, _ = _canned_routine_trigger_runner()
+    schema = fetch_routines_and_triggers(_PARAMS, runner=runner)
+    assert schema.tables == {}
+
+
+def test_fetch_routines_and_triggers_start_log_is_redacted(caplog):
+    runner, _ = _canned_routine_trigger_runner()
+    with caplog.at_level(logging.INFO, logger="pgtp_editor.db.introspect"):
+        fetch_routines_and_triggers(_PARAMS, runner=runner)
     messages = [r.message for r in caplog.records]
     assert any("password=***" in m for m in messages)
     assert not any(_PARAMS.password in m for m in messages)
