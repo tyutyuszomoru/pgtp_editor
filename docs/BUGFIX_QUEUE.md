@@ -622,3 +622,85 @@ description and the new orange/`~`-marker calculated state to the `DbCheckPanel`
 in §17.
 
 ---
+
+## BUG-007: View-menu dock checkboxes don't uncheck when the dock is closed via its own title-bar ✕
+**Status:** OPEN
+**Reported:** 2026-08-01
+**Report (verbatim):** "when I close the BrowserPane, in the View the checkbox is not changing (appears
+to be still open). Closing the BrowserPane must set all BrowserPane panels checkbox not checked"
+
+**Root cause:** The report's "BrowserPane" cannot literally be `ui/ddl_buffer_panel.py::BrowserPanel` —
+grepped case-insensitively for `BrowserPane`/`BrowserPanel` across the repo and confirmed via
+`docs/TEST_LOG.md` (2026-08-01 entry) and `CONSOLIDATED_SPEC.md:921` ("no `EditorPanel`, no SQL
+highlighter mode, no `main_window.py` wiring yet") that `BrowserPanel` is implemented and tested in
+isolation but is **not yet instantiated anywhere in `pgtp_editor/ui/main_window.py`** — there is no dock,
+no tab, and no View-menu action for it at all today, so the reported symptom cannot reproduce against
+that class. Treating "BrowserPane" as the user's loose/mistaken name for one of the window's real
+dockable panels instead: `pgtp_editor/ui/main_window.py::_build_view_menu` (lines 1952-1997) wires three
+real `QDockWidget`s this way —
+- `tree_dock` ("Project Tree", line 229) ← `tree_action.toggled.connect(self.tree_dock.setVisible)` (line 1958)
+- `properties_dock` ("Properties", line 358) ← `properties_action.toggled.connect(self.properties_dock.setVisible)` (line 1963)
+- `audit_dock` ("Audit / Problems", line 261) ← `audit_action.toggled.connect(self.audit_dock.setVisible)` (line 1974)
+
+None of the three docks has `setFeatures()` called anywhere in `main_window.py`, so each keeps Qt's
+default `QDockWidget.DockWidgetFeature` flags, including `DockWidgetClosable` — i.e. each genuinely has
+its own native ✕ close button on its title bar (this is very plausibly what the user actually clicked,
+mistaking one of these left/right dock panels for a "BrowserPane"). The wiring above is **one-directional
+only**: the checkable `QAction.toggled` signal drives `dock.setVisible`, but nothing connects back from
+the dock to the action. Closing a dock via its own ✕ calls `QDockWidget.closeEvent`, which hides the dock
+and emits `visibilityChanged(False)` — but no slot listens to that signal for these three docks, so the
+corresponding View-menu `QAction.isChecked()` stays `True` even though the dock is now hidden. Confirmed
+by reading `tests/ui/test_menus.py` (`test_toggling_project_tree_hides_dock` /
+`test_toggling_audit_panel_hides_dock` / `test_toggling_properties_panel_hides_dock`, lines 178-205):
+every existing test only drives the action→dock direction (`find_action(...).trigger()` then asserts
+`dock.isVisible()`); none drives dock-close→action direction. This is a distinct, existing pattern gap
+from the *tab*-visibility sync that already works correctly elsewhere in the same file — e.g.
+`center_stage.manual_visibility_changed` (`ui/center_stage.py:29,110,117`) is a genuine bidirectional
+`Signal(bool)` that `MainWindow._on_manual_visibility_changed` (line 2982) consumes to keep the Contents
+tab in lockstep with the Manual tab — but that pattern applies to `CenterStage` *tabs*, not the
+`QDockWidget`s at issue here, and was never extended to the three real docks. The fourth View-menu row,
+"Find table reference" (`table_refs_action`, line 1965), is a **tab** inside `left_tabs` (not a
+`QDockWidget` of its own — it lives inside `tree_dock`'s tab widget, see line 250-254), so it has no
+independent title-bar ✕ and is not part of this bug; likewise "Raw XML Panel" is also a `CenterStage` tab,
+not a dock. So exactly three docks (`tree_dock`, `properties_dock`, `audit_dock`) are affected — this
+matches the report's plural "all BrowserPane panels" if the user is bundling multiple left/right docks
+under one remembered name, though it's equally likely they only interacted with one and used "panels"
+loosely; the fix should cover all three regardless since the root cause is identical and shared.
+
+**Proposed fix:** In `pgtp_editor/ui/main_window.py::_build_view_menu`, after each `toggled.connect(...)`
+call for `tree_action`, `properties_action`, and `audit_action`, add the reverse connection: e.g.
+`self.tree_dock.visibilityChanged.connect(tree_action.setChecked)`, and similarly
+`self.properties_dock.visibilityChanged.connect(properties_action.setChecked)` and
+`self.audit_dock.visibilityChanged.connect(audit_action.setChecked)`. Store the three actions as
+`self._tree_action` / `self._properties_action` / `self._audit_action` (currently only
+`table_refs_action`/`_raw_xml_panel_action` are kept as attributes; the other three are local variables in
+`_build_view_menu` — promote them to `self.` attributes so the `visibilityChanged` connection can
+reference them, and so tests can look them up directly instead of via `find_action(view_menu, ...)` if
+convenient). Re-entrancy check: `QAction.setChecked(bool)` does not itself emit `toggled` if the value is
+unchanged, and Qt's `QAction.toggled` only fires on an actual state change, so
+`action.setChecked(dock.isVisible())` in response to `visibilityChanged` will not re-trigger
+`dock.setVisible` in a loop under normal use — but double check empirically once implemented (the existing
+`center_stage.py` Manual pattern avoids a hand-rolled recursion guard entirely by relying on this same Qt
+signal-coalescing behavior, so no extra guard is expected to be needed here either; if a loop is observed,
+follow that file's approach rather than inventing a new guard mechanism). Also note `QDockWidget.
+visibilityChanged` fires not just on user-close but also on programmatic `setVisible`/tabify/float changes
+— this is *desired* here (it's exactly what keeps the checkbox honest in all cases, not just the ✕ click),
+so no filtering of the signal is needed beyond the direct connect.
+
+**Test impact:** `tests/ui/test_menus.py` — extend the existing
+`test_toggling_project_tree_hides_dock` / `test_toggling_audit_panel_hides_dock` /
+`test_toggling_properties_panel_hides_dock` (lines 178-205), or add three sibling tests, that instead
+close the dock directly (`window.tree_dock.close()` / `.hide()`, mirroring how a title-bar ✕ click
+hides the dock) and assert the corresponding View-menu action's `isChecked()` is now `False` — e.g.
+`window.tree_dock.close(); assert find_action(view_menu, "Project Tree").isChecked() is False`. Also add
+the inverse case (re-show the dock via `.show()` and confirm the action re-checks) since
+`visibilityChanged` fires both ways. `BrowserPanel` itself needs no test changes — it remains unwired and
+out of scope per the DDL Explorer follow-up increment noted in `docs/TEST_LOG.md`.
+
+**Spec impact:** none — `docs/superpowers/CONSOLIDATED_SPEC.md` does not document dock-close/View-menu
+sync behavior anywhere (grepped for "View menu", "QDockWidget", "toggleViewAction", "close button"); this
+is an undocumented implementation gap, not a divergence from a stated design decision. No spec-maintainer
+follow-up needed unless the fix introduces new user-facing behavior worth calling out (unlikely — this
+just makes existing documented checkboxes accurate).
+
+---
