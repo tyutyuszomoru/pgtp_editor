@@ -1,9 +1,11 @@
 # PGTP Editor — Consolidated Specification
 
-> **Status:** living document · **Last synthesized:** 2026-08-01
-> **Source of truth:** this file is the single reconciled specification for PGTP Editor.
-> It is synthesized from the dated design specs under [`docs/superpowers/specs/`](specs/) using a
-> **latest-wins** rule: where a later spec overrode an earlier decision, only the later decision
+> **Status:** living document · **Last synthesized:** 2026-08-02
+> **Source of truth:** this file is the single reconciled specification for PGTP Editor, and the **only**
+> place specification content is written. It was originally synthesized from the dated design specs under
+> [`docs/superpowers/specs/`](specs/) — a folder now **frozen as historical record** (read for rationale;
+> never added to or edited). All new and changed design is written **directly here**, using a
+> **latest-wins** rule: where a later decision overrode an earlier one, only the later decision
 > is stated in the body, and the change is recorded in the [Supersession Ledger](#28-supersession-ledger).
 > Maintained by the **`spec-maintainer`** agent (`.claude/agents/spec-maintainer.md`) — see
 > [§31 Maintenance protocol](#31-maintenance-protocol).
@@ -313,22 +315,50 @@ non-Raw-XML tabs hidden until invoked). Bottom is a persistent
 **Audit/Problems** panel (`QListWidget`) shared by `[Schema]`, `[Validate]`, `[Find]`, `[PHP]` lines.
 Right dock is the **Properties** panel.
 
+**Dock visibility is bidirectional (BUG-007).** In `_build_view_menu` each of the **three dock actions**
+— "Project Tree" (`tree_dock`), "Properties Panel" (`properties_dock`), "Audit/Problems Panel"
+(`audit_dock`) — is wired **both ways**: `action.toggled → dock.setVisible` **and**
+`dock.visibilityChanged → action.setChecked`. Closing a dock via its title-bar ✕ (or any programmatic
+hide/show) therefore keeps the menu checkbox honest. **No recursion guard is needed**: `QAction.toggled`
+and `QDockWidget.visibilityChanged` only fire on *actual* state changes, so the pair settles immediately
+(the same Qt signal-coalescing the `CenterStage` Manual-tab sync relies on). The other two View-menu
+checkables are not docks and keep their one-way wiring: "Find table reference" drives
+`_toggle_table_references` (a `left_tabs` tab, §15) and "Raw XML Panel" drives
+`CenterStage.set_raw_xml_tab_visible` (a center tab).
+
 **Document state:** `_dirty` + `_set_dirty()` (title gets " *"); editor `textChanged` marks dirty;
-load/save/revert clears. **Theme toggles never dirty either document:** `XmlEditor.apply_theme_colors`
-sets an `_applying_theme` guard around its `rehighlight()` (which fires a spurious `textChanged` with
-no text actually changed); MainWindow's dirty handlers for **both** the Raw XML and Edit XSD editors
-consult `XmlEditor.is_applying_theme()` and no-op. `.bak` (single, overwritten, `shutil.copy2`) is written before overwriting an
+load/save/revert clears. **Theme toggles never dirty either document:** a theme change re-applies
+character formats in **two stages** (BUG-013), and the `_applying_theme` guard wraps **every** batch of
+both — never a single whole-document `rehighlight()`. `XmlEditor.apply_theme_colors` swaps the colors and
+(coalescing repeated palette-change events via `_theme_rehighlight_pending` + the parented single-shot
+`_theme_kickoff_timer`) schedules `_rehighlight_for_theme`, which (stage 1) `rehighlightBlock`s the
+**visible region only**, inside the guard, so what is on screen recolors together with the app chrome;
+it then starts `_theme_sweep_timer` (0 ms interval, parented) driving `_theme_sweep_tick`, which (stage 2)
+sweeps the **rest of the document from block 0** at `_THEME_SWEEP_BLOCKS_PER_TICK = 400` blocks per
+event-loop turn, each turn again wrapped in the guard, so a multi-MB document never freezes the UI. A
+fresh theme change while a sweep runs restarts it from block 0 with the new colors. Every batch fires a
+spurious `textChanged` with no text actually changed; MainWindow's dirty handlers for **both** the Raw XML
+and Edit XSD editors consult `XmlEditor.is_applying_theme()` and no-op, and the editor's own
+`textChanged` bookkeeping skips the format-only batches the same way (see the debounced structure rescan,
+§8). `.bak` (single, overwritten, `shutil.copy2`) is written before overwriting an
 existing file on save — never on Save-As to a new path, never on a failed/no-op write.
 `_write_project_text(path)` writes editor `toPlainText()` as UTF-8 with `newline=""` (byte-preserving).
 `_current_project_path` is normalized to `str`.
 
 **Per-tab document routing** (curated-XSD pivot, §11): the Edit XSD tab hosts a second document with
-its **own dirty state** (tab-title `*` marker, independent of the project's `_dirty`). **Ctrl+S** and
-the Edit-menu Find/Replace actions (Find/Find Next/Find All/Replace/Replace All) route to the
-**active** center-stage tab's editor + `FindReplaceBar` — Raw XML when the Raw XML tab is active, the
-mode-aware XSD document (curated.xsd or learned.xsd per `_xsd_mode`, §11) when the Edit XSD/Edit AutoXSD
-tab is active. Project-level state (`.bak`, `_current_project_path`, reparse) is untouched by XSD-tab
-saves.
+its **own dirty state** (tab-title `*` marker, independent of the project's `_dirty`). The Edit-menu
+Find/Replace actions (Find/Find Next/Find All/Replace/Replace All) route to the **active** center-stage
+tab's `FindReplaceBar` via `main_window.py::_active_find_bar()`, which dispatches on
+`center_stage.currentIndex()`: **Edit XSD/Edit AutoXSD tab** → `stage.xsd_find_replace_bar` (the
+mode-aware XSD document, curated.xsd or learned.xsd per `_xsd_mode`, §11); **DDL Explorer tab** →
+`stage.ddl_editor_panel.find_replace_bar` (the read-only DDL buffer's own bar, §18.1 — without this
+branch Ctrl+F on the DDL tab bounced the user back to Raw XML); **any other tab** → reveal Raw XML
+(`_reveal_raw_xml_tab()`) and return `stage.find_replace_bar`.
+
+**Ctrl+S is deliberately asymmetric to this:** `main_window.py::_save_active_tab()` routes **only**
+Edit-XSD-vs-project (XSD tab → `_save_xsd()`, everything else → `_save_project()`) — the DDL Explorer
+buffer is read-only and DB-synthesized, so it has **no** save path and needs no branch. Project-level
+state (`.bak`, `_current_project_path`, reparse) is untouched by XSD-tab saves.
 
 - **File ▸ Close** (Ctrl+W): if dirty, 3-way Save/Discard/Cancel (`_confirm_close()`, test-seam
   `confirm=`); clears editor+tree, resets state.
@@ -1045,10 +1075,13 @@ returns focus. Replace-all rewrites all matches in one undo block (right-to-left
 `replace_current_selection(text)`.
 
 **Edit menu** (real actions): Find… (Ctrl+F), Find Next (F3), Find All (Ctrl+Shift+F), Replace…
-(Ctrl+R), Replace All (Ctrl+Alt+Return). Each handler routes to the **active** center-stage editing
-tab's `FindReplaceBar` (Raw XML, or Edit XSD when that tab is active — §7 per-tab routing; when
-neither is active, Raw XML is revealed) and delegates to the same `FindReplaceBar` method the button
-uses. The Edit XSD tab hosts its own `FindReplaceBar` instance with full Find All parity. (The old
+(Ctrl+R), Replace All (Ctrl+Alt+Return). Each handler routes through
+`main_window.py::_active_find_bar()` to the **active** center-stage editing tab's `FindReplaceBar` — Edit
+XSD tab → `stage.xsd_find_replace_bar`, **DDL Explorer tab → `stage.ddl_editor_panel.find_replace_bar`**
+(§18.1), any other tab → reveal Raw XML and use `stage.find_replace_bar` (§7 per-tab routing) — and
+delegates to the same `FindReplaceBar` method the button uses. The Edit XSD tab and the DDL Explorer tab
+each host their own `FindReplaceBar` instance; the Edit XSD one has full Find All parity (the DDL buffer
+is read-only, so its Replace path no-ops via `CodeEditor.replace_current_selection`, §8). (The old
 "Find & Replace…" Ctrl+H stub was removed.)
 
 **Find All → Audit panel, streaming:** `_populate_find_all_results(term)` starts a chunked,
@@ -1147,6 +1180,14 @@ calculated columns, alongside `ok` ones). Tree items carry a uniform 4-tuple Use
 **Reparse refreshes an open DB Check** against the **cached schema** (`_last_db_schema` /
 `_last_db_check_direction` / `_last_db_summary`), no live re-query — via `_populate_db_check(...)` and
 `_refresh_db_check_if_open()` (guarded on tab visibility + valid buffer).
+
+**DB Check results are project-tied and torn down on project close (BUG-011).** `_close_project`, on the
+**committed-close path only**, hides the "Database Check" `left_tabs` tab
+(`left_tabs.setTabVisible(db_check_tab_index, False)`) and clears the three cached fields
+(`_last_db_check_direction` / `_last_db_schema` / `_last_db_summary` → `None`), so a later reparse or
+rename cannot re-run against the closed project's stale state. A **cancelled** close returns before this
+and leaves the still-open project's tab alone; `_revert_project` keeps the project loaded and so does not
+tear down.
 
 **Create Page/Detail/Lookup from a DB table** (`generation/type_map.py` + `generation/from_table.py`,
 pure): right-click a table/view node (DB→XML) → **create page** (insert before `</Pages>`, jump +
@@ -1790,8 +1831,13 @@ note in the "Custom PHP editing" section; no section number is spent on it yet.
 
 **Explicitly sequenced, incremental follow-ups** (named as the roadmap only — not designed in detail
 here; build one at a time, in this order, matching "adding features one by one"):
-1. **PHP folding** for `CodeEditor` — mirrors the Raw XML editor's folding (§8); `CodeEditor` currently
-   has none.
+1. **A PHP fold-region provider** for `CodeEditor` — the shared fold *machinery* already exists since the
+   2026-08-01 `GutterBookmarkFoldMixin` extraction (§8, `ui/editor_gutter.py`): `CodeEditor` mixes the
+   mixin in, overrides `_foldable_region_starting_at` as a lookup into `self._fold_regions`, and exposes
+   `set_fold_regions(regions)` for hosts to install regions from outside. What is missing is only the
+   **PHP-specific region computation** (brace/`{`…`}` blocks, function/class bodies, heredocs) plus the
+   host wiring that calls `set_fold_regions()` — today no host installs regions for JS/PHP, so folding is
+   inert there (§8). Mirrors how the DDL editor installs `DdlObjectSpan`-derived regions.
 2. **A file-tree dock tab** for a configured "custom code" folder (parallel to Project Tree, §7),
    giving the scattered Gantt/print/loader-style files one browsable home instead of ad-hoc opening —
    folder configured per-project, analogous to `Project@outputPath`.
@@ -1847,8 +1893,11 @@ English Markdown manual bundled at `pgtp_editor/resources/manual.md` (via
 `parse_chapters(md)→list[Chapter{level, title}]` (ATX headings, skips fenced code), `ManualPanel(QTextBrowser)`
 (read-only, external links, `set_markdown`, `scroll_to_chapter(index)`), `ManualContentsPanel(QWidget)`
 (`QTreeWidget`, `chapter_selected(int)`). Center-stage **Manual** tab + left-dock **Contents** tab; **Help
-▸ Manual (F1)**. 13 chapters incl. Generating PHP, Validation, Keyboard Shortcuts, Troubleshooting/debug.
-Offline, read-only (no editing/searching, single language).
+▸ Manual (F1)**. **20 `##` chapters**, in order: Getting Started · The Project Tree · Properties · The
+Raw XML Editor · Bookmarks · Find, Replace & Find All · The Code Editor · Caption Management · Schema
+Tools · Database Check · DDL Explorer · Table References · Diff / Merge · Validation · Generating PHP ·
+A note on busy feedback · Appearance & Layout · Keyboard Shortcuts · The Manual · Troubleshooting: debug
+mode. Offline, read-only (no editing/searching, single language).
 
 ---
 
@@ -1882,12 +1931,18 @@ Tools; "New Project" removed; line-wrap moved to editor context menu):
   (Ctrl+Shift+F), Replace… (Ctrl+R), Replace All (Ctrl+Alt+Return), Select Enclosing Block (Ctrl+Shift+B),
   Select Parent Block (Ctrl+Shift+A), ☐ Auto Parse XML (§9; unchecked by default, in-memory only),
   Preferences.
-- **View:** ☑ Project Tree, ☑ Properties, ☑ Audit, ☑ Raw XML Panel (checked by default), Expand All,
-  Collapse All, ☐ Light Theme, ☑/☐ Find table reference.
+- **View** (real order and labels): ☑ Project Tree, ☑ Properties Panel, ☐ Find table reference,
+  ☑ Audit/Problems Panel, ☑ Raw XML Panel (checked by default), — , Expand All, Collapse All, — ,
+  ☐ Light Theme, — , Customize Toolbar… (opens the toolbar customization dialog, §7). The three **dock**
+  checkboxes (Project Tree / Properties Panel / Audit/Problems Panel) are bidirectional — closing a dock
+  by its title-bar ✕ unchecks the menu item (BUG-007, §7).
 - **Bookmarks:** Toggle Bookmark (Ctrl+F2), Next Bookmark (F2), Previous Bookmark (Shift+F2), Clear All
-  Bookmarks. Between Tools and Generation. Target design (2026-08-01, not yet implemented, §8/§13): the
-  whole menu and its four actions are disabled together while Caption Mode is active (gutter bookmark
-  toggling stays usable).
+  Bookmarks. Between Tools and Generation. **All four actions follow the active editor tab** (§8): the
+  target is resolved at trigger time by `_active_bookmark_editor()` — Edit XSD tab → `stage.xsd_editor`,
+  DDL Explorer tab → `stage.ddl_editor_panel.editor`, any other tab → `stage.xml_editor` — and the menu
+  never switches/reveals a tab. Target design (2026-08-01, not yet implemented, §8/§13): the whole menu
+  and its four actions are disabled together while Caption Mode is active (gutter bookmark toggling stays
+  usable).
 - **Schema:** Edit XSD, Edit AutoXSD, Verify XSD, Export XSD, Import XSD — five items (§11). Verify /
   Export / Import act on the **active XSD** (curated or learned, per `_xsd_mode`), not curated-only.
   (Go To XSD is **not** a menu item: it is a window-level Ctrl+L `QAction` added via
@@ -1910,11 +1965,11 @@ Toolbar default: Open, Save, Undo, Redo, Find, Validate, Generate (customizable)
 |---|---|---|
 | Ctrl+O / Ctrl+S / Ctrl+Shift+S / Ctrl+W | Open / Save / Save As / Close | Window (Save routes to the active center-stage tab: Raw XML or Edit XSD, §7) |
 | Ctrl+Z / Ctrl+Y | Undo / Redo (single step) | Window |
-| Ctrl+F / F3 / Ctrl+Shift+F | Find / Find Next / Find All | Window |
-| Ctrl+R / Ctrl+Alt+Return | Replace / Replace All | Window (caption: Ctrl+R = Caption Filter) |
+| Ctrl+F / F3 / Ctrl+Shift+F | Find / Find Next / Find All | The **active center-stage tab's own** `FindReplaceBar`, resolved by `_active_find_bar()` — Edit XSD → `stage.xsd_find_replace_bar`, DDL Explorer → `stage.ddl_editor_panel.find_replace_bar`, otherwise `stage.find_replace_bar` (revealing the Raw XML tab) (§7/§15) |
+| Ctrl+R / Ctrl+Alt+Return | Replace / Replace All | Same per-tab routing as Find, but **inert in the DDL Explorer** — that buffer is read-only (`CodeEditor.replace_current_selection` returns early on `isReadOnly()`) (caption: Ctrl+R = Caption Filter) |
 | Ctrl+Shift+B / Ctrl+Shift+A | Select Enclosing / Parent Block | Raw XML editor (menu-owned) |
 | Ctrl+click / Alt+click | Jump to matching tag / parent tag | Raw XML editor |
-| Ctrl+F2 / F2 / Shift+F2 | Toggle / Next / Previous Bookmark | Raw XML editor (Bookmarks menu; disabled in Caption Mode, §13 — target design 2026-08-01) |
+| Ctrl+F2 / F2 / Shift+F2 | Toggle / Next / Previous Bookmark | The **active editor tab** — Raw XML / Edit XSD / DDL Explorer — resolved at trigger time by `_active_bookmark_editor()`, never switching tabs (Bookmarks menu, §8; disabled in Caption Mode, §13 — target design 2026-08-01) |
 | double-click (line-number gutter zone) | Toggle bookmark on that line | Raw XML editor gutter (target design 2026-08-01, not yet implemented, §8 — additive alongside the existing single-click 12px bookmark strip; NOT gated by Caption Mode) |
 | Ctrl+L | Go To XSD (jump to the attribute's definition in curated.xsd; always forces curated mode) | Window-level QAction (also in the Raw XML editor context menu) |
 | Ctrl+G | Go to line in XML | Caption grid |
@@ -1981,10 +2036,13 @@ is authoritative** (and is what appears in the body above).
 | 2026-08-01 | §18.1 BrowserPanel trigger leaf = `name  (timing/events) on table` (Tables branch) / `name  (timing/events) → function` (Functions branch) | Composite `schema.table.triggername` + bracketed **timing indicator** (`[B]`before / `[A]`after / `[I]`instead of) + **one bracketed event indicator per event** (`[I]`insert / `[U]`update / `[D]`delete / `[T]`truncate), e.g. `[B][D]`, in both branches |
 | 2026-08-01 | §18.1 DDL `EditorPanel`/`CodeEditor` navigation **centered** (`CodeEditor.navigate_to_line` used `centerCursor()`) | DDL navigation **top-aligned** — the object's first line lands at the top of the viewport; DDL-editor-specific, `XmlEditor.navigate_to_line` stays **centered** (its Properties/tree-jump callers expect centering) |
 | 2026-08-01 | §8 gutter / bookmarks / folding existed **only** on `XmlEditor`; DDL `EditorPanel`'s `CodeEditor` had none (no gutter/line-numbers/bookmarks/folding, Qt-mono default tab stop) | Generic gutter + bookmark + fold-**state** machinery **extracted into a shared base** — realized as the mixin `GutterBookmarkFoldMixin` in the new module `ui/editor_gutter.py` — with a **pluggable foldable-region provider**, used by **both** `XmlEditor` (XML-span provider) and the DDL editor (DDL-object provider over the `DdlObjectSpan` index); DDL editor also gains a **4-character tab stop** — one gutter implementation, never a parallel second |
-| 2026-08-01 | §8 gutter + line bookmarks were **Raw-XML-only** — the "Edit code…" JS/PHP event-handler editor (`CodeEditorDialog`/`CodeEditor`) had no gutter, no line numbers and no bookmarks | The shared `GutterBookmarkFoldMixin` (`ui/editor_gutter.py`) sits on **`CodeEditor` itself**, so **every** code editor — including the JS/PHP event-handler dialogs — now shows the line-number gutter and supports line bookmarks (folding inert there: no regions installed). Surfaced as a side effect of the extraction and **explicitly kept by the project owner** rather than gated per language: line numbers in a code editor are conventional, and gating would add a second code path. Bookmarks stay **session-only, per-document**, and the Bookmarks menu/shortcuts remain bound to the Raw XML editor only |
+| 2026-08-01 | §8 gutter + line bookmarks were **Raw-XML-only** — the "Edit code…" JS/PHP event-handler editor (`CodeEditorDialog`/`CodeEditor`) had no gutter, no line numbers and no bookmarks | The shared `GutterBookmarkFoldMixin` (`ui/editor_gutter.py`) sits on **`CodeEditor` itself**, so **every** code editor — including the JS/PHP event-handler dialogs — now shows the line-number gutter and supports line bookmarks (folding inert there: no regions installed). Surfaced as a side effect of the extraction and **explicitly kept by the project owner** rather than gated per language: line numbers in a code editor are conventional, and gating would add a second code path. Bookmarks stay **session-only, per-document**; the "Edit code…" `CodeEditorDialog` is a dialog rather than a center-stage tab, so the Bookmarks menu does not reach it (its gutter strip stays mouse-only) |
+| 2026-08-01 | The Bookmarks menu/shortcuts remained bound to the **Raw XML editor only** (the row above, same date) | **Per-tab dispatch:** `_build_bookmarks_menu` captures no editor; each of the four actions resolves its target at **trigger** time via `main_window.py::_active_bookmark_editor()` — Edit XSD tab → `stage.xsd_editor`, DDL Explorer tab → `stage.ddl_editor_panel.editor`, any other tab → `stage.xml_editor` — mirroring `_active_find_bar` but **without** its `_reveal_raw_xml_tab()` side effect (toggling a bookmark must never switch tabs). The `CodeEditorDialog` remains out of the menu's reach |
 | 2026-08-01 | Dark theme = Fusion + `dark_palette()` **palette-only** (the BUG-004 fix above, same date) — Fusion+palette alone rendered checkable menu indicators outlined near-black on the dark menu background (BUG-010) | Dark = Fusion + `dark_palette()` **+ the QDarkStyleSheet dark QSS** (`qdarkstyle>=3.2`, new runtime dependency, MIT-credited in About); light **always** clears the stylesheet (`app.setStyleSheet("")`) so round-trips leave no stale QSS; the palette stays applied beneath the QSS for palette-reading custom widgets; side effect: `app.style().objectName()` is empty in dark mode (`QStyleSheetStyle` wrapping) |
 | 2026-08-01 | §8 `XmlEditor` ran the O(document) structure rescan (`_rescan_structure`) and code-region rebuild (`_refresh_code_region_selections`) **synchronously on every `textChanged`** — i.e. a full `toPlainText()` copy + whole-document pass per keystroke — and `_update_matching_tag_highlight` **rescanned when it found `_spans` stale** on `cursorPositionChanged` (BUG-015) | Both rescans **debounced** behind a parented single-shot `self._rescan_timer = QTimer(self)`, `_RESCAN_DEBOUNCE_MS = 250`, scheduled by `_on_text_changed_schedule_rescan` (which absorbs the `_applying_theme` skip) and executed by `_rescan_now()` (structure → code regions → matching-tag highlight → gutter repaint); `_update_matching_tag_highlight` now **suppresses** the highlight when spans are stale instead of rescanning (a rescan there would run per keystroke via the caret and defeat the debounce; stale offsets would paint a wrong range anyway); two exact-structure carve-outs bypass the debounce — `setPlainText` calls `_rescan_now()` synchronously (document swap) and `_toggle_fold` calls `_flush_pending_rescan()` first, with the flush deliberately **not** in `_foldable_region_starting_at` (the gutter `paintEvent` calls it per visible block). Measured 216.1 → 2.0 ms per typed character on a 1 MB / 21,002-block document |
 | 2026-08-01 | §8 `XmlSyntaxHighlighter` block state = **odd-`"`-parity per line** (`_has_unterminated_quote(text, start)`), never re-synchronising, so one parity-flipping `"` cascaded a Qt re-highlight to the **end of the document** on every such keystroke (5,972 `highlightBlock` calls / 45 ms on a 6,002-block file; BUG-016) | **Tag-aware four-state machine** — `STATE_NORMAL`/`STATE_IN_UNCLOSED_STRING`/`STATE_IN_TAG`/`STATE_IN_SINGLE_QUOTED` computed by the method `XmlSyntaxHighlighter._end_state(text, state)` over the state-changing characters matched by `_STATE_CHARS_RE = [<>"']` — where a quote only opens a value **inside a tag** (quotes in text content, i.e. PHP handler bodies, are inert), plus the **`<` resync rule**: a raw `<` inside a quoted value snaps the state back to `STATE_IN_TAG`, bounding the cascade to a block or two (trade-off: a raw `<` inside an attribute value ends that value's highlighting early — the document is invalid XML anyway and it self-corrects). `_has_unterminated_quote` deleted; continuation handled by `_continued_string_end(text, quote)`; helpers kept as **methods** so `debuglog.py`'s `("ui.xml_editor", "XmlSyntaxHighlighter.")` flood exclusion still covers them |
+| 2026-08-01 | §7 a theme toggle re-applied formats via **one synchronous whole-document `rehighlight()`** inside `XmlEditor.apply_theme_colors`'s `_applying_theme` guard — which blocked the UI ~1.5 s+ on a multi-MB document (BUG-013) | **Two-stage, guarded per batch:** `apply_theme_colors` swaps colors and schedules `_rehighlight_for_theme` (coalesced via `_theme_rehighlight_pending` + the parented single-shot `_theme_kickoff_timer`), which rehighlights the **visible region** first, then a parented 0 ms `_theme_sweep_timer` drives `_theme_sweep_tick` over the rest of the document at `_THEME_SWEEP_BLOCKS_PER_TICK = 400` blocks per event-loop turn; the `_applying_theme` guard wraps **every** batch, so `is_applying_theme()` still keeps both dirty handlers and the editor's own rescan bookkeeping quiet |
+| 2026-08-01 | §7/§15 Ctrl+F & the Edit-menu Find/Replace actions routed to **Raw XML or Edit XSD only** — with the DDL Explorer tab active they fell through to the default branch, which *revealed the Raw XML tab* and used its bar | `_active_find_bar()` gains a **DDL Explorer branch** returning `stage.ddl_editor_panel.find_replace_bar`, so Ctrl+F on the DDL tab searches the DDL buffer in place. **Ctrl+S stays asymmetric on purpose:** `_save_active_tab()` still branches only Edit-XSD-vs-project, because the DDL buffer is read-only and has no save path |
 
 ---
 
@@ -2037,10 +2095,16 @@ is authoritative** (and is what appears in the body above).
 This document is maintained by the **`spec-maintainer`** agent (`.claude/agents/spec-maintainer.md`),
 which has two duties:
 
-1. **Keep this file in sync.** Whenever a new dated spec lands under `docs/superpowers/specs/` (or an
-   existing one changes), the agent folds it in using latest-wins reconciliation, updates the affected
-   section(s), and appends a row to the [Supersession Ledger](#28-supersession-ledger) for any override.
-   It never leaves two contradictory statements in the body.
+1. **Keep this file in sync — it is the single write target for specification content.** Whenever a
+   design decision is **settled** (a new feature designed after brainstorming, an intentional change to
+   an existing feature, or a shipped feature that diverges from what this document says), the agent
+   writes it **directly into this file** using latest-wins reconciliation — from the dispatching prompt,
+   the feature's plan under [`docs/superpowers/plans/`](plans/), and the changed code — updates the
+   affected section(s), and appends a row to the [Supersession Ledger](#28-supersession-ledger) for any
+   override. It never leaves two contradictory statements in the body.
+   **`docs/superpowers/specs/` is frozen historical record:** no new dated spec files are ever created
+   there and the existing ones are never edited; they are read only for rationale and to back the
+   ledger's evidence (per [`CLAUDE.md`](../../CLAUDE.md)).
 2. **Gate brainstorming.** Whenever brainstorming runs for a new idea, the agent first locates where the
    idea belongs in this spec — flagging any existing feature that already covers most of it and any
    near-duplicate that should be *extended* rather than *forked*. The goal is cohesive, complex features

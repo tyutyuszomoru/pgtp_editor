@@ -165,11 +165,16 @@ session and are not written to the file.
 - **F2** / **Shift+F2** jump to the next / previous bookmark.
 - The **Bookmarks** menu holds the same actions plus **Clear All Bookmarks**.
 
-The **Bookmarks** menu and its shortcuts act on the **Raw XML** editor. The same
-bookmark strip is also available in the **DDL Explorer** tab and in the
-**Edit code…** dialog — there you set and clear bookmarks by clicking the strip
-in the gutter, and each editor keeps its own set. Loading a new document into an
-editor clears its bookmarks.
+The **Bookmarks** menu and its shortcuts follow the tab you are working in: with
+the **Edit XSD** (or **Edit AutoXSD**) tab active they act on the schema editor,
+with the **DDL Explorer** tab active they act on its editor, and on any other tab
+they act on the **Raw XML** editor. Using them never switches tabs on you — a
+bookmark is always set or found in the editor you are already looking at.
+
+The **Edit code…** dialog has the same bookmark strip, but as a separate dialog
+it is out of the Bookmarks menu's reach: there you set and clear bookmarks by
+clicking the strip in the gutter. Each editor keeps its own set, and loading a
+new document into an editor clears its bookmarks.
 
 ---
 
@@ -184,8 +189,14 @@ The search bar under the Raw XML editor provides:
 - **Replace** (Ctrl+R) and **Replace All** (Ctrl+Alt+Enter) — Replace All reports
   how many replacements it made in the status bar.
 
-The **Edit XSD** tab (see *Schema Tools*) has its own identical search bar; the
-shortcuts and the Edit menu act on whichever tab is active.
+The **Edit XSD** tab (see *Schema Tools*) and the **DDL Explorer** tab (see *DDL
+Explorer*) each have their own search bar; the shortcuts and the Edit menu act on
+whichever tab is active, searching that tab's own document. On a tab without its
+own search bar, Find reveals the **Raw XML** tab and searches there.
+
+Because the DDL Explorer buffer is **read-only**, only the searching half applies
+there: Find, Find Next and Find All work as usual, while Replace and Replace All
+have nothing they can change.
 
 ---
 
@@ -517,8 +528,12 @@ navigation comforts as the Raw XML editor:
   collapses that object's body away, leaving the banner visible — handy for
   skimming a long database's worth of definitions.
 - **Bookmarks:** click the bookmark strip at the left edge of the gutter to mark
-  a line (see *Bookmarks*).
-- **Find** and the rest of the search bar work on this tab's own buffer.
+  a line, or use **Ctrl+F2** / **F2** / **Shift+F2** and the **Bookmarks** menu —
+  while this tab is active they act on its editor (see *Bookmarks*).
+- **Find:** this tab has its own search bar, so **Ctrl+F**, **F3** and
+  **Ctrl+Shift+F** search the DDL buffer itself instead of bouncing you to Raw
+  XML. Replace (**Ctrl+R**, **Ctrl+Alt+Enter**) is inert here, since the buffer
+  is read-only.
 
 Clicking an object in the DDL Objects tree scrolls it to the **top** of the DDL
 Explorer tab, so the whole definition is visible below its banner. (The Raw XML
@@ -637,8 +652,8 @@ simply reads as busy instead of stalled.
 | **Ctrl+Shift+S** | Global | Save As |
 | **Ctrl+W** | Global | Close project |
 | **F1** | Global | Open the Manual |
-| **Ctrl+F2** | Raw XML | Toggle bookmark |
-| **F2** / **Shift+F2** | Raw XML | Next / previous bookmark |
+| **Ctrl+F2** | Active editor tab | Toggle bookmark |
+| **F2** / **Shift+F2** | Active editor tab | Next / previous bookmark |
 | **Ctrl+Z** / **Ctrl+Y** | Raw XML | Undo / redo (snapshot history) |
 | **Ctrl+Space** | Raw XML | Attribute / value completion |
 | **Ctrl+L** | Raw XML | Go To XSD (attribute's definition in the Edit XSD tab) |
@@ -646,11 +661,11 @@ simply reads as busy instead of stalled.
 | **Alt+click** | Raw XML (mouse) | Jump to parent tag start |
 | **Ctrl+Shift+B** | Raw XML / Code Editor | Select enclosing block (caret to start) |
 | **Ctrl+Shift+A** | Raw XML | Select parent block |
-| **Ctrl+F** | Raw XML / Edit XSD | Find |
-| **F3** | Raw XML / Edit XSD | Find next |
-| **Ctrl+Shift+F** | Raw XML / Edit XSD | Find all |
-| **Ctrl+R** | Raw XML / Edit XSD | Replace |
-| **Ctrl+Alt+Enter** | Raw XML / Edit XSD | Replace all |
+| **Ctrl+F** | Raw XML / Edit XSD / DDL Explorer | Find |
+| **F3** | Raw XML / Edit XSD / DDL Explorer | Find next |
+| **Ctrl+Shift+F** | Raw XML / Edit XSD / DDL Explorer | Find all |
+| **Ctrl+R** | Raw XML / Edit XSD | Replace (not in the read-only DDL Explorer) |
+| **Ctrl+Alt+Enter** | Raw XML / Edit XSD | Replace all (not in the read-only DDL Explorer) |
 | **Ctrl+F** | Caption Mode | Open Find/Filter |
 | **Ctrl+R** | Caption Mode | Open Replace |
 | **Ctrl+G** | Caption Mode | Go to line in Raw XML |
