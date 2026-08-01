@@ -213,7 +213,7 @@ not a documented behavior, so no spec change is needed for that half of the fix.
 
 ## BUG-003: Table references panel click is slow; editor sluggish right after jump
 
-**Status:** OPEN
+**Status:** RESOLVED (649fffd)
 **Reported:** 2026-08-01
 **Report (verbatim):** "the Table references window is extremely slow when I click on a page. Feels
 like it's not caching but reparsing when I click on a page, it also slows down the XMLEditor, after
@@ -430,7 +430,7 @@ and should be expanded regardless of which fix direction is taken.
 
 ## BUG-005: Caption Management row-tint colors leave black text unreadable on dark row backgrounds
 
-**Status:** OPEN
+**Status:** RESOLVED (649fffd)
 **Reported:** 2026-08-01
 **Report (verbatim):** "also in light mode caption management there's no contrast between backgrounds
 and text (see screenshot) dark brown and dark blue bg with black text..." (screenshot: Caption Management
@@ -496,5 +496,129 @@ or the other, so this is an omission being fixed, not a documented intentional d
 needed unless the resolving session wants to explicitly document "tinted rows always pair an explicit
 foreground with their background" as a stated convention, which would be a `spec-maintainer` nice-to-have,
 not a requirement.
+
+---
+
+## BUG-006: Calculated columns (`isCalculated="true"`) are flagged as mismatches in XML→Database check
+**Status:** OPEN
+**Reported:** 2026-08-01
+**Report (verbatim):** "when a calculated column is created in the xml (<ColumnPresentation fieldName="**" isCalculated="true" it should not show up as mismatch, but with a different symbol, orange and not as mismatch."
+
+**Root cause:** `isCalculated` is parsed and available but never read anywhere in the codebase —
+confirmed by `grep -rln "isCalculated\|is_calculated" pgtp_editor/` returning empty. The raw attribute
+*is* present in the parsed model: `pgtp_editor/model/parser.py::_parse_columns` (around line 252) does
+`attrib=dict(col_el.attrib)`, so every `<ColumnPresentation>` attribute including `isCalculated="true"`
+lands in `ColumnNode.attrib`, but `pgtp_editor/model/nodes.py::ColumnNode` (lines 93-107) only exposes a
+typed `field_name` property — no `is_calculated` property exists to read it back out. The value is then
+lost entirely one layer up: `pgtp_editor/db/compare.py::xml_table_columns` (lines 54-82) collapses each
+table's `list[ColumnNode]` down to a bare `set[str]` of field names (`bucket.add(field_name)` at line 70),
+discarding the `ColumnNode` (and with it `isCalculated`) before `check_xml_against_db` (lines 90-115) ever
+runs. `check_xml_against_db` then builds `ColumnCheck(name=col, ok=schema.column(table_name, col) is not
+None, ...)` for every name in that set (lines 98-105) — a calculated column's `fieldName` legitimately
+has no matching physical DB column, so `schema.column(...)` returns `None` and `ok` is unconditionally
+`False`, i.e. it is indistinguishable from a genuinely missing/renamed column. Rendering then follows
+`ColumnCheck.ok` mechanically: `pgtp_editor/ui/db_check_panel.py::_make_column_item` (lines 132-151) picks
+`marker = "✓" if column.ok else "✗"` and `item.setForeground(0, QBrush(_OK_COLOR if column.ok else
+_BAD_COLOR))` (using `_OK_COLOR`/`_BAD_COLOR` at lines 43-44) — there is only a binary ok/not-ok state
+today, no third category. `_mismatch_count` (lines 91-97) and the "Show only mismatches" filter in
+`_rebuild` (lines 107-119) both key off the same `column.ok` bool, so a calculated column also inflates
+the header's mismatch count and appears when "Show only mismatches" is checked. Note: `check_db_against_xml`
+(the DB→XML direction, lines 118-144) is unaffected by this bug — it iterates real DB columns and only
+uses `xml_table_columns` for membership testing (`column.name in xml_columns`), so a calculated XML column
+with no DB counterpart simply never appears as a DB row there; nothing to fix on that side.
+
+**Proposed fix:**
+1. `pgtp_editor/model/nodes.py::ColumnNode` — add an `is_calculated` property mirroring the existing
+   `field_name` property (line 105-107): `return self.attrib.get("isCalculated", "").lower() == "true"`
+   (match whatever case/bool-string convention other boolean XML attributes in this codebase already use —
+   check how `visible="false"` is parsed in `_build_representation_index`/`RepresentationVisibility` in
+   `pgtp_editor/model/parser.py` for the established true/false string convention and reuse it verbatim
+   rather than inventing a new parsing rule).
+2. `pgtp_editor/db/compare.py::xml_table_columns` — this function's return type (`dict[str, set[str]]`)
+   is too lossy to carry the flag through; either (a) change its return shape to
+   `dict[str, dict[str, bool]]` (field_name → is_calculated) and update its two call sites
+   (`check_xml_against_db` and `check_db_against_xml`) plus its docstring, or (b) keep
+   `xml_table_columns` as-is for the DB→XML membership-test use case and add a small sibling helper (e.g.
+   `xml_calculated_columns(project) -> dict[str, set[str]]`, table → set of calculated field names) used
+   only by `check_xml_against_db`. Prefer (a) for a single source of truth, but either is acceptable as
+   long as `check_db_against_xml` keeps working unchanged (it only needs name membership, not the flag).
+   Watch the union semantics already documented in the docstring (pages/details bound to the same table
+   union their columns) — if two representations disagree on `isCalculated` for the same fieldName
+   (shouldn't happen per one `<ColumnPresentation>` per fieldName within one page, but unioned across
+   pages/details it's structurally possible), OR them (a field is "calculated" if calculated anywhere it
+   appears) rather than picking one arbitrarily.
+3. `pgtp_editor/db/compare.py::ColumnCheck` (lines 38-42) — add a field to carry the new state, e.g.
+   `is_calculated: bool = False`, defaulted so `check_db_against_xml`'s `ColumnCheck` construction (line
+   127-133, which has no notion of calculated columns) doesn't need to change.
+4. `check_xml_against_db` (lines 90-115) — when building each table's `column_checks`, look up
+   `is_calculated` for the field name and: keep `ok=schema.column(...) is not None` computed as before
+   (still useful/harmless if it happens to exist), but pass `is_calculated=<flag>` into `ColumnCheck`. The
+   panel is what decides how to *render* the three-way state (match/calculated/mismatch), not this pure
+   layer — `compare.py` should stay Qt-free and just expose the flag (per its own module docstring, "Qt-free").
+5. `pgtp_editor/ui/db_check_panel.py`:
+   - Add an `_CALC_COLOR = QColor("#d08a1a")` (orange, matching the file's existing pattern of one
+     `QColor` constant per semantic state alongside `_OK_COLOR`/`_BAD_COLOR` at lines 43-44) and a
+     distinct marker glyph — reuse the "different symbol" the report explicitly asks for, e.g. `"∼"` or
+     `"⚙"` (avoid `"✓"`/`"✗"` reuse; pick something that reads clearly in a monospace-ish tree at small
+     size — `"~"` is a safe, universally-renderable fallback if a fancier glyph risks missing-font boxes).
+   - `_make_column_item` (lines 132-151): branch three ways instead of two —
+     `if column.is_calculated: marker, color = "~", _CALC_COLOR elif column.ok: ... else: ...` (adjust
+     exact structure to taste) for both the marker and `setForeground`. A calculated column's `ok` will
+     still technically be `False` from step 4 unless step 4 is changed to force `ok=True` for calculated
+     columns — **decide explicitly and document the choice**: the cleanest approach is to keep `ok` as
+     "does a matching DB column literally exist" (informational, e.g. still useful if someone made a
+     calculated column that coincidentally shadows a real one) and have the panel/`_mismatch_count`
+     treat `is_calculated` as an override that takes precedence over `ok` for both display and counting —
+     i.e. calculated columns are never counted as mismatches and never show the ✗ marker, regardless of
+     the underlying `ok` value.
+   - `_mismatch_count` (lines 91-97): the `sum(1 for column in table.columns if not column.ok)` term must
+     exclude calculated columns — change to `if not column.ok and not column.is_calculated`. Otherwise the
+     header count and this fix's own visual change disagree with each other.
+   - `_rebuild`'s "Show only mismatches" filter (lines 107-119): `mismatch_columns = [c for c in
+     table.columns if not c.ok]` (line 111) needs the same `and not c.is_calculated` exclusion, otherwise
+     calculated columns still appear (as orange, but present) when the user has asked to see only
+     mismatches, which contradicts "should not show up as mismatch" from the report. Decide whether
+     calculated columns should be hidden entirely under the filter (mismatch-only view stays purely
+     red/mismatch) or still shown as a non-filtered informational passthrough — hiding them (excluding
+     from `mismatch_columns` entirely) matches the report's intent most directly.
+   - `contextual_rename` (lines 162-172) and the context-menu "Rename … in XML…" action (lines 219-228)
+     currently gate only on `if ok: return` — must also gate on `is_calculated` (a calculated column has
+     no DB-side name to reconcile via rename; offering "Rename in XML…" for it would be nonsensical/wrong).
+   - The `Qt.ItemDataRole.UserRole` tuple stored on each column item (`("column", column.name, column.ok)`
+     at line 146) is read back by `contextual_rename` and `_on_context_menu` as `(kind, name, ok)` — if
+     `ok` itself is *not* changed to `True` for calculated columns (per the recommended approach above),
+     those two call sites must independently know about `is_calculated`, e.g. by storing a 4-tuple
+     `(kind, name, ok, is_calculated)` and updating every unpacking site (`_on_double_click` line 156-160,
+     `contextual_rename` line 166-172, `_on_context_menu` line 219-228) — grep all three for the 3-tuple
+     unpack `kind, name, ok = data` / `kind, _name, ok = data` and update consistently, since a partial
+     update will crash on unpack-count mismatch.
+
+**Test impact:** `tests/db/test_compare.py` — extend `_col()`/`_make_project()` (or add a new
+calculated-column fixture) to set `isCalculated="true"` on a `ColumnNode.attrib`, then add cases
+alongside `test_check_xml_against_db_directions` asserting the resulting `ColumnCheck.is_calculated is
+True` and (depending on the chosen `ok` semantics from step 4) whatever `ok` value was decided; also a
+`xml_table_columns`/new-helper unit test asserting the calculated flag survives the union-across-pages
+case with an OR precedence test (one page marks a field calculated, another page references the same
+field without the attribute → still calculated). `tests/ui/test_db_check_panel.py` — extend `_checks()`
+with a `ColumnCheck(..., is_calculated=True)` fixture and add cases asserting: the marker is the new
+glyph (not `✓`/`✗`), the foreground is `_CALC_COLOR`, the column is excluded from `_mismatch_count`
+(extend `test_header_shows_direction_connection_and_mismatch_count`), the column is excluded when "Show
+only mismatches" is checked (extend `test_show_only_mismatches_filters`), and no rename context-menu
+action is offered for it (extend `test_rename_requested_only_for_not_found_xml_to_db`). Also check
+`tests/ui/test_db_check_wiring.py` for any end-to-end assertion that constructs `ColumnCheck` positionally
+(if `is_calculated` is added as a new dataclass field, any positional-args construction elsewhere in that
+file or `test_compare.py` needs updating to keep passing, or the field must be keyword-only/defaulted to
+avoid breaking existing positional calls like `ColumnCheck("gone", False, None)` in
+`tests/ui/test_db_check_panel.py` line 29 — confirmed safe since `info` already defaults via
+`field(default=None)`-style annotation, so append `is_calculated: bool = False` last to preserve all
+existing positional call sites).
+
+**Spec impact:** `docs/superpowers/CONSOLIDATED_SPEC.md` §17 (Database) documents `TableCheck`/
+`ColumnCheck` shape and the panel's `✓`/`✗` glyph convention (lines 881-891) with no mention of
+`isCalculated` or a third/calculated state — this is a genuine capability gap, not a documented
+intentional decision (`isCalculated` isn't referenced anywhere in the spec or codebase today). After the
+fix lands, dispatch `spec-maintainer` to add the `is_calculated` field to the `ColumnCheck` shape
+description and the new orange/`~`-marker calculated state to the `DbCheckPanel` glyph/color convention
+in §17.
 
 ---
