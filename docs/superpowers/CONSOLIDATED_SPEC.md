@@ -1,6 +1,6 @@
 # PGTP Editor — Consolidated Specification
 
-> **Status:** living document · **Last synthesized:** 2026-08-01
+> **Status:** living document · **Last synthesized:** 2026-08-02
 > **Source of truth:** this file is the single reconciled specification for PGTP Editor.
 > It is synthesized from the dated design specs under [`docs/superpowers/specs/`](specs/) using a
 > **latest-wins** rule: where a later spec overrode an earlier decision, only the later decision
@@ -33,7 +33,8 @@
     - [18.1 Routines & triggers browsing (DDL Explorer)](#181-routines--triggers-browsing-ddl-explorer) — *implemented (except XML cross-refs)*
     - [18.2 Projects, checkout & state markers](#182-projects-checkout--state-markers) — *planned*
     - [18.3 Deploy workflow & schema diff/migration](#183-deploy-workflow--schema-diffmigration) — *planned*
-    - [18.4 SQL/plpgsql selection formatter](#184-sqlplpgsql-selection-formatter) — *core implemented 2026-08-01; still no UI consumer*
+    - [18.4 SQL/plpgsql selection formatter](#184-sqlplpgsql-selection-formatter) — *core implemented 2026-08-01; consumer designed (§18.5), not built*
+    - [18.5 The DDL object editor, apply & sandbox validation](#185-the-ddl-object-editor-apply--sandbox-validation) — *planned; **the deliverable is the generated deployment SQL script**, over a stateful sandbox (the editable tab is specified here, once)*
 19. [PHP generation (vendor) & Save](#19-php-generation-vendor--save)
 20. [re_phpgen — own generator & gap loop](#20-re_phpgen--own-generator--gap-loop)
     - [20.4 Production cutover](#204-production-cutover-target-design--not-yet-reached) — *planned*
@@ -58,6 +59,18 @@ PGTP Editor is a **PySide6 (Qt6) desktop tool** for editing SQL Maestro PostgreS
 It also functions as a **standalone Postgres DDL-versioning tool** (§18) — usable with **zero `.pgtp`
 files involved** — sharing the app's existing DB connection, code editor, and diff infrastructure
 rather than being a separate product.
+
+**Product framing (the frame that ranks the roadmap, stated by the project owner).** The app exists to
+help developers build **heavily plpgsql-centred applications safely and efficiently**. It is a direct
+correction of what those developers hit in **DBeaver — "where the only possibility is to break the
+database."** In DBeaver, editing a function and deploying it are the *same keystroke*: `CREATE OR
+REPLACE` runs against the live database the moment you save, with no intermediate state, no preview and
+no undo. **DBeaver's feature set is the floor, not the goal.** The direction is a smart IDE that keeps
+the `.pgtp` XML and the database **in sync** for fast, safe function/procedure development. Consequently
+the **edit → validate → apply loop (§18.5) is the core value proposition, not a side feature**, and
+§18's ordering follows from that: the sandbox is the missing intermediate state where *"I changed this"*
+and *"production changed"* are finally two different events; git versioning (§18.2), drift markers and
+the reviewed deploy bundle (§18.3) are all downstream of that one separation.
 
 **In scope:** parsing, viewing, structurally editing, diffing/merging, validating, and DB-checking
 `.pgtp` files; invoking the vendor generator; (as a separate sub-project) reverse-engineering the
@@ -208,7 +221,22 @@ pgtp_editor/
 │   └── settings_index.py  # enum_hint, sums (additive-value) derivation, known_attributes/known_values, unused_setting_attributes
 ├── db/                # PostgreSQL introspection & comparison (Qt-free logic)
 │   ├── config.py, introspect.py (psycopg lazy), compare.py, rename.py
-│   └── ddl_buffer.py  # build_ddl_text(schema) → (text, [DdlObjectSpan]) — DDL Explorer buffer (§18.1)
+│   │                  # introspect.py::run_queries is the sole READ seam — read-only, never commits
+│   ├── ddl_buffer.py  # build_ddl_text(schema) → (text, [DdlObjectSpan]) — DDL Explorer buffer (§18.1)
+│   ├── apply.py       # TARGET DESIGN, does not exist yet — the sole DB **write** seam: apply_ddl(...)
+│   │                  # (explicit commit/rollback, ApplyOutcome); the codebase's first write path (§18.5)
+│   ├── sandbox.py     # TARGET DESIGN — PostgresBackend protocol + LocalPostgresBackend +
+│   │                  # SandboxCapabilities + the app-owned-database ownership guard (§18.5)
+│   ├── ddl_check.py   # TARGET DESIGN — validation-ladder driver: CheckRequest →
+│   │                  # CheckReport{per-tier outcome, [CheckFinding]} (§18.5)
+│   ├── ddl_project.py # TARGET DESIGN, does not exist yet — pure DDL-project paths: object → ddl/*.sql
+│   │                  # filename (overload disambiguation, sanitization), project.json/deployed.json
+│   │                  # shapes; Qt-free & DB-free, mirroring ddl_buffer.py's precedent (§18.2)
+│   ├── schema_diff.py # TARGET DESIGN — diff_schemas(source, target) → [SchemaDifference]; the shape is
+│   │                  # §18.3's verbatim, first built by §18.5's Generate Deployment SQL with the
+│   │                  # routine/trigger cases only (table/column deferred to §18.3)
+│   └── migration_gen.py # TARGET DESIGN — generate_migration(differences, *, header) → str; pure,
+│                      # deterministic; raises UnsupportedDifference on table/column (§18.5/§18.3)
 ├── analysis/
 │   └── reused_tables.py   # collect_table_usages → TableUsage/TableReference
 ├── validation/
@@ -229,15 +257,37 @@ Key `ui/` modules: `main_window.py`, `center_stage.py`, `project_tree.py`, `xml_
 `diff_merge_panel.py`, `caption_management_panel.py`, `caption_find_replace_dialog.py`,
 `caption_scan.py`, `db_check_panel.py`,
 `connection_setup_dialog.py`, `table_references_panel.py`, `ddl_editor_panel.py`,
-`ddl_buffer_panel.py`, `manual_panel.py`, `about.py`, `icons.py`.
+`ddl_buffer_panel.py`, `manual_panel.py`, `about.py`, `icons.py`, plus the two off-GUI-thread helpers
+`async_task.py` (`run_async(fn, on_result, on_error=None, pool=None)` — the executor behind MainWindow's
+injectable `self._run_async`) and `busy.py` (`busy_status(status_bar, message)` context manager,
+`format_size`).
+**Target design, does not exist yet:** `ui/ddl_object_editor.py::DdlObjectEditorPanel` — the editable
+single-object DDL tab (**specified once, in §18.5**), a distinct tab type from the read-only
+`ddl_editor_panel.py::EditorPanel`, which stays read-only permanently.
 (Deleted with the curated-XSD pivot, §11: `schema_learning/sync.py`, `schema_learning/merge.py`,
 `ui/annotate_popover.py`, `ui/team_sync_dialog.py`, `ui/merge_conflicts_dialog.py`,
 `ui/schema_viewer.py`, `ui/schema_viewer_data.py`.)
 
 **Dependency rule:** `model/` touches lxml; nothing in `model/` or `ui/` depends on `diff/`; pure-logic
-modules (`search`, `history`, `caption_scan`, `settings_index`, `xsd_load`, `xsd_verify`, `tier2`, `db/*`,
+modules (`search`, `history`, `caption_scan`, `settings_index`, `xsd_load`, `xsd_verify`, `tier2`,
 `analysis/*`, `type_map`, `from_table`, `xml_structure`, `sql/*`) are Qt-free and unit-testable without a
-`QApplication`. The arrow points **ui → core, never core → ui**: `sql/` is the live, test-enforced
+`QApplication`.
+
+**`db/` is Qt-free with exactly one stated exception — `db/config.py`.** An earlier blanket claim that
+`db/*` is Qt-free was **factually wrong** (see ledger, §28): `db/config.py` imports `QSettings` **at
+module scope** (`from PySide6.QtCore import QSettings`, verified in the code) because the connection
+store *is* QSettings, injected from MainWindow. That is `QtCore` only — no widgets, no `QApplication`
+needed — and it is deliberate: the alternative is a second secrets/settings mechanism, which §17/§18.5
+explicitly reject. Do **not** "fix" it by inventing a parallel store. The genuinely Qt-free `db/` modules
+are therefore enumerated rather than assumed:
+
+| `db/` module | Qt-free? | Status |
+|---|---|---|
+| `introspect.py`, `compare.py`, `rename.py`, `ddl_buffer.py` | yes | implemented |
+| `apply.py`, `sandbox.py`, `ddl_check.py`, `ddl_project.py`, `schema_diff.py`, `migration_gen.py` | yes — **required** | target design (§18.5/§18.2/§18.3) |
+| `config.py` | **no** — `QtCore.QSettings` at module scope | implemented; the one accepted exception |
+
+The arrow points **ui → core, never core → ui**: `sql/` is the live, test-enforced
 precedent — `ui/code_editor.py` imports `SQL_KEYWORDS` from `sql/keywords.py`, never the reverse, and
 `tests/sql/test_package_purity.py` pins it (static AST scan for `PySide6`/DB/network/`pgtp_editor.ui`/
 `pgtp_editor.db` imports **plus** a fresh-interpreter subprocess check that importing `pgtp_editor.sql`
@@ -317,8 +367,44 @@ reimplement.
 tree**, **Contents** (manual), **Database Check**, **Table references**, and **DDL Objects** (§18.1)
 tabs (the latter three hidden until invoked). Center is a tabbed `CenterStage` (Raw XML
 [default-visible working tab], Diff/Merge, Caption Management, Manual, Edit XSD, DDL Explorer —
-non-Raw-XML tabs hidden until invoked). Bottom is a persistent
-**Audit/Problems** panel (`QListWidget`) shared by `[Schema]`, `[Validate]`, `[Find]`, `[PHP]` lines.
+non-Raw-XML tabs hidden until invoked). Every one of those is a **fixed** tab, created in
+`CenterStage.__init__` and addressed by a stored integer index (`raw_xml_tab_index`, `xsd_tab_index`,
+`ddl_tab_index`, …), shown/hidden with `setTabVisible`.
+
+> **Stated invariant — append-only creation, tail-only removal.** Runtime-created tabs (target design:
+> the per-object DDL object editor tabs, §18.5, and §18.5's read-only deployment-script preview tab) are
+> **always appended after the fixed set** (`addTab`, **never** `insertTab`) and removed only from the
+> tail, and are addressed by a **key→widget map**, never a remembered index. This is not a stylistic
+> preference: those **stored fixed indices are load-bearing in five places**, verified in the code —
+> `main_window.py::_active_find_bar`, `_active_bookmark_editor`, `_save_active_tab` and
+> `_on_ddl_navigate_requested` (all four compare `stage.currentIndex()` against `xsd_tab_index` /
+> `ddl_tab_index`), plus **every** `CenterStage.hide_*`/`show_*` method (`hide_manual`, `hide_edit_xsd`,
+> `hide_ddl_explorer`, `set_raw_xml_tab_visible`, `enter_caption_mode`/`leave_caption_mode`) and
+> `_on_tab_close_requested`'s index dispatch. A
+> single `insertTab` anywhere ahead of the fixed set silently re-points all of them. Because the
+> invariant is otherwise implicit, **a regression test is mandatory, not optional**: open two dynamic
+> tabs, close the first, and assert every fixed index still resolves to its original widget
+> (`widget(raw_xml_tab_index) is raw_xml_tab`, …). `_on_tab_close_requested` gains a **first** branch
+> that recognizes a dynamic tab by widget type and emits its close-request signal, *before* any
+> static-index comparison.
+>
+> One convenient consequence and one trap. Convenient: `setTabsClosable(True)` is already global, so an
+> appended tab gets its ✕ for free. Trap: the `_closable = (manual_tab_index, xsd_tab_index,
+> ddl_tab_index)` loop that **strips** the ✕ from non-closable tabs runs **once, in `__init__`** — it
+> never sees a runtime tab, which is exactly the behavior wanted, but it means the fixed set's closability
+> is decided at construction and must not be recomputed later over a widened tab range.
+
+Bottom is a
+persistent **Audit/Problems** panel (`QListWidget`) shared by `[Schema]`, `[Validate]`, `[Find]`, `[PHP]`
+lines. Three further prefixes are **reserved as target design and are reserved against each other in all
+directions** — no feature may quietly annex another's prefix, and no fourth SQL-ish prefix may be added:
+
+| Prefix | Owner | Reports |
+|---|---|---|
+| `[SQL]` | §18.4 formatter, hosted by §18.5's tab | **Format Selection refusals** — layout only, no DB involved |
+| `[Check]` | §18.5 sandbox validation ladder | **SQL/plpgsql validation findings** (`db/ddl_check.py`) |
+| `[Lint]` | §22 | **PHP** linting only (`php -l` / `phpcs`) |
+
 Right dock is the **Properties** panel.
 
 **Document state:** `_dirty` + `_set_dirty()` (title gets " *"); editor `textChanged` marks dirty;
@@ -331,12 +417,20 @@ existing file on save — never on Save-As to a new path, never on a failed/no-o
 `_current_project_path` is normalized to `str`.
 
 **Per-tab document routing** (curated-XSD pivot, §11): the Edit XSD tab hosts a second document with
-its **own dirty state** (tab-title `*` marker, independent of the project's `_dirty`). **Ctrl+S** and
-the Edit-menu Find/Replace actions (Find/Find Next/Find All/Replace/Replace All) route to the
-**active** center-stage tab's editor + `FindReplaceBar` — Raw XML when the Raw XML tab is active, the
-mode-aware XSD document (curated.xsd or learned.xsd per `_xsd_mode`, §11) when the Edit XSD/Edit AutoXSD
-tab is active. Project-level state (`.bak`, `_current_project_path`, reparse) is untouched by XSD-tab
-saves.
+its **own dirty state** (tab-title `*` marker, independent of the project's `_dirty`). **Ctrl+S**
+(`main_window.py::_save_active_tab`) and the Edit-menu Find/Replace actions (Find/Find Next/Find All/
+Replace/Replace All, via `_active_find_bar`) route to the **active** center-stage tab's editor +
+`FindReplaceBar` — Raw XML when the Raw XML tab is active, the mode-aware XSD document (curated.xsd or
+learned.xsd per `_xsd_mode`, §11) when the Edit XSD/Edit AutoXSD tab is active, the read-only DDL
+Explorer buffer's own bar when that tab is active, and — **target design, not yet implemented
+(§18.5)** — the active **DDL object editor tab**'s document when one of the dynamic per-object tabs is
+active. **Ctrl+S there is `Save` only:** it persists the edited text through the tab's *injected save
+callback* (§18.5 — the live-object buffer in v1, the checked-out `ddl/*.sql` file once §18.2 exists) and
+**never executes anything against a database**; pushing DDL to a database is the separate, explicitly
+confirmed **Apply** gesture (§18.5), never implied by a save and never automatic. Project-level state
+(`.bak`, `_current_project_path`, reparse) is untouched by XSD-tab and DDL-object-tab saves. The
+read-only DDL Explorer buffer keeps **no** save branch at all — it is DB-synthesized and has no save
+path (`_save_active_tab`'s asymmetry against `_active_find_bar`, which *does* branch for it).
 
 - **File ▸ Close** (Ctrl+W): if dirty, 3-way Save/Discard/Cancel (`_confirm_close()`, test-seam
   `confirm=`); clears editor+tree, resets state.
@@ -1056,7 +1150,32 @@ the **password is never read from XML** (obfuscated there) — entered by the us
 
 - `db/config.py`: `ConnectionParams(host, port, database, user, password)` with `redacted()`
   (password→`***`); `connection_from_tree` (password `""`); `load_connection`/`save_connection`;
-  `seed_params`.
+  `seed_params`. **Not Qt-free** — it imports `QtCore.QSettings` at module scope, the one stated
+  exception to §5's `db/` rule. Today it hardcodes a single QSettings group, `_GROUP = "db"`.
+
+**Connection profiles — one keying scheme for both dimensions (target design, §18.2 + §18.5).** §18.2
+needs a **per-project** key; §18.5 D2 needs a **profile role** (`target` | `sandbox`). These land as
+*one* mechanism, never two:
+
+| Piece | Contract |
+|---|---|
+| `ProfileKey(project: str = "", role: str = "target")` (frozen dataclass), `DEFAULT_PROFILE = ProfileKey()` | The single key type. Both dimensions, one value. |
+| `_group_for(key) -> str` | `key == DEFAULT_PROFILE` → **the literal string `"db"`**, byte for byte the existing group. Otherwise `"db_profiles/<slug(project)>/<role>"`, where `slug` = `sha1(path.casefold())[:16]` (`""` → `"_global"`) because a QSettings group name cannot contain `/` or `\`. |
+| `load_connection(settings, key=DEFAULT_PROFILE)`, `save_connection(settings, params, key=DEFAULT_PROFILE)`, `seed_params(tree, settings, key=DEFAULT_PROFILE)` | A **trailing defaulted** parameter on each; every existing call site keeps working unchanged. |
+
+- **The compatibility trick is load-bearing and must be preserved:** routing the default profile back to
+  the *same* `"db"` group means existing users' saved connections are **not migrated at all** — there is
+  nothing to migrate, nothing to get wrong, and an older build still reads them. **Every existing test in
+  `tests/db/test_config.py` (9 as of 2026-08-02) must pass unedited**; that is itself the compatibility
+  proof, and new tests may only be *added*. This is why the scheme beats read-fallback-plus-dual-write.
+- **`seed_params` for a `role="sandbox"` key must NOT fall back to the project's `<ConnectionOptions>`.**
+  That element describes the **target** database; seeding the sandbox profile from it is exactly how
+  someone ends up pointing "the sandbox" at production. Sandbox seeding = saved settings only, else
+  blanks with a `localhost`/`5432` default.
+- Loaders keep the existing contract: an absent or garbage group returns `None` and **never raises**.
+- Two profiles means **two plaintext passwords** in QSettings — the existing plaintext caveat label must
+  be shown for the sandbox profile too, and a *superuser* sandbox password (needed for one-click
+  `CREATE EXTENSION`, §18.5) is a trade the user must be shown, not assumed to have accepted.
 - `db/introspect.py` (psycopg lazily imported): `ColumnInfo(name, data_type, is_pk, is_fk, is_nullable,
   default, fk_target)`; `TableInfo(name, kind(table|view|matview), columns)`; `DatabaseSchema.tables`
   keyed schema-qualified (`pr.equipment`). `run_queries(params, sql)` is the **only** connection-opening
@@ -1136,13 +1255,26 @@ golden "freshly-added table" oracle; defaults are corpus-derived and **not yet f
 > `db/schema_snapshot.py`/`db/migration_gen.py` (§18.3); those parts of this section remain target
 > design, settled before implementation starts.
 >
-> **§18.4's SQL/plpgsql selection formatter core is implemented (2026-08-01) but still has no UI
-> consumer.** The Qt-free package `pgtp_editor/sql/` (`__init__.py`/`keywords.py`/`issues.py`/
-> `tokenizer.py`/`formatter.py`) and its mirror `tests/sql/` exist and are green; **nothing calls
-> `format_selection` yet**. The keyboard shortcut is still **TBD** (so §26/§27 gain no entry), the
-> editable DDL Editor surface it is meant to serve (making §18.1's read-only `EditorPanel` editable) is
-> still **undesigned and out of scope**, and the Audit-panel reporting path is a **contract only, not
-> wiring**.
+> **§18.4's SQL/plpgsql selection formatter core is implemented (2026-08-01); its consumer is now
+> designed (2026-08-02) but not built.** The Qt-free package `pgtp_editor/sql/`
+> (`__init__.py`/`keywords.py`/`issues.py`/`tokenizer.py`/`formatter.py`) and its mirror `tests/sql/`
+> exist and are green; **nothing calls `format_selection` yet**. What changed on 2026-08-02 is that the
+> host surface is no longer undesigned: the **DDL object editor** — the editable, per-object tab
+> `ui/ddl_object_editor.py::DdlObjectEditorPanel` — is fully specified in **§18.5**, together with the
+> **`Ctrl+Alt+F` / context-menu "Format Selection"** trigger (§26/§27 now carry the binding) and the
+> **`[SQL]`** Audit-panel prefix for refusals. All of that is **target design**: no code exists for the
+> tab, and the Audit-panel reporting path is still a **contract, not wiring**.
+>
+> **§18.5 (settled design 2026-08-02, not yet implemented)** specifies that editable tab **once**,
+> together with the only thing that can give it a feedback loop: a **stateful, app-provisioned sandbox
+> database** and a validation ladder over it. New modules: `db/apply.py` (the codebase's **first DB write
+> path**), `db/sandbox.py`, `db/ddl_check.py`, `db/schema_diff.py`, `db/migration_gen.py`,
+> `ui/ddl_object_editor.py`. The tab is deliberately **decoupled from §18.2's git project for v1** — no
+> `ddl/` folder, no `deployed.json`, no `*`/`!` markers — and is written against an **injected load/save
+> pair** so §18.2 layers on later by swapping only where the buffer loads from and saves to.
+> **§18.5's headline deliverable is the generated deployment SQL script**, not the editable tab: the
+> sandbox is the *desired state*, production is the *current state*, and the output is one reviewed
+> migration script run once to upgrade the real database. See §18.5's ranked outputs.
 
 **Strategic framing.** This is **not** a feature bolted onto `.pgtp` editing — it is a standalone
 Postgres DDL-versioning mode, independent of phpgen/`.pgtp` entirely, usable with zero `.pgtp` files
@@ -1157,10 +1289,20 @@ Database menu. Generic DB introspection primitives it depends on (`RoutineInfo`/
 `DatabaseSchema.routines`/`.triggers`, §17) stay in §17, reused by both the pre-existing DB-check
 features and this workflow.
 
-Three parts, in dependency order: **§18.1** browses live routines/triggers in one synthesized buffer
-(unchanged in shape from the original DDL Explorer design); **§18.2** introduces the "project" concept,
-checkout-to-edit, and the `*`/`!` state markers; **§18.3** is the deploy workflow, which reuses §18.1's
-browsing UI and the diff/migration engine originally specified as a schema-compare-only tool.
+Five parts. **Section order is not build order** — the numbering is historical and other documents
+reference it, so it is kept stable:
+
+| Part | Scope | Depends on |
+|---|---|---|
+| **§18.1** | Browses live routines/triggers in one synthesized read-only buffer (unchanged in shape from the original DDL Explorer design) | — (implemented) |
+| **§18.5** | The **stateful sandbox as desired state**, the **generated deployment SQL script** (its headline deliverable), the validation ladder, and the **editable single-object DDL tab** (`ui/ddl_object_editor.py::DdlObjectEditorPanel`) with its Save/Apply gestures. **The editable tab is specified here and only here.** | §18.1 only — explicitly buildable **before** §18.2/§18.3 |
+| **§18.2** | The "project" concept (git repo, `ddl/*.sql` file-per-object, `.ddlproject/` manifests), checkout-to-edit, and the `*`/`!` state markers. Adds **no new tab type**: it swaps §18.5's tab's injected load/save pair and adds marker rendering. | §18.1, §18.5 |
+| **§18.3** | The reviewed **batch** deploy workflow, reusing §18.1's browsing UI and the shared diff/migration engine originally specified as a schema-compare-only tool | §18.2 |
+| **§18.4** | The Qt-free SQL/plpgsql selection formatter core (implemented), whose one host surface is §18.5's tab | §18.5 for its consumer |
+
+**Build order is therefore §18.1 → §18.5 → §18.2 → §18.3.** §18.5 was deliberately re-scoped to sit
+before §18.2: a git project, a manifest, a hash scheme and a marker recompute is a large prerequisite to
+place in front of "edit one function and find out whether it compiles" (§18.5 D1, §28).
 
 **Truth model (first-class design principle, not an implementation footnote): the database is the
 sole source of truth; git is a history/audit log only, never authoritative for "current state."**
@@ -1236,12 +1378,17 @@ trigger:**
   through. `CenterStage` exposes `show_ddl_explorer()`/`hide_ddl_explorer()` and a
   `ddl_explorer_visibility_changed = Signal(bool)`. API: `EditorPanel.set_ddl_text(text, spans=None)`
   (a fresh `build_ddl_text` result — text plus its `DdlObjectSpan` list, which drives the fold regions,
-  below) and `EditorPanel.navigate_to_line(line)` (delegates to
+  below; today the spans are converted to fold regions and then **dropped** — **target design (§18.5):
+  the panel must additionally retain the span list** (e.g. `self._spans`), because the right-click ▸
+  Edit entry point resolves the clicked line to the object whose `start_line..end_line` contains it)
+  and `EditorPanel.navigate_to_line(line)` (delegates to
   `CodeEditor.navigate_to_line`, §8, then focuses the editor). This tab is **read-only, DB-sourced,
   live/synthesized** (`editor.setReadOnly(True)`; `CodeEditor.replace_current_selection` no-ops on
   read-only editors, the guard that actually protects the buffer since `QTextCursor` edits bypass
-  `setReadOnly`) — the checked-out, editable form lives in `ddl/*.sql` files (§18.2), edited in a
-  separate tab type.
+  `setReadOnly`) — and it is read-only **permanently, not provisionally**. The editable form is a
+  **separate tab type**, the per-object DDL object editor of §18.5 (loading from the live introspected
+  definition in v1, from the checked-out `ddl/*.sql` file once §18.2 exists). Nothing is ever pushed to a
+  database from `EditorPanel`.
 - **Implemented — editor affordances (parity with the Raw XML editor's `XmlEditor`, via the shared
   mixin — §8):** the DDL `CodeEditor` carries the **same three affordances `XmlEditor` has**: (i) a
   **line-number gutter**, (ii) **line bookmarks**, and (iii) **code folding**, all from
@@ -1396,28 +1543,89 @@ piece), unchanged in mechanism:**
   and open Connection Setup. Fetch error → status-bar message (`DDL Explorer failed: {exc}`) + uncheck
   the toggle. Params are logged redacted (`debuglog.redacted`).
 
-**Explicitly phase 2, not built alongside phase 1 read-only browsing:** DB-side write-back — editing a
-routine's source inline in the `EditorPanel` tab itself and pushing `CREATE OR REPLACE FUNCTION …`
-straight to the live DB, with the diff detected per `DdlObjectSpan`. This is distinct from — and not a
-prerequisite for — §18.2/§18.3's checkout/deploy workflow, which edits a separate `ddl/*.sql` file and
-never writes to `EditorPanel` itself. If/when phase-2 inline write-back is built, it would be gated
-behind a diff-preview + explicit confirm, all-or-nothing, mirroring the Diff/Merge Apply discipline
-(§12).
+**Editing is deliberately NOT hosted here.** The earlier "phase 2" sketch — making this multi-object
+buffer editable in place and pushing `CREATE OR REPLACE FUNCTION …` from it, with the diff detected per
+`DdlObjectSpan` — is **superseded** (§28). A regenerated, whole-schema browsing buffer cannot host
+per-object validation, per-object apply, or per-object dirty state, and it conflicts with §18.2's
+file-per-object model. `EditorPanel` is read-only **permanently**. The editable surface is §18.5's
+separate single-object tab, which reaches this panel only through the right-click ▸ Edit entry point
+(and therefore needs the retained span list noted above).
 
 ### 18.2 Projects, checkout & state markers
 
+> **Status: target design, not yet implemented.** Nothing in this subsection exists in the codebase —
+> there is no `db/ddl_project.py`, no project menu actions, no `.ddlproject/` handling and no marker
+> rendering on `BrowserPanel`. §18.1's browsing substrate (which *is* implemented) and §18.5's editable
+> tab (target design) are what this builds on.
+>
+> **This subsection adds no new tab type.** The editable single-object tab is
+> `ui/ddl_object_editor.py::DdlObjectEditorPanel`, specified **once**, in **§18.5**. Everything here is
+> the *versioning* layer around it: what a project is, how files are named, what checkout does to the
+> tab's **injected load/save pair**, and the `*`/`!` drift markers. Do not restate the tab here.
+
 **"Project" — a new concept, distinct from a `.pgtp` file.** A project = a git repo containing:
 
-- A **committed** project JSON: project name, description, and **non-secret** connection metadata only
-  (host/port/database/user — explicitly **no password**).
-- A `ddl/` folder: **one file per DDL object** (function/procedure/trigger) — deliberately
-  file-per-object (not one big file) specifically so `git diff`/`git blame` work meaningfully per
-  object. This is the git-tracked, human-readable form of what's in `EditorPanel` (§18.1's single-buffer
-  read-only browsing view is the live/synthesized view; `ddl/*.sql` files are the versioned,
-  checked-out, editable form).
-- An **optional** link to a `.pgtp` file — a project may have **zero, one pre-existing, or one
-  newly-created** `.pgtp`. Not required, not assumed. (Only when a `.pgtp` link exists does §18.1's XML
-  cross-referencing angle apply.)
+| Path | Committed? | Role |
+|---|---|---|
+| `.ddlproject/project.json` | yes | Project name, description, **non-secret** connection metadata only (host/port/database/user — explicitly **no password**), and the optional `.pgtp` link. |
+| `ddl/*.sql` | yes | **One file per DDL object** (function/procedure/trigger) — see the naming scheme below. |
+| `.ddlproject/deployed.json` | yes | The deploy manifest (content-hash + deployed commit id per object; see "last-deployed reference" below). |
+
+- `ddl/` is deliberately **file-per-object** (not one big file) specifically so `git diff`/`git blame`
+  work meaningfully per object. This is the git-tracked, human-readable form of what's in `EditorPanel`
+  (§18.1's single-buffer read-only browsing view is the live/synthesized view; `ddl/*.sql` files are the
+  versioned, checked-out, editable form).
+- The `.pgtp` link is **optional** — a project may have **zero, one pre-existing, or one newly-created**
+  `.pgtp`. Not required, not assumed. (Only when a `.pgtp` link exists does §18.1's XML cross-referencing
+  angle apply.)
+
+**Neither browsing nor single-object editing needs a project — only *versioning* does.** Opening the
+DDL Explorer (§18.1) stays **connection-only**, exactly as implemented today. Right-click ▸ Edit…
+(§18.5) is likewise connection-only: it loads the live introspected definition into the editable tab, so
+"edit one function and find out whether it compiles" never requires a git repo. A project becomes
+required only for the versioned workflow this subsection adds: **checked-out `ddl/` files, drift markers
+and deploy**.
+
+**Menu actions** (Database menu, §26, alongside the existing Connection Setup / Check / DDL Explorer
+entries): **New DDL Project…**, **Open DDL Project…**, **Close DDL Project**.
+
+**No project is ever created silently.** Invoking a **project-scoped** action with no project open —
+Check Out for Versioning, Deploy, or anything that would write under `ddl/` — shows a **"DDL project
+required"** dialog offering **Create… / Open… / Cancel**; on Create/Open the operation then proceeds
+against the newly-active project, on Cancel nothing happens. Plain Edit… never raises this dialog.
+Rationale, stated so it is not re-litigated: initializing a git repo on disk is an **outward effect**,
+and this app confirms before outward effects (cf. Generate PHP's Save-vs-Save-As prompt §19, Diff/Merge's
+Apply gate §12).
+
+**File naming — disambiguate only when needed.**
+
+| Case | Path | Example |
+|---|---|---|
+| Routine, sole holder of its `schema.name` | `ddl/<schema>.<name>.sql` | `ddl/public.recalc.sql` |
+| Routine that is **overloaded** (≥ 2 routines share `schema.name`) | `ddl/<schema>.<name>(<argtypes>).sql` | `ddl/public.fmt(integer).sql`, `ddl/public.fmt(text).sql` |
+| Trigger (always table-qualified — a trigger name is unique only per table) | `ddl/<schema>.<table>.<trigger>.sql` | `ddl/public.orders.trg_audit.sql` |
+
+The flat `ddl/<schema>.<name>.sql` scheme this replaces (see the Supersession Ledger, §28) **collides**:
+Postgres allows overloaded functions (`f(int)` and `f(text)` are distinct objects sharing
+`schema.name`), and trigger names repeat across tables. Qualifying *only when needed* keeps the common
+case short and keeps `git diff`/`git blame` readable — the stated reason for file-per-object above.
+`<argtypes>` is `RoutineInfo.arg_types` comma-joined — the **same** list `build_ddl_text`'s banner
+comment already prints (§18.1), so a file name and its banner never disagree; `<table>` is
+`TriggerInfo.table`.
+
+> **Accepted trade-off, stated plainly (not an oversight):** when a *second* overload of an
+> already-checked-out routine first appears, the existing `ddl/public.fmt.sql` must be **renamed** to
+> `ddl/public.fmt(integer).sql`. Git records that as delete+add unless the rename is performed
+> deliberately (`git mv`), so the tool must do the rename deliberately rather than write-new + leave-old.
+> The alternative — always qualifying every routine — was rejected because it makes the overwhelmingly
+> common non-overloaded case noisy for no benefit.
+
+**Path computation is pure and Qt-free.** The `object → ddl/*.sql` path function, the "is this
+`schema.name` overloaded" decision (which needs the whole routine set, not one routine), and filename
+sanitization (path separators, characters illegal on Windows, case-insensitive-filesystem collisions)
+all live in the new pure module **`db/ddl_project.py`** — mirroring `db/ddl_buffer.py`'s precedent so
+they are unit-testable without Qt and without a database. The same module owns the `project.json` /
+`deployed.json` shapes.
 
 **Password handling.** The plaintext password is explicitly **kept out of git**. Reuses the app's
 **existing** `db/config.py::ConnectionParams`/`save_connection` local-settings mechanism (§17) rather
@@ -1425,14 +1633,69 @@ than inventing a new local-secrets file — but this **requires generalizing tha
 single-global-connection to keyed-per-project** (by project path or a project id), since today
 (`db/config.py`, `_GROUP = "db"`, a single fixed QSettings group) it holds exactly one connection at a
 time regardless of which project or `.pgtp` file is open. This is a **required change to the existing
-`db/config.py`**, not a new parallel mechanism: `load_connection`/`save_connection` gain a project-key
-parameter (or an equivalent keyed-group scheme) so each DDL-versioning project's connection (host/port/
-database/user/password) persists independently.
+`db/config.py`**, not a new parallel mechanism: `load_connection`/`save_connection`/`seed_params` gain a
+trailing defaulted `ProfileKey(project, role)` parameter so each DDL-versioning project's connection
+(host/port/database/user/password) persists independently. **§18.5 adds the second dimension to the same
+generalization** — a `role` (`target` | `sandbox`) alongside the project key. Both dimensions are one
+keyed-group scheme in `db/config.py`, and one `ConnectionSetupDialog` with a profile selector: never a
+second settings store, never a second dialog. **The scheme is specified once, in §17** — including the
+compatibility trick that keeps the default profile on the literal existing `"db"` group so no saved
+connection needs migrating and every existing `tests/db/test_config.py` test passes unedited.
 
-**Checkout-to-edit.** Right-click an object in `BrowserPanel` (§18.1) — or its span in `EditorPanel` —
-opens a new, single-object **editable** tab, a distinct tab type from the read-only `EditorPanel`,
-editing just that one `ddl/<schema>.<name>.sql` file. Saving writes to that local file **only** — it
-never touches the live DB directly (DB writes only happen via the reviewed §18.3 deploy step).
+**Checkout-to-edit.** The gesture and the tab are §18.5's (right-click ▸ Edit… on `BrowserPanel.tree`
+or inside an object's span in the read-only `EditorPanel` — see §18.5 for the entry-point table, the
+widget idioms and the span resolution). What a project adds is a **second variant of that gesture**,
+**Check Out for Versioning**, which performs the checkout below and *then* opens the same tab with its
+injected load/save pair pointed at the checked-out file instead of the live definition. It is not a
+second tab type and not a second editor.
+
+**Checkout semantics (the operation itself):**
+
+1. Resolve the object's `ddl/*.sql` path via `db/ddl_project.py` (naming scheme above).
+2. **File absent** → **seed** it from the live introspected definition (`RoutineInfo.source`, i.e.
+   `pg_get_functiondef`; `TriggerInfo.definition`, i.e. `pg_get_triggerdef` — §17/§18.1) and write it.
+   That write **is** the checkout.
+3. **File present** → open it from disk. **The local file is the editable truth and is never silently
+   overwritten from the live DB.**
+4. If the live DB has drifted from the last-deployed reference (the `!` marker, below), **surface it —
+   an Audit line and the existing marker — but do not block editing.** This is the embrace-drift
+   principle: the tool surfaces disagreement, it does not auto-resolve. (Drift blocks **deploy**, §18.3
+   — never editing.)
+
+Checkout itself never opens a database write transaction: it only reads, through
+`db/introspect.py::run_queries` — the sole **read** seam, which only ever `execute`s + `fetchall`s and
+never commits (§17). Database *writes* exist in exactly one place, the separate `db/apply.py` seam
+introduced by §18.5, and checkout does not use it.
+
+**Save vs. Apply under a project — and how this relates to §18.3.** Once the tab's save callback points
+at a checked-out file, **Ctrl+S / Save writes that `ddl/*.sql` file and nothing else** (UTF-8;
+**deliberately no `.bak` sidecar** — the file is git-tracked and git is the history, an intentional
+divergence from §19's `.pgtp` save). **Apply remains the separate, explicitly confirmed §18.5 gesture**
+and is unchanged by checkout: it can target the sandbox or the target database, each confirm-gated.
+Saving never applies and applying never saves.
+
+The two write-to-a-real-database paths are deliberately different gestures with different guardrails,
+and **§18.3 is authoritative whenever both could apply**:
+
+| | §18.5 single-object **Apply** | §18.3 **Deploy** |
+|---|---|---|
+| Scope | exactly one object, the one in the active tab | a **batch** of `*`-flagged objects |
+| Review | a confirmation naming the object and the database | a reviewed, order-adjustable SQL bundle |
+| Drift gate | none — drift is surfaced, not blocking | **any `!`-flagged object blocks the whole batch** |
+| Manifest / git | writes nothing to `deployed.json`, makes no commit | updates `.ddlproject/deployed.json` + commits |
+| Use it for | iterating on one routine | rolling a reviewed change set out |
+
+Consequence, stated so the two never read as duplicates: a single-object Apply to the **target** database
+is a legitimate, narrow, individually-confirmed action — but it is **not** a deploy. It does not record
+last-deployed state, so the object will subsequently read as `!` (live DB differs from the last-deployed
+reference), which is correct and intended: the versioned record of what is deployed is only ever written
+by §18.3. **When a project is open and the objects involved are checked out, the reviewed §18.3 deploy is
+the authoritative path**; single-object Apply exists for the edit/validate loop, not for rollout.
+
+**Tab key under a project.** §18.5's dynamic-tab map is keyed by a stable per-object key; once an object
+is checked out, that key is the **resolved absolute `ddl/*.sql` path**, so re-invoking Edit on a
+checked-out object focuses the existing tab rather than opening a second one. (Project-less, the key is
+the object's `DdlObjectSpan` identity — §18.5.)
 
 **State markers — combinable, not a new third symbol.** Rendered on `BrowserPanel` (§18.1) tree items:
 
@@ -1474,7 +1737,7 @@ cached or trusted from a prior session.
    batch naming each blocker, recovery = resolve then re-run) rather than inventing new machinery. Do
    not let a stale local edit silently overwrite a live DB change that happened independently.
 3. Assembled into a single reviewed SQL bundle — **statement order is adjustable, content is not
-   editable there** (editing only happens in the single-object checkout tabs, §18.2). This is
+   editable there** (editing only happens in the single-object editor tabs, §18.5). This is
    explicitly **NOT** a second diff/generation engine — it invokes the **same** underlying
    diff/assembly machinery specified below, just from an edit-driven entry point (comparing local
    `ddl/` files against the last-deployed reference) rather than a schema-compare-driven entry point
@@ -1500,7 +1763,11 @@ cached or trusted from a prior session.
   diff view. It only emits a reviewed `.sql` file (**"Save Migration As…"**) for the user's own deploy
   path, or (§18.3 step 4) the explicit, reviewed deploy action above. Auto-apply of DDL is out of scope
   — DDL against production is exactly the class of hard-to-reverse action this tool must not silently
-  automate.
+  automate. **This non-goal is about *automatic* and *unreviewed* execution, not about all execution:**
+  §18.5's single-object **Apply**, which does execute DDL against the sandbox or the target database, is
+  compatible with it precisely because it is neither — it is one object, initiated by hand, behind a
+  confirmation naming the object and the database. See §18.2's Apply-vs-Deploy table for which of the two
+  is authoritative when both could apply (short answer: **Deploy**).
 - **Database menu** gains **"Compare Schemas…"** (source/target: live connection or snapshot file) and
   **"Save Schema Snapshot…"**.
 
@@ -1524,25 +1791,30 @@ cached or trusted from a prior session.
 
 ### 18.4 SQL/plpgsql selection formatter
 
-> **Status: core implemented 2026-08-01 (`pgtp_editor/sql/`, `tests/sql/`); still no UI consumer.**
-> Scoped as a standalone, Qt-free formatter **core only**, and it is still **not wired into anything**:
-> nothing calls `format_selection`, the keyboard shortcut that will trigger it is **TBD** (no binding
-> chosen, so §26/§27 gain no entry), and the DDL Editor surface it is meant to serve (making §18.1's
-> currently read-only `EditorPanel`/`ui/ddl_editor_panel.py` editable) is itself **still not designed** —
-> building that editor is explicitly **out of scope** of this subsection and is future work tracked
-> separately. There is **no auto-format mode**, **no "Lint Selection" action**, and **no rule catalog**
-> beyond the tokenize/balance floor. The Audit-panel reporting path below is a **contract** (the `Issue`
-> span exists so a future host can underline the offending construct), **not wiring**.
+> **Status: core implemented 2026-08-01 (`pgtp_editor/sql/`, `tests/sql/`); consumer designed
+> 2026-08-02 (§18.5), not built.** Scoped as a standalone, Qt-free formatter **core only**, and it is
+> still **not wired into anything** — nothing calls `format_selection`. What is no longer open is
+> *where* it will be called from: the host surface is the **DDL object editor** (the editable per-object
+> tab `ui/ddl_object_editor.py::DdlObjectEditorPanel`), fully specified in **§18.5**; the
+> trigger is **`Ctrl+Alt+F`** plus a context-menu **"Format Selection"** item in that tab, enabled only
+> with a selection (so §26/§27 now carry the binding); and refusals report to the Audit panel with the
+> **`[SQL]`** prefix (distinct from §18.5's `[Check]` validation findings and §22's `[Lint]` — the
+> three-way reservation is in §7). That host **does not exist yet** — building it is §18.5's scope, not
+> this subsection's — so the Audit-panel reporting path below remains a **contract** (the `Issue` span
+> exists so the host can underline the offending construct), **not wiring**. Unchanged: there is **no
+> auto-format mode**, **no "Lint Selection" action**, and **no rule catalog** beyond the tokenize/balance
+> floor.
 
-**Problem framing.** Once a future DDL Editor makes plpgsql function/trigger bodies hand-editable,
+**Problem framing.** Once §18.5's DDL object editor makes plpgsql function/trigger bodies hand-editable,
 "uniformity" for that editing means **consistent indentation and line breaks only** — not keyword
 casing, not identifier casing, not comma placement/style, not literal values. This subsection defines
 the formatter that enforces that narrow notion of uniformity.
 
 **Trigger & scope — explicit-only, no auto-mode, full stop:**
 
-- Invoked **only** by an explicit keyboard shortcut (exact binding **TBD** at implementation time) on
-  the current text **selection** in whatever editor eventually hosts it. There is **no** auto-format-on-
+- Invoked **only** by an explicit user action on the current text **selection**: **`Ctrl+Alt+F`** or the
+  **"Format Selection"** context-menu item in §18.5's DDL object editor tab, both enabled only when a
+  selection exists (§18.5 owns that wiring; §26/§27 record the binding). There is **no** auto-format-on-
   edit and **no** format-on-save, and — unlike Auto Parse XML (§9, off-by-default but togglable) — this
   formatter has **no auto-mode at all**: the user explicitly rejected an auto-mode as "intrusive and
   counterintuitive" during design. Do not add one without a fresh design decision superseding this one.
@@ -1722,32 +1994,884 @@ explicit exclusions below). Clause-level incompleteness is *not* a refusal reaso
 - **Exception:** an unterminated string / quoted identifier / dollar-quote / block comment is reported
   **alone** and short-circuits **before** the balance walk, because any balance conclusion drawn past a
   broken quote is unreliable.
-- **Reporting contract (not wiring):** on refusal, the host is expected to report through the **Audit
+- **Reporting contract (designed, still not wiring):** on refusal, the host reports through the **Audit
   panel** (§7 — the app's single output surface for all actions, already used by
-  `[Schema]`/`[Validate]`/`[Find]`/`[PHP]`-prefixed lines) using the `Issue` span so the exact construct
-  can be underlined (e.g. the specific unmatched `BEGIN`) rather than the whole line flagged. **No such
-  consumer exists yet**, and no audit prefix has been chosen; the span is carried precisely so one can be
-  added without touching the core.
+  `[Schema]`/`[Validate]`/`[Find]`/`[PHP]`-prefixed lines) under the **`[SQL]`** prefix, and uses the
+  `Issue` span to **underline the exact construct** (e.g. the specific unmatched `BEGIN`) rather than
+  flagging the whole line — the span is carried precisely for that. The designated host is §18.5's DDL
+  object editor tab; **it does not exist yet**, so no code in the tree calls this today. The core is
+  unchanged by the host's arrival.
 
 **Explicitly out of scope of this subsection (deferred/future, not designed here):**
 
-1. **The DDL Editor UI surface itself** (a future §18.2/§18.3-adjacent enhancement to §18.1, making
-   `EditorPanel`/`ui/ddl_editor_panel.py` editable) — this subsection covers only the reusable formatter
-   core and its keyboard-shortcut trigger *contract* (shortcut TBD). Wiring `format_selection` into a
-   real editing surface, and choosing the concrete shortcut, is future work once that editor exists. As
-   of today the formatter core is shipped and tested but has **no consumer**.
-2. **Semantic/existence linting** (verifying that referenced tables/columns/functions actually exist) is
-   a **separate, explicitly deferred idea** — not designed here and not part of `format_selection`'s
-   refusal gate. It is expected to become its own forthcoming specification built around restoring a
-   schema-only scratch PostgreSQL database and the `okbob/plpgsql_check` extension
-   (github.com/okbob/plpgsql_check — 771 stars, actively maintained, supports PostgreSQL 14–18, checks
-   already-created functions/triggers via `plpgsql_check_function()`/`plpgsql_check_function_tb()`
-   returning `lineno`/`position`/`sqlstate`/`message`). This is a forward pointer only, so a reader does
-   not wonder where "the linter" went — none of that mechanism is designed or committed to by this
-   subsection.
+1. **The DDL object editor UI surface itself** — now **designed in §18.5** (a *new* editable per-object
+   tab, `ui/ddl_object_editor.py::DdlObjectEditorPanel`; note it is **not** §18.1's read-only
+   `EditorPanel` made editable — that panel stays read-only permanently). This subsection still covers
+   only the reusable formatter core; the tab, its context menu, the `Ctrl+Alt+F` action, the
+   selection-only enablement, the single-undo-step replacement and the `[SQL]` Audit reporting all
+   belong to §18.5. As of today neither the tab nor the wiring exists — the formatter core is shipped
+   and tested but has **no live consumer**.
+2. **Semantic/existence linting** (verifying that referenced tables/columns/functions actually exist) —
+   **no longer merely deferred: it is designed in §18.5** as the sandbox-backed validation ladder
+   (schema-only scratch PostgreSQL + the `okbob/plpgsql_check` extension). It remains **entirely outside
+   `format_selection`'s refusal gate**, which stays tokenize/balance only, runs offline, and never
+   touches a database. The two are separate surfaces reporting under separate Audit prefixes (`[SQL]`
+   formatter refusals vs. `[Check]` validation findings, §7).
 3. To restate plainly: there is **no** "Lint Selection" action, **no** rule catalog beyond the
    tokenize/balance floor, and **no** auto-format mode. Any of these appearing designed elsewhere in this
    document would be drift from this settled decision.
+
+### 18.5 The DDL object editor, apply & sandbox validation
+
+> **Status: settled design (2026-08-02), not yet implemented.** Nothing described here exists in the
+> codebase: `ui/ddl_object_editor.py`, `db/apply.py`, `db/sandbox.py`, `db/ddl_check.py`,
+> `db/schema_diff.py` and `db/migration_gen.py` are all new,
+> `CenterStage` has no dynamic tabs, there are no context menus on `BrowserPanel.tree` or the DDL
+> `EditorPanel`, and the Database-menu entries below are not built. §18.1's browsing substrate (which
+> *is* implemented) and §18.4's formatter core (which *is* implemented) are the only things this builds
+> on.
+>
+> **This subsection is the single specification of the editable DDL tab.** §18.2 (projects, checkout,
+> markers) references it and changes only *where the tab's buffer loads from and saves to*; it does not
+> restate it and does not introduce a second editable surface. Two parallel design sessions on
+> 2026-08-02 produced overlapping drafts of this tab; they are reconciled here, and the overrides are in
+> the Supersession Ledger (§28).
+
+#### The three outputs, ranked — read this before anything else
+
+An earlier reading of this section as *"an editable tab with a lint target"* is **wrong** and is
+superseded (§28). The feature's outputs are ranked by **value**, and the ranking is what the design must
+serve:
+
+| Rank | Output | What it is |
+|---|---|---|
+| **1** | **Generate Deployment SQL — THE deliverable** | Sandbox = **desired state**, production = **current state**, output = **one reviewed `.sql` migration script**, run once, to upgrade the real database. Built on `db/schema_diff.py` + `db/migration_gen.py` to §18.3's exact shapes. |
+| **2** | **The stateful sandbox** | An accumulating, executable **desired state** you can prove is coherent (it compiles, it checks) *before* it is diffed. Not a scratch pad that resets between checks. |
+| **3** | **Per-object Save / Apply** | A **convenience** and the **§18.2 precursor** — `Save As… .sql` is exactly §18.2's future `ddl/<schema>.<name>.sql` arriving early. Genuinely useful; **demoted from headline**. |
+
+Build order follows the ranking's dependencies rather than the ranking itself: the write/read
+capabilities and the connection profiles first (invisible infrastructure), then the sandbox
+(`db/sandbox.py`) and the ladder (`db/ddl_check.py`), then the editable tab (which ships useful with **no
+sandbox at all** — edit + Save As), then sandbox setup, then check wiring, and **finally the deployment
+script**, which is worthless without validation: never ship a deployment script assembled from routines
+nobody proved compile. The last thing built is the first thing the user cares about.
+
+**Why the editor and the sandbox are one feature, not two.** A hand-editable DDL tab with no feedback
+loop teaches the user nothing until the moment it is most expensive to learn. The alternatives to a
+sandbox are all worse:
+
+- **Deploy-time discovery** (§18.3) — the user finds out whether their plpgsql compiles at the exact
+  moment the tool exists to make safe.
+- **Apply-to-target discovery** — even with Apply's confirmation gate (below), *using production as your
+  compiler* is precisely the outward effect this app is built to avoid; a confirm dialog makes an action
+  deliberate, it does not make it a feedback loop.
+- **Formatter-as-proxy** (§18.4) — the formatter is indentation and line breaks only, with no semantic
+  rule and no database access at all. It can tell you your `BEGIN` is unmatched; it can never tell you
+  `NEW.custmer_id` is a typo.
+
+Reinforcing this: `pg_dump` sets `check_function_bodies = off` during restore, so a restored database has
+had **zero** validation of its function bodies — "it restored cleanly" says nothing about whether the
+routines compile. Editor and sandbox are therefore specified together and built together.
+
+#### D1 — Editor scope: a single-object editable tab, project-decoupled for v1
+
+The loop is **edit → validate against the sandbox → save, and/or explicitly apply**. Right-click an
+object → **Edit…** opens a new **single-object editable tab** in `CenterStage` holding just that one
+routine or trigger.
+
+- **v1 has no `ddl/` folder, no `.ddlproject/deployed.json` manifest, and no `*`/`!` state markers.**
+  All three are §18.2 concepts; **none is a prerequisite** for editing one function with feedback. The
+  buffer is loaded from the live introspected definition (`RoutineInfo.source` /
+  `TriggerInfo.definition`, §17/§18.1).
+- **The tab is written against an injected load/save pair, never a hard-coded source.** This is a
+  structural requirement, not a style preference: it is the entire mechanism by which §18.2 layers on
+  later **without rework** — checkout swaps the pair (live definition → checked-out
+  `ddl/<schema>.<name>.sql`) and adds marker rendering on `BrowserPanel`, and the tab, its command set,
+  its validation and its Apply gestures are untouched. The tab must not import `db/ddl_project.py`, must
+  not know what a project is, and must not branch on whether one is open.
+- **Rejected: build full §18.2 first.** *(Operative rationale — this reverses an earlier decision, §28.)*
+  A git project, a manifest, a hash scheme and a marker recompute is a large prerequisite to place in
+  front of "edit one function and find out whether it compiles."
+- **Rejected: make the multi-object `EditorPanel` buffer editable in place.** A regenerated whole-schema
+  buffer cannot carry per-object dirty state, per-object validation or per-object apply, and it conflicts
+  with §18.2's file-per-object model. `EditorPanel` stays read-only **permanently** (§18.1), not
+  provisionally.
+
+**Two entry points, both right-click, converging on one operation.**
+
+| Entry point | Gesture | Resolution |
+|---|---|---|
+| `BrowserPanel.tree` (§18.1, left dock "DDL Objects") | right-click an **object row** ▸ **Edit…** | the row's `DdlObjectSpan` (`Qt.ItemDataRole.UserRole`, `_SPAN_ROLE`) |
+| DDL `EditorPanel`'s read-only SQL buffer (center "DDL Explorer" tab) | right-click inside an object's span ▸ **Edit \<schema>.\<name>…** | the retained `DdlObjectSpan` whose `start_line..end_line` contains the clicked line |
+
+- **`EditorPanel` must retain its span list** (e.g. `self._spans`) for the second entry point. Today
+  `set_ddl_text(text, spans)` converts the spans to fold regions and **drops** them (§18.1) — that is a
+  required amendment, not an optional one.
+- **Left-click behavior is unchanged** on both surfaces: the tree still emits `navigate_requested(line)`
+  and the buffer still navigates top-aligned (§18.1).
+- **Argument-name child leaves are not editable targets** — they carry no span (`_SPAN_ROLE` unset,
+  §18.1), so their context menu offers no Edit. Only object rows (routine leaves and both trigger
+  occurrences) do.
+- **Widget idioms, matching what this codebase already does:** the tree uses
+  `setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)` + `customContextMenuRequested` (the
+  `db_check_panel.py` / `project_tree.py` pattern); the editor overrides `contextMenuEvent` and extends
+  `createStandardContextMenu()` (the `xml_editor.py` pattern), moving the caret to the clicked document
+  position first so the resolved span reflects the click and not a stale caret.
+- Neither entry point writes to a database. With a project open, §18.2 adds a second variant of the
+  gesture — **Check Out for Versioning** — which performs a checkout first and then opens this same tab
+  with its load/save pair repointed.
+
+**Tab shape (`ui/ddl_object_editor.py::DdlObjectEditorPanel`).** A **new tab type**, distinct from the
+read-only `EditorPanel`, **one tab per object**. It hosts the **existing**
+`ui/code_editor.py::CodeEditor` in `language="sql"` mode made **editable** (`setReadOnly(False)`) — the
+same widget, highlighter, 4-character tab stop and `ui/editor_gutter.py::GutterBookmarkFoldMixin`
+gutter/bookmarks/folding the read-only DDL Explorer uses (§8/§18.1) — plus its own `FindReplaceBar`
+instance, following the established per-tab document-routing precedent (Edit XSD, DDL Explorer; §7/§15).
+
+- **Re-invoking Edit on an already-open object focuses the existing tab** — never a second tab for the
+  same object.
+- **Title** = the object's short identity (`recalc`, `fmt(integer)`, `orders.trg_audit`) plus a dirty
+  marker (the `" *"` convention the Edit XSD tab already uses, §11); **tooltip** = the full source
+  identity (the qualified object name in v1, the absolute file path once checked out).
+- **Closable.** Closing with unsaved changes prompts — reusing the established Edit-XSD pattern where
+  the **tab signals the MainWindow** to run the confirm (`CenterStage.xsd_close_requested` →
+  `MainWindow._on_xsd_close_requested` → `_confirm_close_xsd()`), rather than the tab deciding for
+  itself. Save / Discard / Cancel; on Cancel the tab stays open and dirty.
+- **Deliberately no `.bak` sidecar** on the file-backed variant — unlike `.pgtp` save (§19) and unlike
+  `curated.xsd` import (§11). The file is git-tracked and **git is the history**; a `.bak` beside it
+  would be untracked noise inside a versioned tree. This divergence from §19 is intentional.
+- **A small button row** carries the three sandbox gestures — **Apply to Sandbox** / **Check** / **Check
+  without applying** — each of which merely **emits a signal**; MainWindow owns every piece of DB work,
+  off-thread. The same three are reachable from the Database menu and the tab's context menu (§26).
+- The panel holds an **`applied_sha1`** slot so it can render *"changed since you last applied it"*
+  against the sandbox working set (D2), and so **Check** on a diverged buffer emits a `[Check]` caveat
+  line instead of silently validating a stale version.
+- **`resolve_save_path: Callable[[], Path | None]`** is the injected save half in concrete form: in v1 it
+  returns the panel's remembered `_save_path` (`None` until Save As picks one, at which point subsequent
+  Ctrl+S is silent). **§18.2's entire change is this one function returning
+  `project.ddl_dir / <the §18.2 filename>`** — no restructure.
+
+Consequences for existing wiring — **all extensions of existing dispatchers, no new machinery**:
+
+- `main_window.py::_active_find_bar()` gains a branch for the active editable DDL tab (Ctrl+F / F3 /
+  Ctrl+Shift+F, and Ctrl+R / Ctrl+Alt+Return, which are **live** here — unlike in the read-only DDL
+  Explorer, where `CodeEditor.replace_current_selection` returns early on `isReadOnly()`).
+- `_active_bookmark_editor()` gains the same branch — still with **no** tab-switching side effect (§8).
+- `_save_active_tab()` gains a branch (§7). The read-only DDL Explorer still gets none: it is
+  DB-synthesized and has no save path, which is why Ctrl+S's routing is asymmetric to Ctrl+F's.
+- This tab is §18.4's **first consumer** (Format Selection, below).
+
+**`CenterStage` needs dynamic tabs — the largest structural piece of this design.** Today every tab is
+created in `CenterStage.__init__` with a stored integer index (`raw_xml_tab_index`,
+`diff_merge_tab_index`, `caption_management_tab_index`, `xsd_tab_index`, `ddl_tab_index`,
+`manual_tab_index`) and shown/hidden via `setTabVisible`; `_on_tab_close_requested` dispatches by
+comparing the closed index to those constants. Per-object tabs are created at **runtime**, so:
+
+- Dynamic object tabs are **always appended after the fixed set**, so the stored fixed indices never
+  shift and every existing index comparison stays correct.
+- Dynamic tabs are looked up through a **key → widget map**, never by a remembered index — close/reorder
+  must not be able to make an index stale. The key is a stable per-object identity: the object's
+  `DdlObjectSpan` identity (kind + schema + name + argtypes, or + table for a trigger) project-less, and
+  the **resolved absolute `ddl/*.sql` path** once checked out (§18.2).
+- Close dispatch must therefore fall through from the fixed-index comparisons to a map lookup.
+
+**Editor command set.** Inherited from the generic code editor rather than reimplemented:
+
+| Affordance | Source |
+|---|---|
+| Undo / redo | `QPlainTextEdit` built-in |
+| Find / Find Next / Find All / Replace / Replace All | its own `FindReplaceBar` instance + a new branch in `_active_find_bar` (§7/§15) |
+| Bookmarks (Ctrl+F2 / F2 / Shift+F2) + gutter + folding | `ui/editor_gutter.py::GutterBookmarkFoldMixin` (§8) + a new branch in `_active_bookmark_editor` |
+| Auto-close & selection-wrap for brackets/quotes; bracket-select (Ctrl+Shift+B) | `CodeEditor.keyPressEvent` / `enclosing_bracket_span` (§8) — already generic, no change |
+| 4-character tab stop, SQL highlighting, top-aligned `navigate_to_line` | `CodeEditor`'s `language="sql"` mode (§8/§18.1) — already generic |
+| Standard context menu + the entries below | `createStandardContextMenu()` extended (the `xml_editor.py` idiom) |
+
+**Two affordances are *not* inherited and are new work if wanted at all** (recorded because an earlier
+draft wrongly listed them as inherited): a **wrap-lines toggle** — `CodeEditor.__init__` hard-sets
+`QPlainTextEdit.LineWrapMode.NoWrap` and defines no context menu at all, so the Raw XML editor's
+checkable wrap entry has no equivalent here; and **goto-line** — **no editor in the app has one**
+(`Ctrl+G` is the caption grid's, §13). Neither is required by this design; if either is built it is an
+additive `CodeEditor` feature in its own right, not a DDL-tab detail.
+
+**Fold regions come from the object's own structure**, not from `EditorPanel`'s whole-buffer
+`DdlObjectSpan` index: a single-object buffer has no banner spans. Regions are installed through the same
+`CodeEditor.set_fold_regions(regions)` seam (§8).
+
+**XML-editor affordances that deliberately do NOT apply here** (stated so a reader does not expect
+them): **Select Parent Block** (Ctrl+Shift+A — XML tag hierarchy), **Add attribute ▸**, **Go To XSD**
+(Ctrl+L), **Auto Parse XML**, attribute autocomplete and hover annotations, **Properties-panel sync**,
+and **editor↔tree sync**. All are XML/schema-driven and meaningless for a SQL buffer.
+
+#### Format Selection — §18.4's formatter finally gets its consumer
+
+- **Format Selection**, bound to **`Ctrl+Alt+F`**, plus a **context-menu item** in this tab. Both are
+  **enabled only when there is a selection**. `Ctrl+Shift+F` remains **Find All**, untouched
+  (`main_window.py`) — §18.4 left the binding TBD and this is the choice.
+- Calls `sql.format_selection(selected_text)` (§18.4).
+- **On success** the selection is replaced as a **single undo step** (one `QTextCursor` edit block), so
+  one Ctrl+Z reverts the whole reformat.
+- **On refusal** (`ok=False`) the text is left **completely unchanged** — `FormatResult.text` is the
+  input verbatim, so even a caller that ignored `ok` could not corrupt it — and **each `Issue` is
+  reported to the Audit panel** (§7) with the **`[SQL]`** prefix. The offending span is additionally
+  **underlined in the editor** using the `Issue`'s precise `start`/`end` — which is *why* §18.4's `Issue`
+  carries a span at all. The underline is **transient** (cleared on the next edit or the next format
+  attempt), not persistent state.
+- Offered **only in this tab** — **not** in the read-only DDL Explorer buffer, where a reformat could not
+  be applied anyway.
+- Restated from §18.4 and unchanged: **selection-only**, **no auto-format mode**, **no "Lint
+  Selection"**, and **no rule catalog beyond the tokenize/balance floor**.
+
+#### Save and Apply are two distinct, explicit user gestures
+
+**Neither is ever automatic, and neither is ever implied by the other.**
+
+| Gesture | What it does | Trigger |
+|---|---|---|
+| **Save** | Persists the edited text through the tab's **injected save callback** — the in-session buffer in v1, the checked-out `ddl/*.sql` file under §18.2. **Touches no database, ever.** | `Ctrl+S` via `_save_active_tab` (§7), File ▸ Save |
+| **Apply** | **Executes** the buffer's DDL against a database — the **sandbox** (where it is *meant* to persist, D2) or the **target** (behind the hard gates below) — through the write seam below. **Persists nothing to disk** and clears no dirty state. | Explicit menu / context-menu / panel action only. **Deliberately no keyboard shortcut** — an irreversible outward effect must not be one keystroke away. |
+
+Validation (the ladder in D3) is a third, likewise explicit gesture. It comes in **two modes** and the
+difference is user-visible: **Apply to Sandbox → Check** *commits* to the sandbox (that is the point —
+the sandbox is the accumulating desired state, D2), while **Check without applying** runs the same
+ladder inside a transaction that is explicitly rolled back. The earlier framing — *"validation writes
+nothing durable anywhere; everything it does inside the sandbox is rolled back"* — is **retracted**
+(§28).
+
+#### The write seam — `db/apply.py`, the codebase's first database write path
+
+Until now the app has had exactly one connection-opening function,
+`db/introspect.py::run_queries(params, sql_list, connect_timeout=10)`, which opens one `psycopg`
+connection, `execute`s each statement, `fetchall`s, and closes it in a `finally` — **no `COMMIT`, no
+explicit `ROLLBACK`, no `autocommit`** (verified in the code). Apply is the first feature that needs to
+write. The design is deliberately conservative:
+
+- **A separate, clearly-named write seam: the new Qt-free module `db/apply.py`.** `run_queries` is
+  **never widened** — not with an `autocommit` flag, not with a commit path, not with "just this one
+  DDL statement". The read seam stays read-only so that *"does this code write to the database?"* stays
+  answerable by **which function is called**, statically, without reading arguments. (Distinct from
+  `diff/apply.py::apply_differences`, which mutates an lxml tree and touches no database — different
+  package, different domain.)
+  Nothing about the two-seam split costs the ladder anything, because the ladder's single
+  session/transaction lives entirely on the write side.
+
+> **Settled, not provisional — the competing proposal was withdrawn by its author.** Phase 1 of
+> `plans/2026-08-02-ddl-object-editor-and-sandbox.md` instead widened `db/introspect.py::run_queries`
+> with `autocommit=`, `notices=`, the `cursor.description is None` guard and a `QueryFailure` exception,
+> keeping it "the sole psycopg call site". That design session **conceded the two-seam split on
+> 2026-08-02** — *"does this code write to the database? stays answerable by which function is called,
+> statically, without reading arguments"* — and dropped the widening task from its plan. Every capability
+> that proposal needed now lives on `apply_ddl` (mixed-statement execution, notice capture,
+> statement-indexed failure); `QueryFailure` is unnecessary because `ApplyOutcome.statement_index`
+> carries the same information **as data** rather than as an exception. `run_queries` is never widened.
+> The plan file's Phase 1 text is stale on this point — the spec is authoritative.
+- **Shape.** `apply_ddl(params, statements: list[str], *, commit: bool, autocommit: bool = False,
+  connect_timeout: int = 10) -> ApplyOutcome`. It opens one connection, executes the statements in
+  order, then **explicitly** `commit()`s when `commit=True` and **explicitly** `rollback()`s otherwise —
+  never relying on implicit close-time rollback for correctness — and closes in a `finally`.
+  `autocommit=True` exists for the single statement PostgreSQL forbids inside a transaction block,
+  `CREATE DATABASE` for an app-owned sandbox; it is invalid to combine with `commit=True` and callers
+  other than sandbox provisioning must not use it.
+- **It must execute a *mixed* statement list — this is a hard correctness requirement, not an
+  optimization.** The ladder is necessarily **one** call: the session/transaction has to span
+  `SET plpgsql.extra_*` → the DDL → the `plpgsql_check_function_tb` **SELECT**. So `apply_ddl` runs
+  statements that return **no** result set (`SET`, `CREATE FUNCTION`, `CREATE TRIGGER`,
+  `CREATE EXTENSION`, `CREATE DATABASE`, the bookkeeping `INSERT`) alongside statements that **do**
+  (the check SELECT). **In psycopg 3, `cursor.fetchall()` after a non-row-returning statement raises
+  `ProgrammingError: the last operation didn't produce a result`** — so `apply_ddl` **must guard on
+  `cursor.description is None`** and record an empty row list for that statement instead of fetching.
+  Results are returned **positionally 1:1 with the statement list** (`ApplyOutcome.rows`), which is what
+  lets the caller attribute each result to the tier that produced it. `db/introspect.py::run_queries`
+  does **not** get this guard, because it does not get writes — it keeps its unconditional `fetchall()`
+  over read-only queries.
+- **Notice capture is part of the seam, because tier 1 has no other channel.**
+  `SET plpgsql.extra_warnings = 'all'` returns **no rows**; PostgreSQL delivers its findings as
+  asynchronous `WARNING` diagnostics during `CREATE FUNCTION`. `apply_ddl` therefore registers a
+  connection notice handler and normalizes each diagnostic into a **psycopg-free frozen
+  `Notice{severity, message, detail, hint, context, sqlstate}`** (duck-typed `getattr` over the
+  driver object), collected on `ApplyOutcome.notices`. Nothing downstream of the seam ever touches a
+  psycopg object.
+- **`ApplyOutcome`** captures failure as data rather than raising raw psycopg exceptions:
+  `{ok: bool, statement_index: int | None, sqlstate, message, detail, hint, position, rows:
+  list[list[tuple]], notices: list[Notice]}` — the diagnostic fields are the same ones `CheckFinding`
+  carries, so a failed apply and a validation finding render identically. **`statement_index` is the
+  tier-attribution mechanism**: without it, a `plpgsql_check` call that itself fails gets misreported as
+  *"your DDL is broken"* — precisely the silent-wrong-result class this project refuses. Its `message`
+  renders the driver's primary message **verbatim**, so `test_connection`'s `(False, str(exc))` contract
+  and MainWindow's status-bar strings do not regress.
+- **Injectable, like every other DB path:** every caller takes `applier: Applier = apply_ddl`, mirroring
+  the existing `runner: Runner = run_queries` convention, so the whole suite runs with psycopg absent.
+- **Off the GUI thread**, via `self._run_async` (`ui/async_task.py::run_async`) with `ui/busy.py`'s
+  `busy_status` — a dead host must never freeze the window (§18.1's precedent).
+
+**Applying to the sandbox** is guarded by the ownership rule in D2 — *the app owns its sandbox databases
+by naming convention and refuses to apply DDL to a database it did not create* — enforced as a hard
+precondition in `db/sandbox.py` before the applier is ever called.
+
+**Applying to the target database has four hard preconditions, in this order.** A confirmation dialog is
+the *last* of them, not the only one.
+
+**1 — Refuse a changed signature. No override, no consent path.** Immediately before applying,
+re-introspect the live catalog and compare the buffer's `(schema, name, argtypes)` against it. **If they
+differ, refuse**, name the mismatch, and direct the user to the deployment-script path. The reason is
+that no confirmation gate *can* catch this: **PostgreSQL identifies a function by
+`(schema, name, argtypes)`**, so editing `calc_total(integer)` into `calc_total(bigint)` and applying
+makes `CREATE OR REPLACE` **create a second function and leave the old one live**. Every existing caller
+keeps hitting the old one. The statement **succeeds**, and the confirmation dialog was **truthful** —
+there is nothing for a confirm-gate to refuse. This is a silent wrong result in production, the worst
+possible place for one.
+
+> **Stated plainly, because it is a real capability loss and it is the correct trade:** this makes
+> **parameter renames and argument-type changes unreachable from Apply.** They belong in the reviewable
+> deployment-script path, where the change surfaces as `removed` + `added` and the generator refuses (or
+> demands an explicit guarded `DROP`) rather than emitting a bare `CREATE OR REPLACE`. **Routine identity
+> must never degrade to `schema.name` anywhere in this pipeline.**
+
+**Related, and different — the failure that is loud.** `CREATE OR REPLACE FUNCTION` also **hard-errors**
+on a changed *return type* (*"cannot change return type of existing function"*) or a renamed *input
+parameter* (*"cannot change name of input parameter"*). That one fails visibly rather than silently, so
+it needs no refusal of its own here — but it is a standing reason not to aim single statements at
+production, and the deployment generator must detect it during its pre-generate drift check and refuse
+with a named blocker (see "Generate Deployment SQL" below) instead of emitting a script that errors
+halfway through on production.
+
+**2 — Gate on a green sandbox validation, with a *named* override.** Apply-to-target is disabled unless
+the ladder (D3) last ran green for this buffer. When the sandbox is unavailable, or lacks a required
+extension, the user may override — but the override dialog must **enumerate exactly what could not be
+checked** (which tiers, and why), never a generic "proceed anyway". Both halves are deliberate:
+**refusing silently would be worse than DBeaver; applying unvalidated *is* DBeaver.**
+
+**3 — Apply runs inside a transaction and rolls back on failure. There is no revert snapshot.**
+`apply_ddl(..., commit=True)` wraps the statements so a rejected statement leaves the target untouched.
+**State the resulting gap rather than leaving it implied: a successful-but-wrong apply has no in-app way
+back until §18.2's checkout ships.** The rollback covers what PostgreSQL *rejects*, not what compiles
+fine and behaves badly. Recovery today is the user's own backup or their git history — this app has
+neither for the target. **This raises the value of landing §18.2 sooner**, and is a reason to prefer the
+deployment-script path for anything non-trivial.
+
+**4 — An explicit confirmation naming both the object and the database**, e.g. *"Apply
+`public.recalc(integer)` to database `prod` on `db01:5432`?"* — never a generic "Are you sure?". The
+confirmation must make *which system* unmistakable, in the same spirit as Diff/Merge's ambiguity gate
+(§12) and Generate PHP's Save-vs-Save-As prompt (§19).
+
+Applying to the target is additionally refused outright when the buffer is empty, and the result
+(success, or the `ApplyOutcome`'s sqlstate/message) is reported to the Audit panel under `[Check]` and to
+the status bar.
+
+**Relationship to §18.3, so the two never read as duplicates.** §18.3 remains the **reviewed batch
+deploy** of many objects with the `!`-drift gate, the assembled bundle and the git commit. Single-object
+Apply is a **different, narrower, individually-confirmed gesture** with no bundle, no drift gate and no
+manifest write. **When both could apply — a project is open and the object is checked out — §18.3's
+Deploy is authoritative**; Apply exists for the edit/validate loop, not for rollout. See §18.2's
+Apply-vs-Deploy table.
+
+#### D2 — Sandbox source: bring-your-own local PostgreSQL for v1
+
+The user runs their own local PostgreSQL server. The app adds a **second connection profile** with
+`role = sandbox` alongside the existing `role = target` connection, persisted through the **same**
+generalized `db/config.py` keyed-group scheme §18.2 already requires (§17) — one store, two dimensions
+(project key, profile role), never a second settings mechanism and **never a second connection dialog**:
+`ui/connection_setup_dialog.py` gains a profile selector, it is not forked. The exact keying scheme
+(`ProfileKey`, the `"db"` compatibility group, the sandbox's no-`<ConnectionOptions>`-fallback rule) is
+specified once, in §17.
+
+**The sandbox is STATEFUL and accumulates applied edits — that is its purpose.** The earlier framing —
+*"apply in a transaction → always `ROLLBACK`; the sandbox database stays pristine across any number of
+checks"* — is **retracted** (§28), both by decision (*"we're doing schema changes on a sandbox, rollback
+is symbolic"*) and because it was a **design defect**: a pristine-baseline-per-check model **cannot
+validate interdependent edits.** Edit `A`, which calls `B`, and also edit `B`; under
+rollback-after-every-check, `A` is forever validated against the *old* `B`, and the combination the user
+is actually building is never checked at all. The accumulating working set can check it; a pristine
+baseline cannot.
+
+- **Rollback survives in exactly one narrow role:** the **"Check without applying"** probe — a
+  convenience for *"what would this do?"*, not a safety mechanism, and not threaded through the rest of
+  the code.
+- **The real safety property is the ownership guard** (below), enforced in **one place**, not rollback
+  discipline scattered across call sites.
+- The sandbox therefore **is** the desired state, and is the source the deployment script is generated
+  from. It is meant to hold your changes between sessions.
+
+**Working-set bookkeeping — the sandbox must be able to say what is in it.** Provisioning creates a
+reserved schema `pgtp_editor_sandbox` holding one table:
+
+```
+applied(kind text, schema_name text, object_name text, table_name text,
+        applied_at timestamptz, text_sha1 text,
+        primary key (kind, schema_name, object_name, table_name))
+```
+
+- `SandboxSession.apply(ref, ddl_text)` is **one** committing, atomic call: the DDL plus the `applied`
+  upsert in a single transaction.
+- `SandboxSession.applied() -> list[AppliedObject]` is one `SELECT`, and is what the Sandbox Setup
+  dialog's working-set list and the deployment generator both read.
+- `SandboxSession.reset()` is **schema-level** — `DROP SCHEMA <each app schema> CASCADE` (never the
+  reserved bookkeeping schema) followed by a re-run of the baseline — deliberately **not**
+  `DROP DATABASE`, which fails while any session is connected and would need a maintenance-database
+  connection and `WITH (FORCE)` (PG 13+). Schema-level reset is just as complete here and avoids all of
+  it.
+- **`text_sha1` is not bookkeeping garnish.** It is what lets the UI say *"this tab has changed since you
+  last applied it"* and what makes **Check** refuse to silently validate a stale version. An in-memory
+  list would forget across an app restart **while the sandbox still holds the edits** — a silent
+  wrong-state trap.
+
+**Baseline provisioning is not optional — an empty sandbox is actively harmful.** Against an empty
+database, tiers 2 and 3 report `relation "pr.equipment" does not exist` for essentially every real
+routine: a **false ERROR**, which reads *worse* than "could not check" because it looks like a genuine
+finding. Provisioning is therefore core, not deferred.
+
+- The deliberate simplification, and it is a large one: **`plpgsql_check` is catalog-based and reads no
+  rows.** It needs relations, columns and types to *exist*; it does not care about primary keys, foreign
+  keys, defaults, indexes or data. So the baseline provisions **schemas → types (domains and composites)
+  → tables (columns + `format_type` + `attnotnull` only) → views/matviews → routines → triggers**, in
+  that order, which is load-bearing.
+- Routines are emitted under `SET check_function_bodies = off` so one bad pre-existing routine cannot
+  block provisioning; triggers come after routines because `CREATE TRIGGER` resolves its function
+  immediately.
+- **Deliberately omitted:** PK, FK, `DEFAULT` (which also sidesteps `nextval('seq')` needing sequences),
+  indexes, extensions, sequences and all data.
+- **Recorded gap, must be closed by the implementation:** `DatabaseSchema` (§17) **models no view
+  definitions** — it has `tables`/`routines`/`triggers` only, and `TableInfo` carries columns, not a
+  definition. A **`pg_get_viewdef` query must be added** to `db/introspect.py` (plus a `pg_type` query
+  for `typtype IN ('d','c')`), or **every routine touching a view fails to compile** in the sandbox and
+  the ladder reports false errors.
+- `snapshot_for_baseline(target_params, runner=run_queries) -> BaselineSnapshot` lives in
+  `db/introspect.py` (reusing `SCHEMA_SQL` + `ROUTINE_TRIGGER_SQL` + the two new queries);
+  `build_baseline_sql(snapshot) -> list[str]` lives in `db/sandbox.py` and is **pure — no I/O, no DB**.
+  Every identifier is quoted through a strict allowlist helper; a schema named `weird"name` is
+  **refused**, never string-interpolated.
+- **The incompleteness must be stated in the UI, not buried.** The report's caveats carry it verbatim:
+  extensions, sequences, constraints, defaults and data are not reproduced, so findings that reference
+  them are unreliable.
+
+**The rest of D2's contract:**
+
+- **Zero bundled bytes.** The app ships no server, no client binaries, and invokes no external process.
+  Everything goes over `psycopg` through the two seams above (§17's "no external `psql`" transport rule
+  is **not** touched by v1).
+- **Capability probe — three states plus "unknown", never a silent "absent".** On sandbox connect,
+  `probe(params, runner=run_queries) -> SandboxCapabilities` runs a small module-level `PROBE_SQL` list
+  (a sibling of `SCHEMA_SQL`): `current_setting('server_version_num')`; `current_setting('is_superuser')`
+  (which works for non-superusers, unlike `pg_user.usesuper`); `SELECT extname FROM pg_extension`;
+  `SELECT name FROM pg_available_extensions`; and `current_database()` +
+  `shobj_description(oid, 'pg_database')` for the ownership marker. `SandboxCapabilities{server_version:
+  tuple[int, ...], is_superuser: bool, installed_extensions: frozenset[str], available_extensions:
+  frozenset[str], database: str, owner_marker: str | None, probe_error: str | None}` is cached, and
+  **`probe` never raises** — a failure becomes `probe_error`. Its derived property
+  `plpgsql_check_state ∈ {installed, installable, absent, unknown}` returns **`"unknown"` whenever
+  `probe_error` is set** and never degrades to `"absent"`. What is missing is reported to the user as
+  *missing*, never silently skipped (see D3).
+- **One-click extension install, behind a pure gate.** `install_plpgsql_check(session)` runs
+  `CREATE EXTENSION IF NOT EXISTS plpgsql_check` and is reachable **only through a `SandboxSession`**,
+  which by construction means the database is app-owned. Whether to offer it at all is decided by the
+  pure `install_gate(caps) -> tuple[bool, str]`: offered only when the state is `installable` **and**
+  `caps.is_superuser`; otherwise it returns the exact reason string the UI shows — *"already
+  installed."* / *"`CREATE EXTENSION` requires superuser; ask your DBA, or connect the sandbox profile as
+  a superuser."* / the platform install text for `absent` (**the app cannot fix that one — it is a C
+  library on disk**) / *"could not probe the server."* The install button lives **inside** the Sandbox
+  Setup dialog next to the probe result it depends on, not as a separate menu item.
+- **Backend interface.** All of this sits behind a Qt-free protocol in `db/sandbox.py` so a managed or
+  bundled server can be added later (§29) without the choice leaking into the UI:
+
+  | Member | Contract |
+  |---|---|
+  | `ensure_running() → dsn` | Return a usable DSN/`ConnectionParams` for the sandbox, starting the server if this backend owns one. For `LocalPostgresBackend` (v1) this is a no-op that returns the configured profile and fails loudly if it cannot connect. |
+  | `capabilities() → SandboxCapabilities` | Delegates to `probe` (full field list above) and caches. **The ladder's tier availability is derived only from this** — never from a bare `try: … except: assume absent`. |
+
+- **Ownership rule (safety, non-negotiable — stated verbatim as settled).** The app **owns its sandbox
+  databases by naming convention** and **refuses to apply DDL to a database it did not create.** The
+  refusal is a hard error surfaced to the user, not a warning: a user who points the sandbox profile at
+  their production database must get "this is not a sandbox I created", never an executed DDL statement.
+  This is the same "never a silent wrong result" stance as Diff/Merge's ambiguity gate (§12) and §18.4's
+  refusal contract. **Now that the sandbox is stateful, this is the *only* safety property left** — it
+  carries the weight rollback used to be imagined to carry, so its shape is pinned:
+
+  | Piece | Contract |
+  |---|---|
+  | `SANDBOX_DB_PREFIX = "pgtp_sandbox_"`, `OWNER_MARKER_PREFIX = "pgtp-editor-sandbox:"` | Two markers, because one is not enough. |
+  | `is_app_owned(database, owner_marker) -> bool` (pure) | True only when the name starts with the prefix **and** the `pg_database` comment starts with the marker prefix. **The name alone is spoofable** — a user can name production `pgtp_sandbox_prod`; the comment is written only by our own provisioning. |
+  | `ForeignDatabaseError` (psycopg-free) | Message names the database and says plainly *"PGTP Editor did not create this database and will not write to it."* |
+  | `open_sandbox(params, runner=run_queries) -> SandboxSession` | Probes, checks ownership, **raises `ForeignDatabaseError` if not owned.** **This is the only gate.** Everything that writes goes through the returned session; nothing else in the codebase re-checks ownership and no write path bypasses the session. Reads (probe, listing, introspecting the *target* for a baseline) are not gated. |
+  | `create_sandbox_database(admin_params, name)` | `name` must match `^pgtp_sandbox_[a-z0-9_]{1,40}$` — **validated, not sanitized**: anything else is refused. Runs `CREATE DATABASE` + `COMMENT ON DATABASE … IS 'pgtp-editor-sandbox:<uuid>:<iso8601>'` with `autocommit=True` against the maintenance database, since PostgreSQL forbids `CREATE DATABASE` in a transaction block. This is the **one** `autocommit=True` call in the app, made from `db/sandbox.py` and nowhere else. |
+
+- **The "create a sandbox for me" offer is a mandatory mitigation, not optional polish.** The ownership
+  rule collides head-on with the most likely real setup: the realistic sandbox is a local restore of
+  production named `myapp_dev`. `open_sandbox` **will** refuse it, and a bare refusal reads as *the tool
+  being broken*. So wherever `ForeignDatabaseError` surfaces — principally **Sandbox Setup…** — the
+  refusal must be shown **together with an explicit "Create a sandbox database for me" action**
+  (`create_sandbox_database` + `build_baseline_sql` seeded from the **target** profile, off-thread with
+  `busy_status`). A refusal without a way forward is the fastest route to the user concluding the tool is
+  broken. *(A future "adopt this database" flow — stamp the marker after an explicit typed confirmation —
+  is worth designing but is deliberately not specified here.)*
+
+#### D3 — The validation ladder
+
+Four tiers, applied in order, each independently available or unavailable. `db/ddl_check.py` (Qt-free)
+drives them and returns a report carrying **per-tier outcome** as well as findings.
+
+| Tier | Mechanism | Requires | Catches |
+|---|---|---|---|
+| 0 | Offline syntax check | nothing | syntax errors while typing — **collapses into tier 2**, see the licensing caveat below |
+| 1 | `SET plpgsql.extra_warnings = 'all'` (+ `plpgsql.extra_errors`) before the DDL, **with the notice channel of `db/apply.py` active** | any server, **no superuser** | `shadowed_variables`, `strict_multi_assignment`, `too_many_rows` |
+| 2 | Execute the DDL against the app-owned sandbox — **committing** for Apply, rolled back for the "check without applying" probe | write access to an app-owned sandbox DB | whether the DDL actually applies at all (parse + `check_function_bodies` + dependency resolution) |
+| 3 | `plpgsql_check_function_tb()` on the object, in the **same session** as tier 2 | the extension installed in the sandbox DB | missing columns, wrong types, unresolved relations, trigger `NEW.x`/`OLD.x` misuse, dead code, missing `RETURN`, volatility violations, SQL-injection risk |
+
+> **Tier 1 correction — it does not work the way an earlier draft of this table claimed (§28).**
+> `SET plpgsql.extra_warnings = 'all'` delivers its findings as **asynchronous `WARNING` notices** during
+> `CREATE FUNCTION`, and **the statements return no rows at all**. A row-fetching runner therefore yields
+> **nothing** from tier 1, forever. Tier 1 is consequently specified as **dependent on the notice-capture
+> channel on `db/apply.py`** (the normalized `Notice` records on `ApplyOutcome`, see the write seam): its
+> findings are parsed out of `Notice.context` strings of the form
+> `compilation of PL/pgSQL function "f" near line 3`. **Where that channel is not available, tier 1 must
+> report `unavailable`, not `passed`.** Documenting a tier as working when it silently yields nothing is
+> exactly the never-report-clean-when-unchecked violation this section otherwise forbids.
+>
+> Related and still unpinned: `SET plpgsql.extra_errors` with an invalid value errors *at SET time* once
+> plpgsql is loaded, and plpgsql may not be loaded yet in a fresh session — this needs live-server
+> confirmation before tier 1 ships.
+
+**Three gestures, three entry points on `db/ddl_check.py`** — they differ in what they commit, and that
+difference is user-visible:
+
+| Entry point | Commits? | Notes |
+|---|---|---|
+| `probe_check(session, ref, ddl_text, caps)` — *"Check without applying"* | no | One call, explicitly rolled back. A convenience, not a guard. |
+| `apply_and_check(session, ref, ddl_text, caps)` — *"Apply to Sandbox"* then check | **yes** | Tier 2's outcome **is** the apply's outcome; the working-set row is written in the same transaction. |
+| `recheck(session, ref, caps)` — *"Check"* | no (nothing new applied) | Runs the ladder against the sandbox **as it currently stands**. Tier 2 reports `passed` with *"applied &lt;timestamp&gt;"* from the bookkeeping table. **If the caller's buffer hash differs from `applied.text_sha1`, the report carries a caveat saying so** — never silently check a stale version. |
+
+Tier attribution uses the `ApplyOutcome.statement_index` of the statement list the driver built; a
+failure in the `plpgsql_check` call must never be reported as *"your DDL is broken"*.
+
+**The hard rule — an unavailable tier reports "could not check", never "clean."** This is the project's
+"never a silent wrong result" invariant applied to validation: a green result must mean *checked and
+found nothing*, never *not checked*. Concretely, the report distinguishes at least
+`passed` / `found_issues` / `unavailable(reason)` / `errored(reason)` per tier, and the UI renders an
+unavailable tier as an explicit, visible statement of what was **not** verified — it is never collapsed
+into the overall OK state, never hidden behind a preference, and never degraded to a one-off toast the
+user can miss.
+
+**Report shape.** `CheckReport{tier0..tier3: TierOutcome, findings: list[CheckFinding], caveats:
+list[str]}`, where `TierOutcome{status ∈ passed | found_issues | unavailable | errored, reason, detail}`.
+`caveats` carries the honest text that must not be buried: the baseline's missing
+extensions/sequences/constraints/defaults/data (D2), `plpgsql_check`'s known blind spots (below), and the
+stale-buffer warning from `recheck`. The UI renders **one line per tier, always**, plus one line per
+caveat.
+
+**Why tier 2 may be run repeatedly, now that it commits.** PostgreSQL has **transactional DDL**, so the
+probe variant leaves zero trace; the committing variant is *meant* to leave a trace — `CREATE OR REPLACE`
+is idempotent, so re-applying the same object is a no-op, and the working-set table records what is in
+there. Tier 3 runs in the **same session** as tier 2, after the object exists, which is what makes
+catalog-based checking possible. (The earlier claim that the sandbox "stays pristine across any number of
+checks" is retracted — see D2 and §28.)
+
+**Line-number mapping is a correctness trap and is specified, not left to the implementer.**
+`plpgsql_check` reports `lineno` relative to **`prosrc`** (the dollar-quoted body), while the tab's
+buffer is **`pg_get_functiondef`** output (header + body). An off-by-header-length line number is exactly
+the silent-wrong-result class this project refuses.
+
+- `body_line_offset(buffer_text) -> int | None` locates the opening dollar-quote tag (`$$`, `$function$`,
+  `$body$`, …) that begins the body and returns its **1-based line number** `L`.
+- `map_lineno(buffer_text, lineno) -> int | None` → `L + lineno - 1`. `prosrc` begins with the newline
+  that terminates the `AS $tag$` line, so `prosrc` line 1 **is** line `L`.
+- **If the opener cannot be located, `lineno` is falsy, or the result is out of range, return `None`** and
+  render the finding **with no line at all**. Never guess.
+- **Tier-2 failures need no offset:** they carry a `position` — a character offset into the statement we
+  sent, which *is* the buffer — so `line = buffer_text.count("\n", 0, position) + 1` is exact.
+- **Tier-1 notices** arrive as `Notice.context` strings (`… near line 3`): regex the line, then apply the
+  same `map_lineno`.
+- The mapping must be pinned by fixture tests over a **verbatim captured `pg_get_functiondef` output**,
+  plus a `LANGUAGE sql` variant, a body opened on the same line as `AS $$`, a `$body$`-tagged variant, a
+  buffer with a `$$` inside a comment before the real opener, and a buffer with **no** opener →
+  `None`. **A live-server confirmation of the `prosrc` ↔ `pg_get_functiondef` offset is the single
+  highest-value live test in this feature and must exist before any finding is rendered against a line.**
+
+**Recovering the applied object's OID for tier 3.** Primary:
+`to_regprocedure(format('%s.%s(%s)', schema, name, argtypes))`, built from the `RoutineInfo` the tree
+supplied. Fallback, for the case where the user edited the signature: `SELECT oid FROM pg_proc WHERE
+xmin = pg_current_xact_id()::text::xid` inside the apply transaction — the catalog row just written is
+the one carrying our xid. **The fallback is clever and therefore suspect: it must be confirmed against a
+live server before it is relied on.** (Note that for Apply-to-target the signature-change case is refused
+outright, above; this fallback exists only for the sandbox.)
+
+**Tier 0 caveat — licensing.** The obvious offline choice, `pglast` (real PostgreSQL grammar via
+libpg_query), is **GPL-3.0-or-later**. PGTP Editor is itself GPL-3.0 (§4), so it is usable *today*, but it
+would become unusable if the project ever ships under a proprietary license — record the dependency as
+license-load-bearing. The license-free alternative, which needs no new dependency at all, is to run a
+throwaway `CREATE FUNCTION` inside a rolled-back transaction and let PostgreSQL's own parser be the
+syntax checker — i.e. tier 0 collapses into tier 2 when a sandbox is available, and is simply reported
+as unavailable when it is not. (§18.4's `format_selection` is **not** a tier: it is a layout formatter
+whose tokenize/balance refusal is not a syntax check and must not be presented as one.)
+
+#### Generate Deployment SQL — the deliverable (output rank 1)
+
+**Sandbox = desired state. Production = current state. Output = one reviewed `.sql` migration script,
+run once, to upgrade the real database.** The user who has edited three routines in the sandbox and
+checked them green gets exactly one file — with an explicit refusal if production moved underneath them,
+and an explicit statement of what the script does *not* cover.
+
+**§18.3 reuse, not a parallel engine.** §18.3 already specifies `db/schema_diff.py::diff_schemas`,
+`db/migration_gen.py::generate_migration`, `Database ▸ Compare Schemas…` and `Save Migration As…` under
+*"one diff/generation engine, two entry points"*. §18.5 **creates those two modules with §18.3's exact
+dataclass shape and signatures** and implements **only the routine/trigger cases**; the table/column
+cases are defined in the type and left unimplemented. §18.3 later fills them in — **nothing built here is
+thrown away, and no second "assemble SQL" mechanism is created.**
+
+> **One divergence from §18.3, stated so it is not read as a contradiction.** §18.3 assumed the desired
+> state comes from a checked-in JSON snapshot (`db/schema_snapshot.py`). **A live sandbox is a strictly
+> better source** — you can execute against it, so the desired state is provably coherent before it is
+> diffed. §18.5 therefore adds a **third** source alongside §18.3's "live connection or snapshot": the
+> sandbox. It does **not** build `db/schema_snapshot.py`; that stays §18.3's.
+
+**`db/schema_diff.py` (pure, Qt-free, no I/O).**
+
+- `SchemaDifference{kind ∈ added|removed|changed, object_kind ∈ table|column|routine|trigger, identity:
+  str, old_def: str | None, new_def: str | None}` — **verbatim §18.3**. Do not "improve" the field names;
+  §18.3's full engine populates the same type.
+- `diff_schemas(source: DatabaseSchema, target: DatabaseSchema) -> list[SchemaDifference]`, keyed on
+  `DatabaseSchema.routines`/`.triggers`, which `fetch_routines_and_triggers` already populates for **any**
+  connection — sandbox or production — with no new catalog query.
+- **Routine identity is the full signature**, `schema.name(argtype, argtype)`, built from
+  `RoutineInfo.arg_types` — **never** `schema.name`. This is the same load-bearing fact as the
+  Apply-to-target signature refusal: a changed argument type is a *different function* to PostgreSQL, so
+  it must surface as **`removed` + `added`**, never as `changed`.
+- Trigger identity is `schema.table.name`, matching `DatabaseSchema.triggers`' existing key.
+- `changed` is decided by **exact text comparison** of `RoutineInfo.source` / `TriggerInfo.definition`.
+  Both come from `pg_get_functiondef` / `pg_get_triggerdef` on each side, so formatting is
+  server-normalized and a cosmetic-only diff is impossible **within one server major**.
+- **`table`/`column` are not implemented.** They are skipped and the omission is **returned**, not
+  swallowed (an `unsupported: list[str]` or a module-level `SUPPORTED_OBJECT_KINDS` the caller checks),
+  so the UI states *"table and column changes are not compared — §18.3"*. **A silently table-blind diff
+  presented as a full migration is exactly the silent-wrong-result class this project refuses.**
+
+**`db/migration_gen.py::generate_migration(differences, *, header: str = "") -> str` (pure,
+deterministic — byte-identical output for identical input, so tests are golden-string assertions).**
+Emission follows §18.3's CREATE→ALTER→guarded-DROP order with only the first and last stages populated:
+
+1. **Header comment block:** generated-at; sandbox and production connection summaries
+   (`user@host:port/db`, **redacted — never a password**, via `debuglog.redacted`'s shape); **both server
+   versions**; which content model produced the script; which baseline model the sandbox was provisioned
+   from; and the explicit *"table/column changes are not included"* limitation.
+2. `added` + `changed` **routines** → the `new_def` verbatim (`pg_get_functiondef` already emits
+   `CREATE OR REPLACE`).
+3. `added` + `changed` **triggers** → `DROP TRIGGER IF EXISTS <name> ON <table>;` followed by the
+   `new_def`. Triggers have no portable `OR REPLACE` below PG 14, and the drop-then-create pair is
+   idempotent on every supported major — simpler than branching on the target's version.
+4. `removed` routines/triggers → **commented-out** guarded `DROP` statements carrying a `-- REVIEW:`
+   marker. **Never live DROP text.** An object absent from the sandbox far more likely means *"the user
+   never touched it"* than *"delete this from production"*.
+
+Every statement is `;`-terminated and blank-line separated, so the script is copy-pasteable into `psql`
+and diffable in git. A `table`/`column` difference raises the module-defined `UnsupportedDifference`
+(Qt-free, psycopg-free); the caller renders the refusal. **Never emit a partial script that silently
+drops table changes on the floor.**
+
+> **Module-docstring requirement (a real trap, not pedantry):** both modules land with their
+> table/column halves deliberately hollow. The next contributor sees `db/migration_gen.py` and reasonably
+> assumes it generates migrations. It generates **routine and trigger** migrations. Each module docstring
+> must open with that limitation in its **first sentence**, and `UnsupportedDifference` must be a real,
+> raised exception — never a silent skip.
+
+**Dependency ordering — verified, and the obvious tool is the wrong one.** **Use stable alphabetical
+ordering by identity, routines before triggers.** Do not make deployment-SQL generation depend on tier 3.
+
+- **PL/pgSQL bodies are not resolved at CREATE time.** With `check_function_bodies = on`, the plpgsql
+  validator parses the body's *statement structure* only; the SQL expressions inside it — including calls
+  to other functions and references to tables — are parsed and planned lazily, at first execution. So
+  `CREATE OR REPLACE FUNCTION a()` whose body calls `b()` **succeeds even when `b()` does not exist.**
+  The strongest evidence is this feature's own premise: if CREATE-time validation resolved relations and
+  callees, tier 3 would have nothing left to catch. **Forward references between plpgsql routines
+  therefore need no ordering at all.**
+- **Exception 1 — `LANGUAGE sql` routines** *are* parsed and analyzed at creation, and PG 14+
+  `BEGIN ATOMIC` bodies additionally record **real catalog dependencies**. These genuinely need ordering.
+- **Exception 2 — triggers.** `CREATE TRIGGER` resolves its function immediately (`pg_trigger.tgfoid` is
+  a hard catalog reference) and the table must already exist. "Routines before triggers" is therefore a
+  real constraint, not cosmetics.
+- **`plpgsql_show_dependency_tb()` is REJECTED for this purpose, despite looking perfect.** It returns
+  exactly the `FUNCTION`/`OPERATOR`/`RELATION` dependency set per routine and would drive a clean
+  topological sort — but it is a `plpgsql_check` function, so **it covers only plpgsql routines: precisely
+  the language that does not need ordering.** It cannot see inside the `LANGUAGE sql` routines that
+  actually do. Adopting it would make generating a deployment script depend on tier 3 — an optional,
+  per-database, superuser-gated C extension — in exchange for ordering information about the cases that
+  were never at risk. **The deliverable must be producible on a bare PostgreSQL with no extensions.**
+  Topological ordering is recorded as a possible **follow-on supplement**, never a replacement for
+  handling the SQL-language case.
+- If any emitted routine's `new_def` is non-plpgsql (detectable from `RoutineInfo.language`, which
+  `fetch_routines_and_triggers` already populates — thread it onto the difference), emit a **header
+  warning**: *"N non-PL/pgSQL routine(s) are included; statement order may need manual adjustment (their
+  bodies are resolved at CREATE time)."* Honest, cheap, non-blocking.
+
+**Mandatory pre-generate drift check.** Before generating, run `fetch_routines_and_triggers` against
+production **off-thread** (one read-only introspection call — no new code) and compare it against the
+sandbox's baseline-time definitions **for the objects in the applied set**. Any object whose production
+definition changed since provisioning is a **`!` drift blocker**, reusing §18.3's *"any `!`-flagged
+object blocks the batch"* all-or-nothing discipline, which itself reuses Diff/Merge's §12 ambiguity gate:
+**refuse the whole script, name every blocker**, recovery = re-provision or re-apply, then re-run. This
+is what stops a deployment script from silently overwriting a production hotfix made during the dev
+cycle. The same introspection pass has both signatures in hand, so it is also where the
+**`CREATE OR REPLACE` hard-failure cases are caught** — a changed *return type* or a renamed *input
+parameter* is refused with a named blocker (*"pr.calc_total: return type changed; a deployment script
+cannot replace this in place"*) rather than emitting a script that errors halfway through on production.
+
+**Honest caveats the script must carry, because they are real:**
+
+- **`pg_get_functiondef` text is not stable across server majors**, and sandbox and production are
+  frequently different majors. Purely cosmetic rendering differences surface as **phantom `changed`
+  entries**, producing a script full of idempotent no-op replacements. Harmless but noisy, and it erodes
+  trust in the diff. Mitigation: report **both** server versions in the header and say so prominently
+  when they differ. A normalizing comparison is a rabbit hole — do not start it.
+- **The baseline's incompleteness (D2) propagates into the deliverable.** A routine valid *in the
+  sandbox* may be invalid in production if it relies on a `DEFAULT nextval(...)`, a constraint or an
+  extension the baseline omitted. The sandbox is a **structural approximation** of production, not a
+  copy; the header must say which baseline model produced it.
+
+**UI flow — review before write.** **Database ▸ Generate Deployment SQL…**, disabled unless a sandbox
+profile is configured. Both introspection calls run off the GUI thread (`self._run_async` +
+`busy_status`). Guards, each with its own specific message: no sandbox → open Sandbox Setup; empty
+applied set → *"nothing has been applied to the sandbox yet"*; drift blockers → the §12-style refusal
+naming every blocker; `UnsupportedDifference` → the table/column refusal. On success the script is shown
+in a **read-only preview tab** reusing `CodeEditor(language="sql")` (a dynamic tab, appended per §7's
+invariant) with a **Save Migration As…** button writing UTF-8 `newline=""`, mirroring `_save_xsd`
+exactly. **Do not write a file the user has not read — this is DDL destined for production. The script is
+never executed by this app; there is no execute path, not even a disabled one** (§18.3's hard non-goal,
+inherited verbatim).
+
+> **Not built here:** §18.3's own **Compare Schemas…** and **Save Migration As…** commands. §18.5 builds
+> the engine those two will call; building their UI is §18.3's job, and its settled *"separate sibling
+> command, no-project-required"* framing must not be pre-empted by a §18.5-shaped screen. Say so in the
+> code comment so the next reader does not "finish" it wrongly.
+
+#### Reuse map — what this feature builds on rather than duplicates
+
+| Need | Existing thing to reuse |
+|---|---|
+| SQL **reads** | `db/introspect.py::run_queries` — the sole read seam, read-only; every new function takes `runner: Runner = run_queries` so the suite runs with psycopg absent |
+| SQL **writes** | the new `db/apply.py::apply_ddl` — the sole write seam (above); `applier: Applier = apply_ddl` injectable the same way. **Never a third connection-opening function.** |
+| Connection profile & dialog | `db/config.py::ConnectionParams` + `ui/connection_setup_dialog.py` — add a profile dimension (§17/§18.2); **no second dialog** |
+| Diagnostics surface | the existing Audit/Problems panel (§7): `"[Check] SEVERITY line N: message"`, line on `UserRole`, target on `UserRole+1`, click-to-navigate — **no new diagnostics panel** |
+| Diagnostic record | the shape of `validation/tier2.py::ValidationIssue{severity, message, line}` |
+| Line mapping | `db/ddl_buffer.py::DdlObjectSpan` — translates a per-routine `lineno` into a buffer line (the *within-object* `prosrc` → buffer offset is D3's `map_lineno`) |
+| Diff / migration generation | §18.3's `db/schema_diff.py` + `db/migration_gen.py` **shapes and signatures**, created here with the routine/trigger cases only — **one engine, two entry points**; never a parallel generator |
+| Production introspection for the drift check | `db/introspect.py::fetch_routines_and_triggers` — already read-only, already exists, no new catalog query |
+| Off-GUI-thread work | `ui/async_task.py::run_async` via MainWindow's injectable `self._run_async`, with `ui/busy.py::busy_status` for the status-bar busy state |
+| External process (if ever) | `generation/runner.py::GeneratorRunner` (QProcess, streamed lines) — **v1 spawns nothing**; do not write a second process runner |
+| Editor widget | `ui/code_editor.py::CodeEditor(language="sql")` + `ui/editor_gutter.py::GutterBookmarkFoldMixin` |
+| Formatter | §18.4's `format_selection` — this tab is its first consumer |
+| Menu home | the **Database** menu (`main_window.py::_build_database_menu`) — **no new top-level menu** |
+| Verifying the sandbox matches | `Database ▸ Compare Schemas…` (§18.3) pointed at the sandbox |
+
+**Findings type.** `db/ddl_check.py::CheckFinding` **mirrors and extends** `ValidationIssue`'s
+`{severity, message, line}` shape — the same pattern-extension precedent §18.4 set with
+`xsd_verify.Issue` — adding `sqlstate`, `level` (plpgsql_check's raw level string), `position`,
+`statement`, `detail`, `hint`, `context` and the object identity. **Do not widen
+`validation/tier2.py::ValidationIssue` itself**: its three fields are asserted by existing tests and it
+belongs to `.pgtp` structural validation, a different domain.
+
+**Line-number honesty** is specified in full in D3 above (`body_line_offset` / `map_lineno`, the exact
+`position`-derived line for tier 2, the `near line N` regex for tier 1, and the mandatory `None` when the
+opener cannot be located). It is not restated here.
+
+#### Audit-panel prefix: `[Check]`
+
+Findings from this feature use **`[Check]`** — `"[Check] ERROR line 42: record has no field \"foo\""` —
+following the same click-to-navigate convention as `[Validate]`/`[Find]`. It is distinct from §18.4's
+`[SQL]` (formatter refusals: layout only, no database) and from §22's `[Lint]` (PHP only). The three-way
+reservation is recorded in §7 and on each owning section deliberately: several linter-shaped features
+feeding one Audit panel must be distinguishable at a glance, none may annex another's prefix, and no
+fourth SQL-ish prefix may be introduced.
+
+#### `plpgsql_check` integration specifics
+
+Verified against the shipped `plpgsql_check--2.10.sql`; these facts **constrain the implementation** and
+are recorded so they are not rediscovered the hard way.
+
+- **v2.10.4, MIT** (the `LICENSE` file; `META.json` wrongly claims BSD). Supports PostgreSQL 14–18.
+- It is a **C extension, ABI-bound per PostgreSQL major**. The `.so`/`.dll` must already be present on
+  the server — the app **cannot** install it over a psycopg connection. Detection, not installation, is
+  the app's job.
+- **`CREATE EXTENSION` requires superuser** (the control file omits both `trusted` and `superuser`, so
+  PostgreSQL's default applies), and the extension is **per-database**. There is **no upgrade path**:
+  updating means `DROP EXTENSION` + `CREATE EXTENSION`.
+- **Calling** the check functions requires **no** privilege — there is no ACL gate in the source and no
+  `REVOKE` in the install script. A DBA-installed extension on a shared server is usable by an ordinary
+  user, so *"detect it on the user's own server and use it when present"* is a **first-class supported
+  path**, not a fallback.
+- **No `shared_preload_libraries` entry is needed** for active mode (`plpgsql_check.mode` defaults to
+  `by_function`) — no config edit, no server restart, nothing the app would have to talk a user through.
+- Availability, for the honest "how do I get it?" message: Linux
+  `apt install postgresql-NN-plpgsql-check` (PGDG) / `dnf install plpgsql_check_NN`. Windows has no
+  GitHub release asset, no StackBuilder entry and no upstream CI — only the author's personal build
+  (`pgsql.cz`, **2.8.5, PG 17+18, x64 only**, ~350 KB: two DLLs + `.control` + `.sql`).
+
+**API gotchas — all of these are call-shape requirements, not trivia:**
+
+| Fact | Consequence for the caller |
+|---|---|
+| The parameter is misspelled **`anyelememttype`** (`m` for `n`) | named-notation calls must use the typo verbatim |
+| Positional order is `other_warnings, performance_warnings, extra_warnings` — **not** the README's order | **always use named notation**; never rely on position |
+| `format` (`text`/`json`/`xml`) exists on `plpgsql_check_function` only, **not** on `_tb` | use `_tb` and consume rows, not a formatted blob |
+| `plpgsql_check_function_tb` returns **11 columns**: `(functionid regproc, lineno int, statement, sqlstate, message, detail, hint, level, "position" int, query, context)` | `"position"` **must be double-quoted** in the select list; the 11 columns map 1:1 onto `CheckFinding` |
+| `fatal_errors` defaults to true | pass **`fatal_errors => false`** for a GUI, else you get exactly one finding per function |
+| Warnings are off by default | pass **`all_warnings => true`** |
+| **Trigger functions require `relid`** | omitting it errors *"missing trigger relation"*; pass the table OID, plus `oldtable => t.tgoldtable, newtable => t.tgnewtable` when the trigger declares transition tables |
+| `level` values are `error`, `warning`, `warning extra`, `warning performance`, `warning security`, `compatibility` | map to the Audit panel's `SEVERITY` token; keep the raw string in `CheckFinding.level` |
+
+**Known blind spots** (must be stated in the UI's "what was checked" text, per the never-silently-clean
+rule): dynamic `EXECUTE`, `refcursor` fetched into a `record`, and temp tables created at runtime.
+Escape hatches for false positives are `plpgsql_check_pragma('type: …')` inside the body and
+`SET plpgsql.enable_check TO false`.
+
+**Trigger tabs are a second, quieter special case** — easy to get 80% right and silently wrong on the
+rest. The tab holds a `CREATE TRIGGER` statement, but tier 3 checks **functions**. So for a trigger tab,
+**tier 2 is the `CREATE TRIGGER` itself** and **tier 3 checks the *referenced* function with `relid`
+set**. Additionally, `CREATE OR REPLACE TRIGGER` exists only on **PG 14+**: below that the statement list
+must be preceded by a `DROP TRIGGER IF EXISTS`, gated on `caps.server_version`.
+
+**Bonus surface, not v1:** `plpgsql_show_dependency_tb()` returns `(type, oid, schema, name, params)` —
+a ready-made "what does this routine touch" view that would slot into `BrowserPanel` as a further
+relationship angle alongside §18.1's dual grouping. Noted, not designed. **It is explicitly rejected as
+a dependency-ordering source for the deployment script** (see "Generate Deployment SQL" above) — it
+covers only plpgsql routines, i.e. exactly the ones that need no ordering.
+
+#### Invariants this feature must conform to
+
+1. **Two seams, one direction each:** `db/introspect.py::run_queries` stays the sole **read** seam and
+   stays read-only; `db/apply.py::apply_ddl` is the sole **write** seam. Every new path takes
+   `runner: Runner = run_queries` / `applier: Applier = apply_ddl` so the whole suite runs without
+   psycopg importable. Never a third connection-opening function.
+2. Every module this feature adds under `db/` — `apply.py`, `sandbox.py`, `ddl_check.py`,
+   `schema_diff.py`, `migration_gen.py` — and `validation/` stay **Qt-free**; only `ui/` imports PySide6
+   (§5). The one pre-existing exception, `db/config.py`'s module-scope `QSettings`, is **not** to be
+   "fixed" by inventing a second store (§5/§17).
+3. Every connection-opening call runs **off the GUI thread** (`self._run_async`) with busy state
+   (`ui/busy.py`) — a dead sandbox host must never freeze the window (§18.1's precedent).
+4. Any new params type must be redactable through `debuglog.redacted(params)`; the redaction test is
+   locked (§25).
+5. Config persistence follows the existing pattern: injectable store, loaders tolerate
+   absent/unreadable/malformed input and **never raise**.
+6. The byte-for-byte `.pgtp` round-trip (§2) is untouched — **this feature never writes the project
+   file**, and works with zero `.pgtp` files open (§18's standalone mode).
+7. Tests mirror the package layout (`tests/db/test_apply.py`, `tests/db/test_sandbox.py`,
+   `tests/db/test_ddl_check.py`, `tests/db/test_schema_diff.py`, `tests/db/test_migration_gen.py`,
+   `tests/ui/test_ddl_object_editor.py`); dialogs use `show()`, never `.exec()`; context menus are built
+   by a `_context_menu_for(item) -> QMenu | None` helper the test can trigger **without** `exec()`; no
+   un-patched modal (§30). **Every Apply confirmation is a test seam** (an injectable `confirm=`
+   callable, the `_confirm_close()` precedent) — a test must never be able to reach a real
+   apply-to-target prompt, and must never be able to execute DDL by accident.
+8. **No live PostgreSQL in the default suite.** Every DB path takes `runner=`/`applier=` and is driven by
+   a fake, exactly as `tests/db/test_introspect.py` does today; `db/sandbox.py`'s pure predicates
+   (`is_app_owned`, `install_gate`, `build_baseline_sql`) and both diff/generation modules are tested
+   directly with no runner at all. The handful of facts that genuinely need a server live in **one
+   env-gated file** (`tests/db/test_sandbox_live.py`, skipped unless a sandbox DSN env var is set),
+   covering at minimum: `cursor.description is None` for `SET`/`CREATE FUNCTION`/`CREATE EXTENSION`; that
+   `plpgsql.extra_warnings='all'` actually delivers notices and its `CONTEXT` matches the `near line N`
+   regex; **the `prosrc` ↔ `pg_get_functiondef` line offset** (do not ship rendered line numbers without
+   it); `plpgsql_check_function_tb`'s 11-column order, the `anyelememttype` typo and the trigger `relid`
+   requirement; the `xmin = pg_current_xact_id()` OID-recovery fallback; that `CREATE DATABASE` requires
+   autocommit and schema-level reset works with a live connection open; and the two ordering claims —
+   that a plpgsql body calling a nonexistent function **creates fine**, and that the same is **not** true
+   for a `LANGUAGE sql` function.
+9. **`CenterStage`'s append-only / tail-only dynamic-tab invariant (§7) has a mandatory regression test**
+   — this feature is the first to create runtime tabs, and five existing call sites depend on the fixed
+   indices staying put.
 
 ---
 
@@ -1891,6 +3015,11 @@ folder is the natural next step. Explicitly deferred; no section number spent on
   (§19): a new `lint_executable_path` key + a "Locate PHP Linter…" action.
 - Output feeds the existing Audit panel (§7) with a new `[Lint]` prefix, following the same
   click-to-navigate convention as `[Validate]`/`[Find]`.
+- **`[Lint]` is reserved for PHP linting, and only PHP linting.** SQL/plpgsql findings from §18.5's
+  sandbox validation ladder use **`[Check]`**, and §18.4's formatter refusals use **`[SQL]`**. The
+  three-way reservation is recorded here as well as in §7 and §18.5 deliberately: several
+  linter-shaped features feeding one Audit panel must be distinguishable at a glance, and none may
+  quietly annex another's prefix.
 - **Non-blocking:** advisory only — never prevents Save.
 
 ---
@@ -1964,8 +3093,28 @@ Tools; "New Project" removed; line-wrap moved to editor context menu):
   Export / Import act on the **active XSD** (curated or learned, per `_xsd_mode`), not curated-only.
   (Go To XSD is **not** a menu item: it is a window-level Ctrl+L `QAction` added via
   `MainWindow.addAction` plus a Raw XML editor context-menu entry; it always forces curated mode.)
-- **Database:** Connection Setup…, Check: XML→Database, Check: Database→XML, ☐ DDL Explorer
-  (checkable toggle after a separator, §18.1; kept in lockstep with the center tab's ✕).
+- **Database:** Connection Setup…, ⎯, Check: XML→Database, Check: Database→XML, ⎯, ☐ DDL Explorer
+  (checkable toggle, §18.1; kept in lockstep with the center tab's ✕). **Target design (2026-08-02, not
+  yet implemented)** — everything §18 adds lives in **this** menu; no new top-level menu is created for
+  it, and no "locate binary" action is added, because v1 spawns no external process:
+  - ⎯ then (§18.5) **Sandbox Setup…** (the `role=sandbox` profile in the same `ConnectionSetupDialog`,
+    plus the capability-probe result, the one-click **Install plpgsql_check** button *inside* that dialog
+    next to the probe result, the working-set list and **Reset Sandbox**, and — when the configured
+    database is not app-owned — the refusal together with the mandatory **"Create a sandbox database for
+    me"** offer); **Check DDL Object** (runs the validation ladder against the active DDL object editor
+    tab); **Apply to Sandbox**; **Apply to Target Database…** (the ellipsis marks the confirmation naming
+    object + database, and it is additionally gated on a green sandbox validation and refused outright on
+    a changed signature — §18.5); and **Generate Deployment SQL…** (the feature's rank-1 deliverable;
+    disabled unless a sandbox profile is configured). **Check DDL Object / Apply to Sandbox / Apply to
+    Target Database…** are **disabled unless a DDL object editor tab is active**, kept in sync on
+    `center_stage.currentChanged`; Apply is never automatic and never implied by Save. Sandbox Setup and
+    Generate Deployment SQL do **not** require an object tab. There is no "locate binary" action —
+    v1 spawns no external process.
+  - ⎯ then (§18.2) **New DDL Project…**, **Open DDL Project…**, **Close DDL Project**.
+  - (§18.3) **Compare Schemas…** and **Save Schema Snapshot…**.
+
+  ("Format Selection" is **not** a menu-bar item: it is a `Ctrl+Alt+F` action plus a context-menu entry
+  scoped to the DDL object editor tab — see §27.)
 - **Tools:** Manage Captions…, Caption Filter… (Ctrl+R in caption context), Reparse Raw XML into Tree,
   Validate Project, Compare/Merge Two Files…, Next/Previous Difference, Apply Changes to Target.
 - **Generation:** Locate PHP Generator Executable…, Generate PHP…, Open Output Folder, panGen (Generate
@@ -1980,19 +3129,25 @@ Toolbar default: Open, Save, Undo, Redo, Find, Validate, Generate (customizable)
 
 | Shortcut | Action | Context |
 |---|---|---|
-| Ctrl+O / Ctrl+S / Ctrl+Shift+S / Ctrl+W | Open / Save / Save As / Close | Window (Save routes to the active center-stage tab: Raw XML or Edit XSD, §7) |
+| Ctrl+O / Ctrl+S / Ctrl+Shift+S / Ctrl+W | Open / Save / Save As / Close | Window (Save routes to the active center-stage tab: Raw XML, Edit XSD, or — target design 2026-08-02, §18.5 — the active DDL object editor tab, where Save persists text only and **never** executes DDL, §7) |
 | Ctrl+Z / Ctrl+Y | Undo / Redo (single step) | Window |
-| Ctrl+F / F3 / Ctrl+Shift+F | Find / Find Next / Find All | Window |
-| Ctrl+R / Ctrl+Alt+Return | Replace / Replace All | Window (caption: Ctrl+R = Caption Filter) |
+| Ctrl+F / F3 / Ctrl+Shift+F | Find / Find Next / Find All | Window — the **active** tab's own `FindReplaceBar` via `_active_find_bar` (Raw XML, Edit XSD, DDL Explorer; plus the DDL object editor tab, §18.5 target design) |
+| Ctrl+R / Ctrl+Alt+Return | Replace / Replace All | Window; same per-tab routing as Find, but **inert in the read-only DDL Explorer** (`CodeEditor.replace_current_selection` returns early on `isReadOnly()`) and **live** in the DDL object editor tab (caption: Ctrl+R = Caption Filter) |
 | Ctrl+Shift+B / Ctrl+Shift+A | Select Enclosing / Parent Block | Raw XML editor (menu-owned) |
 | Ctrl+click / Alt+click | Jump to matching tag / parent tag | Raw XML editor |
-| Ctrl+F2 / F2 / Shift+F2 | Toggle / Next / Previous Bookmark | Raw XML editor (Bookmarks menu; disabled in Caption Mode, §13 — target design 2026-08-01) |
+| Ctrl+F2 / F2 / Shift+F2 | Toggle / Next / Previous Bookmark | Bookmarks menu, dispatched to the **active** editor tab via `_active_bookmark_editor` — Raw XML, Edit XSD, DDL Explorer today, plus the DDL object editor tab (§18.5, target design 2026-08-02); disabled in Caption Mode, §13 — target design 2026-08-01 |
 | double-click (line-number gutter zone) | Toggle bookmark on that line | Raw XML editor gutter (target design 2026-08-01, not yet implemented, §8 — additive alongside the existing single-click 12px bookmark strip; NOT gated by Caption Mode) |
 | Ctrl+L | Go To XSD (jump to the attribute's definition in curated.xsd; always forces curated mode) | Window-level QAction (also in the Raw XML editor context menu) |
+| Ctrl+Alt+F | **Format Selection** (§18.4's `format_selection` on the current selection; single undo step on success, `[SQL]` Audit lines + transient underline on refusal) | DDL object editor tab only, and only with a non-empty selection (target design 2026-08-02, not yet implemented, §18.5). Also a context-menu item there. `Ctrl+Shift+F` stays Find All. |
+| *(no shortcut, deliberately)* | **Check DDL Object** / **Check without applying** / **Apply to Sandbox** / **Apply to Target Database…** / **Generate Deployment SQL…** | Database menu, the DDL object editor tab's context menu, and (for the three check/apply gestures) its button row (§18.5, target design 2026-08-02). Apply is an **irreversible outward effect** and must not be one keystroke away; the target-database variant additionally requires a green sandbox validation, refuses a changed signature outright, and confirms naming the object **and** the database. |
 | Ctrl+G | Go to line in XML | Caption grid |
-| Ctrl+Shift+B | Bracket-select | Code editor dialog |
+| Ctrl+Shift+B | Bracket-select | Code editor dialog; DDL object editor tab (§18.5, target design) |
 | Ctrl+S / Ctrl+W | Save / Cancel | Code editor dialog |
 | F1 | Manual | Window |
+
+**§18.5 introduces exactly one new binding** (`Ctrl+Alt+F`, which §18.4 had left TBD). Everything else it
+needs joins the **existing** per-tab dispatchers rather than adding shortcuts: `_active_find_bar()`,
+`_active_bookmark_editor()` and `_save_active_tab()` each gain one branch.
 
 ---
 
@@ -2057,6 +3212,24 @@ is authoritative** (and is what appears in the body above).
 | 2026-08-01 | §18.4 formatter reuses **`_SQL_KEYWORDS` imported from `pgtp_editor/ui/code_editor.py`** as its shared dialect source (settled design, same date) | **Relocated, not imported:** the set lives in the Qt-free core as `pgtp_editor/sql/keywords.py::SQL_KEYWORDS` (a `frozenset` of 115 lowercase members; added `elseif`, `elsif`, `exit`, `continue`, `foreach`, `reverse`, `intersect`, `while`) and `ui/code_editor.py` binds `_SQL_KEYWORDS = SQL_KEYWORDS` (same object, so `_highlighter._keywords is _SQL_KEYWORDS` still holds). Importing from `ui/` would have inverted §5's dependency rule (core must never import ui; `sql/` must stay Qt-free, now test-enforced by `tests/sql/test_package_purity.py`) — still exactly one shared source of truth for the highlighter's `language="sql"` mode and the formatter, just on the correct side of the arrow |
 | 2026-08-01 | §18.4 module shape sketched in §5's tree as a single `sql/formatter.py` ("name TBD") with entry point `format_selection(text) -> FormatResult` and a `FormatResult` that "is either the reformatted text or a refusal" (settled design, same date) | **Five modules** as shipped — `sql/__init__.py` façade + `keywords.py`/`issues.py`/`tokenizer.py`/`formatter.py` — with `format_selection(text: str, *, indent_unit: str = "    ") -> FormatResult`, `FormatResult(ok, text, issues)` whose `text` on refusal is the input **verbatim** (an `ok`-ignoring caller cannot corrupt the selection), frozen `Issue(message, start, end, start_line, start_col, end_line, end_col, fatal=True)` with `.line == start_line` for `xsd_verify.Issue` parity, and a public `tokenize(text) -> list[Token]` on `sql/tokenizer.py` (the façade's `__all__` stays the four documented names) |
 | 2026-08-01 | Dark theme = Fusion + `dark_palette()` **palette-only** (the BUG-004 fix above, same date) — Fusion+palette alone rendered checkable menu indicators outlined near-black on the dark menu background (BUG-010) | Dark = Fusion + `dark_palette()` **+ the QDarkStyleSheet dark QSS** (`qdarkstyle>=3.2`, new runtime dependency, MIT-credited in About); light **always** clears the stylesheet (`app.setStyleSheet("")`) so round-trips leave no stale QSS; the palette stays applied beneath the QSS for palette-reading custom widgets; side effect: `app.style().objectName()` is empty in dark mode (`QStyleSheetStyle` wrapping) |
+| 2026-08-02 | §18.2 checked-out object file path = flat **`ddl/<schema>.<name>.sql`** for every object kind (2026-07-29) | **Disambiguate-only-when-needed** scheme: a routine that is the sole holder of its `schema.name` keeps `ddl/<schema>.<name>.sql`; an **overloaded** routine appends its argument types (`ddl/public.fmt(integer).sql`); a **trigger** is always table-qualified (`ddl/<schema>.<table>.<trigger>.sql`). The flat scheme collided — Postgres allows function overloads sharing `schema.name`, and trigger names are unique only per table. Accepted trade-off: the first overload's file must be **renamed** (deliberately, `git mv`) when a second overload appears. Path computation, the overload decision and filename sanitization live in the new pure Qt-free `db/ddl_project.py` |
+| 2026-08-02 | §18.2 "Checkout-to-edit" as a **single paragraph** — right-click in `BrowserPanel`/`EditorPanel` opens "a new, single-object editable tab", with no design for how a project comes to exist, what the tab is, how it is titled/closed/saved, or how `CenterStage` hosts a runtime-created tab (2026-07-29) | Full editable-tab design (target design): two right-click entry points with named widget idioms; a **"DDL project required"** Create…/Open…/Cancel dialog plus three Database-menu project actions; checkout semantics (seed-from-live when the file is absent, open-from-disk when present, **never silently overwrite local from the DB**, drift surfaced but **never blocking edit**); `ui/ddl_object_editor.py::DdlObjectEditorPanel`, one tab per object, re-Edit **focuses** the existing tab, short-identity title + dirty marker, tooltip, MainWindow-owned close confirm (the Edit-XSD pattern), **deliberately no `.bak`** (git is the history — an intentional divergence from §19); `CenterStage` gains **dynamic tabs appended after the fixed set** and addressed by a **key→widget map**, never a remembered index. *(Later the same day: the tab material was relocated from §18.2 to §18.5 and the project-required dialog re-scoped to project actions only — see the de-duplication and scoping rows below.)* |
+| 2026-08-02 | §18.4's trigger binding **TBD**, its host surface undesigned, and its Audit-panel prefix unchosen — "§26/§27 gain no entry" (2026-08-01) | **Settled: `Ctrl+Alt+F`** (plus a **"Format Selection"** context-menu item), scoped to the DDL object editor tab and enabled only with a selection; `Ctrl+Shift+F` stays **Find All**. Refusals report to the Audit panel under the **`[SQL]`** prefix with a **transient underline** over the `Issue`'s exact span; success replaces the selection as a **single undo step**. §26/§27 now carry the binding. Still unimplemented — the host tab does not exist yet |
+| 2026-08-02 | §18.1's "explicitly phase 2" write-back sketch: the editable DDL surface = the **multi-object `EditorPanel` buffer made editable in place**, pushing `CREATE OR REPLACE FUNCTION …` straight to the live DB with the diff detected per `DdlObjectSpan` | The editable surface is a **separate single-object tab type** (`ui/ddl_object_editor.py::DdlObjectEditorPanel`, right-click ▸ Edit… from `BrowserPanel` or from a span in `EditorPanel`), and `EditorPanel` is read-only **permanently**, not provisionally — a regenerated multi-object browsing buffer cannot carry per-object dirty state, per-object validation or per-object apply, and it conflicts with §18.2's file-per-object model. Nothing is ever pushed to a database from `EditorPanel` |
+| 2026-08-02 | Two parallel design sessions specified the **same** editable single-object DDL tab under two names in two places — `ui/ddl_object_editor.py::DdlObjectEditorPanel` described inside §18.2 ("the DDL Editor surface"), and `ui/ddl_object_panel.py` ("name TBD") described inside a separate §18.5 | **De-duplicated to one specification:** the module/class is **`ui/ddl_object_editor.py::DdlObjectEditorPanel`** everywhere (§5/§7/§8/§18.1–§18.5/§26/§27), and the tab is specified **once, in §18.5**, where the sandbox lives — validation and the edit→validate→apply loop are one feature. §18.2 is renamed **"Projects, checkout & state markers"**, keeps only the project/file-naming/marker/manifest material, and *references* the tab: checkout changes only its injected load/save pair and adds marker rendering. The `CenterStage` dynamic-tab requirement (fixed indices never shift; key→widget map), the two right-click entry points with the `EditorPanel`-retains-spans amendment, and the Format Selection block all moved from §18.2 into §18.5 unchanged in substance |
+| 2026-08-02 | **Scoping: "build full §18.2 first"** — the editable tab was specified as part of the git-project/checkout workflow, so a project, `ddl/` files, `.ddlproject/deployed.json` and `*`/`!` markers were prerequisites for editing one object | **Reversed by the project owner after seeing both designs: §18.5's scoping wins.** The tab is **project-decoupled in v1** — no `ddl/` folder, no manifest, no markers required to edit one object; it loads from the live introspected definition. It is written against an **injected load/save pair**, not a hard-coded source, so §18.2 layers on later by swapping only *where the buffer loads from and saves to*. Operative rationale, preserved verbatim in §18.5 D1: *"a git project, a manifest, a hash scheme and a marker recompute is a large prerequisite in front of 'edit one function and find out whether it compiles'."* Build order is now §18.1 → §18.5 → §18.2 → §18.3 |
+| 2026-08-02 | §18.2: *"Saving writes to that local file **only** — it never touches the live DB directly (DB writes only happen via the reviewed §18.3 deploy step)"* — the editable tab had no path to a database at all | **Save and Apply are two distinct, explicit user gestures**, never automatic and never implied by each other: **Save** persists the edited text (buffer in v1, `ddl/*.sql` once checked out) and touches no database; **Apply** executes the DDL against a database. **Apply targets BOTH the sandbox and the target database, each confirm-gated** — the sandbox behind §18.5's naming-convention ownership rule, the target behind an explicit confirmation **naming the object and the database**. §18.3 remains the **reviewed batch deploy** with the `!`-drift gate and is **authoritative whenever both could apply**; single-object Apply is a narrower, individually-confirmed gesture that writes no manifest and makes no commit (§18.2's Apply-vs-Deploy table) |
+| 2026-08-02 | §18.5's deliberately-open question *"what apply commits to in a project-less v1"* — candidates were (a) the target database via a confirm-gated `CREATE OR REPLACE` or (b) only the local buffer, deferring all durable writes to §18.2/§18.3 | **Resolved: both destinations, each its own confirm-gated gesture** (sandbox and target), per the row above. Removed from §29 as an open question |
+| 2026-08-02 | §17/§18 single-seam assumption: `db/introspect.py::run_queries` is the **only** connection-opening function and is implicitly read-only (verified: it `execute`s + `fetchall`s and closes in a `finally`, never committing). One competing draft proposed making it **the write path too**, adding an `autocommit: bool = False` parameter and relying on close-time implicit rollback | **Rejected in favor of a separate, clearly-named write seam:** the new Qt-free module **`db/apply.py::apply_ddl(params, statements, *, commit, autocommit=False)`** — the codebase's **first database write path** — with **explicit** `commit()`/`rollback()` (never implicit close-time rollback) and an `ApplyOutcome` that captures failure as data. `run_queries` is **never widened** and stays the read-only read seam, so *"does this code write to the database?"* remains answerable by **which function is called**. Injectable as `applier: Applier = apply_ddl`, mirroring `runner: Runner = run_queries`. Never a third connection-opening function |
+| 2026-08-02 | §17/§18.1 assumed a **single** connection profile — one live "target" database per session (`db/config.py`, fixed QSettings group `"db"`), with §18.2's only planned generalization being a **project key** | **Two** profiles: the existing `role = target` plus a new **`role = sandbox`** (§18.5 D2), persisted through the **same** generalized keyed-group scheme in `db/config.py` — one store, two dimensions (project key + profile role), one `ConnectionSetupDialog` with a profile selector. Not a second settings mechanism and not a second dialog |
+| 2026-08-02 | §18.5 read as *"an editable tab with a lint target"* — the editable single-object tab and its Save/Apply gestures were the headline, and no deployment artifact was specified at all | **Outputs explicitly ranked, Apply demoted:** **(1) Generate Deployment SQL is THE deliverable** — sandbox = *desired state*, production = *current state*, output = one reviewed `.sql` migration script run once to upgrade the real database, built on `db/schema_diff.py` + `db/migration_gen.py` **to §18.3's exact `SchemaDifference` shape and signatures**, implementing the routine/trigger cases and leaving table/column to §18.3 (honouring *"one diff/generation engine, two entry points"*, with a raised `UnsupportedDifference` rather than a silent skip); **(2) the stateful sandbox** as accumulating executable desired state; **(3) per-object Save / Apply** as a convenience and the §18.2 precursor. Build order re-ranked accordingly — the deployment script is built last (it is worthless without validation) and is the first thing the user cares about. Also settled here: **stable alphabetical ordering, routines before triggers** (plpgsql bodies are not resolved at CREATE time, so forward references need no ordering; `LANGUAGE sql`/`BEGIN ATOMIC` routines and triggers are the real exceptions), with **`plpgsql_show_dependency_tb()` explicitly REJECTED** as the ordering source — it covers only plpgsql routines, precisely the ones that need no ordering, and would make the deliverable depend on an optional superuser-gated C extension |
+| 2026-08-02 | §18.5 D2/D3: *"apply in a transaction → always `ROLLBACK`"*; *"the sandbox database stays pristine across any number of checks — no cleanup step, no accumulating garbage"*; *"validation writes nothing durable anywhere: everything it does inside the sandbox is rolled back"* | **Retracted — the sandbox is STATEFUL and accumulates applied edits; that is its purpose.** Owner's framing: *"we're doing schema changes on a sandbox, rollback is symbolic."* It was also a **design defect**: a pristine-baseline-per-check model **cannot validate interdependent edits** — edit `A` which calls `B`, and also edit `B`, and `A` is forever checked against the old `B`. Rollback survives **only** as the narrow *"check without applying"* probe, a convenience and not a guard. **The ownership guard is now the only safety property** and is pinned accordingly (`SANDBOX_DB_PREFIX` **and** a `pg_database` comment marker, because a name alone is spoofable; `is_app_owned` pure; `ForeignDatabaseError`; `open_sandbox` as the single gate). Adds the `pgtp_editor_sandbox.applied` working-set table with `text_sha1`, schema-level `reset()`, and **mandatory baseline provisioning** (an empty sandbox makes tiers 2–3 *actively harmful* — a false `relation … does not exist` ERROR reads worse than "could not check"): schemas → types → tables (columns only) → views → routines → triggers, deliberately omitting PK/FK/defaults/indexes/data because `plpgsql_check` is catalog-based and reads no rows. **Recorded gap:** `DatabaseSchema` models no view definitions, so a `pg_get_viewdef` query must be added or every routine touching a view fails to compile. **R5 mitigation is mandatory:** the realistic sandbox is a local restore named `myapp_dev`, `open_sandbox` refuses it, and the refusal reads as the tool being broken — so the *"create a sandbox for me"* offer ships with the refusal, not as later polish |
+| 2026-08-02 | §18.5 Apply-to-target gated **only** by an explicit confirmation naming the object and the database | **Four hard preconditions, the confirmation being the last.** (1) **A changed signature is refused outright — no override, no consent path.** PostgreSQL identifies a function by `(schema, name, argtypes)`, so editing `calc_total(integer)` into `calc_total(bigint)` and applying makes `CREATE OR REPLACE` **create a second function and leave the old one live**; every existing caller keeps hitting the old one, the statement **succeeds**, and the confirmation dialog was **truthful** — no confirm-gate can catch it because there is nothing to refuse (R14). This deliberately makes parameter renames and argument-type changes **unreachable from Apply**, which is correct: they belong in the reviewable script path. Recorded alongside it, R13: `CREATE OR REPLACE FUNCTION` **hard-errors** on a changed *return type* or a renamed *input parameter*, which fails loudly but is a standing reason not to aim single statements at production — the deployment generator refuses those as named blockers during its drift check. (2) **Gated on a green sandbox validation, with an override that NAMES what could not be checked** — refusing silently would be worse than DBeaver; applying unvalidated *is* DBeaver. (3) **Runs in a transaction and rolls back on failure, with no revert snapshot** — stated explicitly: **a successful-but-wrong apply has no in-app way back until §18.2's checkout ships**, since the rollback covers what PostgreSQL rejects, not what compiles fine and behaves badly; this raises the value of landing §18.2 sooner. (4) The confirmation, unchanged |
+| 2026-08-02 | §18.5 D3 tier 1: *"`SET plpgsql.extra_warnings = 'all'` … catches `shadowed_variables`, `strict_multi_assignment`, `too_many_rows`"* — documented as a working tier over the existing row-fetching runner | **Corrected — as specced the tier yielded nothing.** Its findings are delivered as **asynchronous `WARNING` notices** and the statements **return no rows**, so a row-fetching runner discards them entirely. Tier 1 is now specified against a **notice-capture channel** on the write seam (a psycopg-free normalized `Notice{severity, message, detail, hint, context, sqlstate}` collected on `ApplyOutcome.notices`), with findings parsed from `Notice.context`'s `near line N` and mapped through `map_lineno`; **where that channel is unavailable the tier reports `unavailable`, never `passed`.** Related correction: **tier 2 cannot reuse a plain `fetchall()` path** — psycopg 3 raises `ProgrammingError` on `fetchall()` after `SET`/`CREATE FUNCTION`/`CREATE EXTENSION`, so the write seam **must guard on `cursor.description is None`** and return results positionally 1:1 with the statement list (the earlier claim that tier 2 *"needs no new write path — it is the existing runner, used as-is"* was wrong). Line mapping is likewise pinned rather than left open: `body_line_offset`/`map_lineno` (`prosrc` line 1 **is** the dollar-quote opener's line), the exact `position`-derived line for tier-2 failures, and a mandatory **`None`** (render with no line) when the opener cannot be located — never a guess |
+| 2026-08-02 | §5 dependency rule listed **`db/*`** among the modules that "are Qt-free and unit-testable without a `QApplication`" | **Factually wrong claim corrected** (pre-existing error; the code was never at fault): `db/config.py` imports `QtCore.QSettings` **at module scope**, because the connection store *is* QSettings. §5 now **enumerates** the genuinely Qt-free `db/` modules (`introspect`, `compare`, `rename`, `ddl_buffer`, plus the target-design `apply`/`sandbox`/`ddl_check`/`ddl_project`/`schema_diff`/`migration_gen`) and names `config.py` as the one accepted exception — **not** to be "fixed" by inventing a second settings/secrets store, which §17/§18.5 explicitly reject |
+| 2026-08-02 | §26/§27 named the ladder gesture **"Validate DDL Object"**, a single menu action, with no deployment entry | **"Check DDL Object"**, matching the `[Check]` Audit prefix and `db/ddl_check.py`, and **three distinct gestures** — *Apply to Sandbox* (commits), *Check* (`recheck` against the sandbox as it stands), *Check without applying* (the rolled-back probe) — surfaced on the tab's own button row as well as the menu and context menu; the Database menu additionally gains **Generate Deployment SQL…**, and the one-click *Install plpgsql_check* lives **inside** Sandbox Setup next to the probe result rather than as a fourth menu item |
+| 2026-08-02 | §7 stated the append-after-the-fixed-set / key→widget-map rule for dynamic `CenterStage` tabs as a one-clause aside, with the underlying fragility left implicit | **Promoted to an explicitly stated invariant with a mandatory regression test:** append-only creation (`addTab`, never `insertTab`) and tail-only removal, because the stored fixed indices are **load-bearing in five verified places** — `_active_find_bar`, `_active_bookmark_editor`, `_save_active_tab`, `_on_ddl_navigate_requested` and every `CenterStage.hide_*` (plus `_on_tab_close_requested`'s index dispatch, which must gain a widget-type branch *before* any index comparison). One `insertTab` ahead of the fixed set silently re-points all of them |
+| 2026-08-02 | §18.4 recorded semantic/existence linting (do the referenced tables/columns/functions exist?) as *"a separate, explicitly deferred idea — not designed here"*, a forward pointer only | **Designed, in §18.5**, as the sandbox-backed **four-tier validation ladder** (`db/ddl_check.py` + `db/sandbox.py`, `okbob/plpgsql_check`), with the hard rule that **an unavailable tier reports "could not check", never "clean."** It remains **entirely outside** `format_selection`'s refusal gate, which stays tokenize/balance-only and offline. Findings report under **`[Check]`**, distinct from §18.4's `[SQL]` and §22's `[Lint]` — a three-way prefix reservation recorded in §7, §18.4, §18.5 and §22 |
 
 ---
 
@@ -2081,11 +3254,50 @@ is authoritative** (and is what appears in the body above).
   (must fail gracefully).
 - **Fold re-scan performance** and `line_index` O(N²) — accepted for now; optimize only if profiling
   demands.
-- **§18.4 formatter host, shortcut and audit prefix:** the implemented `sql/` core has **no consumer**.
-  Which editing surface calls it (the still-undesigned editable DDL Editor is the intended one), which
-  keyboard shortcut triggers it (hence no §26/§27 entry), and which Audit-panel prefix its refusals use
-  are all **deliberately unresolved** — pending the DDL Editor design, not an oversight. **Not open:**
-  whether an auto-format mode exists — it does **not**, by explicit decision (§18.4).
+- **~~§18.4 formatter host, shortcut and audit prefix~~ — RESOLVED 2026-08-02 (§18.5):** the host is the
+  DDL object editor tab (`ui/ddl_object_editor.py::DdlObjectEditorPanel`), the trigger is `Ctrl+Alt+F`
+  plus a "Format Selection" context-menu item (selection-only), and refusals report under the `[SQL]`
+  Audit prefix with a transient underline over the `Issue` span. §26/§27 now carry the binding. The
+  wiring is still unbuilt because the host tab is unbuilt — that is a *not-yet-implemented* item, not an
+  open question. **Still not open:** whether an auto-format mode exists — it does **not**, by explicit
+  decision (§18.4).
+- **~~What "Apply" writes to in a project-less v1 (§18.5)~~ — RESOLVED 2026-08-02:** **both** the
+  sandbox and the target database, each its own explicit, confirm-gated gesture, through the new
+  `db/apply.py` write seam; Save and Apply are separate gestures; §18.3's reviewed batch deploy stays
+  authoritative when both could apply (§18.2/§18.5, ledger §28).
+- **Overload-rename git handling (§18.2):** when a second overload of an already-checked-out routine
+  first appears, `ddl/public.fmt.sql` must become `ddl/public.fmt(integer).sql`. *When* the tool performs
+  that rename (eagerly at the next introspection, lazily at the next checkout of either overload, or only
+  on explicit user confirmation), and whether it shells out to `git mv` at all — given §18.2's stated
+  preference for keeping correctness-critical logic independent of git plumbing — is unresolved. Doing
+  nothing is not an option: two overloads would otherwise contend for one path.
+- **The deployment script's content model (§18.5)** — **(a) working set** (everything in the sandbox's
+  `applied` table; already available, needs no extra connection, but may carry no-op statements for
+  objects the user touched then reverted, and **cannot see production changing underneath the user**) vs.
+  **(b) true diff against production at generate time** (`diff_schemas(sandbox, production)` — exactly
+  the delta, catches drift by construction, at the cost of one extra read-only introspection). The
+  mandatory pre-generate drift check is specified either way, which buys (b)'s single real safety benefit
+  at a fraction of its scope; and because `diff_schemas` is written source-agnostic, switching is a
+  one-line change at the call site. **Unresolved — and whichever way it goes, the script header must
+  state which model produced it.**
+- **Transaction-wrapping the generated deployment script (§18.5)** — PostgreSQL has transactional DDL, so
+  `BEGIN; … COMMIT;` around the whole script makes deployment atomic, a very strong property for exactly
+  this use case. But it changes how the user's own deploy tooling must invoke it. Candidate: emit the
+  `BEGIN`/`COMMIT` pair **commented out** in the header with a one-line explanation and let the user
+  choose. **Nobody has actually made this decision.**
+- **Execution against the sandbox (§18.5)** — running a function and seeing its results is not designed.
+  It is **the difference between a validator and an IDE**, and the sandbox makes it safe in a way DBeaver
+  cannot. Scope it as a follow-on feature or fold it into v1 — undecided.
+- **`db/routine_refs.py` (§18.1's one unbuilt piece)** — XML↔routine cross-referencing, answering *"which
+  `.pgtp` pages break if I change this function?"* before a deployment script is generated. **No other
+  tool can do this**, and it is the XML↔DB sync the owner describes as the point of the app (§1). Not
+  designed; a strong candidate for the next design pass rather than an open question about existing
+  design.
+- **Project-relative paths when the repo moves (§18.2):** `project.json`, `deployed.json` and the
+  per-project connection key are all anchored to the project. Whether the QSettings connection key is the
+  absolute project path (breaks on move/clone) or a project id stored in `project.json` (survives, but
+  needs generating and can be duplicated by a copy-paste of the folder), and whether the optional `.pgtp`
+  link is stored relative to the project root or absolute, are unresolved.
 
 ---
 
