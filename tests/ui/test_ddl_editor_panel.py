@@ -79,7 +79,7 @@ def _schema_with_two_objects():
     return DatabaseSchema(
         tables={},
         routines={
-            "pr.calc_total": RoutineInfo(
+            "pr.calc_total(integer)": RoutineInfo(
                 schema="pr",
                 name="calc_total",
                 kind="function",
