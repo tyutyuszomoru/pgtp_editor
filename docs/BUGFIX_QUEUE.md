@@ -1703,3 +1703,224 @@ Ledger row dated 2026-08-01 for BUG-013 (line 2182) — flag for `spec-maintaine
 not edit the spec as part of the fix.
 
 ---
+
+## BUG-018: Overloaded functions are silently lost -- `fetch_routines_and_triggers` keys the routines dict by `schema.name`, so the second overload overwrites the first
+**Status:** RESOLVED (b021b3d)
+**Reported:** 2026-08-02
+**Report (verbatim):** "`pgtp_editor/db/introspect.py:403` in `fetch_routines_and_triggers` keys the
+routines dict by `f\"{schema_name}.{name}\"`. PostgreSQL identifies functions by `(schema, name, argument
+types)`, so overloads are distinct objects that legitimately share `schema.name`. A database containing
+both `public.fmt(integer)` and `public.fmt(text)` produces two rows from the catalog query, both of which
+land on the same dict key — the second silently overwrites the first. Every consumer downstream sees only
+one overload and has no way to know another existed. Note the triggers dict two lines below
+(`introspect.py:417`) IS correctly keyed, `f\"{schema_name}.{table_name}.{name}\"`. So this is specifically
+the routines key, and the correct-key pattern is already present right next to it. `RoutineInfo` itself
+carries `arg_types: list[str]` (introspect.py:70), so the disambiguating data is fetched and retained — it
+just is not used in the key. […] Propose the fix. The obvious candidate is keying on the rendered
+signature `schema.name(argtypes)`, matching what `db/ddl_buffer.py`'s banner comment already renders and
+what the new `db/schema_diff.py::routine_identity` computes. There is a strong argument for extracting one
+shared identity helper rather than a third independent implementation of the same string."
+
+**Root cause:** Confirmed by reading the whole path.
+
+1. **The catalog query does not deduplicate.** `pgtp_editor/db/introspect.py:176-202` (`_ROUTINES_SQL`) is
+   a plain `SELECT … FROM pg_catalog.pg_proc p JOIN pg_namespace JOIN pg_language WHERE p.prokind IN
+   ('f','p') AND …` — no `DISTINCT`, no `GROUP BY` at the outer level (the two `array_agg` subqueries are
+   correlated per-row over `p.proargtypes` / `proallargtypes`). `pg_proc` holds **one row per overload**,
+   so `public.fmt(integer)` and `public.fmt(text)` arrive as two distinct rows, each with its own
+   `arg_types`. The loss happens purely in Python.
+2. **The dict assignment collapses them.** `pgtp_editor/db/introspect.py:390-412`,
+   `fetch_routines_and_triggers`: the row loop ends at line 403 with
+   `routines[f"{schema_name}.{name}"] = RoutineInfo(…)`. Second row wins; the first `RoutineInfo` — a
+   fully-populated, correct object — is discarded before any consumer sees it. Nothing logs or counts the
+   loss; `_log.info(… routines=%d …)` at `:428-433` reports the *post-collapse* `len(routines)`, so even
+   the debug log under-reports.
+3. **The sibling key two lines down is correct.** `introspect.py:417` keys triggers
+   `f"{schema_name}.{table_name}.{name}"` — the report is right that the "key by everything that makes the
+   object unique" pattern already exists in the same function, five lines away.
+
+**Second, independent collision in the same feature (must be fixed together or overload support stays
+broken):** `pgtp_editor/ui/ddl_buffer_panel.py:74-80`, `BrowserPanel.set_schema`, builds
+`span_by_routine[(span.schema, span.name)] = span` — keyed on `(schema, name)` with no argument types,
+and `DdlObjectSpan` (`db/ddl_buffer.py:36-43`) carries no argument types to key on. The lookup at
+`ddl_buffer_panel.py:119` (`span_by_routine.get((routine.schema, routine.name))`) therefore hands **both**
+overloads the *same* (last-wins) span. Fixing only `introspect.py` would make two tree items appear and
+then navigate to the same body — a new, more confusing bug. `db/ddl_buffer.py::build_ddl_text` itself is
+fine (it iterates `schema.routines.values()` at `:62` and emits one banner+span per routine).
+
+**Blast radius — every read of `DatabaseSchema.routines`** (grepped across `pgtp_editor/` and `tests/`):
+
+| Site | How it reads | Affected by the key change? |
+|---|---|---|
+| `db/ddl_buffer.py:62` `build_ddl_text` | `.values()` | No — but see sort note below |
+| `ui/ddl_buffer_panel.py:109` `_build_routines_branch` | `.values()` | No (but the span map above is) |
+| `ui/main_window.py:2524` DDL Explorer status message | `len(schema.routines)` | Behavior **improves** — the count stops under-reporting |
+| `db/schema_diff.py:112-113` `diff_schemas` | `.values()` + own `routine_identity` | No — `_by_identity` (`:91-95`) deliberately ignores the dict key and its comment even names this bug |
+| `tests/db/test_introspect.py:416,422,460` | **by key** (`"pr.calc_total"`, `"pr.do_thing"`, `"pr.split_name"`) | **Yes — the only production-path key-format dependency in the repo** |
+| `tests/db/test_ddl_buffer.py:7-27,51`, `tests/ui/test_ddl_buffer_panel.py`, `tests/ui/test_ddl_explorer_wiring.py:36-55,343-348`, `tests/ui/test_ddl_editor_panel.py:81` | build their *own* fixture dicts and only iterate / re-key them | No (self-consistent fixtures; updating them to signature keys is cosmetic, do it for realism) |
+
+No serialization, QSettings value, on-disk snapshot or `.pgtp` content embeds these keys today
+(`db/schema_snapshot.py` does not exist yet), so the change is in-memory only — no migration of stored
+data is required.
+
+**Proposed fix**
+
+*1. One shared identity helper, in `db/introspect.py`.*
+
+> **Settled 2026-08-02 by the two sessions that own the consumers (§18.2/§18.5 and deployment SQL):
+> make it a `@property` on `RoutineInfo`, not a module-level function.**
+>
+> ```python
+> @property
+> def signature(self) -> str:      # "public.fmt(integer, text)"
+>     return f"{self.schema}.{self.name}({', '.join(self.arg_types)})"
+> ```
+>
+> Preferred over a free function because **it travels with the data**: you cannot hold a `RoutineInfo`
+> and accidentally not have its identity, whereas a free function can be forgotten and silently
+> reimplemented — which is how this bug arose in the first place. It also matches how §18.2 treats
+> `content_hash` (one implementation, consumed everywhere) without adding a second such rule.
+>
+> **Pin the zero-argument spelling explicitly: `public.f()` — empty parens, never bare `public.f`.**
+> This is the divergence most likely to slip through, because zero-arg routines are the common case,
+> so a mismatch there would be everywhere and invisible. Rendering is `", ".join(arg_types)` —
+> comma-space, and `arg_types` (types only), **not** `args` (name/type pairs).
+>
+> Division of labour once it exists: `ddl_buffer`'s banner, `schema_diff.routine_identity` and the
+> dict key all use `signature` **verbatim**. `db/ddl_project.py` derives filenames by *sanitizing*
+> `signature` (Windows-illegal characters) rather than re-rendering it — the
+> disambiguate-only-when-needed decision still needs the overload set, so
+> `object_relpath(obj, overloaded=...)` stays, but the qualified form is `signature` put through
+> sanitization, never a second rendering.
+>
+> The §18.5 owner will fold the single-source rule into the spec once this fix lands, so it is a
+> stated invariant rather than a convention two sessions happen to remember.
+
+The original triage proposed a module-level function at the same location, which remains a valid
+fallback if a property turns out to be awkward:
+
+```python
+def routine_signature(routine: RoutineInfo) -> str:
+    """`schema.name(argtype, argtype)` — PostgreSQL's real identity for a function."""
+    return f"{routine.schema}.{routine.name}({', '.join(routine.arg_types)})"
+```
+
+Either way `introspect.py` is the right home and the *only* possible one of the three candidates:
+`db/schema_diff.py` and `db/ddl_buffer.py` (and the target-design `db/ddl_project.py`) all already import
+**from** `introspect`, so putting the helper in any of them and importing it back into `introspect` is a
+circular import. Placing it at the bottom of the dependency chain lets all three consumers converge on it.
+
+*2. Use it as the dict key.* `introspect.py:403` becomes (build the `RoutineInfo` first, then key off it, so
+the string is computed by the helper and never re-inlined):
+
+```python
+routine = RoutineInfo(...)
+routines[routine_signature(routine)] = routine
+```
+
+*3. Collapse the duplicate implementations onto it:*
+- `db/schema_diff.py:73-83` — make `routine_identity` a one-line delegate
+  (`return routine_signature(routine)`). **Keep the name and the whole docstring**: §18.3's plan names
+  `routine_identity` explicitly and the docstring carries the R14 rationale ("never degrade this to
+  `schema.name`"); tests and the migration generator import it. Do not delete it in favour of the new name.
+- `db/ddl_buffer.py:46-51` — `_banner` currently formats `f"-- {label} {schema}.{name}({args}) --"` from
+  loose `schema`/`name`/`arg_types` arguments. Either pass the `RoutineInfo` through and use
+  `routine_signature`, or leave `_banner` alone and add a comment pointing at the helper. **The joined
+  string must stay byte-identical** — the spec (§18.2, other worktree) states `<argtypes>` in the `ddl/`
+  filename is "the same list `build_ddl_text`'s banner comment already prints", so banner, key, diff
+  identity and future filename must not drift apart.
+- The **joiner is `", "` (comma + space)**, matching both existing implementations. Do not "tidy" it to
+  `","`: it would silently change `db/ddl_project.py`'s future `ddl/public.fmt(integer, text).sql`
+  filenames and desynchronize the banner.
+
+*4. Fix the BrowserPanel span map (same change set).* In `db/ddl_buffer.py`, add a trailing **optional**
+field to `DdlObjectSpan` — e.g. `arg_types: tuple[str, ...] | None = None` (tuple, so the frozen dataclass
+stays hashable) or `signature: str | None = None` — populated in `build_ddl_text:82-91` for routines and
+left `None` for triggers. A **trailing field with a default** keeps the existing positional/keyword
+constructions in `tests/ui/test_ddl_editor_panel.py:211-229` and `tests/db/test_ddl_buffer.py:81` valid.
+Then in `ui/ddl_buffer_panel.py`: key `span_by_routine` on the signature string (`:74-80`) and look it up
+with `routine_signature(routine)` (`:119`). `DdlObjectSpan` is constructed nowhere else in `pgtp_editor/`
+(verified by grep — only `ddl_buffer.py:83`).
+
+*5. Deterministic ordering for overloads.* `db/ddl_buffer.py:65` sorts by
+`(schema, 0 if routine else 1, name)`. Two overloads tie on that key, so Python's stable sort falls back to
+catalog row order — i.e. `pg_proc` physical order, which is not stable across servers or after a
+`CREATE OR REPLACE`. Add `arg_types` (as a tuple, or the signature string) as the final tiebreak so the
+buffer, the spans and therefore any future diff of the buffer are reproducible. The docstring at `:58-59`
+("Deterministic order: schema, then kind …, then name") needs the extra clause.
+
+*Gotchas*
+- **Do not add a field to `RoutineInfo`.** `tests/db/test_introspect.py:416-421` asserts equality against a
+  fully-spelled `RoutineInfo(...)`; a new dataclass field would break that assertion and every other
+  fixture. A module-level function (preferred) or a `@property` is equality-neutral.
+- Zero-argument routines key as `pr.do_thing()` — trailing empty parens. That is intentional and matches the
+  banner and `routine_identity` today; it is what distinguishes `f()` from `f(integer)`.
+- `ui/ddl_buffer_panel.py:100-137` also builds `triggers_by_function` keyed `(schema, function_name)` from
+  `pg_trigger`, which only knows the function *name*. With overloads sharing a name, calling triggers will
+  nest under **every** overload. Leave as-is — a trigger function takes no arguments and is not realistically
+  overloaded — but do not "fix" it by feeding it signatures; `TriggerInfo.function_name` has none to give.
+- **UI ambiguity, deliberately out of scope:** `ddl_buffer_panel.py:111-117` renders a routine's top line as
+  bare `schema.name [F]` (no parens) when it has arguments — a 2026-08-01 Supersession Ledger decision. Two
+  overloads therefore render two identically-labelled tree items distinguished only by their argument child
+  leaves. Do **not** unilaterally change the label format in this fix; flag it for `spec-maintainer`
+  (see Spec impact).
+
+**Test impact**
+
+Existing coverage to **extend, not duplicate**:
+- `tests/db/test_introspect.py` — `_canned_routine_trigger_runner` (`:379-403`) is the canned-row fixture to
+  reuse. `test_fetch_routines_and_triggers_builds_routines_keyed_by_schema_name` (`:412-422`) must be
+  **renamed** (…`_keyed_by_signature`) and its lookups updated to `"pr.calc_total(integer)"` /
+  `"pr.do_thing()"`; `test_fetch_routines_and_triggers_correlates_out_args_end_to_end` (`:443-463`) updates
+  `"pr.split_name"` → `"pr.split_name(text)"` (note: `arg_types` is IN-only, so the key uses `(text)`, not
+  the three `all_arg_types`). These two edits are the entire migration cost.
+- `tests/db/test_ddl_buffer.py`, `tests/ui/test_ddl_buffer_panel.py`, `tests/ui/test_ddl_explorer_wiring.py`
+  — local `_schema()` fixtures; update their dict keys to signature form for realism (no behavior depends
+  on it).
+- `tests/db/test_schema_diff.py:49-54` — `_schema()` keys routines `f"{r.schema}.{r.name}#{i}"` with a
+  comment saying the diff must not rely on the dict key. **Keep that deliberate mismatch** — it is the
+  regression guard for `_by_identity`; only refresh the comment, which currently states as fact that
+  "`fetch_routines_and_triggers` keys routines by `schema.name`".
+
+New cases needed (each fails today):
+- `tests/db/test_introspect.py`: two catalog rows `("public","fmt",…,["integer"],…)` and
+  `("public","fmt",…,["text"],…)` → `len(schema.routines) == 2`, keys exactly
+  `{"public.fmt(integer)", "public.fmt(text)"}`, and each `RoutineInfo.source` is its own. Plus a unit test
+  for `routine_signature` covering the zero-arg (`pr.f()`) and multi-arg (`pr.f(integer, text)`,
+  comma-space) forms.
+- `tests/db/test_ddl_buffer.py`: a schema with two overloads yields **two** banners
+  (`-- FUNCTION public.fmt(integer) --` and `-- FUNCTION public.fmt(text) --`) and two non-overlapping
+  spans; and a determinism test that reversing the input dict's insertion order produces identical text.
+- `tests/ui/test_ddl_buffer_panel.py`: two overloads → two items under "Functions & Procedures", each
+  carrying a **different** `DdlObjectSpan.start_line` (this is the `span_by_routine` regression, and it is
+  the one that still fails if only `introspect.py` is fixed).
+- `tests/db/test_schema_diff.py`: an end-to-end-ish case where the source schema is built the way
+  `fetch_routines_and_triggers` now builds it (signature keys) and one overload differs — asserting the
+  other overload is untouched.
+- Optional but cheap: `tests/ui/test_ddl_explorer_wiring.py` — the status-message routine count reflects
+  both overloads.
+
+Run while iterating: `QT_QPA_PLATFORM=offscreen ./venv/bin/python -m pytest tests/db/test_introspect.py
+tests/db/test_ddl_buffer.py tests/db/test_schema_diff.py tests/ui/test_ddl_buffer_panel.py -q` (the repo
+`venv` is the interpreter with pytest on this box); full suite with `-n 10` at commit time.
+
+**Spec impact:** Flag for `spec-maintainer` **after** the fix lands — do not edit the spec as part of the fix.
+- §18.1 (`CONSOLIDATED_SPEC.md:1261-1300`) describes `RoutineInfo`/`DatabaseSchema.routines` in detail but
+  **never states the routines dict key**, so the current behavior was not an intentional documented
+  decision — it is an omission the code filled in wrongly. §18.1 should gain an explicit sentence: routines
+  are keyed by the full signature `schema.name(argtypes)` (contrast §17's tables, which the spec *does*
+  pin as schema-qualified at `:1146`), and a pointer to the new shared `introspect.routine_signature` as
+  the single producer of that string for the buffer banner (§18.1), the diff identity (§18.3,
+  `schema_diff.routine_identity`) and the `ddl/` filename (§18.2, `db/ddl_project.py`).
+- **Cross-worktree note:** §18.2's overload-disambiguating `ddl/` filename scheme and its
+  `2026-08-02` Supersession Ledger row exist in the *other* worktree
+  (`/home/zrb/Projects/pgtp_editor/.claude/worktrees/silly-booth-10fb09/docs/superpowers/CONSOLIDATED_SPEC.md`,
+  §18.2 "File naming — disambiguate only when needed", ledger row at `:3213`), **not** in this branch's
+  spec yet. That scheme is unimplementable until this bug is fixed — it can only disambiguate overloads
+  introspection actually delivers. Whichever session merges last should make sure the §18.1 keying sentence
+  and the §18.2 filename table land together and name the same helper.
+- No ledger *override* row is needed for the key itself (nothing prior specified it); one **is** warranted
+  if the BrowserPanel label format changes to disambiguate overloads visually, since the bare-`schema.name`
+  top line is pinned by the 2026-08-01 ledger row at `CONSOLIDATED_SPEC.md:2035`.
+
+---
