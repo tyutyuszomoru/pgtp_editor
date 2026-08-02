@@ -78,6 +78,24 @@ class RoutineInfo:
     # A routine with no input arguments has `args == []`.
     args: list[tuple[str, str]] = field(default_factory=list)
 
+    @property
+    def signature(self) -> str:
+        """`schema.name(argtype, argtype)` — PostgreSQL's real identity.
+
+        **The single source of this string.** A function is identified by
+        `(schema, name, argument types)`, so this — not `schema.name` — is what
+        keys `DatabaseSchema.routines`, what `db/ddl_buffer.py`'s banner
+        comment prints, and what `db/schema_diff.py::routine_identity`
+        compares. Consume it verbatim; never re-render it, or the four
+        spellings drift apart (BUG-018).
+
+        A zero-argument routine renders with **empty parens** — `public.f()`,
+        never bare `public.f` — which is exactly what distinguishes `f()` from
+        `f(integer)`. The joiner is `", "` (comma + space) and the source is
+        `arg_types` (types only), not `args` (name/type pairs).
+        """
+        return f"{self.schema}.{self.name}({', '.join(self.arg_types)})"
+
 
 @dataclass(frozen=True)
 class TriggerInfo:
@@ -400,7 +418,7 @@ def fetch_routines_and_triggers(
         arg_names,
         arg_modes,
     ) in routine_rows:
-        routines[f"{schema_name}.{name}"] = RoutineInfo(
+        routine = RoutineInfo(
             schema=schema_name,
             name=name,
             arg_types=list(arg_types or []),
@@ -410,6 +428,12 @@ def fetch_routines_and_triggers(
             kind="function" if prokind == "f" else "procedure",
             args=_input_args(all_arg_types, arg_names, arg_modes),
         )
+        # Keyed by the full signature, not `schema.name`: `pg_proc` holds one
+        # row per overload, so `public.fmt(integer)` and `public.fmt(text)`
+        # arrive as two rows that would collapse onto one key (BUG-018). Built
+        # first, then keyed off `routine.signature`, so the string has exactly
+        # one implementation.
+        routines[routine.signature] = routine
 
     triggers: dict[str, TriggerInfo] = {}
     for schema_name, table_name, name, tgtype, function_name, definition in trigger_rows:

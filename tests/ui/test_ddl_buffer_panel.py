@@ -8,12 +8,12 @@ from pgtp_editor.ui.ddl_buffer_panel import BrowserPanel
 
 def _schema():
     routines = {
-        "pr.calc_total": RoutineInfo(
+        "pr.calc_total(integer, numeric)": RoutineInfo(
             schema="pr", name="calc_total", arg_types=["integer", "numeric"],
             return_type="numeric", language="plpgsql", source="body1", kind="function",
             args=[("item_id", "integer"), ("rate", "numeric")],
         ),
-        "pr.audit_log": RoutineInfo(
+        "pr.audit_log()": RoutineInfo(
             schema="pr", name="audit_log", arg_types=[], return_type="trigger",
             language="plpgsql", source="body2", kind="function",
         ),
@@ -581,3 +581,46 @@ def test_both_trigger_leaves_carry_the_identical_composite_label(qtbot):
     table_leaf = panel.tree.topLevelItem(0).child(0).child(0)
     routine_leaf = panel.tree.topLevelItem(1).child(0).child(0)
     assert table_leaf.text(0) == routine_leaf.text(0) == "pr.equipment.trg_audit [A][I][U]"
+
+
+# --- Overloads: two routines sharing a schema.name (BUG-018) ----------------
+
+
+def test_each_overload_gets_its_own_tree_item_and_its_own_span(qtbot):
+    """Two overloads must navigate to *different* bodies.
+
+    Keyed on `(schema, name)` the span map gave both tree items the same
+    last-wins span, so clicking either one landed on the same routine -- the
+    half of BUG-018 that `db/introspect.py` alone does not fix.
+    """
+    routines = {}
+    for arg in ("integer", "text"):
+        routine = RoutineInfo(
+            schema="pr", name="fmt", arg_types=[arg], return_type="text",
+            language="plpgsql", source=f"BODY-{arg}", kind="function",
+            args=[("v", arg)],
+        )
+        routines[routine.signature] = routine
+    schema = DatabaseSchema(routines=routines)
+
+    from PySide6.QtCore import Qt
+
+    text, spans = build_ddl_text(schema)
+    panel = BrowserPanel()
+    qtbot.addWidget(panel)
+    panel.set_schema(schema, spans)
+
+    routines_root = panel.tree.topLevelItem(1)
+    assert routines_root.childCount() == 2
+
+    items = [routines_root.child(i) for i in range(2)]
+    item_spans = [item.data(0, Qt.ItemDataRole.UserRole) for item in items]
+    assert all(span is not None for span in item_spans)
+    # Distinct spans -- and each points at that overload's own body.
+    assert item_spans[0].start_line != item_spans[1].start_line
+    lines = text.splitlines()
+    bodies = [lines[s.start_line: s.end_line] for s in item_spans]
+    assert bodies == [["BODY-integer"], ["BODY-text"]]
+    # Argument leaves still disambiguate the two identically-labelled items.
+    assert [item.text(0) for item in items] == ["pr.fmt [F]", "pr.fmt [F]"]
+    assert [item.child(0).text(0) for item in items] == ["v (integer)", "v (text)"]

@@ -34,12 +34,12 @@ def _project_with_connection():
 
 def _schema():
     routines = {
-        "pr.calc_total": RoutineInfo(
+        "pr.calc_total(integer)": RoutineInfo(
             schema="pr", name="calc_total", arg_types=["integer"],
             return_type="numeric", language="plpgsql",
             source="CREATE FUNCTION pr.calc_total(a integer) ...", kind="function",
         ),
-        "pr.audit_log": RoutineInfo(
+        "pr.audit_log()": RoutineInfo(
             schema="pr", name="audit_log", arg_types=[], return_type="trigger",
             language="plpgsql", source="CREATE FUNCTION pr.audit_log() ...",
             kind="function",

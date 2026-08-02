@@ -71,13 +71,16 @@ class BrowserPanel(QWidget):
         ``DdlObjectSpan`` index of the buffer they were rendered into."""
         self.tree.clear()
 
-        span_by_routine: dict[tuple[str, str], DdlObjectSpan] = {}
+        # Routine spans are keyed by the full signature, not `(schema, name)`:
+        # two overloads share a `schema.name`, so that key gave both tree items
+        # the same (last-wins) span and navigated them into one body (BUG-018).
+        span_by_routine: dict[str, DdlObjectSpan] = {}
         span_by_trigger: dict[tuple[str, str, str], DdlObjectSpan] = {}
         for span in spans:
             if span.kind == "trigger":
                 span_by_trigger[(span.schema, span.table, span.name)] = span
-            else:
-                span_by_routine[(span.schema, span.name)] = span
+            elif span.signature is not None:
+                span_by_routine[span.signature] = span
 
         self._build_tables_branch(schema, span_by_trigger)
         self._build_routines_branch(schema, span_by_routine, span_by_trigger)
@@ -106,7 +109,14 @@ class BrowserPanel(QWidget):
 
         routines_root = QTreeWidgetItem(["Functions & Procedures"])
         self.tree.addTopLevelItem(routines_root)
-        for routine in sorted(schema.routines.values(), key=lambda r: (r.schema, r.name)):
+        # Argument types are the final sort key so two overloads sharing a
+        # `schema.name` keep a stable, reproducible order -- the same tiebreak
+        # `build_ddl_text` applies, so tree order matches buffer order.
+        routines = sorted(
+            schema.routines.values(),
+            key=lambda r: (r.schema, r.name, tuple(r.arg_types)),
+        )
+        for routine in routines:
             marker = _routine_marker(routine)
             qualified = f"{routine.schema}.{routine.name}"
             # Only a zero-argument routine carries the empty "()" on its top
@@ -116,7 +126,7 @@ class BrowserPanel(QWidget):
                 f"{qualified} [{marker}]" if routine.args else f"{qualified}() [{marker}]"
             )
             routine_item = QTreeWidgetItem([label])
-            span = span_by_routine.get((routine.schema, routine.name))
+            span = span_by_routine.get(routine.signature)
             if span is not None:
                 routine_item.setData(0, _SPAN_ROLE, span)
             routines_root.addChild(routine_item)
