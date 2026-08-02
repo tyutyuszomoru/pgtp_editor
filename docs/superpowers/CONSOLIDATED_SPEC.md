@@ -1455,6 +1455,31 @@ workflow both build on directly — it is not a separate, self-contained feature
   The `DatabaseSchema` it returns always has an empty `.tables`; only `.routines`/`.triggers` are
   populated.
 
+**Overloaded routines are never collapsed — each overload is its own tree entry, its own
+`DdlObjectSpan` and its own editable §18.5 tab (settled 2026-08-02; this *corrects shipped behavior*,
+see §28).** Owner's framing: *"just let repeat overloaded functions to the tree, the dropdown will
+anyhow show the difference, also the ddl is clearly different."* PostgreSQL identifies a routine by
+**`(schema, name, argtypes)`** — the same load-bearing fact that drives §18.5's Apply-to-target
+signature refusal and §18.5's `diff_schemas` routine identity — so routine identity must carry argument
+types **everywhere in this pipeline, with no exceptions**:
+
+| Place | Shipped today (defective) | Required |
+|---|---|---|
+| `db/introspect.py::fetch_routines_and_triggers` | `routines[f"{schema}.{name}"] = RoutineInfo(...)` — overloads **collapse last-wins**, so the DDL Explorer shows only one of N and silently drops the rest | key on the full signature, `f"{schema}.{name}({', '.join(arg_types)})"` (the same rendering `build_ddl_text`'s banner and §18.2's filenames derive from), so every overload survives the fetch |
+| `db/ddl_buffer.py::DdlObjectSpan` | `{kind, schema, name, table, start_line, end_line}` — carries **no** `arg_types`, so two overloads produce two indistinguishable spans | add `arg_types: tuple[str, ...]` (empty for triggers; a tuple so the frozen dataclass stays hashable and usable as §18.5's tab-map key) |
+| `db/ddl_buffer.py::build_ddl_text` ordering | sorts by `(schema, kind_rank, name)` | sorts by `(schema, kind_rank, name, arg_types)` — a name tie between overloads must break **deterministically**, never on dict insertion order |
+| `ui/ddl_buffer_panel.py::BrowserPanel.set_schema` | `span_by_routine[(span.schema, span.name)]` — last-wins again, one span silently wins for all overloads | `span_by_routine[(span.schema, span.name, span.arg_types)]`, looked up with `(routine.schema, routine.name, tuple(routine.arg_types))` |
+
+- The tree therefore shows **N sibling routine nodes with the same `schema.name` top line**, one per
+  overload, each with its own `name (type)` argument children (§18.1's tree presentation, unchanged) —
+  which is exactly what tells them apart visually; the top-line label rule is **not** changed to
+  re-introduce a parenthesised argument list. Sibling order between overloads is by `arg_types`
+  (the same tiebreak as the buffer), so tree and buffer never disagree.
+- A zero-argument routine and an overload set are not special-cased against each other: `f()` and
+  `f(integer)` are two ordinary siblings, the first rendering its empty `()` per the existing rule.
+- Each overload's tree row navigates to **its own** banner line, and right-click ▸ Edit… (§18.5) opens
+  **one tab per overload**, keyed on the span identity including `arg_types`.
+
 **One synthesized buffer, not per-object viewers — reuses the Raw XML editor's proven shape
 (`TagSpan`/§8 + `node_at_line`/§9: one shared text buffer, a structural span index over it, and a tree
 that navigates into it via line numbers) instead of opening a bespoke read-only viewer per routine or
@@ -1463,9 +1488,11 @@ trigger:**
 - **Implemented:** pure module `db/ddl_buffer.py`: `build_ddl_text(schema: DatabaseSchema) → tuple[str,
   list[DdlObjectSpan]]`. Synthesizes **one** text buffer concatenating every routine and trigger
   definition, in deterministic order (schema, then kind — functions/procedures before triggers — then
-  name), each preceded by a banner comment anchoring its span (e.g.
+  name, then `arg_types` so overloads order stably), each preceded by a banner comment anchoring its span (e.g.
   `-- FUNCTION public.foo(integer) --`). `DdlObjectSpan{kind: "function"|"procedure"|"trigger", schema,
-  name, table: str|None (triggers only — the table it fires on), start_line, end_line}` plays the same
+  name, table: str|None (triggers only — the table it fires on), **`arg_types: tuple[str, ...]`
+  (routines only, empty for triggers — required so overloads are distinguishable; see the overload rule
+  above)**, start_line, end_line}` plays the same
   role for this buffer that `TagSpan` (§8, `ui/xml_structure.py`) plays for the Raw XML buffer and that
   `node_at_line` (§9, `model/line_index.py`) plays for click-to-tree sync.
 - **Implemented:** CenterStage tab `ui/ddl_editor_panel.py::EditorPanel(QWidget)` hosts the
@@ -1700,31 +1727,60 @@ Rationale, stated so it is not re-litigated: initializing a git repo on disk is 
 and this app confirms before outward effects (cf. Generate PHP's Save-vs-Save-As prompt §19, Diff/Merge's
 Apply gate §12).
 
-**File naming — disambiguate only when needed.**
+**File naming — disambiguate overloads with a numeric `_1` suffix, not with argument types.**
 
 | Case | Path | Example |
 |---|---|---|
 | Routine, sole holder of its `schema.name` | `ddl/<schema>.<name>.sql` | `ddl/public.recalc.sql` |
-| Routine that is **overloaded** (≥ 2 routines share `schema.name`) | `ddl/<schema>.<name>(<argtypes>).sql` | `ddl/public.fmt(integer).sql`, `ddl/public.fmt(text).sql` |
+| Routine that is **overloaded** (≥ 2 routines share `schema.name`) — **first** overload in signature order | `ddl/<schema>.<name>.sql` (**unsuffixed**, exactly as the sole-holder case) | `ddl/public.fmt.sql` (= `fmt(integer)`) |
+| Each **further** overload, in signature order | `ddl/<schema>.<name>_<n>.sql`, `n` counting from **1** | `ddl/public.fmt_1.sql` (= `fmt(text)`), `ddl/public.fmt_2.sql` |
 | Trigger (always table-qualified — a trigger name is unique only per table) | `ddl/<schema>.<table>.<trigger>.sql` | `ddl/public.orders.trg_audit.sql` |
 
-The flat `ddl/<schema>.<name>.sql` scheme this replaces (see the Supersession Ledger, §28) **collides**:
-Postgres allows overloaded functions (`f(int)` and `f(text)` are distinct objects sharing
-`schema.name`), and trigger names repeat across tables. Qualifying *only when needed* keeps the common
-case short and keeps `git diff`/`git blame` readable — the stated reason for file-per-object above.
-`<argtypes>` is `RoutineInfo.arg_types` comma-joined — the **same** list `build_ddl_text`'s banner
-comment already prints (§18.1), so a file name and its banner never disagree; `<table>` is
-`TriggerInfo.table`.
+Owner's decision, verbatim: *"as of filenames, just resolve it with `_1`"*. Argument types are **not**
+put in the filename: `(integer, character varying[])` renders characters that are illegal or awkward on
+Windows filesystems and in shells, and the resulting names are long and churn-prone. The trigger row is
+unchanged by this decision.
 
-> **Accepted trade-off, stated plainly (not an oversight):** when a *second* overload of an
-> already-checked-out routine first appears, the existing `ddl/public.fmt.sql` must be **renamed** to
-> `ddl/public.fmt(integer).sql`. Git records that as delete+add unless the rename is performed
-> deliberately (`git mv`), so the tool must do the rename deliberately rather than write-new + leave-old.
-> The alternative — always qualifying every routine — was rejected because it makes the overwhelmingly
-> common non-overloaded case noisy for no benefit.
+**Suffix assignment — deterministic and stable across sessions and machines (this is the load-bearing
+part, not a detail).**
 
-**Path computation is pure and Qt-free.** The `object → ddl/*.sql` path function, the "is this
-`schema.name` overloaded" decision (which needs the whole routine set, not one routine), and filename
+- The overload set for a `schema.name` is ordered by its **argument-type signature**: the tuple
+  `RoutineInfo.arg_types`, compared **lexicographically element-by-element as sorted strings**, shorter
+  tuples first on a common prefix (so `f()` < `f(integer)` < `f(integer, text)` < `f(text)`). This is
+  the **same** ordering §18.1 uses to order overload siblings in the tree and in `build_ddl_text`, so
+  file order, tree order and buffer order never disagree.
+- **Ordering is never taken from introspection row order.** `fetch_routines_and_triggers` returns
+  whatever the catalog scan produced; letting that decide would reassign `public.fmt_1.sql` to a
+  different signature between two runs on two machines — the file would keep its name and silently
+  change meaning, in git, which is exactly the silent-wrong-result class this project refuses.
+- **The first overload keeps the unsuffixed name.** Suffixes start at `_1` for the *second* signature.
+  This keeps the overwhelmingly common non-overloaded case identical to the sole-holder case and means
+  a routine that later becomes overloaded never has its existing file renamed.
+- **Reconciliation when the set changes.** Path computation is a **pure function of the whole current
+  overload set** (`db/ddl_project.py`, below), so the numbering is recomputed, not stored:
+  - **An overload is added** — it takes the next free suffix **only if** its signature sorts after every
+    existing one; if it sorts in the middle, the later files would shift, so the tool **renames the
+    affected files deliberately with `git mv`** (never write-new + leave-old), in one operation, and
+    reports the renames to the Audit panel. Renaming rather than appending keeps "file order = signature
+    order" true, which is what makes the mapping recomputable at all.
+  - **An overload is dropped** — its file is **left in place, not deleted and not renumbered.** A
+    checked-out file is the user's git-tracked work; removing it is their call (`git rm`). The gap in
+    numbering is harmless and is the price of never silently mutating a versioned tree. Renumbering is
+    only ever performed by the add path above, and only when it must be.
+
+> **The trade-off the superseded argtypes scheme was designed to avoid, stated plainly: `_1` is not
+> self-describing.** `ddl/public.fmt_1.sql` does not tell you which overload it holds. That is
+> acceptable **only because the mapping is recoverable from the file's own contents**: every `ddl/*.sql`
+> is seeded from `pg_get_functiondef`, whose first line is a full
+> `CREATE OR REPLACE FUNCTION public.fmt(text)` header carrying the complete signature. The signature is
+> therefore always one line away, in the file, in git history, and in every diff — the filename is an
+> identifier, the header is the identity. Consequence for the implementation: **the header is
+> load-bearing**, so a checked-out file whose `CREATE OR REPLACE` header cannot be parsed back to a
+> signature must be reported, never guessed at from its filename.
+
+**Path computation is pure and Qt-free.** The `object → ddl/*.sql` path function — which takes the
+**whole routine set**, not one routine, because both the "is this `schema.name` overloaded" decision and
+the `_n` suffix assignment are properties of the set — the signature ordering above, and filename
 sanitization (path separators, characters illegal on Windows, case-insensitive-filesystem collisions)
 all live in the new pure module **`db/ddl_project.py`** — mirroring `db/ddl_buffer.py`'s precedent so
 they are unit-testable without Qt and without a database. The same module owns the `project.json` /
@@ -2126,8 +2182,9 @@ explicit exclusions below). Clause-level incompleteness is *not* a refusal reaso
 
 ### 18.5 The DDL object editor, apply & sandbox validation
 
-> **Status: settled design (2026-08-02), not yet implemented.** Nothing described here exists in the
-> codebase: `ui/ddl_object_editor.py`, `db/apply.py`, `db/sandbox.py`, `db/ddl_check.py`,
+> **Status: settled design (2026-08-02), not yet implemented — v1 implementation of the editable tab is
+> only just starting, and its scope is pinned by the six carve-outs below.** Nothing described here exists
+> in the codebase: `ui/ddl_object_editor.py`, `db/apply.py`, `db/sandbox.py`, `db/ddl_check.py`,
 > `db/schema_diff.py` and `db/migration_gen.py` are all new,
 > `CenterStage` has no dynamic tabs, there are no context menus on `BrowserPanel.tree` or the DDL
 > `EditorPanel`, and the Database-menu entries below are not built. §18.1's browsing substrate (which
@@ -2205,7 +2262,7 @@ routine or trigger.
 | Entry point | Gesture | Resolution |
 |---|---|---|
 | `BrowserPanel.tree` (§18.1, left dock "DDL Objects") | right-click an **object row** ▸ **Edit…** | the row's `DdlObjectSpan` (`Qt.ItemDataRole.UserRole`, `_SPAN_ROLE`) |
-| DDL `EditorPanel`'s read-only SQL buffer (center "DDL Explorer" tab) | right-click inside an object's span ▸ **Edit \<schema>.\<name>…** | the retained `DdlObjectSpan` whose `start_line..end_line` contains the clicked line |
+| DDL `EditorPanel`'s read-only SQL buffer (center "DDL Explorer" tab) | right-click inside an object's span ▸ **Edit \<schema>.\<name>(\<argtypes>)…** (the span's full signature, so two overloads' menu entries differ; triggers read **Edit \<schema>.\<table>.\<name>…**) | the retained `DdlObjectSpan` whose `start_line..end_line` contains the clicked line |
 
 - **`EditorPanel` must retain its span list** (e.g. `self._spans`) for the second entry point. Today
   `set_ddl_text(text, spans)` converts the spans to fold regions and **drops** them (§18.1) — that is a
@@ -2246,19 +2303,23 @@ instance, following the established per-tab document-routing precedent (Edit XSD
 - **A small button row** carries the three sandbox gestures — **Apply to Sandbox** / **Check** / **Check
   without applying** — each of which merely **emits a signal**; MainWindow owns every piece of DB work,
   off-thread. The same three are reachable from the Database menu and the tab's context menu (§26).
+  **Not in v1** — see the v1 scope carve-outs below: v1 ships **no button row at all** rather than three
+  dead or permanently-disabled buttons. The design above is what the row becomes when the sandbox lane
+  lands; it is not a reversal.
 - The panel holds an **`applied_sha1`** slot so it can render *"changed since you last applied it"*
   against the sandbox working set (D2), and so **Check** on a diverged buffer emits a `[Check]` caveat
   line instead of silently validating a stale version.
-- **`resolve_save_path: Callable[[], Path | None]`** is the injected save half in concrete form: in v1 it
-  returns the panel's remembered `_save_path` (`None` until Save As picks one, at which point subsequent
-  Ctrl+S is silent). **§18.2's entire change is this one function returning
-  `project.ddl_dir / <the §18.2 filename>`** — no restructure.
+- **`resolve_save_path: Callable[[], Path | None]`** is the injected save half in concrete form: it
+  returns the panel's remembered `_save_path`, and **when there is none it runs Save As…** (below) and
+  returns what the user picked, or `None` if they cancelled. **§18.2's entire change is this one function
+  returning `project.ddl_dir / <the §18.2 filename>`** — no restructure.
 
 Consequences for existing wiring — **all extensions of existing dispatchers, no new machinery**:
 
-- `main_window.py::_active_find_bar()` gains a branch for the active editable DDL tab (Ctrl+F / F3 /
-  Ctrl+Shift+F, and Ctrl+R / Ctrl+Alt+Return, which are **live** here — unlike in the read-only DDL
-  Explorer, where `CodeEditor.replace_current_selection` returns early on `isReadOnly()`).
+- `main_window.py::_active_find_bar()` gains a branch for the active editable DDL tab (Ctrl+F / F3, and
+  Ctrl+R / Ctrl+Alt+Return, which are **live** here — unlike in the read-only DDL Explorer, where
+  `CodeEditor.replace_current_selection` returns early on `isReadOnly()`). **Ctrl+Shift+F (Find All) is
+  inert** in this tab — see the v1 scope carve-outs.
 - `_active_bookmark_editor()` gains the same branch — still with **no** tab-switching side effect (§8).
 - `_save_active_tab()` gains a branch (§7). The read-only DDL Explorer still gets none: it is
   DB-synthesized and has no save path, which is why Ctrl+S's routing is asymmetric to Ctrl+F's.
@@ -2282,8 +2343,9 @@ comparing the closed index to those constants. Per-object tabs are created at **
 
 | Affordance | Source |
 |---|---|
-| Undo / redo | `QPlainTextEdit` built-in |
-| Find / Find Next / Find All / Replace / Replace All | its own `FindReplaceBar` instance + a new branch in `_active_find_bar` (§7/§15) |
+| Undo / redo | **`QPlainTextEdit`'s native undo stack — the editor's own, never the project history.** Pinned invariant, see below |
+| Find / Find Next / Replace / Replace All | its own `FindReplaceBar` instance + a new branch in `_active_find_bar` (§7/§15) |
+| Find All | **inert in this tab** (the DDL Explorer precedent) — see the v1 scope carve-outs |
 | Bookmarks (Ctrl+F2 / F2 / Shift+F2) + gutter + folding | `ui/editor_gutter.py::GutterBookmarkFoldMixin` (§8) + a new branch in `_active_bookmark_editor` |
 | Auto-close & selection-wrap for brackets/quotes; bracket-select (Ctrl+Shift+B) | `CodeEditor.keyPressEvent` / `enclosing_bracket_span` (§8) — already generic, no change |
 | 4-character tab stop, SQL highlighting, top-aligned `navigate_to_line` | `CodeEditor`'s `language="sql"` mode (§8/§18.1) — already generic |
@@ -2305,6 +2367,67 @@ them): **Select Parent Block** (Ctrl+Shift+A — XML tag hierarchy), **Add attri
 (Ctrl+L), **Auto Parse XML**, attribute autocomplete and hover annotations, **Properties-panel sync**,
 and **editor↔tree sync**. All are XML/schema-driven and meaningless for a SQL buffer.
 
+#### v1 implementation scope — six settled carve-outs (2026-08-02)
+
+Settled by the project owner while planning the tab's v1 implementation. These are **scope decisions for
+the first shipping increment**, not reversals of the design above, except where a row says otherwise.
+
+**1 — `Ctrl+Z` in the object tab uses the editor's NATIVE undo, and this is a pinned invariant with a
+mandatory regression test.** The trap is real and silent: `main_window.py:401` installs a **window-level**
+`QShortcut(QKeySequence("Ctrl+Z"))` wired to `MainWindow._undo`, which drives the **project snapshot
+history** (`SnapshotHistory`, §7/§9) over the **Raw XML buffer**. `XmlEditor` deliberately consumes
+Ctrl+Z in `keyPressEvent` and re-emits `undo_requested` so both paths reach the same `_undo`; the Edit
+XSD tab does the same but routes its re-emission straight back into its own editor
+(`stage.xsd_editor.undo_requested.connect(stage.xsd_editor.undo)`, `main_window.py:425`). **`CodeEditor`
+does neither** — it neither consumes nor re-emits — so with the object tab focused the window shortcut
+fires and **Ctrl+Z would revert the Raw XML project buffer while the user is looking at SQL.** The
+required behavior:
+
+- `Ctrl+Z` / `Ctrl+Y` with a `DdlObjectEditorPanel` active operate **only** on that editor's own
+  `QPlainTextEdit` undo stack. The project history is not touched, not advanced and not rewound.
+- Realized the same way the XSD tab does it — the editor consumes the key and the tab routes it back to
+  its own `undo()`/`redo()` — so the window shortcut cannot also fire (no double-undo), rather than by
+  disabling the window shortcut, which would break Ctrl+Z everywhere else.
+- **Mandatory regression test** (`tests/ui/test_ddl_object_editor.py`): with an object tab active and a
+  dirty Raw XML document, pressing Ctrl+Z changes the object buffer and leaves the Raw XML text
+  **byte-identical**. This is a silent-wrong-result guard, not a nicety.
+
+**2 — No sandbox button row in v1.** *Apply to Sandbox* / *Check* / *Check without applying* (and their
+Database-menu twins) have their consumers in another lane; v1 therefore ships **no button row and none of
+the three actions** rather than dead or permanently-disabled controls. A **v1 scope carve-out, not a
+design reversal** — the button row, the three gestures, `applied_sha1` and the `[Check]` caveat line stay
+specified above and arrive with `db/sandbox.py` + `db/ddl_check.py`.
+
+**3 — Find All stays inert in the object tab; Find / Find Next / Replace / Replace All all work.**
+This matches the **existing DDL Explorer precedent**: `main_window.py::_populate_find_all_results(term,
+target="raw"|"xsd")` resolves its editor and bar from a two-valued `target` and understands nothing else,
+so the DDL Explorer's Find All is already an unwired no-op. Generalizing that dispatcher to arbitrary
+per-tab editors is its own change and is not v1 scope. The bar's Find All control is present (it is the
+shared `FindReplaceBar`) and simply produces no results; nothing reports a false "0 matches" as though
+the buffer had been searched.
+
+**4 — The Format-Selection transient underline is panel-local.** It is rendered by
+`DdlObjectEditorPanel` calling `setExtraSelections` on its `CodeEditor` — verified: **`CodeEditor` never
+calls `setExtraSelections` today** (only `ui/xml_editor.py` does), so this is new, panel-owned state and
+**not** a `CodeEditor` feature. It is cleared on **the next edit** (`textChanged`) or **the next format
+attempt**, whichever comes first; it is never persisted, never restored on tab focus, and never
+accumulated across refusals.
+
+**5 — Re-running Database ▸ DDL Explorer leaves open object tabs untouched and silent.** A fresh
+`fetch_routines_and_triggers` rebuilds the read-only buffer and the tree only. Open
+`DdlObjectEditorPanel` tabs are **not** reloaded, **not** marked, **not** closed and **not** prompted
+about — even though their live definitions may have changed underneath them. Rationale: the tab's buffer
+is the user's in-progress edit, and the one thing worse than a stale buffer is a tool that discards
+hand-written SQL to resync itself. Drift detection against the live database is §18.2's `!` marker and
+§18.5's mandatory pre-generate drift check, both of which arrive later; **v1 states the gap rather than
+half-solving it**.
+
+**6 — `[SQL]` Audit lines are not clickable.** Formatter-refusal lines carry **no line role** on their
+`QListWidgetItem` — the same treatment the existing `[Find]` summary line gets — so clicking one does
+nothing. The refusal's location is already conveyed by the transient underline over the exact offending
+span (carve-out 4) and by the line/column repeated in the `Issue` message text (§18.4). Click-to-navigate
+Audit lines remain `[Validate]`, `[Find]` results and (later) `[Check]`.
+
 #### Format Selection — §18.4's formatter finally gets its consumer
 
 - **Format Selection**, bound to **`Ctrl+Alt+F`**, plus a **context-menu item** in this tab. Both are
@@ -2315,10 +2438,12 @@ and **editor↔tree sync**. All are XML/schema-driven and meaningless for a SQL 
   one Ctrl+Z reverts the whole reformat.
 - **On refusal** (`ok=False`) the text is left **completely unchanged** — `FormatResult.text` is the
   input verbatim, so even a caller that ignored `ok` could not corrupt it — and **each `Issue` is
-  reported to the Audit panel** (§7) with the **`[SQL]`** prefix. The offending span is additionally
-  **underlined in the editor** using the `Issue`'s precise `start`/`end` — which is *why* §18.4's `Issue`
-  carries a span at all. The underline is **transient** (cleared on the next edit or the next format
-  attempt), not persistent state.
+  reported to the Audit panel** (§7) with the **`[SQL]`** prefix — **not clickable, no line role**
+  (carve-out 6 above). The offending span is additionally **underlined in the editor** using the
+  `Issue`'s precise `start`/`end` — which is *why* §18.4's `Issue` carries a span at all. The underline
+  is **panel-local** (`DdlObjectEditorPanel` owns the `setExtraSelections` call; `CodeEditor` has no such
+  feature) and **transient** — cleared on the next edit or the next format attempt — never persistent
+  state.
 - Offered **only in this tab** — **not** in the read-only DDL Explorer buffer, where a reformat could not
   be applied anyway.
 - Restated from §18.4 and unchanged: **selection-only**, **no auto-format mode**, **no "Lint
@@ -2330,8 +2455,41 @@ and **editor↔tree sync**. All are XML/schema-driven and meaningless for a SQL 
 
 | Gesture | What it does | Trigger |
 |---|---|---|
-| **Save** | Persists the edited text through the tab's **injected save callback** — the in-session buffer in v1, the checked-out `ddl/*.sql` file under §18.2. **Touches no database, ever.** | `Ctrl+S` via `_save_active_tab` (§7), File ▸ Save |
+| **Save** | Persists the edited text through the tab's **injected save callback** — **a real `.sql` file on disk chosen via Save As… in v1** (below), the checked-out `ddl/*.sql` file under §18.2. **Touches no database, ever.** | `Ctrl+S` via `_save_active_tab` (§7), File ▸ Save |
 | **Apply** | **Executes** the buffer's DDL against a database — the **sandbox** (where it is *meant* to persist, D2) or the **target** (behind the hard gates below) — through the write seam below. **Persists nothing to disk** and clears no dirty state. | Explicit menu / context-menu / panel action only. **Deliberately no keyboard shortcut** — an irreversible outward effect must not be one keystroke away. |
+
+**v1 Save ships `Save As… .sql` — a real file, not an in-session buffer (settled 2026-08-02).** An
+earlier reading of this section left it ambiguous whether v1 *"persists the in-session buffer"* or
+whether `resolve_save_path` simply *"returns `None` until Save As picks one"*; it is resolved **in favor
+of a real file** (§28), which is consistent with this section's own output ranking: *"`Save As… .sql` is
+exactly §18.2's future `ddl/<schema>.<name>.sql` arriving early."* An editor whose Save produces nothing
+durable is not a save.
+
+- **`Ctrl+S` with no remembered path opens a file dialog** (`QFileDialog.getSaveFileName`,
+  `SQL files (*.sql)`), prefilled with the object's identity-derived name — the sole-holder form of
+  §18.2's scheme, `<schema>.<name>.sql` for a routine and `<schema>.<table>.<trigger>.sql` for a trigger
+  — so the v1 file a user saves is already shaped like the checked-out file §18.2 will manage.
+- **The chosen path is remembered** on the panel (`_save_path`) for the rest of the session, so every
+  subsequent `Ctrl+S` writes silently to it: UTF-8, `newline=""`, and **deliberately no `.bak` sidecar**
+  (the same intentional divergence from §19 stated above). Saving clears the dirty marker.
+- **Cancelling the dialog cancels the save.** Nothing is written, the tab stays dirty, and no error is
+  reported — a cancelled dialog is not a failure.
+- **Cancelling Save As reached from the close-confirmation prompt ABORTS THE CLOSE.** Close ▸ *Save* on a
+  never-saved tab runs Save As…; if the user cancels it, the tab **stays open and dirty** — exactly as
+  Close ▸ *Cancel* would. The confirm flow must therefore propagate the save's success/cancel back to
+  `MainWindow._on_ddl_object_close_requested` rather than assuming *Save* succeeded. Silently discarding
+  an edit because a file dialog was dismissed is a data-loss bug, not a corner case.
+- **Save still never touches a database.** Save As writes a file; Apply executes DDL; neither ever
+  implies the other.
+- **`Ctrl+Shift+S` stays project-only — it does NOT re-route to the object tab.** It remains File ▸ Save
+  As for the `.pgtp` project (`main_window.py::_save_project_as`), unchanged. Recommended and settled
+  this way because `Ctrl+Shift+S` today is bound directly to `_save_project_as` (not through a
+  `_save_active_tab`-style dispatcher), because the object tab's "save to a new path" need is already met
+  by the first `Ctrl+S`, and because a *"save the current project under a new name"* command that
+  silently means *"write this one function somewhere"* when a tab happens to be focused is precisely the
+  kind of which-system ambiguity §19 and §12 exist to prevent. A **Save As…** entry in the object tab's
+  own context menu is the additive, unambiguous way to re-point an already-saved tab; it is optional in
+  v1 and takes no shortcut.
 
 Validation (the ladder in D3) is a third, likewise explicit gesture. It comes in **two modes** and the
 difference is user-visible: **Apply to Sandbox → Check** *commits* to the sandbox (that is the point —
@@ -3226,7 +3384,9 @@ Tools; "New Project" removed; line-wrap moved to editor context menu):
     Target Database…** are **disabled unless a DDL object editor tab is active**, kept in sync on
     `center_stage.currentChanged`; Apply is never automatic and never implied by Save. Sandbox Setup and
     Generate Deployment SQL do **not** require an object tab. There is no "locate binary" action —
-    v1 spawns no external process.
+    v1 spawns no external process. **None of these five entries ships with the editable tab's first
+    increment** — the sandbox lane is a later carve-out (§18.5, v1 scope), and the tab likewise ships
+    with **no button row** rather than disabled controls.
   - ⎯ then (§18.2) **New DDL Project…**, **Open DDL Project…**, **Close DDL Project**.
   - (§18.3) **Compare Schemas…** and **Save Schema Snapshot…**.
 
@@ -3246,9 +3406,9 @@ Toolbar default: Open, Save, Undo, Redo, Find, Validate, Generate (customizable)
 
 | Shortcut | Action | Context |
 |---|---|---|
-| Ctrl+O / Ctrl+S / Ctrl+Shift+S / Ctrl+W | Open / Save / Save As / Close | Window (Save routes to the active center-stage tab: Raw XML, Edit XSD, or — target design 2026-08-02, §18.5 — the active DDL object editor tab, where Save persists text only and **never** executes DDL, §7) |
-| Ctrl+Z / Ctrl+Y | Undo / Redo (single step) | Window |
-| Ctrl+F / F3 / Ctrl+Shift+F | Find / Find Next / Find All | The **active center-stage tab's own** `FindReplaceBar`, resolved by `_active_find_bar()` — Edit XSD → `stage.xsd_find_replace_bar`, DDL Explorer → `stage.ddl_editor_panel.find_replace_bar`, the DDL object editor tab → its own bar (§18.5, target design 2026-08-02), otherwise `stage.find_replace_bar` (revealing the Raw XML tab) (§7/§15) |
+| Ctrl+O / Ctrl+S / Ctrl+Shift+S / Ctrl+W | Open / Save / Save As / Close | Window. **Save** routes to the active center-stage tab: Raw XML, Edit XSD, or — target design 2026-08-02, §18.5 — the active DDL object editor tab, where Save persists text only and **never** executes DDL (§7); on that tab the **first** Ctrl+S opens **Save As… (`*.sql`)** and remembers the path, and cancelling that dialog from the close-confirmation prompt **aborts the close**. **Ctrl+Shift+S stays project-only** (`_save_project_as`) and deliberately does **not** re-route to the object tab (§18.5) |
+| Ctrl+Z / Ctrl+Y | Undo / Redo (single step) | Window — project snapshot history (`MainWindow._undo`). **Exception, pinned:** with the Edit XSD tab or (target design 2026-08-02, §18.5) a **DDL object editor tab** active, Ctrl+Z/Ctrl+Y drive **that editor's own native undo stack**; the object tab must consume+reroute the key the way `XmlEditor`/the XSD tab do, because `CodeEditor` does neither today and the window shortcut would otherwise revert the **Raw XML project buffer** |
+| Ctrl+F / F3 / Ctrl+Shift+F | Find / Find Next / Find All | The **active center-stage tab's own** `FindReplaceBar`, resolved by `_active_find_bar()` — Edit XSD → `stage.xsd_find_replace_bar`, DDL Explorer → `stage.ddl_editor_panel.find_replace_bar`, the DDL object editor tab → its own bar (§18.5, target design 2026-08-02), otherwise `stage.find_replace_bar` (revealing the Raw XML tab) (§7/§15). **Find All (Ctrl+Shift+F) is inert in both DDL tabs** — `_populate_find_all_results` understands only `target="raw"`/`"xsd"` (§18.1/§18.5) |
 | Ctrl+R / Ctrl+Alt+Return | Replace / Replace All | Same per-tab routing as Find, but **inert in the DDL Explorer** — that buffer is read-only (`CodeEditor.replace_current_selection` returns early on `isReadOnly()`) — and **live** in the DDL object editor tab (§18.5, target design) (caption: Ctrl+R = Caption Filter) |
 | Ctrl+Shift+B / Ctrl+Shift+A | Select Enclosing / Parent Block | Raw XML editor (menu-owned) |
 | Ctrl+click / Alt+click | Jump to matching tag / parent tag | Raw XML editor |
@@ -3256,7 +3416,7 @@ Toolbar default: Open, Save, Undo, Redo, Find, Validate, Generate (customizable)
 | double-click (line-number gutter zone) | Toggle bookmark on that line | Raw XML editor gutter (target design 2026-08-01, not yet implemented, §8 — additive alongside the existing single-click 12px bookmark strip; NOT gated by Caption Mode) |
 | Ctrl+L | Go To XSD (jump to the attribute's definition in curated.xsd; always forces curated mode) | Window-level QAction (also in the Raw XML editor context menu) |
 | Ctrl+Alt+F | **Format Selection** (§18.4's `format_selection` on the current selection; single undo step on success, `[SQL]` Audit lines + transient underline on refusal) | DDL object editor tab only, and only with a non-empty selection (target design 2026-08-02, not yet implemented, §18.5). Also a context-menu item there. `Ctrl+Shift+F` stays Find All. |
-| *(no shortcut, deliberately)* | **Check DDL Object** / **Check without applying** / **Apply to Sandbox** / **Apply to Target Database…** / **Generate Deployment SQL…** | Database menu, the DDL object editor tab's context menu, and (for the three check/apply gestures) its button row (§18.5, target design 2026-08-02). Apply is an **irreversible outward effect** and must not be one keystroke away; the target-database variant additionally requires a green sandbox validation, refuses a changed signature outright, and confirms naming the object **and** the database. |
+| *(no shortcut, deliberately)* | **Check DDL Object** / **Check without applying** / **Apply to Sandbox** / **Apply to Target Database…** / **Generate Deployment SQL…** | Database menu, the DDL object editor tab's context menu, and (for the three check/apply gestures) its button row (§18.5, target design 2026-08-02; **none of them ships in the tab's v1** — the sandbox lane is a scope carve-out and v1 has no button row). Apply is an **irreversible outward effect** and must not be one keystroke away; the target-database variant additionally requires a green sandbox validation, refuses a changed signature outright, and confirms naming the object **and** the database. |
 | Ctrl+G | Go to line in XML | Caption grid |
 | Ctrl+Shift+B | Bracket-select | Code editor dialog; DDL object editor tab (§18.5, target design) |
 | Ctrl+S / Ctrl+W | Save / Cancel | Code editor dialog |
@@ -3334,7 +3494,7 @@ is authoritative** (and is what appears in the body above).
 | 2026-08-01 | §8 `XmlSyntaxHighlighter` block state = **odd-`"`-parity per line** (`_has_unterminated_quote(text, start)`), never re-synchronising, so one parity-flipping `"` cascaded a Qt re-highlight to the **end of the document** on every such keystroke (5,972 `highlightBlock` calls / 45 ms on a 6,002-block file; BUG-016) | **Tag-aware four-state machine** — `STATE_NORMAL`/`STATE_IN_UNCLOSED_STRING`/`STATE_IN_TAG`/`STATE_IN_SINGLE_QUOTED` computed by the method `XmlSyntaxHighlighter._end_state(text, state)` over the state-changing characters matched by `_STATE_CHARS_RE = [<>"']` — where a quote only opens a value **inside a tag** (quotes in text content, i.e. PHP handler bodies, are inert), plus the **`<` resync rule**: a raw `<` inside a quoted value snaps the state back to `STATE_IN_TAG`, bounding the cascade to a block or two (trade-off: a raw `<` inside an attribute value ends that value's highlighting early — the document is invalid XML anyway and it self-corrects). `_has_unterminated_quote` deleted; continuation handled by `_continued_string_end(text, quote)`; helpers kept as **methods** so `debuglog.py`'s `("ui.xml_editor", "XmlSyntaxHighlighter.")` flood exclusion still covers them |
 | 2026-08-01 | §7 a theme toggle re-applied formats via **one synchronous whole-document `rehighlight()`** inside `XmlEditor.apply_theme_colors`'s `_applying_theme` guard — which blocked the UI ~1.5 s+ on a multi-MB document (BUG-013) | **Two-stage, guarded per batch:** `apply_theme_colors` swaps colors and schedules `_rehighlight_for_theme` (coalesced via `_theme_rehighlight_pending` + the parented single-shot `_theme_kickoff_timer`), which rehighlights the **visible region** first, then a parented 0 ms `_theme_sweep_timer` drives `_theme_sweep_tick` over the rest of the document at `_THEME_SWEEP_BLOCKS_PER_TICK = 400` blocks per event-loop turn; the `_applying_theme` guard wraps **every** batch, so `is_applying_theme()` still keeps both dirty handlers and the editor's own rescan bookkeeping quiet |
 | 2026-08-01 | §7/§15 Ctrl+F & the Edit-menu Find/Replace actions routed to **Raw XML or Edit XSD only** — with the DDL Explorer tab active they fell through to the default branch, which *revealed the Raw XML tab* and used its bar | `_active_find_bar()` gains a **DDL Explorer branch** returning `stage.ddl_editor_panel.find_replace_bar`, so Ctrl+F on the DDL tab searches the DDL buffer in place. **Ctrl+S stays asymmetric on purpose:** `_save_active_tab()` still branches only Edit-XSD-vs-project, because the DDL buffer is read-only and has no save path |
-| 2026-08-02 | §18.2 checked-out object file path = flat **`ddl/<schema>.<name>.sql`** for every object kind (2026-07-29) | **Disambiguate-only-when-needed** scheme: a routine that is the sole holder of its `schema.name` keeps `ddl/<schema>.<name>.sql`; an **overloaded** routine appends its argument types (`ddl/public.fmt(integer).sql`); a **trigger** is always table-qualified (`ddl/<schema>.<table>.<trigger>.sql`). The flat scheme collided — Postgres allows function overloads sharing `schema.name`, and trigger names are unique only per table. Accepted trade-off: the first overload's file must be **renamed** (deliberately, `git mv`) when a second overload appears. Path computation, the overload decision and filename sanitization live in the new pure Qt-free `db/ddl_project.py` |
+| 2026-08-02 | §18.2 checked-out object file path = flat **`ddl/<schema>.<name>.sql`** for every object kind (2026-07-29) | **Disambiguate-only-when-needed** scheme: a routine that is the sole holder of its `schema.name` keeps `ddl/<schema>.<name>.sql`; an **overloaded** routine appends its argument types (`ddl/public.fmt(integer).sql`); a **trigger** is always table-qualified (`ddl/<schema>.<table>.<trigger>.sql`). The flat scheme collided — Postgres allows function overloads sharing `schema.name`, and trigger names are unique only per table. Accepted trade-off: the first overload's file must be **renamed** (deliberately, `git mv`) when a second overload appears. Path computation, the overload decision and filename sanitization live in the new pure Qt-free `db/ddl_project.py`. *(The overload half of this row was itself superseded later the same day by the `_1` numeric-suffix scheme — see the row below; the trigger half stands.)* |
 | 2026-08-02 | §18.2 "Checkout-to-edit" as a **single paragraph** — right-click in `BrowserPanel`/`EditorPanel` opens "a new, single-object editable tab", with no design for how a project comes to exist, what the tab is, how it is titled/closed/saved, or how `CenterStage` hosts a runtime-created tab (2026-07-29) | Full editable-tab design (target design): two right-click entry points with named widget idioms; a **"DDL project required"** Create…/Open…/Cancel dialog plus three Database-menu project actions; checkout semantics (seed-from-live when the file is absent, open-from-disk when present, **never silently overwrite local from the DB**, drift surfaced but **never blocking edit**); `ui/ddl_object_editor.py::DdlObjectEditorPanel`, one tab per object, re-Edit **focuses** the existing tab, short-identity title + dirty marker, tooltip, MainWindow-owned close confirm (the Edit-XSD pattern), **deliberately no `.bak`** (git is the history — an intentional divergence from §19); `CenterStage` gains **dynamic tabs appended after the fixed set** and addressed by a **key→widget map**, never a remembered index. *(Later the same day: the tab material was relocated from §18.2 to §18.5 and the project-required dialog re-scoped to project actions only — see the de-duplication and scoping rows below.)* |
 | 2026-08-02 | §18.4's trigger binding **TBD**, its host surface undesigned, and its Audit-panel prefix unchosen — "§26/§27 gain no entry" (2026-08-01) | **Settled: `Ctrl+Alt+F`** (plus a **"Format Selection"** context-menu item), scoped to the DDL object editor tab and enabled only with a selection; `Ctrl+Shift+F` stays **Find All**. Refusals report to the Audit panel under the **`[SQL]`** prefix with a **transient underline** over the `Issue`'s exact span; success replaces the selection as a **single undo step**. §26/§27 now carry the binding. Still unimplemented — the host tab does not exist yet |
 | 2026-08-02 | §18.1's "explicitly phase 2" write-back sketch: the editable DDL surface = the **multi-object `EditorPanel` buffer made editable in place**, pushing `CREATE OR REPLACE FUNCTION …` straight to the live DB with the diff detected per `DdlObjectSpan` | The editable surface is a **separate single-object tab type** (`ui/ddl_object_editor.py::DdlObjectEditorPanel`, right-click ▸ Edit… from `BrowserPanel` or from a span in `EditorPanel`), and `EditorPanel` is read-only **permanently**, not provisionally — a regenerated multi-object browsing buffer cannot carry per-object dirty state, per-object validation or per-object apply, and it conflicts with §18.2's file-per-object model. Nothing is ever pushed to a database from `EditorPanel` |
@@ -3352,6 +3512,11 @@ is authoritative** (and is what appears in the body above).
 | 2026-08-02 | §26/§27 named the ladder gesture **"Validate DDL Object"**, a single menu action, with no deployment entry | **"Check DDL Object"**, matching the `[Check]` Audit prefix and `db/ddl_check.py`, and **three distinct gestures** — *Apply to Sandbox* (commits), *Check* (`recheck` against the sandbox as it stands), *Check without applying* (the rolled-back probe) — surfaced on the tab's own button row as well as the menu and context menu; the Database menu additionally gains **Generate Deployment SQL…**, and the one-click *Install plpgsql_check* lives **inside** Sandbox Setup next to the probe result rather than as a fourth menu item |
 | 2026-08-02 | §7 stated the append-after-the-fixed-set / key→widget-map rule for dynamic `CenterStage` tabs as a one-clause aside, with the underlying fragility left implicit | **Promoted to an explicitly stated invariant with a mandatory regression test:** append-only creation (`addTab`, never `insertTab`) and tail-only removal, because the stored fixed indices are **load-bearing in five verified places** — `_active_find_bar`, `_active_bookmark_editor`, `_save_active_tab`, `_on_ddl_navigate_requested` and every `CenterStage.hide_*` (plus `_on_tab_close_requested`'s index dispatch, which must gain a widget-type branch *before* any index comparison). One `insertTab` ahead of the fixed set silently re-points all of them |
 | 2026-08-02 | §18.4 recorded semantic/existence linting (do the referenced tables/columns/functions exist?) as *"a separate, explicitly deferred idea — not designed here"*, a forward pointer only | **Designed, in §18.5**, as the sandbox-backed **four-tier validation ladder** (`db/ddl_check.py` + `db/sandbox.py`, `okbob/plpgsql_check`), with the hard rule that **an unavailable tier reports "could not check", never "clean."** It remains **entirely outside** `format_selection`'s refusal gate, which stays tokenize/balance-only and offline. Findings report under **`[Check]`**, distinct from §18.4's `[SQL]` and §22's `[Lint]` — a three-way prefix reservation recorded in §7, §18.4, §18.5 and §22 |
+| 2026-08-02 | §18.1 **as shipped**: routine identity is `schema.name` — `db/introspect.py::fetch_routines_and_triggers` keys `routines[f"{schema}.{name}"]`, `DdlObjectSpan` carries no `arg_types`, and `BrowserPanel` indexes `span_by_routine[(schema, name)]`. Overloads therefore **collapse last-wins**: the DDL Explorer shows one of N and silently drops the rest | **Overloads are never collapsed — each gets its own tree entry, its own `DdlObjectSpan`/DDL-buffer span and its own editable §18.5 tab.** Owner: *"just let repeat overloaded functions to the tree, the dropdown will anyhow show the difference, also the ddl is clearly different."* Routine identity carries argument types **everywhere**: the introspection dict keys on the full signature, `DdlObjectSpan` gains `arg_types: tuple[str, ...]` (hashable, so it can key §18.5's dynamic-tab map), `build_ddl_text` breaks name ties on `arg_types`, and `BrowserPanel` indexes `(schema, name, arg_types)`. The tree shows N sibling nodes with the same `schema.name` top line, told apart by their existing per-argument `name (type)` children — the top-line label rule is **not** changed back to a parenthesised argument list. **Corrects shipped behavior**, and aligns §18.1 with the identity rule §18.5 already enforces for Apply-to-target and `diff_schemas` |
+| 2026-08-02 | §18.2 overload filenames = **argument types in the name** (`ddl/public.fmt(integer).sql`), the "disambiguate-only-when-needed" scheme settled earlier the same day (the row above) | **Numeric `_n` suffix instead.** Owner: *"as of filenames, just resolve it with `_1`."* The sole holder of a `schema.name` — and the **first** overload in signature order — keeps `ddl/<schema>.<name>.sql`; further overloads get `_1`, `_2`, …. Argtypes in filenames render characters illegal/awkward on Windows and produce long churn-prone names. **Ordering is by the sorted argument-type signature, never by introspection row order** (which would silently reassign a file to a different signature between runs/machines, in git); a mid-set addition **renames with `git mv`**, a dropped overload leaves its file and its numbering gap alone. Accepted cost: `_1` is not self-describing — the mapping is recoverable from the file's own `CREATE OR REPLACE …(args)` header, which is therefore load-bearing and must be reported rather than guessed if unparseable. **Trigger filenames unchanged** (`ddl/<schema>.<table>.<trigger>.sql`) |
+| 2026-08-02 | §18.5's unresolved v1 Save: the Save/Apply table said Save persists *"the in-session buffer in v1"*, while `resolve_save_path` said it *"returns `None` until Save As picks one"* — an editor whose Save produced nothing durable | **v1 ships `Save As… .sql`.** `Ctrl+S` on an object tab with no remembered path opens `getSaveFileName` (`SQL files (*.sql)`, prefilled with the §18.2 sole-holder filename shape); the chosen path is remembered and every later `Ctrl+S` writes it silently (UTF-8, `newline=""`, **no `.bak`**). Cancelling the dialog cancels the save; **cancelling Save As reached from the close-confirmation prompt ABORTS THE CLOSE** (the confirm flow must propagate save-cancel, or a dismissed dialog silently discards the edit). Save still **never** touches a database. Consistent with this section's own ranking — *"`Save As… .sql` is exactly §18.2's future `ddl/<schema>.<name>.sql` arriving early."* Also settled: **`Ctrl+Shift+S` stays project-only** and does not re-route to the object tab |
+| 2026-08-02 | §27 stated `Ctrl+Z`/`Ctrl+Y` flatly as *"Window"* — i.e. the project snapshot history — with no carve-out for a DDL object editor tab | **Pinned invariant with a mandatory regression test: `Ctrl+Z` in the object tab uses the editor's NATIVE undo.** The window-level `QShortcut` at `main_window.py:401` drives **project-history** undo over the **Raw XML buffer**; `XmlEditor` consumes and re-emits it and the XSD tab routes its re-emission back into its own editor, but **`CodeEditor` does neither** — so without this the object tab's Ctrl+Z would silently revert the Raw XML project buffer while the user is looking at SQL. Realized the XSD way (editor consumes, tab reroutes to its own `undo()`), never by disabling the window shortcut. Test: object tab active + dirty Raw XML → Ctrl+Z changes the object buffer and leaves the Raw XML text byte-identical |
+| 2026-08-02 | §18.5 read as one undivided increment: a panel button row carrying *Apply to Sandbox*/*Check*/*Check without applying*, Find All listed among the tab's inherited affordances, and no statement about a DDL Explorer re-run or `[SQL]` line behavior | **Six v1 scope carve-outs, owner-confirmed** (scope, not design reversals — the sandbox design above stands unchanged): (1) native `Ctrl+Z`, the row above; (2) **no button row and none of the three sandbox gestures in v1** — no dead or permanently-disabled controls, and the Database menu's five §18.5 entries likewise wait; (3) **Find All inert in the object tab**, matching the DDL Explorer precedent (`_populate_find_all_results` understands only `target="raw"`/`"xsd"`), while Find / Find Next / Replace / Replace All all work; (4) the Format-Selection **transient underline is panel-local** — `DdlObjectEditorPanel` owns the `setExtraSelections` call (verified: `CodeEditor` never calls it), cleared on the next edit or next format attempt; (5) **re-running Database ▸ DDL Explorer leaves open object tabs untouched and silent** — no reload, no marking, no prompt, even though live definitions may have changed underneath (drift is §18.2's `!` marker and §18.5's pre-generate drift check, later); (6) **`[SQL]` Audit lines are not clickable** — no line role, same as the existing `[Find]` summary line |
 
 ---
 
