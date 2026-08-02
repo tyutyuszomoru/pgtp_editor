@@ -41,14 +41,28 @@ class DdlObjectSpan:
     table: str | None  # triggers only -- the table the trigger fires on
     start_line: int  # 1-based; the banner comment line
     end_line: int  # 1-based, inclusive; the source text's last line
+    #: Routines only -- `RoutineInfo.signature`, the full `schema.name(args)`
+    #: identity. `None` for triggers. Without it a span cannot be matched back
+    #: to *one* of two overloads sharing a `schema.name`, and BrowserPanel's
+    #: span map hands both tree items the same body (BUG-018). Trailing and
+    #: defaulted so existing positional constructions stay valid.
+    signature: str | None = None
 
 
-def _banner(kind: str, schema: str, name: str, *, table: str | None, arg_types: list[str] | None) -> str:
+def _banner(kind: str, schema: str, name: str, *, table: str | None, signature: str | None) -> str:
+    """The banner comment line anchoring one object's span.
+
+    A routine's banner embeds `RoutineInfo.signature` **verbatim** -- it is
+    never re-rendered here. That string is the single source of a routine's
+    identity: the `DatabaseSchema.routines` dict key, the diff identity
+    (`db/schema_diff.py::routine_identity`) and the future `ddl/` filename are
+    all the same characters, and a second rendering is exactly how they drift
+    apart (BUG-018).
+    """
     if kind == "trigger":
         return f"-- TRIGGER {schema}.{name} ON {table} --"
     label = "FUNCTION" if kind == "function" else "PROCEDURE"
-    args = ", ".join(arg_types or [])
-    return f"-- {label} {schema}.{name}({args}) --"
+    return f"-- {label} {signature} --"
 
 
 def build_ddl_text(schema: DatabaseSchema) -> tuple[str, list[DdlObjectSpan]]:
@@ -56,13 +70,23 @@ def build_ddl_text(schema: DatabaseSchema) -> tuple[str, list[DdlObjectSpan]]:
     definition, each preceded by a banner comment anchoring its span.
 
     Deterministic order: schema, then kind (functions/procedures before
-    triggers within a schema), then name.
+    triggers within a schema), then name, then -- for two overloads sharing a
+    `schema.name` -- their argument types. Without that last clause overloads
+    tie and the stable sort falls back to catalog row order, so the buffer is
+    not reproducible across fetches (BUG-018).
     """
     items: list[tuple[str, RoutineInfo | TriggerInfo]] = [
         ("routine", routine) for routine in schema.routines.values()
     ]
     items += [("trigger", trigger) for trigger in schema.triggers.values()]
-    items.sort(key=lambda item: (item[1].schema, 0 if item[0] == "routine" else 1, item[1].name))
+    items.sort(
+        key=lambda item: (
+            item[1].schema,
+            0 if item[0] == "routine" else 1,
+            item[1].name,
+            tuple(item[1].arg_types) if item[0] == "routine" else (),
+        )
+    )
 
     lines: list[str] = []
     spans: list[DdlObjectSpan] = []
@@ -70,10 +94,12 @@ def build_ddl_text(schema: DatabaseSchema) -> tuple[str, list[DdlObjectSpan]]:
         is_trigger = tag == "trigger"
         kind = "trigger" if is_trigger else obj.kind
         table = obj.table if is_trigger else None
-        arg_types = None if is_trigger else obj.arg_types
+        signature = None if is_trigger else obj.signature
         source = obj.definition if is_trigger else obj.source
 
-        lines.append(_banner(kind, obj.schema, obj.name, table=table, arg_types=arg_types))
+        lines.append(
+            _banner(kind, obj.schema, obj.name, table=table, signature=signature)
+        )
         start_line = len(lines)
         lines.extend(source.splitlines() or [""])
         end_line = len(lines)
@@ -87,6 +113,7 @@ def build_ddl_text(schema: DatabaseSchema) -> tuple[str, list[DdlObjectSpan]]:
                 table=table,
                 start_line=start_line,
                 end_line=end_line,
+                signature=signature,
             )
         )
 

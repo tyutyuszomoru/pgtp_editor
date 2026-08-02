@@ -5,13 +5,13 @@ from pgtp_editor.db.introspect import DatabaseSchema, RoutineInfo, TriggerInfo
 
 def _schema():
     routines = {
-        "pr.calc_total": RoutineInfo(
+        "pr.calc_total(integer)": RoutineInfo(
             schema="pr", name="calc_total", arg_types=["integer"],
             return_type="numeric", language="plpgsql",
             source="CREATE FUNCTION pr.calc_total(integer) ...\nRETURN 1;\n",
             kind="function",
         ),
-        "pr.audit_log": RoutineInfo(
+        "pr.audit_log()": RoutineInfo(
             schema="pr", name="audit_log", arg_types=[], return_type="trigger",
             language="plpgsql", source="CREATE FUNCTION pr.audit_log() ...",
             kind="function",
@@ -48,7 +48,7 @@ def test_build_ddl_text_banner_and_span_lines_are_consistent():
     assert lines[calc_total.start_line - 1] == "-- FUNCTION pr.calc_total(integer) --"
     # The source text's own lines follow the banner up to end_line (inclusive,
     # 1-based) -- as a 0-indexed slice that's [start_line : end_line].
-    source_lines = _schema().routines["pr.calc_total"].source.splitlines()
+    source_lines = _schema().routines["pr.calc_total(integer)"].source.splitlines()
     assert lines[calc_total.start_line: calc_total.end_line] == source_lines
 
 
@@ -65,7 +65,7 @@ def test_build_ddl_text_trigger_span_and_fields():
 def test_build_ddl_text_procedure_banner_uses_procedure_label():
     schema = DatabaseSchema(
         routines={
-            "pr.do_thing": RoutineInfo(
+            "pr.do_thing(text)": RoutineInfo(
                 schema="pr", name="do_thing", arg_types=["text"],
                 return_type="void", language="plpgsql", source="CREATE PROCEDURE ...",
                 kind="procedure",
@@ -83,15 +83,57 @@ def test_ddl_object_span_is_a_plain_frozen_dataclass():
     )
     assert span.kind == "function"
     assert span.table is None
+    # `signature` is trailing and defaulted, so this construction stays valid.
+    assert span.signature is None
+
+
+def _overload_schema(order=("integer", "text")):
+    routines = {}
+    for arg in order:
+        routine = RoutineInfo(
+            schema="pr", name="fmt", arg_types=[arg], return_type="text",
+            language="plpgsql", source=f"BODY-{arg}", kind="function",
+            args=[("v", arg)],
+        )
+        routines[routine.signature] = routine
+    return DatabaseSchema(routines=routines)
+
+
+def test_build_ddl_text_gives_each_overload_its_own_banner_and_span():
+    text, spans = build_ddl_text(_overload_schema())
+    lines = text.splitlines()
+
+    assert len(spans) == 2
+    first, second = spans
+    assert lines[first.start_line - 1] == "-- FUNCTION pr.fmt(integer) --"
+    assert lines[second.start_line - 1] == "-- FUNCTION pr.fmt(text) --"
+    assert lines[first.start_line: first.end_line] == ["BODY-integer"]
+    assert lines[second.start_line: second.end_line] == ["BODY-text"]
+    # Distinct, non-overlapping spans, each carrying its own identity.
+    assert first.end_line < second.start_line
+    assert [s.signature for s in spans] == ["pr.fmt(integer)", "pr.fmt(text)"]
+
+
+def test_build_ddl_text_is_reproducible_regardless_of_overload_insertion_order():
+    """Two overloads tie on (schema, kind, name), so without an argument-type
+    tiebreak the stable sort falls back to `pg_proc` row order and the buffer
+    changes between fetches (BUG-018)."""
+    forward, forward_spans = build_ddl_text(_overload_schema(("integer", "text")))
+    reversed_, reversed_spans = build_ddl_text(_overload_schema(("text", "integer")))
+
+    assert forward == reversed_
+    assert [(s.signature, s.start_line, s.end_line) for s in forward_spans] == [
+        (s.signature, s.start_line, s.end_line) for s in reversed_spans
+    ]
 
 
 def test_build_ddl_text_orders_by_schema_before_kind_or_name():
     schema = DatabaseSchema(
         routines={
-            "zz.aaa": RoutineInfo(
+            "zz.aaa()": RoutineInfo(
                 schema="zz", name="aaa", source="body_zz", kind="function",
             ),
-            "aa.zzz": RoutineInfo(
+            "aa.zzz()": RoutineInfo(
                 schema="aa", name="zzz", source="body_aa", kind="function",
             ),
         },
@@ -131,7 +173,7 @@ def test_build_ddl_text_multiple_triggers_on_same_object_are_all_spanned_distinc
 def test_build_ddl_text_empty_source_still_produces_a_span():
     schema = DatabaseSchema(
         routines={
-            "pr.empty_fn": RoutineInfo(
+            "pr.empty_fn()": RoutineInfo(
                 schema="pr", name="empty_fn", source="", kind="function",
             ),
         },

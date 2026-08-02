@@ -409,17 +409,59 @@ def test_fetch_routines_and_triggers_passes_routine_trigger_sql():
     assert calls[0][1] == ROUTINE_TRIGGER_SQL
 
 
-def test_fetch_routines_and_triggers_builds_routines_keyed_by_schema_name():
+def test_fetch_routines_and_triggers_builds_routines_keyed_by_signature():
     runner, _ = _canned_routine_trigger_runner()
     schema = fetch_routines_and_triggers(_PARAMS, runner=runner)
 
-    routine = schema.routines["pr.calc_total"]
+    routine = schema.routines["pr.calc_total(integer)"]
     assert routine == RoutineInfo(
         schema="pr", name="calc_total", arg_types=["integer"], return_type="numeric",
         language="plpgsql", source="CREATE FUNCTION ...", kind="function",
         args=[("amount", "integer")],
     )
-    assert schema.routines["pr.do_thing"].kind == "procedure"
+    # A zero-argument routine keys with empty parens, never bare `pr.do_thing`.
+    assert schema.routines["pr.do_thing()"].kind == "procedure"
+
+
+def test_routine_signature_renders_zero_one_and_many_arguments():
+    """The one spelling every consumer shares (BUG-018).
+
+    Zero arguments render as `pr.f()` -- **empty parens, never bare `pr.f`**.
+    That is the common case, so a divergence here would be everywhere and
+    invisible, and it is exactly what distinguishes `f()` from `f(integer)`.
+    """
+    assert RoutineInfo(schema="pr", name="f").signature == "pr.f()"
+    assert RoutineInfo(schema="pr", name="f", arg_types=["integer"]).signature == "pr.f(integer)"
+    # Joiner is ", " -- comma + space -- and the source is `arg_types` (types
+    # only), not `args` (name/type pairs).
+    many = RoutineInfo(
+        schema="pr", name="f", arg_types=["integer", "text"],
+        args=[("a", "integer"), ("b", "text")],
+    )
+    assert many.signature == "pr.f(integer, text)"
+
+
+def test_fetch_routines_and_triggers_keeps_both_overloads_of_one_name():
+    """`pg_proc` holds one row per overload; both must survive (BUG-018).
+
+    Keyed by `schema.name` the second row silently overwrote the first and
+    every consumer saw only one of the two functions.
+    """
+    routine_rows = [
+        ("pr", "fmt", "f", "text", "plpgsql", "BODY-INT", ["integer"], ["integer"], ["n"], None),
+        ("pr", "fmt", "f", "text", "plpgsql", "BODY-TEXT", ["text"], ["text"], ["s"], None),
+    ]
+
+    def runner(_params, _sql_list):
+        return [routine_rows, []]
+
+    schema = fetch_routines_and_triggers(_PARAMS, runner=runner)
+
+    assert len(schema.routines) == 2
+    assert set(schema.routines) == {"pr.fmt(integer)", "pr.fmt(text)"}
+    # Each overload keeps its own body -- not the last row's.
+    assert schema.routines["pr.fmt(integer)"].source == "BODY-INT"
+    assert schema.routines["pr.fmt(text)"].source == "BODY-TEXT"
 
 
 def test_fetch_routines_and_triggers_builds_triggers_keyed_by_schema_table_name():
@@ -457,7 +499,9 @@ def test_fetch_routines_and_triggers_correlates_out_args_end_to_end():
         return [routine_rows, []]
 
     schema = fetch_routines_and_triggers(_PARAMS, runner=runner)
-    routine = schema.routines["pr.split_name"]
+    # The key uses the IN-only `arg_types` -- `(text)`, not the three
+    # `all_arg_types` -- because that is what PostgreSQL identifies it by.
+    routine = schema.routines["pr.split_name(text)"]
     assert routine.args == [("full", "text")]
     assert routine.arg_types == ["text"]  # banner signature untouched
 
