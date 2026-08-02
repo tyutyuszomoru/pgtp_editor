@@ -1627,18 +1627,35 @@ def test_xml_editor_folding_still_keeps_the_character_stream_intact(qtbot):
 
 
 def _count_highlight_calls(monkeypatch):
-    """Patch highlightBlock ON THE CLASS (before any editor is built) and
-    return the call counter."""
+    """Swap in a counting SUBCLASS of the highlighter (before any editor is
+    built) and return the call counter.
+
+    Must be called BEFORE the editor is constructed: `XmlEditor.__init__` looks
+    `XmlSyntaxHighlighter` up as a module global, so only editors built while
+    this patch is live get the counting subclass.
+
+    Do NOT go back to `monkeypatch.setattr(module.XmlSyntaxHighlighter,
+    "highlightBlock", ...)`. `highlightBlock` is a C++ virtual and PySide6 binds
+    Python overrides PER INSTANCE AT CONSTRUCTION, not per call -- so every
+    highlighter built under such a patch keeps a raw pointer to the replacement
+    function, and `monkeypatch.undo()` frees it. The dangling pointer is then
+    called by any later `rehighlight()` (BUG-013's theme sweep reaches leaked
+    editors from earlier tests), which either raises a nonsense
+    `TypeError: ... takes 0 positional arguments but 2 were given` naming
+    whatever object landed in the freed slot, or segfaults outright. That was
+    BUG-017. Patching the module NAME instead keeps the override in the
+    subclass's own __dict__, and the instance keeps its type alive.
+    """
     import pgtp_editor.ui.xml_editor as module
 
     calls = {"n": 0}
-    real = module.XmlSyntaxHighlighter.highlightBlock
 
-    def counting(self, text):
-        calls["n"] += 1
-        return real(self, text)
+    class _CountingHighlighter(module.XmlSyntaxHighlighter):
+        def highlightBlock(self, text):
+            calls["n"] += 1
+            super().highlightBlock(text)
 
-    monkeypatch.setattr(module.XmlSyntaxHighlighter, "highlightBlock", counting)
+    monkeypatch.setattr(module, "XmlSyntaxHighlighter", _CountingHighlighter)
     return calls
 
 
@@ -1655,6 +1672,8 @@ def test_quote_in_text_content_does_not_rehighlight_the_document(qtbot, monkeypa
     editor.setPlainText(
         "<Root>\n" + "\n".join(f"  <A id='{i}'>text {i}</A>" for i in range(300)) + "\n</Root>"
     )
+
+    assert calls["n"] >= 1, "the counting highlighter never ran -- the <= assertion below would be vacuous"
 
     cursor = editor.textCursor()
     cursor.setPosition(editor.document().findBlockByNumber(5).position() + 3)
@@ -1679,6 +1698,8 @@ def test_unterminated_quote_inside_a_tag_resyncs_at_the_next_tag(qtbot, monkeypa
     text = "<Root>\n" + "\n".join(f'  <A id="{i}"/>' for i in range(300)) + "\n</Root>"
     editor.setPlainText(text)
 
+    assert calls["n"] >= 1, "the counting highlighter never ran -- the <= assertion below would be vacuous"
+
     cursor = editor.textCursor()
     cursor.setPosition(text.index('id="0"') + len("id="))
     editor.setTextCursor(cursor)
@@ -1686,6 +1707,74 @@ def test_unterminated_quote_inside_a_tag_resyncs_at_the_next_tag(qtbot, monkeypa
     editor.insertPlainText('"')  # now an unterminated quote inside the tag
 
     assert calls["n"] <= 4, f"cascade not bounded by the resync: {calls['n']} blocks"
+
+
+def test_count_highlight_calls_never_patches_the_shiboken_class(qtbot, monkeypatch):
+    """BUG-017 guard. The counting hook must reach the editor through a Python
+    SUBCLASS, never by setting `highlightBlock` on the Shiboken class itself --
+    PySide6 binds virtual overrides per instance at construction, so a class
+    patch leaves every highlighter built under it pointing at a function that
+    `monkeypatch.undo()` then frees (use-after-free: nonsense TypeErrors in
+    unrelated tests, or a segfault). If this test fails, read BUG-017 before
+    'fixing' it."""
+    import pgtp_editor.ui.xml_editor as module
+
+    original_class = module.XmlSyntaxHighlighter
+    original_method = original_class.highlightBlock
+
+    calls = _count_highlight_calls(monkeypatch)
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    editor.setPlainText("<Root>\n  <A id='1'/>\n</Root>")
+
+    # The counter works...
+    assert calls["n"] >= 1
+    # ...but the real class was left completely untouched.
+    assert module.XmlSyntaxHighlighter is not original_class
+    assert original_class.highlightBlock is original_method
+    # ...and the editor's highlighter is a subclass instance, not the real class.
+    assert type(editor._highlighter) is not original_class
+    assert isinstance(editor._highlighter, original_class)
+
+
+def test_counting_highlighter_override_survives_monkeypatch_undo(qtbot, monkeypatch):
+    """BUG-017 guard, lifecycle half. The dangling-pointer crash needed TWO
+    steps: build a highlighter under the patch, then UNDO the patch. PySide6
+    resolved that instance's `highlightBlock` override once, at construction --
+    so once undo drops the last reference to the patched function, the live
+    instance calls freed memory (nonsense TypeError, or segfault) on its next
+    rehighlight.
+
+    The invariant that makes the subclass approach safe: the override the
+    instance was constructed with must STILL be reachable through the
+    instance's own type after the patch is undone. Asserted before we touch the
+    editor again, so a regression fails loudly here instead of crashing the
+    worker."""
+    import pgtp_editor.ui.xml_editor as module
+
+    original_class = module.XmlSyntaxHighlighter
+
+    with monkeypatch.context() as m:
+        calls = _count_highlight_calls(m)
+        editor = XmlEditor()
+        qtbot.addWidget(editor)
+        editor.setPlainText("<Root>\n  <A id='1'>text</A>\n</Root>")
+        assert calls["n"] >= 1
+        highlighter_type = type(editor._highlighter)
+        bound_override = highlighter_type.highlightBlock
+
+    # The patch is undone; the module global is back to the real class...
+    assert module.XmlSyntaxHighlighter is original_class
+    # ...but the instance built under the patch still resolves its override
+    # through its own type -- nothing it points at has been freed.
+    assert type(editor._highlighter) is highlighter_type
+    assert highlighter_type.highlightBlock is bound_override
+
+    # And therefore rehighlighting it after the undo is safe (this is the call
+    # that used to raise the masked TypeError / segfault).
+    before = calls["n"]
+    editor._highlighter.rehighlight()
+    assert calls["n"] > before
 
 
 def test_apostrophes_in_event_handler_body_do_not_string_ify_the_rest(qtbot):
