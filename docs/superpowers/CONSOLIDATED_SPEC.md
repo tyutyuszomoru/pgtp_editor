@@ -1,6 +1,6 @@
 # PGTP Editor — Consolidated Specification
 
-> **Status:** living document · **Last synthesized:** 2026-08-02
+> **Status:** living document · **Last synthesized:** 2026-08-03
 > **Source of truth:** this file is the single reconciled specification for PGTP Editor, and the **only**
 > place specification content is written. It was originally synthesized from the dated design specs under
 > [`docs/superpowers/specs/`](specs/) — a folder now **frozen as historical record** (read for rationale;
@@ -1336,8 +1336,9 @@ golden "freshly-added table" oracle; defaults are corpus-derived and **not yet f
 ## 18. DDL versioning (standalone Postgres mode)
 
 > **Status: §18.1 read-only browsing is fully implemented, wired, and tested — with the single
-> exception of the XML cross-referencing angle; §18.2/§18.3 remain target design, not yet
-> implemented.** Shipped exactly as specified below: `RoutineInfo`/`TriggerInfo`/
+> exception of the XML cross-referencing angle; §18.2 remains entirely target design, not yet
+> implemented, and §18.3's schema-diff/migration **engine** has now landed (see below) though its
+> surrounding deploy workflow and menu wiring have not.** Shipped exactly as specified below: `RoutineInfo`/`TriggerInfo`/
 > `DatabaseSchema.routines`/`.triggers` (`db/introspect.py`), `db/ddl_buffer.py`/`DdlObjectSpan`,
 > `ui/ddl_buffer_panel.py::BrowserPanel`, `ui/ddl_editor_panel.py::EditorPanel` (the CenterStage
 > "DDL Explorer" tab), the `language="sql"` highlighter mode in `ui/code_editor.py` (§8), the
@@ -1354,9 +1355,16 @@ golden "freshly-added table" oracle; defaults are corpus-derived and **not yet f
 > (d) **top-aligned** DDL navigation. See the Supersession Ledger (§28) for each override.
 >
 > Still not built: `db/routine_refs.py` (XML cross-referencing — **the one remaining §18.1 piece**), and
-> `db/schema_diff.py`/
-> `db/schema_snapshot.py`/`db/migration_gen.py` (§18.3); those parts of this section remain target
-> design, settled before implementation starts.
+> `db/schema_snapshot.py` (§18.3's snapshot dump/load, so a live DB can be diffed against a checked-in
+> JSON file). **`db/schema_diff.py` and `db/migration_gen.py` (§18.3's schema-diff/migration engine) are
+> now implemented and tested** (`tests/db/test_schema_diff.py`) — but only for the `routine`/`trigger`
+> cases; `table`/`column` differences are deliberately unsupported (`SchemaDiffResult.unsupported` names
+> the tables a diff did not compare; `migration_gen.generate_migration` raises `UnsupportedDifference`
+> rather than silently omitting a table/column change from the script). What remains target design in
+> §18.3 is everything *around* that engine: the project-aware deploy workflow (§18.2's `*`/`!`-flagged
+> batch, the all-or-nothing ambiguity gate), the `Database ▸ "Compare Schemas…"` / `"Save Schema
+> Snapshot…"` menu wiring, and the diff-viewer UI — none of that is built; only the pure engine modules
+> exist so far, with no caller.
 >
 > **§18.4's SQL/plpgsql selection formatter core is implemented (2026-08-01); its consumer is now
 > designed (2026-08-02) but not built.** The Qt-free package `pgtp_editor/sql/`
@@ -1371,8 +1379,9 @@ golden "freshly-added table" oracle; defaults are corpus-derived and **not yet f
 > **§18.5 (settled design 2026-08-02, not yet implemented)** specifies that editable tab **once**,
 > together with the only thing that can give it a feedback loop: a **stateful, app-provisioned sandbox
 > database** and a validation ladder over it. New modules: `db/apply.py` (the codebase's **first DB write
-> path**), `db/sandbox.py`, `db/ddl_check.py`, `db/schema_diff.py`, `db/migration_gen.py`,
-> `ui/ddl_object_editor.py`. The tab is deliberately **decoupled from §18.2's git project for v1** — no
+> path**), `db/sandbox.py`, `db/ddl_check.py`, `ui/ddl_object_editor.py` — reusing the **already-landed**
+> `db/schema_diff.py`/`db/migration_gen.py` (§18.3) rather than building them again. The tab is
+> deliberately **decoupled from §18.2's git project for v1** — no
 > `ddl/` folder, no `deployed.json`, no `*`/`!` markers — and is written against an **injected load/save
 > pair** so §18.2 layers on later by swapping only where the buffer loads from and saves to.
 > **§18.5's headline deliverable is the generated deployment SQL script**, not the editable tab: the
@@ -1465,20 +1474,22 @@ types **everywhere in this pipeline, with no exceptions**:
 
 | Place | Shipped today (defective) | Required |
 |---|---|---|
-| `db/introspect.py::fetch_routines_and_triggers` | `routines[f"{schema}.{name}"] = RoutineInfo(...)` — overloads **collapse last-wins**, so the DDL Explorer shows only one of N and silently drops the rest | key on the full signature, `f"{schema}.{name}({', '.join(arg_types)})"` (the same rendering `build_ddl_text`'s banner and §18.2's filenames derive from), so every overload survives the fetch |
-| `db/ddl_buffer.py::DdlObjectSpan` | `{kind, schema, name, table, start_line, end_line}` — carries **no** `arg_types`, so two overloads produce two indistinguishable spans | add `arg_types: tuple[str, ...]` (empty for triggers; a tuple so the frozen dataclass stays hashable and usable as §18.5's tab-map key) |
-| `db/ddl_buffer.py::build_ddl_text` ordering | sorts by `(schema, kind_rank, name)` | sorts by `(schema, kind_rank, name, arg_types)` — a name tie between overloads must break **deterministically**, never on dict insertion order |
-| `ui/ddl_buffer_panel.py::BrowserPanel.set_schema` | `span_by_routine[(span.schema, span.name)]` — last-wins again, one span silently wins for all overloads | `span_by_routine[(span.schema, span.name, span.arg_types)]`, looked up with `(routine.schema, routine.name, tuple(routine.arg_types))` |
+| `db/introspect.py::fetch_routines_and_triggers` | `routines[f"{schema}.{name}"] = RoutineInfo(...)` — overloads **collapse last-wins**, so the DDL Explorer shows only one of N and silently drops the rest | key on `RoutineInfo.signature` — the `@property` that is the **single source** of the rendered `schema.name(argtypes)` string (`db/introspect.py`; consumed verbatim, never re-rendered) — so every overload survives the fetch and the same string backs `build_ddl_text`'s banner, `db/schema_diff.py::routine_identity`, and §18.2's filenames |
+| `db/ddl_buffer.py::DdlObjectSpan` | `{kind, schema, name, table, start_line, end_line}` — carries **no** `arg_types`, so two overloads produce two indistinguishable spans | add `signature: str | None = None` (routines only, `None` for triggers; a trailing defaulted field so existing positional/keyword constructions stay valid), populated from `RoutineInfo.signature` |
+| `db/ddl_buffer.py::build_ddl_text` ordering | sorts by `(schema, kind_rank, name)` | sorts by `(schema, kind_rank, name, arg_types)` (the tuple of argument *types*, not the rendered signature string) — a name tie between overloads must break **deterministically**, never on dict insertion order |
+| `ui/ddl_buffer_panel.py::BrowserPanel.set_schema` | `span_by_routine[(span.schema, span.name)]` — last-wins again, one span silently wins for all overloads | `span_by_routine` keyed on the plain string `span.signature`, looked up with `routine.signature` |
 
 - The tree therefore shows **N sibling routine nodes with the same `schema.name` top line**, one per
   overload, each with its own `name (type)` argument children (§18.1's tree presentation, unchanged) —
   which is exactly what tells them apart visually; the top-line label rule is **not** changed to
   re-introduce a parenthesised argument list. Sibling order between overloads is by `arg_types`
-  (the same tiebreak as the buffer), so tree and buffer never disagree.
+  (the same tiebreak as the buffer — the tuple of argument *types* used purely for ordering, not for
+  identity/keying), so tree and buffer never disagree.
 - A zero-argument routine and an overload set are not special-cased against each other: `f()` and
   `f(integer)` are two ordinary siblings, the first rendering its empty `()` per the existing rule.
 - Each overload's tree row navigates to **its own** banner line, and right-click ▸ Edit… (§18.5) opens
-  **one tab per overload**, keyed on the span identity including `arg_types`.
+  **one tab per overload**, keyed on the span identity — `DdlObjectSpan.signature` /
+  `RoutineInfo.signature` — not on a bare `arg_types` tuple.
 
 **One synthesized buffer, not per-object viewers — reuses the Raw XML editor's proven shape
 (`TagSpan`/§8 + `node_at_line`/§9: one shared text buffer, a structural span index over it, and a tree
@@ -1490,9 +1501,9 @@ trigger:**
   definition, in deterministic order (schema, then kind — functions/procedures before triggers — then
   name, then `arg_types` so overloads order stably), each preceded by a banner comment anchoring its span (e.g.
   `-- FUNCTION public.foo(integer) --`). `DdlObjectSpan{kind: "function"|"procedure"|"trigger", schema,
-  name, table: str|None (triggers only — the table it fires on), **`arg_types: tuple[str, ...]`
-  (routines only, empty for triggers — required so overloads are distinguishable; see the overload rule
-  above)**, start_line, end_line}` plays the same
+  name, table: str|None (triggers only — the table it fires on), **`signature: str | None = None`**
+  (routines only, populated from `RoutineInfo.signature`; `None` for triggers — required so overloads
+  are distinguishable; see the overload rule above), start_line, end_line}` plays the same
   role for this buffer that `TagSpan` (§8, `ui/xml_structure.py`) plays for the Raw XML buffer and that
   `node_at_line` (§9, `model/line_index.py`) plays for click-to-tree sync.
 - **Implemented:** CenterStage tab `ui/ddl_editor_panel.py::EditorPanel(QWidget)` hosts the
@@ -1888,6 +1899,17 @@ cached or trusted from a prior session.
 
 ### 18.3 Deploy workflow & schema diff/migration
 
+> **Status: the schema-diff/migration engine is implemented; the deploy workflow around it is not.**
+> `db/schema_diff.py` (`SchemaDifference`/`SchemaDiffResult`/`diff_schemas`/`routine_identity`/
+> `trigger_identity`) and `db/migration_gen.py::generate_migration` exist and are tested
+> (`tests/db/test_schema_diff.py`), covering the `routine`/`trigger` object kinds only — `table`/`column`
+> diffing is deliberately out of scope for now (`SchemaDiffResult.unsupported` names what wasn't
+> compared; `generate_migration` raises `UnsupportedDifference` rather than silently dropping a
+> table/column change). Not yet built: `db/schema_snapshot.py`, the project-aware deploy workflow below
+> (steps 1–4, the `*`/`!`-flagged batch and its ambiguity gate), the `Database ▸ "Compare Schemas…"` /
+> `"Save Schema Snapshot…"` menu entries, and the diff-viewer UI. §18.5's sandbox-validation ladder is
+> expected to reuse this same engine rather than re-implementing it.
+
 **Deploy workflow:**
 
 1. Locally `*`-flagged objects (§18.2) are candidates for a deploy bundle.
@@ -2183,13 +2205,15 @@ explicit exclusions below). Clause-level incompleteness is *not* a refusal reaso
 ### 18.5 The DDL object editor, apply & sandbox validation
 
 > **Status: settled design (2026-08-02), not yet implemented — v1 implementation of the editable tab is
-> only just starting, and its scope is pinned by the six carve-outs below.** Nothing described here exists
-> in the codebase: `ui/ddl_object_editor.py`, `db/apply.py`, `db/sandbox.py`, `db/ddl_check.py`,
-> `db/schema_diff.py` and `db/migration_gen.py` are all new,
-> `CenterStage` has no dynamic tabs, there are no context menus on `BrowserPanel.tree` or the DDL
-> `EditorPanel`, and the Database-menu entries below are not built. §18.1's browsing substrate (which
-> *is* implemented) and §18.4's formatter core (which *is* implemented) are the only things this builds
-> on.
+> only just starting, and its scope is pinned by the six carve-outs below.** Most of what this
+> subsection describes still does not exist in the codebase: `ui/ddl_object_editor.py`, `db/apply.py`,
+> `db/sandbox.py` and `db/ddl_check.py` are new, `CenterStage` has no dynamic tabs, there are no context
+> menus on `BrowserPanel.tree` or the DDL `EditorPanel`, and the Database-menu entries below are not
+> built. **`db/schema_diff.py` and `db/migration_gen.py` are the exception — they landed under §18.3
+> (see that subsection's status) for the `routine`/`trigger` cases**, and this subsection's
+> sandbox-validation ladder is expected to call them once it exists, rather than duplicating
+> diff/migration logic. §18.1's browsing substrate (which *is* implemented) and §18.4's formatter core
+> (which *is* implemented) are the only other things this builds on.
 >
 > **This subsection is the single specification of the editable DDL tab.** §18.2 (projects, checkout,
 > markers) references it and changes only *where the tab's buffer loads from and saves to*; it does not
@@ -3512,7 +3536,7 @@ is authoritative** (and is what appears in the body above).
 | 2026-08-02 | §26/§27 named the ladder gesture **"Validate DDL Object"**, a single menu action, with no deployment entry | **"Check DDL Object"**, matching the `[Check]` Audit prefix and `db/ddl_check.py`, and **three distinct gestures** — *Apply to Sandbox* (commits), *Check* (`recheck` against the sandbox as it stands), *Check without applying* (the rolled-back probe) — surfaced on the tab's own button row as well as the menu and context menu; the Database menu additionally gains **Generate Deployment SQL…**, and the one-click *Install plpgsql_check* lives **inside** Sandbox Setup next to the probe result rather than as a fourth menu item |
 | 2026-08-02 | §7 stated the append-after-the-fixed-set / key→widget-map rule for dynamic `CenterStage` tabs as a one-clause aside, with the underlying fragility left implicit | **Promoted to an explicitly stated invariant with a mandatory regression test:** append-only creation (`addTab`, never `insertTab`) and tail-only removal, because the stored fixed indices are **load-bearing in five verified places** — `_active_find_bar`, `_active_bookmark_editor`, `_save_active_tab`, `_on_ddl_navigate_requested` and every `CenterStage.hide_*` (plus `_on_tab_close_requested`'s index dispatch, which must gain a widget-type branch *before* any index comparison). One `insertTab` ahead of the fixed set silently re-points all of them |
 | 2026-08-02 | §18.4 recorded semantic/existence linting (do the referenced tables/columns/functions exist?) as *"a separate, explicitly deferred idea — not designed here"*, a forward pointer only | **Designed, in §18.5**, as the sandbox-backed **four-tier validation ladder** (`db/ddl_check.py` + `db/sandbox.py`, `okbob/plpgsql_check`), with the hard rule that **an unavailable tier reports "could not check", never "clean."** It remains **entirely outside** `format_selection`'s refusal gate, which stays tokenize/balance-only and offline. Findings report under **`[Check]`**, distinct from §18.4's `[SQL]` and §22's `[Lint]` — a three-way prefix reservation recorded in §7, §18.4, §18.5 and §22 |
-| 2026-08-02 | §18.1 **as shipped**: routine identity is `schema.name` — `db/introspect.py::fetch_routines_and_triggers` keys `routines[f"{schema}.{name}"]`, `DdlObjectSpan` carries no `arg_types`, and `BrowserPanel` indexes `span_by_routine[(schema, name)]`. Overloads therefore **collapse last-wins**: the DDL Explorer shows one of N and silently drops the rest | **Overloads are never collapsed — each gets its own tree entry, its own `DdlObjectSpan`/DDL-buffer span and its own editable §18.5 tab.** Owner: *"just let repeat overloaded functions to the tree, the dropdown will anyhow show the difference, also the ddl is clearly different."* Routine identity carries argument types **everywhere**: the introspection dict keys on the full signature, `DdlObjectSpan` gains `arg_types: tuple[str, ...]` (hashable, so it can key §18.5's dynamic-tab map), `build_ddl_text` breaks name ties on `arg_types`, and `BrowserPanel` indexes `(schema, name, arg_types)`. The tree shows N sibling nodes with the same `schema.name` top line, told apart by their existing per-argument `name (type)` children — the top-line label rule is **not** changed back to a parenthesised argument list. **Corrects shipped behavior**, and aligns §18.1 with the identity rule §18.5 already enforces for Apply-to-target and `diff_schemas` |
+| 2026-08-02 | §18.1 **as shipped**: routine identity is `schema.name` — `db/introspect.py::fetch_routines_and_triggers` keys `routines[f"{schema}.{name}"]`, `DdlObjectSpan` carries no `arg_types`, and `BrowserPanel` indexes `span_by_routine[(schema, name)]`. Overloads therefore **collapse last-wins**: the DDL Explorer shows one of N and silently drops the rest | **Overloads are never collapsed — each gets its own tree entry, its own `DdlObjectSpan`/DDL-buffer span and its own editable §18.5 tab.** Owner: *"just let repeat overloaded functions to the tree, the dropdown will anyhow show the difference, also the ddl is clearly different."* Routine identity carries argument types **everywhere**: the introspection dict keys on the full signature, `DdlObjectSpan` gains a `signature: str | None` field (from `RoutineInfo.signature`), `build_ddl_text` still breaks name ties on `arg_types` (the tuple of argument *types*, used only for ordering), and `BrowserPanel` indexes on `signature`. The tree shows N sibling nodes with the same `schema.name` top line, told apart by their existing per-argument `name (type)` children — the top-line label rule is **not** changed back to a parenthesised argument list. **Corrects shipped behavior**, and aligns §18.1 with the identity rule §18.5 already enforces for Apply-to-target and `diff_schemas`. *(Identity mechanism subsequently refined by BUG-019, 2026-08-02: the module-level rendering sketched here was settled instead as the `RoutineInfo.signature` `@property` — the single source consumed verbatim by `db/ddl_buffer.py`, `db/schema_diff.py::routine_identity` and `ui/ddl_buffer_panel.py`; see the BUG-019 entry in `docs/BUGFIX_QUEUE.md` for the full settlement.)* |
 | 2026-08-02 | §18.2 overload filenames = **argument types in the name** (`ddl/public.fmt(integer).sql`), the "disambiguate-only-when-needed" scheme settled earlier the same day (the row above) | **Numeric `_n` suffix instead.** Owner: *"as of filenames, just resolve it with `_1`."* The sole holder of a `schema.name` — and the **first** overload in signature order — keeps `ddl/<schema>.<name>.sql`; further overloads get `_1`, `_2`, …. Argtypes in filenames render characters illegal/awkward on Windows and produce long churn-prone names. **Ordering is by the sorted argument-type signature, never by introspection row order** (which would silently reassign a file to a different signature between runs/machines, in git); a mid-set addition **renames with `git mv`**, a dropped overload leaves its file and its numbering gap alone. Accepted cost: `_1` is not self-describing — the mapping is recoverable from the file's own `CREATE OR REPLACE …(args)` header, which is therefore load-bearing and must be reported rather than guessed if unparseable. **Trigger filenames unchanged** (`ddl/<schema>.<table>.<trigger>.sql`) |
 | 2026-08-02 | §18.5's unresolved v1 Save: the Save/Apply table said Save persists *"the in-session buffer in v1"*, while `resolve_save_path` said it *"returns `None` until Save As picks one"* — an editor whose Save produced nothing durable | **v1 ships `Save As… .sql`.** `Ctrl+S` on an object tab with no remembered path opens `getSaveFileName` (`SQL files (*.sql)`, prefilled with the §18.2 sole-holder filename shape); the chosen path is remembered and every later `Ctrl+S` writes it silently (UTF-8, `newline=""`, **no `.bak`**). Cancelling the dialog cancels the save; **cancelling Save As reached from the close-confirmation prompt ABORTS THE CLOSE** (the confirm flow must propagate save-cancel, or a dismissed dialog silently discards the edit). Save still **never** touches a database. Consistent with this section's own ranking — *"`Save As… .sql` is exactly §18.2's future `ddl/<schema>.<name>.sql` arriving early."* Also settled: **`Ctrl+Shift+S` stays project-only** and does not re-route to the object tab |
 | 2026-08-02 | §27 stated `Ctrl+Z`/`Ctrl+Y` flatly as *"Window"* — i.e. the project snapshot history — with no carve-out for a DDL object editor tab | **Pinned invariant with a mandatory regression test: `Ctrl+Z` in the object tab uses the editor's NATIVE undo.** The window-level `QShortcut` at `main_window.py:401` drives **project-history** undo over the **Raw XML buffer**; `XmlEditor` consumes and re-emits it and the XSD tab routes its re-emission back into its own editor, but **`CodeEditor` does neither** — so without this the object tab's Ctrl+Z would silently revert the Raw XML project buffer while the user is looking at SQL. Realized the XSD way (editor consumes, tab reroutes to its own `undo()`), never by disabling the window shortcut. Test: object tab active + dirty Raw XML → Ctrl+Z changes the object buffer and leaves the Raw XML text byte-identical |
