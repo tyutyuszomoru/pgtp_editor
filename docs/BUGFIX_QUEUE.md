@@ -1547,7 +1547,7 @@ delimiters). Flag for `spec-maintainer` **after** the fix lands; do not edit the
 
 ---
 ## BUG-017: Parallel-only suite flake (and hard segfaults): monkeypatching the virtual `XmlSyntaxHighlighter.highlightBlock` on the class leaves a dangling PySide override that BUG-013's theme sweep later calls in unrelated tests
-**Status:** OPEN
+**Status:** RESOLVED (4783f84)
 **Reported:** 2026-08-02
 **Report (verbatim):** "Under the full-suite parallel gate (`QT_QPA_PLATFORM=offscreen venv/bin/python -m
 pytest -q -n 10`), roughly 2 runs in 3 produce: `FAILED
