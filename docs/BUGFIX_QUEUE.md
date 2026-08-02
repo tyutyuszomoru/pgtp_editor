@@ -1703,3 +1703,186 @@ Ledger row dated 2026-08-01 for BUG-013 (line 2182) — flag for `spec-maintaine
 not edit the spec as part of the fix.
 
 ---
+
+## BUG-018: Caption-mode "select the matching row" silently selects nothing whenever Shift is held (`QTableView.selectRow` + stale global modifier state) — the real cause of the parallel-gate caption flake
+**Status:** OPEN
+**Reported:** 2026-08-02
+**Report (verbatim):** "Triage a load-dependent test failure on branch `ddl-editing` (HEAD 9412317). Follow-up BUG-012 asked for: with BUG-017's segfaults gone, I captured full tracebacks over 7 clean-signal `-n 10` gate runs. The failure still occurs, roughly 2 in 7, and it is a genuine AssertionError with a clean traceback — no crash, no segfault:
+```
+tests/ui/test_main_window.py::test_enter_caption_mode_for_field_selects_row
+        assert _visible_values(panel) == ["WBS"]     # <-- PASSES
+        selected = panel._table.selectionModel().selectedRows()
+>       assert len(selected) == 1
+E       assert 0 == 1
+E        +  where 0 = len([])
+tests/ui/test_main_window.py:1129: AssertionError
+```
+The critical discriminator: the assertion on the preceding line passes… only the SELECTION is missing. Also observed: the failing test VARIES between runs within this same small family — `test_see_column_in_caption_filters_and_selects_row` in one run, `test_enter_caption_mode_for_field_selects_row` in another. Both tests pass 5/5 in isolation."
+
+**Root cause:** `pgtp_editor/ui/caption_management_panel.py:948–954`,
+`CaptionManagementPanel._select_first_visible_row`, specifically line 953
+`self._table.selectRow(first.row())`.
+
+`QTableView.selectRow()` is **not** an unconditional "select this row" API. Internally
+(`QTableViewPrivate::selectRow`) it asks `QAbstractItemView::selectionCommand()` what kind of
+selection a *user gesture* on that row would mean, and for the default `ExtendedSelection` mode
+that answer is read from the process-global keyboard state,
+`QGuiApplication::keyboardModifiers()`:
+
+- No modifier → `ClearAndSelect` → the row is selected (the normal, passing case).
+- **Shift held → `SelectCurrent`**, which carries the `Current` flag. Because of that flag
+  `QTableViewPrivate::selectRow` does **not** update its `rowSectionAnchor` (it treats the call as
+  "extend the existing shift-anchor"), so the anchor keeps its initial value `-1`, and the range it
+  then builds is `index(min(-1, 0) = -1, 0) … index(0, columnCount-1)` — an **invalid** top-left.
+  `QItemSelectionModel::select()` on that range selects nothing at all. `scrollTo` still runs, the
+  current index is still set to (0,0), and the proxy is completely unaffected — which is exactly the
+  reported discriminator: the filter assertion passes, `selectedRows()` is `[]`.
+
+**Directly proven during triage, not inferred.** An instrumented full-suite `-n 10` run (a scratch
+pytest plugin wrapping `_select_first_visible_row` and dumping view/header/selection state on any
+call that did not end with exactly one selected row) caught the failure on run 2 and logged:
+
+```
+{"nodeid": "tests/ui/test_main_window.py::test_enter_caption_mode_for_field_selects_row",
+ "worker": "gw8",
+ "before": {"rows": 1, "hcount": 8, "hlen": 800, "hoffset": 0, "logical0": 0, "rtl": false,
+            "vpw": 616, "vph": 387, "selmode": "SelectionMode.ExtendedSelection",
+            "selbehav": "SelectionBehavior.SelectItems", "visible": false,
+            "mods": 33554432, "state": "State.NoState", "hidden_cols": []},
+ "after": {"selrows": 0, "selidx": 0, "cur": [0, 0], "rows_after": 1, "src_rows": 5}}
+```
+
+`mods: 33554432` is `Qt.KeyboardModifier.ShiftModifier` (0x02000000). Everything else about the view
+is healthy: 1 proxy row before *and* after, 8 header sections, header length 800, `logicalIndexAt(0)
+== 0`, LTR, `ExtendedSelection`, no hidden columns, no crash. The only anomaly is the latched Shift.
+
+Confirmed by a standalone deterministic repro (no xdist, no load): latch Shift with
+`QTest.keyClick(w, Key_A, ShiftModifier)`, then call `panel.filter_to_field("wbs_id")` →
+`selectedRows() == []` and `selectedIndexes() == []`, every time. Full modifier matrix measured
+against the *current* code and against the proposed fix:
+
+| latched global modifier | `selectRow` (current) | selection-model approach (proposed) |
+|---|---|---|
+| none | 1 row | 1 row |
+| **Shift** | **0 rows** | 1 row |
+| Ctrl | 1 row | 1 row |
+| **Ctrl+Shift** (QTest leaves Shift latched) | **0 rows** | 1 row |
+| Alt | 1 row | 1 row |
+
+**Where the latched Shift comes from (the load dependence).** `QGuiApplication::keyboardModifiers()`
+is process-global and is updated by `QTest`-synthesised key/mouse events; under `offscreen` nothing
+ever clears it again, so it stays latched for the **rest of that worker process**. Three existing
+tests leave it non-zero (measured with a teardown probe printing every transition):
+
+- `tests/ui/test_code_editor.py::test_ctrl_shift_b_selects_bracket_span_caret_at_start` (line 179,
+  `qtbot.keyClick(editor, Key_B, ControlModifier | ShiftModifier)`) → leaves **Shift** (33554432)
+- `tests/ui/test_history_wiring.py::test_ctrl_shift_z_in_editor_triggers_snapshot_redo` (line ~231,
+  `QTest.keyClick(editor, Key_Z, ControlModifier | ShiftModifier)`) → leaves **Shift**
+- (harmless but same class: `test_code_editor.py::test_dialog_ctrl_s_saves`,
+  `test_history_wiring.py::test_ctrl_z_in_editor_fires_undo_exactly_once`,
+  `tests/ui/test_xml_editor_click_nav.py` Ctrl/Alt click tests → leave Ctrl / Alt, which do not break
+  `selectRow`)
+
+So the "load dependence" is **not** thread timing and there is no asynchrony in the caption path
+(BUG-012's reading of the code path was correct). It is **pytest-xdist `--dist load` scheduling**:
+which tests land in which of the 10 worker *processes*, and in what order, is decided dynamically by
+timing, so a Shift-latching test precedes a caption test in the same process only in some runs.
+That fully explains every observed property — ~2 in 7 runs, the failing member of the family varying
+run to run, always a clean `AssertionError` (never a crash), and 5/5 green in isolation.
+
+**Production defect or test artifact: it is a real (low-frequency) production defect**, and the test
+flake is only its most visible symptom. In the running app `keyboardModifiers()` reflects the actual
+keyboard, so any user who happens to hold **Shift** while triggering the caption-jump actions — tree
+context menu ▸ "See column in caption" (`MainWindow._on_tree_see_column_in_caption`,
+`main_window.py:1205` → `enter_caption_mode_for_field`, `main_window.py:2250`), or the equivalent
+menu/keyboard route — lands in Caption Mode with the grid correctly filtered to one row but **no row
+selected and nothing highlighted**, which also breaks the follow-on selection-dependent actions
+(Ctrl+G go-to-line, Copy, Insert NULL) until they click a row. Shift+click on a menu item is a
+perfectly ordinary thing for a user to do by accident. Priority is therefore "real bug, low
+frequency, but the fix is small and also buys back the gate" — not "test-only cosmetics".
+
+**Proposed fix:** two parts; part 1 is the actual fix, part 2 stops this whole class of
+cross-test contamination from recurring.
+
+1. **Production (`pgtp_editor/ui/caption_management_panel.py`, `_select_first_visible_row`, lines
+   948–954).** Stop routing a *programmatic* selection through the *gesture-interpreting*
+   `QTableView.selectRow`, and drive the selection model explicitly (verified to give exactly one
+   selected row under every modifier state in the matrix above):
+
+   ```python
+   def _select_first_visible_row(self) -> None:
+       """Select and scroll to the first row visible through the proxy."""
+       if self._proxy.rowCount() == 0:
+           return
+       first = self._proxy.index(0, 0)
+       last = self._proxy.index(0, self._proxy.columnCount() - 1)
+       selection_model = self._table.selectionModel()
+       selection_model.setCurrentIndex(
+           first, QItemSelectionModel.SelectionFlag.NoUpdate
+       )
+       selection_model.select(
+           QItemSelection(first, last),
+           QItemSelectionModel.SelectionFlag.ClearAndSelect
+           | QItemSelectionModel.SelectionFlag.Rows,
+       )
+       self._table.scrollTo(first)
+   ```
+
+   Gotchas:
+   - Imports: `QItemSelection` and `QItemSelectionModel` come from `PySide6.QtCore` (the module
+     currently imports neither; `QModelIndex`, `Qt` etc. are already imported there).
+   - Keep `setCurrentIndex(..., NoUpdate)` **before** `select(...)` and keep it `NoUpdate`, so the
+     current index does not itself re-issue a selection command. Ctrl+G / `go_to_line_current` and
+     the context-menu actions read the current index and/or `selectedRows()`, so both must be set.
+   - `ClearAndSelect | Rows` (with a full-width `first..last` range) is required for
+     `QItemSelectionModel.selectedRows()` to report the row: the table's
+     `SelectionBehavior.SelectItems` (line 632) means a partial-width range would not count as a
+     selected *row*. Do **not** "fix" this by switching the table to `SelectRows` — the grid is
+     cell-selectable on purpose (copy/paste TSV of arbitrary cell rectangles, `Insert NULL` on
+     selected New Value cells).
+   - Do not add retries, `qtbot.wait`, `processEvents`, or xdist grouping anywhere — none of them
+     are relevant; the path is synchronous and the fix above makes it modifier-independent.
+   - `selectRow` at line 953 is the only `selectRow`/`selectColumn` call in `pgtp_editor/`, so there
+     is no sibling site to fix.
+
+2. **Test hygiene (`tests/ui/conftest.py`, or `tests/conftest.py` if the leaking tests are not all
+   under `tests/ui/`).** Add an autouse teardown fixture that clears the process-global modifier
+   state after every test, so one test's `Ctrl+Shift+…` can never again change another test's
+   behavior:
+
+   ```python
+   @pytest.fixture(autouse=True)
+   def _reset_keyboard_modifiers():
+       yield
+       if QGuiApplication.instance() is not None and QGuiApplication.keyboardModifiers():
+           QTest.keyClick(QWidget(), Qt.Key.Key_Shift, Qt.KeyboardModifier.NoModifier)
+   ```
+
+   Verified during triage: a `QTest.keyClick(..., NoModifier)` on a throwaway, never-shown `QWidget`
+   resets `QGuiApplication.keyboardModifiers()` from Shift back to 0. Guard on
+   `QGuiApplication.instance()` so non-Qt tests (and xdist workers that never built a QApplication)
+   are unaffected, and keep the temporary widget local so nothing is added to the qtbot registry.
+
+**Test impact:** existing coverage of this exact path, extend rather than duplicate:
+- `tests/ui/test_caption_management_panel.py::test_filter_to_field_shows_and_selects_matching_row`
+  (~line 1435) — panel-level, the natural home for the new regression case.
+- `tests/ui/test_main_window.py::test_enter_caption_mode_for_field_selects_row` (line 1116) and
+  `::test_see_column_in_caption_filters_and_selects_row` (line 1260) — the two window-level tests
+  that actually flake; leave their assertions as they are (they are correct), they become stable
+  once the production fix lands.
+- New case (panel-level, deterministic, no xdist needed): latch Shift with
+  `QTest.keyClick(<some widget>, Qt.Key.Key_A, Qt.KeyboardModifier.ShiftModifier)`, then
+  `panel.filter_to_field("wbs_id")`, and assert exactly one selected row mapping back to the
+  `wbs_id` entry — i.e. "the caption jump selects its row regardless of held modifiers". This test
+  fails on today's code and passes with the fix. If fix (2) lands, the fixture will clear the latch
+  afterwards; if not, clear it in the test itself.
+- Validation: `QT_QPA_PLATFORM=offscreen venv/bin/python -m pytest -q -n 10` several times (the
+  failure was ~2 in 7 before; one instrumented run out of two caught it during triage), plus the
+  targeted files above.
+
+**Spec impact:** none. `docs/superpowers/CONSOLIDATED_SPEC.md` §13 (Caption Mode, line 1129) does not
+describe the preset-filter row-selection mechanics, and the fix restores the already-intended
+behavior ("filter to the field, then select + scroll to the first matching row", the docstring at
+`caption_management_panel.py:936–939`) rather than changing it. Nothing for `spec-maintainer`.
+
+---
