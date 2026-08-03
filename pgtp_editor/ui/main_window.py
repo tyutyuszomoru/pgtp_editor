@@ -733,7 +733,10 @@ class MainWindow(QMainWindow):
             )
             return
         dest, _filter = QFileDialog.getSaveFileName(
-            self, "Export XSD", source.name, "XSD files (*.xsd)"
+            self,
+            "Export XSD",
+            str(Path(self._dialog_default_dir()) / source.name) if self._dialog_default_dir() else source.name,
+            "XSD files (*.xsd)",
         )
         if not dest:
             return
@@ -751,7 +754,7 @@ class MainWindow(QMainWindow):
         mode is curated (spec §11)."""
         mode = self._xsd_mode
         source, _filter = QFileDialog.getOpenFileName(
-            self, "Import XSD", "", "XSD files (*.xsd);;All files (*)"
+            self, "Import XSD", self._dialog_default_dir(), "XSD files (*.xsd);;All files (*)"
         )
         if not source:
             return
@@ -1129,11 +1132,20 @@ class MainWindow(QMainWindow):
 
     def _update_title(self) -> None:
         title = "PGTP Editor"
+        if self._ddl_project_folder is not None:
+            title = f"{title} — Project: {self._ddl_project_folder.name}"
         if self._current_project_path:
             title = f"{title} - {Path(self._current_project_path).name}"
         if self._dirty:
             title = f"{title} *"
         self.setWindowTitle(title)
+
+    def _dialog_default_dir(self) -> str:
+        """The directory an Open/Save dialog for a project file (`.pgtp`,
+        XSD import/export, a diff/merge comparison target) should default
+        to: the active §18.2 local project's folder, or '' (Qt's own
+        last-used-directory default) when no project is open."""
+        return str(self._ddl_project_folder) if self._ddl_project_folder is not None else ""
 
     def _on_tree_selection_changed(self, node, kind):
         self.properties_panel.show_node(node, kind)
@@ -1285,11 +1297,39 @@ class MainWindow(QMainWindow):
 
     def _open_project(self):
         path, _filter = QFileDialog.getOpenFileName(
-            self, "Open PGTP Project", "", "PGTP files (*.pgtp)"
+            self, "Open PGTP Project", self._dialog_default_dir(), "PGTP files (*.pgtp)"
         )
         if not path:
             return
-        self.open_project_file(path)
+        if self._ddl_project_folder is None:
+            self._prompt_pgtp_open_mode(path)
+        else:
+            # A project is already active -- the user already committed to
+            # project mode; just open (existing linking logic applies
+            # silently, exactly as it does for any subsequent open).
+            self.open_project_file(path)
+
+    def _prompt_pgtp_open_mode(self, path) -> None:
+        """The first time a `.pgtp` is opened with no project active, ask how
+        to work with it (§18.2): start a **New Project** around it, attach it
+        to an existing project via **Open Project**, or **Edit Standalone**
+        (today's plain behavior -- no project, no linking, unaffected). If
+        the chooser is dismissed without a button (e.g. the window close
+        box), defaults to Standalone -- the safe, non-destructive choice."""
+        box = QMessageBox(self)
+        box.setWindowTitle("Open .pgtp")
+        box.setText("How do you want to work with this file?")
+        new_button = box.addButton("New Project…", QMessageBox.ButtonRole.ActionRole)
+        open_button = box.addButton("Open Project…", QMessageBox.ButtonRole.ActionRole)
+        box.addButton("Edit Standalone", QMessageBox.ButtonRole.ActionRole)
+        box.exec()
+        clicked = box.clickedButton()
+        if clicked is new_button:
+            self._new_ddl_project(on_ready=lambda: self.open_project_file(path))
+        elif clicked is open_button:
+            self._open_ddl_project(on_ready=lambda: self.open_project_file(path))
+        else:
+            self.open_project_file(path)
 
     def open_project_file(self, path):
         """Load and display the .pgtp project at `path`.
@@ -1663,7 +1703,7 @@ class MainWindow(QMainWindow):
         source = self._current_project
         if source is None:
             source_path, _filter = QFileDialog.getOpenFileName(
-                self, "Select Source Project", "", "PGTP files (*.pgtp)"
+                self, "Select Source Project", self._dialog_default_dir(), "PGTP files (*.pgtp)"
             )
             if not source_path:
                 return
@@ -1676,7 +1716,7 @@ class MainWindow(QMainWindow):
                 return
 
         target_path, _filter = QFileDialog.getOpenFileName(
-            self, "Select Target Project", "", "PGTP files (*.pgtp)"
+            self, "Select Target Project", self._dialog_default_dir(), "PGTP files (*.pgtp)"
         )
         if not target_path:
             return
@@ -1696,7 +1736,7 @@ class MainWindow(QMainWindow):
 
     def _compare_page_with(self, page_node):
         target_path, _filter = QFileDialog.getOpenFileName(
-            self, "Select Target Project", "", "PGTP files (*.pgtp)"
+            self, "Select Target Project", self._dialog_default_dir(), "PGTP files (*.pgtp)"
         )
         if not target_path:
             return
@@ -1725,7 +1765,7 @@ class MainWindow(QMainWindow):
 
     def _compare_detail_with(self, detail_node, source_path):
         target_path_str, _filter = QFileDialog.getOpenFileName(
-            self, "Select Target Project", "", "PGTP files (*.pgtp)"
+            self, "Select Target Project", self._dialog_default_dir(), "PGTP files (*.pgtp)"
         )
         if not target_path_str:
             return
@@ -1840,7 +1880,7 @@ class MainWindow(QMainWindow):
 
     def _save_project_as(self) -> None:
         path, _filter = QFileDialog.getSaveFileName(
-            self, "Save Project As", "", "PGTP files (*.pgtp)"
+            self, "Save Project As", self._dialog_default_dir(), "PGTP files (*.pgtp)"
         )
         if not path:
             return
@@ -1987,6 +2027,22 @@ class MainWindow(QMainWindow):
         open_action.setShortcut("Ctrl+O")
         open_action.triggered.connect(self._open_project)
         menu.addMenu("Open Recent")
+        menu.addSeparator()
+        # Local DDL-versioning projects (spec §18.2) -- a distinct concept
+        # from `_current_project` (the open .pgtp), tracked separately as
+        # `_ddl_project_folder`/`_ddl_project_settings`.
+        new_project_action = menu.addAction("New Project…")
+        new_project_action.triggered.connect(self._new_ddl_project)
+        open_project_action = menu.addAction("Open Project…")
+        open_project_action.triggered.connect(self._open_ddl_project)
+        self._close_ddl_project_action = menu.addAction("Close Project")
+        self._close_ddl_project_action.triggered.connect(self._close_ddl_project)
+        self._close_ddl_project_action.setEnabled(False)
+        project_settings_action = menu.addAction("Project Settings…")
+        project_settings_action.triggered.connect(self._open_ddl_project_settings)
+        deploy_pgtp_action = menu.addAction("Deploy .pgtp")
+        deploy_pgtp_action.triggered.connect(self._deploy_pgtp)
+        menu.addSeparator()
         save_action = menu.addAction("Save")
         save_action.setShortcut("Ctrl+S")
         save_action.triggered.connect(self._save_active_tab)
@@ -2447,21 +2503,6 @@ class MainWindow(QMainWindow):
         self._ddl_explorer_action.setCheckable(True)
         self._ddl_explorer_action.setChecked(False)
         self._ddl_explorer_action.toggled.connect(self._on_ddl_explorer_toggled)
-        menu.addSeparator()
-        # Local DDL-versioning projects (spec §18.2) -- a distinct concept
-        # from `_current_project` (the open .pgtp), tracked separately as
-        # `_ddl_project_folder`/`_ddl_project_settings`.
-        new_project_action = menu.addAction("New Project…")
-        new_project_action.triggered.connect(self._new_ddl_project)
-        open_project_action = menu.addAction("Open Project…")
-        open_project_action.triggered.connect(self._open_ddl_project)
-        self._close_ddl_project_action = menu.addAction("Close Project")
-        self._close_ddl_project_action.triggered.connect(self._close_ddl_project)
-        self._close_ddl_project_action.setEnabled(False)
-        project_settings_action = menu.addAction("Project Settings…")
-        project_settings_action.triggered.connect(self._open_ddl_project_settings)
-        deploy_pgtp_action = menu.addAction("Deploy .pgtp")
-        deploy_pgtp_action.triggered.connect(self._deploy_pgtp)
 
     def _open_connection_setup(self):
         tree = (
@@ -2540,6 +2581,7 @@ class MainWindow(QMainWindow):
         self._ddl_project_folder = folder
         self._ddl_project_settings = settings
         self._close_ddl_project_action.setEnabled(True)
+        self._update_title()
 
     def _report_ddl_project_drift(self, folder: Path, settings: ProjectSettings) -> None:
         """Opening a project compares the `.pgtp` working copy's checksum
@@ -2579,6 +2621,7 @@ class MainWindow(QMainWindow):
         self._ddl_project_folder = None
         self._ddl_project_settings = None
         self._close_ddl_project_action.setEnabled(False)
+        self._update_title()
         self.statusBar().showMessage("Project closed.", 5000)
 
     def _remind_pending_ddl_deploys_on_close(self) -> None:
@@ -2915,8 +2958,10 @@ class MainWindow(QMainWindow):
             panel = box["panel"]
             if panel.save_path is not None:
                 return panel.save_path
+            default_dir = self._dialog_default_dir()
+            prefill = str(Path(default_dir) / ref.default_file_name) if default_dir else ref.default_file_name
             path, _filter = QFileDialog.getSaveFileName(
-                self, "Save DDL Object", ref.default_file_name, "SQL files (*.sql)"
+                self, "Save DDL Object", prefill, "SQL files (*.sql)"
             )
             if not path:
                 return None

@@ -15,7 +15,13 @@ you asked for, and the on-disk bytes are preserved except where you edit.
 
 ### Opening a project
 
-Use **File ▸ Open** and pick a `.pgtp` file. The window has three areas:
+Use **File ▸ Open** and pick a `.pgtp` file. If no local DDL-versioning project
+(see *Local DDL-Versioning Projects*) is currently active, a chooser dialog
+asks how you want to work with this file: **New Project…** starts one around
+it, **Open Project…** attaches it to an existing project, and **Edit
+Standalone** opens it plainly with no project involved — today's ordinary
+behavior. If a project **is** already active, the chooser is skipped and the
+file just opens into that project. The window has three areas:
 
 - **Left — Project Tree:** the structure of your project (pages, details, columns,
   event handlers). More tabs share this dock: **Contents** (this manual's
@@ -656,8 +662,10 @@ database — it only writes a `.sql` file to disk:
 
 - The **first save** opens a normal **Save As…** file picker, prefilled with a
   sensible filename (`schema.name.sql`, or `schema.table.trigger.sql` for a
-  trigger). Cancelling the picker just cancels the save — nothing is written
-  and the tab stays dirty.
+  trigger) and, when a local DDL-versioning project is active, starting in
+  that project's folder (see *Local DDL-Versioning Projects ▸ File dialogs
+  default to the active project's folder*). Cancelling the picker just
+  cancels the save — nothing is written and the tab stays dirty.
 - The chosen path is **remembered**, so every later Ctrl+S writes silently to
   it for the rest of the session.
 - **Ctrl+Shift+S** (File ▸ Save As) is **not** repointed to this tab — it
@@ -705,10 +713,10 @@ plain **Edit …** (see *DDL Explorer*) work with just a database connection, no
 project needed. A project becomes relevant only once you want checked-out
 `ddl/` files, a versioned `.pgtp` working copy, drift markers, or a deploy.
 
-### The Database menu's project actions
+### The File menu's project actions
 
-Five actions on the **Database** menu manage projects, alongside the existing
-Connection Setup / Check / DDL Explorer entries:
+Five actions on the **File** menu manage projects, grouped together between
+**Open Recent** and **Save**:
 
 - **New Project…**
 - **Open Project…**
@@ -720,6 +728,25 @@ Connection Setup / Check / DDL Explorer entries:
 Out for Versioning, for example — shows a **"Project Required"** dialog
 offering **Create…**, **Open…**, or **Cancel** if none is open yet; choosing
 Create or Open runs that flow first and then continues the original action.
+
+### The window title shows the active project
+
+Whenever a local DDL-versioning project is open, the title bar adds
+**"— Project: `<folder name>`"**, ahead of the existing `.pgtp` filename and
+unsaved-changes `*` marker — for example
+`PGTP Editor — Project: acme_billing - dev_Ferrara.pgtp *`. With no project
+active, the title shows just the app name and the `.pgtp` filename as before.
+
+### File dialogs default to the active project's folder
+
+While a project is active, every Open/Save-type file dialog in the app —
+**File ▸ Open**, **File ▸ Save As**, **Schema ▸ Export XSD**, **Schema ▸
+Import XSD**, the source/target file pickers in **Compare / Merge**, and the
+first **Save As…** of a DDL object editor tab (see *DDL Explorer*) — starts
+in the project's own folder instead of wherever you last browsed. With no
+project active, these dialogs behave as before and default to the operating
+system's own last-used directory. It's only a starting point in every case:
+you can always navigate elsewhere.
 
 ### Creating a project
 
@@ -790,7 +817,10 @@ this adds to the DDL Objects tree.
 
 The first time you open a `.pgtp` file while a project is active, the app
 copies it into the project folder as a **working copy** and remembers the
-link — this happens automatically, with no extra step. From then on:
+link — this happens automatically, with no extra step. (If no project was
+active yet, **File ▸ Open**'s chooser — see *Getting Started ▸ Opening a
+project* — is how you make one active for this file: pick **New Project…** or
+**Open Project…** there instead of **Edit Standalone**.) From then on:
 
 - Ordinary **Save** (Ctrl+S) writes to this working copy and makes **no
   `.bak` backup** — the working copy itself is the safety net. See *Getting
@@ -798,7 +828,7 @@ link — this happens automatically, with no extra step. From then on:
   project-less `.pgtp` saves, which are unaffected.
 - Pushing your edits back to the original file (on the shared/quality server)
   is the separate, explicit **Deploy .pgtp** action — reachable any time from
-  the Database menu.
+  the File menu.
 - Closing the project (**Close Project**) also offers this as a yes/no
   prompt if the working copy has changes not yet pushed. Declining just
   closes the project without pushing; nothing is lost.
