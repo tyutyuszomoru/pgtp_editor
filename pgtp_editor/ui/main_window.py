@@ -114,6 +114,7 @@ from pgtp_editor.db.introspect import RoutineInfo, fetch_routines_and_triggers
 from pgtp_editor.db.introspect import fetch_schema as db_fetch_schema
 from pgtp_editor.db.introspect import test_connection as db_test_connection
 from pgtp_editor.db.rename import rename_field, rename_table
+from pgtp_editor.db.schema_index import SchemaIndex
 from pgtp_editor.ui.async_task import run_async
 from pgtp_editor.ui.connection_setup_dialog import ConnectionSetupDialog
 from pgtp_editor.ui.new_project_dialog import NewProjectDialog
@@ -222,6 +223,13 @@ class MainWindow(QMainWindow):
         # "create from table" reuses the column metadata without re-querying.
         self._last_db_schema = None
         self._last_db_summary = None
+        # Schema-aware Ctrl+Space completion (§18.6): the Qt-free lookup index
+        # built once per DDL Explorer connect/refresh from the (now widened,
+        # §18.6) fetch's `DatabaseSchema`, and handed to every open/newly
+        # opened `DdlObjectEditorPanel` by injection (`set_schema_index`,
+        # mirroring `XmlEditor.set_schema_model`). None until the DDL Explorer
+        # has fetched at least once.
+        self._ddl_schema_index: SchemaIndex | None = None
         # Off-thread executor seam. The Database Check schema fetch opens a
         # connection; running it here would freeze the window on a slow/dead
         # host. Default marshals it to a threadpool worker; tests inject a
@@ -2902,6 +2910,14 @@ class MainWindow(QMainWindow):
             )
             self.ddl_browser_panel.set_schema(schema, spans, drift_markers=drift_markers)
             self.center_stage.show_ddl_explorer()
+            # Schema-aware Ctrl+Space completion (§18.6): rebuild the lookup
+            # index from this same fetch (now widened to also carry
+            # `.tables`) and push it into every already-open DDL object tab,
+            # exactly like the tree and the read-only buffer are refreshed
+            # above -- built once per connect/refresh, never per keystroke.
+            self._ddl_schema_index = SchemaIndex(schema)
+            for panel in self.center_stage.ddl_object_panels():
+                panel.set_schema_index(self._ddl_schema_index)
             self.statusBar().showMessage(
                 f"DDL Explorer: {len(schema.routines)} routine(s), "
                 f"{len(schema.triggers)} trigger(s).",
@@ -2971,6 +2987,7 @@ class MainWindow(QMainWindow):
 
         panel = self.center_stage.open_ddl_object_tab(ref, source, resolve_save_path=resolver)
         box["panel"] = panel
+        panel.set_schema_index(self._ddl_schema_index)
         panel.dirty_changed.connect(
             lambda _dirty, ref=ref: self.center_stage.update_ddl_object_tab(ref)
         )
@@ -3031,6 +3048,7 @@ class MainWindow(QMainWindow):
         panel = self.center_stage.open_ddl_object_tab(
             ref, text, resolve_save_path=resolver, key=key
         )
+        panel.set_schema_index(self._ddl_schema_index)
         panel.dirty_changed.connect(
             lambda _dirty, ref=ref, key=key: self.center_stage.update_ddl_object_tab(ref, key=key)
         )

@@ -339,12 +339,12 @@ def run_queries(
         connection.close()
 
 
-def fetch_schema(params: ConnectionParams, runner: Runner = run_queries) -> DatabaseSchema:
-    """Introspect the database into a `DatabaseSchema` keyed by ``schema.table``."""
-    _log.info("db: fetch_schema started %s", debuglog.redacted(params))
-    started = time.monotonic()
-    relation_rows, column_rows, constraint_rows = runner(params, list(SCHEMA_SQL))
-
+def _build_tables(
+    relation_rows: Rows, column_rows: Rows, constraint_rows: Rows
+) -> dict[str, TableInfo]:
+    """Assemble ``{"schema.table": TableInfo}`` from `SCHEMA_SQL`'s three
+    row-lists. Shared by `fetch_schema` and `fetch_routines_and_triggers`
+    (§18.6) so the one table/column-assembly implementation backs both."""
     kinds: dict[str, str] = {}
     for schema_name, rel_name, relkind in relation_rows:
         kinds[f"{schema_name}.{rel_name}"] = _KIND_BY_RELKIND.get(relkind, "table")
@@ -381,10 +381,18 @@ def fetch_schema(params: ConnectionParams, runner: Runner = run_queries) -> Data
             )
         )
 
-    tables = {
+    return {
         name: TableInfo(name=name, kind=kind, columns=columns_by_table.get(name, []))
         for name, kind in kinds.items()
     }
+
+
+def fetch_schema(params: ConnectionParams, runner: Runner = run_queries) -> DatabaseSchema:
+    """Introspect the database into a `DatabaseSchema` keyed by ``schema.table``."""
+    _log.info("db: fetch_schema started %s", debuglog.redacted(params))
+    started = time.monotonic()
+    relation_rows, column_rows, constraint_rows = runner(params, list(SCHEMA_SQL))
+    tables = _build_tables(relation_rows, column_rows, constraint_rows)
     elapsed = time.monotonic() - started
     _log.info(
         "db: fetch_schema finished %.3fs tables=%d", elapsed, len(tables)
@@ -395,15 +403,26 @@ def fetch_schema(params: ConnectionParams, runner: Runner = run_queries) -> Data
 def fetch_routines_and_triggers(
     params: ConnectionParams, runner: Runner = run_queries
 ) -> DatabaseSchema:
-    """Introspect functions/procedures + triggers into a `DatabaseSchema`.
+    """Introspect functions/procedures + triggers **and** tables/columns into
+    one `DatabaseSchema` (§18.1, widened by §18.6).
 
-    Independent of `fetch_schema`: the returned schema's `.tables` is always
-    empty -- only `.routines`/`.triggers` are populated. Used by the DDL
-    Explorer (§18.1), which has no need for table/column data.
+    Runs `ROUTINE_TRIGGER_SQL` (routines/triggers) and `SCHEMA_SQL` (the same
+    three queries `fetch_schema` runs) in the same round trip, so the DDL
+    Explorer's one connect-time fetch now populates `.routines`, `.triggers`
+    **and** `.tables`. This supersedes the earlier "`.tables` is always empty"
+    behavior (§28 Supersession Ledger, 2026-08-04): `db/schema_index.py`
+    (§18.6) is built from the `.tables` this now returns, for schema-aware
+    Ctrl+Space completion in the DDL object editor.
+
+    `fetch_schema` itself is UNCHANGED -- its own 3-query contract and tests
+    are untouched, and DB Check keeps calling it directly. This is one
+    widened fetch serving two consumers, never a second parallel fetch.
     """
     _log.info("db: fetch_routines_and_triggers started %s", debuglog.redacted(params))
     started = time.monotonic()
-    routine_rows, trigger_rows = runner(params, list(ROUTINE_TRIGGER_SQL))
+    routine_rows, trigger_rows, relation_rows, column_rows, constraint_rows = runner(
+        params, list(ROUTINE_TRIGGER_SQL) + list(SCHEMA_SQL)
+    )
 
     routines: dict[str, RoutineInfo] = {}
     for (
@@ -448,14 +467,17 @@ def fetch_routines_and_triggers(
             definition=definition,
         )
 
+    tables = _build_tables(relation_rows, column_rows, constraint_rows)
+
     elapsed = time.monotonic() - started
     _log.info(
-        "db: fetch_routines_and_triggers finished %.3fs routines=%d triggers=%d",
+        "db: fetch_routines_and_triggers finished %.3fs routines=%d triggers=%d tables=%d",
         elapsed,
         len(routines),
         len(triggers),
+        len(tables),
     )
-    return DatabaseSchema(routines=routines, triggers=triggers)
+    return DatabaseSchema(routines=routines, triggers=triggers, tables=tables)
 
 
 def test_connection(params: ConnectionParams, runner: Runner = run_queries) -> tuple[bool, str]:

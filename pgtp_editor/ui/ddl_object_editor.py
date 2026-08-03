@@ -42,15 +42,20 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable
+from typing import TYPE_CHECKING, Callable
 
 from PySide6.QtCore import QEvent, Qt, Signal
 from PySide6.QtGui import QColor, QKeySequence, QShortcut, QTextCharFormat, QTextCursor
-from PySide6.QtWidgets import QTextEdit, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QInputDialog, QTextEdit, QVBoxLayout, QWidget
 
+from pgtp_editor.sql.caret_context import DOTTED_PATH, ROW_VARIABLE, resolve_caret_context
 from pgtp_editor.sql.formatter import format_selection as _format_selection_text
 from pgtp_editor.ui.code_editor import CodeEditor
+from pgtp_editor.ui.completion_popup import _CompletionPopup
 from pgtp_editor.ui.find_replace_bar import FindReplaceBar
+
+if TYPE_CHECKING:  # pragma: no cover -- import-cycle/Qt-purity avoidance only
+    from pgtp_editor.db.schema_index import SchemaIndex
 
 
 @dataclass(frozen=True)
@@ -168,6 +173,22 @@ class DdlObjectEditorPanel(QWidget):
         #: and emit a `[Check]` caveat without a constructor change. Nothing in
         #: v1 reads or writes it.
         self.applied_sha1: str | None = None
+
+        # Schema-aware Ctrl+Space completion (§18.6). Injected the same way
+        # `XmlEditor.set_schema_model` is (§11): None disables it entirely.
+        # The panel never imports `db/introspect.py` and never learns what a
+        # connection is -- it only ever sees this already-built, Qt-free
+        # `SchemaIndex` (§18.5 D1's "never talks to a database" invariant).
+        self._schema_index: "SchemaIndex | None" = None
+        self._completion_popup: _CompletionPopup | None = None
+        self._popup_wired = False
+        # Session-only unattached-trigger table association (§18.6): NEVER
+        # persisted anywhere -- not settings.json, not a sidecar file next to
+        # a checked-out ddl/*.sql. Lives only in this tab's memory and is
+        # forgotten on tab close (this panel is destroyed) or app restart.
+        # One routine per tab, so a single slot is enough; keyed by nothing
+        # more durable than the Python attribute itself.
+        self._unattached_trigger_table: str | None = None
 
         self.editor = CodeEditor(language="sql")
         # EDITABLE -- the behavioral difference from §18.1's EditorPanel. In
@@ -297,6 +318,15 @@ class DdlObjectEditorPanel(QWidget):
                 else:
                     self.format_selection()
                 return True
+            # Ctrl+Space: schema-aware completion (§18.6). Handled here rather
+            # than as a QShortcut for the same reason as Ctrl+Alt+F above --
+            # reliable under the offscreen platform in tests.
+            if key == Qt.Key.Key_Space and event.modifiers() == Qt.KeyboardModifier.ControlModifier:
+                if event.type() == QEvent.Type.ShortcutOverride:
+                    event.accept()
+                else:
+                    self._show_completions()
+                return True
         if obj is self.editor and event.type() == QEvent.Type.ContextMenu:
             menu = self._build_context_menu()
             menu.exec(event.globalPos())
@@ -355,3 +385,163 @@ class DdlObjectEditorPanel(QWidget):
             selections.append(extra)
         self.editor.setExtraSelections(selections)
         self.format_refused.emit(result.issues)
+
+    # --- Schema-aware Ctrl+Space completion (§18.6) ------------------------
+    def set_schema_index(self, index: "SchemaIndex | None") -> None:
+        """Inject the current `db/schema_index.py::SchemaIndex` (or None).
+        Built once per DDL Explorer connect/refresh and handed to every open
+        tab -- mirrors `XmlEditor.set_schema_model` (§11). `None` disables
+        completion entirely (the default, e.g. no connection configured)."""
+        self._schema_index = index
+
+    def schema_index(self):
+        """The injected `SchemaIndex`, or None. Read-only accessor for tests
+        and callers that need to check whether completion is available."""
+        return self._schema_index
+
+    def _ensure_completion_popup(self) -> _CompletionPopup:
+        if self._completion_popup is None:
+            self._completion_popup = _CompletionPopup(self)
+        return self._completion_popup
+
+    def _popup_at_caret(self, popup: _CompletionPopup) -> None:
+        """Show ``popup`` just below the caret and give it focus."""
+        rect = self.editor.cursorRect()
+        point = self.editor.viewport().mapToGlobal(rect.bottomLeft())
+        popup.move(point)
+        popup.show()
+        popup.setFocus()
+
+    def _rewire_popup(self, popup: _CompletionPopup, on_chosen) -> None:
+        """Point the shared popup's signals at the current completion stage
+        (the `xml_editor.py` precedent, §11): only disconnect a previous wiring
+        when the popup was actually wired before, so a fresh popup's first use
+        never triggers a PySide6 RuntimeWarning."""
+        if self._popup_wired:
+            popup.chosen.disconnect()
+            popup.cancelled.disconnect()
+        popup.chosen.connect(on_chosen)
+        popup.cancelled.connect(popup.hide)
+        self._popup_wired = True
+
+    def _show_completions(self) -> None:
+        """Ctrl+Space entry point (§18.6). Resolves the caret context and
+        opens the popup for whichever of the three rows applies:
+        schema-qualified table reference, NEW./OLD. in an attached trigger
+        function, or NEW./OLD. in an unattached one (table-pick prompt
+        first). No-op when no `SchemaIndex` is injected or the caret is not
+        in a resolvable position."""
+        if self._schema_index is None:
+            return
+        context = resolve_caret_context(self.editor.toPlainText(), self.editor.textCursor().position())
+        if context is None:
+            return
+        if context.kind == ROW_VARIABLE:
+            self._show_row_variable_completions(context)
+        elif context.kind == DOTTED_PATH:
+            self._show_dotted_path_completions(context)
+
+    def _show_dotted_path_completions(self, context) -> None:
+        """Schema-qualified table reference (§18.6 row 1): no schema typed
+        yet offers schema names; a schema (optionally partial table) offers
+        that schema's table names, schema-qualified, prefix-filtered."""
+        index = self._schema_index
+        if not context.parts:
+            names = [n for n in index.known_schemas() if n.lower().startswith(context.prefix.lower())]
+            if not names:
+                return
+            popup = self._ensure_completion_popup()
+            popup.set_items([(n, n) for n in names])
+            self._rewire_popup(popup, self._complete_identifier)
+            self._popup_at_caret(popup)
+            return
+        schema = context.parts[0]
+        tables = index.known_tables(schema, context.prefix)
+        if not tables:
+            return
+        popup = self._ensure_completion_popup()
+        popup.set_items([(t, f"{schema}.{t}") for t in tables])
+        self._rewire_popup(popup, self._complete_identifier)
+        self._popup_at_caret(popup)
+
+    def _show_row_variable_completions(self, context) -> None:
+        """NEW./OLD. inside a trigger function body (§18.6 rows 2 &amp; 3).
+
+        Attached: the routine IS some trigger's function (reverse lookup via
+        `TriggerInfo.function_name`) -- offer that table's columns directly.
+        Unattached: tell the user plainly, then prompt a table pick (a small,
+        modal `QInputDialog.getItem` picker -- the existing simple-selection-
+        dialog idiom); the pick is session-only (§18.6, never persisted) and
+        forgotten the moment this tab closes or the app restarts.
+        """
+        index = self._schema_index
+        ref = self._ref
+        table = self._unattached_trigger_table
+        if table is None and not ref.is_trigger:
+            trigger = index.trigger_for_function(ref.schema, ref.name, ref.arg_types)
+            if trigger is not None:
+                table = f"{trigger.schema}.{trigger.table}"
+        if table is None and ref.is_trigger and ref.table:
+            table = f"{ref.schema}.{ref.table}"
+        if table is None:
+            table = self._prompt_unattached_trigger_table()
+            if table is None:
+                return  # user cancelled the picker
+            self._unattached_trigger_table = table
+
+        columns = index.known_columns(table)
+        prefix = context.prefix.lower()
+        names = [c for c in columns if c.lower().startswith(prefix)]
+        if not names:
+            return
+        popup = self._ensure_completion_popup()
+        popup.set_items([(c, c) for c in names])
+        self._rewire_popup(popup, self._complete_identifier)
+        self._popup_at_caret(popup)
+
+    def _prompt_unattached_trigger_table(self) -> str | None:
+        """No trigger is defined for this function (§18.6): tell the user,
+        then let them pick which table it belongs to. Returns the picked
+        `"schema.table"` key, or None if there is nothing to pick from or the
+        user cancels. A thin, directly-testable wrapper around
+        `QInputDialog.getItem` -- the existing simple-selection-dialog idiom
+        (mirrors `MainWindow._prompt_rename`'s `QInputDialog.getText` seam)."""
+        index = self._schema_index
+        options = sorted(
+            f"{schema}.{table}"
+            for schema in index.known_schemas()
+            for table in index.known_tables(schema)
+        )
+        if not options:
+            return None
+        choice, ok = QInputDialog.getItem(
+            self,
+            "No Trigger Defined",
+            "No trigger is defined for this function yet. "
+            "Which table does it belong to? (This choice is not saved.)",
+            options,
+            0,
+            False,
+        )
+        return choice if ok else None
+
+    def _complete_identifier(self, name: str) -> None:
+        """Insert `name` at the caret, replacing the partial prefix already
+        typed (if any), hide the popup, and leave the caret just past the
+        inserted text -- a single undoable edit."""
+        popup = self._completion_popup
+        if popup is not None:
+            popup.hide()
+        cursor = self.editor.textCursor()
+        context = resolve_caret_context(self.editor.toPlainText(), cursor.position())
+        prefix_len = len(context.prefix) if context is not None else 0
+        cursor.beginEditBlock()
+        if prefix_len:
+            cursor.movePosition(
+                QTextCursor.MoveOperation.Left,
+                QTextCursor.MoveMode.KeepAnchor,
+                prefix_len,
+            )
+        cursor.insertText(name)
+        cursor.endEditBlock()
+        self.editor.setTextCursor(cursor)

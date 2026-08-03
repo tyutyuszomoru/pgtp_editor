@@ -698,6 +698,32 @@ silently discarded to resync with the database.
 There is no Apply, Check, or sandbox validation in this version — editing and
 saving a `.sql` file to disk is all it does today.
 
+### Schema-aware completion in the DDL object editor
+
+Inside an open DDL object editor tab (opened via **Edit …** or **Check Out for
+Versioning**, above), **Ctrl+Space** offers name completion drawn from the
+same object catalog the DDL Explorer already fetched when you connected — it
+never makes an extra database round-trip when you invoke it. This is the same
+completion idiom as the Raw XML editor's Ctrl+Space (see *The Raw XML Editor ▸
+Schema-aware editing*), applied here to live database names instead of the
+`.pgtp` XSD schema. Three contexts are recognized:
+
+- **A schema name (optionally partial).** Ctrl+Space after it offers the
+  matching table names in that schema.
+- **`NEW.` or `OLD.` inside a trigger function that already has a trigger
+  attached to it.** Ctrl+Space offers that trigger's target table's column
+  names directly.
+- **`NEW.` or `OLD.` inside a trigger function with no trigger currently
+  attached to it.** Ctrl+Space tells you plainly that no trigger is defined
+  for this function, then opens a **"No Trigger Defined"** picker so you can
+  choose which table it belongs to; once chosen, its columns complete as
+  usual. This choice is remembered only for the current tab for the rest of
+  the session — it is **never saved to disk**, and you're prompted again if
+  you reopen the same function in a later session.
+
+This completion is available only in the **editable** DDL object editor tab —
+the read-only **DDL Explorer** viewer tab does not offer it.
+
 ---
 
 ## Local DDL-Versioning Projects
@@ -959,6 +985,7 @@ simply reads as busy instead of stalled.
 | **Ctrl+Z** / **Ctrl+Y** | Raw XML | Undo / redo (snapshot history) |
 | **Ctrl+Z** / **Ctrl+Y** | DDL object editor tab | Undo / redo (that tab's own history only — never the project's) |
 | **Ctrl+Space** | Raw XML | Attribute / value completion |
+| **Ctrl+Space** | DDL object editor tab | Schema-aware name completion (schema/table names, or `NEW.`/`OLD.` column names) |
 | **Ctrl+L** | Raw XML | Go To XSD (attribute's definition in the Edit XSD tab) |
 | **Ctrl+click** | Raw XML (mouse) | Jump to matching open/close tag |
 | **Alt+click** | Raw XML (mouse) | Jump to parent tag start |

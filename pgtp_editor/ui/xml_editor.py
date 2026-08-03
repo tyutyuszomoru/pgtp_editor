@@ -47,8 +47,6 @@ from PySide6.QtGui import (
 )
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
-    QListWidget,
-    QListWidgetItem,
     QMenu,
     QPlainTextEdit,
     QTextEdit,
@@ -62,6 +60,9 @@ from pgtp_editor.schema_learning.settings_index import (
     unused_setting_attributes,
 )
 from pgtp_editor.ui import xml_structure
+from pgtp_editor.ui.completion_popup import (  # noqa: F401  (re-exported name)
+    _CompletionPopup,
+)
 from pgtp_editor.ui.editor_gutter import (  # noqa: F401  (re-exported names)
     _BOOKMARK_STRIP_WIDTH,
     _EditorGutter,
@@ -406,100 +407,6 @@ def _closing_tag_start(text: str, span: xml_structure.TagSpan) -> int | None:
     """Delegates to xml_structure.closing_tag_start (kept as a module-local
     name for the highlight call site)."""
     return xml_structure.closing_tag_start(text, span)
-
-
-class _CompletionPopup(QListWidget):
-    """Frameless completion list for the XML editor. Holds a master list of
-    ``(key, display)`` items and a running filter; arrows navigate, printable
-    chars filter by key prefix (case-insensitive), Enter/Tab or a mouse click
-    choose, Esc cancels. Emits the chosen *key* (not the display string).
-    Callers pass items pre-ordered; filtering preserves that order."""
-
-    chosen = Signal(str)
-    cancelled = Signal()
-
-    def __init__(self, parent=None) -> None:
-        super().__init__(parent)
-        self.setWindowFlags(Qt.WindowType.Popup)
-        self.setUniformItemSizes(True)
-        self._items: list[tuple[str, str]] = []
-        self._filter = ""
-        self.itemClicked.connect(
-            lambda item: self.chosen.emit(item.data(Qt.ItemDataRole.UserRole))
-        )
-
-    def set_items(self, items) -> None:
-        """Replace the master ``(key, display)`` list, reset the filter, and
-        select the first row."""
-        self._items = list(items)
-        self._filter = ""
-        self._rebuild()
-
-    def append_filter(self, text: str) -> None:
-        self._filter += text
-        self._rebuild()
-
-    def backspace_filter(self) -> None:
-        self._filter = self._filter[:-1]
-        self._rebuild()
-
-    def visible_keys(self) -> list[str]:
-        return [
-            self.item(i).data(Qt.ItemDataRole.UserRole) for i in range(self.count())
-        ]
-
-    def current_key(self):
-        item = self.currentItem()
-        return None if item is None else item.data(Qt.ItemDataRole.UserRole)
-
-    def _rebuild(self) -> None:
-        prefix = self._filter.lower()
-        self.clear()
-        for key, display in self._items:
-            if key.lower().startswith(prefix):
-                item = QListWidgetItem(display)
-                item.setData(Qt.ItemDataRole.UserRole, key)
-                self.addItem(item)
-        if self.count():
-            self.setCurrentRow(0)
-
-    def _choose_current(self) -> None:
-        key = self.current_key()
-        if key is not None:
-            self.chosen.emit(key)
-
-    def keyPressEvent(self, event) -> None:
-        key = event.key()
-        if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Tab):
-            self._choose_current()
-            event.accept()
-            return
-        if key == Qt.Key.Key_Escape:
-            self.cancelled.emit()
-            event.accept()
-            return
-        if key == Qt.Key.Key_Backspace:
-            self.backspace_filter()
-            event.accept()
-            return
-        if key in (Qt.Key.Key_Up, Qt.Key.Key_Down):
-            super().keyPressEvent(event)
-            return
-        # Ctrl/Meta chords (Ctrl+C, Ctrl+A, ...) still carry a text() payload
-        # on some platforms; never swallow them into the filter. Shift stays
-        # allowed (uppercase typing filters) and Alt passes through below via
-        # the empty/non-printable text check or the fallthrough.
-        if event.modifiers() & (
-            Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.MetaModifier
-        ):
-            super().keyPressEvent(event)
-            return
-        text = event.text()
-        if text and text.isprintable() and not text.isspace():
-            self.append_filter(text)
-            event.accept()
-            return
-        super().keyPressEvent(event)
 
 
 class XmlEditor(GutterBookmarkFoldMixin, QPlainTextEdit):

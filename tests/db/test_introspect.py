@@ -377,7 +377,7 @@ def test_decode_trigger_type_before_with_no_event_bits():
     assert events == []
 
 
-def _canned_routine_trigger_runner():
+def _canned_routine_trigger_runner(relations=None, columns=None, constraints=None):
     # Columns: schema, name, prokind, return_type, language, source,
     # arg_types (IN-only, banner), all_arg_types, proargnames, proargmodes.
     routine_rows = [
@@ -397,16 +397,24 @@ def _canned_routine_trigger_runner():
 
     def runner(params, sql_list):
         calls.append((params, list(sql_list)))
-        return [routine_rows, trigger_rows]
+        return [
+            routine_rows,
+            trigger_rows,
+            relations if relations is not None else [],
+            columns if columns is not None else [],
+            constraints if constraints is not None else [],
+        ]
 
     return runner, calls
 
 
-def test_fetch_routines_and_triggers_passes_routine_trigger_sql():
+def test_fetch_routines_and_triggers_passes_routine_trigger_and_schema_sql():
+    """The widened fetch (§18.6) runs BOTH query pairs in one round trip --
+    routines/triggers AND the same three queries `fetch_schema` runs."""
     runner, calls = _canned_routine_trigger_runner()
     fetch_routines_and_triggers(_PARAMS, runner=runner)
     assert len(calls) == 1
-    assert calls[0][1] == ROUTINE_TRIGGER_SQL
+    assert calls[0][1] == list(ROUTINE_TRIGGER_SQL) + list(SCHEMA_SQL)
 
 
 def test_fetch_routines_and_triggers_builds_routines_keyed_by_signature():
@@ -453,7 +461,7 @@ def test_fetch_routines_and_triggers_keeps_both_overloads_of_one_name():
     ]
 
     def runner(_params, _sql_list):
-        return [routine_rows, []]
+        return [routine_rows, [], [], [], []]
 
     schema = fetch_routines_and_triggers(_PARAMS, runner=runner)
 
@@ -476,7 +484,29 @@ def test_fetch_routines_and_triggers_builds_triggers_keyed_by_schema_table_name(
     )
 
 
-def test_fetch_routines_and_triggers_leaves_tables_empty():
+def test_fetch_routines_and_triggers_populates_tables():
+    """Superseded (§18.6, §28): the widened fetch also runs `SCHEMA_SQL` and
+    populates `.tables`, exactly like `fetch_schema` does -- so DDL Explorer's
+    one connect-time fetch now serves completion's table/column data too."""
+    relations = [("pr", "equipment", "r")]
+    columns = [("pr", "equipment", "id", "integer", True, None)]
+    constraints = [("pr", "equipment", "id", "p")]
+    runner, _ = _canned_routine_trigger_runner(
+        relations=relations, columns=columns, constraints=constraints
+    )
+    schema = fetch_routines_and_triggers(_PARAMS, runner=runner)
+    assert set(schema.tables) == {"pr.equipment"}
+    table = schema.tables["pr.equipment"]
+    assert table.kind == "table"
+    assert table.columns == [
+        ColumnInfo(
+            name="id", data_type="integer", is_pk=True, is_fk=False,
+            is_nullable=False, default=None,
+        )
+    ]
+
+
+def test_fetch_routines_and_triggers_tables_empty_when_no_relations():
     runner, _ = _canned_routine_trigger_runner()
     schema = fetch_routines_and_triggers(_PARAMS, runner=runner)
     assert schema.tables == {}
@@ -496,7 +526,7 @@ def test_fetch_routines_and_triggers_correlates_out_args_end_to_end():
     ]
 
     def runner(_params, _sql_list):
-        return [routine_rows, []]
+        return [routine_rows, [], [], [], []]
 
     schema = fetch_routines_and_triggers(_PARAMS, runner=runner)
     # The key uses the IN-only `arg_types` -- `(text)`, not the three

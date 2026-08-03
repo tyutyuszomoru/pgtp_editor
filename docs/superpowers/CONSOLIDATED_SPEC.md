@@ -1,6 +1,6 @@
 # PGTP Editor — Consolidated Specification
 
-> **Status:** living document · **Last synthesized:** 2026-08-03
+> **Status:** living document · **Last synthesized:** 2026-08-04
 > **Source of truth:** this file is the single reconciled specification for PGTP Editor, and the **only**
 > place specification content is written. It was originally synthesized from the dated design specs under
 > [`docs/superpowers/specs/`](specs/) — a folder now **frozen as historical record** (read for rationale;
@@ -37,6 +37,7 @@
     - [18.3 Deploy workflow & schema diff/migration](#183-deploy-workflow--schema-diffmigration) — *planned*
     - [18.4 SQL/plpgsql selection formatter](#184-sqlplpgsql-selection-formatter) — *core implemented 2026-08-01; consumer designed (§18.5), not built*
     - [18.5 The DDL object editor, apply & sandbox validation](#185-the-ddl-object-editor-apply--sandbox-validation) — *planned; **the deliverable is the generated deployment SQL script**, over a stateful sandbox (the editable tab is specified here, once)*
+    - [18.6 Schema-aware Ctrl+Space completion in the DDL object editor](#186-schema-aware-ctrlspace-completion-in-the-ddl-object-editor) — *settled design (2026-08-04), not yet implemented*
 19. [PHP generation (vendor) & Save](#19-php-generation-vendor--save)
 20. [re_phpgen — own generator & gap loop](#20-re_phpgen--own-generator--gap-loop)
     - [20.4 Production cutover](#204-production-cutover-target-design--not-yet-reached) — *planned*
@@ -1474,11 +1475,15 @@ workflow both build on directly — it is not a separate, self-contained feature
   dataclass (`db/introspect.py`) has `.routines` and `.triggers` fields alongside `.tables`
   (backward-compatible, all default to empty).
 - Fetched by `fetch_routines_and_triggers(params, runner=run_queries) -> DatabaseSchema`
-  (`ROUTINE_TRIGGER_SQL` = `[_ROUTINES_SQL, _TRIGGERS_SQL]`) — a **separate fetch path from
-  `fetch_schema`**, not merged into it: an implementation choice to avoid touching `fetch_schema`'s
-  existing 3-query contract and its tests, since the DB Check features never need routine/trigger data.
-  The `DatabaseSchema` it returns always has an empty `.tables`; only `.routines`/`.triggers` are
-  populated.
+  (`ROUTINE_TRIGGER_SQL` = `[_ROUTINES_SQL, _TRIGGERS_SQL]`) — still a **separate fetch path from
+  `fetch_schema`**, not merged into it (`fetch_schema`'s existing 3-query contract and its tests are
+  untouched, and DB Check keeps calling `fetch_schema` on its own). **Superseded (§18.6, §28): the
+  `DatabaseSchema` this returns is no longer table-empty.** `fetch_routines_and_triggers` is **widened**
+  to also run `SCHEMA_SQL` (the same three queries `fetch_schema` runs) and populate `.tables`, so DDL
+  Explorer's one connect-time fetch now returns routines, triggers **and** tables/columns in a single
+  round trip — the source `db/schema_index.py` (§18.6) is built from. This is one fetch path serving two
+  consumers (DDL Explorer and, unchanged, DB Check via its own `fetch_schema` call), never a second
+  parallel fetch and never a lazy per-keystroke query.
 
 **Overloaded routines are never collapsed — each overload is its own tree entry, its own
 `DdlObjectSpan` and its own editable §18.5 tab (settled 2026-08-02; this *corrects shipped behavior*,
@@ -3358,6 +3363,121 @@ covers only plpgsql routines, i.e. exactly the ones that need no ordering.
    — this feature is the first to create runtime tabs, and five existing call sites depend on the fixed
    indices staying put.
 
+### 18.6 Schema-aware Ctrl+Space completion in the DDL object editor
+
+> **Status: settled design (2026-08-04), not yet implemented.** A placement-gate pass ran first and
+> recommended **EXTEND**, not a new top-level feature: this generalizes §11's existing `_CompletionPopup`
+> pattern onto a second editor rather than building a second bespoke popup widget, and it widens an
+> existing introspection fetch (§18.1) rather than adding a parallel one. It is scoped to §18.5's
+> **editable** `DdlObjectEditorPanel` only.
+
+**What it is.** Pressing **Ctrl+Space** inside the DDL object editor tab (§18.5,
+`ui/ddl_object_editor.py::DdlObjectEditorPanel`, hosting `ui/code_editor.py::CodeEditor` in
+`language="sql"` mode, made editable) opens a completion popup offering schema-aware suggestions, in
+three contexts:
+
+| Context | Trigger | Offers |
+|---|---|---|
+| Schema-qualified table reference | caret in/after a schema name (optionally partial) | matching table names in that schema, schema-qualified, prefix-filtered as more is typed |
+| `NEW.`/`OLD.` inside an **attached** trigger function | caret after `NEW.` or `OLD.` inside a routine's body, and that routine **is** some trigger's function (reverse lookup via `TriggerInfo.function_name`) | the column names of that trigger's target table (`TriggerInfo.table`) |
+| `NEW.`/`OLD.` inside an **unattached** trigger function | same trigger-context syntax, but no `TriggerInfo` currently references this routine | tells the user no trigger is defined for this function, then prompts a table pick (a small picker reusing an existing simple-selection-dialog idiom); once picked, offers that table's columns |
+
+**Popup widget — reused, not rebuilt.** The popup is a clone/generalization of §11's
+`_CompletionPopup(QListWidget)` (`pgtp_editor/ui/xml_editor.py`) onto the SQL editor: frameless
+(`Qt.WindowType.Popup`), non-modal, `(key, display)` master list with a running prefix filter, ↑/↓
+navigate, Enter/Tab/click choose, Esc/focus-out cancel, printable characters filter — the exact same
+shape and keyboard contract §11 already ships, so this feature adds a **second instantiation of the same
+class/pattern** in the DDL object editor's module, not a second popup implementation. `_CompletionPopup`
+itself needs no XML-specific change to be reused here; it already only deals in `(key, display)` pairs.
+
+**Caret-context resolution — new Qt-free module under `sql/`.** Alongside `sql/keywords.py` and
+`sql/tokenizer.py`, a new pure module resolves what is "under the caret": identifier boundaries,
+dotted-path parsing (`schema.table`), and detecting a `NEW.`/`OLD.` reference specifically inside a
+trigger-function body. Qt-free and unit-testable independent of Qt and of a live database, matching the
+rest of `sql/`'s dependency posture (§5). This module's output — a resolved context (bare identifier,
+`schema.` prefix, `schema.table.` prefix, or `NEW.`/`OLD.` inside a body) — is what the panel uses to pick
+which of the table above's three rows applies and what prefix to filter on.
+
+**Data source — `db/introspect.py::fetch_routines_and_triggers` is widened, not duplicated.** DDL
+Explorer's existing connect-time fetch (§18.1) now also populates `DatabaseSchema.tables` by additionally
+running `SCHEMA_SQL` (the same three queries `fetch_schema`, §17, runs for DB Check) inside the one
+`fetch_routines_and_triggers` call. This **supersedes** §18.1's earlier statement that the returned
+`DatabaseSchema` "always has an empty `.tables`" (§28) — that was true only because nothing yet consumed
+table/column data from this fetch path; completion is now that consumer. `fetch_schema` itself is
+**unchanged** and DB Check keeps calling it directly — this is one widened fetch on DDL Explorer connect
+serving two consumers (routines/triggers browsing **and** completion's table/column data), not a second
+parallel fetch, and **not** a lazy per-keystroke fetch: the index (below) is built once per DDL Explorer
+connect/refresh, exactly like the tree and the read-only buffer are.
+
+**Injection shape — preserves §18.5 D1's "the panel never talks to a database" invariant.** A new pure,
+Qt-free lookup module, `pgtp_editor/db/schema_index.py` (alongside `schema_learning/settings_index.py`,
+§11's analogous query-API module), is built **once** from the `DatabaseSchema` DDL Explorer fetches,
+exposing at minimum:
+
+| Member | Contract |
+|---|---|
+| `known_schemas() -> list[str]` | every schema name present in the fetched `DatabaseSchema` |
+| `known_tables(schema, prefix="") -> list[str]` | table names in `schema` whose name starts with `prefix` (case-insensitive, matching the `_CompletionPopup` filter convention) |
+| `known_columns(table) -> list[str]` | column names of `schema.table` (schema-qualified key, matching `DatabaseSchema.tables`' existing keying, §17) |
+| trigger-function reverse lookup (e.g. `trigger_for_function(schema, name, arg_types) -> TriggerInfo \| None`) | resolves a routine's `RoutineInfo.signature` (§18.1) against `DatabaseSchema.triggers` via `TriggerInfo.function_name`, so the panel can tell an attached trigger function from an unattached one |
+
+This index object is **handed to each open `DdlObjectEditorPanel` by injection** — the same idiom as
+`set_schema_model(model)` on `XmlEditor` (§11): a `set_schema_index(index)` (or equivalent) call, `None`
+disabling completion entirely. `DdlObjectEditorPanel` never imports `db/introspect.py`, never holds a
+connection or connection parameters, and this feature adds nothing to that invariant's list of
+exceptions (§18.5 D1).
+
+**The unattached-trigger table pick is session-only — never persisted.** When Ctrl+Space resolves a
+`NEW.`/`OLD.` context inside a routine that no `TriggerInfo` currently references, the user is told plainly
+that no trigger is defined for this function and is prompted to pick which table it belongs to. This
+choice is **not written anywhere** — not to the project's `settings.json` (§18.2), not to any sidecar
+file next to a checked-out `ddl/*.sql`, not anywhere else on disk. It lives only in the panel's in-memory
+state for that tab and is **forgotten** the moment the app restarts or the tab closes. This is a
+deliberate choice, not an oversight: persisting it would give `DdlObjectEditorPanel` a second source of
+durable state beyond the injected load/save pair, breaking §18.5 D1's project-decoupling invariant (the
+panel "must not know what a project is, and must not branch on whether one is open"). A user reopening
+the same trigger-function tab in a later session simply gets prompted again.
+
+**Scope for this pass — the DDL object editor only.** This feature reaches `DdlObjectEditorPanel` alone.
+It deliberately does **not** reach:
+
+- the **read-only** DDL Explorer viewer tab (`ui/ddl_editor_panel.py::EditorPanel`, §18.1) — that buffer
+  is `setReadOnly(True)` permanently and completion there would suggest edits that cannot land;
+- any other `CodeEditor` consumer (the JS/PHP "Edit code…" dialogs, §21's planned Custom PHP tabs).
+
+**Natural extension point, explicitly not built now.** A future pass may generalize this into a
+`CodeEditor`-level pluggable completion provider — mirroring the `GutterBookmarkFoldMixin` pattern
+already used for the gutter/bookmark/fold split (§8) — if/when Ctrl+Space completion is wanted on other
+`CodeEditor` consumers. This is recorded as the natural next step, not designed here, and not a
+prerequisite for this pass: v1 of this feature wires Ctrl+Space directly on `DdlObjectEditorPanel`'s
+`CodeEditor` instance, the same way §18.5 already wires Format Selection (Ctrl+Alt+F) as a panel-local
+affordance rather than a generic `CodeEditor` feature.
+
+**Reuse map — what this feature builds on rather than duplicates.**
+
+| Need | Existing thing to reuse |
+|---|---|
+| Completion popup widget | `ui/xml_editor.py::_CompletionPopup` (§11) — cloned/generalized onto the SQL editor, not reimplemented |
+| Injection idiom | `XmlEditor.set_schema_model(model)` (§11) — mirrored as the DDL panel's `set_schema_index(index)` |
+| Table/column/schema data source | `db/introspect.py::fetch_routines_and_triggers`, widened to also run `SCHEMA_SQL` (§17/§18.1) — no second fetch path |
+| Query-API module precedent | `schema_learning/settings_index.py` (§11) — the shape `db/schema_index.py` follows |
+| Trigger/function cross-reference | `TriggerInfo.function_name` / `RoutineInfo.signature` (§18.1) — the same reverse-lookup fact §18.1's dual-grouped tree already uses |
+| Caret/token analysis | `sql/keywords.py`, `sql/tokenizer.py` (§18.4) — the new caret-context resolver joins them as a Qt-free `sql/` module |
+| Editable host tab | `ui/ddl_object_editor.py::DdlObjectEditorPanel` (§18.5) — the only consumer in this pass |
+| Simple table-pick idiom | an existing simple selection-dialog idiom (unattached-trigger table prompt) — no new dialog pattern invented |
+
+**Invariants this feature must conform to** (inherited from §18.5 D1 and §5, restated because they are
+load-bearing here specifically):
+
+1. `DdlObjectEditorPanel` still never imports `db/introspect.py`, never opens a connection, and never
+   branches on whether a project is open. `db/schema_index.py` is Qt-free; only `ui/` wires it in.
+2. The unattached-trigger table association is **never** durable state — no project JSON, no sidecar
+   file, no cache surviving tab close or app restart.
+3. `fetch_schema`'s existing 3-query contract and its tests are untouched; DB Check keeps its own,
+   separate `fetch_schema` call. The widening lands only in `fetch_routines_and_triggers`.
+4. The index is built **once per DDL Explorer connect/refresh**, not per keystroke and not lazily
+   per-popup-open.
+
 ---
 
 ## 19. PHP generation (vendor) & Save
@@ -3763,6 +3883,7 @@ is authoritative** (and is what appears in the body above).
 | 2026-08-03 | §18.2's password-handling paragraph: the plaintext password is kept **out of** git by reusing `db/config.py`'s QSettings mechanism, generalized to a keyed `ProfileKey(project, role)` store (§17) | **The password now lives directly inside the project's own gitignored JSON file, not in QSettings, for project-scoped connections.** Owner's reasoning, preserved verbatim: *"if it remained in QSettings, it wouldn't be project specific"* — the project must be self-contained/portable (a folder that can be copied, backed up, or handed off complete), not dependent on a separate app-level global settings store keyed by a path that may not resolve elsewhere. The password never reaches git regardless, because the file it lives in is gitignored — gitignored **instead of** QSettings-hidden, not both. **Reconciled with §17's `ProfileKey` scheme on the least-invention reading:** the UI/selector mechanism (`ConnectionSetupDialog`'s profile selector, `target`/`sandbox`) is unchanged; only the **persistence backend** for a project-scoped `ProfileKey` changes, from a `db_profiles/<slug(project)>/<role>` QSettings group to the project's own `.ddlproject/settings.json`. The **non-project-scoped default profile** (`DEFAULT_PROFILE`, the literal `"db"` QSettings group used with no project open) is untouched and keeps using QSettings exactly as §17 already specifies |
 | 2026-08-03 | §18.2's two-file scheme: `.ddlproject/project.json` (identity/metadata/`.pgtp` link, git-tracked) + `.ddlproject/deployed.json` (deploy manifest, git-tracked) | **Merged into one centralized, gitignored, plaintext JSON file** (`.ddlproject/settings.json`), holding project identity, the `.pgtp` link + its checkout/drift state, both connection profiles (target + sandbox, including password — see the password-handling row above), and the deploy manifest (content-hash + deployed commit id per object, **unchanged in shape**). The deploy manifest no longer needs to be git-tracked for its stated original reason ("so last-deployed state travels across machines") because git integration for this whole model is itself still TBD/deferred (the row above) — there is no live git workflow yet for that state to travel through; **revisit this when git integration is designed.** Governing principle stated explicitly because it explains this merge and the password change together — owner's words: *"nothing the app manages should be a black box… plaintext files everywhere"* — the same spirit that already justified `ddl/*.sql` as plain per-object files, now stated as a principle for the whole local-project model. New UI surface: **Project Settings…** dialog exposing this JSON's full contents (§18.2/§26) |
 | 2026-08-03 | §7/§19's general `.pgtp` save behavior — plain save-in-place with a `.bak` sidecar written via `shutil.copy2` before overwriting an existing file, never on Save-As — implicitly assumed to apply universally, with no project-scoped carve-out | **Superseded, but ONLY within the local-project context — no-project-mode `.pgtp` save behavior is completely untouched by this row.** When a §18.2 local project is open, the `.pgtp` becomes a first-class checked-out artifact, parallel to a DDL object: the app works on a **local working copy** of the `.pgtp`; ordinary Ctrl+S/File ▸ Save writes to this working copy with **no `.bak`** (same rationale as `ddl/*.sql`'s existing no-`.bak` decision — the working copy itself is the safety net). Pushing the working copy back to overwrite the source `.pgtp` at the sshfs-mounted path is a separate, explicit **"Deploy .pgtp"** gesture, reachable both on-demand at any time (Database menu, mirroring DDL's on-demand batch Deploy, §18.3) and as a convenience prompt offered at project close if the working copy has unpushed changes (never forced). Outside a local project, §7/§19's existing plain-save-plus-`.bak` behavior is exactly as it was — this row does not touch it |
+| 2026-08-04 | §18.1: *"a **separate fetch path from `fetch_schema`**, not merged into it: an implementation choice to avoid touching `fetch_schema`'s existing 3-query contract and its tests, since the DB Check features never need routine/trigger data. The `DatabaseSchema` it returns always has an empty `.tables`; only `.routines`/`.triggers` are populated"* | **Widened, not merged: `fetch_routines_and_triggers` now additionally runs `SCHEMA_SQL` (§17) and populates `.tables` too** (§18.6). `fetch_schema` itself and its existing 3-query contract/tests are untouched, and DB Check keeps calling `fetch_schema` directly — this is one connect-time fetch on DDL Explorer now serving two consumers (routine/trigger browsing **and** §18.6's schema-aware Ctrl+Space completion, via the new `db/schema_index.py`), not a second parallel fetch and not a lazy per-keystroke query |
 
 ---
 

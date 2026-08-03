@@ -255,3 +255,11 @@ class CenterStage(QTabWidget):
         if isinstance(widget, DdlObjectEditorPanel):
             return widget
         return None
+
+    def ddl_object_panels(self):
+        """Every currently open `DdlObjectEditorPanel`, in no particular
+        order. Used to push a freshly (re)built `db/schema_index.py::SchemaIndex`
+        (§18.6) into every already-open tab after a DDL Explorer refresh --
+        `set_schema_index` on each, mirroring how a schema refresh updates
+        `XmlEditor.set_schema_model` (§11)."""
+        return list(self._ddl_object_tabs.values())
