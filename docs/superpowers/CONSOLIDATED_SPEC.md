@@ -1418,10 +1418,26 @@ place in front of "edit one function and find out whether it compiles" (§18.5 D
 
 **Truth model (first-class design principle, not an implementation footnote): the database is the
 sole source of truth; git is a history/audit log only, never authoritative for "current state."**
-Consequence, stated explicitly: on every project load (§18.2), the tool re-verifies every local `ddl/`
-file against the live DB by fresh introspection — it never trusts git history, or any cached/prior-
-session state, as representing current DB state. State markers (§18.2) are recomputed fresh on every
-load, not persisted/cached across sessions.
+Owner's framing, preserved close to verbatim: *"the only source of truth in our projects is production
+database DDL, production pgtp and production phps. Everything else is just a snapshot, approximation,
+history."* Consequence, stated explicitly: on every project load (§18.2), the tool re-verifies every
+local `ddl/` file (and, as of the 2026-08-03 revision below, the local `.pgtp` working copy) against the
+live DB / the sshfs-mounted source `.pgtp` by fresh comparison — it never trusts git history, or any
+cached/prior-session state, as representing current state. State markers (§18.2) are recomputed fresh on
+every load, not persisted/cached across sessions.
+
+> **Governing principle, stated once here because it now justifies choices across §18.2/§18.3/§18.5:
+> "nothing the app manages should be a black box — plaintext files everywhere."** This is the same
+> spirit that already justified `ddl/*.sql` being plain per-object files rather than one opaque buffer;
+> §18.2's 2026-08-03 revision extends it to the project's own settings (one plaintext JSON, including the
+> password, deliberately not routed through a binary/opaque app-global store) and to git itself, which is
+> optional and — when configured — a transparent, inspectable layer on top of plain files, never a
+> database the app hides state inside.
+
+**Local project vs. git — settled 2026-08-03, superseding this section's earlier "project = git repo"
+framing (§18.2, §28).** A **local project is a folder the user chooses on their own machine — not
+necessarily a git repository.** Git is an **optional, deferred (TBD) configuration** a project may
+eventually carry, never the definition of what a project *is*. See §18.2 for the full revision.
 
 ### 18.1 Routines & triggers browsing (DDL Explorer)
 
@@ -1695,48 +1711,103 @@ separate single-object tab, which reaches this panel only through the right-clic
 ### 18.2 Projects, checkout & state markers
 
 > **Status: target design, not yet implemented.** Nothing in this subsection exists in the codebase —
-> there is no `db/ddl_project.py`, no project menu actions, no `.ddlproject/` handling and no marker
-> rendering on `BrowserPanel`. §18.1's browsing substrate (which *is* implemented) and §18.5's editable
-> tab (target design) are what this builds on.
+> there is no `db/ddl_project.py`, no project menu actions, no project-settings JSON handling and no
+> marker rendering on `BrowserPanel`. §18.1's browsing substrate (which *is* implemented) and §18.5's
+> editable tab (target design) are what this builds on.
 >
 > **This subsection adds no new tab type.** The editable single-object tab is
 > `ui/ddl_object_editor.py::DdlObjectEditorPanel`, specified **once**, in **§18.5**. Everything here is
 > the *versioning* layer around it: what a project is, how files are named, what checkout does to the
 > tab's **injected load/save pair**, and the `*`/`!` drift markers. Do not restate the tab here.
+>
+> **Revised 2026-08-03 — a wholesale rewrite of the project model, superseding this subsection's earlier
+> git-repo-based design (§28).** The sections below state the current, sole truth; see the Supersession
+> Ledger for exactly what each replaces.
 
-**"Project" — a new concept, distinct from a `.pgtp` file.** A project = a git repo containing:
+#### The external checkout process (outside this app's scope)
 
-| Path | Committed? | Role |
-|---|---|---|
-| `.ddlproject/project.json` | yes | Project name, description, **non-secret** connection metadata only (host/port/database/user — explicitly **no password**), and the optional `.pgtp` link. |
-| `ddl/*.sql` | yes | **One file per DDL object** (function/procedure/trigger) — see the naming scheme below. |
-| `.ddlproject/deployed.json` | yes | The deploy manifest (content-hash + deployed commit id per object; see "last-deployed reference" below). |
+A developer starts work on a branch/bugfix/feature by running an **external**, out-of-app process that
+checks out the production database's DDL, the production `.pgtp` file, and the production PHP files onto
+a quality/staging server. **The app never performs this checkout itself** — it has no knowledge of, and
+no code path for, provisioning that staging server or populating it from production. What the app deals
+with begins one step later: the user opening the `.pgtp` file that process already produced.
 
-- `ddl/` is deliberately **file-per-object** (not one big file) specifically so `git diff`/`git blame`
-  work meaningfully per object. This is the git-tracked, human-readable form of what's in `EditorPanel`
-  (§18.1's single-buffer read-only browsing view is the live/synthesized view; `ddl/*.sql` files are the
-  versioned, checked-out, editable form).
-- The `.pgtp` link is **optional** — a project may have **zero, one pre-existing, or one newly-created**
-  `.pgtp`. Not required, not assumed. (Only when a `.pgtp` link exists does §18.1's XML cross-referencing
-  angle apply.)
+#### What a "local project" is
 
-**Neither browsing nor single-object editing needs a project — only *versioning* does.** Opening the
-DDL Explorer (§18.1) stays **connection-only**, exactly as implemented today. Right-click ▸ Edit…
-(§18.5) is likewise connection-only: it loads the live introspected definition into the editable tab, so
-"edit one function and find out whether it compiles" never requires a git repo. A project becomes
-required only for the versioned workflow this subsection adds: **checked-out `ddl/` files, drift markers
-and deploy**.
+The user opens the app and opens the `.pgtp` file from that quality server via an **sshfs mount** to
+their own machine. At that point the app creates/recognizes a **local project**: a folder the user
+chooses **on their own machine**, which becomes the working area for this checkout.
+
+**A project is fundamentally a local folder — not necessarily a git repository.** This directly
+supersedes this subsection's earlier opening line, *"a project = a git repo containing: …"* (§28). Using
+git as an analogy only (git itself is **not** required — see "Git is optional" below), the owner's
+framing: *"main is prod, each checkout a branch, and each time we open in the pgtp a worktree."* Owner's
+framing for the truth model this all sits on, preserved close to verbatim: *"the only source of truth in
+our projects is production database DDL, production pgtp and production phps. Everything else is just a
+snapshot, approximation, history."*
+
+**Git is optional and TBD — an explicit placeholder, not a designed mechanism.** New Project creation
+*optionally* offers git configuration (server, user, the checkout/branch this project's folder is meant
+to be a worktree of), exactly as §18.3's *"commit/push to git: explicit placeholder, not designed,
+mechanism TBD"* framing already establishes for the deploy step — this is the same kind of placeholder,
+recorded so it is not forgotten, not designed here. **Do not treat any of the following as implying a
+live git workflow**: no commit step, no push step, no branch/worktree machinery is specified by this
+revision. When git integration is eventually designed, it is designed then, as its own pass.
+
+#### New Project creation flow
+
+1. **User picks a folder on disk — that folder IS the project.** No hidden bootstrap directory is
+   required to exist first; the folder itself is the project root.
+2. **Optionally add a local sandbox**: a Postgres connection (host, port, user, password) plus a **Test
+   button whose specific job is verifying the given user is a superuser** — not merely "can connect".
+   This is a new *entry point* into the **already-designed** capability probe / connection-profile
+   mechanism (§18.5 D2's `SandboxCapabilities.is_superuser`, sourced from `current_setting('is_superuser')`
+   via `probe`) — reuse it as-is, do not build a second superuser check. Superuser is required because
+   sandbox provisioning needs `CREATE EXTENSION` (§18.5 D2's one-click `plpgsql_check` install).
+3. **Optionally add git configuration** (server/user/checkout branch, this project as a worktree of it)
+   — explicit **TBD/placeholder only**, per above. No UI beyond capturing the intent needs to be
+   designed yet.
+
+#### Opening an existing project
+
+Opening a project compares **two independent things**, both surfaced, neither auto-resolved:
+
+1. A **checksum of the `.pgtp` working copy** against the source `.pgtp` at the sshfs-mounted path (new
+   in this revision — see "The `.pgtp` file becomes a first-class checked-out artifact" below).
+2. The **existing per-object DDL drift comparison** — the already-designed `*`/`!` markers, unchanged in
+   mechanism (content-hash based, per the "last-deployed reference" material below).
+
+Both comparisons are **recomputed fresh on every project load, never cached or trusted from a prior
+session** — consistent with the truth-model principle stated at the top of §18 ("database is truth, git
+is history only," now extended to "the source `.pgtp` is truth for the `.pgtp` link").
+
+#### Neither browsing nor single-object editing needs a project — only *versioning* does
+
+Opening the DDL Explorer (§18.1) stays **connection-only**, exactly as implemented today. Right-click ▸
+Edit… (§18.5) is likewise connection-only: it loads the live introspected definition into the editable
+tab, so "edit one function and find out whether it compiles" never requires a project. A project becomes
+required only for the versioned workflow this subsection adds: **checked-out `ddl/` files, the checked-out
+`.pgtp` working copy, drift markers and deploy**.
+
+**No-project mode is completely unaffected by this entire revision — stated explicitly so it is not
+misread.** Owner's framing, verbatim: *"No project mode is permitted, but no project mode is just pgtp
+editing, ddl editing and saving locally. No lint, no ddl diff, nothing more, just works as an editor."*
+None of the following — the project JSON, the `.pgtp` working-copy/no-`.bak` model, the drift markers —
+applies when no project is open. **§19/§7's existing plain `.pgtp` save + `.bak` behavior is untouched in
+that mode** (see "The `.pgtp` file becomes a first-class checked-out artifact" below for the precise
+scope of what changes and what does not).
 
 **Menu actions** (Database menu, §26, alongside the existing Connection Setup / Check / DDL Explorer
-entries): **New DDL Project…**, **Open DDL Project…**, **Close DDL Project**.
+entries): **New Project…**, **Open Project…**, **Close Project**, **Project Settings…** (new, below),
+**Deploy .pgtp** (new, below).
 
 **No project is ever created silently.** Invoking a **project-scoped** action with no project open —
-Check Out for Versioning, Deploy, or anything that would write under `ddl/` — shows a **"DDL project
+Check Out for Versioning, Deploy, or anything that would write under `ddl/` — shows a **"Project
 required"** dialog offering **Create… / Open… / Cancel**; on Create/Open the operation then proceeds
 against the newly-active project, on Cancel nothing happens. Plain Edit… never raises this dialog.
-Rationale, stated so it is not re-litigated: initializing a git repo on disk is an **outward effect**,
-and this app confirms before outward effects (cf. Generate PHP's Save-vs-Save-As prompt §19, Diff/Merge's
-Apply gate §12).
+Rationale, stated so it is not re-litigated: creating a folder-backed project on disk is an **outward
+effect**, and this app confirms before outward effects (cf. Generate PHP's Save-vs-Save-As prompt §19,
+Diff/Merge's Apply gate §12).
 
 **File naming — disambiguate overloads with a numeric `_1` suffix, not with argument types.**
 
@@ -1794,23 +1865,77 @@ part, not a detail).**
 the `_n` suffix assignment are properties of the set — the signature ordering above, and filename
 sanitization (path separators, characters illegal on Windows, case-insensitive-filesystem collisions)
 all live in the new pure module **`db/ddl_project.py`** — mirroring `db/ddl_buffer.py`'s precedent so
-they are unit-testable without Qt and without a database. The same module owns the `project.json` /
-`deployed.json` shapes.
+they are unit-testable without Qt and without a database. The same module owns the merged
+project-settings JSON shape (below).
 
-**Password handling.** The plaintext password is explicitly **kept out of git**. Reuses the app's
-**existing** `db/config.py::ConnectionParams`/`save_connection` local-settings mechanism (§17) rather
-than inventing a new local-secrets file — but this **requires generalizing that store from
-single-global-connection to keyed-per-project** (by project path or a project id), since today
-(`db/config.py`, `_GROUP = "db"`, a single fixed QSettings group) it holds exactly one connection at a
-time regardless of which project or `.pgtp` file is open. This is a **required change to the existing
-`db/config.py`**, not a new parallel mechanism: `load_connection`/`save_connection`/`seed_params` gain a
-trailing defaulted `ProfileKey(project, role)` parameter so each DDL-versioning project's connection
-(host/port/database/user/password) persists independently. **§18.5 adds the second dimension to the same
-generalization** — a `role` (`target` | `sandbox`) alongside the project key. Both dimensions are one
-keyed-group scheme in `db/config.py`, and one `ConnectionSetupDialog` with a profile selector: never a
-second settings store, never a second dialog. **The scheme is specified once, in §17** — including the
-compatibility trick that keeps the default profile on the literal existing `"db"` group so no saved
-connection needs migrating and every existing `tests/db/test_config.py` test passes unedited.
+#### Project settings — one centralized, gitignored, plaintext JSON file
+
+**Superseded 2026-08-03 (§28): the earlier two-file scheme (`.ddlproject/project.json` +
+`.ddlproject/deployed.json`, both git-tracked) is replaced by a single file** — call it
+`<project>/.ddlproject/settings.json` (path stable; the `.ddlproject/` folder now holds exactly one
+file). **The file is gitignored — not committed — and holds plaintext, including the password.**
+
+This is a deliberate pair of reversals from the original design, both owner-stated:
+
+- **Password lives directly in this JSON, not in QSettings.** The earlier "Password handling" design —
+  keeping the password **out of** git via the app's existing `db/config.py::ConnectionParams`/
+  `save_connection` QSettings mechanism, generalized to a keyed `ProfileKey(project, role)` — is
+  **superseded for project-scoped connections**. Owner's reasoning, preserved verbatim: *"if it remained
+  in QSettings, it wouldn't be project specific"* — the project must be **self-contained/portable**: a
+  folder that can be copied, backed up, or handed off complete, not dependent on a separate app-level
+  global settings store keyed by a path that may not even resolve on the machine it's copied to. The
+  password never reaches git anyway, because the file it lives in is gitignored — it is simply gitignored
+  **instead of** QSettings-hidden, not gitignored **and** QSettings-hidden.
+- **The deploy manifest no longer needs to be git-tracked, because there is no live git workflow yet for
+  its state to "travel" through.** The earlier `deployed.json` was git-tracked specifically so
+  "last-deployed" state would travel across machines/clones via git. But git integration for this whole
+  local-project model is **itself still TBD/deferred** (see "Git is optional" above) — there is no commit
+  step, no push step, nothing for that state to travel *through* yet. **When/if git integration is
+  designed later, that is the point to revisit whether any of this needs to be git-tracked.** For now,
+  everything is local-per-checkout, and merging the manifest into the gitignored settings file costs
+  nothing that isn't already deferred.
+
+**Governing principle for the whole local-project model, stated explicitly because it explains several
+of these choices at once — owner's words: *"nothing the app manages should be a black box… plaintext
+files everywhere."*** This is the same spirit that already justifies `ddl/*.sql` being plain per-object
+files rather than one opaque buffer (above); it is now stated as a governing principle for local
+projects generally, not only the `ddl/` folder — see also the callout at the top of §18.
+
+**The merged JSON holds** (shape unchanged from the previous design except for the merge and the added
+`.pgtp` fields below):
+
+- **Project identity** — name, description.
+- **The `.pgtp` link + its checkout/drift state** — the sshfs-mounted source path, the local working-copy
+  path, and the last-computed checksum comparison (see "The `.pgtp` file becomes a first-class
+  checked-out artifact," below). The link remains **optional**, exactly as before: a project may have
+  zero, one pre-existing, or one newly-created `.pgtp`.
+- **Target + sandbox connection profiles, including the password** — host/port/database/user/password
+  for both the `target` and (§18.5 D2) `sandbox` roles, since the whole file is gitignored there is no
+  reason to keep the password out of it the way the old design kept it out of git.
+- **The merged deploy manifest** — content-hash + deployed commit id per DDL object, **unchanged in
+  shape** from the previous `deployed.json` design (see "last-deployed reference," below); only its
+  location and its git-tracked-ness change.
+
+**A new, technically-detailed Project Settings dialog** (Database menu ▸ **Project Settings…**) exposes
+this JSON's **full contents**, for viewing and editing — not a simplified subset, the whole thing:
+project identity, the `.pgtp` link and its paths, both connection profiles (including the password
+fields, `EchoMode.Password` as elsewhere, §17), and the deploy manifest's raw per-object entries. This is
+a new UI surface; add it to the Database-menu action list (§26) alongside **New Project…** / **Open
+Project…** / **Close Project** / **Deploy .pgtp** (below).
+
+**Connection profile persistence — reconciled with §17's `ProfileKey` scheme, least-invention reading.**
+§17 already generalizes `db/config.py` to a keyed `ProfileKey(project, role)` scheme backed by QSettings,
+for exactly this project+role dimensionality. This revision changes **where the project-scoped
+connection profile is persisted — into the project's own JSON file — not how it is selected or edited
+at the UI layer.** `ConnectionSetupDialog`'s profile selector (§17/§18.5 D2) is unchanged: the user still
+picks `target` or `sandbox` in the same dialog. What changes is the **backing store** for a
+project-scoped `ProfileKey`: instead of (or in addition to, as a migration convenience — unresolved,
+§29) a `db_profiles/<slug(project)>/<role>` QSettings group, the project's own connection profiles are
+read from and written to its `.ddlproject/settings.json`. The **non-project-scoped** default profile
+(`DEFAULT_PROFILE`, the literal `"db"` QSettings group used when no project is open) is **untouched** —
+that path has no project JSON to live in and keeps using QSettings exactly as §17 specifies. This is the
+reading that requires the least invention beyond what the owner actually stated: the persistence backend
+changes for project-scoped profiles; the UI/selector mechanism does not.
 
 **Checkout-to-edit.** The gesture and the tab are §18.5's (right-click ▸ Edit… on `BrowserPanel.tree`
 or inside an object's span in the read-only `EditorPanel` — see §18.5 for the entry-point table, the
@@ -1839,10 +1964,22 @@ introduced by §18.5, and checkout does not use it.
 
 **Save vs. Apply under a project — and how this relates to §18.3.** Once the tab's save callback points
 at a checked-out file, **Ctrl+S / Save writes that `ddl/*.sql` file and nothing else** (UTF-8;
-**deliberately no `.bak` sidecar** — the file is git-tracked and git is the history, an intentional
-divergence from §19's `.pgtp` save). **Apply remains the separate, explicitly confirmed §18.5 gesture**
-and is unchanged by checkout: it can target the sandbox or the target database, each confirm-gated.
-Saving never applies and applying never saves.
+**deliberately no `.bak` sidecar** — the file is git-tracked (once git is configured; TBD, above) and the
+working copy itself is the safety net regardless, an intentional divergence from §19's `.pgtp` save).
+**Apply remains the separate, explicitly confirmed §18.5 gesture** and is unchanged by checkout: it can
+target the sandbox or the target database, each confirm-gated. Saving never applies and applying never
+saves.
+
+**Stated plainly, since it was previously only implicit in the table below: deploying a DDL edit is an
+explicit per-edit choice among three coexisting destinations, and the user picks which one on every edit
+— this is a confirmation of the existing design, not a change to it.** The owner enumerated the three as
+(A) save only to the sandbox, (B) save to disk for a future batch deploy, (C) deploy directly to the
+currently-open/target database — which map onto the gestures already specified with **no changes needed**:
+(A) = §18.5's **Apply to Sandbox**; (C) = §18.5's **Apply to Target** (unchanged: still confirm-gated
+behind the four hard preconditions); (B) = the plain **Save** described in this paragraph (writes
+`ddl/*.sql`), which is the track §18.3's batch Deploy later assembles into `deploy.sql`. Nothing about
+this changes any of the three gestures; it is recorded here only so the "the user chooses per-edit which
+of the three to use" framing is stated directly rather than left to be inferred from the table below.
 
 The two write-to-a-real-database paths are deliberately different gestures with different guardrails,
 and **§18.3 is authoritative whenever both could apply**:
@@ -1852,7 +1989,7 @@ and **§18.3 is authoritative whenever both could apply**:
 | Scope | exactly one object, the one in the active tab | a **batch** of `*`-flagged objects |
 | Review | a confirmation naming the object and the database | a reviewed, order-adjustable SQL bundle |
 | Drift gate | none — drift is surfaced, not blocking | **any `!`-flagged object blocks the whole batch** |
-| Manifest / git | writes nothing to `deployed.json`, makes no commit | updates `.ddlproject/deployed.json` + commits |
+| Manifest / git | writes nothing to the deploy manifest, makes no commit | updates the project JSON's deploy manifest + commits (once git is configured) |
 | Use it for | iterating on one routine | rolling a reviewed change set out |
 
 Consequence, stated so the two never read as duplicates: a single-object Apply to the **target** database
@@ -1876,9 +2013,11 @@ the object's `DdlObjectSpan` identity — §18.5.)
   **no separate third state/symbol** for "both." This is a deliberate embrace-drift philosophy: the
   tool surfaces disagreement, it does not attempt to auto-resolve it.
 
-> **Settled: "last-deployed reference" = a git-tracked deploy manifest, target design.** A per-project
-> deploy manifest (`.ddlproject/deployed.json`, git-tracked — non-secret provenance data) records, per
-> DDL object, **both** a content-hash and a deployed commit id, with distinct roles:
+> **Settled: "last-deployed reference" = a deploy manifest inside the project's own JSON, target
+> design.** *(Superseded 2026-08-03, §28: previously a separately git-tracked `.ddlproject/deployed.json`
+> — see "Project settings" above for why it merged into the single gitignored file and why that no
+> longer requires the manifest itself to be git-tracked.)* The manifest records, per DDL object, **both**
+> a content-hash and a deployed commit id, with distinct roles:
 >
 > - **Content-hash** — the mechanism actually used for all drift comparisons: `*` = hash(local `ddl/`
 >   file) != stored hash; `!` = hash(live DB introspected definition) != stored hash. This keeps the
@@ -1886,16 +2025,48 @@ the object's `DdlObjectSpan` identity — §18.5.)
 >   dependency on history staying intact — consistent with the "database is truth, git is history only"
 >   principle stated above.
 > - **Deployed commit id** — stored purely for human traceability ("this object was deployed as of
->   commit X"), not consulted by the comparison logic itself.
+>   commit X"), populated only once git integration exists (TBD, above); not consulted by the comparison
+>   logic itself.
 > - Implementation requirement: the hash must be computed the **same way** in all three places it's
 >   used (local file content, live DB introspection via `pg_get_functiondef`/`pg_get_triggerdef`, and
 >   the stored reference), so formatting/whitespace normalization doesn't produce false drift.
-> - The manifest is written atomically at the moment §18.3's deploy step succeeds, alongside the git
->   commit of the deploy itself, and is git-tracked so "last-deployed" state travels correctly across
->   machines/clones rather than living only in one local session.
+> - The manifest is written atomically, inside the project JSON, at the moment §18.3's deploy step
+>   succeeds — alongside the git commit of the deploy itself, once git integration exists. Because the
+>   project JSON is local-per-checkout (not committed), "last-deployed" state does **not** currently
+>   travel across machines/clones the way the earlier git-tracked design intended; this is the accepted
+>   consequence of git being deferred (above), and is exactly the kind of question to revisit once git
+>   integration is designed.
 
 Markers are recomputed **fresh on every project load** per the truth-model principle above — never
 cached or trusted from a prior session.
+
+#### The `.pgtp` file becomes a first-class checked-out artifact, parallel to a DDL object
+
+**Superseded 2026-08-03 (§28), and scoped precisely: this applies ONLY when a local project is open.**
+Outside a project (no-project mode, above), `.pgtp` save behavior is **completely untouched** — plain
+save-in-place with a `.bak` sidecar on overwrite, exactly as §7/§19 already specify (`.bak` written via
+`shutil.copy2` before overwriting an existing file; never on Save-As to a new path). This row's
+supersession applies **only within the local-project context** described here.
+
+**Under a local project, the app works on a local working copy of the `.pgtp`** — analogous to a
+checked-out `ddl/*.sql` file:
+
+- **Ordinary saves (Ctrl+S / File ▸ Save) write to this working copy, and there is deliberately no
+  `.bak`.** Same rationale as `ddl/*.sql`'s existing no-`.bak` decision (above): the working copy itself
+  is the safety net / history — an intentional divergence from §19's plain-mode `.pgtp` save, now
+  extended from DDL objects to the `.pgtp` file itself.
+- **Pushing the working copy back to overwrite the source `.pgtp`** at the sshfs-mounted path is a
+  **separate, explicit "Deploy .pgtp" gesture** — never implied by Save, exactly as Apply is never
+  implied by Save for a DDL object (§18.5).
+- **"Deploy .pgtp" is reachable two ways**, mirroring how DDL's batch Deploy (§18.3) is already
+  **on-demand**, not tied to any lifecycle event:
+  - **On-demand, at any time during the session** — Database menu ▸ **Deploy .pgtp** (§26).
+  - **Offered as a convenience prompt when the project is closed**, if the working copy has unpushed
+    changes relative to the source `.pgtp` — see §18.3's project-close addition, below. It is an offer,
+    never a forced action: closing without deploying is always available.
+- The **checksum comparison at project-open** (above) is what surfaces whether the working copy and the
+  source `.pgtp` have diverged — surfaced, not auto-resolved, the same embrace-drift discipline as the
+  `*`/`!` DDL markers.
 
 ### 18.3 Deploy workflow & schema diff/migration
 
@@ -1927,6 +2098,18 @@ cached or trusted from a prior session.
 4. Once the bundle is approved: (a) commit/push to git with versioning — **explicit placeholder, not
    designed, mechanism TBD** — and (b) execute against the live database. Reuses the existing "never
    auto-execute DDL silently" non-goal below — this is a reviewed, explicit action, not automatic.
+
+**Project close is a reminder point, not a forcing point (added 2026-08-03, §18.2).** Closing a project
+whose working copies have pending changes:
+
+- **If the `.pgtp` working copy has unpushed changes** relative to the source `.pgtp` (§18.2's checksum
+  comparison), offers the **"Deploy .pgtp"** gesture as a convenience prompt.
+- **If there are `*`-flagged DDL objects** that are candidates for a batch deploy, **reminds** the user
+  they exist — it does **not** open the deploy-bundle flow automatically and does **not** force a
+  decision either way.
+- **Neither is ever forced.** Closing the project without deploying anything is always available;
+  these are reminders surfaced at a natural checkpoint, consistent with the rest of §18's
+  embrace-drift, surface-don't-auto-resolve discipline.
 
 **Schema diff & migration engine (shared by both entry points):**
 
@@ -2263,7 +2446,7 @@ The loop is **edit → validate against the sandbox → save, and/or explicitly 
 object → **Edit…** opens a new **single-object editable tab** in `CenterStage` holding just that one
 routine or trigger.
 
-- **v1 has no `ddl/` folder, no `.ddlproject/deployed.json` manifest, and no `*`/`!` state markers.**
+- **v1 has no `ddl/` folder, no project-settings JSON/deploy manifest, and no `*`/`!` state markers.**
   All three are §18.2 concepts; **none is a prerequisite** for editing one function with feedback. The
   buffer is loaded from the live introspected definition (`RoutineInfo.source` /
   `TriggerInfo.definition`, §17/§18.1).
@@ -3176,6 +3359,15 @@ owns File Save / Save As.
   output folder prefilled from `Project@outputPath` else project dir; run with streaming `[PHP]` audit
   lines; finish → summary + success/critical dialog. **Locate PHP Generator Executable…**
   (`getOpenFileName`). **Open Output Folder** via `QDesktopServices.openUrl` (enabled after a run).
+- **Output folder default when a local project (§18.2) is open — added 2026-08-03.** The output-folder
+  prefill above (`Project@outputPath` else project dir — "project dir" there meaning the directory
+  containing the open `.pgtp` file, unrelated to §18.2's local project) is **superseded by the local
+  project's own folder** whenever a §18.2 local project is open: the folder the user chose when creating
+  the project (§18.2) becomes the prefilled output folder, ahead of both existing fallbacks. This is
+  still a **prefill**, not a silent redirect — the folder picker in the Generate PHP flow above is
+  unchanged and the user can still pick a different folder; only the default changes. This does not
+  apply outside a local project (no-project mode keeps today's `Project@outputPath`-else-project-dir
+  default unchanged, consistent with §18.2's "no-project mode is completely unaffected" principle).
 
 ---
 
@@ -3411,7 +3603,16 @@ Tools; "New Project" removed; line-wrap moved to editor context menu):
     v1 spawns no external process. **None of these five entries ships with the editable tab's first
     increment** — the sandbox lane is a later carve-out (§18.5, v1 scope), and the tab likewise ships
     with **no button row** rather than disabled controls.
-  - ⎯ then (§18.2) **New DDL Project…**, **Open DDL Project…**, **Close DDL Project**.
+  - ⎯ then (§18.2, revised 2026-08-03 — renamed from "New/Open/Close DDL Project" and expanded)
+    **New Project…** (folder picker; optionally offers local-sandbox setup — a Postgres connection plus
+    a Test button that specifically verifies superuser, reusing §18.5 D2's capability probe — and
+    optionally offers git configuration, explicit TBD placeholder only), **Open Project…** (runs the
+    `.pgtp`-checksum **and** DDL drift comparisons, both surfaced, neither auto-resolved), **Close
+    Project** (a reminder point for pending `.pgtp`/DDL deploys, §18.3 — never a forced action),
+    **Project Settings…** (new dialog exposing the full project JSON — identity, `.pgtp` link, both
+    connection profiles including password, deploy manifest), and **Deploy .pgtp** (on-demand push of
+    the local `.pgtp` working copy back to the sshfs-mounted source; also offered as a close-time
+    convenience prompt, §18.3).
   - (§18.3) **Compare Schemas…** and **Save Schema Snapshot…**.
 
   ("Format Selection" is **not** a menu-bar item: it is a `Ctrl+Alt+F` action plus a context-menu entry
@@ -3541,6 +3742,10 @@ is authoritative** (and is what appears in the body above).
 | 2026-08-02 | §18.5's unresolved v1 Save: the Save/Apply table said Save persists *"the in-session buffer in v1"*, while `resolve_save_path` said it *"returns `None` until Save As picks one"* — an editor whose Save produced nothing durable | **v1 ships `Save As… .sql`.** `Ctrl+S` on an object tab with no remembered path opens `getSaveFileName` (`SQL files (*.sql)`, prefilled with the §18.2 sole-holder filename shape); the chosen path is remembered and every later `Ctrl+S` writes it silently (UTF-8, `newline=""`, **no `.bak`**). Cancelling the dialog cancels the save; **cancelling Save As reached from the close-confirmation prompt ABORTS THE CLOSE** (the confirm flow must propagate save-cancel, or a dismissed dialog silently discards the edit). Save still **never** touches a database. Consistent with this section's own ranking — *"`Save As… .sql` is exactly §18.2's future `ddl/<schema>.<name>.sql` arriving early."* Also settled: **`Ctrl+Shift+S` stays project-only** and does not re-route to the object tab |
 | 2026-08-02 | §27 stated `Ctrl+Z`/`Ctrl+Y` flatly as *"Window"* — i.e. the project snapshot history — with no carve-out for a DDL object editor tab | **Pinned invariant with a mandatory regression test: `Ctrl+Z` in the object tab uses the editor's NATIVE undo.** The window-level `QShortcut` at `main_window.py:401` drives **project-history** undo over the **Raw XML buffer**; `XmlEditor` consumes and re-emits it and the XSD tab routes its re-emission back into its own editor, but **`CodeEditor` does neither** — so without this the object tab's Ctrl+Z would silently revert the Raw XML project buffer while the user is looking at SQL. Realized the XSD way (editor consumes, tab reroutes to its own `undo()`), never by disabling the window shortcut. Test: object tab active + dirty Raw XML → Ctrl+Z changes the object buffer and leaves the Raw XML text byte-identical |
 | 2026-08-02 | §18.5 read as one undivided increment: a panel button row carrying *Apply to Sandbox*/*Check*/*Check without applying*, Find All listed among the tab's inherited affordances, and no statement about a DDL Explorer re-run or `[SQL]` line behavior | **Six v1 scope carve-outs, owner-confirmed** (scope, not design reversals — the sandbox design above stands unchanged): (1) native `Ctrl+Z`, the row above; (2) **no button row and none of the three sandbox gestures in v1** — no dead or permanently-disabled controls, and the Database menu's five §18.5 entries likewise wait; (3) **Find All inert in the object tab**, matching the DDL Explorer precedent (`_populate_find_all_results` understands only `target="raw"`/`"xsd"`), while Find / Find Next / Replace / Replace All all work; (4) the Format-Selection **transient underline is panel-local** — `DdlObjectEditorPanel` owns the `setExtraSelections` call (verified: `CodeEditor` never calls it), cleared on the next edit or next format attempt; (5) **re-running Database ▸ DDL Explorer leaves open object tabs untouched and silent** — no reload, no marking, no prompt, even though live definitions may have changed underneath (drift is §18.2's `!` marker and §18.5's pre-generate drift check, later); (6) **`[SQL]` Audit lines are not clickable** — no line role, same as the existing `[Find]` summary line |
+| 2026-08-03 | §18.2's project definition: *"'Project' — a new concept, distinct from a `.pgtp` file. A project = a git repo containing: …"* (`.ddlproject/project.json`, `ddl/*.sql`, `.ddlproject/deployed.json`, all git-tracked) | **A project is fundamentally a local folder the user chooses on their own machine — not necessarily a git repository.** Git is an **optional, TBD/deferred configuration** a project may eventually carry (server, user, the checkout/branch this project's folder is meant to be a worktree of), never the definition of a project. Owner's framing, preserved verbatim: *"the only source of truth in our projects is production database DDL, production pgtp and production phps. Everything else is just a snapshot, approximation, history"* and, using git only as an analogy (git itself not required): *"main is prod, each checkout a branch, and each time we open in the pgtp a worktree."* New Project creation flow: (1) pick a folder — that folder IS the project; (2) optionally add a local sandbox (Postgres connection + a Test button that specifically verifies superuser, reusing §18.5 D2's `SandboxCapabilities.is_superuser` probe as a new entry point, not a new mechanism); (3) optionally configure git — explicit placeholder only, not designed, mechanism TBD, mirroring §18.3's existing git-commit placeholder. Opening an existing project now compares **two** things, both surfaced, neither auto-resolved: a checksum of the `.pgtp` working copy against the source `.pgtp` at its sshfs-mounted path, plus the existing per-object DDL drift comparison. Menu actions renamed/expanded accordingly: **New Project…** / **Open Project…** / **Close Project** / **Project Settings…** / **Deploy .pgtp** (§26) |
+| 2026-08-03 | §18.2's password-handling paragraph: the plaintext password is kept **out of** git by reusing `db/config.py`'s QSettings mechanism, generalized to a keyed `ProfileKey(project, role)` store (§17) | **The password now lives directly inside the project's own gitignored JSON file, not in QSettings, for project-scoped connections.** Owner's reasoning, preserved verbatim: *"if it remained in QSettings, it wouldn't be project specific"* — the project must be self-contained/portable (a folder that can be copied, backed up, or handed off complete), not dependent on a separate app-level global settings store keyed by a path that may not resolve elsewhere. The password never reaches git regardless, because the file it lives in is gitignored — gitignored **instead of** QSettings-hidden, not both. **Reconciled with §17's `ProfileKey` scheme on the least-invention reading:** the UI/selector mechanism (`ConnectionSetupDialog`'s profile selector, `target`/`sandbox`) is unchanged; only the **persistence backend** for a project-scoped `ProfileKey` changes, from a `db_profiles/<slug(project)>/<role>` QSettings group to the project's own `.ddlproject/settings.json`. The **non-project-scoped default profile** (`DEFAULT_PROFILE`, the literal `"db"` QSettings group used with no project open) is untouched and keeps using QSettings exactly as §17 already specifies |
+| 2026-08-03 | §18.2's two-file scheme: `.ddlproject/project.json` (identity/metadata/`.pgtp` link, git-tracked) + `.ddlproject/deployed.json` (deploy manifest, git-tracked) | **Merged into one centralized, gitignored, plaintext JSON file** (`.ddlproject/settings.json`), holding project identity, the `.pgtp` link + its checkout/drift state, both connection profiles (target + sandbox, including password — see the password-handling row above), and the deploy manifest (content-hash + deployed commit id per object, **unchanged in shape**). The deploy manifest no longer needs to be git-tracked for its stated original reason ("so last-deployed state travels across machines") because git integration for this whole model is itself still TBD/deferred (the row above) — there is no live git workflow yet for that state to travel through; **revisit this when git integration is designed.** Governing principle stated explicitly because it explains this merge and the password change together — owner's words: *"nothing the app manages should be a black box… plaintext files everywhere"* — the same spirit that already justified `ddl/*.sql` as plain per-object files, now stated as a principle for the whole local-project model. New UI surface: **Project Settings…** dialog exposing this JSON's full contents (§18.2/§26) |
+| 2026-08-03 | §7/§19's general `.pgtp` save behavior — plain save-in-place with a `.bak` sidecar written via `shutil.copy2` before overwriting an existing file, never on Save-As — implicitly assumed to apply universally, with no project-scoped carve-out | **Superseded, but ONLY within the local-project context — no-project-mode `.pgtp` save behavior is completely untouched by this row.** When a §18.2 local project is open, the `.pgtp` becomes a first-class checked-out artifact, parallel to a DDL object: the app works on a **local working copy** of the `.pgtp`; ordinary Ctrl+S/File ▸ Save writes to this working copy with **no `.bak`** (same rationale as `ddl/*.sql`'s existing no-`.bak` decision — the working copy itself is the safety net). Pushing the working copy back to overwrite the source `.pgtp` at the sshfs-mounted path is a separate, explicit **"Deploy .pgtp"** gesture, reachable both on-demand at any time (Database menu, mirroring DDL's on-demand batch Deploy, §18.3) and as a convenience prompt offered at project close if the working copy has unpushed changes (never forced). Outside a local project, §7/§19's existing plain-save-plus-`.bak` behavior is exactly as it was — this row does not touch it |
 
 ---
 
@@ -3604,11 +3809,17 @@ is authoritative** (and is what appears in the body above).
   tool can do this**, and it is the XML↔DB sync the owner describes as the point of the app (§1). Not
   designed; a strong candidate for the next design pass rather than an open question about existing
   design.
-- **Project-relative paths when the repo moves (§18.2):** `project.json`, `deployed.json` and the
-  per-project connection key are all anchored to the project. Whether the QSettings connection key is the
-  absolute project path (breaks on move/clone) or a project id stored in `project.json` (survives, but
-  needs generating and can be duplicated by a copy-paste of the folder), and whether the optional `.pgtp`
-  link is stored relative to the project root or absolute, are unresolved.
+- **Project-relative paths when the folder moves (§18.2).** *(Narrowed 2026-08-03: the merged project
+  JSON now holds the connection profiles directly, so the QSettings-key portion of this question is
+  largely moot for project-scoped connections — see §18.2's "Path computation"/"Project settings"
+  material for the reconciled reading. The migration-convenience question below is what remains.)* Since
+  the project's own connection profiles now live inside `.ddlproject/settings.json`, a copied/moved
+  project folder carries its connection profiles (including password) with it automatically — self-
+  contained by construction. Still unresolved: (a) whether a **non-project-scoped** `ProfileKey` slug
+  migration path is worth keeping for any transitional QSettings-backed profiles that predate this
+  revision (probably not, since nothing has shipped yet); (b) whether the optional `.pgtp` link inside
+  the JSON is stored relative to the project root or absolute (relative survives a folder move without
+  edits; absolute is simpler to implement first).
 
 ---
 
