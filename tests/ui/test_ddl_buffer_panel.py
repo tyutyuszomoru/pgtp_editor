@@ -1,6 +1,6 @@
 from pgtp_editor.db.ddl_buffer import build_ddl_text
 from pgtp_editor.db.introspect import DatabaseSchema, RoutineInfo, TriggerInfo
-from pgtp_editor.ui.ddl_buffer_panel import BrowserPanel
+from pgtp_editor.ui.ddl_buffer_panel import BrowserPanel, resolve_edit_target
 
 # DatabaseSchema is used directly (not just via _schema()) in several tests
 # below to exercise empty/dangling-reference/cross-schema edge cases.
@@ -624,3 +624,163 @@ def test_each_overload_gets_its_own_tree_item_and_its_own_span(qtbot):
     # Argument leaves still disambiguate the two identically-labelled items.
     assert [item.text(0) for item in items] == ["pr.fmt [F]", "pr.fmt [F]"]
     assert [item.child(0).text(0) for item in items] == ["v (integer)", "v (text)"]
+
+
+# --- Right-click ▸ Edit… (spec §18.5, D1 entry point 1) ---------------------
+def _routine_item(panel):
+    """The `calc_total` routine row from `_schema()` (sorted after audit_log)."""
+    routines_root = panel.tree.topLevelItem(1)
+    return routines_root.child(1)
+
+
+def _trigger_leaf_under_table(panel):
+    tables_root = panel.tree.topLevelItem(0)
+    table_item = tables_root.child(0)  # pr.equipment
+    return table_item.child(0)  # trg_audit (sorted by name)
+
+
+def test_edit_requested_carries_a_ref_and_the_live_source_for_a_routine(qtbot):
+    schema = _schema()
+    text, spans = build_ddl_text(schema)
+    panel = BrowserPanel()
+    qtbot.addWidget(panel)
+    panel.set_schema(schema, spans)
+    from PySide6.QtCore import Qt
+
+    item = _routine_item(panel)
+    got = []
+    panel.edit_requested.connect(lambda ref, source: got.append((ref, source)))
+
+    span = item.data(0, Qt.ItemDataRole.UserRole)
+    ref, source = resolve_edit_target(panel._schema, span)
+    panel.edit_requested.emit(ref, source)
+
+    assert got == [(ref, source)]
+    assert ref.kind == "function"
+    assert ref.schema == "pr"
+    assert ref.name == "calc_total"
+    assert ref.arg_types == ("integer", "numeric")
+    assert ref.disambiguate is False  # sole holder of pr.calc_total
+    assert source == "body1"
+
+
+def test_edit_target_marks_an_overloaded_routine_for_disambiguation(qtbot):
+    routines = {}
+    for arg in ("integer", "text"):
+        routine = RoutineInfo(
+            schema="pr", name="fmt", arg_types=[arg], return_type="text",
+            language="plpgsql", source=f"BODY-{arg}", kind="function",
+        )
+        routines[routine.signature] = routine
+    schema = DatabaseSchema(routines=routines)
+    text, spans = build_ddl_text(schema)
+    panel = BrowserPanel()
+    qtbot.addWidget(panel)
+    panel.set_schema(schema, spans)
+    from PySide6.QtCore import Qt
+
+    item = panel.tree.topLevelItem(1).child(0)
+    span = item.data(0, Qt.ItemDataRole.UserRole)
+
+    ref, source = resolve_edit_target(panel._schema, span)
+
+    assert ref.disambiguate is True
+    assert ref.arg_types == ("integer",)
+
+
+def test_edit_target_for_a_trigger(qtbot):
+    schema = _schema()
+    text, spans = build_ddl_text(schema)
+    panel = BrowserPanel()
+    qtbot.addWidget(panel)
+    panel.set_schema(schema, spans)
+    item = _trigger_leaf_under_table(panel)
+    from PySide6.QtCore import Qt
+
+    span = item.data(0, Qt.ItemDataRole.UserRole)
+
+    ref, source = resolve_edit_target(panel._schema, span)
+
+    assert ref.kind == "trigger"
+    assert ref.schema == "pr"
+    assert ref.table == "equipment"
+    assert ref.name == "trg_audit"
+    assert source == "def1"
+
+
+def test_context_menu_on_an_argument_leaf_offers_no_edit(qtbot, monkeypatch):
+    """Argument-name child leaves carry no span -- no Edit… entry (§18.5)."""
+    schema = _schema()
+    text, spans = build_ddl_text(schema)
+    panel = BrowserPanel()
+    qtbot.addWidget(panel)
+    panel.set_schema(schema, spans)
+    from PySide6.QtCore import QPoint, Qt
+    from PySide6.QtWidgets import QTreeWidget
+
+    arg_leaf = _routine_item(panel).child(0)  # "item_id (integer)"
+    assert arg_leaf.data(0, Qt.ItemDataRole.UserRole) is None
+    monkeypatch.setattr(QTreeWidget, "itemAt", lambda self, pos: arg_leaf)
+    got = []
+    panel.edit_requested.connect(lambda *a: got.append(a))
+
+    panel._on_context_menu(QPoint(0, 0))  # position is irrelevant, itemAt is patched
+
+    assert got == []
+
+
+def test_context_menu_at_empty_position_does_nothing(qtbot):
+    schema = _schema()
+    text, spans = build_ddl_text(schema)
+    panel = BrowserPanel()
+    qtbot.addWidget(panel)
+    panel.set_schema(schema, spans)
+    got = []
+    panel.edit_requested.connect(lambda *a: got.append(a))
+
+    from PySide6.QtCore import QPoint
+
+    panel._on_context_menu(QPoint(-1, -1))  # below the last row: no item there
+
+    assert got == []
+
+
+def test_edit_menu_action_triggers_edit_requested(qtbot, monkeypatch):
+    """The actual right-click ▸ Edit… menu path, end to end -- QMenu itself is
+    faked (the established `_FakeMenu` convention, see
+    test_caption_management_panel.py) so no real popup blocks the test."""
+    schema = _schema()
+    text, spans = build_ddl_text(schema)
+    panel = BrowserPanel()
+    qtbot.addWidget(panel)
+    panel.set_schema(schema, spans)
+    got = []
+    panel.edit_requested.connect(lambda ref, source: got.append((ref, source)))
+
+    from PySide6.QtCore import QPoint
+    from PySide6.QtWidgets import QTreeWidget
+
+    captured = {}
+
+    class _FakeMenu:
+        def __init__(self, *a, **k):
+            pass
+
+        def addAction(self, label, cb=None):
+            captured["label"] = label
+            captured["cb"] = cb
+
+        def exec(self, *a, **k):
+            captured["cb"]()
+
+    monkeypatch.setattr("pgtp_editor.ui.ddl_buffer_panel.QMenu", _FakeMenu)
+    item = _routine_item(panel)
+    monkeypatch.setattr(QTreeWidget, "itemAt", lambda self, pos: item)
+
+    panel._on_context_menu(QPoint(0, 0))  # position is irrelevant, itemAt is patched
+
+    assert captured["label"] == "Edit pr.calc_total(integer, numeric)…"
+    assert len(got) == 1
+    ref, source = got[0]
+    assert ref.name == "calc_total"
+    assert source == "body1"

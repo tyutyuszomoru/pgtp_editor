@@ -1,4 +1,5 @@
 from pgtp_editor.ui.center_stage import CenterStage
+from pgtp_editor.ui.ddl_object_editor import DdlObjectEditorPanel, DdlObjectRef
 
 
 def test_tabs_in_order(qtbot):
@@ -178,3 +179,144 @@ def test_leave_caption_mode_restores_raw(qtbot):
     assert stage.xml_editor.isReadOnly() is False
     assert stage.isTabVisible(stage.caption_management_tab_index) is False
     assert stage.currentIndex() == stage.raw_xml_tab_index
+
+
+# --- Dynamic DDL object editor tabs (spec §18.5) ----------------------------
+_REF = DdlObjectRef(kind="function", schema="pr", name="recalc")
+_REF_2 = DdlObjectRef(kind="function", schema="pr", name="other")
+
+
+def test_open_ddl_object_tab_appends_after_the_fixed_set(qtbot):
+    stage = CenterStage()
+    qtbot.addWidget(stage)
+    fixed_count = stage.count()
+
+    panel = stage.open_ddl_object_tab(_REF, "CREATE FUNCTION ...")
+
+    assert isinstance(panel, DdlObjectEditorPanel)
+    assert stage.count() == fixed_count + 1
+    assert stage.indexOf(panel) == fixed_count  # appended, not inserted
+    assert stage.currentWidget() is panel
+    assert stage.tabText(stage.indexOf(panel)) == "recalc"
+
+
+def test_open_ddl_object_tab_focuses_the_existing_tab_never_a_second(qtbot):
+    stage = CenterStage()
+    qtbot.addWidget(stage)
+    first = stage.open_ddl_object_tab(_REF, "text")
+    after_first_open = stage.count()
+    stage.setCurrentIndex(stage.raw_xml_tab_index)
+
+    second = stage.open_ddl_object_tab(_REF, "ignored -- already open")
+
+    assert second is first
+    assert stage.count() == after_first_open  # no new tab
+    assert stage.currentWidget() is first
+
+
+def test_ddl_object_tab_lookup_by_key(qtbot):
+    stage = CenterStage()
+    qtbot.addWidget(stage)
+    assert stage.ddl_object_tab(_REF.key) is None
+    panel = stage.open_ddl_object_tab(_REF, "text")
+    assert stage.ddl_object_tab(_REF.key) is panel
+
+
+def test_two_different_objects_get_two_independent_tabs(qtbot):
+    stage = CenterStage()
+    qtbot.addWidget(stage)
+    one = stage.open_ddl_object_tab(_REF, "one")
+    two = stage.open_ddl_object_tab(_REF_2, "two")
+
+    assert one is not two
+    assert stage.indexOf(two) == stage.indexOf(one) + 1  # tail-only append
+    assert stage.ddl_object_tab(_REF.key) is one
+    assert stage.ddl_object_tab(_REF_2.key) is two
+
+
+def test_active_ddl_object_panel_reflects_current_tab(qtbot):
+    stage = CenterStage()
+    qtbot.addWidget(stage)
+    assert stage.active_ddl_object_panel() is None
+    panel = stage.open_ddl_object_tab(_REF, "text")
+    assert stage.active_ddl_object_panel() is panel
+    stage.setCurrentIndex(stage.raw_xml_tab_index)
+    assert stage.active_ddl_object_panel() is None
+
+
+def test_update_ddl_object_tab_reflects_dirty_marker_in_title_and_tooltip(qtbot):
+    stage = CenterStage()
+    qtbot.addWidget(stage)
+    panel = stage.open_ddl_object_tab(_REF, "text")
+    index = stage.indexOf(panel)
+    assert stage.tabText(index) == "recalc"
+
+    panel.editor.insertPlainText("x")
+    stage.update_ddl_object_tab(_REF)
+
+    assert stage.tabText(index) == "recalc *"
+    assert stage.tabToolTip(index) == "pr.recalc()"
+
+
+def test_close_ddl_object_tab_removes_it_and_forgets_the_key(qtbot):
+    stage = CenterStage()
+    qtbot.addWidget(stage)
+    fixed_count = stage.count()
+    stage.open_ddl_object_tab(_REF, "text")
+
+    stage.close_ddl_object_tab(_REF.key)
+
+    assert stage.count() == fixed_count
+    assert stage.ddl_object_tab(_REF.key) is None
+
+
+def test_close_ddl_object_tab_leaves_fixed_indices_unchanged(qtbot):
+    """Tail-only removal (spec §7 dynamic-tab invariant): removing a dynamic
+    tab must never shift any of the fixed *_tab_index constants."""
+    stage = CenterStage()
+    qtbot.addWidget(stage)
+    fixed = {
+        "raw": stage.raw_xml_tab_index,
+        "xsd": stage.xsd_tab_index,
+        "ddl": stage.ddl_tab_index,
+        "manual": stage.manual_tab_index,
+    }
+    stage.open_ddl_object_tab(_REF, "one")
+    stage.open_ddl_object_tab(_REF_2, "two")
+
+    stage.close_ddl_object_tab(_REF.key)
+
+    assert stage.raw_xml_tab_index == fixed["raw"]
+    assert stage.xsd_tab_index == fixed["xsd"]
+    assert stage.ddl_tab_index == fixed["ddl"]
+    assert stage.manual_tab_index == fixed["manual"]
+
+
+def test_ddl_object_tab_close_button_emits_close_requested_with_the_key(qtbot):
+    """The ✕ must fall through the fixed-index dispatch to the dynamic-tab
+    map lookup (spec §18.5) -- and never call close_ddl_object_tab directly,
+    since MainWindow's unsaved-changes prompt runs first."""
+    stage = CenterStage()
+    qtbot.addWidget(stage)
+    panel = stage.open_ddl_object_tab(_REF, "text")
+    got = []
+    stage.ddl_object_close_requested.connect(got.append)
+
+    stage.tabCloseRequested.emit(stage.indexOf(panel))
+
+    assert got == [_REF.key]
+    # Never closed directly -- only the request was signaled.
+    assert stage.ddl_object_tab(_REF.key) is panel
+
+
+def test_ddl_object_tab_has_a_close_button_by_default(qtbot):
+    from PySide6.QtWidgets import QTabBar
+
+    stage = CenterStage()
+    qtbot.addWidget(stage)
+    panel = stage.open_ddl_object_tab(_REF, "text")
+    bar = stage.tabBar()
+    index = stage.indexOf(panel)
+    right = QTabBar.ButtonPosition.RightSide
+    left = QTabBar.ButtonPosition.LeftSide
+    assert bar.tabButton(index, right) is not None or bar.tabButton(index, left) is not None

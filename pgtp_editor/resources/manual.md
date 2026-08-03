@@ -24,7 +24,8 @@ Use **File ▸ Open** and pick a `.pgtp` file. The window has three areas:
   the DDL Explorer is on — see *DDL Explorer*).
 - **Center — Raw XML / Caption Management / Diff-Merge / Edit XSD / DDL Explorer /
   Manual:** the working area. It opens on **Raw XML**; the other tabs appear when
-  you invoke them.
+  you invoke them. Editing an individual function, procedure, or trigger opens
+  one more tab per object (see *DDL Explorer*).
 - **Right — Properties:** a read-only inspector for whatever you select in the tree.
 
 When you open a file, the status bar shows a live message such as
@@ -36,9 +37,13 @@ busy feedback*.
 ### Saving, closing, reverting
 
 - **File ▸ Save** (Ctrl+S) saves the **active tab**: the project file when you're
-  in Raw XML (or any project view), or the schema the XSD tab currently holds —
-  curated or auto — when that tab is active (see *Schema Tools*).
-- **File ▸ Save As** (Ctrl+Shift+S) writes a copy to a new path.
+  in Raw XML (or any project view), the schema the XSD tab currently holds —
+  curated or auto — when that tab is active (see *Schema Tools*), or the `.sql`
+  file behind an open DDL object editor tab when that tab is active (see *DDL
+  Explorer*).
+- **File ▸ Save As** (Ctrl+Shift+S) writes a copy of the **project** to a new
+  path — this is unaffected by which tab is active, including a DDL object
+  editor tab (which has its own, separate Save As… the first time you save it).
 - **File ▸ Close** (Ctrl+W) closes the project; if you have unsaved changes it
   prompts you to **Save**, **Discard**, or **Cancel**.
 - **File ▸ Revert** discards your edits and reloads the last saved version from the
@@ -167,9 +172,10 @@ session and are not written to the file.
 
 The **Bookmarks** menu and its shortcuts follow the tab you are working in: with
 the **Edit XSD** (or **Edit AutoXSD**) tab active they act on the schema editor,
-with the **DDL Explorer** tab active they act on its editor, and on any other tab
-they act on the **Raw XML** editor. Using them never switches tabs on you — a
-bookmark is always set or found in the editor you are already looking at.
+with the **DDL Explorer** tab or an open **DDL object editor tab** active they
+act on that tab's own editor, and on any other tab they act on the **Raw XML**
+editor. Using them never switches tabs on you — a bookmark is always set or
+found in the editor you are already looking at.
 
 The **Edit code…** dialog has the same bookmark strip, but as a separate dialog
 it is out of the Bookmarks menu's reach: there you set and clear bookmarks by
@@ -189,14 +195,18 @@ The search bar under the Raw XML editor provides:
 - **Replace** (Ctrl+R) and **Replace All** (Ctrl+Alt+Enter) — Replace All reports
   how many replacements it made in the status bar.
 
-The **Edit XSD** tab (see *Schema Tools*) and the **DDL Explorer** tab (see *DDL
-Explorer*) each have their own search bar; the shortcuts and the Edit menu act on
-whichever tab is active, searching that tab's own document. On a tab without its
-own search bar, Find reveals the **Raw XML** tab and searches there.
+The **Edit XSD** tab (see *Schema Tools*), the **DDL Explorer** tab, and an open
+**DDL object editor tab** (see *DDL Explorer*) each have their own search bar;
+the shortcuts and the Edit menu act on whichever tab is active, searching that
+tab's own document. On a tab without its own search bar, Find reveals the
+**Raw XML** tab and searches there.
 
 Because the DDL Explorer buffer is **read-only**, only the searching half applies
 there: Find, Find Next and Find All work as usual, while Replace and Replace All
-have nothing they can change.
+have nothing they can change. A DDL object editor tab is the opposite case:
+it's fully editable, so **Find, Find Next, Replace, and Replace All all work**
+there — only **Find All** stays inert and returns no results, the one gap
+carried over from the read-only DDL Explorer's search bar.
 
 ---
 
@@ -573,6 +583,73 @@ checkbox always reflects whether the explorer is currently visible. The status
 bar reports how many routines and triggers were loaded; if the fetch fails, it
 shows the error and the toggle unchecks itself.
 
+### Editing a single function, procedure, or trigger
+
+Both browsing surfaces double as an entry point into a dedicated, **editable**
+tab for one object at a time — nothing here touches the database; it is purely
+a text editor over the object's current definition.
+
+- In the **DDL Objects** tree, right-click a routine or trigger row for
+  **Edit `<schema>.<name>(<argtypes>)`…** (or **Edit `<schema>.<table>.<name>`…**
+  for a trigger). Right-clicking an argument-name child row offers no Edit
+  action — only object rows open a tab.
+- In the **DDL Explorer** tab's read-only buffer, right-click inside an
+  object's body for the same **Edit …** entry. Two overloaded routines get
+  distinct wording here since the full signature is in the label, so you can
+  tell them apart before opening either.
+- Re-invoking Edit on an object that's already open **focuses its existing
+  tab** rather than opening a second one.
+
+The tab that opens is titled with the object's short name — `recalc`, or
+`fmt(integer)` when it's one of several overloads, or `orders.trg_audit` for a
+trigger — plus the same `" *"` dirty marker the **Edit XSD** tab uses once you
+edit it. Its tooltip shows the full qualified name. It is a real, **editable**
+SQL editor with the same gutter, bookmarks, folding, and 4-character tab stop
+as the read-only DDL Explorer editor, plus its own Find/Replace bar — see
+*Find, Replace & Find All* — where, unlike the read-only DDL Explorer, **Replace
+actually works**.
+
+**Ctrl+Z and Ctrl+Y in this tab undo and redo only this tab's own edits** —
+they never touch the project's Raw XML undo history, even though the same
+shortcuts drive the project's snapshot history everywhere else. This is the
+one place in the app where Ctrl+Z means something different depending on
+which tab is focused.
+
+**Saving** (Ctrl+S, or File ▸ Save, while the tab is active) never touches a
+database — it only writes a `.sql` file to disk:
+
+- The **first save** opens a normal **Save As…** file picker, prefilled with a
+  sensible filename (`schema.name.sql`, or `schema.table.trigger.sql` for a
+  trigger). Cancelling the picker just cancels the save — nothing is written
+  and the tab stays dirty.
+- The chosen path is **remembered**, so every later Ctrl+S writes silently to
+  it for the rest of the session.
+- **Ctrl+Shift+S** (File ▸ Save As) is **not** repointed to this tab — it
+  always means the `.pgtp` project, whichever tab is active.
+
+**Closing** the tab (its **✕**, or the app's usual close-tab gesture) prompts
+**Save**, **Discard**, or **Cancel** if it has unsaved changes, the same as
+**Edit XSD**. Choosing **Save** on a tab that has never been saved runs Save
+As…; if you cancel that file picker, the tab **stays open** rather than
+closing.
+
+**Format Selection** (**Ctrl+Alt+F**, or right-click ▸ **Format Selection**)
+reindents the current text selection in place — the first real user of the
+app's SQL formatter. Both are enabled only when you have a selection. If the
+selection can't be safely reformatted (for example, an unbalanced
+`BEGIN`/`END` split by the selection boundary), nothing changes: the problem
+is reported as a `[SQL]`-prefixed line in the Audit panel, and the exact
+offending text is underlined in red in the editor until your next edit or
+your next format attempt.
+
+Re-running **Database ▸ DDL Explorer** (a fresh fetch) never touches object
+tabs you already have open — they are not reloaded, marked, or closed, even if
+the live definition changed underneath them; your in-progress edits are never
+silently discarded to resync with the database.
+
+There is no Apply, Check, or sandbox validation in this version — editing and
+saving a `.sql` file to disk is all it does today.
+
 ---
 
 ## Table References
@@ -681,17 +758,19 @@ simply reads as busy instead of stalled.
 | **Ctrl+F2** | Active editor tab | Toggle bookmark |
 | **F2** / **Shift+F2** | Active editor tab | Next / previous bookmark |
 | **Ctrl+Z** / **Ctrl+Y** | Raw XML | Undo / redo (snapshot history) |
+| **Ctrl+Z** / **Ctrl+Y** | DDL object editor tab | Undo / redo (that tab's own history only — never the project's) |
 | **Ctrl+Space** | Raw XML | Attribute / value completion |
 | **Ctrl+L** | Raw XML | Go To XSD (attribute's definition in the Edit XSD tab) |
 | **Ctrl+click** | Raw XML (mouse) | Jump to matching open/close tag |
 | **Alt+click** | Raw XML (mouse) | Jump to parent tag start |
 | **Ctrl+Shift+B** | Raw XML / Code Editor | Select enclosing block (caret to start) |
 | **Ctrl+Shift+A** | Raw XML | Select parent block |
-| **Ctrl+F** | Raw XML / Edit XSD / DDL Explorer | Find |
-| **F3** | Raw XML / Edit XSD / DDL Explorer | Find next |
-| **Ctrl+Shift+F** | Raw XML / Edit XSD / DDL Explorer | Find all |
-| **Ctrl+R** | Raw XML / Edit XSD | Replace (not in the read-only DDL Explorer) |
-| **Ctrl+Alt+Enter** | Raw XML / Edit XSD | Replace all (not in the read-only DDL Explorer) |
+| **Ctrl+F** | Raw XML / Edit XSD / DDL Explorer / DDL object editor tab | Find |
+| **F3** | Raw XML / Edit XSD / DDL Explorer / DDL object editor tab | Find next |
+| **Ctrl+Shift+F** | Raw XML / Edit XSD / DDL Explorer / DDL object editor tab | Find all (inert in the DDL Explorer and DDL object editor tabs) |
+| **Ctrl+R** | Raw XML / Edit XSD / DDL object editor tab | Replace (not in the read-only DDL Explorer) |
+| **Ctrl+Alt+Enter** | Raw XML / Edit XSD / DDL object editor tab | Replace all (not in the read-only DDL Explorer) |
+| **Ctrl+Alt+F** | DDL object editor tab | Format Selection (reindent the current selection) |
 | **Ctrl+F** | Caption Mode | Open Find/Filter |
 | **Ctrl+R** | Caption Mode | Open Replace |
 | **Ctrl+G** | Caption Mode | Go to line in Raw XML |

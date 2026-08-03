@@ -18,6 +18,7 @@ from PySide6.QtWidgets import QTabBar, QTabWidget, QVBoxLayout, QWidget
 
 from pgtp_editor.ui.caption_management_panel import CaptionManagementPanel
 from pgtp_editor.ui.ddl_editor_panel import EditorPanel
+from pgtp_editor.ui.ddl_object_editor import DdlObjectEditorPanel
 from pgtp_editor.ui.diff_merge_panel import DiffMergePanel
 from pgtp_editor.ui.find_replace_bar import FindReplaceBar
 from pgtp_editor.ui.manual_panel import ManualPanel
@@ -41,8 +42,21 @@ class CenterStage(QTabWidget):
     # no dirty prompt, unlike Edit XSD.
     ddl_explorer_visibility_changed = Signal(bool)
 
+    # Emitted when a DDL object editor tab's ✕ is clicked (spec §18.5).
+    # Carries the tab's `DdlObjectRef.key`. Closing an editable, per-object
+    # tab must go through MainWindow's unsaved-changes prompt first, exactly
+    # like Edit XSD -- so this signals intent rather than closing directly.
+    ddl_object_close_requested = Signal(tuple)
+
     def __init__(self, parent=None):
         super().__init__(parent)
+        # Dynamic per-object tabs (spec §18.5): always appended AFTER the
+        # fixed set above, so the stored fixed *_tab_index constants never
+        # shift and every existing index comparison in this class and in
+        # MainWindow stays correct. Keyed on the object's stable identity
+        # (`DdlObjectRef.key`), never on a remembered index -- close/reorder
+        # must not be able to make a lookup stale.
+        self._ddl_object_tabs: dict[tuple, DdlObjectEditorPanel] = {}
         self.diff_merge_panel = DiffMergePanel()
         self.diff_merge_tab_index = self.addTab(self.diff_merge_panel, "Diff / Merge")
 
@@ -114,6 +128,15 @@ class CenterStage(QTabWidget):
             # Read-only tab: nothing to prompt for, hide directly (unlike
             # Edit XSD, which routes through MainWindow's dirty check).
             self.hide_ddl_explorer()
+        else:
+            # Falls through to a dynamic DDL object tab (§18.5) -- these are
+            # never at a fixed index, so the only way to identify one is a
+            # map lookup by widget, not by index.
+            widget = self.widget(index)
+            for key, panel in self._ddl_object_tabs.items():
+                if panel is widget:
+                    self.ddl_object_close_requested.emit(key)
+                    break
 
     def set_raw_xml_tab_visible(self, visible):
         self.setTabVisible(self.raw_xml_tab_index, visible)
@@ -170,3 +193,57 @@ class CenterStage(QTabWidget):
         self.setTabVisible(self.caption_management_tab_index, False)
         self.setTabVisible(self.raw_xml_tab_index, True)
         self.setCurrentIndex(self.raw_xml_tab_index)
+
+    # --- Dynamic DDL object editor tabs (spec §18.5) -----------------------
+    def ddl_object_tab(self, key):
+        """The open `DdlObjectEditorPanel` for `key`, or None."""
+        return self._ddl_object_tabs.get(key)
+
+    def open_ddl_object_tab(self, ref, text, resolve_save_path=None):
+        """Focus the existing tab for `ref` if one is already open; otherwise
+        create it, append it (always AFTER the fixed set), and focus that.
+
+        Never opens a second tab for the same object (spec §18.5)."""
+        existing = self._ddl_object_tabs.get(ref.key)
+        if existing is not None:
+            self.setCurrentWidget(existing)
+            return existing
+
+        panel = DdlObjectEditorPanel(ref, text, resolve_save_path=resolve_save_path)
+        self.addTab(panel, panel.tab_title())
+        self._ddl_object_tabs[ref.key] = panel
+        self.setCurrentWidget(panel)
+        return panel
+
+    def close_ddl_object_tab(self, key):
+        """Actually remove the tab for `key`. Called only after MainWindow has
+        resolved any unsaved-changes prompt -- never directly from
+        `_on_tab_close_requested`, mirroring Edit XSD's `hide_edit_xsd`."""
+        panel = self._ddl_object_tabs.pop(key, None)
+        if panel is None:
+            return
+        index = self.indexOf(panel)
+        if index != -1:
+            self.removeTab(index)
+        panel.deleteLater()
+
+    def update_ddl_object_tab(self, ref):
+        """Refresh a DDL object tab's title/tooltip from its panel's current
+        dirty state -- call after any edit that may have crossed the
+        clean/dirty boundary."""
+        panel = self._ddl_object_tabs.get(ref.key)
+        if panel is None:
+            return
+        index = self.indexOf(panel)
+        if index == -1:
+            return
+        self.setTabText(index, panel.tab_title())
+        self.setTabToolTip(index, panel.tab_tooltip())
+
+    def active_ddl_object_panel(self):
+        """The `DdlObjectEditorPanel` currently active, or None if some other
+        tab has focus."""
+        widget = self.currentWidget()
+        if isinstance(widget, DdlObjectEditorPanel):
+            return widget
+        return None

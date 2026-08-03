@@ -2,6 +2,8 @@
 """EditorPanel: the CenterStage "DDL Explorer" tab (spec §18.1) -- a read-only
 sql-mode CodeEditor plus its own FindReplaceBar instance (the same per-tab
 routing precedent as the Edit XSD tab)."""
+from PySide6.QtCore import QPoint
+
 from pgtp_editor.ui.code_editor import CodeEditor, _SQL_KEYWORDS
 from pgtp_editor.ui.ddl_editor_panel import EditorPanel
 from pgtp_editor.ui.find_replace_bar import FindReplaceBar
@@ -95,7 +97,7 @@ def _schema_with_two_objects():
             )
         },
         triggers={
-            "pr.t_audit": TriggerInfo(
+            "pr.orders.t_audit": TriggerInfo(
                 schema="pr",
                 table="orders",
                 name="t_audit",
@@ -370,3 +372,109 @@ def test_navigate_to_a_span_puts_that_objects_banner_at_the_top(qtbot):
     first_visible = panel.editor.firstVisibleBlock()
     assert first_visible.blockNumber() == second.start_line - 1
     assert first_visible.text().startswith("-- TRIGGER ")
+
+
+# --- Right-click ▸ Edit… (spec §18.5, D1 entry point 2) ---------------------
+def _local_pos_for_line(panel, line: int) -> QPoint:
+    """Editor-widget coordinates for `line`'s (1-based) top-left corner."""
+    block = panel.editor.document().findBlockByNumber(line - 1)
+    rect = panel.editor.blockBoundingGeometry(block).translated(
+        panel.editor.contentOffset()
+    )
+    return rect.topLeft().toPoint() + QPoint(1, 1)
+
+
+def _edit_action_target(menu):
+    """The "Edit …" QAction in `menu`, or None -- inspects the built menu
+    directly rather than ever driving a real modal `QMenu.exec` (the
+    xml_editor.py `_build_context_menu` precedent)."""
+    for action in menu.actions():
+        if action.text().startswith("Edit "):
+            return action
+    return None
+
+
+def test_right_click_inside_a_routine_span_offers_edit_with_its_qualified_name(qtbot):
+    from pgtp_editor.db.ddl_buffer import build_ddl_text
+
+    schema = _schema_with_two_objects()
+    text, spans = build_ddl_text(schema)
+    panel = EditorPanel()
+    qtbot.addWidget(panel)
+    panel.set_ddl_text(text, spans, schema=schema)
+    got = []
+    panel.edit_requested.connect(lambda ref, source: got.append((ref, source)))
+
+    routine_span = next(s for s in spans if s.kind != "trigger")
+    pos = _local_pos_for_line(panel, routine_span.start_line + 1)  # inside the body
+    menu = panel._build_context_menu_at(pos)
+    action = _edit_action_target(menu)
+    assert action is not None
+    assert action.text() == "Edit pr.calc_total(integer)…"
+    action.trigger()
+
+    assert len(got) == 1
+    ref, source = got[0]
+    assert ref.kind == "function"
+    assert ref.name == "calc_total"
+    assert "RETURN a * 2" in source
+
+
+def test_right_click_inside_a_trigger_span_offers_edit(qtbot):
+    from pgtp_editor.db.ddl_buffer import build_ddl_text
+
+    schema = _schema_with_two_objects()
+    text, spans = build_ddl_text(schema)
+    panel = EditorPanel()
+    qtbot.addWidget(panel)
+    panel.set_ddl_text(text, spans, schema=schema)
+    got = []
+    panel.edit_requested.connect(lambda ref, source: got.append((ref, source)))
+
+    trigger_span = next(s for s in spans if s.kind == "trigger")
+    pos = _local_pos_for_line(panel, trigger_span.start_line)  # the banner line itself
+    menu = panel._build_context_menu_at(pos)
+    action = _edit_action_target(menu)
+    assert action is not None
+    action.trigger()
+
+    assert len(got) == 1
+    ref, source = got[0]
+    assert ref.kind == "trigger"
+    assert ref.table == "orders"
+    assert ref.name == "t_audit"
+
+
+def test_right_click_outside_any_span_offers_no_edit(qtbot):
+    panel = EditorPanel()
+    qtbot.addWidget(panel)
+    panel.set_ddl_text(_TEXT + "\n-- not inside any span\n", spans=[])
+
+    menu = panel._build_context_menu_at(_local_pos_for_line(panel, 1))
+
+    assert _edit_action_target(menu) is None
+
+
+def test_right_click_moves_the_caret_to_the_clicked_line_first(qtbot):
+    """The resolved span must reflect the CLICK, not a stale caret (§18.5,
+    D1) -- start with the caret elsewhere, right-click a different span."""
+    from pgtp_editor.db.ddl_buffer import build_ddl_text
+
+    schema = _schema_with_two_objects()
+    text, spans = build_ddl_text(schema)
+    panel = EditorPanel()
+    qtbot.addWidget(panel)
+    panel.set_ddl_text(text, spans, schema=schema)
+    panel.navigate_to_line(1)  # caret starts on the routine's banner
+    got = []
+    panel.edit_requested.connect(lambda ref, source: got.append((ref, source)))
+
+    trigger_span = next(s for s in spans if s.kind == "trigger")
+    pos = _local_pos_for_line(panel, trigger_span.start_line)
+    menu = panel._build_context_menu_at(pos)
+    _edit_action_target(menu).trigger()
+
+    assert len(got) == 1
+    ref, _source = got[0]
+    assert ref.kind == "trigger"
+    assert panel.editor.textCursor().blockNumber() == trigger_span.start_line - 1

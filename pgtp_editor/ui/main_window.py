@@ -141,6 +141,10 @@ _VALIDATION_PREFIX = "[Validate] "
 
 _GENERATOR_OUTPUT_PREFIX = "[PHP] "
 
+#: Format Selection refusals (§18.4/§18.5). Not clickable, no line role
+#: (carve-out 6) -- the offending span is already underlined in the tab.
+_SQL_REFUSAL_PREFIX = "[SQL] "
+
 _FIND_ALL_BATCH = 200
 
 # Placeholder shown in the Edit-XSD tab when its backing file does not exist yet.
@@ -259,6 +263,9 @@ class MainWindow(QMainWindow):
         self.ddl_browser_panel.navigate_requested.connect(
             self._on_ddl_navigate_requested
         )
+        # Right-click ▸ Edit… opens/focuses the editable DDL object tab
+        # (spec §18.5, D1 entry point 1).
+        self.ddl_browser_panel.edit_requested.connect(self._on_ddl_edit_requested)
         # Table references ride in their own hidden tab, revealed by the
         # View > "Find table reference" toggle (mirrors the Database Check tab).
         self.table_refs_panel = TableReferencesPanel()
@@ -292,6 +299,15 @@ class MainWindow(QMainWindow):
         self.center_stage.xsd_close_requested.connect(self._on_xsd_close_requested)
         self.center_stage.ddl_explorer_visibility_changed.connect(
             self._on_ddl_explorer_visibility_changed
+        )
+        self.center_stage.ddl_object_close_requested.connect(
+            self._on_ddl_object_close_requested
+        )
+        # DDL Explorer's read-only buffer's own right-click ▸ Edit… (spec
+        # §18.5, D1 entry point 2) -- same target handler as BrowserPanel's
+        # tree entry point.
+        self.center_stage.ddl_editor_panel.edit_requested.connect(
+            self._on_ddl_edit_requested
         )
         try:
             manual_text = load_manual_text()
@@ -784,8 +800,12 @@ class MainWindow(QMainWindow):
         stage = self.center_stage
         if stage.currentIndex() == stage.xsd_tab_index:
             self._save_xsd()
-        else:
-            self._save_project()
+            return
+        panel = stage.active_ddl_object_panel()
+        if panel is not None:
+            self._save_ddl_object_editor(panel)
+            return
+        self._save_project()
 
     def _active_find_bar(self):
         """The FindReplaceBar of the active editor tab; defaults to the Raw
@@ -798,6 +818,11 @@ class MainWindow(QMainWindow):
             # document routing) -- without this branch Ctrl+F on the DDL tab
             # used to bounce the user back to Raw XML.
             return stage.ddl_editor_panel.find_replace_bar
+        panel = stage.active_ddl_object_panel()
+        if panel is not None:
+            # The editable object tab's own bar (spec §18.5) -- Replace is
+            # LIVE here, unlike the read-only DDL Explorer above.
+            return panel.find_replace_bar
         self._reveal_raw_xml_tab()
         return stage.find_replace_bar
 
@@ -818,6 +843,9 @@ class MainWindow(QMainWindow):
             return stage.xsd_editor
         if stage.currentIndex() == stage.ddl_tab_index:
             return stage.ddl_editor_panel.editor
+        panel = stage.active_ddl_object_panel()
+        if panel is not None:
+            return panel.editor
         return stage.xml_editor
 
     def _confirm_close_xsd(self) -> str:
@@ -2517,7 +2545,7 @@ class MainWindow(QMainWindow):
 
         def on_result(schema):
             text, spans = build_ddl_text(schema)
-            self.center_stage.ddl_editor_panel.set_ddl_text(text, spans)
+            self.center_stage.ddl_editor_panel.set_ddl_text(text, spans, schema=schema)
             self.ddl_browser_panel.set_schema(schema, spans)
             self.center_stage.show_ddl_explorer()
             self.statusBar().showMessage(
@@ -2553,6 +2581,111 @@ class MainWindow(QMainWindow):
         object's banner line (two tree leaves may share one span, §18.1)."""
         self.center_stage.setCurrentIndex(self.center_stage.ddl_tab_index)
         self.center_stage.ddl_editor_panel.navigate_to_line(line)
+
+    def _on_ddl_edit_requested(self, ref, source):
+        """Right-click ▸ Edit… on a BrowserPanel object row opens (or
+        focuses) the editable DDL object tab for it (spec §18.5, D1 entry
+        point 1). Re-invoking Edit on an already-open object focuses the
+        existing tab -- never a second tab for the same object."""
+        existing = self.center_stage.ddl_object_tab(ref.key)
+        if existing is not None:
+            self.center_stage.setCurrentWidget(existing)
+            return
+
+        # The §18.2 save seam, in concrete v1 form: return the remembered
+        # path, or run Save As… (this module owns QFileDialog -- the panel
+        # itself must not, so §18.2 can repoint this one callable later
+        # without the panel changing at all). `box` exists only so this
+        # closure can see the panel that does not exist yet at definition
+        # time; it is filled in immediately below, before any save can occur.
+        box = {}
+
+        def resolver():
+            panel = box["panel"]
+            if panel.save_path is not None:
+                return panel.save_path
+            path, _filter = QFileDialog.getSaveFileName(
+                self, "Save DDL Object", ref.default_file_name, "SQL files (*.sql)"
+            )
+            if not path:
+                return None
+            resolved = Path(path)
+            panel.remember_save_path(resolved)
+            return resolved
+
+        panel = self.center_stage.open_ddl_object_tab(ref, source, resolve_save_path=resolver)
+        box["panel"] = panel
+        panel.dirty_changed.connect(
+            lambda _dirty, ref=ref: self.center_stage.update_ddl_object_tab(ref)
+        )
+        panel.format_refused.connect(self._report_ddl_format_refusal)
+
+    def _save_ddl_object_editor(self, panel) -> bool:
+        """Ctrl+S / File ▸ Save for the active DDL object tab (spec §18.5):
+        Save As… on the first save, then silent writes to the remembered
+        path thereafter. Never touches a database. Returns True on success,
+        False if the user cancelled Save As… -- callers (the close-
+        confirmation flow) must treat that exactly like Close ▸ Cancel, not
+        as a completed save."""
+        path = panel.resolve_save_path()
+        if path is None:
+            return False  # Save As… cancelled: not an error, nothing written
+        try:
+            path.write_text(panel.text(), encoding="utf-8", newline="")
+        except OSError as exc:
+            QMessageBox.critical(self, "Save Failed", f"Could not save:\n\n{exc}")
+            return False
+        panel.remember_save_path(path)
+        panel.mark_clean()
+        self.center_stage.update_ddl_object_tab(panel.ref)
+        self.statusBar().showMessage(f"Saved {path}", 5000)
+        return True
+
+    def _confirm_close_ddl_object(self, ref) -> str:
+        """Ask the user how to resolve unsaved changes in a DDL object tab
+        before closing. Returns "save", "discard", or "cancel" (mirrors
+        `_confirm_close`/`_confirm_close_xsd`, so tests can monkeypatch this
+        instead of ever driving a real modal)."""
+        result = QMessageBox.question(
+            self,
+            "Unsaved Changes",
+            f"{ref.qualified} has unsaved changes. Save before closing?",
+            QMessageBox.StandardButton.Save
+            | QMessageBox.StandardButton.Discard
+            | QMessageBox.StandardButton.Cancel,
+        )
+        if result == QMessageBox.StandardButton.Save:
+            return "save"
+        if result == QMessageBox.StandardButton.Discard:
+            return "discard"
+        return "cancel"
+
+    def _on_ddl_object_close_requested(self, key) -> None:
+        """DDL object tab ✕ clicked. Reuses the Edit-XSD save/discard/cancel
+        pattern (`_on_xsd_close_requested`) -- and, per §18.5, a Save As…
+        cancelled from this prompt ABORTS THE CLOSE exactly like Cancel would,
+        so a dismissed file dialog can never silently discard an edit."""
+        panel = self.center_stage.ddl_object_tab(key)
+        if panel is None:
+            return
+        if panel.is_dirty():
+            choice = self._confirm_close_ddl_object(panel.ref)
+            if choice == "cancel":
+                return
+            if choice == "save":
+                if not self._save_ddl_object_editor(panel):
+                    return  # Save As… cancelled: stays open and dirty
+        self.center_stage.close_ddl_object_tab(key)
+
+    def _report_ddl_format_refusal(self, issues) -> None:
+        """Format Selection refusal (§18.4/§18.5): one `[SQL]`-prefixed Audit
+        line per Issue -- never clickable, no line role (carve-out 6); the
+        offending span is already underlined in the tab itself."""
+        for issue in issues:
+            item = QListWidgetItem(
+                f"{_SQL_REFUSAL_PREFIX}line {issue.start_line}: {issue.message}"
+            )
+            self.audit_panel.addItem(item)
 
     def _on_db_rename_requested(self, kind, old):
         new = self._prompt_rename(old)

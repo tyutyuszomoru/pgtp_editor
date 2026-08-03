@@ -26,9 +26,11 @@ live/synthesized: the checked-out, editable form lives in `ddl/*.sql` files
 """
 from __future__ import annotations
 
+from PySide6.QtCore import QEvent, Signal
 from PySide6.QtWidgets import QVBoxLayout, QWidget
 
 from pgtp_editor.ui.code_editor import CodeEditor
+from pgtp_editor.ui.ddl_buffer_panel import resolve_edit_target
 from pgtp_editor.ui.find_replace_bar import FindReplaceBar
 
 
@@ -51,6 +53,12 @@ def _fold_regions_for_spans(spans) -> list[tuple[int, int, int]]:
 
 
 class EditorPanel(QWidget):
+    #: Right-click inside an object's span ▸ Edit <schema>.<name>(<argtypes>)…
+    #: (spec §18.5, D1 entry point 2). Same payload shape as
+    #: `BrowserPanel.edit_requested` -- the object's `DdlObjectRef` and its
+    #: current source text.
+    edit_requested = Signal(object, str)
+
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.editor = CodeEditor(language="sql")
@@ -59,25 +67,81 @@ class EditorPanel(QWidget):
         self.editor.setReadOnly(True)
         self.find_replace_bar = FindReplaceBar(self.editor)
 
+        # Retained so right-click ▸ Edit… (§18.5, D1 entry point 2) can find
+        # which object the click landed inside; the schema that produced them
+        # resolves the click to a `DdlObjectRef` + live source text (shared
+        # helper with BrowserPanel's tree, `ddl_buffer_panel.resolve_edit_target`).
+        self._spans = []
+        self._schema = None
+        self.editor.installEventFilter(self)
+
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
         layout.addWidget(self.editor)
         layout.addWidget(self.find_replace_bar)
 
-    def set_ddl_text(self, text: str, spans=None) -> None:
+    def set_ddl_text(self, text: str, spans=None, schema=None) -> None:
         """Replace the synthesized buffer (a fresh `build_ddl_text` result).
 
         `spans` is that call's `DdlObjectSpan` list; it drives the shared fold
         base's foldable regions (§18.1) -- ONE region per DDL object body, from
         the object's banner line (`start_line`) through its `end_line`, so
         folding an object collapses its source under its banner. Passing None
-        (or an empty list) simply leaves nothing foldable."""
+        (or an empty list) simply leaves nothing foldable. `schema` is the
+        `DatabaseSchema` that produced `spans`, retained (with the spans) so
+        a later right-click can resolve the clicked object (§18.5)."""
         self.editor.setPlainText(text)
-        self.editor.set_fold_regions(_fold_regions_for_spans(spans or []))
+        spans = spans or []
+        self.editor.set_fold_regions(_fold_regions_for_spans(spans))
+        self._spans = spans
+        self._schema = schema
 
     def navigate_to_line(self, line: int) -> None:
         """Jump to `line` (1-based) — BrowserPanel's `navigate_requested`
         target, delegating to CodeEditor's shared navigation API (§8)."""
         self.editor.navigate_to_line(line)
         self.editor.setFocus()
+
+    def _span_at_line(self, line: int):
+        """The `DdlObjectSpan` whose `start_line..end_line` contains the
+        1-based `line`, or None outside any object's body."""
+        for span in self._spans:
+            if span.start_line <= line <= span.end_line:
+                return span
+        return None
+
+    def eventFilter(self, obj, event) -> bool:
+        if obj is self.editor and event.type() == QEvent.Type.ContextMenu:
+            menu = self._build_context_menu_at(event.pos())
+            menu.exec(event.globalPos())
+            return True
+        return super().eventFilter(obj, event)
+
+    def _build_context_menu_at(self, local_pos):
+        """Build (but do not exec) the context menu for a click at
+        `local_pos` (editor-widget coordinates) -- split out from
+        `eventFilter` so tests can inspect it directly instead of ever
+        driving a real modal `QMenu.exec` (the `xml_editor.py`
+        `_build_context_menu` precedent)."""
+        # event.pos() is delivered in the editor's own coordinates, but
+        # cursorForPosition expects viewport coordinates (xml_editor.py's
+        # contextMenuEvent precedent) -- move the caret to the clicked
+        # position FIRST, so the resolved span reflects the click rather than
+        # a stale caret (§18.5, D1).
+        viewport_pos = self.editor.viewport().mapFrom(self.editor, local_pos)
+        cursor = self.editor.cursorForPosition(viewport_pos)
+        self.editor.setTextCursor(cursor)
+        line = cursor.blockNumber() + 1
+        span = self._span_at_line(line)
+        menu = self.editor.createStandardContextMenu()
+        if span is not None and self._schema is not None:
+            resolved = resolve_edit_target(self._schema, span)
+            if resolved is not None:
+                ref, source = resolved
+                menu.addSeparator()
+                menu.addAction(
+                    f"Edit {ref.qualified}…",
+                    lambda: self.edit_requested.emit(ref, source),
+                )
+        return menu

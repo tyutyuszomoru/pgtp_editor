@@ -32,10 +32,11 @@ never trust prior state" posture for DB-sourced data (§18's truth model).
 from __future__ import annotations
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QMenu, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget
 
 from pgtp_editor.db.ddl_buffer import DdlObjectSpan
 from pgtp_editor.db.introspect import DatabaseSchema
+from pgtp_editor.ui.ddl_object_editor import DdlObjectRef
 
 _SPAN_ROLE = Qt.ItemDataRole.UserRole
 
@@ -53,14 +54,67 @@ def _routine_marker(routine) -> str:
     return "F"
 
 
+def resolve_edit_target(
+    schema: DatabaseSchema, span: DdlObjectSpan
+) -> tuple[DdlObjectRef, str] | None:
+    """The `DdlObjectRef` + live source text for `span`, resolved against
+    `schema` (spec §18.5, D1). Shared by both right-click ▸ Edit… entry
+    points -- `BrowserPanel.tree` here and the read-only DDL `EditorPanel`'s
+    buffer (`ddl_editor_panel.py`) -- so routine/trigger identity is derived
+    in exactly one place. Returns None if `schema` no longer has the object
+    (a stale span -- shouldn't happen within one `set_schema` generation,
+    guarded defensively)."""
+    if span.kind == "trigger":
+        trigger = schema.triggers.get(f"{span.schema}.{span.table}.{span.name}")
+        if trigger is None:
+            return None
+        ref = DdlObjectRef(
+            kind="trigger", schema=span.schema, name=span.name, table=span.table
+        )
+        return ref, trigger.definition
+    routine = schema.routines.get(span.signature) if span.signature else None
+    if routine is None:
+        return None
+    overloaded = (
+        sum(
+            1
+            for other in schema.routines.values()
+            if other.schema == routine.schema and other.name == routine.name
+        )
+        > 1
+    )
+    ref = DdlObjectRef(
+        kind=routine.kind,
+        schema=routine.schema,
+        name=routine.name,
+        arg_types=tuple(routine.arg_types),
+        disambiguate=overloaded,
+    )
+    return ref, routine.source
+
+
 class BrowserPanel(QWidget):
     navigate_requested = Signal(int)  # 1-based line in the EditorPanel buffer
+
+    #: Right-click ▸ Edit… on an object row (spec §18.5, D1 entry point 1).
+    #: Carries the object's `DdlObjectRef` and its current source text (the
+    #: live `RoutineInfo.source` / `TriggerInfo.definition` this tree was
+    #: built from) -- everything MainWindow needs to open or focus the
+    #: editable tab, with no second lookup back into the schema.
+    edit_requested = Signal(object, str)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.tree = QTreeWidget()
         self.tree.setHeaderHidden(True)
         self.tree.itemClicked.connect(self._on_item_clicked)
+        self.tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.tree.customContextMenuRequested.connect(self._on_context_menu)
+
+        # The schema this tree was last built from, so a later right-click ▸
+        # Edit… can resolve a routine/trigger's full source text and overload
+        # status without the tree items carrying redundant copies of it.
+        self._schema: DatabaseSchema | None = None
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -69,6 +123,7 @@ class BrowserPanel(QWidget):
     def set_schema(self, schema: DatabaseSchema, spans: list[DdlObjectSpan]) -> None:
         """Rebuild the tree from ``schema`` (routines/triggers) and the
         ``DdlObjectSpan`` index of the buffer they were rendered into."""
+        self._schema = schema
         self.tree.clear()
 
         # Routine spans are keyed by the full signature, not `(schema, name)`:
@@ -163,3 +218,20 @@ class BrowserPanel(QWidget):
         span = item.data(0, _SPAN_ROLE)
         if span is not None:
             self.navigate_requested.emit(span.start_line)
+
+    def _on_context_menu(self, pos) -> None:
+        item = self.tree.itemAt(pos)
+        if item is None:
+            return
+        span = item.data(0, _SPAN_ROLE)
+        # Argument-name child leaves carry no span (§18.1) -- only object rows
+        # (routine leaves and both trigger occurrences) offer Edit….
+        if span is None or self._schema is None:
+            return
+        resolved = resolve_edit_target(self._schema, span)
+        if resolved is None:
+            return
+        ref, source = resolved
+        menu = QMenu(self)
+        menu.addAction(f"Edit {ref.qualified}…", lambda: self.edit_requested.emit(ref, source))
+        menu.exec(self.tree.viewport().mapToGlobal(pos))
