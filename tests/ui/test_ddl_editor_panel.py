@@ -394,6 +394,37 @@ def _edit_action_target(menu):
     return None
 
 
+def _checkout_action_target(menu):
+    """The "Check Out for Versioning" QAction in `menu`, or None (§18.2)."""
+    for action in menu.actions():
+        if action.text() == "Check Out for Versioning":
+            return action
+    return None
+
+
+def test_right_click_inside_a_routine_span_offers_check_out_for_versioning(qtbot):
+    from pgtp_editor.db.ddl_buffer import build_ddl_text
+
+    schema = _schema_with_two_objects()
+    text, spans = build_ddl_text(schema)
+    panel = EditorPanel()
+    qtbot.addWidget(panel)
+    panel.set_ddl_text(text, spans, schema=schema)
+    got = []
+    panel.checkout_requested.connect(lambda ref, source: got.append((ref, source)))
+
+    routine_span = next(s for s in spans if s.kind != "trigger")
+    pos = _local_pos_for_line(panel, routine_span.start_line + 1)
+    menu = panel._build_context_menu_at(pos)
+    action = _checkout_action_target(menu)
+    assert action is not None
+    action.trigger()
+
+    assert len(got) == 1
+    ref, source = got[0]
+    assert ref.name == "calc_total"
+
+
 def test_right_click_inside_a_routine_span_offers_edit_with_its_qualified_name(qtbot):
     from pgtp_editor.db.ddl_buffer import build_ddl_text
 

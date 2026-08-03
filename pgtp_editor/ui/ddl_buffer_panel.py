@@ -35,6 +35,7 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QMenu, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget
 
 from pgtp_editor.db.ddl_buffer import DdlObjectSpan
+from pgtp_editor.db.ddl_project import DriftMarkers, routine_ddl_paths, trigger_ddl_path
 from pgtp_editor.db.introspect import DatabaseSchema
 from pgtp_editor.ui.ddl_object_editor import DdlObjectRef
 
@@ -103,6 +104,11 @@ class BrowserPanel(QWidget):
     #: editable tab, with no second lookup back into the schema.
     edit_requested = Signal(object, str)
 
+    #: Right-click ▸ Check Out for Versioning on an object row (spec §18.2).
+    #: Same payload shape as `edit_requested` -- checkout is a second variant
+    #: of the Edit… gesture, not a second tab type or a second editor.
+    checkout_requested = Signal(object, str)
+
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.tree = QTreeWidget()
@@ -120,9 +126,19 @@ class BrowserPanel(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self.tree)
 
-    def set_schema(self, schema: DatabaseSchema, spans: list[DdlObjectSpan]) -> None:
+    def set_schema(
+        self,
+        schema: DatabaseSchema,
+        spans: list[DdlObjectSpan],
+        drift_markers: dict[str, DriftMarkers] | None = None,
+    ) -> None:
         """Rebuild the tree from ``schema`` (routines/triggers) and the
-        ``DdlObjectSpan`` index of the buffer they were rendered into."""
+        ``DdlObjectSpan`` index of the buffer they were rendered into.
+
+        `drift_markers` (§18.2, keyed by `ddl/*.sql` relative path, from
+        `db/ddl_project.py::compute_drift_markers`) renders the combinable
+        `*`/`!` state markers on each object row when a project is open;
+        `None` (no project) renders nothing, exactly as before."""
         self._schema = schema
         self.tree.clear()
 
@@ -137,10 +153,11 @@ class BrowserPanel(QWidget):
             elif span.signature is not None:
                 span_by_routine[span.signature] = span
 
-        self._build_tables_branch(schema, span_by_trigger)
-        self._build_routines_branch(schema, span_by_routine, span_by_trigger)
+        markers = drift_markers or {}
+        self._build_tables_branch(schema, span_by_trigger, markers)
+        self._build_routines_branch(schema, span_by_routine, span_by_trigger, markers)
 
-    def _build_tables_branch(self, schema: DatabaseSchema, span_by_trigger) -> None:
+    def _build_tables_branch(self, schema: DatabaseSchema, span_by_trigger, markers) -> None:
         by_table: dict[tuple[str, str], list] = {}
         for trigger in schema.triggers.values():
             by_table.setdefault((trigger.schema, trigger.table), []).append(trigger)
@@ -153,9 +170,11 @@ class BrowserPanel(QWidget):
             tables_root.addChild(table_item)
             for trigger in triggers:
                 span = span_by_trigger.get((trigger.schema, trigger.table, trigger.name))
-                self._add_trigger_leaf(table_item, trigger, span)
+                self._add_trigger_leaf(table_item, trigger, span, markers)
 
-    def _build_routines_branch(self, schema: DatabaseSchema, span_by_routine, span_by_trigger) -> None:
+    def _build_routines_branch(
+        self, schema: DatabaseSchema, span_by_routine, span_by_trigger, markers
+    ) -> None:
         triggers_by_function: dict[tuple[str, str], list] = {}
         for trigger in schema.triggers.values():
             triggers_by_function.setdefault(
@@ -171,6 +190,7 @@ class BrowserPanel(QWidget):
             schema.routines.values(),
             key=lambda r: (r.schema, r.name, tuple(r.arg_types)),
         )
+        routine_paths = routine_ddl_paths(schema.routines) if markers else {}
         for routine in routines:
             marker = _routine_marker(routine)
             qualified = f"{routine.schema}.{routine.name}"
@@ -180,6 +200,9 @@ class BrowserPanel(QWidget):
             label = (
                 f"{qualified} [{marker}]" if routine.args else f"{qualified}() [{marker}]"
             )
+            drift = markers.get(routine_paths.get(routine.signature))
+            if drift is not None and drift.marker_text:
+                label = f"{label} {drift.marker_text}"
             routine_item = QTreeWidgetItem([label])
             span = span_by_routine.get(routine.signature)
             if span is not None:
@@ -199,16 +222,23 @@ class BrowserPanel(QWidget):
                 trigger_span = span_by_trigger.get(
                     (trigger.schema, trigger.table, trigger.name)
                 )
-                self._add_trigger_leaf(routine_item, trigger, trigger_span)
+                self._add_trigger_leaf(routine_item, trigger, trigger_span, markers)
 
-    def _add_trigger_leaf(self, parent: QTreeWidgetItem, trigger, span) -> None:
+    def _add_trigger_leaf(self, parent: QTreeWidgetItem, trigger, span, markers=None) -> None:
         """Composite trigger label, identical in both branches (§18.1):
-        ``schema.table.name`` + timing indicator + one indicator per event."""
+        ``schema.table.name`` + timing indicator + one indicator per event,
+        plus the `*`/`!` drift marker text (§18.2) when `markers` names one
+        for this trigger's `ddl/*.sql` path."""
         timing = _TIMING_LETTERS.get(trigger.timing, "?")
         events = "".join(
             f"[{_EVENT_LETTERS.get(event, '?')}]" for event in trigger.events
         )
         label = f"{trigger.schema}.{trigger.table}.{trigger.name} [{timing}]{events}"
+        if markers:
+            relpath = trigger_ddl_path(trigger.schema, trigger.table, trigger.name)
+            drift = markers.get(relpath)
+            if drift is not None and drift.marker_text:
+                label = f"{label} {drift.marker_text}"
         leaf = QTreeWidgetItem([label])
         if span is not None:
             leaf.setData(0, _SPAN_ROLE, span)
@@ -234,4 +264,8 @@ class BrowserPanel(QWidget):
         ref, source = resolved
         menu = QMenu(self)
         menu.addAction(f"Edit {ref.qualified}…", lambda: self.edit_requested.emit(ref, source))
+        menu.addAction(
+            "Check Out for Versioning",
+            lambda: self.checkout_requested.emit(ref, source),
+        )
         menu.exec(self.tree.viewport().mapToGlobal(pos))

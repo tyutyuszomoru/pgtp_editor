@@ -59,6 +59,10 @@ class EditorPanel(QWidget):
     #: current source text.
     edit_requested = Signal(object, str)
 
+    #: Right-click inside an object's span ▸ Check Out for Versioning
+    #: (spec §18.2). Same payload shape as `edit_requested`.
+    checkout_requested = Signal(object, str)
+
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.editor = CodeEditor(language="sql")
@@ -143,5 +147,9 @@ class EditorPanel(QWidget):
                 menu.addAction(
                     f"Edit {ref.qualified}…",
                     lambda: self.edit_requested.emit(ref, source),
+                )
+                menu.addAction(
+                    "Check Out for Versioning",
+                    lambda: self.checkout_requested.emit(ref, source),
                 )
         return menu

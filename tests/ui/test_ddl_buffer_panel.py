@@ -760,18 +760,22 @@ def test_edit_menu_action_triggers_edit_requested(qtbot, monkeypatch):
     from PySide6.QtCore import QPoint
     from PySide6.QtWidgets import QTreeWidget
 
-    captured = {}
+    captured = {"actions": []}
 
     class _FakeMenu:
         def __init__(self, *a, **k):
             pass
 
         def addAction(self, label, cb=None):
-            captured["label"] = label
-            captured["cb"] = cb
+            captured["actions"].append((label, cb))
 
         def exec(self, *a, **k):
-            captured["cb"]()
+            # The real menu only ever triggers the ONE action the user
+            # clicked; simulate clicking "Edit …" specifically.
+            for label, cb in captured["actions"]:
+                if label.startswith("Edit "):
+                    cb()
+                    return
 
     monkeypatch.setattr("pgtp_editor.ui.ddl_buffer_panel.QMenu", _FakeMenu)
     item = _routine_item(panel)
@@ -779,8 +783,208 @@ def test_edit_menu_action_triggers_edit_requested(qtbot, monkeypatch):
 
     panel._on_context_menu(QPoint(0, 0))  # position is irrelevant, itemAt is patched
 
-    assert captured["label"] == "Edit pr.calc_total(integer, numeric)…"
+    labels = [label for label, _cb in captured["actions"]]
+    assert labels == ["Edit pr.calc_total(integer, numeric)…", "Check Out for Versioning"]
     assert len(got) == 1
     ref, source = got[0]
     assert ref.name == "calc_total"
     assert source == "body1"
+
+
+def test_checkout_menu_action_triggers_checkout_requested(qtbot, monkeypatch):
+    """The right-click ▸ Check Out for Versioning path, end to end (§18.2)."""
+    schema = _schema()
+    text, spans = build_ddl_text(schema)
+    panel = BrowserPanel()
+    qtbot.addWidget(panel)
+    panel.set_schema(schema, spans)
+    got = []
+    panel.checkout_requested.connect(lambda ref, source: got.append((ref, source)))
+
+    from PySide6.QtCore import QPoint
+    from PySide6.QtWidgets import QTreeWidget
+
+    captured = {"actions": []}
+
+    class _FakeMenu:
+        def __init__(self, *a, **k):
+            pass
+
+        def addAction(self, label, cb=None):
+            captured["actions"].append((label, cb))
+
+        def exec(self, *a, **k):
+            for label, cb in captured["actions"]:
+                if label == "Check Out for Versioning":
+                    cb()
+                    return
+
+    monkeypatch.setattr("pgtp_editor.ui.ddl_buffer_panel.QMenu", _FakeMenu)
+    item = _routine_item(panel)
+    monkeypatch.setattr(QTreeWidget, "itemAt", lambda self, pos: item)
+
+    panel._on_context_menu(QPoint(0, 0))
+
+    assert len(got) == 1
+    ref, source = got[0]
+    assert ref.name == "calc_total"
+    assert source == "body1"
+
+
+# --- */! drift markers (spec §18.2) -----------------------------------------
+def test_no_markers_when_drift_markers_is_none(qtbot):
+    """No project open -- rendering must be identical to before this
+    feature existed (no trailing marker text at all)."""
+    schema = _schema()
+    text, spans = build_ddl_text(schema)
+    panel = BrowserPanel()
+    qtbot.addWidget(panel)
+
+    panel.set_schema(schema, spans)  # drift_markers omitted entirely
+
+    calc_total_item = panel.tree.topLevelItem(1).child(1)
+    assert calc_total_item.text(0) == "pr.calc_total [F]"
+
+
+def test_star_marker_rendered_on_a_locally_edited_routine(qtbot):
+    from pgtp_editor.db.ddl_project import DriftMarkers
+
+    schema = _schema()
+    text, spans = build_ddl_text(schema)
+    panel = BrowserPanel()
+    qtbot.addWidget(panel)
+
+    panel.set_schema(
+        schema, spans,
+        drift_markers={"ddl/pr.calc_total.sql": DriftMarkers(locally_edited=True)},
+    )
+
+    calc_total_item = panel.tree.topLevelItem(1).child(1)
+    assert calc_total_item.text(0) == "pr.calc_total [F] *"
+
+
+def test_bang_marker_rendered_on_a_live_drifted_routine(qtbot):
+    from pgtp_editor.db.ddl_project import DriftMarkers
+
+    schema = _schema()
+    text, spans = build_ddl_text(schema)
+    panel = BrowserPanel()
+    qtbot.addWidget(panel)
+
+    panel.set_schema(
+        schema, spans,
+        drift_markers={"ddl/pr.calc_total.sql": DriftMarkers(live_drifted=True)},
+    )
+
+    calc_total_item = panel.tree.topLevelItem(1).child(1)
+    assert calc_total_item.text(0) == "pr.calc_total [F] !"
+
+
+def test_both_markers_combine_never_a_third_symbol(qtbot):
+    from pgtp_editor.db.ddl_project import DriftMarkers
+
+    schema = _schema()
+    text, spans = build_ddl_text(schema)
+    panel = BrowserPanel()
+    qtbot.addWidget(panel)
+
+    panel.set_schema(
+        schema, spans,
+        drift_markers={
+            "ddl/pr.calc_total.sql": DriftMarkers(locally_edited=True, live_drifted=True)
+        },
+    )
+
+    calc_total_item = panel.tree.topLevelItem(1).child(1)
+    assert calc_total_item.text(0) == "pr.calc_total [F] *!"
+
+
+def test_marker_only_applies_to_the_named_object_not_siblings(qtbot):
+    from pgtp_editor.db.ddl_project import DriftMarkers
+
+    schema = _schema()
+    text, spans = build_ddl_text(schema)
+    panel = BrowserPanel()
+    qtbot.addWidget(panel)
+
+    panel.set_schema(
+        schema, spans,
+        drift_markers={"ddl/pr.calc_total.sql": DriftMarkers(locally_edited=True)},
+    )
+
+    audit_log_item = panel.tree.topLevelItem(1).child(0)
+    assert audit_log_item.text(0) == "pr.audit_log() [T]"  # untouched
+
+
+def test_marker_rendered_on_a_trigger_leaf_under_its_table(qtbot):
+    from pgtp_editor.db.ddl_project import DriftMarkers
+
+    schema = _schema()
+    text, spans = build_ddl_text(schema)
+    panel = BrowserPanel()
+    qtbot.addWidget(panel)
+
+    panel.set_schema(
+        schema, spans,
+        drift_markers={
+            "ddl/pr.equipment.trg_audit.sql": DriftMarkers(locally_edited=True)
+        },
+    )
+
+    table_item = panel.tree.topLevelItem(0).child(0)  # pr.equipment
+    trigger_leaf = next(
+        table_item.child(i) for i in range(table_item.childCount())
+        if "trg_audit" in table_item.child(i).text(0)
+    )
+    assert trigger_leaf.text(0) == "pr.equipment.trg_audit [A][I][U] *"
+
+
+def test_marker_rendered_on_a_trigger_leaf_under_its_calling_function(qtbot):
+    """Both trigger occurrences (§18.1: table branch + function branch) get
+    the same marker -- they point at the same underlying object."""
+    from pgtp_editor.db.ddl_project import DriftMarkers
+
+    schema = _schema()
+    text, spans = build_ddl_text(schema)
+    panel = BrowserPanel()
+    qtbot.addWidget(panel)
+
+    panel.set_schema(
+        schema, spans,
+        drift_markers={
+            "ddl/pr.equipment.trg_audit.sql": DriftMarkers(live_drifted=True)
+        },
+    )
+
+    audit_log_item = panel.tree.topLevelItem(1).child(0)
+    trigger_leaf = audit_log_item.child(0)
+    assert trigger_leaf.text(0) == "pr.equipment.trg_audit [A][I][U] !"
+
+
+def test_object_with_no_matching_marker_entry_renders_unmarked(qtbot):
+    from pgtp_editor.db.ddl_project import DriftMarkers
+
+    schema = _schema()
+    text, spans = build_ddl_text(schema)
+    panel = BrowserPanel()
+    qtbot.addWidget(panel)
+
+    panel.set_schema(
+        schema, spans,
+        drift_markers={"ddl/some.other.sql": DriftMarkers(locally_edited=True)},
+    )
+
+    calc_total_item = panel.tree.topLevelItem(1).child(1)
+    assert calc_total_item.text(0) == "pr.calc_total [F]"
+
+
+def test_empty_drift_markers_dict_renders_unmarked(qtbot):
+    schema = _schema()
+    text, spans = build_ddl_text(schema)
+    panel = BrowserPanel()
+    qtbot.addWidget(panel)
+
+    panel.set_schema(schema, spans, drift_markers={})
+
+    calc_total_item = panel.tree.topLevelItem(1).child(1)
+    assert calc_total_item.text(0) == "pr.calc_total [F]"

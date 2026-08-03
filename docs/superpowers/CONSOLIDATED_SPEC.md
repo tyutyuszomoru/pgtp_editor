@@ -1710,10 +1710,27 @@ separate single-object tab, which reaches this panel only through the right-clic
 
 ### 18.2 Projects, checkout & state markers
 
-> **Status: target design, not yet implemented.** Nothing in this subsection exists in the codebase —
-> there is no `db/ddl_project.py`, no project menu actions, no project-settings JSON handling and no
-> marker rendering on `BrowserPanel`. §18.1's browsing substrate (which *is* implemented) and §18.5's
-> editable tab (target design) are what this builds on.
+> **Status: implemented and shipped (feature-tester green, `docs/TEST_LOG.md` 2026-08-03 — the main
+> implementation pass and a small follow-up bug-fix pass for a re-open-redirect issue, since fixed).**
+> `db/ddl_project.py` exists with the full `ProjectSettings`/`PgtpLink`/`DeployedObject`/`GitConfig`
+> shape, `settings_path`/`load_settings`/`save_settings` (+ `.gitignore` maintenance),
+> `routine_ddl_paths`/`trigger_ddl_path` (the `_1`-suffix overload scheme),
+> `parse_checked_out_header`/`reconcile_routine_paths` (header-based rename detection), `content_hash`,
+> and `DriftMarkers`/`compute_drift_markers`. The Database-menu actions (**New Project…**, **Open
+> Project…**, **Close Project**, **Project Settings…**, **Deploy .pgtp**), the project-settings JSON
+> dialogs (`ui/new_project_dialog.py::NewProjectDialog`, `ui/project_settings_dialog.py::ProjectSettingsDialog`),
+> `*`/`!` marker rendering on `BrowserPanel.set_schema`'s `drift_markers` parameter, and the
+> checkout-to-edit path (`BrowserPanel`/`EditorPanel`'s `checkout_requested` signal,
+> `MainWindow._checkout_and_edit`/`_ddl_checkout_relpath`) are all in place, as is the `.pgtp`-as-checked-
+> out-artifact machinery (`MainWindow._link_pgtp_to_project_if_needed`, `_resolve_pgtp_project_path`,
+> `_is_ddl_project_pgtp_working_copy`, `_deploy_pgtp`). The **New Project superuser Test button** reuses
+> the §18.5 D2 capability probe (`db/sandbox.py::SandboxCapabilities`/`probe`) as specified — that module
+> is deliberately only the probe slice; the accumulating `SandboxSession`, `build_baseline_sql`, and the
+> rest of the provisioning ladder remain genuinely unbuilt, per §18.5 D2/D3's still-deferred sandbox lane
+> (one of the six carve-outs, not a gap in this subsection). Likewise, git integration throughout this
+> subsection is an **explicit, intentional TBD/placeholder** (see "Git is optional and TBD" below) — it
+> was never meant to be built in this pass, so its absence is not implementation drift. §18.1's browsing
+> substrate and §18.5's editable tab are what this builds on, both also implemented.
 >
 > **This subsection adds no new tab type.** The editable single-object tab is
 > `ui/ddl_object_editor.py::DdlObjectEditorPanel`, specified **once**, in **§18.5**. Everything here is

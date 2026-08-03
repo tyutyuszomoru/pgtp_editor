@@ -199,19 +199,25 @@ class CenterStage(QTabWidget):
         """The open `DdlObjectEditorPanel` for `key`, or None."""
         return self._ddl_object_tabs.get(key)
 
-    def open_ddl_object_tab(self, ref, text, resolve_save_path=None):
-        """Focus the existing tab for `ref` if one is already open; otherwise
-        create it, append it (always AFTER the fixed set), and focus that.
+    def open_ddl_object_tab(self, ref, text, resolve_save_path=None, key=None):
+        """Focus the existing tab for `key` (default: `ref.key`) if one is
+        already open; otherwise create it, append it (always AFTER the fixed
+        set), and focus that.
 
-        Never opens a second tab for the same object (spec §18.5)."""
-        existing = self._ddl_object_tabs.get(ref.key)
+        `key` is overridable so a **checked-out** object (§18.2) can be keyed
+        on its resolved absolute `ddl/*.sql` path instead of `ref.key` --
+        re-invoking Edit on a checked-out object must focus the existing tab
+        even though the same object project-less would key on identity
+        alone. Never opens a second tab for the same object (spec §18.5)."""
+        tab_key = ref.key if key is None else key
+        existing = self._ddl_object_tabs.get(tab_key)
         if existing is not None:
             self.setCurrentWidget(existing)
             return existing
 
         panel = DdlObjectEditorPanel(ref, text, resolve_save_path=resolve_save_path)
         self.addTab(panel, panel.tab_title())
-        self._ddl_object_tabs[ref.key] = panel
+        self._ddl_object_tabs[tab_key] = panel
         self.setCurrentWidget(panel)
         return panel
 
@@ -227,11 +233,13 @@ class CenterStage(QTabWidget):
             self.removeTab(index)
         panel.deleteLater()
 
-    def update_ddl_object_tab(self, ref):
+    def update_ddl_object_tab(self, ref, key=None):
         """Refresh a DDL object tab's title/tooltip from its panel's current
         dirty state -- call after any edit that may have crossed the
-        clean/dirty boundary."""
-        panel = self._ddl_object_tabs.get(ref.key)
+        clean/dirty boundary. `key` overrides `ref.key`, mirroring
+        `open_ddl_object_tab` (checked-out objects key on their path)."""
+        tab_key = ref.key if key is None else key
+        panel = self._ddl_object_tabs.get(tab_key)
         if panel is None:
             return
         index = self.indexOf(panel)

@@ -291,6 +291,71 @@ def test_generate_output_folder_prefilled_from_project_output_path(qtbot, tmp_pa
     assert captured["directory"] == out_attr
 
 
+def test_generate_output_folder_prefers_the_open_local_project_folder(qtbot, tmp_path):
+    """§18.2: when a local DDL-versioning project is open, its folder wins
+    ahead of Project@outputPath and the .pgtp's own directory -- still a
+    prefill, the picker itself is unchanged."""
+    from pgtp_editor.model.parser import load_project_from_text
+
+    window, fake, exe = _configured_window(qtbot, tmp_path)
+    out_attr = str(tmp_path / "declared_out")
+    xml = f'<Project outputPath="{out_attr}"><Presentation><Pages/></Presentation></Project>'
+    window.center_stage.xml_editor.setPlainText(xml)
+    window._current_project = load_project_from_text(xml)
+    window._current_project_path = str(tmp_path / "proj.pgtp")
+    project_folder = tmp_path / "ddl-project"
+    project_folder.mkdir()
+    from pgtp_editor.db.ddl_project import ProjectSettings
+
+    window._set_active_ddl_project(project_folder, ProjectSettings())
+
+    captured = {}
+
+    def fake_dir(parent, caption, directory):
+        captured["directory"] = directory
+        return ""
+
+    with patch(
+        "pgtp_editor.ui.main_window.QMessageBox.question",
+        return_value=QMessageBox.StandardButton.Save,
+    ), patch(
+        "pgtp_editor.ui.main_window.QFileDialog.getExistingDirectory",
+        side_effect=fake_dir,
+    ):
+        window._generate_php()
+
+    assert captured["directory"] == str(project_folder)
+
+
+def test_generate_output_folder_falls_back_normally_with_no_project_open(qtbot, tmp_path):
+    """No-project mode is completely unaffected (§18.2)."""
+    from pgtp_editor.model.parser import load_project_from_text
+
+    window, fake, exe = _configured_window(qtbot, tmp_path)
+    out_attr = str(tmp_path / "declared_out")
+    xml = f'<Project outputPath="{out_attr}"><Presentation><Pages/></Presentation></Project>'
+    window.center_stage.xml_editor.setPlainText(xml)
+    window._current_project = load_project_from_text(xml)
+    window._current_project_path = str(tmp_path / "proj.pgtp")
+
+    captured = {}
+
+    def fake_dir(parent, caption, directory):
+        captured["directory"] = directory
+        return ""
+
+    with patch(
+        "pgtp_editor.ui.main_window.QMessageBox.question",
+        return_value=QMessageBox.StandardButton.Save,
+    ), patch(
+        "pgtp_editor.ui.main_window.QFileDialog.getExistingDirectory",
+        side_effect=fake_dir,
+    ):
+        window._generate_php()
+
+    assert captured["directory"] == out_attr  # unchanged fallback behavior
+
+
 def _run_generation(window, fake, tmp_path):
     from PySide6.QtWidgets import QMessageBox
     window.center_stage.xml_editor.setPlainText("<Project/>")

@@ -52,6 +52,16 @@ busy feedback*.
 The editor writes UTF-8 and preserves your original line endings — it does not
 convert line endings or re-encode content on save.
 
+> **When a local DDL-versioning project is open** (see *Local DDL-Versioning
+> Projects*) and this `.pgtp` is that project's linked working copy, Save behaves
+> a little differently: it writes the working copy and **makes no `.bak`
+> backup**, because the working copy itself is the safety net. This applies
+> **only** in that situation — an ordinary `.pgtp` opened with no project active
+> (or a `.pgtp` that isn't the active project's linked working copy) keeps making
+> `.bak` backups exactly as described above. Pushing the working copy's changes
+> back to the original file is a separate action, **Deploy .pgtp** — see *Local
+> DDL-Versioning Projects*.
+
 ---
 
 ## The Project Tree
@@ -554,6 +564,20 @@ reads `[A][I][U]`. The label is identical in both branches of the tree, so you
 recognize the same trigger whether you found it under its table or under the
 function it calls.
 
+When a **local DDL-versioning project** is open (see *Local DDL-Versioning
+Projects*), object rows also carry combinable drift markers after their other
+indicators:
+
+- **`*`** — the checked-out local file has edits not yet included in a batch
+  deploy.
+- **`!`** — the live database has drifted from what was last deployed.
+- Both can appear together as **`*!`** — there is no separate third symbol for
+  "both."
+
+Both markers are purely informational: they surface disagreement between the
+local file, the last deploy, and the live database, but never block anything
+by themselves. With no project open, no markers are shown.
+
 ### Working in the DDL tab
 
 The DDL Explorer buffer is read-only, but it is a real editor view with the same
@@ -600,6 +624,18 @@ a text editor over the object's current definition.
 - Re-invoking Edit on an object that's already open **focuses its existing
   tab** rather than opening a second one.
 
+Both right-click menus also offer **Check Out for Versioning** alongside
+**Edit …**. This is the project-aware variant of the same gesture: it requires
+a local DDL-versioning project to be open (see *Local DDL-Versioning
+Projects*) — if none is, a **"Project Required"** dialog offers
+**Create…** / **Open…** / **Cancel** before continuing. Checking out an object
+seeds a `ddl/<schema>.<name>.sql` file from the live definition the first
+time (or just opens it if it's already checked out — **the local file is
+never silently overwritten from the database**), then opens the same editable
+tab described below, backed by that file instead of a live, unsaved buffer.
+Re-invoking either Edit… or Check Out for Versioning on an object already
+checked out and open focuses its existing tab.
+
 The tab that opens is titled with the object's short name — `recalc`, or
 `fmt(integer)` when it's one of several overloads, or `orders.trg_audit` for a
 trigger — plus the same `" *"` dirty marker the **Edit XSD** tab uses once you
@@ -627,6 +663,10 @@ database — it only writes a `.sql` file to disk:
 - **Ctrl+Shift+S** (File ▸ Save As) is **not** repointed to this tab — it
   always means the `.pgtp` project, whichever tab is active.
 
+A tab opened via **Check Out for Versioning** (above) skips the Save As…
+picker entirely — its path is already the checked-out `ddl/*.sql` file, so
+every Ctrl+S from the first save onward writes straight to it.
+
 **Closing** the tab (its **✕**, or the app's usual close-tab gesture) prompts
 **Save**, **Discard**, or **Cancel** if it has unsaved changes, the same as
 **Edit XSD**. Choosing **Save** on a tab that has never been saved runs Save
@@ -649,6 +689,131 @@ silently discarded to resync with the database.
 
 There is no Apply, Check, or sandbox validation in this version — editing and
 saving a `.sql` file to disk is all it does today.
+
+---
+
+## Local DDL-Versioning Projects
+
+A **local project** is a plain folder on your own machine that gives you a
+versioned, file-based home for the DDL objects and the `.pgtp` file you're
+working on — checked-out routines and triggers as individual `.sql` files, an
+optional local sandbox connection, and (later) git integration. Everything the
+app manages here is a plain, readable file: nothing is a black box.
+
+Nothing here is required for ordinary editing. Browsing the DDL Explorer and
+plain **Edit …** (see *DDL Explorer*) work with just a database connection, no
+project needed. A project becomes relevant only once you want checked-out
+`ddl/` files, a versioned `.pgtp` working copy, drift markers, or a deploy.
+
+### The Database menu's project actions
+
+Five actions on the **Database** menu manage projects, alongside the existing
+Connection Setup / Check / DDL Explorer entries:
+
+- **New Project…**
+- **Open Project…**
+- **Close Project** — disabled until a project is open.
+- **Project Settings…**
+- **Deploy .pgtp**
+
+**No project is ever created silently.** Any action that needs one — Check
+Out for Versioning, for example — shows a **"Project Required"** dialog
+offering **Create…**, **Open…**, or **Cancel** if none is open yet; choosing
+Create or Open runs that flow first and then continues the original action.
+
+### Creating a project
+
+**New Project…** opens a dialog with:
+
+- **Name** and **Description** — optional, free text.
+- **Project folder** — pick a folder with **Browse…**; that folder *is* the
+  project. There's no separate bootstrap step.
+- **Local sandbox (optional)** — a Postgres connection (Host, Port, Database,
+  User, Password) with its own **Test** button. Testing here checks something
+  specific: that the connected user is a **superuser**, since sandbox
+  provisioning needs `CREATE EXTENSION`. It reports one of:
+  - **"Connected — superuser."**
+  - **"Connected, but NOT a superuser — sandbox provisioning needs CREATE
+    EXTENSION."**
+  - the raw connection error, if it couldn't connect at all.
+- **Git (optional — not yet used)** — Server, User, and Checkout branch
+  fields. These are captured and saved with the project, but git integration
+  isn't built yet: nothing is cloned, committed, or pushed. They're recorded
+  now so the intent isn't lost later.
+
+### Opening a project
+
+**Open Project…** picks an existing project folder. On open, the app compares
+a checksum of the linked `.pgtp`'s working copy against its source and reports
+the result as an Audit-panel line prefixed `[Project]`:
+
+- **"Source .pgtp checksum recorded (…)."** — first time this comparison ran.
+- **"Source .pgtp unchanged since last opened (…)."**
+- **"Source .pgtp has changed since this project last saw it (…) — surfaced,
+  not auto-resolved."**
+
+If the DDL Explorer's routines and triggers are already loaded, its tree's
+drift markers (see *DDL Explorer*) refresh at the same time.
+
+### Project Settings
+
+**Project Settings…** opens a dialog exposing everything about the project in
+one place, fully editable, saved back to the project's settings file on OK:
+
+- **Name** / **Description**.
+- **`.pgtp` link** — the source path (the sshfs-mounted original), the working
+  copy path, and the last-known source checksum.
+- **Target connection** and **Sandbox connection** — both connection
+  profiles in full, including their password fields.
+- **Git** — the same Server / User / Checkout branch fields as New Project.
+- **Deploy manifest** — a table, one row per DDL object, of its `ddl/` path,
+  its last-deployed content hash, and its deployed-commit-id (if any), with
+  **Add Row** / **Remove Selected Row** buttons.
+
+### Where project settings live
+
+A project's settings are one JSON file at `<project folder>/.ddlproject/settings.json`
+— plaintext, including the password fields. The project folder's `.gitignore`
+gets a `.ddlproject/` entry added automatically so this file is never
+accidentally committed. Keeping it plaintext and local to the folder (rather
+than in the app's global settings) means the project folder is self-contained
+and portable — you can copy, back up, or hand off the whole folder and it
+still works.
+
+### Checking out DDL objects
+
+See *DDL Explorer ▸ Editing a single function, procedure, or trigger* for the
+**Check Out for Versioning** gesture itself and the drift markers (`*`/`!`)
+this adds to the DDL Objects tree.
+
+### The .pgtp file as a checked-out artifact
+
+The first time you open a `.pgtp` file while a project is active, the app
+copies it into the project folder as a **working copy** and remembers the
+link — this happens automatically, with no extra step. From then on:
+
+- Ordinary **Save** (Ctrl+S) writes to this working copy and makes **no
+  `.bak` backup** — the working copy itself is the safety net. See *Getting
+  Started ▸ Saving, closing, reverting* for how this compares to plain,
+  project-less `.pgtp` saves, which are unaffected.
+- Pushing your edits back to the original file (on the shared/quality server)
+  is the separate, explicit **Deploy .pgtp** action — reachable any time from
+  the Database menu.
+- Closing the project (**Close Project**) also offers this as a yes/no
+  prompt if the working copy has changes not yet pushed. Declining just
+  closes the project without pushing; nothing is lost.
+
+### Closing a project
+
+**Close Project** always succeeds — closing never forces anything. Along the
+way it reminds you, via Audit-panel lines, of anything left informational and
+unresolved:
+
+- If the `.pgtp` working copy has unpushed changes, it offers to **Deploy
+  .pgtp** (see above) — a yes/no prompt, not a requirement.
+- If there are DDL objects with local edits not yet included in a batch
+  deploy, it adds an Audit-panel line noting how many — it does not open any
+  deploy flow automatically.
 
 ---
 
@@ -705,7 +870,11 @@ The **Generation** menu drives the PHP Generator command-line to compile your
 1. **Locate PHP Generator Executable…** once (the path is stored for future use).
 2. **Generate PHP…** — if the project has unsaved changes, you're prompted to
    **Save** or **Save As** first, so the generator always runs against the file on
-   disk.
+   disk. The output-folder picker that follows is prefilled — with the open
+   **local DDL-versioning project's folder** if one is active (see *Local
+   DDL-Versioning Projects*), otherwise with the project's declared
+   `outputPath` if it has one, otherwise with the current project file's own
+   folder — but it's only a prefill: you can always choose a different folder.
 3. **Open Output Folder** opens the generated output in your file browser.
 
 ---

@@ -365,3 +365,42 @@ def test_clicking_a_leaf_scrolls_that_banner_to_the_top(qtbot, tmp_path):
     panel._on_item_clicked(calc_total_item, 0)
 
     assert editor.firstVisibleBlock().text() == "-- FUNCTION pr.calc_total(integer) --"
+
+
+# --- */! drift markers wired into the DDL Explorer fetch (§18.2) ------------
+def test_toggle_on_with_a_project_open_renders_drift_markers(qtbot, tmp_path):
+    from pgtp_editor.db.ddl_project import DeployedObject, ProjectSettings, content_hash, save_settings
+
+    window = _window(qtbot, tmp_path)
+    project_dir = tmp_path / "proj"
+    settings = ProjectSettings(
+        deployed={
+            "ddl/pr.calc_total.sql": DeployedObject(content_hash="stale-hash"),
+        }
+    )
+    save_settings(project_dir, settings)
+    window._set_active_ddl_project(project_dir, settings)
+
+    window._ddl_explorer_action.setChecked(True)
+
+    panel = window.ddl_browser_panel
+    routines_root = panel.tree.topLevelItem(1)
+    calc_total_item = next(
+        routines_root.child(i) for i in range(routines_root.childCount())
+        if "calc_total" in routines_root.child(i).text(0)
+    )
+    assert calc_total_item.text(0).endswith("!")  # live def differs from stale-hash
+
+
+def test_toggle_on_with_no_project_open_renders_no_markers(qtbot, tmp_path):
+    window = _window(qtbot, tmp_path)
+
+    window._ddl_explorer_action.setChecked(True)
+
+    panel = window.ddl_browser_panel
+    routines_root = panel.tree.topLevelItem(1)
+    calc_total_item = next(
+        routines_root.child(i) for i in range(routines_root.childCount())
+        if "calc_total" in routines_root.child(i).text(0)
+    )
+    assert calc_total_item.text(0) == "pr.calc_total() [F]"

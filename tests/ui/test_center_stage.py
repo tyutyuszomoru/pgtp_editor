@@ -320,3 +320,50 @@ def test_ddl_object_tab_has_a_close_button_by_default(qtbot):
     right = QTabBar.ButtonPosition.RightSide
     left = QTabBar.ButtonPosition.LeftSide
     assert bar.tabButton(index, right) is not None or bar.tabButton(index, left) is not None
+
+
+# --- Key override (checked-out objects key on their ddl/*.sql path, §18.2) --
+def test_open_ddl_object_tab_key_override_is_used_instead_of_ref_key(qtbot):
+    stage = CenterStage()
+    qtbot.addWidget(stage)
+
+    panel = stage.open_ddl_object_tab(_REF, "text", key="ddl/pr.recalc.sql")
+
+    assert stage.ddl_object_tab("ddl/pr.recalc.sql") is panel
+    assert stage.ddl_object_tab(_REF.key) is None  # not keyed by identity here
+
+
+def test_open_ddl_object_tab_with_the_same_override_key_focuses_not_duplicates(qtbot):
+    stage = CenterStage()
+    qtbot.addWidget(stage)
+    first = stage.open_ddl_object_tab(_REF, "text", key="ddl/pr.recalc.sql")
+    stage.setCurrentIndex(stage.raw_xml_tab_index)
+
+    second = stage.open_ddl_object_tab(_REF, "ignored", key="ddl/pr.recalc.sql")
+
+    assert second is first
+    assert stage.currentWidget() is first
+
+
+def test_update_ddl_object_tab_key_override(qtbot):
+    stage = CenterStage()
+    qtbot.addWidget(stage)
+    panel = stage.open_ddl_object_tab(_REF, "text", key="ddl/pr.recalc.sql")
+    index = stage.indexOf(panel)
+    panel.editor.insertPlainText("x")
+
+    stage.update_ddl_object_tab(_REF, key="ddl/pr.recalc.sql")
+
+    assert stage.tabText(index) == "recalc *"
+
+
+def test_close_ddl_object_tab_with_override_key(qtbot):
+    stage = CenterStage()
+    qtbot.addWidget(stage)
+    fixed_count = stage.count()
+    stage.open_ddl_object_tab(_REF, "text", key="ddl/pr.recalc.sql")
+
+    stage.close_ddl_object_tab("ddl/pr.recalc.sql")
+
+    assert stage.count() == fixed_count
+    assert stage.ddl_object_tab("ddl/pr.recalc.sql") is None
