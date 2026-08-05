@@ -1314,4 +1314,514 @@ def test_next_bookmark_ignores_out_of_range_after_edit(qtbot):
     editor.setPlainText("a\nb\nc")
     editor.toggle_bookmark(999)  # points past EOF
     # navigation must not crash even though the block is invalid
-    editor.goto_next_bookmark()
+
+
+# -- resolve_attribute_at (BUG-003) -----------------------------------------
+
+
+def test_resolve_attribute_at_matches_uncached_free_function(qtbot):
+    """The cache-aware entry point must resolve to the same (tag_chain, attr)
+    the uncached free function would, for a position that IS on an attribute."""
+    from pgtp_editor.ui.xml_editor import attribute_at_position
+
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    text = '<Root>\n  <Page phpDriver="1"/>\n</Root>'
+    editor.setPlainText(text)
+    pos = text.index('"1"') + 1  # inside the attribute value
+
+    assert editor.resolve_attribute_at(pos) == attribute_at_position(text, pos)
+    assert editor.resolve_attribute_at(pos) == ("Root/Page", "phpDriver")
+
+
+def test_resolve_attribute_at_rescans_after_document_changes(qtbot):
+    """BUG-003: resolve_attribute_at must not serve a stale cache when the
+    document changed since the last scan -- it should force a rescan (mirrors
+    the guard in _update_matching_tag_highlight) rather than only ever
+    resolving positions valid at the time of the *first* scan."""
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    editor.setPlainText('<Root>\n  <Page phpDriver="1"/>\n</Root>')
+    revision_after_first_scan = editor._spans_revision
+
+    # Prime the cache by resolving once against the original document.
+    first_text = editor.toPlainText()
+    first_pos = first_text.index('"1"') + 1
+    assert editor.resolve_attribute_at(first_pos) == ("Root/Page", "phpDriver")
+
+    # Mutate the document -- this bumps document().revision() but does NOT by
+    # itself call _rescan_structure() until textChanged's connected slot runs;
+    # resolve_attribute_at must still notice the staleness and rescan rather
+    # than resolving against the old cached text/spans.
+    editor.setPlainText('<Root>\n  <Detail elementCaption="new"/>\n</Root>')
+    assert editor.document().revision() != revision_after_first_scan
+
+    new_text = editor.toPlainText()
+    new_pos = new_text.index('"new"') + 1
+    resolved = editor.resolve_attribute_at(new_pos)
+    assert resolved == ("Root/Detail", "elementCaption")
+    # And the stale position from the old document must not accidentally
+    # resolve to a leftover span from the previous scan.
+    assert editor._spans_text == new_text
+
+
+def test_resolve_attribute_at_none_when_not_on_attribute(qtbot):
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    text = "<Root>\n  <Page/>\n</Root>"
+    editor.setPlainText(text)
+    assert editor.resolve_attribute_at(0) is None
+
+
+def test_attribute_at_position_default_spans_none_still_scans_from_scratch(qtbot):
+    """Every existing caller that omits `spans=` (e.g. request_goto_xsd) must
+    keep working exactly as before -- the optional third parameter must not
+    change behavior for callers that don't pass it."""
+    from pgtp_editor.ui.xml_editor import (
+        attribute_at_position,
+        attribute_value_at_position,
+    )
+
+    text = '<Root>\n  <Page phpDriver="1"/>\n</Root>'
+    pos = text.index('"1"') + 1
+    assert attribute_at_position(text, pos) == ("Root/Page", "phpDriver")
+    assert attribute_value_at_position(text, pos) == ("Root/Page", "phpDriver", "1")
+
+
+# -- resolve_attribute_at indexed path (BUG-008) -----------------------------
+#
+# BUG-008 replaced resolve_attribute_at's per-call full-span walk (and its
+# per-level parent_tag_span scans) with a lazily built, revision-guarded
+# index (bisect over spans sorted by open_start + build_parent_map). These
+# tests pin the indexed path to the from-scratch free function: for EVERY
+# kind of position the two must return identical results.
+
+_BUG008_TEXT = (
+    "<Root>\n"
+    "  <Pages>\n"
+    '    <Page fileName="dev_equipment" tableName="pr.equipment">\n'
+    '      <Editor caption="a > b" raw="x>y" other="z"/>\n'
+    "      text content here\n"
+    "    </Page>\n"
+    '    <Page fileName="second"/>\n'
+    "  </Pages>\n"
+    "</Root>"
+)
+
+
+def _bug008_editor(qtbot):
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    editor.setPlainText(_BUG008_TEXT)
+    return editor
+
+
+def test_resolve_attribute_at_indexed_matches_free_function_on_attributes(qtbot):
+    """Equivalence on positions that ARE on an attribute: name token, quoted
+    value, deep nesting, and -- the robustness quirk -- an attribute that sits
+    AFTER a '>' inside another attribute's quoted value in the same tag (the
+    scanner's regex truncates the opening tag at that '>'; the quote-aware
+    _opening_tag_end recompute must keep resolving past it)."""
+    from pgtp_editor.ui.xml_editor import attribute_at_position
+
+    editor = _bug008_editor(qtbot)
+    text = _BUG008_TEXT
+    cases = [
+        # (position, expected (tag_chain, attr))
+        (text.index("fileName"), ("Root/Pages/Page", "fileName")),  # attr name token
+        (text.index('"pr.equipment"') + 3, ("Root/Pages/Page", "tableName")),  # quoted value
+        (text.index("caption"), ("Root/Pages/Page/Editor", "caption")),  # deep nesting
+        (text.index('"a > b"') + 3, ("Root/Pages/Page/Editor", "caption")),  # value w/ '>'
+        (text.index('"x>y"') + 2, ("Root/Pages/Page/Editor", "raw")),  # ON the quoted '>'
+        (text.index('other="z"'), ("Root/Pages/Page/Editor", "other")),  # after the '>' value
+    ]
+    for pos, expected in cases:
+        from_scratch = attribute_at_position(text, pos)
+        indexed = editor.resolve_attribute_at(pos)
+        assert indexed == from_scratch == expected, f"mismatch at position {pos}"
+
+
+def test_resolve_attribute_at_chain_unpolluted_by_earlier_gt_truncated_span(qtbot):
+    """The scanner truncates `<Editor caption="a > b" .../>` at the '>' inside
+    the quoted value, so its span is recorded as unclosed (close_end=None).
+    The pre-BUG-008 ancestor walk (parent_tag_span, depth-filtered) skipped
+    such a bogus span when resolving a LATER sibling element's attribute; the
+    indexed path must do the same -- the second <Page>'s tag_chain must not
+    inherit the phantom still-open Editor as an ancestor, and must equal the
+    from-scratch free function's result."""
+    from pgtp_editor.ui.xml_editor import attribute_at_position
+
+    editor = _bug008_editor(qtbot)
+    text = _BUG008_TEXT
+    pos = text.index('"second"') + 1
+    from_scratch = attribute_at_position(text, pos)
+    assert from_scratch == ("Root/Pages/Page", "fileName")  # pre-fix behavior
+    assert editor.resolve_attribute_at(pos) == from_scratch
+
+
+def test_resolve_attribute_at_chain_unpolluted_by_multiple_truncated_spans(qtbot):
+    """Two CONSECUTIVE '>'-truncated (unclosed) spans inside a properly closed
+    element leave TWO bogus ancestors stuck on build_parent_map's stack, at
+    depths that no longer line up with the later sibling's walk. The depth
+    filter in the indexed chain walk must climb past BOTH in sequence, matching
+    the from-scratch free function's parent_tag_span behavior."""
+    from pgtp_editor.ui.xml_editor import attribute_at_position
+
+    text = (
+        "<Root>\n"
+        "  <Pages>\n"
+        '    <Page fileName="first">\n'
+        '      <E1 caption="a > b" raw="q"/>\n'
+        '      <E2 note="c > d" other="w"/>\n'
+        "    </Page>\n"
+        '    <Page fileName="second"/>\n'
+        "  </Pages>\n"
+        "</Root>"
+    )
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    editor.setPlainText(text)
+    pos = text.index('"second"') + 1
+    from_scratch = attribute_at_position(text, pos)
+    assert from_scratch == ("Root/Pages/Page", "fileName")
+    assert editor.resolve_attribute_at(pos) == from_scratch
+
+
+def test_resolve_attribute_at_indexed_matches_free_function_on_non_attributes(qtbot):
+    """Equivalence on positions that must resolve to None from BOTH paths:
+    tag name, text content, close tag, whitespace between tokens, document
+    edges."""
+    from pgtp_editor.ui.xml_editor import attribute_at_position
+
+    editor = _bug008_editor(qtbot)
+    text = _BUG008_TEXT
+    positions = [
+        0,  # document start, on '<'
+        text.index("Pages"),  # tag name token
+        text.index("text content here") + 4,  # text content
+        text.index("</Page>") + 3,  # inside a close tag
+        text.index(' tableName'),  # whitespace between attributes
+        len(text) - 1,  # inside the root close tag
+    ]
+    for pos in positions:
+        assert attribute_at_position(text, pos) is None, f"fixture bug at {pos}"
+        assert editor.resolve_attribute_at(pos) is None, f"mismatch at position {pos}"
+
+
+def test_resolve_attribute_at_index_invalidated_by_edit(qtbot):
+    """BUG-008 staleness: resolving builds the lazy index; a subsequent edit
+    must invalidate it so the next resolve runs against fresh spans (revision
+    guard + _resolution_index reset), returning the NEW document's result and
+    still matching the from-scratch free function."""
+    from pgtp_editor.ui.xml_editor import attribute_at_position
+
+    editor = _bug008_editor(qtbot)
+    pos = _BUG008_TEXT.index("fileName")
+    assert editor.resolve_attribute_at(pos) == ("Root/Pages/Page", "fileName")
+    assert editor._resolution_index is not None  # index was built lazily
+
+    new_text = '<Root>\n  <Detail elementCaption="new"/>\n</Root>'
+    editor.setPlainText(new_text)  # textChanged -> _rescan_structure
+    assert editor._resolution_index is None  # spans rebuilt -> index dropped
+
+    new_pos = new_text.index('"new"') + 1
+    resolved = editor.resolve_attribute_at(new_pos)
+    assert resolved == ("Root/Detail", "elementCaption")
+    assert resolved == attribute_at_position(new_text, new_pos)
+
+
+def test_xml_editor_supplies_its_own_xml_span_fold_provider(qtbot):
+    """The shared base (§8) folds nothing by default; XmlEditor plugs in the
+    XML-span provider over _spans/TagSpan."""
+    from pgtp_editor.ui.editor_gutter import GutterBookmarkFoldMixin
+    from pgtp_editor.ui.xml_editor import XmlEditor as _XmlEditor
+
+    assert (
+        _XmlEditor._foldable_region_starting_at
+        is not GutterBookmarkFoldMixin._foldable_region_starting_at
+    )
+    editor = _XmlEditor()
+    qtbot.addWidget(editor)
+    editor.setPlainText("<Root>\n  <A/>\n</Root>\n")
+    region = editor._foldable_region_starting_at(editor.document().findBlockByNumber(0))
+    assert region == (1, 1)  # the <A/> line only; open/close lines excluded
+
+
+def test_xml_editor_reexports_the_shared_gutter_symbols(qtbot):
+    """xml_editor re-exports the extracted names so existing importers keep
+    working -- and they are the SAME objects, not copies (§8: exactly one
+    gutter implementation)."""
+    from pgtp_editor.ui import editor_gutter, xml_editor as xml_editor_module
+
+    assert xml_editor_module._EditorGutter is editor_gutter._EditorGutter
+    assert xml_editor_module._BOOKMARK_STRIP_WIDTH is editor_gutter._BOOKMARK_STRIP_WIDTH
+    assert xml_editor_module._FOLD_GLYPH_WIDTH is editor_gutter._FOLD_GLYPH_WIDTH
+
+
+def test_xml_editor_gutter_and_bookmark_methods_come_from_the_shared_mixin(qtbot):
+    """The extraction moved the implementation out; XmlEditor must not have
+    re-declared its own copy of any of it."""
+    from pgtp_editor.ui.editor_gutter import GutterBookmarkFoldMixin
+    from pgtp_editor.ui.xml_editor import XmlEditor as _XmlEditor
+
+    for name in (
+        "toggle_bookmark",
+        "bookmarked_lines",
+        "next_bookmark",
+        "prev_bookmark",
+        "clear_bookmarks",
+        "_is_line_hidden_by_other_collapsed_fold",
+        "_gutter_width",
+        "_apply_gutter_theme_colors",
+    ):
+        assert name not in vars(_XmlEditor), f"{name} re-declared on XmlEditor"
+        assert getattr(_XmlEditor, name) is getattr(GutterBookmarkFoldMixin, name)
+
+    # _toggle_fold is the ONE deliberate exception (BUG-015): XmlEditor wraps
+    # it to flush the debounced structure rescan first, so folding never acts
+    # on stale spans. It must stay a thin wrapper that DELEGATES -- never a
+    # re-implementation.
+    import inspect
+
+    source = inspect.getsource(_XmlEditor._toggle_fold)
+    assert "_flush_pending_rescan" in source
+    assert "super()._toggle_fold(block)" in source
+
+
+def test_folding_right_after_an_edit_flushes_the_debounced_rescan(qtbot):
+    """BUG-015 correctness guard: the structure rescan is debounced, but
+    folding is a deliberate action that must act on EXACT spans. Folding a
+    region created by an edit that the debounce hasn't processed yet must
+    still work -- _toggle_fold flushes first."""
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    editor.setPlainText("<Root>\n</Root>\n")
+
+    # Type a foldable element in; the rescan is still pending afterwards.
+    cursor = editor.textCursor()
+    cursor.setPosition(len("<Root>\n"))
+    editor.setTextCursor(cursor)
+    editor.insertPlainText("  <A>\n    x\n  </A>\n")
+    assert editor._rescan_timer.isActive()  # debounce pending, spans stale
+
+    # Folding the just-typed <A> must still find its region.
+    block = editor.document().findBlockByNumber(1)
+    editor._toggle_fold(block)
+    assert editor._rescan_timer.isActive() is False  # flushed
+    assert editor._fold_state.get(1) is True
+
+
+def test_xml_editor_folding_still_keeps_the_character_stream_intact(qtbot):
+    """§8's hard requirement, re-asserted after the extraction: folding hides
+    rendering only -- the text is fully present."""
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    text = "<Page>\n  <Detail>\n    content\n  </Detail>\n</Page>\n"
+    editor.setPlainText(text)
+    editor._toggle_fold(editor.document().findBlockByNumber(1))
+    assert editor.document().findBlockByNumber(2).isVisible() is False
+    assert editor.toPlainText() == text
+
+
+# --- BUG-016: the quote-parity block-state cascade ---------------------------
+
+
+def _count_highlight_calls(monkeypatch):
+    """Swap in a counting SUBCLASS of the highlighter (before any editor is
+    built) and return the call counter.
+
+    Must be called BEFORE the editor is constructed: `XmlEditor.__init__` looks
+    `XmlSyntaxHighlighter` up as a module global, so only editors built while
+    this patch is live get the counting subclass.
+
+    Do NOT go back to `monkeypatch.setattr(module.XmlSyntaxHighlighter,
+    "highlightBlock", ...)`. `highlightBlock` is a C++ virtual and PySide6 binds
+    Python overrides PER INSTANCE AT CONSTRUCTION, not per call -- so every
+    highlighter built under such a patch keeps a raw pointer to the replacement
+    function, and `monkeypatch.undo()` frees it. The dangling pointer is then
+    called by any later `rehighlight()` (BUG-013's theme sweep reaches leaked
+    editors from earlier tests), which either raises a nonsense
+    `TypeError: ... takes 0 positional arguments but 2 were given` naming
+    whatever object landed in the freed slot, or segfaults outright. That was
+    BUG-017. Patching the module NAME instead keeps the override in the
+    subclass's own __dict__, and the instance keeps its type alive.
+    """
+    import pgtp_editor.ui.xml_editor as module
+
+    calls = {"n": 0}
+
+    class _CountingHighlighter(module.XmlSyntaxHighlighter):
+        def highlightBlock(self, text):
+            calls["n"] += 1
+            super().highlightBlock(text)
+
+    monkeypatch.setattr(module, "XmlSyntaxHighlighter", _CountingHighlighter)
+    return calls
+
+
+def test_quote_in_text_content_does_not_rehighlight_the_document(qtbot, monkeypatch):
+    """THE BUG-016 regression test. `_has_unterminated_quote` used to flip this
+    block's state on ANY odd quote count, so one '"' typed in text content
+    flipped every following block's state in turn and Qt cascaded a
+    re-highlight to EOF (measured: 5,972 calls / 45ms on a 6k-block file).
+    A quote in text content cannot delimit anything in XML, so it must not
+    change the state -- only the edited block re-highlights."""
+    calls = _count_highlight_calls(monkeypatch)
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    editor.setPlainText(
+        "<Root>\n" + "\n".join(f"  <A id='{i}'>text {i}</A>" for i in range(300)) + "\n</Root>"
+    )
+
+    assert calls["n"] >= 1, "the counting highlighter never ran -- the <= assertion below would be vacuous"
+
+    cursor = editor.textCursor()
+    cursor.setPosition(editor.document().findBlockByNumber(5).position() + 3)
+    editor.setTextCursor(cursor)
+    calls["n"] = 0
+    editor.insertPlainText('"')
+
+    assert calls["n"] <= 2, (
+        f"typing one quote re-highlighted {calls['n']} blocks -- the block-state "
+        "cascade is unbounded again (BUG-016)"
+    )
+
+
+def test_unterminated_quote_inside_a_tag_resyncs_at_the_next_tag(qtbot, monkeypatch):
+    """An unterminated quote INSIDE a tag legitimately continues onto the next
+    line, but must not keep flipping state to EOF: the raw '<' that opens the
+    next tag resyncs the state (a '<' cannot occur inside a well-formed
+    attribute value), so the cascade stops after a block or two."""
+    calls = _count_highlight_calls(monkeypatch)
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    text = "<Root>\n" + "\n".join(f'  <A id="{i}"/>' for i in range(300)) + "\n</Root>"
+    editor.setPlainText(text)
+
+    assert calls["n"] >= 1, "the counting highlighter never ran -- the <= assertion below would be vacuous"
+
+    cursor = editor.textCursor()
+    cursor.setPosition(text.index('id="0"') + len("id="))
+    editor.setTextCursor(cursor)
+    calls["n"] = 0
+    editor.insertPlainText('"')  # now an unterminated quote inside the tag
+
+    assert calls["n"] <= 4, f"cascade not bounded by the resync: {calls['n']} blocks"
+
+
+def test_count_highlight_calls_never_patches_the_shiboken_class(qtbot, monkeypatch):
+    """BUG-017 guard. The counting hook must reach the editor through a Python
+    SUBCLASS, never by setting `highlightBlock` on the Shiboken class itself --
+    PySide6 binds virtual overrides per instance at construction, so a class
+    patch leaves every highlighter built under it pointing at a function that
+    `monkeypatch.undo()` then frees (use-after-free: nonsense TypeErrors in
+    unrelated tests, or a segfault). If this test fails, read BUG-017 before
+    'fixing' it."""
+    import pgtp_editor.ui.xml_editor as module
+
+    original_class = module.XmlSyntaxHighlighter
+    original_method = original_class.highlightBlock
+
+    calls = _count_highlight_calls(monkeypatch)
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    editor.setPlainText("<Root>\n  <A id='1'/>\n</Root>")
+
+    # The counter works...
+    assert calls["n"] >= 1
+    # ...but the real class was left completely untouched.
+    assert module.XmlSyntaxHighlighter is not original_class
+    assert original_class.highlightBlock is original_method
+    # ...and the editor's highlighter is a subclass instance, not the real class.
+    assert type(editor._highlighter) is not original_class
+    assert isinstance(editor._highlighter, original_class)
+
+
+def test_counting_highlighter_override_survives_monkeypatch_undo(qtbot, monkeypatch):
+    """BUG-017 guard, lifecycle half. The dangling-pointer crash needed TWO
+    steps: build a highlighter under the patch, then UNDO the patch. PySide6
+    resolved that instance's `highlightBlock` override once, at construction --
+    so once undo drops the last reference to the patched function, the live
+    instance calls freed memory (nonsense TypeError, or segfault) on its next
+    rehighlight.
+
+    The invariant that makes the subclass approach safe: the override the
+    instance was constructed with must STILL be reachable through the
+    instance's own type after the patch is undone. Asserted before we touch the
+    editor again, so a regression fails loudly here instead of crashing the
+    worker."""
+    import pgtp_editor.ui.xml_editor as module
+
+    original_class = module.XmlSyntaxHighlighter
+
+    with monkeypatch.context() as m:
+        calls = _count_highlight_calls(m)
+        editor = XmlEditor()
+        qtbot.addWidget(editor)
+        editor.setPlainText("<Root>\n  <A id='1'>text</A>\n</Root>")
+        assert calls["n"] >= 1
+        highlighter_type = type(editor._highlighter)
+        bound_override = highlighter_type.highlightBlock
+
+    # The patch is undone; the module global is back to the real class...
+    assert module.XmlSyntaxHighlighter is original_class
+    # ...but the instance built under the patch still resolves its override
+    # through its own type -- nothing it points at has been freed.
+    assert type(editor._highlighter) is highlighter_type
+    assert highlighter_type.highlightBlock is bound_override
+
+    # And therefore rehighlighting it after the undo is safe (this is the call
+    # that used to raise the masked TypeError / segfault).
+    before = calls["n"]
+    editor._highlighter.rehighlight()
+    assert calls["n"] > before
+
+
+def test_apostrophes_in_event_handler_body_do_not_string_ify_the_rest(qtbot):
+    """.pgtp keeps PHP event-handler bodies in TEXT CONTENT, full of quotes and
+    apostrophes. Those must not open an attribute value -- before BUG-016 they
+    flipped the state and mis-colored everything after them."""
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    text = (
+        "<OnBeforeInsert>\n"
+        "$name = 'it\\'s';\n"
+        "$sql = \"SELECT 1\";\n"
+        "</OnBeforeInsert>\n"
+        '<Page id="p"/>'
+    )
+    editor.setPlainText(text)
+
+    tag_color = editor._highlighter._tag_format.foreground().color()
+    assert _format_at(editor, text.index("<Page")).foreground().color() == tag_color
+
+
+def test_end_state_transitions_are_tag_aware(qtbot):
+    """The state machine itself: quotes only delimit inside a tag, and a raw
+    '<' inside a quoted value resyncs."""
+    from pgtp_editor.ui.xml_editor import (
+        STATE_IN_SINGLE_QUOTED,
+        STATE_IN_TAG,
+        STATE_IN_UNCLOSED_STRING,
+        STATE_NORMAL,
+    )
+
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    end_state = editor._highlighter._end_state
+
+    # Text content: quotes and apostrophes are ordinary characters.
+    assert end_state('say "hi', STATE_NORMAL) == STATE_NORMAL
+    assert end_state("it's", STATE_NORMAL) == STATE_NORMAL
+    # Inside a tag they open a value; the matching quote closes it.
+    assert end_state('<A b="x', STATE_NORMAL) == STATE_IN_UNCLOSED_STRING
+    assert end_state("<A b='x", STATE_NORMAL) == STATE_IN_SINGLE_QUOTED
+    assert end_state('<A b="x"', STATE_NORMAL) == STATE_IN_TAG
+    assert end_state('<A b="x"/>', STATE_NORMAL) == STATE_NORMAL
+    # A double quote does not close a single-quoted value, and vice versa.
+    assert end_state("\"", STATE_IN_SINGLE_QUOTED) == STATE_IN_SINGLE_QUOTED
+    assert end_state("'", STATE_IN_UNCLOSED_STRING) == STATE_IN_UNCLOSED_STRING
+    # Resync: a raw '<' cannot be inside a well-formed value.
+    assert end_state('  <B c="d"/>', STATE_IN_UNCLOSED_STRING) == STATE_NORMAL
+    # A tag left open at end of line keeps quote tracking on the next line.
+    assert end_state("<A", STATE_NORMAL) == STATE_IN_TAG

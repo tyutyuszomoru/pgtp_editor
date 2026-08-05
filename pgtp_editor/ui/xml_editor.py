@@ -17,25 +17,29 @@
 
 Built as a PySide6 port of QCodeEditor's approach (see pgtp_editor/ui/about.py
 for the OSS credit). Composed of three cooperating pieces: XmlSyntaxHighlighter
-(syntax coloring with unclosed-quote propagation), _EditorGutter (line numbers
-and fold markers), and folding/auto-indent/auto-close behavior implemented
-directly as XmlEditor methods, since those need direct QTextCursor/QTextBlock
-access.
+(syntax coloring with unclosed-quote propagation), the shared
+gutter/bookmark/fold base (``ui/editor_gutter.py`` -- ``_EditorGutter`` plus
+``GutterBookmarkFoldMixin``, also carried by the DDL ``CodeEditor``, §8/§18.1),
+and auto-indent/auto-close behavior implemented directly as XmlEditor methods,
+since those need direct QTextCursor/QTextBlock access.
+
+The only fold piece that stays here is the XML-span foldable-region *provider*
+(``_foldable_region_starting_at`` over ``_spans``/``TagSpan``), which the
+shared base calls.
 """
 from __future__ import annotations
 
 import re
+from bisect import bisect_right
 
-from PySide6.QtCore import QEvent, QPoint, QRect, QSize, Qt, Signal
+from PySide6.QtCore import QEvent, QPoint, Qt, QTimer, Signal
 from PySide6.QtGui import (
     QColor,
     QFont,
     QFontDatabase,
     QKeyEvent,
     QKeySequence,
-    QPainter,
     QPalette,
-    QPen,
     QSyntaxHighlighter,
     QTextCharFormat,
     QTextCursor,
@@ -43,13 +47,10 @@ from PySide6.QtGui import (
 )
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
-    QListWidget,
-    QListWidgetItem,
     QMenu,
     QPlainTextEdit,
     QTextEdit,
     QToolTip,
-    QWidget,
 )
 
 from pgtp_editor.schema_learning.settings_index import (
@@ -59,10 +60,26 @@ from pgtp_editor.schema_learning.settings_index import (
     unused_setting_attributes,
 )
 from pgtp_editor.ui import xml_structure
+from pgtp_editor.ui.completion_popup import (  # noqa: F401  (re-exported name)
+    _CompletionPopup,
+)
+from pgtp_editor.ui.editor_gutter import (  # noqa: F401  (re-exported names)
+    _BOOKMARK_STRIP_WIDTH,
+    _EditorGutter,
+    _FOLD_GLYPH_WIDTH,
+    GutterBookmarkFoldMixin,
+)
 from pgtp_editor.ui.event_body import event_body_line_ranges
 
-STATE_NORMAL = 0
-STATE_IN_UNCLOSED_STRING = 1
+STATE_NORMAL = 0  # in text content, outside any tag
+STATE_IN_UNCLOSED_STRING = 1  # inside a double-quoted attribute value
+STATE_IN_TAG = 2  # inside <...>, not inside a quoted value
+STATE_IN_SINGLE_QUOTED = 3  # inside a single-quoted attribute value
+# The only characters that can change the highlighter's block state. Matching
+# just these with one C-speed regex pass keeps the per-block scan cheap
+# (BUG-016) -- the Python loop then runs over a handful of matches per line
+# instead of every character.
+_STATE_CHARS_RE = re.compile(r"""[<>"']""")
 
 _TAG_OPEN_RE = re.compile(r"</?[A-Za-z_][\w.-]*")
 _TAG_CLOSE_RE = re.compile(r"/?>")
@@ -78,17 +95,17 @@ _ATTR_PAIR_RE = re.compile(
 )
 
 
-def attribute_at_position(text: str, pos: int):
+def attribute_at_position(text: str, pos: int, spans: list[xml_structure.TagSpan] | None = None):
     """Resolve a document character position to ``(tag_chain, attr)`` --
     see attribute_value_at_position, which this delegates to."""
-    resolved = attribute_value_at_position(text, pos)
+    resolved = attribute_value_at_position(text, pos, spans)
     if resolved is None:
         return None
     tag_chain, attr, _value = resolved
     return tag_chain, attr
 
 
-def attribute_value_at_position(text: str, pos: int):
+def attribute_value_at_position(text: str, pos: int, spans: list[xml_structure.TagSpan] | None = None):
     """Resolve a document character position to ``(tag_chain, attr, value)``
     when it falls on an attribute (name token or quoted value) inside an
     *opening* tag; otherwise return ``None``. ``value`` is the attribute's
@@ -101,33 +118,27 @@ def attribute_value_at_position(text: str, pos: int):
     second XML scanner, so open/close/self-closing bookkeeping stays in one
     place.
 
+    ``spans``: an already-scanned span list for ``text`` (e.g. an editor's
+    cached ``self._spans``) to skip a redundant ``xml_structure.scan(text)``
+    call -- pass None (the default) to scan from scratch.
+
     Returns ``None`` when the position is over the tag name, in whitespace
     between tokens, inside a close tag, in text content, or outside every
     element.
     """
-    spans = xml_structure.scan(text)
+    if spans is None:
+        spans = xml_structure.scan(text)
 
     # The span the position is in is the innermost one whose *opening* tag
     # delimiters cover pos (self-closing tags included). A close tag's own
     # '</name>' is not an open-tag region, so positions there resolve to no
     # span and return None -- the desired behavior.
-    # xml_structure's tag regex uses [^<>], so it truncates an opening tag at
-    # the first '>' even when that '>' is inside a quoted attribute value. Its
-    # open_start (and name/chain bookkeeping) is still reliable, so we take the
-    # candidate span from open_start but recompute the tag's true '>' end here,
-    # respecting quotes, to stay robust to '>' inside values.
-    containing = None
-    for span in spans:
-        real_open_end = _opening_tag_end(text, span.open_start)
-        if real_open_end is None:
-            continue
-        if span.open_start <= pos < real_open_end and (
-            containing is None or span.depth > containing.depth
-        ):
-            containing = span
-            containing_open_end = real_open_end
-    if containing is None:
+    containing_pair = _containing_open_tag(
+        text, sorted(spans, key=lambda s: s.open_start), None, pos
+    )
+    if containing_pair is None:
         return None
+    containing, containing_open_end = containing_pair
 
     pair = _attribute_pair_at(text, containing.open_start, containing_open_end, pos)
     if pair is None:
@@ -144,6 +155,41 @@ def attribute_value_at_position(text: str, pos: int):
         walker = parent
     tag_chain = "/".join(reversed(names))
     return tag_chain, attr, value
+
+
+def _containing_open_tag(text, spans_sorted, open_starts, pos):
+    """Innermost span whose *opening* tag covers ``pos`` as a
+    ``(span, real_open_end)`` pair, or None.
+
+    ``spans_sorted`` must be ordered by ``open_start``; ``open_starts`` is the
+    matching pre-extracted key list for bisect (pass None to derive it here).
+
+    xml_structure's tag regex uses [^<>], so it truncates an opening tag at
+    the first '>' even when that '>' is inside a quoted attribute value. Its
+    open_start (and name/chain bookkeeping) is still reliable, so candidates
+    come from open_start but the tag's true '>' end is recomputed here
+    (``_opening_tag_end``, quote-aware) to stay robust to '>' inside values.
+
+    Instead of the old full pass over every span (O(n) text scans per call --
+    the BUG-008 hot spot), walk BACKWARDS from the last span opening at or
+    before ``pos``: the first span (i.e. largest open_start) whose real
+    opening tag covers ``pos`` is the innermost one. The walk stops at the
+    first span that closed at or before ``pos`` -- an element that ended
+    before ``pos`` cannot contain it, and neither can anything opened earlier
+    (its ancestors' opening tags end before this element even opened) -- so
+    the walk is O(depth)-ish, not O(n), for well-formed nesting.
+    """
+    if open_starts is None:
+        open_starts = [s.open_start for s in spans_sorted]
+    for i in range(bisect_right(open_starts, pos) - 1, -1, -1):
+        span = spans_sorted[i]
+        span_end = span.close_end if span.close_end is not None else span.open_end
+        if span_end <= pos and span.close_end is not None:
+            break
+        real_open_end = _opening_tag_end(text, span.open_start)
+        if real_open_end is not None and span.open_start <= pos < real_open_end:
+            return span, real_open_end
+    return None
 
 
 def enclosing_open_tag(text: str, pos: int):
@@ -253,17 +299,6 @@ def _attribute_pair_at(text: str, open_start: int, open_end: int, pos: int):
             return match.group(1), match.group(2)[1:-1]
     return None
 
-# Fixed horizontal allowance reserved for the fold-triangle glyph, added on
-# top of the digit-count-dependent width for line numbers.
-_FOLD_GLYPH_WIDTH = 16
-
-# Fixed horizontal allowance reserved on the LEFT of the gutter for the
-# bookmark strip (where the rounded bookmark tags are drawn / clicked to
-# toggle). Sits left of the fold zone and the line numbers, which both shift
-# right by this amount.
-_BOOKMARK_STRIP_WIDTH = 12
-
-
 class XmlSyntaxHighlighter(QSyntaxHighlighter):
     def __init__(self, document):
         super().__init__(document)
@@ -284,16 +319,68 @@ class XmlSyntaxHighlighter(QSyntaxHighlighter):
         self._attr_name_format.setForeground(QColor(attr_name))
         self._string_format.setForeground(QColor(string))
 
+    # Quote handling is TAG-AWARE (BUG-016). The old rule -- "this block ends
+    # inside a string if the number of '\"' on it is odd" -- ignored whether a
+    # quote could delimit anything at all, so a single quote typed in text
+    # content flipped this block's state, which flipped the next block's, and
+    # so on with the parity never re-synchronising: Qt cascaded a re-highlight
+    # to the END OF THE DOCUMENT on every parity-flipping keystroke (measured:
+    # one '\"' = 5,972 highlightBlock calls / 45ms on a 6k-block file). In XML a
+    # quote only opens an attribute value INSIDE a tag; in text content -- where
+    # .pgtp keeps its PHP event-handler bodies, full of quotes and apostrophes
+    # -- quotes are ordinary characters and must not change the state at all.
+
+    def _end_state(self, text: str, state: int) -> int:
+        """The block state at the end of `text`, entering it in `state`."""
+        for match in _STATE_CHARS_RE.finditer(text):
+            char = match.group()
+            if state == STATE_NORMAL:
+                if char == "<":
+                    state = STATE_IN_TAG
+            elif state == STATE_IN_TAG:
+                if char == ">":
+                    state = STATE_NORMAL
+                elif char == '"':
+                    state = STATE_IN_UNCLOSED_STRING
+                elif char == "'":
+                    state = STATE_IN_SINGLE_QUOTED
+            else:  # inside a quoted attribute value
+                closing = '"' if state == STATE_IN_UNCLOSED_STRING else "'"
+                if char == closing:
+                    state = STATE_IN_TAG
+                elif char == "<":
+                    # RESYNC (the rule that actually bounds the cascade): a raw
+                    # '<' cannot appear inside a well-formed attribute value
+                    # (it must be &lt;), so seeing one means our state is wrong
+                    # and a tag starts here. Without this, an unterminated quote
+                    # inside a tag still flips every following block's state to
+                    # EOF; with it the very next tag snaps the state back and
+                    # the cascade stops after a block or two. Cost: a raw '<'
+                    # typed inside an attribute value ends its highlighting
+                    # early -- acceptable, since that document is invalid XML
+                    # anyway and it self-corrects once escaped or closed.
+                    state = STATE_IN_TAG
+        return state
+
+    def _continued_string_end(self, text: str, quote: str) -> int:
+        """Index just past a string continued from the previous block: past its
+        closing `quote`, at a raw '<' (the resync above), or end of line."""
+        for index, char in enumerate(text):
+            if char == quote:
+                return index + 1
+            if char == "<":
+                return index
+        return len(text)
+
     def highlightBlock(self, text: str) -> None:
+        state = self.previousBlockState()
+        if state not in (STATE_IN_TAG, STATE_IN_UNCLOSED_STRING, STATE_IN_SINGLE_QUOTED):
+            state = STATE_NORMAL  # includes -1, Qt's "no previous block"
         start = 0
-        if self.previousBlockState() == STATE_IN_UNCLOSED_STRING:
-            close_at = text.find('"')
-            if close_at == -1:
-                self.setFormat(0, len(text), self._string_format)
-                self.setCurrentBlockState(STATE_IN_UNCLOSED_STRING)
-                return
-            self.setFormat(0, close_at + 1, self._string_format)
-            start = close_at + 1
+        if state in (STATE_IN_UNCLOSED_STRING, STATE_IN_SINGLE_QUOTED):
+            quote = '"' if state == STATE_IN_UNCLOSED_STRING else "'"
+            start = self._continued_string_end(text, quote)
+            self.setFormat(0, start, self._string_format)
 
         for match in _TAG_OPEN_RE.finditer(text, start):
             self.setFormat(match.start(), match.end() - match.start(), self._tag_format)
@@ -304,14 +391,7 @@ class XmlSyntaxHighlighter(QSyntaxHighlighter):
         for match in _ATTR_VALUE_RE.finditer(text, start):
             self.setFormat(match.start(), match.end() - match.start(), self._string_format)
 
-        if _has_unterminated_quote(text, start):
-            self.setCurrentBlockState(STATE_IN_UNCLOSED_STRING)
-        else:
-            self.setCurrentBlockState(STATE_NORMAL)
-
-
-def _has_unterminated_quote(text: str, start: int) -> bool:
-    return text.count('"', start) % 2 == 1
+        self.setCurrentBlockState(self._end_state(text, state))
 
 
 def _cursor_immediately_after_open_tag(line_text: str, position_in_line: int, tag_name: str) -> bool:
@@ -329,232 +409,7 @@ def _closing_tag_start(text: str, span: xml_structure.TagSpan) -> int | None:
     return xml_structure.closing_tag_start(text, span)
 
 
-class _EditorGutter(QWidget):
-    """Line-number and fold-marker gutter, the standard QPlainTextEdit
-    side-widget pattern (Qt's "Code Editor Example")."""
-
-    def __init__(self, editor: "XmlEditor"):
-        super().__init__(editor)
-        self._editor = editor
-
-    def sizeHint(self) -> QSize:
-        return QSize(self._editor._gutter_width(), 0)
-
-    def paintEvent(self, event) -> None:
-        painter = QPainter(self)
-        painter.fillRect(event.rect(), self._editor._gutter_bg_color)
-
-        block = self._editor.firstVisibleBlock()
-        block_number = block.blockNumber()
-        top = self._editor.blockBoundingGeometry(block).translated(
-            self._editor.contentOffset()
-        ).top()
-        bottom = top + self._editor.blockBoundingRect(block).height()
-
-        # Three zones, left to right: the bookmark strip
-        # [0, _BOOKMARK_STRIP_WIDTH), the fold zone
-        # [_BOOKMARK_STRIP_WIDTH, _BOOKMARK_STRIP_WIDTH + _FOLD_GLYPH_WIDTH),
-        # and the line-number area (right-aligned against the gutter's right
-        # edge). The fold glyph and numbers both shift right by the strip width.
-        number_x = _BOOKMARK_STRIP_WIDTH + _FOLD_GLYPH_WIDTH
-        line_number_width = self.width() - number_x
-
-        while block.isValid() and top <= event.rect().bottom():
-            if block.isVisible() and bottom >= event.rect().top():
-                number_text = str(block_number + 1)
-                painter.setPen(self._editor._gutter_fg_color)
-                painter.drawText(
-                    number_x,
-                    int(top),
-                    line_number_width,
-                    self._editor.fontMetrics().height(),
-                    Qt.AlignmentFlag.AlignRight,
-                    number_text,
-                )
-
-                if block_number in self._editor._bookmarks:
-                    self._draw_bookmark_tag(painter, int(top))
-
-                if self._editor._foldable_region_starting_at(block) is not None:
-                    collapsed = self._editor._fold_state.get(block_number, False)
-                    self._draw_fold_glyph(painter, int(top), collapsed)
-
-            block = block.next()
-            top = bottom
-            bottom = top + self._editor.blockBoundingRect(block).height()
-            block_number += 1
-
-    def _draw_bookmark_tag(self, painter: QPainter, top: int) -> None:
-        """Draw a small filled rounded tag in the bookmark strip, vertically
-        centered on the line, in the palette's Highlight accent (theme-aware,
-        no border, antialiased)."""
-        line_height = self._editor.fontMetrics().height()
-        tag_w = _BOOKMARK_STRIP_WIDTH - 4
-        tag_h = max(4, min(line_height - 6, _BOOKMARK_STRIP_WIDTH))
-        x = 2
-        y = top + (line_height - tag_h) // 2
-        radius = max(1, tag_h // 4)
-        painter.save()
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(self._editor._bookmark_color())
-        painter.drawRoundedRect(QRect(x, y, tag_w, tag_h), radius, radius)
-        painter.restore()
-
-    def _draw_fold_glyph(self, painter: QPainter, top: int, collapsed: bool) -> None:
-        line_height = self._editor.fontMetrics().height()
-        glyph_size = min(_FOLD_GLYPH_WIDTH - 6, line_height - 6)
-        half = max(2, glyph_size // 2)
-        depth = max(1, half // 2)  # how far the chevron's tip protrudes
-        cx = _BOOKMARK_STRIP_WIDTH + _FOLD_GLYPH_WIDTH // 2
-        cy = top + line_height // 2
-        # A fine, unfilled chevron (technical arrow) rather than a filled triangle.
-        pen = QPen(self._editor._gutter_fg_color)
-        pen.setWidthF(1.3)
-        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
-        pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
-        painter.setPen(pen)
-        painter.setBrush(Qt.BrushStyle.NoBrush)
-        painter.save()
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-        if collapsed:
-            # Right-pointing chevron ">"
-            painter.drawLine(cx - depth, cy - half, cx + depth, cy)
-            painter.drawLine(cx + depth, cy, cx - depth, cy + half)
-        else:
-            # Down-pointing chevron "v"
-            painter.drawLine(cx - half, cy - depth, cx, cy + depth)
-            painter.drawLine(cx, cy + depth, cx + half, cy - depth)
-        painter.restore()
-
-    def mousePressEvent(self, event) -> None:
-        click_x = event.position().x()
-        # Zone routing: bookmark strip toggles the clicked line's bookmark;
-        # fold zone keeps the existing fold toggle; a click in the line-number
-        # area does nothing (as before).
-        in_bookmark_strip = click_x < _BOOKMARK_STRIP_WIDTH
-        in_fold_zone = (
-            _BOOKMARK_STRIP_WIDTH
-            <= click_x
-            < _BOOKMARK_STRIP_WIDTH + _FOLD_GLYPH_WIDTH
-        )
-        if not (in_bookmark_strip or in_fold_zone):
-            return
-        block = self._editor.firstVisibleBlock()
-        top = self._editor.blockBoundingGeometry(block).translated(
-            self._editor.contentOffset()
-        ).top()
-        bottom = top + self._editor.blockBoundingRect(block).height()
-        click_y = event.position().y()
-
-        while block.isValid() and top <= click_y:
-            if block.isVisible() and top <= click_y < bottom:
-                if in_bookmark_strip:
-                    self._editor.toggle_bookmark(block.blockNumber())
-                else:
-                    self._editor._toggle_fold(block)
-                self.update()
-                return
-            block = block.next()
-            top = bottom
-            bottom = top + self._editor.blockBoundingRect(block).height()
-
-
-class _CompletionPopup(QListWidget):
-    """Frameless completion list for the XML editor. Holds a master list of
-    ``(key, display)`` items and a running filter; arrows navigate, printable
-    chars filter by key prefix (case-insensitive), Enter/Tab or a mouse click
-    choose, Esc cancels. Emits the chosen *key* (not the display string).
-    Callers pass items pre-ordered; filtering preserves that order."""
-
-    chosen = Signal(str)
-    cancelled = Signal()
-
-    def __init__(self, parent=None) -> None:
-        super().__init__(parent)
-        self.setWindowFlags(Qt.WindowType.Popup)
-        self.setUniformItemSizes(True)
-        self._items: list[tuple[str, str]] = []
-        self._filter = ""
-        self.itemClicked.connect(
-            lambda item: self.chosen.emit(item.data(Qt.ItemDataRole.UserRole))
-        )
-
-    def set_items(self, items) -> None:
-        """Replace the master ``(key, display)`` list, reset the filter, and
-        select the first row."""
-        self._items = list(items)
-        self._filter = ""
-        self._rebuild()
-
-    def append_filter(self, text: str) -> None:
-        self._filter += text
-        self._rebuild()
-
-    def backspace_filter(self) -> None:
-        self._filter = self._filter[:-1]
-        self._rebuild()
-
-    def visible_keys(self) -> list[str]:
-        return [
-            self.item(i).data(Qt.ItemDataRole.UserRole) for i in range(self.count())
-        ]
-
-    def current_key(self):
-        item = self.currentItem()
-        return None if item is None else item.data(Qt.ItemDataRole.UserRole)
-
-    def _rebuild(self) -> None:
-        prefix = self._filter.lower()
-        self.clear()
-        for key, display in self._items:
-            if key.lower().startswith(prefix):
-                item = QListWidgetItem(display)
-                item.setData(Qt.ItemDataRole.UserRole, key)
-                self.addItem(item)
-        if self.count():
-            self.setCurrentRow(0)
-
-    def _choose_current(self) -> None:
-        key = self.current_key()
-        if key is not None:
-            self.chosen.emit(key)
-
-    def keyPressEvent(self, event) -> None:
-        key = event.key()
-        if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Tab):
-            self._choose_current()
-            event.accept()
-            return
-        if key == Qt.Key.Key_Escape:
-            self.cancelled.emit()
-            event.accept()
-            return
-        if key == Qt.Key.Key_Backspace:
-            self.backspace_filter()
-            event.accept()
-            return
-        if key in (Qt.Key.Key_Up, Qt.Key.Key_Down):
-            super().keyPressEvent(event)
-            return
-        # Ctrl/Meta chords (Ctrl+C, Ctrl+A, ...) still carry a text() payload
-        # on some platforms; never swallow them into the filter. Shift stays
-        # allowed (uppercase typing filters) and Alt passes through below via
-        # the empty/non-printable text check or the fallthrough.
-        if event.modifiers() & (
-            Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.MetaModifier
-        ):
-            super().keyPressEvent(event)
-            return
-        text = event.text()
-        if text and text.isprintable() and not text.isspace():
-            self.append_filter(text)
-            event.accept()
-            return
-        super().keyPressEvent(event)
-
-
-class XmlEditor(QPlainTextEdit):
+class XmlEditor(GutterBookmarkFoldMixin, QPlainTextEdit):
     line_clicked = Signal(int)  # 1-based line of a left-mouse click in the text
     # Emitted when a text-modifying key is pressed while the editor is
     # read-only (Caption Mode). The base already blocks the edit; this signal
@@ -586,12 +441,11 @@ class XmlEditor(QPlainTextEdit):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._highlighter = XmlSyntaxHighlighter(self.document())
-        self._gutter = _EditorGutter(self)
-        self._fold_state: dict[int, bool] = {}
-        # Session/file-scoped line bookmarks, tracked by block number. Reset
-        # alongside _fold_state on every setPlainText (a new file loaded), so
-        # bookmarks never drift from external edits or leak across documents.
-        self._bookmarks: set[int] = set()
+        # Shared gutter/bookmark/fold base (§8). Set up here -- immediately
+        # after the highlighter -- so changeEvent's `hasattr(_highlighter)`
+        # guard keeps covering an early ApplicationPaletteChange: by the time
+        # that guard passes, _gutter and the fold/bookmark state exist too.
+        self._init_gutter_bookmarks_folding()
         # Theme-aware colors. These default to the DARK set; apply_theme_colors
         # swaps the whole set to the LIGHT variant (and back) and is driven
         # automatically off ApplicationPaletteChange in changeEvent, so the
@@ -602,8 +456,24 @@ class XmlEditor(QPlainTextEdit):
         # otherwise be indistinguishable from a real edit to MainWindow's
         # dirty-tracking handlers; they check is_applying_theme() and no-op.
         self._applying_theme = False
-        self._gutter_bg_color = QColor("#2b2b2b")
-        self._gutter_fg_color = QColor("#858585")
+        # True while a deferred step-2 rehighlight (BUG-013) is queued, so
+        # several palette-change events in one toggle coalesce into one.
+        self._theme_rehighlight_pending = False
+        # Kickoff timer for the deferred step-2 rehighlight (BUG-014): PARENTED
+        # to self so ~QWidget cancels a still-pending 0ms tick. An unparented
+        # QTimer.singleShot(0, self._rehighlight_for_theme) escapes the
+        # editor's lifetime and fires _rehighlight_for_theme on an
+        # already-deleted C++ XmlEditor (e.g. a widget torn down between a
+        # theme toggle and the next event-loop turn).
+        self._theme_kickoff_timer = QTimer(self)
+        self._theme_kickoff_timer.setSingleShot(True)
+        self._theme_kickoff_timer.setInterval(0)
+        self._theme_kickoff_timer.timeout.connect(self._rehighlight_for_theme)
+        # Step-2 background sweep state (BUG-013): the timer that re-formats
+        # _THEME_SWEEP_BLOCKS_PER_TICK blocks per event-loop turn, and the
+        # next block number it resumes from. Timer created on first use.
+        self._theme_sweep_timer: QTimer | None = None
+        self._theme_sweep_block = 0
         self._current_line_color = QColor("#2d2d30")
         self._error_line_color = QColor("#5a1d1d")
         self._navigation_highlight_color = QColor("#264f78")
@@ -639,12 +509,28 @@ class XmlEditor(QPlainTextEdit):
         self._spans: list[xml_structure.TagSpan] = []
         self._spans_text: str = ""
         self._spans_revision: int | None = None
+        # Lazy attribute-resolution index over _spans (BUG-008): parent map +
+        # spans sorted by open_start (+ the open_start keys for bisect). Built
+        # only when resolve_attribute_at actually runs, NOT in
+        # _rescan_structure -- rescans happen per keystroke and must not pay
+        # the O(n log n) index cost for a feature that may never be used in
+        # that revision. Invalidated whenever _spans is rebuilt.
+        self._resolution_index: tuple | None = None
         self._nav_click_handled = False
         self.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
-        self.blockCountChanged.connect(self._update_gutter_width)
-        self.updateRequest.connect(self._update_gutter_on_scroll)
-        self.textChanged.connect(self._rescan_structure)
-        self.textChanged.connect(self._refresh_code_region_selections)
+        # Structure rescan + code-region rebuild are DEBOUNCED (BUG-015).
+        # Both are O(document) -- a full toPlainText() copy plus a
+        # whole-document regex/handler walk each -- and running them inline
+        # on textChanged meant every single keystroke and Enter paid that
+        # cost on a multi-MB .pgtp ("painfully slow", the reported symptom).
+        # They now run once after the user pauses. Parented QTimer(self),
+        # never QTimer.singleShot -- an unparented one fires on a deleted
+        # editor (BUG-014).
+        self._rescan_timer = QTimer(self)
+        self._rescan_timer.setSingleShot(True)
+        self._rescan_timer.setInterval(self._RESCAN_DEBOUNCE_MS)
+        self._rescan_timer.timeout.connect(self._rescan_now)
+        self.textChanged.connect(self._on_text_changed_schedule_rescan)
         self.cursorPositionChanged.connect(self._highlight_current_line)
         self.cursorPositionChanged.connect(self._update_matching_tag_highlight)
 
@@ -670,19 +556,68 @@ class XmlEditor(QPlainTextEdit):
         # once; guards the disconnect calls in _rewire_popup so a fresh popup
         # doesn't log a PySide6 RuntimeWarning for disconnecting nothing.
         self._popup_wired = False
-        self._update_gutter_width(0)
         self._rescan_structure()
         self._refresh_code_region_selections()
         self._highlight_current_line()
 
+    # Idle gap after the last edit before the O(document) structure rescan +
+    # code-region rebuild run (BUG-015). Short enough to feel immediate on a
+    # typing pause, long enough that a burst of keystrokes coalesces into one
+    # rescan. Same debounce shape as MainWindow's snapshot/auto-parse timers.
+    _RESCAN_DEBOUNCE_MS = 250
+
+    def _on_text_changed_schedule_rescan(self) -> None:
+        """textChanged slot: (re)start the debounce instead of rescanning
+        inline (BUG-015). Format-only theme sweeps change no characters, so
+        the spans/code-regions cannot differ -- skip them entirely rather
+        than scheduling pointless work (this guard used to live inside the
+        two handlers themselves)."""
+        if self._applying_theme:
+            return
+        self._rescan_timer.start()
+
+    def _rescan_now(self) -> None:
+        """Run the debounced work immediately: structure first (code regions
+        and the matching-tag highlight both read fresh `_spans`), then the
+        code-region rebuild, then repaint the layers that were showing stale
+        or suppressed state during the debounce window -- the matching-tag
+        highlight (suppressed while stale, see _update_matching_tag_highlight)
+        and the gutter (fold glyphs are derived from `_spans`)."""
+        self._rescan_timer.stop()
+        self._rescan_structure()
+        self._refresh_code_region_selections()
+        self._update_matching_tag_highlight()
+        self._gutter.update()
+
+    def _flush_pending_rescan(self) -> None:
+        """Force the debounced rescan to complete NOW if one is pending.
+        Call this from any deliberate user action that must see exact
+        structure (e.g. folding) rather than up-to-`_RESCAN_DEBOUNCE_MS`-old
+        spans. Cheap no-op when nothing is pending."""
+        if self._rescan_timer.isActive():
+            self._rescan_now()
+
     def setPlainText(self, text: str) -> None:
+        """Load/replace the whole document. Unlike incremental typing this is
+        a document SWAP whose structure must be correct immediately (BUG-015
+        gotcha): callers load a file, revert, or write a rename through the
+        buffer and then read spans / fold regions / code regions / the
+        matching-tag highlight straight away. So run the debounced work
+        synchronously here rather than leaving it `_RESCAN_DEBOUNCE_MS` in the
+        future. Costs one scan per load, which a load already pays for in the
+        document copy anyway -- the debounce exists for per-keystroke edits."""
         super().setPlainText(text)
-        # Folding state is per-document-instance; a fresh setPlainText call
-        # (a new file loaded into this editor) starts fully unfolded.
-        self._fold_state = {}
-        # Bookmarks share the fold-state lifecycle: a new document starts with
-        # no bookmarks (session/file-scoped, see __init__).
-        self._bookmarks = set()
+        self._rescan_now()
+
+    def _toggle_fold(self, block) -> None:
+        """Folding is a deliberate user action and must act on exact spans --
+        flush any pending debounced rescan first (BUG-015), then defer to the
+        shared gutter mixin. NOTE: the flush belongs here, NOT inside
+        `_foldable_region_starting_at`: the gutter's paintEvent calls that
+        hook for every visible block, so rescanning there would fire on every
+        repaint (i.e. every keystroke) and silently undo the whole debounce."""
+        self._flush_pending_rescan()
+        super()._toggle_fold(block)
 
     def is_applying_theme(self) -> bool:
         """True only while apply_theme_colors's rehighlight() is in flight.
@@ -698,9 +633,8 @@ class XmlEditor(QPlainTextEdit):
         shows immediately -- gutter, current-line band, matching-tag spans and
         code-region backgrounds all recolor at once. Wired to run automatically
         on ApplicationPaletteChange via changeEvent."""
+        self._apply_gutter_theme_colors(light)
         if light:
-            self._gutter_bg_color = QColor("#f0f0f0")
-            self._gutter_fg_color = QColor("#888888")
             self._current_line_color = QColor("#eef1f7")
             self._error_line_color = QColor("#f7d4d4")
             self._navigation_highlight_color = QColor("#cfe0ff")
@@ -710,8 +644,6 @@ class XmlEditor(QPlainTextEdit):
                 tag="#0000ff", attr_name="#e50000", string="#a31515"
             )
         else:
-            self._gutter_bg_color = QColor("#2b2b2b")
-            self._gutter_fg_color = QColor("#858585")
             self._current_line_color = QColor("#2d2d30")
             self._error_line_color = QColor("#5a1d1d")
             self._navigation_highlight_color = QColor("#264f78")
@@ -720,26 +652,87 @@ class XmlEditor(QPlainTextEdit):
             self._highlighter.set_colors(
                 tag="#569cd6", attr_name="#9cdcfe", string="#ce9178"
             )
-        # rehighlight() re-applies character formats over the whole document,
-        # which Qt reports through the same contentsChanged/textChanged path
-        # as a real edit -- with no text actually changing. Left unguarded, a
-        # theme toggle would spuriously mark a clean document (dirty tracking
-        # lives in MainWindow, keyed off textChanged) as having unsaved edits.
-        # Rather than blocking signals (which would also swallow this editor's
-        # own textChanged-driven bookkeeping, e.g. structure rescan / code-
-        # region refresh), set a small guard flag MainWindow's dirty handlers
-        # check via is_applying_theme() and early-return on.
-        self._applying_theme = True
-        try:
-            self._highlighter.rehighlight()
-        finally:
-            self._applying_theme = False
         # Rebuild the extra-selection layers so their stored per-selection
         # colors pick up the new values (they cache the color at build time).
         self._refresh_code_region_selections()
         self._update_matching_tag_highlight()
         self._highlight_current_line()
         self._gutter.update()
+        # Two-step theme change (BUG-013): the app-wide coloring (palette +
+        # QSS re-polish) paints FIRST; the whole-document syntax rehighlight
+        # -- ~1.5s on a multi-MB .pgtp, the dominant per-toggle cost -- runs
+        # as a single deferred call after the app coloring has returned, so
+        # the theme flip is visible immediately and the text recolors as a
+        # visible second step. Coalesced: several palette-change events in
+        # one toggle schedule only one rehighlight.
+        if not self._theme_rehighlight_pending:
+            self._theme_rehighlight_pending = True
+            # Parented single-shot timer, not QTimer.singleShot (BUG-014): the
+            # unparented form fires on an already-deleted editor.
+            self._theme_kickoff_timer.start()
+
+    # Blocks re-formatted per event-loop turn during the step-2 sweep. Small
+    # enough that each turn stays well under a frame, large enough that even
+    # a huge .pgtp finishes in a couple of seconds of BACKGROUND sweeping
+    # while the UI keeps responding.
+    _THEME_SWEEP_BLOCKS_PER_TICK = 400
+
+    def _rehighlight_for_theme(self) -> None:
+        """Step 2 of the theme change: re-apply character formats with the
+        colors apply_theme_colors already swapped in -- visible region first
+        (so what's on screen recolors together with the app chrome), then the
+        rest of the document swept a fixed number of blocks per event-loop
+        turn so a multi-MB document never freezes the UI (BUG-013: a single
+        synchronous rehighlight() blocked ~1.5s+).
+
+        rehighlightBlock() reports through the same textChanged path as a
+        real edit -- with no text actually changing. The _applying_theme
+        guard wraps every batch: MainWindow's dirty handlers check
+        is_applying_theme() and no-op, and this editor's own textChanged
+        bookkeeping (_rescan_structure/_refresh_code_region_selections)
+        skips format-only batches the same way -- otherwise every sweep turn
+        would trigger a full-document structure rescan."""
+        self._theme_rehighlight_pending = False
+        # Recolor what the user is actually looking at, immediately.
+        self._applying_theme = True
+        try:
+            block = self.firstVisibleBlock()
+            bottom = self.viewport().rect().bottom()
+            while block.isValid():
+                geo = self.blockBoundingGeometry(block).translated(self.contentOffset())
+                if geo.top() > bottom:
+                    break
+                self._highlighter.rehighlightBlock(block)
+                block = block.next()
+        finally:
+            self._applying_theme = False
+        # Sweep the rest from the top, one batch per event-loop turn. A new
+        # theme change while a sweep is running restarts it from block 0 with
+        # the new colors (apply_theme_colors always schedules a fresh step 2,
+        # and _theme_sweep_block resets here).
+        self._theme_sweep_block = 0
+        if self._theme_sweep_timer is None:
+            self._theme_sweep_timer = QTimer(self)
+            self._theme_sweep_timer.setInterval(0)
+            self._theme_sweep_timer.timeout.connect(self._theme_sweep_tick)
+        self._theme_sweep_timer.start()
+
+    def _theme_sweep_tick(self) -> None:
+        doc = self.document()
+        block = doc.findBlockByNumber(self._theme_sweep_block)
+        self._applying_theme = True
+        try:
+            remaining = self._THEME_SWEEP_BLOCKS_PER_TICK
+            while block.isValid() and remaining > 0:
+                self._highlighter.rehighlightBlock(block)
+                block = block.next()
+                remaining -= 1
+        finally:
+            self._applying_theme = False
+        if block.isValid():
+            self._theme_sweep_block = block.blockNumber()
+        else:
+            self._theme_sweep_timer.stop()
 
     def changeEvent(self, event) -> None:
         super().changeEvent(event)
@@ -755,9 +748,16 @@ class XmlEditor(QPlainTextEdit):
             self.apply_theme_colors(light)
 
     def _rescan_structure(self) -> None:
+        # Format-only rehighlight batches (theme step-2 sweep, BUG-013) fire
+        # textChanged without any character changing -- the spans cannot
+        # differ, so skip the full-document copy + scan. Consumers'
+        # revision guards lazily rescan later if the revision moved.
+        if self._applying_theme:
+            return
         self._spans_text = self.toPlainText()
         self._spans = xml_structure.scan(self._spans_text)
         self._spans_revision = self.document().revision()
+        self._resolution_index = None  # spans changed; rebuild lazily (BUG-008)
 
     def _foldable_region_starting_at(self, block):
         """Return (first_contained_block_number, last_contained_block_number)
@@ -777,111 +777,6 @@ class XmlEditor(QPlainTextEdit):
                 continue  # single-line element: nothing to fold
             return open_line + 1, close_line - 1
         return None
-
-    def _toggle_fold(self, block) -> None:
-        region = self._foldable_region_starting_at(block)
-        if region is None:
-            return
-        first_contained, last_contained = region
-        block_number = block.blockNumber()
-        currently_collapsed = self._fold_state.get(block_number, False)
-        new_visible = currently_collapsed  # if collapsed, expand; else collapse
-        for line_number in range(first_contained, last_contained + 1):
-            contained_block = self.document().findBlockByNumber(line_number)
-            if new_visible and self._is_line_hidden_by_other_collapsed_fold(
-                line_number, exclude_block_number=block_number
-            ):
-                # Expanding this region must not reveal lines that belong to
-                # a separate, still-collapsed nested fold (e.g. re-expanding
-                # an outer element after its inner child was independently
-                # collapsed and never re-expanded).
-                continue
-            contained_block.setVisible(new_visible)
-        self._fold_state[block_number] = not currently_collapsed
-        self.document().markContentsDirty(block.position(), self.document().characterCount() - block.position())
-        self.viewport().update()
-
-    def _is_line_hidden_by_other_collapsed_fold(self, line_number: int, exclude_block_number: int) -> bool:
-        for other_block_number, collapsed in self._fold_state.items():
-            if other_block_number == exclude_block_number or not collapsed:
-                continue
-            other_block = self.document().findBlockByNumber(other_block_number)
-            other_region = self._foldable_region_starting_at(other_block)
-            if other_region is None:
-                continue
-            other_first, other_last = other_region
-            if other_first <= line_number <= other_last:
-                return True
-        return False
-
-    # --- Bookmarks ---------------------------------------------------------
-    def toggle_bookmark(self, block_number: int) -> None:
-        """Add or remove a bookmark on ``block_number`` (0-based line index)
-        and repaint the gutter so the tag appears/disappears immediately."""
-        if block_number in self._bookmarks:
-            self._bookmarks.discard(block_number)
-        else:
-            self._bookmarks.add(block_number)
-        self._gutter.update()
-
-    def bookmarked_lines(self) -> list[int]:
-        """Bookmarked block numbers in ascending order."""
-        return sorted(self._bookmarks)
-
-    def next_bookmark(self, from_line: int) -> int | None:
-        """Smallest bookmark strictly greater than ``from_line``, wrapping to
-        the smallest bookmark overall; ``None`` when there are no bookmarks."""
-        ordered = self.bookmarked_lines()
-        if not ordered:
-            return None
-        for line in ordered:
-            if line > from_line:
-                return line
-        return ordered[0]
-
-    def prev_bookmark(self, from_line: int) -> int | None:
-        """Largest bookmark strictly less than ``from_line``, wrapping to the
-        largest bookmark overall; ``None`` when there are no bookmarks."""
-        ordered = self.bookmarked_lines()
-        if not ordered:
-            return None
-        for line in reversed(ordered):
-            if line < from_line:
-                return line
-        return ordered[-1]
-
-    def clear_bookmarks(self) -> None:
-        """Remove every bookmark and repaint the gutter."""
-        self._bookmarks = set()
-        self._gutter.update()
-
-    def toggle_bookmark_at_cursor(self) -> None:
-        """Toggle a bookmark on the line the text cursor currently sits on."""
-        self.toggle_bookmark(self.textCursor().blockNumber())
-
-    def goto_next_bookmark(self) -> None:
-        """Move the cursor to the next bookmark after the current line (with
-        wrap-around) and center it. No-op when there are no bookmarks."""
-        target = self.next_bookmark(self.textCursor().blockNumber())
-        if target is not None:
-            self._goto_bookmark_line(target)
-
-    def goto_prev_bookmark(self) -> None:
-        """Move the cursor to the previous bookmark before the current line
-        (with wrap-around) and center it. No-op when there are no bookmarks."""
-        target = self.prev_bookmark(self.textCursor().blockNumber())
-        if target is not None:
-            self._goto_bookmark_line(target)
-
-    def _goto_bookmark_line(self, block_number: int) -> None:
-        """Move the cursor to ``block_number`` (0-based) and center it. Guards
-        against out-of-range bookmarks that may point past EOF after edits."""
-        block = self.document().findBlockByNumber(block_number)
-        if not block.isValid():
-            return
-        cursor = QTextCursor(block)
-        self.setTextCursor(cursor)
-        self.centerCursor()
 
     def _refresh_extra_selections(self) -> None:
         """The single place XmlEditor calls setExtraSelections. Combines
@@ -912,6 +807,12 @@ class XmlEditor(QPlainTextEdit):
         through its close-tag line (inclusive) with a subdued full-width
         background band + monospace font. Purely visual, so it is safe when the
         editor is read-only (Caption Mode)."""
+        # Skip format-only rehighlight batches (theme step-2 sweep, BUG-013):
+        # no text changed, so the ranges are identical -- and
+        # apply_theme_colors calls this explicitly (outside the guard) for
+        # the color swap, so the recolor still happens exactly once.
+        if self._applying_theme:
+            return
         text = self.toPlainText()
         document = self.document()
         selections: list[QTextEdit.ExtraSelection] = []
@@ -965,14 +866,24 @@ class XmlEditor(QPlainTextEdit):
         return cursor
 
     def _update_matching_tag_highlight(self) -> None:
-        # Use the cached spans (kept fresh by _rescan_structure on every
-        # textChanged) instead of rescanning the whole document on every
-        # cursor move -- see the _spans/_spans_revision comment in __init__.
-        # textChanged is expected to fire before cursorPositionChanged, but
-        # that ordering isn't contractual, so defensively rescan if the
-        # cache is stale relative to the document's current revision.
+        # Use the cached spans instead of rescanning the whole document on
+        # every cursor move -- see the _spans/_spans_revision comment in
+        # __init__.
+        #
+        # BUG-015: this must NOT rescan when the cache is stale. Typing moves
+        # the caret, so cursorPositionChanged fires on every keystroke; a
+        # rescan-if-stale here would run the full-document scan per character
+        # and completely defeat the textChanged debounce (this path, not
+        # textChanged, was the remaining per-keystroke stall). While the cache
+        # is stale the cached spans' character offsets refer to the PRE-edit
+        # text, so highlighting from them would paint a visibly wrong range --
+        # worse than none. Clear the highlight and return; _rescan_now
+        # re-invokes this once the debounced rescan lands, a few hundred ms
+        # later, and the correct highlight appears then.
         if self.document().revision() != self._spans_revision:
-            self._rescan_structure()
+            self._matching_tag_selections = []
+            self._refresh_extra_selections()
+            return
         # By the revision invariant just enforced, _spans_text is identical
         # to what toPlainText() would return -- but without re-copying the
         # whole document on every cursor move.
@@ -1125,6 +1036,7 @@ class XmlEditor(QPlainTextEdit):
         cursor = QTextCursor(block)
         cursor.setPosition(block.position() + start)
         cursor.setPosition(block.position() + end, QTextCursor.MoveMode.KeepAnchor)
+
         self.setTextCursor(cursor)
         self.centerCursor()
 
@@ -1132,6 +1044,63 @@ class XmlEditor(QPlainTextEdit):
         selection.format.setBackground(self._navigation_highlight_color)
         selection.cursor = cursor
         self._set_oneshot_selection(selection)
+
+    def resolve_attribute_at(self, pos: int):
+        """Cache-aware ``(tag_chain, attr)`` resolution at document position
+        `pos` -- the entry point PropertiesPanel/hover-hint callers should use
+        instead of the module-level `attribute_at_position(toPlainText(), pos)`,
+        which always re-scans the whole document. Same staleness guard as
+        `_update_matching_tag_highlight`: rescan only if the document changed
+        since the cache was last built.
+
+        BUG-008: resolution runs O(log n + depth) against a lazily built,
+        revision-guarded index (spans sorted by open_start for bisect + a
+        build_parent_map ancestor map) instead of the module function's
+        per-call full-span pass and per-level parent_tag_span scans --
+        PropertiesPanel calls this once per attribute row on every tree
+        selection, so the per-call cost is what makes selection feel instant
+        vs. frozen on ~37k-tag documents."""
+        if self.document().revision() != self._spans_revision:
+            self._rescan_structure()
+        if self._resolution_index is None:
+            spans_sorted = sorted(self._spans, key=lambda s: s.open_start)
+            self._resolution_index = (
+                spans_sorted,
+                [s.open_start for s in spans_sorted],
+                xml_structure.build_parent_map(self._spans),
+            )
+        spans_sorted, open_starts, parent_map = self._resolution_index
+
+        containing_pair = _containing_open_tag(
+            self._spans_text, spans_sorted, open_starts, pos
+        )
+        if containing_pair is None:
+            return None
+        containing, containing_open_end = containing_pair
+        pair = _attribute_pair_at(
+            self._spans_text, containing.open_start, containing_open_end, pos
+        )
+        if pair is None:
+            return None
+        attr, _value = pair
+
+        names = [containing.name]
+        walker = containing
+        while walker is not None:
+            parent = parent_map.get(id(walker))
+            # A '>' inside a quoted attribute value leaves that tag's span
+            # unclosed (close_end=None), and build_parent_map keeps such a
+            # span on its ancestor stack forever -- polluting every later
+            # element's chain with a false ancestor. A real parent is exactly
+            # one depth level up (the same filter parent_tag_span applies),
+            # so climb past any ancestor at the wrong depth.
+            while parent is not None and parent.depth != walker.depth - 1:
+                parent = parent_map.get(id(parent))
+            if parent is None:
+                break
+            names.append(parent.name)
+            walker = parent
+        return "/".join(reversed(names)), attr
 
     def replace_current_selection(self, text: str) -> None:
         """Replace the current selection's text with `text` as a single undo
@@ -1535,7 +1504,7 @@ class XmlEditor(QPlainTextEdit):
         attribute, or enum_hint yields nothing."""
         if self._schema_model is None:
             return None
-        resolved = attribute_at_position(self.toPlainText(), char_pos)
+        resolved = self.resolve_attribute_at(char_pos)
         if resolved is None:
             return None
         tag_chain, attr = resolved
@@ -1698,37 +1667,3 @@ class XmlEditor(QPlainTextEdit):
         ):
             extra_indent = "  "
         cursor.insertText("\n" + leading_ws + extra_indent)
-
-    def _bookmark_color(self) -> QColor:
-        """The bookmark tag's fill, derived from the palette's Highlight role
-        so it reads in both Light and Dark themes. Recomputed on each paint,
-        so it tracks palette changes with no cache to invalidate."""
-        return self.palette().color(QPalette.ColorRole.Highlight)
-
-    def _gutter_width(self) -> int:
-        digits = len(str(max(1, self.blockCount())))
-        digit_width = self.fontMetrics().horizontalAdvance("9")
-        return (
-            digits * digit_width
-            + _BOOKMARK_STRIP_WIDTH
-            + _FOLD_GLYPH_WIDTH
-            + 6
-        )
-
-    def _update_gutter_width(self, _new_block_count: int) -> None:
-        self.setViewportMargins(self._gutter_width(), 0, 0, 0)
-
-    def _update_gutter_on_scroll(self, rect, dy: int) -> None:
-        if dy:
-            self._gutter.scroll(0, dy)
-        else:
-            self._gutter.update(0, rect.y(), self._gutter.width(), rect.height())
-        if rect.contains(self.viewport().rect()):
-            self._update_gutter_width(0)
-
-    def resizeEvent(self, event) -> None:
-        super().resizeEvent(event)
-        contents_rect = self.contentsRect()
-        self._gutter.setGeometry(
-            QRect(contents_rect.left(), contents_rect.top(), self._gutter_width(), contents_rect.height())
-        )

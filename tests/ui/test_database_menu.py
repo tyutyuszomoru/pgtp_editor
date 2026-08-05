@@ -89,3 +89,49 @@ def test_connection_dialog_initialised_to_none(qtbot):
     window = MainWindow()
     qtbot.addWidget(window)
     assert window._connection_dialog is None
+
+
+# --- BUG-024: Connection Setup… is projectless-mode only --------------------
+def test_connection_setup_action_enabled_when_no_project_is_open(qtbot):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    assert window._ddl_project_folder is None
+
+    assert window._connection_setup_action.isEnabled() is True
+
+
+def test_connection_setup_action_disabled_once_a_project_is_active(qtbot, tmp_path):
+    from pgtp_editor.db.ddl_project import ProjectSettings
+
+    window = MainWindow()
+    qtbot.addWidget(window)
+
+    window._set_active_ddl_project(tmp_path / "proj", ProjectSettings())
+
+    assert window._connection_setup_action.isEnabled() is False
+
+
+def test_connection_setup_action_re_enabled_after_closing_the_project(qtbot, tmp_path):
+    from pgtp_editor.db.ddl_project import ProjectSettings
+
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window._set_active_ddl_project(tmp_path / "proj", ProjectSettings())
+    assert window._connection_setup_action.isEnabled() is False
+
+    window._close_ddl_project()
+
+    assert window._connection_setup_action.isEnabled() is True
+
+
+def test_open_connection_setup_no_ops_while_a_project_is_active(qtbot, tmp_path):
+    from pgtp_editor.db.ddl_project import ProjectSettings
+
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window._set_active_ddl_project(tmp_path / "proj", ProjectSettings())
+
+    window._open_connection_setup()
+
+    assert window._connection_dialog is None
+    assert "project settings" in window.statusBar().currentMessage().lower()

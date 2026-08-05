@@ -99,12 +99,35 @@ from pgtp_editor.ui.manual_panel import (
 )
 from pgtp_editor.db.config import save_connection, seed_params
 from pgtp_editor.db.compare import check_db_against_xml, check_xml_against_db
+from pgtp_editor.db.ddl_buffer import build_ddl_text
+from pgtp_editor.db.ddl_project import (
+    PgtpLink,
+    ProjectSettings,
+    compute_drift_markers,
+    content_hash,
+    is_project_dir,
+    load_settings,
+    routine_ddl_paths,
+    save_settings,
+    trigger_ddl_path,
+)
+from pgtp_editor.db.introspect import RoutineInfo, fetch_routines_and_triggers
 from pgtp_editor.db.introspect import fetch_schema as db_fetch_schema
 from pgtp_editor.db.introspect import test_connection as db_test_connection
 from pgtp_editor.db.rename import rename_field, rename_table
+from pgtp_editor.db.schema_index import SchemaIndex
+from pgtp_editor.db.sandbox import (
+    ProjectCapabilityStatus,
+    SandboxCapabilities,
+    determine_project_tier,
+    probe as sandbox_probe,
+)
 from pgtp_editor.ui.async_task import run_async
 from pgtp_editor.ui.connection_setup_dialog import ConnectionSetupDialog
+from pgtp_editor.ui.new_project_dialog import NewProjectDialog
+from pgtp_editor.ui.project_settings_dialog import ProjectSettingsDialog
 from pgtp_editor.ui.db_check_panel import DbCheckPanel
+from pgtp_editor.ui.ddl_buffer_panel import BrowserPanel
 from pgtp_editor.ui.code_editor import CodeEditorDialog
 from pgtp_editor.ui.customize_toolbar_dialog import CustomizeToolbarDialog
 from pgtp_editor.ui.history import SnapshotHistory
@@ -137,6 +160,10 @@ _FIND_RESULT_PREFIX = "[Find] "
 _VALIDATION_PREFIX = "[Validate] "
 
 _GENERATOR_OUTPUT_PREFIX = "[PHP] "
+
+#: Format Selection refusals (§18.4/§18.5). Not clickable, no line role
+#: (carve-out 6) -- the offending span is already underlined in the tab.
+_SQL_REFUSAL_PREFIX = "[SQL] "
 
 _FIND_ALL_BATCH = 200
 
@@ -203,6 +230,13 @@ class MainWindow(QMainWindow):
         # "create from table" reuses the column metadata without re-querying.
         self._last_db_schema = None
         self._last_db_summary = None
+        # Schema-aware Ctrl+Space completion (§18.6): the Qt-free lookup index
+        # built once per DDL Explorer connect/refresh from the (now widened,
+        # §18.6) fetch's `DatabaseSchema`, and handed to every open/newly
+        # opened `DdlObjectEditorPanel` by injection (`set_schema_index`,
+        # mirroring `XmlEditor.set_schema_model`). None until the DDL Explorer
+        # has fetched at least once.
+        self._ddl_schema_index: SchemaIndex | None = None
         # Off-thread executor seam. The Database Check schema fetch opens a
         # connection; running it here would freeze the window on a slow/dead
         # host. Default marshals it to a threadpool worker; tests inject a
@@ -245,6 +279,27 @@ class MainWindow(QMainWindow):
         self.db_check_panel.rename_requested.connect(self._on_db_rename_requested)
         self.db_check_panel.jump_requested.connect(self._on_db_jump_requested)
         self.db_check_panel.create_requested.connect(self._on_db_create_requested)
+        # The DDL Explorer's object tree rides in its own hidden tab (spec
+        # §18.1), revealed together with the center DDL Explorer tab by the
+        # Database > "DDL Explorer" toggle (mirrors the Database Check tab).
+        self.ddl_browser_panel = BrowserPanel()
+        self.ddl_browser_tab_index = self.left_tabs.addTab(
+            self.ddl_browser_panel, "DDL Objects"
+        )
+        self.left_tabs.setTabVisible(self.ddl_browser_tab_index, False)
+        self.ddl_browser_panel.navigate_requested.connect(
+            self._on_ddl_navigate_requested
+        )
+        # Right-click ▸ Edit… opens/focuses the editable DDL object tab
+        # (spec §18.5, D1 entry point 1).
+        self.ddl_browser_panel.edit_requested.connect(self._on_ddl_edit_requested)
+        # Right-click ▸ Check Out for Versioning -- the project-aware second
+        # variant of the same gesture (spec §18.2).
+        self.ddl_browser_panel.checkout_requested.connect(self._on_ddl_checkout_requested)
+        # Click on a Tables-branch table node populates the shared Properties
+        # panel (spec §18.1, 2026-08-05) -- the same panel instance the
+        # XML/XSD tree's own node-click already drives (_on_tree_selection_changed).
+        self.ddl_browser_panel.table_selected.connect(self._on_ddl_table_selected)
         # Table references ride in their own hidden tab, revealed by the
         # View > "Find table reference" toggle (mirrors the Database Check tab).
         self.table_refs_panel = TableReferencesPanel()
@@ -274,6 +329,22 @@ class MainWindow(QMainWindow):
         self.manual_contents.chapter_selected.connect(self._on_manual_chapter_selected)
         self.center_stage.manual_visibility_changed.connect(
             self._on_manual_visibility_changed
+        )
+        self.center_stage.xsd_close_requested.connect(self._on_xsd_close_requested)
+        self.center_stage.ddl_explorer_visibility_changed.connect(
+            self._on_ddl_explorer_visibility_changed
+        )
+        self.center_stage.ddl_object_close_requested.connect(
+            self._on_ddl_object_close_requested
+        )
+        # DDL Explorer's read-only buffer's own right-click ▸ Edit… (spec
+        # §18.5, D1 entry point 2) -- same target handler as BrowserPanel's
+        # tree entry point.
+        self.center_stage.ddl_editor_panel.edit_requested.connect(
+            self._on_ddl_edit_requested
+        )
+        self.center_stage.ddl_editor_panel.checkout_requested.connect(
+            self._on_ddl_checkout_requested
         )
         try:
             manual_text = load_manual_text()
@@ -364,6 +435,20 @@ class MainWindow(QMainWindow):
         self._current_diff_target_project = None
         self._current_diff_target_path = None
 
+        # Local DDL-versioning project state (spec §18.2) -- deliberately
+        # separate from _current_project (the open .pgtp): a project here is
+        # a plain chosen FOLDER, not necessarily related to any .pgtp at all.
+        self._ddl_project_folder: Path | None = None
+        self._ddl_project_settings: ProjectSettings | None = None
+        # Top-of-§18 tier/capability probe result -- refreshed automatically
+        # whenever a project is opened/created, and (later) on demand by the
+        # not-yet-built Project Status screen via refresh_project_capability_status().
+        # None until the first probe completes for the currently-open project.
+        self._ddl_project_capability_status: ProjectCapabilityStatus | None = None
+        # Injectable seam (mirrors _fetch_db_schema) -- tests patch this to a
+        # canned SandboxCapabilities so no real connection is ever opened.
+        self._probe_sandbox_capabilities = sandbox_probe
+
         # Document dirty-state tracking. `_loading` guards programmatic
         # setPlainText calls (load/revert/close) so they don't spuriously
         # mark the buffer dirty.
@@ -419,16 +504,6 @@ class MainWindow(QMainWindow):
         # it. The Customize dialog reference is held so it isn't GC'd while shown.
         self._customize_toolbar_dialog = None
         self._build_toolbar()
-
-        # Capture the app's ORIGINAL style + palette (its real OS-dark look)
-        # BEFORE any theme is applied, so turning Light Theme off can restore
-        # exactly this rather than a generic light default. The palette is
-        # copy-constructed so a later setPalette does not mutate the capture,
-        # and the style key (e.g. "windowsvista") is stored to restore via
-        # setStyle (Sub-project D, #9).
-        app = QApplication.instance()
-        self._default_palette = QPalette(app.palette())
-        self._default_style_key = app.style().objectName()
 
         # Restore persisted window geometry/dock state and theme (Sub-project D).
         # Done after docks/toolbars/menus exist so restoreState can match dock
@@ -581,6 +656,21 @@ class MainWindow(QMainWindow):
         self._set_xsd_dirty(False)
         stage.show_edit_xsd()
 
+    def _on_xsd_close_requested(self) -> None:
+        """Edit XSD tab ✕ clicked. Reuses `_confirm_close_xsd`'s save/discard/
+        cancel prompt (same pattern as `_open_xsd`/`closeEvent`) when dirty;
+        never invents a second confirmation path."""
+        if self._xsd_dirty:
+            choice = self._confirm_close_xsd()
+            if choice == "cancel":
+                return
+            if choice == "save":
+                self._save_xsd()
+                if self._xsd_dirty:
+                    # Save failed (e.g. disk error): don't drop the edits.
+                    return
+        self.center_stage.hide_edit_xsd()
+
     def _goto_xsd_at_cursor(self) -> None:
         """Ctrl+L / context-menu "Go To XSD": resolve the caret in the Raw
         XML editor and jump to its curated XSD definition."""
@@ -670,7 +760,10 @@ class MainWindow(QMainWindow):
             )
             return
         dest, _filter = QFileDialog.getSaveFileName(
-            self, "Export XSD", source.name, "XSD files (*.xsd)"
+            self,
+            "Export XSD",
+            str(Path(self._dialog_default_dir()) / source.name) if self._dialog_default_dir() else source.name,
+            "XSD files (*.xsd)",
         )
         if not dest:
             return
@@ -688,7 +781,7 @@ class MainWindow(QMainWindow):
         mode is curated (spec §11)."""
         mode = self._xsd_mode
         source, _filter = QFileDialog.getOpenFileName(
-            self, "Import XSD", "", "XSD files (*.xsd);;All files (*)"
+            self, "Import XSD", self._dialog_default_dir(), "XSD files (*.xsd);;All files (*)"
         )
         if not source:
             return
@@ -761,17 +854,53 @@ class MainWindow(QMainWindow):
         stage = self.center_stage
         if stage.currentIndex() == stage.xsd_tab_index:
             self._save_xsd()
-        else:
-            self._save_project()
+            return
+        panel = stage.active_ddl_object_panel()
+        if panel is not None:
+            self._save_ddl_object_editor(panel)
+            return
+        self._save_project()
 
     def _active_find_bar(self):
         """The FindReplaceBar of the active editor tab; defaults to the Raw
-        XML bar (revealing that tab) when neither editor tab is active."""
+        XML bar (revealing that tab) when no editor tab is active."""
         stage = self.center_stage
         if stage.currentIndex() == stage.xsd_tab_index:
             return stage.xsd_find_replace_bar
+        if stage.currentIndex() == stage.ddl_tab_index:
+            # The DDL Explorer buffer has its own bar (spec §18.1, per-tab
+            # document routing) -- without this branch Ctrl+F on the DDL tab
+            # used to bounce the user back to Raw XML.
+            return stage.ddl_editor_panel.find_replace_bar
+        panel = stage.active_ddl_object_panel()
+        if panel is not None:
+            # The editable object tab's own bar (spec §18.5) -- Replace is
+            # LIVE here, unlike the read-only DDL Explorer above.
+            return panel.find_replace_bar
         self._reveal_raw_xml_tab()
         return stage.find_replace_bar
+
+    def _active_bookmark_editor(self):
+        """The editor the Bookmarks menu/shortcuts act on: whichever editor
+        tab is active (§8). Every editor carries the same bookmark API from
+        the shared gutter base (`ui/editor_gutter.py`), so this dispatch is
+        the only thing needed to make the menu follow focus -- it mirrors
+        `_active_find_bar`'s per-tab routing.
+
+        Unlike `_active_find_bar` this deliberately does NOT reveal the Raw
+        XML tab as a side effect: toggling a bookmark must never yank the
+        user to a different tab. Any non-editor tab falls back to the Raw XML
+        editor, where bookmarks lived before the DDL Explorer existed.
+        """
+        stage = self.center_stage
+        if stage.currentIndex() == stage.xsd_tab_index:
+            return stage.xsd_editor
+        if stage.currentIndex() == stage.ddl_tab_index:
+            return stage.ddl_editor_panel.editor
+        panel = stage.active_ddl_object_panel()
+        if panel is not None:
+            return panel.editor
+        return stage.xml_editor
 
     def _confirm_close_xsd(self) -> str:
         """Ask the user how to resolve unsaved Edit XSD changes before
@@ -802,17 +931,13 @@ class MainWindow(QMainWindow):
 
     def _restore_theme(self):
         light = self._settings.value("lightTheme", False, type=bool)
-        if light:
-            self._light_theme_action.setChecked(True)
-            apply_theme(
-                QApplication.instance(),
-                True,
-                self._default_palette,
-                self._default_style_key,
-            )
-            # Toolbar was built under the default palette; re-tint its icons to
-            # the just-applied light palette so they stay legible.
-            self._refresh_toolbar_icons()
+        self._light_theme_action.setChecked(light)
+        apply_theme(QApplication.instance(), light)
+        # Toolbar was built under the native/default palette; re-tint its
+        # icons to whichever theme was just applied (BUG-004: the "off"
+        # state is now a real, explicit dark palette, not a native/OS
+        # passthrough) so they stay legible.
+        self._refresh_toolbar_icons()
 
     def closeEvent(self, event):
         # Edit XSD tab (spec §11): unsaved XSD edits get their own
@@ -837,12 +962,7 @@ class MainWindow(QMainWindow):
         super().closeEvent(event)
 
     def _on_light_theme_toggled(self, checked):
-        apply_theme(
-            QApplication.instance(),
-            checked,
-            self._default_palette,
-            self._default_style_key,
-        )
+        apply_theme(QApplication.instance(), checked)
         self._settings.setValue("lightTheme", checked)
         # The palette flipped -- re-tint the toolbar icons so they stay legible.
         self._refresh_toolbar_icons()
@@ -1039,11 +1159,20 @@ class MainWindow(QMainWindow):
 
     def _update_title(self) -> None:
         title = "PGTP Editor"
+        if self._ddl_project_folder is not None:
+            title = f"{title} — Project: {self._ddl_project_folder.name}"
         if self._current_project_path:
             title = f"{title} - {Path(self._current_project_path).name}"
         if self._dirty:
             title = f"{title} *"
         self.setWindowTitle(title)
+
+    def _dialog_default_dir(self) -> str:
+        """The directory an Open/Save dialog for a project file (`.pgtp`,
+        XSD import/export, a diff/merge comparison target) should default
+        to: the active §18.2 local project's folder, or '' (Qt's own
+        last-used-directory default) when no project is open."""
+        return str(self._ddl_project_folder) if self._ddl_project_folder is not None else ""
 
     def _on_tree_selection_changed(self, node, kind):
         self.properties_panel.show_node(node, kind)
@@ -1195,11 +1324,39 @@ class MainWindow(QMainWindow):
 
     def _open_project(self):
         path, _filter = QFileDialog.getOpenFileName(
-            self, "Open PGTP Project", "", "PGTP files (*.pgtp)"
+            self, "Open PGTP Project", self._dialog_default_dir(), "PGTP files (*.pgtp)"
         )
         if not path:
             return
-        self.open_project_file(path)
+        if self._ddl_project_folder is None:
+            self._prompt_pgtp_open_mode(path)
+        else:
+            # A project is already active -- the user already committed to
+            # project mode; just open (existing linking logic applies
+            # silently, exactly as it does for any subsequent open).
+            self.open_project_file(path)
+
+    def _prompt_pgtp_open_mode(self, path) -> None:
+        """The first time a `.pgtp` is opened with no project active, ask how
+        to work with it (§18.2): start a **New Project** around it, attach it
+        to an existing project via **Open Project**, or **Edit Standalone**
+        (today's plain behavior -- no project, no linking, unaffected). If
+        the chooser is dismissed without a button (e.g. the window close
+        box), defaults to Standalone -- the safe, non-destructive choice."""
+        box = QMessageBox(self)
+        box.setWindowTitle("Open .pgtp")
+        box.setText("How do you want to work with this file?")
+        new_button = box.addButton("New Project…", QMessageBox.ButtonRole.ActionRole)
+        open_button = box.addButton("Open Project…", QMessageBox.ButtonRole.ActionRole)
+        box.addButton("Edit Standalone", QMessageBox.ButtonRole.ActionRole)
+        box.exec()
+        clicked = box.clickedButton()
+        if clicked is new_button:
+            self._new_ddl_project(on_ready=lambda: self.open_project_file(path))
+        elif clicked is open_button:
+            self._open_ddl_project(on_ready=lambda: self.open_project_file(path))
+        else:
+            self.open_project_file(path)
 
     def open_project_file(self, path):
         """Load and display the .pgtp project at `path`.
@@ -1211,6 +1368,7 @@ class MainWindow(QMainWindow):
         (and the currently-tracked project) untouched (never a crash, never
         a silently-emptied tree or a silently-forgotten project).
         """
+        path = self._resolve_pgtp_project_path(path)
         _log.info("file: open %s", path)
         name = Path(path).name
         try:
@@ -1233,6 +1391,7 @@ class MainWindow(QMainWindow):
                 # never hit a TypeError when a caller passes a pathlib.Path
                 # instead of the QFileDialog string.
                 self._current_project_path = str(path)
+                self._link_pgtp_to_project_if_needed()
                 raw_text = self._read_raw_text(path)
                 if raw_text is not None:
                     self._loading = True
@@ -1571,7 +1730,7 @@ class MainWindow(QMainWindow):
         source = self._current_project
         if source is None:
             source_path, _filter = QFileDialog.getOpenFileName(
-                self, "Select Source Project", "", "PGTP files (*.pgtp)"
+                self, "Select Source Project", self._dialog_default_dir(), "PGTP files (*.pgtp)"
             )
             if not source_path:
                 return
@@ -1584,7 +1743,7 @@ class MainWindow(QMainWindow):
                 return
 
         target_path, _filter = QFileDialog.getOpenFileName(
-            self, "Select Target Project", "", "PGTP files (*.pgtp)"
+            self, "Select Target Project", self._dialog_default_dir(), "PGTP files (*.pgtp)"
         )
         if not target_path:
             return
@@ -1604,7 +1763,7 @@ class MainWindow(QMainWindow):
 
     def _compare_page_with(self, page_node):
         target_path, _filter = QFileDialog.getOpenFileName(
-            self, "Select Target Project", "", "PGTP files (*.pgtp)"
+            self, "Select Target Project", self._dialog_default_dir(), "PGTP files (*.pgtp)"
         )
         if not target_path:
             return
@@ -1633,7 +1792,7 @@ class MainWindow(QMainWindow):
 
     def _compare_detail_with(self, detail_node, source_path):
         target_path_str, _filter = QFileDialog.getOpenFileName(
-            self, "Select Target Project", "", "PGTP files (*.pgtp)"
+            self, "Select Target Project", self._dialog_default_dir(), "PGTP files (*.pgtp)"
         )
         if not target_path_str:
             return
@@ -1715,13 +1874,24 @@ class MainWindow(QMainWindow):
     def _write_project_text(self, path) -> None:
         """Write the Raw XML editor buffer verbatim to `path` as UTF-8. If
         `path` already exists, copy it to `path + '.bak'` first (same .bak
-        convention as Apply-to-Target)."""
+        convention as Apply-to-Target) -- **unless** `path` is a local
+        §18.2 project's `.pgtp` working copy, where the working copy itself
+        is the safety net and no `.bak` is written, exactly like `ddl/*.sql`
+        (§18.2, "the .pgtp file becomes a first-class checked-out
+        artifact"). Scoped precisely to that case: no-project-mode saves are
+        completely unaffected."""
         _log.info("file: save %s", path)
-        if Path(path).exists():
+        if Path(path).exists() and not self._is_ddl_project_pgtp_working_copy(path):
             shutil.copy2(path, str(path) + ".bak")
         Path(path).write_text(
             self.center_stage.xml_editor.toPlainText(), encoding="utf-8", newline=""
         )
+
+    def _is_ddl_project_pgtp_working_copy(self, path) -> bool:
+        if self._ddl_project_settings is None:
+            return False
+        working_copy_path = self._ddl_project_settings.pgtp.working_copy_path
+        return working_copy_path is not None and str(path) == working_copy_path
 
     def _save_project(self) -> None:
         if not self._current_project_path:
@@ -1737,7 +1907,7 @@ class MainWindow(QMainWindow):
 
     def _save_project_as(self) -> None:
         path, _filter = QFileDialog.getSaveFileName(
-            self, "Save Project As", "", "PGTP files (*.pgtp)"
+            self, "Save Project As", self._dialog_default_dir(), "PGTP files (*.pgtp)"
         )
         if not path:
             return
@@ -1811,6 +1981,16 @@ class MainWindow(QMainWindow):
         # into the emptied editor.
         self._history.clear()
         self._set_dirty(False)
+        # Database Check results are project-tied (BUG-011): hide the tab and
+        # drop the cached direction/schema/summary so a later reparse or
+        # rename re-run can't act on the closed project's stale state. Only
+        # here on the committed-close path -- a cancelled close (returns
+        # above) must leave the still-open project's tab alone, and
+        # _revert_project keeps the project loaded so it doesn't tear down.
+        self.left_tabs.setTabVisible(self.db_check_tab_index, False)
+        self._last_db_check_direction = None
+        self._last_db_schema = None
+        self._last_db_summary = None
         _log.info("file: close outcome=%s", outcome)
 
     def _revert_project(self) -> None:
@@ -1874,6 +2054,22 @@ class MainWindow(QMainWindow):
         open_action.setShortcut("Ctrl+O")
         open_action.triggered.connect(self._open_project)
         menu.addMenu("Open Recent")
+        menu.addSeparator()
+        # Local DDL-versioning projects (spec §18.2) -- a distinct concept
+        # from `_current_project` (the open .pgtp), tracked separately as
+        # `_ddl_project_folder`/`_ddl_project_settings`.
+        new_project_action = menu.addAction("New Project…")
+        new_project_action.triggered.connect(self._new_ddl_project)
+        open_project_action = menu.addAction("Open Project…")
+        open_project_action.triggered.connect(self._open_ddl_project)
+        self._close_ddl_project_action = menu.addAction("Close Project")
+        self._close_ddl_project_action.triggered.connect(self._close_ddl_project)
+        self._close_ddl_project_action.setEnabled(False)
+        project_settings_action = menu.addAction("Project Settings…")
+        project_settings_action.triggered.connect(self._open_ddl_project_settings)
+        deploy_pgtp_action = menu.addAction("Deploy .pgtp")
+        deploy_pgtp_action.triggered.connect(self._deploy_pgtp)
+        menu.addSeparator()
         save_action = menu.addAction("Save")
         save_action.setShortcut("Ctrl+S")
         save_action.triggered.connect(self._save_active_tab)
@@ -1955,15 +2151,26 @@ class MainWindow(QMainWindow):
     def _build_view_menu(self):
         menu = self.menuBar().addMenu("View")
 
+        # The three dock actions are wired BOTH ways (BUG-007): toggled drives
+        # dock.setVisible, and the dock's visibilityChanged drives setChecked,
+        # so closing a dock via its title-bar ✕ (or any programmatic
+        # hide/show) keeps the menu checkbox honest. No recursion guard is
+        # needed: QAction.toggled and QDockWidget.visibilityChanged only fire
+        # on actual state changes, so the pair settles immediately (same Qt
+        # signal-coalescing the Manual tab sync in center_stage relies on).
         tree_action = menu.addAction("Project Tree")
         tree_action.setCheckable(True)
         tree_action.setChecked(True)
         tree_action.toggled.connect(self.tree_dock.setVisible)
+        self.tree_dock.visibilityChanged.connect(tree_action.setChecked)
+        self._tree_action = tree_action
 
         properties_action = menu.addAction("Properties Panel")
         properties_action.setCheckable(True)
         properties_action.setChecked(True)
         properties_action.toggled.connect(self.properties_dock.setVisible)
+        self.properties_dock.visibilityChanged.connect(properties_action.setChecked)
+        self._properties_action = properties_action
 
         table_refs_action = menu.addAction("Find table reference")
         table_refs_action.setCheckable(True)
@@ -1975,6 +2182,8 @@ class MainWindow(QMainWindow):
         audit_action.setCheckable(True)
         audit_action.setChecked(True)
         audit_action.toggled.connect(self.audit_dock.setVisible)
+        self.audit_dock.visibilityChanged.connect(audit_action.setChecked)
+        self._audit_action = audit_action
 
         self._raw_xml_panel_action = menu.addAction("Raw XML Panel")
         self._raw_xml_panel_action.setCheckable(True)
@@ -2306,15 +2515,61 @@ class MainWindow(QMainWindow):
 
     def _build_database_menu(self):
         menu = self.menuBar().addMenu("Database")
-        setup_action = menu.addAction("Connection Setup…")
-        setup_action.triggered.connect(self._open_connection_setup)
+        # Standalone/projectless-mode only (BUG-024): once a §18.2 project is
+        # open, its own ProjectSettings (target/sandbox) is the connection
+        # store and this app-level profile would be a redundant shadow of it.
+        # Stored on self (not a local) so _refresh_project_dependent_actions
+        # can flip its enabled state from _set_active_ddl_project /
+        # _close_ddl_project.
+        self._connection_setup_action = menu.addAction("Connection Setup…")
+        self._connection_setup_action.triggered.connect(self._open_connection_setup)
+        self._connection_setup_action.setEnabled(self._ddl_project_folder is None)
         menu.addSeparator()
         check_xml_action = menu.addAction("Check: XML → Database")
         check_xml_action.triggered.connect(lambda: self._run_db_check("xml_to_db"))
         check_db_action = menu.addAction("Check: Database → XML")
         check_db_action.triggered.connect(lambda: self._run_db_check("db_to_xml"))
+        menu.addSeparator()
+        # DDL Explorer (spec §18.1): checkable toggle, kept in lockstep with
+        # the center tab's real visibility via ddl_explorer_visibility_changed
+        # (bidirectional per the BUG-007 lesson — the tab has its own ✕).
+        self._ddl_explorer_action = menu.addAction("DDL Explorer")
+        self._ddl_explorer_action.setCheckable(True)
+        self._ddl_explorer_action.setChecked(False)
+        self._ddl_explorer_action.toggled.connect(self._on_ddl_explorer_toggled)
+
+    def _prompt_missing_connection(self) -> None:
+        """No configured DB connection: in projectless mode this opens the
+        standalone Connection Setup dialog (unchanged behavior); with a
+        §18.2 project open, that dialog is meaningless (BUG-024) -- point the
+        user at Project Settings (target/sandbox) instead. Shared by
+        _run_db_check and _open_ddl_explorer, the two internal callers that
+        used to always open Connection Setup on a missing host."""
+        if self._ddl_project_folder is not None:
+            self.statusBar().showMessage(
+                "No database connection configured — set one up in Project Settings.",
+                5000,
+            )
+            self._open_ddl_project_settings()
+            return
+        self.statusBar().showMessage(
+            "No database connection configured — set one up first.", 5000
+        )
+        self._open_connection_setup()
 
     def _open_connection_setup(self):
+        # Projectless mode only (BUG-024): while a §18.2 project is open, its
+        # connection lives in Project Settings (target/sandbox) -- this
+        # app-level dialog would be a meaningless, redundant shadow of it.
+        # The menu action is already disabled in that state, but internal
+        # callers (_run_db_check, _open_ddl_explorer) also invoke this method
+        # directly on a missing connection, so guard here too.
+        if self._ddl_project_folder is not None:
+            self.statusBar().showMessage(
+                "Connection is defined in Project Settings while a project is open.",
+                5000,
+            )
+            return
         tree = (
             self._current_project.tree
             if self._current_project is not None
@@ -2327,6 +2582,375 @@ class MainWindow(QMainWindow):
         )
         self._connection_dialog = dialog
         dialog.show()
+
+    # -- Local DDL-versioning projects (§18.2) --------------------------------
+    def _new_ddl_project(self, on_ready=None) -> None:
+        dialog = NewProjectDialog(parent=self)
+
+        def handle() -> None:
+            self._create_ddl_project(dialog)
+            if on_ready is not None:
+                on_ready()
+
+        dialog.accepted.connect(handle)
+        self._new_project_dialog = dialog
+        dialog.show()
+
+    def _create_ddl_project(self, dialog: NewProjectDialog) -> None:
+        folder = Path(dialog.folder())
+        folder.mkdir(parents=True, exist_ok=True)
+        settings = ProjectSettings(
+            name=dialog.name(),
+            description=dialog.description(),
+            sandbox=dialog.sandbox_params(),
+            sandbox_mode=dialog.sandbox_mode(),
+            git=dialog.git_config(),
+        )
+        save_settings(folder, settings)
+        self._set_active_ddl_project(folder, settings)
+        self.statusBar().showMessage(f"Created project: {folder}", 5000)
+
+    def _open_ddl_project(self, on_ready=None) -> None:
+        folder = QFileDialog.getExistingDirectory(
+            self, "Open Project Folder", "",
+            QFileDialog.Option.ShowDirsOnly,
+        )
+        if not folder:
+            return
+        folder_path = Path(folder)
+        # BUG-022: Open requires a REAL project folder -- one already
+        # carrying the `.ddlproject/settings.json` marker. Loading
+        # `load_settings` unconditionally on any folder silently returns a
+        # default ProjectSettings() for a folder that was never a project;
+        # reject that instead of guessing.
+        if not is_project_dir(folder_path):
+            QMessageBox.warning(
+                self,
+                "Not a Project Folder",
+                f"{folder_path} is not a PGTP DDL project folder "
+                "(no .ddlproject/settings.json marker found).",
+            )
+            return
+        settings = load_settings(folder_path)
+        self._set_active_ddl_project(folder_path, settings)
+        self._report_ddl_project_drift(folder_path, settings)
+        self.statusBar().showMessage(f"Opened project: {folder_path}", 5000)
+        if on_ready is not None:
+            on_ready()
+        else:
+            # BUG-021: opening a project should auto-open its linked .pgtp
+            # into the editor -- but only on a plain Open Project (on_ready
+            # is None). When on_ready IS set, the caller (e.g.
+            # _prompt_pgtp_open_mode's "Open Project…" choice, or
+            # _require_ddl_project) already has its own specific .pgtp to
+            # load; auto-opening the linked working copy here too would be a
+            # silent double-load racing against that caller's own load.
+            self._auto_open_linked_pgtp(folder_path, settings)
+
+    def _auto_open_linked_pgtp(self, folder_path: Path, settings: ProjectSettings) -> None:
+        """BUG-021: a project's linked `.pgtp` should populate the editor the
+        moment the project is opened, not require a separate manual File >
+        Open. Reuses the existing `open_project_file` loader -- never
+        reinvents loading.
+
+        Scope, exactly as triaged: **zero** candidates -> silent no-op (no
+        error, nothing to open yet); **one** -> auto-open it; **multiple**
+        unlinked candidates -> report via the Audit panel rather than
+        guessing which one the user means."""
+        working_copy_path = settings.pgtp.working_copy_path
+        if working_copy_path:
+            if Path(working_copy_path).exists():
+                self.open_project_file(working_copy_path)
+            return
+        # Not yet linked -- fall back to scanning the project folder itself
+        # for a `.pgtp` the user may have dropped in directly.
+        candidates = sorted(folder_path.glob("*.pgtp"))
+        if not candidates:
+            return  # zero -- nothing to do
+        if len(candidates) == 1:
+            self.open_project_file(str(candidates[0]))
+            return
+        # Multiple unlinked candidates: never guess -- surface via Audit.
+        names = ", ".join(path.name for path in candidates)
+        self.audit_panel.addItem(
+            QListWidgetItem(
+                f"[Project] Multiple .pgtp files found in {folder_path} "
+                f"({names}) -- open one explicitly via File > Open."
+            )
+        )
+
+    def _require_ddl_project(self, on_ready) -> None:
+        """§18.2: no project-scoped action proceeds silently with none open.
+        Offers **Create… / Open… / Cancel**; on Create/Open, `on_ready` runs
+        against the newly-active project once it exists. On Cancel, nothing
+        happens."""
+        if self._ddl_project_folder is not None:
+            on_ready()
+            return
+        box = QMessageBox(self)
+        box.setWindowTitle("Project Required")
+        box.setText("This action needs an open project.")
+        create_button = box.addButton("Create…", QMessageBox.ButtonRole.ActionRole)
+        open_button = box.addButton("Open…", QMessageBox.ButtonRole.ActionRole)
+        box.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
+        box.exec()
+        clicked = box.clickedButton()
+        if clicked is create_button:
+            self._new_ddl_project(on_ready=on_ready)
+        elif clicked is open_button:
+            self._open_ddl_project(on_ready=on_ready)
+
+    def _set_active_ddl_project(self, folder: Path, settings: ProjectSettings) -> None:
+        self._ddl_project_folder = folder
+        self._ddl_project_settings = settings
+        self._close_ddl_project_action.setEnabled(True)
+        self._refresh_project_dependent_actions()
+        self._update_title()
+        self.refresh_project_capability_status()
+
+    def _refresh_project_dependent_actions(self) -> None:
+        """Single place for menu-action enablement that depends on whether a
+        §18.2 project is open. Currently just the standalone Connection
+        Setup… action (BUG-024: projectless-mode only, since a project's own
+        connection lives in Project Settings), called from both
+        `_set_active_ddl_project` and `_close_ddl_project` so the two
+        transitions can never drift apart."""
+        self._connection_setup_action.setEnabled(self._ddl_project_folder is None)
+
+    def refresh_project_capability_status(self) -> None:
+        """Re-run the top-of-§18 tier/capability probe for the current
+        project (reachable local Postgres via `db/sandbox.py::probe`, plus
+        -- for a "with data" sandbox -- `pg_dump`/`pg_restore` on `PATH`) and
+        store the result on `self._ddl_project_capability_status`.
+
+        **Probe timing, settled 2026-08-05:** runs automatically whenever a
+        project is opened/created (called from `_set_active_ddl_project`)
+        and is also the entry point the not-yet-designed "Project Status"
+        screen will call on demand later -- it is never probed once and
+        cached from creation time, so a sandbox that died between sessions
+        is correctly detected and degrades the project from tier 3 to tier
+        2 for this session. No-op (and clears the stored status) when no
+        project is open. Runs off the GUI thread so an unreachable sandbox
+        host can't freeze the window.
+        """
+        if self._ddl_project_folder is None or self._ddl_project_settings is None:
+            self._ddl_project_capability_status = None
+            return
+        settings = self._ddl_project_settings
+        sandbox_params = settings.sandbox
+        sandbox_mode = settings.sandbox_mode
+        sandbox_configured = bool(sandbox_params.host)
+
+        def do_probe() -> ProjectCapabilityStatus:
+            if not sandbox_configured:
+                return determine_project_tier(
+                    SandboxCapabilities(), sandbox_mode, sandbox_configured=False
+                )
+            caps = self._probe_sandbox_capabilities(sandbox_params)
+            return determine_project_tier(caps, sandbox_mode, sandbox_configured=True)
+
+        def on_result(status: ProjectCapabilityStatus) -> None:
+            self._ddl_project_capability_status = status
+
+        def on_error(exc: BaseException) -> None:
+            # The probe itself never raises (db/sandbox.py::probe's
+            # never-raises contract) -- this only guards against a broken
+            # injected seam in tests/future callers, never silently swallowed.
+            self.audit_panel.addItem(
+                QListWidgetItem(f"[Project] Capability probe failed unexpectedly: {exc}")
+            )
+
+        self._run_async(do_probe, on_result=on_result, on_error=on_error)
+
+    def _report_ddl_project_drift(self, folder: Path, settings: ProjectSettings) -> None:
+        """Opening a project compares the `.pgtp` working copy's checksum
+        against the sshfs-mounted source, surfaced (never auto-resolved) via
+        the Audit panel -- recomputed fresh on every load, never cached
+        (§18.2). The per-object DDL `*`/`!` drift comparison runs alongside
+        the DDL Explorer tree it renders onto (§18.2/§18.8, see BrowserPanel)."""
+        link = settings.pgtp
+        if not link.source_path:
+            return  # no .pgtp linked to this project yet -- nothing to compare
+        try:
+            source_text = Path(link.source_path).read_text(encoding="utf-8")
+        except OSError as exc:
+            item = QListWidgetItem(f"[Project] Could not read source .pgtp: {exc}")
+            self.audit_panel.addItem(item)
+            return
+        current_checksum = content_hash(source_text)
+        if link.last_known_source_checksum is None:
+            message = f"[Project] Source .pgtp checksum recorded ({link.source_path})."
+        elif current_checksum != link.last_known_source_checksum:
+            message = (
+                f"[Project] Source .pgtp has changed since this project last saw it "
+                f"({link.source_path}) -- surfaced, not auto-resolved."
+            )
+        else:
+            message = f"[Project] Source .pgtp unchanged since last opened ({link.source_path})."
+        self.audit_panel.addItem(QListWidgetItem(message))
+
+    def _close_ddl_project(self) -> None:
+        """Closing is a reminder point, never a forcing point (§18.3) --
+        offers "Deploy .pgtp" if the working copy has unpushed changes, but
+        never forces it; closing itself always succeeds."""
+        if self._ddl_project_folder is None:
+            return
+        self._offer_pgtp_deploy_on_close()
+        self._remind_pending_ddl_deploys_on_close()
+        self._ddl_project_folder = None
+        self._ddl_project_settings = None
+        self._ddl_project_capability_status = None
+        self._close_ddl_project_action.setEnabled(False)
+        self._refresh_project_dependent_actions()
+        self._update_title()
+        self.statusBar().showMessage("Project closed.", 5000)
+
+    def _remind_pending_ddl_deploys_on_close(self) -> None:
+        """Reminds about `*`-flagged DDL objects (locally edited, candidates
+        for a batch deploy) -- never opens the deploy-bundle flow
+        automatically and never forces a decision (§18.3). Only checks
+        objects from the currently-loaded DDL Explorer schema, if any --
+        this is a reminder at a natural checkpoint, not a forced fresh
+        fetch."""
+        schema = getattr(self.ddl_browser_panel, "_schema", None)
+        if schema is None or self._ddl_project_settings is None:
+            return
+        markers = compute_drift_markers(self._ddl_project_folder, self._ddl_project_settings, schema)
+        pending = sum(1 for marker in markers.values() if marker.locally_edited)
+        if pending:
+            self.audit_panel.addItem(
+                QListWidgetItem(
+                    f"[Project] {pending} DDL object(s) have local edits pending a batch deploy."
+                )
+            )
+
+    def _offer_pgtp_deploy_on_close(self) -> None:
+        link = self._ddl_project_settings.pgtp if self._ddl_project_settings else None
+        if link is None or not link.working_copy_path or not link.source_path:
+            return
+        try:
+            working_text = Path(link.working_copy_path).read_text(encoding="utf-8")
+        except OSError:
+            return
+        if content_hash(working_text) == link.last_known_source_checksum:
+            return  # nothing pending
+        choice = QMessageBox.question(
+            self,
+            "Unpushed .pgtp Changes",
+            "This project's .pgtp working copy has changes not yet deployed "
+            "to the source. Deploy them now?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if choice == QMessageBox.StandardButton.Yes:
+            self._deploy_pgtp()
+
+    def _resolve_pgtp_project_path(self, path) -> str:
+        """If `path` is the sshfs-mounted source of an ALREADY-linked §18.2
+        project, resolve to the local working copy instead -- **every**
+        open of the linked source redirects there, not just the first
+        (the working copy is the editable truth once linked, §18.2; without
+        this, re-opening the source a second time would silently repoint
+        saves back at the source, defeating the whole no-`.bak` model).
+        Unlinked / no-project cases pass `path` through unchanged -- this is
+        also what makes first-time linking possible at all, since
+        `_link_pgtp_to_project_if_needed` needs the ORIGINAL source path."""
+        if self._ddl_project_settings is None:
+            return str(path)
+        link = self._ddl_project_settings.pgtp
+        if link.source_path and link.working_copy_path and str(path) == link.source_path:
+            return link.working_copy_path
+        return str(path)
+
+    def _link_pgtp_to_project_if_needed(self) -> None:
+        """When a `.pgtp` is opened while a project is active and not yet
+        linked, this `.pgtp` becomes that project's first-class checked-out
+        artifact (§18.2): a local working copy inside the project folder,
+        distinct from the sshfs-mounted source, tracked in the project's own
+        settings. Subsequent saves redirect to the working copy (this method
+        repoints `_current_project_path` there). No-op if no project is
+        open or one is already linked -- never silently relinked. (Every
+        FUTURE open of the linked source is redirected before this method
+        even runs -- see `_resolve_pgtp_project_path`.)"""
+        if self._ddl_project_folder is None or self._ddl_project_settings is None:
+            return
+        if self._ddl_project_settings.pgtp.working_copy_path:
+            return
+        source_path = Path(self._current_project_path)
+        working_copy_path = self._ddl_project_folder / source_path.name
+        try:
+            source_text = source_path.read_text(encoding="utf-8")
+        except OSError:
+            return  # nothing to link yet -- leave the .pgtp unlinked
+        if not working_copy_path.exists():
+            working_copy_path.write_text(source_text, encoding="utf-8", newline="")
+        settings = self._ddl_project_settings
+        updated = ProjectSettings(
+            name=settings.name,
+            description=settings.description,
+            pgtp=PgtpLink(
+                source_path=str(source_path),
+                working_copy_path=str(working_copy_path),
+                last_known_source_checksum=content_hash(source_text),
+            ),
+            target=settings.target,
+            sandbox=settings.sandbox,
+            git=settings.git,
+            deployed=settings.deployed,
+        )
+        save_settings(self._ddl_project_folder, updated)
+        self._ddl_project_settings = updated
+        self._current_project_path = str(working_copy_path)
+
+    def _deploy_pgtp(self) -> None:
+        """Push the local `.pgtp` working copy back to the sshfs-mounted
+        source -- the explicit gesture that reverses working-copy drift
+        (§18.2). Never implied by Save; reachable on-demand (Database menu)
+        and offered as a close-time convenience prompt."""
+        if self._ddl_project_settings is None:
+            self.statusBar().showMessage("No project open.", 5000)
+            return
+        link = self._ddl_project_settings.pgtp
+        if not link.working_copy_path or not link.source_path:
+            self.statusBar().showMessage("No .pgtp linked to this project yet.", 5000)
+            return
+        try:
+            working_text = Path(link.working_copy_path).read_text(encoding="utf-8")
+            Path(link.source_path).write_text(working_text, encoding="utf-8", newline="")
+        except OSError as exc:
+            QMessageBox.critical(self, "Deploy Failed", f"Could not deploy .pgtp:\n\n{exc}")
+            return
+        settings = self._ddl_project_settings
+        updated = ProjectSettings(
+            name=settings.name,
+            description=settings.description,
+            pgtp=PgtpLink(
+                source_path=link.source_path,
+                working_copy_path=link.working_copy_path,
+                last_known_source_checksum=content_hash(working_text),
+            ),
+            target=settings.target,
+            sandbox=settings.sandbox,
+            git=settings.git,
+            deployed=settings.deployed,
+        )
+        save_settings(self._ddl_project_folder, updated)
+        self._ddl_project_settings = updated
+        self.statusBar().showMessage(f"Deployed .pgtp to {link.source_path}", 5000)
+
+    def _open_ddl_project_settings(self) -> None:
+        self._require_ddl_project(self._show_ddl_project_settings_dialog)
+
+    def _show_ddl_project_settings_dialog(self) -> None:
+        dialog = ProjectSettingsDialog(self._ddl_project_settings, parent=self)
+        dialog.accepted.connect(lambda: self._save_ddl_project_settings(dialog))
+        self._project_settings_dialog = dialog
+        dialog.show()
+
+    def _save_ddl_project_settings(self, dialog: ProjectSettingsDialog) -> None:
+        settings = dialog.settings()
+        save_settings(self._ddl_project_folder, settings)
+        self._ddl_project_settings = settings
+        self.statusBar().showMessage("Project settings saved.", 5000)
 
     # -- Database Check (SP2) ------------------------------------------------
 
@@ -2381,10 +3005,7 @@ class MainWindow(QMainWindow):
             return
         params = seed_params(project.tree, self._settings)
         if not params.host:
-            self.statusBar().showMessage(
-                "No database connection configured — set one up first.", 5000
-            )
-            self._open_connection_setup()
+            self._prompt_missing_connection()
             return
         # The schema fetch opens a DB connection -- move ONLY that off the GUI
         # thread. Everything above (buffer parse, seed, guards) is fast and stays
@@ -2412,6 +3033,285 @@ class MainWindow(QMainWindow):
             on_result=on_result,
             on_error=on_error,
         )
+
+    # -- DDL Explorer (spec §18.1) --------------------------------------------
+
+    def _fetch_ddl_schema(self, params):
+        """Introspect routines & triggers. Injectable seam — tests patch this
+        to return a canned `DatabaseSchema` (mirrors `_fetch_db_schema`)."""
+        return fetch_routines_and_triggers(params)
+
+    def _on_ddl_explorer_toggled(self, checked):
+        if checked:
+            self._open_ddl_explorer()
+        else:
+            self.center_stage.hide_ddl_explorer()
+
+    def _open_ddl_explorer(self):
+        """Fetch routines/triggers and reveal the DDL Explorer (center buffer
+        tab + left "DDL Objects" tree). Standalone-mode friendly (§18): no
+        `.pgtp` project is required — only a configured connection."""
+        tree = (
+            self._current_project.tree
+            if self._current_project is not None
+            else None
+        )
+        params = seed_params(tree, self._settings)
+        if not params.host:
+            self._ddl_explorer_action.setChecked(False)
+            self._prompt_missing_connection()
+            return
+        self.statusBar().showMessage("Loading routines & triggers…")
+        _log.info("db: ddl explorer load started %s", debuglog.redacted(params))
+
+        def on_result(schema):
+            text, spans = build_ddl_text(schema)
+            self.center_stage.ddl_editor_panel.set_ddl_text(text, spans, schema=schema)
+            # */! drift markers (§18.2): recomputed fresh on every fetch, never
+            # cached -- None (no markers) when no project is open, matching the
+            # existing project-less rendering exactly.
+            drift_markers = (
+                compute_drift_markers(self._ddl_project_folder, self._ddl_project_settings, schema)
+                if self._ddl_project_folder is not None
+                else None
+            )
+            self.ddl_browser_panel.set_schema(schema, spans, drift_markers=drift_markers)
+            self.center_stage.show_ddl_explorer()
+            # Schema-aware Ctrl+Space completion (§18.6): rebuild the lookup
+            # index from this same fetch (now widened to also carry
+            # `.tables`) and push it into every already-open DDL object tab,
+            # exactly like the tree and the read-only buffer are refreshed
+            # above -- built once per connect/refresh, never per keystroke.
+            self._ddl_schema_index = SchemaIndex(schema)
+            for panel in self.center_stage.ddl_object_panels():
+                panel.set_schema_index(self._ddl_schema_index)
+            self.statusBar().showMessage(
+                f"DDL Explorer: {len(schema.routines)} routine(s), "
+                f"{len(schema.triggers)} trigger(s).",
+                5000,
+            )
+            _log.info("db: ddl explorer load finished")
+
+        def on_error(exc):
+            _log.info("db: ddl explorer load failed %s", exc)
+            self.statusBar().showMessage(f"DDL Explorer failed: {exc}", 8000)
+            self._ddl_explorer_action.setChecked(False)
+
+        self._run_async(
+            lambda: self._fetch_ddl_schema(params),
+            on_result=on_result,
+            on_error=on_error,
+        )
+
+    def _on_ddl_explorer_visibility_changed(self, visible):
+        """Keep the left "DDL Objects" tree tab and the Database-menu toggle
+        in lockstep with the center tab (Contents-rides-with-Manual pattern;
+        bidirectional per BUG-007 — the tab has its own ✕)."""
+        self.left_tabs.setTabVisible(self.ddl_browser_tab_index, visible)
+        if visible:
+            self.tree_dock.setVisible(True)
+            self.left_tabs.setCurrentWidget(self.ddl_browser_panel)
+        self._ddl_explorer_action.setChecked(visible)
+
+    def _on_ddl_navigate_requested(self, line):
+        """Leaf click in the DDL Objects tree → jump the DDL buffer tab to the
+        object's banner line (two tree leaves may share one span, §18.1)."""
+        self.center_stage.setCurrentIndex(self.center_stage.ddl_tab_index)
+        self.center_stage.ddl_editor_panel.navigate_to_line(line)
+
+    def _on_ddl_table_selected(self, table_info) -> None:
+        """Click on a Tables-branch table node (spec §18.1, 2026-08-05) --
+        populates the shared Properties panel, mirroring how the XML/XSD
+        tree's own selection handler (`_on_tree_selection_changed`) calls
+        `show_node` for its four kinds. Click-only, no navigation target:
+        `PropertiesPanel` rows built from a `TableInfo` all carry
+        `target_line=None`."""
+        self.properties_panel.show_node(table_info, "ddl_table")
+
+    def _on_ddl_edit_requested(self, ref, source):
+        """Right-click ▸ Edit… on a BrowserPanel object row opens (or
+        focuses) the editable DDL object tab for it (spec §18.5, D1 entry
+        point 1). Re-invoking Edit on an already-open object focuses the
+        existing tab -- never a second tab for the same object."""
+        existing = self.center_stage.ddl_object_tab(ref.key)
+        if existing is not None:
+            self.center_stage.setCurrentWidget(existing)
+            return
+
+        # The §18.2 save seam, in concrete v1 form: return the remembered
+        # path, or run Save As… (this module owns QFileDialog -- the panel
+        # itself must not, so §18.2 can repoint this one callable later
+        # without the panel changing at all). `box` exists only so this
+        # closure can see the panel that does not exist yet at definition
+        # time; it is filled in immediately below, before any save can occur.
+        box = {}
+
+        def resolver():
+            panel = box["panel"]
+            if panel.save_path is not None:
+                return panel.save_path
+            default_dir = self._dialog_default_dir()
+            prefill = str(Path(default_dir) / ref.default_file_name) if default_dir else ref.default_file_name
+            path, _filter = QFileDialog.getSaveFileName(
+                self, "Save DDL Object", prefill, "SQL files (*.sql)"
+            )
+            if not path:
+                return None
+            resolved = Path(path)
+            panel.remember_save_path(resolved)
+            return resolved
+
+        panel = self.center_stage.open_ddl_object_tab(ref, source, resolve_save_path=resolver)
+        box["panel"] = panel
+        panel.set_schema_index(self._ddl_schema_index)
+        panel.dirty_changed.connect(
+            lambda _dirty, ref=ref: self.center_stage.update_ddl_object_tab(ref)
+        )
+        panel.format_refused.connect(self._report_ddl_format_refusal)
+
+    def _on_ddl_checkout_requested(self, ref, source) -> None:
+        """Right-click ▸ Check Out for Versioning (spec §18.2) -- the
+        project-aware second variant of the Edit… gesture. Requires an open
+        project (offers Create…/Open…/Cancel if none is), then performs the
+        checkout and opens the same editable tab pointed at the checked-out
+        file instead of the live definition."""
+        self._require_ddl_project(lambda: self._checkout_and_edit(ref, source))
+
+    def _ddl_checkout_relpath(self, ref, schema) -> str:
+        """The object's `ddl/*.sql` relative path, computed via
+        `db/ddl_project.py`'s naming scheme (§18.2). Routines need the WHOLE
+        current routine set for correct overload disambiguation; if `ref`'s
+        own signature is missing from `schema` (stale/unavailable), fall
+        back to a single-routine set built from `ref`'s own identity so the
+        sole-holder case still resolves."""
+        if ref.is_trigger:
+            return trigger_ddl_path(ref.schema, ref.table, ref.name)
+        routines = schema.routines if schema is not None else {}
+        signature = f"{ref.schema}.{ref.name}({', '.join(ref.arg_types)})"
+        if not any(r.signature == signature for r in routines.values()):
+            routines = {
+                signature: RoutineInfo(schema=ref.schema, name=ref.name, arg_types=list(ref.arg_types))
+            }
+        return routine_ddl_paths(routines)[signature]
+
+    def _checkout_and_edit(self, ref, source) -> None:
+        schema = getattr(self.ddl_browser_panel, "_schema", None)
+        relpath = self._ddl_checkout_relpath(ref, schema)
+        ddl_path = (self._ddl_project_folder / relpath).resolve()
+        key = str(ddl_path)
+
+        existing = self.center_stage.ddl_object_tab(key)
+        if existing is not None:
+            self.center_stage.setCurrentWidget(existing)
+            return
+
+        if ddl_path.exists():
+            # File present -> open from disk. The local file is the
+            # editable truth and is never silently overwritten from the DB.
+            text = ddl_path.read_text(encoding="utf-8")
+        else:
+            # File absent -> seed from the live introspected definition.
+            # That write IS the checkout (§18.2).
+            ddl_path.parent.mkdir(parents=True, exist_ok=True)
+            ddl_path.write_text(source, encoding="utf-8")
+            text = source
+
+        self._report_ddl_checkout_drift(ref, relpath, source)
+
+        def resolver():
+            return ddl_path
+
+        panel = self.center_stage.open_ddl_object_tab(
+            ref, text, resolve_save_path=resolver, key=key
+        )
+        panel.set_schema_index(self._ddl_schema_index)
+        panel.dirty_changed.connect(
+            lambda _dirty, ref=ref, key=key: self.center_stage.update_ddl_object_tab(ref, key=key)
+        )
+        panel.format_refused.connect(self._report_ddl_format_refusal)
+
+    def _report_ddl_checkout_drift(self, ref, relpath, live_source) -> None:
+        """Checkout semantics step 4 (§18.2): if the live DB has drifted from
+        the last-deployed reference, surface it -- an Audit line -- but
+        never block editing. The `!` marker itself is rendered on
+        BrowserPanel's tree (§18.2/§18.8)."""
+        entry = self._ddl_project_settings.deployed.get(relpath) if self._ddl_project_settings else None
+        if entry is None:
+            return
+        if content_hash(live_source) != entry.content_hash:
+            self.audit_panel.addItem(
+                QListWidgetItem(
+                    f"[Project] Live DB definition for {ref.qualified} has drifted "
+                    f"from the last-deployed reference -- surfaced, not auto-resolved."
+                )
+            )
+
+    def _save_ddl_object_editor(self, panel) -> bool:
+        """Ctrl+S / File ▸ Save for the active DDL object tab (spec §18.5):
+        Save As… on the first save, then silent writes to the remembered
+        path thereafter. Never touches a database. Returns True on success,
+        False if the user cancelled Save As… -- callers (the close-
+        confirmation flow) must treat that exactly like Close ▸ Cancel, not
+        as a completed save."""
+        path = panel.resolve_save_path()
+        if path is None:
+            return False  # Save As… cancelled: not an error, nothing written
+        try:
+            path.write_text(panel.text(), encoding="utf-8", newline="")
+        except OSError as exc:
+            QMessageBox.critical(self, "Save Failed", f"Could not save:\n\n{exc}")
+            return False
+        panel.remember_save_path(path)
+        panel.mark_clean()
+        self.center_stage.update_ddl_object_tab(panel.ref)
+        self.statusBar().showMessage(f"Saved {path}", 5000)
+        return True
+
+    def _confirm_close_ddl_object(self, ref) -> str:
+        """Ask the user how to resolve unsaved changes in a DDL object tab
+        before closing. Returns "save", "discard", or "cancel" (mirrors
+        `_confirm_close`/`_confirm_close_xsd`, so tests can monkeypatch this
+        instead of ever driving a real modal)."""
+        result = QMessageBox.question(
+            self,
+            "Unsaved Changes",
+            f"{ref.qualified} has unsaved changes. Save before closing?",
+            QMessageBox.StandardButton.Save
+            | QMessageBox.StandardButton.Discard
+            | QMessageBox.StandardButton.Cancel,
+        )
+        if result == QMessageBox.StandardButton.Save:
+            return "save"
+        if result == QMessageBox.StandardButton.Discard:
+            return "discard"
+        return "cancel"
+
+    def _on_ddl_object_close_requested(self, key) -> None:
+        """DDL object tab ✕ clicked. Reuses the Edit-XSD save/discard/cancel
+        pattern (`_on_xsd_close_requested`) -- and, per §18.5, a Save As…
+        cancelled from this prompt ABORTS THE CLOSE exactly like Cancel would,
+        so a dismissed file dialog can never silently discard an edit."""
+        panel = self.center_stage.ddl_object_tab(key)
+        if panel is None:
+            return
+        if panel.is_dirty():
+            choice = self._confirm_close_ddl_object(panel.ref)
+            if choice == "cancel":
+                return
+            if choice == "save":
+                if not self._save_ddl_object_editor(panel):
+                    return  # Save As… cancelled: stays open and dirty
+        self.center_stage.close_ddl_object_tab(key)
+
+    def _report_ddl_format_refusal(self, issues) -> None:
+        """Format Selection refusal (§18.4/§18.5): one `[SQL]`-prefixed Audit
+        line per Issue -- never clickable, no line role (carve-out 6); the
+        offending span is already underlined in the tab itself."""
+        for issue in issues:
+            item = QListWidgetItem(
+                f"{_SQL_REFUSAL_PREFIX}line {issue.start_line}: {issue.message}"
+            )
+            self.audit_panel.addItem(item)
 
     def _on_db_rename_requested(self, kind, old):
         new = self._prompt_rename(old)
@@ -2578,24 +3478,36 @@ class MainWindow(QMainWindow):
         apply_action.triggered.connect(self._apply_changes_to_target)
 
     def _build_bookmarks_menu(self):
+        # Each action resolves the target editor at TRIGGER time via
+        # _active_bookmark_editor, not at build time -- the shared gutter base
+        # (§8) puts the same bookmark API on the Raw XML, Edit XSD and DDL
+        # Explorer editors, so the menu follows whichever is active instead of
+        # being bound to Raw XML forever.
         menu = self.menuBar().addMenu("Bookmarks")
-        editor = self.center_stage.xml_editor
 
         toggle_action = menu.addAction("Toggle Bookmark")
         toggle_action.setShortcut("Ctrl+F2")
-        toggle_action.triggered.connect(editor.toggle_bookmark_at_cursor)
+        toggle_action.triggered.connect(
+            lambda: self._active_bookmark_editor().toggle_bookmark_at_cursor()
+        )
 
         next_action = menu.addAction("Next Bookmark")
         next_action.setShortcut("F2")
-        next_action.triggered.connect(editor.goto_next_bookmark)
+        next_action.triggered.connect(
+            lambda: self._active_bookmark_editor().goto_next_bookmark()
+        )
 
         prev_action = menu.addAction("Previous Bookmark")
         prev_action.setShortcut("Shift+F2")
-        prev_action.triggered.connect(editor.goto_prev_bookmark)
+        prev_action.triggered.connect(
+            lambda: self._active_bookmark_editor().goto_prev_bookmark()
+        )
 
         menu.addSeparator()
         clear_action = menu.addAction("Clear All Bookmarks")
-        clear_action.triggered.connect(editor.clear_bookmarks)
+        clear_action.triggered.connect(
+            lambda: self._active_bookmark_editor().clear_bookmarks()
+        )
 
     def _build_generation_menu(self):
         menu = self.menuBar().addMenu("Generation")
@@ -2628,8 +3540,15 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(f"PHP Generator set: {Path(path).name}", 5000)
 
     def _project_output_folder_default(self) -> str:
-        """Prefill for the output-folder dialog: the project's Project@outputPath
-        if readable, else the directory of the current project file, else ''."""
+        """Prefill for the output-folder dialog: when a local §18.2 project
+        is open, its folder wins ahead of both fallbacks below -- still a
+        prefill, not a silent redirect (the picker itself is unchanged, the
+        user can always choose differently). Otherwise: the project's
+        Project@outputPath if readable, else the directory of the current
+        project file, else ''. Inert in no-project mode (§18.2's "no-project
+        mode is completely unaffected" principle)."""
+        if self._ddl_project_folder is not None:
+            return str(self._ddl_project_folder)
         project = self._current_project
         if project is not None and project.tree is not None:
             root = project.tree.getroot()

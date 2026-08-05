@@ -560,6 +560,16 @@
         </xs:restriction>
       </xs:simpleType>
     </xs:attribute>
+    <xs:attribute name="editAbilityMode" use="optional">
+      <xs:simpleType>
+        <xs:restriction base="xs:integer">
+          <xs:enumeration value="0" label="Disable"/>
+          <xs:enumeration value="1" label="Separated page"/>
+          <xs:enumeration value="2" label="Inline mode"/>
+          <xs:enumeration value="3" label="Modal window"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
     <xs:attribute name="editFormCaptionTemplate" use="optional">
       <xs:simpleType>
         <xs:restriction base="xs:string">

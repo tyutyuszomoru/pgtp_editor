@@ -1267,3 +1267,7 @@ def test_see_column_in_caption_filters_and_selects_row(qtbot):
     assert _visible_values(panel) == ["Tag"]
     selected = panel._table.selectionModel().selectedRows()
     assert len(selected) == 1
+    # BUG-020: the preset filter applied from the Browser Pane must be
+    # visibly represented via the panel's active-filter banner, not silent.
+    assert panel._filter_banner.isVisibleTo(panel)
+    assert f"Field = {column.field_name}" in panel._filter_banner_label.text()

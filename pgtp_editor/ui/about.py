@@ -45,6 +45,9 @@ ABOUT_TEXT = (
     "of this project's approach.</li>"
     "<li><a href=\"https://github.com/KDE/breeze-icons\">Breeze icons</a> "
     "(KDE, LGPL-3.0) &mdash; the toolbar icons, recolored at runtime.</li>"
+    "<li><a href=\"https://github.com/ColinDuquesnoy/QDarkStyleSheet\">"
+    "QDarkStyleSheet</a> (Colin Duquesnoy, MIT License) &mdash; the dark "
+    "theme's application stylesheet.</li>"
     "</ul>"
 )
 

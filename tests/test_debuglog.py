@@ -209,9 +209,6 @@ def test_session_header_has_version_and_logdir(clean_logging):
 
 def test_exclusion_predicate():
     assert debuglog.is_excluded("pgtp_editor.ui.xml_editor", "XmlEditor.paintEvent")
-    assert debuglog.is_excluded(
-        "pgtp_editor.ui.xml_editor", "_EditorGutter.paintEvent"
-    )
     assert debuglog.is_excluded("pgtp_editor.model.line_index", "anything_at_all")
     assert debuglog.is_excluded(
         "pgtp_editor.ui.xml_editor", "XmlSyntaxHighlighter.highlightBlock"
@@ -222,6 +219,46 @@ def test_exclusion_predicate():
     assert not debuglog.is_excluded(
         "pgtp_editor.ui.main_window", "MainWindow.open_project_file"
     )
+
+
+def test_shared_gutter_module_is_excluded_at_its_real_location():
+    """Regression: the gutter/bookmark/fold base moved out of `ui/xml_editor.py`
+    into its own `ui/editor_gutter.py` (§8, shared with CodeEditor). Exclusions
+    match on the module derived from `code.co_filename`, so an exclusion still
+    naming `ui.xml_editor` silences NOTHING -- a dead entry that fails silently
+    (only visible as --debug trace flooding). It matters more than before the
+    extraction, since the gutter now also runs on every CodeEditor (the DDL tab
+    and each "Edit code..." dialog), not just the one XmlEditor.
+    """
+    for qualname in (
+        "_EditorGutter.paintEvent",
+        "_EditorGutter.mousePressEvent",
+        "GutterBookmarkFoldMixin._toggle_fold",
+    ):
+        assert debuglog.is_excluded("pgtp_editor.ui.editor_gutter", qualname)
+
+    # The exclusion must be scoped to the gutter module, not blanket-silence
+    # the editors that host it.
+    assert not debuglog.is_excluded(
+        "pgtp_editor.ui.code_editor", "CodeEditor.navigate_to_line"
+    )
+    assert not debuglog.is_excluded(
+        "pgtp_editor.ui.xml_editor", "XmlEditor.apply_theme_colors"
+    )
+
+
+def test_no_exclusion_names_a_module_that_does_not_exist():
+    """Catches the whole class of bug above: an exclusion whose module suffix
+    no longer resolves to a real `pgtp_editor` module is dead weight that
+    silences nothing. Keeps the list honest as code moves between modules."""
+    import importlib.util
+
+    for module_suffix, _qualname in debuglog._EXCLUSIONS:
+        full = f"pgtp_editor.{module_suffix}"
+        assert importlib.util.find_spec(full) is not None, (
+            f"exclusion names {full!r}, which is not an importable module -- "
+            f"it silences nothing (did the code move?)"
+        )
 
 
 def test_tracer_logs_traced_package_calls(clean_logging):

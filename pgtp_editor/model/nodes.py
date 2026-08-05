@@ -106,6 +106,12 @@ class ColumnNode:
     def field_name(self) -> str | None:
         return self.attrib.get("fieldName")
 
+    @property
+    def is_calculated(self) -> bool:
+        # PHP Generator emits lowercase true/false attribute strings (same
+        # convention as visible="false" in _build_representation_index).
+        return self.attrib.get("isCalculated") == "true"
+
 
 @dataclass
 class EventNode:

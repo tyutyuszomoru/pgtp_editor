@@ -7,7 +7,9 @@ from pgtp_editor.ui.caption_management_panel import (
     CaptionManagementPanel,
     NULL_SENTINEL,
     _CHANGED_BACKGROUND,
+    _CHANGED_FOREGROUND,
     _INCONSISTENT_BACKGROUND,
+    _INCONSISTENT_FOREGROUND,
     _FILTER_HEADER_FOREGROUND,
     _CHANGED_COLUMN,
     _LINE_COLUMN,
@@ -160,6 +162,10 @@ def _background(panel, row):
     return panel._model.index(row, 0).data(Qt.ItemDataRole.BackgroundRole)
 
 
+def _foreground(panel, row):
+    return panel._model.index(row, 0).data(Qt.ItemDataRole.ForegroundRole)
+
+
 def test_changed_row_gets_changed_background(qtbot):
     panel = CaptionManagementPanel()
     qtbot.addWidget(panel)
@@ -209,6 +215,95 @@ def test_consistent_unchanged_row_has_no_background(qtbot):
     )
     assert _background(panel, 0) is None
     assert _background(panel, 1) is None
+
+
+def test_changed_row_gets_changed_foreground(qtbot):
+    """BUG-005: a matching foreground must accompany the changed tint so its
+    text stays readable against the dark background under any theme."""
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    panel.load_entries(_sample_entries())
+    _set_new_value(panel, 0, "Homepage")
+    assert _foreground(panel, 0) == _CHANGED_FOREGROUND
+
+
+def test_inconsistent_row_gets_inconsistent_foreground(qtbot):
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    panel.load_entries(
+        [
+            _entry(2, "Page", "acct", "caption", "Account"),
+            _entry(9, "Detail", "acct", "caption", "Accounts"),
+        ]
+    )
+    assert _foreground(panel, 0) == _INCONSISTENT_FOREGROUND
+    assert _foreground(panel, 1) == _INCONSISTENT_FOREGROUND
+
+
+def test_changed_foreground_beats_inconsistency_foreground(qtbot):
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    panel.load_entries(
+        [
+            _entry(2, "Page", "acct", "caption", "Account"),
+            _entry(9, "Detail", "acct", "caption", "Accounts"),
+        ]
+    )
+    _set_new_value(panel, 0, "AccountX")
+    assert _foreground(panel, 0) == _CHANGED_FOREGROUND
+    assert _foreground(panel, 1) == _INCONSISTENT_FOREGROUND
+
+
+def test_consistent_unchanged_row_has_no_foreground(qtbot):
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    panel.load_entries(
+        [
+            _entry(2, "Page", "acct", "caption", "Account"),
+            _entry(9, "Detail", "acct", "caption", "Account"),
+        ]
+    )
+    assert _foreground(panel, 0) is None
+    assert _foreground(panel, 1) is None
+
+
+def test_group_of_three_plus_inconsistent_rows_all_get_foreground(qtbot):
+    """BUG-005: _recompute_inconsistency's group-of-3+ case (not just pairs)
+    must still resolve the matching foreground for every divergent member of
+    the group."""
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    panel.load_entries(_unify_entries())  # 3-row "wbs" group + 1-row "cost" group
+    assert _foreground(panel, 0) == _INCONSISTENT_FOREGROUND
+    assert _foreground(panel, 1) == _INCONSISTENT_FOREGROUND
+    assert _foreground(panel, 2) == _INCONSISTENT_FOREGROUND
+    # The unrelated single-row "cost" group is consistent by itself.
+    assert _foreground(panel, 3) is None
+
+
+def test_unify_reverts_foreground_to_none_once_group_becomes_consistent(qtbot):
+    """BUG-005 + BUG-003-adjacent regression: a row that WAS inconsistent-
+    tinted must have its foreground revert to None (not linger as the warm
+    tint) once its group becomes fully consistent -- exercised through the
+    batched set_new_values path (unify_from_row), matching how the app's
+    Unify action actually mutates rows."""
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    panel.load_entries(_unify_entries())
+    assert _foreground(panel, 1) == _INCONSISTENT_FOREGROUND
+    assert _foreground(panel, 2) == _INCONSISTENT_FOREGROUND
+
+    panel.unify_from_row(0)  # unifies rows 1 and 2 onto row 0's value "WBS ID"
+
+    # Rows 1/2 now carry a non-empty New Value equal to the group's target, so
+    # the whole "wbs" group's effective values agree -> no longer inconsistent.
+    # Changed rows get the changed tint, not None -- row 0 (the unify source)
+    # was never written and has no New Value, so it must now show NO tint at
+    # all (neither warm nor cool) since its group is consistent again.
+    assert _foreground(panel, 0) is None
+    assert _background(panel, 0) is None
+    assert _foreground(panel, 1) == _CHANGED_FOREGROUND
+    assert _foreground(panel, 2) == _CHANGED_FOREGROUND
 
 
 # -- Insert NULL action -----------------------------------------------------
@@ -968,6 +1063,93 @@ def test_unify_current_uses_current_row(qtbot):
     assert panel._model.new_value_at(2) == "WBS ID"
 
 
+# -- BUG-023: Unify scope prompt when a filter is active --------------------
+
+
+def _unify_entries_with_breadcrumb():
+    """Like _unify_entries but with a distinguishing Breadcrumb per row so a
+    value filter on Breadcrumb can narrow to a strict subset of the
+    "wbs"/"caption" sibling group (rows 0-2), leaving row 1 out of the
+    filtered view while row 0 (source) and row 2 stay in."""
+    return [
+        _entry(2, "ColumnPresentation", "wbs", "caption", "WBS ID", breadcrumb="in"),
+        _entry(3, "ColumnPresentation", "wbs", "caption", "Wbs Id", breadcrumb="out"),
+        _entry(4, "ColumnPresentation", "wbs", "caption", "wbs", breadcrumb="in"),
+        _entry(5, "ColumnPresentation", "cost", "caption", "Cost", breadcrumb="in"),
+    ]
+
+
+def test_unify_current_no_prompt_when_no_filter_active(qtbot, monkeypatch):
+    """No filter active -> unify_current runs project-wide with no prompt at
+    all (unchanged behavior); _confirm_unify_scope must not even be called."""
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    panel.load_entries(_unify_entries())
+    _select_source_rows(panel, [0])
+
+    def _boom():
+        raise AssertionError("_confirm_unify_scope should not be called")
+
+    monkeypatch.setattr(panel, "_confirm_unify_scope", _boom)
+    panel.unify_current()
+    assert panel._model.new_value_at(1) == "WBS ID"
+    assert panel._model.new_value_at(2) == "WBS ID"
+
+
+def test_unify_current_prompts_and_applies_filtered_scope(qtbot, monkeypatch):
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    panel.load_entries(_unify_entries_with_breadcrumb())
+    panel._proxy.set_value_filter(_BREADCRUMB_COLUMN, {"in"})
+    _select_source_rows(panel, [0])
+
+    monkeypatch.setattr(panel, "_confirm_unify_scope", lambda: "filtered")
+    panel.unify_current()
+    # Row 2 ("in", visible) is unified; row 1 ("out", filtered out) is not.
+    assert panel._model.new_value_at(2) == "WBS ID"
+    assert panel._model.new_value_at(1) == ""
+
+
+def test_unify_current_prompts_and_applies_project_scope(qtbot, monkeypatch):
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    panel.load_entries(_unify_entries_with_breadcrumb())
+    panel._proxy.set_value_filter(_BREADCRUMB_COLUMN, {"in"})
+    _select_source_rows(panel, [0])
+
+    monkeypatch.setattr(panel, "_confirm_unify_scope", lambda: "project")
+    panel.unify_current()
+    # Entire project: both siblings unified, including the filtered-out row.
+    assert panel._model.new_value_at(1) == "WBS ID"
+    assert panel._model.new_value_at(2) == "WBS ID"
+
+
+def test_unify_current_prompts_and_cancel_applies_nothing(qtbot, monkeypatch):
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    panel.load_entries(_unify_entries_with_breadcrumb())
+    panel._proxy.set_value_filter(_BREADCRUMB_COLUMN, {"in"})
+    _select_source_rows(panel, [0])
+
+    monkeypatch.setattr(panel, "_confirm_unify_scope", lambda: "cancel")
+    panel.unify_current()
+    assert panel._model.new_value_at(1) == ""
+    assert panel._model.new_value_at(2) == ""
+
+
+def test_unify_from_row_restrict_to_limits_eligible_siblings(qtbot):
+    """Direct unify_from_row API: restrict_to limits which sibling rows are
+    eligible, independent of the prompt/panel plumbing."""
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    panel.load_entries(_unify_entries())
+    # Only rows 0 and 2 are eligible; row 1 is excluded even though it shares
+    # the (anchor, attribute) key and differs from the target.
+    panel.unify_from_row(0, restrict_to=[0, 2])
+    assert panel._model.new_value_at(1) == ""
+    assert panel._model.new_value_at(2) == "WBS ID"
+
+
 # -- inconsistency from EFFECTIVE values ------------------------------------
 
 
@@ -1007,7 +1189,7 @@ def test_set_new_values_emits_data_changed_once(qtbot):
     )
     panel._model.set_new_values({0: "A", 2: "B"})
     assert len(emissions) == 1
-    tl, br, _roles = emissions[0]
+    tl, br, roles = emissions[0]
     # Spans the whole grid.
     assert (tl.row(), tl.column()) == (0, _CHANGED_COLUMN)
     assert (br.row(), br.column()) == (
@@ -1016,6 +1198,26 @@ def test_set_new_values_emits_data_changed_once(qtbot):
     )
     assert panel._model.new_value_at(0) == "A"
     assert panel._model.new_value_at(2) == "B"
+    # BUG-005: ForegroundRole must ride alongside BackgroundRole so a row
+    # transitioning into/out of a tinted state repaints its text color too.
+    assert Qt.ItemDataRole.ForegroundRole in roles
+    assert Qt.ItemDataRole.BackgroundRole in roles
+
+
+def test_single_edit_data_changed_includes_foreground_role(qtbot):
+    """Same BUG-005 requirement, but for the singular setData/_emit_row_changed
+    path (_set_new_value) rather than the batched set_new_values path above."""
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    panel.load_entries(_sample_entries())
+    emissions = []
+    panel._model.dataChanged.connect(
+        lambda tl, br, roles: emissions.append(roles)
+    )
+    _set_new_value(panel, 0, "Homepage")
+    background_roles = [roles for roles in emissions if Qt.ItemDataRole.BackgroundRole in roles]
+    assert background_roles  # the whole-grid background repaint emission happened
+    assert Qt.ItemDataRole.ForegroundRole in background_roles[0]
 
 
 # -- sort-active proxy->source mapping under bulk ops -----------------------
@@ -1277,6 +1479,23 @@ def test_set_row_predicate_none_clears(qtbot):
     assert len(_visible_value_column(panel)) == 5
 
 
+def test_set_row_predicate_accepts_optional_label(qtbot):
+    """BUG-020: set_row_predicate gains an optional label, stored alongside
+    the predicate; the old single-arg call sites keep working (label
+    defaults to "")."""
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    panel.load_entries(_context_entries())
+    panel._proxy.set_row_predicate(lambda e: e.table_name == "pr.equip")
+    assert panel._proxy.row_predicate_label() == ""
+    panel._proxy.set_row_predicate(
+        lambda e: e.table_name == "pr.equip", "Table = pr.equip"
+    )
+    assert panel._proxy.row_predicate_label() == "Table = pr.equip"
+    panel._proxy.set_row_predicate(None)
+    assert panel._proxy.row_predicate_label() == ""
+
+
 def test_row_predicate_ands_with_value_and_find_filters(qtbot):
     panel = CaptionManagementPanel()
     qtbot.addWidget(panel)
@@ -1305,6 +1524,10 @@ def test_filter_to_table_shows_only_that_table(qtbot):
     panel.load_entries(_context_entries())
     panel.filter_to_table("pr.equip")
     assert sorted(_visible_value_column(panel)) == ["Equipment", "WBS"]
+    # BUG-020: the preset filter must be visibly represented via the banner.
+    assert panel._filter_banner.isVisibleTo(panel)
+    assert "Table = pr.equip" in panel._filter_banner_label.text()
+    assert "showing 2 of 5 rows" in panel._filter_banner_label.text()
 
 
 def test_filter_to_table_details_shows_only_detail_rows(qtbot):
@@ -1315,6 +1538,9 @@ def test_filter_to_table_details_shows_only_detail_rows(qtbot):
     # Only the in-detail column (Name) matches: table pr.att AND in_detail.
     # The <Detail> caption row itself (Attachments) is NOT in_detail.
     assert _visible_value_column(panel) == ["Name"]
+    assert panel._filter_banner.isVisibleTo(panel)
+    assert "Table = pr.att" in panel._filter_banner_label.text()
+    assert "showing 1 of 5 rows" in panel._filter_banner_label.text()
 
 
 def test_filter_to_field_shows_and_selects_matching_row(qtbot):
@@ -1329,6 +1555,42 @@ def test_filter_to_field_shows_and_selects_matching_row(qtbot):
     assert len(selected) == 1
     source_row = panel._proxy.mapToSource(selected[0]).row()
     assert panel._model.entry_at(source_row).field_name == "wbs_id"
+    # BUG-020: banner reflects the field-level preset filter.
+    assert panel._filter_banner.isVisibleTo(panel)
+    assert "Field = wbs_id" in panel._filter_banner_label.text()
+    assert "showing 1 of 5 rows" in panel._filter_banner_label.text()
+
+
+def test_filter_to_field_with_table_builds_combined_banner_label(qtbot):
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    panel.load_entries(_context_entries())
+    panel.filter_to_field("wbs_id", table_name="pr.equip")
+    assert panel._filter_banner.isVisibleTo(panel)
+    label = panel._filter_banner_label.text()
+    assert "Field = wbs_id" in label
+    assert "Table = pr.equip" in label
+
+
+def test_filter_to_field_selects_row_regardless_of_latched_shift_modifier(qtbot):
+    """BUG-018: QTableView.selectRow reads the process-global keyboard
+    modifiers and silently selects nothing if Shift happens to be latched
+    from an unrelated prior action -- confirm the fix is modifier-independent."""
+    from PySide6.QtTest import QTest
+
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    panel.load_entries(_context_entries())
+
+    QTest.keyClick(panel, Qt.Key.Key_A, Qt.KeyboardModifier.ShiftModifier)
+    try:
+        panel.filter_to_field("wbs_id")
+        selected = panel._table.selectionModel().selectedRows()
+        assert len(selected) == 1
+        source_row = panel._proxy.mapToSource(selected[0]).row()
+        assert panel._model.entry_at(source_row).field_name == "wbs_id"
+    finally:
+        QTest.keyClick(panel, Qt.Key.Key_Shift, Qt.KeyboardModifier.NoModifier)
 
 
 # -- Phase C.3: clear all filters -------------------------------------------
@@ -1340,9 +1602,10 @@ def test_clear_all_filters_resets_everything(qtbot):
     panel.load_entries(_context_entries())
     panel._proxy.set_regex_filter("Name", "normal", False)
     panel._proxy.set_value_filter(_VALUE_COLUMN, {"Name"})
-    panel._proxy.set_row_predicate(lambda e: e.table_name == "pr.att")
+    panel.filter_to_table("pr.att")
     # Sanity: everything narrows to one row.
     assert _visible_value_column(panel) == ["Name"]
+    assert panel._filter_banner.isVisibleTo(panel)
     panel.clear_all_filters()
     # All rows visible again.
     assert len(_visible_value_column(panel)) == 5
@@ -1350,6 +1613,9 @@ def test_clear_all_filters_resets_everything(qtbot):
     assert panel._proxy.filtered_columns() == set()
     assert panel._model._filtered_columns == set()
     assert panel._proxy.find_pattern() == ""
+    # BUG-020: the active-filter banner hides and its label clears.
+    assert panel._filter_banner.isHidden()
+    assert panel._proxy.row_predicate_label() == ""
 
 
 def test_clear_all_filters_in_context_menu_wired(qtbot, monkeypatch):

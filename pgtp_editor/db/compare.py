@@ -40,6 +40,11 @@ class ColumnCheck:
     name: str
     ok: bool
     info: ColumnInfo | None = None
+    # XML-side isCalculated="true" (BUG-006): the column is computed by the
+    # generator and legitimately has no physical DB counterpart. `ok` stays
+    # "does a matching DB column literally exist" (informational); consumers
+    # treat is_calculated as overriding ok for mismatch display/counting.
+    is_calculated: bool = False
 
 
 @dataclass(frozen=True)
@@ -51,23 +56,26 @@ class TableCheck:
     columns: list[ColumnCheck] = field(default_factory=list)
 
 
-def xml_table_columns(project) -> dict[str, set[str]]:
-    """Map each bound ``tableName`` to the set of column ``fieldName``s under it.
+def xml_table_columns(project) -> dict[str, dict[str, bool]]:
+    """Map each bound ``tableName`` to its column ``fieldName``s, each mapped
+    to whether the column is calculated (``isCalculated="true"``, BUG-006).
 
     Pages and (recursively) details bound to the same table union their
-    columns. Empty table/field names are skipped. A table bound with no columns
-    still appears (empty set).
+    columns; a field is calculated if it is calculated anywhere it appears
+    (OR across the union). Empty table/field names are skipped. A table bound
+    with no columns still appears (empty dict). Name membership (``in``) works
+    as before for callers that only need the field-name set.
     """
-    result: dict[str, set[str]] = {}
+    result: dict[str, dict[str, bool]] = {}
 
     def add(name: str | None, columns) -> None:
         if not name:
             return
-        bucket = result.setdefault(name, set())
+        bucket = result.setdefault(name, {})
         for column in columns:
             field_name = column.field_name
             if field_name:
-                bucket.add(field_name)
+                bucket[field_name] = bucket.get(field_name, False) or column.is_calculated
 
     def visit_detail(detail) -> None:
         add(detail.table_name, detail.columns)
@@ -100,6 +108,7 @@ def check_xml_against_db(project, schema: DatabaseSchema) -> list[TableCheck]:
                 name=col,
                 ok=schema.column(table_name, col) is not None,
                 info=schema.column(table_name, col),
+                is_calculated=columns_by_table[table_name][col],
             )
             for col in sorted(columns_by_table[table_name])
         ]
@@ -123,7 +132,7 @@ def check_db_against_xml(project, schema: DatabaseSchema) -> list[TableCheck]:
     checks: list[TableCheck] = []
     for table_name in sorted(schema.tables):
         table_info = schema.tables[table_name]
-        xml_columns = columns_by_table.get(table_name, set())
+        xml_columns = columns_by_table.get(table_name, {})
         column_checks = [
             ColumnCheck(
                 name=column.name,

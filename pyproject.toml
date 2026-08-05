@@ -9,6 +9,7 @@ dependencies = [
     "lxml>=5.0",
     "defusedxml>=0.7",
     "psycopg[binary]>=3.1",
+    "qdarkstyle>=3.2",
 ]
 
 [project.optional-dependencies]
@@ -16,6 +17,7 @@ dev = [
     "pytest>=8.0",
     "pytest-qt>=4.4",
     "pytest-timeout>=2.4",
+    "pytest-xdist>=3.8",
 ]
 
 [build-system]
@@ -26,7 +28,7 @@ build-backend = "setuptools.build_meta"
 include = ["pgtp_editor*"]
 
 [tool.setuptools.package-data]
-"pgtp_editor" = ["resources/*.md", "resources/*.xsd", "resources/icons/breeze/*"]
+"pgtp_editor" = ["resources/*.md", "resources/*.xsd", "resources/*.png", "resources/*.svg", "resources/icons/breeze/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -45,6 +45,11 @@ class _Checker:
         self._enum_values_seen: set[str] | None = None   # per open xs:attribute
         self._type_names: dict[str, int] = {}
         self._type_refs: list[tuple[str, int]] = []
+        # Names of xs:attribute seen so far in the CURRENT complexType, reset
+        # on every complexType start. complexType elements never nest in this
+        # dialect (only reachable via separate top-level records), so a flat
+        # reset-on-start is sufficient -- no stack needed.
+        self._attr_names_seen: set[str] = set()
         # Per-open xs:attribute bookkeeping for the sums-specific rules:
         # is this attribute marked sums="true", does it carry any labeled
         # enumeration value, how many enumeration values does it have, and
@@ -65,6 +70,7 @@ class _Checker:
             self.issues.append(Issue(line, f"hint=\"…\" belongs on xs:attribute, not on {local}"))
         if local == "complexType":
             name = attrs.get("name")
+            self._attr_names_seen = set()
             if name:
                 if name in self._type_names:
                     self.issues.append(Issue(line, f"duplicate type name '{name}'"))
@@ -82,6 +88,14 @@ class _Checker:
             self._attr_has_label = False
             self._attr_enum_count = 0
             self._attr_line = line
+            attr_name = attrs.get("name")
+            if attr_name:
+                if attr_name in self._attr_names_seen:
+                    self.issues.append(
+                        Issue(line, f"duplicate attribute name '{attr_name}' in this complexType")
+                    )
+                else:
+                    self._attr_names_seen.add(attr_name)
         elif local == "restriction":
             base = attrs.get("base")
             if base and base not in _KNOWN_BASES and _local(base) not in _KNOWN_BASE_LOCALS:

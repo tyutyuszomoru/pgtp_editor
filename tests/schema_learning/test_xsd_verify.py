@@ -57,6 +57,86 @@ def test_duplicate_enum_values_flagged():
     assert any("duplicate enumeration value" in i.message for i in verify_curated(text))
 
 
+def test_duplicate_attribute_name_in_same_complex_type_flagged():
+    """BUG-002: a duplicate xs:attribute name= within one complexType (e.g.
+    from copy-pasting a sibling *AbilityMode block) silently overwrote the
+    first definition with no diagnostic. Verify must now catch it."""
+    text = _wrap(
+        '  <xs:complexType name="T">\n'
+        '    <xs:attribute name="a" use="optional">\n'
+        '      <xs:simpleType><xs:restriction base="xs:integer">\n'
+        '        <xs:enumeration value="1" label="First"/>\n'
+        "      </xs:restriction></xs:simpleType>\n"
+        "    </xs:attribute>\n"
+        '    <xs:attribute name="a" use="optional"/>\n'
+        "  </xs:complexType>"
+    )
+    issues = verify_curated(text)
+    messages = [i.message for i in issues]
+    assert any("duplicate attribute name 'a'" in m for m in messages)
+    # Reported at the SECOND (overwriting) occurrence's line, not the first.
+    dup = next(i for i in issues if "duplicate attribute name" in i.message)
+    second_line = text.splitlines().index('    <xs:attribute name="a" use="optional"/>') + 1
+    assert dup.line == second_line
+
+
+def test_same_attribute_name_in_different_complex_types_is_not_flagged():
+    """The seen-names set resets per complexType -- the same attribute name
+    reused across two different complexTypes (very common in this dialect,
+    e.g. every Page-like type has its own 'caption') is not a duplicate."""
+    text = _wrap(
+        '  <xs:complexType name="T1">\n'
+        '    <xs:attribute name="a" use="optional"/>\n'
+        "  </xs:complexType>\n"
+        '  <xs:complexType name="T2">\n'
+        '    <xs:attribute name="a" use="optional"/>\n'
+        "  </xs:complexType>"
+    )
+    messages = " | ".join(i.message for i in verify_curated(text))
+    assert "duplicate attribute name" not in messages
+
+
+def test_duplicate_attribute_name_does_not_suppress_per_occurrence_sums_checks():
+    """The new duplicate-attribute-name check must be purely additive: each
+    occurrence of the duplicated xs:attribute is still its own independent
+    xs:attribute element as far as the parser/checker's start/end pair is
+    concerned, so the existing sums-specific checks (missing labels, over
+    SUMS_MAX_ATOMS) must still fire per-occurrence, attributed to each
+    occurrence's own line, alongside the new duplicate-name issue."""
+    text = _wrap(
+        '  <xs:complexType name="T">\n'
+        '    <xs:attribute name="a" sums="true">\n'  # line 3: unlabeled sums attr
+        "      <xs:simpleType><xs:restriction base=\"xs:integer\">\n"
+        '        <xs:enumeration value="1"/>\n'
+        "      </xs:restriction></xs:simpleType>\n"
+        "    </xs:attribute>\n"
+        '    <xs:attribute name="a" sums="true">\n'  # line 8: duplicate name, ALSO unlabeled
+        "      <xs:simpleType><xs:restriction base=\"xs:integer\">\n"
+        '        <xs:enumeration value="2"/>\n'
+        "      </xs:restriction></xs:simpleType>\n"
+        "    </xs:attribute>\n"
+        "  </xs:complexType>"
+    )
+    issues = verify_curated(text)
+    lines = text.splitlines()
+    first_line = lines.index('    <xs:attribute name="a" sums="true">') + 1
+    second_line = (
+        len(lines[:first_line])
+        + lines[first_line:].index('    <xs:attribute name="a" sums="true">')
+        + 1
+    )
+    assert first_line != second_line
+
+    dup_issues = [i for i in issues if "duplicate attribute name 'a'" in i.message]
+    assert len(dup_issues) == 1
+    assert dup_issues[0].line == second_line  # reported at the overwriting occurrence
+
+    sums_issues = [i for i in issues if "sums attribute has no labeled atomic values" in i.message]
+    # Both occurrences are still independently unlabeled sums attributes --
+    # the duplicate-name bookkeeping must not have swallowed either check.
+    assert {i.line for i in sums_issues} == {first_line, second_line}
+
+
 def test_misplaced_dialect_attributes_and_bad_base():
     text = _wrap(
         '  <xs:complexType name="T" label="wrong">\n'

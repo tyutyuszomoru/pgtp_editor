@@ -26,6 +26,13 @@ class _RecordingXmlEditorStub:
     def select_range_on_line(self, line: int, start: int, end: int) -> None:
         self.select_range_calls.append((line, start, end))
 
+    def resolve_attribute_at(self, pos: int):
+        """Stub for the cache-aware resolver PropertiesPanel._display_value
+        now calls (BUG-003) -- unreached by these navigation-only tests
+        (guarded behind schema_model is not None), but kept in the duck-typed
+        contract so it stays obvious and doesn't silently drift."""
+        return None
+
 
 def _page_node():
     return PageNode(
@@ -261,6 +268,132 @@ def test_attribute_row_shows_curated_label(qtbot):
 
     panel.show_node(_Node(), "page")
     assert panel.table.item(0, 1).text() == "1 — php-psql"
+
+
+def test_display_value_reuses_editor_cache_instead_of_rescanning(qtbot, monkeypatch):
+    """BUG-003 regression: repopulating Properties for the same unchanged
+    document must not re-scan the whole document per row/call -- it should
+    reuse XmlEditor's already-fresh `_spans` cache via `resolve_attribute_at`
+    instead of calling the free-function scanner directly on a fresh
+    `toPlainText()` copy."""
+    from pgtp_editor.schema_learning.model import Model
+    from pgtp_editor.ui import xml_structure
+    from pgtp_editor.ui.xml_editor import XmlEditor
+
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    editor.setPlainText('<Root>\n  <Page phpDriver="1"/>\n</Root>')
+    model = Model()
+    model.paths = {"Root/Page": {
+        "attributes": {"phpDriver": {
+            "type": "integer", "values": ["0", "1"], "overflowed": False,
+            "attr_seen_count": 1, "labels": {"1": "php-psql"}, "use": "optional",
+        }},
+        "children": {}, "instance_count": 1, "order": [],
+        "order_stable": True, "has_text": False,
+    }}
+    panel = PropertiesPanel(editor)
+    qtbot.addWidget(panel)
+    panel.set_schema_model(model)
+
+    class _Node:
+        sourceline = 2
+        attrib = {"phpDriver": "1"}
+        file_name = "x"
+        identity = "x"
+
+    scan_calls = []
+    real_scan = xml_structure.scan
+    monkeypatch.setattr(xml_structure, "scan", lambda text: scan_calls.append(text) or real_scan(text))
+
+    panel.show_node(_Node(), "page")   # first population: the initial setPlainText already scanned once
+    calls_after_first = len(scan_calls)
+    panel.show_node(_Node(), "page")   # second population, document unchanged: must NOT scan again
+    panel.show_node(_Node(), "page")   # and a third time, for good measure
+
+    assert len(scan_calls) == calls_after_first
+    assert panel.table.item(0, 1).text() == "1 — php-psql"
+
+
+# --- ddl_table kind (§18.1, 2026-08-05: DDL Explorer Tables branch click) --
+
+from pgtp_editor.db.introspect import ColumnInfo, TableInfo
+
+
+def _ddl_table():
+    return TableInfo(
+        name="pr.equipment",
+        kind="table",
+        columns=[
+            ColumnInfo(
+                name="id", data_type="integer", is_pk=True, is_fk=False,
+                is_nullable=False, default="nextval('seq')", comment="Primary key",
+            ),
+            ColumnInfo(
+                name="tag", data_type="varchar(255)", is_pk=False, is_fk=False,
+                is_nullable=True, default=None, comment=None,
+            ),
+        ],
+    )
+
+
+def test_ddl_table_population_row_count_and_header(qtbot):
+    panel = PropertiesPanel(xml_editor=_RecordingXmlEditorStub())
+    qtbot.addWidget(panel)
+    panel.show_node(_ddl_table(), "ddl_table")
+    assert panel.is_showing_empty_state() is False
+    assert panel.table.rowCount() == 4  # two rows per column, two columns
+    assert panel.header_text() == "Table: pr.equipment"
+    assert panel.table.item(0, 0).text() == "id"
+    assert panel.table.item(0, 1).text() == "integer, NOT NULL"
+    assert panel.table.item(1, 0).text() == ""
+    assert panel.table.item(1, 1).text() == "default: nextval('seq')  comment: Primary key"
+
+
+def test_ddl_table_row_click_does_not_navigate(qtbot):
+    """Every ddl_table row carries target_line=None (§18.1) -- clicking one
+    must no-op exactly like the existing Representations divider row."""
+    stub = _RecordingXmlEditorStub()
+    panel = PropertiesPanel(xml_editor=stub)
+    qtbot.addWidget(panel)
+    panel.show_node(_ddl_table(), "ddl_table")
+    for row in range(panel.table.rowCount()):
+        panel._on_row_clicked(row, 0)
+    assert stub.navigate_calls == []
+
+
+def test_ddl_table_no_cell_is_editable(qtbot):
+    panel = PropertiesPanel(xml_editor=_RecordingXmlEditorStub())
+    qtbot.addWidget(panel)
+    panel.show_node(_ddl_table(), "ddl_table")
+    for row in range(panel.table.rowCount()):
+        for column in range(panel.table.columnCount()):
+            item = panel.table.item(row, column)
+            assert item is not None
+            assert item.flags() & Qt.ItemFlag.ItemIsEditable == Qt.ItemFlag(0)
+
+
+def test_ddl_table_column_pairs_get_alternating_shade(qtbot):
+    """The first two rows (column 1's identity+detail pair) are unshaded;
+    the next two (column 2's pair) get the pairing-cue shade -- a lightweight
+    visual grouping so the eye reads each column's two rows as one record."""
+    panel = PropertiesPanel(xml_editor=_RecordingXmlEditorStub())
+    qtbot.addWidget(panel)
+    panel.show_node(_ddl_table(), "ddl_table")
+    backgrounds = [panel.table.item(row, 0).background() for row in range(4)]
+    assert backgrounds[0] == backgrounds[1]  # first pair: same shade
+    assert backgrounds[2] == backgrounds[3]  # second pair: same shade
+    assert backgrounds[0] != backgrounds[2]  # pairs alternate
+
+
+def test_other_kinds_get_no_pairing_shade(qtbot):
+    """Non-ddl_table kinds must render exactly as before -- no shading at
+    all, since they never asked for row-pairing."""
+    panel = PropertiesPanel(xml_editor=_RecordingXmlEditorStub())
+    qtbot.addWidget(panel)
+    panel.show_node(_page_node(), "page")
+    backgrounds = [panel.table.item(row, 0).background() for row in range(panel.table.rowCount())]
+    assert all(b == backgrounds[0] for b in backgrounds)
 
 
 def test_attribute_row_plain_without_model(qtbot):

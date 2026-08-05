@@ -110,7 +110,49 @@ def _rows_for_column(column_node) -> list[RowSpec]:
     return rows
 
 
+def _rows_for_ddl_table(table) -> list[RowSpec]:
+    """Two `RowSpec` rows per column of a DDL Explorer `TableInfo` (§18.1,
+    2026-08-05) -- the Properties panel's first non-XML source, and its
+    first "grouped pair of rows per record" (every other `_rows_for_*`
+    builder here emits exactly one row per logical attribute).
+
+    Row 1 (identity line) -- `property_label` is the column name, `value` is
+    `"{data_type}, {NULL|NOT NULL}"`. Row 2 (detail line) -- `property_label`
+    is blank so it visually reads as a continuation of row 1 rather than a
+    new named property, `value` is `"default: {...}  comment: {...}"` (`—`
+    standing in for an unset default/comment). Both rows carry
+    `attr_name=None` and `target_line=None`: a DDL table has no single XML
+    source line a column maps to, so these rows are navigate-to-nothing,
+    exactly like the Representations divider row above.
+
+    Columns are emitted in `TableInfo.columns`'s own declared order --
+    reproducing that order (not re-sorting) is the settled part; pixel/color
+    pairing treatment between column-pairs is `PropertiesPanel`'s job, not
+    this pure function's."""
+    rows: list[RowSpec] = []
+    for column in table.columns:
+        nullability = "NULL" if column.is_nullable else "NOT NULL"
+        rows.append(
+            RowSpec(
+                property_label=column.name,
+                value=f"{column.data_type}, {nullability}",
+                target_line=None,
+                attr_name=None,
+            )
+        )
+        rows.append(
+            RowSpec(
+                property_label="",
+                value=f"default: {column.default or '—'}  comment: {column.comment or '—'}",
+                target_line=None,
+                attr_name=None,
+            )
+        )
+    return rows
+
+
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QHeaderView,
@@ -123,9 +165,16 @@ from PySide6.QtWidgets import (
 )
 
 from pgtp_editor.schema_learning.settings_index import value_label
-from pgtp_editor.ui.xml_editor import attribute_at_position
 
 _READ_ONLY_HINT = "Read-only — click a row to edit in the XML editor"
+
+#: Alternating-shade pairing cue for `_rows_for_ddl_table`'s two-rows-per-
+#: column grouping (§18.1, 2026-08-05) -- the first "these N rows are one
+#: record" convention this panel has needed. A subtle tint, applied to every
+#: other column-pair (rows 0-1, then 4-5, then 8-9, ...) so the eye groups
+#: each identity/detail row pair without a third "group ID" field on
+#: `RowSpec` itself -- purely a row-index computation (2 rows per record).
+_PAIR_SHADE_COLOR = QColor(0, 0, 0, 18)
 
 _EMPTY_STATE_MESSAGE = "Select a Page, Detail, Column, or Event to see its properties"
 
@@ -134,6 +183,9 @@ _ROW_BUILDERS = {
     "detail": (_rows_for_detail, lambda n: f"Detail: {n.table_name}/{n.attrib.get('caption', '')}"),
     "column": (_rows_for_column, lambda n: f"Column: {n.field_name}"),
     "event": (_rows_for_event, lambda n: f"Event: {n.tag_name}"),
+    # DDL Explorer's Tables branch (§18.1, 2026-08-05) -- the panel's first
+    # non-XML source. `t` is a `db.introspect.TableInfo`.
+    "ddl_table": (_rows_for_ddl_table, lambda t: f"Table: {t.name}"),
 }
 
 
@@ -191,7 +243,7 @@ class PropertiesPanel(QWidget):
             return
         rows_fn, header_fn = _ROW_BUILDERS[kind]
         self._current_rows = rows_fn(node)
-        self._populate_table(header_fn(node), self._current_rows)
+        self._populate_table(header_fn(node), self._current_rows, paired=(kind == "ddl_table"))
 
     def set_schema_model(self, model) -> None:
         """Inject the curated schema model (or None). Labels decorate
@@ -213,9 +265,7 @@ class PropertiesPanel(QWidget):
         block = self._xml_editor.document().findBlockByNumber(spec.target_line - 1)
         if not block.isValid():
             return spec.value
-        resolved = attribute_at_position(
-            self._xml_editor.toPlainText(), block.position() + index + 1
-        )
+        resolved = self._xml_editor.resolve_attribute_at(block.position() + index + 1)
         if resolved is None:
             return spec.value
         chain, attr = resolved
@@ -226,21 +276,30 @@ class PropertiesPanel(QWidget):
         self._current_rows = []
         self._stack.setCurrentWidget(self._empty_label)
 
-    def _populate_table(self, header_text: str, rows: list[RowSpec]) -> None:
+    def _populate_table(self, header_text: str, rows: list[RowSpec], paired: bool = False) -> None:
         self._header_label.setText(header_text)
         self.table.setRowCount(len(rows))
         for row_index, row_spec in enumerate(rows):
-            self.table.setItem(row_index, 0, self._make_item(row_spec.property_label))
-            self.table.setItem(row_index, 1, self._make_item(self._display_value(row_spec)))
+            # Every other 2-row record gets a subtle shade (rows 0-1, then
+            # 4-5, ...) so the eye groups each pair (§18.1's ddl_table rows,
+            # 2026-08-05) -- a no-op shade=False for every other `kind`,
+            # which still emits exactly one row per attribute and never asks
+            # for pairing.
+            shaded = paired and (row_index // 2) % 2 == 1
+            self.table.setItem(row_index, 0, self._make_item(row_spec.property_label, shaded))
+            self.table.setItem(row_index, 1, self._make_item(self._display_value(row_spec), shaded))
         self._stack.setCurrentWidget(self._populated_page)
 
     @staticmethod
-    def _make_item(text: str) -> QTableWidgetItem:
+    def _make_item(text: str, shaded: bool = False) -> QTableWidgetItem:
         """Build a read-only table item: the editable flag is explicitly
         cleared so no cell can ever be edited (belt-and-suspenders with the
-        table's NoEditTriggers)."""
+        table's NoEditTriggers). `shaded` paints a subtle background tint --
+        the ddl_table column-pair grouping cue (§18.1, 2026-08-05)."""
         item = QTableWidgetItem(text)
         item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+        if shaded:
+            item.setBackground(_PAIR_SHADE_COLOR)
         return item
 
     def _on_row_clicked(self, row: int, _column: int) -> None:

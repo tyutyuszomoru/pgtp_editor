@@ -60,26 +60,77 @@ def light_palette() -> QPalette:
     return palette
 
 
-def apply_theme(app, light: bool, default_palette=None, default_style=None) -> None:
-    """Apply the light theme when ``light`` is True, otherwise restore the
-    ORIGINAL captured style + palette.
+def dark_palette() -> QPalette:
+    """Build a COMPLETE, detectably-dark QPalette (dark backgrounds, light
+    text, light-cyan links) -- the explicit, tested "Light Theme off" state
+    (BUG-004). Previously "off" simply restored whatever the native/OS style
+    happened to render at startup, which only looked dark on the one platform
+    (Windows) the toggle was originally built and tested against; on any
+    other native-style baseline, toggling the light theme off produced no
+    reliably-dark result at all. Mirrors ``light_palette()``'s structure and
+    role coverage so both states are equally complete and tested."""
+    palette = QPalette()
+    role = QPalette.ColorRole
 
-    The native Windows style largely ignores QPalette, so a light palette
-    barely takes effect under it. Light mode therefore switches to the Fusion
-    style (which honors the palette fully) before applying ``light_palette()``.
+    text = QColor(0xE0, 0xE0, 0xE0)
+    palette.setColor(role.Window, QColor(0x2B, 0x2B, 0x2B))
+    palette.setColor(role.WindowText, text)
+    palette.setColor(role.Base, QColor(0x1E, 0x1E, 0x1E))
+    palette.setColor(role.AlternateBase, QColor(0x2B, 0x2B, 0x2B))
+    palette.setColor(role.ToolTipBase, QColor(0x3A, 0x3A, 0x3A))
+    palette.setColor(role.ToolTipText, text)
+    palette.setColor(role.Text, text)
+    palette.setColor(role.Button, QColor(0x3A, 0x3A, 0x3A))
+    palette.setColor(role.ButtonText, text)
+    palette.setColor(role.BrightText, QColor(0xFF, 0x5C, 0x5C))
+    palette.setColor(role.Highlight, QColor(0x38, 0x74, 0xF2))
+    palette.setColor(role.HighlightedText, QColor(0xFF, 0xFF, 0xFF))
+    palette.setColor(role.Link, QColor(0x6C, 0xB6, 0xFF))
+    palette.setColor(role.LinkVisited, QColor(0xB1, 0x8C, 0xFF))
+    palette.setColor(role.PlaceholderText, QColor(0x8A, 0x8A, 0x8A))
 
-    Restoring (``light`` False) puts back the captured ``default_style`` and
-    ``default_palette`` -- the app's real original (OS-dark) look -- rather
-    than the style's generic ``standardPalette()``, which is only used as a
-    fallback when no default palette was captured (e.g. legacy callers)."""
-    if light:
-        app.setStyle("Fusion")
-        app.setPalette(light_palette())
-    else:
-        if default_style is not None:
-            app.setStyle(default_style)
-        app.setPalette(
-            default_palette
-            if default_palette is not None
-            else app.style().standardPalette()
-        )
+    disabled = QColor(0x6E, 0x6E, 0x6E)
+    group = QPalette.ColorGroup.Disabled
+    palette.setColor(group, role.Text, disabled)
+    palette.setColor(group, role.WindowText, disabled)
+    palette.setColor(group, role.ButtonText, disabled)
+    return palette
+
+
+# Cached QDarkStyleSheet text (BUG-010). Loaded lazily -- qdarkstyle warns if
+# loaded before a QApplication exists, and apply_theme always runs with one.
+_dark_qss_cache: str | None = None
+
+
+def _dark_stylesheet() -> str:
+    """The QDarkStyleSheet dark QSS (github.com/ColinDuquesnoy/QDarkStyleSheet,
+    the `qdarkstyle` package) -- adopted for BUG-010: Fusion + palette alone
+    left checkable menu indicators outlined near-black on the dark menu
+    background (Fusion derives the indicator frame from darkened Window/
+    Button roles). Rather than hand-tuning per-widget QSS, the maintained
+    dark stylesheet styles menus (QMenu::indicator included) and every other
+    widget consistently."""
+    global _dark_qss_cache
+    if _dark_qss_cache is None:
+        import qdarkstyle
+
+        _dark_qss_cache = qdarkstyle.load_stylesheet(qt_api="pyside6")
+    return _dark_qss_cache
+
+
+def apply_theme(app, light: bool) -> None:
+    """Apply the light or dark theme. Light: Fusion + ``light_palette()``,
+    no stylesheet. Dark: Fusion + ``dark_palette()`` + the QDarkStyleSheet
+    QSS (BUG-010).
+
+    Symmetric by construction (BUG-004 fix): there is no third "restore
+    whatever the native/OS style renders" state; both states are real,
+    tested, and platform-independent. ``dark_palette()`` is still applied
+    under the dark QSS because palette-reading custom widgets (XmlEditor's
+    ``apply_theme_colors`` keys off its palette's Base lightness) and any
+    non-stylesheet-covered rendering must agree with the stylesheet's dark
+    look. The light case ALWAYS assigns the empty stylesheet so a
+    light<->dark round-trip never leaves stale dark QSS behind."""
+    app.setStyle("Fusion")
+    app.setPalette(light_palette() if light else dark_palette())
+    app.setStyleSheet("" if light else _dark_stylesheet())

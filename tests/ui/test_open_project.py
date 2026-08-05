@@ -84,10 +84,15 @@ def test_open_project_file_does_not_clear_tree_on_failure_after_success(qtbot, t
 
 
 def test_open_action_triggers_file_dialog(qtbot, tmp_path):
+    """§18.2: with no project active, Open now asks New Project/Open
+    Project/Edit Standalone -- irrelevant to this test's scope (the file
+    dialog itself), so the chooser is bypassed to preserve plain-open intent
+    (the chooser has its own dedicated tests, see test_ddl_project_wiring.py)."""
     window = MainWindow()
     qtbot.addWidget(window)
     path = tmp_path / "valid.pgtp"
     path.write_text(VALID_PGTP, encoding="utf-8")
+    window._prompt_pgtp_open_mode = window.open_project_file
 
     with patch(
         "pgtp_editor.ui.main_window.QFileDialog.getOpenFileName",

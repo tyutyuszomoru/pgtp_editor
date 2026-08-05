@@ -33,13 +33,15 @@ def test_task_run_emits_error(qtbot):
 
 def test_run_async_delivers_result_via_real_pool(qtbot):
     results = []
-    # Hold the returned task: the threadpool auto-deletes the runnable after
-    # run(), and dropping our reference could GC the signals holder before the
-    # queued result is delivered on the GUI thread.
-    task = run_async(lambda: 21 * 2, on_result=results.append)
-    with qtbot.waitSignal(task.signals.result, timeout=3000):
-        pass
-    assert results == [42]
+    # BUG-012: don't waitSignal on task.signals.result -- run_async starts the
+    # worker IMMEDIATELY, and with a trivial callable the signal can fire
+    # before waitSignal's spy connects (Qt delivers only to connections
+    # existing at emit time), which flaked under parallel (-n 10) CPU load.
+    # waitUntil on the on_result side effect is race-free by construction:
+    # on_result is connected inside run_async before the pool starts, and this
+    # is the same pattern the sibling real-pool tests already use.
+    run_async(lambda: 21 * 2, on_result=results.append)
+    qtbot.waitUntil(lambda: results == [42], timeout=5000)
 
 
 def test_run_async_delivers_even_without_caller_reference(qtbot):

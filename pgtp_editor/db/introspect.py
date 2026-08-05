@@ -52,6 +52,12 @@ class ColumnInfo:
     is_nullable: bool
     default: str | None
     fk_target: str | None = None  # referenced "schema.table.column" for FK columns
+    #: `pg_catalog.col_description(attrelid, attnum)` -- the column's own
+    #: comment, if one was ever set via `COMMENT ON COLUMN` (§18.1's
+    #: 2026-08-05 Properties-panel widening). Trailing and defaulted so
+    #: existing positional/keyword `ColumnInfo(...)` constructions across the
+    #: codebase and tests stay valid. `None` for a column with no comment set.
+    comment: str | None = None
 
 
 @dataclass(frozen=True)
@@ -59,11 +65,99 @@ class TableInfo:
     name: str  # "schema.table"
     kind: str  # "table" | "view" | "matview"
     columns: list[ColumnInfo] = field(default_factory=list)
+    #: `pg_get_viewdef` text for `kind in ("view", "matview")`, else None
+    #: (§18.5 D2's "recorded gap" closure -- `DatabaseSchema` previously
+    #: modeled no view definitions at all, so a routine touching a view
+    #: failed to compile in the sandbox baseline).
+    view_definition: str | None = None
+
+
+@dataclass(frozen=True)
+class RoutineInfo:
+    """A function or procedure, sourced from ``pg_proc`` (§18.1)."""
+
+    schema: str
+    name: str
+    arg_types: list[str] = field(default_factory=list)
+    return_type: str | None = None
+    language: str = ""
+    source: str = ""  # full CREATE [OR REPLACE] FUNCTION/PROCEDURE text
+    kind: str = "function"  # "function" | "procedure"
+    # Input (IN/INOUT) argument (name, type) pairs in declared order -- what
+    # the BrowserPanel tree lists as child leaves. `arg_types` above stays the
+    # types-only call signature that build_ddl_text's banner comment uses.
+    # A routine with no input arguments has `args == []`.
+    args: list[tuple[str, str]] = field(default_factory=list)
+
+    @property
+    def signature(self) -> str:
+        """`schema.name(argtype, argtype)` — PostgreSQL's real identity.
+
+        **The single source of this string.** A function is identified by
+        `(schema, name, argument types)`, so this — not `schema.name` — is what
+        keys `DatabaseSchema.routines`, what `db/ddl_buffer.py`'s banner
+        comment prints, and what `db/schema_diff.py::routine_identity`
+        compares. Consume it verbatim; never re-render it, or the four
+        spellings drift apart (BUG-018).
+
+        A zero-argument routine renders with **empty parens** — `public.f()`,
+        never bare `public.f` — which is exactly what distinguishes `f()` from
+        `f(integer)`. The joiner is `", "` (comma + space) and the source is
+        `arg_types` (types only), not `args` (name/type pairs).
+        """
+        return f"{self.schema}.{self.name}({', '.join(self.arg_types)})"
+
+
+@dataclass(frozen=True)
+class TriggerInfo:
+    """A trigger, sourced from ``pg_trigger`` (§18.1)."""
+
+    schema: str
+    table: str
+    name: str
+    timing: str  # "before" | "after" | "instead of"
+    events: list[str] = field(default_factory=list)  # "insert"/"update"/"delete"/"truncate"
+    function_name: str = ""
+    definition: str = ""  # full CREATE TRIGGER text
+
+
+@dataclass(frozen=True)
+class TypeInfo:
+    """A domain or composite type, sourced from ``pg_type`` (§18.5 D2's
+    "recorded gap" closure) -- just enough to reconstruct a catalog-shape
+    `CREATE DOMAIN`/`CREATE TYPE ... AS (...)` for the sandbox baseline.
+
+    Deliberately minimal, matching `build_baseline_sql`'s "catalog shape,
+    not full fidelity" posture (§18.5 D2): a domain's `CHECK` constraints are
+    NOT captured here (the omission list already drops `CHECK`-adjacent
+    fidelity from tables; domains follow the same "catalog-based `plpgsql_
+    check` reads no rows, only needs types to exist" reasoning).
+    """
+
+    schema: str
+    name: str
+    kind: str  # "domain" | "composite"
+    #: Domain only -- the `format_type` of the underlying base type.
+    base_type: str | None = None
+    #: Domain only -- `True` when the domain is declared `NOT NULL`.
+    not_null: bool = False
+    #: Composite only -- ordered `(attribute_name, format_type)` pairs.
+    attributes: list[tuple[str, str]] = field(default_factory=list)
+
+    @property
+    def qualified_name(self) -> str:
+        """`schema.name` -- the key `DatabaseSchema.types` uses."""
+        return f"{self.schema}.{self.name}"
 
 
 @dataclass(frozen=True)
 class DatabaseSchema:
     tables: dict[str, TableInfo] = field(default_factory=dict)
+    routines: dict[str, RoutineInfo] = field(default_factory=dict)
+    triggers: dict[str, TriggerInfo] = field(default_factory=dict)
+    #: Domains and composite types, keyed by `schema.name` (§18.5 D2's
+    #: "recorded gap" closure -- previously unmodeled entirely).
+    types: dict[str, TypeInfo] = field(default_factory=dict)
 
     def has_table(self, name: str) -> bool:
         return name in self.tables
@@ -99,7 +193,8 @@ _COLUMNS_SQL = """
 SELECT n.nspname, c.relname, a.attname,
        pg_catalog.format_type(a.atttypid, a.atttypmod),
        a.attnotnull,
-       pg_catalog.pg_get_expr(d.adbin, d.adrelid)
+       pg_catalog.pg_get_expr(d.adbin, d.adrelid),
+       pg_catalog.col_description(a.attrelid, a.attnum)
 FROM pg_catalog.pg_attribute a
 JOIN pg_catalog.pg_class c ON c.oid = a.attrelid
 JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
@@ -133,6 +228,181 @@ WHERE con.contype IN ('p', 'f')
 SCHEMA_SQL: list[str] = [_RELATIONS_SQL, _COLUMNS_SQL, _CONSTRAINTS_SQL]
 
 _KIND_BY_RELKIND = {"r": "table", "p": "table", "v": "view", "m": "matview"}
+
+# --- Routines & triggers (§18.1 DDL Explorer) -------------------------------
+# A separate query pair from SCHEMA_SQL/fetch_schema above -- routines/triggers
+# are only needed by the DDL Explorer, not by the existing DB Check features,
+# so this stays an independent fetch rather than growing fetch_schema's
+# established 3-query contract.
+
+_ROUTINES_SQL = """
+SELECT n.nspname, p.proname, p.prokind,
+       pg_catalog.format_type(p.prorettype, NULL),
+       l.lanname,
+       pg_catalog.pg_get_functiondef(p.oid),
+       COALESCE(
+           (SELECT array_agg(pg_catalog.format_type(t.oid, NULL) ORDER BY a.ord)
+            FROM unnest(p.proargtypes) WITH ORDINALITY AS a(oid, ord)
+            JOIN pg_catalog.pg_type t ON t.oid = a.oid),
+           ARRAY[]::text[]
+       ),
+       COALESCE(
+           (SELECT array_agg(pg_catalog.format_type(t.oid, NULL) ORDER BY a.ord)
+            FROM unnest(COALESCE(p.proallargtypes, p.proargtypes::oid[]))
+                 WITH ORDINALITY AS a(oid, ord)
+            JOIN pg_catalog.pg_type t ON t.oid = a.oid),
+           ARRAY[]::text[]
+       ),
+       p.proargnames,
+       p.proargmodes::text[]
+FROM pg_catalog.pg_proc p
+JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+JOIN pg_catalog.pg_language l ON l.oid = p.prolang
+WHERE p.prokind IN ('f', 'p')
+  AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+  AND n.nspname NOT LIKE 'pg_toast%'
+"""
+
+_TRIGGERS_SQL = """
+SELECT n.nspname, c.relname, t.tgname, t.tgtype, p.proname,
+       pg_catalog.pg_get_triggerdef(t.oid)
+FROM pg_catalog.pg_trigger t
+JOIN pg_catalog.pg_class c ON c.oid = t.tgrelid
+JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+JOIN pg_catalog.pg_proc p ON p.oid = t.tgfoid
+WHERE NOT t.tgisinternal
+  AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+  AND n.nspname NOT LIKE 'pg_toast%'
+"""
+
+ROUTINE_TRIGGER_SQL: list[str] = [_ROUTINES_SQL, _TRIGGERS_SQL]
+
+# --- View definitions & domain/composite types (§18.5 D2 "recorded gap") ----
+# A separate query pair, consumed ONLY by `snapshot_for_baseline` -- neither
+# `fetch_schema` nor `fetch_routines_and_triggers` needs view bodies or
+# domain/composite shapes, so this does not widen either of those two
+# established contracts. `pg_get_viewdef` needs relkind IN ('v', 'm'); the
+# `pg_type` query needs typtype IN ('d', 'c') (domain, composite), per §18.5
+# D2's explicit instruction.
+
+_VIEWDEFS_SQL = """
+SELECT n.nspname, c.relname, pg_catalog.pg_get_viewdef(c.oid, true)
+FROM pg_catalog.pg_class c
+JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+WHERE c.relkind IN ('v', 'm')
+  AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+  AND n.nspname NOT LIKE 'pg_toast%'
+"""
+
+# Domains: base type + NOT NULL only -- CHECK constraints are deliberately
+# NOT captured (§18.5 D2's "catalog-based, reads no rows" baseline: a domain
+# CHECK is data-validation fidelity, the same category of thing the baseline
+# already drops for tables via the PK/FK/DEFAULT omission list). Composites:
+# ordered attribute (name, type) pairs, sourced the same way table columns
+# are (`pg_attribute` + `format_type`), since a composite type IS a
+# `pg_class` row with relkind 'c' under the hood.
+_TYPES_SQL = """
+SELECT n.nspname, t.typname, t.typtype,
+       pg_catalog.format_type(t.typbasetype, t.typtypmod),
+       t.typnotnull,
+       COALESCE(
+           (SELECT array_agg(a.attname ORDER BY a.attnum)
+            FROM pg_catalog.pg_attribute a
+            WHERE a.attrelid = t.typrelid AND a.attnum > 0 AND NOT a.attisdropped),
+           ARRAY[]::text[]
+       ),
+       COALESCE(
+           (SELECT array_agg(pg_catalog.format_type(a.atttypid, a.atttypmod) ORDER BY a.attnum)
+            FROM pg_catalog.pg_attribute a
+            WHERE a.attrelid = t.typrelid AND a.attnum > 0 AND NOT a.attisdropped),
+           ARRAY[]::text[]
+       )
+FROM pg_catalog.pg_type t
+JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace
+WHERE t.typtype IN ('d', 'c')
+  AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+  AND n.nspname NOT LIKE 'pg_toast%'
+  -- A composite type's OWN row-type entry (created implicitly by every
+  -- CREATE TABLE) must be excluded -- only "free-standing" CREATE TYPE ... AS
+  -- (...) composites are wanted here; table row-types are already fully
+  -- captured via SCHEMA_SQL/_build_tables and would otherwise duplicate as a
+  -- phantom `CREATE TYPE` for every table.
+  AND NOT EXISTS (
+      SELECT 1 FROM pg_catalog.pg_class c
+      WHERE c.oid = t.typrelid AND c.relkind != 'c'
+  )
+"""
+
+BASELINE_EXTRA_SQL: list[str] = [_VIEWDEFS_SQL, _TYPES_SQL]
+
+# pg_trigger.tgtype bit flags (see Postgres's trigger.h) -- decoded in Python
+# rather than in SQL so the mapping is unit-testable without a live database.
+_TRIGGER_BEFORE = 1 << 1
+_TRIGGER_INSERT = 1 << 2
+_TRIGGER_DELETE = 1 << 3
+_TRIGGER_UPDATE = 1 << 4
+_TRIGGER_TRUNCATE = 1 << 5
+_TRIGGER_INSTEAD = 1 << 6
+
+
+# pg_proc.proargmodes values that denote an argument the CALLER passes in:
+# i=IN, b=INOUT, v=VARIADIC. (o=OUT and t=TABLE are outputs.)
+_INPUT_ARG_MODES = frozenset("ibv")
+
+
+def _input_args(
+    all_arg_types: list[str] | None,
+    arg_names: list[str] | None,
+    arg_modes: list[str] | None,
+) -> list[tuple[str, str]]:
+    """Correlate ``pg_proc``'s parallel argument arrays into input-argument
+    ``(name, type)`` pairs in declared order (§18.1).
+
+    ``all_arg_types`` is ``COALESCE(proallargtypes, proargtypes)`` already
+    run through ``format_type``; ``arg_names`` is ``proargnames``;
+    ``arg_modes`` is ``proargmodes``. Postgres leaves ``proargmodes`` NULL
+    when every argument is IN (the common case) -- an absent mode therefore
+    reads as IN. Returns the modes that are genuinely *input* arguments:
+    IN (``i``), INOUT (``b``) and VARIADIC (``v``) -- a variadic parameter is
+    passed in by the caller, so omitting it would silently hide a real
+    parameter from the tree. OUT (``o``) and TABLE (``t``) entries are
+    dropped. An unnamed argument yields ``""`` for its name.
+
+    Kept in Python (like ``_decode_trigger_type``) so the correlation is
+    unit-testable without a live database.
+    """
+    pairs: list[tuple[str, str]] = []
+    for index, type_name in enumerate(all_arg_types or []):
+        mode = "i"
+        if arg_modes and index < len(arg_modes) and arg_modes[index]:
+            mode = arg_modes[index]
+        if mode not in _INPUT_ARG_MODES:
+            continue
+        name = ""
+        if arg_names and index < len(arg_names) and arg_names[index]:
+            name = arg_names[index]
+        pairs.append((name, type_name))
+    return pairs
+
+
+def _decode_trigger_type(tgtype: int) -> tuple[str, list[str]]:
+    """Return ``(timing, events)`` decoded from a raw ``pg_trigger.tgtype`` bitmask."""
+    if tgtype & _TRIGGER_INSTEAD:
+        timing = "instead of"
+    elif tgtype & _TRIGGER_BEFORE:
+        timing = "before"
+    else:
+        timing = "after"
+    events: list[str] = []
+    if tgtype & _TRIGGER_INSERT:
+        events.append("insert")
+    if tgtype & _TRIGGER_UPDATE:
+        events.append("update")
+    if tgtype & _TRIGGER_DELETE:
+        events.append("delete")
+    if tgtype & _TRIGGER_TRUNCATE:
+        events.append("truncate")
+    return timing, events
 
 
 def run_queries(
@@ -171,12 +441,21 @@ def run_queries(
         connection.close()
 
 
-def fetch_schema(params: ConnectionParams, runner: Runner = run_queries) -> DatabaseSchema:
-    """Introspect the database into a `DatabaseSchema` keyed by ``schema.table``."""
-    _log.info("db: fetch_schema started %s", debuglog.redacted(params))
-    started = time.monotonic()
-    relation_rows, column_rows, constraint_rows = runner(params, list(SCHEMA_SQL))
+def _build_tables(
+    relation_rows: Rows,
+    column_rows: Rows,
+    constraint_rows: Rows,
+    view_definition_rows: Rows | None = None,
+) -> dict[str, TableInfo]:
+    """Assemble ``{"schema.table": TableInfo}`` from `SCHEMA_SQL`'s three
+    row-lists. Shared by `fetch_schema` and `fetch_routines_and_triggers`
+    (§18.6) so the one table/column-assembly implementation backs both.
 
+    `view_definition_rows` (from `_VIEWDEFS_SQL`, one row per `("v", "m")`
+    relation) is optional and additive -- both existing callers omit it and
+    get `view_definition=None` on every `TableInfo` exactly as before;
+    `snapshot_for_baseline` is the only caller that supplies it.
+    """
     kinds: dict[str, str] = {}
     for schema_name, rel_name, relkind in relation_rows:
         kinds[f"{schema_name}.{rel_name}"] = _KIND_BY_RELKIND.get(relkind, "table")
@@ -197,7 +476,7 @@ def fetch_schema(params: ConnectionParams, runner: Runner = run_queries) -> Data
                 fk_targets[key] = ref_target
 
     columns_by_table: dict[str, list[ColumnInfo]] = {name: [] for name in kinds}
-    for schema_name, rel_name, col_name, data_type, notnull, default in column_rows:
+    for schema_name, rel_name, col_name, data_type, notnull, default, comment in column_rows:
         table_key = f"{schema_name}.{rel_name}"
         if table_key not in columns_by_table:
             continue
@@ -210,18 +489,208 @@ def fetch_schema(params: ConnectionParams, runner: Runner = run_queries) -> Data
                 is_nullable=not notnull,
                 default=default,
                 fk_target=fk_targets.get((table_key, col_name)),
+                comment=comment,
             )
         )
 
-    tables = {
-        name: TableInfo(name=name, kind=kind, columns=columns_by_table.get(name, []))
+    view_definitions: dict[str, str] = {}
+    for schema_name, rel_name, definition in view_definition_rows or []:
+        view_definitions[f"{schema_name}.{rel_name}"] = definition
+
+    return {
+        name: TableInfo(
+            name=name,
+            kind=kind,
+            columns=columns_by_table.get(name, []),
+            view_definition=view_definitions.get(name),
+        )
         for name, kind in kinds.items()
     }
+
+
+def _build_types(type_rows: Rows) -> dict[str, TypeInfo]:
+    """Assemble ``{"schema.name": TypeInfo}`` from `_TYPES_SQL`'s rows
+    (§18.5 D2's "recorded gap" closure)."""
+    types: dict[str, TypeInfo] = {}
+    for schema_name, type_name, typtype, base_type, not_null, attr_names, attr_types in type_rows:
+        kind = "domain" if typtype == "d" else "composite"
+        attributes = list(zip(attr_names or [], attr_types or [], strict=True))
+        info = TypeInfo(
+            schema=schema_name,
+            name=type_name,
+            kind=kind,
+            base_type=base_type if kind == "domain" else None,
+            not_null=bool(not_null) if kind == "domain" else False,
+            attributes=attributes if kind == "composite" else [],
+        )
+        types[info.qualified_name] = info
+    return types
+
+
+def fetch_schema(params: ConnectionParams, runner: Runner = run_queries) -> DatabaseSchema:
+    """Introspect the database into a `DatabaseSchema` keyed by ``schema.table``."""
+    _log.info("db: fetch_schema started %s", debuglog.redacted(params))
+    started = time.monotonic()
+    relation_rows, column_rows, constraint_rows = runner(params, list(SCHEMA_SQL))
+    tables = _build_tables(relation_rows, column_rows, constraint_rows)
     elapsed = time.monotonic() - started
     _log.info(
         "db: fetch_schema finished %.3fs tables=%d", elapsed, len(tables)
     )
     return DatabaseSchema(tables=tables)
+
+
+def fetch_routines_and_triggers(
+    params: ConnectionParams, runner: Runner = run_queries
+) -> DatabaseSchema:
+    """Introspect functions/procedures + triggers **and** tables/columns into
+    one `DatabaseSchema` (§18.1, widened by §18.6).
+
+    Runs `ROUTINE_TRIGGER_SQL` (routines/triggers) and `SCHEMA_SQL` (the same
+    three queries `fetch_schema` runs) in the same round trip, so the DDL
+    Explorer's one connect-time fetch now populates `.routines`, `.triggers`
+    **and** `.tables`. This supersedes the earlier "`.tables` is always empty"
+    behavior (§28 Supersession Ledger, 2026-08-04): `db/schema_index.py`
+    (§18.6) is built from the `.tables` this now returns, for schema-aware
+    Ctrl+Space completion in the DDL object editor.
+
+    `fetch_schema` itself is UNCHANGED -- its own 3-query contract and tests
+    are untouched, and DB Check keeps calling it directly. This is one
+    widened fetch serving two consumers, never a second parallel fetch.
+    """
+    _log.info("db: fetch_routines_and_triggers started %s", debuglog.redacted(params))
+    started = time.monotonic()
+    routine_rows, trigger_rows, relation_rows, column_rows, constraint_rows = runner(
+        params, list(ROUTINE_TRIGGER_SQL) + list(SCHEMA_SQL)
+    )
+
+    routines, triggers = _build_routines_and_triggers(routine_rows, trigger_rows)
+    tables = _build_tables(relation_rows, column_rows, constraint_rows)
+
+    elapsed = time.monotonic() - started
+    _log.info(
+        "db: fetch_routines_and_triggers finished %.3fs routines=%d triggers=%d tables=%d",
+        elapsed,
+        len(routines),
+        len(triggers),
+        len(tables),
+    )
+    return DatabaseSchema(routines=routines, triggers=triggers, tables=tables)
+
+
+def _build_routines_and_triggers(
+    routine_rows: Rows, trigger_rows: Rows
+) -> tuple[dict[str, RoutineInfo], dict[str, TriggerInfo]]:
+    """Assemble the `.routines`/`.triggers` dicts from `ROUTINE_TRIGGER_SQL`'s
+    two row-lists. Factored out of `fetch_routines_and_triggers` so
+    `snapshot_for_baseline` (§18.5 D2) can build the identical shape from one
+    shared implementation rather than a second parallel loop."""
+    routines: dict[str, RoutineInfo] = {}
+    for (
+        schema_name,
+        name,
+        prokind,
+        return_type,
+        language,
+        source,
+        arg_types,
+        all_arg_types,
+        arg_names,
+        arg_modes,
+    ) in routine_rows:
+        routine = RoutineInfo(
+            schema=schema_name,
+            name=name,
+            arg_types=list(arg_types or []),
+            return_type=return_type,
+            language=language,
+            source=source,
+            kind="function" if prokind == "f" else "procedure",
+            args=_input_args(all_arg_types, arg_names, arg_modes),
+        )
+        # Keyed by the full signature, not `schema.name`: `pg_proc` holds one
+        # row per overload, so `public.fmt(integer)` and `public.fmt(text)`
+        # arrive as two rows that would collapse onto one key (BUG-018). Built
+        # first, then keyed off `routine.signature`, so the string has exactly
+        # one implementation.
+        routines[routine.signature] = routine
+
+    triggers: dict[str, TriggerInfo] = {}
+    for schema_name, table_name, name, tgtype, function_name, definition in trigger_rows:
+        timing, events = _decode_trigger_type(tgtype)
+        triggers[f"{schema_name}.{table_name}.{name}"] = TriggerInfo(
+            schema=schema_name,
+            table=table_name,
+            name=name,
+            timing=timing,
+            events=events,
+            function_name=function_name,
+            definition=definition,
+        )
+    return routines, triggers
+
+
+@dataclass(frozen=True)
+class BaselineSnapshot:
+    """A `DatabaseSchema` widened with the two "recorded gap" queries
+    (§18.5 D2) that `build_baseline_sql` (`db/sandbox.py`) needs but neither
+    `fetch_schema` nor `fetch_routines_and_triggers` fetches: view/matview
+    definitions (already carried on `TableInfo.view_definition`) and
+    domain/composite types (`DatabaseSchema.types`).
+
+    A thin wrapper, not a re-invented model -- `DatabaseSchema` stays the one
+    shared shape; this only exists because `snapshot_for_baseline` is a
+    distinct entry point (one specific extra round trip) worth naming
+    separately from the general-purpose `fetch_*` functions above.
+    """
+
+    schema: DatabaseSchema = field(default_factory=DatabaseSchema)
+
+
+def snapshot_for_baseline(
+    target_params: ConnectionParams, runner: Runner = run_queries
+) -> BaselineSnapshot:
+    """Introspect the **target** database into a `BaselineSnapshot` -- the
+    input `db/sandbox.py::build_baseline_sql` consumes to provision a fresh
+    sandbox (§18.5 D2).
+
+    Reuses `SCHEMA_SQL` + `ROUTINE_TRIGGER_SQL` + `BASELINE_EXTRA_SQL` (the
+    view-definition and domain/composite-type queries) in **one** round trip,
+    mirroring `fetch_routines_and_triggers`'s "one widened fetch" precedent
+    rather than issuing several separate connections.
+
+    Qt-free, and -- like every other function here -- never imports psycopg
+    directly: only the injectable `runner` (defaulting to `run_queries`,
+    the sole psycopg touchpoint) ever opens a connection.
+    """
+    _log.info("db: snapshot_for_baseline started %s", debuglog.redacted(target_params))
+    started = time.monotonic()
+    (
+        routine_rows,
+        trigger_rows,
+        relation_rows,
+        column_rows,
+        constraint_rows,
+        viewdef_rows,
+        type_rows,
+    ) = runner(target_params, list(ROUTINE_TRIGGER_SQL) + list(SCHEMA_SQL) + list(BASELINE_EXTRA_SQL))
+
+    routines, triggers = _build_routines_and_triggers(routine_rows, trigger_rows)
+    tables = _build_tables(relation_rows, column_rows, constraint_rows, viewdef_rows)
+    types = _build_types(type_rows)
+
+    elapsed = time.monotonic() - started
+    _log.info(
+        "db: snapshot_for_baseline finished %.3fs tables=%d routines=%d triggers=%d types=%d",
+        elapsed,
+        len(tables),
+        len(routines),
+        len(triggers),
+        len(types),
+    )
+    return BaselineSnapshot(
+        schema=DatabaseSchema(tables=tables, routines=routines, triggers=triggers, types=types)
+    )
 
 
 def test_connection(params: ConnectionParams, runner: Runner = run_queries) -> tuple[bool, str]:

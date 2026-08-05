@@ -33,7 +33,7 @@ def test_manual_tab_close_button_hides_it(qtbot):
     assert cs.currentIndex() == cs.raw_xml_tab_index
 
 
-def test_only_manual_tab_is_closable(qtbot):
+def test_only_manual_and_xsd_tabs_are_closable(qtbot):
     from PySide6.QtWidgets import QTabBar
 
     cs = CenterStage()
@@ -47,6 +47,52 @@ def test_only_manual_tab_is_closable(qtbot):
                   cs.caption_management_tab_index):
         assert bar.tabButton(index, right) is None
         assert bar.tabButton(index, left) is None
-    # The Manual tab keeps a close button (on whichever side the style uses).
-    assert (bar.tabButton(cs.manual_tab_index, right) is not None
-            or bar.tabButton(cs.manual_tab_index, left) is not None)
+    # The Manual and Edit XSD tabs keep a close button (whichever side the
+    # style uses, BUG-001).
+    for index in (cs.manual_tab_index, cs.xsd_tab_index):
+        assert (bar.tabButton(index, right) is not None
+                or bar.tabButton(index, left) is not None)
+
+
+def test_xsd_tab_close_button_emits_xsd_close_requested(qtbot):
+    """The Edit XSD tab's ✕ must NOT hide the tab directly (BUG-001) --
+    closing has to go through MainWindow's unsaved-changes prompt first, so
+    the tab-close mechanism only signals intent."""
+    cs = CenterStage()
+    qtbot.addWidget(cs)
+    cs.show_edit_xsd()
+    got = []
+    cs.xsd_close_requested.connect(lambda: got.append(True))
+
+    cs.tabCloseRequested.emit(cs.xsd_tab_index)
+
+    assert got == [True]
+    assert cs.isTabVisible(cs.xsd_tab_index) is True  # unchanged by the signal alone
+
+
+def test_hide_edit_xsd_hides_tab_and_returns_to_raw_xml(qtbot):
+    cs = CenterStage()
+    qtbot.addWidget(cs)
+    cs.show_edit_xsd()
+
+    cs.hide_edit_xsd()
+
+    assert cs.isTabVisible(cs.xsd_tab_index) is False
+    assert cs.currentIndex() == cs.raw_xml_tab_index
+
+
+def test_hide_edit_xsd_when_not_current_tab_does_not_change_current_index(qtbot):
+    """If the user switched away to another tab (e.g. Manual) while the Edit
+    XSD tab stayed visible, hiding it must not steal focus back to Raw XML --
+    mirrors hide_manual's same not-current guard."""
+    cs = CenterStage()
+    qtbot.addWidget(cs)
+    cs.show_edit_xsd()
+    cs.show_manual()  # switches current tab away from xsd_tab_index
+    assert cs.currentIndex() == cs.manual_tab_index
+    assert cs.isTabVisible(cs.xsd_tab_index) is True  # still visible, just not current
+
+    cs.hide_edit_xsd()
+
+    assert cs.isTabVisible(cs.xsd_tab_index) is False
+    assert cs.currentIndex() == cs.manual_tab_index  # unchanged, not forced to Raw XML

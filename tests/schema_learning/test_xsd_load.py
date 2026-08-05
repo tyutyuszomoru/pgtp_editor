@@ -137,6 +137,34 @@ def test_inline_complex_type_does_not_leak_attributes_into_enclosing_type():
     assert "inner" not in root_attrs
 
 
+def test_duplicate_attribute_in_same_complex_type_last_one_wins():
+    """Current (kept) load behavior for a malformed duplicate xs:attribute
+    name= within one complexType (BUG-002): the LAST occurrence silently
+    overwrites the first -- Verify (xsd_verify.py) is what surfaces this to
+    the user, load_curated stays permissive and deterministic. Pinned here so
+    a future change to warn-on-overwrite doesn't silently change semantics."""
+    xsd = """<?xml version="1.0" encoding="UTF-8"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  <xs:element name="Root" type="Root_Type"/>
+  <xs:complexType name="Root_Type">
+    <xs:attribute name="a" use="optional">
+      <xs:simpleType>
+        <xs:restriction base="xs:integer">
+          <xs:enumeration value="1" label="First"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="a" use="optional" type="xs:string"/>
+  </xs:complexType>
+</xs:schema>
+"""
+    schema = load_curated(xsd)
+    entry = schema.model.paths["Root"]["attributes"]["a"]
+    assert entry["type"] == "string"  # the second, unlabeled block wins
+    assert entry["values"] == []
+    assert entry["labels"] == {}
+
+
 def test_type_cycle_does_not_hang():
     cyclic = """<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
   <xs:element name="A" type="A_Type"/>

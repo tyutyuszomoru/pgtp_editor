@@ -53,3 +53,32 @@ def test_bundled_curated_xsd_loads_and_verifies_clean():
     assert schema.model.paths  # non-empty structure was parsed
     fatal = [issue for issue in verify_curated(text) if issue.fatal]
     assert fatal == []
+
+
+def test_bundled_curated_xsd_resolves_edit_ability_mode_label():
+    """Regression for BUG-002: editAbilityMode was entirely missing from the
+    bundled curated.xsd, so the Properties panel could never show its label
+    even though the sibling *AbilityMode attributes resolved fine."""
+    from pgtp_editor.schema_learning.settings_index import value_label
+
+    text = bundled_curated_xsd_text()
+    schema = load_curated(text)
+    chain = "Project/Presentation/Pages/Page"
+
+    assert value_label(schema.model, chain, "editAbilityMode", "3") == "Modal window"
+    # Sibling attribute, kept working -- same enumeration/labels.
+    assert value_label(schema.model, chain, "viewAbilityMode", "3") == "Modal window"
+
+
+def test_bundled_curated_xsd_new_edit_ability_mode_block_verifies_cleanly():
+    """The new editAbilityMode block itself must not trip the new
+    duplicate-attribute-name check (BUG-002 part 2) or any other Verify rule
+    -- it's a copy of the viewAbilityMode block's shape, so a copy/paste slip
+    (e.g. forgetting to rename it, landing it in the wrong complexType twice)
+    would show up here specifically, not just in the overall fatal-issues
+    guard `test_bundled_curated_xsd_loads_and_verifies_clean` already has."""
+    text = bundled_curated_xsd_text()
+    issues = verify_curated(text)
+    messages = [i.message for i in issues]
+    assert not any("editAbilityMode" in m for m in messages)
+    assert not any("duplicate attribute name" in m for m in messages)

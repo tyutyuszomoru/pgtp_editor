@@ -15,14 +15,23 @@ you asked for, and the on-disk bytes are preserved except where you edit.
 
 ### Opening a project
 
-Use **File ▸ Open** and pick a `.pgtp` file. The window has three areas:
+Use **File ▸ Open** and pick a `.pgtp` file. If no local DDL-versioning project
+(see *Local DDL-Versioning Projects*) is currently active, a chooser dialog
+asks how you want to work with this file: **New Project…** starts one around
+it, **Open Project…** attaches it to an existing project, and **Edit
+Standalone** opens it plainly with no project involved — today's ordinary
+behavior. If a project **is** already active, the chooser is skipped and the
+file just opens into that project. The window has three areas:
 
 - **Left — Project Tree:** the structure of your project (pages, details, columns,
   event handlers). More tabs share this dock: **Contents** (this manual's
-  chapters), **Table references** (when you turn it on from the View menu), and,
-  after you run a database check, **Database Check**.
-- **Center — Raw XML / Caption Management / Diff-Merge / Edit XSD / Manual:** the
-  working area. It opens on **Raw XML**; the other tabs appear when you invoke them.
+  chapters), **Table references** (when you turn it on from the View menu),
+  **Database Check** (after you run a database check), and **DDL Objects** (while
+  the DDL Explorer is on — see *DDL Explorer*).
+- **Center — Raw XML / Caption Management / Diff-Merge / Edit XSD / DDL Explorer /
+  Manual:** the working area. It opens on **Raw XML**; the other tabs appear when
+  you invoke them. Editing an individual function, procedure, or trigger opens
+  one more tab per object (see *DDL Explorer*).
 - **Right — Properties:** a read-only inspector for whatever you select in the tree.
 
 When you open a file, the status bar shows a live message such as
@@ -34,9 +43,13 @@ busy feedback*.
 ### Saving, closing, reverting
 
 - **File ▸ Save** (Ctrl+S) saves the **active tab**: the project file when you're
-  in Raw XML (or any project view), or the schema the XSD tab currently holds —
-  curated or auto — when that tab is active (see *Schema Tools*).
-- **File ▸ Save As** (Ctrl+Shift+S) writes a copy to a new path.
+  in Raw XML (or any project view), the schema the XSD tab currently holds —
+  curated or auto — when that tab is active (see *Schema Tools*), or the `.sql`
+  file behind an open DDL object editor tab when that tab is active (see *DDL
+  Explorer*).
+- **File ▸ Save As** (Ctrl+Shift+S) writes a copy of the **project** to a new
+  path — this is unaffected by which tab is active, including a DDL object
+  editor tab (which has its own, separate Save As… the first time you save it).
 - **File ▸ Close** (Ctrl+W) closes the project; if you have unsaved changes it
   prompts you to **Save**, **Discard**, or **Cancel**.
 - **File ▸ Revert** discards your edits and reloads the last saved version from the
@@ -44,6 +57,16 @@ busy feedback*.
 
 The editor writes UTF-8 and preserves your original line endings — it does not
 convert line endings or re-encode content on save.
+
+> **When a local DDL-versioning project is open** (see *Local DDL-Versioning
+> Projects*) and this `.pgtp` is that project's linked working copy, Save behaves
+> a little differently: it writes the working copy and **makes no `.bak`
+> backup**, because the working copy itself is the safety net. This applies
+> **only** in that situation — an ordinary `.pgtp` opened with no project active
+> (or a `.pgtp` that isn't the active project's linked working copy) keeps making
+> `.bak` backups exactly as described above. Pushing the working copy's changes
+> back to the original file is a separate action, **Deploy .pgtp** — see *Local
+> DDL-Versioning Projects*.
 
 ---
 
@@ -155,13 +178,25 @@ it).
 
 ## Bookmarks
 
-Bookmarks let you mark lines in the Raw XML editor and jump between them. They live
-for the current session and are not written to the file.
+Bookmarks let you mark lines and jump between them. They live for the current
+session and are not written to the file.
 
 - **Ctrl+F2** (or clicking the bookmark strip in the gutter) toggles a bookmark on
   the current line; a tag marker appears in the strip.
 - **F2** / **Shift+F2** jump to the next / previous bookmark.
 - The **Bookmarks** menu holds the same actions plus **Clear All Bookmarks**.
+
+The **Bookmarks** menu and its shortcuts follow the tab you are working in: with
+the **Edit XSD** (or **Edit AutoXSD**) tab active they act on the schema editor,
+with the **DDL Explorer** tab or an open **DDL object editor tab** active they
+act on that tab's own editor, and on any other tab they act on the **Raw XML**
+editor. Using them never switches tabs on you — a bookmark is always set or
+found in the editor you are already looking at.
+
+The **Edit code…** dialog has the same bookmark strip, but as a separate dialog
+it is out of the Bookmarks menu's reach: there you set and clear bookmarks by
+clicking the strip in the gutter. Each editor keeps its own set, and loading a
+new document into an editor clears its bookmarks.
 
 ---
 
@@ -176,8 +211,18 @@ The search bar under the Raw XML editor provides:
 - **Replace** (Ctrl+R) and **Replace All** (Ctrl+Alt+Enter) — Replace All reports
   how many replacements it made in the status bar.
 
-The **Edit XSD** tab (see *Schema Tools*) has its own identical search bar; the
-shortcuts and the Edit menu act on whichever tab is active.
+The **Edit XSD** tab (see *Schema Tools*), the **DDL Explorer** tab, and an open
+**DDL object editor tab** (see *DDL Explorer*) each have their own search bar;
+the shortcuts and the Edit menu act on whichever tab is active, searching that
+tab's own document. On a tab without its own search bar, Find reveals the
+**Raw XML** tab and searches there.
+
+Because the DDL Explorer buffer is **read-only**, only the searching half applies
+there: Find, Find Next and Find All work as usual, while Replace and Replace All
+have nothing they can change. A DDL object editor tab is the opposite case:
+it's fully editable, so **Find, Find Next, Replace, and Replace All all work**
+there — only **Find All** stays inert and returns no results, the one gap
+carried over from the read-only DDL Explorer's search bar.
 
 ---
 
@@ -200,6 +245,9 @@ The Code Editor is a modal window with:
 
 - **Syntax highlighting** — JavaScript for client-side handlers, PHP for
   server-side handlers.
+- A **line-number gutter**, with a bookmark strip at its left edge: click it to
+  mark a line while you work through a long handler (see *Bookmarks*). There is
+  nothing to fold in a code body, so the gutter shows no fold chevrons here.
 - **Auto-close** for `()`, `[]`, `{}`, `''`, and `""` — the caret lands between the
   pair, and typing the matching closer "types through" it.
 - **Selection-wrap** — with text selected, typing a bracket or quote wraps the
@@ -260,7 +308,14 @@ across the project are highlighted so you can unify them.
 - **Header filters** — click a column header to filter by its values, Excel-style.
   A **search box** narrows the checkbox list as you type and unchecks values that no
   longer match, so you can zero in on a large set quickly.
-- **Clear all filters** — available from the right-click menu.
+- **Preset filters from the Project Tree** — a **See … in Caption Mode** action (for a
+  table, a detail's table, or a single column — see *The Project Tree*) narrows the
+  grid to just that scope. Whenever one of these is active, an **active-filter banner**
+  appears above the grid, e.g. `Filtered: Field = wbs_id — showing 3 of 214 rows`, with
+  a **Clear** button. The banner (and the preset narrowing) disappears once you clear it.
+- **Clear all filters** — available from the right-click menu, and (when a preset
+  filter is active) from the banner's own **Clear** button. Both clear every filter
+  mechanism at once: header filters, the Find/Filter pattern, and any preset filter.
 
 ### Find / Filter / Replace
 
@@ -274,7 +329,14 @@ A shared modal drives searching and bulk editing:
 ### Power tools
 
 - **Bulk Transform** — apply a transformation across many captions at once.
-- **Unify** — make inconsistent captions consistent.
+- **Unify** (right-click ▸ **Unify: set all inconsistent siblings to this value**) —
+  set every other row sharing the selected row's element/attribute to the selected
+  row's value, wherever they currently disagree. If any filter is active (a header
+  filter, a Find/Filter pattern, or a preset filter from the Project Tree) when you
+  invoke it, a prompt first asks **Filtered rows only**, **Entire project**, or
+  **Cancel**, so you can choose whether the unify should touch only the rows
+  currently visible in the grid or every matching row in the project. With no
+  filter active, Unify runs project-wide as before, with no prompt.
 
 ---
 
@@ -330,6 +392,11 @@ center area — a full editor with its own find/replace bar (Find, Find All,
 Replace, all the usual shortcuts). The tab keeps its own unsaved-changes marker
 (`Edit XSD *`), and **Ctrl+S saves whichever tab is active** — the project from
 Raw XML, the schema from the XSD tab.
+
+Click the tab's **✕** to close it and return to Raw XML. With no unsaved edits
+it closes right away; with unsaved edits it prompts you to **Save**,
+**Discard**, or **Cancel** first — the same prompt used when switching between
+Edit XSD and Edit AutoXSD (below) or closing the app with unsaved schema edits.
 
 Saving the curated schema re-parses it and refreshes completion, hovers, and
 Properties labels **immediately**. If the XML is malformed, your text is still
@@ -404,10 +471,20 @@ against a live PostgreSQL database.
 
 ### Connecting
 
-**Connection Setup…** collects server, port, database, user, and password, with a
-**Test** button. The non-password fields are seeded from the project's
-`<ConnectionOptions>`; a connection you save is remembered and takes precedence over
-the project's values next time.
+**Database ▸ Connection Setup…** collects server, port, database, user, and
+password, with a **Test** button. The non-password fields are seeded from the
+`.pgtp` project's `<ConnectionOptions>`; a connection you save is remembered and
+takes precedence over the project's values next time.
+
+**Connection Setup…** is available only in **projectless mode** — with no local
+DDL-versioning project open (see *Local DDL-Versioning Projects*). Once a project
+is open, its connection lives in **Project Settings…** (the **Connections** tab —
+see *Local DDL-Versioning Projects ▸ Project Settings*) instead, and the menu
+action is disabled while that project stays active; it re-enables the moment you
+close the project. If something that needs a connection (Database Check, DDL
+Explorer) finds none configured while a project is open, it points you at Project
+Settings via a status-bar message rather than opening the now-meaningless
+standalone dialog.
 
 > On Windows, use **`127.0.0.1`** rather than `localhost` — `localhost` can resolve
 > to IPv6 first and stall the connection. The check runs off the UI thread with a
@@ -417,17 +494,457 @@ the project's values next time.
 
 - **Check: XML → Database** verifies every table and column the project references
   actually exists in the database. Results appear in the **Database Check** tab in
-  the left dock as a tree with green/red ticks. Each table shows its kind —
-  `(T)` table, `(V)` view, `(M)` materialized view — and how many times the project
-  references it `(×N)`; each column shows its datatype, primary keys are underlined,
-  foreign keys are marked `(fk)`, and nullability/defaults are noted. A
-  **show-only-mismatches** toggle and a count help you focus. **Double-click** a
-  result to jump to its place in the XML. If a table isn't found, you can rename it
-  (a project-wide replace) and re-run the check.
+  the left dock as a tree: a green **✓** marks a match and a red **✗** a mismatch.
+  Each table shows its kind — `(T)` table, `(V)` view, `(M)` materialized view — and
+  how many times the project references it `(×N)`; each column shows its datatype,
+  primary keys are underlined, foreign keys are marked `(fk)`, and
+  nullability/defaults are noted. **Calculated columns** (marked
+  `isCalculated="true"` in the XML) are generator-computed and have no physical
+  database column by design, so they are shown with an orange **~** instead of a red
+  ✗ — they don't count as mismatches. A **Show only mismatches** checkbox and a
+  mismatch count in the header help you focus; calculated columns are excluded from
+  both (the filter hides them entirely). **Double-click** a result — including a
+  calculated column — to jump to its place in the XML. If a table or column isn't
+  found, right-click it for **Rename table/column in XML…** (a project-wide
+  replace) and re-run the check; the action isn't offered for calculated columns,
+  since there is nothing database-side to reconcile.
 - **Check: Database → XML** is the reverse: it lists tables and columns that exist
   in the database but the project doesn't reference.
 
+Results are tied to the project they were checked against: **File ▸ Close** closes
+the **Database Check** tab and discards its results (cancelling the close, or
+**File ▸ Revert**, leaves them in place). Running a check on the next project
+brings the tab back as usual.
+
 The password is stored with the connection settings and is never written to any log.
+
+### Creating pages, details, and lookups from a table
+
+After a **Check: Database → XML** run, **right-click a table or view row** (not a
+column row) in the results tree to synthesize project XML from that table's live
+schema:
+
+- **Create new page from this table** builds a complete `<Page>` — column
+  presentations, captions, and view/edit types derived from the database column
+  types — and inserts it into the Raw XML buffer just before `</Pages>`, then
+  switches to the Raw XML tab with the new page selected. If the project already
+  has a page for that table (or a page with the same `fileName`), a confirmation
+  asks whether to create another one anyway with a de-duplicated `fileName`.
+- **Create new detail from this table…** builds a `<Detail>` fragment (a nested
+  page plus a master/foreign-key column map, filled in automatically when the
+  table has exactly one foreign key, otherwise left as empty placeholders) and
+  **copies it to the clipboard** — paste it into the `<Details>` block of the
+  target page.
+- **Create new lookup from this table…** builds a `<Lookup>` element (link field
+  = the table's single primary key; display field = the first text-like non-key
+  column, best effort) and **copies it to the clipboard** — paste it into the
+  target column.
+
+These actions are offered only in the **Database → XML** direction, because they
+need the schema captured by the last check; if that schema is no longer available,
+the status bar asks you to run a Database check first.
+
+---
+
+## DDL Explorer
+
+**Database ▸ DDL Explorer** is a checkable toggle that shows your database's
+server-side code — every function, procedure, and trigger — inside the editor.
+It needs only a database connection: you can use it with **no `.pgtp` file open
+at all**. If no connection is configured yet: in projectless mode, **Connection
+Setup…** opens automatically — save a connection, then toggle the explorer
+again; with a local DDL-versioning project open, a status-bar message points you
+at **Project Settings…** instead (see *Database Check ▸ Connecting* and *Local
+DDL-Versioning Projects*).
+
+Turning it on fetches all routines and triggers from the connected PostgreSQL
+database and reveals two tabs at once:
+
+- **Center — DDL Explorer:** every definition in a single **read-only**,
+  SQL-highlighted buffer. Each object is preceded by a banner comment (e.g.
+  `-- FUNCTION public.foo(integer) --`) so you can always tell where you are.
+  The buffer is a live snapshot of the database and cannot be edited.
+- **Left dock — DDL Objects:** a tree of the same objects, grouped from two
+  angles. Under **Tables**, **every table in the connected schema is listed** —
+  tables that own a trigger list those triggers nested underneath them; tables
+  with no triggers appear as plain entries. Under **Functions & Procedures**,
+  each function or procedure lists the triggers that call it. A trigger
+  therefore appears in **both** places — either entry points at the same
+  definition. **Click** a routine or trigger to jump the DDL Explorer buffer
+  straight to it; **click** a table to see its columns in Properties (see
+  *Clicking a table: column properties*, below).
+
+### Reading the DDL Objects tree
+
+Under **Tables**, each table is listed as `schema.table`. A table with
+triggers shows a trigger count suffix, e.g. `public.orders  (2)`, with those
+triggers nested underneath it exactly as before; a table with no triggers
+shows the bare `schema.table` label (no count, since it would only ever be
+`0`) and has no children. Widening the branch to every table means it no
+longer omits tables that happen to have no trigger of their own.
+
+Routines under **Functions & Procedures** are listed by their fully-qualified
+`schema.name`, followed by a marker telling you what kind of routine it is:
+
+- **`[F]`** — a plain function.
+- **`[P]`** — a procedure.
+- **`[T]`** — a trigger function, i.e. a function that returns `trigger`.
+
+A routine's **input arguments are listed as child rows**, one per argument, in
+the form `name (type)`. A routine that takes no arguments carries an empty pair
+of parentheses on its own row instead — for example
+`public.dont_delete_standards() [T]`. Argument rows are labels only: clicking
+one doesn't navigate anywhere.
+
+Triggers are shown by their composite name `schema.table.triggername`, followed
+by bracketed indicators — the timing first, then one per event:
+
+- Timing: **`[B]`** before, **`[A]`** after, **`[I]`** instead of.
+- Events: **`[I]`** insert, **`[U]`** update, **`[D]`** delete, **`[T]`** truncate.
+
+So a BEFORE DELETE trigger reads `[B][D]`, and an AFTER INSERT OR UPDATE trigger
+reads `[A][I][U]`. The label is identical in both branches of the tree, so you
+recognize the same trigger whether you found it under its table or under the
+function it calls.
+
+When a **local DDL-versioning project** is open (see *Local DDL-Versioning
+Projects*), object rows also carry combinable drift markers after their other
+indicators:
+
+- **`*`** — the checked-out local file has edits not yet included in a batch
+  deploy.
+- **`!`** — the live database has drifted from what was last deployed.
+- Both can appear together as **`*!`** — there is no separate third symbol for
+  "both."
+
+Both markers are purely informational: they surface disagreement between the
+local file, the last deploy, and the live database, but never block anything
+by themselves. With no project open, no markers are shown.
+
+### Clicking a table: column properties
+
+Clicking any table node under **Tables** — whether it owns triggers or not —
+populates the **Properties** panel (the same right-hand dock the Project Tree
+and Table References use, see *Properties*) with that table's full column
+list. Each column is shown as **two rows**: a compact identity line — the
+column name, its data type, and whether it's nullable (`NULL` / `NOT NULL`) —
+followed by a detail line with its default value and comment (an unset
+default or comment shows as `—`). Subtle alternating shading pairs each
+column's two rows together so they read as one record.
+
+This is **display-only**: clicking a table populates Properties but, unlike
+clicking a routine or trigger, does **not** jump or scroll the DDL Explorer
+buffer, since a whole table has no single line in that buffer to jump to.
+Right-clicking a table node offers no context menu — **Edit …** and **Check
+Out for Versioning** remain available only on routine and trigger rows.
+
+### Working in the DDL tab
+
+The DDL Explorer buffer is read-only, but it is a real editor view with the same
+navigation comforts as the Raw XML editor:
+
+- **Line numbers** in the gutter.
+- **Folding per DDL object:** a chevron on each object's banner comment line
+  collapses that object's body away, leaving the banner visible — handy for
+  skimming a long database's worth of definitions.
+- **Bookmarks:** click the bookmark strip at the left edge of the gutter to mark
+  a line, or use **Ctrl+F2** / **F2** / **Shift+F2** and the **Bookmarks** menu —
+  while this tab is active they act on its editor (see *Bookmarks*).
+- **Find:** this tab has its own search bar, so **Ctrl+F**, **F3** and
+  **Ctrl+Shift+F** search the DDL buffer itself instead of bouncing you to Raw
+  XML. Replace (**Ctrl+R**, **Ctrl+Alt+Enter**) is inert here, since the buffer
+  is read-only.
+
+Clicking an object in the DDL Objects tree scrolls it to the **top** of the DDL
+Explorer tab, so the whole definition is visible below its banner. (The Raw XML
+editor centers its jump targets instead.) Tab indentation in this tab is shown
+4 characters wide, which keeps `pg_get_functiondef`'s tab-indented bodies
+readable.
+
+Close the explorer with the **✕** on the DDL Explorer tab or by unchecking
+**Database ▸ DDL Explorer** — both hide the two tabs together, and the menu
+checkbox always reflects whether the explorer is currently visible. The status
+bar reports how many routines and triggers were loaded; if the fetch fails, it
+shows the error and the toggle unchecks itself.
+
+### Editing a single function, procedure, or trigger
+
+Both browsing surfaces double as an entry point into a dedicated, **editable**
+tab for one object at a time — nothing here touches the database; it is purely
+a text editor over the object's current definition.
+
+- In the **DDL Objects** tree, right-click a routine or trigger row for
+  **Edit `<schema>.<name>(<argtypes>)`…** (or **Edit `<schema>.<table>.<name>`…**
+  for a trigger). Right-clicking an argument-name child row offers no Edit
+  action — only object rows open a tab.
+- In the **DDL Explorer** tab's read-only buffer, right-click inside an
+  object's body for the same **Edit …** entry. Two overloaded routines get
+  distinct wording here since the full signature is in the label, so you can
+  tell them apart before opening either.
+- Re-invoking Edit on an object that's already open **focuses its existing
+  tab** rather than opening a second one.
+
+Both right-click menus also offer **Check Out for Versioning** alongside
+**Edit …**. This is the project-aware variant of the same gesture: it requires
+a local DDL-versioning project to be open (see *Local DDL-Versioning
+Projects*) — if none is, a **"Project Required"** dialog offers
+**Create…** / **Open…** / **Cancel** before continuing. Checking out an object
+seeds a `ddl/<schema>.<name>.sql` file from the live definition the first
+time (or just opens it if it's already checked out — **the local file is
+never silently overwritten from the database**), then opens the same editable
+tab described below, backed by that file instead of a live, unsaved buffer.
+Re-invoking either Edit… or Check Out for Versioning on an object already
+checked out and open focuses its existing tab.
+
+The tab that opens is titled with the object's short name — `recalc`, or
+`fmt(integer)` when it's one of several overloads, or `orders.trg_audit` for a
+trigger — plus the same `" *"` dirty marker the **Edit XSD** tab uses once you
+edit it. Its tooltip shows the full qualified name. It is a real, **editable**
+SQL editor with the same gutter, bookmarks, folding, and 4-character tab stop
+as the read-only DDL Explorer editor, plus its own Find/Replace bar — see
+*Find, Replace & Find All* — where, unlike the read-only DDL Explorer, **Replace
+actually works**.
+
+**Ctrl+Z and Ctrl+Y in this tab undo and redo only this tab's own edits** —
+they never touch the project's Raw XML undo history, even though the same
+shortcuts drive the project's snapshot history everywhere else. This is the
+one place in the app where Ctrl+Z means something different depending on
+which tab is focused.
+
+**Saving** (Ctrl+S, or File ▸ Save, while the tab is active) never touches a
+database — it only writes a `.sql` file to disk:
+
+- The **first save** opens a normal **Save As…** file picker, prefilled with a
+  sensible filename (`schema.name.sql`, or `schema.table.trigger.sql` for a
+  trigger) and, when a local DDL-versioning project is active, starting in
+  that project's folder (see *Local DDL-Versioning Projects ▸ File dialogs
+  default to the active project's folder*). Cancelling the picker just
+  cancels the save — nothing is written and the tab stays dirty.
+- The chosen path is **remembered**, so every later Ctrl+S writes silently to
+  it for the rest of the session.
+- **Ctrl+Shift+S** (File ▸ Save As) is **not** repointed to this tab — it
+  always means the `.pgtp` project, whichever tab is active.
+
+A tab opened via **Check Out for Versioning** (above) skips the Save As…
+picker entirely — its path is already the checked-out `ddl/*.sql` file, so
+every Ctrl+S from the first save onward writes straight to it.
+
+**Closing** the tab (its **✕**, or the app's usual close-tab gesture) prompts
+**Save**, **Discard**, or **Cancel** if it has unsaved changes, the same as
+**Edit XSD**. Choosing **Save** on a tab that has never been saved runs Save
+As…; if you cancel that file picker, the tab **stays open** rather than
+closing.
+
+**Format Selection** (**Ctrl+Alt+F**, or right-click ▸ **Format Selection**)
+reindents the current text selection in place — the first real user of the
+app's SQL formatter. Both are enabled only when you have a selection. If the
+selection can't be safely reformatted (for example, an unbalanced
+`BEGIN`/`END` split by the selection boundary), nothing changes: the problem
+is reported as a `[SQL]`-prefixed line in the Audit panel, and the exact
+offending text is underlined in red in the editor until your next edit or
+your next format attempt.
+
+Re-running **Database ▸ DDL Explorer** (a fresh fetch) never touches object
+tabs you already have open — they are not reloaded, marked, or closed, even if
+the live definition changed underneath them; your in-progress edits are never
+silently discarded to resync with the database.
+
+There is no Apply, Check, or sandbox validation in this version — editing and
+saving a `.sql` file to disk is all it does today.
+
+### Schema-aware completion in the DDL object editor
+
+Inside an open DDL object editor tab (opened via **Edit …** or **Check Out for
+Versioning**, above), **Ctrl+Space** offers name completion drawn from the
+same object catalog the DDL Explorer already fetched when you connected — it
+never makes an extra database round-trip when you invoke it. This is the same
+completion idiom as the Raw XML editor's Ctrl+Space (see *The Raw XML Editor ▸
+Schema-aware editing*), applied here to live database names instead of the
+`.pgtp` XSD schema. Three contexts are recognized:
+
+- **A schema name (optionally partial).** Ctrl+Space after it offers the
+  matching table names in that schema.
+- **`NEW.` or `OLD.` inside a trigger function that already has a trigger
+  attached to it.** Ctrl+Space offers that trigger's target table's column
+  names directly.
+- **`NEW.` or `OLD.` inside a trigger function with no trigger currently
+  attached to it.** Ctrl+Space tells you plainly that no trigger is defined
+  for this function, then opens a **"No Trigger Defined"** picker so you can
+  choose which table it belongs to; once chosen, its columns complete as
+  usual. This choice is remembered only for the current tab for the rest of
+  the session — it is **never saved to disk**, and you're prompted again if
+  you reopen the same function in a later session.
+
+This completion is available only in the **editable** DDL object editor tab —
+the read-only **DDL Explorer** viewer tab does not offer it.
+
+---
+
+## Local DDL-Versioning Projects
+
+A **local project** is a plain folder on your own machine that gives you a
+versioned, file-based home for the DDL objects and the `.pgtp` file you're
+working on — checked-out routines and triggers as individual `.sql` files, an
+optional local sandbox connection, and (later) git integration. Everything the
+app manages here is a plain, readable file: nothing is a black box.
+
+Nothing here is required for ordinary editing. Browsing the DDL Explorer and
+plain **Edit …** (see *DDL Explorer*) work with just a database connection, no
+project needed. A project becomes relevant only once you want checked-out
+`ddl/` files, a versioned `.pgtp` working copy, drift markers, or a deploy.
+
+### The File menu's project actions
+
+Five actions on the **File** menu manage projects, grouped together between
+**Open Recent** and **Save**:
+
+- **New Project…**
+- **Open Project…**
+- **Close Project** — disabled until a project is open.
+- **Project Settings…**
+- **Deploy .pgtp**
+
+**No project is ever created silently.** Any action that needs one — Check
+Out for Versioning, for example — shows a **"Project Required"** dialog
+offering **Create…**, **Open…**, or **Cancel** if none is open yet; choosing
+Create or Open runs that flow first and then continues the original action.
+
+### The window title shows the active project
+
+Whenever a local DDL-versioning project is open, the title bar adds
+**"— Project: `<folder name>`"**, ahead of the existing `.pgtp` filename and
+unsaved-changes `*` marker — for example
+`PGTP Editor — Project: acme_billing - dev_Ferrara.pgtp *`. With no project
+active, the title shows just the app name and the `.pgtp` filename as before.
+
+### File dialogs default to the active project's folder
+
+While a project is active, every Open/Save-type file dialog in the app —
+**File ▸ Open**, **File ▸ Save As**, **Schema ▸ Export XSD**, **Schema ▸
+Import XSD**, the source/target file pickers in **Compare / Merge**, and the
+first **Save As…** of a DDL object editor tab (see *DDL Explorer*) — starts
+in the project's own folder instead of wherever you last browsed. With no
+project active, these dialogs behave as before and default to the operating
+system's own last-used directory. It's only a starting point in every case:
+you can always navigate elsewhere.
+
+### Creating a project
+
+**New Project…** opens a dialog with:
+
+- **Name** and **Description** — optional, free text.
+- **Project folder** — pick a folder with **Browse…**; that folder *is* the
+  project. There's no separate bootstrap step.
+- **Local sandbox (optional)** — a Postgres connection (Host, Port, Database,
+  User, Password) with its own **Test** button. Testing here checks something
+  specific: that the connected user is a **superuser**, since sandbox
+  provisioning needs `CREATE EXTENSION`. It reports one of:
+  - **"Connected — superuser."**
+  - **"Connected, but NOT a superuser — sandbox provisioning needs CREATE
+    EXTENSION."**
+  - the raw connection error, if it couldn't connect at all.
+- **Git (optional — not yet used)** — Server, User, and Checkout branch
+  fields. These are captured and saved with the project, but git integration
+  isn't built yet: nothing is cloned, committed, or pushed. They're recorded
+  now so the intent isn't lost later.
+
+### Opening a project
+
+**Open Project…** opens a folder picker showing **folders only** (no files) — pick
+an existing project folder. The folder must already be a valid project (it must
+carry the `.ddlproject/settings.json` marker written by **New Project…**); picking
+any other folder is rejected with a **"Not a Project Folder"** message instead of
+silently creating an empty project.
+
+On a successful open, the app compares a checksum of the linked `.pgtp`'s working
+copy against its source and reports the result as an Audit-panel line prefixed
+`[Project]`:
+
+- **"Source .pgtp checksum recorded (…)."** — first time this comparison ran.
+- **"Source .pgtp unchanged since last opened (…)."**
+- **"Source .pgtp has changed since this project last saw it (…) — surfaced,
+  not auto-resolved."**
+
+If the DDL Explorer's routines and triggers are already loaded, its tree's
+drift markers (see *DDL Explorer*) refresh at the same time.
+
+Opening a project also **auto-opens its linked `.pgtp`** into the editor, so you
+don't need a separate **File ▸ Open** afterwards:
+
+- If the project already has exactly one linked working copy, it opens
+  automatically.
+- If the project has no linked `.pgtp` yet but its folder contains exactly one
+  `.pgtp` file, that one opens instead.
+- If none is found, nothing opens — no error, just an empty editor until you open
+  a file yourself.
+- If the folder contains **multiple** `.pgtp` files and none is linked yet, the
+  app doesn't guess: it reports the finding as an Audit-panel line prefixed
+  `[Project]` listing the candidates, and you open the one you want via
+  **File ▸ Open**.
+
+### Project Settings
+
+**Project Settings…** opens a dialog exposing everything about the project in
+one place, fully editable, saved back to the project's settings file on OK. The
+fields are grouped into four tabs:
+
+- **General** — **Name** / **Description**, and the **`.pgtp` link** (the source
+  path — the sshfs-mounted original — the working copy path, and the last-known
+  source checksum).
+- **Connections** — **Target connection** and **Sandbox connection**, both
+  connection profiles in full, including their password fields.
+- **Git** — the same Server / User / Checkout branch fields as New Project.
+- **Deploy manifest** — a table, one row per DDL object, of its `ddl/` path,
+  its last-deployed content hash, and its deployed-commit-id (if any), with
+  **Add Row** / **Remove Selected Row** buttons.
+
+### Where project settings live
+
+A project's settings are one JSON file at `<project folder>/.ddlproject/settings.json`
+— plaintext, including the password fields. The project folder's `.gitignore`
+gets a `.ddlproject/` entry added automatically so this file is never
+accidentally committed. Keeping it plaintext and local to the folder (rather
+than in the app's global settings) means the project folder is self-contained
+and portable — you can copy, back up, or hand off the whole folder and it
+still works.
+
+### Checking out DDL objects
+
+See *DDL Explorer ▸ Editing a single function, procedure, or trigger* for the
+**Check Out for Versioning** gesture itself and the drift markers (`*`/`!`)
+this adds to the DDL Objects tree.
+
+### The .pgtp file as a checked-out artifact
+
+The first time you open a `.pgtp` file while a project is active, the app
+copies it into the project folder as a **working copy** and remembers the
+link — this happens automatically, with no extra step. (If no project was
+active yet, **File ▸ Open**'s chooser — see *Getting Started ▸ Opening a
+project* — is how you make one active for this file: pick **New Project…** or
+**Open Project…** there instead of **Edit Standalone**.) From then on:
+
+- Ordinary **Save** (Ctrl+S) writes to this working copy and makes **no
+  `.bak` backup** — the working copy itself is the safety net. See *Getting
+  Started ▸ Saving, closing, reverting* for how this compares to plain,
+  project-less `.pgtp` saves, which are unaffected.
+- Pushing your edits back to the original file (on the shared/quality server)
+  is the separate, explicit **Deploy .pgtp** action — reachable any time from
+  the File menu.
+- Closing the project (**Close Project**) also offers this as a yes/no
+  prompt if the working copy has changes not yet pushed. Declining just
+  closes the project without pushing; nothing is lost.
+
+### Closing a project
+
+**Close Project** always succeeds — closing never forces anything. Along the
+way it reminds you, via Audit-panel lines, of anything left informational and
+unresolved:
+
+- If the `.pgtp` working copy has unpushed changes, it offers to **Deploy
+  .pgtp** (see above) — a yes/no prompt, not a requirement.
+- If there are DDL objects with local edits not yet included in a batch
+  deploy, it adds an Audit-panel line noting how many — it does not open any
+  deploy flow automatically.
 
 ---
 
@@ -484,7 +1001,11 @@ The **Generation** menu drives the PHP Generator command-line to compile your
 1. **Locate PHP Generator Executable…** once (the path is stored for future use).
 2. **Generate PHP…** — if the project has unsaved changes, you're prompted to
    **Save** or **Save As** first, so the generator always runs against the file on
-   disk.
+   disk. The output-folder picker that follows is prefilled — with the open
+   **local DDL-versioning project's folder** if one is active (see *Local
+   DDL-Versioning Projects*), otherwise with the project's declared
+   `outputPath` if it has one, otherwise with the current project file's own
+   folder — but it's only a prefill: you can always choose a different folder.
 3. **Open Output Folder** opens the generated output in your file browser.
 
 ---
@@ -508,10 +1029,17 @@ simply reads as busy instead of stalled.
 
 ## Appearance & Layout
 
-- **View ▸ Light Theme** toggles between the light and dark themes.
+- **View ▸ Light Theme** is a checkable toggle between the editor's two themes:
+  checked applies the light theme, unchecked applies the dark theme. Both are the
+  editor's own color schemes and look the same on every platform — the app does
+  not follow your operating system's light/dark setting. Toolbar icons re-tint to
+  stay legible in either theme, and your choice is remembered across restarts.
 - The **View** menu toggles each panel: **Project Tree**, **Properties Panel**,
-  **Audit/Problems Panel**, and **Raw XML Panel**. **View ▸ Find table reference**
-  toggles the **Table references** tab (see *Table References*).
+  **Audit/Problems Panel**, and **Raw XML Panel**. Each checkbox always reflects
+  whether its panel is currently visible — closing a panel with the ✕ on its own
+  title bar unchecks the menu entry too, and re-checking it brings the panel
+  back. **View ▸ Find table reference** toggles the **Table references** tab
+  (see *Table References*).
 - **View ▸ Customize Toolbar…** chooses which actions appear on the icon toolbar.
 - Your window size and position, dock layout, theme, and toolbar arrangement are
   remembered between sessions.
@@ -527,20 +1055,23 @@ simply reads as busy instead of stalled.
 | **Ctrl+Shift+S** | Global | Save As |
 | **Ctrl+W** | Global | Close project |
 | **F1** | Global | Open the Manual |
-| **Ctrl+F2** | Raw XML | Toggle bookmark |
-| **F2** / **Shift+F2** | Raw XML | Next / previous bookmark |
+| **Ctrl+F2** | Active editor tab | Toggle bookmark |
+| **F2** / **Shift+F2** | Active editor tab | Next / previous bookmark |
 | **Ctrl+Z** / **Ctrl+Y** | Raw XML | Undo / redo (snapshot history) |
+| **Ctrl+Z** / **Ctrl+Y** | DDL object editor tab | Undo / redo (that tab's own history only — never the project's) |
 | **Ctrl+Space** | Raw XML | Attribute / value completion |
+| **Ctrl+Space** | DDL object editor tab | Schema-aware name completion (schema/table names, or `NEW.`/`OLD.` column names) |
 | **Ctrl+L** | Raw XML | Go To XSD (attribute's definition in the Edit XSD tab) |
 | **Ctrl+click** | Raw XML (mouse) | Jump to matching open/close tag |
 | **Alt+click** | Raw XML (mouse) | Jump to parent tag start |
 | **Ctrl+Shift+B** | Raw XML / Code Editor | Select enclosing block (caret to start) |
 | **Ctrl+Shift+A** | Raw XML | Select parent block |
-| **Ctrl+F** | Raw XML / Edit XSD | Find |
-| **F3** | Raw XML / Edit XSD | Find next |
-| **Ctrl+Shift+F** | Raw XML / Edit XSD | Find all |
-| **Ctrl+R** | Raw XML / Edit XSD | Replace |
-| **Ctrl+Alt+Enter** | Raw XML / Edit XSD | Replace all |
+| **Ctrl+F** | Raw XML / Edit XSD / DDL Explorer / DDL object editor tab | Find |
+| **F3** | Raw XML / Edit XSD / DDL Explorer / DDL object editor tab | Find next |
+| **Ctrl+Shift+F** | Raw XML / Edit XSD / DDL Explorer / DDL object editor tab | Find all (inert in the DDL Explorer and DDL object editor tabs) |
+| **Ctrl+R** | Raw XML / Edit XSD / DDL object editor tab | Replace (not in the read-only DDL Explorer) |
+| **Ctrl+Alt+Enter** | Raw XML / Edit XSD / DDL object editor tab | Replace all (not in the read-only DDL Explorer) |
+| **Ctrl+Alt+F** | DDL object editor tab | Format Selection (reindent the current selection) |
 | **Ctrl+F** | Caption Mode | Open Find/Filter |
 | **Ctrl+R** | Caption Mode | Open Replace |
 | **Ctrl+G** | Caption Mode | Go to line in Raw XML |

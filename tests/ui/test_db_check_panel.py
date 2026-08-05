@@ -4,7 +4,7 @@ from PySide6.QtCore import Qt
 
 from pgtp_editor.db.compare import ColumnCheck, TableCheck
 from pgtp_editor.db.introspect import ColumnInfo
-from pgtp_editor.ui.db_check_panel import DbCheckPanel
+from pgtp_editor.ui.db_check_panel import _CALC_COLOR, DbCheckPanel
 
 
 def _checks():
@@ -27,6 +27,9 @@ def _checks():
                 ColumnInfo("fk_c", "integer", False, True, True, None),
             ),
             ColumnCheck("gone", False, None),
+            # Calculated XML column (BUG-006): no DB counterpart (ok=False)
+            # but never a mismatch.
+            ColumnCheck("calc_total", False, None, is_calculated=True),
         ],
     )
     v = TableCheck(name="pr.v", ok=True, kind="view", invocations=1, columns=[])
@@ -99,8 +102,10 @@ def test_header_shows_direction_connection_and_mismatch_count(qtbot):
     header = panel.header_label.text()
     assert "XML" in header and "Database" in header
     assert "u@h:5432/db" in header
-    # Mismatches: pr.a.gone(1) + pr.missing table(1) + pr.missing.x(1) = 3.
-    assert "3" in header
+    # Mismatches: pr.a.gone(1) + pr.missing table(1) + pr.missing.x(1) = 3;
+    # pr.a.calc_total (calculated, BUG-006) is NOT counted despite ok=False.
+    assert "3 mismatches" in header
+    assert "4 mismatches" not in header
 
 
 def test_show_only_mismatches_filters(qtbot):
@@ -119,7 +124,8 @@ def test_show_only_mismatches_filters(qtbot):
     assert any("pr.missing" in n for n in names)
 
     a_item = next(it for it in _top_items(panel) if "pr.a" in it.text(0))
-    # Only the mismatch column remains under pr.a.
+    # Only the mismatch column remains under pr.a — the calculated
+    # calc_total (ok=False but is_calculated) is excluded too (BUG-006).
     assert a_item.childCount() == 1
     assert "gone" in a_item.child(0).text(0)
 
@@ -218,10 +224,97 @@ def test_request_create_emits_with_table_name(qtbot):
     assert received == [("page", "pr.a"), ("detail", "pr.a")]
 
 
+# -- calculated columns (BUG-006) -----------------------------------------
+
+
+def _calc_item(panel):
+    a_item = next(it for it in _top_items(panel) if "pr.a" in it.text(0))
+    return next(
+        a_item.child(i)
+        for i in range(a_item.childCount())
+        if "calc_total" in a_item.child(i).text(0)
+    )
+
+
+def test_calculated_column_gets_tilde_marker_and_calc_color(qtbot):
+    panel = DbCheckPanel()
+    qtbot.addWidget(panel)
+    panel.set_result("xml_to_db", _checks(), "u@h:5432/db")
+
+    calc = _calc_item(panel)
+    text = calc.text(0)
+    assert text.startswith("~")
+    assert "✓" not in text and "✗" not in text
+    assert calc.foreground(0).color() == _CALC_COLOR
+
+
+def test_calculated_marker_overrides_ok_true(qtbot):
+    # A calculated column that coincidentally shadows a real DB column
+    # (ok=True) still renders as calculated, not as a green match.
+    panel = DbCheckPanel()
+    qtbot.addWidget(panel)
+    shadow = TableCheck(
+        name="pr.s", ok=True, kind="table", invocations=1,
+        columns=[
+            ColumnCheck(
+                "shadow", True,
+                ColumnInfo("shadow", "integer", False, False, True, None),
+                is_calculated=True,
+            ),
+        ],
+    )
+    panel.set_result("xml_to_db", [shadow], "u@h:5432/db")
+    item = _top_items(panel)[0].child(0)
+    assert item.text(0).startswith("~")
+    assert item.foreground(0).color() == _CALC_COLOR
+
+
+def test_calculated_column_role_carries_is_calculated(qtbot):
+    panel = DbCheckPanel()
+    qtbot.addWidget(panel)
+    panel.set_result("xml_to_db", _checks(), "u@h:5432/db")
+
+    calc = _calc_item(panel)
+    kind, name, ok, is_calculated = calc.data(0, Qt.ItemDataRole.UserRole)
+    assert (kind, name, ok, is_calculated) == ("column", "calc_total", False, True)
+
+
+def test_no_rename_offered_for_calculated_column(qtbot):
+    panel = DbCheckPanel()
+    qtbot.addWidget(panel)
+    panel.set_result("xml_to_db", _checks(), "u@h:5432/db")
+
+    received = []
+    panel.rename_requested.connect(lambda k, n: received.append((k, n)))
+    panel.contextual_rename(_calc_item(panel))
+    assert received == []
+
+    # Sanity: a genuinely missing column in the same tree still offers rename.
+    a_item = next(it for it in _top_items(panel) if "pr.a" in it.text(0))
+    gone = next(
+        a_item.child(i)
+        for i in range(a_item.childCount())
+        if "gone" in a_item.child(i).text(0)
+    )
+    panel.contextual_rename(gone)
+    assert received == [("column", "gone")]
+
+
+def test_double_click_on_calculated_column_still_jumps(qtbot):
+    panel = DbCheckPanel()
+    qtbot.addWidget(panel)
+    panel.set_result("xml_to_db", _checks(), "u@h:5432/db")
+
+    received = []
+    panel.jump_requested.connect(lambda k, n: received.append((k, n)))
+    panel.tree.itemDoubleClicked.emit(_calc_item(panel), 0)
+    assert received == [("column", "calc_total")]
+
+
 def test_row_data_role_carries_kind_name_ok(qtbot):
     panel = DbCheckPanel()
     qtbot.addWidget(panel)
     panel.set_result("xml_to_db", _checks(), "u@h:5432/db")
     a_item = next(it for it in _top_items(panel) if "pr.a" in it.text(0))
-    kind, name, ok = a_item.data(0, Qt.ItemDataRole.UserRole)
-    assert (kind, name, ok) == ("table", "pr.a", True)
+    kind, name, ok, is_calculated = a_item.data(0, Qt.ItemDataRole.UserRole)
+    assert (kind, name, ok, is_calculated) == ("table", "pr.a", True, False)
