@@ -8,7 +8,7 @@ logic rather than a real QFileDialog popup.
 """
 from pgtp_editor.db.config import ConnectionParams
 from pgtp_editor.db.ddl_project import GitConfig
-from pgtp_editor.db.sandbox import SandboxCapabilities
+from pgtp_editor.db.sandbox import SandboxCapabilities, SandboxMode
 from pgtp_editor.ui.new_project_dialog import NewProjectDialog
 
 
@@ -197,6 +197,108 @@ def test_uses_the_passed_params_not_stale_ones(qtbot):
     dialog.test_sandbox()
 
     assert seen[0].host == "myhost"
+
+
+# --- "with data" / "without data" sandbox clone choice (§18.5 D2a) ----------
+def test_sandbox_mode_defaults_to_schema_only(qtbot):
+    dialog = NewProjectDialog()
+    qtbot.addWidget(dialog)
+    assert dialog.sandbox_mode() == SandboxMode.SCHEMA_ONLY
+
+
+def test_selecting_with_data_radio_changes_sandbox_mode(qtbot):
+    dialog = NewProjectDialog()
+    qtbot.addWidget(dialog)
+
+    dialog._sandbox_with_data_radio.setChecked(True)
+
+    assert dialog.sandbox_mode() == SandboxMode.WITH_DATA
+
+
+def test_reselecting_without_data_radio_reverts_sandbox_mode(qtbot):
+    dialog = NewProjectDialog()
+    qtbot.addWidget(dialog)
+    dialog._sandbox_with_data_radio.setChecked(True)
+
+    dialog._sandbox_without_data_radio.setChecked(True)
+
+    assert dialog.sandbox_mode() == SandboxMode.SCHEMA_ONLY
+
+
+def test_sandbox_mode_radios_are_mutually_exclusive(qtbot):
+    dialog = NewProjectDialog()
+    qtbot.addWidget(dialog)
+
+    dialog._sandbox_with_data_radio.setChecked(True)
+
+    assert not dialog._sandbox_without_data_radio.isChecked()
+
+
+def test_with_data_caveat_mentions_one_shot_and_pg_dump_restore(qtbot):
+    """§18.5 D2a: cloning is one-shot -- no refresh operation -- and needs
+    pg_dump/pg_restore. The dialog must state this, not bury it."""
+    dialog = NewProjectDialog()
+    qtbot.addWidget(dialog)
+    labels = [child.text() for child in dialog.findChildren(type(dialog._folder_error_label))]
+    combined = " ".join(labels).lower()
+    assert "pg_dump" in combined
+    assert "pg_restore" in combined
+    assert "one-shot" in combined or "destroy and recreate" in combined
+
+
+def test_test_sandbox_with_data_mode_and_tools_present_reports_superuser(qtbot):
+    dialog = NewProjectDialog(
+        prober=lambda params: SandboxCapabilities(
+            is_superuser=True, pg_dump_path="/usr/bin/pg_dump", pg_restore_path="/usr/bin/pg_restore"
+        )
+    )
+    dialog._run_async = _sync_run
+    qtbot.addWidget(dialog)
+    dialog._sandbox_with_data_radio.setChecked(True)
+
+    dialog.test_sandbox()
+
+    assert "superuser" in dialog._sandbox_status_label.text().lower()
+    assert "not found" not in dialog._sandbox_status_label.text().lower()
+
+
+def test_test_sandbox_with_data_mode_and_missing_tools_reports_named_failure(qtbot):
+    """A missing pg_dump/pg_restore must be a named, surfaced failure --
+    never silently accepted as if schema-only would kick in instead."""
+    dialog = NewProjectDialog(
+        prober=lambda params: SandboxCapabilities(
+            is_superuser=True, pg_dump_path=None, pg_restore_path=None
+        )
+    )
+    dialog._run_async = _sync_run
+    qtbot.addWidget(dialog)
+    dialog._sandbox_with_data_radio.setChecked(True)
+
+    dialog.test_sandbox()
+
+    status = dialog._sandbox_status_label.text().lower()
+    assert "pg_dump" in status
+    assert "pg_restore" in status
+    assert "not found" in status
+
+
+def test_test_sandbox_without_data_mode_ignores_missing_clone_tools(qtbot):
+    """Schema-only mode needs neither pg_dump nor pg_restore -- a missing
+    binary must not be reported as a blocker when "without data" is chosen."""
+    dialog = NewProjectDialog(
+        prober=lambda params: SandboxCapabilities(
+            is_superuser=True, pg_dump_path=None, pg_restore_path=None
+        )
+    )
+    dialog._run_async = _sync_run
+    qtbot.addWidget(dialog)
+    assert dialog.sandbox_mode() == SandboxMode.SCHEMA_ONLY
+
+    dialog.test_sandbox()
+
+    status = dialog._sandbox_status_label.text().lower()
+    assert "superuser" in status
+    assert "pg_dump" not in status
 
 
 # --- Git fields: captured, inert ---------------------------------------------

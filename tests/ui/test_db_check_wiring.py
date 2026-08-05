@@ -206,6 +206,72 @@ def test_run_db_check_no_project(qtbot):
     assert not window.left_tabs.isTabVisible(window.db_check_tab_index)
 
 
+_RAW_XML_NO_CONNECTION = (
+    '<Project>\n'
+    '  <Presentation><Pages>\n'
+    '    <Page fileName="a" tableName="pr.a">\n'
+    '      <ColumnPresentations>\n'
+    '        <ColumnPresentation fieldName="id"/>\n'
+    '      </ColumnPresentations>\n'
+    '    </Page>\n'
+    '  </Pages></Presentation>\n'
+    '</Project>\n'
+)
+
+
+def _project_no_connection():
+    tree = etree.ElementTree(etree.fromstring(_RAW_XML_NO_CONNECTION.encode()))
+    page = PageNode(
+        identity="p",
+        attrib={"tableName": "pr.a"},
+        columns=[ColumnNode(identity="id", attrib={"fieldName": "id"})],
+    )
+    return ProjectModel(pages=[page], tree=tree)
+
+
+def test_run_db_check_without_connection_opens_standalone_setup(qtbot):
+    """BUG-024: standalone mode (no §18.2 project active), a missing
+    connection opens the app-level Connection Setup dialog -- unchanged
+    behavior."""
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window._current_project = _project_no_connection()
+    window.center_stage.xml_editor.setPlainText(_RAW_XML_NO_CONNECTION)
+    fetches = []
+    window._fetch_db_schema = lambda params: fetches.append(1) or _schema()
+    window._run_async = _sync_run
+
+    window._run_db_check("xml_to_db")
+
+    assert window._connection_dialog is not None
+    assert fetches == []
+    assert window.db_check_panel.tree.topLevelItemCount() == 0
+
+
+def test_run_db_check_without_connection_and_project_open_reroutes_to_project_settings(qtbot, tmp_path):
+    """BUG-024: with a §18.2 project open, _run_db_check's missing-connection
+    path must point at Project Settings instead of the meaningless standalone
+    Connection Setup dialog -- the same _prompt_missing_connection reroute
+    already covered for _open_ddl_explorer in test_ddl_explorer_wiring.py."""
+    from pgtp_editor.db.ddl_project import ProjectSettings
+
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window._set_active_ddl_project(tmp_path / "proj", ProjectSettings())
+    window._current_project = _project_no_connection()
+    window.center_stage.xml_editor.setPlainText(_RAW_XML_NO_CONNECTION)
+    fetches = []
+    window._fetch_db_schema = lambda params: fetches.append(1) or _schema()
+    window._run_async = _sync_run
+
+    window._run_db_check("xml_to_db")
+
+    assert window._connection_dialog is None  # standalone Connection Setup NOT opened
+    assert window._project_settings_dialog is not None  # Project Settings opened instead
+    assert fetches == []
+    assert window.db_check_panel.tree.topLevelItemCount() == 0
+
+
 def test_run_db_check_fetch_error_shows_status(qtbot):
     window = _window_with_project(qtbot)
 

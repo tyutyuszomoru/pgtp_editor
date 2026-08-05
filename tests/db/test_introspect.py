@@ -9,17 +9,21 @@ import logging
 
 from pgtp_editor.db.config import ConnectionParams
 from pgtp_editor.db.introspect import (
+    BASELINE_EXTRA_SQL,
     ROUTINE_TRIGGER_SQL,
     SCHEMA_SQL,
+    BaselineSnapshot,
     ColumnInfo,
     DatabaseSchema,
     RoutineInfo,
     TableInfo,
     TriggerInfo,
+    TypeInfo,
     _decode_trigger_type,
     _input_args,
     fetch_routines_and_triggers,
     fetch_schema,
+    snapshot_for_baseline,
 )
 from pgtp_editor.db.introspect import test_connection as check_connection
 
@@ -543,3 +547,156 @@ def test_fetch_routines_and_triggers_start_log_is_redacted(caplog):
     messages = [r.message for r in caplog.records]
     assert any("password=***" in m for m in messages)
     assert not any(_PARAMS.password in m for m in messages)
+
+
+# --- snapshot_for_baseline / BaselineSnapshot (§18.5 D2 "recorded gap") ------
+
+
+def _canned_baseline_runner(
+    relations=None, columns=None, constraints=None, viewdefs=None, types=None
+):
+    routine_rows = [
+        (
+            "pr", "calc_total", "f", "numeric", "plpgsql", "CREATE FUNCTION ...",
+            ["integer"], ["integer"], ["amount"], None,
+        ),
+    ]
+    trigger_rows = [
+        ("pr", "equipment", "trg_audit", 2 | 4 | 16, "audit_log", "CREATE TRIGGER ..."),
+    ]
+    calls = []
+
+    def runner(params, sql_list):
+        calls.append((params, list(sql_list)))
+        return [
+            routine_rows,
+            trigger_rows,
+            relations if relations is not None else [],
+            columns if columns is not None else [],
+            constraints if constraints is not None else [],
+            viewdefs if viewdefs is not None else [],
+            types if types is not None else [],
+        ]
+
+    return runner, calls
+
+
+def test_snapshot_for_baseline_passes_all_three_query_sets_in_one_round_trip():
+    runner, calls = _canned_baseline_runner()
+    snapshot_for_baseline(_PARAMS, runner=runner)
+    assert len(calls) == 1  # ONE round trip, not several separate connections
+    assert calls[0][0] is _PARAMS
+    expected = list(ROUTINE_TRIGGER_SQL) + list(SCHEMA_SQL) + list(BASELINE_EXTRA_SQL)
+    assert calls[0][1] == expected
+
+
+def test_snapshot_for_baseline_returns_a_baseline_snapshot_wrapping_a_database_schema():
+    runner, _ = _canned_baseline_runner()
+    snapshot = snapshot_for_baseline(_PARAMS, runner=runner)
+    assert isinstance(snapshot, BaselineSnapshot)
+    assert isinstance(snapshot.schema, DatabaseSchema)
+
+
+def test_snapshot_for_baseline_populates_tables_routines_and_triggers():
+    relations = [("pr", "equipment", "r")]
+    columns = [("pr", "equipment", "id", "integer", True, None)]
+    constraints = [("pr", "equipment", "id", "p")]
+    runner, _ = _canned_baseline_runner(relations=relations, columns=columns, constraints=constraints)
+    snapshot = snapshot_for_baseline(_PARAMS, runner=runner)
+    assert set(snapshot.schema.tables) == {"pr.equipment"}
+    assert "pr.calc_total(integer)" in snapshot.schema.routines
+    assert "pr.equipment.trg_audit" in snapshot.schema.triggers
+
+
+def test_snapshot_for_baseline_attaches_view_definitions_to_table_info():
+    relations = [("pr", "eq_view", "v"), ("pr", "eq_matview", "m")]
+    viewdefs = [
+        ("pr", "eq_view", "SELECT id FROM pr.equipment;"),
+        ("pr", "eq_matview", "SELECT id, tag FROM pr.equipment;"),
+    ]
+    runner, _ = _canned_baseline_runner(relations=relations, viewdefs=viewdefs)
+    snapshot = snapshot_for_baseline(_PARAMS, runner=runner)
+    assert snapshot.schema.tables["pr.eq_view"].view_definition == "SELECT id FROM pr.equipment;"
+    assert (
+        snapshot.schema.tables["pr.eq_matview"].view_definition
+        == "SELECT id, tag FROM pr.equipment;"
+    )
+
+
+def test_snapshot_for_baseline_plain_table_has_no_view_definition():
+    relations = [("pr", "equipment", "r")]
+    runner, _ = _canned_baseline_runner(relations=relations)
+    snapshot = snapshot_for_baseline(_PARAMS, runner=runner)
+    assert snapshot.schema.tables["pr.equipment"].view_definition is None
+
+
+def test_snapshot_for_baseline_builds_domain_type_info():
+    types = [
+        ("pr", "positive_int", "d", "integer", True, [], []),
+    ]
+    runner, _ = _canned_baseline_runner(types=types)
+    snapshot = snapshot_for_baseline(_PARAMS, runner=runner)
+    info = snapshot.schema.types["pr.positive_int"]
+    assert info == TypeInfo(
+        schema="pr", name="positive_int", kind="domain",
+        base_type="integer", not_null=True, attributes=[],
+    )
+
+
+def test_snapshot_for_baseline_domain_not_null_false():
+    types = [("pr", "nickname", "d", "text", False, [], [])]
+    runner, _ = _canned_baseline_runner(types=types)
+    snapshot = snapshot_for_baseline(_PARAMS, runner=runner)
+    assert snapshot.schema.types["pr.nickname"].not_null is False
+
+
+def test_snapshot_for_baseline_builds_composite_type_info():
+    types = [
+        ("pr", "full_address", "c", None, False, ["street", "city"], ["text", "text"]),
+    ]
+    runner, _ = _canned_baseline_runner(types=types)
+    snapshot = snapshot_for_baseline(_PARAMS, runner=runner)
+    info = snapshot.schema.types["pr.full_address"]
+    assert info == TypeInfo(
+        schema="pr", name="full_address", kind="composite",
+        base_type=None, not_null=False,
+        attributes=[("street", "text"), ("city", "text")],
+    )
+    assert info.qualified_name == "pr.full_address"
+
+
+def test_snapshot_for_baseline_types_default_empty_when_no_type_rows():
+    runner, _ = _canned_baseline_runner()
+    snapshot = snapshot_for_baseline(_PARAMS, runner=runner)
+    assert snapshot.schema.types == {}
+
+
+def test_baseline_extra_sql_has_viewdef_and_type_queries():
+    assert len(BASELINE_EXTRA_SQL) == 2
+    viewdef_sql, types_sql = BASELINE_EXTRA_SQL
+    assert "pg_get_viewdef" in viewdef_sql
+    assert "relkind IN ('v', 'm')" in viewdef_sql
+    assert "typtype IN ('d', 'c')" in types_sql
+
+
+def test_snapshot_for_baseline_start_log_is_redacted(caplog):
+    runner, _ = _canned_baseline_runner()
+    with caplog.at_level(logging.INFO, logger="pgtp_editor.db.introspect"):
+        snapshot_for_baseline(_PARAMS, runner=runner)
+    messages = [r.message for r in caplog.records]
+    assert any("password=***" in m for m in messages)
+    assert not any(_PARAMS.password in m for m in messages)
+
+
+def test_table_info_view_definition_defaults_to_none():
+    """Backward compatibility: existing construction sites that never pass
+    `view_definition` still work and get None."""
+    table = TableInfo(name="s.t", kind="table", columns=[])
+    assert table.view_definition is None
+
+
+def test_database_schema_types_defaults_empty_and_is_additive():
+    """Pre-existing callers that construct `DatabaseSchema` without `types=`
+    must not break -- mirrors the same contract test for routines/triggers."""
+    schema = DatabaseSchema(tables={})
+    assert schema.types == {}

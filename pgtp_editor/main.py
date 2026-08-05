@@ -17,8 +17,75 @@ import argparse
 import logging
 import os
 import sys
+from importlib.resources import files
 
 from pgtp_editor import debuglog
+
+APPLICATION_NAME = "PGTP Editor"
+ORGANIZATION_NAME = "MDS"
+DESKTOP_FILE_NAME = "pgtp-editor"
+
+
+def _load_app_icon():
+    """Load the bundled app icon as a QIcon, or None if it can't be found.
+
+    Guarded so a partial/broken install (missing resource file) never crashes
+    startup -- the app just runs without a custom icon in that case.
+    """
+    from PySide6.QtGui import QIcon
+
+    try:
+        resource = files("pgtp_editor") / "resources" / "app_icon.png"
+        if not resource.is_file():
+            return None
+        with resource.open("rb") as fh:
+            data = fh.read()
+    except (FileNotFoundError, OSError, ModuleNotFoundError):
+        return None
+
+    icon = QIcon()
+    from PySide6.QtGui import QPixmap
+
+    pixmap = QPixmap()
+    if not pixmap.loadFromData(data):
+        return None
+    icon.addPixmap(pixmap)
+    return icon if not icon.isNull() else None
+
+
+def apply_app_identity(app):
+    """Set application/desktop identity and window icon on `app`.
+
+    Factored out of main() so tests can call it directly (under
+    QT_QPA_PLATFORM=offscreen) without running the full event loop. Sets the
+    application name/organization/display name and the desktop-file name
+    (must match the basename of packaging/linux/pgtp-editor.desktop, which is
+    how KDE/Wayland associates the taskbar icon) plus the QApplication-level
+    window icon (drives the in-window/title-bar corner icon and is the
+    taskbar fallback). Every setter is guarded with getattr so this is a
+    no-op against stand-in/fake app objects that don't implement the full
+    QApplication API (e.g. in unit tests).
+    """
+    app_cls = type(app)
+    for name, value in (
+        ("setApplicationName", APPLICATION_NAME),
+        ("setOrganizationName", ORGANIZATION_NAME),
+        ("setApplicationDisplayName", APPLICATION_NAME),
+        ("setDesktopFileName", DESKTOP_FILE_NAME),
+    ):
+        setter = getattr(app_cls, name, None)
+        if setter is not None:
+            setter(value)
+
+    # Only load the icon (constructs a real QPixmap/QIcon, which requires an
+    # actual QGuiApplication instance to exist) when `app` genuinely supports
+    # setWindowIcon -- a stand-in/fake app object in tests may not have a real
+    # Qt application behind it at all, and building a QPixmap with none can
+    # crash the process rather than just fail an attribute lookup.
+    if hasattr(app, "setWindowIcon"):
+        icon = _load_app_icon()
+        if icon is not None:
+            app.setWindowIcon(icon)
 
 
 def parse_args(argv):
@@ -65,6 +132,7 @@ def main():
     )
 
     app = QApplication(sys.argv)
+    apply_app_identity(app)
 
     from pgtp_editor.ui.main_window import MainWindow
 

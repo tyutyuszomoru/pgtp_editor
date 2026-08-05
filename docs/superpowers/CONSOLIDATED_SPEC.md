@@ -1,6 +1,6 @@
 # PGTP Editor — Consolidated Specification
 
-> **Status:** living document · **Last synthesized:** 2026-08-04
+> **Status:** living document · **Last synthesized:** 2026-08-05 (§18.8 corrected to the 5-node model, then given its concrete per-node state enumeration + dark-mode asset convention, then a same-day fix to the Quality node's locked/gray semantic and the Sandbox2 install-state-vs-lint-result semantic; later the same day, BUG-020/021/022/023/024/025 folded in — Captions' preset row-predicate filter + active-filter banner + Unify scope prompt, §18.2's Open-Project validity gate + auto-open of the linked `.pgtp`, the tabbed Project Settings dialog, and Connection Setup… becoming projectless-mode-only)
 > **Source of truth:** this file is the single reconciled specification for PGTP Editor, and the **only**
 > place specification content is written. It was originally synthesized from the dated design specs under
 > [`docs/superpowers/specs/`](specs/) — a folder now **frozen as historical record** (read for rationale;
@@ -38,6 +38,8 @@
     - [18.4 SQL/plpgsql selection formatter](#184-sqlplpgsql-selection-formatter) — *core implemented 2026-08-01; consumer designed (§18.5), not built*
     - [18.5 The DDL object editor, apply & sandbox validation](#185-the-ddl-object-editor-apply--sandbox-validation) — *planned; **the deliverable is the generated deployment SQL script**, over a stateful sandbox (the editable tab is specified here, once)*
     - [18.6 Schema-aware Ctrl+Space completion in the DDL object editor](#186-schema-aware-ctrlspace-completion-in-the-ddl-object-editor) — *settled design (2026-08-04), not yet implemented*
+    - [18.7 Two live DDL Explorer instances — target vs. sandbox](#187-two-live-ddl-explorer-instances--target-vs-sandbox) — *settled design (2026-08-05), not yet implemented*
+    - [18.8 The Project Status window](#188-the-project-status-window) — *settled design (2026-08-05), corrected same day to a 5-node model, concrete per-node state list + dark-mode asset convention added same day; node action-window contents open (§29); not yet implemented*
 19. [PHP generation (vendor) & Save](#19-php-generation-vendor--save)
 20. [re_phpgen — own generator & gap loop](#20-re_phpgen--own-generator--gap-loop)
     - [20.4 Production cutover](#204-production-cutover-target-design--not-yet-reached) — *planned*
@@ -1114,12 +1116,35 @@ unchanged. Helpers `apply_find_replace(value, find, repl, mode, case)` and
 New Value is the only editable column.** A row is *changed* iff New Value is non-empty; the literal
 sentinel `<NULL>` means set the caption to empty string. `changed_edits()` resolves that. Changed rows
 tinted `#26343a`; inconsistency (same `(anchor, attribute)`, differing values) tinted `#3a2f1d`;
-changed wins. **Filtering:** Excel-style per-column **header filter** popups (non-modal, checkable
-distinct values) via proxy `set_value_filter(column, allowed|None)`, AND-ed with a regex filter
-(`set_regex_filter(pattern, mode, case)`). (The earlier inline per-column QLineEdit filter row was
-removed.) Right-click: Insert NULL, Go to line in XML (Ctrl+G, injected `on_go_to_line`), **Transform ▸**,
-**Unify** (set all inconsistent siblings to this value). Ctrl+C copies cells tab/newline-separated;
-Ctrl+V fills New Value (Excel vertical fill). Decoupled from MainWindow via injected callbacks.
+changed wins. **Filtering — three independent mechanisms** (BUG-020, 2026-08-05): Excel-style
+per-column **header filter** popups (non-modal, checkable distinct values) via proxy
+`set_value_filter(column, allowed|None)`, AND-ed with a regex **find filter**
+(`set_regex_filter(pattern, mode, case)`), and a third, **preset row-predicate** filter
+(`_CaptionFilterProxyModel.set_row_predicate(predicate, label: str = "")`) applied programmatically by
+the Browser Pane's "See column in caption mode" entry path (`filter_to_field`/`filter_to_table`/
+`filter_to_table_details`, reached via `MainWindow._on_tree_see_column_in_caption` →
+`enter_caption_mode_for_field`/`enter_caption_mode_for_table_details`) rather than by any grid widget —
+it narrows to a semantic condition (e.g. `field_name == "wbs_id"`) no manual gesture produces. Unlike
+the header filter (which repaints the affected column header with the `_FILTER_INDICATOR`), the preset
+predicate is surfaced via a dedicated **active-filter banner**: a `QLabel` + "Clear" `QPushButton`
+inserted above `self._table`, shown whenever `row_predicate_label()` is non-empty, reading
+`"Filtered: <label> — showing N of M rows"` (label examples: `Field = wbs_id`, `Table = pr.equip`,
+`Table = pr.att  (Detail embeds)`); hidden by `clear_all_filters()`, the single path that deactivates the
+predicate. The header ▼ indicator stays exclusive to `set_value_filter`; the banner is the only surface
+for the preset predicate, which is not per-column. **(The earlier inline per-column QLineEdit filter row
+was removed.)** Right-click: Insert NULL, Go to line in XML (Ctrl+G, injected `on_go_to_line`),
+**Transform ▸**, **Unify** (set all inconsistent siblings to this value — see the scope prompt below when
+a filter is active). Ctrl+C copies cells tab/newline-separated; Ctrl+V fills New Value (Excel vertical
+fill). Decoupled from MainWindow via injected callbacks.
+
+**Unify scope prompt when a filter is active** (BUG-023, 2026-08-05). `unify_current()` unconditionally
+ran project-wide; it now checks `self._proxy.is_any_filter_active()` first. With **no filter active**,
+behavior is unchanged — no prompt, unify runs project-wide via `unify_from_row(source_row)`. With
+**any filter active** (header, find, or the preset predicate above), `_confirm_unify_scope()` — a
+`QMessageBox` mirroring `MainWindow._confirm_close_xsd`'s string-returning pattern, so tests monkeypatch
+it rather than ever driving a live modal — asks **"Filtered rows only" / "Entire project" / Cancel**.
+"Filtered rows only" calls `unify_from_row(source_row, restrict_to=self._visible_source_rows())`;
+"Entire project" calls the unrestricted form; Cancel does nothing.
 
 **Caption find/replace modal** (`caption_find_replace_dialog.py::CaptionFindReplaceDialog`) — Tools ▸
 "Caption Filter…" / Ctrl+R. Find/Replace fields, Search Mode (Normal/Extended/Regex), Match case, Scope
@@ -1293,7 +1318,17 @@ needs a **per-project** key; §18.5 D2 needs a **profile role** (`target` | `san
   attribute replace.
 
 **UI:** **Database** menu (Connection Setup…, Check: XML→Database, Check: Database→XML, and — after a
-separator — the checkable **DDL Explorer** toggle, §18.1).
+separator — the checkable **DDL Explorer** toggle, §18.1). **Connection Setup… is projectless-mode
+only** (BUG-024, 2026-08-05, §18): while a §18.2 local project is open, its own `ProjectSettings`
+(`target`/`sandbox`) is the connection store, and the app-level profile this dialog edits would be a
+redundant, silently-live shadow of it. `MainWindow` gates this with `self._connection_setup_action`,
+stored on `self` (not a bare local) so `_refresh_project_dependent_actions()` — called from both
+`_set_active_ddl_project` and `_close_ddl_project` — can flip `setEnabled(self._ddl_project_folder is
+None)` on every project open/close transition; `_open_connection_setup()` itself also early-returns (no
+dialog, a status-bar hint pointing at Project Settings) when a project is active, since two internal
+callers — `_run_db_check`/`_open_ddl_explorer`'s shared `_prompt_missing_connection()` fallback — invoke
+it directly on a missing connection and must be rerouted to **Project Settings…** instead while a project
+is open, rather than opening the now-meaningless standalone dialog.
 `ConnectionSetupDialog` (host/port/database/user, password EchoMode.Password, Test + status, plaintext
 caveat; API `set_params`/`params()`/`test()`). `DbCheckPanel` (header: direction + `user@host:port/db` +
 mismatch count; "Show only mismatches" toggle; `QTreeWidget` with `(T)`/`(V)`/`(M)` prefixes, `(×N)`
@@ -1409,7 +1444,7 @@ reference it, so it is kept stable:
 |---|---|---|
 | **§18.1** | Browses live routines/triggers in one synthesized read-only buffer (unchanged in shape from the original DDL Explorer design) | — (implemented) |
 | **§18.5** | The **stateful sandbox as desired state**, the **generated deployment SQL script** (its headline deliverable), the validation ladder, and the **editable single-object DDL tab** (`ui/ddl_object_editor.py::DdlObjectEditorPanel`) with its Save/Apply gestures. **The editable tab is specified here and only here.** | §18.1 only — explicitly buildable **before** §18.2/§18.3 |
-| **§18.2** | The "project" concept (git repo, `ddl/*.sql` file-per-object, `.ddlproject/` manifests), checkout-to-edit, and the `*`/`!` state markers. Adds **no new tab type**: it swaps §18.5's tab's injected load/save pair and adds marker rendering. | §18.1, §18.5 |
+| **§18.2** | The "project" concept (a local folder — git optional/TBD, not the definition of a project, see below), `ddl/*.sql` file-per-object, `.ddlproject/settings.json`, checkout-to-edit, and the `*`/`!` state markers. Adds **no new tab type**: it swaps §18.5's tab's injected load/save pair and adds marker rendering. | §18.1, §18.5 |
 | **§18.3** | The reviewed **batch** deploy workflow, reusing §18.1's browsing UI and the shared diff/migration engine originally specified as a schema-compare-only tool | §18.2 |
 | **§18.4** | The Qt-free SQL/plpgsql selection formatter core (implemented), whose one host surface is §18.5's tab | §18.5 for its consumer |
 
@@ -1439,6 +1474,50 @@ every load, not persisted/cached across sessions.
 framing (§18.2, §28).** A **local project is a folder the user chooses on their own machine — not
 necessarily a git repository.** Git is an **optional, deferred (TBD) configuration** a project may
 eventually carry, never the definition of what a project *is*. See §18.2 for the full revision.
+
+**Three operating modes — the taxonomy that organizes everything below (settled 2026-08-05, reframe of
+material already designed in §18.2/§18.5 D2/§18.7, not a new capability).** The app never asks the user to
+declare which mode they are in; the mode is a **consequence** of (a) whether a local project is open and
+(b) whether that project's environment satisfies the sandbox requirements below. Read this table before
+§18.2 onward — every subsection's scope is one of these three tiers, and "sandbox" is **not** a bare
+per-project settings toggle: it is an **environment-capability-gated** tier, present only when the
+project's own machine can actually run one (see the capability check below).
+
+| # | Mode | What is active | Requires |
+|---|---|---|---|
+| **1** | **Standalone** | No project open. DDL Explorer (§18.1) is browsable — **read-only, permanently** — against any configured connection. No checkout, no editing beyond the read-only buffer, no linting, no deploy. **Database ▸ Connection Setup… is available only in this mode** (BUG-024, below). | A configured DB connection only — zero `.pgtp` files, zero local projects (§18.1's existing "standalone-mode friendly" framing, unchanged) |
+| **2** | **Quality project** | A local project (§18.2) with **no working sandbox** — either the user never configured one, or the local machine doesn't meet the sandbox requirements below (graceful degradation, not an error). Gets: DDL editing (§18.5's object tab), local **Save** + §18.3's batch `deploy.sql` assembly, and **Apply to Target** (direct, confirm-gated deploy to the quality/target database). | A local project folder (§18.2); a `target` connection profile |
+| **3** | **Development project** | A quality project **plus** a working local sandbox: reachable local Postgres, a schema (optionally with data, §18.5 D2a) cloned into it. Gets **everything in quality project mode, plus**: `plpgsql_check` linting (D3 tier 3), `SET plpgsql.extra_warnings` linting (D3 tier 1), sandbox-execution linting (D3 tier 2 — compiles/applies against the sandbox; see the open item below for *running* a routine against sandbox rows, which is separate and not yet designed), **Apply to Sandbox**, the sandbox-scoped second DDL Explorer instance (§18.7), and **Generate Deployment SQL** (§18.5's headline deliverable, which needs the sandbox as its desired-state source). | Everything in tier 2, **plus** a reachable local Postgres superuser connection (§18.2's New Project Test button) |
+
+- **Tier 1 already matches shipped behavior** (§18.1's "Editing is deliberately NOT hosted here" /
+  `EditorPanel` stays read-only permanently) — naming it "standalone" here is a label on existing design,
+  not a change to it.
+- **Tier 2 vs. tier 3 is not a user toggle — it is what the environment can support.** A project's owner
+  may *intend* a development setup (they configured a sandbox connection in New Project) and still land in
+  tier 2 at any given moment if the sandbox connection stops resolving, the machine doesn't have Postgres
+  reachable, or the sandbox database was destroyed — the app does not error in that case, it simply
+  operates as a quality project until the sandbox is reachable again. This is the same embrace-drift,
+  surface-don't-force posture as the `*`/`!` markers.
+- **`psql`/`pg_restore` are NOT a tier-3 prerequisite in general — only for the "with data" sandbox
+  variant.** Verified against D2/D2a's actual mechanism: the schema-only baseline (`build_baseline_sql`,
+  D2's default and the one that unlocks tiers 1–3 of the validation ladder) is **in-process `psycopg`
+  only** — zero bundled bytes, zero external processes, per D2's "zero bundled bytes" invariant. `pg_dump`/
+  `pg_restore` on `PATH` are required **only** by D2a's optional "with data" clone mode, which is a
+  narrowly-scoped, explicitly-named exception layered on top of the schema-only path, not a general
+  sandbox requirement. A development project with reachable Postgres and no `pg_dump`/`pg_restore` on
+  `PATH` is still a fully-capable development project (schema-only sandbox); it only loses access to the
+  "with data" cloning choice at New Project time.
+- **Probe timing — settled 2026-08-05.** The environment-capability check (reachable local Postgres via
+  §18.5 D2's `SandboxCapabilities.probe`, reused from §18.2's New Project Test button; plus `psql`/
+  `pg_restore`-on-`PATH`, relevant only to D2a's "with data" clone path) runs **automatically whenever a
+  project is opened**, and **on demand** whenever the **Project Status window (§18.8)** is brought up. It
+  is not probed-once-and-cached from creation time: a sandbox that has died between sessions is detected
+  at the next project open and correctly degrades the project from tier 3 to tier 2 for that session.
+- **Capability display — settled design, §18.8.** The tier the project is currently running in (quality
+  vs. development) and, if degraded, why (e.g. "sandbox unavailable: pg_restore not found on PATH") is
+  surfaced in the **Project Status window** — a small node-and-connector diagram of project health,
+  fully specified in §18.8. See §18.8 for the design and §29 for the one remaining open question (each
+  node's click-through action-window content).
 
 ### 18.1 Routines & triggers browsing (DDL Explorer)
 
@@ -1785,12 +1864,26 @@ revision. When git integration is eventually designed, it is designed then, as i
    This is a new *entry point* into the **already-designed** capability probe / connection-profile
    mechanism (§18.5 D2's `SandboxCapabilities.is_superuser`, sourced from `current_setting('is_superuser')`
    via `probe`) — reuse it as-is, do not build a second superuser check. Superuser is required because
-   sandbox provisioning needs `CREATE EXTENSION` (§18.5 D2's one-click `plpgsql_check` install).
+   sandbox provisioning needs `CREATE EXTENSION` (§18.5 D2's one-click `plpgsql_check` install). This same
+   step also presents a **"with data" / "without data"** choice (§18.5 D2a, settled 2026-08-05) deciding
+   which provisioning strategy runs once the sandbox database is created: "without data" is the existing
+   schema-only `build_baseline_sql` path (the default); "with data" clones the target database via
+   `pg_dump`/`pg_restore` subprocesses instead — a scoped, one-shot exception to D2's otherwise-holding
+   no-external-process invariant. The choice is recorded in the project's sandbox settings, not
+   re-toggleable later; getting fresher data means destroying and recreating the sandbox.
 3. **Optionally add git configuration** (server/user/checkout branch, this project as a worktree of it)
    — explicit **TBD/placeholder only**, per above. No UI beyond capturing the intent needs to be
    designed yet.
 
 #### Opening an existing project
+
+**"Open Project…" requires a valid project folder** (BUG-022, 2026-08-05). The folder picker
+(`QFileDialog.getExistingDirectory` with `Option.ShowDirsOnly`, so only folders — never files — are
+shown) does not accept just any folder: after the pick, `db/ddl_project.py::is_project_dir(path)` checks
+for the project marker, the `.ddlproject/settings.json` file. A folder lacking the marker is **rejected**
+with a warning dialog ("not a PGTP DDL project folder … no `.ddlproject/settings.json` marker found") and
+the operation aborts rather than silently proceeding with a freshly-defaulted, effectively-empty
+`ProjectSettings()`. Only a folder that already carries the marker opens.
 
 Opening a project compares **two independent things**, both surfaced, neither auto-resolved:
 
@@ -1802,6 +1895,20 @@ Opening a project compares **two independent things**, both surfaced, neither au
 Both comparisons are **recomputed fresh on every project load, never cached or trusted from a prior
 session** — consistent with the truth-model principle stated at the top of §18 ("database is truth, git
 is history only," now extended to "the source `.pgtp` is truth for the `.pgtp` link").
+
+**Opening a project auto-opens its linked `.pgtp` working copy into the editor** (BUG-021, 2026-08-05).
+Once the project folder is validated and made active, `MainWindow._auto_open_linked_pgtp` runs (skipped
+only when the caller supplied its own `on_ready` continuation with its own load already in hand, e.g.
+`_prompt_pgtp_open_mode`'s "Open Project…" choice or `_require_ddl_project`, avoiding a double-load race)
+and reuses the existing `open_project_file` loader rather than a second load path:
+
+- **`settings.pgtp.working_copy_path` set and the file exists** — auto-open it directly.
+- **Not yet linked, and exactly one `*.pgtp` sits in the project folder** — auto-open that one candidate.
+- **Not yet linked, and zero `*.pgtp` files in the project folder** — silent no-op; nothing to open yet,
+  not an error.
+- **Not yet linked, and multiple `*.pgtp` candidates** — never guess: report the file names via the
+  Audit panel (`[Project] Multiple .pgtp files found in … — open one explicitly via File > Open.`) and
+  leave the editor as-is.
 
 #### Neither browsing nor single-object editing needs a project — only *versioning* does
 
@@ -1944,6 +2051,16 @@ project identity, the `.pgtp` link and its paths, both connection profiles (incl
 fields, `EchoMode.Password` as elsewhere, §17), and the deploy manifest's raw per-object entries. This is
 a new UI surface; add it to the Database-menu action list (§26) alongside **New Project…** / **Open
 Project…** / **Close Project** / **Deploy .pgtp** (below).
+
+**Layout: a `QTabWidget`, four tabs** (BUG-025, 2026-08-05; layout only — the "whole JSON, nothing
+hidden" contract above is unchanged). The dialog's field groups are distributed across tabs rather than
+stacked in one long single-column `QVBoxLayout` (which pushed lower groups off-screen): **"General"**
+(identity form — Name, Description — + the `.pgtp` link group), **"Connections"** (the Target connection
+and Sandbox connection groups, the latter carrying its sandbox-mode radio sub-form), **"Git"** (the git
+config group), **"Deploy manifest"** (the deploy-manifest table + Add/Remove buttons, on its own tab
+since the table wants width). The OK/Cancel `QDialogButtonBox` stays outside/below the tab widget, not
+inside any tab. Default size `560×480`, resizable (no `setFixedSize`). All fields keep their existing
+`self._…`-attribute get/set wiring — reparenting into tabs does not change how any value round-trips.
 
 **Connection profile persistence — reconciled with §17's `ProfileKey` scheme, least-invention reading.**
 §17 already generalizes `db/config.py` to a keyed `ProfileKey(project, role)` scheme backed by QSettings,
@@ -2720,6 +2837,46 @@ durable is not a save.
   own context menu is the additive, unambiguous way to re-point an already-saved tab; it is optional in
   v1 and takes no shortcut.
 
+#### "Deploy this edit…" — the explicit per-edit destination command (settled 2026-08-05)
+
+**Ctrl+S remains exactly what it is today — a plain file save that never touches a database.** This
+command does not reopen or contradict that; it adds a **separately-triggered, explicit** action that
+presents the three coexisting per-edit destinations described in §18.2 (*"deploying a DDL edit is an
+explicit per-edit choice among three coexisting destinations, and the user picks which one on every
+edit"*) as one command, instead of requiring the user to already know which of three separate gestures
+(Ctrl+S, the Apply-to-Sandbox action, the Apply-to-Target action) they want before they start.
+
+- **Trigger — a per-tab action on the DDL object editor, not a keyboard shortcut.** Following the existing
+  idiom for other tab-local actions on this same tab (Format Selection, §18.4/§18.5 — a context-menu item
+  plus a bound key), **"Deploy this edit…"** is exposed as a **context-menu item** on `DdlObjectEditorPanel`
+  (and, matching this tab's existing pattern of also surfacing its actions on a menu, a Database-menu
+  entry alongside the tab's other five §18.5 actions, §26) — **deliberately no keyboard shortcut**, for the
+  same reason Apply itself takes none: *"an irreversible outward effect must not be one keystroke away."*
+  A toolbar button is an acceptable alternative surface if the implementation finds it fits better, but a
+  bound shortcut does not.
+- **What it does — opens the existing 3-way destination choice, reusing the already-built gestures rather
+  than duplicating them.** Invoking it presents the three destinations named in §18.2's table (Apply to
+  Sandbox / Save for a future batch deploy / Apply to Target) and, once the user picks one, **delegates
+  straight to that gesture's existing, already-specified wiring** — it is a picker in front of the three
+  gestures, not a fourth thing that writes DDL or files on its own:
+  - **Apply to Sandbox** → the existing `apply_and_check(session, ref, ddl_text, caps)` entry point (D3),
+    confirm-gated exactly as today.
+  - **Save (for a future batch deploy)** → the existing plain **Save** gesture described above — writes
+    the buffer to disk (`Save As… .sql` in v1; the checked-out `ddl/*.sql` file once §18.2 checkout is in
+    play) and touches no database, exactly as Save always has.
+  - **Apply to Target** → the existing Apply-to-target path, unchanged: still gated behind all four hard
+    preconditions (signature-change refusal, green-sandbox-validation gate with a named override, the
+    transactional apply-with-no-revert-snapshot caveat, and the confirmation naming the object **and** the
+    database) and still reports to the Audit panel under `[Check]`.
+- **No new write path, no new confirmation mechanism, no new Applier.** This command adds a **selection
+  UI** in front of three gestures that already exist and are already specified above and in D3/the write
+  seam — `db/apply.py::apply_ddl`, `db/ddl_check.py`'s three entry points, and the plain-file Save
+  callback are **not** duplicated, forked, or given a second code path for this entry point.
+- **Preserves the "irreversible action must not be one keystroke away" invariant — it does not reopen
+  it.** The command itself carries no shortcut, and picking "Apply to Target" from it still runs through
+  every one of Apply-to-target's existing hard preconditions and its own explicit confirmation. Nothing
+  about this command shortens or bypasses any existing gate.
+
 Validation (the ladder in D3) is a third, likewise explicit gesture. It comes in **two modes** and the
 difference is user-visible: **Apply to Sandbox → Check** *commits* to the sandbox (that is the point —
 the sandbox is the accumulating desired state, D2), while **Check without applying** runs the same
@@ -2992,6 +3149,51 @@ finding. Provisioning is therefore core, not deferred.
   `busy_status`). A refusal without a way forward is the fastest route to the user concluding the tool is
   broken. *(A future "adopt this database" flow — stamp the marker after an explicit typed confirmation —
   is worth designing but is deliberately not specified here.)*
+
+##### D2a — Optional "with data" sandbox cloning (settled 2026-08-05)
+
+**Everything above in D2 is the schema-only baseline path and stays exactly as specified — this is an
+additional, optional mode layered alongside it, not a replacement.** `build_baseline_sql` remains the
+`plpgsql_check`-only path: in-process, `psycopg`-only, schema/types/tables/views/routines/triggers, zero
+rows. D2a adds a second, explicitly-chosen provisioning mode that also brings the **data**, for the user
+who wants to run/exercise routines against realistic rows rather than only catalog-check them.
+
+- **A DELIBERATE, SCOPED EXCEPTION to D2's "zero bundled bytes, no external process" invariant, and
+  narrowly for this path only.** Data cloning shells out to the **`pg_dump`**/**`pg_restore`** binaries as
+  external subprocesses (custom-format dump piped or spooled into a restore against the sandbox
+  database). The app does not bundle these binaries — it locates and invokes whatever `pg_dump`/
+  `pg_restore` is on the user's `PATH` (matching the existing precedent of invoking the vendor generator
+  and `re_phpgen` as external subprocesses, §1/§20) — but this is still a real, named departure from "the
+  app ships no server, no client binaries, and invokes no external process. Everything goes over
+  `psycopg`," which otherwise continues to hold for the rest of sandbox provisioning. **The schema-only
+  baseline path is untouched: it stays in-process/`psycopg`, today and after this addition.** A missing
+  `pg_dump`/`pg_restore` on `PATH` is reported to the user as a named, actionable failure (which binary,
+  which `PATH` was searched) — never a silent fall-back to schema-only and never a bare stack trace.
+- **Chosen at sandbox-creation time, not toggled later.** The New Project dialog's (§18.2) local-sandbox
+  step — currently "add a Postgres connection + a superuser Test button" — gains a **"with data" /
+  "without data"** choice presented at that same step. "Without data" is the existing D2 schema-only
+  `build_baseline_sql` path, unchanged, and stays the default. "With data" runs `pg_dump` against the
+  **target** profile and `pg_restore` into the freshly `create_sandbox_database`-provisioned sandbox,
+  **instead of** `build_baseline_sql` for that sandbox — the two are alternative provisioning strategies
+  for the same one-time setup step, never both run in sequence.
+- **Cloning is one-shot only — there is no refresh/re-sync operation.** The clone reflects the target
+  database at the moment the sandbox was created and is never automatically refreshed. To get fresher
+  production data later, the user **destroys and recreates the sandbox**: `SandboxSession.reset()`
+  already performs `DROP SCHEMA … CASCADE` on every app schema (D2, above) — for a "with data" sandbox
+  this is followed by **re-running the pg_dump/pg_restore clone**, not a re-run of `build_baseline_sql`,
+  so a reset sandbox ends up in the same mode (with or without data) it was created in. `reset()` itself
+  is unchanged in its schema-level (never `DROP DATABASE`) shape; only which provisioning step follows
+  the `DROP SCHEMA … CASCADE` depends on the sandbox's recorded mode.
+- **The sandbox's mode (with-data or schema-only) is recorded, not re-derived.** It must be stored
+  alongside the sandbox's other project-scoped state (the project's `.ddlproject/settings.json`, §18.2)
+  so `reset()` and any later "what kind of sandbox is this" UI question do not have to guess from the
+  database's current contents.
+- **Everything else about D2/D3 is unaffected.** Ownership-by-naming-convention (`is_app_owned`,
+  `open_sandbox`'s single gate), the `applied` working-set bookkeeping table, and the validation ladder
+  (D3) apply identically to a with-data sandbox — `plpgsql_check` still reads no rows either way, so the
+  ladder gains no new capability from the presence of data; what data cloning buys is the **separate,
+  not-yet-designed** capability of actually *executing* routines against realistic rows (§29's "Execution
+  against the sandbox" open question), not a new validation tier.
 
 #### D3 — The validation ladder
 
@@ -3478,6 +3680,305 @@ load-bearing here specifically):
 4. The index is built **once per DDL Explorer connect/refresh**, not per keystroke and not lazily
    per-popup-open.
 
+### 18.7 Two live DDL Explorer instances — target vs. sandbox
+
+> **Status: settled design (2026-08-05), not yet implemented.** Today there is exactly **one**
+> `BrowserPanel` instance (`ui/ddl_buffer_panel.py`), **one** left-dock "DDL Objects" tab, **one** center
+> `EditorPanel` DDL Explorer tab, and **one** database connection feeding all of it (§18.1). This
+> subsection makes the DDL Explorer **per-connection** rather than a singleton, so a project with a
+> provisioned sandbox (§18.5 D2/D2a) can browse it independently of the target/production database it was
+> cloned from.
+
+**What it is.** Once a project has a sandbox configured (§18.2's New Project sandbox step, or a sandbox
+added later via Sandbox Setup…), a **second, separate DDL Explorer instance** becomes available: one
+instance browses the **target** database (unchanged — today's single instance, connection `role =
+target`), and the other browses the **local sandbox** (`role = sandbox`, §18.5 D2). Both can be open
+simultaneously; each is its own left-dock tree tab and its own center-stage editor tab, not a toggle that
+switches one shared pair between two connections.
+
+- **The sandbox instance appears only once a sandbox exists for the active project.** With no sandbox
+  configured, the DDL Explorer toggle behaves exactly as it does today (§18.1) — one instance, against
+  the target connection. There is no empty/disabled "Sandbox DDL Explorer" affordance shown when no
+  sandbox exists; the second instance's menu entry/tab is simply absent until a sandbox is provisioned,
+  the same "no dead controls" posture already established for the sandbox button row (§18.5 carve-out 2).
+- **Reuses `BrowserPanel`/`EditorPanel` as-is, instantiated twice — not a rewrite.** Both widget classes
+  already take a `DatabaseSchema` (`set_schema`) and a synthesized buffer (`set_ddl_text`) as data; nothing
+  about their rendering, tree-building or navigation logic is target-vs-sandbox-aware today, and none of
+  it needs to become so. What changes is **how many of each are constructed and what connection params
+  feed each one's fetch** — this is new instantiation/wiring, not new tree or editor behavior.
+
+**Architecture change — tab identity keyed per-connection, not a singleton.** This is the genuinely new
+part:
+
+- `CenterStage`'s single fixed `ddl_tab_index` (§7/§18.1) becomes **two** dynamic tabs, addressed the same
+  way §18.5's per-object tabs already are — by a **stable key**, not a remembered index — reusing the
+  append-only/tail-only dynamic-tab machinery and its mandatory regression test (§18.5's carve-out 9)
+  rather than inventing a second tab-management scheme. The key is the connection **role**
+  (`"target"`/`"sandbox"`), since exactly one connection of each role can exist per project.
+- Likewise the left-dock "DDL Objects" tab (§18.1) becomes **two** dock tabs, one per role, each wrapping
+  its own `BrowserPanel` instance.
+- `MainWindow`'s existing single-instance wiring (`_open_ddl_explorer()`, `_fetch_ddl_schema`,
+  `_on_ddl_navigate_requested`, the visibility lockstep between the menu toggle and the tab ✕, §18.1) is
+  **parameterized by role** rather than duplicated: one fetch/open/navigate/lockstep code path taking
+  `role` and the corresponding `ConnectionParams`, invoked once for `target` (as today) and, when a sandbox
+  exists, again for `sandbox`. The Database-menu "DDL Explorer" toggle becomes **two** checkable entries
+  (or one toggle plus a second, sandbox-scoped one appearing once a sandbox exists) — exact menu wording
+  is an implementation detail, not specified further here.
+- Right-click ▸ Edit… (§18.5) from **either** instance opens the same `DdlObjectEditorPanel` tab type;
+  which connection an edit ultimately targets (Apply to Sandbox vs. Apply to Target, §18.5) is governed
+  entirely by the existing Apply gestures and their confirmation gates — browsing the sandbox's tree does
+  **not** change what Apply-to-target's four hard preconditions require, and does not make Apply-to-sandbox
+  implicit.
+
+**Drift-marker computation is scoped per source connection — not a single shared computation.** §18.2's
+`*`/`!` markers (local-file-vs-deployed, live-DB-vs-deployed) are computed once per introspected
+`DatabaseSchema`, and each `BrowserPanel` instance now renders markers computed **against its own
+connection's introspection**, not a markers set borrowed from the other instance. Concretely: the target
+instance's `!` marker means *"the target database has drifted from the last-deployed reference"* exactly
+as today; the sandbox instance's tree renders against the sandbox's own introspected schema and the
+sandbox's own working-set bookkeeping (`SandboxSession.applied`, §18.5 D2's `text_sha1`) — it is a
+**separate** drift/state computation, not the target's markers redrawn on a second tree.
+
+**The tree must tolerate genuine divergence in the object set, not just drift on an identical set.** This
+is the load-bearing difference from every other place in the app that shows "the same data from two
+angles" (e.g. §15's Table References, §18.1's dual-grouped tree): the sandbox is an **independent,
+editable database**, so its introspected routines/triggers/tables can be a **different set** from the
+target's — objects applied only to the sandbox and never deployed, objects that exist on target but were
+never cloned/applied to the sandbox, or (for a schema-only D2 baseline) tables present with columns but no
+data. Each `BrowserPanel` instance's tree is built from **its own connection's introspection alone**
+(`set_schema(schema, spans)`, unchanged signature) — there is no cross-referencing, no merged tree, and no
+attempt to align the two trees' node sets or render a placeholder for "exists on the other side but not
+here." An object present in the sandbox but not the target (or vice versa) simply does not appear in the
+other instance's tree at all, exactly as if it were the only connection open.
+
+**Reuse map — what this feature builds on rather than duplicates.**
+
+| Need | Existing thing to reuse |
+|---|---|
+| Tree widget + rendering rules | `ui/ddl_buffer_panel.py::BrowserPanel` (§18.1) — instantiated twice, unchanged internals |
+| Read-only synthesized buffer + editor | `ui/ddl_editor_panel.py::EditorPanel` (§18.1) — instantiated twice, unchanged internals |
+| Introspection fetch | `db/introspect.py::fetch_routines_and_triggers` (§18.1/§18.6) — called once per role with that role's `ConnectionParams` |
+| Second connection profile | `role = sandbox` (§18.5 D2), already generalized into `db/config.py`'s keyed `ProfileKey` scheme (§17) — no new connection mechanism |
+| Dynamic, key-addressed tabs (not index-addressed) | §18.5's per-object `DdlObjectEditorPanel` tabs and their append-only/tail-only invariant + regression test (§18.5 carve-out 9) — the same pattern, keyed on connection role instead of object identity |
+| Drift markers | §18.2's `*`/`!` computation (`compute_drift_markers`) — invoked per connection, not shared |
+| "No dead controls" posture | §18.5 carve-out 2 (no sandbox button row until the sandbox lane exists) — mirrored here as "no second DDL Explorer entry until a sandbox exists" |
+
+**Explicitly not designed here:** the exact menu/tab wording and layout for the two instances (left as an
+implementation detail); any merged/diffed view showing both trees side-by-side or overlaid (rejected by
+the "tolerate genuine divergence, no cross-referencing" rule above — that would be a different, undesigned
+feature); and what happens to an open sandbox DDL Explorer instance when the sandbox is destroyed/reset
+mid-session (an open question, below).
+
+---
+
+### 18.8 The Project Status window
+
+> **Status: settled design (2026-08-05), corrected same day, not yet implemented.** The first pass
+> specified a **4-node** diagram (`quality_*` / `app_*` / `sandbox1_*` / `sandbox2_*`) in which the `app`
+> node conflated two different things into one 4-state node: **project tier** and **sandbox
+> connectivity**. The owner has since clarified and provided a corrected diagram. This subsection is
+> rewritten to the corrected **5-node** model below; the 4-node model is superseded, not layered
+> alongside (Supersession Ledger, §28). **One thing remains genuinely open and is flagged, not
+> invented:** most of the node action windows' exact contents (see the end of this subsection and §29).
+
+**What it is.** A small graphical status window rendering project health as a **node-and-connector
+diagram**, read left-to-right as a horizontal chain that splits at the end: **quality → app → sandbox →
+(sandbox1 / sandbox2)**. It is the visual home of the top-of-§18 capability probe's result
+(`ProjectCapabilityStatus`, `pgtp_editor/db/sandbox.py`) — the same probe already wired to run
+automatically on project open (`MainWindow._set_active_ddl_project` → `refresh_project_capability_status()`)
+and, per this subsection, again on demand whenever this window itself is opened.
+
+**Layout — five node families plus connectors, in this arrangement:**
+
+```
+[quality] --connector--> [app] --connector--> [sandbox] --connector--> [sandbox1]  (upper)
+                                                                  \--connector--> [sandbox2]  (lower)
+```
+
+| Node | Position | Represents | Backing state |
+|---|---|---|---|
+| **Quality** | leftmost | The quality/target database's connection status | The `target` connection profile (§17/§18.2) — reachability, not yet further broken into states beyond connected/not by this pass |
+| **App** | 2nd | The project's **tier** — standalone / quality-project / development-project — and nothing else | `ProjectCapabilityStatus`/`ProjectTier`, rendered as one of the 3 states below. **No longer carries sandbox connectivity** — that is now the Sandbox node's job |
+| **Sandbox** | 3rd, its own full node (not a connector) | The sandbox database's **live connectivity**: not-set-up / connection-ok / offline / connected-but-tools-missing | `SandboxCapabilities` (probe reachability) + `SandboxMode`/`data_clone_available` for the tools-missing state — see the state table below |
+| **Sandbox1** | upper-right | The sandbox's **data-fill** status: schema-only vs. data-cloned via `pg_restore` (§18.5 D2/D2a), and whether that provisioning succeeded | D2a's clone outcome / `db/ddl_project.py::ProjectSettings.sandbox_mode` (`SandboxMode.SCHEMA_ONLY` / `WITH_DATA`) plus success/failure of the last provisioning run |
+| **Sandbox2** | lower-right | Whether the **`plpgsql_check` Postgres extension is installed** in the sandbox database — a capability/installation marker, **not** a per-object lint pass/fail result (that already lives in the DDL object editor's Audit panel, §18.5 D3) | `SandboxCapabilities.plpgsql_check_state`, **but see the corrected 2-state reading below** — the property's own 4 values don't map 1:1 onto this node (flagged, not glossed over) |
+| **Connectors** | between each pair | Line art linking quality→app, app→sandbox, and sandbox→(sandbox1, sandbox2); the sandbox→sandbox1/2 connector visually splits into two after the sandbox node | Carries state too, but see "not yet specified" below |
+
+The owner's diagram depicts the Sandbox node with its own icon (a monitor/screen bearing a Postgres
+elephant logo plus a database icon) — visually distinct from a connector, confirming it is a fifth node
+family, not a richer connector state grafted onto the app→sandbox1/2 link.
+
+**Image asset convention.** Each node/connector is rendered from a pre-made image, named
+`[position]_[status]` — e.g. `app_project_setup`, `sandbox_connection_ok`, `sandbox1_...`,
+`connector_...`. The owner has already saved these assets in a local images folder; wiring them into the
+app (locating/bundling the folder, a lookup table from state to filename, `QPixmap` loading) is an
+**implementation task**, not a further design decision — this subsection specifies the states each
+family must be able to render, not the asset pipeline.
+
+**Dark-mode asset convention — every asset has a `_drk` counterpart.** For each `[position]_[status]`
+base file there is a same-named dark-theme variant with a `_drk` suffix appended before the extension —
+e.g. `quality_ok.png` / `quality_ok_drk.png`, `sandbox_connection_ok.png` /
+`sandbox_connection_ok_drk.png`. The lookup-table/loading code (implementation task, above) must select
+the `_drk` file whenever the app is currently running in its dark theme, and the plain file otherwise.
+**Verified against the codebase, not assumed:** the app has no OS/system dark-mode *detection* — theme
+selection is an explicit, user-toggled menu checkbox, **Light Theme** (`MainWindow`, `main_window.py`,
+unchecked by default, i.e. dark-by-default), applied via `ui/theme.py::apply_theme(app, light: bool)`.
+There is no `QStyleHints`/`colorScheme()` OS-preference read anywhere in `pgtp_editor/`. This window's
+`_drk`-vs-plain selection should therefore key off the **same boolean** the Light Theme action already
+tracks (`MainWindow._light_theme_action.isChecked()` / the `light` argument last passed to
+`apply_theme`), not a new or different signal — reusing the existing toggle, not adding a second
+theme-detection mechanism.
+
+**Per-node state enumeration — concrete, from the owner's reference images (saved locally, not yet
+wired into the app).** This supersedes nothing added above; it fills in the exact state lists the
+node-family table and the App/Sandbox state tables already reference, plus gives Quality, Sandbox1 and
+Sandbox2 their first explicit enumerations.
+
+| Node | States (icon look) | Notes |
+|---|---|---|
+| **Quality** | `quality_connection_not_set_up` (locked/gray padlock over a database icon); `error` (red — connection attempted but failed/unreachable); `connection_ok` (green — connected, healthy) | **Corrected 2026-08-05:** the locked/gray icon is **not** a distinct auth-failure mode alongside a general error state — its actual filename is `quality_connection_not_set_up`, i.e. the quality/target connection is simply **not configured yet**, the same semantic category as the Sandbox node's `sandbox_not_set_up` state. This mirrors the Sandbox node's not_set_up/offline/connection_ok pattern exactly: `not_set_up` (never configured) / `error` (configured but unreachable) / `connection_ok` (configured and healthy). The earlier "is locked/gray a distinct failure mode from red?" open question is resolved by this — there is no ambiguity once locked/gray is understood as "not set up," not "auth failed" |
+| **App** | `app_standalone` (a generic "\<XML\>" editor-window icon — the plain-editor-no-project look); `app_project_not_setup` (gray/inactive gear+lightbulb); `app_project_setup` (green gear+lightbulb) | Matches the already-specified 3-state, tier-only model above one-for-one; this row only supplies the concrete icon look per state |
+| **Sandbox** | **red** (offline/unreachable); **gray** (not set up); **green** (connection ok) | **Only 3 visual states, not 4.** The previously-noted `sandbox_tools_missing` condition (sandbox reachable but `psql`/`pg_restore` absent) is **not** a distinct icon — it still renders the same green/connection-ok icon, with the missing-tool detail surfaced only in the node's click-through status/help window (consistent with this subsection's existing click-through description above: name the missing tool, link to help). The Sandbox node's state table earlier in this subsection listed `sandbox_tools_missing` as one of four *backing states*; that backing-state distinction is still real (`SandboxCapabilities`/`degraded_reason` still tell tools-missing apart from offline), but **it now maps onto the same icon as `sandbox_connection_ok`**, not a fourth icon — corrected here from any earlier reading that implied a 4th visual state |
+| **Sandbox1** (data-fill) | **not-filled** (lighter/schema-only look); **filled** (fuller green — data cloned via `pg_restore`, §18.5 D2a) | 2 visual states shown in the reference images. **Open point (§29):** no distinct "clone in progress" or "clone failed" icon has been provided yet — flagged as a gap to confirm with the owner, not invented here |
+| **Sandbox2** (`plpgsql_check` capability) | `sandbox2_plpgsql_check_not_installed` (red X over a magnifying-glass-on-database icon); `sandbox2_plpgsql_check_installed` (teal/cyan check-mark, same magnifying-glass-on-database motif) | **Corrected 2026-08-05:** these are **install-state** icons, not run-result icons — the red-X state means "the `plpgsql_check` extension is not installed in this sandbox," and the check-mark state means "it is installed." This is **not** whether a specific routine passed or failed a lint check (that per-object result lives in the DDL object editor's Audit panel, §18.5 D3) — this node shows environment/capability status only. The earlier "no distinct not-yet-run icon" open question no longer applies: there is no run result to represent here, only installed/not-installed, and 2 states fully cover that |
+
+Each state name in this table is the state, not necessarily the owner-verbatim asset filename stem (as
+already caveated above for the Sandbox node's candidate names) — verify against the owner's actual saved
+image filenames before wiring, same caution as already stated for the Sandbox row's candidate names.
+
+**App node — 3 states, project tier only (corrected from the 4-state conflated model):**
+
+| State | Meaning | Corresponds to |
+|---|---|---|
+| `app_standalone` | No project is open at all | Tier 1 (standalone, §18 taxonomy) |
+| `app_project_not_setup` | A DDL-versioning project is active but has no working sandbox | Tier 2 (quality project), `ProjectCapabilityStatus.tier is ProjectTier.QUALITY` |
+| `app_project_setup` | A DDL-versioning project is active with a working sandbox | Tier 3 (development project), `ProjectCapabilityStatus.tier is ProjectTier.DEVELOPMENT` |
+
+The App node no longer distinguishes *why* a project is at tier 2 (never configured vs. configured-but-
+offline vs. tools-missing) — that finer-grained live-connectivity detail is now the **Sandbox** node's
+job, described next. The App node answers exactly one question — "what tier is this project running
+in?" — and answers it the same way regardless of *why* tier 3 isn't reached.
+
+**Implementation note — verify before building.** `pgtp_editor/db/sandbox.py::ProjectTier` today is a
+**2-member** enum (`QUALITY`, `DEVELOPMENT`); there is no `ProjectTier` member for tier 1 at all —
+"standalone" is simply the absence of an open project, never a value the enum carries, and
+`determine_project_tier()`'s own docstring says as much ("Tier 1 … is therefore never returned"). The
+corrected 3-state App node above is therefore **not** a straight 1:1 rendering of one enum: `app_standalone`
+must be derived from "no project is currently open" (a fact `ProjectCapabilityStatus` itself doesn't
+carry — it models only an already-open project), while `app_project_not_setup`/`app_project_setup` map
+directly onto `ProjectTier.QUALITY`/`DEVELOPMENT`. This is a clean, buildable mapping, but it is **not**
+the shape the first (4-state, now-superseded) pass assumed, so flag it rather than assume the existing
+`ProjectCapabilityStatus`/`ProjectTier` shapes need no adjustment — they don't need new members, but the
+window's App-node rendering logic needs an explicit "is a project open at all?" check that sits outside
+`ProjectCapabilityStatus`.
+
+**Sandbox node — NEW, distinct node; the live-connectivity counterpart to the App node's tier state.**
+Not yet given owner-verbatim asset names beyond the `[position]_[status]` convention. **3 visual states**
+(confirmed against the owner's reference images, below), backed by a 4-way distinction in the underlying
+capability model — the 4th backing condition (tools-missing) does not get its own icon:
+
+| Visual state (candidate name) | Icon look | Meaning | Backing state |
+|---|---|---|---|
+| `sandbox_not_set_up` | gray | No sandbox is configured for this project at all | `ProjectCapabilityStatus.degraded_reason == "no local sandbox configured for this project"` |
+| `sandbox_connection_ok` | green | A sandbox is configured and reachable — **also covers the tools-missing condition below**, which renders identically | `ProjectCapabilityStatus.tier is ProjectTier.DEVELOPMENT`; **or** reachable with `SandboxMode is WITH_DATA` and `psql`/`pg_restore` missing from `PATH` (see the tools-missing row) |
+| `sandbox_offline` | red | A sandbox is configured but currently unreachable | `ProjectCapabilityStatus.tier is ProjectTier.QUALITY` with a `degraded_reason` naming an unreachable probe (e.g. `"sandbox unreachable: …"`) |
+
+**Tools-missing is a backing condition, not a 4th icon.** When the sandbox database itself is reachable
+but `psql`/`pg_restore` are not on `PATH` (relevant only when `SandboxMode is WITH_DATA`, matching D2a's
+existing capability distinction; `ProjectCapabilityStatus.tier is ProjectTier.QUALITY` with
+`degraded_reason` naming `pg_dump`/`pg_restore` missing), the node still renders the plain
+`sandbox_connection_ok` (green) icon — there is no separate `sandbox_tools_missing` asset. The detail is
+surfaced only in the node's click-through status/help window (below: names the missing tool, links to
+help). **Corrected here** from an earlier reading of this subsection that could be taken to imply a
+4th visual state; the click-through behavior described later in this subsection was already right, this
+table is what's been tightened to match it.
+
+This is the fine-grained, live-connectivity state the old conflated `app_*` node used to carry
+(`app_sandbox_not_set_up` / `app_sandbox_connection_ok` / `app_sandbox_offline` from the superseded pass
+map onto `sandbox_not_set_up` / `sandbox_connection_ok` / `sandbox_offline` here). The exact asset-name
+strings above are the spec-maintainer's inference from `ProjectCapabilityStatus.degraded_reason`'s
+existing string shapes, not owner-verbatim — verify against the owner's actual saved image filenames
+before wiring.
+
+**Absence rule — no sandbox means the sandbox nodes are ABSENT, not grayed out — now covering three
+node families, not two.** When `ProjectCapabilityStatus.degraded_reason == "no local sandbox configured
+for this project"` (i.e. the project has never had a sandbox configured at all), **the Sandbox node,
+Sandbox1, Sandbox2, and their connectors do not render at all** — the diagram shows only quality→app,
+ending at the app node. This is the same "no dead controls" posture already established for the sandbox
+button row (§18.5 carve-out 2) and for the second DDL Explorer instance (§18.7): an inactive capability
+is not shown disabled, it is simply not shown. A sandbox that IS configured but currently offline or
+tools-missing still renders the Sandbox node plus Sandbox1/Sandbox2 — in whatever failed/unknown state
+applies — because a sandbox exists conceptually for this project even though it is not fully reachable
+right now; only "never configured" removes the nodes entirely.
+
+**Probe timing — unchanged from the top-of-§18 taxonomy, restated here as this window's specific
+trigger.** The capability probe (`refresh_project_capability_status()`) runs (a) automatically whenever
+a project is opened (already wired, `_set_active_ddl_project`), and (b) on demand whenever the Project
+Status window itself is invoked — opening this window is itself a trigger for a fresh probe, not a
+passive reader of a stale cached result.
+
+**All five node families are clickable, but the click-through behavior is now two distinct patterns, not
+one uniform "opens an action window":**
+
+- **Quality and App — one-step action window.** Clicking the Quality node opens an action window showing
+  connection info plus a reconnect action. Clicking the App node opens *some* action window scoped to the
+  project-tier concern, but its exact contents are **not yet specified by the owner** (unchanged open
+  question from the first pass — flagged again in §29, not invented here).
+- **Sandbox — one-step status/help window.** Clicking the Sandbox node opens a window showing
+  status/connection details; if the underlying condition is specifically tools-missing (a reachable
+  sandbox with `psql`/`pg_restore` absent from `PATH` — rendered as the same `sandbox_connection_ok`
+  icon, not a distinct one, per the state table above), the window **names the missing tool** and links
+  to a help section. **Verified:**
+  the app's only existing help surface is the general **in-app manual** (§24, `resources/manual.md`,
+  toggled via F1 / Help ▸ Manual, `MainWindow` around `main_window.py:3777`) — there is no dedicated,
+  topic-anchored help-navigation concept (no deep-link-to-a-heading mechanism). "Links to a help
+  section" therefore most plausibly means **opening the manual**, ideally scrolled to a
+  tool-installation topic — but no such topic exists there yet, and no anchor/deep-link mechanism exists
+  to jump to one even if it did. Treat both the manual content and any deep-link mechanism as **new
+  work**, not reuse, and record it as open in §29.
+- **Sandbox1 and Sandbox2 — two-step status+action window, NOT a direct one-click trigger.** Clicking
+  either opens a status/help window that **itself contains an embedded action button** — e.g. Sandbox1's
+  window offers "run data clone now" / "redo clone." Sandbox2's window, when `not_installed`, offers an
+  **"install the plpgsql_check extension"** action button (runs `CREATE EXTENSION IF NOT EXISTS
+  plpgsql_check` against the sandbox — the same one-click install already specified as living inside
+  Sandbox Setup, §18.5 ledger row 2026-08-02, via `install_plpgsql_check(session)`, now also reachable
+  from here) — **not** "run a check," since this node is about installation state, not a lint result.
+  When Sandbox2 is already `installed`, the window is purely informational (states the fact); **no
+  meaningful action remains to offer in that state** — there is nothing left to install, and re-running
+  `CREATE EXTENSION IF NOT EXISTS` on an already-installed extension is a no-op not worth surfacing as a
+  button. This is a deliberate two-step pattern (open status → press the button inside it, when one
+  applies), not a single click that fires the action directly — distinct from how Quality/App/Sandbox's
+  action windows are described.
+
+**Explicitly not yet specified (recorded, not blocking):**
+- **Connector states.** Connectors carry state (asset names follow the same `connector_[status]`
+  convention) but the exact state set per connector — e.g. whether the quality→app connector merely
+  mirrors the quality node's reachability, or carries its own richer state — has not been enumerated by
+  the owner.
+- **The App node's action-window contents/behavior.** Flagged explicitly in §29 as an open question —
+  implementers must not invent this; it needs a further owner pass. (Quality's, Sandbox's, Sandbox1's and
+  Sandbox2's click-through *patterns* are now specified above; App's is the one node whose action-window
+  content remains entirely open.)
+- **The Sandbox node's "links to a help section" content and deep-link mechanism.** Verified: the app's
+  only existing help surface is the general in-app manual (§24), which has no topic-anchored deep-link
+  mechanism today — both the tool-installation help content and any way to jump straight to it are new
+  work, not reuse (see above).
+- **Menu/shortcut entry point.** Not designed here: whether "Project Status…" is a Database-menu action,
+  a toolbar button, or something else. Left as an implementation detail, consistent with how §18.7 left
+  its own menu wording unspecified.
+
+**Reuse map.**
+
+| Need | Existing thing to reuse |
+|---|---|
+| Tier data (App node) | `db/sandbox.py::ProjectCapabilityStatus`/`ProjectTier`/`determine_project_tier` — consumed as-is, not recomputed; App-node rendering additionally needs an "is a project open at all?" check outside this shape (see implementation note above) |
+| Live connectivity (Sandbox node) | `db/sandbox.py::SandboxCapabilities` (`probe_error`) + `ProjectCapabilityStatus.degraded_reason` + `SandboxMode`/`data_clone_available` for the tools-missing state |
+| Probe trigger | `MainWindow.refresh_project_capability_status()` — called again on this window's open, exactly as it already is on project open |
+| Data-fill state (Sandbox1) | `db/sandbox.py::SandboxMode` (`SCHEMA_ONLY`/`WITH_DATA`) + D2a's clone outcome |
+| plpgsql_check install state (Sandbox2) | `SandboxCapabilities.plpgsql_check_state` — **flagged mismatch:** this property already returns exactly the right *kind* of fact (installed vs. not, never a lint result), confirmed by its own docstring and by `install_plpgsql_check(session)` (§18.5 D2) being the same `CREATE EXTENSION IF NOT EXISTS plpgsql_check` action this node's button fires. But it is **4-valued** (`"installed"` / `"installable"` / `"absent"` / `"unknown"`), while this node has only **2** icons (`sandbox2_plpgsql_check_installed` / `sandbox2_plpgsql_check_not_installed`). The rendering logic must collapse `"installable"`/`"absent"`/`"unknown"` onto the single `not_installed` icon (all three mean "not installed," just for different reasons — extension available-but-uninstalled, unavailable, or probe-failed) — this collapse is not yet owner-confirmed and is left as an implementation detail rather than a further open design question, since the 2-icon set leaves no room for a 4th visual state |
+| Install action (Sandbox2) | `install_plpgsql_check(session)` (§18.5 D2) — the same one-click `CREATE EXTENSION IF NOT EXISTS plpgsql_check`, reachable both from Sandbox Setup and from this window's Sandbox2 action button |
+| "No dead controls" posture | §18.5 carve-out 2 / §18.7's absent-not-disabled sandbox-instance rule — same principle, now governing the Sandbox node, Sandbox1, Sandbox2, and their connectors together |
+
 ---
 
 ## 19. PHP generation (vendor) & Save
@@ -3721,10 +4222,17 @@ Tools; "New Project" removed; line-wrap moved to editor context menu):
   Export / Import act on the **active XSD** (curated or learned, per `_xsd_mode`), not curated-only.
   (Go To XSD is **not** a menu item: it is a window-level Ctrl+L `QAction` added via
   `MainWindow.addAction` plus a Raw XML editor context-menu entry; it always forces curated mode.)
-- **Database:** Connection Setup…, ⎯, Check: XML→Database, Check: Database→XML, ⎯, ☐ DDL Explorer
+- **Database:** Connection Setup… (**projectless-mode only** — disabled while a §18.2 project is open,
+  since the project's own `target`/`sandbox` connections in Project Settings… are authoritative then;
+  BUG-024, 2026-08-05), ⎯, Check: XML→Database, Check: Database→XML, ⎯, ☐ DDL Explorer
   (checkable toggle, §18.1; kept in lockstep with the center tab's ✕). **Target design (2026-08-02, not
   yet implemented)** — everything §18 adds lives in **this** menu; no new top-level menu is created for
   it, and no "locate binary" action is added, because v1 spawns no external process:
+  - **Once a project has a sandbox configured (§18.5 D2/D2a), the DDL Explorer toggle above gains a
+    sandbox-scoped sibling** (§18.7, settled 2026-08-05): a second checkable entry opening a separate DDL
+    Explorer instance against the sandbox connection, absent entirely when no sandbox exists (no dead
+    controls, mirroring §18.5 carve-out 2's posture). Exact wording/placement of the second entry is an
+    implementation detail, not pinned here.
   - ⎯ then (§18.5) **Sandbox Setup…** (the `role=sandbox` profile in the same `ConnectionSetupDialog`,
     plus the capability-probe result, the one-click **Install plpgsql_check** button *inside* that dialog
     next to the probe result, the working-set list and **Reset Sandbox**, and — when the configured
@@ -3732,28 +4240,34 @@ Tools; "New Project" removed; line-wrap moved to editor context menu):
     me"** offer); **Check DDL Object** (runs the validation ladder against the active DDL object editor
     tab); **Apply to Sandbox**; **Apply to Target Database…** (the ellipsis marks the confirmation naming
     object + database, and it is additionally gated on a green sandbox validation and refused outright on
-    a changed signature — §18.5); and **Generate Deployment SQL…** (the feature's rank-1 deliverable;
-    disabled unless a sandbox profile is configured). **Check DDL Object / Apply to Sandbox / Apply to
-    Target Database…** are **disabled unless a DDL object editor tab is active**, kept in sync on
-    `center_stage.currentChanged`; Apply is never automatic and never implied by Save. Sandbox Setup and
-    Generate Deployment SQL do **not** require an object tab. There is no "locate binary" action —
-    v1 spawns no external process. **None of these five entries ships with the editable tab's first
-    increment** — the sandbox lane is a later carve-out (§18.5, v1 scope), and the tab likewise ships
-    with **no button row** rather than disabled controls.
+    a changed signature — §18.5); **Generate Deployment SQL…** (the feature's rank-1 deliverable;
+    disabled unless a sandbox profile is configured); and **Deploy this edit…** (§18.5, settled
+    2026-08-05 — opens the same 3-way destination picker as the DDL object editor tab's own context-menu
+    action of the same name, reusing Apply to Sandbox / Save / Apply to Target Database…'s existing
+    wiring rather than a fourth gesture; deliberately **no shortcut**). **Check DDL Object / Apply to
+    Sandbox / Apply to Target Database… / Deploy this edit…** are **disabled unless a DDL object editor
+    tab is active**, kept in sync on `center_stage.currentChanged`; Apply is never automatic and never
+    implied by Save. Sandbox Setup and Generate Deployment SQL do **not** require an object tab. There is
+    no "locate binary" action — v1 spawns no external process, **except** §18.5 D2a's optional
+    `pg_dump`/`pg_restore` sandbox data-cloning path, a narrowly-scoped exception to that invariant (§18.5
+    D2a). **None of these entries ships with the editable tab's first increment** — the sandbox lane is a
+    later carve-out (§18.5, v1 scope), and the tab likewise ships with **no button row** rather than
+    disabled controls.
   - ⎯ then (§18.2, revised 2026-08-03 — renamed from "New/Open/Close DDL Project" and expanded)
     **New Project…** (folder picker; optionally offers local-sandbox setup — a Postgres connection plus
-    a Test button that specifically verifies superuser, reusing §18.5 D2's capability probe — and
-    optionally offers git configuration, explicit TBD placeholder only), **Open Project…** (runs the
-    `.pgtp`-checksum **and** DDL drift comparisons, both surfaced, neither auto-resolved), **Close
-    Project** (a reminder point for pending `.pgtp`/DDL deploys, §18.3 — never a forced action),
-    **Project Settings…** (new dialog exposing the full project JSON — identity, `.pgtp` link, both
-    connection profiles including password, deploy manifest), and **Deploy .pgtp** (on-demand push of
-    the local `.pgtp` working copy back to the sshfs-mounted source; also offered as a close-time
-    convenience prompt, §18.3).
+    a Test button that specifically verifies superuser, reusing §18.5 D2's capability probe, plus a
+    "with data"/"without data" provisioning choice (§18.5 D2a) — and optionally offers git configuration,
+    explicit TBD placeholder only), **Open Project…** (runs the `.pgtp`-checksum **and** DDL drift
+    comparisons, both surfaced, neither auto-resolved), **Close Project** (a reminder point for pending
+    `.pgtp`/DDL deploys, §18.3 — never a forced action), **Project Settings…** (new dialog exposing the
+    full project JSON — identity, `.pgtp` link, both connection profiles including password, deploy
+    manifest), and **Deploy .pgtp** (on-demand push of the local `.pgtp` working copy back to the
+    sshfs-mounted source; also offered as a close-time convenience prompt, §18.3).
   - (§18.3) **Compare Schemas…** and **Save Schema Snapshot…**.
 
   ("Format Selection" is **not** a menu-bar item: it is a `Ctrl+Alt+F` action plus a context-menu entry
-  scoped to the DDL object editor tab — see §27.)
+  scoped to the DDL object editor tab — see §27. "Deploy this edit…" is likewise primarily a **context-menu
+  item** on that same tab, mirrored onto this menu as described above.)
 - **Tools:** Manage Captions…, Caption Filter… (Ctrl+R in caption context), Reparse Raw XML into Tree,
   Validate Project, Compare/Merge Two Files…, Next/Previous Difference, Apply Changes to Target.
 - **Generation:** Locate PHP Generator Executable…, Generate PHP…, Open Output Folder, panGen (Generate
@@ -3778,7 +4292,7 @@ Toolbar default: Open, Save, Undo, Redo, Find, Validate, Generate (customizable)
 | double-click (line-number gutter zone) | Toggle bookmark on that line | Raw XML editor gutter (target design 2026-08-01, not yet implemented, §8 — additive alongside the existing single-click 12px bookmark strip; NOT gated by Caption Mode) |
 | Ctrl+L | Go To XSD (jump to the attribute's definition in curated.xsd; always forces curated mode) | Window-level QAction (also in the Raw XML editor context menu) |
 | Ctrl+Alt+F | **Format Selection** (§18.4's `format_selection` on the current selection; single undo step on success, `[SQL]` Audit lines + transient underline on refusal) | DDL object editor tab only, and only with a non-empty selection (target design 2026-08-02, not yet implemented, §18.5). Also a context-menu item there. `Ctrl+Shift+F` stays Find All. |
-| *(no shortcut, deliberately)* | **Check DDL Object** / **Check without applying** / **Apply to Sandbox** / **Apply to Target Database…** / **Generate Deployment SQL…** | Database menu, the DDL object editor tab's context menu, and (for the three check/apply gestures) its button row (§18.5, target design 2026-08-02; **none of them ships in the tab's v1** — the sandbox lane is a scope carve-out and v1 has no button row). Apply is an **irreversible outward effect** and must not be one keystroke away; the target-database variant additionally requires a green sandbox validation, refuses a changed signature outright, and confirms naming the object **and** the database. |
+| *(no shortcut, deliberately)* | **Check DDL Object** / **Check without applying** / **Apply to Sandbox** / **Apply to Target Database…** / **Generate Deployment SQL…** / **Deploy this edit…** | Database menu, the DDL object editor tab's context menu, and (for the three check/apply gestures) its button row (§18.5, target design 2026-08-02; **none of them ships in the tab's v1** — the sandbox lane is a scope carve-out and v1 has no button row). Apply is an **irreversible outward effect** and must not be one keystroke away; the target-database variant additionally requires a green sandbox validation, refuses a changed signature outright, and confirms naming the object **and** the database. **Deploy this edit…** (§18.5, settled 2026-08-05) is a picker in front of these same three destinations (Apply to Sandbox / Save / Apply to Target Database…) and reuses their existing wiring rather than adding a fourth gesture — likewise deliberately unshortcut. |
 | Ctrl+G | Go to line in XML | Caption grid |
 | Ctrl+Shift+B | Bracket-select | Code editor dialog; DDL object editor tab (§18.5, target design) |
 | Ctrl+S / Ctrl+W | Save / Cancel | Code editor dialog |
@@ -3884,6 +4398,12 @@ is authoritative** (and is what appears in the body above).
 | 2026-08-03 | §18.2's two-file scheme: `.ddlproject/project.json` (identity/metadata/`.pgtp` link, git-tracked) + `.ddlproject/deployed.json` (deploy manifest, git-tracked) | **Merged into one centralized, gitignored, plaintext JSON file** (`.ddlproject/settings.json`), holding project identity, the `.pgtp` link + its checkout/drift state, both connection profiles (target + sandbox, including password — see the password-handling row above), and the deploy manifest (content-hash + deployed commit id per object, **unchanged in shape**). The deploy manifest no longer needs to be git-tracked for its stated original reason ("so last-deployed state travels across machines") because git integration for this whole model is itself still TBD/deferred (the row above) — there is no live git workflow yet for that state to travel through; **revisit this when git integration is designed.** Governing principle stated explicitly because it explains this merge and the password change together — owner's words: *"nothing the app manages should be a black box… plaintext files everywhere"* — the same spirit that already justified `ddl/*.sql` as plain per-object files, now stated as a principle for the whole local-project model. New UI surface: **Project Settings…** dialog exposing this JSON's full contents (§18.2/§26) |
 | 2026-08-03 | §7/§19's general `.pgtp` save behavior — plain save-in-place with a `.bak` sidecar written via `shutil.copy2` before overwriting an existing file, never on Save-As — implicitly assumed to apply universally, with no project-scoped carve-out | **Superseded, but ONLY within the local-project context — no-project-mode `.pgtp` save behavior is completely untouched by this row.** When a §18.2 local project is open, the `.pgtp` becomes a first-class checked-out artifact, parallel to a DDL object: the app works on a **local working copy** of the `.pgtp`; ordinary Ctrl+S/File ▸ Save writes to this working copy with **no `.bak`** (same rationale as `ddl/*.sql`'s existing no-`.bak` decision — the working copy itself is the safety net). Pushing the working copy back to overwrite the source `.pgtp` at the sshfs-mounted path is a separate, explicit **"Deploy .pgtp"** gesture, reachable both on-demand at any time (Database menu, mirroring DDL's on-demand batch Deploy, §18.3) and as a convenience prompt offered at project close if the working copy has unpushed changes (never forced). Outside a local project, §7/§19's existing plain-save-plus-`.bak` behavior is exactly as it was — this row does not touch it |
 | 2026-08-04 | §18.1: *"a **separate fetch path from `fetch_schema`**, not merged into it: an implementation choice to avoid touching `fetch_schema`'s existing 3-query contract and its tests, since the DB Check features never need routine/trigger data. The `DatabaseSchema` it returns always has an empty `.tables`; only `.routines`/`.triggers` are populated"* | **Widened, not merged: `fetch_routines_and_triggers` now additionally runs `SCHEMA_SQL` (§17) and populates `.tables` too** (§18.6). `fetch_schema` itself and its existing 3-query contract/tests are untouched, and DB Check keeps calling `fetch_schema` directly — this is one connect-time fetch on DDL Explorer now serving two consumers (routine/trigger browsing **and** §18.6's schema-aware Ctrl+Space completion, via the new `db/schema_index.py`), not a second parallel fetch and not a lazy per-keystroke query |
+| 2026-08-05 | §18.5 D2's "Zero bundled bytes" invariant, stated flatly: *"The app ships no server, no client binaries, and invokes no external process. Everything goes over `psycopg`."* — with no carve-out of any kind | **A single, deliberate, narrowly-scoped exception for optional sandbox data cloning (new §18.5 D2a).** The schema-only `build_baseline_sql` baseline path (D2's core contract) is completely unchanged and stays in-process/`psycopg`-only, today and after this addition. The **new, optional** "with data" sandbox-provisioning mode shells out to **`pg_dump`**/**`pg_restore`** as external subprocesses against the user's locally-installed binaries (the app bundles neither) — chosen once, at sandbox-creation time (a "with data"/"without data" choice added to the New Project dialog's local-sandbox step, §18.2), never toggled later. Cloning is **one-shot**: there is no refresh/re-sync operation — refreshing means destroying and recreating the sandbox, whose existing schema-level `reset()` (`DROP SCHEMA … CASCADE`) is followed by a re-run of whichever provisioning strategy (schema-only or with-data) the sandbox was created with, recorded in the project's sandbox settings rather than re-derived. A missing `pg_dump`/`pg_restore` on `PATH` is a named, actionable failure, never a silent fall-back to schema-only. Everything else in D2/D3 (ownership guard, working-set bookkeeping, the validation ladder) is unaffected — `plpgsql_check` still reads no rows regardless of which baseline mode produced the sandbox |
+| 2026-08-05 | §18.1/§18.5's implicit architecture: **exactly one** `BrowserPanel` instance, **one** left-dock "DDL Objects" tab, **one** center `EditorPanel` DDL Explorer tab, and **one** database connection feeding all of it — stated as fact throughout §18.1 ("the tab," "the tree") with no per-connection variant ever contemplated | **New §18.7: the DDL Explorer becomes per-connection, not a singleton, once a project has a sandbox.** A second, independent instance of the existing `BrowserPanel`/`EditorPanel` pair browses the `role=sandbox` connection (§18.5 D2) alongside the existing target-database instance — both may be open simultaneously, each its own dock tab and center tab. `CenterStage`'s dynamic-tab key→widget map (previously used only for §18.5's per-object tabs) is generalized to also key the two DDL Explorer tabs by connection **role**, rather than the fixed `ddl_tab_index`; the left-dock "DDL Objects" tab likewise becomes two, one per role. `BrowserPanel`/`EditorPanel`'s own rendering/tree-building/navigation code is **reused unmodified** — only instantiation count and which `ConnectionParams` feeds each instance's fetch changes. Drift-marker computation (§18.2's `*`/`!`) is scoped **per source connection**, not shared between the two instances, and each instance's tree must tolerate its connection's object set genuinely diverging from the other's (no cross-referencing, no merged/diffed tree — an object present only in the sandbox or only on target simply does not appear in the other instance at all). The sandbox-scoped instance's menu/dock entry is **absent**, not disabled, until a sandbox exists for the active project (mirroring §18.5 carve-out 2's "no dead controls" posture) |
+| 2026-08-05 | §18's "Five parts" table described §18.2's scope as *"the 'project' concept (**git repo**, `ddl/*.sql` file-per-object, `.ddlproject/` manifests)"* — a stale description left in place after the 2026-08-03 "project = local folder, not necessarily git" revision superseded it elsewhere in the same top-level section | **Corrected to match the already-current body text, no design change:** §18.2's scope is now described as *"a local folder (git optional/TBD, not the definition of a project), `ddl/*.sql` file-per-object, `.ddlproject/settings.json`, checkout-to-edit, and the `*`/`!` state markers."* This is a **prose-drift fix, not a new decision** — the 2026-08-03 row above already establishes the current truth; this row only records that the "Five parts" table itself had not been updated to match it. Also new the same day: an explicit **"three operating modes" taxonomy** (standalone / quality project / development project) added at the top of §18, reframing — not changing — the already-settled scope of §18.1 (read-only, unchanged), §18.2/§18.5 (quality-project capabilities: DDL editing, Save, batch deploy.sql, Apply-to-Target), and §18.5 D2/D2a/§18.7 (development-project capabilities: sandbox linting tiers, Apply-to-Sandbox, the sandbox DDL Explorer instance, Generate Deployment SQL) — gating "development project" on an **environment capability** (reachable local Postgres; `psql`/`pg_restore` on `PATH` required only for D2a's optional "with data" clone, verified against D2's actual in-process-`psycopg`-only schema baseline, not a general sandbox prerequisite) rather than a bare per-project settings toggle. Where/when the capability check runs and how tier 2-vs-3 is surfaced to the user is recorded as a new open question (§29), not resolved by this pass |
+| 2026-08-05 | The "Project Status" window/screen was named as the planned destination for tier/capability/degradation-reason display (top of §18, added same day) but stated explicitly as **NOT YET DESIGNED** — "the owner has UI reference images saved locally for it but has not yet specified its layout or behavior," recorded as an open question in §29 | **New §18.8: the window is now fully specified as a node-and-connector diagram** — quality (target-DB connection) → app (`ProjectCapabilityStatus`/`ProjectTier`'s 4 named states: `app_standalone`/`app_sandbox_not_set_up`/`app_sandbox_connection_ok`/`app_sandbox_offline`) → sandbox1 (data-fill status, upper) / sandbox2 (`plpgsql_check` capability, lower), the app→sandbox connector splitting in two. Sandbox1/sandbox2/their connector are **absent, not grayed out**, whenever no sandbox is configured at all (mirroring §18.5 carve-out 2 / §18.7's absent-not-disabled rule). All four node families are clickable, each opening a node-specific "action window." **Deliberately left open, not invented:** the four action windows' exact contents/behavior (§29), the exact connector state set beyond the `connector_[status]` naming convention, and the menu/shortcut entry point — this row fills the previously-flagged design gap, it does not merely reword it |
+| 2026-08-05 | §18.8's just-written **4-node** model (row directly above, same day): a single 4-state `app_*` node (`app_standalone`/`app_sandbox_not_set_up`/`app_sandbox_connection_ok`/`app_sandbox_offline`) that **conflated project tier and sandbox live connectivity into one node**, in a `quality → app → (sandbox1 / sandbox2)` chain | **Corrected to a 5-node model** — a real correction of just-written design, not a refinement of the still-open question, hence its own ledger row. Chain is now `quality → app → sandbox → (sandbox1 / sandbox2)`. **App node narrowed to 3 states, project tier only** (`app_standalone`/`app_project_not_setup`/`app_project_setup`), mapping onto `ProjectTier`'s existing `QUALITY`/`DEVELOPMENT` plus "no project open" (not itself a `ProjectTier` member — see the App-node implementation note in §18.8). **New, distinct `sandbox_*` node** takes over the live-connectivity states the old `app_*` node used to carry, plus a new `sandbox_tools_missing` state (sandbox DB reachable but `psql`/`pg_restore` absent, relevant only under `SandboxMode.WITH_DATA`) that the 4-node model had no room for. Sandbox1/sandbox2 unchanged in meaning. Click-through is also corrected from one uniform pattern to two: Quality/Sandbox open a one-step status/reconnect-or-help window; Sandbox1/Sandbox2 open a two-step status+help window with an embedded action button ("run data clone now" / "run `plpgsql_check` install now"); the App node's action window remains the one genuinely unspecified click-through, carried over from the prior pass. Absence rule widened from "sandbox1/sandbox2 absent" to "sandbox node + sandbox1 + sandbox2 + their connectors all absent" when no sandbox is configured. **Implementation note, not papered over:** the shipped `ProjectCapabilityStatus`/`ProjectTier`/`SandboxCapabilities` shapes in `pgtp_editor/db/sandbox.py` do not need new members to support this corrected model, but they also do not natively expose "is a project open at all?" (needed for `app_standalone`) — the window's rendering logic must add that check itself rather than reading it off `ProjectCapabilityStatus`, which only ever describes an already-open project |
+| 2026-08-05 | §18's three-modes table (Tier 1) and the Database-menu descriptions (§17's "UI:" paragraph, §26) listed **Connection Setup…** as unconditionally available, with no mode gating stated one way or the other (an incidental omission, not a considered decision — BUG-024) | **Connection Setup… is projectless-mode only.** While a §18.2 local project is open, the project's own `ProjectSettings.target`/`.sandbox` (edited via **Project Settings…**) is the sole connection store; the app-level `Connection Setup…` action is now disabled (`self._connection_setup_action.setEnabled(self._ddl_project_folder is None)`, refreshed by `_refresh_project_dependent_actions()` on both project open and close) and `_open_connection_setup()`/the two internal missing-connection callers (`_run_db_check`, `_open_ddl_explorer`) reroute to Project Settings… instead of opening the dialog while a project is active. Corrects the prior unconditional-availability framing in both §18's Tier-1 row and §17/§26's Database-menu prose |
 
 ---
 
@@ -3941,7 +4461,76 @@ is authoritative** (and is what appears in the body above).
   choose. **Nobody has actually made this decision.**
 - **Execution against the sandbox (§18.5)** — running a function and seeing its results is not designed.
   It is **the difference between a validator and an IDE**, and the sandbox makes it safe in a way DBeaver
-  cannot. Scope it as a follow-on feature or fold it into v1 — undecided.
+  cannot. Scope it as a follow-on feature or fold it into v1 — undecided. **This is the same gap the
+  2026-08-05 "three operating modes" taxonomy (top of §18) names as development-project tier 3's
+  "linting with execution on local database"** — owner-named as a distinct mode from D3 tier 2 (which
+  only proves the DDL *applies/compiles*, not that the routine *behaves correctly* against real rows) and
+  from D3 tier 3's static `plpgsql_check` analysis. Naming it does not resolve scope/design; still
+  undecided which of D3's tiers it would extend or whether it is a genuinely new tier/surface.
+- **~~Where the tier-2/tier-3 (quality-project vs. development-project) environment-capability check
+  runs~~ — RESOLVED 2026-08-05 (top of §18):** the probe (reusing §18.5 D2's `SandboxCapabilities.probe`)
+  runs automatically on every project **open** (so a sandbox that died between sessions correctly degrades
+  the project to quality-project mode for that session) and again on demand whenever the **Project Status
+  window (§18.8, RESOLVED 2026-08-05 — see below)** is brought up — it is not cached from creation time.
+  Still open: whether a `pg_dump`/`pg_restore`-on-`PATH` check is folded into the same probe (to
+  gate/offer D2a's "with data" choice) or deferred until "with data" is actually chosen and then fails
+  lazily and namedly.
+- **~~The "Project Status" window/screen — layout and behavior~~ — RESOLVED 2026-08-05 (§18.8), corrected
+  same day to a 5-node model:** the window is a small node-and-connector diagram, read as a horizontal
+  chain: **quality → app → sandbox → (sandbox1 / sandbox2)**, the last connector splitting after the
+  sandbox node. The **app node is now project-tier-only, 3 states** (`app_standalone` /
+  `app_project_not_setup` / `app_project_setup`), a corrected reading of a first pass that had wrongly
+  conflated project tier and sandbox connectivity into one 4-state `app_*` node. Sandbox connectivity is
+  now its own **new, distinct node** (`sandbox_*`: not-set-up / connection-ok / offline /
+  connected-but-tools-missing), with sandbox1/sandbox2 unchanged in meaning (data-fill status;
+  `plpgsql_check` capability respectively). The sandbox node, sandbox1, sandbox2, and their connectors
+  remain **absent** (not disabled) whenever no sandbox is configured at all. **Still open, and the reason
+  this item is not fully closed:** the App node's action-window contents/behavior is **NOT designed** and
+  must not be invented — a further owner pass is needed. (Quality/Sandbox/Sandbox1/Sandbox2's
+  click-through *patterns* are now specified: Quality opens a connection-info+reconnect window; Sandbox
+  opens a status/help window naming the missing tool when degraded by missing `psql`/`pg_restore`;
+  Sandbox1/Sandbox2 open a two-step status+help window with an embedded action button, e.g. "run data
+  clone now" / "install the plpgsql_check extension" (Sandbox2 is an install-state marker, not a lint
+  pass/fail result — only the App node's action window is unspecified.)
+  Also still unspecified: the exact connector state set (asset names follow `connector_[status]` but the
+  states themselves aren't enumerated), the menu/shortcut entry point for opening the window, and the
+  Sandbox node's tools-missing help-section content/deep-link mechanism (verified: the app's only
+  existing help surface, the in-app manual §24, has no topic-anchor/deep-link mechanism today — both are
+  new work) — all left as either a future spec detail or an implementation detail per §18.8.
+  **Implementation note:** `ProjectTier`
+  (`pgtp_editor/db/sandbox.py`) is a 2-member enum (`QUALITY`/`DEVELOPMENT`) with no tier-1 member at
+  all — the corrected 3-state App node's `app_standalone` state must be derived from "no project is
+  currently open," a fact outside `ProjectCapabilityStatus` itself, not from a third enum member; no
+  code change is required, but the window's App-node rendering logic needs this explicit check (§18.8).
+  **Added 2026-08-05, concrete per-node state list from the owner's reference images (§18.8):** three
+  further small gaps, none blocking, all flagged rather than invented:
+  1. **Quality node — RESOLVED 2026-08-05, no longer an open gap.** The locked/gray icon is
+     `quality_connection_not_set_up`, not a distinct auth-failure mode alongside a general error state —
+     it means the quality/target connection is simply not configured yet, the same semantic category as
+     the Sandbox node's `sandbox_not_set_up`. The Quality node's 3 states are therefore `not_set_up`
+     (locked/gray) / `error` (red, connection attempted but failed) / `connection_ok` (green), mirroring
+     the Sandbox node's not_set_up/offline/connection_ok pattern exactly.
+  2. **Sandbox1 — no "in-progress"/"clone-failed" icon provided.** Sandbox1 (data-fill) shows only 2
+     states in the reference images (not-filled, filled) with no distinct "clone in progress" or "clone
+     failed" icon. Flagged for owner confirmation, not invented here.
+  2a. **Sandbox2 — corrected 2026-08-05, no longer an open gap.** The earlier note here speculated about
+     a missing "not-yet-run" icon, on the mistaken premise that Sandbox2 was a `plpgsql_check` pass/fail
+     result. It is actually an **install-state** marker (`sandbox2_plpgsql_check_installed` /
+     `sandbox2_plpgsql_check_not_installed` — is the extension installed in the sandbox, not whether a
+     routine passed a lint check; that per-object result lives in the DDL object editor's Audit panel,
+     §18.5 D3). There is no "run" to be pending, so no third icon is missing. **What remains genuinely
+     open:** `SandboxCapabilities.plpgsql_check_state` is 4-valued (`installed`/`installable`/`absent`/
+     `unknown`) while this node has only 2 icons; collapsing `installable`/`absent`/`unknown` onto the
+     single `not_installed` icon is a reasonable implementation default but is not owner-confirmed (§18.8
+     reuse map).
+  3. **Dark-mode asset convention — confirmed reuse, not a new mechanism, but verify the hook point at
+     implementation time.** Every image asset gets a `_drk`-suffixed dark-theme counterpart
+     (`quality_ok.png` / `quality_ok_drk.png`). The app's theme selection is the existing user-toggled
+     **Light Theme** menu checkbox (`ui/theme.py::apply_theme`, `MainWindow._light_theme_action`) — there
+     is no OS/system dark-mode *detection* anywhere in `pgtp_editor/` today. The `_drk`-vs-plain asset
+     choice should key off this existing toggle's boolean state, not a new detection mechanism; this is
+     recorded as confirmed-available reuse, not a gap, but is called out here because it was easy to
+     mistake for requiring new OS-theme-detection capability.
 - **`db/routine_refs.py` (§18.1's one unbuilt piece)** — XML↔routine cross-referencing, answering *"which
   `.pgtp` pages break if I change this function?"* before a deployment script is generated. **No other
   tool can do this**, and it is the XML↔DB sync the owner describes as the point of the app (§1). Not
@@ -3958,6 +4547,22 @@ is authoritative** (and is what appears in the body above).
   revision (probably not, since nothing has shipped yet); (b) whether the optional `.pgtp` link inside
   the JSON is stored relative to the project root or absolute (relative survives a folder move without
   edits; absolute is simpler to implement first).
+- **§18.5 D2a — `pg_dump`/`pg_restore` invocation details.** Not designed: whether the app searches
+  `PATH` only or also offers a configurable binary location (mirroring §26's "Locate PHP Generator
+  Executable…" precedent, which this feature's Database-menu text explicitly declines to add a parallel
+  of for v1); the exact dump format/flags (custom-format `-Fc` is the natural default for piping into
+  `pg_restore`, but this is not pinned); whether large-database cloning needs a progress indicator beyond
+  the existing `busy_status` spinner; and whether/how a version mismatch between the target server's
+  `pg_dump` requirements and the binary found on `PATH` is detected and reported. Flag back to the user
+  rather than guess.
+- **§18.7 — sandbox destroyed/reset while its DDL Explorer instance is open.** Not designed: whether the
+  sandbox-scoped DDL Explorer tab and dock auto-close, show a stale/error state, or require the user to
+  manually reopen after a `SandboxSession.reset()` or a sandbox-connection removal. Left as an open
+  question in §18.7 rather than guessed at.
+- **§18.5 "Deploy this edit…" — exact picker UI.** Not designed: whether the 3-way destination choice is
+  presented as a small modal dialog with three buttons, a `QMenu` fly-out, or another idiom; this is
+  deliberately left to the implementation as long as it (a) is not a keyboard shortcut and (b) delegates
+  to the three existing gestures' own wiring/confirmations rather than reimplementing any of them.
 
 ---
 

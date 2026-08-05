@@ -105,6 +105,7 @@ from pgtp_editor.db.ddl_project import (
     ProjectSettings,
     compute_drift_markers,
     content_hash,
+    is_project_dir,
     load_settings,
     routine_ddl_paths,
     save_settings,
@@ -115,6 +116,12 @@ from pgtp_editor.db.introspect import fetch_schema as db_fetch_schema
 from pgtp_editor.db.introspect import test_connection as db_test_connection
 from pgtp_editor.db.rename import rename_field, rename_table
 from pgtp_editor.db.schema_index import SchemaIndex
+from pgtp_editor.db.sandbox import (
+    ProjectCapabilityStatus,
+    SandboxCapabilities,
+    determine_project_tier,
+    probe as sandbox_probe,
+)
 from pgtp_editor.ui.async_task import run_async
 from pgtp_editor.ui.connection_setup_dialog import ConnectionSetupDialog
 from pgtp_editor.ui.new_project_dialog import NewProjectDialog
@@ -429,6 +436,14 @@ class MainWindow(QMainWindow):
         # a plain chosen FOLDER, not necessarily related to any .pgtp at all.
         self._ddl_project_folder: Path | None = None
         self._ddl_project_settings: ProjectSettings | None = None
+        # Top-of-§18 tier/capability probe result -- refreshed automatically
+        # whenever a project is opened/created, and (later) on demand by the
+        # not-yet-built Project Status screen via refresh_project_capability_status().
+        # None until the first probe completes for the currently-open project.
+        self._ddl_project_capability_status: ProjectCapabilityStatus | None = None
+        # Injectable seam (mirrors _fetch_db_schema) -- tests patch this to a
+        # canned SandboxCapabilities so no real connection is ever opened.
+        self._probe_sandbox_capabilities = sandbox_probe
 
         # Document dirty-state tracking. `_loading` guards programmatic
         # setPlainText calls (load/revert/close) so they don't spuriously
@@ -2496,8 +2511,15 @@ class MainWindow(QMainWindow):
 
     def _build_database_menu(self):
         menu = self.menuBar().addMenu("Database")
-        setup_action = menu.addAction("Connection Setup…")
-        setup_action.triggered.connect(self._open_connection_setup)
+        # Standalone/projectless-mode only (BUG-024): once a §18.2 project is
+        # open, its own ProjectSettings (target/sandbox) is the connection
+        # store and this app-level profile would be a redundant shadow of it.
+        # Stored on self (not a local) so _refresh_project_dependent_actions
+        # can flip its enabled state from _set_active_ddl_project /
+        # _close_ddl_project.
+        self._connection_setup_action = menu.addAction("Connection Setup…")
+        self._connection_setup_action.triggered.connect(self._open_connection_setup)
+        self._connection_setup_action.setEnabled(self._ddl_project_folder is None)
         menu.addSeparator()
         check_xml_action = menu.addAction("Check: XML → Database")
         check_xml_action.triggered.connect(lambda: self._run_db_check("xml_to_db"))
@@ -2512,7 +2534,38 @@ class MainWindow(QMainWindow):
         self._ddl_explorer_action.setChecked(False)
         self._ddl_explorer_action.toggled.connect(self._on_ddl_explorer_toggled)
 
+    def _prompt_missing_connection(self) -> None:
+        """No configured DB connection: in projectless mode this opens the
+        standalone Connection Setup dialog (unchanged behavior); with a
+        §18.2 project open, that dialog is meaningless (BUG-024) -- point the
+        user at Project Settings (target/sandbox) instead. Shared by
+        _run_db_check and _open_ddl_explorer, the two internal callers that
+        used to always open Connection Setup on a missing host."""
+        if self._ddl_project_folder is not None:
+            self.statusBar().showMessage(
+                "No database connection configured — set one up in Project Settings.",
+                5000,
+            )
+            self._open_ddl_project_settings()
+            return
+        self.statusBar().showMessage(
+            "No database connection configured — set one up first.", 5000
+        )
+        self._open_connection_setup()
+
     def _open_connection_setup(self):
+        # Projectless mode only (BUG-024): while a §18.2 project is open, its
+        # connection lives in Project Settings (target/sandbox) -- this
+        # app-level dialog would be a meaningless, redundant shadow of it.
+        # The menu action is already disabled in that state, but internal
+        # callers (_run_db_check, _open_ddl_explorer) also invoke this method
+        # directly on a missing connection, so guard here too.
+        if self._ddl_project_folder is not None:
+            self.statusBar().showMessage(
+                "Connection is defined in Project Settings while a project is open.",
+                5000,
+            )
+            return
         tree = (
             self._current_project.tree
             if self._current_project is not None
@@ -2546,6 +2599,7 @@ class MainWindow(QMainWindow):
             name=dialog.name(),
             description=dialog.description(),
             sandbox=dialog.sandbox_params(),
+            sandbox_mode=dialog.sandbox_mode(),
             git=dialog.git_config(),
         )
         save_settings(folder, settings)
@@ -2553,16 +2607,73 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(f"Created project: {folder}", 5000)
 
     def _open_ddl_project(self, on_ready=None) -> None:
-        folder = QFileDialog.getExistingDirectory(self, "Open Project Folder", "")
+        folder = QFileDialog.getExistingDirectory(
+            self, "Open Project Folder", "",
+            QFileDialog.Option.ShowDirsOnly,
+        )
         if not folder:
             return
         folder_path = Path(folder)
+        # BUG-022: Open requires a REAL project folder -- one already
+        # carrying the `.ddlproject/settings.json` marker. Loading
+        # `load_settings` unconditionally on any folder silently returns a
+        # default ProjectSettings() for a folder that was never a project;
+        # reject that instead of guessing.
+        if not is_project_dir(folder_path):
+            QMessageBox.warning(
+                self,
+                "Not a Project Folder",
+                f"{folder_path} is not a PGTP DDL project folder "
+                "(no .ddlproject/settings.json marker found).",
+            )
+            return
         settings = load_settings(folder_path)
         self._set_active_ddl_project(folder_path, settings)
         self._report_ddl_project_drift(folder_path, settings)
         self.statusBar().showMessage(f"Opened project: {folder_path}", 5000)
         if on_ready is not None:
             on_ready()
+        else:
+            # BUG-021: opening a project should auto-open its linked .pgtp
+            # into the editor -- but only on a plain Open Project (on_ready
+            # is None). When on_ready IS set, the caller (e.g.
+            # _prompt_pgtp_open_mode's "Open Project…" choice, or
+            # _require_ddl_project) already has its own specific .pgtp to
+            # load; auto-opening the linked working copy here too would be a
+            # silent double-load racing against that caller's own load.
+            self._auto_open_linked_pgtp(folder_path, settings)
+
+    def _auto_open_linked_pgtp(self, folder_path: Path, settings: ProjectSettings) -> None:
+        """BUG-021: a project's linked `.pgtp` should populate the editor the
+        moment the project is opened, not require a separate manual File >
+        Open. Reuses the existing `open_project_file` loader -- never
+        reinvents loading.
+
+        Scope, exactly as triaged: **zero** candidates -> silent no-op (no
+        error, nothing to open yet); **one** -> auto-open it; **multiple**
+        unlinked candidates -> report via the Audit panel rather than
+        guessing which one the user means."""
+        working_copy_path = settings.pgtp.working_copy_path
+        if working_copy_path:
+            if Path(working_copy_path).exists():
+                self.open_project_file(working_copy_path)
+            return
+        # Not yet linked -- fall back to scanning the project folder itself
+        # for a `.pgtp` the user may have dropped in directly.
+        candidates = sorted(folder_path.glob("*.pgtp"))
+        if not candidates:
+            return  # zero -- nothing to do
+        if len(candidates) == 1:
+            self.open_project_file(str(candidates[0]))
+            return
+        # Multiple unlinked candidates: never guess -- surface via Audit.
+        names = ", ".join(path.name for path in candidates)
+        self.audit_panel.addItem(
+            QListWidgetItem(
+                f"[Project] Multiple .pgtp files found in {folder_path} "
+                f"({names}) -- open one explicitly via File > Open."
+            )
+        )
 
     def _require_ddl_project(self, on_ready) -> None:
         """§18.2: no project-scoped action proceeds silently with none open.
@@ -2589,7 +2700,63 @@ class MainWindow(QMainWindow):
         self._ddl_project_folder = folder
         self._ddl_project_settings = settings
         self._close_ddl_project_action.setEnabled(True)
+        self._refresh_project_dependent_actions()
         self._update_title()
+        self.refresh_project_capability_status()
+
+    def _refresh_project_dependent_actions(self) -> None:
+        """Single place for menu-action enablement that depends on whether a
+        §18.2 project is open. Currently just the standalone Connection
+        Setup… action (BUG-024: projectless-mode only, since a project's own
+        connection lives in Project Settings), called from both
+        `_set_active_ddl_project` and `_close_ddl_project` so the two
+        transitions can never drift apart."""
+        self._connection_setup_action.setEnabled(self._ddl_project_folder is None)
+
+    def refresh_project_capability_status(self) -> None:
+        """Re-run the top-of-§18 tier/capability probe for the current
+        project (reachable local Postgres via `db/sandbox.py::probe`, plus
+        -- for a "with data" sandbox -- `pg_dump`/`pg_restore` on `PATH`) and
+        store the result on `self._ddl_project_capability_status`.
+
+        **Probe timing, settled 2026-08-05:** runs automatically whenever a
+        project is opened/created (called from `_set_active_ddl_project`)
+        and is also the entry point the not-yet-designed "Project Status"
+        screen will call on demand later -- it is never probed once and
+        cached from creation time, so a sandbox that died between sessions
+        is correctly detected and degrades the project from tier 3 to tier
+        2 for this session. No-op (and clears the stored status) when no
+        project is open. Runs off the GUI thread so an unreachable sandbox
+        host can't freeze the window.
+        """
+        if self._ddl_project_folder is None or self._ddl_project_settings is None:
+            self._ddl_project_capability_status = None
+            return
+        settings = self._ddl_project_settings
+        sandbox_params = settings.sandbox
+        sandbox_mode = settings.sandbox_mode
+        sandbox_configured = bool(sandbox_params.host)
+
+        def do_probe() -> ProjectCapabilityStatus:
+            if not sandbox_configured:
+                return determine_project_tier(
+                    SandboxCapabilities(), sandbox_mode, sandbox_configured=False
+                )
+            caps = self._probe_sandbox_capabilities(sandbox_params)
+            return determine_project_tier(caps, sandbox_mode, sandbox_configured=True)
+
+        def on_result(status: ProjectCapabilityStatus) -> None:
+            self._ddl_project_capability_status = status
+
+        def on_error(exc: BaseException) -> None:
+            # The probe itself never raises (db/sandbox.py::probe's
+            # never-raises contract) -- this only guards against a broken
+            # injected seam in tests/future callers, never silently swallowed.
+            self.audit_panel.addItem(
+                QListWidgetItem(f"[Project] Capability probe failed unexpectedly: {exc}")
+            )
+
+        self._run_async(do_probe, on_result=on_result, on_error=on_error)
 
     def _report_ddl_project_drift(self, folder: Path, settings: ProjectSettings) -> None:
         """Opening a project compares the `.pgtp` working copy's checksum
@@ -2628,7 +2795,9 @@ class MainWindow(QMainWindow):
         self._remind_pending_ddl_deploys_on_close()
         self._ddl_project_folder = None
         self._ddl_project_settings = None
+        self._ddl_project_capability_status = None
         self._close_ddl_project_action.setEnabled(False)
+        self._refresh_project_dependent_actions()
         self._update_title()
         self.statusBar().showMessage("Project closed.", 5000)
 
@@ -2832,10 +3001,7 @@ class MainWindow(QMainWindow):
             return
         params = seed_params(project.tree, self._settings)
         if not params.host:
-            self.statusBar().showMessage(
-                "No database connection configured — set one up first.", 5000
-            )
-            self._open_connection_setup()
+            self._prompt_missing_connection()
             return
         # The schema fetch opens a DB connection -- move ONLY that off the GUI
         # thread. Everything above (buffer parse, seed, guards) is fast and stays
@@ -2888,11 +3054,8 @@ class MainWindow(QMainWindow):
         )
         params = seed_params(tree, self._settings)
         if not params.host:
-            self.statusBar().showMessage(
-                "No database connection configured — set one up first.", 5000
-            )
             self._ddl_explorer_action.setChecked(False)
-            self._open_connection_setup()
+            self._prompt_missing_connection()
             return
         self.statusBar().showMessage("Loading routines & triggers…")
         _log.info("db: ddl explorer load started %s", debuglog.redacted(params))

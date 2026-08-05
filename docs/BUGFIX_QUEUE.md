@@ -2112,3 +2112,199 @@ tests/db/test_ddl_buffer.py tests/db/test_schema_diff.py tests/ui/test_ddl_buffe
   top line is pinned by the 2026-08-01 ledger row at `CONSOLIDATED_SPEC.md:2035`.
 
 ---
+
+## BUG-020: "See column in caption mode" applies an invisible preset filter — the grid is narrowed but no filter widget/header shows which column (or how) is filtered
+**Status:** OPEN
+**Reported:** 2026-08-05
+**Report (verbatim):** "When I come to Caption Management from BrowserPane (show column in caption mode), there's a filter applied. I can't see which columns are filtered and how. The applied filters should be just as visible as if they were applied manually"
+
+**Root cause:** The Browser/tree "See column in caption mode" action funnels through
+`main_window.py::MainWindow._on_tree_see_column_in_caption` (line 1291) →
+`enter_caption_mode_for_field` (line 2387) →
+`CaptionManagementPanel.filter_to_field(field_name, table_name)`
+(`caption_management_panel.py:936`). `filter_to_field` (and its siblings
+`filter_to_table` line 924 / `filter_to_table_details` line 928, reachable via
+`enter_caption_mode_for_table_details`) apply the filter by calling
+`self._proxy.set_row_predicate(lambda e: ...)` — the Phase C.2 preset **row-predicate**
+mechanism on `_CaptionFilterProxyModel` (`caption_management_panel.py:336`,
+`_row_predicate` / `filterAcceptsRow` at 449).
+
+The row-predicate is a *third*, entirely invisible filter mechanism. The two
+user-facing filters both have a visible representation:
+  * **Header value filters** (`set_value_filter`, 364) notify the source model via
+    `_notify_filtered_columns` → `_CaptionTableModel.set_filtered_columns` (189), which
+    repaints the affected column header with the `_FILTER_INDICATOR` " ▼" marker plus
+    bold font + accent foreground (`headerData`, 199–216).
+  * **Whole-row find filter** (`set_regex_filter`, 348) is set through the shared
+    Find/Filter/Replace modal and its pattern is retrievable via
+    `current_filter_pattern()` (782) to pre-load the Replace dialog.
+
+The preset **row-predicate** has none of that: `set_row_predicate` only calls
+`self.invalidate()` (343) — it does not touch `set_filtered_columns`, has no header
+marker, no status text, and no field the user can inspect. So on entry from the Browser
+Pane the grid silently collapses to (e.g.) one `field_name` with zero on-screen
+explanation of what was filtered or how. There is no inline filter QLineEdit/combo in the
+panel at all (the old inline per-column filter row was removed — see spec §13), so a
+lambda predicate is genuinely opaque.
+
+Note there is also no single "manual" setter to funnel through here: unlike value/find
+filters, a preset predicate is a semantic narrowing ("field = wbs_id") that no manual
+gesture produces, so the fix must *add* a visible representation for it, not just reroute
+to an existing widget.
+
+**Proposed fix:** Give the preset row-predicate a visible, human-readable representation,
+mirroring how value filters surface via `set_filtered_columns`. Concretely:
+
+1. In `_CaptionFilterProxyModel` (`caption_management_panel.py:336`), change
+   `set_row_predicate` to accept an optional human-readable **label** alongside the
+   predicate, e.g. `set_row_predicate(predicate, label: str = "")`, and store
+   `self._row_predicate_label`. Add a `row_predicate_label()` getter. Keep the existing
+   single-arg call sites (`clear_all_filters` passes `None` → label `""`) working.
+2. In the three preset entry points, pass a descriptive label built from the same
+   arguments used for the predicate, so proxy + label stay in sync in one call:
+     * `filter_to_field` (936): e.g. `Field = wbs_id` (or `Field = wbs_id  ·  Table = pr.equip`
+       when `table_name` is given).
+     * `filter_to_table` (924): `Table = pr.equip`.
+     * `filter_to_table_details` (928): `Table = pr.att  (Detail embeds)`.
+3. Surface the label in the panel UI. Add a small **active-filter banner** — a `QLabel`
+   (styled like the changed/inconsistency accents already used, `_FILTER_HEADER_FOREGROUND`)
+   inserted into the panel's `QVBoxLayout` (built at 654–656) **above** `self._table`,
+   plus a compact "Clear" `QPushButton` wired to the existing
+   `clear_all_filters()` (968). Show the banner (with text like
+   `Filtered: Field = wbs_id — showing 3 of 214 rows`) whenever a preset predicate is
+   active; hide it when the predicate is cleared. Update its visibility/text from the
+   preset setters and from `clear_all_filters`. The row count can come from
+   `self._proxy.rowCount()` / `self._model.rowCount()`.
+4. Do NOT try to reuse the header ▼ indicator for the predicate — the predicate is not
+   per-column (it keys on `field_name`/`table_name`, which map to the Anchor/Breadcrumb
+   columns only loosely), so a banner is the correct surface; the header markers stay
+   exclusive to `set_value_filter`.
+
+Gotchas:
+  * `clear_all_filters` (968) already calls `set_row_predicate(None)`; it must also hide
+    the new banner. Keep it the single clear path.
+  * `filter_to_field` calls `_select_first_visible_row()` after setting the predicate;
+    compute/refresh the banner's row count *after* the proxy has been invalidated so the
+    "showing N of M" count is correct.
+  * Keep the label construction next to the predicate lambda in each of the three
+    methods so the two never drift (the report's core complaint is exactly that the
+    predicate and its visible description were out of sync — here, absent).
+
+**Test impact:** `tests/ui/test_caption_management_panel.py` already covers the preset
+predicates: `test_filter_to_table_shows_only_that_table` (1417),
+`test_filter_to_table_details_shows_only_detail_rows` (1425),
+`test_filter_to_field_shows_and_selects_matching_row` (1435),
+`test_clear_all_filters_resets_everything` (1452), and the raw
+`test_set_row_predicate_*` (1377–1416). Extend these (don't duplicate): after each
+`filter_to_*` call assert the new banner is visible and its label/text reflects the
+field/table, and after `clear_all_filters` assert the banner is hidden and
+`row_predicate_label()` is `""`. If `set_row_predicate` gains a `label` param, update the
+direct-call tests at 1381/1389/1400/1458 (they can keep passing just a predicate since
+`label` defaults to `""`). In `tests/ui/test_main_window.py`,
+`test_see_column_in_caption_filters_and_selects_row` (1290) should additionally assert the
+panel's banner shows the field after `_on_tree_see_column_in_caption`.
+
+**Spec impact:** Diverges from `CONSOLIDATED_SPEC.md` §13 "Grid" (lines 1114–1124), which
+documents only the header value filter and the regex find filter as the panel's filtering
+mechanisms — the Phase C.2 preset **row-predicate** (`set_row_predicate`) and its
+Browser-Pane "See column in caption mode" entry path are not described there at all, and
+the section explicitly notes the inline per-column filter row was removed. Flag for
+spec-maintainer after the fix lands: document the preset row-predicate as a third filter
+mechanism and its new visible active-filter banner in §13.
+
+---
+
+## BUG-021: Opening a project doesn't auto-open its linked `.pgtp` into the editor
+**Status:** OPEN
+**Reported:** 2026-08-05
+**Report (verbatim):** "at opening the project the pgtp should automatically open"
+
+*(Reconstructed from a background-triage report that was lost when a §18.3 merge from another worktree overwrote the working-tree queue file before this entry was committed. Line numbers are pre-merge and may have shifted — re-grep the named symbols.)*
+
+**Root cause:** `MainWindow._open_ddl_project` (`pgtp_editor/ui/main_window.py`, ~2570-2580) sets the project active and reports drift but never calls the existing loader `open_project_file` (`main_window.py`, ~1356-1415). The project's working-copy path is already recorded in `settings.pgtp.working_copy_path` (`PgtpLink` in `pgtp_editor/db/ddl_project.py`, ~66-77), so the fix reuses the existing load path rather than reinventing loading.
+
+**Proposed fix:** After a project folder is opened/validated, locate the linked `.pgtp` via `settings.pgtp.working_copy_path` and call the existing `open_project_file` automatically so the editor is immediately populated. Handle the scope cases explicitly: **zero** `.pgtp` linked → do nothing (no error); **one** → auto-open + keep the project link; **multiple** candidates → report via the Audit panel rather than guessing. Watch the `on_ready` double-load gotcha (don't trigger a second load through the ready callback).
+
+**Test impact:** `tests/ui/test_ddl_project_wiring.py` and `tests/ui/test_open_project.py` — add a case asserting that opening a project folder with a linked working copy populates the editor.
+
+**Spec impact:** §18.2 — clarify that opening a project auto-opens its linked working copy; flag for spec-maintainer after the fix lands.
+
+---
+
+## BUG-022: "Open Project" folder chooser shows files and accepts any folder as an (empty) project
+**Status:** OPEN
+**Reported:** 2026-08-05
+**Report (verbatim):** "when I choose a folder to open as a project, there's no project file, the entire folder is the project. so the Open dialogue should be a folder chooser dialoge not showing any files, just the folders. also Open should only be pressable if the folder is really a project folder"
+
+*(Reconstructed from a background-triage report that was lost when a §18.3 merge from another worktree overwrote the working-tree queue file before this entry was committed. Line numbers are pre-merge and may have shifted — re-grep the named symbols.)*
+
+**Root cause:** `MainWindow._open_ddl_project` (`pgtp_editor/ui/main_window.py`, ~2570) already uses `getExistingDirectory` (so it *is* a directory chooser), but without the `ShowDirsOnly` option (so files are shown) and with **no validity gate** — it calls `load_settings` unconditionally, which silently returns a default `ProjectSettings()` for any non-project folder. Note: the reporter's premise "there's no project file" is slightly off — a project folder *does* carry a marker (`.ddlproject/settings.json`); that marker is exactly what the Open gate should check.
+
+**Proposed fix:** (1) Pass `QFileDialog.Option.ShowDirsOnly` to the picker so only folders show. (2) Add an `is_project_dir(path)` predicate in `pgtp_editor/db/ddl_project.py` that checks for the `.ddlproject/settings.json` marker, and after the pick reject folders lacking it (message + re-prompt/abort) instead of loading defaults. Note `getExistingDirectory` can't natively disable the accept button per-selection, so validate-after-pick is the pragmatic path.
+
+**Test impact:** `test_open_ddl_project_on_a_brand_new_folder_gets_default_settings` (`tests/ui/test_ddl_project_wiring.py`, ~147) encodes the current buggy behavior and must be flipped to assert rejection of a non-project folder. Add a case for a valid project folder proceeding.
+
+**Spec impact:** §18.2 — mechanism unchanged; optional one-line clarification that Open requires a valid project folder. Flag for spec-maintainer after the fix lands.
+
+---
+
+## BUG-023: Caption-mode "Unify: set all inconsistent siblings" gives no filtered-vs-project-wide scope choice when a filter is active
+**Status:** OPEN
+**Reported:** 2026-08-05
+**Report (verbatim):** "in caption mode when a filter is applied, and I select \"Unify: set all inconsistent siblings\" there should be a popup so I can decide if only apply to the filtered data or project-wide."
+
+*(Reconstructed from a background-triage report that was lost when a §18.3 merge from another worktree overwrote the working-tree queue file before this entry was committed. Line numbers are pre-merge and may have shifted — re-grep the named symbols.)*
+
+**Root cause:** `CaptionManagementPanel.unify_from_row` (`pgtp_editor/ui/caption_management_panel.py`, ~843-867) unconditionally iterates `self._model.entries()` (the whole project) and never consults `self._proxy`, so Unify **always** runs project-wide and there is currently no scope choice at all. The report's premise is slightly inverted: the requested popup is a new opt-in to *restrict* Unify to the visible/filtered rows, not a fix to a wrongly-scoped operation.
+
+**Proposed fix:** In `unify_current`, when a filter is currently active, show a three-way prompt — **Filtered rows only / Entire project / Cancel** — mirroring the existing string-returning modal pattern `_confirm_close_xsd` (`main_window.py`, ~900-917). Add a `restrict_to` parameter to `unify_from_row` so it can iterate only the visible rows (via the proxy / `_visible_source_rows`) when the user picks "Filtered rows only". When no filter is active, keep current behavior (no prompt). IMPORTANT: the new modal must be monkeypatched in tests — never let a test reach an un-patched `QMessageBox`/`QDialog.exec`.
+
+**Test impact:** `tests/ui/test_caption_management_panel.py` — extend the existing unify tests with filter-active cases for both scope choices and cancel (with the prompt patched).
+
+**Spec impact:** `CONSOLIDATED_SPEC.md` §13 Grid/Unify (~line 1123) — document the new scope prompt. Flag for spec-maintainer after the fix lands.
+
+---
+
+## BUG-024: Standalone "Connection Setup…" is redundant/meaningless when a §18.2 project is open — should be projectless-mode only
+**Status:** OPEN
+**Reported:** 2026-08-05
+**Report (verbatim):** "database connection setup is obsolete as it's being defined in Project settings. It should only be visible when in projectless mode, otherwise the setup is meaningless"
+
+**Root cause:** There are two independent connection stores. The standalone **Database ▸ Connection Setup…** action opens `ConnectionSetupDialog` (`pgtp_editor/ui/connection_setup_dialog.py`) via `MainWindow._open_connection_setup` (`pgtp_editor/ui/main_window.py:2529-2541`), which persists app-level QSettings through `save_connection(self._settings, dialog.params())` (single host/port/database/user/password profile). Separately, a §18.2 local project stores **its own** connection in `ProjectSettings` — a `target: ConnectionParams` and a `sandbox: ConnectionParams` (`pgtp_editor/db/ddl_project.py:115-116`), edited via `ProjectSettingsDialog` ("Target connection" / "Sandbox connection" groups, `pgtp_editor/ui/project_settings_dialog.py:75-91`). The `Connection Setup…` action is built unconditionally in `_build_database_menu` (`main_window.py:2511-2514`) as a plain local `setup_action` — it is **never stored on `self` and never enable/disable-gated on project state**, so it stays fully live even while a project is open. That makes it redundant with, and a silent shadow of, the project's own connection. It is meaningful only in Tier-1 standalone mode (spec §18 modes table, `CONSOLIDATED_SPEC.md:1455`), where Database Check / DDL Explorer read the app-level profile via `seed_params(tree, self._settings)` because there is no project. The app already tracks whether a §18.2 project is open via `self._ddl_project_folder` (set in `_set_active_ddl_project`, `main_window.py:2603-2608`; cleared in `_close_ddl_project`, `main_window.py:2682-2695`) — `_ddl_project_folder is None` is exactly "projectless mode".
+
+**Proposed fix:** Gate the standalone connection action's enabled state on projectless mode, following the existing `_close_ddl_project_action` project-dependent-enablement pattern (which does the inverse: enabled while a project is open).
+- In `_build_database_menu` (`main_window.py:2511`), stop discarding the action into a local `setup_action`; store it as `self._connection_setup_action = menu.addAction("Connection Setup…")`, keep the `.triggered.connect(self._open_connection_setup)` wiring, and set its initial enabled state to `self._ddl_project_folder is None` (True at startup, since no project is open then).
+- Add a small central helper, e.g. `_refresh_project_dependent_actions()`, that sets `self._connection_setup_action.setEnabled(self._ddl_project_folder is None)`, and call it from **both** `_set_active_ddl_project` (right where `self._close_ddl_project_action.setEnabled(True)` is set, `main_window.py:2606`) and `_close_ddl_project` (alongside `self._close_ddl_project_action.setEnabled(False)`, `main_window.py:2693`). Optionally fold the existing `_close_ddl_project_action` toggles into the same helper so all project-state menu enablement lives in one place — but at minimum the connection action must flip in both transitions.
+- Defensive guard in `_open_connection_setup` (`main_window.py:2529`): early-return (no dialog) when `self._ddl_project_folder is not None`, ideally with a status-bar hint like "Connection is defined in Project Settings while a project is open." This covers the two **internal** callers that auto-open the dialog on a missing connection — `_run_db_check` (`main_window.py:2900`) and `_open_ddl_explorer` (`main_window.py:2957`); with a project open those flows should point the user at Project Settings instead of the standalone dialog rather than opening a meaningless app-level setup. Gotcha: those two call sites currently expect `_open_connection_setup()` to do something visible on a missing host — reroute them (e.g. status-bar message directing to Project Settings, or open `_open_ddl_project_settings`) rather than silently no-opping, so the user isn't left with a dead "set one up first" message and no dialog.
+- Decide (and document in the queue-resolution commit) the intended relationship, which this fix encodes: **in project mode the connection comes from `ProjectSettings` only** (`target`/`sandbox`); the app-level `save_connection`/`seed_params` profile is the standalone-mode store and is not touched while a project is open. Note that `_run_db_check`/`_open_ddl_explorer` still seed from `self._settings` today even in project mode — if the broader intent is that project-mode checks use the project's `target` connection, that is a larger change; this bug is scoped to hiding/disabling the redundant *setup UI*, so keep the seed-source change out of scope unless the resolver deliberately expands it (flag it if so).
+
+**Test impact:** `tests/ui/test_database_menu.py` already covers the action's existence and `_open_connection_setup` (`test_database_menu_exists_with_connection_setup`, `test_open_connection_setup_seeds_from_project_and_holds_dialog`, `test_open_connection_setup_with_no_project`, `test_accepting_dialog_saves_connection`) — extend it with: (a) action enabled when no project is open; (b) action disabled after `_set_active_ddl_project(...)`; (c) re-enabled after `_close_ddl_project()`; (d) `_open_connection_setup()` no-ops / does not create `self._connection_dialog` while a project is active. Reuse the `_menu_helpers.find_action`/`find_top_menu` helpers. `tests/ui/test_ddl_project_wiring.py` already exercises `_set_active_ddl_project`/`_close_ddl_project` enablement (`test_new_ddl_project_becomes_the_active_project`, `test_close_ddl_project_clears_state_and_disables_action`) — the new central helper's calls slot naturally there; add connection-action assertions to those transitions rather than new fixtures. Keep the internal-caller reroutes covered where `test_ddl_explorer_wiring.py` / any db-check test drives the missing-connection branch. As always, patch any modal so a test never reaches a live `QDialog.exec`.
+
+**Spec impact:** The §18 three-modes table (`CONSOLIDATED_SPEC.md:1455`, Tier 1 "A configured DB connection only") and the Database-menu descriptions (`CONSOLIDATED_SPEC.md:1297`, `:4160`) currently list "Connection Setup…" unconditionally and do **not** state that it is standalone/projectless-only — the always-available behavior appears to be incidental, not a documented intentional decision. This fix introduces a real behavioral rule (connection setup is projectless-only; in project mode the connection lives in Project Settings' `target`/`sandbox`). Diverges from the current unconditional-menu prose — flag for spec-maintainer after the fix lands to record the mode gating in §18 and the Database-menu section.
+
+---
+
+## BUG-025: Project Settings dialog is a single tall single-column stack — window is narrow and long, many fields unreadable
+**Status:** OPEN
+**Reported:** 2026-08-05
+**Report (verbatim):** "Project settings' window is narrow and long, many fields aren't readable. Project settings should be tabbed, each settings in its place."
+
+**Root cause:** `ProjectSettingsDialog.__init__` (`pgtp_editor/ui/project_settings_dialog.py:56-150`) builds one top-level `QVBoxLayout` (line 141) and stacks every field group into it vertically (lines 142-148): the identity `QFormLayout`, then five `QGroupBox`es — `pgtp_group` (.pgtp link), `target_group` (Target connection, 5 rows), `sandbox_group` (Sandbox connection, 5 rows + a sandbox-mode radio sub-form), `git_group` (3 rows), and `deployed_group` (a `QTableWidget` + two buttons). Because this dialog deliberately exposes the ENTIRE project JSON (module docstring, lines 17-28), that is ~20 rows plus a table all in a single column with no width demand, so Qt sizes the window narrow (widest single label/field) and very tall (sum of all groups), pushing lower groups off-screen. There is no `QTabWidget`, no `resize()`/default size, and no grouping across columns/tabs — the single-column stack IS the bug. No spec section mandated this layout (see Spec impact), so it is an incidental layout choice, not an intentional decision.
+
+**Proposed fix:** Introduce a `QTabWidget` in `__init__` and distribute the already-built groups across tabs; keep every widget object and its get/set wiring untouched (they are only reparented into tab pages). Concretely:
+- Build the field-group widgets exactly as today (do not change `_build_connection_form`, `set_settings`, `settings`, `_set_connection_fields`, `_connection_from_fields`, or the deploy-manifest table methods — they reference widgets by `self._…` attribute, which survives reparenting).
+- Create `tabs = QTabWidget(self)` and add four tabs (proposed names follow the real groupings):
+  - **"General"** — the identity form (Name, Description) + `pgtp_group` (.pgtp link). Wrap the identity `QFormLayout` and `pgtp_group` in a `QWidget` page with a `QVBoxLayout`.
+  - **"Connections"** — `target_group` and `sandbox_group` (the two `QGroupBox`es) on one page; these are the two 5-field connection profiles. Note `sandbox_group` already carries the sandbox-mode radios sub-form (lines 98-109) — it moves with the group intact.
+  - **"Git"** — `git_group`.
+  - **"Deploy manifest"** — `deployed_group` (the table + Add/Remove buttons); the table wants width, so it benefits most from its own tab.
+- Replace the six `layout.addWidget/addLayout(...)` group lines (142-147) with a single `layout.addWidget(tabs)`, then keep `layout.addWidget(buttons)` (146→148) so the OK/Cancel `QDialogButtonBox` stays OUTSIDE the tab widget, below it.
+- Add a sane default size at the end of `__init__`, e.g. `self.resize(560, 480)` (dialog stays resizable — do not use `setFixedSize`).
+
+Gotchas: (1) OK/Cancel button box must remain a direct child of the top-level `QVBoxLayout`, not inside any tab. (2) There is currently NO cross-tab validation in this dialog (`accepted` just calls `self.accept`, line 138) — do not add any; but if a future field validation is added it must run on `accept` regardless of which tab is active, since a hidden tab's widgets still hold values. (3) All widgets are accessed by attribute (`self._name_edit`, `self._deployed_table`, etc.), so reparenting into tab pages does not break any external reference or the round-trip logic. (4) A `QGroupBox` already has a layout set in its constructor (e.g. line 70, 160); do not re-parent by re-assigning a layout — just `page_layout.addWidget(group)`.
+
+**Test impact:** `tests/ui/test_project_settings_dialog.py` — every existing test reaches widgets purely by `self._…` attribute (e.g. `_name_edit`, `_target_host_edit`, `_deployed_table`, `_sandbox_mode_with_data_radio`) and the round-trip via `settings()`/`set_settings()`; none inspect the layout or assume a specific parent, so reparenting into tabs must keep them all green with no change. If any assertion ever calls `widget.isVisible()` (none do today), it would fail for a widget on a non-current tab — grep for `isVisible`/`isVisibleTo` before running and switch the active tab if needed. New case to add: assert `dialog.findChild(QTabWidget)` exists and exposes the four expected tab titles ("General", "Connections", "Git", "Deploy manifest"), and that a field on a non-default tab (e.g. `_git_server_edit`) is still populated by `set_settings` while that tab is not current.
+
+**Spec impact:** §18.2 (project-settings dialog; the dialog is described at `CONSOLIDATED_SPEC.md` around the §18.2 "full JSON exposed for editing" framing, ~line 1414 / 1435) specifies WHAT the dialog exposes (the entire project JSON, all fields editable) but does NOT prescribe a layout (single-column vs tabbed). This is a pure UI-layout change that preserves the "whole JSON, nothing hidden" contract. Flag for spec-maintainer to add a one-line note that the dialog groups fields into tabs (General / Connections / Git / Deploy manifest) after the fix lands — no behavioral divergence.
+
+---

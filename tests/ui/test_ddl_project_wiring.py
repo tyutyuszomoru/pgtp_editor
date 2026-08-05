@@ -144,9 +144,36 @@ def test_open_ddl_project_cancelled_picker_does_nothing(qtbot, tmp_path, monkeyp
     assert window._close_ddl_project_action.isEnabled() is False
 
 
-def test_open_ddl_project_on_a_brand_new_folder_gets_default_settings(qtbot, tmp_path, monkeypatch):
+def test_open_ddl_project_on_a_non_project_folder_is_rejected(qtbot, tmp_path, monkeypatch):
+    """BUG-022: a folder with no `.ddlproject/settings.json` marker is not a
+    project -- Open must reject it (message + abort) rather than silently
+    loading default settings for it."""
     project_dir = tmp_path / "brand-new"
     project_dir.mkdir()
+    window = _window(qtbot, tmp_path)
+    import pgtp_editor.ui.main_window as main_window_module
+
+    monkeypatch.setattr(
+        main_window_module.QFileDialog, "getExistingDirectory",
+        staticmethod(lambda *a, **k: str(project_dir)),
+    )
+    monkeypatch.setattr(main_window_module.QMessageBox, "warning", lambda *a, **k: None)
+
+    window._open_ddl_project()
+
+    assert window._ddl_project_folder is None
+    assert window._ddl_project_settings is None
+    assert window._close_ddl_project_action.isEnabled() is False
+
+
+def test_open_ddl_project_on_a_valid_project_folder_proceeds(qtbot, tmp_path, monkeypatch):
+    """A folder that DOES carry the `.ddlproject/settings.json` marker (even
+    with otherwise-default settings, e.g. freshly created and never
+    customized) is a real project and Open must proceed normally."""
+    from pgtp_editor.db.ddl_project import save_settings
+
+    project_dir = tmp_path / "real-project"
+    save_settings(project_dir, ProjectSettings())
     window = _window(qtbot, tmp_path)
     import pgtp_editor.ui.main_window as main_window_module
 
@@ -158,6 +185,164 @@ def test_open_ddl_project_on_a_brand_new_folder_gets_default_settings(qtbot, tmp
     window._open_ddl_project()
 
     assert window._ddl_project_settings == ProjectSettings()
+    assert window._ddl_project_folder == project_dir
+    assert window._close_ddl_project_action.isEnabled() is True
+
+
+def test_open_ddl_project_folder_picker_shows_dirs_only(qtbot, tmp_path, monkeypatch):
+    """BUG-022: the folder chooser must pass ShowDirsOnly so files aren't
+    shown alongside folders."""
+    window = _window(qtbot, tmp_path)
+    import pgtp_editor.ui.main_window as main_window_module
+
+    captured = {}
+
+    def fake_get_existing_directory(*args, **kwargs):
+        captured["args"] = args
+        captured["kwargs"] = kwargs
+        return ""
+
+    monkeypatch.setattr(
+        main_window_module.QFileDialog, "getExistingDirectory",
+        staticmethod(fake_get_existing_directory),
+    )
+
+    window._open_ddl_project()
+
+    options = captured["args"][3] if len(captured["args"]) > 3 else captured["kwargs"].get("options")
+    assert main_window_module.QFileDialog.Option.ShowDirsOnly in main_window_module.QFileDialog.Options(options)
+
+
+# --- Auto-open the linked .pgtp on Open Project (BUG-021) ------------------
+def test_open_ddl_project_auto_opens_the_linked_working_copy(qtbot, tmp_path, monkeypatch):
+    from pgtp_editor.db.ddl_project import save_settings
+
+    project_dir = tmp_path / "proj"
+    working_copy = project_dir / "app.pgtp"
+    project_dir.mkdir()
+    working_copy.write_text(_VALID_PGTP, encoding="utf-8")
+    save_settings(
+        project_dir,
+        ProjectSettings(pgtp=PgtpLink(working_copy_path=str(working_copy))),
+    )
+    window = _window(qtbot, tmp_path)
+    import pgtp_editor.ui.main_window as main_window_module
+
+    monkeypatch.setattr(
+        main_window_module.QFileDialog, "getExistingDirectory",
+        staticmethod(lambda *a, **k: str(project_dir)),
+    )
+
+    window._open_ddl_project()
+
+    assert window._current_project_path == str(working_copy)
+    assert window._current_project is not None
+
+
+def test_open_ddl_project_with_no_linked_pgtp_does_nothing(qtbot, tmp_path, monkeypatch):
+    from pgtp_editor.db.ddl_project import save_settings
+
+    project_dir = tmp_path / "proj"
+    save_settings(project_dir, ProjectSettings())  # no .pgtp linked, empty folder
+    window = _window(qtbot, tmp_path)
+    import pgtp_editor.ui.main_window as main_window_module
+
+    monkeypatch.setattr(
+        main_window_module.QFileDialog, "getExistingDirectory",
+        staticmethod(lambda *a, **k: str(project_dir)),
+    )
+
+    window._open_ddl_project()  # must not raise
+
+    assert window._current_project is None
+    assert window._current_project_path is None
+
+
+def test_open_ddl_project_with_exactly_one_unlinked_pgtp_auto_opens_it(qtbot, tmp_path, monkeypatch):
+    """No recorded link yet, but exactly one `.pgtp` sits in the project
+    folder -- auto-open it (BUG-021 zero/one/multiple scope)."""
+    from pgtp_editor.db.ddl_project import save_settings
+
+    project_dir = tmp_path / "proj"
+    save_settings(project_dir, ProjectSettings())
+    only_pgtp = project_dir / "solo.pgtp"
+    only_pgtp.write_text(_VALID_PGTP, encoding="utf-8")
+    window = _window(qtbot, tmp_path)
+    import pgtp_editor.ui.main_window as main_window_module
+
+    monkeypatch.setattr(
+        main_window_module.QFileDialog, "getExistingDirectory",
+        staticmethod(lambda *a, **k: str(project_dir)),
+    )
+
+    window._open_ddl_project()
+
+    assert window._current_project_path == str(only_pgtp)
+
+
+def test_open_ddl_project_with_multiple_unlinked_pgtp_reports_via_audit_and_guesses_nothing(
+    qtbot, tmp_path, monkeypatch
+):
+    from pgtp_editor.db.ddl_project import save_settings
+
+    project_dir = tmp_path / "proj"
+    save_settings(project_dir, ProjectSettings())
+    (project_dir / "one.pgtp").write_text(_VALID_PGTP, encoding="utf-8")
+    (project_dir / "two.pgtp").write_text(_VALID_PGTP, encoding="utf-8")
+    window = _window(qtbot, tmp_path)
+    import pgtp_editor.ui.main_window as main_window_module
+
+    monkeypatch.setattr(
+        main_window_module.QFileDialog, "getExistingDirectory",
+        staticmethod(lambda *a, **k: str(project_dir)),
+    )
+
+    window._open_ddl_project()
+
+    assert window._current_project is None  # never guessed which one
+    texts = [window.audit_panel.item(i).text() for i in range(window.audit_panel.count())]
+    assert any(
+        t.startswith("[Project]") and "multiple" in t.lower() for t in texts
+    )
+
+
+def test_open_ddl_project_via_prompt_pgtp_open_mode_does_not_double_load(qtbot, tmp_path, monkeypatch):
+    """The on_ready gotcha: when _open_ddl_project is invoked with an
+    on_ready callback (e.g. from _prompt_pgtp_open_mode's "Open Project…"
+    choice), the auto-open-linked-pgtp behavior must NOT also fire -- only
+    the caller's own on_ready load should happen."""
+    from pgtp_editor.db.ddl_project import save_settings
+
+    project_dir = tmp_path / "proj"
+    linked_copy = project_dir / "other.pgtp"
+    project_dir.mkdir()
+    linked_copy.write_text(_VALID_PGTP, encoding="utf-8")
+    save_settings(
+        project_dir,
+        ProjectSettings(pgtp=PgtpLink(working_copy_path=str(linked_copy))),
+    )
+    window = _window(qtbot, tmp_path)
+    source = tmp_path / "source.pgtp"
+    source.write_text(_VALID_PGTP, encoding="utf-8")
+    import pgtp_editor.ui.main_window as main_window_module
+
+    monkeypatch.setattr(
+        main_window_module.QFileDialog, "getExistingDirectory",
+        staticmethod(lambda *a, **k: str(project_dir)),
+    )
+
+    opened = []
+    original_open = window.open_project_file
+
+    def tracking_open(path):
+        opened.append(str(path))
+        return original_open(path)
+
+    window.open_project_file = tracking_open
+    window._open_ddl_project(on_ready=lambda: window.open_project_file(str(source)))
+
+    # Only the caller's own path was opened -- never the linked working copy.
+    assert opened == [str(source)]
 
 
 # --- .pgtp checksum drift report on open ------------------------------------

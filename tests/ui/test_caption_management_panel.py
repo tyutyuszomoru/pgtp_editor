@@ -1063,6 +1063,93 @@ def test_unify_current_uses_current_row(qtbot):
     assert panel._model.new_value_at(2) == "WBS ID"
 
 
+# -- BUG-023: Unify scope prompt when a filter is active --------------------
+
+
+def _unify_entries_with_breadcrumb():
+    """Like _unify_entries but with a distinguishing Breadcrumb per row so a
+    value filter on Breadcrumb can narrow to a strict subset of the
+    "wbs"/"caption" sibling group (rows 0-2), leaving row 1 out of the
+    filtered view while row 0 (source) and row 2 stay in."""
+    return [
+        _entry(2, "ColumnPresentation", "wbs", "caption", "WBS ID", breadcrumb="in"),
+        _entry(3, "ColumnPresentation", "wbs", "caption", "Wbs Id", breadcrumb="out"),
+        _entry(4, "ColumnPresentation", "wbs", "caption", "wbs", breadcrumb="in"),
+        _entry(5, "ColumnPresentation", "cost", "caption", "Cost", breadcrumb="in"),
+    ]
+
+
+def test_unify_current_no_prompt_when_no_filter_active(qtbot, monkeypatch):
+    """No filter active -> unify_current runs project-wide with no prompt at
+    all (unchanged behavior); _confirm_unify_scope must not even be called."""
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    panel.load_entries(_unify_entries())
+    _select_source_rows(panel, [0])
+
+    def _boom():
+        raise AssertionError("_confirm_unify_scope should not be called")
+
+    monkeypatch.setattr(panel, "_confirm_unify_scope", _boom)
+    panel.unify_current()
+    assert panel._model.new_value_at(1) == "WBS ID"
+    assert panel._model.new_value_at(2) == "WBS ID"
+
+
+def test_unify_current_prompts_and_applies_filtered_scope(qtbot, monkeypatch):
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    panel.load_entries(_unify_entries_with_breadcrumb())
+    panel._proxy.set_value_filter(_BREADCRUMB_COLUMN, {"in"})
+    _select_source_rows(panel, [0])
+
+    monkeypatch.setattr(panel, "_confirm_unify_scope", lambda: "filtered")
+    panel.unify_current()
+    # Row 2 ("in", visible) is unified; row 1 ("out", filtered out) is not.
+    assert panel._model.new_value_at(2) == "WBS ID"
+    assert panel._model.new_value_at(1) == ""
+
+
+def test_unify_current_prompts_and_applies_project_scope(qtbot, monkeypatch):
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    panel.load_entries(_unify_entries_with_breadcrumb())
+    panel._proxy.set_value_filter(_BREADCRUMB_COLUMN, {"in"})
+    _select_source_rows(panel, [0])
+
+    monkeypatch.setattr(panel, "_confirm_unify_scope", lambda: "project")
+    panel.unify_current()
+    # Entire project: both siblings unified, including the filtered-out row.
+    assert panel._model.new_value_at(1) == "WBS ID"
+    assert panel._model.new_value_at(2) == "WBS ID"
+
+
+def test_unify_current_prompts_and_cancel_applies_nothing(qtbot, monkeypatch):
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    panel.load_entries(_unify_entries_with_breadcrumb())
+    panel._proxy.set_value_filter(_BREADCRUMB_COLUMN, {"in"})
+    _select_source_rows(panel, [0])
+
+    monkeypatch.setattr(panel, "_confirm_unify_scope", lambda: "cancel")
+    panel.unify_current()
+    assert panel._model.new_value_at(1) == ""
+    assert panel._model.new_value_at(2) == ""
+
+
+def test_unify_from_row_restrict_to_limits_eligible_siblings(qtbot):
+    """Direct unify_from_row API: restrict_to limits which sibling rows are
+    eligible, independent of the prompt/panel plumbing."""
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    panel.load_entries(_unify_entries())
+    # Only rows 0 and 2 are eligible; row 1 is excluded even though it shares
+    # the (anchor, attribute) key and differs from the target.
+    panel.unify_from_row(0, restrict_to=[0, 2])
+    assert panel._model.new_value_at(1) == ""
+    assert panel._model.new_value_at(2) == "WBS ID"
+
+
 # -- inconsistency from EFFECTIVE values ------------------------------------
 
 
@@ -1392,6 +1479,23 @@ def test_set_row_predicate_none_clears(qtbot):
     assert len(_visible_value_column(panel)) == 5
 
 
+def test_set_row_predicate_accepts_optional_label(qtbot):
+    """BUG-020: set_row_predicate gains an optional label, stored alongside
+    the predicate; the old single-arg call sites keep working (label
+    defaults to "")."""
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    panel.load_entries(_context_entries())
+    panel._proxy.set_row_predicate(lambda e: e.table_name == "pr.equip")
+    assert panel._proxy.row_predicate_label() == ""
+    panel._proxy.set_row_predicate(
+        lambda e: e.table_name == "pr.equip", "Table = pr.equip"
+    )
+    assert panel._proxy.row_predicate_label() == "Table = pr.equip"
+    panel._proxy.set_row_predicate(None)
+    assert panel._proxy.row_predicate_label() == ""
+
+
 def test_row_predicate_ands_with_value_and_find_filters(qtbot):
     panel = CaptionManagementPanel()
     qtbot.addWidget(panel)
@@ -1420,6 +1524,10 @@ def test_filter_to_table_shows_only_that_table(qtbot):
     panel.load_entries(_context_entries())
     panel.filter_to_table("pr.equip")
     assert sorted(_visible_value_column(panel)) == ["Equipment", "WBS"]
+    # BUG-020: the preset filter must be visibly represented via the banner.
+    assert panel._filter_banner.isVisibleTo(panel)
+    assert "Table = pr.equip" in panel._filter_banner_label.text()
+    assert "showing 2 of 5 rows" in panel._filter_banner_label.text()
 
 
 def test_filter_to_table_details_shows_only_detail_rows(qtbot):
@@ -1430,6 +1538,9 @@ def test_filter_to_table_details_shows_only_detail_rows(qtbot):
     # Only the in-detail column (Name) matches: table pr.att AND in_detail.
     # The <Detail> caption row itself (Attachments) is NOT in_detail.
     assert _visible_value_column(panel) == ["Name"]
+    assert panel._filter_banner.isVisibleTo(panel)
+    assert "Table = pr.att" in panel._filter_banner_label.text()
+    assert "showing 1 of 5 rows" in panel._filter_banner_label.text()
 
 
 def test_filter_to_field_shows_and_selects_matching_row(qtbot):
@@ -1444,6 +1555,42 @@ def test_filter_to_field_shows_and_selects_matching_row(qtbot):
     assert len(selected) == 1
     source_row = panel._proxy.mapToSource(selected[0]).row()
     assert panel._model.entry_at(source_row).field_name == "wbs_id"
+    # BUG-020: banner reflects the field-level preset filter.
+    assert panel._filter_banner.isVisibleTo(panel)
+    assert "Field = wbs_id" in panel._filter_banner_label.text()
+    assert "showing 1 of 5 rows" in panel._filter_banner_label.text()
+
+
+def test_filter_to_field_with_table_builds_combined_banner_label(qtbot):
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    panel.load_entries(_context_entries())
+    panel.filter_to_field("wbs_id", table_name="pr.equip")
+    assert panel._filter_banner.isVisibleTo(panel)
+    label = panel._filter_banner_label.text()
+    assert "Field = wbs_id" in label
+    assert "Table = pr.equip" in label
+
+
+def test_filter_to_field_selects_row_regardless_of_latched_shift_modifier(qtbot):
+    """BUG-018: QTableView.selectRow reads the process-global keyboard
+    modifiers and silently selects nothing if Shift happens to be latched
+    from an unrelated prior action -- confirm the fix is modifier-independent."""
+    from PySide6.QtTest import QTest
+
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    panel.load_entries(_context_entries())
+
+    QTest.keyClick(panel, Qt.Key.Key_A, Qt.KeyboardModifier.ShiftModifier)
+    try:
+        panel.filter_to_field("wbs_id")
+        selected = panel._table.selectionModel().selectedRows()
+        assert len(selected) == 1
+        source_row = panel._proxy.mapToSource(selected[0]).row()
+        assert panel._model.entry_at(source_row).field_name == "wbs_id"
+    finally:
+        QTest.keyClick(panel, Qt.Key.Key_Shift, Qt.KeyboardModifier.NoModifier)
 
 
 # -- Phase C.3: clear all filters -------------------------------------------
@@ -1455,9 +1602,10 @@ def test_clear_all_filters_resets_everything(qtbot):
     panel.load_entries(_context_entries())
     panel._proxy.set_regex_filter("Name", "normal", False)
     panel._proxy.set_value_filter(_VALUE_COLUMN, {"Name"})
-    panel._proxy.set_row_predicate(lambda e: e.table_name == "pr.att")
+    panel.filter_to_table("pr.att")
     # Sanity: everything narrows to one row.
     assert _visible_value_column(panel) == ["Name"]
+    assert panel._filter_banner.isVisibleTo(panel)
     panel.clear_all_filters()
     # All rows visible again.
     assert len(_visible_value_column(panel)) == 5
@@ -1465,6 +1613,9 @@ def test_clear_all_filters_resets_everything(qtbot):
     assert panel._proxy.filtered_columns() == set()
     assert panel._model._filtered_columns == set()
     assert panel._proxy.find_pattern() == ""
+    # BUG-020: the active-filter banner hides and its label clears.
+    assert panel._filter_banner.isHidden()
+    assert panel._proxy.row_predicate_label() == ""
 
 
 def test_clear_all_filters_in_context_menu_wired(qtbot, monkeypatch):

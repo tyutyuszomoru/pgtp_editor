@@ -30,6 +30,8 @@ from collections.abc import Callable, Sequence
 
 from PySide6.QtCore import (
     QAbstractTableModel,
+    QItemSelection,
+    QItemSelectionModel,
     QModelIndex,
     QSortFilterProxyModel,
     Qt,
@@ -38,10 +40,12 @@ from PySide6.QtGui import QColor, QFont, QGuiApplication, QKeySequence, QShortcu
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
+    QLabel,
     QLineEdit,
     QListWidget,
     QListWidgetItem,
     QMenu,
+    QMessageBox,
     QPushButton,
     QTableView,
     QVBoxLayout,
@@ -332,18 +336,34 @@ class _CaptionFilterProxyModel(QSortFilterProxyModel):
         # None for no predicate. ANDed with the find + value filters. Reads the
         # source CaptionEntry via the model's entry_at accessor.
         self._row_predicate: Callable[[CaptionEntry], bool] | None = None
+        # Human-readable description of the active row predicate, e.g.
+        # "Field = wbs_id" (BUG-020). Empty when no predicate is active. Kept
+        # alongside the predicate so the two can never drift out of sync.
+        self._row_predicate_label: str = ""
 
     def set_row_predicate(
-        self, predicate: Callable[[CaptionEntry], bool] | None
+        self,
+        predicate: Callable[[CaptionEntry], bool] | None,
+        label: str = "",
     ) -> None:
         """Set a preset row predicate over the source ``CaptionEntry`` (Phase
-        C.2). A row passes iff ``predicate(entry)`` is True; ``None`` clears it.
-        ANDed with the find + value filters."""
+        C.2). A row passes iff ``predicate(entry)`` is True; ``None`` clears it
+        (and resets the label to ``""`` regardless of what was passed).
+        ANDed with the find + value filters.
+
+        ``label`` is a human-readable description of what the predicate
+        narrows to (e.g. "Field = wbs_id"), surfaced by the panel's
+        active-filter banner (BUG-020) so a preset filter is never invisible.
+        """
         self._row_predicate = predicate
+        self._row_predicate_label = label if predicate is not None else ""
         self.invalidate()
 
     def row_predicate(self) -> Callable[[CaptionEntry], bool] | None:
         return self._row_predicate
+
+    def row_predicate_label(self) -> str:
+        return self._row_predicate_label
 
     def set_regex_filter(self, pattern: str, mode: str, case: bool) -> None:
         """Set the whole-row find filter. A row passes iff any displayed cell
@@ -377,6 +397,16 @@ class _CaptionFilterProxyModel(QSortFilterProxyModel):
 
     def filtered_columns(self) -> set[int]:
         return set(self._value_filters)
+
+    def is_any_filter_active(self) -> bool:
+        """True iff any of the three filter mechanisms (preset row predicate,
+        find filter, or a header value filter) currently narrows the grid.
+        Used by Unify (BUG-023) to decide whether to prompt for scope."""
+        return bool(
+            self._row_predicate is not None
+            or self._find_pattern
+            or self._value_filters
+        )
 
     def _notify_filtered_columns(self) -> None:
         model = self.sourceModel()
@@ -651,7 +681,31 @@ class CaptionManagementPanel(QWidget):
         button_row.addWidget(self._apply_button)
         button_row.addWidget(self._close_button)
 
+        # Active-filter banner (BUG-020): the preset row-predicate filters
+        # (filter_to_table / filter_to_table_details / filter_to_field) are
+        # otherwise entirely invisible -- unlike header value filters (▼
+        # indicator) and the find filter, a preset predicate has no on-screen
+        # representation at all. This banner surfaces it: a short label built
+        # alongside the predicate (see filter_to_* / set_row_predicate) plus a
+        # "showing N of M" row count, with a Clear button wired to the single
+        # clear_all_filters() path. Hidden whenever no preset predicate is
+        # active.
+        self._filter_banner_label = QLabel()
+        self._filter_banner_label.setStyleSheet(
+            f"font-weight: bold; color: {_FILTER_HEADER_FOREGROUND.name()};"
+        )
+        self._filter_banner_clear_button = QPushButton("Clear")
+        self._filter_banner_clear_button.clicked.connect(self.clear_all_filters)
+        self._filter_banner = QWidget()
+        banner_row = QHBoxLayout(self._filter_banner)
+        banner_row.setContentsMargins(0, 0, 0, 0)
+        banner_row.addWidget(self._filter_banner_label)
+        banner_row.addStretch(1)
+        banner_row.addWidget(self._filter_banner_clear_button)
+        self._filter_banner.setVisible(False)
+
         layout = QVBoxLayout(self)
+        layout.addWidget(self._filter_banner)
         layout.addWidget(self._table)
         layout.addLayout(button_row)
 
@@ -840,13 +894,21 @@ class CaptionManagementPanel(QWidget):
             updates[source_row] = transform_caption(seed, kind)
         self._model.set_new_values(updates)
 
-    def unify_from_row(self, source_row: int) -> None:
+    def unify_from_row(
+        self, source_row: int, restrict_to: Sequence[int] | None = None
+    ) -> None:
         """Set the New Value of every OTHER row sharing this row's
         ``(anchor, attribute)`` whose effective current value differs from the
         source row's target, to that target. The target is the source row's New
         Value if set, else its Value. A row's effective current value is its New
         Value if set, else its Value; rows already matching are left
-        untouched."""
+        untouched.
+
+        ``restrict_to`` (BUG-023), when given, limits which sibling rows are
+        eligible for the update to that collection of source-model row
+        indices (typically the currently-visible/filtered rows via
+        ``_visible_source_rows()``) — "Filtered rows only" scope. ``None``
+        (the default) keeps the original project-wide behavior."""
         if not (0 <= source_row < self._model.rowCount()):
             return
         entries = self._model.entries()
@@ -854,10 +916,12 @@ class CaptionManagementPanel(QWidget):
         source_new = self._model.new_value_at(source_row)
         target = source_new if source_new else source_entry.value
         key = (source_entry.anchor, source_entry.attribute)
+        eligible_rows = range(len(entries)) if restrict_to is None else restrict_to
         updates: dict[int, str] = {}
-        for row, entry in enumerate(entries):
+        for row in eligible_rows:
             if row == source_row:
                 continue
+            entry = entries[row]
             if (entry.anchor, entry.attribute) != key:
                 continue
             row_new = self._model.new_value_at(row)
@@ -867,10 +931,51 @@ class CaptionManagementPanel(QWidget):
         self._model.set_new_values(updates)
 
     def unify_current(self) -> None:
+        """Unify the current row's inconsistent siblings. When a filter is
+        currently active (BUG-023), first ask whether to restrict the unify to
+        the filtered/visible rows or run it project-wide, via
+        ``_confirm_unify_scope`` (monkeypatched in tests — never a live
+        modal). When no filter is active, behavior is unchanged (no prompt,
+        project-wide)."""
         source_row = self._current_source_row()
         if source_row is None:
             return
-        self.unify_from_row(source_row)
+        if not self._proxy.is_any_filter_active():
+            self.unify_from_row(source_row)
+            return
+        choice = self._confirm_unify_scope()
+        if choice == "cancel":
+            return
+        if choice == "filtered":
+            self.unify_from_row(source_row, restrict_to=self._visible_source_rows())
+        else:  # "project"
+            self.unify_from_row(source_row)
+
+    def _confirm_unify_scope(self) -> str:
+        """Ask the user whether Unify should apply to the filtered rows only
+        or project-wide. Returns "filtered", "project", or "cancel". Split out
+        (mirroring MainWindow's ``_confirm_close_xsd``) so tests can
+        monkeypatch it instead of ever driving a real modal."""
+        box = QMessageBox(self)
+        box.setWindowTitle("Unify Scope")
+        box.setText(
+            "A filter is currently active. Apply Unify to the filtered rows "
+            "only, or to the entire project?"
+        )
+        filtered_button = box.addButton(
+            "Filtered rows only", QMessageBox.ButtonRole.AcceptRole
+        )
+        project_button = box.addButton(
+            "Entire project", QMessageBox.ButtonRole.AcceptRole
+        )
+        box.addButton(QMessageBox.StandardButton.Cancel)
+        box.exec()
+        clicked = box.clickedButton()
+        if clicked is filtered_button:
+            return "filtered"
+        if clicked is project_button:
+            return "project"
+        return "cancel"
 
     # -- header value filters (Phase 3) -------------------------------------
 
@@ -923,34 +1028,58 @@ class CaptionManagementPanel(QWidget):
 
     def filter_to_table(self, table_name: str) -> None:
         """Show only rows whose owning page/detail table is `table_name`."""
-        self._proxy.set_row_predicate(lambda e: e.table_name == table_name)
+        label = f"Table = {table_name}"
+        self._proxy.set_row_predicate(lambda e: e.table_name == table_name, label)
+        self._refresh_filter_banner()
 
     def filter_to_table_details(self, table_name: str) -> None:
         """Show only rows whose owning table is `table_name` AND that live
         within a <Detail> embed (so you see how a DB table is captioned across
         its Detail embeds)."""
+        label = f"Table = {table_name}  (Detail embeds)"
         self._proxy.set_row_predicate(
-            lambda e: e.table_name == table_name and e.in_detail
+            lambda e: e.table_name == table_name and e.in_detail, label
         )
+        self._refresh_filter_banner()
 
     def filter_to_field(self, field_name: str, table_name: str | None = None) -> None:
         """Show only rows whose column `field_name` matches (optionally also
         `table_name`), then SELECT + scroll to the first matching row so the
         specific column line is highlighted."""
         if table_name is None:
-            self._proxy.set_row_predicate(lambda e: e.field_name == field_name)
+            label = f"Field = {field_name}"
+            self._proxy.set_row_predicate(lambda e: e.field_name == field_name, label)
         else:
+            label = f"Field = {field_name}  ·  Table = {table_name}"
             self._proxy.set_row_predicate(
-                lambda e: e.field_name == field_name and e.table_name == table_name
+                lambda e: e.field_name == field_name and e.table_name == table_name,
+                label,
             )
         self._select_first_visible_row()
+        self._refresh_filter_banner()
 
     def _select_first_visible_row(self) -> None:
-        """Select and scroll to the first row visible through the proxy."""
+        """Select and scroll to the first row visible through the proxy.
+
+        Drives the selection model directly rather than `QTableView.selectRow`,
+        which interprets a *user gesture* via the process-global keyboard
+        modifiers (`QGuiApplication.keyboardModifiers()`) -- if Shift happens
+        to be latched (e.g. from an unrelated prior Ctrl+Shift+... action),
+        `selectRow` builds an invalid anchor-relative range and silently
+        selects nothing. See BUG-018."""
         if self._proxy.rowCount() == 0:
             return
         first = self._proxy.index(0, 0)
-        self._table.selectRow(first.row())
+        last = self._proxy.index(0, self._proxy.columnCount() - 1)
+        selection_model = self._table.selectionModel()
+        selection_model.setCurrentIndex(
+            first, QItemSelectionModel.SelectionFlag.NoUpdate
+        )
+        selection_model.select(
+            QItemSelection(first, last),
+            QItemSelectionModel.SelectionFlag.ClearAndSelect
+            | QItemSelectionModel.SelectionFlag.Rows,
+        )
         self._table.scrollTo(first)
 
     def _source_row_to_proxy_row(self, source_row: int) -> int:
@@ -963,15 +1092,38 @@ class CaptionManagementPanel(QWidget):
         """Source-model row index for a proxy (visual) row."""
         return self._proxy.mapToSource(self._proxy.index(proxy_row, 0)).row()
 
+    # -- active-filter banner (BUG-020) --------------------------------------
+
+    def _refresh_filter_banner(self) -> None:
+        """Show/hide the active-filter banner and refresh its text to reflect
+        the current preset row-predicate label + visible/total row counts.
+        Called after every preset filter setter and after clear_all_filters
+        (the single path that can deactivate a predicate) so the banner is
+        never out of sync with `self._proxy.row_predicate()`. Computed AFTER
+        the proxy has already been invalidated by the caller so the "showing
+        N of M" count reflects the new predicate."""
+        label = self._proxy.row_predicate_label()
+        if not label:
+            self._filter_banner.setVisible(False)
+            return
+        visible = self._proxy.rowCount()
+        total = self._model.rowCount()
+        self._filter_banner_label.setText(
+            f"Filtered: {label} — showing {visible} of {total} rows"
+        )
+        self._filter_banner.setVisible(True)
+
     # -- clear all filters (Phase C.3) --------------------------------------
 
     def clear_all_filters(self) -> None:
         """Clear the find filter, every header value filter, and the preset row
-        predicate; refresh the header indicators."""
+        predicate; refresh the header indicators and hide the active-filter
+        banner (this is the single path that hides it, BUG-020)."""
         self._proxy.set_regex_filter("", self._proxy._find_mode, self._proxy._find_case)
         for column in list(self._proxy.filtered_columns()):
             self._proxy.set_value_filter(column, None)
         self._proxy.set_row_predicate(None)
+        self._refresh_filter_banner()
 
     def _show_header_context_menu(self, pos) -> None:
         header = self._table.horizontalHeader()

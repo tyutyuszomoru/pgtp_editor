@@ -50,6 +50,7 @@ from pathlib import Path
 
 from .config import ConnectionParams
 from .introspect import DatabaseSchema, RoutineInfo
+from .sandbox import SandboxMode
 
 #: The project's settings file -- one centralized, gitignored, plaintext
 #: JSON holding everything project-scoped (§18.2 "Project settings").
@@ -113,6 +114,10 @@ class ProjectSettings:
     pgtp: PgtpLink = field(default_factory=PgtpLink)
     target: ConnectionParams = field(default_factory=ConnectionParams)
     sandbox: ConnectionParams = field(default_factory=ConnectionParams)
+    #: How the sandbox was (or will be) provisioned (§18.5 D2a) -- chosen once
+    #: at New Project time, recorded here so `reset()` re-runs the SAME mode
+    #: rather than re-deriving/guessing it from the database's contents.
+    sandbox_mode: SandboxMode = SandboxMode.SCHEMA_ONLY
     git: GitConfig = field(default_factory=GitConfig)
     deployed: dict[str, DeployedObject] = field(default_factory=dict)
 
@@ -120,6 +125,14 @@ class ProjectSettings:
 def settings_path(project_dir: Path | str) -> Path:
     """The one settings file's path for `project_dir` -- never a second file."""
     return Path(project_dir) / SETTINGS_DIRNAME / SETTINGS_FILENAME
+
+
+def is_project_dir(project_dir: Path | str) -> bool:
+    """True if `project_dir` already carries the project marker -- the
+    `.ddlproject/settings.json` file (§18.2). Used to gate "Open Project"
+    (BUG-022): a folder without this marker is not a project, and Open must
+    reject it rather than silently loading default settings for it."""
+    return settings_path(project_dir).is_file()
 
 
 def load_settings(project_dir: Path | str) -> ProjectSettings:
@@ -155,6 +168,7 @@ def _settings_to_dict(settings: ProjectSettings) -> dict:
         },
         "target": _connection_to_dict(settings.target),
         "sandbox": _connection_to_dict(settings.sandbox),
+        "sandbox_mode": settings.sandbox_mode.value,
         "git": {
             "server": settings.git.server,
             "user": settings.git.user,
@@ -193,6 +207,7 @@ def _settings_from_dict(raw: dict) -> ProjectSettings:
         ),
         target=ConnectionParams(**{**_connection_defaults(), **(raw.get("target") or {})}),
         sandbox=ConnectionParams(**{**_connection_defaults(), **(raw.get("sandbox") or {})}),
+        sandbox_mode=_parse_sandbox_mode(raw.get("sandbox_mode")),
         git=GitConfig(**{**_git_defaults(), **(raw.get("git") or {})}),
         deployed={
             relpath: DeployedObject(
@@ -206,6 +221,17 @@ def _settings_from_dict(raw: dict) -> ProjectSettings:
 
 def _connection_defaults() -> dict:
     return {"host": "", "port": "", "database": "", "user": "", "password": ""}
+
+
+def _parse_sandbox_mode(raw: str | None) -> SandboxMode:
+    """Never raise on a missing/unrecognized value -- an older settings.json
+    written before D2a existed has no `sandbox_mode` key at all, which must
+    default to `SCHEMA_ONLY` (today's existing, unaffected behavior), not
+    fail to load the project."""
+    try:
+        return SandboxMode(raw)
+    except ValueError:
+        return SandboxMode.SCHEMA_ONLY
 
 
 def _git_defaults() -> dict:

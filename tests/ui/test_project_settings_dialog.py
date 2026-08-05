@@ -1,10 +1,11 @@
 # tests/ui/test_project_settings_dialog.py
 """Tests for ProjectSettingsDialog (§18.2) -- the whole project JSON,
 viewable and editable, never a simplified subset. Never `.exec()`-ed."""
-from PySide6.QtWidgets import QLineEdit, QTableWidgetItem
+from PySide6.QtWidgets import QLineEdit, QTableWidgetItem, QTabWidget
 
 from pgtp_editor.db.config import ConnectionParams
 from pgtp_editor.db.ddl_project import DeployedObject, GitConfig, PgtpLink, ProjectSettings
+from pgtp_editor.db.sandbox import SandboxMode
 from pgtp_editor.ui.project_settings_dialog import ProjectSettingsDialog
 
 
@@ -152,6 +153,44 @@ def test_empty_project_settings_populates_all_fields_blank(qtbot):
     assert dialog.settings() == ProjectSettings()
 
 
+# --- sandbox_mode (§18.5 D2a) -------------------------------------------------
+def test_schema_only_sandbox_mode_selects_the_without_data_radio(qtbot):
+    dialog = ProjectSettingsDialog(ProjectSettings(sandbox_mode=SandboxMode.SCHEMA_ONLY))
+    qtbot.addWidget(dialog)
+    assert dialog._sandbox_mode_without_data_radio.isChecked()
+    assert not dialog._sandbox_mode_with_data_radio.isChecked()
+
+
+def test_with_data_sandbox_mode_selects_the_with_data_radio(qtbot):
+    dialog = ProjectSettingsDialog(ProjectSettings(sandbox_mode=SandboxMode.WITH_DATA))
+    qtbot.addWidget(dialog)
+    assert dialog._sandbox_mode_with_data_radio.isChecked()
+    assert not dialog._sandbox_mode_without_data_radio.isChecked()
+
+
+def test_sandbox_mode_round_trips_through_settings(qtbot):
+    dialog = ProjectSettingsDialog(ProjectSettings(sandbox_mode=SandboxMode.WITH_DATA))
+    qtbot.addWidget(dialog)
+    assert dialog.settings().sandbox_mode == SandboxMode.WITH_DATA
+
+
+def test_toggling_the_sandbox_mode_radio_changes_the_settings_result(qtbot):
+    dialog = ProjectSettingsDialog(ProjectSettings(sandbox_mode=SandboxMode.SCHEMA_ONLY))
+    qtbot.addWidget(dialog)
+
+    dialog._sandbox_mode_with_data_radio.setChecked(True)
+
+    assert dialog.settings().sandbox_mode == SandboxMode.WITH_DATA
+
+
+def test_full_settings_round_trip_preserves_with_data_sandbox_mode(qtbot):
+    settings = ProjectSettings(name="x", sandbox_mode=SandboxMode.WITH_DATA)
+    dialog = ProjectSettingsDialog(settings)
+    qtbot.addWidget(dialog)
+
+    assert dialog.settings() == settings
+
+
 def test_set_settings_replaces_prior_contents_not_appends(qtbot):
     dialog = ProjectSettingsDialog(_full_settings())
     qtbot.addWidget(dialog)
@@ -160,3 +199,25 @@ def test_set_settings_replaces_prior_contents_not_appends(qtbot):
 
     assert dialog._name_edit.text() == "fresh"
     assert dialog._deployed_table.rowCount() == 0
+
+
+# --- tabbed layout (BUG-025) --------------------------------------------------
+def test_dialog_exposes_a_tab_widget_with_the_expected_tabs(qtbot):
+    dialog = ProjectSettingsDialog(_full_settings())
+    qtbot.addWidget(dialog)
+
+    tabs = dialog.findChild(QTabWidget)
+    assert tabs is not None
+    titles = [tabs.tabText(i) for i in range(tabs.count())]
+    assert titles == ["General", "Connections", "Git", "Deploy manifest"]
+
+
+def test_non_current_tab_fields_are_still_populated_by_set_settings(qtbot):
+    dialog = ProjectSettingsDialog(_full_settings())
+    qtbot.addWidget(dialog)
+
+    tabs = dialog.findChild(QTabWidget)
+    tabs.setCurrentIndex(0)  # "General" -- not the "Git" tab
+
+    assert tabs.tabText(tabs.currentIndex()) != "Git"
+    assert dialog._git_server_edit.text() == "git.example.com"

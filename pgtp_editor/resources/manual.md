@@ -308,7 +308,14 @@ across the project are highlighted so you can unify them.
 - **Header filters** — click a column header to filter by its values, Excel-style.
   A **search box** narrows the checkbox list as you type and unchecks values that no
   longer match, so you can zero in on a large set quickly.
-- **Clear all filters** — available from the right-click menu.
+- **Preset filters from the Project Tree** — a **See … in Caption Mode** action (for a
+  table, a detail's table, or a single column — see *The Project Tree*) narrows the
+  grid to just that scope. Whenever one of these is active, an **active-filter banner**
+  appears above the grid, e.g. `Filtered: Field = wbs_id — showing 3 of 214 rows`, with
+  a **Clear** button. The banner (and the preset narrowing) disappears once you clear it.
+- **Clear all filters** — available from the right-click menu, and (when a preset
+  filter is active) from the banner's own **Clear** button. Both clear every filter
+  mechanism at once: header filters, the Find/Filter pattern, and any preset filter.
 
 ### Find / Filter / Replace
 
@@ -322,7 +329,14 @@ A shared modal drives searching and bulk editing:
 ### Power tools
 
 - **Bulk Transform** — apply a transformation across many captions at once.
-- **Unify** — make inconsistent captions consistent.
+- **Unify** (right-click ▸ **Unify: set all inconsistent siblings to this value**) —
+  set every other row sharing the selected row's element/attribute to the selected
+  row's value, wherever they currently disagree. If any filter is active (a header
+  filter, a Find/Filter pattern, or a preset filter from the Project Tree) when you
+  invoke it, a prompt first asks **Filtered rows only**, **Entire project**, or
+  **Cancel**, so you can choose whether the unify should touch only the rows
+  currently visible in the grid or every matching row in the project. With no
+  filter active, Unify runs project-wide as before, with no prompt.
 
 ---
 
@@ -457,10 +471,20 @@ against a live PostgreSQL database.
 
 ### Connecting
 
-**Connection Setup…** collects server, port, database, user, and password, with a
-**Test** button. The non-password fields are seeded from the project's
-`<ConnectionOptions>`; a connection you save is remembered and takes precedence over
-the project's values next time.
+**Database ▸ Connection Setup…** collects server, port, database, user, and
+password, with a **Test** button. The non-password fields are seeded from the
+`.pgtp` project's `<ConnectionOptions>`; a connection you save is remembered and
+takes precedence over the project's values next time.
+
+**Connection Setup…** is available only in **projectless mode** — with no local
+DDL-versioning project open (see *Local DDL-Versioning Projects*). Once a project
+is open, its connection lives in **Project Settings…** (the **Connections** tab —
+see *Local DDL-Versioning Projects ▸ Project Settings*) instead, and the menu
+action is disabled while that project stays active; it re-enables the moment you
+close the project. If something that needs a connection (Database Check, DDL
+Explorer) finds none configured while a project is open, it points you at Project
+Settings via a status-bar message rather than opening the now-meaningless
+standalone dialog.
 
 > On Windows, use **`127.0.0.1`** rather than `localhost` — `localhost` can resolve
 > to IPv6 first and stall the connection. The check runs off the UI thread with a
@@ -527,8 +551,11 @@ the status bar asks you to run a Database check first.
 **Database ▸ DDL Explorer** is a checkable toggle that shows your database's
 server-side code — every function, procedure, and trigger — inside the editor.
 It needs only a database connection: you can use it with **no `.pgtp` file open
-at all**. If no connection is configured yet, **Connection Setup…** opens
-automatically; save a connection, then toggle the explorer again.
+at all**. If no connection is configured yet: in projectless mode, **Connection
+Setup…** opens automatically — save a connection, then toggle the explorer
+again; with a local DDL-versioning project open, a status-bar message points you
+at **Project Settings…** instead (see *Database Check ▸ Connecting* and *Local
+DDL-Versioning Projects*).
 
 Turning it on fetches all routines and triggers from the connected PostgreSQL
 database and reveals two tabs at once:
@@ -796,9 +823,15 @@ you can always navigate elsewhere.
 
 ### Opening a project
 
-**Open Project…** picks an existing project folder. On open, the app compares
-a checksum of the linked `.pgtp`'s working copy against its source and reports
-the result as an Audit-panel line prefixed `[Project]`:
+**Open Project…** opens a folder picker showing **folders only** (no files) — pick
+an existing project folder. The folder must already be a valid project (it must
+carry the `.ddlproject/settings.json` marker written by **New Project…**); picking
+any other folder is rejected with a **"Not a Project Folder"** message instead of
+silently creating an empty project.
+
+On a successful open, the app compares a checksum of the linked `.pgtp`'s working
+copy against its source and reports the result as an Audit-panel line prefixed
+`[Project]`:
 
 - **"Source .pgtp checksum recorded (…)."** — first time this comparison ran.
 - **"Source .pgtp unchanged since last opened (…)."**
@@ -808,16 +841,31 @@ the result as an Audit-panel line prefixed `[Project]`:
 If the DDL Explorer's routines and triggers are already loaded, its tree's
 drift markers (see *DDL Explorer*) refresh at the same time.
 
+Opening a project also **auto-opens its linked `.pgtp`** into the editor, so you
+don't need a separate **File ▸ Open** afterwards:
+
+- If the project already has exactly one linked working copy, it opens
+  automatically.
+- If the project has no linked `.pgtp` yet but its folder contains exactly one
+  `.pgtp` file, that one opens instead.
+- If none is found, nothing opens — no error, just an empty editor until you open
+  a file yourself.
+- If the folder contains **multiple** `.pgtp` files and none is linked yet, the
+  app doesn't guess: it reports the finding as an Audit-panel line prefixed
+  `[Project]` listing the candidates, and you open the one you want via
+  **File ▸ Open**.
+
 ### Project Settings
 
 **Project Settings…** opens a dialog exposing everything about the project in
-one place, fully editable, saved back to the project's settings file on OK:
+one place, fully editable, saved back to the project's settings file on OK. The
+fields are grouped into four tabs:
 
-- **Name** / **Description**.
-- **`.pgtp` link** — the source path (the sshfs-mounted original), the working
-  copy path, and the last-known source checksum.
-- **Target connection** and **Sandbox connection** — both connection
-  profiles in full, including their password fields.
+- **General** — **Name** / **Description**, and the **`.pgtp` link** (the source
+  path — the sshfs-mounted original — the working copy path, and the last-known
+  source checksum).
+- **Connections** — **Target connection** and **Sandbox connection**, both
+  connection profiles in full, including their password fields.
 - **Git** — the same Server / User / Checkout branch fields as New Project.
 - **Deploy manifest** — a table, one row per DDL object, of its `ddl/` path,
   its last-deployed content hash, and its deployed-commit-id (if any), with

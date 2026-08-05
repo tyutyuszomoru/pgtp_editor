@@ -12,6 +12,7 @@ from pgtp_editor.db.ddl_project import (
     Reconciliation,
     compute_drift_markers,
     content_hash,
+    is_project_dir,
     load_settings,
     parse_checked_out_header,
     reconcile_routine_paths,
@@ -22,6 +23,7 @@ from pgtp_editor.db.ddl_project import (
     trigger_ddl_path,
 )
 from pgtp_editor.db.introspect import DatabaseSchema, RoutineInfo, TriggerInfo
+from pgtp_editor.db.sandbox import SandboxMode
 
 
 def _routine(schema, name, arg_types, **kwargs):
@@ -37,6 +39,25 @@ def test_load_settings_on_a_brand_new_project_returns_defaults(tmp_path):
     settings = load_settings(tmp_path)
     assert settings == ProjectSettings()
     assert not (tmp_path / ".ddlproject").exists()  # nothing written by loading
+
+
+# --- BUG-022: the Open-Project validity gate --------------------------------
+def test_is_project_dir_false_for_a_brand_new_empty_folder(tmp_path):
+    assert is_project_dir(tmp_path) is False
+
+
+def test_is_project_dir_false_when_ddlproject_dir_exists_but_has_no_settings_file(tmp_path):
+    (tmp_path / ".ddlproject").mkdir()
+    assert is_project_dir(tmp_path) is False
+
+
+def test_is_project_dir_true_after_save_settings(tmp_path):
+    save_settings(tmp_path, ProjectSettings())
+    assert is_project_dir(tmp_path) is True
+
+
+def test_is_project_dir_false_for_a_nonexistent_path(tmp_path):
+    assert is_project_dir(tmp_path / "does-not-exist") is False
 
 
 def test_save_then_load_round_trips_every_field(tmp_path):
@@ -87,6 +108,51 @@ def test_save_settings_does_not_duplicate_an_existing_gitignore_entry(tmp_path):
     lines = (tmp_path / ".gitignore").read_text(encoding="utf-8").splitlines()
     assert lines.count(".ddlproject/") == 1
     assert "*.pyc" in lines  # untouched
+
+
+# --- sandbox_mode (§18.5 D2a) -------------------------------------------------
+def test_default_sandbox_mode_is_schema_only(tmp_path):
+    assert ProjectSettings().sandbox_mode == SandboxMode.SCHEMA_ONLY
+
+
+def test_sandbox_mode_round_trips_with_data(tmp_path):
+    settings = ProjectSettings(sandbox_mode=SandboxMode.WITH_DATA)
+
+    save_settings(tmp_path, settings)
+    loaded = load_settings(tmp_path)
+
+    assert loaded.sandbox_mode == SandboxMode.WITH_DATA
+
+
+def test_sandbox_mode_is_recorded_in_settings_json_as_plain_text(tmp_path):
+    save_settings(tmp_path, ProjectSettings(sandbox_mode=SandboxMode.WITH_DATA))
+
+    raw = settings_path(tmp_path).read_text(encoding="utf-8")
+
+    assert '"sandbox_mode": "with_data"' in raw
+
+
+def test_loading_a_settings_file_with_no_sandbox_mode_key_defaults_to_schema_only(tmp_path):
+    """An older settings.json written before D2a existed has no `sandbox_mode`
+    key at all -- must default gracefully, never fail to load the project."""
+    path = settings_path(tmp_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text('{"name": "legacy", "deployed": {}}', encoding="utf-8")
+
+    loaded = load_settings(tmp_path)
+
+    assert loaded.sandbox_mode == SandboxMode.SCHEMA_ONLY
+    assert loaded.name == "legacy"
+
+
+def test_loading_a_settings_file_with_an_unrecognized_sandbox_mode_defaults_gracefully(tmp_path):
+    path = settings_path(tmp_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text('{"sandbox_mode": "nonsense"}', encoding="utf-8")
+
+    loaded = load_settings(tmp_path)
+
+    assert loaded.sandbox_mode == SandboxMode.SCHEMA_ONLY
 
 
 def test_save_settings_preserves_unrelated_gitignore_content(tmp_path):

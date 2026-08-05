@@ -23,7 +23,11 @@ repository. This dialog collects that folder plus two OPTIONAL sections:
   specific job: verifying the connected user is a **superuser** (sandbox
   provisioning needs `CREATE EXTENSION`), reusing `db/sandbox.py::probe` as
   the same capability probe the later sandbox lane uses -- not a second,
-  ad hoc superuser check.
+  ad hoc superuser check. This step also presents the **"with data" /
+  "without data"** provisioning choice (§18.5 D2a, settled 2026-08-05):
+  "without data" (the default) is the existing schema-only baseline path;
+  "with data" clones the target database via `pg_dump`/`pg_restore`
+  instead, once, at creation time -- never re-toggled later.
 - **Git** -- server/user/checkout-branch fields, captured but **inert**
   (§18.2: "explicit TBD/placeholder only, not designed"). No Test button,
   no validation beyond being present -- nothing reads these fields yet
@@ -49,13 +53,14 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QPushButton,
+    QRadioButton,
     QVBoxLayout,
     QWidget,
 )
 
 from pgtp_editor.db.config import ConnectionParams
 from pgtp_editor.db.ddl_project import GitConfig
-from pgtp_editor.db.sandbox import SandboxCapabilities, probe
+from pgtp_editor.db.sandbox import SandboxCapabilities, SandboxMode, probe
 from pgtp_editor.ui.async_task import run_async
 
 Prober = Callable[[ConnectionParams], SandboxCapabilities]
@@ -72,6 +77,9 @@ class NewProjectDialog(QDialog):
         # Off-thread executor seam, same convention as ConnectionSetupDialog:
         # tests replace this with a synchronous stub for determinism.
         self._run_async = run_async
+        # Last sandbox capability probe result, kept so a caller (e.g.
+        # MainWindow) can read it after `accepted` fires without re-probing.
+        self._last_probe: SandboxCapabilities | None = None
         self.setWindowTitle("New Project")
 
         identity_form = QFormLayout()
@@ -109,9 +117,30 @@ class NewProjectDialog(QDialog):
         sandbox_test_row = QHBoxLayout()
         sandbox_test_row.addWidget(self._sandbox_test_button)
         sandbox_test_row.addWidget(self._sandbox_status_label, 1)
+
+        # "with data" / "without data" clone choice (§18.5 D2a) -- chosen
+        # once, here, at sandbox-creation time; never re-toggled later. Recorded
+        # verbatim into ProjectSettings.sandbox_mode by the caller.
+        self._sandbox_without_data_radio = QRadioButton("Without data (schema only, default)")
+        self._sandbox_without_data_radio.setChecked(True)
+        self._sandbox_with_data_radio = QRadioButton(
+            "With data (clones the target database via pg_dump/pg_restore)"
+        )
+        mode_caveat = QLabel(
+            "One-shot: cloning happens once, at creation. To refresh data later,"
+            " destroy and recreate the sandbox. \"With data\" additionally needs"
+            " pg_dump/pg_restore on PATH."
+        )
+        mode_caveat.setWordWrap(True)
+        sandbox_mode_layout = QVBoxLayout()
+        sandbox_mode_layout.addWidget(self._sandbox_without_data_radio)
+        sandbox_mode_layout.addWidget(self._sandbox_with_data_radio)
+        sandbox_mode_layout.addWidget(mode_caveat)
+
         sandbox_layout = QVBoxLayout(sandbox_group)
         sandbox_layout.addLayout(sandbox_form)
         sandbox_layout.addLayout(sandbox_test_row)
+        sandbox_layout.addLayout(sandbox_mode_layout)
 
         git_group = QGroupBox("Git (optional -- not yet used)")
         self._git_server_edit = QLineEdit()
@@ -180,6 +209,14 @@ class NewProjectDialog(QDialog):
             password=self._sandbox_password_edit.text(),
         )
 
+    def sandbox_mode(self) -> SandboxMode:
+        """The sandbox provisioning choice (§18.5 D2a) -- "without data"
+        (`SandboxMode.SCHEMA_ONLY`) is the default and stays selected unless
+        the user explicitly picks "with data"."""
+        if self._sandbox_with_data_radio.isChecked():
+            return SandboxMode.WITH_DATA
+        return SandboxMode.SCHEMA_ONLY
+
     def git_config(self) -> GitConfig:
         return GitConfig(
             server=self._git_server_edit.text(),
@@ -214,15 +251,28 @@ class NewProjectDialog(QDialog):
 
     def _apply_sandbox_probe_result(self, caps: SandboxCapabilities) -> None:
         self._sandbox_test_button.setEnabled(True)
+        self._last_probe = caps
         if caps.probe_error is not None:
             self._sandbox_status_label.setText(caps.probe_error)
             self._sandbox_status_label.setStyleSheet("color: red;")
             return
-        if caps.is_superuser:
-            self._sandbox_status_label.setText("Connected — superuser.")
-            self._sandbox_status_label.setStyleSheet("color: green;")
+        if not caps.is_superuser:
+            self._sandbox_status_label.setText(
+                "Connected, but NOT a superuser — sandbox provisioning needs CREATE EXTENSION."
+            )
+            self._sandbox_status_label.setStyleSheet("color: red;")
             return
-        self._sandbox_status_label.setText(
-            "Connected, but NOT a superuser — sandbox provisioning needs CREATE EXTENSION."
-        )
-        self._sandbox_status_label.setStyleSheet("color: red;")
+        if self.sandbox_mode() is SandboxMode.WITH_DATA and not caps.data_clone_available:
+            missing = [
+                name
+                for name, path in (("pg_dump", caps.pg_dump_path), ("pg_restore", caps.pg_restore_path))
+                if path is None
+            ]
+            self._sandbox_status_label.setText(
+                "Connected — superuser, but 'with data' needs "
+                f"{' and '.join(missing)} on PATH (not found)."
+            )
+            self._sandbox_status_label.setStyleSheet("color: red;")
+            return
+        self._sandbox_status_label.setText("Connected — superuser.")
+        self._sandbox_status_label.setStyleSheet("color: green;")

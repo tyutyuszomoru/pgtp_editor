@@ -35,16 +35,20 @@ from PySide6.QtWidgets import (
     QFormLayout,
     QGroupBox,
     QHeaderView,
+    QLabel,
     QLineEdit,
     QPushButton,
+    QRadioButton,
     QTableWidget,
     QTableWidgetItem,
+    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
 
 from pgtp_editor.db.config import ConnectionParams
 from pgtp_editor.db.ddl_project import DeployedObject, GitConfig, PgtpLink, ProjectSettings
+from pgtp_editor.db.sandbox import SandboxMode
 
 _DEPLOYED_COLUMNS = ("Path", "Content hash", "Deployed commit")
 
@@ -87,6 +91,24 @@ class ProjectSettingsDialog(QDialog):
             self._sandbox_password_edit,
         ) = self._build_connection_form(sandbox_group)
 
+        # Sandbox provisioning mode (§18.5 D2a) -- chosen once at New Project
+        # time; shown/editable here too since this dialog exposes the JSON's
+        # FULL contents, not a subset. Changing it here does NOT re-clone
+        # anything by itself -- it only edits the recorded intent for the
+        # NEXT reset()/recreate, exactly like every other field in this dialog.
+        self._sandbox_mode_without_data_radio = QRadioButton("Without data (schema only)")
+        self._sandbox_mode_with_data_radio = QRadioButton("With data")
+        mode_note = QLabel(
+            "Changing this does not re-clone the sandbox -- it takes effect"
+            " the next time the sandbox is reset/recreated."
+        )
+        mode_note.setWordWrap(True)
+        sandbox_mode_form = QFormLayout()
+        sandbox_mode_form.addRow(self._sandbox_mode_without_data_radio)
+        sandbox_mode_form.addRow(self._sandbox_mode_with_data_radio)
+        sandbox_mode_form.addRow(mode_note)
+        sandbox_group.layout().addRow(sandbox_mode_form)
+
         git_group = QGroupBox("Git (optional -- not yet used)")
         self._git_server_edit = QLineEdit()
         self._git_user_edit = QLineEdit()
@@ -117,14 +139,35 @@ class ProjectSettingsDialog(QDialog):
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
 
+        tabs = QTabWidget(self)
+
+        general_page = QWidget()
+        general_layout = QVBoxLayout(general_page)
+        general_layout.addLayout(identity_form)
+        general_layout.addWidget(pgtp_group)
+        tabs.addTab(general_page, "General")
+
+        connections_page = QWidget()
+        connections_layout = QVBoxLayout(connections_page)
+        connections_layout.addWidget(target_group)
+        connections_layout.addWidget(sandbox_group)
+        tabs.addTab(connections_page, "Connections")
+
+        git_page = QWidget()
+        git_layout = QVBoxLayout(git_page)
+        git_layout.addWidget(git_group)
+        tabs.addTab(git_page, "Git")
+
+        deploy_page = QWidget()
+        deploy_layout = QVBoxLayout(deploy_page)
+        deploy_layout.addWidget(deployed_group)
+        tabs.addTab(deploy_page, "Deploy manifest")
+
         layout = QVBoxLayout(self)
-        layout.addLayout(identity_form)
-        layout.addWidget(pgtp_group)
-        layout.addWidget(target_group)
-        layout.addWidget(sandbox_group)
-        layout.addWidget(git_group)
-        layout.addWidget(deployed_group)
+        layout.addWidget(tabs)
         layout.addWidget(buttons)
+
+        self.resize(560, 480)
 
         self.set_settings(settings)
 
@@ -167,6 +210,10 @@ class ProjectSettingsDialog(QDialog):
             self._sandbox_user_edit,
             self._sandbox_password_edit,
         )
+        if settings.sandbox_mode is SandboxMode.WITH_DATA:
+            self._sandbox_mode_with_data_radio.setChecked(True)
+        else:
+            self._sandbox_mode_without_data_radio.setChecked(True)
         self._git_server_edit.setText(settings.git.server)
         self._git_user_edit.setText(settings.git.user)
         self._git_branch_edit.setText(settings.git.checkout_branch)
@@ -204,6 +251,11 @@ class ProjectSettingsDialog(QDialog):
                 self._sandbox_database_edit,
                 self._sandbox_user_edit,
                 self._sandbox_password_edit,
+            ),
+            sandbox_mode=(
+                SandboxMode.WITH_DATA
+                if self._sandbox_mode_with_data_radio.isChecked()
+                else SandboxMode.SCHEMA_ONLY
             ),
             git=GitConfig(
                 server=self._git_server_edit.text(),

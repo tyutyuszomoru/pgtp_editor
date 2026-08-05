@@ -154,6 +154,25 @@ def test_toggle_on_without_connection_unchecks_and_opens_setup(qtbot, tmp_path):
     assert not window.left_tabs.isTabVisible(window.ddl_browser_tab_index)
 
 
+def test_toggle_on_without_connection_and_project_open_reroutes_to_project_settings(qtbot, tmp_path):
+    """BUG-024: with a §18.2 project open, a missing connection must point
+    the user at Project Settings, not the meaningless standalone Connection
+    Setup dialog."""
+    from pgtp_editor.db.ddl_project import ProjectSettings
+
+    window = _window(qtbot, tmp_path, with_project=False)  # no .pgtp, empty settings
+    window._set_active_ddl_project(tmp_path / "proj", ProjectSettings())
+    fetches = []
+    window._fetch_ddl_schema = lambda params: fetches.append(1) or _schema()
+
+    window._ddl_explorer_action.setChecked(True)
+
+    assert window._ddl_explorer_action.isChecked() is False  # rolled back
+    assert window._connection_dialog is None  # Connection Setup NOT opened
+    assert window._project_settings_dialog is not None  # Project Settings opened instead
+    assert fetches == []  # never tried to fetch
+
+
 def test_fetch_error_unchecks_and_shows_status(qtbot, tmp_path):
     window = _window(qtbot, tmp_path)
 

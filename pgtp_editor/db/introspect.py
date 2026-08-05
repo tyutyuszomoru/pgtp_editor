@@ -59,6 +59,11 @@ class TableInfo:
     name: str  # "schema.table"
     kind: str  # "table" | "view" | "matview"
     columns: list[ColumnInfo] = field(default_factory=list)
+    #: `pg_get_viewdef` text for `kind in ("view", "matview")`, else None
+    #: (§18.5 D2's "recorded gap" closure -- `DatabaseSchema` previously
+    #: modeled no view definitions at all, so a routine touching a view
+    #: failed to compile in the sandbox baseline).
+    view_definition: str | None = None
 
 
 @dataclass(frozen=True)
@@ -111,10 +116,42 @@ class TriggerInfo:
 
 
 @dataclass(frozen=True)
+class TypeInfo:
+    """A domain or composite type, sourced from ``pg_type`` (§18.5 D2's
+    "recorded gap" closure) -- just enough to reconstruct a catalog-shape
+    `CREATE DOMAIN`/`CREATE TYPE ... AS (...)` for the sandbox baseline.
+
+    Deliberately minimal, matching `build_baseline_sql`'s "catalog shape,
+    not full fidelity" posture (§18.5 D2): a domain's `CHECK` constraints are
+    NOT captured here (the omission list already drops `CHECK`-adjacent
+    fidelity from tables; domains follow the same "catalog-based `plpgsql_
+    check` reads no rows, only needs types to exist" reasoning).
+    """
+
+    schema: str
+    name: str
+    kind: str  # "domain" | "composite"
+    #: Domain only -- the `format_type` of the underlying base type.
+    base_type: str | None = None
+    #: Domain only -- `True` when the domain is declared `NOT NULL`.
+    not_null: bool = False
+    #: Composite only -- ordered `(attribute_name, format_type)` pairs.
+    attributes: list[tuple[str, str]] = field(default_factory=list)
+
+    @property
+    def qualified_name(self) -> str:
+        """`schema.name` -- the key `DatabaseSchema.types` uses."""
+        return f"{self.schema}.{self.name}"
+
+
+@dataclass(frozen=True)
 class DatabaseSchema:
     tables: dict[str, TableInfo] = field(default_factory=dict)
     routines: dict[str, RoutineInfo] = field(default_factory=dict)
     triggers: dict[str, TriggerInfo] = field(default_factory=dict)
+    #: Domains and composite types, keyed by `schema.name` (§18.5 D2's
+    #: "recorded gap" closure -- previously unmodeled entirely).
+    types: dict[str, TypeInfo] = field(default_factory=dict)
 
     def has_table(self, name: str) -> bool:
         return name in self.tables
@@ -233,6 +270,64 @@ WHERE NOT t.tgisinternal
 
 ROUTINE_TRIGGER_SQL: list[str] = [_ROUTINES_SQL, _TRIGGERS_SQL]
 
+# --- View definitions & domain/composite types (§18.5 D2 "recorded gap") ----
+# A separate query pair, consumed ONLY by `snapshot_for_baseline` -- neither
+# `fetch_schema` nor `fetch_routines_and_triggers` needs view bodies or
+# domain/composite shapes, so this does not widen either of those two
+# established contracts. `pg_get_viewdef` needs relkind IN ('v', 'm'); the
+# `pg_type` query needs typtype IN ('d', 'c') (domain, composite), per §18.5
+# D2's explicit instruction.
+
+_VIEWDEFS_SQL = """
+SELECT n.nspname, c.relname, pg_catalog.pg_get_viewdef(c.oid, true)
+FROM pg_catalog.pg_class c
+JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+WHERE c.relkind IN ('v', 'm')
+  AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+  AND n.nspname NOT LIKE 'pg_toast%'
+"""
+
+# Domains: base type + NOT NULL only -- CHECK constraints are deliberately
+# NOT captured (§18.5 D2's "catalog-based, reads no rows" baseline: a domain
+# CHECK is data-validation fidelity, the same category of thing the baseline
+# already drops for tables via the PK/FK/DEFAULT omission list). Composites:
+# ordered attribute (name, type) pairs, sourced the same way table columns
+# are (`pg_attribute` + `format_type`), since a composite type IS a
+# `pg_class` row with relkind 'c' under the hood.
+_TYPES_SQL = """
+SELECT n.nspname, t.typname, t.typtype,
+       pg_catalog.format_type(t.typbasetype, t.typtypmod),
+       t.typnotnull,
+       COALESCE(
+           (SELECT array_agg(a.attname ORDER BY a.attnum)
+            FROM pg_catalog.pg_attribute a
+            WHERE a.attrelid = t.typrelid AND a.attnum > 0 AND NOT a.attisdropped),
+           ARRAY[]::text[]
+       ),
+       COALESCE(
+           (SELECT array_agg(pg_catalog.format_type(a.atttypid, a.atttypmod) ORDER BY a.attnum)
+            FROM pg_catalog.pg_attribute a
+            WHERE a.attrelid = t.typrelid AND a.attnum > 0 AND NOT a.attisdropped),
+           ARRAY[]::text[]
+       )
+FROM pg_catalog.pg_type t
+JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace
+WHERE t.typtype IN ('d', 'c')
+  AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+  AND n.nspname NOT LIKE 'pg_toast%'
+  -- A composite type's OWN row-type entry (created implicitly by every
+  -- CREATE TABLE) must be excluded -- only "free-standing" CREATE TYPE ... AS
+  -- (...) composites are wanted here; table row-types are already fully
+  -- captured via SCHEMA_SQL/_build_tables and would otherwise duplicate as a
+  -- phantom `CREATE TYPE` for every table.
+  AND NOT EXISTS (
+      SELECT 1 FROM pg_catalog.pg_class c
+      WHERE c.oid = t.typrelid AND c.relkind != 'c'
+  )
+"""
+
+BASELINE_EXTRA_SQL: list[str] = [_VIEWDEFS_SQL, _TYPES_SQL]
+
 # pg_trigger.tgtype bit flags (see Postgres's trigger.h) -- decoded in Python
 # rather than in SQL so the mapping is unit-testable without a live database.
 _TRIGGER_BEFORE = 1 << 1
@@ -340,11 +435,20 @@ def run_queries(
 
 
 def _build_tables(
-    relation_rows: Rows, column_rows: Rows, constraint_rows: Rows
+    relation_rows: Rows,
+    column_rows: Rows,
+    constraint_rows: Rows,
+    view_definition_rows: Rows | None = None,
 ) -> dict[str, TableInfo]:
     """Assemble ``{"schema.table": TableInfo}`` from `SCHEMA_SQL`'s three
     row-lists. Shared by `fetch_schema` and `fetch_routines_and_triggers`
-    (§18.6) so the one table/column-assembly implementation backs both."""
+    (§18.6) so the one table/column-assembly implementation backs both.
+
+    `view_definition_rows` (from `_VIEWDEFS_SQL`, one row per `("v", "m")`
+    relation) is optional and additive -- both existing callers omit it and
+    get `view_definition=None` on every `TableInfo` exactly as before;
+    `snapshot_for_baseline` is the only caller that supplies it.
+    """
     kinds: dict[str, str] = {}
     for schema_name, rel_name, relkind in relation_rows:
         kinds[f"{schema_name}.{rel_name}"] = _KIND_BY_RELKIND.get(relkind, "table")
@@ -381,10 +485,38 @@ def _build_tables(
             )
         )
 
+    view_definitions: dict[str, str] = {}
+    for schema_name, rel_name, definition in view_definition_rows or []:
+        view_definitions[f"{schema_name}.{rel_name}"] = definition
+
     return {
-        name: TableInfo(name=name, kind=kind, columns=columns_by_table.get(name, []))
+        name: TableInfo(
+            name=name,
+            kind=kind,
+            columns=columns_by_table.get(name, []),
+            view_definition=view_definitions.get(name),
+        )
         for name, kind in kinds.items()
     }
+
+
+def _build_types(type_rows: Rows) -> dict[str, TypeInfo]:
+    """Assemble ``{"schema.name": TypeInfo}`` from `_TYPES_SQL`'s rows
+    (§18.5 D2's "recorded gap" closure)."""
+    types: dict[str, TypeInfo] = {}
+    for schema_name, type_name, typtype, base_type, not_null, attr_names, attr_types in type_rows:
+        kind = "domain" if typtype == "d" else "composite"
+        attributes = list(zip(attr_names or [], attr_types or [], strict=True))
+        info = TypeInfo(
+            schema=schema_name,
+            name=type_name,
+            kind=kind,
+            base_type=base_type if kind == "domain" else None,
+            not_null=bool(not_null) if kind == "domain" else False,
+            attributes=attributes if kind == "composite" else [],
+        )
+        types[info.qualified_name] = info
+    return types
 
 
 def fetch_schema(params: ConnectionParams, runner: Runner = run_queries) -> DatabaseSchema:
@@ -424,6 +556,27 @@ def fetch_routines_and_triggers(
         params, list(ROUTINE_TRIGGER_SQL) + list(SCHEMA_SQL)
     )
 
+    routines, triggers = _build_routines_and_triggers(routine_rows, trigger_rows)
+    tables = _build_tables(relation_rows, column_rows, constraint_rows)
+
+    elapsed = time.monotonic() - started
+    _log.info(
+        "db: fetch_routines_and_triggers finished %.3fs routines=%d triggers=%d tables=%d",
+        elapsed,
+        len(routines),
+        len(triggers),
+        len(tables),
+    )
+    return DatabaseSchema(routines=routines, triggers=triggers, tables=tables)
+
+
+def _build_routines_and_triggers(
+    routine_rows: Rows, trigger_rows: Rows
+) -> tuple[dict[str, RoutineInfo], dict[str, TriggerInfo]]:
+    """Assemble the `.routines`/`.triggers` dicts from `ROUTINE_TRIGGER_SQL`'s
+    two row-lists. Factored out of `fetch_routines_and_triggers` so
+    `snapshot_for_baseline` (§18.5 D2) can build the identical shape from one
+    shared implementation rather than a second parallel loop."""
     routines: dict[str, RoutineInfo] = {}
     for (
         schema_name,
@@ -466,18 +619,70 @@ def fetch_routines_and_triggers(
             function_name=function_name,
             definition=definition,
         )
+    return routines, triggers
 
-    tables = _build_tables(relation_rows, column_rows, constraint_rows)
+
+@dataclass(frozen=True)
+class BaselineSnapshot:
+    """A `DatabaseSchema` widened with the two "recorded gap" queries
+    (§18.5 D2) that `build_baseline_sql` (`db/sandbox.py`) needs but neither
+    `fetch_schema` nor `fetch_routines_and_triggers` fetches: view/matview
+    definitions (already carried on `TableInfo.view_definition`) and
+    domain/composite types (`DatabaseSchema.types`).
+
+    A thin wrapper, not a re-invented model -- `DatabaseSchema` stays the one
+    shared shape; this only exists because `snapshot_for_baseline` is a
+    distinct entry point (one specific extra round trip) worth naming
+    separately from the general-purpose `fetch_*` functions above.
+    """
+
+    schema: DatabaseSchema = field(default_factory=DatabaseSchema)
+
+
+def snapshot_for_baseline(
+    target_params: ConnectionParams, runner: Runner = run_queries
+) -> BaselineSnapshot:
+    """Introspect the **target** database into a `BaselineSnapshot` -- the
+    input `db/sandbox.py::build_baseline_sql` consumes to provision a fresh
+    sandbox (§18.5 D2).
+
+    Reuses `SCHEMA_SQL` + `ROUTINE_TRIGGER_SQL` + `BASELINE_EXTRA_SQL` (the
+    view-definition and domain/composite-type queries) in **one** round trip,
+    mirroring `fetch_routines_and_triggers`'s "one widened fetch" precedent
+    rather than issuing several separate connections.
+
+    Qt-free, and -- like every other function here -- never imports psycopg
+    directly: only the injectable `runner` (defaulting to `run_queries`,
+    the sole psycopg touchpoint) ever opens a connection.
+    """
+    _log.info("db: snapshot_for_baseline started %s", debuglog.redacted(target_params))
+    started = time.monotonic()
+    (
+        routine_rows,
+        trigger_rows,
+        relation_rows,
+        column_rows,
+        constraint_rows,
+        viewdef_rows,
+        type_rows,
+    ) = runner(target_params, list(ROUTINE_TRIGGER_SQL) + list(SCHEMA_SQL) + list(BASELINE_EXTRA_SQL))
+
+    routines, triggers = _build_routines_and_triggers(routine_rows, trigger_rows)
+    tables = _build_tables(relation_rows, column_rows, constraint_rows, viewdef_rows)
+    types = _build_types(type_rows)
 
     elapsed = time.monotonic() - started
     _log.info(
-        "db: fetch_routines_and_triggers finished %.3fs routines=%d triggers=%d tables=%d",
+        "db: snapshot_for_baseline finished %.3fs tables=%d routines=%d triggers=%d types=%d",
         elapsed,
+        len(tables),
         len(routines),
         len(triggers),
-        len(tables),
+        len(types),
     )
-    return DatabaseSchema(routines=routines, triggers=triggers, tables=tables)
+    return BaselineSnapshot(
+        schema=DatabaseSchema(tables=tables, routines=routines, triggers=triggers, types=types)
+    )
 
 
 def test_connection(params: ConnectionParams, runner: Runner = run_queries) -> tuple[bool, str]:
