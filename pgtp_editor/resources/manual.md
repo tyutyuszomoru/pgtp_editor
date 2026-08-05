@@ -667,8 +667,10 @@ column's two rows together so they read as one record.
 This is **display-only**: clicking a table populates Properties but, unlike
 clicking a routine or trigger, does **not** jump or scroll the DDL Explorer
 buffer, since a whole table has no single line in that buffer to jump to.
-Right-clicking a table node offers no context menu — **Edit …** and **Check
-Out for Versioning** remain available only on routine and trigger rows.
+Right-clicking a table node offers exactly one action, **Add Trigger…** (see
+*Creating a new trigger, function, or procedure*, below) — **Edit …** and
+**Check Out for Versioning** remain available only on routine and trigger rows,
+because those act on an object's existing definition.
 
 ### Working in the DDL tab
 
@@ -783,6 +785,68 @@ silently discarded to resync with the database.
 
 There is no Apply, Check, or sandbox validation in this version — editing and
 saving a `.sql` file to disk is all it does today.
+
+### Creating a new trigger, function, or procedure
+
+Besides editing what the database already has, the DDL Explorer is where you
+start a **brand-new** object. Nothing here talks to the database: both dialogs
+only collect a few fields and open an editor tab on a generated skeleton, which
+you then fill in and save like any other DDL object tab (see *Editing a single
+function, procedure, or trigger*, above).
+
+**Add Trigger…** — right-click a **table** node under **Tables** in the DDL
+Objects tree. (This is the one context menu a table node has; **Edit …** and
+**Check Out for Versioning** still belong to routine and trigger rows only.) The
+dialog shows the clicked table as a fixed line — you picked it by right-clicking
+it, so it isn't offered again as a field — plus:
+
+- **Name** — the trigger's name.
+- **Timing** — **BEFORE**, **AFTER**, or **INSTEAD OF**.
+- **Events** — **INSERT**, **UPDATE**, **DELETE** as checkboxes, because
+  Postgres combines them with `OR` (`BEFORE INSERT OR UPDATE`). Tick at least
+  one; you can tick several.
+- **Level** — **FOR EACH ROW** or **FOR EACH STATEMENT**. (Postgres has no
+  transaction-level trigger, so none is offered.)
+- **Trigger function** — a list of the functions the trigger can attach to. It
+  lists **only functions that RETURN trigger**, because a trigger can attach to
+  nothing else. If the database has no such function yet, the list is empty, the
+  dialog says so plainly, and **OK** stays disabled — create the trigger
+  function first (below), then come back.
+
+**New Function/Procedure…** — two ways in: right-click the **Functions &
+Procedures** branch in the DDL Objects tree, or use **Database ▸ New
+Function/Procedure…**. (A routine isn't scoped to a particular table, so unlike
+Add Trigger it earns a menu entry of its own.) Three fields:
+
+- **Name** — plain (`my_function`) or schema-qualified (`pr.my_function`); an
+  unqualified name lands in `public`, the same default Postgres itself applies.
+- **Kind** — **Function** or **Procedure**.
+- **Returns** — an editable list of the common types, so `trigger` is one click,
+  while `numeric(10,2)`, `integer[]` or `pr.my_domain` can simply be typed.
+  **The Returns row disappears entirely when you pick Procedure**: a Postgres
+  procedure has no `RETURNS` clause at all, so a return type there would be a
+  syntax error rather than an ignorable extra. The dialog opens on **Function**
+  returning `trigger`, since writing a trigger function is the usual first step
+  towards a trigger.
+
+Both dialogs validate as you type: **OK** is enabled only when the fields
+render, and the reason is shown inline in red rather than as an error box.
+Names are quoted safely — mixed case is preserved (`MyFunc` becomes
+`"MyFunc"`), and a name containing a space or a quote is **refused with an
+inline message** instead of producing broken SQL.
+
+**OK opens a new editor tab holding the generated skeleton** — a
+`LANGUAGE plpgsql` body stub for a routine, a complete `CREATE TRIGGER`
+statement for a trigger. Creating an object **runs nothing against the
+database**; it only gives you correct starting text. Saving works exactly as it
+does for any other DDL object tab.
+
+With a **local DDL-versioning project** open (see *Local DDL-Versioning
+Projects*), a newly created object is **registered for versioning
+automatically**: it shows up as a pending local change (the `*` drift marker) in
+the DDL Objects tree and is picked up by the normal deploy flow. Created with no
+project open, it is just an editor tab and a file — unversioned, which is a
+supported way to work.
 
 ### Schema-aware completion in the DDL object editor
 
@@ -1025,6 +1089,83 @@ unresolved:
 - If there are DDL objects with local edits not yet included in a batch
   deploy, it adds an Audit-panel line noting how many — it does not open any
   deploy flow automatically.
+
+---
+
+## Project Status
+
+**Database ▸ Project Status…** opens a separate **Project Status** window that
+shows, at a glance, how much of the working setup is actually in place. It reads
+left to right as a chain that splits at the end:
+
+**Quality database → Project → Sandbox → Sandbox data / plpgsql_check**
+
+Above the diagram a one-line summary states the tier and anything degrading it;
+below it, the reminder **"Click a node for details and actions."** A
+**Re-check** button sits in the top-right corner.
+
+**Opening the window re-probes.** It is never a stale cached reading: a sandbox
+that died since you opened the project shows as unreachable here, and invoking
+the menu entry again on an already-open window probes again rather than just
+raising it. **Re-check** does the same on demand. The diagram follows the app's
+Light/Dark theme automatically (see *Appearance & Layout*).
+
+### The nodes
+
+- **Quality database** — the target/production connection this project works
+  against: **Not configured**, **Unreachable**, or **Connected**. Not configured
+  is its own state, distinct from a failed login: an unconfigured connection has
+  not failed, it has not been tried.
+- **Project** — which tier you are working in: **Standalone editor** (no project
+  open), **Quality project** (a project is open but has no working sandbox), or
+  **Development project** (a project is open with a working sandbox).
+- **Sandbox** — the project's local sandbox database: **Connected**,
+  **Unreachable**, or **Not configured**. A sandbox that is reachable but whose
+  `pg_dump`/`pg_restore` tools are missing from your `PATH` reads **Connected —
+  tools missing**: the database itself is fine, only data cloning is blocked.
+- **Sandbox data** — whether data has been cloned into the sandbox
+  (**Data cloned**) or it holds the schema only (**Schema only**).
+- **plpgsql_check** — whether the `plpgsql_check` extension is **Installed** in
+  the sandbox or **Not installed**.
+
+**If no sandbox is configured at all** — including when no project is open — the
+Sandbox, Sandbox data, and plpgsql_check nodes are **simply absent** and the
+chain ends at the Project node. They are not drawn greyed out: an inactive
+capability is left out rather than shown as a dead control. A sandbox that *is*
+configured but offline keeps all three nodes, in their failed state.
+
+### Clicking a node
+
+**Every node is clickable** (also with the keyboard: Tab to it, then Space or
+Enter). Each opens its own small, non-modal window that you can leave open while
+you work:
+
+- **Quality database** — the connection's status and details, and a
+  **Reconnect** action.
+- **Project** — states the tier plainly. This window is deliberately minimal for
+  now; its fuller contents are not yet designed.
+- **Sandbox** — the sandbox's status and connection details. In the
+  tools-missing case it **names the missing tool** and notes that schema-only
+  work is unaffected, alongside an **Open help** button.
+- **Sandbox data** — explains the current fill state and offers **Run data clone
+  now** (or **Redo data clone** when data is already there).
+- **plpgsql_check** — explains the install state and offers **Install the
+  plpgsql_check extension**. Once the extension is installed the window is
+  purely informational and offers no button, because there is nothing left to
+  do.
+
+An action is never a single click on the node itself: you always land in the
+node's window first and press the button there. Running one closes that window
+and re-probes, so the diagram can't keep claiming the state from before you
+acted.
+
+> In this version the Quality window's **Reconnect**, the Sandbox window's help
+> link and both windows' connection detail lines are live. The two sandbox
+> *action* buttons — **Run data clone** and **Install the plpgsql_check
+> extension** — are not yet offered: both need a live sandbox session, which
+> arrives with sandbox provisioning. Rather than show a button that cannot
+> work, those windows stay status-only for now. Everything the diagram reports
+> is live and accurate today.
 
 ---
 

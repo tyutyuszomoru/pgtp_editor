@@ -100,6 +100,7 @@ from pgtp_editor.ui.manual_panel import (
 from pgtp_editor.db.config import load_connection, save_connection, seed_params
 from pgtp_editor.db.compare import check_db_against_xml, check_xml_against_db
 from pgtp_editor.db.ddl_buffer import build_ddl_text
+from pgtp_editor.db.migration_gen import connection_summary
 from pgtp_editor.db.ddl_project import (
     DeployedObject,
     PgtpLink,
@@ -3322,6 +3323,15 @@ class MainWindow(QMainWindow):
             dark=not self._light_theme_action.isChecked(),
         )
 
+    @staticmethod
+    def _connection_summary_for(params) -> str:
+        """`user@host:port/db` for a status window, or a plain "not
+        configured" line. Routed through `connection_summary` so no password
+        can reach the window text."""
+        if params is None:
+            return "Not configured."
+        return connection_summary(params)
+
     def _open_project_status(self) -> None:
         """Database ▸ Project Status… (§18.8).
 
@@ -3343,9 +3353,24 @@ class MainWindow(QMainWindow):
             self.refresh_project_capability_status()
             return self._build_project_status_diagram()
 
+        # Sandbox1's "run data clone" and Sandbox2's "install plpgsql_check"
+        # are deliberately NOT wired: both need a live `SandboxSession`, which
+        # only `open_sandbox` can create and which this window has no way to
+        # obtain yet (§18.5 D2's provisioning UI is not built). The panel hides
+        # an affordance whose callback is None, so those windows stay
+        # status-only rather than offering a button that cannot work.
+        settings = self._ddl_project_settings
         panel = ProjectStatusPanel(
             diagram=self._build_project_status_diagram(),
             on_refresh=on_refresh,
+            on_reconnect_quality=on_refresh,
+            on_show_help=self._show_manual,
+            quality_summary=self._connection_summary_for(
+                settings.target if settings is not None else load_connection(self._settings)
+            ),
+            sandbox_summary=self._connection_summary_for(
+                settings.sandbox if settings is not None else None
+            ),
             parent=self,
         )
         panel.setWindowFlag(Qt.WindowType.Window, True)
