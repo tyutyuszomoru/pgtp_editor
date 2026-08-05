@@ -1,6 +1,6 @@
 # PGTP Editor — Consolidated Specification
 
-> **Status:** living document · **Last synthesized:** 2026-08-06 (previously 2026-08-05: §18.8 corrected to the 5-node model, then given its concrete per-node state enumeration + dark-mode asset convention, then a same-day fix to the Quality node's locked/gray semantic and the Sandbox2 install-state-vs-lint-result semantic; later the same day, BUG-020/021/022/023/024/025 folded in — Captions' preset row-predicate filter + active-filter banner + Unify scope prompt, §18.2's Open-Project validity gate + auto-open of the linked `.pgtp`, the tabbed Project Settings dialog, and Connection Setup… becoming projectless-mode-only; later still the same day, §18.1's Tables branch widened to every table (not just trigger-owning ones) plus click-to-Properties-panel column detail, with `ColumnInfo.comment` added; and finally BUG-021/026/027/028 — §18.2's project-action lambda wiring that made the `.pgtp` auto-open actually reachable, §17's role-split `(P# D# L#)` DB→XML counts and any-role mismatch rule, §7's toolbar widened to every menu command with menu-path ids, and §13's active-filter banner extended to the whole-row find filter). **2026-08-06:** FQ-001 folded into §18.2 — per-group Test buttons on the Project Settings dialog's Connections tab (generic connectivity for Target, superuser probe for Sandbox).
+> **Status:** living document · **Last synthesized:** 2026-08-06 (previously 2026-08-05: §18.8 corrected to the 5-node model, then given its concrete per-node state enumeration + dark-mode asset convention, then a same-day fix to the Quality node's locked/gray semantic and the Sandbox2 install-state-vs-lint-result semantic; later the same day, BUG-020/021/022/023/024/025 folded in — Captions' preset row-predicate filter + active-filter banner + Unify scope prompt, §18.2's Open-Project validity gate + auto-open of the linked `.pgtp`, the tabbed Project Settings dialog, and Connection Setup… becoming projectless-mode-only; later still the same day, §18.1's Tables branch widened to every table (not just trigger-owning ones) plus click-to-Properties-panel column detail, with `ColumnInfo.comment` added; and finally BUG-021/026/027/028 — §18.2's project-action lambda wiring that made the `.pgtp` auto-open actually reachable, §17's role-split `(P# D# L#)` DB→XML counts and any-role mismatch rule, §7's toolbar widened to every menu command with menu-path ids, and §13's active-filter banner extended to the whole-row find filter). **2026-08-06:** FQ-001 folded into §18.2 — per-group Test buttons on the Project Settings dialog's Connections tab (generic connectivity for Target, superuser probe for Sandbox). Same day: the §18.2 project actions' menu location corrected from Database to **File**, matching the shipped `_build_file_menu` (§26, ledger 2026-08-06).
 > **Source of truth:** this file is the single reconciled specification for PGTP Editor, and the **only**
 > place specification content is written. It was originally synthesized from the dated design specs under
 > [`docs/superpowers/specs/`](specs/) — a folder now **frozen as historical record** (read for rationale;
@@ -1955,7 +1955,7 @@ Tables branch's original scope, not a new feature:**
 > shape, `settings_path`/`load_settings`/`save_settings` (+ `.gitignore` maintenance),
 > `routine_ddl_paths`/`trigger_ddl_path` (the `_1`-suffix overload scheme),
 > `parse_checked_out_header`/`reconcile_routine_paths` (header-based rename detection), `content_hash`,
-> and `DriftMarkers`/`compute_drift_markers`. The Database-menu actions (**New Project…**, **Open
+> and `DriftMarkers`/`compute_drift_markers`. The File-menu actions (**New Project…**, **Open
 > Project…**, **Close Project**, **Project Settings…**, **Deploy .pgtp**), the project-settings JSON
 > dialogs (`ui/new_project_dialog.py::NewProjectDialog`, `ui/project_settings_dialog.py::ProjectSettingsDialog`),
 > `*`/`!` marker rendering on `BrowserPanel.set_schema`'s `drift_markers` parameter, and the
@@ -2093,9 +2093,10 @@ applies when no project is open. **§19/§7's existing plain `.pgtp` save + `.ba
 that mode** (see "The `.pgtp` file becomes a first-class checked-out artifact" below for the precise
 scope of what changes and what does not).
 
-**Menu actions** (Database menu, §26, alongside the existing Connection Setup / Check / DDL Explorer
-entries): **New Project…**, **Open Project…**, **Close Project**, **Project Settings…** (new, below),
-**Deploy .pgtp** (new, below).
+**Menu actions** (**File** menu, §26 — their own separator-delimited group between `Open…` and `Save`,
+built by `MainWindow._build_file_menu`; *not* the Database menu, which keeps Connection Setup / Check /
+DDL Explorer and the §18.5 sandbox entries): **New Project…**, **Open Project…**, **Close Project**,
+**Project Settings…** (new, below), **Deploy .pgtp** (new, below).
 
 **No project is ever created silently.** Invoking a **project-scoped** action with no project open —
 Check Out for Versioning, Deploy, or anything that would write under `ddl/` — shows a **"Project
@@ -2212,11 +2213,11 @@ projects generally, not only the `ddl/` folder — see also the callout at the t
   shape** from the previous `deployed.json` design (see "last-deployed reference," below); only its
   location and its git-tracked-ness change.
 
-**A new, technically-detailed Project Settings dialog** (Database menu ▸ **Project Settings…**) exposes
+**A new, technically-detailed Project Settings dialog** (File menu ▸ **Project Settings…**) exposes
 this JSON's **full contents**, for viewing and editing — not a simplified subset, the whole thing:
 project identity, the `.pgtp` link and its paths, both connection profiles (including the password
 fields, `EchoMode.Password` as elsewhere, §17), and the deploy manifest's raw per-object entries. This is
-a new UI surface; add it to the Database-menu action list (§26) alongside **New Project…** / **Open
+a new UI surface; add it to the **File**-menu action list (§26) alongside **New Project…** / **Open
 Project…** / **Close Project** / **Deploy .pgtp** (below).
 
 **Layout: a `QTabWidget`, four tabs** (BUG-025, 2026-08-05; layout only — the "whole JSON, nothing
@@ -2420,7 +2421,7 @@ checked-out `ddl/*.sql` file:
   implied by Save for a DDL object (§18.5).
 - **"Deploy .pgtp" is reachable two ways**, mirroring how DDL's batch Deploy (§18.3) is already
   **on-demand**, not tied to any lifecycle event:
-  - **On-demand, at any time during the session** — Database menu ▸ **Deploy .pgtp** (§26).
+  - **On-demand, at any time during the session** — File menu ▸ **Deploy .pgtp** (§26).
   - **Offered as a convenience prompt when the project is closed**, if the working copy has unpushed
     changes relative to the source `.pgtp` — see §18.3's project-close addition, below. It is an offer,
     never a forced action: closing without deploying is always available.
@@ -4421,8 +4422,22 @@ Only new module: `debuglog.py`. Log dir `%LOCALAPPDATA%\MDS\PGTP Editor\logs\` (
 Final reconciled state (after all overrides — the original top-level "Diff/Merge" menu was folded into
 Tools; "New Project" removed; line-wrap moved to editor context menu):
 
-- **File:** Open (Ctrl+O), Open Recent, Save (Ctrl+S), Save As (Ctrl+Shift+S), Close (Ctrl+W), Revert,
-  Exit.
+- **File:** Open (Ctrl+O), Open Recent, ⎯, **the §18.2 project action group** (see below), ⎯,
+  Save (Ctrl+S), Save As (Ctrl+Shift+S), Revert, Close (Ctrl+W), ⎯, Exit. Real build order in
+  `MainWindow._build_file_menu`: `Open…` · separator · the five project actions · separator ·
+  Save / Save As / Revert / Close · separator · Exit.
+  - **§18.2 project actions** (revised 2026-08-03 — renamed from "New/Open/Close DDL Project" and
+    expanded; **corrected 2026-08-06**: these five live on the **File** menu, in their own
+    separator-delimited group between `Open…` and `Save`, *not* on the Database menu — §24):
+    **New Project…** (folder picker; optionally offers local-sandbox setup — a Postgres connection plus
+    a Test button that specifically verifies superuser, reusing §18.5 D2's capability probe, plus a
+    "with data"/"without data" provisioning choice (§18.5 D2a) — and optionally offers git configuration,
+    explicit TBD placeholder only), **Open Project…** (runs the `.pgtp`-checksum **and** DDL drift
+    comparisons, both surfaced, neither auto-resolved), **Close Project** (a reminder point for pending
+    `.pgtp`/DDL deploys, §18.3 — never a forced action), **Project Settings…** (new dialog exposing the
+    full project JSON — identity, `.pgtp` link, both connection profiles including password, deploy
+    manifest), and **Deploy .pgtp** (on-demand push of the local `.pgtp` working copy back to the
+    sshfs-mounted source; also offered as a close-time convenience prompt, §18.3).
 - **Edit:** Undo (Ctrl+Z), Redo (Ctrl+Y), Cut/Copy/Paste/Delete, Find… (Ctrl+F), Find Next (F3), Find All
   (Ctrl+Shift+F), Replace… (Ctrl+R), Replace All (Ctrl+Alt+Return), Select Enclosing Block (Ctrl+Shift+B),
   Select Parent Block (Ctrl+Shift+A), ☐ Auto Parse XML (§9; unchecked by default, in-memory only),
@@ -4447,7 +4462,8 @@ Tools; "New Project" removed; line-wrap moved to editor context menu):
   since the project's own `target`/`sandbox` connections in Project Settings… are authoritative then;
   BUG-024, 2026-08-05), ⎯, Check: XML→Database, Check: Database→XML, ⎯, ☐ DDL Explorer
   (checkable toggle, §18.1; kept in lockstep with the center tab's ✕). **Target design (2026-08-02, not
-  yet implemented)** — everything §18 adds lives in **this** menu; no new top-level menu is created for
+  yet implemented)** — everything §18 adds lives in **this** menu (except §18.2's five project actions,
+  which are on **File** — see below); no new top-level menu is created for
   it, and no "locate binary" action is added, because v1 spawns no external process:
   - **Once a project has a sandbox configured (§18.5 D2/D2a), the DDL Explorer toggle above gains a
     sandbox-scoped sibling** (§18.7, settled 2026-08-05): a second checkable entry opening a separate DDL
@@ -4474,16 +4490,9 @@ Tools; "New Project" removed; line-wrap moved to editor context menu):
     D2a). **None of these entries ships with the editable tab's first increment** — the sandbox lane is a
     later carve-out (§18.5, v1 scope), and the tab likewise ships with **no button row** rather than
     disabled controls.
-  - ⎯ then (§18.2, revised 2026-08-03 — renamed from "New/Open/Close DDL Project" and expanded)
-    **New Project…** (folder picker; optionally offers local-sandbox setup — a Postgres connection plus
-    a Test button that specifically verifies superuser, reusing §18.5 D2's capability probe, plus a
-    "with data"/"without data" provisioning choice (§18.5 D2a) — and optionally offers git configuration,
-    explicit TBD placeholder only), **Open Project…** (runs the `.pgtp`-checksum **and** DDL drift
-    comparisons, both surfaced, neither auto-resolved), **Close Project** (a reminder point for pending
-    `.pgtp`/DDL deploys, §18.3 — never a forced action), **Project Settings…** (new dialog exposing the
-    full project JSON — identity, `.pgtp` link, both connection profiles including password, deploy
-    manifest), and **Deploy .pgtp** (on-demand push of the local `.pgtp` working copy back to the
-    sshfs-mounted source; also offered as a close-time convenience prompt, §18.3).
+  - **The §18.2 project actions (New Project… / Open Project… / Close Project / Project Settings… /
+    Deploy .pgtp) are *not* on this menu** — they live on the **File** menu (above; corrected
+    2026-08-06, §24). Everything else §18 adds does live here.
   - (§18.3) **Compare Schemas…** and **Save Schema Snapshot…**.
 
   ("Format Selection" is **not** a menu-bar item: it is a `Ctrl+Alt+F` action plus a context-menu entry
@@ -4629,6 +4638,7 @@ is authoritative** (and is what appears in the body above).
 | 2026-08-05 | §17 `TableCheck{name, ok, kind, invocations, columns}`, with `check_db_against_xml`'s table-level `ok = table_name in columns_by_table` — i.e. *"the table name appears among the **page/detail** bindings"* — and `DbCheckPanel` rendering a single aggregate `(×N)` invocation count in **both** directions (BUG-026) | **`TableCheck` gains `page_count`/`detail_count`/`lookup_count`** (defaulted, so `check_xml_against_db` is untouched), populated from the new **`xml_table_role_counts(project)`** in `db/compare.py`, and the DB→XML table-level rule becomes **`ok = (page_count + detail_count + lookup_count) > 0`** — *referenced in **any** role, page, detail **or** lookup*. A lookup-only table is therefore no longer a red mismatch contradicting its own nonzero count. The **DB→XML** tree shows the role split `(P# D# L#)`; **XML→DB** keeps `(×N)`. `xml_table_columns`/`xml_table_invocations` are unchanged and still drive the per-column check and the aggregate; `ok` remains the **single** mismatch signal for styling, the header count, "Show only mismatches" and the UserRole tuple — no parallel role-count mismatch flag |
 | 2026-08-05 | §7 (and the 2026-07-20 ledger row *"Toolbar Available = registry-minus-present" → "Available = all commands, present ones disabled"*, whose **"all commands" meant all commands in the static registry**): the toolbar was *"driven by a stable action-id registry (`toolbar_registry.py`)"* holding a hardcoded 7-entry `AVAILABLE_COMMANDS`, with each toolbar button a **freshly-built `QAction`** wired through a hardcoded `_toolbar_slots` dict — a closed universe that could never offer a real menu command (BUG-027) | **Available = every MENU command**, enumerated by walking the live menu bar (`MainWindow._walk_menu_actions`/`_all_menu_commands`/`_collect_menu_commands`), with ids **derived from the menu path** (`File › Save As... → file.save-as`) instead of hand-assigned. `AVAILABLE_COMMANDS` and `_toolbar_slots` are gone; `toolbar_registry.py` is reduced to pure identity rules (`normalize_label`/`slugify`/`command_id_for`/`menu_path_label`, `LEGACY_COMMANDS`, `LEGACY_ID_ALIASES`, `DEFAULT_TOOLBAR_IDS`, `ICON_ID_BY_COMMAND`, `valid_ids`, `resolve_ids`). The toolbar hosts the **menus' own QActions**, so a button shares the menu item's slot, enabled state, checked state and shortcut (hence `removeAction` in a loop, never `QToolBar.clear()`, which deletes them). Icons stay **optional** — only the legacy seven have vendored SVGs, and they are hidden in menus (`setIconVisibleInMenu(False)`). Pre-widening saved toolbars survive via `LEGACY_ID_ALIASES` applied in `resolve_ids`. Excluded from the walk: separators, submenu placeholders, and the dynamic **Open Recent** submenu wholesale. Load-bearing gotcha recorded in §7: `QAction.menu()` transfers ownership to Python, so every descended submenu **and its owning action** is pinned in `_menu_keepalive` for the window's lifetime |
 | 2026-08-05 | §13's active-filter banner (BUG-020, earlier the same day) represented **only** the preset row-predicate: `_refresh_filter_banner` read `row_predicate_label()` and hid the banner whenever that label was empty, and `apply_find_filter` never refreshed it — so a find filter narrowed the grid with nothing on screen stating the find text, its mode/case or its scope (BUG-028) | **The banner represents the whole-row find filter as well.** `apply_find_filter` refreshes the banner (only after `set_regex_filter` returns normally — an invalid regex raises), and `_refresh_filter_banner` composes **both** descriptors, joined by the same `"  ·  "` separator: the preset label, and `_find_filter_descriptor()`'s `Find "<pattern>" (<qualifiers>)` — mode named only when non-default (`regex`/`extended`), `case-sensitive` only when set, always ending with **`all columns`** (the find filter matches any column, so that is the honest scope). Mode/case are read through new proxy getters `find_mode()`/`find_case()`. The banner hides only when **neither** is present; `clear_all_filters()` stays the single clear path. **Header value filters remain deliberately unrepresented** in the banner — they keep their exclusive per-column ▼ marker, which is never painted for the find filter or the preset predicate |
+| 2026-08-06 | §18.2/§26 placed the five project actions (**New Project…**, **Open Project…**, **Close Project**, **Project Settings…**, **Deploy .pgtp**) on the **Database** menu, "alongside the existing Connection Setup / Check / DDL Explorer entries", and §26's Database bullet carried their full descriptions | **Spec-vs-reality drift corrected in favor of the shipped code — the five live on the FILE menu**, owner-confirmed. `MainWindow._build_file_menu` builds them as their own separator-delimited group between `Open…` and `Save` (`New Project…`, `Open Project…`, `Close Project`, `Project Settings…`, `Deploy .pgtp`); `_build_database_menu` contains **no** project action. §26's File bullet now carries the group and its descriptions, and the Database bullet states explicitly that these five are not on it (Connection Setup / Check / DDL Explorer and the §18.5 sandbox entries genuinely are). Nothing about the actions' behavior, gating or wiring changes — **menu location only**. `pgtp_editor/resources/manual.md` already documented them as **File ▸ …** and was correct throughout |
 
 ---
 
