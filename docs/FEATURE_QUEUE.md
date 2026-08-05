@@ -60,7 +60,7 @@ already-specified dialog, closed by reusing both existing tester functions verba
 ---
 
 ## FQ-002: Create new trigger / function / procedure from the DDL Explorer
-**Status:** QUEUED
+**Status:** PROCESSED (§18.1 / §18.5 D1; 9f7c7c2, 11d230d, 849d4ae, 484ef64)
 **Requested:** 2026-08-05
 **Idea (verbatim/summarized):** "from ddl explorer I would like to be able to add a new trigger (on
 right click on a table), or add a new procedure/function. For triggers I'd like a dialogue: name,
@@ -363,5 +363,62 @@ exact size of the curated subset and which specific Breeze icons to vendor; whet
 runtime directory scan vs. a checked-in generated manifest; the precise QSettings key name and serialized
 shape for the assignment map; and the exact picker-grid widget layout (columns, search box, "no icon"
 affordance).
+
+---
+
+## FQ-005: Give the light theme the same professional QSS polish as the dark theme
+**Status:** PROCESSED (uncommitted — implemented directly this session, not via the normal QUEUED wait)
+**Requested:** 2026-08-06
+**Idea (verbatim/summarized):** Started as a `/product-brainstorming` request to evaluate adopting a
+third-party Qt stylesheet library (`Qt-Advanced-Stylesheets` / its PySide6 port `qtass-pyside6`) so the
+light theme would look as polished as the dark theme. That library was investigated and explicitly
+rejected (license-less PyPI package, `python<3.14` incompatible with the installed 3.14.6 interpreter,
+one-person two-month project then a year of silence). The real want, once separated from the proposed
+vehicle: "the same professional look in light theme that the dark theme gives me... In dark theme the
+look is professional, but in light it's... so basic, standard." Resolved with zero new dependencies.
+
+**Problem:** `pgtp_editor/ui/theme.py`'s `apply_theme(app, light)` gave the dark theme a real QSS layer
+(`qdarkstyle.load_stylesheet(qt_api="pyside6")`, adopted for BUG-010's `QMenu::indicator` fix) on top of
+`dark_palette()`, but the light theme got `app.setStyleSheet("")` unconditionally — Fusion + palette only,
+no QSS. That asymmetry is exactly the "basic, standard" look the requester noticed.
+
+**Resolution actually implemented:** `qdarkstyle` was already a pinned dependency (`pyproject.toml`,
+`qdarkstyle>=3.2`; installed `3.2.3`) and ships `qdarkstyle.light.palette.LightPalette` alongside
+`qdarkstyle.dark.palette.DarkPalette` — verified live that
+`qdarkstyle.load_stylesheet(qt_api="pyside6", palette=LightPalette)` returns a real, non-empty QSS. In
+`pgtp_editor/ui/theme.py`: `_dark_stylesheet()` (single `_dark_qss_cache: str | None` global) was renamed
+to `_qdarkstyle_stylesheet(light: bool)`, caching both variants in `_qss_cache: dict[bool, str]`, passing
+`palette=LightPalette if light else DarkPalette` explicitly (dark previously relied on qdarkstyle's
+implicit default). `apply_theme` now calls `app.setStyleSheet(_qdarkstyle_stylesheet(light))`
+unconditionally for both branches instead of `"" if light else _dark_stylesheet()`. `light_palette()`/
+`dark_palette()` are unchanged — the QPalette source stays hand-rolled for both themes (so
+`XmlEditor.apply_theme_colors`, which keys off palette Base lightness directly, is unaffected); only the
+QSS *source* changed.
+
+**Verified side-finding, not a regression:** applying either theme's non-empty QSS via
+`QApplication.setStyleSheet()` makes Qt wrap the requested style in an internal `QStyleSheetStyle` proxy
+whose `objectName()` reports `''`, not `"fusion"` — confirmed this already silently happened for the dark
+theme before this change too (`app.style().objectName()` was already `''` post-dark-toggle; no test had
+ever asserted this for dark, so it went unnoticed). Fusion is still genuinely requested via
+`app.setStyle("Fusion")` and still governs anything the QSS doesn't override — this is a test-assertion
+gap the light-only precondition previously masked, not a functional break. Handed to `feature-tester` to
+fix the now-symmetric assertions properly (spy on `setStyle` rather than reading back `objectName()` after
+a stylesheet is applied) rather than patched around in the main session.
+
+**Alternatives considered:** Adopting `qtass-pyside6` (rejected: no license, `requires-python<3.14`
+incompatible with the installed interpreter, near-zero adoption/maintenance signal). Adopting `qt-material`
+(UN-GCPDS) instead — the mature, 2,857-star, BSD-2-Clause-licensed project `qtass`'s own README credits as
+its inspiration/stylesheet source — was raised as the honest fallback if a real dependency were needed, but
+made moot once the already-installed `qdarkstyle` was confirmed to ship the same capability for free.
+
+**Suggested placement:** EXTEND §7 (App shell, `CONSOLIDATED_SPEC.md` theme subsection, lines ~479-507).
+The documented invariant "the light case ALWAYS assigns the empty stylesheet so a light<->dark round-trip
+never leaves stale dark QSS behind" (spec line ~492) is now false and needs updating, plus a Supersession
+Ledger row — hand to `spec-maintainer` (JOB 1) directly; this entry documents that it should happen, it
+does not do it.
+
+**Open questions:** none — implemented, tested, and being folded into the spec as part of this same
+session's work; this entry exists purely as the queue's documentation of what happened, per explicit
+request, so no future queue-processing pass re-proposes it.
 
 ---
