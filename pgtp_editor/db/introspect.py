@@ -52,6 +52,12 @@ class ColumnInfo:
     is_nullable: bool
     default: str | None
     fk_target: str | None = None  # referenced "schema.table.column" for FK columns
+    #: `pg_catalog.col_description(attrelid, attnum)` -- the column's own
+    #: comment, if one was ever set via `COMMENT ON COLUMN` (§18.1's
+    #: 2026-08-05 Properties-panel widening). Trailing and defaulted so
+    #: existing positional/keyword `ColumnInfo(...)` constructions across the
+    #: codebase and tests stay valid. `None` for a column with no comment set.
+    comment: str | None = None
 
 
 @dataclass(frozen=True)
@@ -187,7 +193,8 @@ _COLUMNS_SQL = """
 SELECT n.nspname, c.relname, a.attname,
        pg_catalog.format_type(a.atttypid, a.atttypmod),
        a.attnotnull,
-       pg_catalog.pg_get_expr(d.adbin, d.adrelid)
+       pg_catalog.pg_get_expr(d.adbin, d.adrelid),
+       pg_catalog.col_description(a.attrelid, a.attnum)
 FROM pg_catalog.pg_attribute a
 JOIN pg_catalog.pg_class c ON c.oid = a.attrelid
 JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
@@ -469,7 +476,7 @@ def _build_tables(
                 fk_targets[key] = ref_target
 
     columns_by_table: dict[str, list[ColumnInfo]] = {name: [] for name in kinds}
-    for schema_name, rel_name, col_name, data_type, notnull, default in column_rows:
+    for schema_name, rel_name, col_name, data_type, notnull, default, comment in column_rows:
         table_key = f"{schema_name}.{rel_name}"
         if table_key not in columns_by_table:
             continue
@@ -482,6 +489,7 @@ def _build_tables(
                 is_nullable=not notnull,
                 default=default,
                 fk_target=fk_targets.get((table_key, col_name)),
+                comment=comment,
             )
         )
 

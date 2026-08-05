@@ -1,6 +1,6 @@
 # PGTP Editor — Consolidated Specification
 
-> **Status:** living document · **Last synthesized:** 2026-08-05 (§18.8 corrected to the 5-node model, then given its concrete per-node state enumeration + dark-mode asset convention, then a same-day fix to the Quality node's locked/gray semantic and the Sandbox2 install-state-vs-lint-result semantic; later the same day, BUG-020/021/022/023/024/025 folded in — Captions' preset row-predicate filter + active-filter banner + Unify scope prompt, §18.2's Open-Project validity gate + auto-open of the linked `.pgtp`, the tabbed Project Settings dialog, and Connection Setup… becoming projectless-mode-only)
+> **Status:** living document · **Last synthesized:** 2026-08-05 (§18.8 corrected to the 5-node model, then given its concrete per-node state enumeration + dark-mode asset convention, then a same-day fix to the Quality node's locked/gray semantic and the Sandbox2 install-state-vs-lint-result semantic; later the same day, BUG-020/021/022/023/024/025 folded in — Captions' preset row-predicate filter + active-filter banner + Unify scope prompt, §18.2's Open-Project validity gate + auto-open of the linked `.pgtp`, the tabbed Project Settings dialog, and Connection Setup… becoming projectless-mode-only; later still the same day, §18.1's Tables branch widened to every table (not just trigger-owning ones) plus click-to-Properties-panel column detail, with `ColumnInfo.comment` added)
 > **Source of truth:** this file is the single reconciled specification for PGTP Editor, and the **only**
 > place specification content is written. It was originally synthesized from the dated design specs under
 > [`docs/superpowers/specs/`](specs/) — a folder now **frozen as historical record** (read for rationale;
@@ -1791,6 +1791,76 @@ per-object validation, per-object apply, or per-object dirty state, and it confl
 file-per-object model. `EditorPanel` is read-only **permanently**. The editable surface is §18.5's
 separate single-object tab, which reaches this panel only through the right-click ▸ Edit entry point
 (and therefore needs the retained span list noted above).
+
+**Tables branch widened to every table, plus click-to-Properties (2026-08-05) — a completion of the
+Tables branch's original scope, not a new feature:**
+
+- **Every table in the connected schema is now a tree node**, not only tables that own a trigger. The
+  original `_build_tables_branch` derived its whole node set from `schema.triggers` (`by_table` built by
+  iterating `schema.triggers.values()` and grouping by `(schema, table)`) — a table with zero triggers
+  never got a node at all, and the Tables branch under-represented the schema **by omission, not by
+  design** (§18.1 never stated "trigger-owning tables only" as an intentional filter; it was incidental
+  to building the branch from `TriggerInfo.table` before `DatabaseSchema.tables` existed in this fetch
+  path — see the "Superseded (§18.6, §28)" note above, where `fetch_routines_and_triggers` was widened to
+  populate `.tables`). `_build_tables_branch` now iterates `schema.tables` (sorted by table name) as the
+  primary node source, and folds in the existing trigger grouping by `(schema_name, table_name)` lookup
+  for whichever of those tables also appear in `by_table` — the two data sources merge on the same key
+  tables already share. A table with triggers keeps exactly its current presentation (label suffixed
+  `(N)` trigger count, trigger leaves nested underneath, per the worked examples above); a table with
+  none is a **plain leaf node** — label is bare `schema.table` (no `(N)` suffix, since `N` would be `0`)
+  — with no children.
+- **Every table node (trigger-owning or plain) now carries a click target**: clicking it populates the
+  **existing, shared** `ui/properties_panel.py::PropertiesPanel` (§10) — the same panel instance the
+  XML/XSD project tree's Page/Detail/Column/Event selection already drives — **not** a new DDL-specific
+  properties surface. This is the Properties panel's **first non-XML source**: `PropertiesPanel.show_node`
+  already dispatches purely on a `kind: str` key into `_ROW_BUILDERS` (`"page"`, `"detail"`, `"column"`,
+  `"event"` today), each mapped to a `(rows_fn, header_fn)` pair — this dispatch table is generic enough
+  to accept a new key unchanged, confirming the placement-gate's belief. `_ROW_BUILDERS` gains
+  `"ddl_table": (_rows_for_ddl_table, lambda t: f"Table: {t.name}")`, where `_rows_for_ddl_table(table:
+  TableInfo) -> list[RowSpec]` is a new pure function alongside `_rows_for_attrib_node` /
+  `_rows_for_detail` / `_rows_for_column` / `_rows_for_event` in `ui/properties_panel.py`, built the same
+  Qt-free way. `BrowserPanel.navigate_requested`'s existing line-jump wiring is unaffected — a **second**
+  signal on the table-node click (e.g. `table_selected(TableInfo)`, mirroring the shape of
+  `edit_requested`/`checkout_requested` already on `BrowserPanel`) is what `MainWindow` connects to
+  `self.properties_panel.show_node(table_info, "ddl_table")`, parallel to how the XML tree's own
+  selection handler already calls `show_node` for its four kinds. A DDL table node is **click-only,
+  no context menu** — right-click ▸ Edit…/Check Out (§18.1/§18.2) remain routine- and trigger-leaf-only,
+  since a whole table has no single `DdlObjectSpan`/source text to hand those entry points.
+  `PropertiesPanel` rows built from a `TableInfo` are **navigate-to-nothing**: every `RowSpec.target_line`
+  is `None` (there is no XML/DDL-buffer source line a column-of-a-table maps to the way an XML attribute
+  does), so `_on_row_clicked` no-ops on them exactly as it already does for any `RowSpec` with
+  `target_line=None` (e.g. the Representations divider row, §10) — no new no-navigation-target case
+  needed in `PropertiesPanel` itself.
+- **`ColumnInfo` gains a `comment` field** (`db/introspect.py`): `comment: str | None = None`, trailing
+  and defaulted so existing positional/keyword `ColumnInfo(...)` constructions across the codebase and
+  tests stay valid. Sourced via `pg_catalog.col_description(a.attrelid, a.attnum)` — the catalog function
+  keyed on the column's owning relation's oid and its attribute number, both already selected by
+  `_COLUMNS_SQL` (`a.attrelid`, `a.attnum`) — added as a plain expression column to `_COLUMNS_SQL` (not a
+  join; `col_description` is a builtin function, not a table), so the query still returns exactly one row
+  per column and `_build_tables`'s column-row unpacking gains one trailing field:
+  `for schema_name, rel_name, col_name, data_type, notnull, default, comment in column_rows`, threaded
+  straight into `ColumnInfo(..., comment=comment)`. This is the **one shared assembly point** —
+  `_build_tables` — already serving both `fetch_schema` and `fetch_routines_and_triggers`/§18.6's
+  `schema_index.py`, so both existing callers gain comments for free with no second query path; a column
+  with no comment set reads back as SQL `NULL` → Python `None`, same convention as `default`.
+- **Per-column properties shown, one pair of rows per column**: name, data type, nullability, default
+  value, comment — **two `RowSpec` rows per column**, not one, the first grouping concept `RowSpec`
+  /`PropertiesPanel` has needed (every existing `_rows_for_*` builder emits exactly one row per logical
+  attribute). Row 1 (identity line) — `property_label` = the column name, `value` = `"{data_type}{,
+  NULL if is_nullable else NOT NULL}"` (e.g. `integer, NOT NULL`); row 2 (detail line) —
+  `property_label` = `""` (blank, so it visually reads as a continuation of row 1, not a new named
+  property), `value` = `"default: {default or '—'}  comment: {comment or '—'}"`. Both rows carry
+  `attr_name=None` and `target_line=None` (no navigation, see above). This split is a deliberate
+  **compact-identity / free-text-detail** grouping — the identity line (name, type, nullability) is
+  what a reader scans first; the wider, more variable-length detail line (default expressions can be
+  arbitrary SQL, comments arbitrary prose) is set apart underneath it. **Flagged for implementation:**
+  `PropertiesPanel`'s row rendering has no existing "these N rows are one record" convention (today every
+  row already stands alone); a lightweight pairing cue — e.g. an alternating background shade per
+  column-pair, or a thin separator every 2 rows — should be added so the eye groups each column's two
+  rows without needing a third "group ID" data field on `RowSpec` itself. Exact pixel/color treatment is
+  left to implementation, consistent with this spec's general behavior-over-pixel-layout stance; the
+  **row content and pairing order** (identity row, then detail row, per column, columns in `TableInfo`'s
+  existing declared order) is the settled, reproducible part.
 
 ### 18.2 Projects, checkout & state markers
 

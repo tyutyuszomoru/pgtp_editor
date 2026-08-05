@@ -565,13 +565,23 @@ database and reveals two tabs at once:
   `-- FUNCTION public.foo(integer) --`) so you can always tell where you are.
   The buffer is a live snapshot of the database and cannot be edited.
 - **Left dock — DDL Objects:** a tree of the same objects, grouped from two
-  angles. Under **Tables**, each table lists the triggers defined on it; under
-  **Functions & Procedures**, each function or procedure lists the triggers that
-  call it. A trigger therefore appears in **both** places — either entry points
-  at the same definition. **Click** any object to jump the DDL Explorer buffer
-  straight to it.
+  angles. Under **Tables**, **every table in the connected schema is listed** —
+  tables that own a trigger list those triggers nested underneath them; tables
+  with no triggers appear as plain entries. Under **Functions & Procedures**,
+  each function or procedure lists the triggers that call it. A trigger
+  therefore appears in **both** places — either entry points at the same
+  definition. **Click** a routine or trigger to jump the DDL Explorer buffer
+  straight to it; **click** a table to see its columns in Properties (see
+  *Clicking a table: column properties*, below).
 
 ### Reading the DDL Objects tree
+
+Under **Tables**, each table is listed as `schema.table`. A table with
+triggers shows a trigger count suffix, e.g. `public.orders  (2)`, with those
+triggers nested underneath it exactly as before; a table with no triggers
+shows the bare `schema.table` label (no count, since it would only ever be
+`0`) and has no children. Widening the branch to every table means it no
+longer omits tables that happen to have no trigger of their own.
 
 Routines under **Functions & Procedures** are listed by their fully-qualified
 `schema.name`, followed by a marker telling you what kind of routine it is:
@@ -610,6 +620,23 @@ indicators:
 Both markers are purely informational: they surface disagreement between the
 local file, the last deploy, and the live database, but never block anything
 by themselves. With no project open, no markers are shown.
+
+### Clicking a table: column properties
+
+Clicking any table node under **Tables** — whether it owns triggers or not —
+populates the **Properties** panel (the same right-hand dock the Project Tree
+and Table References use, see *Properties*) with that table's full column
+list. Each column is shown as **two rows**: a compact identity line — the
+column name, its data type, and whether it's nullable (`NULL` / `NOT NULL`) —
+followed by a detail line with its default value and comment (an unset
+default or comment shows as `—`). Subtle alternating shading pairs each
+column's two rows together so they read as one record.
+
+This is **display-only**: clicking a table populates Properties but, unlike
+clicking a routine or trigger, does **not** jump or scroll the DDL Explorer
+buffer, since a whole table has no single line in that buffer to jump to.
+Right-clicking a table node offers no context menu — **Edit …** and **Check
+Out for Versioning** remain available only on routine and trigger rows.
 
 ### Working in the DDL tab
 

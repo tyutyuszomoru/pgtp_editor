@@ -177,3 +177,72 @@ def test_rows_for_column_no_representations_has_no_divider():
     col = ColumnNode(identity="c", attrib={"fieldName": "id"}, sourceline=5)
     labels = [r.property_label for r in _rows_for_column(col)]
     assert "— Representations —" not in labels
+
+
+# --- _rows_for_ddl_table (§18.1, 2026-08-05: DDL Explorer Tables branch -----
+# click-to-Properties) -------------------------------------------------------
+
+from pgtp_editor.db.introspect import ColumnInfo, TableInfo
+from pgtp_editor.ui.properties_panel import _rows_for_ddl_table
+
+
+def test_rows_for_ddl_table_two_rows_per_column():
+    table = TableInfo(
+        name="pr.equipment",
+        kind="table",
+        columns=[
+            ColumnInfo(
+                name="id", data_type="integer", is_pk=True, is_fk=False,
+                is_nullable=False, default="nextval('seq')", comment="Primary key",
+            ),
+            ColumnInfo(
+                name="tag", data_type="varchar(255)", is_pk=False, is_fk=False,
+                is_nullable=True, default=None, comment=None,
+            ),
+        ],
+    )
+    rows = _rows_for_ddl_table(table)
+    assert len(rows) == 4
+    assert rows[0].property_label == "id"
+    assert rows[0].value == "integer, NOT NULL"
+    assert rows[1].property_label == ""
+    assert rows[1].value == "default: nextval('seq')  comment: Primary key"
+    assert rows[2].property_label == "tag"
+    assert rows[2].value == "varchar(255), NULL"
+    assert rows[3].property_label == ""
+    assert rows[3].value == "default: —  comment: —"
+
+
+def test_rows_for_ddl_table_rows_are_non_navigating():
+    table = TableInfo(
+        name="pr.equipment",
+        kind="table",
+        columns=[
+            ColumnInfo(
+                name="id", data_type="integer", is_pk=True, is_fk=False,
+                is_nullable=False, default=None, comment=None,
+            ),
+        ],
+    )
+    rows = _rows_for_ddl_table(table)
+    assert all(r.target_line is None for r in rows)
+    assert all(r.attr_name is None for r in rows)
+
+
+def test_rows_for_ddl_table_preserves_column_declared_order():
+    table = TableInfo(
+        name="pr.equipment",
+        kind="table",
+        columns=[
+            ColumnInfo(name="z_col", data_type="text", is_pk=False, is_fk=False, is_nullable=True, default=None),
+            ColumnInfo(name="a_col", data_type="text", is_pk=False, is_fk=False, is_nullable=True, default=None),
+        ],
+    )
+    rows = _rows_for_ddl_table(table)
+    identity_labels = [r.property_label for r in rows if r.property_label]
+    assert identity_labels == ["z_col", "a_col"]  # not re-sorted alphabetically
+
+
+def test_rows_for_ddl_table_no_columns_yields_no_rows():
+    table = TableInfo(name="pr.empty_table", kind="table", columns=[])
+    assert _rows_for_ddl_table(table) == []

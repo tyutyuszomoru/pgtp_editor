@@ -36,7 +36,7 @@ def _canned_runner():
     """Return (runner, calls) — a fake returning pg_catalog-shaped rows.
 
     relations:   (schema, name, relkind)
-    columns:     (schema, table, colname, format_type, attnotnull, default)
+    columns:     (schema, table, colname, format_type, attnotnull, default, comment)
     constraints: (schema, table, colname, contype)
     """
     relations = [
@@ -46,10 +46,10 @@ def _canned_runner():
         ("pr", "part", "p"),
     ]
     columns = [
-        ("pr", "equipment", "id", "integer", True, "nextval('seq'::regclass)"),
-        ("pr", "equipment", "tag", "varchar(255)", False, None),
-        ("pr", "equipment", "owner_id", "integer", True, None),
-        ("pr", "eq_view", "vcol", "text", False, None),
+        ("pr", "equipment", "id", "integer", True, "nextval('seq'::regclass)", None),
+        ("pr", "equipment", "tag", "varchar(255)", False, None, "the equipment tag"),
+        ("pr", "equipment", "owner_id", "integer", True, None, None),
+        ("pr", "eq_view", "vcol", "text", False, None, None),
     ]
     constraints = [
         ("pr", "equipment", "id", "p"),
@@ -101,6 +101,7 @@ def test_fetch_schema_column_metadata():
         is_fk=False,
         is_nullable=False,
         default="nextval('seq'::regclass)",
+        comment=None,
     )
 
     tag_col = schema.column("pr.equipment", "tag")
@@ -109,6 +110,7 @@ def test_fetch_schema_column_metadata():
     assert tag_col.is_fk is False
     assert tag_col.is_nullable is True
     assert tag_col.default is None
+    assert tag_col.comment == "the equipment tag"
 
     owner_col = schema.column("pr.equipment", "owner_id")
     assert owner_col.is_fk is True
@@ -121,8 +123,8 @@ def test_fetch_schema_captures_fk_target():
     ColumnInfo.fk_target; PK rows (4-tuple or None ref) leave it None."""
     relations = [("pr", "part", "r")]
     columns = [
-        ("pr", "part", "id", "integer", True, None),
-        ("pr", "part", "equipment_id", "integer", False, None),
+        ("pr", "part", "id", "integer", True, None, None),
+        ("pr", "part", "equipment_id", "integer", False, None, None),
     ]
     constraints = [
         ("pr", "part", "id", "p", None),
@@ -135,6 +137,15 @@ def test_fetch_schema_captures_fk_target():
     schema = fetch_schema(_PARAMS, runner=runner)
     assert schema.column("pr.part", "equipment_id").fk_target == "pr.equipment.id"
     assert schema.column("pr.part", "id").fk_target is None
+
+
+def test_columns_sql_sources_column_comments():
+    """The widened query must actually select `col_description` keyed on the
+    column's own `attrelid`/`attnum` (2026-08-05, §18.1's Properties-panel
+    widening) -- not just thread a `comment` field through row-unpacking
+    without the catalog function that produces it."""
+    columns_sql = SCHEMA_SQL[1]
+    assert "col_description(a.attrelid, a.attnum)" in columns_sql
 
 
 def test_fetch_schema_missing_column_returns_none():
@@ -493,7 +504,7 @@ def test_fetch_routines_and_triggers_populates_tables():
     populates `.tables`, exactly like `fetch_schema` does -- so DDL Explorer's
     one connect-time fetch now serves completion's table/column data too."""
     relations = [("pr", "equipment", "r")]
-    columns = [("pr", "equipment", "id", "integer", True, None)]
+    columns = [("pr", "equipment", "id", "integer", True, None, None)]
     constraints = [("pr", "equipment", "id", "p")]
     runner, _ = _canned_routine_trigger_runner(
         relations=relations, columns=columns, constraints=constraints
@@ -505,7 +516,7 @@ def test_fetch_routines_and_triggers_populates_tables():
     assert table.columns == [
         ColumnInfo(
             name="id", data_type="integer", is_pk=True, is_fk=False,
-            is_nullable=False, default=None,
+            is_nullable=False, default=None, comment=None,
         )
     ]
 
@@ -599,7 +610,7 @@ def test_snapshot_for_baseline_returns_a_baseline_snapshot_wrapping_a_database_s
 
 def test_snapshot_for_baseline_populates_tables_routines_and_triggers():
     relations = [("pr", "equipment", "r")]
-    columns = [("pr", "equipment", "id", "integer", True, None)]
+    columns = [("pr", "equipment", "id", "integer", True, None, None)]
     constraints = [("pr", "equipment", "id", "p")]
     runner, _ = _canned_baseline_runner(relations=relations, columns=columns, constraints=constraints)
     snapshot = snapshot_for_baseline(_PARAMS, runner=runner)

@@ -11,7 +11,7 @@ from lxml import etree
 from PySide6.QtCore import QSettings
 
 from pgtp_editor.db.config import ConnectionParams, save_connection
-from pgtp_editor.db.introspect import DatabaseSchema, RoutineInfo, TriggerInfo
+from pgtp_editor.db.introspect import ColumnInfo, DatabaseSchema, RoutineInfo, TableInfo, TriggerInfo
 from pgtp_editor.ui.main_window import MainWindow
 
 from ._menu_helpers import action_labels, find_action, find_top_menu
@@ -52,7 +52,18 @@ def _schema():
             definition="CREATE TRIGGER trg_audit ...",
         ),
     }
-    return DatabaseSchema(routines=routines, triggers=triggers)
+    tables = {
+        "pr.equipment": TableInfo(
+            name="pr.equipment", kind="table",
+            columns=[
+                ColumnInfo(
+                    name="id", data_type="integer", is_pk=True, is_fk=False,
+                    is_nullable=False, default=None,
+                ),
+            ],
+        ),
+    }
+    return DatabaseSchema(routines=routines, triggers=triggers, tables=tables)
 
 
 def _sync_run(fn, on_result, on_error=None):
@@ -248,6 +259,40 @@ def test_clicking_a_tree_leaf_navigates_to_its_span_start(qtbot, tmp_path):
     editor = window.center_stage.ddl_editor_panel.editor
     line_text = editor.textCursor().block().text()
     assert line_text == "-- FUNCTION pr.calc_total(integer) --"
+
+
+# ---------------------------------------------------------------------------
+# Click-to-Properties: BrowserPanel table node → PropertiesPanel (§18.1,
+# 2026-08-05).
+# ---------------------------------------------------------------------------
+
+def test_clicking_a_table_node_populates_properties_panel(qtbot, tmp_path):
+    """End-to-end through the real BrowserPanel click handler, mirroring how
+    the XML/XSD tree's own node-click already drives the same Properties
+    panel instance (_on_tree_selection_changed)."""
+    window = _window(qtbot, tmp_path)
+    window._ddl_explorer_action.setChecked(True)
+    panel = window.ddl_browser_panel
+    table_item = panel.tree.topLevelItem(0).child(0)  # pr.equipment
+
+    panel._on_item_clicked(table_item, 0)
+
+    assert window.properties_panel.is_showing_empty_state() is False
+    assert window.properties_panel.header_text() == "Table: pr.equipment"
+
+
+def test_clicking_a_table_node_does_not_jump_the_center_editor(qtbot, tmp_path):
+    """A table node has no DdlObjectSpan -- unlike a routine/trigger leaf
+    click, it must never move the center editor's caret."""
+    window = _window(qtbot, tmp_path)
+    window._ddl_explorer_action.setChecked(True)
+    window.center_stage.setCurrentIndex(window.center_stage.raw_xml_tab_index)
+    panel = window.ddl_browser_panel
+    table_item = panel.tree.topLevelItem(0).child(0)
+
+    panel._on_item_clicked(table_item, 0)
+
+    assert window.center_stage.currentIndex() == window.center_stage.raw_xml_tab_index
 
 
 # ---------------------------------------------------------------------------

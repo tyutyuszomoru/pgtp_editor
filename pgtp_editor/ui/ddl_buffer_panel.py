@@ -40,6 +40,10 @@ from pgtp_editor.db.introspect import DatabaseSchema
 from pgtp_editor.ui.ddl_object_editor import DdlObjectRef
 
 _SPAN_ROLE = Qt.ItemDataRole.UserRole
+#: A table node's `TableInfo`, keyed on a role distinct from `_SPAN_ROLE` so
+#: a table row (click -> Properties panel, §18.1) and a trigger/routine row
+#: (click -> `navigate_requested`) never collide on the same item.
+_TABLE_ROLE = Qt.ItemDataRole.UserRole + 1
 
 _TIMING_LETTERS = {"before": "B", "after": "A", "instead of": "I"}
 _EVENT_LETTERS = {"insert": "I", "update": "U", "delete": "D", "truncate": "T"}
@@ -109,6 +113,13 @@ class BrowserPanel(QWidget):
     #: of the Edit… gesture, not a second tab type or a second editor.
     checkout_requested = Signal(object, str)
 
+    #: Left-click on a Tables-branch table node (spec §18.1, 2026-08-05):
+    #: carries the clicked table's `TableInfo` so `MainWindow` can populate
+    #: the shared `PropertiesPanel` (`show_node(table_info, "ddl_table")`).
+    #: Click-only, no context menu -- a whole table has no single
+    #: `DdlObjectSpan`/source text for Edit…/Check Out to act on.
+    table_selected = Signal(object)
+
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.tree = QTreeWidget()
@@ -158,15 +169,40 @@ class BrowserPanel(QWidget):
         self._build_routines_branch(schema, span_by_routine, span_by_trigger, markers)
 
     def _build_tables_branch(self, schema: DatabaseSchema, span_by_trigger, markers) -> None:
+        """Every table in `schema.tables` gets a node (2026-08-05 widening --
+        the branch previously derived its whole node set from
+        `schema.triggers`, so a table with zero triggers never got a node at
+        all). Trigger grouping is folded in by `(schema_name, table_name)`
+        lookup for whichever tables also appear in `by_table`; a table with
+        triggers keeps its existing `(N)`-suffixed/nested presentation, a
+        table with none is a plain leaf (bare `schema.table`, no children).
+
+        `by_table`'s keys are also unioned in (not just `schema.tables`'s)
+        so a trigger on a table this `DatabaseSchema` has no `TableInfo` for
+        (e.g. callers/tests that populate `triggers` without `tables`) still
+        renders exactly as before -- this widening is additive, never a
+        narrowing of what used to show up."""
         by_table: dict[tuple[str, str], list] = {}
         for trigger in schema.triggers.values():
             by_table.setdefault((trigger.schema, trigger.table), []).append(trigger)
 
+        table_keys: set[tuple[str, str]] = set(by_table)
+        for qualified in schema.tables:
+            schema_name, _, table_name = qualified.partition(".")
+            table_keys.add((schema_name, table_name))
+
         tables_root = QTreeWidgetItem(["Tables"])
         self.tree.addTopLevelItem(tables_root)
-        for schema_name, table_name in sorted(by_table):
-            triggers = sorted(by_table[(schema_name, table_name)], key=lambda t: t.name)
-            table_item = QTreeWidgetItem([f"{schema_name}.{table_name}  ({len(triggers)})"])
+        for schema_name, table_name in sorted(table_keys):
+            triggers = sorted(by_table.get((schema_name, table_name), []), key=lambda t: t.name)
+            if triggers:
+                label = f"{schema_name}.{table_name}  ({len(triggers)})"
+            else:
+                label = f"{schema_name}.{table_name}"
+            table_item = QTreeWidgetItem([label])
+            table_info = schema.tables.get(f"{schema_name}.{table_name}")
+            if table_info is not None:
+                table_item.setData(0, _TABLE_ROLE, table_info)
             tables_root.addChild(table_item)
             for trigger in triggers:
                 span = span_by_trigger.get((trigger.schema, trigger.table, trigger.name))
@@ -248,6 +284,10 @@ class BrowserPanel(QWidget):
         span = item.data(0, _SPAN_ROLE)
         if span is not None:
             self.navigate_requested.emit(span.start_line)
+            return
+        table_info = item.data(0, _TABLE_ROLE)
+        if table_info is not None:
+            self.table_selected.emit(table_info)
 
     def _on_context_menu(self, pos) -> None:
         item = self.tree.itemAt(pos)

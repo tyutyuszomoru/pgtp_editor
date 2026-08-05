@@ -296,6 +296,10 @@ class MainWindow(QMainWindow):
         # Right-click ▸ Check Out for Versioning -- the project-aware second
         # variant of the same gesture (spec §18.2).
         self.ddl_browser_panel.checkout_requested.connect(self._on_ddl_checkout_requested)
+        # Click on a Tables-branch table node populates the shared Properties
+        # panel (spec §18.1, 2026-08-05) -- the same panel instance the
+        # XML/XSD tree's own node-click already drives (_on_tree_selection_changed).
+        self.ddl_browser_panel.table_selected.connect(self._on_ddl_table_selected)
         # Table references ride in their own hidden tab, revealed by the
         # View > "Find table reference" toggle (mirrors the Database Check tab).
         self.table_refs_panel = TableReferencesPanel()
@@ -3114,6 +3118,15 @@ class MainWindow(QMainWindow):
         object's banner line (two tree leaves may share one span, §18.1)."""
         self.center_stage.setCurrentIndex(self.center_stage.ddl_tab_index)
         self.center_stage.ddl_editor_panel.navigate_to_line(line)
+
+    def _on_ddl_table_selected(self, table_info) -> None:
+        """Click on a Tables-branch table node (spec §18.1, 2026-08-05) --
+        populates the shared Properties panel, mirroring how the XML/XSD
+        tree's own selection handler (`_on_tree_selection_changed`) calls
+        `show_node` for its four kinds. Click-only, no navigation target:
+        `PropertiesPanel` rows built from a `TableInfo` all carry
+        `target_line=None`."""
+        self.properties_panel.show_node(table_info, "ddl_table")
 
     def _on_ddl_edit_requested(self, ref, source):
         """Right-click ▸ Edit… on a BrowserPanel object row opens (or

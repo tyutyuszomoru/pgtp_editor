@@ -1,5 +1,5 @@
 from pgtp_editor.db.ddl_buffer import build_ddl_text
-from pgtp_editor.db.introspect import DatabaseSchema, RoutineInfo, TriggerInfo
+from pgtp_editor.db.introspect import ColumnInfo, DatabaseSchema, RoutineInfo, TableInfo, TriggerInfo
 from pgtp_editor.ui.ddl_buffer_panel import BrowserPanel, resolve_edit_target
 
 # DatabaseSchema is used directly (not just via _schema()) in several tests
@@ -988,3 +988,207 @@ def test_empty_drift_markers_dict_renders_unmarked(qtbot):
 
     calc_total_item = panel.tree.topLevelItem(1).child(1)
     assert calc_total_item.text(0) == "pr.calc_total [F]"
+
+
+# --- Tables branch widened to every table, plus click-to-Properties --------
+# (§18.1, 2026-08-05)
+
+
+def _table_info(name: str) -> TableInfo:
+    return TableInfo(
+        name=name,
+        kind="table",
+        columns=[
+            ColumnInfo(
+                name="id", data_type="integer", is_pk=True, is_fk=False,
+                is_nullable=False, default=None,
+            ),
+        ],
+    )
+
+
+def test_table_with_no_triggers_gets_a_plain_leaf_node(qtbot):
+    """A table in schema.tables that owns zero triggers must still get a
+    tree node -- the branch's original under-by-omission scope, now
+    completed -- rendered as a bare 'schema.table' label with no children."""
+    schema = DatabaseSchema(tables={"pr.widget": _table_info("pr.widget")})
+    _, spans = build_ddl_text(schema)
+    panel = BrowserPanel()
+    qtbot.addWidget(panel)
+
+    panel.set_schema(schema, spans)
+
+    tables_root = panel.tree.topLevelItem(0)
+    assert tables_root.childCount() == 1
+    table_item = tables_root.child(0)
+    assert table_item.text(0) == "pr.widget"  # no "(N)" suffix
+    assert table_item.childCount() == 0
+
+
+def test_table_with_triggers_keeps_existing_presentation_when_also_in_tables(qtbot):
+    """A table present in BOTH schema.tables and schema.triggers keeps its
+    current (N)-suffixed/nested presentation unchanged -- the two data
+    sources merge on the shared (schema, table) key."""
+    schema = DatabaseSchema(
+        tables={"pr.equipment": _table_info("pr.equipment")},
+        triggers={
+            "pr.equipment.trg_audit": TriggerInfo(
+                schema="pr", table="equipment", name="trg_audit", timing="after",
+                events=["insert"], function_name="audit_log", definition="def",
+            ),
+        },
+    )
+    _, spans = build_ddl_text(schema)
+    panel = BrowserPanel()
+    qtbot.addWidget(panel)
+
+    panel.set_schema(schema, spans)
+
+    tables_root = panel.tree.topLevelItem(0)
+    assert tables_root.childCount() == 1
+    table_item = tables_root.child(0)
+    assert table_item.text(0) == "pr.equipment  (1)"
+    assert table_item.childCount() == 1
+    assert table_item.child(0).text(0) == "pr.equipment.trg_audit [A][I]"
+
+
+def test_tables_branch_unions_schema_tables_and_trigger_only_tables(qtbot):
+    """A table that only shows up via schema.triggers (no TableInfo, e.g. a
+    caller that populates triggers without tables) must still appear --
+    the widening is additive, never a narrowing of prior behavior."""
+    schema = DatabaseSchema(
+        tables={"pr.widget": _table_info("pr.widget")},
+        triggers={
+            "pr.equipment.trg_audit": TriggerInfo(
+                schema="pr", table="equipment", name="trg_audit", timing="after",
+                events=["insert"], function_name="audit_log", definition="def",
+            ),
+        },
+    )
+    _, spans = build_ddl_text(schema)
+    panel = BrowserPanel()
+    qtbot.addWidget(panel)
+
+    panel.set_schema(schema, spans)
+
+    tables_root = panel.tree.topLevelItem(0)
+    labels = sorted(tables_root.child(i).text(0) for i in range(tables_root.childCount()))
+    assert labels == ["pr.equipment  (1)", "pr.widget"]
+
+
+def test_tables_branch_sorted_by_table_name(qtbot):
+    schema = DatabaseSchema(
+        tables={
+            "pr.zeta": _table_info("pr.zeta"),
+            "pr.alpha": _table_info("pr.alpha"),
+        },
+    )
+    _, spans = build_ddl_text(schema)
+    panel = BrowserPanel()
+    qtbot.addWidget(panel)
+
+    panel.set_schema(schema, spans)
+
+    tables_root = panel.tree.topLevelItem(0)
+    labels = [tables_root.child(i).text(0) for i in range(tables_root.childCount())]
+    assert labels == ["pr.alpha", "pr.zeta"]
+
+
+def test_click_on_table_node_emits_table_selected_with_table_info(qtbot):
+    table_info = _table_info("pr.widget")
+    schema = DatabaseSchema(tables={"pr.widget": table_info})
+    _, spans = build_ddl_text(schema)
+    panel = BrowserPanel()
+    qtbot.addWidget(panel)
+    panel.set_schema(schema, spans)
+
+    got = []
+    panel.table_selected.connect(got.append)
+    table_item = panel.tree.topLevelItem(0).child(0)
+    panel._on_item_clicked(table_item, 0)
+
+    assert got == [table_info]
+
+
+def test_click_on_table_node_does_not_emit_navigate_requested(qtbot):
+    """A table node has no DdlObjectSpan -- clicking it must go through the
+    table_selected path, never navigate_requested."""
+    schema = DatabaseSchema(tables={"pr.widget": _table_info("pr.widget")})
+    _, spans = build_ddl_text(schema)
+    panel = BrowserPanel()
+    qtbot.addWidget(panel)
+    panel.set_schema(schema, spans)
+
+    got = []
+    panel.navigate_requested.connect(got.append)
+    table_item = panel.tree.topLevelItem(0).child(0)
+    panel._on_item_clicked(table_item, 0)
+
+    assert got == []
+
+
+def test_click_on_trigger_owning_table_node_still_emits_table_selected(qtbot):
+    """A table WITH triggers is still a table node in its own right -- its
+    top-level row click emits table_selected, distinct from clicking one of
+    its nested trigger leaves (which emits navigate_requested instead)."""
+    table_info = _table_info("pr.equipment")
+    schema = DatabaseSchema(
+        tables={"pr.equipment": table_info},
+        triggers={
+            "pr.equipment.trg_audit": TriggerInfo(
+                schema="pr", table="equipment", name="trg_audit", timing="after",
+                events=["insert"], function_name="audit_log", definition="def",
+            ),
+        },
+    )
+    _, spans = build_ddl_text(schema)
+    panel = BrowserPanel()
+    qtbot.addWidget(panel)
+    panel.set_schema(schema, spans)
+
+    got_table = []
+    got_navigate = []
+    panel.table_selected.connect(got_table.append)
+    panel.navigate_requested.connect(got_navigate.append)
+    table_item = panel.tree.topLevelItem(0).child(0)
+    panel._on_item_clicked(table_item, 0)
+
+    assert got_table == [table_info]
+    assert got_navigate == []
+
+
+def test_table_with_no_tableinfo_and_no_triggers_never_happens_but_empty_schema_is_safe(qtbot):
+    """Defensive: an empty schema still builds the (empty) Tables branch
+    without raising."""
+    panel = BrowserPanel()
+    qtbot.addWidget(panel)
+    panel.set_schema(DatabaseSchema(), [])
+    assert panel.tree.topLevelItem(0).childCount() == 0
+
+
+def test_context_menu_on_a_table_node_offers_no_edit(qtbot, monkeypatch):
+    """A table node is click-only, no context menu (§18.1, 2026-08-05) -- a
+    whole table has no single DdlObjectSpan/source text for Edit…/Check Out
+    to act on. Table nodes carry only _TABLE_ROLE data, never _SPAN_ROLE, so
+    the existing span-gated context-menu path must no-op on them exactly as
+    it already does for an argument-name leaf."""
+    schema = DatabaseSchema(tables={"pr.widget": _table_info("pr.widget")})
+    _, spans = build_ddl_text(schema)
+    panel = BrowserPanel()
+    qtbot.addWidget(panel)
+    panel.set_schema(schema, spans)
+    from PySide6.QtCore import QPoint, Qt
+    from PySide6.QtWidgets import QTreeWidget
+
+    table_item = panel.tree.topLevelItem(0).child(0)
+    assert table_item.data(0, Qt.ItemDataRole.UserRole) is None  # no _SPAN_ROLE
+    monkeypatch.setattr(QTreeWidget, "itemAt", lambda self, pos: table_item)
+    got_edit = []
+    got_checkout = []
+    panel.edit_requested.connect(lambda *a: got_edit.append(a))
+    panel.checkout_requested.connect(lambda *a: got_checkout.append(a))
+
+    panel._on_context_menu(QPoint(0, 0))  # position is irrelevant, itemAt is patched
+
+    assert got_edit == []
+    assert got_checkout == []
