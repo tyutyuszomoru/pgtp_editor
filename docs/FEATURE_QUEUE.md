@@ -153,3 +153,215 @@ don't silently diverge.
 menu-location details folded into "Proposed approach" above) before this entry was picked up.
 
 ---
+
+## FQ-003: Unify DB Check (both directions) + Table References into one "Database/XML Coherence" view
+**Status:** QUEUED
+**Requested:** 2026-08-06
+**Idea (verbatim/summarized):** "Unite the Database→XML check, XML→Database check, and Table References
+panel into a single 'Database/XML Coherence' view. Our truth is always the db. The xml represents the
+interface. So anything in the xml that's not in the db is an error (or renamed table, or something else
+to address, otherwise the app won't work). Finding where that db table plays in the xml is important."
+This idea has already been through a full brainstorming session (product-brainstorming skill +
+spec-maintainer JOB2 placement gate + two rounds of code verification) and is fully converged; this entry
+records the settled design, not an open elaboration.
+
+**Problem:** Today there are **three separate left-dock surfaces** presenting overlapping information
+about the same underlying question (does the XML interface match the live DB truth), all built on top of
+the **same already-shared analyzer**: `pgtp_editor/analysis/reused_tables.py::collect_table_usages` (pure,
+Qt-free) is called directly by both `pgtp_editor/db/compare.py::check_xml_against_db` and
+`check_db_against_xml` (via `xml_table_invocations`/`xml_table_role_counts`, BUG-026), and consumed a
+third time by `pgtp_editor/ui/table_references_panel.py::TableReferencesPanel`. Despite sharing one data
+layer, the **presentation** is triplicated: two separate Database-menu items ("Check: XML → Database" /
+"Check: Database → XML", `pgtp_editor/ui/main_window.py:2622-2625`) driving one `DbCheckPanel` class
+(`pgtp_editor/ui/db_check_panel.py`) added to `left_tabs` as its own hidden tab
+(`db_check_tab_index`, `main_window.py:275-277`), plus a wholly separate "Table references" hidden tab
+(`table_refs_tab_index`, `main_window.py:307`) toggled from the View menu (§15,
+`CONSOLIDATED_SPEC.md:1302-1304`). The user has to know which of three surfaces answers which question,
+and the "direction" framing of the two DB-check menu items is itself an artifact of showing only one
+side's state at a time rather than DB-state and XML-state together per table.
+
+**Proposed approach:** Two top-level branches sharing one data source
+(`analysis/reused_tables.py` + `db/compare.py`'s DB-augmented layer), replacing all three current surfaces
+(2 DB-Check-direction menu items/tab + 1 Table References menu item/tab) with one panel/tab and one
+Database-menu toggle:
+
+1. **"Tables and Views" branch** — rooted in the live DB relation list (tables **and** views, identical
+   treatment — `db/introspect.py` already fetches both the same way, `relkind IN ('r','p','v','m')` per
+   §17, and neither `compare.py` nor `reused_tables.py` apply kind-based filtering, so no new
+   special-casing is needed for views). Per table/view, two sub-sections:
+   - **Database columns** — today's column-check list (DB type/nullable/PK/FK/etc., per §17's
+     `ColumnCheck`). Calculated columns (`ColumnCheck.is_calculated`, `db/compare.py`, BUG-006) are shown
+     but **excluded from mismatch flagging** — they are intentionally DB-less by design, not an error.
+   - **References** — today's Table-References content for that table, badge-summarized using the
+     **existing** `TableCheck.page_count`/`.detail_count`/`.lookup_count` rollup fields (§17, BUG-026;
+     `db/compare.py` lines ~50-62) rather than computing new counts, expandable into the full breadcrumb
+     list currently shown by `TableReferencesPanel`.
+   - The **direction toggle** from today's two separate DB-check menu items is **eliminated**, not merged:
+     once DB state and XML state are shown together per table, there is no remaining framing choice about
+     which side is "ground truth for display" — the DB is always ground truth (per the requester's core
+     framing) and the XML is always the thing being checked against it.
+
+2. **"Pages" branch** — a **recursive tree mirroring the real XML structure**, not a fixed depth. Each
+   Page node shows its own bound table (if any) and its own lookup columns (with a **"lookup with
+   insert"** badge wherever `TableReference.ref_type == "lookup with insert"` applies — fired when a
+   `<Lookup>` has a child `<OnTheFlyInsertPage>`, `reused_tables.py:73-80` — this distinction is shown
+   today in the Table References breadcrumbs and must be preserved as a badge, not flattened into a
+   generic "lookup" label), then nests child Details the same way: each Detail has its own bound table +
+   its own lookup columns + further nested child Details, recursing to whatever depth the XML actually
+   has. This is exactly the shape `visit_detail`'s existing recursion in `reused_tables.py:108-116`
+   already walks (a Detail can contain child Details at unlimited depth) — the UI must mirror that
+   recursion, not flatten it to an assumed "Page > Details > Detail > Lookups" 2-level shape.
+
+3. **Mismatch toggle** (global, filters both branches down to only problem nodes) — settled semantics,
+   confirmed directly with the requester:
+   - **In the Pages branch:** a Page/Detail/Lookup node whose target table/view name does not exist in
+     the live DB at all is flagged red **at that exact reference point** — this is where a "renamed
+     table" error must surface, *not* as a synthetic phantom entry under "Tables and Views," which stays
+     purely DB-sourced (a table that doesn't exist in the DB has no row to attach a phantom entry to in
+     that branch).
+   - **In the Tables-and-Views branch:** a real DB table/view with `page_count == detail_count ==
+     lookup_count == 0` (referenced nowhere in the XML at all) **is** flagged by the toggle too —
+     confirmed directly with the requester ("if neither Page, nor Detail nor Lookup is there, flag it.
+     Probably needs attention."). This is the reverse-direction case and is explicitly wanted, not
+     excluded, even though an unreferenced table is not itself a coherence *error* in the same sense as a
+     dangling XML reference — the toggle is deliberately "things needing attention," not strictly
+     "things that are broken."
+   - Column-level mismatches (existing `ColumnCheck.ok == False` cases) also fold into the toggle,
+     excluding `is_calculated` columns as above.
+   - No mismatch-type enum exists anywhere today; mismatches are currently derived ad hoc from `ok`
+     (bool) + `kind` (`None` = missing in DB) + role counts. The new toggle needs its own filter predicate
+     spanning both branches per the rules above, since nothing pre-packaged does this today.
+
+**Alternatives considered:**
+- A fully separate "connection-optional" hybrid that kept Table References as an independent panel with
+  just a cross-navigation link into DB Check was considered (this was the facilitating assistant's
+  first-pass recommendation during brainstorming) and superseded once the requester clarified the core
+  motivation is architectural — three near-duplicate presentations of what is fundamentally one
+  DB-truth-vs-XML-interface question — not just a UI convenience link. The full merge was chosen instead.
+- The §18.3 precedent of explicitly **rejecting** a unified Compare/Deploy screen
+  (`CONSOLIDATED_SPEC.md:2512-2514`: "a single unified Compare/Deploy screen... would either overload the
+  simple compare tool with project/git machinery it doesn't need, or dilute the deploy workflow's
+  guardrails into a generic diff viewer") was raised as a caution during brainstorming but explicitly
+  distinguished, not silently re-decided: that precedent turned on **risk asymmetry** (Compare is
+  read-only, Deploy is destructive/write, and merging them would dilute Deploy's guardrails). DB Check
+  and Table References are both **read-only diagnostic** surfaces with no write path — the risk asymmetry
+  that drove §18.3's rejection does not exist here, so it does not block this merge. Recorded so whoever
+  implements this does not have to re-litigate the §18.3 reasoning from scratch.
+
+**Suggested placement:** EXTEND §17 (Database, `CONSOLIDATED_SPEC.md` lines ~1327-1454) as the primary
+landing section — it already owns `db/compare.py`, `DbCheckPanel`, and the Database-menu check actions
+that this design replaces. §15 (Search, Find All & Table References, lines ~1261-1306) should have its
+"Table References tab" subsection **folded into §17** rather than kept as a cross-referenced sibling: the
+settled design makes table-references a sub-branch (the "References" section under "Tables and Views,"
+and the whole "Pages" branch) of one coherence view, not an independently toggleable panel — the View
+menu's "Find table reference" checkable and the `table_refs_tab_index` hidden tab both go away as
+standalone entry points once §17's Database menu toggle covers the merged view. Whoever picks this up
+must reuse `analysis/reused_tables.py::collect_table_usages` wholesale (do not reimplement the
+page/detail/lookup walk) and the existing `TableCheck`/`ColumnCheck` rollup fields (`page_count`/
+`detail_count`/`lookup_count`/`is_calculated`) rather than introducing parallel counting logic.
+
+**Open questions:** none — the design converged through direct requester decisions on both the Pages-vs-
+Tables-and-Views mismatch semantics and the recursive (not fixed-depth) Pages tree shape; see "Proposed
+approach" above for the exact resolutions. Implementation-level questions (exact tree-widget structure,
+whether "Tables and Views" and "Pages" are two sub-tabs vs. two top-level tree roots in one widget, menu
+action naming/shortcut) are left to whoever designs this into §17's spec text and implements it.
+
+---
+
+## FQ-004: Choose a Breeze icon for any toolbar button in Customize Toolbar
+**Status:** QUEUED
+**Requested:** 2026-08-06
+**Idea (verbatim/summarized):** "the menu points I'm adding with customize toolbar have no icons. there
+should be an option to add icons. I'm already referencing an icon pack, let's offer from that pack to
+choose icons for my toolbar buttons"
+
+**Problem:** Since BUG-027 (shipped on this branch, `toolbar_registry.py` + `MainWindow._walk_menu_actions`),
+Customize Toolbar can add **any** menu command to the toolbar, but only the legacy seven commands carry a
+vendored icon (`ICON_ID_BY_COMMAND` maps a menu-path id → one of the 7 keys in
+`icons.py::ACTION_ICON_FILES`). Every other command is icon-less by design — `_set_action_icon`
+(`main_window.py:1108-1123`) returns early when there is no mapping — so a user-added button renders
+text-only. The toolbar uses `ToolButtonTextBesideIcon` (`main_window.py:980-982`), so an icon-less button
+shows just a label, visually inconsistent with the decorated legacy seven and giving the user no way to
+make a compact, icon-first toolbar. The user wants to pick an icon for such buttons "from the pack I
+already reference."
+
+**Key finding (drove the shape of this entry):** the "pack already referenced" is **not** an enumerable
+catalog today — it is exactly **7 vendored Breeze SVGs** in
+`pgtp_editor/resources/icons/breeze/` (`document-open`, `document-save`, `edit-undo`, `edit-redo`,
+`edit-find`, `dialog-ok-apply`, `run-build`), hardcoded one-per-legacy-command in the 7-entry
+`ACTION_ICON_FILES` dict. There is no directory scan, no manifest, no qtawesome, and no `QIcon.fromTheme`
+usage anywhere. A picker "over the pack" would today offer 7 icons, most already spoken for. This feature
+therefore requires **vendoring a larger Breeze subset** as a prerequisite (decided with the requester
+2026-08-06, see below), not just a new dialog widget.
+
+**Proposed approach** (all four sub-decisions confirmed with the requester 2026-08-06):
+- **Icon source — vendor a curated Breeze subset (~50–100 common-action SVGs)** from the same upstream
+  Breeze set the current 7 came from. **Not** the full Breeze `actions/` category (bundle-size), **not**
+  OS Qt theme icons (`QIcon.fromTheme` is unpopulated on Windows, which the project targets per CLAUDE.md).
+  - **License/attribution:** Breeze SVGs are LGPL-3.0; the vendored subset must ship its
+    `ATTRIBUTION.md` + `LICENSE-LGPL-3.0.txt` (both already present in `resources/icons/breeze/`) covering
+    the expanded set, and the About box / credits should reflect the widened bundle if it names the icon
+    source.
+  - **Bundle-size implication:** ~50–100 additional SVGs (Breeze action SVGs are ~1–3 KB each) is a small
+    but non-zero addition to the packaged app — flagged for the implementer, acceptable per requester.
+  - **Rendering:** every offered icon must flow through the **existing `icons.themed_icon()` pipeline**
+    (`recolor_svg`: `currentColor` + `#232629` → palette WindowText color; rendered at 22px + 44px hi-dpi),
+    so newly-choosable icons tint and size identically to the current 7 and re-tint on theme change via the
+    existing `_refresh_toolbar_icons`.
+  - **Enumerable catalog needed (implementation note):** `icons.py` today has only the hardcoded 7-entry
+    `ACTION_ICON_FILES` dict. The picker needs an enumerable catalog/manifest over the vendored subset —
+    either a directory scan of `resources/icons/breeze/` at load time or a generated manifest listing
+    `(icon_id, filename, human_name)` — so the picker can list and (ideally) search/filter the set. Keep
+    the Qt-free/pure split `icons.py` already observes (catalog building should stay Qt-light; only
+    rendering touches Qt).
+- **Assignment scope — any toolbar button.** Allow assigning or **overriding** the icon on **any** button
+  currently on the toolbar, including the legacy seven that already have a default icon. Not restricted to
+  icon-less user-added buttons.
+- **Menu propagation — toolbar-only.** Preserve the existing deliberate `setIconVisibleInMenu(False)`
+  behavior (`main_window.py:1121`): a chosen icon appears **only** on the toolbar button; menu items stay
+  text-only. Do not propagate the chosen icon to the menu.
+- **Custom icons — bundled pack only for v1.** No user-supplied SVG/PNG files this round. (Own-file icons
+  are noted as a possible future extension, explicitly out of scope for this entry.)
+- **Persistence** — key each per-action icon assignment to the **stable menu-path command id**
+  (`toolbar_registry.command_id_for`, e.g. `file.save-as`), the same identity already used for `toolbarIds`.
+  Store the mapping (`command_id → chosen icon_id`) in QSettings alongside the existing `toolbarIds` key
+  (a sibling key, e.g. `toolbarIconIds`), so it is **back-compatible**: an existing saved toolbar with no
+  assignments simply keeps each button's default icon (legacy seven) or none (everything else).
+  `_set_action_icon` gains a lookup — assigned icon_id wins over the `ICON_ID_BY_COMMAND` default — and an
+  assignment for a command id no longer present is dropped on load the way `resolve_ids` already drops
+  unknown ids.
+- **UI shape** — an icon column/button per row in the On-Toolbar list of `CustomizeToolbarDialog`
+  (`customize_toolbar_dialog.py`), opening an icon-picker grid (searchable/filterable over the vendored
+  catalog, plus a "no icon" / "reset to default" choice). The dialog's existing test seams
+  (`selected_ids()`/`set_ids()`, never `.exec()` in tests) should be mirrored by a parallel accessor for
+  the id→icon assignment map so the assignment is unit-testable the same headless way.
+
+**Alternatives considered:**
+- **Pick only from the 7 we already ship** — rejected: near-useless, since most are already the legacy
+  commands' own icons, and it would not solve the icon-less-added-button problem the user actually has.
+- **Use OS Qt theme icons (`QIcon.fromTheme`)** — rejected: unpopulated on Windows (a first-class target
+  per CLAUDE.md), so it would work on Linux only and silently give Windows users an empty picker.
+- **Vendor the full Breeze `actions/` category** — rejected in favor of a curated ~50–100 subset to keep
+  the bundle small and the picker scannable.
+- **Allow arbitrary user SVG/PNG files in v1** — deferred: larger surface (file dialog, validation,
+  recolor/sizing of arbitrary art through a pipeline built for Breeze's `currentColor` convention); noted
+  as a future extension, out of scope here.
+
+**Suggested placement:** EXTEND **§7 Customize Toolbar** in `CONSOLIDATED_SPEC.md` (lines 512–559), which
+already specifies the toolbar's menu-command universe, the `ICON_ID_BY_COMMAND`/`themed_icon` icon
+pipeline, "Icons are optional" (lines 544–548), the `setIconVisibleInMenu(False)` menu-stays-text-only
+rule, the two-list Customize dialog, and the `toolbarIds` QSettings persistence with `resolve_ids`
+back-compat. This is a direct capability addition to an already-specified feature — no new section
+warranted. Whoever folds this in must (a) amend "Icons are optional / only the legacy seven have vendored
+SVGs" to reflect the widened choosable catalog while keeping the "icon is never a precondition for adding a
+command" invariant, (b) reuse `themed_icon`/`recolor_svg` and `_refresh_toolbar_icons` verbatim rather than
+a second render path, and (c) key the new persistence to `command_id_for` alongside `toolbarIds`.
+
+**Open questions:** none blocking — the four load-bearing decisions (icon source, assignment scope, menu
+propagation, custom icons) are resolved above. Implementation-level details left to the implementer:
+exact size of the curated subset and which specific Breeze icons to vendor; whether the catalog is a
+runtime directory scan vs. a checked-in generated manifest; the precise QSettings key name and serialized
+shape for the assignment map; and the exact picker-grid widget layout (columns, search box, "no icon"
+affordance).
+
+---
