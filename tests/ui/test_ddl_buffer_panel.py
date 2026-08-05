@@ -1166,29 +1166,73 @@ def test_table_with_no_tableinfo_and_no_triggers_never_happens_but_empty_schema_
     assert panel.tree.topLevelItem(0).childCount() == 0
 
 
-def test_context_menu_on_a_table_node_offers_no_edit(qtbot, monkeypatch):
-    """A table node is click-only, no context menu (§18.1, 2026-08-05) -- a
-    whole table has no single DdlObjectSpan/source text for Edit…/Check Out
-    to act on. Table nodes carry only _TABLE_ROLE data, never _SPAN_ROLE, so
-    the existing span-gated context-menu path must no-op on them exactly as
-    it already does for an argument-name leaf."""
+def _table_panel(qtbot):
     schema = DatabaseSchema(tables={"pr.widget": _table_info("pr.widget")})
     _, spans = build_ddl_text(schema)
     panel = BrowserPanel()
     qtbot.addWidget(panel)
     panel.set_schema(schema, spans)
-    from PySide6.QtCore import QPoint, Qt
-    from PySide6.QtWidgets import QTreeWidget
+    return panel
 
+
+def test_context_menu_on_a_table_node_offers_no_edit(qtbot):
+    """A table node still offers NO Edit…/Check Out (§18.1) -- a whole table
+    has no single DdlObjectSpan/source text for either to act on, and table
+    nodes carry only _TABLE_ROLE data, never _SPAN_ROLE.
+
+    FQ-002 carved out a *creation* entry on this node (covered below), which
+    is why this asserts the absence of the two edit gestures rather than the
+    absence of a menu: the reason the edit entries stay away is unchanged, and
+    that is the guarantee worth pinning.
+    """
+    from PySide6.QtCore import Qt
+
+    panel = _table_panel(qtbot)
     table_item = panel.tree.topLevelItem(0).child(0)
     assert table_item.data(0, Qt.ItemDataRole.UserRole) is None  # no _SPAN_ROLE
-    monkeypatch.setattr(QTreeWidget, "itemAt", lambda self, pos: table_item)
-    got_edit = []
-    got_checkout = []
-    panel.edit_requested.connect(lambda *a: got_edit.append(a))
-    panel.checkout_requested.connect(lambda *a: got_checkout.append(a))
 
-    panel._on_context_menu(QPoint(0, 0))  # position is irrelevant, itemAt is patched
+    menu = panel._menu_for_item(table_item)
 
-    assert got_edit == []
-    assert got_checkout == []
+    labels = [action.text() for action in menu.actions()]
+    assert not any("Edit" in label for label in labels)
+    assert not any("Check Out" in label for label in labels)
+
+
+def test_context_menu_on_a_table_node_offers_add_trigger(qtbot):
+    """FQ-002's carve-out: the table node's menu holds exactly one entry, and
+    it emits the clicked table's TableInfo so the caller can scope the new
+    trigger to it without a second lookup."""
+    panel = _table_panel(qtbot)
+    table_item = panel.tree.topLevelItem(0).child(0)
+    requested = []
+    panel.add_trigger_requested.connect(requested.append)
+
+    menu = panel._menu_for_item(table_item)
+
+    assert [action.text() for action in menu.actions()] == ["Add Trigger…"]
+    menu.actions()[0].trigger()
+    assert len(requested) == 1
+    assert requested[0].name == "pr.widget"
+
+
+def test_context_menu_on_the_routines_branch_offers_new_routine(qtbot):
+    """Right-clicking the "Functions & Procedures" root offers creation. The
+    root is identified by its branch role, not its visible label."""
+    panel = _table_panel(qtbot)
+    routines_root = panel.tree.topLevelItem(1)
+    fired = []
+    panel.new_routine_requested.connect(lambda: fired.append(True))
+
+    menu = panel._menu_for_item(routines_root)
+
+    assert [action.text() for action in menu.actions()] == ["New Function/Procedure…"]
+    menu.actions()[0].trigger()
+    assert fired == [True]
+
+
+def test_context_menu_on_the_tables_branch_root_offers_nothing(qtbot):
+    """Creation is scoped: a trigger needs a specific table, so the Tables
+    root itself has nothing to offer -- and must not pop an empty menu."""
+    panel = _table_panel(qtbot)
+
+    assert panel._menu_for_item(panel.tree.topLevelItem(0)) is None

@@ -44,6 +44,11 @@ _SPAN_ROLE = Qt.ItemDataRole.UserRole
 #: a table row (click -> Properties panel, §18.1) and a trigger/routine row
 #: (click -> `navigate_requested`) never collide on the same item.
 _TABLE_ROLE = Qt.ItemDataRole.UserRole + 1
+#: Which top-level branch an item IS (not which branch it sits under) --
+#: `"tables"` / `"routines"`. Only the two branch roots carry it, so the
+#: context menu can offer FQ-002's creation entries on a root without
+#: string-matching the visible label.
+_BRANCH_ROLE = Qt.ItemDataRole.UserRole + 2
 
 _TIMING_LETTERS = {"before": "B", "after": "A", "instead of": "I"}
 _EVENT_LETTERS = {"insert": "I", "update": "U", "delete": "D", "truncate": "T"}
@@ -116,9 +121,23 @@ class BrowserPanel(QWidget):
     #: Left-click on a Tables-branch table node (spec §18.1, 2026-08-05):
     #: carries the clicked table's `TableInfo` so `MainWindow` can populate
     #: the shared `PropertiesPanel` (`show_node(table_info, "ddl_table")`).
-    #: Click-only, no context menu -- a whole table has no single
-    #: `DdlObjectSpan`/source text for Edit…/Check Out to act on.
+    #: Click-only for Edit…/Check Out -- a whole table has no single
+    #: `DdlObjectSpan`/source text for those to act on. It DOES carry a
+    #: context menu for *creation* (see `add_trigger_requested`), which needs
+    #: no source span precisely because the object does not exist yet.
     table_selected = Signal(object)
+
+    #: Right-click ▸ Add Trigger… on a Tables-branch table node (FQ-002).
+    #: Carries the clicked table's `TableInfo`. This is the carve-out to
+    #: §18.1's original "table nodes have no context menu" rule: that rule
+    #: exists because Edit…/Check Out need a source span, and a
+    #: not-yet-created trigger has none to need.
+    add_trigger_requested = Signal(object)
+
+    #: Right-click ▸ New Function/Procedure… on the "Functions & Procedures"
+    #: branch root (FQ-002). Carries nothing -- unlike a trigger, a routine is
+    #: not scoped to a specific parent object, so there is no context to pass.
+    new_routine_requested = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -192,6 +211,7 @@ class BrowserPanel(QWidget):
             table_keys.add((schema_name, table_name))
 
         tables_root = QTreeWidgetItem(["Tables"])
+        tables_root.setData(0, _BRANCH_ROLE, "tables")
         self.tree.addTopLevelItem(tables_root)
         for schema_name, table_name in sorted(table_keys):
             triggers = sorted(by_table.get((schema_name, table_name), []), key=lambda t: t.name)
@@ -218,6 +238,7 @@ class BrowserPanel(QWidget):
             ).append(trigger)
 
         routines_root = QTreeWidgetItem(["Functions & Procedures"])
+        routines_root.setData(0, _BRANCH_ROLE, "routines")
         self.tree.addTopLevelItem(routines_root)
         # Argument types are the final sort key so two overloads sharing a
         # `schema.name` keep a stable, reproducible order -- the same tiebreak
@@ -290,22 +311,66 @@ class BrowserPanel(QWidget):
             self.table_selected.emit(table_info)
 
     def _on_context_menu(self, pos) -> None:
+        """Three distinct menus, keyed on what the clicked item IS.
+
+        Object rows offer the existing *edit* gestures, which need a source
+        span. Table nodes and the routines branch root offer FQ-002's
+        *creation* gestures, which deliberately need no span -- the object
+        being created does not exist yet, so there is nothing to read a
+        definition from. That asymmetry is why §18.1's original "table nodes
+        have no context menu" rule could be carved out for creation without
+        weakening the reason it was written.
+        """
         item = self.tree.itemAt(pos)
         if item is None:
             return
-        span = item.data(0, _SPAN_ROLE)
-        # Argument-name child leaves carry no span (§18.1) -- only object rows
-        # (routine leaves and both trigger occurrences) offer Edit….
-        if span is None or self._schema is None:
+        menu = self._menu_for_item(item)
+        if menu is None:
             return
-        resolved = resolve_edit_target(self._schema, span)
-        if resolved is None:
-            return
-        ref, source = resolved
-        menu = QMenu(self)
-        menu.addAction(f"Edit {ref.qualified}…", lambda: self.edit_requested.emit(ref, source))
-        menu.addAction(
-            "Check Out for Versioning",
-            lambda: self.checkout_requested.emit(ref, source),
-        )
         menu.exec(self.tree.viewport().mapToGlobal(pos))
+
+    def _menu_for_item(self, item) -> "QMenu | None":
+        """The menu for `item`, or `None` when it offers nothing.
+
+        Split out from `_on_context_menu` so tests can assert the offered
+        entries without driving a modal `exec()`.
+        """
+        span = item.data(0, _SPAN_ROLE)
+        if span is not None:
+            if self._schema is None:
+                return None
+            resolved = resolve_edit_target(self._schema, span)
+            if resolved is None:
+                return None
+            ref, source = resolved
+            menu = QMenu(self)
+            menu.addAction(
+                f"Edit {ref.qualified}…", lambda: self.edit_requested.emit(ref, source)
+            )
+            menu.addAction(
+                "Check Out for Versioning",
+                lambda: self.checkout_requested.emit(ref, source),
+            )
+            return menu
+
+        table_info = item.data(0, _TABLE_ROLE)
+        if table_info is not None:
+            menu = QMenu(self)
+            menu.addAction(
+                "Add Trigger…",
+                lambda: self.add_trigger_requested.emit(table_info),
+            )
+            return menu
+
+        if item.data(0, _BRANCH_ROLE) == "routines":
+            menu = QMenu(self)
+            menu.addAction(
+                "New Function/Procedure…",
+                lambda: self.new_routine_requested.emit(),
+            )
+            return menu
+
+        # Argument-name child leaves and the Tables branch root carry neither a
+        # span nor a creation context -- no menu at all, rather than an empty
+        # one popping up under the cursor.
+        return None

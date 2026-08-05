@@ -1,6 +1,6 @@
 # PGTP Editor — Consolidated Specification
 
-> **Status:** living document · **Last synthesized:** 2026-08-06 (previously 2026-08-05: §18.8 corrected to the 5-node model, then given its concrete per-node state enumeration + dark-mode asset convention, then a same-day fix to the Quality node's locked/gray semantic and the Sandbox2 install-state-vs-lint-result semantic; later the same day, BUG-020/021/022/023/024/025 folded in — Captions' preset row-predicate filter + active-filter banner + Unify scope prompt, §18.2's Open-Project validity gate + auto-open of the linked `.pgtp`, the tabbed Project Settings dialog, and Connection Setup… becoming projectless-mode-only; later still the same day, §18.1's Tables branch widened to every table (not just trigger-owning ones) plus click-to-Properties-panel column detail, with `ColumnInfo.comment` added; and finally BUG-021/026/027/028 — §18.2's project-action lambda wiring that made the `.pgtp` auto-open actually reachable, §17's role-split `(P# D# L#)` DB→XML counts and any-role mismatch rule, §7's toolbar widened to every menu command with menu-path ids, and §13's active-filter banner extended to the whole-row find filter). **2026-08-06:** FQ-001 folded into §18.2 — per-group Test buttons on the Project Settings dialog's Connections tab (generic connectivity for Target, superuser probe for Sandbox). Same day: the §18.2 project actions' menu location corrected from Database to **File**, matching the shipped `_build_file_menu` (§26, ledger 2026-08-06).
+> **Status:** living document · **Last synthesized:** 2026-08-06 (previously 2026-08-05: §18.8 corrected to the 5-node model, then given its concrete per-node state enumeration + dark-mode asset convention, then a same-day fix to the Quality node's locked/gray semantic and the Sandbox2 install-state-vs-lint-result semantic; later the same day, BUG-020/021/022/023/024/025 folded in — Captions' preset row-predicate filter + active-filter banner + Unify scope prompt, §18.2's Open-Project validity gate + auto-open of the linked `.pgtp`, the tabbed Project Settings dialog, and Connection Setup… becoming projectless-mode-only; later still the same day, §18.1's Tables branch widened to every table (not just trigger-owning ones) plus click-to-Properties-panel column detail, with `ColumnInfo.comment` added; and finally BUG-021/026/027/028 — §18.2's project-action lambda wiring that made the `.pgtp` auto-open actually reachable, §17's role-split `(P# D# L#)` DB→XML counts and any-role mismatch rule, §7's toolbar widened to every menu command with menu-path ids, and §13's active-filter banner extended to the whole-row find filter). **2026-08-06:** FQ-001 folded into §18.2 — per-group Test buttons on the Project Settings dialog's Connections tab (generic connectivity for Target, superuser probe for Sandbox). Same day: the §18.2 project actions' menu location corrected from Database to **File**, matching the shipped `_build_file_menu` (§26, ledger 2026-08-06). Same day: FQ-002 folded in — §18.1 gains "Creating brand-new objects from the Explorer" (Add Trigger… on a table node, one New Function/Procedure… action on the routines-branch root and the Database menu, the shipped pure `db/ddl_skeleton.py` contract, and manifest registration of the new object so the existing §18.3/§18.4 deploy flow sees it), with §18.5 D1 gaining the third (creation) entry point into the same editable tab and two ledger rows (§28).
 > **Source of truth:** this file is the single reconciled specification for PGTP Editor, and the **only**
 > place specification content is written. It was originally synthesized from the dated design specs under
 > [`docs/superpowers/specs/`](specs/) — a folder now **frozen as historical record** (read for rationale;
@@ -32,7 +32,7 @@
 16. [Validation](#16-validation)
 17. [Database](#17-database)
 18. [DDL versioning (standalone Postgres mode)](#18-ddl-versioning-standalone-postgres-mode) — *planned*
-    - [18.1 Routines & triggers browsing (DDL Explorer)](#181-routines--triggers-browsing-ddl-explorer) — *implemented (except XML cross-refs)*
+    - [18.1 Routines & triggers browsing (DDL Explorer)](#181-routines--triggers-browsing-ddl-explorer) — *implemented (except XML cross-refs); object **creation** (FQ-002, 2026-08-06) is settled design with its pure skeleton core shipped*
     - [18.2 Projects, checkout & state markers](#182-projects-checkout--state-markers) — *planned*
     - [18.3 Deploy workflow & schema diff/migration](#183-deploy-workflow--schema-diffmigration) — *planned*
     - [18.4 SQL/plpgsql selection formatter](#184-sqlplpgsql-selection-formatter) — *core implemented 2026-08-01; consumer designed (§18.5), not built*
@@ -1908,9 +1908,15 @@ Tables branch's original scope, not a new feature:**
   signal on the table-node click (e.g. `table_selected(TableInfo)`, mirroring the shape of
   `edit_requested`/`checkout_requested` already on `BrowserPanel`) is what `MainWindow` connects to
   `self.properties_panel.show_node(table_info, "ddl_table")`, parallel to how the XML tree's own
-  selection handler already calls `show_node` for its four kinds. A DDL table node is **click-only,
-  no context menu** — right-click ▸ Edit…/Check Out (§18.1/§18.2) remain routine- and trigger-leaf-only,
-  since a whole table has no single `DdlObjectSpan`/source text to hand those entry points.
+  selection handler already calls `show_node` for its four kinds. A DDL table node offers **no *editing*
+  context menu** — right-click ▸ **Edit…** / **Check Out for Versioning** (§18.1/§18.2) remain routine- and
+  trigger-leaf-only, since a whole table has no single `DdlObjectSpan`/source text to hand those entry
+  points. **Amended 2026-08-06 (FQ-002, §28): the table node does carry a context menu, holding exactly one
+  *creation* entry — "Add Trigger…" — see "Creating brand-new objects from the Explorer" below.** The
+  span-based limitation above is specific to *editing an object that already exists*; an object that does
+  not exist yet has no source text to need a span for, so creation is not blocked by it. (The narrowing
+  originally written here was a statement about the edit/checkout entry points, never a decision that a
+  table row must be inert.)
   `PropertiesPanel` rows built from a `TableInfo` are **navigate-to-nothing**: every `RowSpec.target_line`
   is `None` (there is no XML/DDL-buffer source line a column-of-a-table maps to the way an XML attribute
   does), so `_on_row_clicked` no-ops on them exactly as it already does for any `RowSpec` with
@@ -1946,6 +1952,167 @@ Tables branch's original scope, not a new feature:**
   left to implementation, consistent with this spec's general behavior-over-pixel-layout stance; the
   **row content and pairing order** (identity row, then detail row, per column, columns in `TableInfo`'s
   existing declared order) is the settled, reproducible part.
+
+#### Creating brand-new objects from the Explorer — Add Trigger / Add Function or Procedure (FQ-002, 2026-08-06)
+
+> **Status: settled design 2026-08-06. The pure skeleton core is *implemented and shipped* (commit
+> `9f7c7c2`, `db/ddl_skeleton.py`); the two dialogs, the table-node context menu entry, the
+> routines-branch context menu entry, the Database-menu action and the manifest registration are not.**
+
+Until now the Explorer could only browse and edit objects that **already exist** in the connected
+database (§18.1 browsing, §18.2 checkout, §18.5 editing). Originating a brand-new trigger, function or
+procedure meant hand-writing `CREATE …` somewhere else entirely. This closes that gap **without adding a
+new editor, a new tab type or a second deploy path**: the creation gesture ends in the *existing* §18.5
+`DdlObjectEditorPanel` tab, pre-filled with a generated skeleton.
+
+**Three entry points, one per shape of the thing being created:**
+
+| Entry point | Gesture | Opens |
+|---|---|---|
+| `BrowserPanel.tree`, **Tables branch, a table node** | right-click ▸ **Add Trigger…** | the Add Trigger dialog, with that node's `schema.table` pre-bound (the table is *not* an editable field — it comes from the clicked node) |
+| `BrowserPanel.tree`, the **"Functions & Procedures"** branch root (`_build_routines_branch`) | right-click ▸ **New Function/Procedure…** | the Add Function/Procedure dialog |
+| **Database menu ▸ New Function/Procedure…** (§26) | click | the same dialog, same code path |
+
+- The table-node entry is the reason §18.1's "no context menu" statement on table nodes is amended above
+  (§28). Nothing else about the table node changes: left-click still emits `table_selected(TableInfo)` and
+  still populates the shared `PropertiesPanel` (§10).
+- **There is exactly one Function/Procedure action, not two** — kind is a *field inside the dialog*, not a
+  choice made by picking a menu entry. Unlike a trigger, a routine is not scoped to a specific table, so
+  the tree-root and menu entry point at an identical, argument-less command.
+- The Database-menu placement is **after the ☐ DDL Explorer toggle, behind a separator**
+  (`MainWindow._build_database_menu`) — that menu already owns Connection Setup, the two XML↔DB checks and
+  DDL Explorer itself, and is where §18 puts everything except §18.2's five File-menu project actions
+  (§26). Because the toolbar's command universe is derived by walking the live menu bar with menu-path ids
+  (§7, BUG-027), this action is toolbar-customizable **for free** as `database.new-function-procedure`; no
+  registry entry is written by hand.
+
+**Add Trigger dialog — fields (all required):**
+
+| Field | Widget shape | Values |
+|---|---|---|
+| Name | line edit | the trigger's own name; validated by the skeleton emitter, not sanitized (below) |
+| Timing | single choice | `BEFORE` / `AFTER` / `INSTEAD OF` — `db/ddl_skeleton.py::TRIGGER_TIMINGS` verbatim, never a second literal list |
+| Events | **multi-select** | `INSERT` / `UPDATE` / `DELETE` — `TRIGGER_EVENTS`; Postgres combines them with `OR`, so any non-empty subset is legal and at least one is mandatory |
+| Level | single choice | `FOR EACH ROW` / `FOR EACH STATEMENT` — `TRIGGER_LEVELS`. **There is no transaction-level trigger in Postgres**; the original request's "for each transaction" was corrected at triage and must not reappear as a third option |
+| Trigger function | chooser over existing objects | **only routines whose `RoutineInfo.return_type == "trigger"`** in the already-fetched `DatabaseSchema` (§18.1's single connect-time `fetch_routines_and_triggers` result — no extra query, no lazy fetch). These are exactly the tree's `[T]`-marked routines (§18.1 marker table) |
+
+- **No inline "create a new trigger function" shortcut in v1.** If no routine returns `trigger`, the dialog
+  says so plainly and offers no function to pick — the user creates the function first (via the
+  Function/Procedure flow, choosing return type `trigger`) and then the trigger. Stating the gap beats a
+  half-wired nested-creation path.
+- The function chooser reuses the **existing picker idiom** already in `DdlObjectEditorPanel` for the
+  reverse case — `_prompt_unattached_trigger_table` (§18.6, a thin, directly-testable `QInputDialog.getItem`
+  wrapper over the schema's known tables) — rather than a new widget: same simple-selection-dialog
+  convention, same testability seam.
+- `INSTEAD OF` is view-only in Postgres. That constraint is the **dialog's** to enforce or to leave to the
+  database; `ddl_skeleton.py` deliberately does not police it (see its `TRIGGER_TIMINGS` docstring).
+
+**Add Function/Procedure dialog — fields:**
+
+| Field | Values |
+|---|---|
+| Name | line edit; may be schema-qualified (`public.recalc`) |
+| Kind | `Function` / `Procedure` — maps straight onto `DdlObjectRef.kind ∈ {"function","procedure"}` |
+| Return datatype | **function-only, and hidden/disabled — not merely optional — when Kind is Procedure** |
+
+**Why the return type is hidden rather than optional:** `CREATE PROCEDURE` has **no `RETURNS` clause at
+all** in Postgres (procedures use `OUT` parameters); a return type on a procedure is a syntax error, not an
+ignorable extra. `procedure_skeleton` accordingly **takes no return-type argument by construction** rather
+than accepting and discarding one, so the impossible combination cannot be expressed anywhere in the stack.
+
+**Skeleton generation — `db/ddl_skeleton.py` (implemented; this is its shipped contract):**
+
+Pure and Qt-free — no Qt, no psycopg, no I/O, no clock — and **deterministic**: identical input yields
+byte-identical output, so its tests are plain golden strings. **Nothing in it executes SQL**; it renders
+text that lands in an editor a user may run nearly unchanged, which is why a skeleton must be *valid as
+emitted*.
+
+| Symbol | Contract |
+|---|---|
+| `TRIGGER_TIMINGS` | `("BEFORE", "AFTER", "INSTEAD OF")` |
+| `TRIGGER_EVENTS` | `("INSERT", "UPDATE", "DELETE")` — also the **canonical emission order**: output follows this order regardless of the order the caller passes, so a dialog backed by an unordered set of checkbox states still produces stable, diffable text; the set is de-duplicated (`INSERT OR INSERT` is a syntax error) |
+| `TRIGGER_LEVELS` | `("FOR EACH ROW", "FOR EACH STATEMENT")` |
+| `SkeletonError(ValueError)` | **Refuse, don't degrade** — matching `migration_gen.UnsupportedDifference`: the caller renders the refusal and no half-formed SQL reaches the editor, where it would look authoritative and get run |
+| `trigger_skeleton(*, name, table, timing, events, level, function_name) -> str` | `CREATE TRIGGER <name>` / `<timing> <events joined by " OR "> ON <table>` / `<level>` / `EXECUTE FUNCTION <function>();`. `table` and `function_name` may be schema-qualified — each dot-separated part is quoted **separately**, so the dot stays a separator instead of becoming part of a name. Raises `SkeletonError` on an unknown timing/level, an unknown event, or an empty event set |
+| `function_skeleton(*, name, return_type) -> str` | `CREATE OR REPLACE FUNCTION <name>()` / `RETURNS <type>` / `LANGUAGE plpgsql` / `AS $$` / `BEGIN` / body stub / `END;` / `$$;` |
+| `procedure_skeleton(*, name) -> str` | the same shape **minus any `RETURNS` line**, body stub = `-- TODO: implement` |
+
+Two correctness rules the module exists to enforce, recorded because both are easy to get wrong by hand
+and both are test-covered:
+
+1. **`CREATE PROCEDURE` never gets a `RETURNS` clause** (see above — enforced by the signature itself).
+2. **`RETURN NULL;` is invalid in a `void` function** ("RETURN cannot have a parameter in function
+   returning void"). `_body_stub` therefore emits `-- TODO: implement` **alone** for `void` and
+   `-- TODO: implement` + `RETURN NULL;` for every other return type. A plpgsql block whose body is only a
+   comment is valid; a skeleton that fails the moment it is run is worse than one that does nothing.
+
+Identifier handling follows the codebase's established **validated-not-sanitized** posture: every name
+goes through `db/sandbox.py::quote_ident`, which double-quotes only after a strict allowlist and otherwise
+raises `UnsafeIdentifierError` — arbitrary content is **never escaped into the output**. Mixed case
+survives correctly (`MyFunc` → `"MyFunc"`); a name with a space or an embedded quote is **refused, not
+mangled**. The **return type is the one free-text field** and cannot use `quote_ident` (`character
+varying(255)`, `numeric(10,2)` and `integer[]` are all legitimate and none would survive it), so it gets
+its own allowlist — `_SAFE_DATATYPE_RE = ^[A-Za-z_][A-Za-z0-9_ .,()\[\]]*$` — permitting precision,
+arrays and schema-qualified domains while refusing **quotes, semicolons and dollar signs**, which is what
+keeps a return type from closing the statement or the `$$` body. Empty name/return type → `SkeletonError`.
+
+**v1 emits no parameter list and offers no language picker.** `LANGUAGE plpgsql` is the default and the
+only option — this is a plpgsql IDE — and the user fills in the signature in the editor.
+
+**Both flows end in the existing editable tab — no new tab type.** The dialog's accepted result is turned
+into a `DdlObjectRef` (§18.5) for an object that does **not yet exist in the database**, plus the skeleton
+text, and handed to the **existing** `CenterStage.open_ddl_object_tab(ref, text, resolve_save_path=…)`.
+`DdlObjectRef` already models `kind ∈ {"function","procedure","trigger"}`, so the tab, its title/tooltip
+rules, its dirty tracking, its Save/Save As… path, §18.4's Format Selection and §18.6's Ctrl+Space
+completion all apply unchanged. The **only** structural novelty is the source of the buffer: skeleton text
+instead of an introspected `RoutineInfo.source`/`TriggerInfo.definition` — see §18.5 D1's third-entry-point
+note. Re-invoking the same creation with the same identity focuses the existing tab, because the tab map is
+keyed on `DdlObjectRef.key` exactly as for an existing object.
+
+**Deploy-pipeline integration — resolved 2026-08-06 against the code, and deliberately *not* a new
+mechanism:**
+
+- **Do NOT write new `CREATE`-emission logic.** `db/migration_gen.py` already handles brand-new objects:
+  it emits every `kind in ("added", "changed")` difference as a bare `CREATE` for routines and as
+  `DROP TRIGGER IF EXISTS` + `CREATE` for triggers (no portable `CREATE OR REPLACE TRIGGER` below PG 14).
+  That path is correct and already tested; duplicating it would be the parallel-implementation trap.
+- **But that path only fires when diffing two introspected `DatabaseSchema` snapshots** — §18.5's
+  sandbox-vs-production flow, where `schema_diff.py` reports `target_object is None` as `kind="added"`. The
+  **local-file-vs-DB** pipeline (§18.3/§18.4) is a different track: it identifies objects purely through
+  `ProjectSettings.deployed` (`db/ddl_project.py`), which today is only ever populated by **checking out an
+  object that already exists** ("file absent → seed from the live introspected definition … that write *is*
+  the checkout", §18.2), and `compute_drift_markers()` iterates **only** `settings.deployed.items()`.
+- Consequence, stated so nobody re-discovers it the hard way: a new `ddl/*.sql` written with no prior
+  checkout **parses fine** (`parse_checked_out_header()` recovers identity from the file's own header, not
+  from the manifest) but is **invisible to drift tracking** — no `*`, no tree marker, never surfaced as a
+  pending change. That is a silent-wrong-result class of failure and is not acceptable.
+- **Required: the creation flow registers the new object in `ProjectSettings.deployed` (the drift manifest)
+  at creation time**, keyed by the same `ddl/*.sql` POSIX-relative path `routine_ddl_paths` /
+  `trigger_ddl_path` compute, as a **"local exists, no last-deployed reference yet"** entry. The existing
+  §18.3/§18.4 deploy UI then picks the object up through its **normal** drift/apply flow. **No second,
+  parallel "new object" deploy path is created.**
+- Concretely: the entry is a `DeployedObject` whose `content_hash` is the **empty string** as the
+  never-deployed sentinel (`deployed_commit=None`). The existing comparison then does the right thing with
+  no special-casing — `hash(local file) != ""` → `locally_edited` → the `*` marker, while the object's
+  absence from the live schema leaves `live_drifted` **False** (`compute_drift_markers` reports a missing
+  live definition as *not* drifted rather than manufacturing a false positive). So a freshly created,
+  never-deployed object renders exactly as `*`, which is the truth. *Implementation note:*
+  `DeployedObject.content_hash` is typed `str` (non-optional) and `compute_drift_markers`'s docstring
+  currently reads "an object with no last-deployed reference at all … has no entry here" — that sentence
+  describes objects **absent** from the manifest, and the sentinel entry above is the deliberate,
+  documented exception; whoever implements this must extend that docstring rather than leave the two
+  readings in tension.
+- Creating an object **outside a project** (projectless mode, §18.2) writes no manifest entry, because
+  there is no manifest — the tab still opens, Save As… still works, and the object simply has no drift
+  state, consistent with everything else in projectless mode.
+
+**Rejected: one unified "Add DDL object" dialog for all three kinds.** The required field sets genuinely
+differ — a trigger needs timing, events, level, an owning table and an existing trigger function; a
+function needs a return type a procedure **must not** have — so a single dialog would be mostly-irrelevant
+fields no matter which kind was picked. `DdlObjectRef.kind` already treats the three as distinct
+identities, and the split dialogs match that model. (One dialog *does* serve **two** kinds — function and
+procedure — because they differ by exactly one field, which the Kind selector hides; that is the boundary
+of the rejection, not a contradiction of it.)
 
 ### 18.2 Projects, checkout & state markers
 
@@ -2825,7 +2992,9 @@ routine or trigger.
   with §18.2's file-per-object model. `EditorPanel` stays read-only **permanently** (§18.1), not
   provisionally.
 
-**Two entry points, both right-click, converging on one operation.**
+**Two entry points for *editing an existing object*, both right-click, converging on one operation.**
+(A third gesture — *creating* an object that does not exist yet — opens the same tab and is described after
+this table.)
 
 | Entry point | Gesture | Resolution |
 |---|---|---|
@@ -2848,6 +3017,24 @@ routine or trigger.
 - Neither entry point writes to a database. With a project open, §18.2 adds a second variant of the
   gesture — **Check Out for Versioning** — which performs a checkout first and then opens this same tab
   with its load/save pair repointed.
+
+**A third entry point opens this same tab for an object that does not exist yet (FQ-002, 2026-08-06, §28).**
+The two rows above are both *Edit an existing object*; **creation** is a distinct gesture and is specified
+in §18.1 ("Creating brand-new objects from the Explorer"): the Add Trigger / Add Function-or-Procedure
+dialogs build a `DdlObjectRef` for a not-yet-existing object and call the same
+`CenterStage.open_ddl_object_tab(ref, text, …)` with a generated **skeleton** (`db/ddl_skeleton.py`) as the
+buffer text. Consequences for this subsection, all of them *nothing to change*:
+
+- The ref is **not** resolved through `ui/ddl_buffer_panel.py::resolve_edit_target` — that helper looks the
+  object up in the live `DatabaseSchema` and correctly returns `None` for something the database has never
+  heard of. Creation builds its ref from the dialog's own fields instead; `resolve_edit_target` remains the
+  single identity-derivation point for the two **edit** entry points and is unchanged.
+- Tab identity, title/tooltip rules (`short_title`/`qualified`), dirty tracking, the close prompt, Save /
+  Save As… (`resolve_save_path`, `default_file_name`), Format Selection and §18.6 completion all behave
+  exactly as for an edited object — the panel never knew whether the DB holds the object, and must not
+  start branching on it.
+- The tab still **never writes to a database**. A created object reaches the database only through the
+  ordinary Apply (§18.5) or Deploy (§18.3) gestures, on the user's explicit command.
 
 **Tab shape (`ui/ddl_object_editor.py::DdlObjectEditorPanel`).** A **new tab type**, distinct from the
 read-only `EditorPanel`, **one tab per object**. It hosts the **existing**
@@ -4461,7 +4648,13 @@ Tools; "New Project" removed; line-wrap moved to editor context menu):
 - **Database:** Connection Setup… (**projectless-mode only** — disabled while a §18.2 project is open,
   since the project's own `target`/`sandbox` connections in Project Settings… are authoritative then;
   BUG-024, 2026-08-05), ⎯, Check: XML→Database, Check: Database→XML, ⎯, ☐ DDL Explorer
-  (checkable toggle, §18.1; kept in lockstep with the center tab's ✕). **Target design (2026-08-02, not
+  (checkable toggle, §18.1; kept in lockstep with the center tab's ✕), ⎯, **New Function/Procedure…**
+  (FQ-002, 2026-08-06, settled design — opens the one Add Function/Procedure dialog whose *Kind* field
+  chooses function vs. procedure, then opens the §18.5 editor tab on a generated skeleton; the trigger
+  counterpart is deliberately **not** here, since a trigger is scoped to a table and is reached by
+  right-clicking that table's node in the DDL Explorer tree — §18.1. Requires a configured connection, like
+  the other Database-menu entries; deliberately **no shortcut**, and toolbar-customizable for free as
+  `database.new-function-procedure` via §7's menu-path id derivation). **Target design (2026-08-02, not
   yet implemented)** — everything §18 adds lives in **this** menu (except §18.2's five project actions,
   which are on **File** — see below); no new top-level menu is created for
   it, and no "locate binary" action is added, because v1 spawns no external process:
@@ -4523,6 +4716,7 @@ Toolbar default: Open, Save, Undo, Redo, Find, Validate, Generate (customizable)
 | Ctrl+L | Go To XSD (jump to the attribute's definition in curated.xsd; always forces curated mode) | Window-level QAction (also in the Raw XML editor context menu) |
 | Ctrl+Alt+F | **Format Selection** (§18.4's `format_selection` on the current selection; single undo step on success, `[SQL]` Audit lines + transient underline on refusal) | DDL object editor tab only, and only with a non-empty selection (target design 2026-08-02, not yet implemented, §18.5). Also a context-menu item there. `Ctrl+Shift+F` stays Find All. |
 | *(no shortcut, deliberately)* | **Check DDL Object** / **Check without applying** / **Apply to Sandbox** / **Apply to Target Database…** / **Generate Deployment SQL…** / **Deploy this edit…** | Database menu, the DDL object editor tab's context menu, and (for the three check/apply gestures) its button row (§18.5, target design 2026-08-02; **none of them ships in the tab's v1** — the sandbox lane is a scope carve-out and v1 has no button row). Apply is an **irreversible outward effect** and must not be one keystroke away; the target-database variant additionally requires a green sandbox validation, refuses a changed signature outright, and confirms naming the object **and** the database. **Deploy this edit…** (§18.5, settled 2026-08-05) is a picker in front of these same three destinations (Apply to Sandbox / Save / Apply to Target Database…) and reuses their existing wiring rather than adding a fourth gesture — likewise deliberately unshortcut. |
+| *(no shortcut, deliberately)* | **Add Trigger…** / **New Function/Procedure…** | DDL Explorer tree context menus (table node / "Functions & Procedures" root) and, for the routine one, **Database ▸ New Function/Procedure…** (§18.1, FQ-002, settled design 2026-08-06 — the pure `db/ddl_skeleton.py` core is implemented, the dialogs are not). Both are dialog-gated and write **nothing** to a database — they only open a §18.5 editor tab on generated skeleton text — so the reason for withholding a shortcut is menu-hygiene, not the irreversible-outward-effect rule above. |
 | Ctrl+G | Go to line in XML | Caption grid |
 | Ctrl+Shift+B | Bracket-select | Code editor dialog; DDL object editor tab (§18.5, target design) |
 | Ctrl+S / Ctrl+W | Save / Cancel | Code editor dialog |
@@ -4638,6 +4832,8 @@ is authoritative** (and is what appears in the body above).
 | 2026-08-05 | §17 `TableCheck{name, ok, kind, invocations, columns}`, with `check_db_against_xml`'s table-level `ok = table_name in columns_by_table` — i.e. *"the table name appears among the **page/detail** bindings"* — and `DbCheckPanel` rendering a single aggregate `(×N)` invocation count in **both** directions (BUG-026) | **`TableCheck` gains `page_count`/`detail_count`/`lookup_count`** (defaulted, so `check_xml_against_db` is untouched), populated from the new **`xml_table_role_counts(project)`** in `db/compare.py`, and the DB→XML table-level rule becomes **`ok = (page_count + detail_count + lookup_count) > 0`** — *referenced in **any** role, page, detail **or** lookup*. A lookup-only table is therefore no longer a red mismatch contradicting its own nonzero count. The **DB→XML** tree shows the role split `(P# D# L#)`; **XML→DB** keeps `(×N)`. `xml_table_columns`/`xml_table_invocations` are unchanged and still drive the per-column check and the aggregate; `ok` remains the **single** mismatch signal for styling, the header count, "Show only mismatches" and the UserRole tuple — no parallel role-count mismatch flag |
 | 2026-08-05 | §7 (and the 2026-07-20 ledger row *"Toolbar Available = registry-minus-present" → "Available = all commands, present ones disabled"*, whose **"all commands" meant all commands in the static registry**): the toolbar was *"driven by a stable action-id registry (`toolbar_registry.py`)"* holding a hardcoded 7-entry `AVAILABLE_COMMANDS`, with each toolbar button a **freshly-built `QAction`** wired through a hardcoded `_toolbar_slots` dict — a closed universe that could never offer a real menu command (BUG-027) | **Available = every MENU command**, enumerated by walking the live menu bar (`MainWindow._walk_menu_actions`/`_all_menu_commands`/`_collect_menu_commands`), with ids **derived from the menu path** (`File › Save As... → file.save-as`) instead of hand-assigned. `AVAILABLE_COMMANDS` and `_toolbar_slots` are gone; `toolbar_registry.py` is reduced to pure identity rules (`normalize_label`/`slugify`/`command_id_for`/`menu_path_label`, `LEGACY_COMMANDS`, `LEGACY_ID_ALIASES`, `DEFAULT_TOOLBAR_IDS`, `ICON_ID_BY_COMMAND`, `valid_ids`, `resolve_ids`). The toolbar hosts the **menus' own QActions**, so a button shares the menu item's slot, enabled state, checked state and shortcut (hence `removeAction` in a loop, never `QToolBar.clear()`, which deletes them). Icons stay **optional** — only the legacy seven have vendored SVGs, and they are hidden in menus (`setIconVisibleInMenu(False)`). Pre-widening saved toolbars survive via `LEGACY_ID_ALIASES` applied in `resolve_ids`. Excluded from the walk: separators, submenu placeholders, and the dynamic **Open Recent** submenu wholesale. Load-bearing gotcha recorded in §7: `QAction.menu()` transfers ownership to Python, so every descended submenu **and its owning action** is pinned in `_menu_keepalive` for the window's lifetime |
 | 2026-08-05 | §13's active-filter banner (BUG-020, earlier the same day) represented **only** the preset row-predicate: `_refresh_filter_banner` read `row_predicate_label()` and hid the banner whenever that label was empty, and `apply_find_filter` never refreshed it — so a find filter narrowed the grid with nothing on screen stating the find text, its mode/case or its scope (BUG-028) | **The banner represents the whole-row find filter as well.** `apply_find_filter` refreshes the banner (only after `set_regex_filter` returns normally — an invalid regex raises), and `_refresh_filter_banner` composes **both** descriptors, joined by the same `"  ·  "` separator: the preset label, and `_find_filter_descriptor()`'s `Find "<pattern>" (<qualifiers>)` — mode named only when non-default (`regex`/`extended`), `case-sensitive` only when set, always ending with **`all columns`** (the find filter matches any column, so that is the honest scope). Mode/case are read through new proxy getters `find_mode()`/`find_case()`. The banner hides only when **neither** is present; `clear_all_filters()` stays the single clear path. **Header value filters remain deliberately unrepresented** in the banner — they keep their exclusive per-column ▼ marker, which is never painted for the find filter or the preset predicate |
+| 2026-08-06 | §18.1 (2026-08-05, Tables-branch widening): *"A DDL table node is **click-only, no context menu** — right-click ▸ Edit…/Check Out remain routine- and trigger-leaf-only, since a whole table has no single `DdlObjectSpan`/source text to hand those entry points"*; mirrored in code by `BrowserPanel.table_selected`'s docstring | **Carve-out for creation (FQ-002).** A table node **does** get a context menu, holding exactly one entry — **Add Trigger…** — which opens the new-trigger dialog (name · timing · events · level · existing-trigger-function chooser) and then a §18.5 editor tab on a `db/ddl_skeleton.py::trigger_skeleton` result. The original narrowing stands **for editing**: Edit… / Check Out for Versioning stay routine- and trigger-leaf-only, because they need a source span. A not-yet-existing object has no source text, so the span limitation does not apply to it. Left-click behavior (`table_selected(TableInfo)` → shared `PropertiesPanel`) is unchanged |
+| 2026-08-06 | §18.5 D1: *"**Two entry points, both right-click, converging on one operation**"* — the editable `DdlObjectEditorPanel` tab was reachable only by Edit… on `BrowserPanel.tree` or inside a span in the read-only `EditorPanel` (plus §18.2's Check Out variant), all of which resolve an **existing** object through `resolve_edit_target` against the live `DatabaseSchema` | **A third, non-edit gesture opens the same tab: creation (FQ-002).** The §18.1 Add Trigger / Add Function-or-Procedure dialogs build a `DdlObjectRef` for an object the database has never heard of and call the same `CenterStage.open_ddl_object_tab(ref, text, …)` with **generated skeleton text** instead of an introspected `RoutineInfo.source`/`TriggerInfo.definition`. `resolve_edit_target` is **not** on this path (it correctly returns `None` for a non-existent object) and remains the single identity-derivation point for the two edit entry points. The panel gains **no** new capability and must not branch on whether the object exists |
 | 2026-08-06 | §18.2/§26 placed the five project actions (**New Project…**, **Open Project…**, **Close Project**, **Project Settings…**, **Deploy .pgtp**) on the **Database** menu, "alongside the existing Connection Setup / Check / DDL Explorer entries", and §26's Database bullet carried their full descriptions | **Spec-vs-reality drift corrected in favor of the shipped code — the five live on the FILE menu**, owner-confirmed. `MainWindow._build_file_menu` builds them as their own separator-delimited group between `Open…` and `Save` (`New Project…`, `Open Project…`, `Close Project`, `Project Settings…`, `Deploy .pgtp`); `_build_database_menu` contains **no** project action. §26's File bullet now carries the group and its descriptions, and the Database bullet states explicitly that these five are not on it (Connection Setup / Check / DDL Explorer and the §18.5 sandbox entries genuinely are). Nothing about the actions' behavior, gating or wiring changes — **menu location only**. `pgtp_editor/resources/manual.md` already documented them as **File ▸ …** and was correct throughout |
 
 ---
