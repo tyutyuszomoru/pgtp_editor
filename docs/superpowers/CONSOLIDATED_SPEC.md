@@ -1,6 +1,6 @@
 # PGTP Editor — Consolidated Specification
 
-> **Status:** living document · **Last synthesized:** 2026-08-06 (previously 2026-08-05: §18.8 corrected to the 5-node model, then given its concrete per-node state enumeration + dark-mode asset convention, then a same-day fix to the Quality node's locked/gray semantic and the Sandbox2 install-state-vs-lint-result semantic; later the same day, BUG-020/021/022/023/024/025 folded in — Captions' preset row-predicate filter + active-filter banner + Unify scope prompt, §18.2's Open-Project validity gate + auto-open of the linked `.pgtp`, the tabbed Project Settings dialog, and Connection Setup… becoming projectless-mode-only; later still the same day, §18.1's Tables branch widened to every table (not just trigger-owning ones) plus click-to-Properties-panel column detail, with `ColumnInfo.comment` added; and finally BUG-021/026/027/028 — §18.2's project-action lambda wiring that made the `.pgtp` auto-open actually reachable, §17's role-split `(P# D# L#)` DB→XML counts and any-role mismatch rule, §7's toolbar widened to every menu command with menu-path ids, and §13's active-filter banner extended to the whole-row find filter). **2026-08-06:** FQ-001 folded into §18.2 — per-group Test buttons on the Project Settings dialog's Connections tab (generic connectivity for Target, superuser probe for Sandbox). Same day: the §18.2 project actions' menu location corrected from Database to **File**, matching the shipped `_build_file_menu` (§26, ledger 2026-08-06). Same day: FQ-002 folded in — §18.1 gains "Creating brand-new objects from the Explorer" (Add Trigger… on a table node, one New Function/Procedure… action on the routines-branch root and the Database menu, the shipped pure `db/ddl_skeleton.py` contract, and manifest registration of the new object so the existing §18.3/§18.4 deploy flow sees it), with §18.5 D1 gaining the third (creation) entry point into the same editable tab and two ledger rows (§28).
+> **Status:** living document · **Last synthesized:** 2026-08-06 (previously 2026-08-05: §18.8 corrected to the 5-node model, then given its concrete per-node state enumeration + dark-mode asset convention, then a same-day fix to the Quality node's locked/gray semantic and the Sandbox2 install-state-vs-lint-result semantic; later the same day, BUG-020/021/022/023/024/025 folded in — Captions' preset row-predicate filter + active-filter banner + Unify scope prompt, §18.2's Open-Project validity gate + auto-open of the linked `.pgtp`, the tabbed Project Settings dialog, and Connection Setup… becoming projectless-mode-only; later still the same day, §18.1's Tables branch widened to every table (not just trigger-owning ones) plus click-to-Properties-panel column detail, with `ColumnInfo.comment` added; and finally BUG-021/026/027/028 — §18.2's project-action lambda wiring that made the `.pgtp` auto-open actually reachable, §17's role-split `(P# D# L#)` DB→XML counts and any-role mismatch rule, §7's toolbar widened to every menu command with menu-path ids, and §13's active-filter banner extended to the whole-row find filter). **2026-08-06:** FQ-001 folded into §18.2 — per-group Test buttons on the Project Settings dialog's Connections tab (generic connectivity for Target, superuser probe for Sandbox). Same day: the §18.2 project actions' menu location corrected from Database to **File**, matching the shipped `_build_file_menu` (§26, ledger 2026-08-06). Same day: FQ-002 folded in — §18.1 gains "Creating brand-new objects from the Explorer" (Add Trigger… on a table node, one New Function/Procedure… action on the routines-branch root and the Database menu, the shipped pure `db/ddl_skeleton.py` contract, and manifest registration of the new object so the existing §18.3/§18.4 deploy flow sees it), with §18.5 D1 gaining the third (creation) entry point into the same editable tab and two ledger rows (§28). Same day: FQ-003 folded in — §17 gains **the Database/XML Coherence view**, one merged left-dock surface replacing the two DB-check directions *and* §15's standalone Table References tab (direction toggle eliminated on the "DB is always the truth" framing; a recursive, depth-faithful Pages branch; one global mismatch toggle spanning both branches), with §15 reduced to a pointer, §26's View-menu "Find table reference" and the two Database-menu check items replaced by one Database-menu toggle, and two ledger rows (§28).
 > **Source of truth:** this file is the single reconciled specification for PGTP Editor, and the **only**
 > place specification content is written. It was originally synthesized from the dated design specs under
 > [`docs/superpowers/specs/`](specs/) — a folder now **frozen as historical record** (read for rationale;
@@ -28,9 +28,9 @@
 12. [Diff / Merge](#12-diff--merge)
 13. [Captions](#13-captions)
 14. [Columns](#14-columns)
-15. [Search, Find All & Table References](#15-search-find-all--table-references)
+15. [Search, Find All & Table References](#15-search-find-all--table-references) — *table references folded into §17's Database/XML Coherence view (FQ-003, 2026-08-06); §15 keeps a pointer only*
 16. [Validation](#16-validation)
-17. [Database](#17-database)
+17. [Database](#17-database) — includes [the Database/XML Coherence view](#the-databasexml-coherence-view) — *settled design (FQ-003, 2026-08-06), not yet implemented*
 18. [DDL versioning (standalone Postgres mode)](#18-ddl-versioning-standalone-postgres-mode) — *planned*
     - [18.1 Routines & triggers browsing (DDL Explorer)](#181-routines--triggers-browsing-ddl-explorer) — *implemented (except XML cross-refs); object **creation** (FQ-002, 2026-08-06) is settled design with its pure skeleton core shipped*
     - [18.2 Projects, checkout & state markers](#182-projects-checkout--state-markers) — *planned*
@@ -369,8 +369,9 @@ reimplement.
 ## 7. App shell
 
 **Layout:** IDE-style docked panels. Left dock is a `QTabWidget` (`self.left_tabs`) hosting **Project
-tree**, **Contents** (manual), **Database Check**, **Table references**, and **DDL Objects** (§18.1)
-tabs (the latter three hidden until invoked). Center is a tabbed `CenterStage` (Raw XML
+tree**, **Contents** (manual), the **Database/XML Coherence** view (§17 — one tab; it replaces the
+former separate "Database Check" and "Table references" tabs, FQ-003) and **DDL Objects** (§18.1)
+tabs (the latter two hidden until invoked). Center is a tabbed `CenterStage` (Raw XML
 [default-visible working tab], Diff/Merge, Caption Management, Manual, Edit XSD, DDL Explorer —
 non-Raw-XML tabs hidden until invoked). Every one of those is a **fixed** tab, created in
 `CenterStage.__init__` and addressed by a stored integer index (`raw_xml_tab_index`, `xsd_tab_index`,
@@ -418,10 +419,12 @@ Right dock is the **Properties** panel.
 `dock.visibilityChanged → action.setChecked`. Closing a dock via its title-bar ✕ (or any programmatic
 hide/show) therefore keeps the menu checkbox honest. **No recursion guard is needed**: `QAction.toggled`
 and `QDockWidget.visibilityChanged` only fire on *actual* state changes, so the pair settles immediately
-(the same Qt signal-coalescing the `CenterStage` Manual-tab sync relies on). The other two View-menu
-checkables are not docks and keep their one-way wiring: "Find table reference" drives
-`_toggle_table_references` (a `left_tabs` tab, §15) and "Raw XML Panel" drives
-`CenterStage.set_raw_xml_tab_visible` (a center tab).
+(the same Qt signal-coalescing the `CenterStage` Manual-tab sync relies on). The remaining non-dock
+View-menu checkable keeps its one-way wiring: "Raw XML Panel" drives
+`CenterStage.set_raw_xml_tab_visible` (a center tab). (The former "Find table reference" checkable —
+one-way wiring to `_toggle_table_references`, a `left_tabs` tab — is gone with FQ-003; the equivalent
+`left_tabs`-tab toggle is now Database ▸ **Database/XML Coherence**, §17/§26, and follows the same
+one-way pattern.)
 
 **Document state:** `_dirty` + `_set_dirty()` (title gets " *"); editor `textChanged` marks dirty;
 load/save/revert clears. **Theme toggles never dirty either document:** a theme change re-applies
@@ -1289,19 +1292,14 @@ is read-only, so its Replace path no-ops via `CodeEditor.replace_current_selecti
 item(s)` / `Find All stopped — found N item(s)` / `N replacement(s) for "term"`. The Find All button
 toggles to **Stop** while running. Single-threaded chunking only (no threads, no progress bar, no caps).
 
-**Table References tab** (`analysis/reused_tables.py` + `ui/table_references_panel.py`) — replaces the
-old "Find Reused Tables" modal:
-- `collect_table_usages(project)→list[TableUsage]`; `TableUsage.references: list[TableReference]`;
-  `TableReference{breadcrumb, node, kind(page|detail|column), line|None, ref_type(table|lookup|lookup with
-  insert)}`. Line = page/detail `sourceline`, lookup = `<Lookup>` sourceline (`column.lookup.sourceline`,
-  fallback `column.sourceline`). `(lookup with insert)` when `<Lookup>` has an `<OnTheFlyInsertPage>`
-  child. Grouped by table name, sorted, document order within a table.
-- `TableReferencesPanel(QTreeWidget)`: top-level `"<table>  (<count>)"`, children = reference
-  breadcrumbs; `selection_changed(node, kind)` → Properties (a lookup reference targets its owning
-  `ColumnNode`); `jump_requested(line)` → `_tree_jump_to_line` (reveal Raw XML + `navigate_to_line`).
-- Added to `left_tabs` as a hidden tab "Table references". **View menu** checkable "Find table
-  reference": on → reveal/focus + repopulate; off → hide; refreshed on reparse when visible. The old
-  Tools ▸ "Find Reused Tables…" action, its handler, and `reused_tables_window.py` are removed/deleted.
+**Table references — moved to §17** (FQ-003, settled 2026-08-06; ledger §28). Table-reference analysis
+is no longer an independently toggleable left-dock surface of its own. The pure analyzer
+(`analysis/reused_tables.py::collect_table_usages`) and the tree presentation built on it are specified
+in **§17's Database/XML Coherence view**, where they appear as the per-relation **References** sub-section
+and as the whole **Pages** branch. The standalone "Table references" `left_tabs` tab
+(`table_refs_tab_index`) and the **View menu** checkable "Find table reference" cease to exist as entry
+points; the single Database-menu **Database/XML Coherence** toggle replaces them (§26). The still-earlier
+Tools ▸ "Find Reused Tables…" modal, its handler and `reused_tables_window.py` remain removed/deleted.
 
 ---
 
@@ -1326,8 +1324,11 @@ Tools ▸ Validate Project → Audit panel with `"[Validate] SEVERITY line N: me
 
 ## 17. Database
 
-Validate a `.pgtp` against a live PostgreSQL DB bidirectionally, reconcile by renaming, and synthesize
-new elements from a DB table. All logic Qt-free in `db/`.
+Validate a `.pgtp` against a live PostgreSQL DB, reconcile by renaming, and synthesize new elements from a
+DB table. **The DB is the truth; the XML is the interface checked against it** — the two check *functions*
+in `db/compare.py` remain (they compute the two halves of the picture), but the **UI has no direction
+choice**: both halves are presented together per relation in the single Database/XML Coherence view below.
+All logic Qt-free in `db/`.
 
 **Transport:** `psycopg` v3 (`psycopg[binary]`), no external `psql`. Connection seeded from XML
 `<ConnectionOptions>` (design-time, **not** `<ScriptConnectionOptions>`) — host/port/database/`login`→user;
@@ -1398,8 +1399,9 @@ needs a **per-project** key; §18.5 D2 needs a **profile role** (`target` | `san
 - `db/rename.py` (pure): `rename_field(text, old, new)` / `rename_table(...)` = literal global
   attribute replace.
 
-**UI:** **Database** menu (Connection Setup…, Check: XML→Database, Check: Database→XML, and — after a
-separator — the checkable **DDL Explorer** toggle, §18.1). **Connection Setup… is projectless-mode
+**UI:** **Database** menu (Connection Setup…, the checkable **Database/XML Coherence** toggle — one entry,
+replacing the two former "Check: XML→Database" / "Check: Database→XML" items, see the coherence view
+below — and, after a separator, the checkable **DDL Explorer** toggle, §18.1). **Connection Setup… is projectless-mode
 only** (BUG-024, 2026-08-05, §18): while a §18.2 local project is open, its own `ProjectSettings`
 (`target`/`sandbox`) is the connection store, and the app-level profile this dialog edits would be a
 redundant, silently-live shadow of it. `MainWindow` gates this with `self._connection_setup_action`,
@@ -1411,37 +1413,118 @@ callers — `_run_db_check`/`_open_ddl_explorer`'s shared `_prompt_missing_conne
 it directly on a missing connection and must be rerouted to **Project Settings…** instead while a project
 is open, rather than opening the now-meaningless standalone dialog.
 `ConnectionSetupDialog` (host/port/database/user, password EchoMode.Password, Test + status, plaintext
-caveat; API `set_params`/`params()`/`test()`). `DbCheckPanel` (header: direction + `user@host:port/db` +
-mismatch count; "Show only mismatches" toggle; `QTreeWidget` with `(T)`/`(V)`/`(M)` prefixes, datatypes,
-PK underline, `(fk)`). **Per-table count suffix is direction-dependent** (BUG-026): **DB→XML** renders the
-role split `(P{page_count} D{detail_count} L{lookup_count})` — e.g. `(P3 D1 L2)`, no `×` — so a
-lookup-only table reads as referenced instead of as a "`(×N)` but red" contradiction; **XML→DB** keeps the
-aggregate `(×N)` (`check_xml_against_db` does not populate the role fields). A DB table is red **iff no
-role references it at all**, which falls out of `TableCheck.ok` with no extra condition in the panel. **Three-way column glyph/color convention:**
-calculated (`ColumnCheck.is_calculated`) → orange `~` (`_CALC_COLOR = QColor("#d08a1a")`); else
-`ok` → green ✓ (`_OK_COLOR`); else red ✗ (`_BAD_COLOR`). Calculated columns are **never counted as
-mismatches** — excluded from the header mismatch count and hidden under "Show only mismatches" —
-and rename is gated off for them (both the contextual-rename path and the context menu skip
-calculated columns, alongside `ok` ones). Tree items carry a uniform 4-tuple UserRole payload
-`(kind, name, ok, is_calculated)` on both table and column items (tables always `False`). Signals
-`rename_requested(kind, old)` (XML→DB not-found, non-calculated nodes), `jump_requested(kind, name)`
-(double-click → Raw XML), and `create_requested(kind, name)` (DB→XML table nodes). Added to
-`left_tabs` as a hidden tab.
+caveat; API `set_params`/`params()`/`test()`).
 
-**Reparse refreshes an open DB Check** against the **cached schema** (`_last_db_schema` /
-`_last_db_check_direction` / `_last_db_summary`), no live re-query — via `_populate_db_check(...)` and
-`_refresh_db_check_if_open()` (guarded on tab visibility + valid buffer).
+### The Database/XML Coherence view
 
-**DB Check results are project-tied and torn down on project close (BUG-011).** `_close_project`, on the
-**committed-close path only**, hides the "Database Check" `left_tabs` tab
-(`left_tabs.setTabVisible(db_check_tab_index, False)`) and clears the three cached fields
-(`_last_db_check_direction` / `_last_db_schema` / `_last_db_summary` → `None`), so a later reparse or
-rename cannot re-run against the closed project's stale state. A **cancelled** close returns before this
-and leaves the still-open project's tab alone; `_revert_project` keeps the project loaded and so does not
-tear down.
+> **Settled design, FQ-003, 2026-08-06 — not yet implemented.** It replaces **three** shipped left-dock
+> surfaces with one: the XML→Database check, the Database→XML check (both `ui/db_check_panel.py`'s
+> `DbCheckPanel` behind two Database-menu items) and the standalone "Table references" tab
+> (`ui/table_references_panel.py::TableReferencesPanel`, formerly §15). All three already sit on the
+> **same** data layer — `analysis/reused_tables.py::collect_table_usages` feeds `db/compare.py`'s two
+> check functions (via `xml_table_invocations`/`xml_table_role_counts`) *and* the references panel — so
+> only the presentation was triplicated. Ledger §28, 2026-08-06 (two rows).
+
+**Framing (the invariant the whole view is built on): the database is always the truth; the XML is the
+interface being checked against it.** Anything the XML references that the DB does not have is an error
+(a renamed table, a dropped table, a typo) — the app will not work. Conversely, finding *where* a DB
+relation plays in the XML is a first-class question, not a separate tool.
+
+**One panel, one hidden `left_tabs` tab, one checkable Database-menu toggle** (§26). Two top-level
+branches over one data source (`collect_table_usages` + `db/compare.py`'s DB-augmented layer):
+
+**1. "Tables and Views" branch — DB-sourced.** Rooted in the live DB relation list. **Tables and views are
+treated identically**: `db/introspect.py` already fetches both the same way (`relkind IN ('r','p','v','m')`,
+`TableInfo.kind ∈ {table, view, matview}`) and neither `compare.py` nor `reused_tables.py` applies
+kind-based filtering, so **no new special-casing for views is introduced**. Per relation, two
+sub-sections:
+- **Database columns** — today's per-column check list (`ColumnCheck`: DB type, nullable, PK underline,
+  `(fk)`). The shipped three-way glyph/color convention carries over unchanged: calculated
+  (`ColumnCheck.is_calculated`) → orange `~` (`_CALC_COLOR = QColor("#d08a1a")`); else `ok` → green ✓
+  (`_OK_COLOR`); else red ✗ (`_BAD_COLOR`). **Calculated columns are shown but never flagged** (BUG-006)
+  — they are intentionally DB-less by design, excluded from the mismatch count and from the mismatch
+  filter, and rename stays gated off for them.
+- **References** — the former Table-References content for that relation, **badge-summarized from the
+  existing `TableCheck.page_count` / `.detail_count` / `.lookup_count` rollups** (BUG-026, `db/compare.py`)
+  rather than from any new counting pass, and **expandable** to the full breadcrumb list the
+  `TableReferencesPanel` shows today (`TableUsage.references: list[TableReference]`). The role-split
+  rendering `(P{page_count} D{detail_count} L{lookup_count})` introduced by BUG-026 is retained as the
+  relation-level badge (the aggregate `(×N)` form, which existed only for the XML→DB direction, goes away
+  with the direction toggle).
+- This branch stays **purely DB-sourced**: a name that exists only in the XML gets **no synthetic phantom
+  row** here (see the mismatch toggle below).
+
+**The direction toggle is eliminated, not merged.** Once DB state and XML state are displayed *together*
+per relation, there is no remaining framing choice about which side is "ground truth for display" — the DB
+always is. The two Database-menu direction items were an artifact of showing only one side at a time; the
+merged view therefore has one entry point and no direction control anywhere in its UI or its caches.
+
+**2. "Pages" branch — XML-sourced, a RECURSIVE tree mirroring the real XML structure, not a fixed depth.**
+Each Page node shows its own bound table (if any) and its own lookup columns, then nests its child Details
+the same way — each Detail carrying its own bound table, its own lookup columns and its own further nested
+Details — **recursing to whatever depth the XML actually has**. This is exactly the shape
+`reused_tables.py::visit_detail` already walks (a `<Detail>` may contain child `<Detail>`s at unlimited
+depth). **The UI must NOT flatten this into an assumed "Page > Details > Detail > Lookups" fixed-depth
+shape.** A **"lookup with insert"** badge is rendered wherever `TableReference.ref_type == "lookup with
+insert"` (a `<Lookup>` carrying an `<OnTheFlyInsertPage>` child, `_lookup_ref_type`) — this distinction is
+visible in today's breadcrumbs and must survive as a badge, never collapsed into a generic "lookup" label.
+
+**3. Mismatch toggle — one global control filtering *both* branches** down to only the nodes needing
+attention. Settled semantics:
+
+| Where | Flagged when |
+|---|---|
+| Pages branch (node level) | The Page/Detail/Lookup's target table/view name **does not exist in the live DB at all** — flagged red **at that exact reference point**. This is where a renamed/dropped table surfaces; explicitly **not** as a phantom entry under Tables and Views. |
+| Tables and Views (relation level) | A real DB relation with `page_count == detail_count == lookup_count == 0` — referenced nowhere in the XML in any role. Requester-confirmed: *"if neither Page, nor Detail nor Lookup is there, flag it. Probably needs attention."* |
+| Tables and Views (column level) | `ColumnCheck.ok == False`, **excluding** `is_calculated` columns. |
+
+The toggle is deliberately **"things needing attention," not strictly "things that are broken"** — an
+unreferenced DB relation is not a coherence error in the same sense as a dangling XML reference, and is
+still surfaced on purpose. **No mismatch-type enum exists today**: mismatches are derived ad hoc from
+`ColumnCheck.ok` + `TableCheck.kind` (`None` = missing in DB) + the role counts, so the toggle needs its
+own filter predicate spanning both branches — nothing pre-packaged covers it.
+
+**Reuse mandate (binding on the implementer).** `analysis/reused_tables.py::collect_table_usages` is reused
+**wholesale** — the page/detail/lookup walk is not reimplemented — and the existing `TableCheck` /
+`ColumnCheck` rollup fields (`page_count` / `detail_count` / `lookup_count` / `is_calculated` / `ok`) are
+the only counting logic; **no parallel counters.** `TableCheck.ok` remains the single table-level mismatch
+signal, `ColumnCheck.ok` the single column-level one. Carried over from `DbCheckPanel` unchanged: the
+header (`user@host:port/db` + mismatch count, minus the direction label), the `(T)`/`(V)`/`(M)` relation
+prefixes, the uniform 4-tuple UserRole payload `(kind, name, ok, is_calculated)` on relation and column
+items (relations always `False`), and the signals `rename_requested(kind, old)` (XML-side not-found,
+non-calculated nodes), `jump_requested(kind, name)` / `jump_requested(line)` (double-click → reveal Raw XML
++ `navigate_to_line`, the mechanism `TableReferencesPanel` already uses) and `create_requested(kind, name)`
+(relation nodes → Create Page/Detail/Lookup, below). `selection_changed(node, kind)` → Properties keeps its
+existing semantic that a lookup reference targets its **owning `ColumnNode`**.
+
+**Left open as implementation detail, deliberately not invented here:** the exact tree-widget structure,
+whether "Tables and Views" and "Pages" are two sub-tabs or two top-level roots in one widget, and the menu
+action's final wording/placement. Behavior above is binding; those are not.
+
+**Rejected alternatives (recorded so they are not re-litigated).**
+1. *A connection-optional hybrid* keeping Table References a separate panel with only a cross-navigation
+   link into DB Check. Superseded once the requester clarified that the motivation is **architectural** —
+   three near-duplicate presentations of one DB-truth-vs-XML-interface question — not a UI-convenience
+   link. The full merge was chosen.
+2. *§18.3's precedent of rejecting a unified Compare/Deploy screen* was raised as a caution and
+   **explicitly distinguished, not silently re-decided.** That rejection turned on **risk asymmetry**:
+   Compare is read-only, Deploy is destructive, and merging them would dilute Deploy's guardrails. Both
+   surfaces merged here are **read-only diagnostics with no write path**, so the asymmetry that drove
+   §18.3's rejection does not exist and does not block this merge.
+
+**Reparse refreshes an open coherence view** against the **cached schema** (`_last_db_schema` /
+`_last_db_summary`), no live re-query — via `_populate_db_check(...)` and `_refresh_db_check_if_open()`
+(guarded on tab visibility + valid buffer). The former `_last_db_check_direction` cache **disappears with
+the direction toggle**.
+
+**Coherence results are project-tied and torn down on project close (BUG-011).** `_close_project`, on the
+**committed-close path only**, hides the view's `left_tabs` tab and clears the cached fields
+(`_last_db_schema` / `_last_db_summary` → `None`), so a later reparse or rename cannot re-run against the
+closed project's stale state. A **cancelled** close returns before this and leaves the still-open project's
+tab alone; `_revert_project` keeps the project loaded and so does not tear down.
 
 **Create Page/Detail/Lookup from a DB table** (`generation/type_map.py` + `generation/from_table.py`,
-pure): right-click a table/view node (DB→XML) → **create page** (insert before `</Pages>`, jump +
+pure): right-click a table/view node in the coherence view's **Tables and Views** branch → **create page** (insert before `</Pages>`, jump +
 select), **create detail** (copy `<Detail>` to clipboard), **create lookup** (copy `<Lookup/>` to
 clipboard). Aims at full PHP-Generator new-table parity via `type_map` (single source of parity truth,
 keyed on normalized pg type: numeric/char/text/boolean/date/timestamp families → presentation +
@@ -1847,8 +1930,8 @@ piece), unchanged in mechanism:**
 **Database menu & main-window wiring — implemented:**
 
 - The Database menu gains a **checkable "DDL Explorer" toggle** (`self._ddl_explorer_action`), after a
-  separator following the existing three items (Connection Setup…, Check: XML→Database,
-  Check: Database→XML). Toggle on → `_open_ddl_explorer()`; toggle off →
+  separator following the existing items (Connection Setup… and — after FQ-003 — the single
+  **Database/XML Coherence** toggle that replaced the two direction items, §17). Toggle on → `_open_ddl_explorer()`; toggle off →
   `center_stage.hide_ddl_explorer()`.
 - **Bidirectional lockstep** (the BUG-007 lesson — the tab has its own ✕):
   `CenterStage.ddl_explorer_visibility_changed(bool)` drives
@@ -4629,11 +4712,13 @@ Tools; "New Project" removed; line-wrap moved to editor context menu):
   (Ctrl+Shift+F), Replace… (Ctrl+R), Replace All (Ctrl+Alt+Return), Select Enclosing Block (Ctrl+Shift+B),
   Select Parent Block (Ctrl+Shift+A), ☐ Auto Parse XML (§9; unchecked by default, in-memory only),
   Preferences.
-- **View** (real order and labels): ☑ Project Tree, ☑ Properties Panel, ☐ Find table reference,
+- **View** (real order and labels): ☑ Project Tree, ☑ Properties Panel,
   ☑ Audit/Problems Panel, ☑ Raw XML Panel (checked by default), — , Expand All, Collapse All, — ,
   ☐ Light Theme, — , Customize Toolbar… (opens the toolbar customization dialog, §7). The three **dock**
   checkboxes (Project Tree / Properties Panel / Audit/Problems Panel) are bidirectional — closing a dock
-  by its title-bar ✕ unchecks the menu item (BUG-007, §7).
+  by its title-bar ✕ unchecks the menu item (BUG-007, §7). **The former ☐ "Find table reference" checkable
+  is gone** (FQ-003, 2026-08-06) — table references are a sub-branch of the Database ▸ Database/XML
+  Coherence view (§17), not an independently toggleable panel.
 - **Bookmarks:** Toggle Bookmark (Ctrl+F2), Next Bookmark (F2), Previous Bookmark (Shift+F2), Clear All
   Bookmarks. Between Tools and Generation. **All four actions follow the active editor tab** (§8): the
   target is resolved at trigger time by `_active_bookmark_editor()` — Edit XSD tab → `stage.xsd_editor`,
@@ -4647,7 +4732,11 @@ Tools; "New Project" removed; line-wrap moved to editor context menu):
   `MainWindow.addAction` plus a Raw XML editor context-menu entry; it always forces curated mode.)
 - **Database:** Connection Setup… (**projectless-mode only** — disabled while a §18.2 project is open,
   since the project's own `target`/`sandbox` connections in Project Settings… are authoritative then;
-  BUG-024, 2026-08-05), ⎯, Check: XML→Database, Check: Database→XML, ⎯, ☐ DDL Explorer
+  BUG-024, 2026-08-05), ⎯, ☐ **Database/XML Coherence** (checkable toggle revealing the merged
+  left-dock coherence view, §17 — **one** entry replacing the former *Check: XML→Database* and
+  *Check: Database→XML* items **and** the View menu's *Find table reference*; deliberately **no
+  shortcut**; toolbar-customizable for free via §7's menu-path id derivation. Final wording is an
+  implementation detail, FQ-003), ⎯, ☐ DDL Explorer
   (checkable toggle, §18.1; kept in lockstep with the center tab's ✕), ⎯, **New Function/Procedure…**
   (FQ-002, 2026-08-06, settled design — opens the one Add Function/Procedure dialog whose *Kind* field
   chooses function vs. procedure, then opens the §18.5 editor tab on a generated skeleton; the trigger
@@ -4717,6 +4806,7 @@ Toolbar default: Open, Save, Undo, Redo, Find, Validate, Generate (customizable)
 | Ctrl+Alt+F | **Format Selection** (§18.4's `format_selection` on the current selection; single undo step on success, `[SQL]` Audit lines + transient underline on refusal) | DDL object editor tab only, and only with a non-empty selection (target design 2026-08-02, not yet implemented, §18.5). Also a context-menu item there. `Ctrl+Shift+F` stays Find All. |
 | *(no shortcut, deliberately)* | **Check DDL Object** / **Check without applying** / **Apply to Sandbox** / **Apply to Target Database…** / **Generate Deployment SQL…** / **Deploy this edit…** | Database menu, the DDL object editor tab's context menu, and (for the three check/apply gestures) its button row (§18.5, target design 2026-08-02; **none of them ships in the tab's v1** — the sandbox lane is a scope carve-out and v1 has no button row). Apply is an **irreversible outward effect** and must not be one keystroke away; the target-database variant additionally requires a green sandbox validation, refuses a changed signature outright, and confirms naming the object **and** the database. **Deploy this edit…** (§18.5, settled 2026-08-05) is a picker in front of these same three destinations (Apply to Sandbox / Save / Apply to Target Database…) and reuses their existing wiring rather than adding a fourth gesture — likewise deliberately unshortcut. |
 | *(no shortcut, deliberately)* | **Add Trigger…** / **New Function/Procedure…** | DDL Explorer tree context menus (table node / "Functions & Procedures" root) and, for the routine one, **Database ▸ New Function/Procedure…** (§18.1, FQ-002, settled design 2026-08-06 — the pure `db/ddl_skeleton.py` core is implemented, the dialogs are not). Both are dialog-gated and write **nothing** to a database — they only open a §18.5 editor tab on generated skeleton text — so the reason for withholding a shortcut is menu-hygiene, not the irreversible-outward-effect rule above. |
+| *(no shortcut, deliberately)* | **Database/XML Coherence** (checkable) | Database menu (§17/§26, FQ-003, settled 2026-08-06). It replaces three previously unshortcut entry points — Check: XML→Database, Check: Database→XML and View ▸ Find table reference — none of which carried a shortcut either, so nothing is lost; the merged view is read-only and reached by toggle, not by keystroke |
 | Ctrl+G | Go to line in XML | Caption grid |
 | Ctrl+Shift+B | Bracket-select | Code editor dialog; DDL object editor tab (§18.5, target design) |
 | Ctrl+S / Ctrl+W | Save / Cancel | Code editor dialog |
@@ -4835,6 +4925,8 @@ is authoritative** (and is what appears in the body above).
 | 2026-08-06 | §18.1 (2026-08-05, Tables-branch widening): *"A DDL table node is **click-only, no context menu** — right-click ▸ Edit…/Check Out remain routine- and trigger-leaf-only, since a whole table has no single `DdlObjectSpan`/source text to hand those entry points"*; mirrored in code by `BrowserPanel.table_selected`'s docstring | **Carve-out for creation (FQ-002).** A table node **does** get a context menu, holding exactly one entry — **Add Trigger…** — which opens the new-trigger dialog (name · timing · events · level · existing-trigger-function chooser) and then a §18.5 editor tab on a `db/ddl_skeleton.py::trigger_skeleton` result. The original narrowing stands **for editing**: Edit… / Check Out for Versioning stay routine- and trigger-leaf-only, because they need a source span. A not-yet-existing object has no source text, so the span limitation does not apply to it. Left-click behavior (`table_selected(TableInfo)` → shared `PropertiesPanel`) is unchanged |
 | 2026-08-06 | §18.5 D1: *"**Two entry points, both right-click, converging on one operation**"* — the editable `DdlObjectEditorPanel` tab was reachable only by Edit… on `BrowserPanel.tree` or inside a span in the read-only `EditorPanel` (plus §18.2's Check Out variant), all of which resolve an **existing** object through `resolve_edit_target` against the live `DatabaseSchema` | **A third, non-edit gesture opens the same tab: creation (FQ-002).** The §18.1 Add Trigger / Add Function-or-Procedure dialogs build a `DdlObjectRef` for an object the database has never heard of and call the same `CenterStage.open_ddl_object_tab(ref, text, …)` with **generated skeleton text** instead of an introspected `RoutineInfo.source`/`TriggerInfo.definition`. `resolve_edit_target` is **not** on this path (it correctly returns `None` for a non-existent object) and remains the single identity-derivation point for the two edit entry points. The panel gains **no** new capability and must not branch on whether the object exists |
 | 2026-08-06 | §18.2/§26 placed the five project actions (**New Project…**, **Open Project…**, **Close Project**, **Project Settings…**, **Deploy .pgtp**) on the **Database** menu, "alongside the existing Connection Setup / Check / DDL Explorer entries", and §26's Database bullet carried their full descriptions | **Spec-vs-reality drift corrected in favor of the shipped code — the five live on the FILE menu**, owner-confirmed. `MainWindow._build_file_menu` builds them as their own separator-delimited group between `Open…` and `Save` (`New Project…`, `Open Project…`, `Close Project`, `Project Settings…`, `Deploy .pgtp`); `_build_database_menu` contains **no** project action. §26's File bullet now carries the group and its descriptions, and the Database bullet states explicitly that these five are not on it (Connection Setup / Check / DDL Explorer and the §18.5 sandbox entries genuinely are). Nothing about the actions' behavior, gating or wiring changes — **menu location only**. `pgtp_editor/resources/manual.md` already documented them as **File ▸ …** and was correct throughout |
+| 2026-08-06 | §17's **two-direction DB Check framing**: two Database-menu items (*Check: XML→Database* / *Check: Database→XML*) driving one `DbCheckPanel` in a hidden `left_tabs` tab, with a direction label in its header, a direction-dependent per-table count suffix (`(P# D# L#)` for DB→XML vs. the aggregate `(×N)` for XML→DB) and a `_last_db_check_direction` cache consulted on reparse | **One Database-menu checkable toggle, one merged "Database/XML Coherence" view, no direction control anywhere** (FQ-003). The direction toggle is **eliminated, not merged**: once DB state and XML state are shown together per relation, there is no remaining choice about which side is ground truth for display — **the DB always is, and the XML is always the interface being checked against it** (requester's core framing). The view has two branches over the same data layer: **Tables and Views** (DB-sourced; per relation a *Database columns* sub-section = today's `ColumnCheck` list with calculated columns shown but never flagged, BUG-006, and a *References* sub-section badge-summarized from the existing `TableCheck.page_count`/`.detail_count`/`.lookup_count` rollups, BUG-026, expandable to the full breadcrumbs) and **Pages** (a **recursive** tree mirroring the real XML depth — Page → bound table + lookup columns → nested Details, each with their own table/lookups/further Details, exactly `visit_detail`'s unlimited recursion; the UI must **not** flatten it to a fixed "Page > Details > Detail > Lookups" shape, and the `"lookup with insert"` `ref_type` stays a distinct badge). One **global mismatch toggle** filters both branches: a Pages node whose target relation is absent from the live DB is flagged **at that reference point** (never as a phantom row under Tables and Views, which stays purely DB-sourced); a real relation with `page_count == detail_count == lookup_count == 0` **is** flagged (requester-confirmed — the toggle is "things needing attention," not strictly "things that are broken"); `ColumnCheck.ok == False` folds in, excluding calculated columns. No mismatch-type enum exists today, so the toggle carries its own predicate. `collect_table_usages` and the existing rollup fields must be reused wholesale — **no parallel counting logic**. The `(P# D# L#)` badge survives as the relation-level form; the aggregate `(×N)` and `_last_db_check_direction` go away with the direction. Rejected alternatives recorded in §17: the connection-optional hybrid with a cross-navigation link (superseded — the motivation is architectural, not a UI convenience), and §18.3's unified-Compare/Deploy rejection, **explicitly distinguished rather than silently re-decided** (that turned on **risk asymmetry** — Compare read-only vs. Deploy destructive — and both surfaces merged here are read-only diagnostics with no write path). Settled design, **not yet implemented** |
+| 2026-08-06 | §15's **Table References tab** as an independent left-dock surface: `TableReferencesPanel` in its own hidden `left_tabs` tab ("Table references", `table_refs_tab_index`), revealed by the **View menu** checkable "Find table reference", refreshed on reparse when visible — specified in §15 as a sibling of Search/Find All and cross-referenced from §17 | **Folded into §17's Database/XML Coherence view** (FQ-003, row above). Table references are no longer independently toggleable: they appear as the per-relation **References** sub-section of the *Tables and Views* branch and as the whole **Pages** branch of the merged view. The `table_refs_tab_index` hidden tab and the **View ▸ Find table reference** checkable both **disappear as standalone entry points** (§26's View bullet loses that item); the single Database ▸ **Database/XML Coherence** toggle is the only entry point. §15 keeps a pointer only. The pure analyzer `analysis/reused_tables.py::collect_table_usages` and its `TableUsage`/`TableReference` shapes are **unchanged** and must be reused wholesale by the merged view — this row moves presentation, not analysis. The earlier removal of Tools ▸ "Find Reused Tables…" / `reused_tables_window.py` stands |
 
 ---
 
