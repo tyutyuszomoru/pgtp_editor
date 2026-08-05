@@ -1,0 +1,335 @@
+"""§18.8 Project Status window (ui/project_status_panel.py).
+
+The panel is a painter over `project_status_model`'s already-derived diagram, so
+these tests never assert *state derivation* (that is the model's own suite) — they
+assert the four things the widget alone can get wrong:
+
+1. **Shape.** It renders exactly the nodes the diagram contains, so the absence
+   rule (no sandbox ever configured → no sandbox trio) survives into the widget
+   instead of being re-decided there.
+2. **Click-through.** Each of the five families opens its own window, the
+   tools-missing window names the missing tools, and Sandbox1/Sandbox2 are
+   two-step: the click opens a window, the *button inside it* fires the action.
+3. **No dead controls.** With no callbacks injected, nothing crashes and no
+   button is offered for an action nobody can perform.
+4. **Theme.** A theme flip swaps every asset to its `_drk` counterpart without
+   re-deriving any state.
+
+Nothing here can reach a modal call: the panel opens non-modal `QDialog`s with
+`show()` and exposes them as `last_window`, so no `.exec()`/`QMessageBox` is ever
+involved.
+"""
+import pytest
+
+from pgtp_editor.db.sandbox import SandboxCapabilities, SandboxMode, determine_project_tier
+from pgtp_editor.ui import project_status_model as psm
+from pgtp_editor.ui.project_status_model import NodeFamily, QualityState, build_diagram
+from pgtp_editor.ui.project_status_panel import ProjectStatusPanel
+
+pytestmark = pytest.mark.usefixtures("qapp")
+
+
+# ---------------------------------------------------------------------------
+# helpers -- real probe results, same shapes the model's own suite uses
+# ---------------------------------------------------------------------------
+def _caps(**kwargs) -> SandboxCapabilities:
+    defaults = dict(
+        server_version=(16, 0),
+        pg_dump_path="/usr/bin/pg_dump",
+        pg_restore_path="/usr/bin/pg_restore",
+    )
+    return SandboxCapabilities(**{**defaults, **kwargs})
+
+
+def _full_diagram(*, dark: bool = True, **kwargs) -> psm.ProjectStatusDiagram:
+    """Tier 3: every node renders."""
+    status = determine_project_tier(_caps(), SandboxMode.SCHEMA_ONLY)
+    return build_diagram(
+        status=status, quality=QualityState.CONNECTION_OK, dark=dark, **kwargs
+    )
+
+
+def _no_sandbox_diagram() -> psm.ProjectStatusDiagram:
+    status = determine_project_tier(
+        _caps(), SandboxMode.SCHEMA_ONLY, sandbox_configured=False
+    )
+    return build_diagram(status=status, quality=QualityState.CONNECTION_OK)
+
+
+def _tools_missing_diagram() -> psm.ProjectStatusDiagram:
+    status = determine_project_tier(
+        _caps(pg_dump_path=None, pg_restore_path=None), SandboxMode.WITH_DATA
+    )
+    return build_diagram(status=status, quality=QualityState.CONNECTION_OK)
+
+
+def _installed_diagram() -> psm.ProjectStatusDiagram:
+    status = determine_project_tier(
+        _caps(installed_extensions=frozenset({"plpgsql_check"})), SandboxMode.SCHEMA_ONLY
+    )
+    return build_diagram(status=status, quality=QualityState.CONNECTION_OK)
+
+
+# ---------------------------------------------------------------------------
+# shape
+# ---------------------------------------------------------------------------
+def test_full_diagram_renders_all_five_nodes():
+    panel = ProjectStatusPanel(diagram=_full_diagram())
+    assert set(panel.node_widgets) == set(NodeFamily)
+    for family in NodeFamily:
+        widget = panel.node_widget(family)
+        assert widget is not None
+        assert not widget.icon_label.pixmap().isNull()
+
+
+def test_sandbox_absent_diagram_renders_only_quality_and_app():
+    diagram = _no_sandbox_diagram()
+    assert not diagram.sandbox_present  # guard: the model applied the absence rule
+    panel = ProjectStatusPanel(diagram=diagram)
+    assert set(panel.node_widgets) == {NodeFamily.QUALITY, NodeFamily.APP}
+    # Absent, not disabled: there is no sandbox widget to be a dead control.
+    assert panel.node_widget(NodeFamily.SANDBOX) is None
+
+
+def test_switching_diagram_replaces_the_nodes():
+    panel = ProjectStatusPanel(diagram=_full_diagram())
+    panel.set_diagram(_no_sandbox_diagram())
+    assert set(panel.node_widgets) == {NodeFamily.QUALITY, NodeFamily.APP}
+    panel.set_diagram(_full_diagram())
+    assert set(panel.node_widgets) == set(NodeFamily)
+
+
+def test_no_diagram_renders_an_empty_state_without_crashing():
+    panel = ProjectStatusPanel()
+    assert panel.node_widgets == {}
+    assert "Not probed" in panel.summary_label.text()
+
+
+def test_icons_are_aligned_on_one_centre_line():
+    """Every chain node's icon box is the same height, which is what makes the
+    connectors line up; a per-asset height would break the diagram silently."""
+    panel = ProjectStatusPanel(diagram=_full_diagram())
+    chain = [NodeFamily.QUALITY, NodeFamily.APP, NodeFamily.SANDBOX]
+    heights = {panel.node_widget(f).icon_label.height() for f in chain}
+    assert len(heights) == 1
+
+
+# ---------------------------------------------------------------------------
+# click-through
+# ---------------------------------------------------------------------------
+def test_every_node_opens_its_own_window():
+    panel = ProjectStatusPanel(diagram=_full_diagram())
+    seen = []
+    panel.node_activated.connect(seen.append)
+    for family in NodeFamily:
+        panel.node_widget(family).click()
+        assert panel.last_window is not None
+        assert panel.last_window.family is family
+    assert seen == [family.value for family in NodeFamily]
+    assert len(panel.open_windows) == len(NodeFamily)
+
+
+def test_quality_window_shows_connection_info_and_reconnect():
+    calls = []
+    panel = ProjectStatusPanel(
+        diagram=_full_diagram(),
+        on_reconnect_quality=lambda: calls.append("reconnect"),
+        quality_summary="quality@db.example:5432/appdb",
+    )
+    panel.node_widget(NodeFamily.QUALITY).click()
+    window = panel.last_window
+    assert "quality@db.example" in window.body_text
+    assert window.action_button is not None
+    window.action_button.click()
+    assert calls == ["reconnect"]
+
+
+def test_app_window_is_a_placeholder_with_no_action():
+    """§18.8 leaves the App action window's contents unspecified and forbids
+    inventing them, so it states the tier and offers nothing else."""
+    panel = ProjectStatusPanel(diagram=_full_diagram())
+    panel.node_widget(NodeFamily.APP).click()
+    window = panel.last_window
+    assert "Tier 3" in window.body_text
+    assert "development project" in window.body_text
+    assert window.action_button is None
+
+
+def test_tools_missing_window_names_the_missing_tools_and_offers_help():
+    helped = []
+    diagram = _tools_missing_diagram()
+    assert diagram.sandbox_degradation is psm.SandboxDegradation.TOOLS_MISSING
+    panel = ProjectStatusPanel(diagram=diagram, on_show_help=lambda: helped.append(1))
+    # Deliberately the same green icon as a healthy sandbox (§18.8).
+    assert panel.node_widget(NodeFamily.SANDBOX).icon_label.pixmap() is not None
+    assert diagram.node(NodeFamily.SANDBOX).state == "sandbox_connected"
+    panel.node_widget(NodeFamily.SANDBOX).click()
+    window = panel.last_window
+    for tool in diagram.missing_tools:
+        assert tool in window.body_text
+    assert window.help_button is not None
+    window.help_button.click()
+    assert helped == [1]
+
+
+def test_healthy_sandbox_window_offers_no_help_button():
+    panel = ProjectStatusPanel(diagram=_full_diagram(), on_show_help=lambda: None)
+    panel.node_widget(NodeFamily.SANDBOX).click()
+    assert panel.last_window.help_button is None
+
+
+def test_sandbox1_is_two_step_clone_action():
+    calls = []
+    panel = ProjectStatusPanel(
+        diagram=_full_diagram(), on_run_data_clone=lambda: calls.append("clone")
+    )
+    panel.node_widget(NodeFamily.SANDBOX1).click()
+    window = panel.last_window
+    # Step one opened a window; the click alone must not have fired anything.
+    assert calls == []
+    assert window.action_button.text() == "Run data clone now"
+    window.action_button.click()
+    assert calls == ["clone"]
+
+
+def test_sandbox1_offers_redo_when_data_is_already_cloned():
+    panel = ProjectStatusPanel(
+        diagram=_full_diagram(sandbox_mode=SandboxMode.WITH_DATA, data_clone_done=True),
+        on_run_data_clone=lambda: None,
+    )
+    panel.node_widget(NodeFamily.SANDBOX1).click()
+    assert panel.last_window.action_button.text() == "Redo data clone"
+
+
+def test_sandbox2_offers_install_only_when_not_installed():
+    calls = []
+    panel = ProjectStatusPanel(
+        diagram=_full_diagram(), on_install_plpgsql_check=lambda: calls.append("install")
+    )
+    assert (
+        panel.diagram.node(NodeFamily.SANDBOX2).state
+        == "sandbox2_plpgsql_check_not_installed"
+    )
+    panel.node_widget(NodeFamily.SANDBOX2).click()
+    window = panel.last_window
+    assert calls == []  # two-step: opening is not acting
+    assert "plpgsql_check" in window.action_button.text()
+    window.action_button.click()
+    assert calls == ["install"]
+
+
+def test_sandbox2_installed_window_is_informational_only():
+    installed = _installed_diagram()
+    assert (
+        installed.node(NodeFamily.SANDBOX2).state == "sandbox2_plpgsql_check_installed"
+    )
+    panel = ProjectStatusPanel(
+        diagram=installed, on_install_plpgsql_check=lambda: pytest.fail("no action")
+    )
+    panel.node_widget(NodeFamily.SANDBOX2).click()
+    assert panel.last_window.action_button is None
+
+
+def test_nodes_activate_from_the_keyboard():
+    from PySide6.QtCore import Qt
+    from PySide6.QtGui import QKeyEvent
+
+    panel = ProjectStatusPanel(diagram=_full_diagram())
+    widget = panel.node_widget(NodeFamily.QUALITY)
+    widget.keyPressEvent(
+        QKeyEvent(QKeyEvent.Type.KeyPress, Qt.Key.Key_Space, Qt.KeyboardModifier.NoModifier)
+    )
+    assert panel.last_window is not None
+
+
+# ---------------------------------------------------------------------------
+# no dead controls
+# ---------------------------------------------------------------------------
+def test_without_callbacks_no_window_offers_a_button():
+    panel = ProjectStatusPanel(diagram=_tools_missing_diagram())
+    assert panel.refresh_button.isHidden()
+    for family in NodeFamily:
+        panel.node_widget(family).click()
+        window = panel.last_window
+        assert window.action_button is None
+        assert window.help_button is None
+
+
+def test_refresh_without_callback_is_a_no_op():
+    panel = ProjectStatusPanel(diagram=_full_diagram())
+    panel.refresh()  # must not raise
+    assert set(panel.node_widgets) == set(NodeFamily)
+
+
+# ---------------------------------------------------------------------------
+# theme
+# ---------------------------------------------------------------------------
+def test_theme_flip_swaps_every_asset():
+    panel = ProjectStatusPanel(diagram=_full_diagram(dark=True))
+    assert all(asset.endswith("_drk.png") for asset in panel.diagram.assets())
+    states_before = [node.state for node in panel.diagram.nodes]
+
+    panel.set_dark(False)
+    assert not any(asset.endswith("_drk.png") for asset in panel.diagram.assets())
+    assert panel.diagram.dark is False
+    # State is never re-derived by a theme change, only the filenames change.
+    assert [node.state for node in panel.diagram.nodes] == states_before
+    assert set(panel.node_widgets) == set(NodeFamily)
+
+    panel.set_light_theme(False)
+    assert all(asset.endswith("_drk.png") for asset in panel.diagram.assets())
+
+
+def test_set_dark_with_no_diagram_is_safe():
+    panel = ProjectStatusPanel()
+    panel.set_dark(False)
+    assert panel.diagram is None
+
+
+# ---------------------------------------------------------------------------
+# the on-open re-probe seam
+# ---------------------------------------------------------------------------
+def test_showing_the_panel_triggers_a_fresh_probe():
+    """§18.8: opening this window is itself a probe trigger, not a passive read
+    of a cached result."""
+    calls = []
+
+    def probe():
+        calls.append("probe")
+        return _no_sandbox_diagram()
+
+    panel = ProjectStatusPanel(diagram=_full_diagram(), on_refresh=probe)
+    assert calls == []
+    panel.show()
+    assert calls == ["probe"]
+    # The returned diagram is rendered immediately.
+    assert set(panel.node_widgets) == {NodeFamily.QUALITY, NodeFamily.APP}
+    panel.hide()
+    panel.show()
+    assert calls == ["probe"]  # only the first show re-probes
+    panel.close()
+
+
+def test_refresh_button_reprobes_and_a_none_return_keeps_the_diagram():
+    calls = []
+    panel = ProjectStatusPanel(diagram=_full_diagram(), on_refresh=lambda: calls.append(1))
+    panel.refresh_button.click()
+    assert calls == [1]
+    assert set(panel.node_widgets) == set(NodeFamily)
+
+
+def test_action_reprobes_after_running():
+    """An action must not leave the diagram claiming the pre-action state."""
+    calls = []
+    panel = ProjectStatusPanel(
+        diagram=_full_diagram(),
+        on_install_plpgsql_check=lambda: calls.append("install"),
+        on_refresh=lambda: (calls.append("probe"), _installed_diagram())[1],
+    )
+    panel.node_widget(NodeFamily.SANDBOX2).click()
+    panel.last_window.action_button.click()
+    assert calls == ["install", "probe"]
+    assert (
+        panel.diagram.node(NodeFamily.SANDBOX2).state
+        == "sandbox2_plpgsql_check_installed"
+    )
