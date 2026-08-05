@@ -97,10 +97,11 @@ from pgtp_editor.ui.manual_panel import (
     load_manual_text,
     parse_chapters,
 )
-from pgtp_editor.db.config import save_connection, seed_params
+from pgtp_editor.db.config import load_connection, save_connection, seed_params
 from pgtp_editor.db.compare import check_db_against_xml, check_xml_against_db
 from pgtp_editor.db.ddl_buffer import build_ddl_text
 from pgtp_editor.db.ddl_project import (
+    DeployedObject,
     PgtpLink,
     ProjectSettings,
     compute_drift_markers,
@@ -119,12 +120,18 @@ from pgtp_editor.db.schema_index import SchemaIndex
 from pgtp_editor.db.sandbox import (
     ProjectCapabilityStatus,
     SandboxCapabilities,
+    SandboxMode,
     determine_project_tier,
     probe as sandbox_probe,
 )
 from pgtp_editor.ui.async_task import run_async
 from pgtp_editor.ui.connection_setup_dialog import ConnectionSetupDialog
 from pgtp_editor.ui.new_project_dialog import NewProjectDialog
+from pgtp_editor.ui.ddl_object_editor import DdlObjectRef
+from pgtp_editor.ui.new_routine_dialog import NewRoutineDialog
+from pgtp_editor.ui.new_trigger_dialog import NewTriggerDialog
+from pgtp_editor.ui.project_status_model import build_diagram, quality_state
+from pgtp_editor.ui.project_status_panel import ProjectStatusPanel
 from pgtp_editor.ui.project_settings_dialog import ProjectSettingsDialog
 from pgtp_editor.ui.db_check_panel import DbCheckPanel
 from pgtp_editor.ui.ddl_buffer_panel import BrowserPanel
@@ -238,6 +245,11 @@ class MainWindow(QMainWindow):
         # mirroring `XmlEditor.set_schema_model`). None until the DDL Explorer
         # has fetched at least once.
         self._ddl_schema_index: SchemaIndex | None = None
+        #: The raw `DatabaseSchema` behind `_ddl_schema_index` (FQ-002).
+        self._ddl_schema = None
+        #: The §18.8 Project Status window, kept so re-invoking the menu entry
+        #: raises the existing one instead of stacking duplicates.
+        self._project_status_window = None
         # Off-thread executor seam. The Database Check schema fetch opens a
         # connection; running it here would freeze the window on a slow/dead
         # host. Default marshals it to a threadpool worker; tests inject a
@@ -301,6 +313,12 @@ class MainWindow(QMainWindow):
         # panel (spec §18.1, 2026-08-05) -- the same panel instance the
         # XML/XSD tree's own node-click already drives (_on_tree_selection_changed).
         self.ddl_browser_panel.table_selected.connect(self._on_ddl_table_selected)
+        self.ddl_browser_panel.add_trigger_requested.connect(
+            self._on_ddl_add_trigger_requested
+        )
+        self.ddl_browser_panel.new_routine_requested.connect(
+            self._on_ddl_new_routine_requested
+        )
         # Table references ride in their own hidden tab, revealed by the
         # View > "Find table reference" toggle (mirrors the Database Check tab).
         self.table_refs_panel = TableReferencesPanel()
@@ -2631,6 +2649,18 @@ class MainWindow(QMainWindow):
         self._ddl_explorer_action.setCheckable(True)
         self._ddl_explorer_action.setChecked(False)
         self._ddl_explorer_action.toggled.connect(self._on_ddl_explorer_toggled)
+        menu.addSeparator()
+        # FQ-002: creating a routine is not scoped to a parent object, so it
+        # earns a menu entry as well as the tree's context menu. Its trigger
+        # counterpart deliberately does NOT appear here -- a trigger needs a
+        # specific table, which only the tree can supply.
+        new_routine_action = menu.addAction("New Function/Procedure…")
+        new_routine_action.triggered.connect(lambda: self._on_ddl_new_routine_requested())
+        menu.addSeparator()
+        # §18.8: opening the window is itself a probe trigger, not a passive
+        # read of a cached result -- see _open_project_status.
+        project_status_action = menu.addAction("Project Status…")
+        project_status_action.triggered.connect(lambda: self._open_project_status())
 
     def _prompt_missing_connection(self) -> None:
         """No configured DB connection: in projectless mode this opens the
@@ -3177,6 +3207,10 @@ class MainWindow(QMainWindow):
             # exactly like the tree and the read-only buffer are refreshed
             # above -- built once per connect/refresh, never per keystroke.
             self._ddl_schema_index = SchemaIndex(schema)
+            # Kept alongside the index because FQ-002's creation dialogs need
+            # the raw schema (the trigger-function candidate list), and the
+            # index exposes only its own query surface.
+            self._ddl_schema = schema
             for panel in self.center_stage.ddl_object_panels():
                 panel.set_schema_index(self._ddl_schema_index)
             self.statusBar().showMessage(
@@ -3262,6 +3296,161 @@ class MainWindow(QMainWindow):
             lambda _dirty, ref=ref: self.center_stage.update_ddl_object_tab(ref)
         )
         panel.format_refused.connect(self._report_ddl_format_refusal)
+
+    # --- §18.8: the Project Status window ------------------------------------
+    def _build_project_status_diagram(self):
+        """Current `ProjectStatusDiagram`, or None when nothing to show.
+
+        Quality has no backing field on `ProjectCapabilityStatus` (which
+        models the sandbox side only), so it is derived here from whether a
+        target connection is configured at all -- §18.8's not_set_up / error /
+        connection_ok trio, mirroring the Sandbox node's own pattern.
+        """
+        settings = self._ddl_project_settings
+        # With a project open its own target profile is authoritative
+        # (BUG-024); projectless, the app-level saved connection is.
+        target = (
+            settings.target if settings is not None else load_connection(self._settings)
+        )
+        quality = quality_state(configured=target is not None, probe_error=None)
+        sandbox_mode = settings.sandbox_mode if settings is not None else SandboxMode.SCHEMA_ONLY
+        return build_diagram(
+            status=self._ddl_project_capability_status,
+            quality=quality,
+            sandbox_mode=sandbox_mode,
+            data_clone_done=sandbox_mode is SandboxMode.WITH_DATA,
+            dark=not self._light_theme_action.isChecked(),
+        )
+
+    def _open_project_status(self) -> None:
+        """Database ▸ Project Status… (§18.8).
+
+        Opening the window is itself a probe trigger, not a passive read of a
+        cached result -- a sandbox that died since the project was opened must
+        show as offline here. A fresh panel probes itself when first shown (its
+        `on_refresh` seam), so only the reuse path below re-probes explicitly;
+        doing both would probe twice per open.
+        """
+        existing = self._project_status_window
+        if existing is not None:
+            self.refresh_project_capability_status()
+            existing.set_diagram(self._build_project_status_diagram())
+            existing.raise_()
+            existing.activateWindow()
+            return
+
+        def on_refresh():
+            self.refresh_project_capability_status()
+            return self._build_project_status_diagram()
+
+        panel = ProjectStatusPanel(
+            diagram=self._build_project_status_diagram(),
+            on_refresh=on_refresh,
+            parent=self,
+        )
+        panel.setWindowFlag(Qt.WindowType.Window, True)
+        panel.setWindowTitle("Project Status")
+        panel.destroyed.connect(lambda: setattr(self, "_project_status_window", None))
+        self._project_status_window = panel
+        panel.show()
+
+    # --- FQ-002: creating brand-new DDL objects ------------------------------
+    def _trigger_function_candidates(self) -> list[str]:
+        """Qualified names of every routine returning `trigger` (FQ-002).
+
+        A trigger can only attach to a function that `RETURNS trigger`, so the
+        chooser is restricted to those -- read off the schema already fetched
+        for the Explorer, never a second round trip.
+        """
+        if self._ddl_schema is None:
+            return []
+        return sorted(
+            f"{routine.schema}.{routine.name}"
+            for routine in self._ddl_schema.routines.values()
+            if (routine.return_type or "").strip().lower() == "trigger"
+        )
+
+    def _on_ddl_add_trigger_requested(self, table_info) -> None:
+        """Right-click ▸ Add Trigger… on a table node (FQ-002)."""
+        dialog = NewTriggerDialog(
+            table_info.name, self._trigger_function_candidates(), parent=self
+        )
+        dialog.accepted.connect(lambda: self._open_created_ddl_object(dialog))
+        dialog.show()
+
+    def _on_ddl_new_routine_requested(self) -> None:
+        """Database ▸ New Function/Procedure… and the tree's routines-branch
+        context entry (FQ-002) -- one action, one dialog, kind inside it."""
+        dialog = NewRoutineDialog(parent=self)
+        dialog.accepted.connect(lambda: self._open_created_ddl_object(dialog))
+        dialog.show()
+
+    def _open_created_ddl_object(self, dialog) -> None:
+        """Open a newly-created object's editor tab on its generated skeleton.
+
+        Deliberately routed through `_on_ddl_edit_requested`, the same path
+        Edit… uses: the tab, its save-path resolver, its completion index and
+        its dirty bookkeeping are identical whether the text came from
+        introspection or from a skeleton. The only thing creation does
+        differently is build the `DdlObjectRef` from dialog fields rather than
+        `resolve_edit_target`, which correctly returns None for an object that
+        does not exist yet.
+        """
+        ref = self._ref_for_created_object(dialog)
+        if ref is None:
+            return
+        self._on_ddl_edit_requested(ref, dialog.skeleton())
+        self._register_created_object(ref)
+
+    def _ref_for_created_object(self, dialog):
+        schema, name = self._split_qualified(
+            dialog.trigger_name() if isinstance(dialog, NewTriggerDialog) else dialog.routine_name()
+        )
+        if isinstance(dialog, NewTriggerDialog):
+            table_schema, table_name = self._split_qualified(dialog.table())
+            # A trigger's own schema is its table's -- pg_trigger has no
+            # separate namespace for it.
+            return DdlObjectRef(
+                kind="trigger",
+                schema=table_schema or schema,
+                name=name,
+                table=table_name,
+            )
+        return DdlObjectRef(kind=dialog.kind(), schema=schema, name=name)
+
+    @staticmethod
+    def _split_qualified(qualified: str) -> tuple[str, str]:
+        """`"pr.recalc"` -> `("pr", "recalc")`; a bare name gets the `public`
+        default Postgres itself would apply."""
+        schema, _, name = (qualified or "").strip().rpartition(".")
+        return (schema or "public"), name
+
+    def _register_created_object(self, ref) -> None:
+        """Record the new object in the deploy manifest so the existing §18.3
+        drift/deploy flow can see it (FQ-002).
+
+        Without this the object is invisible to versioning: the local-file
+        pipeline tracks objects through `ProjectSettings.deployed`, which is
+        otherwise only ever populated by checking out something that already
+        exists in the DB, and `compute_drift_markers` iterates that mapping
+        alone. The sentinel is an empty `content_hash` -- "local exists, no
+        last-deployed reference yet" -- which that function already renders as
+        `*`-only with no special-casing, since the object is absent from the
+        live schema and so cannot read as live-drifted.
+
+        No project open means no manifest to write to, which is not an error:
+        creating an object projectless is a supported, unversioned flow.
+        """
+        if self._ddl_project_folder is None or self._ddl_project_settings is None:
+            return
+        schema = self._ddl_schema
+        if schema is None:
+            return
+        relpath = self._ddl_checkout_relpath(ref, schema)
+        if relpath is None or relpath in self._ddl_project_settings.deployed:
+            return
+        self._ddl_project_settings.deployed[relpath] = DeployedObject(content_hash="")
+        save_settings(self._ddl_project_folder, self._ddl_project_settings)
 
     def _on_ddl_checkout_requested(self, ref, source) -> None:
         """Right-click ▸ Check Out for Versioning (spec §18.2) -- the
