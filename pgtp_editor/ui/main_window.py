@@ -139,13 +139,18 @@ from pgtp_editor.ui.ddl_buffer_panel import BrowserPanel
 from pgtp_editor.ui.code_editor import CodeEditorDialog
 from pgtp_editor.ui.customize_toolbar_dialog import CustomizeToolbarDialog
 from pgtp_editor.ui.history import SnapshotHistory
-from pgtp_editor.ui.icons import themed_icon
+from pgtp_editor.ui.icons import catalog_ids as icon_catalog_ids, themed_icon
 from pgtp_editor.ui.toolbar_registry import (
     DEFAULT_TOOLBAR_IDS,
+    ICON_ASSIGNMENTS_SETTINGS_KEY,
     ICON_ID_BY_COMMAND,
     command_id_for,
+    icon_id_for,
     menu_path_label,
+    parse_icon_assignments,
     resolve_ids,
+    resolve_icon_assignments,
+    serialize_icon_assignments,
 )
 from pgtp_editor.ui.event_body import (
     extract_event_body,
@@ -1011,6 +1016,10 @@ class MainWindow(QMainWindow):
         self._menu_keepalive_seen = set()
         self._collect_menu_commands()
         self._toolbar_ids = []
+        # FQ-004: command_id -> chosen icon id. Restored before the first
+        # _apply_toolbar_ids so the very first paint already honours the
+        # user's choices rather than flashing the defaults.
+        self._toolbar_icon_ids = self._restore_toolbar_icon_ids()
         self._apply_toolbar_ids(self._restore_toolbar_ids())
 
     def _collect_menu_commands(self):
@@ -1131,8 +1140,13 @@ class MainWindow(QMainWindow):
         hosts real menu QActions -- so an id with no icon is the normal case,
         not an error, and is left icon-less (text-beside-icon copes). The icon
         is hidden in menus so decorating a shared action for the toolbar does
-        not change how the menu looks."""
-        icon_id = ICON_ID_BY_COMMAND.get(command_id)
+        not change how the menu looks.
+
+        FQ-004: a user-chosen icon (Customize Toolbar ▸ Choose Icon…) wins over
+        the legacy default, so any button can be decorated or re-decorated from
+        the vendored Breeze catalog. With no assignment stored the lookup falls
+        straight through to `ICON_ID_BY_COMMAND` and behavior is unchanged."""
+        icon_id = icon_id_for(command_id, self._toolbar_icon_ids)
         if icon_id is None:
             return
         try:
@@ -1153,9 +1167,39 @@ class MainWindow(QMainWindow):
         """Persist the current toolbar ids (stored as a list)."""
         self._settings.setValue("toolbarIds", self._toolbar_ids)
 
-    def _apply_and_save_toolbar_ids(self, ids):
+    def _restore_toolbar_icon_ids(self):
+        """Read the stored per-command icon assignments (FQ-004).
+
+        Pruned through `resolve_icon_assignments` against the live menu
+        commands and the vendored catalog, so an assignment naming a command
+        or an icon that no longer exists is dropped rather than raising later
+        -- the same self-healing `resolve_ids` already applies to the id list.
+        """
+        stored = parse_icon_assignments(
+            self._settings.value(ICON_ASSIGNMENTS_SETTINGS_KEY)
+        )
+        if not stored:
+            return {}
+        self._collect_menu_commands()
+        return resolve_icon_assignments(stored, self._menu_commands, icon_catalog_ids())
+
+    def _save_toolbar_icon_ids(self) -> None:
+        self._settings.setValue(
+            ICON_ASSIGNMENTS_SETTINGS_KEY,
+            serialize_icon_assignments(self._toolbar_icon_ids),
+        )
+
+    def _apply_and_save_toolbar_ids(self, ids, icon_assignments=None):
         """Apply an id list to the toolbar and persist it (test seam / the
-        Customize dialog's OK path)."""
+        Customize dialog's OK path).
+
+        `icon_assignments` (FQ-004) is applied first so the rebuild below
+        already paints the chosen icons; None leaves the current assignments
+        untouched, keeping every existing caller working unchanged.
+        """
+        if icon_assignments is not None:
+            self._toolbar_icon_ids = dict(icon_assignments)
+            self._save_toolbar_icon_ids()
         self._apply_toolbar_ids(ids)
         self._save_toolbar_ids()
 
@@ -1165,10 +1209,12 @@ class MainWindow(QMainWindow):
         # BUG-027: offer every menu command, re-enumerated at open time so
         # anything the menus gained since startup is included.
         dialog = CustomizeToolbarDialog(
-            self._collect_menu_commands(), self._toolbar_ids, self
+            self._collect_menu_commands(), self._toolbar_ids, self, self._toolbar_icon_ids
         )
         dialog.accepted.connect(
-            lambda: self._apply_and_save_toolbar_ids(dialog.result_ids())
+            lambda: self._apply_and_save_toolbar_ids(
+                dialog.result_ids(), dialog.result_icon_assignments()
+            )
         )
         self._customize_toolbar_dialog = dialog
         dialog.show()

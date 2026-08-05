@@ -2,6 +2,8 @@
 
 The dialog is driven via its slot methods and accessors; never `.exec()`'d.
 """
+from PySide6.QtCore import Qt
+
 from pgtp_editor.ui.customize_toolbar_dialog import CustomizeToolbarDialog
 
 # The dialog is generic over whatever (id, label) pairs it is handed -- since
@@ -156,3 +158,112 @@ def test_result_order_preserved_through_add_remove_move_sequence(qtbot):
     assert "save" in _enabled(dialog)
     for cid in ("open", "undo", "redo"):
         assert cid not in _enabled(dialog)
+
+
+# -- FQ-004: per-button icon assignment -------------------------------------
+#
+# These use MENU-PATH ids so `toolbar_registry.ICON_ID_BY_COMMAND` defaults
+# apply, which is what the real dialog is handed since BUG-027.
+
+MENU_COMMANDS = [
+    ("file.open", "File › Open"),
+    ("file.save", "File › Save"),
+    ("file.save-as", "File › Save As"),
+    ("edit.undo", "Edit › Undo"),
+]
+
+
+def _menu_dialog(qtbot, current_ids, icon_assignments=None):
+    dialog = CustomizeToolbarDialog(
+        MENU_COMMANDS, current_ids, None, icon_assignments
+    )
+    qtbot.addWidget(dialog)
+    return dialog
+
+
+def _row_has_icon(dialog, command_id):
+    for row in range(dialog.toolbar_list.count()):
+        item = dialog.toolbar_list.item(row)
+        if item.data(Qt.ItemDataRole.UserRole) == command_id:
+            return not item.icon().isNull()
+    raise AssertionError(f"{command_id} not on the toolbar list")
+
+
+def test_no_assignments_means_default_icons_back_compat(qtbot):
+    dialog = _menu_dialog(qtbot, ["file.open", "file.save-as"])
+    assert dialog.icon_assignments() == {}
+    # Legacy default survives; the icon-less command stays icon-less.
+    assert dialog.effective_icon_id("file.open") == "open"
+    assert dialog.effective_icon_id("file.save-as") is None
+    assert _row_has_icon(dialog, "file.open")
+    assert not _row_has_icon(dialog, "file.save-as")
+
+
+def test_assignment_map_round_trips_through_the_seam(qtbot):
+    dialog = _menu_dialog(qtbot, ["file.save-as"])
+    dialog.assign_icon("file.save-as", "document-save-as")
+    assert dialog.icon_assignments() == {"file.save-as": "document-save-as"}
+    assert dialog.effective_icon_id("file.save-as") == "document-save-as"
+    assert _row_has_icon(dialog, "file.save-as")
+
+
+def test_initial_assignments_are_honored(qtbot):
+    dialog = _menu_dialog(
+        qtbot, ["file.save-as"], {"file.save-as": "zoom-in"}
+    )
+    assert dialog.effective_icon_id("file.save-as") == "zoom-in"
+    assert _row_has_icon(dialog, "file.save-as")
+
+
+def test_assignment_overrides_a_legacy_default(qtbot):
+    dialog = _menu_dialog(qtbot, ["file.open"])
+    assert dialog.effective_icon_id("file.open") == "open"
+    dialog.assign_icon("file.open", "zoom-in")
+    assert dialog.effective_icon_id("file.open") == "zoom-in"
+
+
+def test_clearing_an_assignment_restores_the_default(qtbot):
+    dialog = _menu_dialog(qtbot, ["file.open", "file.save-as"])
+    dialog.assign_icon("file.open", "zoom-in")
+    dialog.assign_icon("file.save-as", "zoom-in")
+    dialog.assign_icon("file.open", None)          # picker "Default" choice
+    dialog.assign_icon("file.save-as", None)
+    assert dialog.icon_assignments() == {}
+    assert dialog.effective_icon_id("file.open") == "open"
+    assert dialog.effective_icon_id("file.save-as") is None
+    assert not _row_has_icon(dialog, "file.save-as")
+
+
+def test_set_icon_assignments_replaces_the_map(qtbot):
+    dialog = _menu_dialog(qtbot, ["file.open"], {"file.open": "zoom-in"})
+    dialog.set_icon_assignments({"file.open": "document-save-as"})
+    assert dialog.icon_assignments() == {"file.open": "document-save-as"}
+    dialog.set_icon_assignments(None)
+    assert dialog.icon_assignments() == {}
+
+
+def test_assignments_survive_reordering_and_readding(qtbot):
+    dialog = _menu_dialog(qtbot, ["file.open", "file.save-as"])
+    dialog.assign_icon("file.save-as", "zoom-in")
+    dialog._select_toolbar("file.save-as")
+    dialog._move_up()
+    assert dialog.selected_ids() == ["file.save-as", "file.open"]
+    assert dialog.icon_assignments() == {"file.save-as": "zoom-in"}
+    assert _row_has_icon(dialog, "file.save-as")
+
+
+def test_result_icon_assignments_prunes_removed_buttons(qtbot):
+    dialog = _menu_dialog(qtbot, ["file.open", "file.save-as"])
+    dialog.assign_icon("file.save-as", "zoom-in")
+    dialog._select_toolbar("file.save-as")
+    dialog._remove_selected()
+    assert dialog.result_icon_assignments() == {}
+
+
+def test_choose_icon_without_a_selection_is_a_no_op(qtbot):
+    """The picker slot must not open (or crash) with nothing selected -- this
+    is the only path that would `.exec()`."""
+    dialog = _menu_dialog(qtbot, ["file.open"])
+    dialog.toolbar_list.setCurrentRow(-1)
+    dialog._choose_icon()
+    assert dialog.icon_assignments() == {}

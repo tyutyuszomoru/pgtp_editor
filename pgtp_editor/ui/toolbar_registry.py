@@ -123,3 +123,84 @@ def resolve_ids(ids: Iterable[str] | None, known: Iterable[str]) -> list[str]:
     id first, so a toolbar saved by an older build still restores."""
     mapped = [LEGACY_ID_ALIASES.get(cid, cid) for cid in (ids or [])]
     return valid_ids(mapped, known)
+
+
+# -- per-command icon assignments (FQ-004) ----------------------------------
+#
+# A user may pick a Breeze icon for ANY toolbar button, overriding the legacy
+# default where there is one. The assignment is keyed by the same stable
+# menu-path command id `toolbarIds` uses, and persisted in a sibling QSettings
+# key (`ICON_ASSIGNMENTS_SETTINGS_KEY`). Absence of an assignment means "use
+# the default" -- which is what makes an older saved toolbar, with no
+# assignments at all, behave exactly as before.
+
+ICON_ASSIGNMENTS_SETTINGS_KEY = "toolbarIconIds"
+
+_ASSIGNMENT_SEPARATOR = "="
+
+
+def serialize_icon_assignments(assignments: dict[str, str] | None) -> list[str]:
+    """`{command_id: icon_id}` as a flat, QSettings-friendly list of
+    ``"command_id=icon_id"`` strings, sorted for a stable stored order."""
+    return [
+        f"{command_id}{_ASSIGNMENT_SEPARATOR}{icon_id}"
+        for command_id, icon_id in sorted((assignments or {}).items())
+        if command_id and icon_id
+    ]
+
+
+def parse_icon_assignments(value) -> dict[str, str]:
+    """The inverse of `serialize_icon_assignments`, tolerant of what QSettings
+    hands back: a list of ``"command_id=icon_id"`` strings, a single such
+    string, an already-parsed dict, or None/garbage (-> empty)."""
+    if isinstance(value, dict):
+        return {
+            str(k): str(v) for k, v in value.items() if str(k) and str(v)
+        }
+    if isinstance(value, str):
+        value = [value]
+    result: dict[str, str] = {}
+    for raw in value or []:
+        if not isinstance(raw, str) or _ASSIGNMENT_SEPARATOR not in raw:
+            continue
+        command_id, _, icon_id = raw.partition(_ASSIGNMENT_SEPARATOR)
+        command_id, icon_id = command_id.strip(), icon_id.strip()
+        if command_id and icon_id:
+            result[command_id] = icon_id
+    return result
+
+
+def resolve_icon_assignments(
+    assignments: dict[str, str] | None,
+    known_commands: Iterable[str],
+    known_icons: Iterable[str],
+) -> dict[str, str]:
+    """Filter a loaded assignment map to what still exists, the way
+    `resolve_ids` filters saved toolbar ids.
+
+    Legacy (pre-BUG-027) command ids are mapped onto their menu-path id first;
+    an assignment whose command no longer exists, or whose icon is no longer
+    vendored, is dropped.
+    """
+    known_command_set = set(known_commands)
+    known_icon_set = set(known_icons)
+    result: dict[str, str] = {}
+    for command_id, icon_id in (assignments or {}).items():
+        mapped = LEGACY_ID_ALIASES.get(command_id, command_id)
+        if mapped in known_command_set and icon_id in known_icon_set:
+            result[mapped] = icon_id
+    return result
+
+
+def icon_id_for(command_id: str, assignments: dict[str, str] | None = None):
+    """The icon a toolbar button should show: the user's assignment if there
+    is one, else the legacy default from `ICON_ID_BY_COMMAND`, else None.
+
+    Note the two id spaces: an assignment holds a *catalog* icon id (an SVG
+    filename stem, e.g. ``document-save-as``) while a legacy default holds a
+    legacy action id (``save``). `icons.load_svg_text` accepts either.
+    """
+    assigned = (assignments or {}).get(command_id)
+    if assigned:
+        return assigned
+    return ICON_ID_BY_COMMAND.get(command_id)

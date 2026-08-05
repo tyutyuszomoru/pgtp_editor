@@ -22,8 +22,25 @@ concrete fill into the SVG *text* before handing it to the renderer -- both the
 ``currentColor`` token and the stylesheet ``color:#232629`` value, belt and
 suspenders, so a literal fill is always present.
 
-The pure string helpers (``ACTION_ICON_FILES``, ``load_svg_text``,
-``recolor_svg``) are Qt-free; only ``themed_icon`` touches Qt.
+The pure string helpers (``ACTION_ICON_FILES``, the catalog functions,
+``load_svg_text``, ``recolor_svg``) are Qt-free; only ``themed_icon`` touches
+Qt.
+
+FQ-004 widened the vendored pack from the original seven SVGs to a curated
+common-action subset, and added an *enumerable catalog* over it so the
+Customize Toolbar icon picker can list, search and assign any of them. The
+catalog is a directory scan of ``resources/icons/breeze/`` performed once,
+lazily, on first use -- a checked-in manifest would be one more thing to keep
+in sync with the folder.
+
+Two id spaces meet here, deliberately:
+
+* the seven **legacy action ids** (``open``, ``save``, ...), which name the
+  default icon of the legacy toolbar commands, and
+* **catalog icon ids**, which are simply the SVG filename stems
+  (``document-save-as``). These are what a user-chosen assignment stores.
+
+``load_svg_text``/``themed_icon`` accept either, legacy first.
 """
 import re
 from importlib.resources import files
@@ -42,16 +59,80 @@ ACTION_ICON_FILES: dict[str, str] = {
 # Breeze's ColorScheme-Text default color, matched case-insensitively.
 _BREEZE_COLOR_RE = re.compile(r"#232629", re.IGNORECASE)
 
+# Lazily built once: [(icon_id, filename, human_name), ...] sorted by icon_id.
+_CATALOG_CACHE: list[tuple[str, str, str]] | None = None
+
+
+def _breeze_dir():
+    return files("pgtp_editor") / "resources" / "icons" / "breeze"
+
+
+def human_name_for(icon_id: str) -> str:
+    """A Breeze filename stem as a readable label:
+    ``document-save-as`` -> ``Document Save As``."""
+    return " ".join(
+        word.capitalize() for word in icon_id.replace("_", "-").split("-") if word
+    )
+
+
+def icon_catalog() -> list[tuple[str, str, str]]:
+    """Every vendored Breeze icon as ``(icon_id, filename, human_name)``,
+    sorted by icon_id.
+
+    Built by scanning the vendored folder once and cached; Qt-free.
+    """
+    global _CATALOG_CACHE
+    if _CATALOG_CACHE is None:
+        entries = []
+        for resource in _breeze_dir().iterdir():
+            name = resource.name
+            if not name.endswith(".svg"):
+                continue
+            icon_id = name[: -len(".svg")]
+            entries.append((icon_id, name, human_name_for(icon_id)))
+        _CATALOG_CACHE = sorted(entries)
+    return list(_CATALOG_CACHE)
+
+
+def catalog_ids() -> list[str]:
+    """Just the icon ids of `icon_catalog()`, in the same order."""
+    return [icon_id for icon_id, _filename, _label in icon_catalog()]
+
+
+def catalog_filename(icon_id: str) -> str | None:
+    """The vendored filename for a catalog icon id, or None if unknown."""
+    for candidate, filename, _label in icon_catalog():
+        if candidate == icon_id:
+            return filename
+    return None
+
+
+def search_catalog(query: str) -> list[tuple[str, str, str]]:
+    """Catalog entries matching `query`: every whitespace-separated term must
+    appear (case-insensitively) in the icon id or its human name. An empty
+    query matches everything."""
+    terms = (query or "").lower().split()
+    if not terms:
+        return icon_catalog()
+    return [
+        entry
+        for entry in icon_catalog()
+        if all(
+            term in entry[0].lower() or term in entry[2].lower() for term in terms
+        )
+    ]
+
 
 def load_svg_text(action_id: str) -> str:
     """Read the vendored Breeze SVG for `action_id` as UTF-8 text.
 
-    Raises KeyError for an unknown id.
+    `action_id` may be a legacy action id (`ACTION_ICON_FILES`) or a catalog
+    icon id (an SVG filename stem). Raises KeyError for an unknown id.
     """
-    filename = ACTION_ICON_FILES[action_id]
-    resource = (
-        files("pgtp_editor") / "resources" / "icons" / "breeze" / filename
-    )
+    filename = ACTION_ICON_FILES.get(action_id) or catalog_filename(action_id)
+    if filename is None:
+        raise KeyError(action_id)
+    resource = _breeze_dir() / filename
     return resource.read_text(encoding="utf-8")
 
 

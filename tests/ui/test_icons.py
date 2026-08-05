@@ -126,3 +126,97 @@ def test_themed_icon_renders_requested_color(qapp, command_id):
 def test_themed_icon_accepts_hex_string(qapp):
     icon = icons.themed_icon("open", "#123456")
     assert not icon.isNull()
+
+
+# -- FQ-004: the enumerable catalog over the widened vendored pack -----------
+
+
+def test_catalog_matches_the_vendored_svgs_on_disk():
+    on_disk = sorted(
+        entry.name[: -len(".svg")]
+        for entry in _breeze_dir().iterdir()
+        if entry.name.endswith(".svg")
+    )
+    catalog = icons.icon_catalog()
+    assert [icon_id for icon_id, _filename, _label in catalog] == on_disk
+    # The picker is pointless over a handful of icons -- FQ-004 vendored a
+    # curated common-action subset, so guard the floor.
+    assert len(catalog) >= 60
+
+
+def test_catalog_entries_all_resolve_to_a_real_readable_svg():
+    breeze = _breeze_dir()
+    for icon_id, filename, label in icons.icon_catalog():
+        assert filename == f"{icon_id}.svg"
+        assert (breeze / filename).is_file(), filename
+        assert label and label[0].isupper()
+        text = icons.load_svg_text(icon_id)
+        assert "<svg" in text
+        # Every offered icon must be recolorable by the existing pipeline.
+        assert "currentColor" in text or "232629" in text
+
+
+def test_catalog_is_sorted_and_free_of_duplicates():
+    ids = icons.catalog_ids()
+    assert ids == sorted(ids)
+    assert len(ids) == len(set(ids))
+
+
+def test_catalog_still_contains_the_legacy_seven_unchanged():
+    ids = set(icons.catalog_ids())
+    for filename in icons.ACTION_ICON_FILES.values():
+        assert filename[: -len(".svg")] in ids
+
+
+def test_human_name_for_reads_like_a_label():
+    assert icons.human_name_for("document-save-as") == "Document Save As"
+    assert icons.human_name_for("zoom-in") == "Zoom In"
+
+
+def test_catalog_filename_unknown_id_is_none():
+    assert icons.catalog_filename("no-such-icon") is None
+
+
+def test_search_catalog_filters_by_term_and_is_case_insensitive():
+    all_ids = icons.catalog_ids()
+    zoom = [entry[0] for entry in icons.search_catalog("ZOOM")]
+    assert zoom, "expected the vendored subset to include zoom-* icons"
+    assert all("zoom" in icon_id for icon_id in zoom)
+    assert len(zoom) < len(all_ids)
+
+
+def test_search_catalog_requires_every_term():
+    both = [entry[0] for entry in icons.search_catalog("document save")]
+    assert "document-save-as" in both
+    assert "document-open" not in both
+
+
+def test_search_catalog_empty_query_returns_everything():
+    assert icons.search_catalog("") == icons.icon_catalog()
+    assert icons.search_catalog("   ") == icons.icon_catalog()
+
+
+def test_search_catalog_no_match_is_empty():
+    assert icons.search_catalog("zzzz-not-an-icon") == []
+
+
+def test_load_svg_text_accepts_a_catalog_id_as_well_as_a_legacy_id():
+    # Legacy id and its catalog id name the same artwork.
+    assert icons.load_svg_text("open") == icons.load_svg_text("document-open")
+
+
+def test_themed_icon_renders_a_newly_vendored_catalog_icon(qapp):
+    """A newly vendored icon goes through the SAME pipeline as the legacy
+    seven -- non-null, and genuinely tinted to the requested color."""
+    icon = icons.themed_icon("document-save-as", QColor("#ff0000"))
+    assert isinstance(icon, QIcon)
+    assert not icon.isNull()
+    image = icon.pixmap(22, 22).toImage()
+    assert _has_opaque_pixels(image)
+    assert _colored_pixels(image, QColor("#ff0000")) > 0
+    assert _colored_pixels(image, QColor("#0000ff")) == 0
+
+
+def test_every_catalog_icon_renders_non_null(qapp):
+    for icon_id in icons.catalog_ids():
+        assert not icons.themed_icon(icon_id, QColor("#ff0000")).isNull(), icon_id

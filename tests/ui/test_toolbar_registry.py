@@ -121,3 +121,91 @@ def test_resolve_ids_passes_through_new_ids_and_still_drops_unknowns():
 
 def test_resolve_ids_deduplicates_a_legacy_and_new_id_for_the_same_command():
     assert resolve_ids(["save", "file.save"], _KNOWN) == ["file.save"]
+
+
+# -- FQ-004: per-command icon assignments (still pure/Qt-free) ---------------
+
+from pgtp_editor.ui.toolbar_registry import (  # noqa: E402
+    ICON_ASSIGNMENTS_SETTINGS_KEY,
+    icon_id_for,
+    parse_icon_assignments,
+    resolve_icon_assignments,
+    serialize_icon_assignments,
+)
+
+KNOWN_COMMANDS = ["file.open", "file.save", "file.save-as", "edit.undo"]
+KNOWN_ICONS = ["document-open", "document-save-as", "zoom-in"]
+
+
+def test_settings_key_is_a_sibling_of_toolbar_ids():
+    assert ICON_ASSIGNMENTS_SETTINGS_KEY == "toolbarIconIds"
+
+
+def test_serialize_round_trips_through_parse():
+    mapping = {"file.save-as": "document-save-as", "edit.undo": "zoom-in"}
+    stored = serialize_icon_assignments(mapping)
+    assert stored == ["edit.undo=zoom-in", "file.save-as=document-save-as"]
+    assert parse_icon_assignments(stored) == mapping
+
+
+def test_serialize_drops_empty_entries():
+    assert serialize_icon_assignments({"": "x", "a": ""}) == []
+    assert serialize_icon_assignments(None) == []
+
+
+def test_parse_tolerates_qsettings_shapes():
+    assert parse_icon_assignments(None) == {}
+    assert parse_icon_assignments([]) == {}
+    # QSettings collapses a one-element list to a bare string on some backends.
+    assert parse_icon_assignments("file.open=zoom-in") == {"file.open": "zoom-in"}
+    # An already-parsed dict passes through.
+    assert parse_icon_assignments({"a": "b"}) == {"a": "b"}
+    # Garbage entries are ignored, good ones survive.
+    assert parse_icon_assignments(["junk", 7, "a=b"]) == {"a": "b"}
+
+
+def test_resolve_drops_unknown_command_ids():
+    resolved = resolve_icon_assignments(
+        {"file.save-as": "zoom-in", "gone.command": "zoom-in"},
+        KNOWN_COMMANDS,
+        KNOWN_ICONS,
+    )
+    assert resolved == {"file.save-as": "zoom-in"}
+
+
+def test_resolve_drops_no_longer_vendored_icons():
+    resolved = resolve_icon_assignments(
+        {"file.save-as": "was-removed-upstream"}, KNOWN_COMMANDS, KNOWN_ICONS
+    )
+    assert resolved == {}
+
+
+def test_resolve_maps_legacy_command_ids_like_resolve_ids_does():
+    resolved = resolve_icon_assignments(
+        {"open": "zoom-in"}, KNOWN_COMMANDS, KNOWN_ICONS
+    )
+    assert resolved == {"file.open": "zoom-in"}
+
+
+def test_resolve_of_nothing_is_empty_back_compat():
+    assert resolve_icon_assignments(None, KNOWN_COMMANDS, KNOWN_ICONS) == {}
+    assert resolve_icon_assignments({}, KNOWN_COMMANDS, KNOWN_ICONS) == {}
+
+
+def test_icon_id_for_falls_back_to_the_legacy_default():
+    # Back-compat: with no assignments the legacy seven keep their icons and
+    # everything else stays icon-less, exactly as before FQ-004.
+    for command_id, legacy in ICON_ID_BY_COMMAND.items():
+        assert icon_id_for(command_id, {}) == legacy
+        assert icon_id_for(command_id, None) == legacy
+    assert icon_id_for("file.save-as", {}) is None
+
+
+def test_icon_id_for_assignment_overrides_a_legacy_default():
+    assert icon_id_for("file.save", {"file.save": "zoom-in"}) == "zoom-in"
+
+
+def test_icon_id_for_assignment_gives_an_iconless_command_an_icon():
+    assert icon_id_for("file.save-as", {"file.save-as": "document-save-as"}) == (
+        "document-save-as"
+    )

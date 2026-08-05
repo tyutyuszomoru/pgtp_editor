@@ -463,3 +463,68 @@ def test_saved_ids_are_menu_path_ids_in_settings(qtbot, tmp_path):
     stored = settings.value("toolbarIds")
     stored = stored.split(",") if isinstance(stored, str) else list(stored)
     assert stored == ["file.save-as", "edit.replace"]
+
+
+# --- FQ-004: per-command icon assignments ----------------------------------
+def test_assigned_icon_overrides_the_legacy_default(qtbot, tmp_path):
+    """Any button may be re-decorated, including the legacy seven."""
+    from pgtp_editor.ui.toolbar_registry import icon_id_for
+
+    window = MainWindow(
+        settings=QSettings(str(tmp_path / "s.ini"), QSettings.Format.IniFormat)
+    )
+    qtbot.addWidget(window)
+
+    assert icon_id_for("file.save", {}) == "save"
+    assert icon_id_for("file.save", {"file.save": "document-print"}) == "document-print"
+
+
+def test_icon_assignments_round_trip_through_settings(qtbot, tmp_path):
+    """Saved under a sibling key of toolbarIds, restored on the next window."""
+    from pgtp_editor.ui.toolbar_registry import ICON_ASSIGNMENTS_SETTINGS_KEY
+
+    path = str(tmp_path / "s.ini")
+    window = MainWindow(settings=QSettings(path, QSettings.Format.IniFormat))
+    qtbot.addWidget(window)
+    window._apply_and_save_toolbar_ids(
+        window._toolbar_ids, {"file.save": "document-print"}
+    )
+    window._settings.sync()
+
+    reopened = MainWindow(settings=QSettings(path, QSettings.Format.IniFormat))
+    qtbot.addWidget(reopened)
+
+    assert reopened._settings.value(ICON_ASSIGNMENTS_SETTINGS_KEY) is not None
+    assert reopened._toolbar_icon_ids.get("file.save") == "document-print"
+
+
+def test_an_unknown_assignment_is_dropped_on_load(qtbot, tmp_path):
+    """Self-healing, the way resolve_ids already drops unknown ids: an
+    assignment naming a command that no longer exists must not survive."""
+    from pgtp_editor.ui.toolbar_registry import (
+        ICON_ASSIGNMENTS_SETTINGS_KEY,
+        serialize_icon_assignments,
+    )
+
+    path = str(tmp_path / "s.ini")
+    seed = QSettings(path, QSettings.Format.IniFormat)
+    seed.setValue(
+        ICON_ASSIGNMENTS_SETTINGS_KEY,
+        serialize_icon_assignments({"no.such.command": "document-print"}),
+    )
+    seed.sync()
+
+    window = MainWindow(settings=QSettings(path, QSettings.Format.IniFormat))
+    qtbot.addWidget(window)
+
+    assert "no.such.command" not in window._toolbar_icon_ids
+
+
+def test_no_assignments_leaves_toolbar_behavior_unchanged(qtbot, tmp_path):
+    """Back-compat: an existing saved toolbar keeps each button's default."""
+    window = MainWindow(
+        settings=QSettings(str(tmp_path / "s.ini"), QSettings.Format.IniFormat)
+    )
+    qtbot.addWidget(window)
+
+    assert window._toolbar_icon_ids == {}
