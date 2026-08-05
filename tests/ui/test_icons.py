@@ -11,10 +11,13 @@ import pytest
 from PySide6.QtGui import QColor, QIcon
 
 from pgtp_editor.ui import icons
-from pgtp_editor.ui.toolbar_registry import DEFAULT_TOOLBAR_IDS
+from pgtp_editor.ui.toolbar_registry import LEGACY_COMMANDS
 
 
-ALL_IDS = DEFAULT_TOOLBAR_IDS
+# BUG-027: icons are keyed by the LEGACY command ids (the seven with vendored
+# SVGs), not by the menu-path ids the toolbar now stores -- `_set_action_icon`
+# maps one to the other via `ICON_ID_BY_COMMAND`.
+ALL_IDS = [command_id for command_id, _label in LEGACY_COMMANDS]
 
 
 def _breeze_dir():

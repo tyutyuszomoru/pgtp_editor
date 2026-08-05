@@ -239,6 +239,60 @@ def test_open_ddl_project_auto_opens_the_linked_working_copy(qtbot, tmp_path, mo
     assert window._current_project is not None
 
 
+def test_open_project_action_signal_path_auto_opens_the_linked_working_copy(
+    qtbot, tmp_path, monkeypatch
+):
+    """BUG-021 regression: the test above calls `_open_ddl_project()` directly,
+    so `on_ready` is None and auto-open fires. The REAL menu path goes through
+    `QAction.triggered`, which passes `checked=False` -- and `False is not None`
+    took the on_ready branch, calling `False()`. Drive the actual signal."""
+    from pgtp_editor.db.ddl_project import save_settings
+
+    project_dir = tmp_path / "proj"
+    working_copy = project_dir / "app.pgtp"
+    project_dir.mkdir()
+    working_copy.write_text(_VALID_PGTP, encoding="utf-8")
+    save_settings(
+        project_dir,
+        ProjectSettings(pgtp=PgtpLink(working_copy_path=str(working_copy))),
+    )
+    window = _window(qtbot, tmp_path)
+    import pgtp_editor.ui.main_window as main_window_module
+
+    monkeypatch.setattr(
+        main_window_module.QFileDialog, "getExistingDirectory",
+        staticmethod(lambda *a, **k: str(project_dir)),
+    )
+
+    action = find_action(find_top_menu(window, "File"), "Open Project…")
+    assert action is not None
+    action.trigger()
+
+    assert window._current_project_path == str(working_copy)
+    assert window._current_project is not None
+
+
+def test_new_project_action_signal_path_does_not_treat_checked_as_on_ready(
+    qtbot, tmp_path, monkeypatch
+):
+    """BUG-021, parallel latent defect: `_new_ddl_project` is wired the same
+    way, so the dialog's accepted handler would call `False()` (TypeError)."""
+    window = _window(qtbot, tmp_path)
+    created = []
+    monkeypatch.setattr(
+        MainWindow, "_create_ddl_project", lambda self, dialog: created.append(dialog)
+    )
+
+    action = find_action(find_top_menu(window, "File"), "New Project…")
+    assert action is not None
+    action.trigger()
+
+    dialog = window._new_project_dialog
+    assert isinstance(dialog, NewProjectDialog)
+    dialog.accepted.emit()  # must not raise TypeError: 'bool' object is not callable
+    assert created == [dialog]
+
+
 def test_open_ddl_project_with_no_linked_pgtp_does_nothing(qtbot, tmp_path, monkeypatch):
     from pgtp_editor.db.ddl_project import save_settings
 
@@ -1458,3 +1512,85 @@ def test_ddl_project_state_is_independent_of_current_project(qtbot, tmp_path):
 
     assert window._current_project is None  # untouched -- no .pgtp opened
     assert window._ddl_project_folder is not None
+
+
+# --- BUG-021: the `callable(on_ready)` guard itself ------------------------
+def test_open_ddl_project_treats_a_non_callable_on_ready_as_absent(
+    qtbot, tmp_path, monkeypatch
+):
+    """The hardened guard: `checked=False` (or any non-callable) must fall
+    through to the plain-Open behaviour — auto-opening the linked `.pgtp` —
+    instead of being invoked as a callback."""
+    from pgtp_editor.db.ddl_project import save_settings
+
+    project_dir = tmp_path / "proj"
+    working_copy = project_dir / "app.pgtp"
+    project_dir.mkdir()
+    working_copy.write_text(_VALID_PGTP, encoding="utf-8")
+    save_settings(
+        project_dir,
+        ProjectSettings(pgtp=PgtpLink(working_copy_path=str(working_copy))),
+    )
+    window = _window(qtbot, tmp_path)
+    import pgtp_editor.ui.main_window as main_window_module
+
+    monkeypatch.setattr(
+        main_window_module.QFileDialog, "getExistingDirectory",
+        staticmethod(lambda *a, **k: str(project_dir)),
+    )
+
+    window._open_ddl_project(on_ready=False)
+
+    assert window._current_project_path == str(working_copy)
+
+
+def test_new_ddl_project_treats_a_non_callable_on_ready_as_absent(
+    qtbot, tmp_path, monkeypatch
+):
+    window = _window(qtbot, tmp_path)
+    created = []
+    monkeypatch.setattr(
+        MainWindow, "_create_ddl_project", lambda self, dialog: created.append(dialog)
+    )
+
+    window._new_ddl_project(on_ready=False)
+    window._new_project_dialog.accepted.emit()   # must not raise
+
+    assert created == [window._new_project_dialog]
+
+
+def test_a_real_on_ready_callback_still_runs_on_open(qtbot, tmp_path, monkeypatch):
+    """The other half of the guard: a genuine callable is still honoured (and
+    suppresses the plain-Open auto-open, which is the caller's job then)."""
+    from pgtp_editor.db.ddl_project import save_settings
+
+    project_dir = tmp_path / "proj"
+    project_dir.mkdir()
+    save_settings(project_dir, ProjectSettings())
+    window = _window(qtbot, tmp_path)
+    import pgtp_editor.ui.main_window as main_window_module
+
+    monkeypatch.setattr(
+        main_window_module.QFileDialog, "getExistingDirectory",
+        staticmethod(lambda *a, **k: str(project_dir)),
+    )
+    ran = []
+    window._open_ddl_project(on_ready=lambda: ran.append(True))
+
+    assert ran == [True]
+    assert window._ddl_project_folder == project_dir
+
+
+def test_close_project_action_signal_path_closes_the_project(qtbot, tmp_path):
+    """The third project action is connected bare; triggering it must close
+    the project rather than choke on `triggered`'s `checked` argument."""
+    window = _window(qtbot, tmp_path)
+    project_dir = tmp_path / "proj"
+    project_dir.mkdir()
+    window._set_active_ddl_project(project_dir, ProjectSettings())
+    assert window._close_ddl_project_action.isEnabled() is True
+
+    window._close_ddl_project_action.trigger()
+
+    assert window._ddl_project_folder is None
+    assert window._close_ddl_project_action.isEnabled() is False

@@ -307,21 +307,44 @@ across the project are highlighted so you can unify them.
 
 - **Header filters** — click a column header to filter by its values, Excel-style.
   A **search box** narrows the checkbox list as you type and unchecks values that no
-  longer match, so you can zero in on a large set quickly.
+  longer match, so you can zero in on a large set quickly. A filtered column keeps a
+  **▼** marker in its header, so you can always see which columns are narrowing the grid.
 - **Preset filters from the Project Tree** — a **See … in Caption Mode** action (for a
   table, a detail's table, or a single column — see *The Project Tree*) narrows the
-  grid to just that scope. Whenever one of these is active, an **active-filter banner**
-  appears above the grid, e.g. `Filtered: Field = wbs_id — showing 3 of 214 rows`, with
-  a **Clear** button. The banner (and the preset narrowing) disappears once you clear it.
-- **Clear all filters** — available from the right-click menu, and (when a preset
-  filter is active) from the banner's own **Clear** button. Both clear every filter
-  mechanism at once: header filters, the Find/Filter pattern, and any preset filter.
+  grid to just that scope.
+- **Clear all filters** — available from the right-click menu, and from the
+  active-filter banner's own **Clear** button. Both clear every filter mechanism at
+  once: header filters, the Find/Filter pattern, and any preset filter.
+
+### The active-filter banner
+
+Whenever a preset filter or a **Find/Filter** pattern is narrowing the grid, a banner
+appears above it saying what is filtering and how many rows survive, with a **Clear**
+button at its right:
+
+- A preset filter from the Project Tree reads, for example,
+  `Filtered: Field = wbs_id — showing 3 of 214 rows`.
+- A find filter reads, for example,
+  `Filtered: Find "ord" (all columns) — showing 12 of 340 rows`. The mode is named
+  only when it isn't the default **Normal** one (`regex`, `extended`), and
+  `case-sensitive` is added only when you turned **Match case** on. The scope is
+  always `all columns`, because the find filter matches a row if *any* of its columns
+  matches.
+- With both active, **both descriptors are shown**, joined by `·` — e.g.
+  `Filtered: Field = wbs_id · Find "ord" (regex, all columns) — showing 2 of 214 rows`.
+
+**Per-column header filters are deliberately not described in the banner** — they
+already announce themselves with the **▼** marker on their own column header, which
+the find and preset filters have no equivalent of. The banner's **Clear** button, on
+the other hand, clears *everything* (header filters included) and the banner then
+disappears.
 
 ### Find / Filter / Replace
 
 A shared modal drives searching and bulk editing:
 
-- **Mode:** **String** (literal), **Extended** (escapes like `\n`), or **Regex**.
+- **Mode:** **Normal (plain string)**, **Extended** (escapes like `\n`, `\t`, `\xNN`),
+  or **Regular expression**.
 - **Match case** toggle.
 - **Scope:** **In selection** or **Global**.
 - **Find / Filter** narrows the grid; **Replace** applies to the matched set.
@@ -496,7 +519,8 @@ standalone dialog.
   actually exists in the database. Results appear in the **Database Check** tab in
   the left dock as a tree: a green **✓** marks a match and a red **✗** a mismatch.
   Each table shows its kind — `(T)` table, `(V)` view, `(M)` materialized view — and
-  how many times the project references it `(×N)`; each column shows its datatype,
+  how many times the project references it `(×N)` (the other direction splits this
+  count by role — see below); each column shows its datatype,
   primary keys are underlined, foreign keys are marked `(fk)`, and
   nullability/defaults are noted. **Calculated columns** (marked
   `isCalculated="true"` in the XML) are generator-computed and have no physical
@@ -509,7 +533,15 @@ standalone dialog.
   replace) and re-run the check; the action isn't offered for calculated columns,
   since there is nothing database-side to reconcile.
 - **Check: Database → XML** is the reverse: it lists tables and columns that exist
-  in the database but the project doesn't reference.
+  in the database but the project doesn't reference. Here each table's reference
+  count is **split by the role it is referenced in** — `(P3 D1 L2)` means three page
+  bindings, one detail binding, and two column lookups. A table counts as a match
+  (green **✓**) as soon as **any** role references it, so a table used only as a
+  lookup target — `(P0 D0 L1)` — is not a mismatch. Such a table's columns still
+  show as absent from the project, which is informational: a lookup only ever binds
+  a link field and a display field, so the rest of the table legitimately goes
+  unreferenced. Only a table no role references at all — `(P0 D0 L0)` — is flagged
+  red.
 
 Results are tied to the project they were checked against: **File ▸ Close** closes
 the **Database Check** tab and discards its results (cancelling the close, or
@@ -871,8 +903,9 @@ drift markers (see *DDL Explorer*) refresh at the same time.
 Opening a project also **auto-opens its linked `.pgtp`** into the editor, so you
 don't need a separate **File ▸ Open** afterwards:
 
-- If the project already has exactly one linked working copy, it opens
-  automatically.
+- If the project already has a linked working copy, it opens automatically (if that
+  file is missing from disk, nothing opens — the link is left alone rather than
+  re-guessed).
 - If the project has no linked `.pgtp` yet but its folder contains exactly one
   `.pgtp` file, that one opens instead.
 - If none is found, nothing opens — no error, just an empty editor until you open
@@ -1040,9 +1073,46 @@ simply reads as busy instead of stalled.
   title bar unchecks the menu entry too, and re-checking it brings the panel
   back. **View ▸ Find table reference** toggles the **Table references** tab
   (see *Table References*).
-- **View ▸ Customize Toolbar…** chooses which actions appear on the icon toolbar.
+- **View ▸ Customize Toolbar…** chooses which commands appear on the toolbar (see
+  *The toolbar*, below).
 - Your window size and position, dock layout, theme, and toolbar arrangement are
   remembered between sessions.
+
+### The toolbar
+
+The **Main Toolbar** shows each command as an icon with its label beside it. Out of
+the box it carries seven commands — **File ▸ Open**, **File ▸ Save**, **Edit ▸ Undo**,
+**Edit ▸ Redo**, **Edit ▸ Find**, **Tools ▸ Validate Project**, and **Generation ▸
+Generate PHP** — but it is not limited to them.
+
+**View ▸ Customize Toolbar…** opens a two-list dialog: **Available** on the left,
+**On Toolbar** on the right, with **Add →**, **← Remove**, **Up**, and **Down**
+between them, and **OK** / **Cancel** at the bottom.
+
+- The Available list offers **every command in the menu bar**, listed by its menu
+  path — `File › Save As`, `Schema › Verify XSD`, `Database › DDL Explorer`, and so
+  on — in the order the menus themselves present them. Anything you can invoke from
+  a menu you can put on the toolbar.
+- Commands already on the toolbar stay visible in the Available list but appear
+  **greyed out**, so you can see the whole command set at once and still can't add
+  the same command twice.
+- Two things are deliberately left out: menu **separators**, and the **File ▸ Open
+  Recent** submenu, whose entries change from session to session and so can't be
+  pinned.
+- **Up** / **Down** reorder the On-Toolbar list; **OK** applies the arrangement and
+  remembers it for future sessions, **Cancel** discards your changes.
+
+**Most commands have no icon** — only the original seven ship with one. That is
+by design, not a missing piece: a toolbar button shows its label beside its icon, so
+an icon-less command simply reads as text. An icon is never a precondition for
+putting a command on the toolbar.
+
+A toolbar button *is* the menu item, not a copy of it. It therefore shares that
+menu item's enabled state (a command disabled in the menu is disabled on the
+toolbar), its checked state for toggles such as **Database ▸ DDL Explorer** or
+**View ▸ Light Theme**, and its keyboard shortcut — the button and the menu entry
+can never drift apart. Toolbars you arranged in an earlier version of the editor
+are carried over unchanged.
 
 ---
 

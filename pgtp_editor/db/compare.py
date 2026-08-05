@@ -54,6 +54,12 @@ class TableCheck:
     kind: str | None
     invocations: int
     columns: list[ColumnCheck] = field(default_factory=list)
+    # BUG-026: the aggregate `invocations` split by the role the table is
+    # referenced in — page binding, detail binding, column lookup. Defaulted to
+    # 0 so callers that only care about the aggregate need not change.
+    page_count: int = 0
+    detail_count: int = 0
+    lookup_count: int = 0
 
 
 def xml_table_columns(project) -> dict[str, dict[str, bool]]:
@@ -95,6 +101,29 @@ def xml_table_invocations(project) -> dict[str, int]:
     return {usage.name: len(usage.breadcrumbs) for usage in collect_table_usages(project)}
 
 
+def xml_table_role_counts(project) -> dict[str, dict[str, int]]:
+    """Map each table to its reference count split by role (BUG-026).
+
+    ``{tableName: {"page": n, "detail": n, "lookup": n}}``. Derived from the
+    same `collect_table_usages` walk as `xml_table_invocations`, tallying each
+    reference by its ``kind``: ``"page"``/``"detail"`` are table bindings, and
+    ``"column"`` is by construction a column lookup (`visit_columns` only emits
+    a column reference when ``column.lookup`` carries a ``tableName``).
+    """
+    result: dict[str, dict[str, int]] = {}
+    for usage in collect_table_usages(project):
+        counts = {"page": 0, "detail": 0, "lookup": 0}
+        for ref in usage.references:
+            if ref.kind == "page":
+                counts["page"] += 1
+            elif ref.kind == "detail":
+                counts["detail"] += 1
+            elif ref.kind == "column":
+                counts["lookup"] += 1
+        result[usage.name] = counts
+    return result
+
+
 def check_xml_against_db(project, schema: DatabaseSchema) -> list[TableCheck]:
     """For each XML-referenced table/column, mark found/missing against the DB."""
     columns_by_table = xml_table_columns(project)
@@ -128,6 +157,7 @@ def check_db_against_xml(project, schema: DatabaseSchema) -> list[TableCheck]:
     """For each DB table/column, mark present/absent in the XML."""
     columns_by_table = xml_table_columns(project)
     invocations = xml_table_invocations(project)
+    role_counts = xml_table_role_counts(project)
 
     checks: list[TableCheck] = []
     for table_name in sorted(schema.tables):
@@ -141,13 +171,24 @@ def check_db_against_xml(project, schema: DatabaseSchema) -> list[TableCheck]:
             )
             for column in sorted(table_info.columns, key=lambda c: c.name)
         ]
+        roles = role_counts.get(table_name, {})
+        page_count = roles.get("page", 0)
+        detail_count = roles.get("detail", 0)
+        lookup_count = roles.get("lookup", 0)
         checks.append(
             TableCheck(
                 name=table_name,
-                ok=table_name in columns_by_table,
+                # BUG-026: a DB table is a genuine mismatch only when the XML
+                # references it in NO role. `columns_by_table` never sees
+                # column-lookup targets, so keying `ok` off it flagged
+                # lookup-only tables red while they showed a nonzero count.
+                ok=(page_count + detail_count + lookup_count) > 0,
                 kind=table_info.kind,
                 invocations=invocations.get(table_name, 0),
                 columns=column_checks,
+                page_count=page_count,
+                detail_count=detail_count,
+                lookup_count=lookup_count,
             )
         )
     return checks

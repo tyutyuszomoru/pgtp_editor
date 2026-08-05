@@ -1,6 +1,6 @@
 # PGTP Editor — Consolidated Specification
 
-> **Status:** living document · **Last synthesized:** 2026-08-05 (§18.8 corrected to the 5-node model, then given its concrete per-node state enumeration + dark-mode asset convention, then a same-day fix to the Quality node's locked/gray semantic and the Sandbox2 install-state-vs-lint-result semantic; later the same day, BUG-020/021/022/023/024/025 folded in — Captions' preset row-predicate filter + active-filter banner + Unify scope prompt, §18.2's Open-Project validity gate + auto-open of the linked `.pgtp`, the tabbed Project Settings dialog, and Connection Setup… becoming projectless-mode-only; later still the same day, §18.1's Tables branch widened to every table (not just trigger-owning ones) plus click-to-Properties-panel column detail, with `ColumnInfo.comment` added)
+> **Status:** living document · **Last synthesized:** 2026-08-05 (§18.8 corrected to the 5-node model, then given its concrete per-node state enumeration + dark-mode asset convention, then a same-day fix to the Quality node's locked/gray semantic and the Sandbox2 install-state-vs-lint-result semantic; later the same day, BUG-020/021/022/023/024/025 folded in — Captions' preset row-predicate filter + active-filter banner + Unify scope prompt, §18.2's Open-Project validity gate + auto-open of the linked `.pgtp`, the tabbed Project Settings dialog, and Connection Setup… becoming projectless-mode-only; later still the same day, §18.1's Tables branch widened to every table (not just trigger-owning ones) plus click-to-Properties-panel column detail, with `ColumnInfo.comment` added; and finally BUG-021/026/027/028 — §18.2's project-action lambda wiring that made the `.pgtp` auto-open actually reachable, §17's role-split `(P# D# L#)` DB→XML counts and any-role mismatch rule, §7's toolbar widened to every menu command with menu-path ids, and §13's active-filter banner extended to the whole-row find filter)
 > **Source of truth:** this file is the single reconciled specification for PGTP Editor, and the **only**
 > place specification content is written. It was originally synthesized from the dated design specs under
 > [`docs/superpowers/specs/`](specs/) — a folder now **frozen as historical record** (read for rationale;
@@ -509,11 +509,54 @@ restore. Tests assert palette roles rather than pixels.
 **Window-state persistence:** `closeEvent` saves `saveGeometry()`/`saveState()` to QSettings; restored
 on construction (default size on a fresh install). Tests use a temp QSettings scope.
 
-**Toolbar:** a `QToolBar` driven by a stable action-id registry (`toolbar_registry.py`). Default set:
-Open, Save, Undo, Redo, Find, Validate, Generate. **Customize Toolbar** dialog (two lists +
-Add/Remove/Up/Down) writes an ordered id list, persisted in QSettings. The **Available list shows all
-registry commands in registry order, always**; commands already on the toolbar are shown **disabled**
-(not removed). Test seams `selected_ids()`/`set_ids()`; never `.exec()` in tests.
+**Toolbar:** a `QToolBar` whose customizable universe is **every menu command**, not a hand-maintained
+registry (BUG-027, 2026-08-05). `toolbar_registry.py` is reduced to **pure, Qt-free identity rules** —
+`normalize_label` (strips `&` mnemonics and a trailing `…`/`...`), `slugify`, `command_id_for(path)`
+(`["File","Save As..."] → "file.save-as"`), `menu_path_label(path)` (`"File › Save As"`),
+`LEGACY_COMMANDS` (the pre-widening seven, kept because they name the vendored icon files and define the
+default), `LEGACY_ID_ALIASES`, `DEFAULT_TOOLBAR_IDS`, `ICON_ID_BY_COMMAND`, plus `valid_ids` and
+`resolve_ids`. It holds **no command list**.
+
+- **Ids are derived from the menu path, never hand-assigned.** A newly added menu action becomes
+  toolbar-available with zero bookkeeping; the accepted trade-off is that *renaming* a menu label
+  changes its id and drops that one button from an already-saved toolbar (self-healing — the user
+  re-adds it).
+- **Enumeration walks the live menu bar.** `MainWindow._walk_menu_actions` is a depth-first walk of
+  `menuBar().actions()` yielding `(id, label, QAction)` for every **leaf** command;
+  `_all_menu_commands()` returns the ordered `(id, label)` pairs and `_collect_menu_commands()` refreshes
+  both `_menu_command_pairs` and the `_menu_commands` id→QAction map (also re-run at
+  `_open_customize_toolbar` time so commands added since startup are offered). **Skipped:** separators,
+  submenu placeholder actions (an action that opens a submenu is not itself a command), and the dynamic
+  **Open Recent** submenu wholesale — its children are transient per-session file entries and must never
+  be pinnable. Duplicate ids get a numeric `-2`, `-3` suffix so an id always resolves to exactly one
+  action.
+  > **Trap, load-bearing:** `QAction.menu()` hands the returned `QMenu`'s ownership to Python, so letting
+  > that wrapper go out of scope **destroys the real menu and every action in it** (this crashed startup
+  > with *"Internal C++ object (QAction) already deleted"* the moment `_restore_theme` touched the View
+  > menu). Every submenu descended into — **and the action that owns it** — is pinned for the window's
+  > lifetime in `_menu_keepalive`/`_menu_keepalive_seen`; that list is **never cleared** to re-pin.
+- **The toolbar hosts the menus' OWN QActions.** `_apply_toolbar_ids` calls
+  `toolbar.addAction(self._menu_commands[command_id])` — not a lookalike wired through a slot table — so
+  a button shares the menu item's slot, enabled state, checked state (View-menu dock toggles stay in
+  sync) and shortcut for free and can never drift. Corollary: repopulating uses
+  `removeAction` in a loop, **never `QToolBar.clear()`**, which in PySide *deletes* the underlying
+  QActions and would destroy live menu items.
+- **Icons are optional.** Only the legacy seven have vendored SVGs (`ICON_ID_BY_COMMAND` maps menu-path
+  id → `icons.ACTION_ICON_FILES` key); every other command is icon-less by design — an icon is never a
+  precondition for putting a command on the toolbar, and text-beside-icon copes. `_set_action_icon` also
+  calls `setIconVisibleInMenu(False)`, so decorating a shared action for the toolbar does not change how
+  the menu looks. `_refresh_toolbar_icons` re-tints on every theme change.
+- **Back-compat.** Saved toolbars from before the widening hold legacy ids; `resolve_ids` maps them
+  through `LEGACY_ID_ALIASES` (`open→file.open`, `save→file.save`, `undo→edit.undo`, `redo→edit.redo`,
+  `find→edit.find`, `validate→tools.validate-project`, `generate→generation.generate-php`) before
+  `valid_ids` filters, so an existing user's toolbar survives instead of silently emptying to the
+  default. `DEFAULT_TOOLBAR_IDS` is those seven aliases in legacy order.
+
+**Customize Toolbar** dialog (two lists + Add/Remove/Up/Down) writes an ordered id list, persisted in
+QSettings key `toolbarIds`. The **Available list shows all menu commands in menu order, always**, each
+labelled by its menu path (`File › Save As`) so the long list stays scannable; commands already on the
+toolbar are shown **disabled** (not removed). Test seams `selected_ids()`/`set_ids()`; never `.exec()` in
+tests.
 
 ---
 
@@ -1124,15 +1167,39 @@ per-column **header filter** popups (non-modal, checkable distinct values) via p
 the Browser Pane's "See column in caption mode" entry path (`filter_to_field`/`filter_to_table`/
 `filter_to_table_details`, reached via `MainWindow._on_tree_see_column_in_caption` →
 `enter_caption_mode_for_field`/`enter_caption_mode_for_table_details`) rather than by any grid widget —
-it narrows to a semantic condition (e.g. `field_name == "wbs_id"`) no manual gesture produces. Unlike
-the header filter (which repaints the affected column header with the `_FILTER_INDICATOR`), the preset
-predicate is surfaced via a dedicated **active-filter banner**: a `QLabel` + "Clear" `QPushButton`
-inserted above `self._table`, shown whenever `row_predicate_label()` is non-empty, reading
-`"Filtered: <label> — showing N of M rows"` (label examples: `Field = wbs_id`, `Table = pr.equip`,
-`Table = pr.att  (Detail embeds)`); hidden by `clear_all_filters()`, the single path that deactivates the
-predicate. The header ▼ indicator stays exclusive to `set_value_filter`; the banner is the only surface
-for the preset predicate, which is not per-column. **(The earlier inline per-column QLineEdit filter row
-was removed.)** Right-click: Insert NULL, Go to line in XML (Ctrl+G, injected `on_go_to_line`),
+it narrows to a semantic condition (e.g. `field_name == "wbs_id"`) no manual gesture produces.
+
+**Active-filter banner** (BUG-020, extended by BUG-028, both 2026-08-05). A `QLabel` + "Clear"
+`QPushButton` (`self._filter_banner` / `self._filter_banner_label`) inserted above `self._table`,
+refreshed by `_refresh_filter_banner()` after **every** preset filter setter, after `apply_find_filter`
+and after `clear_all_filters` — always *after* the proxy has been invalidated, so the row counts are the
+new ones. It represents **two** of the three mechanisms, joined by `"  ·  "` when both are active, and
+reads `"Filtered: <descriptors> — showing N of M rows"` (`N = _proxy.rowCount()`,
+`M = _model.rowCount()`):
+
+| Source | Descriptor | Example |
+|---|---|---|
+| Preset row-predicate | `_proxy.row_predicate_label()` | `Field = wbs_id`, `Table = pr.equip`, `Table = pr.att  (Detail embeds)`, `Field = wbs_id  ·  Table = pr.equip` |
+| Whole-row find filter | `_find_filter_descriptor()` | `Find "ord" (all columns)`, `Find "^Ord$" (regex, case-sensitive, all columns)` |
+
+`_find_filter_descriptor()` returns `""` when `_proxy.find_pattern()` is empty; otherwise it builds
+`Find "<pattern>" (<qualifiers>)` where the qualifiers list names the mode only when it is **not** the
+default Normal (`regular` → `regex`, `extended` → `extended`), adds `case-sensitive` only when the case
+flag is set, and **always** ends with **`all columns`** — the honest scope statement, because
+`_passes_find_filter` accepts a row iff any column matches across `range(model.columnCount())`. Mode and
+case are read through the proxy getters `find_mode()`/`find_case()` (added alongside the existing
+`find_pattern()`), never off the private attributes. The banner **hides only when neither** descriptor is
+present; `clear_all_filters()` remains the single path that deactivates everything (it already clears the
+find pattern) — no second clear path exists. `apply_find_filter` refreshes only **after**
+`set_regex_filter` returns normally, since an invalid regex raises `ValueError`.
+
+**Header value filters are deliberately NOT represented in the banner** — they keep their own per-column
+`_FILTER_INDICATOR` ▼ marker, and the ▼ marker stays exclusive to `set_value_filter`. Conversely the
+preset predicate and the find filter are **not** per-column (the find filter is whole-row), so the banner
+is their only surface — no ▼ is ever painted for them. **(The earlier inline per-column QLineEdit filter
+row was removed.)**
+
+Right-click: Insert NULL, Go to line in XML (Ctrl+G, injected `on_go_to_line`),
 **Transform ▸**, **Unify** (set all inconsistent siblings to this value — see the scope prompt below when
 a filter is active). Ctrl+C copies cells tab/newline-separated; Ctrl+V fills New Value (Excel vertical
 fill). Decoupled from MainWindow via injected callbacks.
@@ -1303,8 +1370,22 @@ needs a **per-project** key; §18.5 D2 needs a **profile role** (`target` | `san
   fn; `fetch_schema`/`test_connection` take `runner=` for fakes. `test_connection` runs `SELECT 1`,
   returns `(ok, message)`, never raises.
 - `db/compare.py` (pure): `check_xml_against_db` (XML→DB) and `check_db_against_xml` (DB→XML) →
-  `TableCheck{name, ok, kind, invocations, columns:[ColumnCheck]}`; reuses `analysis/reused_tables.py`
-  traversal. `ColumnCheck{name, ok, info: ColumnInfo|None = None, is_calculated: bool = False}` —
+  `TableCheck{name, ok, kind, invocations, columns:[ColumnCheck], page_count=0, detail_count=0,
+  lookup_count=0}`; reuses `analysis/reused_tables.py` traversal. **Role-split reference counts and the
+  DB→XML mismatch rule** (BUG-026, 2026-08-05): `xml_table_role_counts(project) -> dict[str, dict[str,
+  int]]` maps `tableName` → `{"page": n, "detail": n, "lookup": n}`, derived from the **same**
+  `collect_table_usages` walk as the aggregate `xml_table_invocations` (kept for back-compat) by tallying
+  each `TableReference.kind` — `"page"`/`"detail"` are table bindings and `"column"` is by construction a
+  column **lookup** (`visit_columns` emits a column reference only when `column.lookup` carries a
+  `tableName`). `check_db_against_xml` populates the three counts from it and computes
+  **`ok = (page_count + detail_count + lookup_count) > 0`** — *referenced in **any** role* — replacing the
+  earlier `table_name in columns_by_table`, which consulted only `xml_table_columns` (page/detail bindings
+  only) and therefore marked a **lookup-only table a red mismatch while simultaneously showing it a
+  nonzero invocation count**. `xml_table_columns`/`columns_by_table` are untouched and still drive the
+  per-column present/absent check — a lookup-only table legitimately shows all-absent columns, which is
+  informational, not a mismatch. `ok` stays the **single** mismatch signal: the panel's red styling, its
+  header mismatch count, its "Show only mismatches" filter and the UserRole tuple all key off it, and no
+  second "role counts" flag is introduced. `ColumnCheck{name, ok, info: ColumnInfo|None = None, is_calculated: bool = False}` —
   `is_calculated` (last, defaulted, so `check_db_against_xml`'s constructions need no change) carries
   the XML-side `isCalculated="true"` flag via `ColumnNode.is_calculated` (§6). `xml_table_columns`
   returns `dict[str, dict[str, bool]]` (`tableName` → `fieldName` → is_calculated), **OR-unioned**
@@ -1331,8 +1412,12 @@ it directly on a missing connection and must be rerouted to **Project Settings�
 is open, rather than opening the now-meaningless standalone dialog.
 `ConnectionSetupDialog` (host/port/database/user, password EchoMode.Password, Test + status, plaintext
 caveat; API `set_params`/`params()`/`test()`). `DbCheckPanel` (header: direction + `user@host:port/db` +
-mismatch count; "Show only mismatches" toggle; `QTreeWidget` with `(T)`/`(V)`/`(M)` prefixes, `(×N)`
-invocation counts, datatypes, PK underline, `(fk)`). **Three-way column glyph/color convention:**
+mismatch count; "Show only mismatches" toggle; `QTreeWidget` with `(T)`/`(V)`/`(M)` prefixes, datatypes,
+PK underline, `(fk)`). **Per-table count suffix is direction-dependent** (BUG-026): **DB→XML** renders the
+role split `(P{page_count} D{detail_count} L{lookup_count})` — e.g. `(P3 D1 L2)`, no `×` — so a
+lookup-only table reads as referenced instead of as a "`(×N)` but red" contradiction; **XML→DB** keeps the
+aggregate `(×N)` (`check_xml_against_db` does not populate the role fields). A DB table is red **iff no
+role references it at all**, which falls out of `TableCheck.ok` with no extra condition in the panel. **Three-way column glyph/color convention:**
 calculated (`ColumnCheck.is_calculated`) → orange `~` (`_CALC_COLOR = QColor("#d08a1a")`); else
 `ok` → green ✓ (`_OK_COLOR`); else red ✗ (`_BAD_COLOR`). Calculated columns are **never counted as
 mismatches** — excluded from the header mismatch count and hidden under "Show only mismatches" —
@@ -1979,6 +2064,18 @@ and reuses the existing `open_project_file` loader rather than a second load pat
 - **Not yet linked, and multiple `*.pgtp` candidates** — never guess: report the file names via the
   Audit panel (`[Project] Multiple .pgtp files found in … — open one explicitly via File > Open.`) and
   leave the editor as-is.
+
+> **The menu actions are lambda-wrapped, and this is load-bearing, not style.** `QAction.triggered`
+> emits a `checked: bool`, so `open_project_action.triggered.connect(self._open_ddl_project)` invokes
+> `_open_ddl_project(False)` — binding `on_ready=False`, which is *not* `None`, so the old
+> `if on_ready is not None:` guard took the callback branch and called `False()`. The auto-open was
+> therefore **dead code on the only path a user can reach it by**, while its unit test (which called the
+> method directly) passed. Both project actions are wired as
+> `…triggered.connect(lambda: self._open_ddl_project())` /
+> `…triggered.connect(lambda: self._new_ddl_project())`, and the guard is hardened to
+> **`if callable(on_ready):`** as defence in depth. Any argument-less action slot with optional
+> parameters must be wired the same way. **Regression tests must drive the real signal**
+> (`action.trigger()`), never just call the method — a direct call cannot reproduce this class of bug.
 
 #### Neither browsing nor single-object editing needs a project — only *versioning* does
 
@@ -4474,6 +4571,10 @@ is authoritative** (and is what appears in the body above).
 | 2026-08-05 | The "Project Status" window/screen was named as the planned destination for tier/capability/degradation-reason display (top of §18, added same day) but stated explicitly as **NOT YET DESIGNED** — "the owner has UI reference images saved locally for it but has not yet specified its layout or behavior," recorded as an open question in §29 | **New §18.8: the window is now fully specified as a node-and-connector diagram** — quality (target-DB connection) → app (`ProjectCapabilityStatus`/`ProjectTier`'s 4 named states: `app_standalone`/`app_sandbox_not_set_up`/`app_sandbox_connection_ok`/`app_sandbox_offline`) → sandbox1 (data-fill status, upper) / sandbox2 (`plpgsql_check` capability, lower), the app→sandbox connector splitting in two. Sandbox1/sandbox2/their connector are **absent, not grayed out**, whenever no sandbox is configured at all (mirroring §18.5 carve-out 2 / §18.7's absent-not-disabled rule). All four node families are clickable, each opening a node-specific "action window." **Deliberately left open, not invented:** the four action windows' exact contents/behavior (§29), the exact connector state set beyond the `connector_[status]` naming convention, and the menu/shortcut entry point — this row fills the previously-flagged design gap, it does not merely reword it |
 | 2026-08-05 | §18.8's just-written **4-node** model (row directly above, same day): a single 4-state `app_*` node (`app_standalone`/`app_sandbox_not_set_up`/`app_sandbox_connection_ok`/`app_sandbox_offline`) that **conflated project tier and sandbox live connectivity into one node**, in a `quality → app → (sandbox1 / sandbox2)` chain | **Corrected to a 5-node model** — a real correction of just-written design, not a refinement of the still-open question, hence its own ledger row. Chain is now `quality → app → sandbox → (sandbox1 / sandbox2)`. **App node narrowed to 3 states, project tier only** (`app_standalone`/`app_project_not_setup`/`app_project_setup`), mapping onto `ProjectTier`'s existing `QUALITY`/`DEVELOPMENT` plus "no project open" (not itself a `ProjectTier` member — see the App-node implementation note in §18.8). **New, distinct `sandbox_*` node** takes over the live-connectivity states the old `app_*` node used to carry, plus a new `sandbox_tools_missing` state (sandbox DB reachable but `psql`/`pg_restore` absent, relevant only under `SandboxMode.WITH_DATA`) that the 4-node model had no room for. Sandbox1/sandbox2 unchanged in meaning. Click-through is also corrected from one uniform pattern to two: Quality/Sandbox open a one-step status/reconnect-or-help window; Sandbox1/Sandbox2 open a two-step status+help window with an embedded action button ("run data clone now" / "run `plpgsql_check` install now"); the App node's action window remains the one genuinely unspecified click-through, carried over from the prior pass. Absence rule widened from "sandbox1/sandbox2 absent" to "sandbox node + sandbox1 + sandbox2 + their connectors all absent" when no sandbox is configured. **Implementation note, not papered over:** the shipped `ProjectCapabilityStatus`/`ProjectTier`/`SandboxCapabilities` shapes in `pgtp_editor/db/sandbox.py` do not need new members to support this corrected model, but they also do not natively expose "is a project open at all?" (needed for `app_standalone`) — the window's rendering logic must add that check itself rather than reading it off `ProjectCapabilityStatus`, which only ever describes an already-open project |
 | 2026-08-05 | §18's three-modes table (Tier 1) and the Database-menu descriptions (§17's "UI:" paragraph, §26) listed **Connection Setup…** as unconditionally available, with no mode gating stated one way or the other (an incidental omission, not a considered decision — BUG-024) | **Connection Setup… is projectless-mode only.** While a §18.2 local project is open, the project's own `ProjectSettings.target`/`.sandbox` (edited via **Project Settings…**) is the sole connection store; the app-level `Connection Setup…` action is now disabled (`self._connection_setup_action.setEnabled(self._ddl_project_folder is None)`, refreshed by `_refresh_project_dependent_actions()` on both project open and close) and `_open_connection_setup()`/the two internal missing-connection callers (`_run_db_check`, `_open_ddl_explorer`) reroute to Project Settings… instead of opening the dialog while a project is active. Corrects the prior unconditional-availability framing in both §18's Tier-1 row and §17/§26's Database-menu prose |
+| 2026-08-05 | §18.2's auto-open of a project's linked `.pgtp` (added earlier the same day) was specified as behavior only, with the menu wiring left unstated — and as shipped it was **dead on the only path a user can reach**: `open_project_action.triggered.connect(self._open_ddl_project)` let `QAction.triggered`'s `checked: bool` bind to `on_ready`, so `on_ready=False` passed the `if on_ready is not None:` guard, called `False()` and never reached the auto-open branch (BUG-021, reopened after 2508d2a) | **The wiring is now part of the specification, not an implementation detail:** both project actions are connected through an argument-swallowing lambda (`lambda: self._open_ddl_project()` / `lambda: self._new_ddl_project()`) and both guards are hardened from `is not None` to **`callable(on_ready)`**. The `_auto_open_linked_pgtp` zero/one/multiple logic is unchanged — it was always correct. Generalized rules recorded in §18.2: any argument-less action slot with optional parameters is lambda-wrapped, and a regression test for such a slot must drive the **real signal** (`action.trigger()`), since a direct method call cannot reproduce the defect (the pre-existing test passed against dead code) |
+| 2026-08-05 | §17 `TableCheck{name, ok, kind, invocations, columns}`, with `check_db_against_xml`'s table-level `ok = table_name in columns_by_table` — i.e. *"the table name appears among the **page/detail** bindings"* — and `DbCheckPanel` rendering a single aggregate `(×N)` invocation count in **both** directions (BUG-026) | **`TableCheck` gains `page_count`/`detail_count`/`lookup_count`** (defaulted, so `check_xml_against_db` is untouched), populated from the new **`xml_table_role_counts(project)`** in `db/compare.py`, and the DB→XML table-level rule becomes **`ok = (page_count + detail_count + lookup_count) > 0`** — *referenced in **any** role, page, detail **or** lookup*. A lookup-only table is therefore no longer a red mismatch contradicting its own nonzero count. The **DB→XML** tree shows the role split `(P# D# L#)`; **XML→DB** keeps `(×N)`. `xml_table_columns`/`xml_table_invocations` are unchanged and still drive the per-column check and the aggregate; `ok` remains the **single** mismatch signal for styling, the header count, "Show only mismatches" and the UserRole tuple — no parallel role-count mismatch flag |
+| 2026-08-05 | §7 (and the 2026-07-20 ledger row *"Toolbar Available = registry-minus-present" → "Available = all commands, present ones disabled"*, whose **"all commands" meant all commands in the static registry**): the toolbar was *"driven by a stable action-id registry (`toolbar_registry.py`)"* holding a hardcoded 7-entry `AVAILABLE_COMMANDS`, with each toolbar button a **freshly-built `QAction`** wired through a hardcoded `_toolbar_slots` dict — a closed universe that could never offer a real menu command (BUG-027) | **Available = every MENU command**, enumerated by walking the live menu bar (`MainWindow._walk_menu_actions`/`_all_menu_commands`/`_collect_menu_commands`), with ids **derived from the menu path** (`File › Save As... → file.save-as`) instead of hand-assigned. `AVAILABLE_COMMANDS` and `_toolbar_slots` are gone; `toolbar_registry.py` is reduced to pure identity rules (`normalize_label`/`slugify`/`command_id_for`/`menu_path_label`, `LEGACY_COMMANDS`, `LEGACY_ID_ALIASES`, `DEFAULT_TOOLBAR_IDS`, `ICON_ID_BY_COMMAND`, `valid_ids`, `resolve_ids`). The toolbar hosts the **menus' own QActions**, so a button shares the menu item's slot, enabled state, checked state and shortcut (hence `removeAction` in a loop, never `QToolBar.clear()`, which deletes them). Icons stay **optional** — only the legacy seven have vendored SVGs, and they are hidden in menus (`setIconVisibleInMenu(False)`). Pre-widening saved toolbars survive via `LEGACY_ID_ALIASES` applied in `resolve_ids`. Excluded from the walk: separators, submenu placeholders, and the dynamic **Open Recent** submenu wholesale. Load-bearing gotcha recorded in §7: `QAction.menu()` transfers ownership to Python, so every descended submenu **and its owning action** is pinned in `_menu_keepalive` for the window's lifetime |
+| 2026-08-05 | §13's active-filter banner (BUG-020, earlier the same day) represented **only** the preset row-predicate: `_refresh_filter_banner` read `row_predicate_label()` and hid the banner whenever that label was empty, and `apply_find_filter` never refreshed it — so a find filter narrowed the grid with nothing on screen stating the find text, its mode/case or its scope (BUG-028) | **The banner represents the whole-row find filter as well.** `apply_find_filter` refreshes the banner (only after `set_regex_filter` returns normally — an invalid regex raises), and `_refresh_filter_banner` composes **both** descriptors, joined by the same `"  ·  "` separator: the preset label, and `_find_filter_descriptor()`'s `Find "<pattern>" (<qualifiers>)` — mode named only when non-default (`regex`/`extended`), `case-sensitive` only when set, always ending with **`all columns`** (the find filter matches any column, so that is the honest scope). Mode/case are read through new proxy getters `find_mode()`/`find_case()`. The banner hides only when **neither** is present; `clear_all_filters()` stays the single clear path. **Header value filters remain deliberately unrepresented** in the banner — they keep their exclusive per-column ▼ marker, which is never painted for the find filter or the preset predicate |
 
 ---
 

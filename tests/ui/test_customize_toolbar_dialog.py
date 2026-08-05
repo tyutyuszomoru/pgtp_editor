@@ -3,7 +3,19 @@
 The dialog is driven via its slot methods and accessors; never `.exec()`'d.
 """
 from pgtp_editor.ui.customize_toolbar_dialog import CustomizeToolbarDialog
-from pgtp_editor.ui.toolbar_registry import AVAILABLE_COMMANDS
+
+# The dialog is generic over whatever (id, label) pairs it is handed -- since
+# BUG-027 that is the live menu walk, not a registry constant, so these tests
+# supply their own fixed sample set rather than importing one.
+AVAILABLE_COMMANDS = [
+    ("open", "Open"),
+    ("save", "Save"),
+    ("undo", "Undo"),
+    ("redo", "Redo"),
+    ("find", "Find"),
+    ("validate", "Validate"),
+    ("generate", "Generate"),
+]
 
 
 def _dialog(qtbot, current_ids):

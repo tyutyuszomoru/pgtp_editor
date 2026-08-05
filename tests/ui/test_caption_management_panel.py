@@ -445,6 +445,17 @@ def test_find_filter_matches_any_cell(qtbot):
     # whose anchor/value contain it.
     panel.apply_find_filter("ord", "normal", False)
     assert sorted(_visible_value_column(panel)) == ["Ord", "Orders"]
+    # BUG-028: the find filter is represented in the active-filter banner, with
+    # its whole-row scope stated explicitly.
+    assert panel._filter_banner.isVisibleTo(panel)
+    banner = panel._filter_banner_label.text()
+    assert 'Find "ord"' in banner
+    assert "all columns" in banner
+    assert "showing 2 of 3 rows" in banner
+    # Getters mirroring find_pattern() (BUG-028).
+    assert panel._proxy.find_pattern() == "ord"
+    assert panel._proxy.find_mode() == "normal"
+    assert panel._proxy.find_case() is False
 
 
 def test_find_filter_regex_mode(qtbot):
@@ -458,6 +469,15 @@ def test_find_filter_regex_mode(qtbot):
     )
     panel.apply_find_filter(r"^Ord$", "regular", True)
     assert _visible_value_column(panel) == ["Ord"]
+    # BUG-028: non-default mode/case are named in the banner descriptor.
+    assert panel._filter_banner.isVisibleTo(panel)
+    banner = panel._filter_banner_label.text()
+    assert 'Find "^Ord$"' in banner
+    assert "regex" in banner
+    assert "case-sensitive" in banner
+    assert "all columns" in banner
+    assert panel._proxy.find_mode() == "regular"
+    assert panel._proxy.find_case() is True
 
 
 def test_empty_find_filter_shows_all_rows(qtbot):
@@ -470,8 +490,12 @@ def test_empty_find_filter_shows_all_rows(qtbot):
         ]
     )
     panel.apply_find_filter("home", "normal", False)
+    assert panel._filter_banner.isVisibleTo(panel)
     panel.apply_find_filter("", "normal", False)
     assert sorted(_visible_value_column(panel)) == ["Home", "Orders"]
+    # BUG-028: with no preset predicate active, clearing the pattern hides the
+    # banner again.
+    assert panel._filter_banner.isHidden()
 
 
 def test_sorting_by_line_column_is_numeric(qtbot):
@@ -926,6 +950,8 @@ def test_apply_find_filter_invalid_regex_raises(qtbot):
     panel.load_entries(_replace_entries())
     with pytest.raises(ValueError):
         panel.apply_find_filter("(", "regular", True)
+    # BUG-028: the banner must not advertise a filter that was rejected.
+    assert panel._filter_banner.isHidden()
 
 
 def test_current_filter_pattern_reflects_active_filter(qtbot):
@@ -1572,6 +1598,27 @@ def test_filter_to_field_with_table_builds_combined_banner_label(qtbot):
     assert "Table = pr.equip" in label
 
 
+def test_banner_combines_preset_predicate_and_find_filter(qtbot):
+    """BUG-028: with both a preset row predicate and a find filter active, the
+    single banner shows both descriptors joined by the `·` separator, and the
+    existing single clear path hides it."""
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    panel.load_entries(_context_entries())
+    panel.filter_to_field("wbs_id", table_name="pr.equip")
+    panel.apply_find_filter("WBS", "normal", False)
+    assert panel._filter_banner.isVisibleTo(panel)
+    label = panel._filter_banner_label.text()
+    assert "Field = wbs_id" in label
+    assert "Table = pr.equip" in label
+    assert 'Find "WBS"' in label
+    assert "all columns" in label
+    assert "·" in label
+    assert "showing 1 of 5 rows" in label
+    panel.clear_all_filters()
+    assert panel._filter_banner.isHidden()
+
+
 def test_filter_to_field_selects_row_regardless_of_latched_shift_modifier(qtbot):
     """BUG-018: QTableView.selectRow reads the process-global keyboard
     modifiers and silently selects nothing if Shift happens to be latched
@@ -1600,7 +1647,11 @@ def test_clear_all_filters_resets_everything(qtbot):
     panel = CaptionManagementPanel()
     qtbot.addWidget(panel)
     panel.load_entries(_context_entries())
-    panel._proxy.set_regex_filter("Name", "normal", False)
+    panel.apply_find_filter("Name", "normal", False)
+    # BUG-028: the find filter alone already makes the banner visible, before
+    # any preset predicate is set.
+    assert panel._filter_banner.isVisibleTo(panel)
+    assert 'Find "Name"' in panel._filter_banner_label.text()
     panel._proxy.set_value_filter(_VALUE_COLUMN, {"Name"})
     panel.filter_to_table("pr.att")
     # Sanity: everything narrows to one row.
@@ -1651,3 +1702,119 @@ def test_clear_all_filters_in_context_menu_wired(qtbot, monkeypatch):
     # The wired callback is clear_all_filters.
     cb = dict(captured["actions"])["Clear all filters"]
     assert cb == panel.clear_all_filters
+
+
+# -- BUG-028: find-filter banner descriptor, remaining qualifier cases ------
+
+
+def test_find_banner_extended_mode_is_named(qtbot):
+    """The third search mode gets its own qualifier word (`extended`), not the
+    regex one — the banner must not misdescribe how the pattern is read."""
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    panel.load_entries(_replace_entries())
+    panel.apply_find_filter("Home", "extended", False)
+    banner = panel._filter_banner_label.text()
+    assert 'Find "Home"' in banner
+    assert "extended" in banner
+    assert "regex" not in banner
+    assert "case-sensitive" not in banner
+    assert "all columns" in banner
+
+
+def test_find_banner_omits_mode_for_default_normal_search(qtbot):
+    """A plain case-insensitive Normal search stays terse: scope only."""
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    panel.load_entries(_replace_entries())
+    panel.apply_find_filter("Home", "normal", False)
+    banner = panel._filter_banner_label.text()
+    assert 'Find "Home" (all columns)' in banner
+    assert "regex" not in banner
+    assert "extended" not in banner
+    assert "case-sensitive" not in banner
+
+
+def test_find_banner_names_case_sensitivity_without_naming_normal_mode(qtbot):
+    """Mode and case are independent qualifiers: case-sensitive Normal names
+    only the case flag."""
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    panel.load_entries(_replace_entries())
+    panel.apply_find_filter("Home", "normal", True)
+    banner = panel._filter_banner_label.text()
+    assert 'Find "Home" (case-sensitive, all columns)' in banner
+    assert "regex" not in banner
+    assert "extended" not in banner
+
+
+def test_header_value_filter_alone_does_not_show_the_banner(qtbot):
+    """Header value filters are deliberately NOT represented in the banner —
+    they carry their own per-column ▼ marker (BUG-020/028)."""
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    panel.load_entries(_replace_entries())
+    panel._proxy.set_value_filter(_VALUE_COLUMN, {"Cart"})
+    assert panel._filter_banner.isHidden()
+
+
+def test_rejected_regex_leaves_the_previous_banner_intact(qtbot):
+    """BUG-028: `apply_find_filter` refreshes only after `set_regex_filter`
+    returns normally, so a rejected pattern neither replaces nor clears the
+    description of the filter that IS active."""
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    panel.load_entries(_replace_entries())
+    panel.apply_find_filter("Home", "normal", False)
+    before = panel._filter_banner_label.text()
+
+    with pytest.raises(ValueError):
+        panel.apply_find_filter("(", "regular", True)
+
+    assert panel._filter_banner.isVisibleTo(panel)
+    assert panel._filter_banner_label.text() == before
+    assert panel._proxy.find_pattern() == "Home"
+
+
+def test_clear_all_filters_keeps_mode_and_case_while_clearing_the_pattern(qtbot):
+    """clear_all_filters clears the PATTERN through the public getters rather
+    than resetting the user's mode/case choices (BUG-028 replaced the private
+    `_find_mode`/`_find_case` reads here)."""
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    panel.load_entries(_replace_entries())
+    panel.apply_find_filter("Home", "regular", True)
+    panel.clear_all_filters()
+    assert panel._proxy.find_pattern() == ""
+    assert panel._proxy.find_mode() == "regular"
+    assert panel._proxy.find_case() is True
+    assert panel._filter_banner.isHidden()
+
+
+def test_banner_stays_visible_for_preset_predicate_after_find_is_cleared(qtbot):
+    """The banner hides only when NEITHER descriptor is present: clearing just
+    the find pattern must leave the preset predicate's banner standing."""
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    panel.load_entries(_context_entries())
+    panel.filter_to_table("pr.equip")
+    panel.apply_find_filter("WBS", "normal", False)
+    assert 'Find "WBS"' in panel._filter_banner_label.text()
+
+    panel.apply_find_filter("", "normal", False)
+    assert panel._filter_banner.isVisibleTo(panel)
+    label = panel._filter_banner_label.text()
+    assert "Table = pr.equip" in label
+    assert "Find" not in label
+
+
+def test_find_banner_row_counts_track_the_find_filter(qtbot):
+    """The banner is refreshed AFTER the proxy is invalidated, so the counts
+    describe the post-filter view."""
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    panel.load_entries(_replace_entries())
+    panel.apply_find_filter("Page", "normal", False)
+    assert "showing 2 of 3 rows" in panel._filter_banner_label.text()
+    panel.apply_find_filter("Cart", "normal", False)
+    assert "showing 1 of 3 rows" in panel._filter_banner_label.text()

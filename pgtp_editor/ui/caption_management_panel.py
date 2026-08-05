@@ -381,6 +381,17 @@ class _CaptionFilterProxyModel(QSortFilterProxyModel):
     def find_pattern(self) -> str:
         return self._find_pattern
 
+    def find_mode(self) -> str:
+        """Search mode of the active find filter (one of
+        ``caption_scan.SEARCH_MODES``). Exposed so the panel's active-filter
+        banner can describe the filter without reading private attrs
+        (BUG-028)."""
+        return self._find_mode
+
+    def find_case(self) -> bool:
+        """Case-sensitivity flag of the active find filter (BUG-028)."""
+        return self._find_case
+
     def set_value_filter(self, column: int, allowed: set[str] | None) -> None:
         """Restrict `column` to rows whose DisplayRole text is in `allowed`.
         `None` removes the value filter for that column."""
@@ -832,6 +843,10 @@ class CaptionManagementPanel(QWidget):
         """Apply a whole-row find filter via the proxy. Raises ValueError on an
         invalid regex (caller/dialog shows it inline)."""
         self._proxy.set_regex_filter(pattern, mode, case)
+        # Only reached when set_regex_filter returned normally (an invalid
+        # regex propagates out before this), so the banner never advertises a
+        # filter that was rejected. BUG-028.
+        self._refresh_filter_banner()
 
     def current_filter_pattern(self) -> str:
         """The proxy's currently-active find pattern (for pre-loading the
@@ -1094,18 +1109,50 @@ class CaptionManagementPanel(QWidget):
 
     # -- active-filter banner (BUG-020) --------------------------------------
 
+    def _find_filter_descriptor(self) -> str:
+        """Human-readable description of the active whole-row find filter, or
+        "" when no find pattern is set (BUG-028).
+
+        The find filter matches against every displayed column, so the scope is
+        always stated as "all columns" -- unlike header value filters, it has
+        no per-column header marker, making the banner its only surface.
+        Non-default mode/case are named explicitly; a plain case-insensitive
+        Normal search stays terse."""
+        pattern = self._proxy.find_pattern()
+        if not pattern:
+            return ""
+        qualifiers: list[str] = []
+        mode = self._proxy.find_mode()
+        if mode == "regular":
+            qualifiers.append("regex")
+        elif mode == "extended":
+            qualifiers.append("extended")
+        if self._proxy.find_case():
+            qualifiers.append("case-sensitive")
+        qualifiers.append("all columns")
+        return f'Find "{pattern}" ({", ".join(qualifiers)})'
+
     def _refresh_filter_banner(self) -> None:
         """Show/hide the active-filter banner and refresh its text to reflect
-        the current preset row-predicate label + visible/total row counts.
-        Called after every preset filter setter and after clear_all_filters
-        (the single path that can deactivate a predicate) so the banner is
-        never out of sync with `self._proxy.row_predicate()`. Computed AFTER
-        the proxy has already been invalidated by the caller so the "showing
-        N of M" count reflects the new predicate."""
-        label = self._proxy.row_predicate_label()
-        if not label:
+        the current preset row-predicate label AND the whole-row find filter,
+        plus visible/total row counts. Called after every preset filter setter,
+        after apply_find_filter (BUG-028), and after clear_all_filters (the
+        single path that can deactivate everything) so the banner is never out
+        of sync with the proxy. Computed AFTER the proxy has already been
+        invalidated by the caller so the "showing N of M" count reflects the
+        new filters.
+
+        Header value filters are deliberately NOT represented here -- they
+        carry their own per-column header marker (BUG-020)."""
+        descriptors = [
+            d
+            for d in (self._proxy.row_predicate_label(), self._find_filter_descriptor())
+            if d
+        ]
+        if not descriptors:
             self._filter_banner.setVisible(False)
             return
+        label = "  ·  ".join(descriptors)
         visible = self._proxy.rowCount()
         total = self._model.rowCount()
         self._filter_banner_label.setText(
@@ -1119,7 +1166,9 @@ class CaptionManagementPanel(QWidget):
         """Clear the find filter, every header value filter, and the preset row
         predicate; refresh the header indicators and hide the active-filter
         banner (this is the single path that hides it, BUG-020)."""
-        self._proxy.set_regex_filter("", self._proxy._find_mode, self._proxy._find_case)
+        self._proxy.set_regex_filter(
+            "", self._proxy.find_mode(), self._proxy.find_case()
+        )
         for column in list(self._proxy.filtered_columns()):
             self._proxy.set_value_filter(column, None)
         self._proxy.set_row_predicate(None)

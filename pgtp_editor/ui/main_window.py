@@ -133,10 +133,11 @@ from pgtp_editor.ui.customize_toolbar_dialog import CustomizeToolbarDialog
 from pgtp_editor.ui.history import SnapshotHistory
 from pgtp_editor.ui.icons import themed_icon
 from pgtp_editor.ui.toolbar_registry import (
-    AVAILABLE_COMMANDS,
     DEFAULT_TOOLBAR_IDS,
-    label_for,
-    valid_ids,
+    ICON_ID_BY_COMMAND,
+    command_id_for,
+    menu_path_label,
+    resolve_ids,
 )
 from pgtp_editor.ui.event_body import (
     extract_event_body,
@@ -979,23 +980,91 @@ class MainWindow(QMainWindow):
         self._toolbar.setToolButtonStyle(
             Qt.ToolButtonStyle.ToolButtonTextBesideIcon
         )
-        # id -> slot for every command the toolbar can host.
-        self._toolbar_slots = {
-            "open": self._open_project,
-            "save": self._save_project,
-            "undo": self._undo,
-            "redo": self._redo,
-            "find": self._show_find_bar,
-            "validate": self._validate_project,
-            "generate": self._generate_php,
-        }
+        # BUG-027: the toolbar's command universe IS the menu bar. Built here
+        # (after `_build_menu_bar`, which __init__ calls first) rather than
+        # from a static registry, so every command the app has -- present and
+        # future -- is offerable in Customize Toolbar with no bookkeeping.
+        self._menu_commands = {}
+        self._menu_command_pairs = []
+        # Strong refs to every QMenu the walk descends into -- see
+        # `_walk_menu_actions`; without these PySide destroys them.
+        self._menu_keepalive = []
+        self._menu_keepalive_seen = set()
+        self._collect_menu_commands()
         self._toolbar_ids = []
         self._apply_toolbar_ids(self._restore_toolbar_ids())
+
+    def _collect_menu_commands(self):
+        """Refresh `_menu_commands` (id -> QAction) and `_menu_command_pairs`
+        ((id, "File › Save As") in menu order) from the live menu bar."""
+        self._menu_command_pairs = self._all_menu_commands()
+        self._menu_commands = {
+            command_id: action for command_id, _label, action in self._walk_menu_actions()
+        }
+        return self._menu_command_pairs
+
+    def _walk_menu_actions(self, menu=None, path=(), seen=None):
+        """Depth-first walk of the menu bar yielding (id, label, QAction) for
+        every *leaf* command.
+
+        Skips separators and submenu placeholders (an action that opens a
+        submenu is not itself a command). The dynamic "Open Recent" submenu is
+        skipped wholesale -- its children are transient per-session file
+        entries and must never be pinned to the toolbar. Duplicate ids (two
+        identically-labelled actions in one menu) get a numeric suffix so an
+        id always resolves to exactly one action.
+
+        CAUTION: `QAction.menu()` hands the returned QMenu's ownership to
+        Python, so letting that wrapper go out of scope DESTROYS the real menu
+        and every action in it (this crashed startup with "Internal C++ object
+        (QAction) already deleted" the moment `_restore_theme` touched the
+        View menu). Every submenu we descend into is therefore pinned in
+        `_menu_keepalive` for the window's lifetime."""
+        if seen is None:
+            seen = {}
+        actions = self.menuBar().actions() if menu is None else menu.actions()
+        for action in actions:
+            if action.isSeparator():
+                continue
+            label = action.text()
+            submenu = action.menu()
+            if submenu is not None:
+                # Pin BOTH the submenu and the action that owns it: dropping
+                # either one takes the whole branch's actions down with it.
+                # Never CLEAR this list to re-pin -- releasing the last ref is
+                # exactly what destroys the menus.
+                for obj in (action, submenu):
+                    if id(obj) not in self._menu_keepalive_seen:
+                        self._menu_keepalive_seen.add(id(obj))
+                        self._menu_keepalive.append(obj)
+                if "recent" in menu_path_label([label]).lower():
+                    continue
+                yield from self._walk_menu_actions(submenu, path + (label,), seen)
+                continue
+            full_path = path + (label,)
+            command_id = command_id_for(full_path)
+            if not command_id:
+                continue
+            seen[command_id] = seen.get(command_id, 0) + 1
+            if seen[command_id] > 1:
+                command_id = f"{command_id}-{seen[command_id]}"
+            yield command_id, menu_path_label(full_path), action
+
+    def _all_menu_commands(self):
+        """Ordered (id, label) pairs for every menu command -- what the
+        Customize Toolbar dialog offers in its Available list."""
+        return [
+            (command_id, label) for command_id, label, _action in self._walk_menu_actions()
+        ]
 
     def _restore_toolbar_ids(self):
         """Read the stored toolbar ids, tolerant of the backend returning a
         list, a comma-separated string, or None; fall back to the default set
-        when nothing valid is stored."""
+        when nothing valid is stored.
+
+        BUG-027: goes through `resolve_ids`, which maps the pre-BUG-027 legacy
+        ids (`save`, `undo`, ...) onto their menu-path ids -- without that,
+        every existing user's saved toolbar would be dropped as unknown."""
         stored = self._settings.value("toolbarIds")
         if stored is None:
             ids = DEFAULT_TOOLBAR_IDS
@@ -1003,18 +1072,28 @@ class MainWindow(QMainWindow):
             ids = stored.split(",")
         else:
             ids = list(stored)
-        ids = valid_ids(ids)
-        return ids if ids else DEFAULT_TOOLBAR_IDS
+        known = self._menu_commands
+        ids = resolve_ids(ids, known)
+        return ids if ids else resolve_ids(DEFAULT_TOOLBAR_IDS, known)
 
     def _apply_toolbar_ids(self, ids):
         """Clear and repopulate the toolbar from an ordered id list (unknown
-        and duplicate ids are dropped)."""
-        ids = valid_ids(ids)
-        self._toolbar.clear()
+        and duplicate ids are dropped).
+
+        BUG-027: adds the **real menu QAction**, not a lookalike wired to a
+        slot table. The button therefore shares the menu item's enabled state,
+        checked state and shortcut for free, and can never drift from what the
+        menu does."""
+        ids = resolve_ids(ids, self._menu_commands)
+        # NOT `self._toolbar.clear()`: PySide's clear() DELETES the underlying
+        # QActions, which since BUG-027 are the menus' own actions -- that
+        # destroyed live menu items (and crashed the next `setChecked` on one).
+        # removeAction detaches without taking ownership.
+        for existing in list(self._toolbar.actions()):
+            self._toolbar.removeAction(existing)
         color = self._toolbar_icon_color()
         for command_id in ids:
-            action = QAction(label_for(command_id), self)
-            action.triggered.connect(self._toolbar_slots[command_id])
+            action = self._menu_commands[command_id]
             self._set_action_icon(action, command_id, color)
             self._toolbar.addAction(action)
         self._toolbar_ids = ids
@@ -1027,11 +1106,19 @@ class MainWindow(QMainWindow):
         return QApplication.instance().palette().color(QPalette.ColorRole.WindowText)
 
     def _set_action_icon(self, action, command_id, color) -> None:
-        """Tint and assign the Breeze icon for `command_id` to `action`. A
-        missing/damaged icon is skipped (label stays) rather than crashing --
-        shouldn't happen with the vendored set."""
+        """Tint and assign the Breeze icon for `command_id` to `action`.
+
+        BUG-027: only the legacy seven have a vendored SVG, and the toolbar now
+        hosts real menu QActions -- so an id with no icon is the normal case,
+        not an error, and is left icon-less (text-beside-icon copes). The icon
+        is hidden in menus so decorating a shared action for the toolbar does
+        not change how the menu looks."""
+        icon_id = ICON_ID_BY_COMMAND.get(command_id)
+        if icon_id is None:
+            return
         try:
-            action.setIcon(themed_icon(command_id, color))
+            action.setIcon(themed_icon(icon_id, color))
+            action.setIconVisibleInMenu(False)
         except Exception:  # pragma: no cover - vendored set is always present
             pass
 
@@ -1056,7 +1143,11 @@ class MainWindow(QMainWindow):
     def _open_customize_toolbar(self):
         """Open the (non-modal) Customize Toolbar dialog; on OK, apply and
         persist the chosen ordered id list."""
-        dialog = CustomizeToolbarDialog(AVAILABLE_COMMANDS, self._toolbar_ids, self)
+        # BUG-027: offer every menu command, re-enumerated at open time so
+        # anything the menus gained since startup is included.
+        dialog = CustomizeToolbarDialog(
+            self._collect_menu_commands(), self._toolbar_ids, self
+        )
         dialog.accepted.connect(
             lambda: self._apply_and_save_toolbar_ids(dialog.result_ids())
         )
@@ -2058,10 +2149,13 @@ class MainWindow(QMainWindow):
         # Local DDL-versioning projects (spec §18.2) -- a distinct concept
         # from `_current_project` (the open .pgtp), tracked separately as
         # `_ddl_project_folder`/`_ddl_project_settings`.
+        # BUG-021: wrap in lambdas so `triggered`'s `checked: bool` argument
+        # never lands in the `on_ready` parameter -- a bare connect passes
+        # `False`, which is not None and so was taken for a callback.
         new_project_action = menu.addAction("New Project…")
-        new_project_action.triggered.connect(self._new_ddl_project)
+        new_project_action.triggered.connect(lambda: self._new_ddl_project())
         open_project_action = menu.addAction("Open Project…")
-        open_project_action.triggered.connect(self._open_ddl_project)
+        open_project_action.triggered.connect(lambda: self._open_ddl_project())
         self._close_ddl_project_action = menu.addAction("Close Project")
         self._close_ddl_project_action.triggered.connect(self._close_ddl_project)
         self._close_ddl_project_action.setEnabled(False)
@@ -2589,7 +2683,7 @@ class MainWindow(QMainWindow):
 
         def handle() -> None:
             self._create_ddl_project(dialog)
-            if on_ready is not None:
+            if callable(on_ready):
                 on_ready()
 
         dialog.accepted.connect(handle)
@@ -2635,7 +2729,7 @@ class MainWindow(QMainWindow):
         self._set_active_ddl_project(folder_path, settings)
         self._report_ddl_project_drift(folder_path, settings)
         self.statusBar().showMessage(f"Opened project: {folder_path}", 5000)
-        if on_ready is not None:
+        if callable(on_ready):
             on_ready()
         else:
             # BUG-021: opening a project should auto-open its linked .pgtp
