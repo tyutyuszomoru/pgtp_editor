@@ -2215,7 +2215,7 @@ mechanism and its new visible active-filter banner in §13.
 ---
 
 ## BUG-021: Opening a project doesn't auto-open its linked `.pgtp` into the editor
-**Status:** REOPENED 2026-08-05 — the fix in 2508d2a did NOT work; opening a project still does not auto-open its linked `.pgtp`. The resolver must re-examine what 2508d2a actually changed in `_open_ddl_project` / `open_project_file` and why the working copy isn't loaded (e.g. `settings.pgtp.working_copy_path` empty/not persisted, the load call guarded out, or an `on_ready` timing issue) rather than re-applying the same change. Previously: RESOLVED (2508d2a).
+**Status:** RESOLVED (704f87f) — the 2508d2a fix did not work; root cause was `QAction.triggered`'s `checked: bool` binding to `on_ready`, so `on_ready=False` passed the `is not None` guard and called `False()`. Fixed by lambda-wrapping both project actions and hardening the guards to `callable(on_ready)`; regression tests now drive the real signal via `action.trigger()`. Previously: REOPENED 2026-08-05, RESOLVED (2508d2a).
 **Reported:** 2026-08-05
 **Report (verbatim):** "at opening the project the pgtp should automatically open"
 
@@ -2313,7 +2313,7 @@ Gotchas: (1) OK/Cancel button box must remain a direct child of the top-level `Q
 ---
 
 ## BUG-026: Database→XML flags lookup-only tables as red mismatches; per-table count should split into P/D/L roles
-**Status:** OPEN
+**Status:** RESOLVED (704f87f)
 **Reported:** 2026-08-05
 **Report (verbatim):** "in the Database->XML window those database tables that have multiple mentions but only as lookup tables are with red and counted as mismatch. The counter besides the table name should be separated in categories P for page, D for detail, and L for lookup. eg: (P3 D1 L2). Mismatches in red are only those tables that have all categories 0."
 
@@ -2342,7 +2342,7 @@ Second half of the report (role-split count) is a display gap, not a bug in isol
 ---
 
 ## BUG-027: Customize Toolbar offers only 7 hardcoded commands, not all menu items
-**Status:** OPEN
+**Status:** RESOLVED (704f87f)
 **Reported:** 2026-08-05
 **Report (verbatim):** "customize toolbar is unfinished, the choice should be all menu items, but it's very limited to a few items."
 
@@ -2365,7 +2365,7 @@ Second half of the report (role-split count) is a display gap, not a bug in isol
 ---
 
 ## BUG-028: Caption-mode Find filter isn't shown in the active-filter banner — user can't see the find text or which columns it applies to
-**Status:** OPEN
+**Status:** RESOLVED (704f87f)
 **Reported:** 2026-08-05
 **Report (verbatim):** "Caption mode when filtered using Find doesn't show which columns have been the filter applied to. The same mechanism as when coming from Browser pane should be applied."
 
