@@ -783,7 +783,7 @@ follow-up unless the fix changes user-visible behavior (it should not).
 ---
 
 ## BUG-009: Linux/KDE shows a generic "W" placeholder icon instead of the app icon (taskbar + title-bar)
-**Status:** OPEN
+**Status:** RESOLVED (2508d2a)
 **Reported:** 2026-08-01
 **Report (verbatim):** "application icon in linux kde is a W instead of the application's own icon both in the taskbar and in the window's corner"
 
@@ -1705,7 +1705,7 @@ not edit the spec as part of the fix.
 ---
 
 ## BUG-018: Caption-mode "select the matching row" silently selects nothing whenever Shift is held (`QTableView.selectRow` + stale global modifier state) — the real cause of the parallel-gate caption flake
-**Status:** OPEN
+**Status:** RESOLVED (2508d2a)
 **Reported:** 2026-08-02
 **Report (verbatim):** "Triage a load-dependent test failure on branch `ddl-editing` (HEAD 9412317). Follow-up BUG-012 asked for: with BUG-017's segfaults gone, I captured full tracebacks over 7 clean-signal `-n 10` gate runs. The failure still occurs, roughly 2 in 7, and it is a genuine AssertionError with a clean traceback — no crash, no segfault:
 ```
@@ -2114,7 +2114,7 @@ tests/db/test_ddl_buffer.py tests/db/test_schema_diff.py tests/ui/test_ddl_buffe
 ---
 
 ## BUG-020: "See column in caption mode" applies an invisible preset filter — the grid is narrowed but no filter widget/header shows which column (or how) is filtered
-**Status:** OPEN
+**Status:** RESOLVED (2508d2a)
 **Reported:** 2026-08-05
 **Report (verbatim):** "When I come to Caption Management from BrowserPane (show column in caption mode), there's a filter applied. I can't see which columns are filtered and how. The applied filters should be just as visible as if they were applied manually"
 
@@ -2215,7 +2215,7 @@ mechanism and its new visible active-filter banner in §13.
 ---
 
 ## BUG-021: Opening a project doesn't auto-open its linked `.pgtp` into the editor
-**Status:** OPEN
+**Status:** RESOLVED (2508d2a)
 **Reported:** 2026-08-05
 **Report (verbatim):** "at opening the project the pgtp should automatically open"
 
@@ -2232,7 +2232,7 @@ mechanism and its new visible active-filter banner in §13.
 ---
 
 ## BUG-022: "Open Project" folder chooser shows files and accepts any folder as an (empty) project
-**Status:** OPEN
+**Status:** RESOLVED (2508d2a)
 **Reported:** 2026-08-05
 **Report (verbatim):** "when I choose a folder to open as a project, there's no project file, the entire folder is the project. so the Open dialogue should be a folder chooser dialoge not showing any files, just the folders. also Open should only be pressable if the folder is really a project folder"
 
@@ -2249,7 +2249,7 @@ mechanism and its new visible active-filter banner in §13.
 ---
 
 ## BUG-023: Caption-mode "Unify: set all inconsistent siblings" gives no filtered-vs-project-wide scope choice when a filter is active
-**Status:** OPEN
+**Status:** RESOLVED (2508d2a)
 **Reported:** 2026-08-05
 **Report (verbatim):** "in caption mode when a filter is applied, and I select \"Unify: set all inconsistent siblings\" there should be a popup so I can decide if only apply to the filtered data or project-wide."
 
@@ -2266,7 +2266,7 @@ mechanism and its new visible active-filter banner in §13.
 ---
 
 ## BUG-024: Standalone "Connection Setup…" is redundant/meaningless when a §18.2 project is open — should be projectless-mode only
-**Status:** OPEN
+**Status:** RESOLVED (2508d2a)
 **Reported:** 2026-08-05
 **Report (verbatim):** "database connection setup is obsolete as it's being defined in Project settings. It should only be visible when in projectless mode, otherwise the setup is meaningless"
 
@@ -2285,7 +2285,7 @@ mechanism and its new visible active-filter banner in §13.
 ---
 
 ## BUG-025: Project Settings dialog is a single tall single-column stack — window is narrow and long, many fields unreadable
-**Status:** OPEN
+**Status:** RESOLVED (2508d2a)
 **Reported:** 2026-08-05
 **Report (verbatim):** "Project settings' window is narrow and long, many fields aren't readable. Project settings should be tabbed, each settings in its place."
 
