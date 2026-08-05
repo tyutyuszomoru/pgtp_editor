@@ -1,6 +1,6 @@
 # PGTP Editor — Consolidated Specification
 
-> **Status:** living document · **Last synthesized:** 2026-08-05 (§18.8 corrected to the 5-node model, then given its concrete per-node state enumeration + dark-mode asset convention, then a same-day fix to the Quality node's locked/gray semantic and the Sandbox2 install-state-vs-lint-result semantic; later the same day, BUG-020/021/022/023/024/025 folded in — Captions' preset row-predicate filter + active-filter banner + Unify scope prompt, §18.2's Open-Project validity gate + auto-open of the linked `.pgtp`, the tabbed Project Settings dialog, and Connection Setup… becoming projectless-mode-only; later still the same day, §18.1's Tables branch widened to every table (not just trigger-owning ones) plus click-to-Properties-panel column detail, with `ColumnInfo.comment` added; and finally BUG-021/026/027/028 — §18.2's project-action lambda wiring that made the `.pgtp` auto-open actually reachable, §17's role-split `(P# D# L#)` DB→XML counts and any-role mismatch rule, §7's toolbar widened to every menu command with menu-path ids, and §13's active-filter banner extended to the whole-row find filter)
+> **Status:** living document · **Last synthesized:** 2026-08-06 (previously 2026-08-05: §18.8 corrected to the 5-node model, then given its concrete per-node state enumeration + dark-mode asset convention, then a same-day fix to the Quality node's locked/gray semantic and the Sandbox2 install-state-vs-lint-result semantic; later the same day, BUG-020/021/022/023/024/025 folded in — Captions' preset row-predicate filter + active-filter banner + Unify scope prompt, §18.2's Open-Project validity gate + auto-open of the linked `.pgtp`, the tabbed Project Settings dialog, and Connection Setup… becoming projectless-mode-only; later still the same day, §18.1's Tables branch widened to every table (not just trigger-owning ones) plus click-to-Properties-panel column detail, with `ColumnInfo.comment` added; and finally BUG-021/026/027/028 — §18.2's project-action lambda wiring that made the `.pgtp` auto-open actually reachable, §17's role-split `(P# D# L#)` DB→XML counts and any-role mismatch rule, §7's toolbar widened to every menu command with menu-path ids, and §13's active-filter banner extended to the whole-row find filter). **2026-08-06:** FQ-001 folded into §18.2 — per-group Test buttons on the Project Settings dialog's Connections tab (generic connectivity for Target, superuser probe for Sandbox).
 > **Source of truth:** this file is the single reconciled specification for PGTP Editor, and the **only**
 > place specification content is written. It was originally synthesized from the dated design specs under
 > [`docs/superpowers/specs/`](specs/) — a folder now **frozen as historical record** (read for rationale;
@@ -2228,6 +2228,60 @@ config group), **"Deploy manifest"** (the deploy-manifest table + Add/Remove but
 since the table wants width). The OK/Cancel `QDialogButtonBox` stays outside/below the tab widget, not
 inside any tab. Default size `560×480`, resizable (no `setFixedSize`). All fields keep their existing
 `self._…`-attribute get/set wiring — reparenting into tabs does not change how any value round-trips.
+
+**Each connection group on the "Connections" tab carries its own Test button + inline status label
+(FQ-001, 2026-08-05) — two *different* tests, reusing the two flavors that already exist, never a third.**
+Editing a saved project's connection details (a moved database, a rotated credential) previously had no
+in-dialog verification path: the user saved blind and found out on next use. Each of the two groups built
+by `ProjectSettingsDialog._build_connection_form` gets a `Test` button + `QLabel` status line appended
+beneath its host/port/database/user/password rows by a small sibling helper,
+`_add_test_row(group, on_click) -> (QPushButton, QLabel)` (kept separate from `_build_connection_form`
+because the two groups wire different slots — `test_target` vs. `test_sandbox` — into the same row shape).
+Both **test the values currently typed in the dialog's fields**,
+never the last-saved `ProjectSettings.target`/`.sandbox` — the params object is rebuilt from the live field
+widgets at click time by `target_params()`/`sandbox_params()`, exactly as `ConnectionSetupDialog.params()`
+and `NewProjectDialog.sandbox_params()` already do.
+
+| Group | Test performed | Reused verbatim from | Underlying call |
+|---|---|---|---|
+| **Target connection** | Generic connectivity — `SELECT 1`, green `Connected.` / red driver message | `ui/connection_setup_dialog.py::ConnectionSetupDialog.test` | `db/introspect.py::test_connection(params) -> tuple[bool, str]` (never raises; failure is the message) |
+| **Sandbox connection** | **Superuser capability probe**, not mere connectivity | `ui/new_project_dialog.py::NewProjectDialog.test_sandbox` + `_apply_sandbox_probe_result` | `db/sandbox.py::probe(params) -> SandboxCapabilities` |
+
+The sandbox result mapping is the same four-way ladder as the New Project dialog's, in this order —
+`caps.probe_error is not None` → that message, red; **not `caps.is_superuser`** → *"Connected, but NOT a
+superuser — sandbox provisioning needs CREATE EXTENSION."*, red; **mode is `SandboxMode.WITH_DATA`
+and not `caps.data_clone_available`** → *"Connected — superuser, but 'with data' needs `pg_dump` and/or
+`pg_restore` on PATH (not found)."* naming which binary is missing, red; otherwise *"Connected —
+superuser."*, green. The `WITH_DATA` branch has a real source **in this dialog**: it reads the
+already-present sandbox-mode radios (`_sandbox_mode_without_data_radio`/`_sandbox_mode_with_data_radio`,
+§18.5 D2a) as currently set on screen, not the saved `settings.sandbox_mode`, via a `sandbox_mode()`
+accessor matching `NewProjectDialog`'s. Unlike `NewProjectDialog`, this dialog **does not retain the
+probe result** (no `_last_probe`): no caller reads a capability probe back off Project Settings — the
+probe here exists purely to inform the user before they press OK.
+
+**A single shared generic connectivity test for both groups was considered and explicitly rejected**
+(owner-confirmed 2026-08-05): it would green-light a sandbox connection that connects fine as a
+non-superuser and then fails at provisioning time (`CREATE EXTENSION`, §18.5 D2) — reintroducing exactly
+the false-green the New Project superuser probe exists to prevent, and violating this project's
+"never a silent wrong result" rule. The two tests stay distinct because the two connections have
+genuinely different success conditions.
+
+Mechanics follow the two source dialogs exactly, so nothing new is invented: the click disables its own
+Test button, clears the label's stylesheet and shows the busy text (`"Testing connection…"` for target,
+`"Testing…"` for sandbox); the work runs **off the GUI thread** through the injected `self._run_async`
+seam (`ui/async_task.py::run_async`, assigned as a plain attribute in `__init__` so tests replace it with
+a synchronous stub); the result/error callbacks run back on the GUI thread, set the label text plus
+`color: green;`/`color: red;`, and re-enable the button. **No modal, no toast, no Audit line** — the
+inline colored label is the entire feedback surface, matching the existing two Test buttons.
+
+**Injection seams.** `ProjectSettingsDialog.__init__(self, settings, parent=None, tester: Tester =
+test_connection, prober: Prober = probe)` — both new parameters are **defaulted keyword arguments**,
+mirroring `ConnectionSetupDialog(parent, tester)` and `NewProjectDialog(parent, prober)`, so the dialog's
+single construction site (`ui/main_window.py`, the **Project Settings…** action) needs no change and
+tests can inject fakes. As in both source dialogs, `self._run_async = run_async` is set as a plain
+attribute rather than a constructor parameter. The dialog still **persists nothing on its own**: testing a
+connection neither writes `settings.json` nor mutates the active project's live connection — it only
+reports.
 
 **Connection profile persistence — reconciled with §17's `ProfileKey` scheme, least-invention reading.**
 §17 already generalizes `db/config.py` to a keyed `ProfileKey(project, role)` scheme backed by QSettings,

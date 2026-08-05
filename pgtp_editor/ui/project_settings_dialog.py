@@ -29,11 +29,14 @@ this dialog persists nothing on its own.
 """
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QFormLayout,
     QGroupBox,
+    QHBoxLayout,
     QHeaderView,
     QLabel,
     QLineEdit,
@@ -48,14 +51,32 @@ from PySide6.QtWidgets import (
 
 from pgtp_editor.db.config import ConnectionParams
 from pgtp_editor.db.ddl_project import DeployedObject, GitConfig, PgtpLink, ProjectSettings
-from pgtp_editor.db.sandbox import SandboxMode
+from pgtp_editor.db.introspect import test_connection
+from pgtp_editor.db.sandbox import SandboxCapabilities, SandboxMode, probe
+from pgtp_editor.ui.async_task import run_async
 
 _DEPLOYED_COLUMNS = ("Path", "Content hash", "Deployed commit")
 
+Tester = Callable[[ConnectionParams], "tuple[bool, str]"]
+Prober = Callable[[ConnectionParams], SandboxCapabilities]
+
 
 class ProjectSettingsDialog(QDialog):
-    def __init__(self, settings: ProjectSettings, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        settings: ProjectSettings,
+        parent: QWidget | None = None,
+        tester: Tester = test_connection,
+        prober: Prober = probe,
+    ) -> None:
         super().__init__(parent)
+        # Test seams, same convention as ConnectionSetupDialog (generic
+        # connectivity) and NewProjectDialog (sandbox superuser probe): both
+        # flavors are reused verbatim rather than a third being invented.
+        self._tester = tester
+        self._prober = prober
+        # Off-thread executor seam; tests replace it with a synchronous stub.
+        self._run_async = run_async
         self.setWindowTitle("Project Settings")
 
         identity_form = QFormLayout()
@@ -81,6 +102,9 @@ class ProjectSettingsDialog(QDialog):
             self._target_user_edit,
             self._target_password_edit,
         ) = self._build_connection_form(target_group)
+        self._target_test_button, self._target_status_label = self._add_test_row(
+            target_group, self.test_target
+        )
 
         sandbox_group = QGroupBox("Sandbox connection")
         (
@@ -90,6 +114,9 @@ class ProjectSettingsDialog(QDialog):
             self._sandbox_user_edit,
             self._sandbox_password_edit,
         ) = self._build_connection_form(sandbox_group)
+        self._sandbox_test_button, self._sandbox_status_label = self._add_test_row(
+            sandbox_group, self.test_sandbox
+        )
 
         # Sandbox provisioning mode (§18.5 D2a) -- chosen once at New Project
         # time; shown/editable here too since this dialog exposes the JSON's
@@ -187,6 +214,113 @@ class ProjectSettingsDialog(QDialog):
         form.addRow("Password:", password_edit)
         return host_edit, port_edit, database_edit, user_edit, password_edit
 
+    @staticmethod
+    def _add_test_row(group: QGroupBox, slot: Callable[[], None]) -> tuple[QPushButton, QLabel]:
+        """The Test button + inline colored status label row, same shape as
+        `ConnectionSetupDialog` / `NewProjectDialog` (FQ-001)."""
+        test_button = QPushButton("Test")
+        test_button.clicked.connect(slot)
+        status_label = QLabel("")
+        test_row = QHBoxLayout()
+        test_row.addWidget(test_button)
+        test_row.addWidget(status_label, 1)
+        group.layout().addRow(test_row)
+        return test_button, status_label
+
+    # --- Connection tests (FQ-001) -------------------------------------------
+    def target_params(self) -> ConnectionParams:
+        """The target connection as **currently typed**, not as last saved."""
+        return self._connection_from_fields(
+            self._target_host_edit,
+            self._target_port_edit,
+            self._target_database_edit,
+            self._target_user_edit,
+            self._target_password_edit,
+        )
+
+    def sandbox_params(self) -> ConnectionParams:
+        """The sandbox connection as **currently typed**, not as last saved."""
+        return self._connection_from_fields(
+            self._sandbox_host_edit,
+            self._sandbox_port_edit,
+            self._sandbox_database_edit,
+            self._sandbox_user_edit,
+            self._sandbox_password_edit,
+        )
+
+    def sandbox_mode(self) -> SandboxMode:
+        if self._sandbox_mode_with_data_radio.isChecked():
+            return SandboxMode.WITH_DATA
+        return SandboxMode.SCHEMA_ONLY
+
+    def test_target(self) -> None:
+        """Generic connectivity check, identical to `ConnectionSetupDialog.test`.
+        Run off the GUI thread so an unreachable host can't freeze the dialog."""
+        self._target_test_button.setEnabled(False)
+        self._target_status_label.setStyleSheet("")
+        self._target_status_label.setText("Testing connection…")
+        params = self.target_params()
+
+        def on_result(result: "tuple[bool, str]") -> None:
+            ok, message = result
+            color = "green" if ok else "red"
+            self._target_status_label.setText(message)
+            self._target_status_label.setStyleSheet(f"color: {color};")
+            self._target_test_button.setEnabled(True)
+
+        def on_error(exc: BaseException) -> None:
+            self._target_status_label.setText(str(exc))
+            self._target_status_label.setStyleSheet("color: red;")
+            self._target_test_button.setEnabled(True)
+
+        self._run_async(lambda: self._tester(params), on_result=on_result, on_error=on_error)
+
+    def test_sandbox(self) -> None:
+        """Superuser-specific probe, identical to `NewProjectDialog.test_sandbox`
+        -- NOT a plain connectivity check, which would give a false green light
+        to a connection that connects but can't `CREATE EXTENSION` (§18.5 D2)."""
+        self._sandbox_test_button.setEnabled(False)
+        self._sandbox_status_label.setStyleSheet("")
+        self._sandbox_status_label.setText("Testing…")
+        params = self.sandbox_params()
+
+        def on_result(caps: SandboxCapabilities) -> None:
+            self._apply_sandbox_probe_result(caps)
+
+        def on_error(exc: BaseException) -> None:
+            self._sandbox_status_label.setText(str(exc))
+            self._sandbox_status_label.setStyleSheet("color: red;")
+            self._sandbox_test_button.setEnabled(True)
+
+        self._run_async(lambda: self._prober(params), on_result=on_result, on_error=on_error)
+
+    def _apply_sandbox_probe_result(self, caps: SandboxCapabilities) -> None:
+        self._sandbox_test_button.setEnabled(True)
+        if caps.probe_error is not None:
+            self._sandbox_status_label.setText(caps.probe_error)
+            self._sandbox_status_label.setStyleSheet("color: red;")
+            return
+        if not caps.is_superuser:
+            self._sandbox_status_label.setText(
+                "Connected, but NOT a superuser — sandbox provisioning needs CREATE EXTENSION."
+            )
+            self._sandbox_status_label.setStyleSheet("color: red;")
+            return
+        if self.sandbox_mode() is SandboxMode.WITH_DATA and not caps.data_clone_available:
+            missing = [
+                name
+                for name, path in (("pg_dump", caps.pg_dump_path), ("pg_restore", caps.pg_restore_path))
+                if path is None
+            ]
+            self._sandbox_status_label.setText(
+                "Connected — superuser, but 'with data' needs "
+                f"{' and '.join(missing)} on PATH (not found)."
+            )
+            self._sandbox_status_label.setStyleSheet("color: red;")
+            return
+        self._sandbox_status_label.setText("Connected — superuser.")
+        self._sandbox_status_label.setStyleSheet("color: green;")
+
     # --- Load / save the whole ProjectSettings -------------------------------
     def set_settings(self, settings: ProjectSettings) -> None:
         self._name_edit.setText(settings.name)
@@ -238,25 +372,9 @@ class ProjectSettingsDialog(QDialog):
                 working_copy_path=self._pgtp_working_copy_edit.text() or None,
                 last_known_source_checksum=self._pgtp_checksum_edit.text() or None,
             ),
-            target=self._connection_from_fields(
-                self._target_host_edit,
-                self._target_port_edit,
-                self._target_database_edit,
-                self._target_user_edit,
-                self._target_password_edit,
-            ),
-            sandbox=self._connection_from_fields(
-                self._sandbox_host_edit,
-                self._sandbox_port_edit,
-                self._sandbox_database_edit,
-                self._sandbox_user_edit,
-                self._sandbox_password_edit,
-            ),
-            sandbox_mode=(
-                SandboxMode.WITH_DATA
-                if self._sandbox_mode_with_data_radio.isChecked()
-                else SandboxMode.SCHEMA_ONLY
-            ),
+            target=self.target_params(),
+            sandbox=self.sandbox_params(),
+            sandbox_mode=self.sandbox_mode(),
             git=GitConfig(
                 server=self._git_server_edit.text(),
                 user=self._git_user_edit.text(),

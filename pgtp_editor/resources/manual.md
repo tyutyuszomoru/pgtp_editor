@@ -874,7 +874,13 @@ you can always navigate elsewhere.
   - **"Connected — superuser."**
   - **"Connected, but NOT a superuser — sandbox provisioning needs CREATE
     EXTENSION."**
+  - if you chose **With data** (below) but `pg_dump`/`pg_restore` aren't on
+    your PATH, a message naming the missing one.
   - the raw connection error, if it couldn't connect at all.
+
+  The same group also carries the provisioning choice — **Without data (schema
+  only, default)**, the schema-only baseline, or **With data**, which clones
+  the target database via `pg_dump`/`pg_restore` once, at creation time.
 - **Git (optional — not yet used)** — Server, User, and Checkout branch
   fields. These are captured and saved with the project, but git integration
   isn't built yet: nothing is cloned, committed, or pushed. They're recorded
@@ -925,11 +931,52 @@ fields are grouped into four tabs:
   path — the sshfs-mounted original — the working copy path, and the last-known
   source checksum).
 - **Connections** — **Target connection** and **Sandbox connection**, both
-  connection profiles in full, including their password fields.
+  connection profiles in full, including their password fields. Each group has
+  its own **Test** button (see *Testing the project's connections*, below). The
+  Sandbox connection group also carries the sandbox provisioning mode —
+  **Without data (schema only)** or **With data**. Changing that mode here does
+  not re-clone anything; it takes effect the next time the sandbox is
+  reset or recreated.
 - **Git** — the same Server / User / Checkout branch fields as New Project.
 - **Deploy manifest** — a table, one row per DDL object, of its `ddl/` path,
   its last-deployed content hash, and its deployed-commit-id (if any), with
   **Add Row** / **Remove Selected Row** buttons.
+
+### Testing the project's connections
+
+On the **Connections** tab, the **Target connection** and **Sandbox
+connection** groups each have a **Test** button with a status line beside it,
+so you can verify connection details you just edited — after a database move
+or a password rotation, say — instead of saving blind and finding out later.
+
+Both buttons test the values **currently typed in the fields**, not the
+last-saved settings, so you can check a change before committing to it with
+**OK**. Testing never saves anything by itself, and the result is shown only
+on that inline status line: no dialog, no Audit-panel entry. The test runs in
+the background, so an unreachable host can't freeze the dialog; the button is
+disabled until the result comes back.
+
+The two buttons deliberately do **different** checks, because the two
+connections have different success conditions:
+
+- **Target connection ▸ Test** is a plain connectivity check — the same one
+  the standalone Connection Setup dialog performs (see *Database Check ▸
+  Connecting*). It shows **"Testing connection…"**, then the outcome in green
+  on success or in red with the driver's error message on failure.
+- **Sandbox connection ▸ Test** is stricter: it checks for a **superuser**,
+  not merely that the connection works, because setting up a sandbox needs
+  `CREATE EXTENSION`. It is the same check as the **New Project…** dialog's
+  sandbox Test button, and reports, in this order:
+  - the raw connection error, in red, if it couldn't probe at all;
+  - **"Connected, but NOT a superuser — sandbox provisioning needs CREATE
+    EXTENSION."**, in red;
+  - if the mode is **With data** but `pg_dump`/`pg_restore` aren't on your
+    PATH, a red message naming the missing one;
+  - otherwise **"Connected — superuser."**, in green.
+
+A plain "it connects" test on the sandbox would be misleading — it would give
+a green light to a connection that logs in fine as a non-superuser and then
+fails at provisioning time. That is why the sandbox test is the stricter one.
 
 ### Where project settings live
 

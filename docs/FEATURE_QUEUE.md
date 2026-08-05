@@ -13,7 +13,7 @@ record of what was proposed and why it was shaped the way it was.
 ---
 
 ## FQ-001: Test button for both connections in Project Settings' Connections tab
-**Status:** QUEUED
+**Status:** PROCESSED (§18.2)
 **Requested:** 2026-08-05
 **Idea (verbatim/summarized):** "in Project settings Connection tab I want a Test button for both settable connections"
 
@@ -91,9 +91,12 @@ skeleton/template helper anywhere in the codebase for any of these object kinds.
   connected DB (introspected the same way `pgtp_editor/db/introspect.py` already reads routines) — no
   inline "create new function" shortcut in this dialog for v1.
 - **Add Function/Procedure** — reachable from **both** a right-click on the "Functions & Procedures"
-  tree branch (`_build_routines_branch`, `ddl_buffer_panel.py:211-261`) **and** a menu action (e.g. a
-  "New Function/Procedure…" entry, location TBD at design time — DDL menu or File menu), since unlike a
-  trigger it isn't scoped to a specific table. Dialog: name; kind (Function / Procedure); return
+  tree branch (`_build_routines_branch`, `ddl_buffer_panel.py:211-261`) **and** a menu action: a single
+  **"New Function/Procedure…" entry in the Database menu** (`main_window.py`, menu built ~line 2611),
+  placed after the existing "DDL Explorer" action with a separator — that menu already owns Connection
+  Setup, the XML↔DB check actions, and DDL Explorer itself, so it's the existing home for DDL-Explorer-
+  adjacent actions; one action opens the one dialog (kind is a field inside it, not two separate menu
+  entries), since unlike a trigger it isn't scoped to a specific table. Dialog: name; kind (Function / Procedure); return
   datatype — **function-only**, since `CREATE PROCEDURE` has no `RETURNS` clause in Postgres at all
   (procedures use OUT parameters or return nothing) — the dialog must hide/disable the return-datatype
   field when Procedure is selected, not just leave it optional.
@@ -107,12 +110,28 @@ skeleton/template helper anywhere in the codebase for any of these object kinds.
   reverse case (trigger function with no linked trigger) — worth reusing that picker's UI pattern for
   the new trigger dialog's function chooser rather than building a new widget from scratch.
 - **Skeleton generation is genuinely new code** — no `CREATE TRIGGER`/`CREATE FUNCTION`/`CREATE PROCEDURE`
-  templating exists anywhere (`db/migration_gen.py` generates ALTER/CREATE/DROP for *already-tracked*
-  deployed-vs-local diffs, not fresh skeletons for objects with no prior existence; `generation/` is PHP
-  generation from `.pgtp`, unrelated). New skeleton text should default `LANGUAGE plpgsql` (no language
-  picker in v1, matching this project's plpgsql-IDE focus) and paste a minimal valid stub (e.g.
-  `CREATE OR REPLACE FUNCTION ... RETURNS trigger AS $$ BEGIN ... END; $$;` /
-  `CREATE PROCEDURE ...($$ BEGIN ... END; $$)`) built from the dialog's fields.
+  templating exists anywhere (`generation/` is PHP generation from `.pgtp`, unrelated). New skeleton text
+  should default `LANGUAGE plpgsql` (no language picker in v1, matching this project's plpgsql-IDE focus)
+  and paste a minimal valid stub (e.g. `CREATE OR REPLACE FUNCTION ... RETURNS trigger AS $$ BEGIN ... END;
+  $$;` / `CREATE PROCEDURE ...($$ BEGIN ... END; $$)`) built from the dialog's fields.
+- **Getting the new object into the deploy pipeline needs its own path — it is NOT automatic today**
+  (resolved 2026-08-06, verified against code rather than left open). `db/migration_gen.py:105-117`
+  already collects `schema_diff.py`'s `kind="added"` differences (`target_object is None`, line 217-218)
+  and correctly emits a bare `CREATE` for routines and a `DROP TRIGGER IF EXISTS` + `CREATE` for triggers
+  — **do not write new CREATE-statement-emission logic, that part already exists and already works.**
+  But that "added" path only fires when comparing two already-introspected `DatabaseSchema` snapshots
+  (the §18.5 sandbox-vs-production flow); the separate local-file-vs-DB deploy pipeline (§18.3/§18.4)
+  tracks objects purely through `ProjectSettings.deployed` (`db/ddl_project.py:127-143`), which is only
+  ever populated by checking out an object that already exists in the DB — "file absent → seed from the
+  live introspected definition... that write **is** the checkout" (`CONSOLIDATED_SPEC.md:2256-2258`) —
+  and `compute_drift_markers()` (`ddl_project.py:506-544`) iterates only over `settings.deployed.items()`.
+  A hand-written new `ddl/*.sql` file with no prior checkout is invisible to that pipeline: it would
+  parse fine (`parse_checked_out_header()`, `ddl_project.py:317-341`, recovers identity from the file's
+  own header, not from the manifest) but never surface as a pending change. **Whoever implements this
+  must add the newly-created object to `ProjectSettings.deployed`/the drift-tracking manifest at creation
+  time** (as a "local exists, no last-deployed reference yet" entry) so the existing §18.3/§18.4 deploy UI
+  picks it up through its normal drift/apply flow — not invent a second, parallel "new object" deploy
+  path alongside the existing checkout-based one.
 
 **Alternatives considered:** A single unified "Add DDL object" dialog covering all three kinds was
 considered and rejected — trigger, function, and procedure have different required fields (a trigger
@@ -130,12 +149,7 @@ Whoever folds this in should also explicitly amend the table-node "no context me
 line ~1912 to carve out the new "Add Trigger" creation entry, so the invariant and the shipped behavior
 don't silently diverge.
 
-**Open questions:**
-- Does saving a new-object tab feed the brand-new `CREATE TRIGGER`/`CREATE FUNCTION`/`CREATE PROCEDURE`
-  text into the existing local-vs-DB diff/deploy pipeline (`db/migration_gen.py` + §18.3/§18.4) the same
-  way an edited existing object does, or does creation need its own "not yet in the DB" handling since
-  today's diff logic was built around already-tracked objects? Needs a design-time answer, not guessed.
-- Exact menu location for the "New Function/Procedure…" action (DDL menu vs. File menu vs. a toolbar
-  button) — left to whoever designs this, no strong existing convention points to one over the other.
+**Open questions:** none — both resolved 2026-08-06 against actual code (see the deploy-pipeline and
+menu-location details folded into "Proposed approach" above) before this entry was picked up.
 
 ---
