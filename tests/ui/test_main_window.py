@@ -247,7 +247,7 @@ def test_reparse_success_rebuilds_tree_and_adopts_new_model(qtbot):
 
     # User edits the editor to a two-page document, then reparses.
     window.center_stage.xml_editor.setPlainText(textwrap.dedent(_REPARSE_TWO_PAGES))
-    window._reparse_raw_xml()
+    window._doc_ui.reparse()
 
     assert window.project_tree.topLevelItemCount() == 2
     assert window._current_project is not project
@@ -287,7 +287,7 @@ def test_reparse_failure_preserves_model_and_tree_and_highlights_line(qtbot, mon
     window.center_stage.xml_editor.setPlainText(
         "<Project><Presentation><Pages><Page></Pages></Presentation></Project>"
     )
-    window._reparse_raw_xml()
+    window._doc_ui.reparse()
 
     assert critical_calls, "expected QMessageBox.critical to be shown"
     assert highlighted, "expected highlight_error_line to be called for the error line"
@@ -323,14 +323,14 @@ def test_reparse_failure_without_line_number_still_shows_dialog(qtbot, monkeypat
 
     # Force a PgtpParseError with line=None by monkeypatching the parser
     # entry point MainWindow calls.
-    import pgtp_editor.ui.main_window as mw
+    import pgtp_editor.ui.pgtp_document_controller as doc_module
     from pgtp_editor.model.parser import PgtpParseError
 
     def _raise_no_line(text, source_description="<editor>"):
         raise PgtpParseError("structural surprise", line=None)
 
-    monkeypatch.setattr(mw, "load_project_from_text", _raise_no_line)
-    window._reparse_raw_xml()
+    monkeypatch.setattr(doc_module, "load_project_from_text", _raise_no_line)
+    window._doc_ui.reparse()
 
     assert critical_calls, "dialog still shown when line is unknown"
     assert highlighted == []  # no line to highlight
@@ -357,7 +357,7 @@ def test_reparse_realigns_click_sync_after_line_shift(qtbot):
     one_page_lines = textwrap.dedent(_REPARSE_ONE_PAGE).split("\n")
     shifted = one_page_lines[0] + "\n<!-- a -->\n<!-- b -->\n" + "\n".join(one_page_lines[1:])
     window.center_stage.xml_editor.setPlainText(shifted)
-    window._reparse_raw_xml()
+    window._doc_ui.reparse()
 
     new_page = window._current_project.pages[0]
     # Clicking the page's (now-shifted) line resolves to the rebuilt node.

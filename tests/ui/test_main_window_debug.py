@@ -49,7 +49,7 @@ def test_open_project_file_logs_seam(qtbot, tmp_path, caplog):
     project.write_text(
         '<?xml version="1.0" encoding="UTF-8"?><Project/>', encoding="utf-8"
     )
-    with caplog.at_level(logging.INFO, logger="pgtp_editor.ui.main_window"):
+    with caplog.at_level(logging.INFO, logger="pgtp_editor.ui.pgtp_document_controller"):
         window.open_project_file(project)
     assert any("file: open" in r.message for r in caplog.records)
 
@@ -62,8 +62,8 @@ def test_save_logs_seam(qtbot, tmp_path, caplog):
         '<?xml version="1.0" encoding="UTF-8"?><Project/>', encoding="utf-8"
     )
     window.open_project_file(project)
-    with caplog.at_level(logging.INFO, logger="pgtp_editor.ui.main_window"):
-        window._write_project_text(project)
+    with caplog.at_level(logging.INFO, logger="pgtp_editor.ui.pgtp_document_controller"):
+        window._doc_ui._write_project_text(project)
     assert any("file: save" in r.message for r in caplog.records)
 
 
@@ -77,6 +77,6 @@ def test_revert_logs_seam(qtbot, tmp_path, caplog):
     # str, not Path: production hands open_project_file the QFileDialog string,
     # and _revert_project builds the .bak path with str concatenation.
     window.open_project_file(str(project))
-    with caplog.at_level(logging.INFO, logger="pgtp_editor.ui.main_window"):
-        window._revert_project()
+    with caplog.at_level(logging.INFO, logger="pgtp_editor.ui.pgtp_document_controller"):
+        window._doc_ui.revert()
     assert any("file: revert" in r.message for r in caplog.records)

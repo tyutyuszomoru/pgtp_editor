@@ -1,5 +1,5 @@
 """§9 Edit ▸ Auto Parse XML — the checkable toggle, the `blockCountChanged`
-listener, the 400 ms debounce, and `_reparse_raw_xml(silent=True)`'s
+listener, the 400 ms debounce, and `PgtpDocumentController.reparse(silent=True)`'s
 status-bar-only failure mode.
 
 The whole point of `silent=True` is that a failure fires WHILE THE USER IS
@@ -9,6 +9,7 @@ the modal is monkeypatched to a recorder and asserted NOT to have been called.
 """
 from pgtp_editor.ui import modals
 from pgtp_editor.ui.main_window import MainWindow
+from pgtp_editor.ui.pgtp_document_controller import PgtpDocumentController
 from tests.ui._menu_helpers import find_action, find_top_menu
 
 _MINIMAL_PGTP = (
@@ -130,7 +131,7 @@ def test_fire_time_handler_re_checks_the_toggle(qtbot, tmp_path, monkeypatch):
     window = _window(qtbot, tmp_path)
     calls = []
     monkeypatch.setattr(
-        MainWindow, "_reparse_raw_xml", lambda self, **kw: calls.append(kw)
+        PgtpDocumentController, "reparse", lambda self, **kw: calls.append(kw)
     )
     window._auto_parse_now()
     assert calls == []
@@ -179,12 +180,12 @@ def test_silent_failure_raises_no_modal_and_does_not_move_the_caret(
     )
     # Establish a last-good model first.
     window.center_stage.xml_editor.setPlainText(_MINIMAL_PGTP)
-    window._reparse_raw_xml()
+    window._doc_ui.reparse()
     good_project = window._current_project
     assert good_project is not None
 
     window.center_stage.xml_editor.setPlainText("<Project><Page")
-    window._reparse_raw_xml(silent=True)
+    window._doc_ui.reparse(silent=True)
 
     assert modal_calls == []
     assert highlighted == []
@@ -201,7 +202,7 @@ def test_the_manual_path_still_raises_the_modal(qtbot, tmp_path, monkeypatch):
     modal_calls = _no_modals(monkeypatch)
     window.center_stage.xml_editor.setPlainText("<Project><Page")
 
-    window._reparse_raw_xml()
+    window._doc_ui.reparse()
 
     assert len(modal_calls) == 1
 
@@ -212,7 +213,7 @@ def test_the_tools_menu_action_passes_no_silent_argument(qtbot, tmp_path, monkey
     window = _window(qtbot, tmp_path)
     seen = []
     monkeypatch.setattr(
-        MainWindow, "_reparse_raw_xml", lambda self, **kw: seen.append(kw)
+        PgtpDocumentController, "reparse", lambda self, **kw: seen.append(kw)
     )
     find_action(find_top_menu(window, "Tools"), "Reparse Raw XML into Tree").trigger()
     assert seen == [{}]

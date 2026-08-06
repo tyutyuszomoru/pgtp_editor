@@ -214,7 +214,7 @@ def test_navigation_resolves_a_checked_out_tab_keyed_on_its_path(qtbot, tmp_path
     project_dir = tmp_path / "proj"
     save_settings(project_dir, ProjectSettings())
     window = _window(qtbot, tmp_path)
-    window._set_active_ddl_project(project_dir, ProjectSettings())
+    window._ddl_project_ui.set_active_project(project_dir, ProjectSettings())
 
     window._checkout_and_edit(_REF, _SOURCE)
 
@@ -461,14 +461,14 @@ def _project_window(qtbot, tmp_path, monkeypatch, sandbox_host="localhost"):
     save_settings(project_dir, settings)
     window = _window(qtbot, tmp_path)
     window._run_async = _sync_run
-    window._probe_sandbox_capabilities = lambda params: SandboxCapabilities(
+    window._ddl_project_ui.probe_sandbox_capabilities = lambda params: SandboxCapabilities(
         is_superuser=True
     )
     controller = window.sandbox_controller
     controller._run_async = _sync_run
     session = _FakeSession()
     controller._opener = lambda *a, **k: session
-    window._set_active_ddl_project(project_dir, settings)
+    window._ddl_project_ui.set_active_project(project_dir, settings)
     return window, controller, session
 
 
@@ -526,7 +526,7 @@ def test_closing_the_project_leaves_no_stale_session(qtbot, tmp_path, monkeypatc
     window._open_sandbox_session()
     assert controller.has_session
 
-    window._close_ddl_project()
+    window._ddl_project_ui.close_project()
 
     assert controller.session is None
     assert not window._sandbox_check_action.isVisible()

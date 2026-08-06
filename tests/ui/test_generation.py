@@ -307,7 +307,7 @@ def test_generate_output_folder_prefers_the_open_local_project_folder(qtbot, tmp
     project_folder.mkdir()
     from pgtp_editor.db.ddl_project import ProjectSettings
 
-    window._set_active_ddl_project(project_folder, ProjectSettings())
+    window._ddl_project_ui.set_active_project(project_folder, ProjectSettings())
 
     captured = {}
 

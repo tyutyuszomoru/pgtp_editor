@@ -97,7 +97,7 @@ def test_connection_setup_action_enabled_when_no_project_is_open(qtbot):
     qtbot.addWidget(window)
     assert window._ddl_project_folder is None
 
-    assert window._connection_setup_action.isEnabled() is True
+    assert window._ddl_project_ui.connection_setup_action.isEnabled() is True
 
 
 def test_connection_setup_action_disabled_once_a_project_is_active(qtbot, tmp_path):
@@ -106,9 +106,9 @@ def test_connection_setup_action_disabled_once_a_project_is_active(qtbot, tmp_pa
     window = MainWindow()
     qtbot.addWidget(window)
 
-    window._set_active_ddl_project(tmp_path / "proj", ProjectSettings())
+    window._ddl_project_ui.set_active_project(tmp_path / "proj", ProjectSettings())
 
-    assert window._connection_setup_action.isEnabled() is False
+    assert window._ddl_project_ui.connection_setup_action.isEnabled() is False
 
 
 def test_connection_setup_action_re_enabled_after_closing_the_project(qtbot, tmp_path):
@@ -116,12 +116,12 @@ def test_connection_setup_action_re_enabled_after_closing_the_project(qtbot, tmp
 
     window = MainWindow()
     qtbot.addWidget(window)
-    window._set_active_ddl_project(tmp_path / "proj", ProjectSettings())
-    assert window._connection_setup_action.isEnabled() is False
+    window._ddl_project_ui.set_active_project(tmp_path / "proj", ProjectSettings())
+    assert window._ddl_project_ui.connection_setup_action.isEnabled() is False
 
-    window._close_ddl_project()
+    window._ddl_project_ui.close_project()
 
-    assert window._connection_setup_action.isEnabled() is True
+    assert window._ddl_project_ui.connection_setup_action.isEnabled() is True
 
 
 def test_open_connection_setup_no_ops_while_a_project_is_active(qtbot, tmp_path):
@@ -129,7 +129,7 @@ def test_open_connection_setup_no_ops_while_a_project_is_active(qtbot, tmp_path)
 
     window = MainWindow()
     qtbot.addWidget(window)
-    window._set_active_ddl_project(tmp_path / "proj", ProjectSettings())
+    window._ddl_project_ui.set_active_project(tmp_path / "proj", ProjectSettings())
 
     window._open_connection_setup()
 

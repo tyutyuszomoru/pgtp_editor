@@ -172,7 +172,7 @@ def test_toggle_on_without_connection_and_project_open_reroutes_to_project_setti
     from pgtp_editor.db.ddl_project import ProjectSettings
 
     window = _window(qtbot, tmp_path, with_project=False)  # no .pgtp, empty settings
-    window._set_active_ddl_project(tmp_path / "proj", ProjectSettings())
+    window._ddl_project_ui.set_active_project(tmp_path / "proj", ProjectSettings())
     fetches = []
     window._fetch_ddl_schema = lambda params: fetches.append(1) or _schema()
 
@@ -180,7 +180,7 @@ def test_toggle_on_without_connection_and_project_open_reroutes_to_project_setti
 
     assert window._ddl_explorer_action.isChecked() is False  # rolled back
     assert window._connection_dialog is None  # Connection Setup NOT opened
-    assert window._project_settings_dialog is not None  # Project Settings opened instead
+    assert window._ddl_project_ui.project_settings_dialog is not None  # Project Settings opened instead
     assert fetches == []  # never tried to fetch
 
 
@@ -450,7 +450,7 @@ def test_toggle_on_with_a_project_open_renders_drift_markers(qtbot, tmp_path):
         },
     )
     save_settings(project_dir, settings)
-    window._set_active_ddl_project(project_dir, settings)
+    window._ddl_project_ui.set_active_project(project_dir, settings)
 
     window._ddl_explorer_action.setChecked(True)
 
@@ -493,7 +493,7 @@ def test_explorer_with_a_project_open_connects_with_the_project_target(qtbot, tm
     window._run_async = _sync_run
     used = []
     window._fetch_ddl_schema = lambda params: used.append(params) or _schema()
-    window._set_active_ddl_project(
+    window._ddl_project_ui.set_active_project(
         tmp_path / "proj",
         ProjectSettings(target=ConnectionParams(
             host="project-host", port="5433", database="pdb", user="pu", password="pp"
@@ -517,7 +517,7 @@ def test_explorer_prompts_once_for_a_password_the_pgtp_could_not_supply(qtbot, t
         target=ConnectionParams(host="dbhost", port="5433", database="erpdb", user="erp")
     )
     save_settings(project_dir, project_settings)
-    window._set_active_ddl_project(project_dir, project_settings)
+    window._ddl_project_ui.set_active_project(project_dir, project_settings)
     used = []
     window._fetch_ddl_schema = lambda params: used.append(params) or _schema()
     window._prompt_target_password = lambda params: "s3cret"

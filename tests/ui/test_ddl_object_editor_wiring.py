@@ -412,7 +412,7 @@ def test_saving_a_checked_out_object_makes_the_file_level_star_appear(qtbot, tmp
     # BUG-034: with a project open, its own target is what the fetch uses.
     settings = ProjectSettings(target=_TARGET)
     save_settings(project_dir, settings)
-    window._set_active_ddl_project(project_dir, settings)
+    window._ddl_project_ui.set_active_project(project_dir, settings)
     _load_explorer(window, monkeypatch)
 
     window._checkout_and_edit(_REF, "-- live recalc\n")
@@ -449,7 +449,7 @@ def test_checkout_registers_the_live_hash_and_never_overwrites_a_real_reference(
         deployed={"ddl/pr.recalc.sql": DeployedObject(content_hash="the-real-deploy")},
     )
     save_settings(project_dir, settings)
-    window._set_active_ddl_project(project_dir, settings)
+    window._ddl_project_ui.set_active_project(project_dir, settings)
     _load_explorer(window, monkeypatch)
 
     window._checkout_and_edit(_REF, "-- live recalc\n")

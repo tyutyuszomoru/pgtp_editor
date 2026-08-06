@@ -596,7 +596,7 @@ def test_ctrl_s_with_a_php_tab_focused_saves_the_file_not_the_project(
     window = _window(qtbot, tmp_path)
     saved_project = []
     monkeypatch.setattr(
-        type(window), "_save_project", lambda self: saved_project.append(True)
+        window._doc_ui, "save_project", lambda: saved_project.append(True)
     )
     path = _php(tmp_path)
     tab = window._php_tabs.open_path(path)
@@ -640,7 +640,7 @@ def test_a_dropped_pgtp_reaches_the_project_open_path(qtbot, tmp_path, monkeypat
     window = _window(qtbot, tmp_path)
     prompted = []
     monkeypatch.setattr(
-        type(window), "_prompt_pgtp_open_mode", lambda self, p: prompted.append(p)
+        window._doc_ui, "prompt_open_mode", lambda p: prompted.append(p)
     )
     project = tmp_path / "app.pgtp"
     project.write_text("<Project/>", encoding="utf-8")

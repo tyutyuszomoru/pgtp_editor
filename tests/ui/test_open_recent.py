@@ -8,6 +8,7 @@ an entry opens through the ONE existing project-open path.
 from PySide6.QtCore import QSettings
 
 from pgtp_editor.ui.main_window import MainWindow
+from pgtp_editor.ui.pgtp_document_controller import PgtpDocumentController
 from tests.ui._menu_helpers import action_labels, find_action, find_top_menu
 
 _MINIMAL_PGTP = (
@@ -50,7 +51,7 @@ def test_opening_a_project_records_it(qtbot, tmp_path):
 
     window.open_project_file(str(path))
 
-    assert window._recent_files() == [str(path)]
+    assert window._doc_ui.recent_files() == [str(path)]
 
 
 def test_the_list_is_most_recent_first_and_deduplicated(qtbot, tmp_path):
@@ -62,7 +63,7 @@ def test_the_list_is_most_recent_first_and_deduplicated(qtbot, tmp_path):
     window.open_project_file(str(second))
     window.open_project_file(str(first))
 
-    assert window._recent_files() == [str(first), str(second)]
+    assert window._doc_ui.recent_files() == [str(first), str(second)]
 
 
 def test_the_list_is_capped(qtbot, tmp_path):
@@ -71,8 +72,8 @@ def test_the_list_is_capped(qtbot, tmp_path):
     for path in paths:
         window.open_project_file(str(path))
 
-    recent = window._recent_files()
-    assert len(recent) == MainWindow._RECENT_FILES_MAX == 10
+    recent = window._doc_ui.recent_files()
+    assert len(recent) == PgtpDocumentController._RECENT_FILES_MAX == 10
     # The most recent survive; the oldest fall off the tail.
     assert recent[0] == str(paths[-1])
     assert str(paths[0]) not in recent
@@ -87,7 +88,7 @@ def test_entries_whose_file_is_gone_are_dropped(qtbot, tmp_path):
 
     doomed.unlink()
 
-    assert window._recent_files() == [str(kept)]
+    assert window._doc_ui.recent_files() == [str(kept)]
 
 
 def test_the_list_persists_across_windows(qtbot, tmp_path):
@@ -102,7 +103,7 @@ def test_the_list_persists_across_windows(qtbot, tmp_path):
 
     second_window = _window(qtbot, tmp_path, settings=_ini_settings(tmp_path))
 
-    assert second_window._recent_files() == [str(path)]
+    assert second_window._doc_ui.recent_files() == [str(path)]
     assert action_labels(_recent_menu(second_window)) == ["demo.pgtp"]
 
 
@@ -117,7 +118,7 @@ def test_a_failed_open_is_not_recorded(qtbot, tmp_path, monkeypatch):
 
     window.open_project_file(str(broken))
 
-    assert window._recent_files() == []
+    assert window._doc_ui.recent_files() == []
 
 
 def test_save_as_records_the_new_path(qtbot, tmp_path, monkeypatch):
@@ -130,9 +131,9 @@ def test_save_as_records_the_new_path(qtbot, tmp_path, monkeypatch):
         modals.QFileDialog, "getSaveFileName", lambda *a, **k: (str(target), "")
     )
 
-    window._save_project_as()
+    window._doc_ui.save_as()
 
-    assert window._recent_files() == [str(target)]
+    assert window._doc_ui.recent_files() == [str(target)]
 
 
 # -- the submenu ------------------------------------------------------------
@@ -172,7 +173,7 @@ def test_triggering_an_entry_goes_through_the_existing_open_path(qtbot, tmp_path
     path = _make_project(tmp_path)
     window.open_project_file(str(path))
     opened = []
-    window._open_pgtp_path = lambda target: opened.append(target)
+    window._doc_ui.open_pgtp_path = lambda target: opened.append(target)
 
     menu = _recent_menu(window)
     menu.aboutToShow.emit()
@@ -190,7 +191,7 @@ def test_each_entry_binds_its_own_path(qtbot, tmp_path):
     window.open_project_file(str(first))
     window.open_project_file(str(second))
     opened = []
-    window._open_pgtp_path = lambda target: opened.append(target)
+    window._doc_ui.open_pgtp_path = lambda target: opened.append(target)
 
     menu = _recent_menu(window)
     menu.aboutToShow.emit()

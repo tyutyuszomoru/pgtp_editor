@@ -55,10 +55,10 @@ def _window(qtbot, tmp_path, *, sandbox_host="localhost", mode=SandboxMode.SCHEM
     )
     qtbot.addWidget(window)
     window._run_async = sync_run
-    window._probe_sandbox_capabilities = lambda params: _caps()
+    window._ddl_project_ui.probe_sandbox_capabilities = lambda params: _caps()
     window._inspect_sandbox_provisioning = lambda params: (None, None)
     stub_sandbox_provisioning(window)
-    window._set_active_ddl_project(project_dir, settings)
+    window._ddl_project_ui.set_active_project(project_dir, settings)
     return window, project_dir
 
 
@@ -334,7 +334,7 @@ def test_the_install_action_reaches_install_plpgsql_check_without_a_prompt(
     """Installing is non-destructive (`CREATE EXTENSION IF NOT EXISTS` drops
     nothing), so it must never reach `confirm_destructive`."""
     window, _dir = _window(qtbot, tmp_path)
-    window._probe_sandbox_capabilities = lambda params: _caps(
+    window._ddl_project_ui.probe_sandbox_capabilities = lambda params: _caps(
         available_extensions=frozenset({"plpgsql_check"})
     )
     window._open_sandbox_session()

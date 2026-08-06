@@ -46,7 +46,7 @@ def _window(qtbot, tmp_path):
     )
     qtbot.addWidget(window)
     window._run_async = sync_run
-    window._probe_sandbox_capabilities = lambda params: SandboxCapabilities(
+    window._ddl_project_ui.probe_sandbox_capabilities = lambda params: SandboxCapabilities(
         is_superuser=True,
         available_extensions=frozenset({"plpgsql_check"}),
         database="pgtp_sandbox_x",
@@ -127,7 +127,7 @@ def test_creating_a_project_creates_and_records_an_auto_named_sandbox_database(
     created = stub_sandbox_provisioning(window)
     dialog = _dialog(qtbot, window, tmp_path)
 
-    window._create_ddl_project(dialog)
+    window._ddl_project_ui.create_project(dialog)
 
     assert len(created) == 1
     assert _NAME_RE.match(created[0])
@@ -146,7 +146,7 @@ def test_the_session_is_live_after_creation_so_apply_to_sandbox_is_reachable(
     stub_sandbox_provisioning(window)
     dialog = _dialog(qtbot, window, tmp_path)
 
-    window._create_ddl_project(dialog)
+    window._ddl_project_ui.create_project(dialog)
 
     assert window.sandbox_controller.has_session is True
     assert window.sandbox_controller.can_check is True
@@ -159,7 +159,7 @@ def test_a_project_without_a_sandbox_connection_creates_nothing(qtbot, tmp_path)
     created = stub_sandbox_provisioning(window)
     dialog = _dialog(qtbot, window, tmp_path, host="")
 
-    window._create_ddl_project(dialog)
+    window._ddl_project_ui.create_project(dialog)
 
     assert created == []
     assert window.sandbox_controller.has_session is False
@@ -182,7 +182,7 @@ def test_a_taken_name_is_skipped_and_the_created_one_is_what_gets_recorded(
     window.sandbox_controller._database_creator = creator
     dialog = _dialog(qtbot, window, tmp_path)
 
-    window._create_ddl_project(dialog)
+    window._ddl_project_ui.create_project(dialog)
 
     assert len(attempts) == 2 and attempts[0] != attempts[1]
     assert window._ddl_project_settings.sandbox.database == attempts[1]
@@ -195,7 +195,7 @@ def test_the_admin_connection_used_is_the_maintenance_database(qtbot, tmp_path):
     window.sandbox_controller._database_creator = lambda admin, name: seen.append(admin)
     dialog = _dialog(qtbot, window, tmp_path)
 
-    window._create_ddl_project(dialog)
+    window._ddl_project_ui.create_project(dialog)
 
     assert seen[0].database == MAINTENANCE_DATABASE
     assert seen[0].user == "postgres"
@@ -214,7 +214,7 @@ def test_a_failed_creation_still_creates_the_project_and_records_no_sandbox_db(
     window.sandbox_controller._database_creator = creator
     dialog = _dialog(qtbot, window, tmp_path)
 
-    window._create_ddl_project(dialog)
+    window._ddl_project_ui.create_project(dialog)
 
     # the project exists and is open -- a sandbox failure is a tier-2 degrade
     assert window._ddl_project_folder == tmp_path / "proj"
@@ -240,14 +240,14 @@ def test_a_failed_provisioning_leaves_the_reported_tier_agreeing_with_reality(
     )
     # A sandbox that cannot be reached/built must degrade the project, whatever
     # the recorded mode says (BUG-035's class of lie).
-    window._probe_sandbox_capabilities = lambda params: SandboxCapabilities(
+    window._ddl_project_ui.probe_sandbox_capabilities = lambda params: SandboxCapabilities(
         probe_error="database does not exist"
     )
     dialog = _dialog(qtbot, window, tmp_path)
 
-    window._create_ddl_project(dialog)
+    window._ddl_project_ui.create_project(dialog)
 
-    status = window._ddl_project_capability_status
+    status = window._ddl_project_ui.capability_status
     assert status is not None
     assert status.tier.value != "development"
     assert "database does not exist" in status.degraded_reason
@@ -262,7 +262,7 @@ def test_a_with_data_choice_is_recorded_verbatim(qtbot, tmp_path):
     dialog = _dialog(qtbot, window, tmp_path)
     dialog._sandbox_with_data_radio.setChecked(True)
 
-    window._create_ddl_project(dialog)
+    window._ddl_project_ui.create_project(dialog)
 
     assert load_settings(tmp_path / "proj").sandbox_mode is SandboxMode.WITH_DATA
 
@@ -282,7 +282,7 @@ def test_provisioning_never_opens_a_modal(qtbot, tmp_path, monkeypatch):
     stub_sandbox_provisioning(window)
     dialog = _dialog(qtbot, window, tmp_path)
 
-    window._create_ddl_project(dialog)
+    window._ddl_project_ui.create_project(dialog)
 
     assert window.sandbox_controller.has_session is True
 
@@ -293,7 +293,7 @@ def test_the_target_profile_is_what_the_baseline_is_built_from(qtbot, tmp_path):
     snapshots = []
     window.sandbox_controller._snapshotter = lambda params: snapshots.append(params)
     dialog = _dialog(qtbot, window, tmp_path)
-    window._create_ddl_project(dialog)
+    window._ddl_project_ui.create_project(dialog)
     # A brand-new project has no target yet: nothing is connected to, and the
     # sandbox is provisioned empty with that said out loud.
     assert snapshots == []
@@ -310,7 +310,7 @@ def test_a_configured_target_is_snapshotted_for_the_baseline(qtbot, tmp_path):
     snapshots = []
     window.sandbox_controller._snapshotter = lambda params: snapshots.append(params)
     dialog = _dialog(qtbot, window, tmp_path)
-    window._create_ddl_project(dialog)
+    window._ddl_project_ui.create_project(dialog)
     # Configure a target the way Project Settings does, then re-provision through
     # the same controller entry point the New Project step uses.
     target = ConnectionParams(host="db.example", database="prod", user="me")
@@ -388,7 +388,7 @@ def test_every_candidate_taken_records_no_sandbox_and_says_why(qtbot, tmp_path):
     window.sandbox_controller._database_creator = creator
     dialog = _dialog(qtbot, window, tmp_path)
 
-    window._create_ddl_project(dialog)
+    window._ddl_project_ui.create_project(dialog)
 
     assert len(attempts) > 1  # every generated candidate was tried
     assert window._ddl_project_settings.sandbox.database == ""
@@ -414,7 +414,7 @@ def test_a_refused_plpgsql_check_install_still_records_the_created_database(
     )
     dialog = _dialog(qtbot, window, tmp_path)
 
-    window._create_ddl_project(dialog)
+    window._ddl_project_ui.create_project(dialog)
 
     assert len(created) == 1
     assert load_settings(tmp_path / "proj").sandbox.database == created[0]
@@ -432,7 +432,7 @@ def test_the_recorded_sandbox_database_is_an_app_owned_name(qtbot, tmp_path):
     stub_sandbox_provisioning(window)
     dialog = _dialog(qtbot, window, tmp_path)
 
-    window._create_ddl_project(dialog)
+    window._ddl_project_ui.create_project(dialog)
 
     recorded = load_settings(tmp_path / "proj").sandbox.database
     assert is_app_owned(recorded, "pgtp-editor-sandbox:1:2026-08-06T00:00:00+00:00")
@@ -459,7 +459,7 @@ def test_creation_touches_no_database_other_than_the_one_it_creates(qtbot, tmp_p
     window.sandbox_controller._database_creator = creator
     dialog = _dialog(qtbot, window, tmp_path)
 
-    window._create_ddl_project(dialog)
+    window._ddl_project_ui.create_project(dialog)
 
     assert provisioned == created  # exactly the created database, nothing else
     assert window._ddl_project_settings.sandbox.database == created[0]
@@ -470,7 +470,7 @@ def test_the_created_name_is_what_the_session_is_opened_on(qtbot, tmp_path):
     created = stub_sandbox_provisioning(window)
     dialog = _dialog(qtbot, window, tmp_path)
 
-    window._create_ddl_project(dialog)
+    window._ddl_project_ui.create_project(dialog)
 
     assert window.sandbox_controller.sandbox_params.database == created[0]
     assert window.sandbox_controller.session.params.database == created[0]

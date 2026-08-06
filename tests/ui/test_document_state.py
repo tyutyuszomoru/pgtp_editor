@@ -42,7 +42,7 @@ def test_editing_editor_sets_dirty_and_title_star(qtbot, tmp_path):
 
 def test_load_clears_dirty(qtbot, tmp_path):
     window = _window(qtbot, tmp_path)
-    window._set_dirty(True)
+    window._doc_ui.set_dirty(True)
     path = _make_project(tmp_path)
 
     window.open_project_file(str(path))
@@ -67,7 +67,7 @@ def test_successful_save_clears_dirty(qtbot, tmp_path):
     window.center_stage.xml_editor.setPlainText("dirty edit")
     assert window._dirty is True
 
-    window._save_project()
+    window._doc_ui.save_project()
 
     assert window._dirty is False
 
@@ -82,7 +82,7 @@ def test_save_over_existing_makes_bak_with_presave_content(qtbot, tmp_path):
     window._current_project_path = str(target)
     window.center_stage.xml_editor.setPlainText("POST-SAVE")
 
-    window._save_project()
+    window._doc_ui.save_project()
 
     assert target.read_text(encoding="utf-8") == "POST-SAVE"
     assert (tmp_path / "existing.pgtp.bak").read_text(encoding="utf-8") == "PRE-SAVE"
@@ -93,7 +93,7 @@ def test_save_as_new_path_makes_no_bak(qtbot, tmp_path):
     target = tmp_path / "brand_new.pgtp"
     window.center_stage.xml_editor.setPlainText("data")
 
-    window._write_project_text(str(target))
+    window._doc_ui._write_project_text(str(target))
 
     assert not (tmp_path / "brand_new.pgtp.bak").exists()
 
@@ -107,7 +107,7 @@ def test_close_discard_clears_state(qtbot, tmp_path):
     window.open_project_file(str(path))
     window.center_stage.xml_editor.setPlainText("dirty")
 
-    window._close_project(confirm="discard")
+    window._doc_ui.close(confirm="discard")
 
     assert window._current_project is None
     assert window._current_project_path is None
@@ -124,7 +124,7 @@ def test_close_cancel_preserves_state(qtbot, tmp_path):
     window.center_stage.xml_editor.setPlainText("dirty edit")
     tree_count_before = window.project_tree.topLevelItemCount()
 
-    window._close_project(confirm="cancel")
+    window._doc_ui.close(confirm="cancel")
 
     assert window._current_project is not None
     assert window._current_project_path == str(path)
@@ -139,7 +139,7 @@ def test_close_not_dirty_treated_as_discard(qtbot, tmp_path):
     window.open_project_file(str(path))
     assert window._dirty is False
 
-    window._close_project()  # confirm is None but not dirty -> discard
+    window._doc_ui.close()  # confirm is None but not dirty -> discard
 
     assert window._current_project is None
     assert window._current_project_path is None
@@ -151,7 +151,7 @@ def test_close_save_writes_and_closes(qtbot, tmp_path):
     window.open_project_file(str(path))
     window.center_stage.xml_editor.setPlainText("saved on close")
 
-    window._close_project(confirm="save")
+    window._doc_ui.close(confirm="save")
 
     assert path.read_text(encoding="utf-8") == "saved on close"
     assert window._current_project is None
@@ -173,7 +173,7 @@ def test_close_save_aborts_if_still_dirty(qtbot, tmp_path):
         "pgtp_editor.ui.modals.QFileDialog.getSaveFileName",
         return_value=("", ""),
     ):
-        window._close_project(confirm="save")
+        window._doc_ui.close(confirm="save")
 
     # Save-As was cancelled -> still dirty -> close aborted, state intact.
     assert window._dirty is True
@@ -201,13 +201,13 @@ def test_revert_restores_bak_and_marks_dirty(qtbot, tmp_path):
     window.open_project_file(str(path))
     # Create a .bak by saving over the file (pre-save content becomes .bak).
     window.center_stage.xml_editor.setPlainText(_MINIMAL_PGTP)
-    window._save_project()  # writes .bak = _MINIMAL_PGTP (pre-save on-disk)
+    window._doc_ui.save_project()  # writes .bak = _MINIMAL_PGTP (pre-save on-disk)
     bak = tmp_path / "demo.pgtp.bak"
     assert bak.exists()
     # Now edit further and revert.
     window.center_stage.xml_editor.setPlainText("something else entirely")
 
-    window._revert_project()
+    window._doc_ui.revert()
 
     assert window.center_stage.xml_editor.toPlainText() == bak.read_text(encoding="utf-8")
     assert window._current_project_path == str(path)
@@ -222,7 +222,7 @@ def test_revert_no_bak_shows_message(qtbot, tmp_path):
     assert not (tmp_path / "demo.pgtp.bak").exists()
     editor_before = window.center_stage.xml_editor.toPlainText()
 
-    window._revert_project()
+    window._doc_ui.revert()
 
     assert window.statusBar().currentMessage() == "Nothing to revert to."
     assert window.center_stage.xml_editor.toPlainText() == editor_before
@@ -232,7 +232,7 @@ def test_revert_no_project_path_shows_message(qtbot, tmp_path):
     window = _window(qtbot, tmp_path)
     assert window._current_project_path is None
 
-    window._revert_project()
+    window._doc_ui.revert()
 
     assert window.statusBar().currentMessage() == "Nothing to revert to."
 
@@ -252,7 +252,7 @@ def test_revert_menu_action_is_gated_on_the_bak_and_wired(qtbot, tmp_path):
     assert revert.isEnabled() is False
 
     window.center_stage.xml_editor.setPlainText(_MINIMAL_PGTP)
-    window._save_project()  # writes demo.pgtp.bak
+    window._doc_ui.save_project()  # writes demo.pgtp.bak
     assert revert.isEnabled() is True
 
     revert.trigger()
@@ -263,12 +263,12 @@ def test_closing_the_project_disables_revert_again(qtbot, tmp_path):
     window = _window(qtbot, tmp_path)
     path = _make_project(tmp_path)
     window.open_project_file(str(path))
-    window._save_project()
-    assert window._revert_action.isEnabled() is True
+    window._doc_ui.save_project()
+    assert window._doc_ui.revert_action.isEnabled() is True
 
-    window._close_project(confirm="discard")
+    window._doc_ui.close(confirm="discard")
 
-    assert window._revert_action.isEnabled() is False
+    assert window._doc_ui.revert_action.isEnabled() is False
 
 
 def test_revert_still_defends_at_runtime_when_the_bak_vanishes(qtbot, tmp_path):
@@ -277,14 +277,14 @@ def test_revert_still_defends_at_runtime_when_the_bak_vanishes(qtbot, tmp_path):
     window = _window(qtbot, tmp_path)
     path = _make_project(tmp_path)
     window.open_project_file(str(path))
-    window._save_project()
-    assert window._revert_action.isEnabled() is True
+    window._doc_ui.save_project()
+    assert window._doc_ui.revert_action.isEnabled() is True
 
     (tmp_path / "demo.pgtp.bak").unlink()
-    window._revert_project()
+    window._doc_ui.revert()
 
     assert window.statusBar().currentMessage() == "Nothing to revert to."
-    assert window._revert_action.isEnabled() is False
+    assert window._doc_ui.revert_action.isEnabled() is False
 
 
 # -- failed open must not mark dirty (C1 regression) ------------------------
