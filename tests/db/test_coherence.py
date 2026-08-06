@@ -185,6 +185,18 @@ def test_reference_badges_come_from_role_rollups():
     assert look_refs.children[0].label.startswith("Page 'Main' ▸ Column 'look_fk'")
 
 
+def test_reference_rows_carry_the_owning_nodes_properties_kind():
+    """`TableReference.kind` IS the Properties-panel node kind, so a reference
+    row must carry it — dropping it left the Properties panel empty for every
+    row under a References group (BUG-032)."""
+    tree = _tree()
+    page_ref = _find(tree.tables_and_views, "pr.a").children[1].children[0]
+    assert page_ref.kind == "reference"  # the row's own kind is unchanged
+    assert page_ref.node_kind == "page"
+    look_refs = _find(tree.tables_and_views, "pr.look").children[1]
+    assert [ref.node_kind for ref in look_refs.children] == ["column", "column", "column"]
+
+
 # --- Pages branch: recursion depth (the anti-flattening guard) --------------
 
 

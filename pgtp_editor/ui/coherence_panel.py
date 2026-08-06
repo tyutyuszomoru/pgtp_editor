@@ -95,6 +95,15 @@ NOT_COMPARED_TEXT = (
 COHERENT_TEXT = "Compared: the XML and the database agree. Nothing needs attention."
 NO_MISMATCHES_TEXT = "No mismatches to show. Untick “Show only mismatches” to see everything."
 
+#: Internal `CoherenceNode.kind` -> the host-facing kind vocabulary MainWindow's
+#: name-based slots speak (`_on_db_jump_requested` / `_on_db_rename_requested`
+#: both test `kind == "table"`, and §17 binds the carried-over
+#: `jump_requested(kind, name)` / `(kind, name, ok, is_calculated)` shapes to
+#: `DbCheckPanel`'s `"table"`). A DB relation is `"relation"` internally, so it
+#: must be normalized on the way out — the omission of exactly this was BUG-032
+#: facet A. `contextual_rename` already did it by hand; this is the one mapping.
+_HOST_KIND = {"relation": "table"}
+
 _ROW_ROLE = Qt.ItemDataRole.UserRole  # (kind, name, ok, is_calculated) — DbCheckPanel shape
 _NODE_ROLE = Qt.ItemDataRole.UserRole + 1  # the CoherenceNode itself
 
@@ -254,7 +263,7 @@ class CoherencePanel(QWidget):
             0,
             _ROW_ROLE,
             (
-                node.kind,
+                _HOST_KIND.get(node.kind, node.kind),
                 node.table_name or node.label,
                 not node.flagged,
                 BADGE_CALCULATED in node.badges,
@@ -358,7 +367,10 @@ class CoherencePanel(QWidget):
             return
         # A lookup row's model node is the owning ColumnNode — the semantic the
         # Table References panel already had, kept so Properties behaves the same.
-        self.selection_changed.emit(node.node, node.kind)
+        # A reference row's model node is likewise the Page/Detail/Column that
+        # does the referencing, and `node_kind` says which — without it those
+        # rows rendered an empty Properties panel (BUG-032).
+        self.selection_changed.emit(node.node, node.node_kind or node.kind)
 
     def _on_double_click(self, item: QTreeWidgetItem, _column: int) -> None:
         node = self.node_for(item)
@@ -368,7 +380,9 @@ class CoherencePanel(QWidget):
             self.jump_requested.emit(node.line)
             return
         if node.kind in ("relation", "column"):
-            self.name_jump_requested.emit(node.kind, node.table_name or node.label)
+            self.name_jump_requested.emit(
+                _HOST_KIND.get(node.kind, node.kind), node.table_name or node.label
+            )
 
     def rename_menu_label(self, item: QTreeWidgetItem | None) -> str | None:
         """The "rename in XML…" label for `item`, or None when it does not

@@ -218,9 +218,88 @@ def test_double_click_on_a_relation_row_goes_through_the_name_jump(qtbot, tmp_pa
 
     name_jump.assert_called_once()
     kind, name = name_jump.call_args.args
-    assert kind == "relation"
+    # BUG-032 facet A: the host-facing kind for a relation is "table" (what the
+    # slot tests to build a tableName= token), not the internal "relation".
+    assert kind == "table"
     assert name
     line_jump.assert_not_called()
+
+
+def test_relation_double_click_really_finds_the_tableName_token(qtbot, tmp_path):
+    """BUG-032 facet A end to end, with the REAL slot body (the test above
+    patches it, which is how the wrong-token search shipped): double-clicking a
+    referenced relation must locate `tableName="…"` in the buffer, reveal Raw
+    XML, seed the Find bar with that token and list the occurrences — never the
+    "does not reference" message."""
+    window = _window(qtbot, tmp_path)
+    window._run_db_check()
+    panel = window.coherence_panel
+    relation = next(
+        item
+        for item in _rows_of_kind(panel, "relation")
+        if panel.node_for(item).table_name == "pr.orders"
+    )
+
+    panel.tree.itemDoubleClicked.emit(relation, 0)
+
+    bar = window.center_stage.find_replace_bar
+    assert bar._find_field.text() == 'tableName="pr.orders"'
+    assert window.center_stage.currentIndex() == window.center_stage.raw_xml_tab_index
+    # Offscreen the top-level window is never shown, so isVisible() is False
+    # regardless; assert the hidden flag the handler toggles.
+    assert not window.audit_dock.isHidden()
+    assert window._find_all_term == 'tableName="pr.orders"'
+    assert (
+        window.center_stage.xml_editor.textCursor().selectedText()
+        == 'tableName="pr.orders"'
+    )
+    assert "does not reference" not in window.statusBar().currentMessage()
+
+
+def test_an_unreferenced_relation_says_the_xml_does_not_reference_it(qtbot, tmp_path):
+    """The legitimate miss (a DB relation the XML references in no role) gets a
+    specific message now that the token bug no longer makes every relation miss."""
+    window = _window(qtbot, tmp_path)
+    schema = _schema()
+    schema.tables["pr.orphan"] = TableInfo(name="pr.orphan", kind="table", columns=[])
+    window._fetch_db_schema = lambda params: schema
+    window._run_db_check()
+    panel = window.coherence_panel
+    orphan = next(
+        item
+        for item in _rows_of_kind(panel, "relation")
+        if panel.node_for(item).table_name == "pr.orphan"
+    )
+
+    panel.tree.itemDoubleClicked.emit(orphan, 0)
+
+    message = window.statusBar().currentMessage()
+    assert 'No tableName="pr.orphan" in the buffer' in message
+    assert "the XML does not reference pr.orphan" in message
+
+
+def test_selecting_a_reference_row_really_populates_properties(qtbot, tmp_path):
+    """BUG-032 follow-up: rows under a relation's "References" group carried
+    kind="reference", which has no Properties builder — after facet B's graceful
+    degrade they rendered EMPTY where the retired Table References panel showed
+    the owning node. Drive the unpatched path: populated, with the owning node's
+    own header."""
+    window = _window(qtbot, tmp_path)
+    window._run_db_check()
+    panel = window.coherence_panel
+    references = _rows_of_kind(panel, "reference")
+    assert references
+
+    headers = []
+    for item in references:
+        panel.tree.setCurrentItem(item)
+        assert window.properties_panel.is_showing_empty_state() is False
+        headers.append(window.properties_panel.header_text())
+
+    # kb.x_objecttype is referenced by the lookup on pr.orders' `objecttype`
+    # column; pr.orders is referenced by the page itself.
+    assert "Column: objecttype" in headers
+    assert any(header.startswith("Page: ") for header in headers)
 
 
 def test_menus_offer_neither_reused_tables_nor_find_table_reference(qtbot):

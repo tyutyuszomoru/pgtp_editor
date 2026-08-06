@@ -3772,10 +3772,23 @@ class MainWindow(QMainWindow):
         attribute token in the Find-all results panel, select the first one, and
         seed the Find bar so Find Next / F3 steps through them (reusing the
         existing Find All + Find Next machinery rather than a one-shot jump)."""
-        token = f'tableName="{name}"' if kind == "table" else f'fieldName="{name}"'
+        # `kind` is the host-facing vocabulary DbCheckPanel established and §17
+        # carried over: a relation is "table". `CoherencePanel` normalizes
+        # "relation" -> "table" on the way out (BUG-032 facet A), and
+        # "relation" is accepted here as well so a future caller emitting the
+        # internal node kind cannot silently reintroduce a fieldName= search
+        # for a table name.
+        is_table = kind in ("table", "relation")
+        token = f'tableName="{name}"' if is_table else f'fieldName="{name}"'
         editor = self.center_stage.xml_editor
         if token not in editor.toPlainText():
-            self.statusBar().showMessage(f"{name} not found in the buffer.", 5000)
+            # A genuine miss is now meaningful (it is what an "unreferenced"
+            # relation looks like), so say what was searched and what that
+            # means instead of the bare "not found" that the token bug made
+            # indistinguishable from a malfunction.
+            self.statusBar().showMessage(
+                f"No {token} in the buffer — the XML does not reference {name}.", 5000
+            )
             return
         self.center_stage.setCurrentIndex(self.center_stage.raw_xml_tab_index)
         # Clear any selection so the first Find Next lands on the first match.

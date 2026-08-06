@@ -475,7 +475,23 @@ def test_on_db_jump_requested_table_token(qtbot):
 def test_on_db_jump_requested_missing_token_shows_status(qtbot):
     window = _window_with_project(qtbot)
     window._on_db_jump_requested("table", "pr.absent")
-    assert "not found" in window.statusBar().currentMessage()
+    # BUG-032 facet A: the miss names the token searched and what a miss means
+    # (the XML references the relation nowhere) instead of a bare "not found".
+    message = window.statusBar().currentMessage()
+    assert 'No tableName="pr.absent" in the buffer' in message
+    assert "the XML does not reference pr.absent" in message
+
+
+def test_on_db_jump_requested_accepts_the_internal_relation_kind(qtbot):
+    """Hardening for BUG-032 facet A: CoherencePanel normalizes "relation" ->
+    "table" at the emit site, but the slot must build the tableName= token for
+    the internal spelling too, so a future caller cannot silently reintroduce a
+    fieldName= search for a table name."""
+    window = _window_with_project(qtbot)
+    editor = window.center_stage.xml_editor
+    window._on_db_jump_requested("relation", "pr.a")
+    assert window.center_stage.find_replace_bar._find_field.text() == 'tableName="pr.a"'
+    assert editor.textCursor().selectedText() == 'tableName="pr.a"'
 
 
 _MULTI_XML = (
@@ -621,7 +637,7 @@ def test_missing_token_leaves_find_field_and_selection_untouched(qtbot):
 
     window._on_db_jump_requested("table", "pr.absent")
 
-    assert "not found" in window.statusBar().currentMessage()
+    assert 'No tableName="pr.absent" in the buffer' in window.statusBar().currentMessage()
     assert bar._find_field.text() == "SENTINEL"  # untouched
     assert editor.textCursor().selectedText() == pre_sel  # untouched
     assert window._find_all_term != 'tableName="pr.absent"'

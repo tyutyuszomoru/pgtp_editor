@@ -21,6 +21,7 @@ built into a real ``CoherenceTree``; the panel is then asserted purely through
 its widgets. No live DB, no modal, no MainWindow.
 """
 import pytest
+from PySide6.QtCore import Qt
 
 from pgtp_editor.db.coherence import (
     BADGE_MISSING_IN_DB,
@@ -312,11 +313,29 @@ def test_double_click_emits_the_xml_line(panel, qtbot):
 
 
 def test_double_click_on_a_relation_emits_the_name_signal(panel, qtbot):
+    """The emitted kind is the HOST vocabulary ("table"), not the internal node
+    kind ("relation") — MainWindow._on_db_jump_requested tests `kind == "table"`
+    to pick the tableName= search token, so emitting "relation" made every
+    relation double-click search for fieldName="<table>" and always miss
+    (BUG-032 facet A). Same normalization `contextual_rename` already does."""
     _populate(panel)
     relation = _find_in_panel(panel, "pr.v")
     with qtbot.waitSignal(panel.name_jump_requested, timeout=1000) as blocker:
         panel.tree.itemDoubleClicked.emit(relation, 0)
-    assert blocker.args == ["relation", "pr.v"]
+    assert blocker.args == ["table", "pr.v"]
+
+
+def test_a_relation_rows_row_role_uses_the_host_kind(panel):
+    """§17 binds the carried-over 4-tuple `(kind, name, ok, is_calculated)` to
+    DbCheckPanel's shape, where a relation was "table". Keeping "relation" in it
+    is the same latent mismatch that produced BUG-032 facet A."""
+    _populate(panel)
+    relation = _find_in_panel(panel, "pr.v")
+    kind, name, ok, is_calculated = relation.data(0, Qt.ItemDataRole.UserRole)
+    assert (kind, name) == ("table", "pr.v")
+    # Column rows keep their kind unchanged.
+    column = _children(_children(relation)[0])[0]
+    assert column.data(0, Qt.ItemDataRole.UserRole)[0] == "column"
 
 
 def test_selection_emits_the_owning_model_node(panel, qtbot):
@@ -330,6 +349,30 @@ def test_selection_emits_the_owning_model_node(panel, qtbot):
     # A lookup row's model node is its owning ColumnNode (Properties semantic).
     assert isinstance(node, ColumnNode)
     assert node.field_name == "look_fk"
+
+
+def test_selecting_a_reference_row_emits_the_owning_nodes_properties_kind(panel, qtbot):
+    """A "References" row's model node is the Page/Detail/Column doing the
+    referencing, so Properties must be told THAT kind — `TableReference.kind`.
+    Emitting the row's own "reference" kind left the panel empty (BUG-032)."""
+    _populate(panel)
+    relation = _find_in_panel(panel, "pr.look")
+    references = _children(
+        next(child for child in _children(relation) if REFERENCES_GROUP_LABEL in child.text(0))
+    )
+    assert references
+    kinds = []
+    for item in references:
+        with qtbot.waitSignal(panel.selection_changed, timeout=1000) as blocker:
+            panel.tree.setCurrentItem(item)
+        node, kind = blocker.args
+        assert node is not None
+        kinds.append(kind)
+    # The lookups on pr.a's columns and the deep detail's column: all column
+    # references here, and never the internal "reference" kind.
+    assert "reference" not in kinds
+    assert set(kinds) <= {"page", "detail", "column"}
+    assert "column" in kinds
 
 
 # --- empty states ------------------------------------------------------------

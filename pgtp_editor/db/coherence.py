@@ -111,6 +111,11 @@ class CoherenceNode:
                 navigation, or None for DB-sourced rows.
     payload:    the record this row was built from (TableCheck | ColumnCheck |
                 TableReference), for panels that want more than the badges.
+    node_kind:  the Properties-panel kind for `node`, when the row's own `kind`
+                is not one (a `"reference"` row's model node is the Page/Detail/
+                Column that does the referencing, so Properties must render it
+                as `"page"`/`"detail"`/`"column"` — BUG-032). None means "use
+                `kind`".
     """
 
     kind: str
@@ -122,6 +127,7 @@ class CoherenceNode:
     line: int | None = None
     node: object | None = None
     payload: object | None = None
+    node_kind: str | None = None
 
 
 @dataclass(frozen=True)
@@ -251,6 +257,11 @@ def _reference_node(ref: TableReference) -> CoherenceNode:
         line=ref.line,
         node=ref.node,
         payload=ref,
+        # `TableReference.kind` IS "the Properties-panel node kind"
+        # ("page" | "detail" | "column"); carry it so selecting a row under a
+        # relation's References group shows the owning node's properties, the
+        # way the retired Table References panel did (BUG-032).
+        node_kind=ref.kind,
     )
 
 
