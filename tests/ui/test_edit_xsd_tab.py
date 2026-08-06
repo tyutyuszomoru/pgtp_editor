@@ -23,7 +23,7 @@ from tests.ui._menu_helpers import find_action, find_top_menu
 
 from pgtp_editor.schema_learning.storage import curated_xsd_path
 from pgtp_editor.ui.main_window import MainWindow
-from pgtp_editor.ui import main_window as main_window_module
+from pgtp_editor.ui import xsd_controller as xsd_controller_module
 from pgtp_editor.ui import modals
 
 _MINIMAL = """<?xml version="1.0" encoding="UTF-8"?>
@@ -57,30 +57,30 @@ def _unseed(window):
     path = curated_xsd_path(window._schema_storage_dir)
     if path.exists():
         path.unlink()
-    window._curated_schema = None
+    window._xsd_ui.curated_schema = None
     return path
 
 
 def test_open_edit_xsd_loads_file_into_tab(window):
     _seed(window)
-    window._open_edit_xsd()
+    window._xsd_ui.open()
     stage = window.center_stage
     assert stage.currentIndex() == stage.xsd_tab_index
     assert stage.tabText(stage.xsd_tab_index) == "Edit XSD"
     assert stage.xsd_editor.toPlainText() == _MINIMAL
-    assert window._xsd_dirty is False
+    assert window._xsd_ui.dirty is False
 
 
 def test_editing_marks_dirty_and_save_reparses(window):
     path = _seed(window)
-    window._open_edit_xsd()
+    window._xsd_ui.open()
     stage = window.center_stage
     stage.xsd_editor.setPlainText(_MINIMAL.replace('name="a"', 'name="b"'))
     # setPlainText fires textChanged -> dirty
-    assert window._xsd_dirty is True
+    assert window._xsd_ui.dirty is True
     assert stage.tabText(stage.xsd_tab_index) == "Edit XSD *"
-    window._save_xsd()
-    assert window._xsd_dirty is False
+    window._xsd_ui.save()
+    assert window._xsd_ui.dirty is False
     assert 'name="b"' in path.read_text(encoding="utf-8")
     model = stage.xml_editor.schema_model()
     assert "b" in model.paths["Root"]["attributes"]
@@ -88,26 +88,26 @@ def test_editing_marks_dirty_and_save_reparses(window):
 
 def test_malformed_save_still_writes_and_keeps_last_good(window):
     path = _seed(window)
-    window._open_edit_xsd()
-    window._load_curated_schema()
+    window._xsd_ui.open()
+    window._xsd_ui.load_curated()
     good_model = window.center_stage.xml_editor.schema_model()
     window.center_stage.xsd_editor.setPlainText("<broken")
-    window._save_xsd()
+    window._xsd_ui.save()
     assert path.read_text(encoding="utf-8") == "<broken"   # text never lost
     assert window.center_stage.xml_editor.schema_model() is good_model
 
 
 def test_ctrl_s_routes_to_active_tab(window):
     _seed(window)
-    window._open_edit_xsd()
+    window._xsd_ui.open()
     window.center_stage.xsd_editor.setPlainText(_MINIMAL + "<!-- x -->")
     window._save_active_tab()
-    assert window._xsd_dirty is False  # saved the XSD, not the project
+    assert window._xsd_ui.dirty is False  # saved the XSD, not the project
 
 
 def test_find_bar_routing(window):
     _seed(window)
-    window._open_edit_xsd()
+    window._xsd_ui.open()
     assert window._active_find_bar() is window.center_stage.xsd_find_replace_bar
     window.center_stage.setCurrentIndex(window.center_stage.raw_xml_tab_index)
     assert window._active_find_bar() is window.center_stage.find_replace_bar
@@ -115,10 +115,10 @@ def test_find_bar_routing(window):
 
 def test_close_event_xsd_dirty_discard_closes(window, monkeypatch):
     _seed(window)
-    window._open_edit_xsd()
+    window._xsd_ui.open()
     window.center_stage.xsd_editor.setPlainText(_MINIMAL + "<!-- x -->")
-    assert window._xsd_dirty is True
-    monkeypatch.setattr(window, "_confirm_close_xsd", lambda: "discard")
+    assert window._xsd_ui.dirty is True
+    monkeypatch.setattr(window._xsd_ui, "confirm_close", lambda: "discard")
     event = QCloseEvent()
     window.closeEvent(event)
     assert event.isAccepted()
@@ -126,24 +126,24 @@ def test_close_event_xsd_dirty_discard_closes(window, monkeypatch):
 
 def test_close_event_xsd_dirty_cancel_ignores(window, monkeypatch):
     _seed(window)
-    window._open_edit_xsd()
+    window._xsd_ui.open()
     window.center_stage.xsd_editor.setPlainText(_MINIMAL + "<!-- x -->")
-    monkeypatch.setattr(window, "_confirm_close_xsd", lambda: "cancel")
+    monkeypatch.setattr(window._xsd_ui, "confirm_close", lambda: "cancel")
     event = QCloseEvent()
     window.closeEvent(event)
     assert not event.isAccepted()
-    assert window._xsd_dirty is True
+    assert window._xsd_ui.dirty is True
 
 
 def test_close_event_xsd_dirty_save_writes_and_closes(window, monkeypatch):
     path = _seed(window)
-    window._open_edit_xsd()
+    window._xsd_ui.open()
     window.center_stage.xsd_editor.setPlainText(_MINIMAL.replace('name="a"', 'name="b"'))
-    monkeypatch.setattr(window, "_confirm_close_xsd", lambda: "save")
+    monkeypatch.setattr(window._xsd_ui, "confirm_close", lambda: "save")
     event = QCloseEvent()
     window.closeEvent(event)
     assert event.isAccepted()
-    assert window._xsd_dirty is False
+    assert window._xsd_ui.dirty is False
     assert 'name="b"' in path.read_text(encoding="utf-8")
 
 
@@ -151,7 +151,7 @@ def test_xsd_tab_close_button_no_unsaved_changes_hides_directly(window):
     """BUG-001: clicking the Edit XSD tab's ✕ with no unsaved changes hides
     it and switches to Raw XML without any prompt."""
     _seed(window)
-    window._open_edit_xsd()
+    window._xsd_ui.open()
     stage = window.center_stage
     assert stage.currentIndex() == stage.xsd_tab_index
 
@@ -163,11 +163,11 @@ def test_xsd_tab_close_button_no_unsaved_changes_hides_directly(window):
 
 def test_xsd_tab_close_button_dirty_discard_hides_without_saving(window, monkeypatch):
     path = _seed(window)
-    window._open_edit_xsd()
+    window._xsd_ui.open()
     stage = window.center_stage
     stage.xsd_editor.setPlainText(_MINIMAL + "<!-- x -->")
-    assert window._xsd_dirty is True
-    monkeypatch.setattr(window, "_confirm_close_xsd", lambda: "discard")
+    assert window._xsd_ui.dirty is True
+    monkeypatch.setattr(window._xsd_ui, "confirm_close", lambda: "discard")
 
     stage.tabCloseRequested.emit(stage.xsd_tab_index)
 
@@ -178,14 +178,14 @@ def test_xsd_tab_close_button_dirty_discard_hides_without_saving(window, monkeyp
 
 def test_xsd_tab_close_button_dirty_save_writes_and_hides(window, monkeypatch):
     path = _seed(window)
-    window._open_edit_xsd()
+    window._xsd_ui.open()
     stage = window.center_stage
     stage.xsd_editor.setPlainText(_MINIMAL.replace('name="a"', 'name="b"'))
-    monkeypatch.setattr(window, "_confirm_close_xsd", lambda: "save")
+    monkeypatch.setattr(window._xsd_ui, "confirm_close", lambda: "save")
 
     stage.tabCloseRequested.emit(stage.xsd_tab_index)
 
-    assert window._xsd_dirty is False
+    assert window._xsd_ui.dirty is False
     assert 'name="b"' in path.read_text(encoding="utf-8")
     assert stage.isTabVisible(stage.xsd_tab_index) is False
     assert stage.currentIndex() == stage.raw_xml_tab_index
@@ -193,41 +193,41 @@ def test_xsd_tab_close_button_dirty_save_writes_and_hides(window, monkeypatch):
 
 def test_xsd_tab_close_button_dirty_cancel_leaves_tab_open_and_dirty(window, monkeypatch):
     _seed(window)
-    window._open_edit_xsd()
+    window._xsd_ui.open()
     stage = window.center_stage
     stage.xsd_editor.setPlainText(_MINIMAL + "<!-- x -->")
-    monkeypatch.setattr(window, "_confirm_close_xsd", lambda: "cancel")
+    monkeypatch.setattr(window._xsd_ui, "confirm_close", lambda: "cancel")
 
     stage.tabCloseRequested.emit(stage.xsd_tab_index)
 
-    assert window._xsd_dirty is True
+    assert window._xsd_ui.dirty is True
     assert stage.isTabVisible(stage.xsd_tab_index) is True
     assert stage.currentIndex() == stage.xsd_tab_index
     assert stage.tabText(stage.xsd_tab_index) == "Edit XSD *"
-    window._confirm_close_xsd = lambda: "discard"  # silence teardown close prompt
+    window._xsd_ui.confirm_close = lambda: "discard"  # silence teardown close prompt
 
 
 def test_xsd_tab_close_button_save_failure_keeps_tab_open(window, monkeypatch):
     """A disk error during the close-time save must not drop the tab or the
     unsaved edits (mirrors closeEvent's same guard)."""
     _seed(window)
-    window._open_edit_xsd()
+    window._xsd_ui.open()
     stage = window.center_stage
     stage.xsd_editor.setPlainText(_MINIMAL + "<!-- x -->")
-    monkeypatch.setattr(window, "_confirm_close_xsd", lambda: "save")
+    monkeypatch.setattr(window._xsd_ui, "confirm_close", lambda: "save")
 
     def _boom(self, *a, **k):
         raise OSError("read-only filesystem")
-    monkeypatch.setattr(main_window_module.Path, "write_text", _boom)
+    monkeypatch.setattr(xsd_controller_module.Path, "write_text", _boom)
     monkeypatch.setattr(
         modals.QMessageBox, "critical", staticmethod(lambda *a, **k: None)
     )
 
     stage.tabCloseRequested.emit(stage.xsd_tab_index)
 
-    assert window._xsd_dirty is True
+    assert window._xsd_ui.dirty is True
     assert stage.isTabVisible(stage.xsd_tab_index) is True
-    window._confirm_close_xsd = lambda: "discard"  # silence teardown close prompt
+    window._xsd_ui.confirm_close = lambda: "discard"  # silence teardown close prompt
 
 
 def test_xsd_tab_close_button_works_in_learned_mode(window, monkeypatch):
@@ -239,13 +239,13 @@ def test_xsd_tab_close_button_works_in_learned_mode(window, monkeypatch):
     learned_path = learned_xsd_path(window._schema_storage_dir)
     learned_path.parent.mkdir(parents=True, exist_ok=True)
     learned_path.write_text(_MINIMAL, encoding="utf-8")
-    window._open_edit_auto_xsd()
+    window._xsd_ui.open_auto()
     stage = window.center_stage
-    assert window._xsd_mode == "learned"
+    assert window._xsd_ui.mode == "learned"
     assert stage.tabText(stage.xsd_tab_index) == "Edit AutoXSD"
     stage.xsd_editor.setPlainText(_MINIMAL + "<!-- x -->")
-    assert window._xsd_dirty is True
-    monkeypatch.setattr(window, "_confirm_close_xsd", lambda: "discard")
+    assert window._xsd_ui.dirty is True
+    monkeypatch.setattr(window._xsd_ui, "confirm_close", lambda: "discard")
 
     stage.tabCloseRequested.emit(stage.xsd_tab_index)
 
@@ -260,12 +260,12 @@ def test_xsd_tab_close_when_not_current_tab_does_not_steal_focus(window):
     switching away from the Edit XSD tab before closing it must not force
     focus back onto it or onto Raw XML."""
     _seed(window)
-    window._open_edit_xsd()
+    window._xsd_ui.open()
     stage = window.center_stage
     stage.setCurrentIndex(stage.raw_xml_tab_index)
     assert stage.isTabVisible(stage.xsd_tab_index) is True
 
-    window._on_xsd_close_requested()
+    window._xsd_ui.on_close_requested()
 
     assert stage.isTabVisible(stage.xsd_tab_index) is False
     assert stage.currentIndex() == stage.raw_xml_tab_index  # already there, unchanged
@@ -280,26 +280,26 @@ def test_theme_toggle_does_not_mark_dirty(window):
     window.center_stage.xsd_editor.apply_theme_colors(True)
     window.center_stage.xsd_editor.apply_theme_colors(False)
     assert window._dirty is False
-    assert window._xsd_dirty is False
+    assert window._xsd_ui.dirty is False
 
 
 def test_goto_xsd_navigates_to_attribute_line(window):
     _seed(window)
-    window._load_curated_schema()
-    window._goto_xsd("Root", "a")
+    window._xsd_ui.load_curated()
+    window._xsd_ui.goto("Root", "a")
     stage = window.center_stage
     assert stage.currentIndex() == stage.xsd_tab_index
-    line = window._curated_schema.attribute_lines[("Root", "a")]
+    line = window._xsd_ui.curated_schema.attribute_lines[("Root", "a")]
     assert stage.xsd_editor.textCursor().blockNumber() + 1 == line
 
 
 def test_goto_xsd_falls_back_to_element_then_status(window):
     _seed(window)
-    window._load_curated_schema()
-    window._goto_xsd("Root", "missing")
-    line = window._curated_schema.element_lines["Root"]
+    window._xsd_ui.load_curated()
+    window._xsd_ui.goto("Root", "missing")
+    line = window._xsd_ui.curated_schema.element_lines["Root"]
     assert window.center_stage.xsd_editor.textCursor().blockNumber() + 1 == line
-    window._goto_xsd("Nope", "x")
+    window._xsd_ui.goto("Nope", "x")
     assert "not in the curated XSD" in window.statusBar().currentMessage()
 
 
@@ -311,27 +311,27 @@ def test_window_carries_goto_xsd_action_with_ctrl_l_shortcut(window):
 
 def test_goto_xsd_at_cursor_navigates_to_attribute_line(window):
     _seed(window)
-    window._load_curated_schema()
+    window._xsd_ui.load_curated()
     stage = window.center_stage
     stage.xml_editor.setPlainText('<Root a="1"/>')
     cursor = stage.xml_editor.textCursor()
     cursor.setPosition(stage.xml_editor.toPlainText().index('"1"') + 1)
     stage.xml_editor.setTextCursor(cursor)
 
-    window._goto_xsd_at_cursor()
+    window._xsd_ui.goto_at_cursor()
 
     assert stage.currentIndex() == stage.xsd_tab_index
-    line = window._curated_schema.attribute_lines[("Root", "a")]
+    line = window._xsd_ui.curated_schema.attribute_lines[("Root", "a")]
     assert stage.xsd_editor.textCursor().blockNumber() + 1 == line
 
 
 def test_goto_xsd_at_cursor_unresolvable_shows_status_and_stays_put(window):
     _seed(window)
-    window._load_curated_schema()
+    window._xsd_ui.load_curated()
     stage = window.center_stage
     stage.xml_editor.setPlainText("")
 
-    window._goto_xsd_at_cursor()
+    window._xsd_ui.goto_at_cursor()
 
     assert stage.currentIndex() != stage.xsd_tab_index
     assert (
@@ -354,7 +354,7 @@ def test_verify_reports_clickable_issue_lines(window):
         '<xs:attribute name="a" use="optional" type="xs:string"/>',
         '<xs:attribute name="a" use="optional" type="xs:string" label="wrong"/>',
     ))
-    window._verify_xsd()
+    window._xsd_ui.verify()
     items = [window.audit_panel.item(i) for i in range(window.audit_panel.count())]
     verify_items = [i for i in items if "VERIFY line" in i.text()]
     assert verify_items
@@ -376,7 +376,7 @@ def test_clicking_verify_issue_navigates_to_xsd_line(window):
         '<xs:attribute name="a" use="optional" type="xs:string"/>',
         '<xs:attribute name="a" use="optional" type="xs:string" label="wrong"/>',
     ))
-    window._verify_xsd()
+    window._xsd_ui.verify()
     items = [window.audit_panel.item(i) for i in range(window.audit_panel.count())]
     verify_item = next(i for i in items if "VERIFY line" in i.text())
     line = verify_item.data(Qt.ItemDataRole.UserRole)
@@ -390,9 +390,9 @@ def test_clicking_verify_issue_navigates_to_xsd_line(window):
 
 def test_save_auto_verifies_report_only(window):
     _seed(window)
-    window._open_edit_xsd()
+    window._xsd_ui.open()
     window.center_stage.xsd_editor.setPlainText(_MINIMAL)
-    window._save_xsd()
+    window._xsd_ui.save()
     texts = [window.audit_panel.item(i).text() for i in range(window.audit_panel.count())]
     assert any(t.startswith("[Schema] VERIFY") for t in texts)
 
@@ -404,7 +404,7 @@ def test_export_copies_curated(window, monkeypatch, tmp_path):
         modals.QFileDialog, "getSaveFileName",
         staticmethod(lambda *a, **k: (str(dest), "")),
     )
-    window._export_xsd()
+    window._xsd_ui.export()
     assert dest.read_text(encoding="utf-8") == _MINIMAL
 
 
@@ -421,21 +421,21 @@ def test_import_refuses_malformed(window, monkeypatch, tmp_path):
         modals.QMessageBox, "critical",
         staticmethod(lambda *a, **k: criticals.append(a)),
     )
-    window._import_xsd()
+    window._xsd_ui.import_()
     assert criticals
     assert curated_xsd_path(window._schema_storage_dir).read_text(encoding="utf-8") == _MINIMAL
 
 
 def test_import_replaces_with_bak_and_reloads(window, monkeypatch, tmp_path):
     _seed(window)
-    window._load_curated_schema()
+    window._xsd_ui.load_curated()
     incoming = tmp_path / "incoming.xsd"
     incoming.write_text(_MINIMAL.replace('name="a"', 'name="z"'), encoding="utf-8")
     monkeypatch.setattr(
         modals.QFileDialog, "getOpenFileName",
         staticmethod(lambda *a, **k: (str(incoming), "")),
     )
-    window._import_xsd()
+    window._xsd_ui.import_()
     path = curated_xsd_path(window._schema_storage_dir)
     assert 'name="z"' in path.read_text(encoding="utf-8")
     assert (path.parent / "curated.xsd.bak").read_text(encoding="utf-8") == _MINIMAL
@@ -445,10 +445,10 @@ def test_import_replaces_with_bak_and_reloads(window, monkeypatch, tmp_path):
 def test_import_with_dirty_tab_includes_notice(window, monkeypatch, tmp_path):
     """Importing while Edit XSD tab has unsaved edits should include a notice."""
     _seed(window)
-    window._open_edit_xsd()
+    window._xsd_ui.open()
     stage = window.center_stage
     stage.xsd_editor.setPlainText(_MINIMAL.replace('name="a"', 'name="dirty"'))
-    assert window._xsd_dirty is True
+    assert window._xsd_ui.dirty is True
 
     incoming = tmp_path / "incoming.xsd"
     incoming.write_text(_MINIMAL.replace('name="a"', 'name="imported"'), encoding="utf-8")
@@ -456,11 +456,11 @@ def test_import_with_dirty_tab_includes_notice(window, monkeypatch, tmp_path):
         modals.QFileDialog, "getOpenFileName",
         staticmethod(lambda *a, **k: (str(incoming), "")),
     )
-    window._import_xsd()
+    window._xsd_ui.import_()
 
     # Tab should be reloaded with imported content
     assert stage.xsd_editor.toPlainText() == incoming.read_text(encoding="utf-8")
-    assert window._xsd_dirty is False
+    assert window._xsd_ui.dirty is False
 
     # Audit log should mention the tab was replaced
     audit_items = [window.audit_panel.item(i).text() for i in range(window.audit_panel.count())]
@@ -489,7 +489,7 @@ def test_import_with_warnings_ask_user_decline(window, monkeypatch, tmp_path):
         modals.QMessageBox, "question",
         staticmethod(lambda *a, **k: modals.QMessageBox.StandardButton.No),
     )
-    window._import_xsd()
+    window._xsd_ui.import_()
 
     # Original file should be untouched
     path = curated_xsd_path(window._schema_storage_dir)
@@ -517,7 +517,7 @@ def test_import_with_warnings_ask_user_accept(window, monkeypatch, tmp_path):
         modals.QMessageBox, "question",
         staticmethod(lambda *a, **k: modals.QMessageBox.StandardButton.Yes),
     )
-    window._import_xsd()
+    window._xsd_ui.import_()
 
     # File should be replaced
     path = curated_xsd_path(window._schema_storage_dir)
@@ -533,20 +533,20 @@ def test_open_edit_xsd_without_file_loads_empty_skeleton(window):
     """First run, before any curated.xsd exists: Edit XSD opens an empty
     xs:schema skeleton instead of erroring on the missing file."""
     _unseed(window)
-    window._open_edit_xsd()
+    window._xsd_ui.open()
     stage = window.center_stage
     assert stage.currentIndex() == stage.xsd_tab_index
     text = stage.xsd_editor.toPlainText()
     assert text.startswith('<?xml version="1.0"')
     assert "<xs:schema" in text and "</xs:schema>" in text
-    assert window._xsd_dirty is False
+    assert window._xsd_ui.dirty is False
 
 
 def test_verify_without_curated_shows_status(window):
     """Verify XSD with a clean tab and no curated.xsd on disk: status
     message, no VERIFY audit lines."""
     _unseed(window)
-    window._verify_xsd()
+    window._xsd_ui.verify()
     assert "No Edit XSD file yet." in window.statusBar().currentMessage()
     texts = [window.audit_panel.item(i).text() for i in range(window.audit_panel.count())]
     assert not any(t.startswith("[Schema] VERIFY") for t in texts)
@@ -557,31 +557,31 @@ def test_verify_checks_dirty_tab_text_not_saved_file(window):
     live tab text — the thing the user is looking at — not the clean file
     on disk (spec §11)."""
     _seed(window)  # saved file is clean, would verify with no issues
-    window._open_edit_xsd()
+    window._xsd_ui.open()
     window.center_stage.xsd_editor.setPlainText(_MINIMAL.replace(
         '<xs:attribute name="a" use="optional" type="xs:string"/>',
         '<xs:attribute name="a" use="optional" type="xs:string" label="wrong"/>',
     ))
-    assert window._xsd_dirty is True
-    window._verify_xsd()
+    assert window._xsd_ui.dirty is True
+    window._xsd_ui.verify()
     texts = [window.audit_panel.item(i).text() for i in range(window.audit_panel.count())]
     assert any("VERIFY line" in t for t in texts)
-    window._confirm_close_xsd = lambda: "discard"  # silence teardown close prompt
+    window._xsd_ui.confirm_close = lambda: "discard"  # silence teardown close prompt
 
 
 def test_clicking_verify_issue_with_dirty_tab_preserves_edits(window):
     """Clicking a VERIFY audit line while the Edit XSD tab holds unsaved
     edits must navigate WITHOUT reloading curated.xsd over the user's
-    text (the _open_edit_xsd dirty guard)."""
+    text (XsdController.open's dirty guard)."""
     _seed(window)
-    window._open_edit_xsd()
+    window._xsd_ui.open()
     dirty_text = _MINIMAL.replace(
         '<xs:attribute name="a" use="optional" type="xs:string"/>',
         '<xs:attribute name="a" use="optional" type="xs:string" label="wrong"/>',
     )
     window.center_stage.xsd_editor.setPlainText(dirty_text)
     window.center_stage.setCurrentIndex(window.center_stage.raw_xml_tab_index)
-    window._verify_xsd()
+    window._xsd_ui.verify()
     items = [window.audit_panel.item(i) for i in range(window.audit_panel.count())]
     verify_item = next(i for i in items if "VERIFY line" in i.text())
 
@@ -590,10 +590,10 @@ def test_clicking_verify_issue_with_dirty_tab_preserves_edits(window):
     stage = window.center_stage
     assert stage.currentIndex() == stage.xsd_tab_index
     assert stage.xsd_editor.toPlainText() == dirty_text  # edits NOT clobbered
-    assert window._xsd_dirty is True
+    assert window._xsd_ui.dirty is True
     line = verify_item.data(Qt.ItemDataRole.UserRole)
     assert stage.xsd_editor.textCursor().blockNumber() + 1 == line
-    window._confirm_close_xsd = lambda: "discard"  # silence teardown close prompt
+    window._xsd_ui.confirm_close = lambda: "discard"  # silence teardown close prompt
 
 
 def test_export_without_curated_shows_status_and_no_dialog(window, monkeypatch):
@@ -603,25 +603,25 @@ def test_export_without_curated_shows_status_and_no_dialog(window, monkeypatch):
         modals.QFileDialog, "getSaveFileName",
         staticmethod(lambda *a, **k: dialog_calls.append(a) or ("", "")),
     )
-    window._export_xsd()
+    window._xsd_ui.export()
     assert "No Edit XSD file yet." in window.statusBar().currentMessage()
     assert not dialog_calls
 
 
 def test_export_with_dirty_tab_shows_save_first_and_no_dialog(window, monkeypatch):
     _seed(window)
-    window._open_edit_xsd()
+    window._xsd_ui.open()
     window.center_stage.xsd_editor.setPlainText(_MINIMAL + "<!-- x -->")
-    assert window._xsd_dirty is True
+    assert window._xsd_ui.dirty is True
     dialog_calls = []
     monkeypatch.setattr(
         modals.QFileDialog, "getSaveFileName",
         staticmethod(lambda *a, **k: dialog_calls.append(a) or ("", "")),
     )
-    window._export_xsd()
+    window._xsd_ui.export()
     assert "save it first" in window.statusBar().currentMessage()
     assert not dialog_calls
-    window._confirm_close_xsd = lambda: "discard"  # silence teardown close prompt
+    window._xsd_ui.confirm_close = lambda: "discard"  # silence teardown close prompt
 
 
 def test_export_cancelled_dialog_is_noop(window, monkeypatch, tmp_path):
@@ -635,7 +635,7 @@ def test_export_cancelled_dialog_is_noop(window, monkeypatch, tmp_path):
         modals.QMessageBox, "critical",
         staticmethod(lambda *a, **k: criticals.append(a)),
     )
-    window._export_xsd()
+    window._xsd_ui.export()
     assert not criticals
 
 
@@ -648,13 +648,13 @@ def test_export_copy_oserror_shows_critical(window, monkeypatch, tmp_path):
     )
     def _boom(*a, **k):
         raise OSError("disk full")
-    monkeypatch.setattr(main_window_module.shutil, "copyfile", _boom)
+    monkeypatch.setattr(xsd_controller_module.shutil, "copyfile", _boom)
     criticals = []
     monkeypatch.setattr(
         modals.QMessageBox, "critical",
         staticmethod(lambda *a, **k: criticals.append(a)),
     )
-    window._export_xsd()
+    window._xsd_ui.export()
     assert criticals
     assert "Export Failed" in criticals[0][1]
     assert not dest.exists()
@@ -664,9 +664,9 @@ def test_import_write_oserror_shows_critical_and_keeps_dirty(window, monkeypatch
     """If replacing curated.xsd fails at write time, the user sees a
     critical dialog and the tab's dirty state is NOT cleared."""
     _seed(window)
-    window._open_edit_xsd()
+    window._xsd_ui.open()
     window.center_stage.xsd_editor.setPlainText(_MINIMAL + "<!-- x -->")
-    assert window._xsd_dirty is True
+    assert window._xsd_ui.dirty is True
 
     incoming = tmp_path / "incoming.xsd"
     incoming.write_text(_MINIMAL.replace('name="a"', 'name="z"'), encoding="utf-8")
@@ -674,45 +674,45 @@ def test_import_write_oserror_shows_critical_and_keeps_dirty(window, monkeypatch
         modals.QFileDialog, "getOpenFileName",
         staticmethod(lambda *a, **k: (str(incoming), "")),
     )
-    real_write_text = main_window_module.Path.write_text
+    real_write_text = xsd_controller_module.Path.write_text
     target = curated_xsd_path(window._schema_storage_dir)
     def _guarded_write(self, *a, **k):
         if self == target:
             raise OSError("permission denied")
         return real_write_text(self, *a, **k)
-    monkeypatch.setattr(main_window_module.Path, "write_text", _guarded_write)
+    monkeypatch.setattr(xsd_controller_module.Path, "write_text", _guarded_write)
     criticals = []
     monkeypatch.setattr(
         modals.QMessageBox, "critical",
         staticmethod(lambda *a, **k: criticals.append(a)),
     )
-    window._import_xsd()
+    window._xsd_ui.import_()
 
     assert criticals
     assert "Import Failed" in criticals[0][1]
-    assert window._xsd_dirty is True  # not cleared by a failed import
+    assert window._xsd_ui.dirty is True  # not cleared by a failed import
     assert target.read_text(encoding="utf-8") == _MINIMAL  # untouched
-    window._confirm_close_xsd = lambda: "discard"  # silence teardown close prompt
+    window._xsd_ui.confirm_close = lambda: "discard"  # silence teardown close prompt
 
 
 def test_save_write_oserror_shows_critical_and_keeps_dirty(window, monkeypatch):
     _seed(window)
-    window._open_edit_xsd()
+    window._xsd_ui.open()
     window.center_stage.xsd_editor.setPlainText(_MINIMAL + "<!-- x -->")
-    assert window._xsd_dirty is True
+    assert window._xsd_ui.dirty is True
     def _boom(self, *a, **k):
         raise OSError("read-only filesystem")
-    monkeypatch.setattr(main_window_module.Path, "write_text", _boom)
+    monkeypatch.setattr(xsd_controller_module.Path, "write_text", _boom)
     criticals = []
     monkeypatch.setattr(
         modals.QMessageBox, "critical",
         staticmethod(lambda *a, **k: criticals.append(a)),
     )
-    window._save_xsd()
+    window._xsd_ui.save()
     assert criticals
     assert "Save Failed" in criticals[0][1]
-    assert window._xsd_dirty is True
-    window._confirm_close_xsd = lambda: "discard"  # silence teardown close prompt
+    assert window._xsd_ui.dirty is True
+    window._xsd_ui.confirm_close = lambda: "discard"  # silence teardown close prompt
 
 
 def test_import_binary_file_shows_error(window, monkeypatch, tmp_path):
@@ -731,7 +731,7 @@ def test_import_binary_file_shows_error(window, monkeypatch, tmp_path):
         modals.QMessageBox, "critical",
         staticmethod(lambda *a, **k: criticals.append(a)),
     )
-    window._import_xsd()
+    window._xsd_ui.import_()
 
     # Critical error should be shown
     assert criticals
@@ -744,14 +744,14 @@ def test_import_binary_file_shows_error(window, monkeypatch, tmp_path):
 
 def test_load_curated_schema_binary_file_returns_false_and_keeps_last_good(window):
     """A curated.xsd that is binary/non-UTF-8 must not crash
-    _load_curated_schema: it should audit-log the failure, return False, and
+    XsdController.load_curated: it should audit-log the failure, return False, and
     keep whatever schema was last successfully loaded (spec §11)."""
     path = _seed(window)
-    window._load_curated_schema()
+    window._xsd_ui.load_curated()
     good_model = window.center_stage.xml_editor.schema_model()
 
     path.write_bytes(bytes([0xff, 0xfe, 0x00]))
-    result = window._load_curated_schema()
+    result = window._xsd_ui.load_curated()
 
     assert result is False
     assert window.center_stage.xml_editor.schema_model() is good_model
@@ -760,13 +760,13 @@ def test_load_curated_schema_binary_file_returns_false_and_keeps_last_good(windo
 
 
 def test_open_edit_xsd_binary_file_shows_status_and_does_not_open(window):
-    """A binary/non-UTF-8 curated.xsd must not crash _open_edit_xsd: it
+    """A binary/non-UTF-8 curated.xsd must not crash XsdController.open: it
     should show a status-bar message and leave the tab untouched instead of
     switching to it with garbage content."""
     path = _seed(window)
     path.write_bytes(bytes([0xff, 0xfe, 0x00]))
 
-    window._open_edit_xsd()
+    window._xsd_ui.open()
 
     stage = window.center_stage
     assert stage.currentIndex() != stage.xsd_tab_index
@@ -774,12 +774,12 @@ def test_open_edit_xsd_binary_file_shows_status_and_does_not_open(window):
 
 
 def test_verify_xsd_binary_file_shows_status_and_no_verify_lines(window):
-    """A binary/non-UTF-8 curated.xsd must not crash _verify_xsd: it should
+    """A binary/non-UTF-8 curated.xsd must not crash XsdController.verify: it should
     show a status-bar message and produce no VERIFY audit lines."""
     path = _seed(window)
     path.write_bytes(bytes([0xff, 0xfe, 0x00]))
 
-    window._verify_xsd()
+    window._xsd_ui.verify()
 
     assert "Could not read curated.xsd" in window.statusBar().currentMessage()
     texts = [window.audit_panel.item(i).text() for i in range(window.audit_panel.count())]

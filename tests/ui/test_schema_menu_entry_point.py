@@ -20,7 +20,7 @@ def test_export_xsd_action_triggers_export_xsd(qtbot, tmp_path):
     window = MainWindow(schema_storage_dir=storage_dir)
     qtbot.addWidget(window)
 
-    with patch.object(window, "_export_xsd") as mock_handler:
+    with patch.object(window._xsd_ui, "export") as mock_handler:
         menu = find_top_menu(window, "Schema")
         find_action(menu, "Export XSD").trigger()
 
@@ -32,7 +32,7 @@ def test_import_xsd_action_triggers_import_xsd(qtbot, tmp_path):
     window = MainWindow(schema_storage_dir=storage_dir)
     qtbot.addWidget(window)
 
-    with patch.object(window, "_import_xsd") as mock_handler:
+    with patch.object(window._xsd_ui, "import_") as mock_handler:
         menu = find_top_menu(window, "Schema")
         find_action(menu, "Import XSD").trigger()
 

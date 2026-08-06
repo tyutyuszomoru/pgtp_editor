@@ -69,18 +69,6 @@ from pgtp_editor.model.parser import (
     load_project,
     load_project_from_text,
 )
-from pgtp_editor.schema_learning.model import Model
-from pgtp_editor.schema_learning.parser import walk_document
-from pgtp_editor.schema_learning.storage import (
-    CURATED_BUNDLED_VERSION,
-    bundled_curated_xsd_text,
-    curated_xsd_path,
-    learned_xsd_path,
-    schema_model_path,
-)
-from pgtp_editor.schema_learning.xsd_gen import generate_curated_xsd, generate_xsd
-from pgtp_editor.schema_learning.xsd_load import XsdLoadError, load_curated
-from pgtp_editor.schema_learning.xsd_verify import verify_curated
 from pgtp_editor.validation.tier2 import validate_project
 from pgtp_editor.ui._stub_action import add_stub_action
 from pgtp_editor.ui.about import show_about_dialog
@@ -137,8 +125,15 @@ from pgtp_editor.ui.coherence_panel import CoherencePanel
 from pgtp_editor.ui.ddl_buffer_panel import BrowserPanel
 from pgtp_editor.ui.code_editor import CodeEditorDialog
 from pgtp_editor.ui.history import SnapshotHistory
+# §21/§22: the custom-PHP editing lane and the PHP lint lane. `LINT_AUDIT_TARGET`
+# is the `UserRole + 1` tag a `[Lint]` Audit row carries, read by
+# `_on_audit_item_clicked` to route the click to a PHP tab.
+from pgtp_editor.lint.findings import LINT_AUDIT_TARGET
+from pgtp_editor.ui.lint_controller import LintController
+from pgtp_editor.ui.php_tab_controller import PhpTabController
 from pgtp_editor.ui.toolbar_controller import ToolbarController
 from pgtp_editor.ui.ui_shell import UiShell
+from pgtp_editor.ui.xsd_controller import XsdController
 from pgtp_editor.ui.event_body import (
     extract_event_body,
     insert_event_handler,
@@ -179,21 +174,6 @@ _CHECK_SEVERITY_TOKENS = {"error": "ERROR", "warning": "WARNING", "notice": "INF
 _SANDBOX_PREFIX = "[Sandbox] "
 
 _FIND_ALL_BATCH = 200
-
-# Placeholder shown in the Edit-XSD tab when its backing file does not exist yet.
-_EMPTY_XSD_SKELETON = (
-    '<?xml version="1.0" encoding="UTF-8"?>\n'
-    '<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" '
-    'elementFormDefault="qualified">\n</xs:schema>\n'
-)
-
-_SCHEMA_REPORT_TEMPLATES = {
-    "new_element": "[Schema] NEW ELEMENT: {path} (first seen in {source})",
-    "new_attribute": "[Schema] NEW ATTRIBUTE: {path}@{attr} (first seen in {source})",
-    "new_value": '[Schema] NEW ATTR VALUE: {path}@{attr} += "{value}" (from {source})',
-    "enum_overflow": "[Schema] ENUM OVERFLOWED: {path}@{attr} now free-form string (from {source})",
-    "now_optional": "[Schema] NOW OPTIONAL: {path}@{attr} (previously required, from {source})",
-}
 
 
 class MainWindow(QMainWindow):
@@ -249,11 +229,11 @@ class MainWindow(QMainWindow):
                 "PGTP Editor",
             )
         )
+        # Injectable root of the schema artifacts (curated.xsd / learned.xsd /
+        # schema_model.json). Stays a HOST constructor seam -- it is a
+        # constructor parameter the whole suite reads off the finished window --
+        # and is handed to `XsdController`, which owns everything under it.
         self._schema_storage_dir = schema_storage_dir
-        # The parsed curated.xsd (spec §11) — the sole schema source feeding
-        # completion/hover. None until _load_curated_schema succeeds at least
-        # once (loaded after self.audit_panel exists, near the end of __init__).
-        self._curated_schema = None
         self._generator_config_dir = generator_config_dir
         self._generator_runner = generator_runner if generator_runner is not None else GeneratorRunner()
         self._current_output_folder = None
@@ -378,7 +358,6 @@ class MainWindow(QMainWindow):
         self.center_stage.manual_visibility_changed.connect(
             self._on_manual_visibility_changed
         )
-        self.center_stage.xsd_close_requested.connect(self._on_xsd_close_requested)
         self.center_stage.ddl_explorer_visibility_changed.connect(
             self._on_ddl_explorer_visibility_changed
         )
@@ -452,7 +431,6 @@ class MainWindow(QMainWindow):
         self.center_stage.xml_editor.edit_code_requested.connect(
             self._on_edit_code_requested
         )
-        self.center_stage.xml_editor.goto_xsd_requested.connect(self._goto_xsd)
         # The live CodeEditorDialog (kept referenced so it is not GC'd while
         # shown). MainWindow owns its lifecycle + the write-back.
         self._code_editor_dialog: CodeEditorDialog | None = None
@@ -566,18 +544,11 @@ class MainWindow(QMainWindow):
         self.center_stage.xml_editor.undo_requested.connect(self._undo)
         self.center_stage.xml_editor.redo_requested.connect(self._redo)
 
-        # Edit XSD tab (spec §11): dirty tracking + its own undo/redo routing.
-        # The XSD tab has no snapshot history -- it relies solely on the
-        # editor's native undo, so its Ctrl+Z/Ctrl+Y re-emission is routed
-        # straight back into the editor rather than through _undo/_redo.
-        self._xsd_dirty = False
-        self._xsd_loading = False
-        # Which schema the shared Edit-XSD tab currently holds: "curated"
-        # (Schema ▸ Edit XSD) or "learned" (Schema ▸ Edit AutoXSD). Save /
-        # Verify / Export / Import all act on the active mode (spec §11).
-        self._xsd_mode = "curated"
+        # Edit XSD tab (spec §11): its own undo/redo routing. The XSD tab has
+        # no snapshot history -- it relies solely on the editor's native undo,
+        # so its Ctrl+Z/Ctrl+Y re-emission is routed straight back into the
+        # editor rather than through _undo/_redo.
         stage = self.center_stage
-        stage.xsd_editor.textChanged.connect(self._on_xsd_text_changed)
         stage.xsd_editor.undo_requested.connect(stage.xsd_editor.undo)
         stage.xsd_editor.redo_requested.connect(stage.xsd_editor.redo)
         stage.xsd_find_replace_bar.set_on_status(self.statusBar().showMessage)
@@ -586,14 +557,15 @@ class MainWindow(QMainWindow):
         )
         stage.xsd_find_replace_bar.set_on_stop_find_all(self._stop_find_all)
 
-        self._build_menu_bar()
-
         #: The narrow contract every collaborator object gets instead of this
-        #: window (see `ui/ui_shell.py`). Built after the menu bar so
-        #: `_light_theme_action` exists, but every field is late-bound anyway:
+        #: window (see `ui/ui_shell.py`). Built BEFORE the menu bar, because a
+        #: collaborator that owns a menu outright builds it (see `_xsd_ui`
+        #: below) and so must exist first. Every field is late-bound anyway:
         #: they are bound methods that resolve host state at CALL time, which
         #: is what keeps post-construction seam injection
-        #: (`window._run_async = ...`) working for collaborators too.
+        #: (`window._run_async = ...`) working for collaborators too -- and is
+        #: why `is_light_theme` may be handed over before `_light_theme_action`
+        #: exists.
         self._shell = UiShell(
             window=self,
             stage=self.center_stage,
@@ -607,6 +579,44 @@ class MainWindow(QMainWindow):
             reveal_raw_xml=self._reveal_raw_xml_tab,
             is_light_theme=self._is_light_theme,
         )
+
+        #: The §11 schema lane (`ui/xsd_controller.py`): the Schema menu, the
+        #: Edit-XSD tab and the curated-schema feed. The Properties panel is
+        #: not a §11 surface, so its schema feed is injected rather than grown
+        #: as a `UiShell` field.
+        self._xsd_ui = XsdController(
+            self._shell,
+            self._schema_storage_dir,
+            parent=self,
+            feed_properties_schema=self.properties_panel.set_schema_model,
+        )
+
+        self._build_menu_bar()
+
+        # §21 custom-PHP editing + §22 PHP lint. Two lanes, deliberately
+        # separate objects, wired to each other only HERE: the lint lane hands
+        # the §21 lane a `(service, lint_on_save)` pair to pass into
+        # `open_php_file_tab`, and the §21 lane announces each new tab so the
+        # lint lane can connect `lint_reported` to the Audit panel. Neither
+        # imports the other (see tests/ui/test_collaborator_boundaries.py).
+        self._lint_ui = LintController(
+            self._shell, parent=self, config_dir=self._generator_config_dir
+        )
+        self._php_tabs = PhpTabController(self._shell, parent=self)
+        self._php_tabs.lint_settings = self._lint_ui.tab_lint_settings
+        # A dropped `.pgtp` is a PROJECT open, not a text open -- it must go
+        # through §18.2's New Project / Open Project / Edit Standalone chooser.
+        self._php_tabs.open_pgtp = self._open_pgtp_path
+        self._php_tabs.tab_opened.connect(self._lint_ui.attach_tab)
+        # Previously emitted into the void: the ✕ on a PHP tab did nothing.
+        self.center_stage.php_file_close_requested.connect(
+            self._php_tabs.on_close_requested
+        )
+        # Reflect the persisted §22 toggle on the menu item built above.
+        self._lint_on_save_action.setChecked(self._lint_ui.lint_on_save)
+        # §21: files can be dropped onto the window (handled by dragEnterEvent /
+        # dropEvent below, which delegate the classification to `_php_tabs`).
+        self.setAcceptDrops(True)
 
         # Customizable icon bar (Sub-project E), owned by ToolbarController.
         # Constructed LAST of the collaborators and built here because `build`
@@ -625,348 +635,24 @@ class MainWindow(QMainWindow):
         # absent but the learning engine has state, then load whatever
         # curated.xsd now exists into the editor's completion/hover model.
         # Runs last so self.audit_panel already exists.
-        self._ensure_curated_bootstrap()
-        self._load_curated_schema()
-
-    def _load_curated_schema(self) -> bool:
-        """Parse curated.xsd and feed completion/hover from it — the SOLE
-        schema source (spec §11). On parse failure the last good in-memory
-        schema stays live; returns False. Missing file → False, silent."""
-        path = curated_xsd_path(self._schema_storage_dir)
-        if not path.exists():
-            return False
-        try:
-            schema = load_curated(path.read_text(encoding="utf-8"))
-        except (OSError, UnicodeDecodeError, XsdLoadError) as exc:
-            self.audit_panel.addItem(
-                f"[Schema] Curated XSD has XML errors: {exc} — keeping last good schema"
-            )
-            return False
-        self._curated_schema = schema
-        self.center_stage.xml_editor.set_schema_model(schema.model)
-        self.properties_panel.set_schema_model(schema.model)
-        return True
-
-    def _ensure_curated_bootstrap(self) -> None:
-        """One-time seed of the user's curated.xsd when it is absent — never
-        overwrites an existing file (curated.xsd is hand-owned, spec §11).
-        Prefers copying the schema bundled with the app (Curated v1.2); falls
-        back to generating one from the learning engine's state only when no
-        bundled resource is present."""
-        curated = curated_xsd_path(self._schema_storage_dir)
-        if curated.exists():
-            return
-
-        bundled = bundled_curated_xsd_text()
-        if bundled is not None:
-            try:
-                curated.parent.mkdir(parents=True, exist_ok=True)
-                curated.write_text(bundled, encoding="utf-8")
-            except OSError as exc:
-                self.audit_panel.addItem(f"[Schema] Could not seed curated.xsd: {exc}")
-                return
-            self.audit_panel.addItem(
-                f"[Schema] Seeded curated.xsd from the bundled schema "
-                f"(v{CURATED_BUNDLED_VERSION})"
-            )
-            return
-
-        # Fallback: no bundled resource — generate from the learned model.
-        model_path = schema_model_path(self._schema_storage_dir)
-        if not model_path.exists():
-            return
-        try:
-            model = Model.load(model_path)
-            curated.parent.mkdir(parents=True, exist_ok=True)
-            curated.write_text(generate_curated_xsd(model), encoding="utf-8")
-        except Exception as exc:
-            self.audit_panel.addItem(f"[Schema] Could not bootstrap curated.xsd: {exc}")
-            return
-        self.audit_panel.addItem(
-            "[Schema] Bootstrapped curated.xsd from the learned schema (labels preserved)"
-        )
-
-    # -- Edit XSD tab (spec §11) ---------------------------------------------
-
-    def _on_xsd_text_changed(self) -> None:
-        # A theme toggle's rehighlight() also fires textChanged with no text
-        # actually changed; ignored via is_applying_theme() (see
-        # XmlEditor.apply_theme_colors).
-        if self._xsd_loading or self.center_stage.xsd_editor.is_applying_theme():
-            return
-        self._set_xsd_dirty(True)
-
-    def _set_xsd_dirty(self, dirty: bool) -> None:
-        self._xsd_dirty = dirty
-        stage = self.center_stage
-        base = self._xsd_tab_label(self._xsd_mode)
-        stage.setTabText(stage.xsd_tab_index, f"{base} *" if dirty else base)
-
-    @staticmethod
-    def _xsd_tab_label(mode: str) -> str:
-        """Tab title for the Edit-XSD tab in each mode (spec §11)."""
-        return "Edit AutoXSD" if mode == "learned" else "Edit XSD"
-
-    def _xsd_path_for_mode(self, mode: str) -> Path:
-        """The on-disk file backing each Edit-XSD mode: the hand-curated
-        schema, or the auto-learned discovery artifact (spec §11)."""
-        if mode == "learned":
-            return learned_xsd_path(self._schema_storage_dir)
-        return curated_xsd_path(self._schema_storage_dir)
-
-    def _open_edit_xsd(self) -> None:
-        """Schema ▸ Edit XSD: open the hand-curated schema in the XSD tab."""
-        self._open_xsd("curated")
-
-    def _open_edit_auto_xsd(self) -> None:
-        """Schema ▸ Edit AutoXSD: open the auto-learned schema (learned.xsd)
-        in the same tab so it can be analysed against the curated one."""
-        self._open_xsd("learned")
-
-    def _open_xsd(self, mode: str) -> None:
-        """Load the XSD file for `mode` ("curated" | "learned") into the shared
-        Edit-XSD tab and switch to it. Unsaved edits in the current mode are
-        preserved when re-opening the same mode; switching to the other mode
-        prompts save/discard/cancel first (spec §11)."""
-        stage = self.center_stage
-        if self._xsd_dirty and mode != self._xsd_mode:
-            choice = self._confirm_close_xsd()
-            if choice == "cancel":
-                return
-            if choice == "save":
-                self._save_xsd()
-                if self._xsd_dirty:
-                    # Save failed (e.g. disk error): don't drop the edits.
-                    return
-        elif self._xsd_dirty and mode == self._xsd_mode:
-            # Same schema, unsaved edits: keep them; just reveal the tab.
-            stage.show_edit_xsd()
-            return
-
-        path = self._xsd_path_for_mode(mode)
-        if path.exists():
-            try:
-                text = path.read_text(encoding="utf-8")
-            except (OSError, UnicodeDecodeError) as exc:
-                self.statusBar().showMessage(f"Could not read {path.name}: {exc}", 5000)
-                return
-        else:
-            text = _EMPTY_XSD_SKELETON
-            if mode == "learned":
-                self.statusBar().showMessage(
-                    "No auto-learned schema yet — open a .pgtp to build it.", 5000
-                )
-        self._xsd_mode = mode
-        self._xsd_loading = True
-        try:
-            stage.xsd_editor.setPlainText(text)
-        finally:
-            self._xsd_loading = False
-        self._set_xsd_dirty(False)
-        stage.show_edit_xsd()
-
-    def _on_xsd_close_requested(self) -> None:
-        """Edit XSD tab ✕ clicked. Reuses `_confirm_close_xsd`'s save/discard/
-        cancel prompt (same pattern as `_open_xsd`/`closeEvent`) when dirty;
-        never invents a second confirmation path."""
-        if self._xsd_dirty:
-            choice = self._confirm_close_xsd()
-            if choice == "cancel":
-                return
-            if choice == "save":
-                self._save_xsd()
-                if self._xsd_dirty:
-                    # Save failed (e.g. disk error): don't drop the edits.
-                    return
-        self.center_stage.hide_edit_xsd()
-
-    def _goto_xsd_at_cursor(self) -> None:
-        """Ctrl+L / context-menu "Go To XSD": resolve the caret in the Raw
-        XML editor and jump to its curated XSD definition."""
-        editor = self.center_stage.xml_editor
-        if editor.schema_model() is None or not editor.request_goto_xsd():
-            self.statusBar().showMessage(
-                "Place the cursor inside an element in the Raw XML first.", 5000
-            )
-
-    def _goto_xsd(self, tag_chain: str, attr: str) -> None:
-        """Open the Edit XSD tab and select the attribute's definition;
-        fall back to the element's type definition; else status message.
-        Lines come from the last successful parse -- navigation targets the
-        saved file content."""
-        schema = self._curated_schema
-        if schema is None:
-            self.statusBar().showMessage(
-                "No curated XSD loaded yet — Schema ▸ Edit XSD.", 5000
-            )
-            return
-        line = schema.attribute_lines.get((tag_chain, attr))
-        if line is None:
-            line = schema.element_lines.get(tag_chain)
-        if line is None:
-            self.statusBar().showMessage(
-                f"'{tag_chain}' is not in the curated XSD yet.", 5000
-            )
-            return
-        self._open_edit_xsd()
-        self.center_stage.xsd_editor.navigate_to_line(line)
-
-    def _save_xsd(self) -> None:
-        """Save the Edit-XSD tab to whichever schema it currently holds
-        (curated or auto). The text is ALWAYS written (user text is never
-        lost); a malformed file keeps the last good schema live. Saving the
-        curated schema re-feeds completion; saving the auto schema does not
-        (learned.xsd never feeds completion, spec §11)."""
-        mode = self._xsd_mode
-        path = self._xsd_path_for_mode(mode)
-        text = self.center_stage.xsd_editor.toPlainText()
-        try:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(text, encoding="utf-8", newline="")
-        except OSError as exc:
-            modals.QMessageBox.critical(self, "Save Failed", f"Could not save:\n\n{exc}")
-            return
-        self._set_xsd_dirty(False)
-        self.statusBar().showMessage(f"Saved {path.name}", 5000)
-        if mode == "curated":
-            self._load_curated_schema()
-        self._report_verify_issues(verify_curated(text))
-
-    def _verify_xsd(self) -> None:
-        """Schema ▸ Verify XSD: check dialect rules against whatever the user
-        is currently looking at -- the Edit-XSD tab's live text when it has
-        unsaved edits, otherwise the active mode's saved file on disk."""
-        stage = self.center_stage
-        if self._xsd_dirty:
-            text = stage.xsd_editor.toPlainText()
-        else:
-            path = self._xsd_path_for_mode(self._xsd_mode)
-            if not path.exists():
-                self.statusBar().showMessage(
-                    f"No {self._xsd_tab_label(self._xsd_mode)} file yet.", 5000
-                )
-                return
-            try:
-                text = path.read_text(encoding="utf-8")
-            except (OSError, UnicodeDecodeError) as exc:
-                self.statusBar().showMessage(f"Could not read {path.name}: {exc}", 5000)
-                return
-        self._report_verify_issues(verify_curated(text))
-
-    def _export_xsd(self) -> None:
-        """Schema ▸ Export XSD: copy the active mode's saved file to a chosen
-        destination (curated.xsd or learned.xsd, per the open tab)."""
-        mode = self._xsd_mode
-        source = self._xsd_path_for_mode(mode)
-        if not source.exists():
-            self.statusBar().showMessage(
-                f"No {self._xsd_tab_label(mode)} file yet.", 5000
-            )
-            return
-        if self._xsd_dirty:
-            self.statusBar().showMessage(
-                "The XSD tab has unsaved changes — save it first (Ctrl+S).", 5000
-            )
-            return
-        dest, _filter = modals.QFileDialog.getSaveFileName(
-            self,
-            "Export XSD",
-            str(Path(self._dialog_default_dir()) / source.name) if self._dialog_default_dir() else source.name,
-            "XSD files (*.xsd)",
-        )
-        if not dest:
-            return
-        try:
-            shutil.copyfile(source, dest)
-        except OSError as exc:
-            modals.QMessageBox.critical(self, "Export Failed", f"Could not export:\n\n{exc}")
-            return
-        self.statusBar().showMessage(f"Exported to {Path(dest).name}", 5000)
-
-    def _import_xsd(self) -> None:
-        """Schema ▸ Import XSD: replace the active mode's file with an external
-        one -- verify first (hard refuse malformed XML; dialect warnings
-        importable), back up, replace, then re-feed completion when the active
-        mode is curated (spec §11)."""
-        mode = self._xsd_mode
-        source, _filter = modals.QFileDialog.getOpenFileName(
-            self, "Import XSD", self._dialog_default_dir(), "XSD files (*.xsd);;All files (*)"
-        )
-        if not source:
-            return
-        try:
-            text = Path(source).read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError) as exc:
-            modals.QMessageBox.critical(self, "Import Failed", f"Could not read:\n\n{exc}")
-            return
-        issues = verify_curated(text)
-        if any(issue.fatal for issue in issues):
-            modals.QMessageBox.critical(
-                self, "Import Refused",
-                "The file is not well-formed XML:\n\n" + issues[0].message,
-            )
-            return
-        if issues:
-            answer = modals.QMessageBox.question(
-                self, "Import With Warnings",
-                f"The file has {len(issues)} dialect warning(s). Import anyway?",
-                modals.QMessageBox.StandardButton.Yes | modals.QMessageBox.StandardButton.No,
-            )
-            if answer != modals.QMessageBox.StandardButton.Yes:
-                return
-        tab_was_dirty = self._xsd_dirty
-        target = self._xsd_path_for_mode(mode)
-        try:
-            target.parent.mkdir(parents=True, exist_ok=True)
-            if target.exists():
-                shutil.copy2(target, str(target) + ".bak")
-            target.write_text(text, encoding="utf-8")
-        except OSError as exc:
-            modals.QMessageBox.critical(self, "Import Failed", f"Could not write:\n\n{exc}")
-            return
-        self._set_xsd_dirty(False)
-        if mode == "curated":
-            self._load_curated_schema()
-        stage = self.center_stage
-        if stage.xsd_editor.toPlainText():
-            self._xsd_loading = True
-            try:
-                stage.xsd_editor.setPlainText(text)
-            finally:
-                self._xsd_loading = False
-        label = self._xsd_tab_label(mode)
-        notice = f"[Schema] Imported {label} from {Path(source).name}"
-        if tab_was_dirty:
-            notice += " (unsaved XSD tab edits were replaced)"
-        self.audit_panel.addItem(notice)
-        self._report_verify_issues(issues)
-
-    def _report_verify_issues(self, issues) -> None:
-        """Append Verify XSD results to the audit panel. Each issue line is
-        clickable -- routed through _on_audit_item_clicked's existing
-        (line, target) UserRole/UserRole+1 convention (see _find_all_step),
-        with target "xsd" so the click opens the Edit XSD tab at that line.
-        The active XSD mode is stashed in UserRole+2 so the click re-opens the
-        schema the issue was found in (curated vs auto)."""
-        if not issues:
-            self.audit_panel.addItem("[Schema] VERIFY: no issues found.")
-            return
-        for issue in issues:
-            item = QListWidgetItem(f"[Schema] VERIFY line {issue.line}: {issue.message}")
-            item.setData(Qt.ItemDataRole.UserRole, issue.line)
-            item.setData(Qt.ItemDataRole.UserRole + 1, "xsd")
-            item.setData(Qt.ItemDataRole.UserRole + 2, self._xsd_mode)
-            self.audit_panel.addItem(item)
+        self._xsd_ui.ensure_bootstrap()
+        self._xsd_ui.load_curated()
 
     def _save_active_tab(self) -> None:
         """Ctrl+S / File ▸ Save routes to the active center-stage tab."""
         stage = self.center_stage
         if stage.currentIndex() == stage.xsd_tab_index:
-            self._save_xsd()
+            self._xsd_ui.save()
             return
         panel = stage.active_ddl_object_panel()
         if panel is not None:
             self._save_ddl_object_editor(panel)
+            return
+        if stage.active_php_file_tab() is not None:
+            # §21: without this branch Ctrl+S on a focused PHP tab saved the
+            # PROJECT -- the tab's own event filter only claims the key while
+            # the caret is inside its editor, and File ▸ Save never was.
+            self._php_tabs.save_active_tab()
             return
         self._save_project()
 
@@ -986,6 +672,12 @@ class MainWindow(QMainWindow):
             # The editable object tab's own bar (spec §18.5) -- Replace is
             # LIVE here, unlike the read-only DDL Explorer above.
             return panel.find_replace_bar
+        php_tab = stage.active_php_file_tab()
+        if php_tab is not None:
+            # §21: the PHP tab owns its own FindReplaceBar. Without this branch
+            # Ctrl+F on a PHP tab yanked the user over to Raw XML (the fallback
+            # below REVEALS that tab) and searched the wrong document.
+            return php_tab.find_replace_bar
         self._reveal_raw_xml_tab()
         return stage.find_replace_bar
 
@@ -1009,26 +701,12 @@ class MainWindow(QMainWindow):
         panel = stage.active_ddl_object_panel()
         if panel is not None:
             return panel.editor
+        php_tab = stage.active_php_file_tab()
+        if php_tab is not None:
+            # §21: its `CodeEditor` carries the same gutter bookmark API (§8),
+            # so the Bookmarks menu follows a PHP tab like any other editor.
+            return php_tab.editor
         return stage.xml_editor
-
-    def _confirm_close_xsd(self) -> str:
-        """Ask the user how to resolve unsaved Edit XSD changes before
-        closing. Returns "save", "discard", or "cancel". Split out (mirroring
-        `_confirm_close`) so tests can monkeypatch it instead of ever driving
-        a real modal."""
-        result = modals.QMessageBox.question(
-            self,
-            "Unsaved Changes",
-            "The XSD has unsaved changes. Save before closing?",
-            modals.QMessageBox.StandardButton.Save
-            | modals.QMessageBox.StandardButton.Discard
-            | modals.QMessageBox.StandardButton.Cancel,
-        )
-        if result == modals.QMessageBox.StandardButton.Save:
-            return "save"
-        if result == modals.QMessageBox.StandardButton.Discard:
-            return "discard"
-        return "cancel"
 
     def _restore_window_state(self):
         geometry = self._settings.value("geometry")
@@ -1048,21 +726,41 @@ class MainWindow(QMainWindow):
         # passthrough) so they stay legible.
         self._toolbar_ui.refresh_icons()
 
+    # -- §21 drag-and-drop ---------------------------------------------------
+    # `QMainWindow` gestures, so they stay on the host; every decision about
+    # WHAT a dropped path means belongs to `_php_tabs` (a `.pgtp` routes back
+    # to `_open_pgtp_path`, a binary or a folder is refused out loud).
+
+    def dragEnterEvent(self, event):
+        """Accept a drag carrying at least one existing file (§21).
+
+        Deliberately a cheap existence test: this fires while the mouse is
+        still moving, so the text/UTF-8 classification waits for the drop,
+        where a refusal can be explained instead of silently showing a no-drop
+        cursor."""
+        paths = self._php_tabs.dropped_paths(event.mimeData())
+        if self._php_tabs.can_accept_drop(paths):
+            event.acceptProposedAction()
+            return
+        super().dragEnterEvent(event)
+
+    def dropEvent(self, event):
+        """Open every dropped file (§21), routing each by kind."""
+        paths = self._php_tabs.dropped_paths(event.mimeData())
+        if not self._php_tabs.can_accept_drop(paths):
+            super().dropEvent(event)
+            return
+        event.acceptProposedAction()
+        self._php_tabs.handle_dropped_paths(paths)
+
     def closeEvent(self, event):
         # Edit XSD tab (spec §11): unsaved XSD edits get their own
         # save/discard/cancel prompt, distinct from the project's (File >
         # Close handles that one) since the XSD tab has no Close command.
-        if self._xsd_dirty:
-            confirm = self._confirm_close_xsd()
-            if confirm == "cancel":
-                event.ignore()
-                return
-            if confirm == "save":
-                self._save_xsd()
-                if self._xsd_dirty:
-                    # Save failed (e.g. disk error) -- don't discard changes.
-                    event.ignore()
-                    return
+        # The §11 lane answers its own half; False = abort the close.
+        if not self._xsd_ui.confirm_close_for_exit():
+            event.ignore()
+            return
         # Persist window geometry/dock state on close (Sub-project D). No modal
         # prompt here -- File > Close handles the unsaved-changes prompt.
         self._settings.setValue("geometry", self.saveGeometry())
@@ -1362,13 +1060,19 @@ class MainWindow(QMainWindow):
         )
         if not path:
             return
+        self._open_pgtp_path(path)
+
+    def _open_pgtp_path(self, path) -> None:
+        """Open a `.pgtp` the way File ▸ Open… does, given a path that came
+        from somewhere other than that dialog (§21's drag-and-drop drops one
+        here). Split out so the drop path cannot fork the §18.2 decision."""
         if self._ddl_project_folder is None:
-            self._prompt_pgtp_open_mode(path)
+            self._prompt_pgtp_open_mode(str(path))
         else:
             # A project is already active -- the user already committed to
             # project mode; just open (existing linking logic applies
             # silently, exactly as it does for any subsequent open).
-            self.open_project_file(path)
+            self.open_project_file(str(path))
 
     def _prompt_pgtp_open_mode(self, path) -> None:
         """The first time a `.pgtp` is opened with no project active, ask how
@@ -1445,49 +1149,13 @@ class MainWindow(QMainWindow):
                 )
                 # Schema enrichment is the slowest part of open; keep it inside
                 # the busy block so the hourglass covers it.
-                self._enrich_schema_from_file(path)
+                self._xsd_ui.enrich_from_file(path)
 
         # Cursor restored here (busy_status __exit__), BEFORE any dialog.
         if parse_error is not None:
             self._handle_parse_failure(path, parse_error)
             return
         self.statusBar().showMessage(f"Opened: {path}", 5000)
-
-    def _enrich_schema_from_file(self, path):
-        try:
-            model_path = schema_model_path(self._schema_storage_dir)
-            xsd_path = learned_xsd_path(self._schema_storage_dir)
-            model_path.parent.mkdir(parents=True, exist_ok=True)
-
-            if model_path.exists():
-                model = Model.load(model_path)
-            else:
-                model = Model()
-
-            events = []
-            for elem_path, attrib, child_tag_counts, has_text in walk_document(path):
-                events.extend(model.merge_element(elem_path, attrib, child_tag_counts, has_text))
-
-            model.save(model_path)
-            xsd_path.write_text(generate_xsd(model), encoding="utf-8")
-
-            self._report_schema_events(events, path)
-            _log.info("schema: enriched %s", path)
-
-            self._ensure_curated_bootstrap()
-            if self._curated_schema is None:
-                self._load_curated_schema()
-        except Exception as exc:
-            self.audit_panel.addItem(f"[Schema] Could not update schema knowledge: {exc}")
-
-    def _report_schema_events(self, events, source_path):
-        source_name = Path(source_path).name
-        if len(events) > 20:
-            self.audit_panel.addItem(f"[Schema] Learned {len(events)} new structural facts from {source_name}")
-            return
-        for event in events:
-            template = _SCHEMA_REPORT_TEMPLATES[event["kind"]]
-            self.audit_panel.addItem(template.format(source=source_name, **event))
 
     def _populate_find_all_results(self, term: str, target: str = "raw") -> None:
         """Start a streaming Find All: results are appended to the Audit panel
@@ -1634,12 +1302,14 @@ class MainWindow(QMainWindow):
             # (same load-from-disk-if-clean behavior as Schema > Edit XSD /
             # Edit AutoXSD). Find-All-in-XSD lines have no mode tag -- they
             # target whatever the tab already shows, so just reveal it.
-            mode = item.data(Qt.ItemDataRole.UserRole + 2)
-            if mode:
-                self._open_xsd(mode)
-            else:
-                self.center_stage.show_edit_xsd()
-            self.center_stage.xsd_editor.navigate_to_line(line)
+            self._xsd_ui.reveal_line(line, item.data(Qt.ItemDataRole.UserRole + 2))
+            return
+        if target == LINT_AUDIT_TARGET:
+            # §22: a `[Lint]` finding carries the PHP tab's CenterStage key on
+            # UserRole+2 (the slot Verify XSD uses for its mode, read only on
+            # the "xsd" branch above, so the two never collide). Same "does
+            # nothing if that tab is gone" rule as `[Check]` below.
+            self._php_tabs.navigate_to(item.data(Qt.ItemDataRole.UserRole + 2), line)
             return
         if isinstance(target, tuple):
             # §18.5 D3a: a `[Check]` finding carries the object's
@@ -2079,7 +1749,11 @@ class MainWindow(QMainWindow):
         self._build_file_menu()
         self._build_edit_menu()
         self._build_view_menu()
-        self._build_schema_menu()
+        # The Schema menu is owned outright by the §11 lane, so it builds it
+        # (and registers its own window-level Ctrl+L action through the host's
+        # `addAction`) -- called from here so the menu keeps its position in
+        # the bar.
+        self._xsd_ui.build_menu(self.menuBar(), self.addAction)
         self._build_database_menu()
         self._build_tools_menu()
         self._build_bookmarks_menu()
@@ -2092,6 +1766,13 @@ class MainWindow(QMainWindow):
         open_action.setShortcut("Ctrl+O")
         open_action.triggered.connect(self._open_project)
         menu.addMenu("Open Recent")
+        # §21: the standalone custom-PHP editor's entry point. Sits beside
+        # "Open..." because it IS an open gesture, and deliberately ABOVE the
+        # project separator: a `.php` file has no structural tie to a `.pgtp`
+        # and opens whether or not a project is loaded. Connected through a
+        # lambda because the collaborator is constructed after the menu bar.
+        open_php_action = menu.addAction("Open PHP File…")
+        open_php_action.triggered.connect(lambda: self._php_tabs.open_php_file_dialog())
         menu.addSeparator()
         # Local DDL-versioning projects (spec §18.2) -- a distinct concept
         # from `_current_project` (the open .pgtp), tracked separately as
@@ -2528,27 +2209,6 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(
             "Raw XML is read-only in Caption Mode — close Caption Mode to edit.", 4000
         )
-
-    def _build_schema_menu(self):
-        menu = self.menuBar().addMenu("Schema")
-        edit_action = menu.addAction("Edit XSD")
-        edit_action.triggered.connect(self._open_edit_xsd)
-        edit_auto_action = menu.addAction("Edit AutoXSD")
-        edit_auto_action.triggered.connect(self._open_edit_auto_xsd)
-        verify_action = menu.addAction("Verify XSD")
-        verify_action.triggered.connect(self._verify_xsd)
-        export_action = menu.addAction("Export XSD")
-        export_action.triggered.connect(self._export_xsd)
-        import_action = menu.addAction("Import XSD")
-        import_action.triggered.connect(self._import_xsd)
-        # "Go To XSD" (Ctrl+L) lives as a window-level action, not a menu
-        # entry -- the Schema menu proper is Edit XSD / Edit AutoXSD / Verify /
-        # Export / Import.
-        goto_xsd_action = QAction("Go To XSD", self)
-        goto_xsd_action.setShortcut(QKeySequence("Ctrl+L"))
-        goto_xsd_action.triggered.connect(self._goto_xsd_at_cursor)
-        self.addAction(goto_xsd_action)
-        self._goto_xsd_action = goto_xsd_action
 
     def _build_database_menu(self):
         menu = self.menuBar().addMenu("Database")
@@ -3656,8 +3316,8 @@ class MainWindow(QMainWindow):
     def _confirm_close_ddl_object(self, ref) -> str:
         """Ask the user how to resolve unsaved changes in a DDL object tab
         before closing. Returns "save", "discard", or "cancel" (mirrors
-        `_confirm_close`/`_confirm_close_xsd`, so tests can monkeypatch this
-        instead of ever driving a real modal)."""
+        `_confirm_close` and `XsdController.confirm_close`, so tests can
+        monkeypatch this instead of ever driving a real modal)."""
         result = modals.QMessageBox.question(
             self,
             "Unsaved Changes",
@@ -4265,6 +3925,20 @@ class MainWindow(QMainWindow):
         menu.addSeparator()
         validate_action = menu.addAction("Validate Project")
         validate_action.triggered.connect(self._validate_project)
+        menu.addSeparator()
+        # §22 PHP lint. Directly under Validate Project because it is the same
+        # kind of gesture one tier down (this file, not the project), and all
+        # three feed the one Audit panel -- `[Lint]`, never `[Validate]`'s or
+        # §18.5's `[Check]` prefix. Lambdas: `_lint_ui` is built after the menu.
+        lint_action = menu.addAction("Lint Current File")
+        lint_action.triggered.connect(lambda: self._lint_ui.lint_active_file())
+        self._lint_on_save_action = menu.addAction("Lint on Save")
+        self._lint_on_save_action.setCheckable(True)
+        self._lint_on_save_action.toggled.connect(
+            lambda checked: self._lint_ui.set_lint_on_save(checked)
+        )
+        locate_linter_action = menu.addAction("Locate PHP Linter…")
+        locate_linter_action.triggered.connect(lambda: self._lint_ui.locate_linter())
         menu.addSeparator()
         reparse_action = menu.addAction("Reparse Raw XML into Tree")
         reparse_action.triggered.connect(self._reparse_raw_xml)

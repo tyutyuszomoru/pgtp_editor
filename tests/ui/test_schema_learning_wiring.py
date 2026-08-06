@@ -185,7 +185,7 @@ def test_report_schema_events_with_exactly_20_events_prints_one_line_each(qtbot,
     ]
 
     window.audit_panel.clear()  # drop the __init__ bundled-seed line
-    window._report_schema_events(events, str(source_path))
+    window._xsd_ui.report_schema_events(events, str(source_path))
 
     assert window.audit_panel.count() == 20
     for i in range(20):
@@ -210,7 +210,7 @@ def test_report_schema_events_with_21_events_collapses_to_summary_line(qtbot, tm
     ]
 
     window.audit_panel.clear()  # drop the __init__ bundled-seed line
-    window._report_schema_events(events, str(source_path))
+    window._xsd_ui.report_schema_events(events, str(source_path))
 
     assert window.audit_panel.count() == 1
     expected = "[Schema] Learned 21 new structural facts from twentyone.pgtp"

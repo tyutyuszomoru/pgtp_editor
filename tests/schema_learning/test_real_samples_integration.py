@@ -4,8 +4,8 @@ directory (gitignored, not tracked, but present on disk for local dev and
 CI alike).
 
 This drives walk_document + Model.merge_element directly — no UI, no
-MainWindow — mirroring exactly what _enrich_schema_from_file does inside
-pgtp_editor/ui/main_window.py.
+MainWindow — mirroring exactly what XsdController.enrich_from_file does inside
+pgtp_editor/ui/xsd_controller.py.
 """
 from pathlib import Path
 

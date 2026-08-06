@@ -1226,7 +1226,7 @@ def test_export_xsd_dialog_defaults_to_the_project_folder(qtbot, tmp_path, monke
 
     monkeypatch.setattr("pgtp_editor.ui.modals.QFileDialog.getSaveFileName", fake_save)
 
-    window._export_xsd()
+    window._xsd_ui.export()
 
     assert captured["directory"] == str(project_dir / xsd_path.name)
 
@@ -1243,7 +1243,7 @@ def test_import_xsd_dialog_defaults_to_the_project_folder(qtbot, tmp_path, monke
 
     monkeypatch.setattr("pgtp_editor.ui.modals.QFileDialog.getOpenFileName", fake_open)
 
-    window._import_xsd()
+    window._xsd_ui.import_()
 
     assert captured["directory"] == str(project_dir)
 
