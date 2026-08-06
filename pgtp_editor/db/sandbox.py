@@ -1039,10 +1039,15 @@ _INSTALL_PLPGSQL_CHECK_SQL = "CREATE EXTENSION IF NOT EXISTS plpgsql_check"
 #: The four exact reason strings `install_gate` returns, verbatim from §18.5
 #: D2 -- matched closely because the UI shows them as-is.
 _REASON_ALREADY_INSTALLED = "already installed."
-_REASON_REQUIRES_SUPERUSER = (
+#: Public: `install_gate` only hands this out when the extension is
+#: `installable`, but a UI host needs the same sentence to explain a
+#: superuser-blocked install it detected itself. Exported so the wording lives
+#: in exactly one place rather than being re-typed at the call site.
+REASON_REQUIRES_SUPERUSER = (
     "CREATE EXTENSION requires superuser; ask your DBA, or connect the "
     "sandbox profile as a superuser."
 )
+_REASON_REQUIRES_SUPERUSER = REASON_REQUIRES_SUPERUSER
 _REASON_ABSENT = (
     "plpgsql_check is not available on this server -- it must be installed "
     "as a C library on disk by a database administrator before PGTP Editor "
