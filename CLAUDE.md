@@ -76,6 +76,26 @@
   policies above as usual, then flip that entry's `Status` line to
   `RESOLVED (<commit>)` in place rather than deleting it.
 
+## Feature idea triage (parallel workflow, opt-in)
+
+- **When the user hands over a feature idea, change request, or improvement
+  while other implementation work is in progress**, dispatch the
+  `feature-triage` subagent (`.claude/agents/feature-triage.md`) in the
+  **foreground** (not `run_in_background`) instead of interrupting the
+  current work — unlike `bug-triager`, it is expected to ask
+  clarifying/challenging questions and needs answers relayed back before it
+  writes anything. It recommends EXTEND-vs-CREATE placement against
+  `CONSOLIDATED_SPEC.md` and appends one elaborated proposal to
+  `docs/FEATURE_QUEUE.md` — it never edits `CONSOLIDATED_SPEC.md`,
+  `pgtp_editor/`, or `tests/`, so it cannot conflict with whatever the main
+  session is mid-editing.
+- **When the user asks to pick up the queue** (typically once the main
+  implementation task has wrapped up), read `docs/FEATURE_QUEUE.md`, dispatch
+  `spec-maintainer` (JOB 1) to fold each `QUEUED` entry into
+  `CONSOLIDATED_SPEC.md`, implement it, run the feature-tester /
+  manual-maintainer policies above as usual, then flip that entry's `Status`
+  line to `PROCESSED (<commit or spec §>)` in place rather than deleting it.
+
 ## Test environment
 
 Development happens on **both Windows and Linux**, and the two differ in which

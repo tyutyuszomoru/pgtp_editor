@@ -22,6 +22,8 @@ from pgtp_editor.ui.ddl_object_editor import DdlObjectEditorPanel
 from pgtp_editor.ui.diff_merge_panel import DiffMergePanel
 from pgtp_editor.ui.find_replace_bar import FindReplaceBar
 from pgtp_editor.ui.manual_panel import ManualPanel
+from pgtp_editor.ui.php_file_tab import PhpFileTab, php_tab_key
+from pgtp_editor.ui.sql_console_panel import CONSOLE_TAB_KEY, SqlConsolePanel
 from pgtp_editor.ui.xml_editor import XmlEditor
 
 
@@ -48,6 +50,12 @@ class CenterStage(QTabWidget):
     # like Edit XSD -- so this signals intent rather than closing directly.
     ddl_object_close_requested = Signal(tuple)
 
+    # Emitted when a custom-PHP file tab's ✕ is clicked (spec §21). Carries
+    # the tab's key (its resolved absolute path, or a minted "untitled:N").
+    # Same reason as the two signals above: an editable tab's close must go
+    # through MainWindow's unsaved-changes prompt first.
+    php_file_close_requested = Signal(str)
+
     def __init__(self, parent=None):
         super().__init__(parent)
         # Dynamic per-object tabs (spec §18.5): always appended AFTER the
@@ -56,7 +64,24 @@ class CenterStage(QTabWidget):
         # MainWindow stays correct. Keyed on the object's stable identity
         # (`DdlObjectRef.key`), never on a remembered index -- close/reorder
         # must not be able to make a lookup stale.
+        #
+        # The Sandbox SQL Console (§18.5 D4) is filed in THIS SAME map under
+        # `CONSOLE_TAB_KEY == ("sandbox-sql",)`, exactly as the spec asks
+        # ("the same key->widget map the per-object tabs use"). That cannot
+        # collide: a `DdlObjectRef.key` is always a 5-tuple
+        # `(kind, schema, name, table, arg_types)`, and a checked-out object's
+        # override key is a `str` (its resolved path) -- while the console's
+        # key is a 1-tuple. Two guards keep the sharing safe:
+        # `_on_tab_close_requested` intercepts the console's X before the
+        # object loop, and `ddl_object_panels()` filters by type so the
+        # console is never handed to a caller expecting `.ref`/`.is_dirty()`.
         self._ddl_object_tabs: dict[tuple, DdlObjectEditorPanel] = {}
+        # Dynamic custom-PHP file tabs (spec §21), appended after the fixed
+        # set for exactly the same reason, and keyed on the file's resolved
+        # absolute path -- opening the same file twice must focus the tab that
+        # is already open, never add a second one.
+        self._php_file_tabs: dict[str, PhpFileTab] = {}
+        self._untitled_php_counter = 0
         self.diff_merge_panel = DiffMergePanel()
         self.diff_merge_tab_index = self.addTab(self.diff_merge_panel, "Diff / Merge")
 
@@ -129,14 +154,31 @@ class CenterStage(QTabWidget):
             # Edit XSD, which routes through MainWindow's dirty check).
             self.hide_ddl_explorer()
         else:
-            # Falls through to a dynamic DDL object tab (§18.5) -- these are
-            # never at a fixed index, so the only way to identify one is a
-            # map lookup by widget, not by index.
+            # Falls through to a dynamic tab -- a DDL object editor (§18.5) or
+            # a custom-PHP file (§21). These are never at a fixed index, so
+            # the only way to identify one is a map lookup by widget, not by
+            # index.
             widget = self.widget(index)
+            if widget is self._ddl_object_tabs.get(CONSOLE_TAB_KEY):
+                # The Sandbox SQL Console (§18.5 D4) shares the object-tab map
+                # but is a scratch surface: it holds no document, has no save
+                # path and no dirty concept, so it closes directly here (like
+                # the read-only DDL Explorer's X) instead of routing through
+                # MainWindow's unsaved-changes prompt, which would need a save
+                # gesture that does not exist. Must stay AHEAD of the loop
+                # below: emitting `ddl_object_close_requested(("sandbox-sql",))`
+                # would land in MainWindow's handler and call `is_dirty()` on
+                # the console -- an AttributeError that crashes the app.
+                self.close_sandbox_sql_tab()
+                return
             for key, panel in self._ddl_object_tabs.items():
                 if panel is widget:
                     self.ddl_object_close_requested.emit(key)
-                    break
+                    return
+            for key, tab in self._php_file_tabs.items():
+                if tab is widget:
+                    self.php_file_close_requested.emit(key)
+                    return
 
     def set_raw_xml_tab_visible(self, visible):
         self.setTabVisible(self.raw_xml_tab_index, visible)
@@ -261,5 +303,161 @@ class CenterStage(QTabWidget):
         order. Used to push a freshly (re)built `db/schema_index.py::SchemaIndex`
         (§18.6) into every already-open tab after a DDL Explorer refresh --
         `set_schema_index` on each, mirroring how a schema refresh updates
-        `XmlEditor.set_schema_model` (§11)."""
-        return list(self._ddl_object_tabs.values())
+        `XmlEditor.set_schema_model` (§11).
+
+        Type-filtered on purpose: the Sandbox SQL Console (§18.5 D4) lives in
+        the same map, and every caller of this accessor assumes a per-object
+        panel (`.ref`, `.is_dirty()`). Use `sandbox_sql_tab()` for the
+        console."""
+        return [
+            panel
+            for panel in self._ddl_object_tabs.values()
+            if isinstance(panel, DdlObjectEditorPanel)
+        ]
+
+    # --- Sandbox SQL Console tab (spec §18.5 D4) ---------------------------
+    def sandbox_sql_tab(self):
+        """The open `SqlConsolePanel`, or None. Single-instance by design."""
+        panel = self._ddl_object_tabs.get(CONSOLE_TAB_KEY)
+        return panel if isinstance(panel, SqlConsolePanel) else None
+
+    def open_sandbox_sql_tab(self, *, session_provider=None, **panel_kwargs):
+        """Focus the Sandbox SQL Console if it is already open; otherwise
+        create it, append it (always AFTER the fixed set) and focus that.
+
+        Single-instance, exactly `open_ddl_object_tab`'s rule (§18.5 D4:
+        "re-invoking the command focuses the existing tab rather than opening a
+        second console"). `session_provider` and any further `panel_kwargs`
+        (`run_query`, `run_async`) are forwarded to `SqlConsolePanel`
+        untouched, so hosts and tests inject the same seams the panel already
+        declares."""
+        existing = self.sandbox_sql_tab()
+        if existing is not None:
+            self.setCurrentWidget(existing)
+            return existing
+
+        panel = SqlConsolePanel(session_provider=session_provider, **panel_kwargs)
+        index = self.addTab(panel, panel.tab_title())
+        self.setTabToolTip(
+            index,
+            "Ad-hoc SQL against this project's sandbox database only — "
+            "never the target database (spec §18.5 D4)",
+        )
+        self._ddl_object_tabs[CONSOLE_TAB_KEY] = panel
+        self.setCurrentWidget(panel)
+        return panel
+
+    def close_sandbox_sql_tab(self):
+        """Remove the Sandbox SQL Console tab. No unsaved-changes prompt: the
+        console is a scratch buffer with no save path (mirrors
+        `hide_ddl_explorer`'s direct close, not `close_ddl_object_tab`'s
+        prompt-first route)."""
+        panel = self._ddl_object_tabs.pop(CONSOLE_TAB_KEY, None)
+        if panel is None:
+            return
+        index = self.indexOf(panel)
+        if index != -1:
+            self.removeTab(index)
+        panel.deleteLater()
+
+    # --- Dynamic custom-PHP file tabs (spec §21) ---------------------------
+    def php_file_tab(self, key):
+        """The open `PhpFileTab` for `key`, or None."""
+        return self._php_file_tabs.get(key)
+
+    def open_php_file_tab(
+        self,
+        path=None,
+        text="",
+        resolve_save_path=None,
+        writer=None,
+        lint_service=None,
+        lint_on_save: bool = False,
+    ):
+        """Focus the tab already open for `path` if there is one; otherwise
+        create it, append it (always AFTER the fixed set), and focus that.
+
+        `path` may be None for a text-only buffer, which gets a minted
+        `"untitled:N"` key instead. Reading the file is the CALLER's job (§21:
+        the tab never touches the filesystem behind the caller's back) -- the
+        already-read `text` is handed in, and `resolve_save_path`/`writer` are
+        the injected save seams, exactly as for `open_ddl_object_tab`.
+
+        `lint_service`/`lint_on_save` are §22's two seams, passed straight
+        through to `PhpFileTab` (a `lint/service.py::LintService` and the
+        after-save toggle). Both are optional and default exactly as the tab
+        defaults them, so a host that does not care about linting -- or an
+        existing caller written before §22 -- opens a tab with no linting and
+        costs nothing. Without these parameters a host could not physically
+        inject the service into a tab it opens."""
+        if path is not None:
+            key = php_tab_key(path)
+            existing = self._php_file_tabs.get(key)
+            if existing is not None:
+                self.setCurrentWidget(existing)
+                return existing
+        else:
+            self._untitled_php_counter += 1
+            key = f"untitled:{self._untitled_php_counter}"
+
+        tab = PhpFileTab(
+            path,
+            text,
+            resolve_save_path=resolve_save_path,
+            writer=writer,
+            lint_service=lint_service,
+            lint_on_save=lint_on_save,
+        )
+        index = self.addTab(tab, tab.tab_title())
+        self.setTabToolTip(index, tab.tab_tooltip())
+        self._php_file_tabs[key] = tab
+        self.setCurrentWidget(tab)
+        return tab
+
+    def close_php_file_tab(self, key):
+        """Actually remove the PHP file tab for `key`. Called only after
+        MainWindow has resolved any unsaved-changes prompt -- never directly
+        from `_on_tab_close_requested`, mirroring `close_ddl_object_tab`."""
+        tab = self._php_file_tabs.pop(key, None)
+        if tab is None:
+            return
+        index = self.indexOf(tab)
+        if index != -1:
+            self.removeTab(index)
+        tab.deleteLater()
+
+    def update_php_file_tab(self, key):
+        """Refresh a PHP file tab's title/tooltip from its current dirty state
+        and path -- call after any edit that may have crossed the clean/dirty
+        boundary, and after a Save As… renamed it."""
+        tab = self._php_file_tabs.get(key)
+        if tab is None:
+            return
+        index = self.indexOf(tab)
+        if index == -1:
+            return
+        self.setTabText(index, tab.tab_title())
+        self.setTabToolTip(index, tab.tab_tooltip())
+
+    def php_file_tab_key(self, tab):
+        """The map key a given `PhpFileTab` is filed under, or None. Lets a
+        host that holds the widget (e.g. from `active_php_file_tab`) reach the
+        key the close/update APIs take, without duplicating the key rule."""
+        for key, candidate in self._php_file_tabs.items():
+            if candidate is tab:
+                return key
+        return None
+
+    def active_php_file_tab(self):
+        """The `PhpFileTab` currently active, or None if some other tab has
+        focus (mirrors `active_ddl_object_panel`)."""
+        widget = self.currentWidget()
+        if isinstance(widget, PhpFileTab):
+            return widget
+        return None
+
+    def php_file_tabs(self):
+        """Every currently open `PhpFileTab`, keyed as the close/update APIs
+        expect. Used by the host's app-close flow to prompt for each dirty
+        one."""
+        return dict(self._php_file_tabs)

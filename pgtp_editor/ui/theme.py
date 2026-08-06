@@ -97,40 +97,46 @@ def dark_palette() -> QPalette:
     return palette
 
 
-# Cached QDarkStyleSheet text (BUG-010). Loaded lazily -- qdarkstyle warns if
-# loaded before a QApplication exists, and apply_theme always runs with one.
-_dark_qss_cache: str | None = None
+# Cached QDarkStyleSheet text, one per theme (BUG-010; extended for the light
+# QSS below). Loaded lazily -- qdarkstyle warns if loaded before a
+# QApplication exists, and apply_theme always runs with one.
+_qss_cache: dict[bool, str] = {}
 
 
-def _dark_stylesheet() -> str:
-    """The QDarkStyleSheet dark QSS (github.com/ColinDuquesnoy/QDarkStyleSheet,
-    the `qdarkstyle` package) -- adopted for BUG-010: Fusion + palette alone
-    left checkable menu indicators outlined near-black on the dark menu
-    background (Fusion derives the indicator frame from darkened Window/
-    Button roles). Rather than hand-tuning per-widget QSS, the maintained
-    dark stylesheet styles menus (QMenu::indicator included) and every other
-    widget consistently."""
-    global _dark_qss_cache
-    if _dark_qss_cache is None:
+def _qdarkstyle_stylesheet(light: bool) -> str:
+    """The QDarkStyleSheet QSS (github.com/ColinDuquesnoy/QDarkStyleSheet, the
+    `qdarkstyle` package) for the given theme -- adopted for BUG-010: Fusion +
+    palette alone left checkable menu indicators outlined near-black on the
+    dark menu background (Fusion derives the indicator frame from darkened
+    Window/Button roles). Rather than hand-tuning per-widget QSS, the
+    maintained stylesheet styles menus (QMenu::indicator included) and every
+    other widget consistently -- for BOTH themes: qdarkstyle ships a
+    `qdarkstyle.light.palette.LightPalette` alongside its `DarkPalette`, so
+    the light theme gets the same professional chrome the dark theme always
+    had, at no new dependency cost."""
+    if light not in _qss_cache:
         import qdarkstyle
+        from qdarkstyle.dark.palette import DarkPalette
+        from qdarkstyle.light.palette import LightPalette
 
-        _dark_qss_cache = qdarkstyle.load_stylesheet(qt_api="pyside6")
-    return _dark_qss_cache
+        _qss_cache[light] = qdarkstyle.load_stylesheet(
+            qt_api="pyside6", palette=LightPalette if light else DarkPalette
+        )
+    return _qss_cache[light]
 
 
 def apply_theme(app, light: bool) -> None:
-    """Apply the light or dark theme. Light: Fusion + ``light_palette()``,
-    no stylesheet. Dark: Fusion + ``dark_palette()`` + the QDarkStyleSheet
-    QSS (BUG-010).
+    """Apply the light or dark theme: Fusion + ``light_palette()``/
+    ``dark_palette()`` + the matching QDarkStyleSheet QSS (BUG-010, extended
+    to cover light too).
 
     Symmetric by construction (BUG-004 fix): there is no third "restore
     whatever the native/OS style renders" state; both states are real,
-    tested, and platform-independent. ``dark_palette()`` is still applied
-    under the dark QSS because palette-reading custom widgets (XmlEditor's
+    tested, and platform-independent, and now both carry a stylesheet.
+    ``light_palette()``/``dark_palette()`` are still applied under the QSS
+    because palette-reading custom widgets (XmlEditor's
     ``apply_theme_colors`` keys off its palette's Base lightness) and any
-    non-stylesheet-covered rendering must agree with the stylesheet's dark
-    look. The light case ALWAYS assigns the empty stylesheet so a
-    light<->dark round-trip never leaves stale dark QSS behind."""
+    non-stylesheet-covered rendering must agree with the stylesheet's look."""
     app.setStyle("Fusion")
     app.setPalette(light_palette() if light else dark_palette())
-    app.setStyleSheet("" if light else _dark_stylesheet())
+    app.setStyleSheet(_qdarkstyle_stylesheet(light))

@@ -97,19 +97,105 @@ def parse_args(argv):
         help="write a full-detail diagnostic log for this session",
     )
     parser.add_argument(
+        "--mcp",
+        action="store_true",
+        default=False,
+        help="run §23's MCP server on stdio INSTEAD of the GUI (headless, "
+        "off by default; the optional file argument becomes the default "
+        "project for tool calls that omit a path)",
+    )
+    parser.add_argument(
         "file",
         nargs="?",
         default=None,
         help="optional .pgtp project to open at startup (used by the "
         "Windows 'Edit with PGTP Editor' right-click verb, which passes "
-        "the clicked file path)",
+        "the clicked file path); with --mcp it is the default project "
+        "for path-less tool calls",
     )
     return parser.parse_args(argv)
+
+
+class _DefaultPathProvider:
+    """Headless `--mcp <file>`: a `FileProjectProvider` with a default path.
+
+    §23's headless mode is "file-path-driven", i.e. every tool call names a
+    `.pgtp`. When the user *did* name one on the command line, making every
+    client call repeat it would be gratuitous, so a path-less call resolves to
+    that file. This adds no logic of its own beyond substituting the default —
+    all parsing/validation stays in `FileProjectProvider`, and an explicit
+    `path` argument still wins (so e.g. `diff_projects` can name two files).
+
+    `LiveProjectProvider` is deliberately NOT used here: it exists for the
+    in-app case, where there is a real in-memory model to share. Headless has
+    none.
+    """
+
+    def __init__(self, default_path, delegate=None):
+        from pgtp_editor.mcp import FileProjectProvider
+
+        self._default_path = default_path
+        self._delegate = delegate if delegate is not None else FileProjectProvider()
+
+    def resolve(self, path=None):
+        return self._delegate.resolve(path or self._default_path)
+
+
+def run_mcp_server(path=None, *, serve=None, stderr=None):
+    """Run §23's MCP server on stdio and return a process exit code.
+
+    THE single implementation behind both start paths: the `--mcp` flag (see
+    `main`) and `python -m pgtp_editor.mcp` (see `pgtp_editor/mcp/__main__.py`,
+    a shim that calls straight into here). Neither constructs a `QApplication`
+    nor imports anything from `pgtp_editor.ui` — stdout is the JSON-RPC
+    channel, and a GUI contending for it would corrupt every session.
+
+    Blocks until the peer closes stdin. `serve` is injectable so tests never
+    enter a real stdio loop.
+    """
+    stderr = stderr if stderr is not None else sys.stderr
+
+    provider = None
+    if path is not None:
+        # Fail loudly and early rather than answering every tool call with the
+        # same error, and never with a traceback as the user-facing output.
+        if not os.path.isfile(path):
+            print(f"pgtp_editor --mcp: no such .pgtp file: {path}", file=stderr)
+            return 2
+        try:
+            with open(path, "rb"):
+                pass
+        except OSError as exc:
+            print(
+                f"pgtp_editor --mcp: cannot read {path}: {exc.strerror or exc}",
+                file=stderr,
+            )
+            return 2
+        provider = _DefaultPathProvider(path)
+
+    if serve is None:
+        from pgtp_editor.mcp import serve_stdio as serve
+
+    print(
+        "PGTP Editor MCP server on stdio"
+        + (f" (default project: {path})" if path else ""),
+        file=stderr,
+    )
+    serve(provider=provider)
+    return 0
 
 
 def main():
     args = parse_args(sys.argv[1:])
     session_path = debuglog.setup(debug=args.debug)
+
+    # --mcp runs the server INSTEAD of the GUI, and returns here before any Qt
+    # import: stdio is the MCP transport, so a GUI process sharing stdout would
+    # corrupt the protocol stream (see mcp/server.py's module docstring, which
+    # names serve_stdio "THE headless --mcp entry point"). The in-app server is
+    # a separate thing entirely -- start_server_thread from a GUI gesture.
+    if args.mcp:
+        return run_mcp_server(args.file)
 
     # Qt imports AFTER setup so even import-time crashes are logged.
     from PySide6 import __version__ as pyside_version

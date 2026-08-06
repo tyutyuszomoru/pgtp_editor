@@ -47,7 +47,7 @@ def test_open_project_file_shows_error_dialog_on_malformed_xml(qtbot, tmp_path):
     path = tmp_path / "broken.pgtp"
     path.write_text(MALFORMED_PGTP, encoding="utf-8")
 
-    with patch("pgtp_editor.ui.main_window.QMessageBox.critical") as mock_critical:
+    with patch("pgtp_editor.ui.modals.QMessageBox.critical") as mock_critical:
         window.open_project_file(str(path))
 
     mock_critical.assert_called_once()
@@ -59,7 +59,7 @@ def test_open_project_file_does_not_crash_on_missing_file(qtbot, tmp_path):
     qtbot.addWidget(window)
     missing_path = tmp_path / "does_not_exist.pgtp"
 
-    with patch("pgtp_editor.ui.main_window.QMessageBox.critical") as mock_critical:
+    with patch("pgtp_editor.ui.modals.QMessageBox.critical") as mock_critical:
         window.open_project_file(str(missing_path))
 
     mock_critical.assert_called_once()
@@ -75,7 +75,7 @@ def test_open_project_file_does_not_clear_tree_on_failure_after_success(qtbot, t
 
     broken_path = tmp_path / "broken.pgtp"
     broken_path.write_text(MALFORMED_PGTP, encoding="utf-8")
-    with patch("pgtp_editor.ui.main_window.QMessageBox.critical"):
+    with patch("pgtp_editor.ui.modals.QMessageBox.critical"):
         window.open_project_file(str(broken_path))
 
     # Previously-loaded tree stays intact — a failed open never silently
@@ -95,7 +95,7 @@ def test_open_action_triggers_file_dialog(qtbot, tmp_path):
     window._prompt_pgtp_open_mode = window.open_project_file
 
     with patch(
-        "pgtp_editor.ui.main_window.QFileDialog.getOpenFileName",
+        "pgtp_editor.ui.modals.QFileDialog.getOpenFileName",
         return_value=(str(path), "PGTP files (*.pgtp)"),
     ):
         window._open_project()
@@ -108,7 +108,7 @@ def test_open_action_cancelled_dialog_does_nothing(qtbot):
     qtbot.addWidget(window)
 
     with patch(
-        "pgtp_editor.ui.main_window.QFileDialog.getOpenFileName",
+        "pgtp_editor.ui.modals.QFileDialog.getOpenFileName",
         return_value=("", ""),
     ):
         window._open_project()
@@ -218,7 +218,7 @@ def test_open_project_file_does_not_overwrite_current_project_on_parse_failure(q
 
     broken_path = tmp_path / "broken.pgtp"
     broken_path.write_text(MALFORMED_PGTP, encoding="utf-8")
-    with patch("pgtp_editor.ui.main_window.QMessageBox.critical"):
+    with patch("pgtp_editor.ui.modals.QMessageBox.critical"):
         window.open_project_file(str(broken_path))
 
     assert window._current_project is first_project
@@ -254,7 +254,7 @@ def test_parse_failure_populates_and_shows_raw_xml_tab(qtbot, tmp_path):
     path = tmp_path / "broken.pgtp"
     path.write_text(MALFORMED_PGTP_WITH_KNOWN_LINE, encoding="utf-8")
 
-    with patch("pgtp_editor.ui.main_window.QMessageBox.critical"):
+    with patch("pgtp_editor.ui.modals.QMessageBox.critical"):
         window.open_project_file(str(path))
 
     assert window.center_stage.isTabVisible(window.center_stage.raw_xml_tab_index) is True
@@ -268,7 +268,7 @@ def test_parse_failure_syncs_raw_xml_panel_checkbox(qtbot, tmp_path):
     path = tmp_path / "broken.pgtp"
     path.write_text(MALFORMED_PGTP_WITH_KNOWN_LINE, encoding="utf-8")
 
-    with patch("pgtp_editor.ui.main_window.QMessageBox.critical"):
+    with patch("pgtp_editor.ui.modals.QMessageBox.critical"):
         window.open_project_file(str(path))
 
     assert window._raw_xml_panel_action.isChecked() is True
@@ -292,7 +292,7 @@ def test_parse_failure_highlights_the_reported_error_line(qtbot, tmp_path):
         expected_line = exc.lineno
     assert expected_line is not None
 
-    with patch("pgtp_editor.ui.main_window.QMessageBox.critical"):
+    with patch("pgtp_editor.ui.modals.QMessageBox.critical"):
         window.open_project_file(str(path))
 
     selections = window.center_stage.xml_editor.extraSelections()
@@ -306,7 +306,7 @@ def test_parse_failure_still_shows_dialog(qtbot, tmp_path):
     path = tmp_path / "broken.pgtp"
     path.write_text(MALFORMED_PGTP_WITH_KNOWN_LINE, encoding="utf-8")
 
-    with patch("pgtp_editor.ui.main_window.QMessageBox.critical") as mock_critical:
+    with patch("pgtp_editor.ui.modals.QMessageBox.critical") as mock_critical:
         window.open_project_file(str(path))
 
     mock_critical.assert_called_once()
@@ -342,7 +342,7 @@ def test_parse_failure_does_not_crash_when_file_unreadable_after_initial_parse_a
     qtbot.addWidget(window)
     missing_path = tmp_path / "does_not_exist.pgtp"
 
-    with patch("pgtp_editor.ui.main_window.QMessageBox.critical"):
+    with patch("pgtp_editor.ui.modals.QMessageBox.critical"):
         window.open_project_file(str(missing_path))
 
     # A missing file raises PgtpParseError via the OSError branch in
@@ -459,7 +459,7 @@ def test_open_parse_failure_restores_cursor_before_dialog(qtbot, tmp_path):
     path = tmp_path / "broken.pgtp"
     path.write_text(MALFORMED_PGTP, encoding="utf-8")
 
-    with patch("pgtp_editor.ui.main_window.QMessageBox.critical") as mock_critical:
+    with patch("pgtp_editor.ui.modals.QMessageBox.critical") as mock_critical:
         mock_critical.side_effect = lambda *a, **k: (
             None if QApplication.overrideCursor() is None
             else (_ for _ in ()).throw(AssertionError("cursor not restored before dialog"))

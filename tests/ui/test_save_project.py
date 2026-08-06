@@ -65,7 +65,7 @@ def test_save_with_no_current_path_routes_to_save_as(qtbot, tmp_path):
     target = tmp_path / "saved.pgtp"
 
     with patch(
-        "pgtp_editor.ui.main_window.QFileDialog.getSaveFileName",
+        "pgtp_editor.ui.modals.QFileDialog.getSaveFileName",
         return_value=(str(target), "PGTP files (*.pgtp)"),
     ):
         window._save_project()
@@ -95,7 +95,7 @@ def test_save_as_adopts_the_new_path(qtbot, tmp_path):
     target = tmp_path / "as.pgtp"
 
     with patch(
-        "pgtp_editor.ui.main_window.QFileDialog.getSaveFileName",
+        "pgtp_editor.ui.modals.QFileDialog.getSaveFileName",
         return_value=(str(target), "PGTP files (*.pgtp)"),
     ):
         window._save_project_as()
@@ -110,7 +110,7 @@ def test_save_as_cancel_is_a_noop(qtbot, tmp_path):
     window.center_stage.xml_editor.setPlainText("data")
 
     with patch(
-        "pgtp_editor.ui.main_window.QFileDialog.getSaveFileName",
+        "pgtp_editor.ui.modals.QFileDialog.getSaveFileName",
         return_value=("", ""),
     ):
         window._save_project_as()
@@ -126,7 +126,7 @@ def test_save_surfaces_os_error_and_leaves_buffer_untouched(qtbot, tmp_path):
     with patch(
         "pgtp_editor.ui.main_window.MainWindow._write_project_text",
         side_effect=OSError("disk full"),
-    ), patch("pgtp_editor.ui.main_window.QMessageBox.critical") as mock_critical:
+    ), patch("pgtp_editor.ui.modals.QMessageBox.critical") as mock_critical:
         window._save_project()
 
     assert mock_critical.called
@@ -142,7 +142,7 @@ def test_file_menu_save_actions_are_wired(qtbot, tmp_path):
     file_menu = find_top_menu(window, "File")
 
     with patch(
-        "pgtp_editor.ui.main_window.QFileDialog.getSaveFileName",
+        "pgtp_editor.ui.modals.QFileDialog.getSaveFileName",
         return_value=(str(target), "PGTP files (*.pgtp)"),
     ):
         find_action(file_menu, "Save").trigger()

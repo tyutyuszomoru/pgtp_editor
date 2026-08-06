@@ -99,7 +99,8 @@ def test_panel_hosts_an_EDITABLE_sql_code_editor(qtbot):
 
 
 def test_panel_has_no_sandbox_button_row(qtbot):
-    """Carve-out 2: v1 ships no Apply/Check controls rather than dead ones."""
+    """Carve-out 2: with no apply seam wired the panel ships no Apply/Check
+    controls at all, rather than dead or permanently-disabled ones."""
     from PySide6.QtWidgets import QPushButton
 
     panel = _panel(qtbot)
@@ -529,3 +530,755 @@ def test_shortcut_override_does_not_claim_unrelated_keys(qtbot):
     QApplication.sendEvent(panel.editor, event)
 
     assert event.isAccepted() is False
+
+
+# ===========================================================================
+# Apply (§18.5): Apply to Sandbox, Apply to Target's four hard preconditions,
+# and the "Deploy this edit…" destination picker.
+#
+# Every DB-touching step is an injected seam, so no test here reaches a real
+# database, and the confirmation gate is injected too, so no test reaches an
+# un-patched modal.
+# ===========================================================================
+from pgtp_editor.ui.ddl_object_editor import (  # noqa: E402
+    CHECK_PREFIX,
+    DEST_SANDBOX,
+    DEST_SAVE,
+    DEST_TARGET,
+    parse_buffer_identity,
+)
+
+_TARGET_SRC = (
+    "CREATE OR REPLACE FUNCTION pr.recalc() RETURNS void AS $$\n"
+    "BEGIN\n"
+    "  PERFORM 1;\n"
+    "END;\n"
+    "$$ LANGUAGE plpgsql;\n"
+)
+
+
+class _Tier:
+    """A duck-typed `TierOutcome{status, reason, detail}` (§18.5 D3)."""
+
+    def __init__(self, status, reason=""):
+        self.status = status
+        self.reason = reason
+        self.detail = ""
+
+
+class _Report:
+    """A duck-typed `CheckReport{tier0..tier3, findings, caveats}`."""
+
+    def __init__(self, statuses=("passed", "passed", "passed", "passed"), findings=(), caveats=()):
+        self.tier0, self.tier1, self.tier2, self.tier3 = (
+            s if isinstance(s, _Tier) else _Tier(s) for s in statuses
+        )
+        self.findings = list(findings)
+        self.caveats = list(caveats)
+
+
+def _green():
+    return _Report()
+
+
+class _Seams:
+    """Recording stand-ins for every injected seam."""
+
+    def __init__(self, *, confirm=True, live=None, sandbox_db="sbx on localhost:5432",
+                 target_db="prod on db01:5432", report=None):
+        self.sandbox_calls = []
+        self.target_calls = []
+        self.confirms = []
+        self.identity_calls = []
+        self._confirm = confirm
+        self._live = live
+        self._report = report if report is not None else _green()
+        self.sandbox_db = sandbox_db
+        self.target_db = target_db
+
+    def apply_to_sandbox(self, ref, text):
+        self.sandbox_calls.append((ref, text))
+        return self._report
+
+    def apply_to_target(self, ref, text):
+        self.target_calls.append((ref, text))
+        return type("Outcome", (), {"ok": True, "statement_index": None})()
+
+    def live_identity(self, ref):
+        self.identity_calls.append(ref)
+        return self._live
+
+    def confirm(self, title, text):
+        self.confirms.append((title, text))
+        answer = self._confirm
+        if isinstance(answer, list):
+            return answer.pop(0)
+        return answer
+
+
+def _wired(qtbot, seams, *, ref=_PLAIN, text=_TARGET_SRC, sandbox=True, target=True, confirm=True):
+    panel = DdlObjectEditorPanel(
+        ref,
+        text,
+        apply_to_sandbox=seams.apply_to_sandbox if sandbox else None,
+        apply_to_target=seams.apply_to_target if target else None,
+        live_identity=seams.live_identity if target else None,
+        sandbox_database_label=lambda: seams.sandbox_db,
+        target_database_label=lambda: seams.target_db,
+        confirm=seams.confirm if confirm else None,
+    )
+    qtbot.addWidget(panel)
+    return panel
+
+
+def _audit(panel):
+    """Collect the Audit lines the panel emits, as the host would."""
+    lines = []
+    panel.check_reported.connect(lambda batch: lines.extend(batch))
+    return lines
+
+
+# --- Apply to Sandbox -------------------------------------------------------
+def test_apply_to_sandbox_invokes_the_injected_seam_with_ref_and_buffer(qtbot):
+    seams = _Seams()
+    panel = _wired(qtbot, seams)
+
+    assert panel.apply_to_sandbox() is True
+
+    assert seams.sandbox_calls == [(_PLAIN, _TARGET_SRC)]
+
+
+def test_apply_to_sandbox_confirmation_names_the_object_and_the_database(qtbot):
+    seams = _Seams()
+    panel = _wired(qtbot, seams)
+
+    panel.apply_to_sandbox()
+
+    _, text = seams.confirms[0]
+    assert "pr.recalc()" in text
+    assert "sbx on localhost:5432" in text
+
+
+def test_declined_confirmation_applies_nothing_to_the_sandbox(qtbot):
+    seams = _Seams(confirm=False)
+    panel = _wired(qtbot, seams)
+    lines = _audit(panel)
+
+    assert panel.apply_to_sandbox() is False
+
+    assert seams.sandbox_calls == []
+    assert panel.applied_sha1 is None
+    assert any("cancelled" in line for line in lines)
+
+
+def test_apply_to_sandbox_records_the_buffer_hash_and_the_report(qtbot):
+    seams = _Seams()
+    panel = _wired(qtbot, seams)
+
+    panel.apply_to_sandbox()
+
+    assert panel.applied_sha1 == panel.text_sha1()
+    assert panel.last_check_report() is seams._report
+
+
+def test_a_report_stops_counting_once_the_buffer_changes(qtbot):
+    """The precondition-2 gate is 'green FOR THIS BUFFER' -- a report against
+    an older buffer must never read as this buffer's clearance."""
+    seams = _Seams()
+    panel = _wired(qtbot, seams)
+    panel.apply_to_sandbox()
+    assert panel.last_check_report() is not None
+
+    panel.editor.insertPlainText("-- edited\n")
+
+    assert panel.last_check_report() is None
+
+
+def test_apply_to_sandbox_refuses_an_empty_buffer(qtbot):
+    seams = _Seams()
+    panel = _wired(qtbot, seams, text="   \n")
+    lines = _audit(panel)
+
+    assert panel.apply_to_sandbox() is False
+
+    assert seams.sandbox_calls == []
+    assert seams.confirms == []
+    assert any("empty" in line for line in lines)
+
+
+def test_apply_refuses_when_the_database_cannot_be_named(qtbot):
+    """A confirmation that does not say WHICH database is not compliant, so an
+    unnameable destination is refused rather than confirmed vaguely."""
+    seams = _Seams(sandbox_db="")
+    panel = _wired(qtbot, seams)
+    lines = _audit(panel)
+
+    assert panel.apply_to_sandbox() is False
+
+    assert seams.sandbox_calls == []
+    assert seams.confirms == []
+    assert any("must name the database" in line for line in lines)
+
+
+# --- Affordances are absent when unwired (carve-out 2) ----------------------
+def test_no_apply_row_when_no_seam_is_wired(qtbot):
+    panel = _panel(qtbot)
+    assert panel.has_sandbox_apply is False
+    assert panel.has_target_apply is False
+    assert panel.apply_row is None
+    assert panel.sandbox_button is None and panel.target_button is None
+    assert panel.apply_to_sandbox() is False
+    assert panel.apply_to_target() is False
+
+
+def test_context_menu_omits_unwired_apply_entries(qtbot):
+    panel = _panel(qtbot)
+    labels = [a.text() for a in panel._build_context_menu().actions()]
+    assert "Apply to Sandbox" not in labels
+    assert "Apply to Target…" not in labels
+    # The picker itself stays -- Save is always a reachable destination.
+    assert "Deploy this edit…" in labels
+
+
+def test_wired_seams_add_their_buttons_and_menu_entries(qtbot):
+    seams = _Seams()
+    panel = _wired(qtbot, seams)
+    assert panel.apply_row is not None
+    assert panel.sandbox_button.text() == "Apply to Sandbox"
+    assert panel.target_button.text() == "Apply to Target…"
+    labels = [a.text() for a in panel._build_context_menu().actions()]
+    assert "Apply to Sandbox" in labels and "Apply to Target…" in labels
+
+
+def test_apply_row_appears_and_disappears_with_the_seams(qtbot):
+    seams = _Seams()
+    panel = _panel(qtbot)
+    panel.set_apply_seams(
+        apply_to_sandbox=seams.apply_to_sandbox,
+        sandbox_database_label=lambda: seams.sandbox_db,
+        confirm=seams.confirm,
+    )
+    assert panel.sandbox_button is not None
+    assert panel.has_target_apply is False
+
+    panel.set_apply_seams()
+
+    assert panel.apply_row is None and panel.sandbox_button is None
+
+
+def test_apply_is_absent_without_a_confirmation_gate(qtbot):
+    """There is no unconfirmed apply path to fall back to, so a missing
+    confirm seam removes the gesture rather than skipping the gate."""
+    seams = _Seams()
+    panel = _wired(qtbot, seams, confirm=False)
+    assert panel.has_sandbox_apply is False
+    assert panel.has_target_apply is False
+    assert panel.apply_to_sandbox() is False
+    assert panel.apply_to_target() is False
+    assert seams.sandbox_calls == [] and seams.target_calls == []
+
+
+def test_apply_to_target_is_absent_without_the_live_identity_seam(qtbot):
+    """Precondition 1 cannot be enforced without it, and an unenforceable
+    precondition must remove the gesture, not weaken it."""
+    seams = _Seams()
+    panel = DdlObjectEditorPanel(
+        _PLAIN,
+        _TARGET_SRC,
+        apply_to_target=seams.apply_to_target,
+        target_database_label=lambda: seams.target_db,
+        confirm=seams.confirm,
+    )
+    qtbot.addWidget(panel)
+    assert panel.has_target_apply is False
+    assert panel.apply_to_target() is False
+    assert seams.target_calls == []
+
+
+# --- Apply to Target: the four hard preconditions ---------------------------
+def _live_same():
+    return DdlObjectRef(kind="function", schema="pr", name="recalc")
+
+
+def test_apply_to_target_invokes_the_write_seam_when_everything_passes(qtbot):
+    seams = _Seams(live=_live_same())
+    panel = _wired(qtbot, seams)
+    panel.record_check_report(_green())
+
+    assert panel.apply_to_target() is True
+
+    assert seams.target_calls == [(_PLAIN, _TARGET_SRC)]
+
+
+def test_precondition_1_refuses_a_changed_signature_naming_the_mismatch(qtbot):
+    """`CREATE OR REPLACE` on a changed (schema, name, argtypes) creates a
+    SECOND function and leaves the old one live -- refused outright, with no
+    override and no consent path."""
+    seams = _Seams(live=DdlObjectRef(kind="function", schema="pr", name="recalc",
+                                     arg_types=("integer",)))
+    panel = _wired(
+        qtbot,
+        seams,
+        text="CREATE OR REPLACE FUNCTION pr.recalc(p_id bigint) RETURNS void AS $$\n"
+        "BEGIN END;\n$$ LANGUAGE plpgsql;\n",
+    )
+    panel.record_check_report(_green())
+    lines = _audit(panel)
+
+    assert panel.apply_to_target() is False
+
+    assert seams.target_calls == []
+    assert seams.confirms == []  # no override is offered for this one
+    joined = " ".join(lines)
+    assert "pr.recalc(bigint)" in joined and "pr.recalc(integer)" in joined
+
+
+def test_precondition_1_refuses_a_buffer_whose_signature_cannot_be_parsed(qtbot):
+    seams = _Seams(live=_live_same())
+    panel = _wired(qtbot, seams, text="-- just a comment, no CREATE at all\n")
+    panel.record_check_report(_green())
+    lines = _audit(panel)
+
+    assert panel.apply_to_target() is False
+
+    assert seams.target_calls == []
+    assert any("could not determine the object's signature" in line for line in lines)
+
+
+def test_precondition_1_allows_an_object_the_target_does_not_have_yet(qtbot):
+    seams = _Seams(live=None)
+    panel = _wired(qtbot, seams)
+    panel.record_check_report(_green())
+    lines = _audit(panel)
+
+    assert panel.apply_to_target() is True
+
+    assert any("does not exist in the target catalog" in line for line in lines)
+
+
+def test_precondition_2_hard_blocks_on_findings_with_no_override(qtbot):
+    seams = _Seams(live=_live_same())
+    panel = _wired(qtbot, seams)
+    panel.record_check_report(
+        _Report(statuses=("passed", "passed", "passed", "found_issues"),
+                findings=[type("F", (), {"message": "column pr.orders.custmer_id does not exist"})()])
+    )
+    lines = _audit(panel)
+
+    assert panel.apply_to_target() is False
+
+    assert seams.target_calls == []
+    assert seams.confirms == []  # a checked-and-failed result is not overridable
+    assert any("was not green" in line for line in lines)
+
+
+def test_precondition_2_blocks_when_the_ladder_never_ran_and_the_override_is_declined(qtbot):
+    seams = _Seams(live=_live_same(), confirm=False)
+    panel = _wired(qtbot, seams)
+    lines = _audit(panel)
+
+    assert panel.apply_to_target() is False
+
+    assert seams.target_calls == []
+    title, text = seams.confirms[0]
+    assert "Without Full Validation" in title
+    assert "has not been run over this buffer" in text
+    assert any("override was declined" in line for line in lines)
+
+
+def test_precondition_2_override_enumerates_exactly_what_could_not_be_checked(qtbot):
+    """Never a generic 'proceed anyway': the dialog names the tiers and why."""
+    seams = _Seams(live=_live_same(), confirm=[True, True])
+    panel = _wired(qtbot, seams)
+    panel.record_check_report(
+        _Report(statuses=("passed", "passed", "passed",
+                          _Tier("unavailable", "plpgsql_check is not installed")))
+    )
+
+    assert panel.apply_to_target() is True
+
+    override = seams.confirms[0][1]
+    assert "tier3" in override and "plpgsql_check is not installed" in override
+    assert "tier0" not in override  # only the tiers that actually failed to run
+
+
+def test_precondition_3_confirmation_states_the_transaction_and_the_missing_revert(qtbot):
+    seams = _Seams(live=_live_same())
+    panel = _wired(qtbot, seams)
+    panel.record_check_report(_green())
+
+    panel.apply_to_target()
+
+    text = seams.confirms[-1][1]
+    assert "transaction" in text and "rolls back" in text
+    assert "no revert snapshot" in text
+
+
+def test_precondition_4_confirmation_names_the_object_and_the_database(qtbot):
+    seams = _Seams(live=_live_same())
+    panel = _wired(qtbot, seams)
+    panel.record_check_report(_green())
+
+    panel.apply_to_target()
+
+    title, text = seams.confirms[-1]
+    assert title == "Apply to Target"
+    assert "pr.recalc()" in text and "prod on db01:5432" in text
+
+
+def test_declined_confirmation_applies_nothing_to_the_target(qtbot):
+    seams = _Seams(live=_live_same(), confirm=False)
+    panel = _wired(qtbot, seams)
+    panel.record_check_report(_green())
+    lines = _audit(panel)
+
+    assert panel.apply_to_target() is False
+
+    assert seams.target_calls == []
+    assert any("cancelled" in line for line in lines)
+
+
+def test_apply_to_target_refuses_an_empty_buffer(qtbot):
+    seams = _Seams(live=_live_same())
+    panel = _wired(qtbot, seams, text="\n\n")
+    panel.record_check_report(_green())
+
+    assert panel.apply_to_target() is False
+
+    assert seams.target_calls == []
+
+
+# --- Reporting under the [Check] prefix ------------------------------------
+def test_results_are_reported_to_the_audit_panel_under_the_check_prefix(qtbot):
+    seams = _Seams(report=_Report(caveats=["defaults and data are not reproduced"]))
+    panel = _wired(qtbot, seams)
+    lines = _audit(panel)
+
+    panel.apply_to_sandbox()
+
+    assert lines and all(line.startswith("[Check] ") for line in lines)
+    # Never another feature's reserved prefix (§7/§18.4/§22).
+    assert not any("[SQL]" in line or "[Lint]" in line for line in lines)
+    assert CHECK_PREFIX == "[Check] "
+
+
+def test_every_tier_is_reported_always_plus_one_line_per_caveat(qtbot):
+    """An unavailable tier is stated, never collapsed into the overall OK
+    state (§18.5 D3's hard rule)."""
+    seams = _Seams(
+        report=_Report(
+            statuses=("passed", _Tier("unavailable", "no notice channel"), "passed", "passed"),
+            caveats=["extensions are not reproduced"],
+        )
+    )
+    panel = _wired(qtbot, seams)
+    lines = _audit(panel)
+
+    panel.apply_to_sandbox()
+
+    joined = "\n".join(lines)
+    for tier in ("tier0", "tier1", "tier2", "tier3"):
+        assert tier in joined
+    assert "unavailable -- no notice channel" in joined
+    assert "caveat: extensions are not reproduced" in joined
+
+
+# --- Two Audit channels (§18.5 D3a, overriding §28) -------------------------
+class _Finding:
+    """A duck-typed `db/ddl_check.py::CheckFinding` -- read by attribute only."""
+
+    def __init__(self, severity, line, message):
+        self.severity = severity
+        self.line = line
+        self.lineno = line
+        self.message = message
+
+
+def _findings(panel):
+    """Collect the finding batches the panel emits on `check_findings`."""
+    batches = []
+    panel.check_findings.connect(lambda batch: batches.append(list(batch)))
+    return batches
+
+
+def test_findings_go_out_as_objects_on_check_findings_and_never_as_narrative(qtbot):
+    """The ledger override asserted from BOTH sides: the clickable channel gets
+    the objects, and the narrative channel gets no `finding:` line -- a
+    pre-formatted string could not carry the line/target roles the host needs."""
+    one = _Finding("error", 6, 'record has no field "foo"')
+    two = _Finding("warning", None, "target variable is never read")
+    seams = _Seams(report=_Report(statuses=("passed", "passed", "passed", "found_issues"),
+                                  findings=[one, two]))
+    panel = _wired(qtbot, seams)
+    lines = _audit(panel)
+    batches = _findings(panel)
+
+    panel.apply_to_sandbox()
+
+    # Clickable channel: exactly one batch, carrying the OBJECTS themselves.
+    assert len(batches) == 1
+    assert batches[0] == [one, two]
+    assert batches[0][0] is one and batches[0][1] is two
+    # Narrative channel: tiers are still there, findings are not -- not the
+    # `finding:` label, not the messages, not even a pre-rendered line number.
+    joined = "\n".join(lines)
+    assert "tier3" in joined
+    assert "finding" not in joined
+    assert 'record has no field "foo"' not in joined
+    assert "target variable is never read" not in joined
+
+
+def test_a_report_with_no_findings_does_not_emit_the_findings_channel_at_all(qtbot):
+    """An empty batch would render an empty Audit run -- so none is sent."""
+    seams = _Seams(report=_Report(caveats=["data is not reproduced"]))
+    panel = _wired(qtbot, seams)
+    lines = _audit(panel)
+    batches = _findings(panel)
+
+    panel.apply_to_sandbox()
+
+    assert batches == []
+    assert any("caveat: data is not reproduced" in line for line in lines)
+
+
+def test_report_check_result_emits_both_channels_with_no_headline(qtbot):
+    """Making a Check result VISIBLE, as opposed to `record_check_report`,
+    which only RECORDS it for precondition 2."""
+    finding = _Finding("error", 12, "unbound record variable")
+    report = _Report(statuses=("passed", "passed", "passed", "found_issues"),
+                     findings=[finding], caveats=["dynamic EXECUTE is not analyzed"])
+    panel = _panel(qtbot)
+    lines = _audit(panel)
+    batches = _findings(panel)
+
+    panel.report_check_result(report)
+
+    assert batches == [[finding]]
+    joined = "\n".join(lines)
+    assert "tier3: found_issues" in joined
+    assert "caveat: dynamic EXECUTE is not analyzed" in joined
+    assert "unbound record variable" not in joined
+    # No headline: every line is a tier/caveat line, none an "applied …" notice.
+    assert not any("applied" in line for line in lines)
+    # Recording stays a separate act.
+    assert panel.last_check_report() is None
+
+
+# --- "Run in Sandbox Console" (§18.5 D4) -- a bridge that executes nothing ---
+def test_run_in_console_entry_is_absent_while_the_seam_is_unwired(qtbot):
+    panel = _panel(qtbot, text="select 1")
+    assert panel.has_run_in_console is False
+    labels = [a.text() for a in panel._build_context_menu().actions()]
+    assert "Run in Sandbox Console" not in labels
+
+
+def test_run_in_console_entry_is_present_but_disabled_without_a_selection(qtbot):
+    panel = _panel(qtbot, text="select 1")
+    panel.set_run_in_console(lambda text: None)
+    assert panel.has_run_in_console is True
+    action = next(
+        a for a in panel._build_context_menu().actions() if a.text() == "Run in Sandbox Console"
+    )
+    assert action.isEnabled() is False
+    assert action.shortcut().isEmpty()
+
+
+def test_run_in_console_entry_is_enabled_with_a_selection(qtbot):
+    panel = _panel(qtbot, text="select 1")
+    panel.set_run_in_console(lambda text: None)
+    _select_all(panel)
+    action = next(
+        a for a in panel._build_context_menu().actions() if a.text() == "Run in Sandbox Console"
+    )
+    assert action.isEnabled() is True
+
+
+def test_run_in_console_hands_over_the_selection_with_real_newlines_and_executes_nothing(qtbot):
+    seams = _Seams()
+    panel = _wired(qtbot, seams)
+    handed = []
+    panel.set_run_in_console(handed.append)
+    _select_all(panel)
+
+    action = next(
+        a for a in panel._build_context_menu().actions() if a.text() == "Run in Sandbox Console"
+    )
+    action.trigger()
+
+    # QTextCursor.selectedText() joins lines with U+2029; the console must get
+    # real newlines, and the buffer must reach it unchanged otherwise.
+    assert len(handed) == 1
+    assert handed[0].splitlines() == _TARGET_SRC.splitlines()
+    assert " " not in handed[0]
+    assert "\n" in handed[0]
+    # It is not an apply: no seam ran, no confirmation was asked for.
+    assert seams.sandbox_calls == [] and seams.target_calls == []
+    assert seams.confirms == []
+    # And the buffer itself is untouched.
+    assert panel.text() == _TARGET_SRC
+
+
+def test_run_in_sandbox_console_is_a_noop_without_a_selection_or_a_console(qtbot):
+    seams = _Seams()
+    panel = _wired(qtbot, seams)
+    handed = []
+
+    # No console at all.
+    _select_all(panel)
+    assert panel.run_in_sandbox_console() is False
+
+    # A console, but nothing selected.
+    panel.set_run_in_console(handed.append)
+    cursor = panel.editor.textCursor()
+    cursor.clearSelection()
+    panel.editor.setTextCursor(cursor)
+    assert panel.run_in_sandbox_console() is False
+
+    assert handed == []
+    assert seams.sandbox_calls == [] and seams.target_calls == []
+
+
+# --- "Deploy this edit…" -- a picker in front of the three gestures ---------
+def test_deploy_this_edit_delegates_to_apply_to_sandbox(qtbot, monkeypatch):
+    seams = _Seams()
+    panel = _wired(qtbot, seams)
+    monkeypatch.setattr(panel, "_prompt_destination", lambda: DEST_SANDBOX)
+
+    assert panel.deploy_this_edit() == DEST_SANDBOX
+
+    assert seams.sandbox_calls == [(_PLAIN, _TARGET_SRC)]
+    assert seams.target_calls == []
+
+
+def test_deploy_this_edit_delegates_save_to_the_hosts_existing_save_gesture(qtbot, monkeypatch):
+    """It writes no file of its own and touches no database."""
+    seams = _Seams()
+    panel = _wired(qtbot, seams)
+    monkeypatch.setattr(panel, "_prompt_destination", lambda: DEST_SAVE)
+    saves = []
+    panel.save_requested.connect(lambda: saves.append(1))
+
+    assert panel.deploy_this_edit() == DEST_SAVE
+
+    assert saves == [1]
+    assert seams.sandbox_calls == [] and seams.target_calls == []
+
+
+def test_deploy_this_edit_target_still_runs_every_hard_precondition(qtbot, monkeypatch):
+    seams = _Seams(live=DdlObjectRef(kind="function", schema="pr", name="recalc",
+                                     arg_types=("integer",)))
+    panel = _wired(qtbot, seams)
+    panel.record_check_report(_green())
+    monkeypatch.setattr(panel, "_prompt_destination", lambda: DEST_TARGET)
+    lines = _audit(panel)
+
+    panel.deploy_this_edit()
+
+    # Signature mismatch: refused through the very same precondition 1.
+    assert seams.target_calls == []
+    assert any("differs from the live object" in line for line in lines)
+
+
+def test_deploy_this_edit_cancelled_does_nothing(qtbot, monkeypatch):
+    seams = _Seams(live=_live_same())
+    panel = _wired(qtbot, seams)
+    monkeypatch.setattr(panel, "_prompt_destination", lambda: None)
+    saves = []
+    panel.save_requested.connect(lambda: saves.append(1))
+
+    assert panel.deploy_this_edit() is None
+
+    assert seams.sandbox_calls == [] and seams.target_calls == [] and saves == []
+
+
+def test_deploy_destinations_omit_gestures_whose_seam_is_unwired(qtbot):
+    panel = _panel(qtbot)
+    assert panel.deploy_destinations() == [DEST_SAVE]
+    seams = _Seams()
+    wired = _wired(qtbot, seams)
+    assert wired.deploy_destinations() == [DEST_SANDBOX, DEST_SAVE, DEST_TARGET]
+
+
+# --- No apply gesture is ever one keystroke away (a safety property) --------
+def test_no_shortcut_is_bound_to_any_apply_gesture(qtbot):
+    """Apply is deliberately unbound -- an irreversible outward effect must not
+    be one keystroke away. Asserted three ways: the panel's QShortcut set, the
+    context-menu actions, and a battery of plausible key presses."""
+    from PySide6.QtGui import QShortcut
+
+    seams = _Seams(live=_live_same())
+    panel = _wired(qtbot, seams)
+    panel.record_check_report(_green())
+
+    sequences = {s.key().toString() for s in panel.findChildren(QShortcut)}
+    assert sequences == {"Ctrl+Alt+F"}  # Format Selection, and nothing else
+
+    for action in panel._build_context_menu().actions():
+        if action.text() in ("Apply to Sandbox", "Apply to Target…", "Deploy this edit…"):
+            assert action.shortcut().isEmpty(), action.text()
+
+    ctrl = Qt.KeyboardModifier.ControlModifier
+    ctrl_shift = ctrl | Qt.KeyboardModifier.ShiftModifier
+    ctrl_alt = ctrl | Qt.KeyboardModifier.AltModifier
+    for key, mods in (
+        (Qt.Key.Key_Return, ctrl),
+        (Qt.Key.Key_Enter, ctrl),
+        (Qt.Key.Key_D, ctrl),
+        (Qt.Key.Key_A, ctrl_alt),
+        (Qt.Key.Key_S, ctrl_shift),
+        (Qt.Key.Key_T, ctrl_alt),
+        (Qt.Key.Key_P, ctrl_shift),
+        (Qt.Key.Key_F5, Qt.KeyboardModifier.NoModifier),
+    ):
+        panel.eventFilter(panel.editor, _shortcut_override(key, mods))
+        panel.eventFilter(panel.editor, _key_press(key, mods))
+        QTest.keyClick(panel.editor, key, mods)
+
+    assert seams.sandbox_calls == []
+    assert seams.target_calls == []
+    assert seams.confirms == []
+
+
+# --- parse_buffer_identity (precondition 1's buffer half) -------------------
+def test_parse_buffer_identity_reads_schema_name_and_argument_types():
+    ref = parse_buffer_identity(
+        "CREATE OR REPLACE FUNCTION pr.calc_total(p_id integer, p_when timestamp with time zone)\n"
+        " RETURNS numeric AS $$ BEGIN END $$ LANGUAGE plpgsql;",
+        _PLAIN,
+    )
+    assert ref.kind == "function"
+    assert (ref.schema, ref.name) == ("pr", "calc_total")
+    assert ref.arg_types == ("integer", "timestamp with time zone")
+
+
+def test_parse_buffer_identity_drops_out_arguments_and_defaults():
+    ref = parse_buffer_identity(
+        "CREATE FUNCTION pr.f(IN p_a integer, OUT p_b text, p_c double precision DEFAULT 1.0)"
+        " RETURNS void AS $$ $$ LANGUAGE sql;",
+        _PLAIN,
+    )
+    assert ref.arg_types == ("integer", "double precision")
+
+
+def test_parse_buffer_identity_handles_no_arguments_and_types_with_parens():
+    assert parse_buffer_identity("CREATE FUNCTION pr.f() RETURNS void AS $$ $$;", _PLAIN).arg_types == ()
+    ref = parse_buffer_identity("CREATE FUNCTION pr.f(p numeric(10,2)) RETURNS void AS $$ $$;", _PLAIN)
+    assert ref.arg_types == ("numeric(10,2)",)
+
+
+def test_parse_buffer_identity_falls_back_to_the_tabs_schema_when_unqualified():
+    ref = parse_buffer_identity("CREATE PROCEDURE recalc() AS $$ $$;", _PLAIN)
+    assert (ref.kind, ref.schema, ref.name) == ("procedure", "pr", "recalc")
+
+
+def test_parse_buffer_identity_reads_a_trigger_name_and_table():
+    ref = parse_buffer_identity(
+        "CREATE TRIGGER trg_audit AFTER INSERT ON pr.orders\n"
+        " FOR EACH ROW EXECUTE FUNCTION pr.audit();",
+        _TRIGGER,
+    )
+    assert (ref.kind, ref.schema, ref.name, ref.table) == ("trigger", "pr", "trg_audit", "orders")
+
+
+def test_parse_buffer_identity_returns_none_when_there_is_no_create():
+    assert parse_buffer_identity("SELECT 1;", _PLAIN) is None

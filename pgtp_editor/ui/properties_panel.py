@@ -182,6 +182,10 @@ _ROW_BUILDERS = {
     "page": (lambda n: _rows_for_attrib_node(n), lambda n: f"Page: {n.file_name or n.identity}"),
     "detail": (_rows_for_detail, lambda n: f"Detail: {n.table_name}/{n.attrib.get('caption', '')}"),
     "column": (_rows_for_column, lambda n: f"Column: {n.field_name}"),
+    # §17/FQ-003's merged coherence view mints lookup rows whose model node IS
+    # the owning ColumnNode (the column carrying the <Lookup>), so the column
+    # builder and header are exactly right -- no separate lookup builder.
+    "lookup": (_rows_for_column, lambda n: f"Column: {n.field_name}"),
     "event": (_rows_for_event, lambda n: f"Event: {n.tag_name}"),
     # DDL Explorer's Tables branch (§18.1, 2026-08-05) -- the panel's first
     # non-XML source. `t` is a `db.introspect.TableInfo`.
@@ -241,7 +245,14 @@ class PropertiesPanel(QWidget):
         if node is None or kind is None:
             self._show_empty_state()
             return
-        rows_fn, header_fn = _ROW_BUILDERS[kind]
+        builder = _ROW_BUILDERS.get(kind)
+        if builder is None:
+            # An unknown kind is a wiring gap, not a user error: degrade to the
+            # empty state instead of letting a KeyError escape into the Qt slot
+            # that called us (BUG-032 facet B).
+            self._show_empty_state()
+            return
+        rows_fn, header_fn = builder
         self._current_rows = rows_fn(node)
         self._populate_table(header_fn(node), self._current_rows, paired=(kind == "ddl_table"))
 

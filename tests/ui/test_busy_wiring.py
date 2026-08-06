@@ -37,7 +37,7 @@ def test_validate_shows_validating_message_and_restores_cursor(qtbot, tmp_path, 
     _open(window, tmp_path)
     messages = _record_status(window, monkeypatch)
 
-    window._validate_project()
+    window._find_ui.validate_project()
 
     assert any(m.startswith("Validating ") for m in messages), messages
     assert QApplication.overrideCursor() is None
@@ -66,7 +66,7 @@ def test_reparse_parse_failure_restores_cursor_before_dialog(qtbot, tmp_path):
     # Malformed XML in the editor so load_project_from_text raises.
     window.center_stage.xml_editor.setPlainText("<Project><Pages></Project>")
 
-    with patch("pgtp_editor.ui.main_window.QMessageBox.critical") as mock_critical:
+    with patch("pgtp_editor.ui.modals.QMessageBox.critical") as mock_critical:
         mock_critical.side_effect = lambda *a, **k: (
             None if QApplication.overrideCursor() is None
             else (_ for _ in ()).throw(

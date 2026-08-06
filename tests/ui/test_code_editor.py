@@ -681,6 +681,29 @@ def test_code_editor_gutter_click_on_line_number_is_a_no_op(qtbot):
     assert editor.document().findBlockByNumber(1).isVisible() is True
 
 
+def _double_click_gutter(editor, x, block_number):
+    block = editor.document().findBlockByNumber(block_number)
+    top = editor.blockBoundingGeometry(block).translated(editor.contentOffset()).top()
+    event = _QMouseEvent_g(
+        _QEvent_g.Type.MouseButtonDblClick,
+        _QPoint_g(x, int(top) + 2),
+        Qt.MouseButton.LeftButton,
+        Qt.MouseButton.LeftButton,
+        Qt.KeyboardModifier.NoModifier,
+    )
+    editor._gutter.mouseDoubleClickEvent(event)
+
+
+def test_code_editor_gutter_double_click_on_line_number_toggles_bookmark(qtbot):
+    """The double-click gesture lives on the ONE shared ``_EditorGutter``, so
+    every mixin host carries it — not just the Raw XML editor (spec §8)."""
+    editor = _gutter_editor(qtbot)
+    _double_click_gutter(editor, _STRIP_W + _FOLD_W + 2, 2)
+    assert editor.bookmarked_lines() == [2]
+    _double_click_gutter(editor, _STRIP_W + _FOLD_W + 2, 2)
+    assert editor.bookmarked_lines() == []
+
+
 def test_code_editor_gutter_paints_with_bookmark_and_fold_glyph(qtbot):
     """Exercise the shared paintEvent through the CodeEditor host: bookmark
     tag + fold chevron, collapsed and expanded."""

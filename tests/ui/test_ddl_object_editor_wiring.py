@@ -12,10 +12,10 @@ from PySide6.QtCore import QSettings, Qt
 from PySide6.QtGui import QTextCursor
 from PySide6.QtTest import QTest
 
-import pgtp_editor.ui.main_window as main_window_module
 from pgtp_editor.db.introspect import DatabaseSchema, RoutineInfo
 from pgtp_editor.ui.ddl_object_editor import DdlObjectRef
 from pgtp_editor.ui.main_window import MainWindow
+from pgtp_editor.ui import modals
 
 
 def _empty_settings(tmp_path):
@@ -78,7 +78,7 @@ def test_ctrl_s_on_the_ddl_object_tab_routes_to_save_as_then_remembers_path(
     panel.editor.insertPlainText("-- edited\n")
     dest = tmp_path / "pr.recalc.sql"
     monkeypatch.setattr(
-        main_window_module.QFileDialog, "getSaveFileName",
+        modals.QFileDialog, "getSaveFileName",
         staticmethod(lambda *a, **k: (str(dest), "")),
     )
 
@@ -90,7 +90,7 @@ def test_ctrl_s_on_the_ddl_object_tab_routes_to_save_as_then_remembers_path(
 
     # A second save with a remembered path writes silently, no dialog.
     monkeypatch.setattr(
-        main_window_module.QFileDialog, "getSaveFileName",
+        modals.QFileDialog, "getSaveFileName",
         staticmethod(lambda *a, **k: (_ for _ in ()).throw(AssertionError("dialog reopened"))),
     )
     panel.editor.insertPlainText("more\n")
@@ -104,7 +104,7 @@ def test_ctrl_s_save_as_cancelled_leaves_tab_dirty_and_writes_nothing(qtbot, tmp
     panel = window.center_stage.ddl_object_tab(_REF.key)
     panel.editor.insertPlainText("x")
     monkeypatch.setattr(
-        main_window_module.QFileDialog, "getSaveFileName",
+        modals.QFileDialog, "getSaveFileName",
         staticmethod(lambda *a, **k: ("", "")),  # Cancel
     )
 
@@ -119,8 +119,8 @@ def test_active_find_bar_and_bookmark_editor_route_to_the_ddl_object_tab(qtbot, 
     window._on_ddl_edit_requested(_REF, "text")
     panel = window.center_stage.ddl_object_tab(_REF.key)
 
-    assert window._active_find_bar() is panel.find_replace_bar
-    assert window._active_bookmark_editor() is panel.editor
+    assert window._find_ui.active_find_bar() is panel.find_replace_bar
+    assert window._find_ui.active_bookmark_editor() is panel.editor
 
 
 def test_closing_a_clean_ddl_object_tab_closes_without_prompting(qtbot, tmp_path, monkeypatch):
@@ -170,7 +170,7 @@ def test_closing_a_dirty_tab_save_writes_then_closes(qtbot, tmp_path, monkeypatc
     dest = tmp_path / "pr.recalc.sql"
     monkeypatch.setattr(window, "_confirm_close_ddl_object", lambda ref: "save")
     monkeypatch.setattr(
-        main_window_module.QFileDialog, "getSaveFileName",
+        modals.QFileDialog, "getSaveFileName",
         staticmethod(lambda *a, **k: (str(dest), "")),
     )
 
@@ -191,7 +191,7 @@ def test_closing_a_dirty_tab_save_then_cancelled_save_as_aborts_the_close(
     panel.editor.insertPlainText("x")
     monkeypatch.setattr(window, "_confirm_close_ddl_object", lambda ref: "save")
     monkeypatch.setattr(
-        main_window_module.QFileDialog, "getSaveFileName",
+        modals.QFileDialog, "getSaveFileName",
         staticmethod(lambda *a, **k: ("", "")),  # Cancel
     )
 

@@ -61,6 +61,7 @@ from pgtp_editor.schema_learning.settings_index import (
 )
 from pgtp_editor.ui import xml_structure
 from pgtp_editor.ui.completion_popup import (  # noqa: F401  (re-exported name)
+    CompletionPopupHostMixin,
     _CompletionPopup,
 )
 from pgtp_editor.ui.editor_gutter import (  # noqa: F401  (re-exported names)
@@ -409,7 +410,7 @@ def _closing_tag_start(text: str, span: xml_structure.TagSpan) -> int | None:
     return xml_structure.closing_tag_start(text, span)
 
 
-class XmlEditor(GutterBookmarkFoldMixin, QPlainTextEdit):
+class XmlEditor(CompletionPopupHostMixin, GutterBookmarkFoldMixin, QPlainTextEdit):
     line_clicked = Signal(int)  # 1-based line of a left-mouse click in the text
     # Emitted when a text-modifying key is pressed while the editor is
     # read-only (Caption Mode). The base already blocks the edit; this signal
@@ -549,13 +550,8 @@ class XmlEditor(GutterBookmarkFoldMixin, QPlainTextEdit):
         # disables value-hover tooltips (see set_schema_model / event()).
         self._schema_model = None
         # The shared Ctrl+Space completion popup (attribute names, then
-        # chained values). Created lazily on first use; see
-        # _ensure_completion_popup.
-        self._completion_popup: _CompletionPopup | None = None
-        # True once _rewire_popup has connected the popup's signals at least
-        # once; guards the disconnect calls in _rewire_popup so a fresh popup
-        # doesn't log a PySide6 RuntimeWarning for disconnecting nothing.
-        self._popup_wired = False
+        # chained values) and its wiring state -- see CompletionPopupHostMixin.
+        self._init_completion_popup()
         self._rescan_structure()
         self._refresh_code_region_selections()
         self._highlight_current_line()
@@ -1408,19 +1404,6 @@ class XmlEditor(GutterBookmarkFoldMixin, QPlainTextEdit):
         self.setTextCursor(cursor)
         return tag_chain
 
-    def _ensure_completion_popup(self) -> _CompletionPopup:
-        if self._completion_popup is None:
-            self._completion_popup = _CompletionPopup(self)
-        return self._completion_popup
-
-    def _popup_at_caret(self, popup: _CompletionPopup) -> None:
-        """Show ``popup`` just below the caret and give it focus."""
-        rect = self.cursorRect()
-        point = self.viewport().mapToGlobal(rect.bottomLeft())
-        popup.move(point)
-        popup.show()
-        popup.setFocus()
-
     def _show_attribute_completions(self) -> None:
         """Ctrl+Space entry point. Opens the attribute popup for the opening
         tag at the caret. No-op when read-only, no model, not inside an
@@ -1440,18 +1423,6 @@ class XmlEditor(GutterBookmarkFoldMixin, QPlainTextEdit):
         popup.set_items([(n, n) for n in names])
         self._rewire_popup(popup, self._complete_attribute)
         self._popup_at_caret(popup)
-
-    def _rewire_popup(self, popup: _CompletionPopup, on_chosen) -> None:
-        """Point the shared popup's signals at the current completion stage.
-        Only disconnects previous connections when the popup was actually
-        wired before, so a fresh popup's first use does not trigger a
-        PySide6 RuntimeWarning for disconnecting an unconnected signal."""
-        if self._popup_wired:
-            popup.chosen.disconnect()
-            popup.cancelled.disconnect()
-        popup.chosen.connect(on_chosen)
-        popup.cancelled.connect(popup.hide)
-        self._popup_wired = True
 
     def _complete_attribute(self, name: str) -> None:
         """Insert ``name=""`` at the caret's opening tag (single undoable

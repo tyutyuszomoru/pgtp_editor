@@ -15,6 +15,7 @@ from pgtp_editor.db.ddl_project import ProjectSettings, save_settings
 from pgtp_editor.db.sandbox import ProjectTier, SandboxCapabilities, SandboxMode
 from pgtp_editor.ui.main_window import MainWindow
 from pgtp_editor.ui.new_project_dialog import NewProjectDialog
+from pgtp_editor.ui import modals
 
 
 def _empty_settings(tmp_path):
@@ -178,7 +179,7 @@ def test_opening_a_project_probes_again_reflecting_the_sandboxs_current_state(
     import pgtp_editor.ui.main_window as main_window_module
 
     monkeypatch.setattr(
-        main_window_module.QFileDialog, "getExistingDirectory",
+        modals.QFileDialog, "getExistingDirectory",
         staticmethod(lambda *a, **k: str(project_dir)),
     )
     window._probe_sandbox_capabilities = lambda params: SandboxCapabilities(is_superuser=True)
@@ -200,7 +201,7 @@ def test_a_sandbox_that_died_between_sessions_is_detected_on_reopen(qtbot, tmp_p
     import pgtp_editor.ui.main_window as main_window_module
 
     monkeypatch.setattr(
-        main_window_module.QFileDialog, "getExistingDirectory",
+        modals.QFileDialog, "getExistingDirectory",
         staticmethod(lambda *a, **k: str(project_dir)),
     )
     window._probe_sandbox_capabilities = lambda params: SandboxCapabilities(
@@ -264,3 +265,213 @@ def test_default_probe_seam_is_the_real_sandbox_probe_function(qtbot, tmp_path):
 
     window = _window(qtbot, tmp_path)
     assert window._probe_sandbox_capabilities is real_probe
+
+
+# --- BUG-030: the Quality node reflects real target reachability -------------
+def _project_with_target(qtbot, tmp_path, target_host="target-host"):
+    """A window with an open project whose target profile is `target_host`.
+
+    Goes through `_set_active_ddl_project` (the real trigger point) rather than
+    poking the attributes, so the target probe is exercised where it ships.
+    """
+    window = _window(qtbot, tmp_path)
+    window._probe_sandbox_capabilities = lambda params: SandboxCapabilities(is_superuser=True)
+    project_dir = tmp_path / "p"
+    settings = ProjectSettings(
+        target=ConnectionParams(host=target_host, database="db", user="u"),
+        sandbox=ConnectionParams(host="localhost"),
+        sandbox_mode=SandboxMode.SCHEMA_ONLY,
+    )
+    save_settings(project_dir, settings)
+    return window, project_dir, settings
+
+
+def _quality_state(window):
+    from pgtp_editor.ui.project_status_model import NodeFamily
+
+    diagram = window._build_project_status_diagram()
+    return diagram.node(NodeFamily.QUALITY).state
+
+
+def test_an_unreachable_target_renders_the_quality_node_offline(qtbot, tmp_path, monkeypatch):
+    """The regression: green used to mean "a target profile exists", so an
+    offline target the DDL Explorer refused to reach still showed as
+    Connected."""
+    import pgtp_editor.ui.main_window as main_window_module
+    from pgtp_editor.ui.project_status_model import QualityState
+
+    window, project_dir, settings = _project_with_target(qtbot, tmp_path)
+    monkeypatch.setattr(
+        main_window_module, "db_test_connection",
+        lambda params: (False, "could not connect to server"),
+    )
+
+    window._set_active_ddl_project(project_dir, settings)
+
+    assert window._ddl_target_probe_error == "could not connect to server"
+    assert _quality_state(window) == QualityState.OFFLINE.value
+
+
+def test_a_reachable_target_renders_the_quality_node_connected(qtbot, tmp_path, monkeypatch):
+    import pgtp_editor.ui.main_window as main_window_module
+    from pgtp_editor.ui.project_status_model import QualityState
+
+    window, project_dir, settings = _project_with_target(qtbot, tmp_path)
+    monkeypatch.setattr(
+        main_window_module, "db_test_connection", lambda params: (True, "Connected.")
+    )
+
+    window._set_active_ddl_project(project_dir, settings)
+
+    assert window._ddl_target_probe_error is None
+    assert _quality_state(window) == QualityState.CONNECTION_OK.value
+
+
+def test_the_target_probe_tests_the_same_params_the_summary_line_shows(qtbot, tmp_path, monkeypatch):
+    """BUG-024's selection must be single-sourced: probing a different profile
+    than the summary/Explorer use is how false greens come back."""
+    import pgtp_editor.ui.main_window as main_window_module
+
+    window, project_dir, settings = _project_with_target(qtbot, tmp_path)
+    seen = []
+    monkeypatch.setattr(
+        main_window_module, "db_test_connection",
+        lambda params: (seen.append(params), (True, "Connected."))[1],
+    )
+
+    window._set_active_ddl_project(project_dir, settings)
+
+    assert seen == [settings.target]
+    assert seen[0] is window._project_status_target()
+
+
+def test_no_target_configured_is_still_not_set_up_and_never_probed(qtbot, tmp_path, monkeypatch):
+    import pgtp_editor.ui.main_window as main_window_module
+    from pgtp_editor.ui.project_status_model import QualityState
+
+    window = _window(qtbot, tmp_path)
+    calls = []
+    monkeypatch.setattr(
+        main_window_module, "db_test_connection",
+        lambda params: (calls.append(params), (True, "Connected."))[1],
+    )
+
+    window.refresh_project_capability_status()  # no project, no saved connection
+
+    assert calls == []  # nothing to reach: never opens a connection
+    assert _quality_state(window) == QualityState.NOT_SET_UP.value
+
+
+def test_a_host_less_target_profile_is_never_probed_and_clears_a_stale_error(
+    qtbot, tmp_path, monkeypatch
+):
+    import pgtp_editor.ui.main_window as main_window_module
+
+    window, project_dir, settings = _project_with_target(qtbot, tmp_path, target_host="")
+    calls = []
+    monkeypatch.setattr(
+        main_window_module, "db_test_connection",
+        lambda params: (calls.append(params), (False, "boom"))[1],
+    )
+    window._ddl_target_probe_error = "stale error from a previous profile"
+
+    window._set_active_ddl_project(project_dir, settings)
+
+    assert calls == []
+    assert window._ddl_target_probe_error is None
+
+
+def test_the_probe_result_pushes_a_corrected_diagram_into_the_open_window(
+    qtbot, tmp_path, monkeypatch
+):
+    """Gotcha (1): the first paint uses the last-known state and the async
+    result corrects it -- so a healthy target never flashes red, and a target
+    that died is corrected to red without the user reopening the window."""
+    import pgtp_editor.ui.main_window as main_window_module
+    from pgtp_editor.ui.project_status_model import NodeFamily, QualityState
+
+    window, project_dir, settings = _project_with_target(qtbot, tmp_path)
+    monkeypatch.setattr(
+        main_window_module, "db_test_connection", lambda params: (True, "Connected.")
+    )
+    window._set_active_ddl_project(project_dir, settings)
+    window._open_project_status()
+    panel = window._project_status_window
+    assert panel is not None
+    pushed = []
+    panel.set_diagram = lambda diagram: pushed.append(diagram)
+
+    monkeypatch.setattr(
+        main_window_module, "db_test_connection", lambda params: (False, "connection refused")
+    )
+    window.refresh_project_capability_status()
+
+    assert pushed, "the landing probe result must re-render the open window"
+    assert pushed[-1].node(NodeFamily.QUALITY).state == QualityState.OFFLINE.value
+
+
+def test_projectless_mode_probes_the_app_level_saved_connection(qtbot, tmp_path, monkeypatch):
+    """BUG-024's selection has two branches and both must be probed: with no
+    project open the target is the app-level saved connection, and the Quality
+    node must go red for it too (the window is reachable projectless)."""
+    import pgtp_editor.ui.main_window as main_window_module
+    from pgtp_editor.db.config import save_connection
+    from pgtp_editor.ui.project_status_model import QualityState
+
+    settings = _empty_settings(tmp_path)
+    saved = ConnectionParams(host="app-level-host", database="db", user="u")
+    save_connection(settings, saved)
+    window = MainWindow(settings=settings)
+    qtbot.addWidget(window)
+    window._run_async = _sync_run
+    seen = []
+    monkeypatch.setattr(
+        main_window_module, "db_test_connection",
+        lambda params: (seen.append(params), (False, "could not connect to server"))[1],
+    )
+
+    window.refresh_project_capability_status()
+
+    assert seen == [saved]
+    assert _quality_state(window) == QualityState.OFFLINE.value
+
+
+def test_the_windows_recheck_seam_reprobes_the_target(qtbot, tmp_path, monkeypatch):
+    """§18.8's Re-check button / on-open re-probe goes through the panel's own
+    `refresh()` seam, so the target probe must hang off that path too -- not
+    only off a direct `refresh_project_capability_status()` call."""
+    import pgtp_editor.ui.main_window as main_window_module
+    from pgtp_editor.ui.project_status_model import NodeFamily, QualityState
+
+    window, project_dir, settings = _project_with_target(qtbot, tmp_path)
+    monkeypatch.setattr(
+        main_window_module, "db_test_connection", lambda params: (True, "Connected.")
+    )
+    window._set_active_ddl_project(project_dir, settings)
+    window._open_project_status()
+    panel = window._project_status_window
+    assert panel.node_widget(NodeFamily.QUALITY) is not None
+
+    # The target dies while the window is open; the user hits Re-check.
+    monkeypatch.setattr(
+        main_window_module, "db_test_connection", lambda params: (False, "connection refused")
+    )
+    panel.refresh()
+
+    assert window._ddl_target_probe_error == "connection refused"
+    assert _quality_state(window) == QualityState.OFFLINE.value
+
+
+def test_closing_a_project_clears_the_target_probe_error(qtbot, tmp_path, monkeypatch):
+    import pgtp_editor.ui.main_window as main_window_module
+
+    window, project_dir, settings = _project_with_target(qtbot, tmp_path)
+    monkeypatch.setattr(
+        main_window_module, "db_test_connection", lambda params: (False, "connection refused")
+    )
+    window._set_active_ddl_project(project_dir, settings)
+    assert window._ddl_target_probe_error == "connection refused"
+
+    window._close_ddl_project()
+
+    assert window._ddl_target_probe_error is None

@@ -226,7 +226,7 @@ def test_reparse_action_exists_and_is_not_a_stub(qtbot):
     # The editor is empty here, so reparse takes the failure path, which shows
     # a modal QMessageBox.critical -- patch it, or the modal event loop blocks
     # the headless test run forever.
-    with patch("pgtp_editor.ui.main_window.QMessageBox.critical"):
+    with patch("pgtp_editor.ui.modals.QMessageBox.critical"):
         action.trigger()
     assert window.statusBar().currentMessage() != "Not yet implemented: Reparse Raw XML into Tree"
 
@@ -373,7 +373,7 @@ def test_find_all_populates_audit_panel_with_line_items_and_summary(qtbot):
     window = MainWindow()
     qtbot.addWidget(window)
     window.center_stage.xml_editor.setPlainText("first page\nsecond line\nthird page here")
-    window._populate_find_all_results("page")
+    window._find_ui.find_all("page")
     qtbot.waitUntil(lambda: not window.center_stage.find_replace_bar._find_all_running, timeout=5000)
 
     texts = [window.audit_panel.item(i).text() for i in range(window.audit_panel.count())]
@@ -394,8 +394,8 @@ def test_find_all_clears_only_prior_find_entries(qtbot):
     window.audit_panel.addItem("[Schema] seeded entry")
     window.center_stage.xml_editor.setPlainText("page here")
 
-    window._populate_find_all_results("page")
-    window._populate_find_all_results("page")  # run again
+    window._find_ui.find_all("page")
+    window._find_ui.find_all("page")  # run again
     qtbot.waitUntil(lambda: not window.center_stage.find_replace_bar._find_all_running, timeout=5000)
 
     texts = [window.audit_panel.item(i).text() for i in range(window.audit_panel.count())]
@@ -413,7 +413,7 @@ def test_clicking_find_result_navigates_editor_to_line(qtbot):
     window = MainWindow()
     qtbot.addWidget(window)
     window.center_stage.xml_editor.setPlainText("a\nb\npage on line 3\nd")
-    window._populate_find_all_results("page")
+    window._find_ui.find_all("page")
     qtbot.waitUntil(lambda: not window.center_stage.find_replace_bar._find_all_running, timeout=5000)
 
     result_item = window.audit_panel.item(0)
@@ -445,7 +445,7 @@ def test_clicking_summary_line_is_a_noop(qtbot):
     window = MainWindow()
     qtbot.addWidget(window)
     window.center_stage.xml_editor.setPlainText("page\npage")
-    window._populate_find_all_results("page")
+    window._find_ui.find_all("page")
     qtbot.waitUntil(lambda: not window.center_stage.find_replace_bar._find_all_running, timeout=5000)
     window.center_stage.xml_editor.moveCursor(QTextCursor.MoveOperation.Start)
     before = window.center_stage.xml_editor.textCursor().blockNumber()
@@ -494,7 +494,7 @@ def test_find_all_streaming_completes_and_reports_final_count(qtbot):
     window.center_stage.xml_editor.setPlainText("page one\nsecond\nthird page here")
     bar = window.center_stage.find_replace_bar
 
-    window._populate_find_all_results("page")
+    window._find_ui.find_all("page")
     qtbot.waitUntil(lambda: not bar._find_all_running, timeout=5000)
 
     texts = [window.audit_panel.item(i).text() for i in range(window.audit_panel.count())]
@@ -515,16 +515,16 @@ def test_find_all_stop_keeps_partial_results(qtbot):
     window.center_stage.xml_editor.setPlainText("\n".join(f"a{i}" for i in range(500)))
     bar = window.center_stage.find_replace_bar
 
-    window._populate_find_all_results("a")
+    window._find_ui.find_all("a")
     # Take manual control of stepping so the test is deterministic (no timing).
-    window._find_all_timer.stop()
-    window._find_all_step()          # process exactly one batch
-    partial = window._find_all_count
+    window._find_ui.find_all_timer.stop()
+    window._find_ui._find_all_step()          # process exactly one batch
+    partial = window._find_ui.find_all_count
     assert 0 < partial < 500
     results_before_summary = window.audit_panel.count()
 
-    window._stop_find_all()
-    window._find_all_step()          # observes the stop flag -> finishes
+    window._find_ui.stop_find_all()
+    window._find_ui._find_all_step()          # observes the stop flag -> finishes
 
     assert bar._find_all_running is False
     assert bar._find_all_button.text() == "Find All"
@@ -540,9 +540,9 @@ def test_find_all_live_count_status_after_a_batch(qtbot):
     qtbot.addWidget(window)
     window.center_stage.xml_editor.setPlainText("\n".join(f"a{i}" for i in range(500)))
 
-    window._populate_find_all_results("a")
-    window._find_all_timer.stop()
-    window._find_all_step()
+    window._find_ui.find_all("a")
+    window._find_ui.find_all_timer.stop()
+    window._find_ui._find_all_step()
     msg = window.statusBar().currentMessage()
     assert msg.startswith('Finding "a"… found ')
 
@@ -553,13 +553,48 @@ def test_find_all_restart_does_not_leak_a_second_timer(qtbot):
     window.center_stage.xml_editor.setPlainText("page page")
     bar = window.center_stage.find_replace_bar
 
-    window._populate_find_all_results("page")
-    first_timer = window._find_all_timer
-    window._populate_find_all_results("page")  # re-trigger while (nominally) active
+    window._find_ui.find_all("page")
+    first_timer = window._find_ui.find_all_timer
+    window._find_ui.find_all("page")  # re-trigger while (nominally) active
     # The previous timer was stopped/dropped; a fresh one is in place.
-    assert window._find_all_timer is not first_timer
+    assert window._find_ui.find_all_timer is not first_timer
     assert not first_timer.isActive()
     qtbot.waitUntil(lambda: not bar._find_all_running, timeout=5000)
+
+
+def test_find_all_state_properties_expose_the_live_iteration_objects(qtbot):
+    """The streaming Find All is driven BY HAND above (stop the timer, step once,
+    read the partial count), so `FindValidateController`'s state properties must
+    hand back the very objects the controller will next act on -- not copies,
+    snapshots or recomputed values. A property that returned a copy would leave
+    those tests green while testing nothing."""
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window.center_stage.xml_editor.setPlainText("\n".join(f"a{i}" for i in range(500)))
+    find_ui = window._find_ui
+
+    find_ui.find_all("a")
+    # The property IS the attribute every write in the controller lands on.
+    assert find_ui.find_all_timer is find_ui._find_all_timer
+    assert find_ui.find_all_iter is find_ui._find_all_iter
+
+    # Stopping through the property stops the timer the controller owns.
+    find_ui.find_all_timer.stop()
+    assert not find_ui._find_all_timer.isActive()
+
+    # Stepping by hand advances the very iterator the property exposed.
+    iterator = find_ui.find_all_iter
+    find_ui._find_all_step()
+    assert find_ui.find_all_iter is iterator
+    assert find_ui.find_all_count > 0
+    assert find_ui.find_all_term == "a"
+    assert find_ui.find_all_target == "raw"
+
+    find_ui.stop_find_all()
+    find_ui._find_all_step()
+    # The finish path cleared both, through the same attributes.
+    assert find_ui.find_all_timer is None
+    assert find_ui.find_all_iter is None
 
 
 def test_manage_captions_requires_non_empty_raw_xml(qtbot):
@@ -856,8 +891,8 @@ def test_caption_shortcuts_disabled_outside_caption_mode(qtbot):
     qtbot.addWidget(window)
     assert not window._caption_filter_shortcut.isEnabled()
     assert not window._caption_replace_shortcut.isEnabled()
-    assert window._editor_find_action.isEnabled()
-    assert window._editor_replace_action.isEnabled()
+    assert window._find_ui.find_action.isEnabled()
+    assert window._find_ui.replace_action.isEnabled()
 
 
 def test_enter_caption_mode_gates_shortcuts(qtbot):
@@ -868,8 +903,8 @@ def test_enter_caption_mode_gates_shortcuts(qtbot):
     _enter_caption_mode_with(window, '<Root>\n  <Page caption="Home"/>\n</Root>')
     assert window._caption_filter_shortcut.isEnabled()
     assert window._caption_replace_shortcut.isEnabled()
-    assert not window._editor_find_action.isEnabled()
-    assert not window._editor_replace_action.isEnabled()
+    assert not window._find_ui.find_action.isEnabled()
+    assert not window._find_ui.replace_action.isEnabled()
 
 
 def test_close_caption_mode_restores_editor_actions(qtbot):
@@ -881,8 +916,8 @@ def test_close_caption_mode_restores_editor_actions(qtbot):
     window._close_caption_mode()
     assert not window._caption_filter_shortcut.isEnabled()
     assert not window._caption_replace_shortcut.isEnabled()
-    assert window._editor_find_action.isEnabled()
-    assert window._editor_replace_action.isEnabled()
+    assert window._find_ui.find_action.isEnabled()
+    assert window._find_ui.replace_action.isEnabled()
 
 
 def test_caption_replace_shortcut_routes_to_caption_after_go_to_line(qtbot):
@@ -942,7 +977,7 @@ def _load_into_window(window, xml_text):
 
 
 def _validation_items(window):
-    from pgtp_editor.ui.main_window import _VALIDATION_PREFIX
+    from pgtp_editor.ui.find_controller import _VALIDATION_PREFIX
 
     return [
         window.audit_panel.item(row).text()
@@ -955,7 +990,7 @@ def test_validate_with_no_project_shows_info_and_empty_audit(qtbot):
     window = MainWindow()
     qtbot.addWidget(window)
     assert window._current_project is None
-    window._validate_project()
+    window._find_ui.validate_project()
     assert window.statusBar().currentMessage() == "Open a project to validate."
     assert window.audit_panel.count() == 0
 
@@ -965,7 +1000,7 @@ def test_validate_duplicate_filename_populates_audit_and_status(qtbot):
     qtbot.addWidget(window)
     _load_into_window(window, _DUP_FILENAME_XML)
 
-    window._validate_project()
+    window._find_ui.validate_project()
 
     items = _validation_items(window)
     errors = [t for t in items if "ERROR" in t]
@@ -983,10 +1018,10 @@ def test_clear_validation_results_removes_only_validation_items(qtbot):
     # Seed a schema entry that must survive.
     window.audit_panel.addItem(QListWidgetItem("[Schema] x"))
     _load_into_window(window, _DUP_FILENAME_XML)
-    window._validate_project()
+    window._find_ui.validate_project()
     assert _validation_items(window)  # validation items present
 
-    window._clear_validation_results()
+    window._find_ui.clear_validation_results()
 
     assert _validation_items(window) == []
     remaining = [
@@ -999,10 +1034,10 @@ def test_clicking_validation_item_navigates_to_line(qtbot):
     window = MainWindow()
     qtbot.addWidget(window)
     _load_into_window(window, _DUP_FILENAME_XML)
-    window._validate_project()
+    window._find_ui.validate_project()
 
     # Find the first validation row and click it.
-    from pgtp_editor.ui.main_window import _VALIDATION_PREFIX
+    from pgtp_editor.ui.find_controller import _VALIDATION_PREFIX
 
     row = next(
         r
@@ -1035,7 +1070,7 @@ def test_validate_passes_on_clean_project(qtbot):
         '</Project>\n'
     )
     _load_into_window(window, clean)
-    window._validate_project()
+    window._find_ui.validate_project()
     assert _validation_items(window) == []
     assert window.statusBar().currentMessage() == "Validation passed — no issues."
 

@@ -26,6 +26,13 @@ navigation, Enter/Tab/click to choose, Esc/focus-out to cancel -- instead of a
 second bespoke popup implementation. `xml_editor.py` re-exports this name for
 backward compatibility (existing imports/tests spell it
 ``pgtp_editor.ui.xml_editor._CompletionPopup``).
+
+Alongside the widget lives ``CompletionPopupHostMixin`` — the three-method
+wiring (``_ensure_completion_popup`` / ``_popup_at_caret`` / ``_rewire_popup``)
+that every consumer of the popup used to carry as its own byte-similar copy.
+It follows the ``GutterBookmarkFoldMixin`` idiom of ``ui/editor_gutter.py``:
+no ``__init__`` of its own, activated from the host's ``__init__`` by calling
+``_init_completion_popup()``, with exactly one pluggable hook.
 """
 from __future__ import annotations
 
@@ -125,3 +132,81 @@ class _CompletionPopup(QListWidget):
             event.accept()
             return
         super().keyPressEvent(event)
+
+
+class CompletionPopupHostMixin:
+    """The shared Ctrl+Space popup *wiring* for any widget that hosts a
+    `_CompletionPopup` (§11 for `XmlEditor`, §18.6 for the DDL object editor
+    and the SQL console).
+
+    Extracted verbatim out of the three hosts (`ui/xml_editor.py`,
+    `ui/ddl_object_editor.py`, `ui/sql_console_panel.py`), which each carried
+    an identical copy of these three methods. The popup class was already
+    shared; only its plumbing was duplicated.
+
+    Requirements on the host:
+
+    - it is a ``QWidget`` (the popup is parented to it, and it is what gets
+      focus back once the popup closes);
+    - it exposes the text editor the caret lives in via
+      ``_completion_editor()`` -- the ONE pluggable piece, see below;
+    - it calls ``_init_completion_popup()`` from its ``__init__``.
+
+    Like ``GutterBookmarkFoldMixin`` it deliberately has no ``__init__`` of its
+    own, so the host's ``super().__init__(parent)`` still reaches its Qt base
+    class unchanged. Mix it in *before* the Qt base class.
+
+    The **only pluggable piece** is ``_completion_editor()``. It exists because
+    the hosts differ in whether they *are* the text editor or merely *contain*
+    one: ``XmlEditor`` is itself a ``QPlainTextEdit`` (and returns ``self``),
+    while ``DdlObjectEditorPanel`` and ``SqlConsolePanel`` are ``QWidget``
+    panels wrapping a ``CodeEditor`` in ``self.editor``. Caret geometry must be
+    read off that editor, not off the panel -- so the difference is expressed
+    as this hook rather than as three copies of ``_popup_at_caret``.
+    """
+
+    # --- Setup -------------------------------------------------------------
+    def _init_completion_popup(self) -> None:
+        """Declare the popup state. Call from the host's ``__init__``."""
+        # The shared Ctrl+Space completion popup, created lazily on first use
+        # (see _ensure_completion_popup) and then reused for every subsequent
+        # completion stage of this host.
+        self._completion_popup: _CompletionPopup | None = None
+        # True once _rewire_popup has connected the popup's signals at least
+        # once; guards the disconnect calls in _rewire_popup so a fresh popup
+        # doesn't log a PySide6 RuntimeWarning for disconnecting nothing.
+        self._popup_wired = False
+
+    # --- Caret-owning editor (the ONE pluggable piece) ---------------------
+    def _completion_editor(self):
+        """The text edit whose caret the popup is positioned against. The
+        default assumes the host IS that editor; panel hosts override it to
+        return their wrapped editor."""
+        return self
+
+    # --- Wiring ------------------------------------------------------------
+    def _ensure_completion_popup(self) -> _CompletionPopup:
+        if self._completion_popup is None:
+            self._completion_popup = _CompletionPopup(self)
+        return self._completion_popup
+
+    def _popup_at_caret(self, popup: _CompletionPopup) -> None:
+        """Show ``popup`` just below the caret and give it focus."""
+        editor = self._completion_editor()
+        rect = editor.cursorRect()
+        point = editor.viewport().mapToGlobal(rect.bottomLeft())
+        popup.move(point)
+        popup.show()
+        popup.setFocus()
+
+    def _rewire_popup(self, popup: _CompletionPopup, on_chosen) -> None:
+        """Point the shared popup's signals at the current completion stage.
+        Only disconnects previous connections when the popup was actually
+        wired before, so a fresh popup's first use does not trigger a
+        PySide6 RuntimeWarning for disconnecting an unconnected signal."""
+        if self._popup_wired:
+            popup.chosen.disconnect()
+            popup.cancelled.disconnect()
+        popup.chosen.connect(on_chosen)
+        popup.cancelled.connect(popup.hide)
+        self._popup_wired = True

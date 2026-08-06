@@ -10,7 +10,10 @@ def test_file_menu_contents(qtbot):
     assert file_menu is not None
     labels = action_labels(file_menu)
     assert labels == [
-        "Open...", "Open Recent", "―",
+        # "Open PHP File…" (§21) sits beside "Open..." because it IS an open
+        # gesture, and above the project separator: a .php file has no
+        # structural tie to a .pgtp and opens with or without a project.
+        "Open...", "Open Recent", "Open PHP File…", "―",
         "New Project…", "Open Project…", "Close Project", "Project Settings…", "Deploy .pgtp", "―",
         "Save", "Save As...",
         "Revert", "Close", "―", "Exit",
@@ -156,7 +159,10 @@ def test_view_menu_contents(qtbot):
     qtbot.addWidget(window)
     view_menu = find_top_menu(window, "View")
     assert action_labels(view_menu) == [
-        "Project Tree", "Properties Panel", "Find table reference",
+        # "Find table reference" retired by FQ-003: table references are now
+        # the References sub-section / Pages branch of the Database ▸
+        # Database/XML Coherence view, with no standalone entry point.
+        "Project Tree", "Properties Panel",
         "Audit/Problems Panel", "Raw XML Panel",
         "―",
         "Expand All", "Collapse All",
@@ -357,6 +363,9 @@ def test_tools_menu_contents(qtbot):
     assert action_labels(menu) == [
         "Manage Captions...", "Caption Filter…", "―",
         "Validate Project", "―",
+        # §22 PHP lint, directly under Validate Project: the same kind of
+        # gesture one tier down (this file, not the project).
+        "Lint Current File", "Lint on Save", "Locate PHP Linter…", "―",
         "Reparse Raw XML into Tree", "―",
         "Compare / Merge Two Files...", "Next Difference", "Prev Difference",
         "Apply Changes to Target",
@@ -365,7 +374,7 @@ def test_tools_menu_contents(qtbot):
 
 def test_validate_project_action_populates_audit(qtbot):
     from pgtp_editor.model.parser import load_project_from_text
-    from pgtp_editor.ui.main_window import _VALIDATION_PREFIX
+    from pgtp_editor.ui.find_controller import _VALIDATION_PREFIX
 
     window = MainWindow()
     qtbot.addWidget(window)
@@ -583,7 +592,7 @@ def test_bookmark_actions_target_the_active_xsd_editor(qtbot):
     assert window.center_stage.xml_editor.bookmarked_lines() == []
     # setPlainText marked the XSD tab dirty; silence the teardown close prompt
     # so it never reaches a real modal (CLAUDE.md testing policy).
-    window._confirm_close_xsd = lambda: "discard"
+    window._xsd_ui.confirm_close = lambda: "discard"
 
 
 def test_bookmark_actions_do_not_switch_tabs(qtbot):

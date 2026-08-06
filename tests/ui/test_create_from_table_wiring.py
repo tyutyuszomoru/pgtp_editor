@@ -1,8 +1,9 @@
 # tests/ui/test_create_from_table_wiring.py
 """MainWindow wiring for "create page/detail/lookup from a DB table" (SP3).
 
-No live DB (schema injected via `_last_db_schema`), no modal (the duplicate
-warning goes through the `_confirm_duplicate_page` seam), no real clipboard
+No live DB (schema injected via `CoherenceController.last_schema`), no modal
+(the duplicate warning goes through the `confirm_duplicate_page` seam), no real
+clipboard
 dependency beyond QApplication's in-process clipboard.
 """
 from PySide6.QtWidgets import QApplication
@@ -48,13 +49,13 @@ def _window(qtbot):
     window = MainWindow()
     qtbot.addWidget(window)
     window.center_stage.xml_editor.setPlainText(_RAW_XML)
-    window._last_db_schema = _schema()
+    window._db_ui.last_schema = _schema()
     return window
 
 
 def test_create_page_inserts_before_pages_close(qtbot):
     window = _window(qtbot)
-    window._on_db_create_requested("page", "pr.equipment")
+    window._db_ui.on_create_requested("page", "pr.equipment")
 
     text = window.center_stage.xml_editor.toPlainText()
     assert 'tableName="pr.equipment"' in text
@@ -69,8 +70,8 @@ def test_create_page_duplicate_prompts_and_dedupes_filename(qtbot):
     window = _window(qtbot)
     # pr.existing already has a page + fileName pr_existing.
     seen = []
-    window._confirm_duplicate_page = lambda name: seen.append(name) or True
-    window._on_db_create_requested("page", "pr.existing")
+    window._db_ui.confirm_duplicate_page = lambda name: seen.append(name) or True
+    window._db_ui.on_create_requested("page", "pr.existing")
 
     text = window.center_stage.xml_editor.toPlainText()
     assert seen == ["pr.existing"]
@@ -81,16 +82,16 @@ def test_create_page_duplicate_prompts_and_dedupes_filename(qtbot):
 
 def test_create_page_duplicate_cancel_leaves_buffer_unchanged(qtbot):
     window = _window(qtbot)
-    window._confirm_duplicate_page = lambda name: False
+    window._db_ui.confirm_duplicate_page = lambda name: False
     before = window.center_stage.xml_editor.toPlainText()
-    window._on_db_create_requested("page", "pr.existing")
+    window._db_ui.on_create_requested("page", "pr.existing")
     assert window.center_stage.xml_editor.toPlainText() == before
 
 
 def test_create_detail_copies_to_clipboard_with_fk_link(qtbot):
     window = _window(qtbot)
     before = window.center_stage.xml_editor.toPlainText()
-    window._on_db_create_requested("detail", "pr.part")
+    window._db_ui.on_create_requested("detail", "pr.part")
 
     clip = QApplication.clipboard().text()
     assert clip.startswith("<Detail ")
@@ -103,7 +104,7 @@ def test_create_detail_copies_to_clipboard_with_fk_link(qtbot):
 
 def test_create_lookup_copies_to_clipboard(qtbot):
     window = _window(qtbot)
-    window._on_db_create_requested("lookup", "pr.equipment")
+    window._db_ui.on_create_requested("lookup", "pr.equipment")
     clip = QApplication.clipboard().text()
     assert clip.startswith("<Lookup ")
     assert 'tableName="pr.equipment"' in clip
@@ -114,15 +115,16 @@ def test_create_without_schema_shows_status(qtbot):
     window = MainWindow()
     qtbot.addWidget(window)
     window.center_stage.xml_editor.setPlainText(_RAW_XML)
-    window._last_db_schema = None
-    window._on_db_create_requested("page", "pr.equipment")
-    assert "Database check" in window.statusBar().currentMessage()
+    window._db_ui.last_schema = None
+    window._db_ui.on_create_requested("page", "pr.equipment")
+    # FQ-003: the hint now names the merged view, not the retired check.
+    assert "Database/XML Coherence" in window.statusBar().currentMessage()
 
 
 def test_create_page_unknown_table_shows_status(qtbot):
     window = _window(qtbot)
     before = window.center_stage.xml_editor.toPlainText()
-    window._on_db_create_requested("page", "pr.does_not_exist")
+    window._db_ui.on_create_requested("page", "pr.does_not_exist")
     # Guard: schema present but table absent → status message, buffer untouched.
     assert window.center_stage.xml_editor.toPlainText() == before
     assert "pr.does_not_exist" in window.statusBar().currentMessage()
@@ -144,7 +146,7 @@ _TAB_XML = (
 def test_create_page_into_tab_indented_buffer(qtbot):
     window = _window(qtbot)
     window.center_stage.xml_editor.setPlainText(_TAB_XML)
-    window._on_db_create_requested("page", "pr.equipment")
+    window._db_ui.on_create_requested("page", "pr.equipment")
 
     text = window.center_stage.xml_editor.toPlainText()
     assert 'tableName="pr.equipment"' in text
@@ -171,8 +173,8 @@ def test_create_page_filename_collision_only_prompts(qtbot):
     window = _window(qtbot)
     window.center_stage.xml_editor.setPlainText(raw)
     seen = []
-    window._confirm_duplicate_page = lambda name: seen.append(name) or True
-    window._on_db_create_requested("page", "pr.equipment")
+    window._db_ui.confirm_duplicate_page = lambda name: seen.append(name) or True
+    window._db_ui.on_create_requested("page", "pr.equipment")
 
     text = window.center_stage.xml_editor.toPlainText()
     assert seen == ["pr.equipment"]  # fileName collision alone prompts
@@ -186,7 +188,7 @@ def test_create_page_no_pages_close_shows_status(qtbot):
         "<Project>\n  <Presentation/>\n</Project>\n"
     )
     before = window.center_stage.xml_editor.toPlainText()
-    window._on_db_create_requested("page", "pr.equipment")
+    window._db_ui.on_create_requested("page", "pr.equipment")
     # No </Pages> anchor → buffer untouched, status explains why.
     assert window.center_stage.xml_editor.toPlainText() == before
     assert "</Pages>" in window.statusBar().currentMessage()
@@ -195,7 +197,7 @@ def test_create_page_no_pages_close_shows_status(qtbot):
 def test_create_lookup_composite_pk_leaves_link_empty(qtbot):
     window = _window(qtbot)
     # Inject a table with a composite PK.
-    schema = window._last_db_schema
+    schema = window._db_ui.last_schema
     bridge = TableInfo(
         name="pr.bridge", kind="table",
         columns=[
@@ -205,7 +207,7 @@ def test_create_lookup_composite_pk_leaves_link_empty(qtbot):
         ],
     )
     schema.tables["pr.bridge"] = bridge
-    window._on_db_create_requested("lookup", "pr.bridge")
+    window._db_ui.on_create_requested("lookup", "pr.bridge")
     clip = QApplication.clipboard().text()
     assert clip.startswith("<Lookup ")
     assert 'linkFieldName=""' in clip

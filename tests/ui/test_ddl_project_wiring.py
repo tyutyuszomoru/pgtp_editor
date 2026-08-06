@@ -19,6 +19,7 @@ from pgtp_editor.ui.new_project_dialog import NewProjectDialog
 from pgtp_editor.ui.project_settings_dialog import ProjectSettingsDialog
 
 from ._menu_helpers import find_action, find_top_menu
+from pgtp_editor.ui import modals
 
 
 def _empty_settings(tmp_path):
@@ -115,10 +116,9 @@ def test_open_ddl_project_loads_existing_settings(qtbot, tmp_path, monkeypatch):
 
     save_settings(project_dir, ProjectSettings(name="Prior work"))
     window = _window(qtbot, tmp_path)
-    import pgtp_editor.ui.main_window as main_window_module
 
     monkeypatch.setattr(
-        main_window_module.QFileDialog, "getExistingDirectory",
+        modals.QFileDialog, "getExistingDirectory",
         staticmethod(lambda *a, **k: str(project_dir)),
     )
 
@@ -131,10 +131,9 @@ def test_open_ddl_project_loads_existing_settings(qtbot, tmp_path, monkeypatch):
 
 def test_open_ddl_project_cancelled_picker_does_nothing(qtbot, tmp_path, monkeypatch):
     window = _window(qtbot, tmp_path)
-    import pgtp_editor.ui.main_window as main_window_module
 
     monkeypatch.setattr(
-        main_window_module.QFileDialog, "getExistingDirectory",
+        modals.QFileDialog, "getExistingDirectory",
         staticmethod(lambda *a, **k: ""),  # Cancel
     )
 
@@ -151,13 +150,12 @@ def test_open_ddl_project_on_a_non_project_folder_is_rejected(qtbot, tmp_path, m
     project_dir = tmp_path / "brand-new"
     project_dir.mkdir()
     window = _window(qtbot, tmp_path)
-    import pgtp_editor.ui.main_window as main_window_module
 
     monkeypatch.setattr(
-        main_window_module.QFileDialog, "getExistingDirectory",
+        modals.QFileDialog, "getExistingDirectory",
         staticmethod(lambda *a, **k: str(project_dir)),
     )
-    monkeypatch.setattr(main_window_module.QMessageBox, "warning", lambda *a, **k: None)
+    monkeypatch.setattr(modals.QMessageBox, "warning", lambda *a, **k: None)
 
     window._open_ddl_project()
 
@@ -175,10 +173,9 @@ def test_open_ddl_project_on_a_valid_project_folder_proceeds(qtbot, tmp_path, mo
     project_dir = tmp_path / "real-project"
     save_settings(project_dir, ProjectSettings())
     window = _window(qtbot, tmp_path)
-    import pgtp_editor.ui.main_window as main_window_module
 
     monkeypatch.setattr(
-        main_window_module.QFileDialog, "getExistingDirectory",
+        modals.QFileDialog, "getExistingDirectory",
         staticmethod(lambda *a, **k: str(project_dir)),
     )
 
@@ -193,7 +190,6 @@ def test_open_ddl_project_folder_picker_shows_dirs_only(qtbot, tmp_path, monkeyp
     """BUG-022: the folder chooser must pass ShowDirsOnly so files aren't
     shown alongside folders."""
     window = _window(qtbot, tmp_path)
-    import pgtp_editor.ui.main_window as main_window_module
 
     captured = {}
 
@@ -203,14 +199,14 @@ def test_open_ddl_project_folder_picker_shows_dirs_only(qtbot, tmp_path, monkeyp
         return ""
 
     monkeypatch.setattr(
-        main_window_module.QFileDialog, "getExistingDirectory",
+        modals.QFileDialog, "getExistingDirectory",
         staticmethod(fake_get_existing_directory),
     )
 
     window._open_ddl_project()
 
     options = captured["args"][3] if len(captured["args"]) > 3 else captured["kwargs"].get("options")
-    assert main_window_module.QFileDialog.Option.ShowDirsOnly in main_window_module.QFileDialog.Options(options)
+    assert modals.QFileDialog.Option.ShowDirsOnly in modals.QFileDialog.Options(options)
 
 
 # --- Auto-open the linked .pgtp on Open Project (BUG-021) ------------------
@@ -226,10 +222,9 @@ def test_open_ddl_project_auto_opens_the_linked_working_copy(qtbot, tmp_path, mo
         ProjectSettings(pgtp=PgtpLink(working_copy_path=str(working_copy))),
     )
     window = _window(qtbot, tmp_path)
-    import pgtp_editor.ui.main_window as main_window_module
 
     monkeypatch.setattr(
-        main_window_module.QFileDialog, "getExistingDirectory",
+        modals.QFileDialog, "getExistingDirectory",
         staticmethod(lambda *a, **k: str(project_dir)),
     )
 
@@ -239,16 +234,68 @@ def test_open_ddl_project_auto_opens_the_linked_working_copy(qtbot, tmp_path, mo
     assert window._current_project is not None
 
 
+def test_open_project_action_signal_path_auto_opens_the_linked_working_copy(
+    qtbot, tmp_path, monkeypatch
+):
+    """BUG-021 regression: the test above calls `_open_ddl_project()` directly,
+    so `on_ready` is None and auto-open fires. The REAL menu path goes through
+    `QAction.triggered`, which passes `checked=False` -- and `False is not None`
+    took the on_ready branch, calling `False()`. Drive the actual signal."""
+    from pgtp_editor.db.ddl_project import save_settings
+
+    project_dir = tmp_path / "proj"
+    working_copy = project_dir / "app.pgtp"
+    project_dir.mkdir()
+    working_copy.write_text(_VALID_PGTP, encoding="utf-8")
+    save_settings(
+        project_dir,
+        ProjectSettings(pgtp=PgtpLink(working_copy_path=str(working_copy))),
+    )
+    window = _window(qtbot, tmp_path)
+
+    monkeypatch.setattr(
+        modals.QFileDialog, "getExistingDirectory",
+        staticmethod(lambda *a, **k: str(project_dir)),
+    )
+
+    action = find_action(find_top_menu(window, "File"), "Open Project…")
+    assert action is not None
+    action.trigger()
+
+    assert window._current_project_path == str(working_copy)
+    assert window._current_project is not None
+
+
+def test_new_project_action_signal_path_does_not_treat_checked_as_on_ready(
+    qtbot, tmp_path, monkeypatch
+):
+    """BUG-021, parallel latent defect: `_new_ddl_project` is wired the same
+    way, so the dialog's accepted handler would call `False()` (TypeError)."""
+    window = _window(qtbot, tmp_path)
+    created = []
+    monkeypatch.setattr(
+        MainWindow, "_create_ddl_project", lambda self, dialog: created.append(dialog)
+    )
+
+    action = find_action(find_top_menu(window, "File"), "New Project…")
+    assert action is not None
+    action.trigger()
+
+    dialog = window._new_project_dialog
+    assert isinstance(dialog, NewProjectDialog)
+    dialog.accepted.emit()  # must not raise TypeError: 'bool' object is not callable
+    assert created == [dialog]
+
+
 def test_open_ddl_project_with_no_linked_pgtp_does_nothing(qtbot, tmp_path, monkeypatch):
     from pgtp_editor.db.ddl_project import save_settings
 
     project_dir = tmp_path / "proj"
     save_settings(project_dir, ProjectSettings())  # no .pgtp linked, empty folder
     window = _window(qtbot, tmp_path)
-    import pgtp_editor.ui.main_window as main_window_module
 
     monkeypatch.setattr(
-        main_window_module.QFileDialog, "getExistingDirectory",
+        modals.QFileDialog, "getExistingDirectory",
         staticmethod(lambda *a, **k: str(project_dir)),
     )
 
@@ -268,10 +315,9 @@ def test_open_ddl_project_with_exactly_one_unlinked_pgtp_auto_opens_it(qtbot, tm
     only_pgtp = project_dir / "solo.pgtp"
     only_pgtp.write_text(_VALID_PGTP, encoding="utf-8")
     window = _window(qtbot, tmp_path)
-    import pgtp_editor.ui.main_window as main_window_module
 
     monkeypatch.setattr(
-        main_window_module.QFileDialog, "getExistingDirectory",
+        modals.QFileDialog, "getExistingDirectory",
         staticmethod(lambda *a, **k: str(project_dir)),
     )
 
@@ -290,10 +336,9 @@ def test_open_ddl_project_with_multiple_unlinked_pgtp_reports_via_audit_and_gues
     (project_dir / "one.pgtp").write_text(_VALID_PGTP, encoding="utf-8")
     (project_dir / "two.pgtp").write_text(_VALID_PGTP, encoding="utf-8")
     window = _window(qtbot, tmp_path)
-    import pgtp_editor.ui.main_window as main_window_module
 
     monkeypatch.setattr(
-        main_window_module.QFileDialog, "getExistingDirectory",
+        modals.QFileDialog, "getExistingDirectory",
         staticmethod(lambda *a, **k: str(project_dir)),
     )
 
@@ -324,10 +369,9 @@ def test_open_ddl_project_via_prompt_pgtp_open_mode_does_not_double_load(qtbot, 
     window = _window(qtbot, tmp_path)
     source = tmp_path / "source.pgtp"
     source.write_text(_VALID_PGTP, encoding="utf-8")
-    import pgtp_editor.ui.main_window as main_window_module
 
     monkeypatch.setattr(
-        main_window_module.QFileDialog, "getExistingDirectory",
+        modals.QFileDialog, "getExistingDirectory",
         staticmethod(lambda *a, **k: str(project_dir)),
     )
 
@@ -362,10 +406,9 @@ def test_open_reports_unchanged_source_pgtp(qtbot, tmp_path, monkeypatch):
         ),
     )
     window = _window(qtbot, tmp_path)
-    import pgtp_editor.ui.main_window as main_window_module
 
     monkeypatch.setattr(
-        main_window_module.QFileDialog, "getExistingDirectory",
+        modals.QFileDialog, "getExistingDirectory",
         staticmethod(lambda *a, **k: str(project_dir)),
     )
 
@@ -391,10 +434,9 @@ def test_open_reports_drifted_source_pgtp(qtbot, tmp_path, monkeypatch):
         ),
     )
     window = _window(qtbot, tmp_path)
-    import pgtp_editor.ui.main_window as main_window_module
 
     monkeypatch.setattr(
-        main_window_module.QFileDialog, "getExistingDirectory",
+        modals.QFileDialog, "getExistingDirectory",
         staticmethod(lambda *a, **k: str(project_dir)),
     )
 
@@ -412,10 +454,9 @@ def test_open_with_no_pgtp_link_reports_nothing(qtbot, tmp_path, monkeypatch):
     project_dir = tmp_path / "proj"
     save_settings(project_dir, ProjectSettings())  # no .pgtp linked
     window = _window(qtbot, tmp_path)
-    import pgtp_editor.ui.main_window as main_window_module
 
     monkeypatch.setattr(
-        main_window_module.QFileDialog, "getExistingDirectory",
+        modals.QFileDialog, "getExistingDirectory",
         staticmethod(lambda *a, **k: str(project_dir)),
     )
     before = window.audit_panel.count()
@@ -434,10 +475,9 @@ def test_open_reports_unreadable_source_pgtp_gracefully(qtbot, tmp_path, monkeyp
         ProjectSettings(pgtp=PgtpLink(source_path=str(tmp_path / "does-not-exist.pgtp"))),
     )
     window = _window(qtbot, tmp_path)
-    import pgtp_editor.ui.main_window as main_window_module
 
     monkeypatch.setattr(
-        main_window_module.QFileDialog, "getExistingDirectory",
+        modals.QFileDialog, "getExistingDirectory",
         staticmethod(lambda *a, **k: str(project_dir)),
     )
 
@@ -534,7 +574,7 @@ def test_project_required_create_path(qtbot, tmp_path, monkeypatch):
         def clickedButton(self):
             return self.buttons["Create…"]
 
-    monkeypatch.setattr("pgtp_editor.ui.main_window.QMessageBox", _FakeBox)
+    monkeypatch.setattr("pgtp_editor.ui.modals.QMessageBox", _FakeBox)
     got = []
 
     window._require_ddl_project(lambda: got.append(True))
@@ -574,7 +614,7 @@ def test_project_required_cancel_path_never_calls_on_ready(qtbot, tmp_path, monk
         def clickedButton(self):
             return self.buttons["Cancel"]
 
-    monkeypatch.setattr("pgtp_editor.ui.main_window.QMessageBox", _FakeBox)
+    monkeypatch.setattr("pgtp_editor.ui.modals.QMessageBox", _FakeBox)
     got = []
 
     window._require_ddl_project(lambda: got.append(True))
@@ -590,7 +630,7 @@ def test_project_required_skips_the_dialog_entirely_when_already_open(qtbot, tmp
     dialog._folder_edit.setText(str(tmp_path / "p"))
     window._create_ddl_project(dialog)
     monkeypatch.setattr(
-        "pgtp_editor.ui.main_window.QMessageBox",
+        "pgtp_editor.ui.modals.QMessageBox",
         lambda *a, **k: (_ for _ in ()).throw(AssertionError("must not prompt")),
     )
     got = []
@@ -722,7 +762,7 @@ def test_checkout_requires_a_project_and_offers_create_open_cancel(qtbot, tmp_pa
         def clickedButton(self):
             return self.buttons["Cancel"]
 
-    monkeypatch.setattr("pgtp_editor.ui.main_window.QMessageBox", _FakeBox)
+    monkeypatch.setattr("pgtp_editor.ui.modals.QMessageBox", _FakeBox)
 
     window._on_ddl_checkout_requested(ref, "text")  # must not raise, no project created
 
@@ -978,7 +1018,7 @@ def test_close_project_offers_deploy_pgtp_when_working_copy_has_pending_changes(
     edited_text = _VALID_PGTP.replace("<Pages/>", "<Pages><!--edited--></Pages>")
     working_copy.write_text(edited_text, encoding="utf-8")
     monkeypatch.setattr(
-        "pgtp_editor.ui.main_window.QMessageBox.question",
+        "pgtp_editor.ui.modals.QMessageBox.question",
         staticmethod(lambda *a, **k: QMessageBox.StandardButton.Yes),
     )
 
@@ -998,7 +1038,7 @@ def test_close_project_declining_the_deploy_prompt_still_closes_without_deployin
     edited_text = _VALID_PGTP.replace("<Pages/>", "<Pages><!--edited--></Pages>")
     working_copy.write_text(edited_text, encoding="utf-8")
     monkeypatch.setattr(
-        "pgtp_editor.ui.main_window.QMessageBox.question",
+        "pgtp_editor.ui.modals.QMessageBox.question",
         staticmethod(lambda *a, **k: QMessageBox.StandardButton.No),
     )
 
@@ -1016,7 +1056,7 @@ def test_close_project_with_no_pending_pgtp_changes_never_prompts(qtbot, tmp_pat
     source.write_text(_VALID_PGTP, encoding="utf-8")
     window.open_project_file(str(source))
     monkeypatch.setattr(
-        "pgtp_editor.ui.main_window.QMessageBox.question",
+        "pgtp_editor.ui.modals.QMessageBox.question",
         staticmethod(lambda *a, **k: (_ for _ in ()).throw(AssertionError("must not prompt"))),
     )
 
@@ -1030,7 +1070,7 @@ def test_close_project_with_no_pgtp_linked_never_prompts(qtbot, tmp_path, monkey
     project_dir = tmp_path / "proj"
     _open_project(window, project_dir)
     monkeypatch.setattr(
-        "pgtp_editor.ui.main_window.QMessageBox.question",
+        "pgtp_editor.ui.modals.QMessageBox.question",
         staticmethod(lambda *a, **k: (_ for _ in ()).throw(AssertionError("must not prompt"))),
     )
 
@@ -1124,7 +1164,7 @@ def test_open_pgtp_dialog_defaults_to_the_project_folder(qtbot, tmp_path, monkey
         captured["directory"] = directory
         return "", ""
 
-    monkeypatch.setattr("pgtp_editor.ui.main_window.QFileDialog.getOpenFileName", fake_open)
+    monkeypatch.setattr("pgtp_editor.ui.modals.QFileDialog.getOpenFileName", fake_open)
 
     window._open_project()
 
@@ -1141,7 +1181,7 @@ def test_save_project_as_dialog_defaults_to_the_project_folder(qtbot, tmp_path, 
         captured["directory"] = directory
         return "", ""
 
-    monkeypatch.setattr("pgtp_editor.ui.main_window.QFileDialog.getSaveFileName", fake_save)
+    monkeypatch.setattr("pgtp_editor.ui.modals.QFileDialog.getSaveFileName", fake_save)
 
     window._save_project_as()
 
@@ -1156,7 +1196,7 @@ def test_open_pgtp_dialog_defaults_to_empty_with_no_project(qtbot, tmp_path, mon
         captured["directory"] = directory
         return "", ""
 
-    monkeypatch.setattr("pgtp_editor.ui.main_window.QFileDialog.getOpenFileName", fake_open)
+    monkeypatch.setattr("pgtp_editor.ui.modals.QFileDialog.getOpenFileName", fake_open)
 
     window._open_project()
 
@@ -1184,9 +1224,9 @@ def test_export_xsd_dialog_defaults_to_the_project_folder(qtbot, tmp_path, monke
         captured["directory"] = directory
         return "", ""
 
-    monkeypatch.setattr("pgtp_editor.ui.main_window.QFileDialog.getSaveFileName", fake_save)
+    monkeypatch.setattr("pgtp_editor.ui.modals.QFileDialog.getSaveFileName", fake_save)
 
-    window._export_xsd()
+    window._xsd_ui.export()
 
     assert captured["directory"] == str(project_dir / xsd_path.name)
 
@@ -1201,9 +1241,9 @@ def test_import_xsd_dialog_defaults_to_the_project_folder(qtbot, tmp_path, monke
         captured["directory"] = directory
         return "", ""
 
-    monkeypatch.setattr("pgtp_editor.ui.main_window.QFileDialog.getOpenFileName", fake_open)
+    monkeypatch.setattr("pgtp_editor.ui.modals.QFileDialog.getOpenFileName", fake_open)
 
-    window._import_xsd()
+    window._xsd_ui.import_()
 
     assert captured["directory"] == str(project_dir)
 
@@ -1218,9 +1258,9 @@ def test_compare_merge_two_files_dialogs_default_to_the_project_folder(qtbot, tm
         captured.append(directory)
         return "", ""
 
-    monkeypatch.setattr("pgtp_editor.ui.main_window.QFileDialog.getOpenFileName", fake_open)
+    monkeypatch.setattr("pgtp_editor.ui.modals.QFileDialog.getOpenFileName", fake_open)
 
-    window._compare_merge_two_files()
+    window._diff_ui.compare_two_files()
 
     # No `_current_project` is open, so the source picker runs first and
     # returning "" (cancelled) short-circuits before the target picker --
@@ -1242,9 +1282,9 @@ def test_compare_merge_two_files_target_dialog_also_defaults_to_the_project_fold
         captured["directory"] = directory
         return "", ""
 
-    monkeypatch.setattr("pgtp_editor.ui.main_window.QFileDialog.getOpenFileName", fake_open)
+    monkeypatch.setattr("pgtp_editor.ui.modals.QFileDialog.getOpenFileName", fake_open)
 
-    window._compare_merge_two_files()
+    window._diff_ui.compare_two_files()
 
     assert captured["directory"] == str(project_dir)
 
@@ -1276,9 +1316,9 @@ def test_compare_page_with_dialog_defaults_to_the_project_folder(qtbot, tmp_path
         captured["directory"] = directory
         return "", ""
 
-    monkeypatch.setattr("pgtp_editor.ui.main_window.QFileDialog.getOpenFileName", fake_open)
+    monkeypatch.setattr("pgtp_editor.ui.modals.QFileDialog.getOpenFileName", fake_open)
 
-    window._compare_page_with(page_node)
+    window._diff_ui.compare_page_with(page_node)
 
     assert captured["directory"] == str(project_dir)
 
@@ -1300,9 +1340,9 @@ def test_compare_detail_with_dialog_defaults_to_the_project_folder(qtbot, tmp_pa
         captured["directory"] = directory
         return "", ""
 
-    monkeypatch.setattr("pgtp_editor.ui.main_window.QFileDialog.getOpenFileName", fake_open)
+    monkeypatch.setattr("pgtp_editor.ui.modals.QFileDialog.getOpenFileName", fake_open)
 
-    window._compare_detail_with(detail_node, str(source_pgtp))
+    window._diff_ui.compare_detail_with(detail_node, str(source_pgtp))
 
     assert captured["directory"] == str(project_dir)
 
@@ -1320,7 +1360,7 @@ def test_save_ddl_object_dialog_defaults_to_the_project_folder(qtbot, tmp_path, 
         captured["directory"] = directory
         return "", ""
 
-    monkeypatch.setattr("pgtp_editor.ui.main_window.QFileDialog.getSaveFileName", fake_save)
+    monkeypatch.setattr("pgtp_editor.ui.modals.QFileDialog.getSaveFileName", fake_save)
 
     window._on_ddl_edit_requested(ref, "CREATE FUNCTION pr.recalc() ...")
     panel = window.center_stage.ddl_object_tab(ref.key)
@@ -1363,14 +1403,14 @@ def test_open_with_no_project_prompts_and_new_project_choice_creates_one(qtbot, 
     source = tmp_path / "source.pgtp"
     source.write_text(_VALID_PGTP, encoding="utf-8")
     monkeypatch.setattr(
-        "pgtp_editor.ui.main_window.QFileDialog.getOpenFileName",
+        "pgtp_editor.ui.modals.QFileDialog.getOpenFileName",
         lambda *a, **k: (str(source), ""),
     )
 
     class _FakeBox(_FakeChooserBox):
         _clicked_label = "New Project…"
 
-    monkeypatch.setattr("pgtp_editor.ui.main_window.QMessageBox", _FakeBox)
+    monkeypatch.setattr("pgtp_editor.ui.modals.QMessageBox", _FakeBox)
 
     window._open_project()
 
@@ -1392,16 +1432,16 @@ def test_open_with_no_project_prompts_and_open_project_choice_links_it(qtbot, tm
     existing_project = tmp_path / "existing-proj"
     save_settings(existing_project, ProjectSettings())
     monkeypatch.setattr(
-        "pgtp_editor.ui.main_window.QFileDialog.getOpenFileName",
+        "pgtp_editor.ui.modals.QFileDialog.getOpenFileName",
         lambda *a, **k: (str(source), ""),
     )
 
     class _FakeBox(_FakeChooserBox):
         _clicked_label = "Open Project…"
 
-    monkeypatch.setattr("pgtp_editor.ui.main_window.QMessageBox", _FakeBox)
+    monkeypatch.setattr("pgtp_editor.ui.modals.QMessageBox", _FakeBox)
     monkeypatch.setattr(
-        "pgtp_editor.ui.main_window.QFileDialog.getExistingDirectory",
+        "pgtp_editor.ui.modals.QFileDialog.getExistingDirectory",
         lambda *a, **k: str(existing_project),
     )
 
@@ -1416,10 +1456,10 @@ def test_open_with_no_project_edit_standalone_choice_opens_plainly(qtbot, tmp_pa
     source = tmp_path / "source.pgtp"
     source.write_text(_VALID_PGTP, encoding="utf-8")
     monkeypatch.setattr(
-        "pgtp_editor.ui.main_window.QFileDialog.getOpenFileName",
+        "pgtp_editor.ui.modals.QFileDialog.getOpenFileName",
         lambda *a, **k: (str(source), ""),
     )
-    monkeypatch.setattr("pgtp_editor.ui.main_window.QMessageBox", _FakeChooserBox)
+    monkeypatch.setattr("pgtp_editor.ui.modals.QMessageBox", _FakeChooserBox)
 
     window._open_project()
 
@@ -1434,11 +1474,11 @@ def test_open_with_a_project_already_active_never_prompts(qtbot, tmp_path, monke
     source = tmp_path / "source.pgtp"
     source.write_text(_VALID_PGTP, encoding="utf-8")
     monkeypatch.setattr(
-        "pgtp_editor.ui.main_window.QFileDialog.getOpenFileName",
+        "pgtp_editor.ui.modals.QFileDialog.getOpenFileName",
         lambda *a, **k: (str(source), ""),
     )
     monkeypatch.setattr(
-        "pgtp_editor.ui.main_window.QMessageBox",
+        "pgtp_editor.ui.modals.QMessageBox",
         lambda *a, **k: (_ for _ in ()).throw(AssertionError("must not prompt")),
     )
 
@@ -1458,3 +1498,83 @@ def test_ddl_project_state_is_independent_of_current_project(qtbot, tmp_path):
 
     assert window._current_project is None  # untouched -- no .pgtp opened
     assert window._ddl_project_folder is not None
+
+
+# --- BUG-021: the `callable(on_ready)` guard itself ------------------------
+def test_open_ddl_project_treats_a_non_callable_on_ready_as_absent(
+    qtbot, tmp_path, monkeypatch
+):
+    """The hardened guard: `checked=False` (or any non-callable) must fall
+    through to the plain-Open behaviour — auto-opening the linked `.pgtp` —
+    instead of being invoked as a callback."""
+    from pgtp_editor.db.ddl_project import save_settings
+
+    project_dir = tmp_path / "proj"
+    working_copy = project_dir / "app.pgtp"
+    project_dir.mkdir()
+    working_copy.write_text(_VALID_PGTP, encoding="utf-8")
+    save_settings(
+        project_dir,
+        ProjectSettings(pgtp=PgtpLink(working_copy_path=str(working_copy))),
+    )
+    window = _window(qtbot, tmp_path)
+
+    monkeypatch.setattr(
+        modals.QFileDialog, "getExistingDirectory",
+        staticmethod(lambda *a, **k: str(project_dir)),
+    )
+
+    window._open_ddl_project(on_ready=False)
+
+    assert window._current_project_path == str(working_copy)
+
+
+def test_new_ddl_project_treats_a_non_callable_on_ready_as_absent(
+    qtbot, tmp_path, monkeypatch
+):
+    window = _window(qtbot, tmp_path)
+    created = []
+    monkeypatch.setattr(
+        MainWindow, "_create_ddl_project", lambda self, dialog: created.append(dialog)
+    )
+
+    window._new_ddl_project(on_ready=False)
+    window._new_project_dialog.accepted.emit()   # must not raise
+
+    assert created == [window._new_project_dialog]
+
+
+def test_a_real_on_ready_callback_still_runs_on_open(qtbot, tmp_path, monkeypatch):
+    """The other half of the guard: a genuine callable is still honoured (and
+    suppresses the plain-Open auto-open, which is the caller's job then)."""
+    from pgtp_editor.db.ddl_project import save_settings
+
+    project_dir = tmp_path / "proj"
+    project_dir.mkdir()
+    save_settings(project_dir, ProjectSettings())
+    window = _window(qtbot, tmp_path)
+
+    monkeypatch.setattr(
+        modals.QFileDialog, "getExistingDirectory",
+        staticmethod(lambda *a, **k: str(project_dir)),
+    )
+    ran = []
+    window._open_ddl_project(on_ready=lambda: ran.append(True))
+
+    assert ran == [True]
+    assert window._ddl_project_folder == project_dir
+
+
+def test_close_project_action_signal_path_closes_the_project(qtbot, tmp_path):
+    """The third project action is connected bare; triggering it must close
+    the project rather than choke on `triggered`'s `checked` argument."""
+    window = _window(qtbot, tmp_path)
+    project_dir = tmp_path / "proj"
+    project_dir.mkdir()
+    window._set_active_ddl_project(project_dir, ProjectSettings())
+    assert window._close_ddl_project_action.isEnabled() is True
+
+    window._close_ddl_project_action.trigger()
+
+    assert window._ddl_project_folder is None
+    assert window._close_ddl_project_action.isEnabled() is False

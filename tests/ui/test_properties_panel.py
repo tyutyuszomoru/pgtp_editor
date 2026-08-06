@@ -85,6 +85,40 @@ def test_column_population(qtbot):
     assert panel.header_text() == "Column: tag"
 
 
+def test_lookup_kind_renders_the_same_rows_as_column(qtbot):
+    """BUG-032 facet B: a coherence lookup row's model node IS the owning
+    ColumnNode, so "lookup" reuses the column builder — and must not raise."""
+    panel = PropertiesPanel(xml_editor=_RecordingXmlEditorStub())
+    qtbot.addWidget(panel)
+    panel.show_node(_column_node(), "column")
+    as_column = [
+        (panel.table.item(r, 0).text(), panel.table.item(r, 1).text())
+        for r in range(panel.table.rowCount())
+    ]
+    column_header = panel.header_text()
+
+    panel.show_node(_column_node(), "lookup")
+
+    assert panel.is_showing_empty_state() is False
+    assert panel.header_text() == column_header
+    assert [
+        (panel.table.item(r, 0).text(), panel.table.item(r, 1).text())
+        for r in range(panel.table.rowCount())
+    ] == as_column
+
+
+def test_unknown_kind_falls_back_to_the_empty_state(qtbot):
+    """A kind with no builder is a wiring gap: degrade, never raise (BUG-032)."""
+    panel = PropertiesPanel(xml_editor=_RecordingXmlEditorStub())
+    qtbot.addWidget(panel)
+    panel.show_node(_page_node(), "page")
+    assert panel.is_showing_empty_state() is False
+
+    panel.show_node(_page_node(), "bogus")
+
+    assert panel.is_showing_empty_state() is True
+
+
 def test_detail_population(qtbot):
     panel = PropertiesPanel(xml_editor=_RecordingXmlEditorStub())
     qtbot.addWidget(panel)

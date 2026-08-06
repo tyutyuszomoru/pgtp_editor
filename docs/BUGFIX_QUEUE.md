@@ -2215,7 +2215,7 @@ mechanism and its new visible active-filter banner in §13.
 ---
 
 ## BUG-021: Opening a project doesn't auto-open its linked `.pgtp` into the editor
-**Status:** REOPENED 2026-08-05 — the fix in 2508d2a did NOT work; opening a project still does not auto-open its linked `.pgtp`. The resolver must re-examine what 2508d2a actually changed in `_open_ddl_project` / `open_project_file` and why the working copy isn't loaded (e.g. `settings.pgtp.working_copy_path` empty/not persisted, the load call guarded out, or an `on_ready` timing issue) rather than re-applying the same change. Previously: RESOLVED (2508d2a).
+**Status:** RESOLVED (704f87f) — the 2508d2a fix did not work; root cause was `QAction.triggered`'s `checked: bool` binding to `on_ready`, so `on_ready=False` passed the `is not None` guard and called `False()`. Fixed by lambda-wrapping both project actions and hardening the guards to `callable(on_ready)`; regression tests now drive the real signal via `action.trigger()`. Previously: REOPENED 2026-08-05, RESOLVED (2508d2a).
 **Reported:** 2026-08-05
 **Report (verbatim):** "at opening the project the pgtp should automatically open"
 
@@ -2313,7 +2313,7 @@ Gotchas: (1) OK/Cancel button box must remain a direct child of the top-level `Q
 ---
 
 ## BUG-026: Database→XML flags lookup-only tables as red mismatches; per-table count should split into P/D/L roles
-**Status:** OPEN
+**Status:** RESOLVED (704f87f)
 **Reported:** 2026-08-05
 **Report (verbatim):** "in the Database->XML window those database tables that have multiple mentions but only as lookup tables are with red and counted as mismatch. The counter besides the table name should be separated in categories P for page, D for detail, and L for lookup. eg: (P3 D1 L2). Mismatches in red are only those tables that have all categories 0."
 
@@ -2342,7 +2342,7 @@ Second half of the report (role-split count) is a display gap, not a bug in isol
 ---
 
 ## BUG-027: Customize Toolbar offers only 7 hardcoded commands, not all menu items
-**Status:** OPEN
+**Status:** RESOLVED (704f87f)
 **Reported:** 2026-08-05
 **Report (verbatim):** "customize toolbar is unfinished, the choice should be all menu items, but it's very limited to a few items."
 
@@ -2365,7 +2365,7 @@ Second half of the report (role-split count) is a display gap, not a bug in isol
 ---
 
 ## BUG-028: Caption-mode Find filter isn't shown in the active-filter banner — user can't see the find text or which columns it applies to
-**Status:** OPEN
+**Status:** RESOLVED (704f87f)
 **Reported:** 2026-08-05
 **Report (verbatim):** "Caption mode when filtered using Find doesn't show which columns have been the filter applied to. The same mechanism as when coming from Browser pane should be applied."
 
@@ -2397,5 +2397,449 @@ Gotchas:
 **Test impact:** `tests/ui/test_caption_management_panel.py`. Existing find-filter tests to extend (don't duplicate): `apply_find_filter` cases around lines 446/459/472–473/904/935/943/1263 and the raw `set_regex_filter` cases (577/1370/1508). Add assertions that after `apply_find_filter("ord", "normal", False)` the banner is visible (`panel._filter_banner.isVisibleTo(panel)`) and `panel._filter_banner_label.text()` states the find text + "all columns" (and mode/case for the regex/case-sensitive variant at 459); that clearing the pattern (`apply_find_filter("", …)`, cf. 473) hides the banner when no preset predicate is active; and a combined case: apply a preset (`filter_to_field`) AND a find filter, assert the banner shows both descriptors, then `clear_all_filters` hides it. Extend `test_clear_all_filters_resets_everything` (1599) — it already sets a regex filter (1603) and asserts the banner hides (1617) — to also assert the banner was visible *because of the find filter* before clearing (currently it's visible only due to the preset it also sets). If getters `find_mode()`/`find_case()` are added, add trivial getter tests near the existing `find_pattern` usage.
 
 **Spec impact:** Same section BUG-020 flagged — CONSOLIDATED_SPEC §13 "Grid" (~lines 1114–1124). BUG-020's spec follow-up documents the preset row-predicate + banner as a filter surface; this extends that surface to also represent the whole-row find filter (find text, mode/case, "all columns" scope). Flag for spec-maintainer AFTER the fix lands, folded into the same §13 banner description; do not edit the spec here.
+
+---
+
+## BUG-031: Project Status window cannot be reopened after being closed — menu silently does nothing
+**Status:** RESOLVED (ec03946) — reuse branch now calls `show()` + unminimizes before `raise_()`/`activateWindow()`. The reuse-path re-probe proved load-bearing (`showEvent` probes only on first show), so a reopened window would otherwise show stale state; now covered.
+**Reported:** 2026-08-06
+**Report (verbatim):** "once the window is closed it cannot be opened again, clicking the menu silently does nothing."
+
+**Root cause:** Cached-singleton + missing re-`show()` on the reuse path — a lifecycle bug in `pgtp_editor/ui/main_window.py::MainWindow._open_project_status` (lines 3382–3427), the handler for the **Database ▸ "Project Status…"** menu action (built at `main_window.py:2683–2684`, `project_status_action = menu.addAction("Project Status…")` wired to `lambda: self._open_project_status()`). The window instance is a `ProjectStatusPanel` (`pgtp_editor/ui/project_status_panel.py:421`, `class ProjectStatusPanel(QWidget)`) cached on `self._project_status_window` (declared `= None` at `main_window.py:256–258`, comment: "kept so re-invoking the menu entry ...").
+
+First open (lines 3399–3427): `existing = self._project_status_window` is `None`, so a fresh `ProjectStatusPanel` is constructed, made a top-level window (`panel.setWindowFlag(Qt.WindowType.Window, True)`, line 3423), and shown (`panel.show()`, line 3427). Two things are wired that are meant to make it single-instance-and-reopenable:
+  * line 3425: `panel.destroyed.connect(lambda: setattr(self, "_project_status_window", None))` — intended to reset the cache when the window goes away.
+  * lines 3391–3397, the reuse branch: `if existing is not None:` re-probe, `existing.set_diagram(...)`, `existing.raise_()`, `existing.activateWindow()`, `return`.
+
+The defect is that closing the window (OS window-frame ✕) **hides but does not destroy** the panel, so the two mechanisms above never engage:
+  1. `ProjectStatusPanel.__init__` (`project_status_panel.py:456–544`) never sets `WA_DeleteOnClose`, and Qt's default for a top-level widget is `WA_DeleteOnClose = False`. (The one `setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, False)` in this file, `project_status_panel.py:360`, is on the *inner* `NodeWindow` click-through dialog, **not** on the panel — a red herring.) There is no `closeEvent` override on `ProjectStatusPanel`. So a close just hides the widget; the C++/Python object stays alive.
+  2. Because it is not destroyed, `QWidget.destroyed` never fires, so the line-3425 lambda never runs and `self._project_status_window` **stays pointing at the still-alive, now-hidden panel** — it is never reset to `None`.
+  3. Next menu click: `existing is not None` is `True` (it's the hidden panel), so the reuse branch runs `refresh()` / `set_diagram()` / `raise_()` / `activateWindow()` and returns — but **never calls `show()`/`setVisible(True)`**. `raise_()`/`activateWindow()` on a hidden window are no-ops with no visible effect and no error. Result: the menu silently does nothing, for the rest of the session. (This is the classic cached-instance + never-reset-on-close variant, not a GC / dangling-deleted-object variant: the object is very much alive, just hidden and never re-shown.)
+
+The spec's stated intent (see Spec impact) is "single-instance (re-invoking raises the existing one)" — so keeping the instance and re-raising is *by design*; the bug is purely the missing re-show for the closed/hidden case. `_open_project_status` is the only cached-singleton reopenable window in `main_window.py`; every other `.show()` there (e.g. lines 1217, 2400, 3092, 3451) constructs a fresh local `dialog` each call and has no reuse branch, so there is no in-app sibling pattern to copy — the fix is self-contained to this handler.
+
+**Proposed fix:** In `pgtp_editor/ui/main_window.py::_open_project_status`, make the reuse branch (lines 3391–3397) actually bring a hidden window back on screen, keeping the documented single-instance behavior. Minimal, robust change — add `show()` and (defensively) unminimize before raise/activate:
+```python
+existing = self._project_status_window
+if existing is not None:
+    self.refresh_project_capability_status()
+    existing.set_diagram(self._build_project_status_diagram())
+    existing.show()                                   # NEW: re-show if it was closed/hidden
+    existing.setWindowState(
+        existing.windowState() & ~Qt.WindowState.WindowMinimized
+    )                                                  # NEW: restore if minimized
+    existing.raise_()
+    existing.activateWindow()
+    return
+```
+`show()` on an already-visible window is harmless (Qt no-ops), so this also covers the "re-invoke while still open" case the spec describes. Gotchas / things easy to get wrong:
+  * Do **not** "fix" this by adding `WA_DeleteOnClose = True` to the panel and relying solely on the destroyed→None reset to force a fresh window each time. That is a valid *alternative* shape, but it (a) discards the re-probe-and-reuse design the spec explicitly documents ("raises the existing one"), (b) would make the line-3425 `destroyed` lambda the load-bearing reset and must be verified to fire under the offscreen test platform, and (c) changes the identity semantics the existing `on_refresh`/`_refreshed_on_show` seam (`project_status_panel.py:625–630`) relies on. Prefer the re-`show()` fix above; it is the smaller, intent-preserving change.
+  * Keep the existing re-probe (`refresh_project_capability_status()` + `set_diagram(...)`) in the reuse branch — a window reopened after the sandbox died must reflect current state (that is the whole point of the docstring at lines 3383–3389). Note `ProjectStatusPanel.showEvent` only re-probes on the *first* show (`_refreshed_on_show` guard, `project_status_panel.py:628`), so the explicit reuse-branch re-probe is still required on every reopen and must not be removed.
+  * The line-3425 `destroyed` reset stays as-is — it is still correct for the real teardown path (app close / parent destruction), just not exercised by an ordinary window close.
+
+**Test impact:** No existing test covers the open→close→reopen lifecycle. `tests/ui/test_ddl_creation_wiring.py::test_database_menu_offers_new_function_procedure_and_project_status` (line 153) only asserts the menu entry exists; `tests/ui/test_project_capability_wiring.py` covers the capability probe, not the window; `tests/ui/test_project_status_panel.py` unit-tests `ProjectStatusPanel` in isolation (no MainWindow reuse path). Add a new lifecycle case, most naturally in `tests/ui/test_ddl_creation_wiring.py` (it already builds a MainWindow and reaches `_open_project_status`) or a new `tests/ui/test_project_status_wiring.py`: call `win._open_project_status()`, assert `win._project_status_window is not None` and `.isVisible()`; call `win._project_status_window.close()` and assert it is hidden but the attribute is still non-None (documents that close does not destroy); call `win._open_project_status()` again and assert the **same** panel instance is back and `.isVisible()` is `True` again (the regression lock — this is what silently fails today). Keep any `QMessageBox`/`QDialog.exec` off the path (the panel is non-modal `show()`, so no modal patching needed, but the re-probe seam `on_refresh` may touch the sandbox probe — reuse whatever probe stub `test_project_capability_wiring.py` already injects rather than hitting a real DB).
+
+**Spec impact:** CONSOLIDATED_SPEC §18.8 ("The Project Status window", line 4721; status block line 4729–4731) explicitly documents the intended behavior: "the window is non-modal and single-instance (re-invoking raises the existing one)". The shipped code diverges from this — re-invoking after a close does **not** re-raise, it silently no-ops. This is a code-vs-spec bug (implementation fails to meet the documented design), not a design change, so no new design decision is needed. After the fix lands, flag `spec-maintainer` only if §18.8's wording should be sharpened to state that a **closed** (not just backgrounded) window reopens/re-shows — the current "raises the existing one" phrasing is arguably already satisfied by the fix and may not need editing.
+
+---
+
+## BUG-029: Project Status window PNGs are clipped and blurry ("cut and very low resolution")
+**Status:** RESOLVED (acb813f) — root cause was BOTH halves the entry named. Blur: the pipeline MAGNIFIED small rasters (2x at dpr 1.0, 4x on HiDPI), which cannot add detail. Now rendered from the owner-supplied SVGs through `QSvgRenderer` into a `QImage` sized `logical x dpr`. Logical size is `defaultSize() * 2.133`, not `defaultSize()` raw — Qt reads these SVGs' millimetre dims at 90 dpi while the deleted PNGs were 96 dpi exports of the same drawing, so the 96/90 correction keeps every size within 1-2 px of the old layout. Clipping: pad is now `box.expandedTo(icon)` with the `max(0, ...)` clamps removed, ONE dpr threaded `_rebuild`->`_make_node`->`_boxed_pixmap`, connector labels ceil-sized with AlignCenter, and a `devicePixelRatioChanged`/`screenChanged` rebuild. The 1px drift class is gone as a clipping cause (`_logical_size` ceils). Packaging verified: pyproject's `resources/status/*` glob is extension-agnostic, so SVGs ship.
+
+**Remaining ASSET issue, needs the owner (no code fix will follow):** `resources/status/sandbox_offline.svg` is not an SVG — it is a 40x34 PNG saved under an `.svg` name. `QSvgRenderer` rejects it, which would have left the offline sandbox node a blank gap, so `_scaled_pixmap` falls back to raster loading at 2x for non-SVG content. That one state therefore renders SOFT while its `_drk` counterpart (a real SVG) is crisp. Re-export it as true SVG and it becomes crisp with no code change. Cosmetic aside: `sandbox_not_set_up.svg` is 41x31 vs its dark twin's 37x32, so the light icon is ~10% wider; alignment is unaffected.
+**Reported:** 2026-08-06
+**Report (verbatim):** "PNGs are cut and very low resolution."
+
+**Root cause:** Two compounding problems, both in `pgtp_editor/ui/project_status_panel.py` feeding off the bundled raster assets under `pgtp_editor/resources/status/`.
+
+1. **Low resolution (blurry) — the assets are tiny rasters that get *upscaled*.** The bundled PNGs are exported at very small pixel sizes (verified on disk): Quality nodes 36×72, App nodes 48×38, Sandbox 40×35, Sandbox1 20×20, Sandbox2 29×27, connectors as small as 23×5 / 36×5. `_scaled_pixmap()` (lines 171–192) loads the source with `QPixmap(str(path))`, then unconditionally *magnifies* it to `source.size() * ASSET_SCALE (=2.0) * dpr` via `QPixmap.scaled(..., SmoothTransformation)` (lines 182–190). Even at `dpr=1.0` that is a 2× upscale of a ~36px raster; on a HiDPI screen (`dpr=2.0`) it is a 4× upscale. Smooth-scaling a small raster past its native size cannot add detail — the result is inherently soft/blurry. This is the "very low resolution" symptom and it is a **source-asset problem**, not just a code bug: `ASSET_SCALE = 2.0` (line 104) exists precisely because "the bundled art is small (20–72 px tall)". A crisp render needs the art supplied at (or rendered to) the actual displayed pixel size. The repo already carries the vector master `pgtp_editor/resources/status/000source.svg` (a full-page 210×297mm Inkscape drawing the individual PNGs were sliced from), so higher-fidelity output is achievable without new art from the owner.
+
+2. **Clipping ("cut") — the centering box can be smaller than the boxed pixmap, and `_boxed_pixmap` hard-clamps the paint offset to `max(0, …)`.** `_boxed_pixmap()` (lines 203–225) paints the scaled icon into a transparent pad of size `box` at offset `(max(0,(box.w - size.w)//2), max(0,(box.h - size.h)//2))`. When the scaled icon is *larger* than `box` in either axis, the offset is clamped to 0 and the overflow past `box.width()/height()` is silently cut off (the `QPainter` clips to the pad pixmap). `box` is built in `_make_node()` (line 762) as `QSize(NODE_WIDTH - 8, box_h)` = `QSize(108, box_h)`. Two ways the icon exceeds that box:
+   - **Height axis:** `box_h` is the *logical* height of the tallest icon in the row (`chain_box_h`/`branch_box_h`, lines 668–674, from `_logical_size`). But `_logical_size` (195–200) divides device pixels by DPR, while `_scaled_pixmap`'s target uses `round(source.h * ASSET_SCALE * dpr)` — the two roundings do not always invert cleanly, so a pixmap's logical height can come out 1px taller than `box_h`, shaving the icon's bottom/top edge.
+   - **DPR mismatch between build and paint:** `_scaled_pixmap` builds every pixmap at `dpr = self.devicePixelRatioF()` captured in `_rebuild` (line 656), but `_boxed_pixmap` re-reads `dpr = pixmap.devicePixelRatio()` in `_make_node` (line 761). If the panel is moved to a screen with a different DPR after `_rebuild` (or the two disagree at construction before the widget is shown), the pad is sized for one ratio and the icon for another, so the icon overflows the pad and is clipped. The narrow connectors (e.g. `connector_quality-app` 36×5) are also `setFixedSize(_logical_size(pixmap))` in `_make_connector` (770–771) with no headroom, so any rounding drift crops them too.
+
+**Proposed fix:** All in `pgtp_editor/ui/project_status_panel.py` — do not touch the model.
+- *Fix the clipping first (pure code, no new assets):* In `_boxed_pixmap` (203–225), grow the pad to fit when the icon exceeds `box` — use `box = box.expandedTo(_logical_size(pixmap))` (or paint into a pad sized `max(box, icon)`) so the centering offset never has to clamp, and clip nothing. Make the DPR single-sourced: pass the same `dpr` used by `_scaled_pixmap` down through `_make_node`→`_boxed_pixmap` instead of re-reading `pixmap.devicePixelRatio()` at line 761, so pad and icon always share one ratio. Give `_make_connector` (768–773) the same expandedTo treatment (don't pin the label to an exact rounded logical size). Re-render on DPR change by overriding a `screen change`/`devicePixelRatio` hook (or calling `_rebuild()` when the top-level window's `QWindow.devicePixelRatioChanged` fires) so a screen move rebuilds pixmaps at the new ratio.
+- *Fix the resolution:* preferred — render the node/connector art from the vector master `000source.svg` at the exact target device size instead of upscaling the small PNGs. That means loading via `QSvgRenderer` (Qt SVG, already an available Qt module) and painting each slice into a `QImage`/`QPixmap` at `logical_size * dpr`, then `setDevicePixelRatio(dpr)` — crisp at any scale, no `ASSET_SCALE` upscale. Because the individual node/connector slices are not currently separate SVG files, this needs either (a) the owner to export per-node SVGs (name them on the existing `[stem]`/`[stem]_drk` convention `asset_filename`/`asset_path` already resolve, in `project_status_model.py`), or (b) a slicing step. If per-slice SVGs are out of scope for this fix, the minimal alternative is to **re-export the PNGs at the displayed pixel size** (roughly `native × ASSET_SCALE × maxDPR`, e.g. 3–4×) and drop `ASSET_SCALE` to 1.0 so `_scaled_pixmap` only ever *downscales* (which stays crisp), never upscales. **Gotcha:** keep `asset_filename`/`asset_path` and the `_drk` light/dark convention (`project_status_model.py`, lines 302–318) unchanged — both theme variants must be re-supplied together, and `all_asset_stems()`'s on-disk existence test (321+) must still pass. Do not change the model, the state→stem tables, or the alignment math in `_rebuild` beyond the DPR/box-sizing corrections above.
+- **Note for the resolver:** if you can only fix the code (no new/re-exported assets land in this pass), the *clipping* half is fully fixable in code now; the *resolution* half is asset-bound — say so in the commit and leave a follow-up, rather than claiming "PNGs low-res" is resolved by code alone.
+
+**Test impact:** `tests/ui/test_project_status_panel.py` is the existing coverage. `test_chain_icon_boxes_share_one_height` (~line 109) already asserts icon-box height equality — extend it, don't duplicate. New cases: (1) for every node family in a full diagram, assert the icon-label pixmap's *logical* size is not clipped relative to its source — i.e. `_boxed_pixmap` output contains the whole scaled icon (assert pad logical size >= scaled-icon logical size in both axes, so the `max(0,…)` clamp never truncates); (2) a DPR-mismatch case — build the panel/pixmaps at one `devicePixelRatioF` and assert no icon overflows its box (monkeypatch/screen-stub the ratio); (3) a connector case asserting `_make_connector`'s label is at least the pixmap's logical size. If the resolution fix switches to SVG rendering, add a case asserting a node pixmap's device width equals `logical × dpr` (crisp, not the old `native × 2` upscale). `pgtp_editor/ui/project_status_model.py`'s on-disk asset test already guards both variants existing — extend it if assets are re-exported/renamed, don't add a parallel one.
+
+**Spec impact:** CONSOLIDATED_SPEC §18.8 ("Image asset convention", ~lines 4777–4796) explicitly defers the asset pipeline as "an **implementation task**, not a further design decision — this subsection specifies the states each family must be able to render, not the asset pipeline," and records that the owner "already saved these assets in a local images folder." So the buggy render is **not** an intentional spec decision — no divergence to flag. However, if the fix formalizes a resolution/DPI or SVG-source rule (e.g. "assets are rendered from the vector master at device size," or "PNGs must be supplied at Nx"), that new pipeline rule should be folded into §18.8's asset-convention paragraph — flag for spec-maintainer AFTER the fix lands. Do not edit the spec here.
+
+---
+## BUG-030: Quality node shows GREEN (connection_ok) while the target DB is actually offline — it never probes, it only checks "configured"
+**Status:** RESOLVED (ec03946) — real off-GUI-thread `db_test_connection` probe stored in `_ddl_target_probe_error`, folded into `refresh_project_capability_status()` as one re-probe entry point; new `_project_status_target()` keeps the diagram, the summary line and the probe on one `ConnectionParams`. TWO CORRECTIONS to this entry: (1) its `connect_timeout` gotcha is stale — `introspect.py::run_queries` already declares `connect_timeout: int = 10`, so the green→red correction is bounded at ~10s, not the OS TCP timeout; (2) a REMAINING HOLE, not fixed here: `ProjectSettings.target` defaults to `ConnectionParams()` and is never `None`, so `configured=target is not None` is constantly True for any open project — `NOT_SET_UP` is unreachable and a new project with an unfilled target renders green "Connected". Fix is `configured=target is not None and bool(target.host)`; left open deliberately rather than locked in by a test.
+**Reported:** 2026-08-06
+**Report (verbatim):** "quality server in green although the connection is offline (confirmed by ddl explorer error message)."
+
+**Root cause:** `pgtp_editor/ui/main_window.py`, `MainWindow._build_project_status_diagram()` (around line 3363):
+
+```python
+quality = quality_state(configured=target is not None, probe_error=None)
+```
+
+`probe_error` is **hardcoded to `None`**. `project_status_model.quality_state(configured, probe_error)` (`pgtp_editor/ui/project_status_model.py:218`) returns `QualityState.CONNECTION_OK` (green, caption "Connected") whenever `configured` is true and `probe_error is None`, `QualityState.OFFLINE` (red, "Unreachable") only when `probe_error is not None`, and `NOT_SET_UP` only when unconfigured. Because the caller never passes a real error, the Quality node reports green for *any* configured target connection — this is root-cause option (a): green means "a target profile exists" (`target is not None`), NOT "the target is reachable." No connection is ever attempted for this node. Unlike the Sandbox node, whose state is derived from a real off-thread probe (`refresh_project_capability_status()` → `_run_async(do_probe, …)`, `main_window.py:2865`/`2908`), the Quality node has no probe at all — `refresh_project_capability_status()` only probes the *sandbox* (`ProjectCapabilityStatus` "models the sandbox side only" per the method's own docstring at 3352), so re-checking never touches the target.
+
+The DDL Explorer / Database-XML Coherence path the user saw the error from *does* open a real connection to the same target profile and surfaces the failure: `test_connection(params, runner=run_queries)` at `pgtp_editor/db/introspect.py:696` runs `SELECT 1` and returns `(False, <error text>)` on any driver/connection failure (never raises); the coherence run (`main_window.py:3161`+, its `on_error` at 3198) opens the connection off-thread via the same `params` and reports the error. So the status window and the DDL Explorer read the same target profile but the status window never tests it — hence the false-positive green.
+
+**Proposed fix:** Make the Quality node's state come from a real connectivity probe of the target profile, using the existing `db_test_connection` (already imported at `main_window.py:118` as `test_connection as db_test_connection`) — the same `SELECT 1` check the Explorer path relies on — instead of `probe_error=None`.
+
+Concrete shape:
+- Add a stored field for the last target probe result, e.g. `self._ddl_target_probe_error: str | None` (mirroring how `self._ddl_project_capability_status` caches the sandbox probe). Initialize it to a sentinel meaning "not probed yet" and treat unprobed as OFFLINE-unknown is NOT desired — see gotcha below.
+- Add a target probe that runs **off the GUI thread**, mirroring `refresh_project_capability_status()`'s `_run_async(do_probe, on_result=…, on_error=…)` pattern (`main_window.py:2889`–2908). `do_probe` calls `db_test_connection(target)` → `(ok, message)`; `on_result` stores `None` when `ok` else `message`, then re-renders the open Project Status window via `set_diagram(self._build_project_status_diagram())` if `self._project_status_window is not None`. Do NOT block the GUI synchronously in `_build_project_status_diagram()` — a dead host would freeze the window (the whole reason the sandbox probe is already async; see the "Runs off the GUI thread so an unreachable sandbox host can't freeze the window" note at 2878).
+- Wire it into the same trigger points the sandbox probe uses so "opening the window is a fresh probe" (§18.8) holds for Quality too: the panel's `on_refresh` seam (`_open_project_status`'s `on_refresh` at 3399, and the reuse path's explicit `refresh_project_capability_status()` at 3393) and the Re-check button already funnel through `refresh_project_capability_status` — either extend that method to also probe the target, or add a sibling `refresh_target_connection_status()` and call it from the same three spots (3393, 3400, and `_set_active_ddl_project`'s probe call at 2854). Prefer extending the existing method so there is one "re-probe everything the window shows" entry point.
+- In `_build_project_status_diagram()`, pass the stored result: `quality = quality_state(configured=target is not None, probe_error=self._ddl_target_probe_error)`.
+
+Gotchas:
+- **Configured-but-not-yet-probed vs. offline.** Do not render red before the async probe has returned, or a healthy connection flashes red on every open. Two acceptable shapes: (1) render the last-known state and let the async result push a corrected diagram via `set_diagram` (matches how the sandbox side already works — first paint uses the cached `_ddl_project_capability_status`, the probe refreshes it), or (2) if no probe has run yet, keep the current green until the first result lands. Pick (1) for consistency with the sandbox node; initialize `_ddl_target_probe_error` from the *previous* probe, and have the diagram builder read whatever is currently stored.
+- **Same `target` selection as today.** Keep the BUG-024 target selection exactly: `settings.target if settings is not None else load_connection(self._settings)` (project's own profile when a project is open, app-level saved connection otherwise). The probe must test the *same* `ConnectionParams` object the summary line and the Explorer use, or you reintroduce root-cause option (d).
+- **`test_connection` never raises** — it returns `(False, msg)`. So `on_error` in the `_run_async` wrapper is only for a broken injected seam (as the sandbox probe's `on_error` comment at 2900 notes); the real failure arrives as `ok=False` in `on_result`. Store `message` (not the exception) as `probe_error` so the Quality window's status line and any future detail match what the Explorer shows.
+- **Timeout.** `db_test_connection` → `run_queries` → `psycopg.connect` (`introspect.py:425`). A dead host can hang on TCP connect for the OS default; because the probe is off-thread the GUI won't freeze, but the window's green→red correction can lag. If `ConnectionParams`/`run_queries` does not already set a `connect_timeout`, note that a short one keeps the correction snappy — verify whether one is already applied before adding it (out of scope to add here if the async wrapper already bounds it acceptably).
+
+**Test impact:** `tests/ui/test_project_capability_wiring.py` is the wiring-level home (it already exercises `quality_state`/`probe_error` for the sandbox-degradation cases at lines 97/104/207 and builds diagrams through the MainWindow seams) — extend it, don't duplicate. New cases: (1) target profile configured + `db_test_connection` monkeypatched to return `(False, "could not connect to server")` → `_build_project_status_diagram()`'s Quality node is `QualityState.OFFLINE`/`quality_offline` (red), not `CONNECTION_OK`; (2) configured + `(True, "Connected.")` → `CONNECTION_OK`; (3) no target configured → still `NOT_SET_UP` (unchanged); (4) the async path: after the probe result lands, an already-open `_project_status_window` gets a re-rendered diagram with the corrected Quality state (patch `_run_async` to run synchronously the way the existing sandbox-probe wiring tests do). Also assert `db_test_connection` is called with the *same* `target` params the summary uses. `tests/ui/test_project_status_model.py` and `tests/ui/test_project_status_panel.py` already cover the pure `quality_state`/panel-render layer and need no change (the model function is already correct; only the caller was wrong) — do not touch them beyond a possible added `quality_state(configured=True, probe_error="…")` assertion if not already present.
+
+**Spec impact:** Diverges from CONSOLIDATED_SPEC §18.8. The spec's per-node source table (line 4766) states the Quality node's source is the target profile's **"reachability, not yet further broken into states beyond connected/not,"** and the state enumeration (line 4805) defines `connection_ok` as "green — connected, healthy" and `error` as "red — connection attempted but failed/unreachable." The current code never attempts a connection, so it violates the specified reachability semantics — this is an implementation bug against settled design, **not** an intentional decision, so no design change is needed. Optional: after the fix lands, flag spec-maintainer to note (in §18.8 or §18.5's probe-timing paragraph ~line 1753, which currently describes only the sandbox capability probe being re-run on window open) that the target-connection reachability probe now runs on the same on-open/Re-check triggers as the sandbox probe. Low priority — the existing spec text already implies reachability is required; this would only make the "when is the target probed" timing explicit alongside the sandbox one.
+
+---
+
+## BUG-032: Database/XML coherence lookup-table handling — (A) double-click on a "Tables and Views" relation row always says "not found in the buffer" (wrong search token), and (B) KeyError: 'lookup' crash selecting a lookup reference
+
+**Status:** RESOLVED — facet B (ec03946), facet A (596f109). Facet A's real cause was a `kind` string mismatch, NOT the rejected reset/working-set hypothesis: `_on_db_jump_requested` tested `kind == "table"` (written for the removed `DbCheckPanel`) while `CoherencePanel` emits `kind="relation"`, so relation rows searched for `fieldName=` instead of `tableName=` and always missed. Fixed at both ends via a single `_HOST_KIND` mapping plus slot hardening; a genuine miss now names the token actually searched. Also restored Properties for `kind="reference"` rows (an unreported sibling crash facet B exposed) by carrying `TableReference.kind` through `_reference_node` as `CoherenceNode.node_kind`. The two tests that pinned the bug are flipped and the real slot body is now driven unpatched end to end.
+**Re-triaged:** 2026-08-06 — **Facet A's root cause was replaced** (the original sandbox-reset diagnosis was tested against the reporter's account and rejected; see "Rejected hypothesis" under Facet A). Facet B unchanged and already implemented.
+**Reported:** 2026-08-06
+**Report (verbatim):** "Database/XML coherence database table lookup stops working after a while. at first it finds the database tables in the reference, then after a few tests it says not found in the buffer."
+
+Per the coordinator (relaying the user), a second symptom is **the same bug, filed under one id** — a `KeyError: 'lookup'` crash when a lookup-table reference is selected. Both are about lookup-table handling in the coherence surface; this entry covers both and relates them below. They are **two distinct code defects that share a theme** (the merged coherence view of FQ-003 wiring node kinds into slots that were written for the panels it replaced), not one shared root cause — fix both, in this one entry.
+
+---
+
+### Facet B (crash — fix this one first; it is small, certain, and independently reproducible)
+
+> **Facet B status: IMPLEMENTED / FIXED this session.** The analysis below is kept verbatim as the record
+> of why the fix was shaped this way; do not re-implement it. Only Facet A remains open, which is why the
+> entry's `Status` line is still `OPEN`.
+
+**Root cause:** `pgtp_editor/ui/properties_panel.py:244`, `PropertiesPanel.show_node()`:
+`rows_fn, header_fn = _ROW_BUILDERS[kind]`. `_ROW_BUILDERS` (lines 181–189) has keys
+`page`, `detail`, `column`, `event`, `ddl_table` — there is **no `"lookup"` key**. The coherence
+tree's Pages branch mints lookup rows with `kind="lookup"` and `node=<the owning ColumnNode>`
+(`pgtp_editor/db/coherence.py`, `lookup_nodes()` at lines 337–362, node built at ~351–360 with
+`node=column`). `CoherencePanel._on_current_changed` (`pgtp_editor/ui/coherence_panel.py:361`) emits
+`selection_changed.emit(node.node, node.kind)` → wired at `main_window.py:306` to
+`_on_table_ref_selection` (`main_window.py:1333–1334`) → `properties_panel.show_node(node, "lookup")`
+→ `_ROW_BUILDERS["lookup"]` → `KeyError: 'lookup'`. Selecting any lookup row in the coherence tree
+crashes. This regressed with FQ-003's merged coherence view / BUG-026's page/detail/**lookup** role
+modeling, which introduced the `"lookup"` kind on the reference side (`_XML_KINDS` in
+`coherence_panel.py:90` explicitly includes `"lookup"`) without adding the matching
+`_ROW_BUILDERS["lookup"]` mapping in the Properties panel.
+
+**Proposed fix (two parts, both in `pgtp_editor/ui/properties_panel.py`):**
+1. Add a `"lookup"` entry to `_ROW_BUILDERS` (after the `"column"` entry, ~line 184) that **reuses the
+   existing column builder** — a lookup node's `.node` is a `ColumnNode`, so `_rows_for_column` is
+   exactly right:
+   `"lookup": (_rows_for_column, lambda n: f"Column: {n.field_name}"),`
+   Keep the header identical to `"column"` (the underlying node is the column that carries the
+   `<Lookup>`); do not invent a new `_rows_for_lookup`.
+2. Make `show_node` **degrade gracefully on an unknown kind** so a future missing mapping can never
+   crash again. Replace `_ROW_BUILDERS[kind]` with a `.get(kind)` guarded lookup: on a miss, fall back
+   to the empty state (`self._show_empty_state(); return`) rather than raising — mirroring the existing
+   `node is None or kind is None → _show_empty_state()` guard two lines above. (An empty panel is the
+   safe, non-crashing degradation consistent with §17/§10; a hard `KeyError` reaching the Qt signal
+   slot is not.) Gotcha: `_populate_table(..., paired=(kind == "ddl_table"))` on line 246 must stay
+   reachable only when a builder was found — put the fallback `return` before it.
+
+**Test impact (Facet B):** `tests/ui/test_properties_panel.py` already covers `show_node` for the
+existing kinds — extend it, don't duplicate: (1) `show_node(column_node, "lookup")` renders the same
+rows as `show_node(column_node, "column")` and does **not** raise; (2) `show_node(anything, "bogus")`
+falls back to the empty state instead of raising. `tests/ui/test_coherence_wiring.py` (the
+`selection_changed → _on_table_ref_selection → properties_panel.show_node` wiring) is the integration
+home: add a case that builds a coherence tree containing a lookup row (a `<Column>` with a
+`<Lookup tableName="…">`), selects it, and asserts no exception and a populated Properties panel. Fixture
+material for a lookup-bearing project already exists under `tests/analysis/test_reused_tables.py` /
+`tests/db/test_coherence.py` — reuse a sample with a lookup column rather than hand-rolling XML.
+
+---
+
+### Facet A (the reported "not found in the buffer" failure) — RE-TRIAGED 2026-08-06, root cause replaced
+
+**Rejected hypothesis (do not re-chase it).** The first triage of this facet blamed the **stateful
+sandbox**: `SandboxSession.reset()` (`db/sandbox.py`) dropping every app schema and re-provisioning only
+from the baseline, wiping objects `apply()`'d afterwards while their `applied` bookkeeping rows survive,
+so a later tier-3 Check's `to_regprocedure`/`to_regclass` resolve returns NULL and `run_plpgsql_check`
+emits `REASON_OBJECT_ABSENT` / `REASON_RELATION_ABSENT`. **That mechanism requires a destructive gesture
+between the working Check runs and the failing ones, and the reporter has explicitly confirmed there was
+none** — no reset, no re-provision, no data clone; they only ran Check repeatedly. Independently
+verified in code: the only callers of `reset_session` / `provision` / `run_data_clone` are explicit user
+gestures in `pgtp_editor/ui/sandbox_controller.py`, and `db/sandbox.py` is the sole definition site, so
+nothing on the Check path can trigger the drop. The hypothesis is therefore **rejected on the evidence**,
+not merely deprioritised. Two further nails: the sandbox messages say "not found in the **sandbox**"
+(`db/ddl_check.py:126`, `:132`), never "buffer"; and the report names the **Database/XML Coherence**
+surface, which has no sandbox involvement at all. The whole sandbox/`ddl_text`-persistence fix direction
+that was pre-approved *conditional on that diagnosis* is consequently **not applicable to this bug** — if
+a durable-working-set feature is still wanted on its own merits, it belongs in `docs/FEATURE_QUEUE.md`,
+not here.
+
+**Root cause (actual): the wrong search token is built for the coherence view's relation rows.**
+`pgtp_editor/ui/main_window.py:3770-3779`, `MainWindow._on_db_jump_requested(kind, name)`:
+
+```python
+token = f'tableName="{name}"' if kind == "table" else f'fieldName="{name}"'
+editor = self.center_stage.xml_editor
+if token not in editor.toPlainText():
+    self.statusBar().showMessage(f"{name} not found in the buffer.", 5000)
+    return
+```
+
+`main_window.py:3778` is the **only** place in the codebase that produces the reported wording
+(`grep -rn "not found in the buffer" pgtp_editor/` returns just this line and `main_window.py:2471`, the
+unrelated "Could not insert `<tag>`: page not found in the buffer." from the tree's Add-Event-Handler
+write-back). So the failing lookup is the coherence view's **double-click → find this DB relation's name
+in the Raw XML** navigation, not anything sandbox-side.
+
+The kind vocabulary changed under this slot and the slot was never updated:
+
+* The slot's `kind == "table"` test was written for the old `DbCheckPanel`, whose relation rows stored
+  the 4-tuple `("table", table.name, ok, False)` (`pgtp_editor/ui/db_check_panel.py:156`) and emitted it
+  verbatim (`db_check_panel.py:194-199`). With `kind == "table"` the token is `tableName="…"` — correct.
+* FQ-003's merged view replaced that panel. `CoherencePanel` rows carry `CoherenceNode.kind`, and a
+  DB-side relation's kind is **`"relation"`**, not `"table"` (`pgtp_editor/db/coherence.py:286`, with
+  `table_name=check.name` at `:293`). `CoherencePanel._on_double_click`
+  (`pgtp_editor/ui/coherence_panel.py:363-371`) emits
+  `name_jump_requested.emit(node.kind, node.table_name or node.label)` → `("relation", "pr.v")`.
+* Commit `113fbfa` ("wire FQ-003's merged view") only **re-pointed the connection** —
+  `- self.db_check_panel.jump_requested.connect(self._on_db_jump_requested)` /
+  `+ self.coherence_panel.name_jump_requested.connect(self._on_db_jump_requested)`
+  (`main_window.py:303`) — and left `_on_db_jump_requested`'s body untouched (verified with
+  `git show 113fbfa -- pgtp_editor/ui/main_window.py`).
+
+Consequence: for every relation row in the **Tables and Views** branch, `kind == "relation"` falls into
+the `else`, so the app searches the XML for `fieldName="<table name>"`. Table names in these projects are
+schema-qualified (`pr.a`, `pr.v`) and are never field names, so the search **always** misses and the user
+always gets "`pr.v` not found in the buffer." Column rows still work (`kind == "column"` →
+`fieldName="…"`, correct), and Pages-branch page/detail/lookup rows and the per-relation **References**
+group rows never reach this slot at all — they take the other signal, `jump_requested(line)` →
+`_tree_jump_to_line` (`main_window.py:304`; `_XML_KINDS` at `coherence_panel.py:90` is
+`{page, detail, lookup, reference}`). Note that `CoherencePanel._make_item` also stores the raw
+`node.kind` into the carried-over `_ROW_ROLE` 4-tuple (`coherence_panel.py:248-262`), so the same
+`"relation"`-vs-`"table"` vocabulary mismatch is latent for any future consumer of that role.
+
+**On the "after a while / after a few tests" wording — the defect is deterministic, not degrading.**
+The most likely reading, which fits the report line by line: the reporter's early successful navigations
+were the rows that *do* work — "at first it finds the database tables **in the reference**" maps exactly
+onto the **References** group under a relation (`kind == "reference"`, jumps by line, works) and onto
+column rows; then double-clicking the relation row itself always yields "not found in the buffer."
+Alternatively "at first" refers to the pre-FQ-003 build, where `DbCheckPanel` emitted `"table"` and the
+same gesture worked — i.e. this is a regression the reporter experienced across versions rather than
+within one session. Either way there is **no time- or count-dependent mechanism in this code path**, and
+the previous entry's "nothing in the coherence path caches or evicts" audit still holds and is still
+worth keeping: `build_coherence_tree` is rebuilt from a fresh `fetch_schema` per run, `SchemaIndex` is
+read-only, `DatabaseSchema.tables` is never mutated, and `run_queries` (`db/introspect.py:408-441`) opens
+and closes one connection per call — no LRU/TTL/size cap anywhere. Nothing rewrites `xml_editor`'s text
+behind the user's back either (Caption Mode snapshots and re-writes it only on explicit Apply,
+`main_window.py:2490-2546`), so the buffer cannot silently lose the token.
+
+**If the reporter insists a relation-row double-click genuinely worked earlier in the same session on
+the same build,** then something above is incomplete and these facts are needed before implementing:
+(1) the exact row double-clicked (branch + level: a relation under "Tables and Views", vs a row under its
+"References" group, vs a Page/Detail/Lookup under "Pages"); (2) the literal status-bar text including the
+name it printed (an unqualified vs `schema.`-qualified name distinguishes token-shape problems from
+name-mismatch ones); (3) how many Check runs, and whether the app or DB was restarted in between;
+(4) whether the row carried an "unreferenced" badge. Ask before widening the fix beyond the token bug.
+
+<details>
+<summary>Superseded first-pass root cause (sandbox reset) — retained for the record only</summary>
+
+**Root cause (buffer lifecycle):** The "buffer" the report describes is the **stateful sandbox** — the
+app-owned sandbox database that accumulates applied DDL objects (§18.5 D2). The table LOOKUP that
+"works at first, then reports not found" is the tier-3 Check driver resolving the object/relation oid
+in that sandbox: `pgtp_editor/db/ddl_check.py::run_plpgsql_check` (lines 691–787) issues
+`build_resolve_sql` (lines 514–529) which does `to_regprocedure(...)` / `to_regclass(...)` against the
+sandbox; when the lookup returns NULL it emits **`REASON_OBJECT_ABSENT`** (`ddl_check.py:125–129`,
+"the object was not found in the sandbox …") or **`REASON_RELATION_ABSENT`** (`ddl_check.py:131–135`,
+"the table this trigger fires on was not found in the sandbox …"). Those are the literal
+"not found in the … buffer" messages the user is seeing (the sandbox working set is the buffer).
+
+The "works at first, fails after a few tests" mechanism is that the sandbox buffer gets **dropped and
+only partially repopulated** by a destructive operation between checks:
+`pgtp_editor/db/sandbox.py::SandboxSession.reset()` (lines 914–939) runs
+`DROP SCHEMA <each app schema> CASCADE` for every `self.schema_names` and then re-provisions **only**
+from `self.baseline` (`build_baseline_sql` against the recorded snapshot for a `SCHEMA_ONLY` sandbox,
+or a fresh `clone_data` for `WITH_DATA`). Anything the user `apply()`'d **after** provisioning (each
+edited function/trigger they applied via §18.5's `apply_and_check`,
+`ui/ddl_object_editor.py::apply_to_sandbox`, lines 851–887) is wiped and **not** re-applied — the
+bookkeeping row survives in `applied` but the object itself is gone from the catalog. So the next
+Check's `to_regprocedure`/`to_regclass` lookup finds nothing → `REASON_OBJECT_ABSENT` /
+`REASON_RELATION_ABSENT`. `reset()` is reachable from
+`ui/sandbox_controller.py::reset_session` (lines 595–619, a `DESTRUCTIVE_OPERATIONS` member) and the
+same "drop-and-recreate-from-baseline" happens on `provision` (lines 432–495) and
+`run_data_clone` (lines 497–547) — each drops the accumulated working set. The reference (the live
+target DB / the introspected schema) is **fine**; it is the sandbox *buffer layer* that loses the
+objects, exactly as the report frames it ("finds them in the reference … not found in the buffer").
+
+Note what is NOT the cause, so the resolver does not chase it: the `Database/XML Coherence` view proper
+(`db/coherence.py::build_coherence_tree`, called from `main_window.py::_run_db_check`/`_populate_db_check`,
+lines 3150–3207 / 3124–3130) rebuilds a **fresh** tree from a **fresh** `fetch_schema` every run and
+holds no evicting cache — `SchemaIndex` (`db/schema_index.py`) is read-only, `DatabaseSchema.tables`
+is never `.pop()`'d, and `run_queries` (`db/introspect.py:408–441`) opens and closes one connection per
+call. There is no LRU/TTL/size-cap eviction anywhere in this path. The degradation is specifically the
+sandbox working set being reset-without-reapply, not a coherence-view cache.
+
+**Proposed fix (SUPERSEDED — do not implement) — pick per the resolver's read of §18.5 D2's intended
+semantics; option 1 is recommended:**
+1. **Re-apply the recorded working set after a reset/reprovision.** In
+   `SandboxSession.reset()` (`db/sandbox.py:914–939`), after the drop + baseline/clone re-provision,
+   re-`apply()` every object still recorded in the `applied` bookkeeping table so the buffer that was
+   "just refreshed" still contains what the user put there. Gotcha: `apply()` stores only a
+   `text_sha1` fingerprint, **not** the DDL text (lines 880–891), so `reset()` cannot replay the text
+   from bookkeeping alone. Two sub-options: (a) widen the `applied` table / `apply()` to persist the
+   `ddl_text` so `reset()` can replay it; or (b) have the **controller** (`SandboxController.reset_session`,
+   `sandbox_controller.py:595–619`) capture the working set the host still has open in DDL tabs and
+   re-apply after the reset completes. Prefer (a) — it keeps `reset()` self-contained and correct for
+   any caller — but it is a schema/contract change to the bookkeeping table, so it needs a
+   `spec-maintainer` §18.5 D2 note (see Spec impact).
+2. **If reset-drops-the-working-set is the intended, documented behavior** (D2a's "refreshing means
+   destroying and recreating the sandbox" — `sandbox_controller.py:110–133` warnings literally say
+   "Anything already applied to the sandbox is lost"), then the bug is a **UX/messaging** one: the
+   Check's `REASON_OBJECT_ABSENT` after a reset reads to the user as a malfunction ("stops working"),
+   when the object genuinely needs re-applying. Fix by making the DDL editor's Check surface an
+   actionable line when a prior-applied object comes back absent — reuse the existing "changed since
+   last applied" divergence signal (`ui/ddl_object_editor.py`, `applied_sha1` at line 552, the
+   diverged-buffer `[Check]` caveat referenced at lines 548–551): if `applied_sha1` is set but the
+   sandbox lookup now returns absent, emit a `[Check]` line telling the user to Apply to Sandbox again
+   rather than presenting a bare "not found in the sandbox." This is the smaller change and does not
+   touch the bookkeeping contract.
+
+   **Decision guidance for the resolver:** read §18.5 D2/D2a in `CONSOLIDATED_SPEC.md` first. If the
+   working set is meant to be *durable* across a mere Check cycle (the user's mental model — "it found
+   it before"), option 1 is the real fix. If reset is only triggered by an explicit destructive
+   gesture the user consciously took, option 2 (honest, actionable messaging) may be sufficient. Do
+   **not** implement both blindly; the buffer-lifecycle question is a design call for the spec, not an
+   invented behavior.
+
+</details>
+
+**Proposed fix (Facet A) — one small, certain change plus two cheap hardenings. No design decision is
+required; this is a plain regression against the behavior `DbCheckPanel` already had.**
+
+1. **Normalize the relation kind where the signal is emitted** — `pgtp_editor/ui/coherence_panel.py`,
+   `CoherencePanel._on_double_click` (lines 363-371). Emit the MainWindow-facing kind vocabulary, not the
+   internal node kind:
+   `self.name_jump_requested.emit("table" if node.kind == "relation" else node.kind, node.table_name or node.label)`
+   — or cleaner, a module-level `_JUMP_KIND = {"relation": "table", "column": "column"}` and
+   `self.name_jump_requested.emit(_JUMP_KIND.get(node.kind, node.kind), …)`.
+   **This is the established pattern in this very file, not an invention:** `contextual_rename`
+   (`coherence_panel.py:391-399`) already maps a relation row to the host-facing `"table"` kind
+   (`self.rename_requested.emit("table", node.table_name)`) precisely because `MainWindow._on_db_rename_requested`
+   (`main_window.py:3748`) also tests `kind == "table"`. The jump signal simply never got the same
+   normalization. Doing it here keeps `CoherenceNode.kind` (`"relation"`) untouched for the tree's own
+   rendering/filtering logic, and matches CONSOLIDATED_SPEC §17's binding "carried over from
+   `DbCheckPanel` unchanged … `jump_requested(kind, name)`" (spec line ~1548).
+2. **Harden the slot so a future kind rename cannot silently reintroduce a wrong-token search** —
+   `main_window.py:3775`. Replace the single-value test with an explicit set and an explicit fallback,
+   e.g. `token = f'tableName="{name}"' if kind in ("table", "relation") else f'fieldName="{name}"'`.
+   Belt-and-braces with (1) on purpose: (1) fixes the contract, (2) makes the slot correct even if some
+   other caller passes the internal kind. Do **not** implement (2) alone and skip (1) — the `_ROW_ROLE`
+   4-tuple (`coherence_panel.py:248-262`) still ships `"relation"` where §17 says the carried-over shape
+   holds `"table"`, and leaving that inconsistent is what caused this bug. If (1)'s normalization is
+   applied, feed the same normalized kind into `_ROW_ROLE` too so both host-facing surfaces agree.
+3. **Make the failure message honest and actionable when the token legitimately misses.** With (1) in
+   place, a relation with the `"unreferenced"` badge (`BADGE_UNREFERENCED`, `db/coherence.py:84`; the DB
+   relation the XML references in no role — settled §17 behavior, spec line ~1531) will *correctly* find
+   no `tableName="…"` occurrence. "`pr.v` not found in the buffer." reads as a malfunction for that case.
+   In `_on_db_jump_requested`, when the token misses, print the token that was searched and, if the row
+   is a relation, say the relation is not referenced in the XML — e.g.
+   `f'No {token} in the buffer — the XML does not reference {name}.'` Keep it a status-bar message
+   (`self.statusBar().showMessage(..., 5000)`); do **not** escalate to a dialog. This is the only part of
+   the fix that touches wording; keep it minimal so the existing status-message tests stay meaningful.
+
+**Gotchas.** (i) `_on_db_jump_requested` does more than jump: it reveals the Raw XML tab, seeds the Find
+bar with the token and runs Find All into the Audit panel (`main_window.py:3780-3795`). Fixing the token
+turns all of that on for relation rows for the first time — expect the Audit dock to become visible on a
+relation double-click, which is the intended pre-FQ-003 behavior. (ii) With Caption Mode active the Raw
+XML tab is present but read-only; the jump still works and needs no gating (no change here). (iii) Line
+numbers cited are as of this re-triage on branch `bugfix-021-026-027-028`; re-grep
+`not found in the buffer` and `name_jump_requested` if they have drifted.
+
+**Relationship between the two facets:** they are **grouped by theme, not by a single root cause**.
+after the re-triage they turn out to be **the same class of defect, twice**: FQ-003's merged coherence
+view feeds `CoherenceNode.kind` values into MainWindow/panel slots that were written for the surfaces it
+replaced. Facet B: the new `"lookup"` kind reached `PropertiesPanel._ROW_BUILDERS`, which has no such key
+→ `KeyError`. Facet A: the new `"relation"` kind reached `MainWindow._on_db_jump_requested`, which only
+recognises the old `"table"` → wrong search token. Neither fix subsumes the other (different files,
+different tests), but a resolver should take the shared lesson: **audit every remaining consumer of a
+`CoherenceNode.kind` for the old `DbCheckPanel`/`TableReferencesPanel` vocabulary.** Known consumers to
+check while here: `main_window.py:300-306`'s five connections (`rename_requested` → `_on_db_rename_requested`
+tests `kind == "table"` and *is* fed a normalized `"table"`, OK; `create_requested` → `_on_db_create_requested`
+takes a `what`, not a node kind, OK; `selection_changed` → `_on_table_ref_selection` → Facet B) plus the
+`_ROW_ROLE` 4-tuple.
+
+**Test impact (Facet A):** the sandbox tests named in the superseded analysis are **not** relevant — do
+not add anything to `tests/db/test_sandbox.py` or `tests/db/test_ddl_check.py` for this bug.
+* `tests/ui/test_db_check_wiring.py` is the existing home of the slot's tests (lines ~446-640) — extend,
+  don't duplicate. **Note that these tests are exactly why the bug escaped:** every one of them calls
+  `window._on_db_jump_requested("table", "pr.a")` / `("column", "id")`, i.e. the *legacy* kinds the
+  coherence panel no longer emits. Add cases driving the kind the panel actually sends: (1)
+  `_on_db_jump_requested("relation", "pr.a")` finds `tableName="pr.a"`, reveals the Raw XML tab, seeds the
+  Find bar with `tableName="pr.a"` and populates Find All — i.e. identical outcome to the `"table"` case;
+  (2) a relation the XML does not reference produces the new, honest status message (assert on the token
+  appearing in the text, not on the exact sentence).
+* `tests/ui/test_coherence_panel.py:314-319`
+  (`test_double_click_on_a_relation_emits_the_name_signal`) currently pins `blocker.args ==
+  ["relation", "pr.v"]` — this assertion **pins the bug in place** and must be updated to
+  `["table", "pr.v"]` when fix (1) lands. Same for `tests/ui/test_coherence_wiring.py:190-208`
+  (`test_double_click_on_a_relation_row_goes_through_the_name_jump`), which asserts `kind == "relation"`
+  on the patched slot. Both should additionally assert the *effect* (the token searched / the Find bar
+  seeded), not just the string that crosses the signal — asserting only the kind string is what let a
+  wrong kind pass as "wired correctly".
+* If `_ROW_ROLE` is normalized too, re-check any test reading that role (grep `_ROW_ROLE` /
+  `Qt.ItemDataRole.UserRole` in `tests/ui/test_coherence_panel.py`).
+No live PostgreSQL is needed anywhere for Facet A; the existing `_window(qtbot, tmp_path)` fixture and the
+monkeypatched schema fetch in the coherence wiring tests are sufficient.
+
+**Spec impact:** Facet B is a plain implementation bug against §17/§10 — the coherence view's `"lookup"`
+kind is settled design (§17, FQ-003; the Pages-branch lookup rows and the `_XML_KINDS` set including
+`"lookup"`), and the Properties panel simply failed to render it; **no design change, no spec edit.**
+Facet A is likewise an implementation bug against settled §17 design, **not** an intentional decision:
+§17's "Reuse mandate" paragraph (CONSOLIDATED_SPEC line ~1544-1550) states as binding that, carried over
+from `DbCheckPanel` unchanged, are "the uniform 4-tuple UserRole payload `(kind, name, ok, is_calculated)`
+on relation and column items" and "the signals … `jump_requested(kind, name)` / `jump_requested(line)`
+(double-click → reveal Raw XML + `navigate_to_line`)". Emitting `"relation"` where the carried-over
+contract says `"table"` is the divergence, so fixing it *restores* spec-conformance. **No `spec-maintainer`
+dispatch is required for the fix itself.** Optional, low priority, after it lands: a one-line §17 note
+making the host-facing kind vocabulary explicit ("`CoherenceNode.kind` is internal; the `rename_requested`
+/ `name_jump_requested` / `_ROW_ROLE` surfaces use the carried-over `table`/`column` vocabulary") so the
+next kind added to the tree cannot repeat this. **§18.5 D2/D2a is no longer implicated at all** — the
+rejected sandbox hypothesis was the only reason it was cited. Do not edit `CONSOLIDATED_SPEC.md` here.
+
+---
+
+## BUG-033: Editing a function's DDL shows no "*" changed marker in the DDL Objects tree
+**Status:** OPEN
+**Reported:** 2026-08-06
+**Report (verbatim):** "I modified a ddl of a function, but in the DDL Objects window I can't see the * that it was changed"
+
+**Root cause:** The "DDL Objects" window is the left-dock tree `pgtp_editor/ui/ddl_buffer_panel.py::BrowserPanel` (`ddl_browser_panel`, dock titled "DDL Objects" at `main_window.py:312`). Its object-row labels get a `*` (or `!`) suffix ONLY from the §18.2 project *drift* markers: `BrowserPanel._build_routines_branch` (ddl_buffer_panel.py:260-262) and `_add_trigger_leaf` (ddl_buffer_panel.py:294-298) append `drift.marker_text` when a `DriftMarkers` entry exists for the object's `ddl/*.sql` path. Those markers come from `db/ddl_project.py::compute_drift_markers`, which compares each **checked-out `ddl/*.sql` file on disk** against the last-deployed reference (`locally_edited` → `*`). They say nothing about an open editor tab's in-memory buffer.
+
+The editable tab is `pgtp_editor/ui/ddl_object_editor.py::DdlObjectEditorPanel`. Its dirty state is real and correctly tracked — `is_dirty()` reads `editor.document().isModified()`, and `dirty_changed` (Signal, emitted on clean↔dirty transitions via `document().modificationChanged`, ddl_object_editor.py:593) fires on edit. But in the host, `MainWindow._on_ddl_edit_requested` (main_window.py:3401-3403) wires `dirty_changed` ONLY to `center_stage.update_ddl_object_tab(ref)`, which repaints the **CenterStage tab title's** `" *"` (`CenterStage.update_ddl_object_tab` → `panel.tab_title()`, center_stage.py:266/338; marker built in `DdlObjectEditorPanel.tab_title`, ddl_object_editor.py:625-628). Nothing tells `BrowserPanel` that an object now has unsaved edits, so the tree row is never repainted.
+
+So the reported symptom has two layers, both real:
+- (a) An unsaved in-editor edit is per-tab dirty state that the tree has no channel to hear about — `dirty_changed` is not connected to any browser refresh. This is a missing capability, not a broken wire.
+- (b) Even after the user SAVES the edit, `MainWindow._save_ddl_object_editor` (main_window.py:3681-3700) writes the `ddl/*.sql` file and calls `center_stage.update_ddl_object_tab` but does NOT recompute drift markers or call `BrowserPanel.set_schema` again — so the file-level `*` (which `compute_drift_markers` would now produce) also does not appear in the tree until the DDL Explorer is manually refreshed. And the `*` marker exists at all only when a DDL project is open (`drift_markers` is `None`/empty projectless — ddl_buffer_panel.py:186), so in projectless mode there is no `*` channel whatsoever.
+
+**Proposed fix:** Two independent pieces; do both, and reuse the existing marker/refresh plumbing rather than inventing a parallel one.
+
+1. Live in-editor dirty marker on the tree (the direct reading of the report). Give `BrowserPanel` a way to overlay an "open tab is dirty" marker keyed by object identity, then feed it from the panel's existing `dirty_changed`:
+   - In `ddl_buffer_panel.py::BrowserPanel`, add a stored set/dict of dirty object keys (use `DdlObjectRef.key`-shaped tuples — the same `(kind, schema, name, table, arg_types)` identity `CenterStage` keys tabs on) and a public `set_object_dirty(ref, dirty: bool)` (or `set_dirty_objects(keys)`). When it changes, re-run the label build for the affected rows (simplest correct approach: re-call the existing `set_schema(self._schema, <spans>, drift_markers=…)` path, or refresh labels in place) so the row label gains/loses the marker. To match rows to keys, note the routine rows currently carry only a `_SPAN_ROLE` `DdlObjectSpan`; either store the `DdlObjectRef.key` on each object row via a new `UserRole` (e.g. `_OBJKEY_ROLE = Qt.ItemDataRole.UserRole + 3`) at build time in `_build_routines_branch`/`_add_trigger_leaf`, or resolve span→ref through the retained `self._schema` with `resolve_edit_target`. The former is simpler and avoids re-deriving overload disambiguation.
+   - Reuse the app's established dirty glyph: the tab title uses `" *"` (ddl_object_editor.py:628, per §11/§18.5). Use the SAME `*` so the tree and the tab agree, and make it combine cleanly with the §18.2 `*`/`!` drift `marker_text` already appended on the same label (do not emit two `*`s — if the drift marker already shows `*`, the in-editor dirty state is subsumed; only add a marker when the drift path did not already add one).
+   - In `main_window.py::_on_ddl_edit_requested` (the existing `dirty_changed` connection at 3401-3403), extend the same lambda (or add a second connection) to also call `self.ddl_browser_panel.set_object_dirty(ref, dirty)`. Clear it on save (`_save_ddl_object_editor`, after `panel.mark_clean()`) and on tab close/discard so a discarded edit drops the marker. There is one `dirty_changed` wiring site per open-tab path — note there are TWO panel-open sites: `_on_ddl_edit_requested` (main_window.py:3401) and the checkout path around main_window.py:3660 (`panel.dirty_changed.connect` at 3660); wire both, or better, factor the connection into one helper both call.
+
+2. Refresh the file-level drift marker after a save (layer b). In `main_window.py::_save_ddl_object_editor`, after `panel.mark_clean()` and the existing `update_ddl_object_tab` call, recompute drift and rebuild the tree the same way the DDL Explorer refresh already does — reuse the exact `schema = getattr(self.ddl_browser_panel, "_schema", None)` + `compute_drift_markers(self._ddl_project_folder, self._ddl_project_settings, schema)` + `self.ddl_browser_panel.set_schema(schema, spans, drift_markers=…)` pattern used at main_window.py:3303-3308 (guard on a project being open and a schema being loaded, exactly as `_remind_pending_ddl_deploys_on_close` at 3018-3021 does). This makes the `*` the user expects appear immediately after Save, not only after a manual Explorer refresh. Gotcha: `set_schema` needs the `spans` list; confirm where the refresh path (main_window.py ~3300) obtains its `spans` and reuse that same source, do not re-synthesize a second time.
+
+Gotchas: (i) `drift_markers` is `None`/empty projectless (ddl_buffer_panel.py:186) — piece 1 must still show the in-editor `*` projectless, since the report is about an edit not yet (or never to be) saved to a project file. (ii) Do not confuse the two `*` meanings: §18.2's `*` = "checked-out file differs from last-deployed" (`DriftMarkers.locally_edited`); the new one = "an open editor tab has unsaved changes for this object." Decide (and note in the row/tooltip if practical) that they collapse to one `*` glyph rather than stacking. (iii) Keep the dirty set keyed on `DdlObjectRef.key`, never a tree index — the tree is rebuilt wholesale on every `set_schema`, so any index-based tracking would go stale immediately.
+
+**Test impact:** `tests/ui/test_ddl_buffer_panel.py` already covers `BrowserPanel` label building and the drift `marker_text` rendering — extend it with a case that `set_object_dirty(ref, True)` adds `*` to the matching routine/trigger row and `False` removes it, and that it does not double-mark a row that already carries a drift `*`. `tests/ui/test_ddl_object_editor_wiring.py` / `tests/ui/test_ddl_explorer_wiring.py` cover the MainWindow↔panel↔browser signal wiring — add a case that editing an open `DdlObjectEditorPanel` (drive `document().setModified(True)` or type text) propagates through `dirty_changed` to `ddl_browser_panel` and marks the row, and that saving via `_save_ddl_object_editor` rebuilds the tree so the file-level drift `*` appears (monkeypatch `compute_drift_markers` and the save path — the file write and any `QFileDialog`/`QMessageBox` must be patched, per the testing policy). `tests/ui/test_ddl_object_editor.py` already covers `tab_title`/`is_dirty`; no change needed there.
+
+**Spec impact:** Diverges from / underspecified in `CONSOLIDATED_SPEC.md` §18.1 (BrowserPanel row markers) and §18.2 (`*`/`!` drift markers, `compute_drift_markers`, §18.2 lines ~2256, 2413-2418) and §18.5 (the editable tab's dirty state, ~3246-3268). The spec today defines the tree `*` strictly as the §18.2 **file-vs-last-deployed** drift marker and defines the editable tab's dirty `*` strictly as a **tab-title** marker; it does NOT say an unsaved in-editor edit should surface on the DDL Objects tree, nor that a save should refresh the tree. Whether to (a) show a live in-editor `*` on the tree at all and (b) how it relates to the §18.2 drift `*` is a design decision — flag for `spec-maintainer` after the fix lands so §18.1/§18.2/§18.5 state the combined marker semantics. Do not edit the spec here.
 
 ---

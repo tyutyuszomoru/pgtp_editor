@@ -36,8 +36,17 @@ from PySide6.QtCore import (
     QSortFilterProxyModel,
     Qt,
 )
-from PySide6.QtGui import QColor, QFont, QGuiApplication, QKeySequence, QShortcut
+from PySide6.QtGui import (
+    QColor,
+    QFont,
+    QGuiApplication,
+    QKeyEvent,
+    QKeySequence,
+    QShortcut,
+)
 from PySide6.QtWidgets import (
+    QCheckBox,
+    QComboBox,
     QHBoxLayout,
     QHeaderView,
     QLabel,
@@ -52,6 +61,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from pgtp_editor.ui.caption_find_replace_dialog import MODE_LABELS
 from pgtp_editor.ui.caption_scan import (
     CaptionEntry,
     apply_caption_edits,
@@ -381,6 +391,17 @@ class _CaptionFilterProxyModel(QSortFilterProxyModel):
     def find_pattern(self) -> str:
         return self._find_pattern
 
+    def find_mode(self) -> str:
+        """Search mode of the active find filter (one of
+        ``caption_scan.SEARCH_MODES``). Exposed so the panel's active-filter
+        banner can describe the filter without reading private attrs
+        (BUG-028)."""
+        return self._find_mode
+
+    def find_case(self) -> bool:
+        """Case-sensitivity flag of the active find filter (BUG-028)."""
+        return self._find_case
+
     def set_value_filter(self, column: int, allowed: set[str] | None) -> None:
         """Restrict `column` to rows whose DisplayRole text is in `allowed`.
         `None` removes the value filter for that column."""
@@ -625,6 +646,202 @@ class _HeaderFilterPopup(QWidget):
         self.close()
 
 
+class CaptionFindReplaceBar(QWidget):
+    """The Caption grid's own modeless Find/Replace bar — a sibling of
+    ``find_replace_bar.FindReplaceBar``, but for a *grid* rather than a text
+    document, and with a **live** Replace.
+
+    "Live" is the one thing that separates it from the Caption Find/Replace
+    modal (``caption_find_replace_dialog.CaptionFindReplaceDialog``): there is
+    no Replace All button. Every keystroke in the Find or Replace-with field,
+    and every change of Search Mode / Match case, immediately re-computes the
+    proposal for the in-scope rows and writes it into the grid's **New Value**
+    column via the injected ``on_live_replace(find, replacement, mode, case)``.
+    The XML is never touched — New Value is, as always, only a proposal that a
+    separate explicit Apply turns into text (§13).
+
+    Because the preview is recomputed rather than accumulated, it is fully
+    reversible while the bar is open: clearing the Find field puts every row's
+    previous New Value back. The panel owns that bookkeeping.
+
+    **Filter is deliberately NOT live.** It stays behind the Filter button, so
+    the set of rows the live Replace acts on only ever changes on an explicit
+    gesture — a live filter racing a live replace would make the proposal
+    scope unreadable.
+
+    Invalid regex is reported in the inline ``error_label`` (never a modal, and
+    never an exception out of a keystroke handler); the panel guarantees the
+    preview has already been rolled back when it raises."""
+
+    def __init__(
+        self,
+        on_live_replace: Callable[[str, str, str, bool], int],
+        on_filter: Callable[[str, str, bool], None],
+        on_close: Callable[[], None] | None = None,
+        parent=None,
+    ):
+        super().__init__(parent)
+        self._on_live_replace = on_live_replace
+        self._on_filter = on_filter
+        self._on_close = on_close or (lambda: None)
+        # Guards the live re-run while the bar itself is programmatically
+        # rewriting its own fields (set_find_text / reset), so a caller cannot
+        # trigger a half-configured preview.
+        self._suspended = False
+        # Whether the bar is currently driving a live preview. Tracked
+        # explicitly rather than read off ``isVisible()``, which is False for
+        # any widget whose window is not shown (every headless test, and a
+        # Caption tab sitting behind another tab).
+        self._active = False
+
+        self.find_field = QLineEdit()
+        self.find_field.setPlaceholderText("Find")
+        self.replace_field = QLineEdit()
+        self.replace_field.setPlaceholderText("Replace with (live)")
+
+        self.mode_combo = QComboBox()
+        for label, mode in MODE_LABELS:
+            self.mode_combo.addItem(label, mode)
+        self.match_case_checkbox = QCheckBox("Match case")
+        self.filter_button = QPushButton("Filter")
+        self.close_button = QPushButton("Close")
+
+        self.status_label = QLabel("")
+        self.error_label = QLabel("")
+        self.error_label.setStyleSheet("color: #d05050;")
+        self.error_label.setWordWrap(True)
+
+        find_row = QHBoxLayout()
+        find_row.addWidget(self.find_field)
+        find_row.addWidget(self.mode_combo)
+        find_row.addWidget(self.match_case_checkbox)
+        find_row.addWidget(self.filter_button)
+        find_row.addWidget(self.close_button)
+
+        replace_row = QHBoxLayout()
+        replace_row.addWidget(self.replace_field)
+        replace_row.addWidget(self.status_label)
+        replace_row.addWidget(self.error_label, 1)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(4, 2, 4, 2)
+        layout.addLayout(find_row)
+        layout.addLayout(replace_row)
+
+        self.find_field.textChanged.connect(self.run_live_replace)
+        self.replace_field.textChanged.connect(self.run_live_replace)
+        self.mode_combo.currentIndexChanged.connect(self.run_live_replace)
+        self.match_case_checkbox.toggled.connect(self.run_live_replace)
+        self.filter_button.clicked.connect(self.apply_filter)
+        self.close_button.clicked.connect(self.close_bar)
+
+        self.hide()
+
+    # -- field getters ------------------------------------------------------
+
+    def selected_mode(self) -> str:
+        return self.mode_combo.currentData()
+
+    def set_mode(self, mode: str) -> None:
+        index = self.mode_combo.findData(mode)
+        if index < 0:
+            raise ValueError(f"Unknown search mode: {mode!r}")
+        self.mode_combo.setCurrentIndex(index)
+
+    def match_case(self) -> bool:
+        return self.match_case_checkbox.isChecked()
+
+    def set_find_text(self, text: str) -> None:
+        """Set the Find field without re-running the live replace (the caller
+        typically follows up with its own explicit run)."""
+        self._suspended = True
+        try:
+            self.find_field.setText(text)
+        finally:
+            self._suspended = False
+
+    # -- show / hide --------------------------------------------------------
+
+    def show_bar(self, initial_find: str = "") -> None:
+        """Reveal the bar, optionally seeding Find-what, and focus the Find
+        field. Non-modal — nothing here ever calls ``.exec()``."""
+        if initial_find:
+            self.set_find_text(initial_find)
+        self._active = True
+        self.show()
+        self.find_field.setFocus()
+        self.find_field.selectAll()
+
+    def close_bar(self) -> None:
+        """Hide the bar and hand the live preview over to the panel as ordinary
+        proposals (``on_close``). The proposed New Values *stay* — they are the
+        same non-destructive proposals the modal's Replace All produces, and
+        discarding them on close would make the bar incapable of producing
+        anything. What is dropped is only the ability to roll them back by
+        editing the pattern."""
+        self._active = False
+        self.hide()
+        self._on_close()
+
+    def is_active(self) -> bool:
+        """True between ``show_bar`` and ``close_bar`` — i.e. while keystrokes
+        in this bar are driving a live preview."""
+        return self._active
+
+    def keyPressEvent(self, event: QKeyEvent) -> None:
+        if event.key() == Qt.Key.Key_Escape:
+            self.close_bar()
+            return
+        super().keyPressEvent(event)
+
+    # -- operations ---------------------------------------------------------
+
+    def _clear_error(self) -> None:
+        self.error_label.setText("")
+
+    def _show_error(self, message: str) -> None:
+        # Non-blocking: inline label only, never a modal.
+        self.error_label.setText(message)
+        self.status_label.setText("")
+
+    def run_live_replace(self, *_args) -> None:
+        """Recompute the live proposal from the current field state. Wired to
+        every field's change signal, so it runs on each keystroke; it is also
+        safe to call directly (the panel does, after the filter scope moves).
+
+        ``*_args`` swallows whatever the emitting signal passes (the new text,
+        the combo index, the checkbox state) — none of it is read, the fields
+        are."""
+        if self._suspended:
+            return
+        self._clear_error()
+        try:
+            count = self._on_live_replace(
+                self.find_field.text(),
+                self.replace_field.text(),
+                self.selected_mode(),
+                self.match_case(),
+            )
+        except ValueError as exc:
+            self._show_error(str(exc))
+            return
+        self.status_label.setText(
+            f"{count} row(s) proposed" if count else ""
+        )
+
+    def apply_filter(self) -> None:
+        """Push the Find-what to the grid's whole-row find filter (explicit, on
+        the button — see the class docstring on why filtering is not live).
+        Catches the invalid-regex ValueError and shows it inline."""
+        self._clear_error()
+        try:
+            self._on_filter(
+                self.find_field.text(), self.selected_mode(), self.match_case()
+            )
+        except ValueError as exc:
+            self._show_error(str(exc))
+
+
 class CaptionManagementPanel(QWidget):
     def __init__(
         self,
@@ -704,9 +921,29 @@ class CaptionManagementPanel(QWidget):
         banner_row.addWidget(self._filter_banner_clear_button)
         self._filter_banner.setVisible(False)
 
+        # The grid's own live Find/Replace bar (§13/§7's per-tab bar idiom).
+        # Named `find_replace_bar` to match the sibling surfaces MainWindow's
+        # _active_find_bar() already routes to (stage.find_replace_bar,
+        # stage.xsd_find_replace_bar, ddl_editor_panel.find_replace_bar).
+        self.find_replace_bar = CaptionFindReplaceBar(
+            on_live_replace=self.live_replace_preview,
+            on_filter=self.apply_find_filter,
+            on_close=self.commit_live_replace,
+            parent=self,
+        )
+        # Rows the live preview overwrote -> the New Value each had before it.
+        # Restored (and re-derived) on every recompute, so the preview is a
+        # replacement of itself rather than an accumulation. Emptied by
+        # commit_live_replace when the bar closes.
+        self._live_replace_baseline: dict[int, str] = {}
+        # Re-entrancy guard: writing New Values can move rows in and out of the
+        # find filter, which must never recursively re-run the preview.
+        self._live_replace_running = False
+
         layout = QVBoxLayout(self)
         layout.addWidget(self._filter_banner)
         layout.addWidget(self._table)
+        layout.addWidget(self.find_replace_bar)
         layout.addLayout(button_row)
 
         # Shortcuts scoped to the table.
@@ -832,6 +1069,13 @@ class CaptionManagementPanel(QWidget):
         """Apply a whole-row find filter via the proxy. Raises ValueError on an
         invalid regex (caller/dialog shows it inline)."""
         self._proxy.set_regex_filter(pattern, mode, case)
+        # Only reached when set_regex_filter returned normally (an invalid
+        # regex propagates out before this), so the banner never advertises a
+        # filter that was rejected. BUG-028. The live replace is re-scoped
+        # BEFORE the banner refresh so the banner's "showing N of M" counts the
+        # rows the user actually ends up looking at.
+        self._refresh_live_replace()
+        self._refresh_filter_banner()
 
     def current_filter_pattern(self) -> str:
         """The proxy's currently-active find pattern (for pre-loading the
@@ -870,6 +1114,80 @@ class CaptionManagementPanel(QWidget):
                 updates[source_row] = new_value
         self._model.set_new_values(updates)
         return len(updates)
+
+    # -- live replace bar (§13) ---------------------------------------------
+
+    def show_find_replace_bar(self) -> None:
+        """Reveal the grid's live Find/Replace bar, seeded from the currently
+        active find pattern (so Ctrl+F-then-Ctrl+R style reuse works). The bar
+        is a plain child widget — never a modal, never ``.exec()``."""
+        self.find_replace_bar.show_bar(self.current_filter_pattern())
+
+    def live_replace_preview(
+        self, find: str, replacement: str, mode: str, case: bool
+    ) -> int:
+        """Recompute the bar's live proposal and return the number of rows it
+        proposes a new value for.
+
+        Every run first **rolls back** the previous run (each touched row gets
+        the New Value it held before the preview claimed it), then applies the
+        fresh proposal on top — so the preview always reflects the pattern as
+        it stands now, and never accumulates the debris of half-typed ones. An
+        empty ``find`` therefore restores the grid exactly.
+
+        **Scope is the currently-visible (filtered) rows.** The proposal is
+        never written into a row the active filters hide: a live edit the user
+        cannot see contradicts §13's visible-state discipline, and it matches
+        the modal's default "In selection (filtered rows)" scope. The modal
+        keeps the Global option — going project-wide stays an explicit,
+        button-pressed gesture rather than something a keystroke can do.
+
+        Raises ``ValueError`` on an invalid regex (the bar shows it inline);
+        the rollback has already happened when it raises, so a broken pattern
+        leaves no stale preview behind. The pattern is validated up front so a
+        bad regex is reported even when the scope is empty."""
+        if self._live_replace_running:
+            return len(self._live_replace_baseline)
+        self._live_replace_running = True
+        try:
+            if self._live_replace_baseline:
+                self._model.set_new_values(dict(self._live_replace_baseline))
+                self._live_replace_baseline = {}
+            if not find:
+                return 0
+            # Compile-check before touching any row (mirrors set_regex_filter).
+            matches("", find, mode, case)
+            entries = self._model.entries()
+            updates: dict[int, str] = {}
+            for source_row in self._visible_source_rows():
+                proposed = apply_find_replace(
+                    entries[source_row].value, find, replacement, mode, case
+                )
+                if proposed is not None:
+                    updates[source_row] = proposed
+            self._live_replace_baseline = {
+                row: self._model.new_value_at(row) for row in updates
+            }
+            self._model.set_new_values(updates)
+            return len(updates)
+        finally:
+            self._live_replace_running = False
+
+    def commit_live_replace(self) -> None:
+        """Stop tracking the live preview: whatever it proposed becomes an
+        ordinary, hand-editable New Value. Called when the bar closes — it does
+        not write anything, it only forgets the rollback baseline."""
+        self._live_replace_baseline = {}
+
+    def _refresh_live_replace(self) -> None:
+        """Re-run the live preview against the *new* filter scope. Called after
+        every gesture that changes which rows are visible, so rows that just
+        left the visible set get their previous New Value back and rows that
+        just entered it pick the proposal up. A no-op when the bar is hidden
+        and nothing is currently previewed."""
+        if not self.find_replace_bar.is_active() and not self._live_replace_baseline:
+            return
+        self.find_replace_bar.run_live_replace()
 
     # -- bulk transform + unify (Phase 5) -----------------------------------
 
@@ -1015,7 +1333,7 @@ class CaptionManagementPanel(QWidget):
             column,
             self.cascaded_distinct_values(column),
             self._proxy.value_filter(column),
-            on_apply=self._proxy.set_value_filter,
+            on_apply=self._apply_header_value_filter,
             parent=self,
         )
         header = self._table.horizontalHeader()
@@ -1024,12 +1342,22 @@ class CaptionManagementPanel(QWidget):
         popup.show()
         return popup
 
+    def _apply_header_value_filter(self, column: int, allowed: set[str] | None) -> None:
+        """The header popup's OK target: set the column's value filter, then
+        re-scope the live replace preview to the rows that are now visible.
+        Deliberately does NOT touch the active-filter banner — header value
+        filters keep their own exclusive ▼ marker and stay out of it
+        (BUG-020)."""
+        self._proxy.set_value_filter(column, allowed)
+        self._refresh_live_replace()
+
     # -- preset filters (Phase C.2) -----------------------------------------
 
     def filter_to_table(self, table_name: str) -> None:
         """Show only rows whose owning page/detail table is `table_name`."""
         label = f"Table = {table_name}"
         self._proxy.set_row_predicate(lambda e: e.table_name == table_name, label)
+        self._refresh_live_replace()
         self._refresh_filter_banner()
 
     def filter_to_table_details(self, table_name: str) -> None:
@@ -1040,6 +1368,7 @@ class CaptionManagementPanel(QWidget):
         self._proxy.set_row_predicate(
             lambda e: e.table_name == table_name and e.in_detail, label
         )
+        self._refresh_live_replace()
         self._refresh_filter_banner()
 
     def filter_to_field(self, field_name: str, table_name: str | None = None) -> None:
@@ -1055,6 +1384,7 @@ class CaptionManagementPanel(QWidget):
                 lambda e: e.field_name == field_name and e.table_name == table_name,
                 label,
             )
+        self._refresh_live_replace()
         self._select_first_visible_row()
         self._refresh_filter_banner()
 
@@ -1094,18 +1424,50 @@ class CaptionManagementPanel(QWidget):
 
     # -- active-filter banner (BUG-020) --------------------------------------
 
+    def _find_filter_descriptor(self) -> str:
+        """Human-readable description of the active whole-row find filter, or
+        "" when no find pattern is set (BUG-028).
+
+        The find filter matches against every displayed column, so the scope is
+        always stated as "all columns" -- unlike header value filters, it has
+        no per-column header marker, making the banner its only surface.
+        Non-default mode/case are named explicitly; a plain case-insensitive
+        Normal search stays terse."""
+        pattern = self._proxy.find_pattern()
+        if not pattern:
+            return ""
+        qualifiers: list[str] = []
+        mode = self._proxy.find_mode()
+        if mode == "regular":
+            qualifiers.append("regex")
+        elif mode == "extended":
+            qualifiers.append("extended")
+        if self._proxy.find_case():
+            qualifiers.append("case-sensitive")
+        qualifiers.append("all columns")
+        return f'Find "{pattern}" ({", ".join(qualifiers)})'
+
     def _refresh_filter_banner(self) -> None:
         """Show/hide the active-filter banner and refresh its text to reflect
-        the current preset row-predicate label + visible/total row counts.
-        Called after every preset filter setter and after clear_all_filters
-        (the single path that can deactivate a predicate) so the banner is
-        never out of sync with `self._proxy.row_predicate()`. Computed AFTER
-        the proxy has already been invalidated by the caller so the "showing
-        N of M" count reflects the new predicate."""
-        label = self._proxy.row_predicate_label()
-        if not label:
+        the current preset row-predicate label AND the whole-row find filter,
+        plus visible/total row counts. Called after every preset filter setter,
+        after apply_find_filter (BUG-028), and after clear_all_filters (the
+        single path that can deactivate everything) so the banner is never out
+        of sync with the proxy. Computed AFTER the proxy has already been
+        invalidated by the caller so the "showing N of M" count reflects the
+        new filters.
+
+        Header value filters are deliberately NOT represented here -- they
+        carry their own per-column header marker (BUG-020)."""
+        descriptors = [
+            d
+            for d in (self._proxy.row_predicate_label(), self._find_filter_descriptor())
+            if d
+        ]
+        if not descriptors:
             self._filter_banner.setVisible(False)
             return
+        label = "  ·  ".join(descriptors)
         visible = self._proxy.rowCount()
         total = self._model.rowCount()
         self._filter_banner_label.setText(
@@ -1119,10 +1481,13 @@ class CaptionManagementPanel(QWidget):
         """Clear the find filter, every header value filter, and the preset row
         predicate; refresh the header indicators and hide the active-filter
         banner (this is the single path that hides it, BUG-020)."""
-        self._proxy.set_regex_filter("", self._proxy._find_mode, self._proxy._find_case)
+        self._proxy.set_regex_filter(
+            "", self._proxy.find_mode(), self._proxy.find_case()
+        )
         for column in list(self._proxy.filtered_columns()):
             self._proxy.set_value_filter(column, None)
         self._proxy.set_row_predicate(None)
+        self._refresh_live_replace()
         self._refresh_filter_banner()
 
     def _show_header_context_menu(self, pos) -> None:
@@ -1170,5 +1535,6 @@ class CaptionManagementPanel(QWidget):
             self.unify_current,
         )
         menu.addSeparator()
+        menu.addAction("Find / Replace bar", self.show_find_replace_bar)
         menu.addAction("Clear all filters", self.clear_all_filters)
         menu.exec(self._table.viewport().mapToGlobal(pos))

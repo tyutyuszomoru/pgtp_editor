@@ -1,5 +1,6 @@
 from pgtp_editor.ui.center_stage import CenterStage
 from pgtp_editor.ui.ddl_object_editor import DdlObjectEditorPanel, DdlObjectRef
+from pgtp_editor.ui.sql_console_panel import CONSOLE_TAB_KEY, SqlConsolePanel
 
 
 def test_tabs_in_order(qtbot):
@@ -367,3 +368,159 @@ def test_close_ddl_object_tab_with_override_key(qtbot):
 
     assert stage.count() == fixed_count
     assert stage.ddl_object_tab("ddl/pr.recalc.sql") is None
+
+
+# --- Sandbox SQL Console tab (spec §18.5 D4) --------------------------------
+def test_open_sandbox_sql_tab_appends_after_the_fixed_set(qtbot):
+    """Tail-only append (spec §7 dynamic-tab invariant): the console must land
+    after the fixed set and leave every fixed *_tab_index untouched."""
+    stage = CenterStage()
+    qtbot.addWidget(stage)
+    fixed_count = stage.count()
+    fixed = {
+        "diff": stage.diff_merge_tab_index,
+        "caption": stage.caption_management_tab_index,
+        "raw": stage.raw_xml_tab_index,
+        "xsd": stage.xsd_tab_index,
+        "ddl": stage.ddl_tab_index,
+        "manual": stage.manual_tab_index,
+    }
+
+    panel = stage.open_sandbox_sql_tab()
+
+    assert isinstance(panel, SqlConsolePanel)
+    assert stage.count() == fixed_count + 1
+    assert stage.indexOf(panel) == fixed_count  # appended, not inserted
+    assert stage.currentWidget() is panel
+    assert stage.tabText(stage.indexOf(panel)) == panel.tab_title()
+    assert stage.tabToolTip(stage.indexOf(panel))  # names the sandbox boundary
+    assert stage.diff_merge_tab_index == fixed["diff"]
+    assert stage.caption_management_tab_index == fixed["caption"]
+    assert stage.raw_xml_tab_index == fixed["raw"]
+    assert stage.xsd_tab_index == fixed["xsd"]
+    assert stage.ddl_tab_index == fixed["ddl"]
+    assert stage.manual_tab_index == fixed["manual"]
+
+
+def test_open_sandbox_sql_tab_is_single_instance(qtbot):
+    """§18.5 D4: re-invoking the command focuses the existing console rather
+    than opening a second one."""
+    stage = CenterStage()
+    qtbot.addWidget(stage)
+    first = stage.open_sandbox_sql_tab()
+    after_first_open = stage.count()
+    stage.setCurrentIndex(stage.raw_xml_tab_index)
+
+    second = stage.open_sandbox_sql_tab()
+
+    assert second is first
+    assert stage.count() == after_first_open  # no new tab
+    assert stage.currentWidget() is first
+
+
+def test_sandbox_sql_tab_shares_the_object_map_but_not_ddl_object_panels(qtbot):
+    """It is filed under ("sandbox-sql",) in the per-object key->widget map,
+    yet must never be handed to callers expecting `.ref`/`.is_dirty()`."""
+    stage = CenterStage()
+    qtbot.addWidget(stage)
+    assert stage.sandbox_sql_tab() is None
+
+    console = stage.open_sandbox_sql_tab()
+    obj = stage.open_ddl_object_tab(_REF, "text")
+
+    assert stage.sandbox_sql_tab() is console
+    assert stage.ddl_object_tab(CONSOLE_TAB_KEY) is console
+    assert CONSOLE_TAB_KEY == ("sandbox-sql",)
+    assert stage.ddl_object_panels() == [obj]
+    assert console not in stage.ddl_object_panels()
+    assert stage.active_ddl_object_panel() is obj
+    stage.setCurrentWidget(console)
+    assert stage.active_ddl_object_panel() is None
+
+
+def test_sandbox_sql_tab_close_button_closes_directly_without_signaling(qtbot):
+    """Crash regression: the console shares the object-tab map, so its ✕ must
+    be intercepted before the object loop. Emitting
+    ddl_object_close_requested(("sandbox-sql",)) would reach MainWindow's
+    handler and call `is_dirty()` on the console -- an AttributeError."""
+    stage = CenterStage()
+    qtbot.addWidget(stage)
+    fixed_count = stage.count()
+    console = stage.open_sandbox_sql_tab()
+    got = []
+    stage.ddl_object_close_requested.connect(got.append)
+
+    stage.tabCloseRequested.emit(stage.indexOf(console))
+
+    assert got == []  # no unsaved-changes round trip -- nothing to save
+    assert stage.sandbox_sql_tab() is None
+    assert stage.ddl_object_tab(CONSOLE_TAB_KEY) is None
+    assert stage.count() == fixed_count
+
+
+def test_close_sandbox_sql_tab_is_idempotent(qtbot):
+    stage = CenterStage()
+    qtbot.addWidget(stage)
+    fixed_count = stage.count()
+    stage.open_sandbox_sql_tab()
+
+    stage.close_sandbox_sql_tab()
+    stage.close_sandbox_sql_tab()  # no-op, must not raise
+
+    assert stage.count() == fixed_count
+    assert stage.sandbox_sql_tab() is None
+
+
+# --- §22's injection seam on the custom-PHP tab -----------------------------
+# The two `lint_service` / `lint_on_save` parameters exist so a host can
+# physically inject §22's service into a tab it opens; without them the four
+# remaining §22 wiring items have nowhere to attach. They must default exactly
+# as `PhpFileTab.__init__` defaults them, so every pre-§22 caller is unchanged.
+from pgtp_editor.ui.php_file_tab import PhpFileTab, php_tab_key
+
+
+class _StubLintService:
+    """Stands in for `lint/service.py::LintService`: the tab must store it and
+    hand it back untouched, so nothing here needs to run a linter."""
+
+
+def test_open_php_file_tab_injects_the_lint_seams_into_the_tab(qtbot, tmp_path):
+    stage = CenterStage()
+    qtbot.addWidget(stage)
+    path = tmp_path / "page.php"
+    path.write_text("<?php\n", encoding="utf-8")
+    service = _StubLintService()
+
+    tab = stage.open_php_file_tab(
+        path, "<?php\n", lint_service=service, lint_on_save=True
+    )
+
+    assert isinstance(tab, PhpFileTab)
+    assert tab.lint_service is service
+    assert tab.lint_on_save is True
+    assert stage.php_file_tab(php_tab_key(path)) is tab
+
+
+def test_open_php_file_tab_without_the_lint_seams_is_unchanged(qtbot, tmp_path):
+    """The pre-§22 call: neither parameter given, so the tab is linting-free
+    and costs nothing -- the defaults must match `PhpFileTab.__init__`."""
+    stage = CenterStage()
+    qtbot.addWidget(stage)
+    path = tmp_path / "page.php"
+    path.write_text("<?php\n", encoding="utf-8")
+
+    tab = stage.open_php_file_tab(path, "<?php\n")
+
+    assert tab.lint_service is None
+    assert tab.lint_on_save is False
+
+
+def test_open_php_file_tab_lint_seams_reach_an_untitled_buffer_too(qtbot):
+    stage = CenterStage()
+    qtbot.addWidget(stage)
+    service = _StubLintService()
+
+    tab = stage.open_php_file_tab(None, "<?php\n", lint_service=service)
+
+    assert tab.lint_service is service
+    assert tab.lint_on_save is False

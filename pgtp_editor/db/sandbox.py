@@ -57,7 +57,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Protocol
+from typing import Any, Protocol
 
 from .config import ConnectionParams
 from .introspect import (
@@ -762,17 +762,100 @@ class AppliedObject:
     text_sha1: str
 
 
+def text_sha1(ddl_text: str) -> str:
+    """The `applied.text_sha1` fingerprint of one object's DDL text.
+
+    One function, because two callers need the *same* number for the same
+    text: `SandboxSession.apply` writes it, and §18.5 D3's `recheck` compares
+    the caller's buffer against it to refuse to silently validate a stale
+    version. Two independent hashings of "the buffer" would drift the moment
+    one of them normalized whitespace.
+    """
+    return hashlib.sha1(ddl_text.encode("utf-8")).hexdigest()  # noqa: S324 -- content fingerprint, not security
+
+
+def applied_upsert_sql(ref: Sequence[str], ddl_text: str) -> str:
+    """The `applied` bookkeeping upsert for one object, as **one statement**.
+
+    Exposed (rather than inlined in `SandboxSession.apply`) because §18.5 D3's
+    `apply_and_check` must write this row **inside the ladder's own
+    transaction** -- the DDL, the bookkeeping row and the `plpgsql_check`
+    SELECT share one `db/apply.py::apply_ddl` call, so the ladder needs the
+    statement text, not a second committing round trip that could land without
+    the DDL (or vice versa). `db/ddl_check.py` composes it; this module still
+    owns what the row *is*.
+    """
+    kind, schema_name, object_name, table_name = ref
+    applied_at = datetime.now(timezone.utc).isoformat()
+    return f"""
+            INSERT INTO {_APPLIED_TABLE_QUALIFIED}
+                (kind, schema_name, object_name, table_name, applied_at, text_sha1)
+            VALUES ({_sql_string_literal(kind)}, {_sql_string_literal(schema_name)},
+                    {_sql_string_literal(object_name)}, {_sql_string_literal(table_name)},
+                    {_sql_string_literal(applied_at)}, {_sql_string_literal(text_sha1(ddl_text))})
+            ON CONFLICT (kind, schema_name, object_name, table_name)
+            DO UPDATE SET applied_at = EXCLUDED.applied_at, text_sha1 = EXCLUDED.text_sha1
+        """
+
+
+@dataclass(frozen=True)
+class FetchedRows:
+    """What `SandboxExecutor.fetch` hands back -- the driver's raw answer to
+    **one** capped statement, before any truncation decision or timing.
+
+    Deliberately dumb: the executor's whole job is the wire, and every
+    decision about truncation, timing and presentation is made by its caller
+    (`db/sandbox_query.py::run_sandbox_query`) where it is testable without a
+    database.
+
+    `columns is None` **exactly** when the statement produced no result set
+    (psycopg leaves `cursor.description` None for DML/DDL) -- the single signal
+    separating "rows" from "no rows", taken from the driver rather than guessed
+    by pattern-matching the SQL text. The same signal
+    `db/apply.py::StatementResult` uses.
+
+    `rows` may carry **one row more** than the caller's cap; that extra row is
+    how truncation becomes a *fact* rather than an inference from
+    `len(rows) == cap`, and it is dropped before it reaches a `QueryResult`.
+
+    Lives here, not in `db/sandbox_query.py`, because it is the return type of
+    a `SandboxExecutor` method and the seam owns its own vocabulary
+    (`sandbox_query` re-exports it under its historical name `RawResult`).
+    """
+
+    columns: tuple[str, ...] | None
+    rows: Sequence[Sequence[Any]] = ()
+    #: `cursor.rowcount` -- rows affected by a DML statement, or -1/None when
+    #: the driver does not know.
+    affected: int | None = None
+    #: `cursor.statusmessage` (e.g. `"UPDATE 3"`, `"CREATE FUNCTION"`), shown
+    #: verbatim rather than re-worded.
+    status: str = ""
+
+
 class SandboxExecutor(Protocol):
     """The execution seam `SandboxSession` needs -- distinct from
     `db/introspect.py::Runner`, which is read-only-oriented (one connection,
     each SQL run and its rows collected, no explicit transaction semantics).
     `SandboxSession.apply` needs an atomic multi-statement transaction (DDL
     + the `applied` upsert together); `reset`/provisioning need to run a
-    batch of DDL as one committing unit; `applied()` needs a plain read.
+    batch of DDL as one committing unit; `applied()` needs a plain read;
+    D4's ad-hoc SQL console needs a **capped** single-statement run that may
+    or may not return a result set (`fetch`).
 
     Implementations open ONE connection per call (mirroring `run_queries`),
     matching PostgreSQL's transactional-DDL semantics: every statement in
     `statements` commits together, or none of them do.
+
+    **`fetch` is the third method deliberately, not a fourth seam.** §18.5's
+    invariant 1 names exactly three connection-opening seams -- `run_queries`
+    (read), `apply_ddl` (DDL write) and this one (the sandbox lane) -- and
+    spells this protocol out as `execute`/`query`/`fetch`. Before it existed,
+    `db/sandbox_query.py` opened its own psycopg connection, which was a
+    fourth: ad-hoc SQL's whole safety argument is that it can reach nothing
+    but an ownership-gated `SandboxSession`, and a private connection inside
+    that module put its connection discipline outside the seam that guarantees
+    it.
     """
 
     def execute(self, params: ConnectionParams, statements: Sequence[str]) -> None:
@@ -783,6 +866,26 @@ class SandboxExecutor(Protocol):
 
     def query(self, params: ConnectionParams, sql: str) -> list[tuple]:
         """Run one read-only `sql` statement and return its rows."""
+        ...
+
+    def fetch(
+        self, params: ConnectionParams, sql: str, *, max_rows: int
+    ) -> FetchedRows:
+        """Run **one** statement, which may be DML/DDL or a query, and return
+        at most `max_rows + 1` rows plus the driver's own metadata.
+
+        The extra row is fetched on purpose so the caller can distinguish a
+        result set exactly at the cap from a truncated one (§18.5 D4:
+        `truncated` is a fact, never inferred). `max_rows` is passed *down*
+        rather than applied afterwards so a real implementation can
+        `fetchmany` instead of dragging a million rows across the wire and
+        discarding them.
+
+        Commits on success, because an ad-hoc statement may legitimately be
+        DML against the (disposable) sandbox and leaving it in a rolled-back
+        limbo would be the surprising behaviour; a failure rolls back and
+        propagates, so nothing lands half-applied.
+        """
         ...
 
 
@@ -826,6 +929,46 @@ class _RealSandboxExecutor:
             with connection.cursor() as cursor:
                 cursor.execute(sql)
                 return cursor.fetchall()
+        finally:
+            connection.close()
+
+    def fetch(
+        self, params: ConnectionParams, sql: str, *, max_rows: int
+    ) -> FetchedRows:
+        import psycopg  # noqa: PLC0415 -- lazy on purpose (see module docstring)
+
+        connection = psycopg.connect(
+            host=params.host or None,
+            port=params.port or None,
+            dbname=params.database or None,
+            user=params.user or None,
+            password=params.password or None,
+        )
+        try:
+            with connection.cursor() as cursor:
+                cursor.execute(sql)
+                description = cursor.description
+                if description is None:
+                    # DML/DDL: psycopg 3 RAISES on fetch* here, so the guard is
+                    # required, not defensive (§18.5's write-seam correction).
+                    result = FetchedRows(
+                        columns=None,
+                        rows=(),
+                        affected=cursor.rowcount,
+                        status=cursor.statusmessage or "",
+                    )
+                else:
+                    result = FetchedRows(
+                        columns=tuple(str(column[0]) for column in description),
+                        rows=cursor.fetchmany(max_rows + 1),
+                        affected=cursor.rowcount,
+                        status=cursor.statusmessage or "",
+                    )
+            connection.commit()
+            return result
+        except Exception:
+            connection.rollback()
+            raise
         finally:
             connection.close()
 
@@ -876,19 +1019,9 @@ class SandboxSession:
         as a `(kind, schema_name, object_name, table_name)` tuple so this
         module makes no assumption about how callers derive it.
         """
-        kind, schema_name, object_name, table_name = ref
-        text_sha1 = hashlib.sha1(ddl_text.encode("utf-8")).hexdigest()  # noqa: S324 -- content fingerprint, not security
-        applied_at = datetime.now(timezone.utc).isoformat()
-        upsert_sql = f"""
-            INSERT INTO {_APPLIED_TABLE_QUALIFIED}
-                (kind, schema_name, object_name, table_name, applied_at, text_sha1)
-            VALUES ({_sql_string_literal(kind)}, {_sql_string_literal(schema_name)},
-                    {_sql_string_literal(object_name)}, {_sql_string_literal(table_name)},
-                    {_sql_string_literal(applied_at)}, {_sql_string_literal(text_sha1)})
-            ON CONFLICT (kind, schema_name, object_name, table_name)
-            DO UPDATE SET applied_at = EXCLUDED.applied_at, text_sha1 = EXCLUDED.text_sha1
-        """
-        self.executor.execute(self.params, [ddl_text, upsert_sql])
+        self.executor.execute(
+            self.params, [ddl_text, applied_upsert_sql(ref, ddl_text)]
+        )
 
     def applied(self) -> list[AppliedObject]:
         """One `SELECT` over the `applied` bookkeeping table -- what the
@@ -1039,10 +1172,15 @@ _INSTALL_PLPGSQL_CHECK_SQL = "CREATE EXTENSION IF NOT EXISTS plpgsql_check"
 #: The four exact reason strings `install_gate` returns, verbatim from §18.5
 #: D2 -- matched closely because the UI shows them as-is.
 _REASON_ALREADY_INSTALLED = "already installed."
-_REASON_REQUIRES_SUPERUSER = (
+#: Public: `install_gate` only hands this out when the extension is
+#: `installable`, but a UI host needs the same sentence to explain a
+#: superuser-blocked install it detected itself. Exported so the wording lives
+#: in exactly one place rather than being re-typed at the call site.
+REASON_REQUIRES_SUPERUSER = (
     "CREATE EXTENSION requires superuser; ask your DBA, or connect the "
     "sandbox profile as a superuser."
 )
+_REASON_REQUIRES_SUPERUSER = REASON_REQUIRES_SUPERUSER
 _REASON_ABSENT = (
     "plpgsql_check is not available on this server -- it must be installed "
     "as a C library on disk by a database administrator before PGTP Editor "

@@ -46,10 +46,10 @@ def test_compare_merge_two_files_prompts_for_source_when_none_open(qtbot, tmp_pa
     target_path = _write(tmp_path, "target.pgtp", CHANGED_PGTP)
 
     with patch(
-        "pgtp_editor.ui.main_window.QFileDialog.getOpenFileName",
+        "pgtp_editor.ui.modals.QFileDialog.getOpenFileName",
         side_effect=[(source_path, ""), (target_path, "")],
     ):
-        window._compare_merge_two_files()
+        window._diff_ui.compare_two_files()
 
     assert window.center_stage.currentIndex() == window.center_stage.diff_merge_tab_index
     leaves = window.center_stage.diff_merge_panel._flattened_leaves()
@@ -64,10 +64,10 @@ def test_compare_merge_two_files_uses_current_project_as_source_without_promptin
     target_path = _write(tmp_path, "target.pgtp", CHANGED_PGTP)
 
     with patch(
-        "pgtp_editor.ui.main_window.QFileDialog.getOpenFileName",
+        "pgtp_editor.ui.modals.QFileDialog.getOpenFileName",
         return_value=(target_path, ""),
     ) as mock_dialog:
-        window._compare_merge_two_files()
+        window._diff_ui.compare_two_files()
 
     mock_dialog.assert_called_once()
     leaves = window.center_stage.diff_merge_panel._flattened_leaves()
@@ -80,10 +80,10 @@ def test_compare_merge_two_files_cancelled_target_dialog_does_nothing(qtbot, tmp
     source_path = _write(tmp_path, "source.pgtp", VALID_PGTP)
 
     with patch(
-        "pgtp_editor.ui.main_window.QFileDialog.getOpenFileName",
+        "pgtp_editor.ui.modals.QFileDialog.getOpenFileName",
         side_effect=[(source_path, ""), ("", "")],
-    ), patch("pgtp_editor.ui.main_window.QMessageBox.critical") as mock_critical:
-        window._compare_merge_two_files()
+    ), patch("pgtp_editor.ui.modals.QMessageBox.critical") as mock_critical:
+        window._diff_ui.compare_two_files()
 
     # Cancelling the target dialog is a no-op: no comparison is run, so the
     # change-list tree stays empty. (Note: diff_merge_tab_index is tab 0,
@@ -107,10 +107,10 @@ def test_compare_merge_two_files_shows_error_on_target_parse_failure(qtbot, tmp_
     broken_path = _write(tmp_path, "broken.pgtp", MALFORMED_PGTP)
 
     with patch(
-        "pgtp_editor.ui.main_window.QFileDialog.getOpenFileName",
+        "pgtp_editor.ui.modals.QFileDialog.getOpenFileName",
         side_effect=[(source_path, ""), (broken_path, "")],
-    ), patch("pgtp_editor.ui.main_window.QMessageBox.critical") as mock_critical:
-        window._compare_merge_two_files()
+    ), patch("pgtp_editor.ui.modals.QMessageBox.critical") as mock_critical:
+        window._diff_ui.compare_two_files()
 
     mock_critical.assert_called_once()
 
@@ -138,10 +138,10 @@ def test_next_and_prev_difference_menu_actions_navigate_the_panel(qtbot, tmp_pat
     target_path = _write(tmp_path, "target.pgtp", VALID_PGTP)
 
     with patch(
-        "pgtp_editor.ui.main_window.QFileDialog.getOpenFileName",
+        "pgtp_editor.ui.modals.QFileDialog.getOpenFileName",
         side_effect=[(source_path, ""), (target_path, "")],
     ):
-        window._compare_merge_two_files()
+        window._diff_ui.compare_two_files()
 
     menu = find_top_menu(window, "Tools")
     next_action = find_action(menu, "Next Difference")
@@ -176,10 +176,10 @@ def test_compare_this_page_with_real_handler(qtbot, tmp_path):
     page_node = window._current_project.pages[0]
 
     with patch(
-        "pgtp_editor.ui.main_window.QFileDialog.getOpenFileName",
+        "pgtp_editor.ui.modals.QFileDialog.getOpenFileName",
         return_value=(target_path, ""),
     ):
-        window._compare_page_with(page_node)
+        window._diff_ui.compare_page_with(page_node)
 
     assert window.center_stage.currentIndex() == window.center_stage.diff_merge_tab_index
     leaves = window.center_stage.diff_merge_panel._flattened_leaves()
@@ -206,10 +206,10 @@ def test_compare_this_page_with_shows_error_when_page_not_found_in_target(qtbot,
     page_node = window._current_project.pages[0]
 
     with patch(
-        "pgtp_editor.ui.main_window.QFileDialog.getOpenFileName",
+        "pgtp_editor.ui.modals.QFileDialog.getOpenFileName",
         return_value=(target_path, ""),
-    ), patch("pgtp_editor.ui.main_window.QMessageBox.critical") as mock_critical:
-        window._compare_page_with(page_node)
+    ), patch("pgtp_editor.ui.modals.QMessageBox.critical") as mock_critical:
+        window._diff_ui.compare_page_with(page_node)
 
     mock_critical.assert_called_once()
     args, _kwargs = mock_critical.call_args
@@ -285,10 +285,10 @@ def test_compare_this_detail_with_real_handler(qtbot, tmp_path):
     source_path = _detail_source_path(project)
 
     with patch(
-        "pgtp_editor.ui.main_window.QFileDialog.getOpenFileName",
+        "pgtp_editor.ui.modals.QFileDialog.getOpenFileName",
         return_value=(target_path, ""),
     ):
-        window._compare_detail_with(detail_node, source_path)
+        window._diff_ui.compare_detail_with(detail_node, source_path)
 
     assert window.center_stage.currentIndex() == window.center_stage.diff_merge_tab_index
     leaves = window.center_stage.diff_merge_panel._flattened_leaves()
@@ -306,10 +306,10 @@ def test_compare_this_detail_with_shows_error_when_detail_not_found_in_target(qt
     source_path = _detail_source_path(project)
 
     with patch(
-        "pgtp_editor.ui.main_window.QFileDialog.getOpenFileName",
+        "pgtp_editor.ui.modals.QFileDialog.getOpenFileName",
         return_value=(target_path, ""),
-    ), patch("pgtp_editor.ui.main_window.QMessageBox.critical") as mock_critical:
-        window._compare_detail_with(detail_node, source_path)
+    ), patch("pgtp_editor.ui.modals.QMessageBox.critical") as mock_critical:
+        window._diff_ui.compare_detail_with(detail_node, source_path)
 
     mock_critical.assert_called_once()
 
@@ -321,14 +321,14 @@ def test_compare_merge_two_files_tracks_current_diff_target(qtbot, tmp_path):
     target_path = _write(tmp_path, "target.pgtp", CHANGED_PGTP)
 
     with patch(
-        "pgtp_editor.ui.main_window.QFileDialog.getOpenFileName",
+        "pgtp_editor.ui.modals.QFileDialog.getOpenFileName",
         side_effect=[(source_path, ""), (target_path, "")],
     ):
-        window._compare_merge_two_files()
+        window._diff_ui.compare_two_files()
 
-    assert window._current_diff_target_path == target_path
-    assert window._current_diff_target_project is not None
-    assert window._current_diff_target_project.pages[0].file_name == "development_equipment"
+    assert window._diff_ui.target_path == target_path
+    assert window._diff_ui.target_project is not None
+    assert window._diff_ui.target_project.pages[0].file_name == "development_equipment"
 
 
 def test_compare_this_page_with_tracks_current_diff_target(qtbot, tmp_path):
@@ -339,13 +339,13 @@ def test_compare_this_page_with_tracks_current_diff_target(qtbot, tmp_path):
 
     page_node = window._current_project.pages[0]
     with patch(
-        "pgtp_editor.ui.main_window.QFileDialog.getOpenFileName",
+        "pgtp_editor.ui.modals.QFileDialog.getOpenFileName",
         return_value=(target_path, ""),
     ):
-        window._compare_page_with(page_node)
+        window._diff_ui.compare_page_with(page_node)
 
-    assert window._current_diff_target_path == target_path
-    assert window._current_diff_target_project is not None
+    assert window._diff_ui.target_path == target_path
+    assert window._diff_ui.target_project is not None
 
 
 def test_compare_this_detail_with_tracks_current_diff_target(qtbot, tmp_path):
@@ -358,10 +358,10 @@ def test_compare_this_detail_with_tracks_current_diff_target(qtbot, tmp_path):
     detail_node = project.pages[0].details[0]
     source_path = _detail_source_path(project)
     with patch(
-        "pgtp_editor.ui.main_window.QFileDialog.getOpenFileName",
+        "pgtp_editor.ui.modals.QFileDialog.getOpenFileName",
         return_value=(target_path, ""),
     ):
-        window._compare_detail_with(detail_node, source_path)
+        window._diff_ui.compare_detail_with(detail_node, source_path)
 
-    assert window._current_diff_target_path == target_path
-    assert window._current_diff_target_project is not None
+    assert window._diff_ui.target_path == target_path
+    assert window._diff_ui.target_project is not None

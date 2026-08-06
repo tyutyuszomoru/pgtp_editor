@@ -1193,3 +1193,78 @@ def test_sandbox_module_lazy_psycopg_imports_are_all_inside_function_bodies():
         elif isinstance(node, ast.ImportFrom):
             all_names.add(node.module or "")
     assert any("psycopg" in name for name in all_names)
+
+
+# -- the seam's third method: fetch (§18.5 invariant 1) ---------------------
+
+
+def test_sandbox_executor_protocol_declares_fetch():
+    """§18.5's invariant names this seam `execute`/`query`/`fetch`. `fetch` is
+    what `db/sandbox_query.py` runs ad-hoc SQL through, so it cannot open its own
+    connection -- which would be a fourth seam."""
+    from pgtp_editor.db.sandbox import DEFAULT_SANDBOX_EXECUTOR, SandboxExecutor
+
+    assert hasattr(SandboxExecutor, "fetch")
+    for name in ("execute", "query", "fetch"):
+        assert callable(getattr(DEFAULT_SANDBOX_EXECUTOR, name))
+
+
+def test_real_executor_fetch_imports_psycopg_lazily_and_caps_by_one():
+    """The `max_rows + 1` fetch is what makes truncation a fact rather than an
+    inference from `len(rows) == cap` (§18.5 D4)."""
+    import inspect
+
+    from pgtp_editor.db.sandbox import DEFAULT_SANDBOX_EXECUTOR
+
+    source = inspect.getsource(type(DEFAULT_SANDBOX_EXECUTOR).fetch)
+    assert "import psycopg" in source
+    assert "max_rows + 1" in source
+    # The mixed DML/query guard: psycopg 3 raises on fetch* after DDL/DML.
+    assert "description is None" in source
+
+
+def test_fetched_rows_defaults_are_a_no_result_set():
+    from pgtp_editor.db.sandbox import FetchedRows
+
+    raw = FetchedRows(columns=None)
+    assert raw.rows == ()
+    assert raw.affected is None
+    assert raw.status == ""
+
+
+# -- the bookkeeping helpers the ladder composes with ----------------------
+
+
+def test_text_sha1_is_one_function_for_both_writers_and_readers():
+    import hashlib
+
+    from pgtp_editor.db.sandbox import text_sha1
+
+    assert text_sha1("abc") == hashlib.sha1(b"abc").hexdigest()
+
+
+def test_applied_upsert_sql_is_one_statement_carrying_the_ref_and_the_hash():
+    from pgtp_editor.db.sandbox import applied_upsert_sql, text_sha1
+
+    sql = applied_upsert_sql(("routine", "pr", "calc()", ""), "CREATE FUNCTION ...")
+
+    assert sql.count("INSERT INTO") == 1
+    assert "ON CONFLICT (kind, schema_name, object_name, table_name)" in sql
+    assert "'routine'" in sql and "'pr'" in sql and "'calc()'" in sql
+    assert text_sha1("CREATE FUNCTION ...") in sql
+
+
+def test_session_apply_uses_the_shared_upsert_helper():
+    """One spelling of the bookkeeping row: `SandboxSession.apply` and
+    `db/ddl_check.py::apply_and_check` must write the SAME row, so the statement
+    text has one source."""
+    from pgtp_editor.db.sandbox import text_sha1
+
+    executor = _FakeExecutor()
+    session = SandboxSession(
+        params=_SANDBOX_PARAMS, mode=SandboxMode.SCHEMA_ONLY, executor=executor
+    )
+    session.apply(("routine", "pr", "calc()", ""), "CREATE FUNCTION ...")
+
+    _params, statements = executor.execute_calls[0]
+    assert text_sha1("CREATE FUNCTION ...") in statements[1]

@@ -124,7 +124,7 @@ def test_parse_failure_does_not_create_schema_model_file(qtbot, tmp_path):
     broken_path = tmp_path / "broken.pgtp"
     broken_path.write_text(MALFORMED_PGTP, encoding="utf-8")
 
-    with patch("pgtp_editor.ui.main_window.QMessageBox.critical"):
+    with patch("pgtp_editor.ui.modals.QMessageBox.critical"):
         window.open_project_file(str(broken_path))
 
     model_path = schema_model_path(storage_dir)
@@ -148,7 +148,7 @@ def test_parse_failure_leaves_pre_seeded_schema_model_byte_for_byte_unchanged(qt
     broken_path = tmp_path / "broken.pgtp"
     broken_path.write_text(MALFORMED_PGTP, encoding="utf-8")
 
-    with patch("pgtp_editor.ui.main_window.QMessageBox.critical"):
+    with patch("pgtp_editor.ui.modals.QMessageBox.critical"):
         window.open_project_file(str(broken_path))
 
     assert model_path.read_text(encoding="utf-8") == seeded_content
@@ -166,7 +166,7 @@ def test_parse_failure_appends_no_schema_audit_entry(qtbot, tmp_path):
 
     # The one-time bundled-seed audit line from __init__ is not under test here.
     window.audit_panel.clear()
-    with patch("pgtp_editor.ui.main_window.QMessageBox.critical"):
+    with patch("pgtp_editor.ui.modals.QMessageBox.critical"):
         window.open_project_file(str(broken_path))
 
     assert window.audit_panel.count() == 0
@@ -185,7 +185,7 @@ def test_report_schema_events_with_exactly_20_events_prints_one_line_each(qtbot,
     ]
 
     window.audit_panel.clear()  # drop the __init__ bundled-seed line
-    window._report_schema_events(events, str(source_path))
+    window._xsd_ui.report_schema_events(events, str(source_path))
 
     assert window.audit_panel.count() == 20
     for i in range(20):
@@ -210,7 +210,7 @@ def test_report_schema_events_with_21_events_collapses_to_summary_line(qtbot, tm
     ]
 
     window.audit_panel.clear()  # drop the __init__ bundled-seed line
-    window._report_schema_events(events, str(source_path))
+    window._xsd_ui.report_schema_events(events, str(source_path))
 
     assert window.audit_panel.count() == 1
     expected = "[Schema] Learned 21 new structural facts from twentyone.pgtp"

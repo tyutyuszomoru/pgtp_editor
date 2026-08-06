@@ -17,7 +17,9 @@
 """DbCheckPanel: the left-dock "Database Check" results tree.
 
 Renders one direction's `TableCheck`/`ColumnCheck` list: table rows carry a
-``(T|V|M)`` kind prefix and an ``(×N)`` invocation count; column rows show the
+``(T|V|M)`` kind prefix and a reference count — ``(×N)`` in the XML → Database
+direction, role-split ``(P# D# L#)`` (page / detail / lookup, BUG-026) in the
+Database → XML direction; column rows show the
 DB datatype, PK underline, ``(fk)``, ``NOT NULL`` and ``DEFAULT`` metadata. A
 green ``✓`` / red ``✗`` marker (glyph + colored foreground so it reads in both
 themes) flags each row; calculated XML columns (``isCalculated="true"``,
@@ -134,7 +136,18 @@ class DbCheckPanel(QWidget):
     def _make_table_item(self, table) -> QTreeWidgetItem:
         marker = "✓" if table.ok else "✗"
         prefix = _KIND_PREFIX.get(table.kind, "")
-        text = f"{marker} {prefix}{table.name} (×{table.invocations})"
+        # BUG-026: the Database → XML direction splits the reference count by
+        # role — page binding / detail binding / column lookup — so a table
+        # used only as a lookup target reads as referenced rather than as a
+        # bare "(×N) but red" contradiction. XML → Database keeps the
+        # aggregate form (its checks do not populate the role fields).
+        if self._direction == "db_to_xml":
+            count_text = (
+                f"(P{table.page_count} D{table.detail_count} L{table.lookup_count})"
+            )
+        else:
+            count_text = f"(×{table.invocations})"
+        text = f"{marker} {prefix}{table.name} {count_text}"
         item = QTreeWidgetItem([text])
         item.setForeground(0, QBrush(_OK_COLOR if table.ok else _BAD_COLOR))
         # Uniform (kind, name, ok, is_calculated) 4-tuple with the column
