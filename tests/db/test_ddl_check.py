@@ -36,7 +36,12 @@ from pgtp_editor.db.ddl_check import (
     run_plpgsql_check,
     severity_for_level,
 )
-from pgtp_editor.db.sandbox import AppliedObject, SandboxCapabilities, UnsafeIdentifierError
+from pgtp_editor.db.sandbox import (
+    REASON_REQUIRES_SUPERUSER,
+    AppliedObject,
+    SandboxCapabilities,
+    UnsafeIdentifierError,
+)
 
 PARAMS = ConnectionParams(host="h", port=5432, database="pgtp_sandbox_x", user="u")
 
@@ -178,7 +183,8 @@ def test_every_ran_report_states_the_blind_spots():
         ("warning extra", "warning"),
         ("warning performance", "warning"),
         ("warning security", "warning"),
-        ("compatibility", "warning"),
+        # §18.5 D3a pins `compatibility` to the INFO token, i.e. "notice".
+        ("compatibility", "notice"),
         ("notice", "notice"),
         ("something new", "warning"),  # never demoted to notice
     ],
@@ -189,6 +195,77 @@ def test_severity_mapping_keeps_the_raw_level(level, severity):
     (finding,) = run_plpgsql_check(_Session(), _request(), _caps(), query=query).findings
     assert finding.level == level
     assert finding.severity == severity
+
+
+@pytest.mark.parametrize(
+    "level",
+    ["error", "warning", "warning extra", "warning performance", "warning security",
+     "compatibility"],
+)
+def test_a_level_the_table_knows_is_not_annotated_onto_the_message(level):
+    # The six levels §18.5 D3a's table names carry no parenthetical: the raw
+    # level is already fully described by the mapped SEVERITY token.
+    assert ddl_check.is_known_level(level) is True
+    query = _Query(_resolved(), [_row(level=level, message="m")])
+    (finding,) = run_plpgsql_check(_Session(), _request(), _caps(), query=query).findings
+    assert finding.message == "m"
+    assert finding.level == level
+
+
+@pytest.mark.parametrize("level", ["something new", "deprecation", "WARNING SOMETHING-NEW"])
+def test_an_unknown_level_is_warning_and_appended_to_the_message(level):
+    # §18.5 D3a: anything the table does not know maps to WARNING *and* has its
+    # raw level appended in parentheses -- never dropped, never mapped to INFO.
+    assert ddl_check.is_known_level(level) is False
+    assert severity_for_level(level) == "warning"
+    query = _Query(_resolved(), [_row(level=level, message="m")])
+    (finding,) = run_plpgsql_check(_Session(), _request(), _caps(), query=query).findings
+    assert finding.severity == "warning"
+    assert finding.message == f"m ({level})"
+    # The raw level stays on the finding as well -- the parenthetical is for the
+    # Audit renderer, which shows only severity/line/message.
+    assert finding.level == level
+
+
+def test_a_future_warning_subclass_counts_as_unknown_and_is_named():
+    # The boundary decision: `startswith("warning")` gets the SEVERITY right,
+    # but the table lists exactly four warning variants, so a new warning class
+    # is still a level this build has never heard of and must be named.
+    level = "warning brand-new"
+    assert ddl_check.is_known_level(level) is False
+    assert severity_for_level(level) == "warning"
+    query = _Query(_resolved(), [_row(level=level, message="m")])
+    (finding,) = run_plpgsql_check(_Session(), _request(), _caps(), query=query).findings
+    assert finding.message == "m (warning brand-new)"
+    assert finding.severity == "warning"
+
+
+def test_a_blank_level_adds_no_empty_parenthetical():
+    # Nothing to preserve, so "m ()" would be noise rather than information.
+    query = _Query(_resolved(), [_row(level="", message="m")])
+    (finding,) = run_plpgsql_check(_Session(), _request(), _caps(), query=query).findings
+    assert finding.message == "m"
+    assert finding.severity == "warning"
+
+
+@pytest.mark.parametrize(
+    "level",
+    ["", "  ", "ERROR", " Warning Extra ", "Compatibility", "notice", "info",
+     "something new", "warning brand-new", "error also-new", "ünicode",
+     "12345"],
+)
+def test_the_level_mapping_is_total(level):
+    # §18.5 D3a calls the mapping "fixed and total": no level input, however
+    # odd, can produce an unmapped severity or crash.
+    assert severity_for_level(level) in ("error", "warning", "notice")
+    assert isinstance(ddl_check.message_for_level("m", level), str)
+
+
+def test_the_mapping_lives_in_exactly_one_place():
+    # D3a: "applied in exactly one place". parse_findings must not re-derive a
+    # severity of its own -- it delegates, so patching the single mapping
+    # changes every finding.
+    assert parse_findings([_row(level="compatibility")], _request())[0].severity == "notice"
 
 
 # --- clean vs. impossible --------------------------------------------------
@@ -229,13 +306,36 @@ def test_non_installed_capability_states_never_run_a_query(state):
 
 def test_the_three_non_installed_states_give_three_distinct_reasons():
     reasons = {
-        state: capability_outcome(_caps(state)).reason
-        for state in ("installable", "absent", "unknown")
+        "installable": capability_outcome(_caps("installable", is_superuser=True)).reason,
+        "absent": capability_outcome(_caps("absent")).reason,
+        "unknown": capability_outcome(_caps("unknown")).reason,
     }
     assert len(set(reasons.values())) == 3
     assert reasons["installable"] == ddl_check.REASON_NOT_INSTALLED
     assert reasons["unknown"] == ddl_check.REASON_UNKNOWN_CAPABILITY
     assert "administrator" in reasons["absent"]
+
+
+def test_installable_names_the_one_click_install_and_where_it_lives():
+    # §18.5 D3a: the `installable` case must name the install and both places
+    # it is reachable from -- verbatim.
+    reason = capability_outcome(_caps("installable", is_superuser=True)).reason
+    assert (
+        "Install it from Database ▸ Sandbox Setup…, or the Project Status "
+        "window's plpgsql_check node." in reason
+    )
+    assert "NOT been linted" in reason
+
+
+def test_installable_without_superuser_shows_install_gates_own_sentence():
+    # Not re-typed here: the sentence comes from install_gate, and pointing a
+    # non-superuser at a button they are not offered would be worse than mute.
+    reason = capability_outcome(_caps("installable", is_superuser=False)).reason
+    assert REASON_REQUIRES_SUPERUSER in reason
+    assert "Sandbox Setup" not in reason
+    assert reason == f"{ddl_check.REASON_NOT_INSTALLED_BASE} {REASON_REQUIRES_SUPERUSER}"
+    # It is still `unavailable` -- never a clean or green result.
+    assert capability_outcome(_caps("installable")).status == STATUS_UNAVAILABLE
 
 
 def test_unknown_capability_carries_the_probe_error_as_detail():

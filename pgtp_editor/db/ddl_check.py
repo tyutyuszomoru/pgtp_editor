@@ -35,8 +35,11 @@ situation: the extension ran, we parsed its result, and there were no rows.
 
 **Scope of this pass — tier 3 only, stated rather than implied.** D3's ladder
 has four tiers; tiers 0–2 all hang off the write seam `db/apply.py::apply_ddl`
-(tier 1 needs its notice channel, tier 2 *is* the apply), and that module does
-not exist yet. Rather than omit them from the report — which would let the UI
+(tier 1 needs its notice channel, tier 2 *is* the apply). That module now
+exists (`apply_ddl`/`ApplyOutcome`/`StatementFailure`), but **nothing in this
+driver is wired through it yet** — no path here composes a statement list or
+calls `apply_ddl`, so tiers 0–2 still verify nothing.
+Rather than omit them from the report — which would let the UI
 render a tier-3-only report as a complete one — `CheckReport` carries tiers
 0–2 as explicit `unavailable` outcomes naming the missing seam. The report
 therefore composes, unchanged, with the panel that already reads it:
@@ -100,17 +103,31 @@ STATUS_ERRORED = "errored"
 #: instead of "unavailable ()".
 REASON_TIER_NOT_BUILT = (
     "not built yet: tiers 0-2 run through the write seam db/apply.py, which "
-    "does not exist yet -- nothing about this DDL was verified by this tier."
+    "now exists but is not yet wired into this driver -- nothing about this "
+    "DDL was verified by this tier."
 )
 
-#: `plpgsql_check_state == "installable"`. Deliberately NOT `install_gate`'s
-#: text (which is about whether to offer the install BUTTON); this one is
-#: about why the check did not run.
-REASON_NOT_INSTALLED = (
+#: `plpgsql_check_state == "installable"`, first sentence: why the check did not
+#: run. Deliberately NOT `install_gate`'s text (which is about whether to offer
+#: the install BUTTON).
+REASON_NOT_INSTALLED_BASE = (
     "plpgsql_check is available on this server but is not installed in the "
-    "sandbox database -- install it from Sandbox Setup; until then this "
-    "routine has NOT been linted."
+    "sandbox database -- this routine has NOT been linted."
 )
+
+#: §18.5 D3a requires the `installable` case to *name the one-click install and
+#: where it lives*, verbatim -- an "it is not installed" message the user cannot
+#: act on is the same dead end as no message.
+REASON_INSTALL_LOCATIONS = (
+    "Install it from Database ▸ Sandbox Setup…, or the Project Status "
+    "window's plpgsql_check node."
+)
+
+#: The full `installable` reason when the install really is one click away.
+#: When it is not -- `install_gate` refusing because the connection is not a
+#: superuser -- `not_installed_reason` substitutes `install_gate`'s own
+#: sentence, which is never re-typed here (§18.5 D3a).
+REASON_NOT_INSTALLED = f"{REASON_NOT_INSTALLED_BASE} {REASON_INSTALL_LOCATIONS}"
 
 #: `plpgsql_check_state == "unknown"` -- a failed probe. Never collapsed into
 #: "absent" (see `SandboxCapabilities.plpgsql_check_state`).
@@ -209,8 +226,14 @@ class CheckFinding:
     rendered with no line at all — never a guess (§18.5 D3).
     """
 
-    #: "error" | "warning" | "notice" -- `ValidationIssue`'s vocabulary.
+    #: "error" | "warning" | "notice" -- `ValidationIssue`'s two values plus
+    #: `"notice"`, which the Audit renderer shows as `INFO` (§18.5 D3a maps
+    #: `compatibility` there). `ValidationIssue` itself only ever emits
+    #: "error"/"warning"; the third value is this type's extension, and adding
+    #: it here rather than widening `ValidationIssue` is deliberate.
     severity: str
+    #: The finding's message. An unrecognised raw `level` is appended in
+    #: parentheses (§18.5 D3a) -- see `message_for_level`.
     message: str
     #: The buffer line, or None when it could not be mapped honestly.
     line: int | None = None
@@ -562,19 +585,67 @@ def build_check_sql(request: CheckRequest, funcoid: int, relid: int | None = Non
 # Parsing
 # ---------------------------------------------------------------------------
 
-def severity_for_level(level: str) -> str:
-    """Map plpgsql_check's raw `level` onto `ValidationIssue`'s three-value
-    severity vocabulary. The raw string is kept on the finding regardless
-    (§18.5 D3) -- this is for the Audit panel's `SEVERITY` token only.
+#: The exact `level` values §18.5 D3a's mapping table knows, normalized. A
+#: level outside this set is mapped by `severity_for_level`'s prefix rules AND
+#: has its raw string appended to the message by `parse_findings` -- see
+#: `is_known_level`.
+KNOWN_LEVELS = frozenset(
+    {
+        "error",
+        "warning",
+        "warning extra",
+        "warning performance",
+        "warning security",
+        "compatibility",
+    }
+)
 
-    An unrecognised level maps to `"warning"`, never to `"notice"`: guessing
-    downwards would quietly demote something the extension thought worth
-    saying.
+
+def is_known_level(level: str) -> bool:
+    """Whether `level` is one of the six values §18.5 D3a's table names.
+
+    **`warning <unknown-suffix>` is deliberately NOT known.** The prefix rule
+    in `severity_for_level` still maps it to `"warning"`, so the *severity* is
+    right — but the table lists exactly four warning variants, and a future
+    `warning something-new` is a warning *class* this build has never heard of.
+    D3a's rule for a level the table does not know is "`WARNING`, and the raw
+    `level` is appended to the message in parentheses -- **never dropped, never
+    silently mapped to `INFO`**". Getting the severity right by luck of the
+    prefix is not the same as not swallowing the level: the Audit renderer shows
+    `SEVERITY`, line and message, and nothing else, so the parenthetical is the
+    only place a new class becomes visible at all. Treating it as known would
+    make it exactly as invisible as `warning extra`, which is the silent
+    swallowing the spec forbids.
+
+    An empty/blank level is reported as known: there is no raw text to preserve,
+    and appending a bare "()" to the message would be noise, not information.
+    """
+    normalized = (level or "").strip().lower()
+    return not normalized or normalized in KNOWN_LEVELS
+
+
+def severity_for_level(level: str) -> str:
+    """Map plpgsql_check's raw `level` onto the lowercase severity vocabulary
+    `CheckFinding` shares with `ValidationIssue` (`"error"`/`"warning"`, plus
+    `"notice"` for the Audit `INFO` token). The raw string is kept on the
+    finding regardless (§18.5 D3) -- this is for the Audit panel's `SEVERITY`
+    token only, and it is §18.5 D3a's **single** home for the level->severity
+    decision. Do not add a second mapping in the renderer.
+
+    Total by construction (§18.5 D3a): every input returns one of the three
+    values, and an unrecognised level maps to `"warning"`, never to `"notice"`
+    -- guessing downwards would quietly demote something the extension thought
+    worth saying. `compatibility`, by contrast, is mapped down *deliberately*:
+    D3a pins it to `INFO`.
     """
     normalized = (level or "").strip().lower()
     if normalized.startswith("error"):
         return "error"
-    if normalized.startswith("warning") or normalized == "compatibility":
+    if normalized == "compatibility":
+        # D3a: `compatibility` -> INFO. `"notice"` is the lowercase value the
+        # Audit renderer turns into the `INFO` token.
+        return "notice"
+    if normalized.startswith("warning"):
         return "warning"
     if normalized.startswith("notice") or normalized.startswith("info"):
         return "notice"
@@ -594,6 +665,24 @@ def _as_text(value: Any) -> str:
     return "" if value is None else str(value)
 
 
+def message_for_level(message: str, level: str) -> str:
+    """The finding's message, with an unknown `level` appended in parentheses.
+
+    §18.5 D3a: a level the mapping table does not know maps to `WARNING` **and**
+    has its raw `level` appended to the message -- "never dropped". The append
+    has to happen here, where the message is composed: `severity_for_level`
+    returns a severity and structurally cannot carry text, and doing it in the
+    Audit renderer would put `plpgsql_check` level knowledge in the UI and
+    create the second mapping D3a forbids. The raw value also stays on
+    `CheckFinding.level`, so "map it once" and "never drop the raw level" hold
+    together.
+    """
+    if is_known_level(level):
+        return message
+    raw = (level or "").strip()
+    return f"{message} ({raw})" if message else f"({raw})"
+
+
 def parse_findings(rows: Sequence[Any], request: CheckRequest) -> list[CheckFinding]:
     """Turn `plpgsql_check_function_tb` rows into `CheckFinding`s.
 
@@ -601,6 +690,11 @@ def parse_findings(rows: Sequence[Any], request: CheckRequest) -> list[CheckFind
     11 columns. Dropping such a row would shrink the finding list, and a
     shorter finding list is indistinguishable from a cleaner routine — the one
     lie this module exists to prevent.
+
+    The severity comes from `severity_for_level` (the single mapping) and the
+    message from `message_for_level`, which appends an *unknown* raw level in
+    parentheses so a level this build never heard of is never swallowed
+    (§18.5 D3a).
     """
     findings: list[CheckFinding] = []
     for index, row in enumerate(rows):
@@ -629,7 +723,7 @@ def parse_findings(rows: Sequence[Any], request: CheckRequest) -> list[CheckFind
         findings.append(
             CheckFinding(
                 severity=severity_for_level(_as_text(level)),
-                message=_as_text(message),
+                message=message_for_level(_as_text(message), _as_text(level)),
                 line=map_lineno(request.buffer_text, source_lineno),
                 level=_as_text(level),
                 sqlstate=_as_text(sqlstate),
@@ -650,6 +744,23 @@ def parse_findings(rows: Sequence[Any], request: CheckRequest) -> list[CheckFind
 # The capability gate -- never a silent no-op
 # ---------------------------------------------------------------------------
 
+def not_installed_reason(caps: SandboxCapabilities) -> str:
+    """The `installable` reason, with the actionable second sentence chosen by
+    `install_gate` rather than guessed here (§18.5 D3a).
+
+    - install offered -> name the one-click install and both places it lives;
+    - install refused (the connection is not a superuser) -> `install_gate`'s
+      **own** `CREATE EXTENSION requires superuser` sentence, taken from the
+      gate so the wording exists in exactly one place. Telling a non-superuser
+      to "install it from Sandbox Setup" would point at a button that is not
+      offered to them.
+    """
+    offered, gate_reason = install_gate(caps)
+    if offered or not gate_reason:
+        return REASON_NOT_INSTALLED
+    return f"{REASON_NOT_INSTALLED_BASE} {gate_reason}"
+
+
 def capability_outcome(caps: SandboxCapabilities) -> TierOutcome | None:
     """None when tier 3 can run; otherwise the `unavailable` outcome
     explaining why it cannot, one distinct reason per
@@ -660,13 +771,14 @@ def capability_outcome(caps: SandboxCapabilities) -> TierOutcome | None:
     **not interchangeable**: "the DBA never installed the library",
     "it is installable, click the button", and "we could not even ask" call
     for three different user actions. The `absent` text is `install_gate`'s
-    own, so the platform-install wording lives in exactly one place.
+    own, and so is the `installable`-but-not-superuser half of
+    `not_installed_reason`, so both wordings live in exactly one place.
     """
     state = caps.plpgsql_check_state
     if state == "installed":
         return None
     if state == "installable":
-        return TierOutcome(status=STATUS_UNAVAILABLE, reason=REASON_NOT_INSTALLED)
+        return TierOutcome(status=STATUS_UNAVAILABLE, reason=not_installed_reason(caps))
     if state == "unknown":
         return TierOutcome(
             status=STATUS_UNAVAILABLE,
@@ -813,8 +925,9 @@ def recheck(
     `run_plpgsql_check` — named because the gesture is user-visible and the
     panel's Check button wants an entry point to bind to, not because it adds
     behaviour. D3's other two entry points, `apply_and_check` (commits) and
-    `probe_check` (rolled back), both need `db/apply.py`'s write seam and are
-    therefore not built here; do not "finish" them by making this one write.
+    `probe_check` (rolled back), both drive `db/apply.py`'s write seam; that
+    module exists now, but wiring them through it is separate, unstarted work,
+    so they are not built here -- do not "finish" them by making this one write.
     """
     return run_plpgsql_check(session, request, caps, query=query)
 
@@ -951,9 +1064,12 @@ __all__ = [
     "CheckReport",
     "CheckRequest",
     "CheckSession",
+    "KNOWN_LEVELS",
     "MalformedCheckOutputError",
     "Query",
+    "REASON_INSTALL_LOCATIONS",
     "REASON_NOT_INSTALLED",
+    "REASON_NOT_INSTALLED_BASE",
     "REASON_OBJECT_ABSENT",
     "REASON_RELATION_ABSENT",
     "REASON_SWEEP_ROW_ERRORED",
@@ -974,7 +1090,10 @@ __all__ = [
     "build_resolve_sql",
     "capability_outcome",
     "check_working_set",
+    "is_known_level",
     "map_lineno",
+    "message_for_level",
+    "not_installed_reason",
     "parse_findings",
     "recheck",
     "request_from_applied",
