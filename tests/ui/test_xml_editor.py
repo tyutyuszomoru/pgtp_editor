@@ -1294,6 +1294,142 @@ def test_gutter_click_in_fold_zone_still_toggles_fold(qtbot):
     assert editor.bookmarked_lines() == []
 
 
+def _gutter_mouse_event(kind, x, y):
+    """A left-button mouse event of ``kind`` at gutter-widget coords (x, y)."""
+    return _QMouseEvent_bm(
+        kind,
+        _QPoint_bm(int(x), int(y)),
+        _Qt_bm.MouseButton.LeftButton,
+        _Qt_bm.MouseButton.LeftButton,
+        _Qt_bm.KeyboardModifier.NoModifier,
+    )
+
+
+def _line_number_zone_x():
+    from pgtp_editor.ui.xml_editor import _BOOKMARK_STRIP_WIDTH, _FOLD_GLYPH_WIDTH
+
+    return _BOOKMARK_STRIP_WIDTH + _FOLD_GLYPH_WIDTH + 2
+
+
+def _gutter_editor(qtbot, text="<Page>\n  <Detail>\n    content\n  </Detail>\n</Page>"):
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    editor.resize(400, 300)
+    editor.show()
+    editor.setPlainText(text)
+    return editor
+
+
+def _block_top(editor, block_number):
+    block = editor.document().findBlockByNumber(block_number)
+    return editor.blockBoundingGeometry(block).translated(editor.contentOffset()).top()
+
+
+def test_gutter_double_click_on_line_number_toggles_bookmark(qtbot):
+    """Spec §8/§27 target design: a double-click in the line-number zone is a
+    second, larger click target for the bookmark toggle."""
+    editor = _gutter_editor(qtbot)
+    y = int(_block_top(editor, 2)) + 2
+    x = _line_number_zone_x()
+
+    editor._gutter.mouseDoubleClickEvent(
+        _gutter_mouse_event(_QEvent_bm.Type.MouseButtonDblClick, x, y)
+    )
+    assert editor.bookmarked_lines() == [2]
+
+    # A second double-click on the same line clears it again.
+    editor._gutter.mouseDoubleClickEvent(
+        _gutter_mouse_event(_QEvent_bm.Type.MouseButtonDblClick, x, y)
+    )
+    assert editor.bookmarked_lines() == []
+
+
+def test_gutter_single_click_on_line_number_is_still_a_no_op(qtbot):
+    """The 'additive' guarantee: the single click in the line-number zone keeps
+    doing nothing, so Qt's press-before-double-click delivery cannot leave the
+    user with a fold toggled AND a bookmark set."""
+    editor = _gutter_editor(qtbot)
+    y = int(_block_top(editor, 2)) + 2
+
+    editor._gutter.mousePressEvent(
+        _gutter_mouse_event(_QEvent_bm.Type.MouseButtonPress, _line_number_zone_x(), y)
+    )
+    assert editor.bookmarked_lines() == []
+    assert editor.document().findBlockByNumber(2).isVisible() is True
+
+
+def test_gutter_full_double_click_gesture_on_line_number_toggles_once(qtbot):
+    """Qt delivers press → release → double-click. Replaying the real sequence
+    must leave exactly one bookmark, not zero (press undoing it) or two."""
+    editor = _gutter_editor(qtbot)
+    y = int(_block_top(editor, 1)) + 2
+    x = _line_number_zone_x()
+
+    editor._gutter.mousePressEvent(
+        _gutter_mouse_event(_QEvent_bm.Type.MouseButtonPress, x, y)
+    )
+    editor._gutter.mouseReleaseEvent(
+        _gutter_mouse_event(_QEvent_bm.Type.MouseButtonRelease, x, y)
+    )
+    editor._gutter.mouseDoubleClickEvent(
+        _gutter_mouse_event(_QEvent_bm.Type.MouseButtonDblClick, x, y)
+    )
+    assert editor.bookmarked_lines() == [1]
+
+
+def test_gutter_double_click_in_fold_zone_does_not_toggle_a_bookmark(qtbot):
+    """Outside the line-number zone the double-click keeps its old meaning —
+    the fold zone folds, and no bookmark appears."""
+    editor = _gutter_editor(qtbot)
+    from pgtp_editor.ui.xml_editor import _BOOKMARK_STRIP_WIDTH, _FOLD_GLYPH_WIDTH
+
+    y = int(_block_top(editor, 0)) + 2
+    editor._gutter.mouseDoubleClickEvent(
+        _gutter_mouse_event(
+            _QEvent_bm.Type.MouseButtonDblClick,
+            _BOOKMARK_STRIP_WIDTH + _FOLD_GLYPH_WIDTH // 2,
+            y,
+        )
+    )
+    assert editor.bookmarked_lines() == []
+
+
+def test_gutter_double_click_in_bookmark_strip_gesture_is_unchanged(qtbot):
+    """The strip's single click still owns the toggle; the full press +
+    double-click gesture there nets out exactly as it did before (Qt's default
+    mouseDoubleClickEvent re-dispatches to mousePressEvent)."""
+    editor = _gutter_editor(qtbot)
+    y = int(_block_top(editor, 3)) + 2
+
+    editor._gutter.mousePressEvent(
+        _gutter_mouse_event(_QEvent_bm.Type.MouseButtonPress, 2, y)
+    )
+    assert editor.bookmarked_lines() == [3]
+    editor._gutter.mouseDoubleClickEvent(
+        _gutter_mouse_event(_QEvent_bm.Type.MouseButtonDblClick, 2, y)
+    )
+    assert editor.bookmarked_lines() == []
+
+
+def test_gutter_double_click_picks_the_right_line_when_scrolled(qtbot):
+    """The classic gutter off-by-one: with the view scrolled, the topmost
+    painted row must map to the FIRST VISIBLE block, not to block 0."""
+    editor = _gutter_editor(qtbot, "\n".join(f"<L{i}/>" for i in range(200)))
+    editor.verticalScrollBar().setValue(60)
+    first_visible = editor.firstVisibleBlock().blockNumber()
+    assert first_visible > 0  # the scroll actually moved the view
+
+    top = editor.blockBoundingGeometry(editor.firstVisibleBlock()).translated(
+        editor.contentOffset()
+    ).top()
+    editor._gutter.mouseDoubleClickEvent(
+        _gutter_mouse_event(
+            _QEvent_bm.Type.MouseButtonDblClick, _line_number_zone_x(), int(top) + 2
+        )
+    )
+    assert editor.bookmarked_lines() == [first_visible]
+
+
 def test_gutter_paint_with_bookmarks_does_not_crash(qtbot):
     from PySide6.QtGui import QPixmap
     editor = XmlEditor()

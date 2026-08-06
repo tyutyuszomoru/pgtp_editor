@@ -47,7 +47,7 @@ default here folds nothing.
 from __future__ import annotations
 
 from PySide6.QtCore import QRect, QSize, Qt
-from PySide6.QtGui import QColor, QPainter, QPalette, QPen, QTextCursor
+from PySide6.QtGui import QColor, QPainter, QPalette, QPen, QTextBlock, QTextCursor
 from PySide6.QtWidgets import QWidget
 
 # Fixed horizontal allowance reserved for the fold-triangle glyph, added on
@@ -163,6 +163,25 @@ class _EditorGutter(QWidget):
             painter.drawLine(cx, cy + depth, cx + half, cy - depth)
         painter.restore()
 
+    def _block_at_y(self, click_y: float) -> QTextBlock | None:
+        """The visible block whose painted row contains ``click_y`` (gutter
+        widget coordinates), or ``None`` past the last visible block. Walks the
+        same first-visible-block/height chain the paint loop does, so it stays
+        correct while the view is scrolled and while folds hide blocks."""
+        block = self._editor.firstVisibleBlock()
+        top = self._editor.blockBoundingGeometry(block).translated(
+            self._editor.contentOffset()
+        ).top()
+        bottom = top + self._editor.blockBoundingRect(block).height()
+
+        while block.isValid() and top <= click_y:
+            if block.isVisible() and top <= click_y < bottom:
+                return block
+            block = block.next()
+            top = bottom
+            bottom = top + self._editor.blockBoundingRect(block).height()
+        return None
+
     def mousePressEvent(self, event) -> None:
         click_x = event.position().x()
         # Zone routing: bookmark strip toggles the clicked line's bookmark;
@@ -176,24 +195,31 @@ class _EditorGutter(QWidget):
         )
         if not (in_bookmark_strip or in_fold_zone):
             return
-        block = self._editor.firstVisibleBlock()
-        top = self._editor.blockBoundingGeometry(block).translated(
-            self._editor.contentOffset()
-        ).top()
-        bottom = top + self._editor.blockBoundingRect(block).height()
-        click_y = event.position().y()
+        block = self._block_at_y(event.position().y())
+        if block is None:
+            return
+        if in_bookmark_strip:
+            self._editor.toggle_bookmark(block.blockNumber())
+        else:
+            self._editor._toggle_fold(block)
+        self.update()
 
-        while block.isValid() and top <= click_y:
-            if block.isVisible() and top <= click_y < bottom:
-                if in_bookmark_strip:
-                    self._editor.toggle_bookmark(block.blockNumber())
-                else:
-                    self._editor._toggle_fold(block)
-                self.update()
-                return
-            block = block.next()
-            top = bottom
-            bottom = top + self._editor.blockBoundingRect(block).height()
+    def mouseDoubleClickEvent(self, event) -> None:
+        """Second, larger click target for the bookmark toggle (spec §8/§27):
+        a double-click in the **line-number zone** toggles that line's
+        bookmark. Purely additive — the single click there is (and stays) a
+        no-op, so Qt's press-before-double-click delivery cannot leave the user
+        with two effects. In the bookmark strip and the fold zone the event is
+        handed to ``QWidget`` unchanged, which re-dispatches it to
+        ``mousePressEvent`` exactly as it does today."""
+        if event.position().x() < _BOOKMARK_STRIP_WIDTH + _FOLD_GLYPH_WIDTH:
+            super().mouseDoubleClickEvent(event)
+            return
+        block = self._block_at_y(event.position().y())
+        if block is None:
+            return
+        self._editor.toggle_bookmark(block.blockNumber())
+        self.update()
 
 
 class GutterBookmarkFoldMixin:
