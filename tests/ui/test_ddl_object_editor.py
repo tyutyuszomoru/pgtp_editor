@@ -983,6 +983,161 @@ def test_every_tier_is_reported_always_plus_one_line_per_caveat(qtbot):
     assert "caveat: extensions are not reproduced" in joined
 
 
+# --- Two Audit channels (§18.5 D3a, overriding §28) -------------------------
+class _Finding:
+    """A duck-typed `db/ddl_check.py::CheckFinding` -- read by attribute only."""
+
+    def __init__(self, severity, line, message):
+        self.severity = severity
+        self.line = line
+        self.lineno = line
+        self.message = message
+
+
+def _findings(panel):
+    """Collect the finding batches the panel emits on `check_findings`."""
+    batches = []
+    panel.check_findings.connect(lambda batch: batches.append(list(batch)))
+    return batches
+
+
+def test_findings_go_out_as_objects_on_check_findings_and_never_as_narrative(qtbot):
+    """The ledger override asserted from BOTH sides: the clickable channel gets
+    the objects, and the narrative channel gets no `finding:` line -- a
+    pre-formatted string could not carry the line/target roles the host needs."""
+    one = _Finding("error", 6, 'record has no field "foo"')
+    two = _Finding("warning", None, "target variable is never read")
+    seams = _Seams(report=_Report(statuses=("passed", "passed", "passed", "found_issues"),
+                                  findings=[one, two]))
+    panel = _wired(qtbot, seams)
+    lines = _audit(panel)
+    batches = _findings(panel)
+
+    panel.apply_to_sandbox()
+
+    # Clickable channel: exactly one batch, carrying the OBJECTS themselves.
+    assert len(batches) == 1
+    assert batches[0] == [one, two]
+    assert batches[0][0] is one and batches[0][1] is two
+    # Narrative channel: tiers are still there, findings are not -- not the
+    # `finding:` label, not the messages, not even a pre-rendered line number.
+    joined = "\n".join(lines)
+    assert "tier3" in joined
+    assert "finding" not in joined
+    assert 'record has no field "foo"' not in joined
+    assert "target variable is never read" not in joined
+
+
+def test_a_report_with_no_findings_does_not_emit_the_findings_channel_at_all(qtbot):
+    """An empty batch would render an empty Audit run -- so none is sent."""
+    seams = _Seams(report=_Report(caveats=["data is not reproduced"]))
+    panel = _wired(qtbot, seams)
+    lines = _audit(panel)
+    batches = _findings(panel)
+
+    panel.apply_to_sandbox()
+
+    assert batches == []
+    assert any("caveat: data is not reproduced" in line for line in lines)
+
+
+def test_report_check_result_emits_both_channels_with_no_headline(qtbot):
+    """Making a Check result VISIBLE, as opposed to `record_check_report`,
+    which only RECORDS it for precondition 2."""
+    finding = _Finding("error", 12, "unbound record variable")
+    report = _Report(statuses=("passed", "passed", "passed", "found_issues"),
+                     findings=[finding], caveats=["dynamic EXECUTE is not analyzed"])
+    panel = _panel(qtbot)
+    lines = _audit(panel)
+    batches = _findings(panel)
+
+    panel.report_check_result(report)
+
+    assert batches == [[finding]]
+    joined = "\n".join(lines)
+    assert "tier3: found_issues" in joined
+    assert "caveat: dynamic EXECUTE is not analyzed" in joined
+    assert "unbound record variable" not in joined
+    # No headline: every line is a tier/caveat line, none an "applied …" notice.
+    assert not any("applied" in line for line in lines)
+    # Recording stays a separate act.
+    assert panel.last_check_report() is None
+
+
+# --- "Run in Sandbox Console" (§18.5 D4) -- a bridge that executes nothing ---
+def test_run_in_console_entry_is_absent_while_the_seam_is_unwired(qtbot):
+    panel = _panel(qtbot, text="select 1")
+    assert panel.has_run_in_console is False
+    labels = [a.text() for a in panel._build_context_menu().actions()]
+    assert "Run in Sandbox Console" not in labels
+
+
+def test_run_in_console_entry_is_present_but_disabled_without_a_selection(qtbot):
+    panel = _panel(qtbot, text="select 1")
+    panel.set_run_in_console(lambda text: None)
+    assert panel.has_run_in_console is True
+    action = next(
+        a for a in panel._build_context_menu().actions() if a.text() == "Run in Sandbox Console"
+    )
+    assert action.isEnabled() is False
+    assert action.shortcut().isEmpty()
+
+
+def test_run_in_console_entry_is_enabled_with_a_selection(qtbot):
+    panel = _panel(qtbot, text="select 1")
+    panel.set_run_in_console(lambda text: None)
+    _select_all(panel)
+    action = next(
+        a for a in panel._build_context_menu().actions() if a.text() == "Run in Sandbox Console"
+    )
+    assert action.isEnabled() is True
+
+
+def test_run_in_console_hands_over_the_selection_with_real_newlines_and_executes_nothing(qtbot):
+    seams = _Seams()
+    panel = _wired(qtbot, seams)
+    handed = []
+    panel.set_run_in_console(handed.append)
+    _select_all(panel)
+
+    action = next(
+        a for a in panel._build_context_menu().actions() if a.text() == "Run in Sandbox Console"
+    )
+    action.trigger()
+
+    # QTextCursor.selectedText() joins lines with U+2029; the console must get
+    # real newlines, and the buffer must reach it unchanged otherwise.
+    assert len(handed) == 1
+    assert handed[0].splitlines() == _TARGET_SRC.splitlines()
+    assert " " not in handed[0]
+    assert "\n" in handed[0]
+    # It is not an apply: no seam ran, no confirmation was asked for.
+    assert seams.sandbox_calls == [] and seams.target_calls == []
+    assert seams.confirms == []
+    # And the buffer itself is untouched.
+    assert panel.text() == _TARGET_SRC
+
+
+def test_run_in_sandbox_console_is_a_noop_without_a_selection_or_a_console(qtbot):
+    seams = _Seams()
+    panel = _wired(qtbot, seams)
+    handed = []
+
+    # No console at all.
+    _select_all(panel)
+    assert panel.run_in_sandbox_console() is False
+
+    # A console, but nothing selected.
+    panel.set_run_in_console(handed.append)
+    cursor = panel.editor.textCursor()
+    cursor.clearSelection()
+    panel.editor.setTextCursor(cursor)
+    assert panel.run_in_sandbox_console() is False
+
+    assert handed == []
+    assert seams.sandbox_calls == [] and seams.target_calls == []
+
+
 # --- "Deploy this edit…" -- a picker in front of the three gestures ---------
 def test_deploy_this_edit_delegates_to_apply_to_sandbox(qtbot, monkeypatch):
     seams = _Seams()

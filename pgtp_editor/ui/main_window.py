@@ -16,6 +16,7 @@
 import copy
 import logging
 import os
+import re
 import shutil
 from pathlib import Path
 
@@ -128,7 +129,10 @@ from pgtp_editor.db.sandbox import (
 from pgtp_editor.ui.async_task import run_async
 from pgtp_editor.ui.connection_setup_dialog import ConnectionSetupDialog
 from pgtp_editor.ui.new_project_dialog import NewProjectDialog
-from pgtp_editor.ui.ddl_object_editor import DdlObjectRef
+from pgtp_editor.db.apply import ApplyOutcome
+from pgtp_editor.db.ddl_check import CheckRequest
+from pgtp_editor.ui.ddl_object_editor import CHECK_PREFIX, DdlObjectRef
+from pgtp_editor.ui.sandbox_controller import SandboxController, SandboxOperation
 from pgtp_editor.ui.new_routine_dialog import NewRoutineDialog
 from pgtp_editor.ui.new_trigger_dialog import NewTriggerDialog
 from pgtp_editor.ui.project_status_model import build_diagram, quality_state
@@ -176,6 +180,20 @@ _GENERATOR_OUTPUT_PREFIX = "[PHP] "
 #: Format Selection refusals (§18.4/§18.5). Not clickable, no line role
 #: (carve-out 6) -- the offending span is already underlined in the tab.
 _SQL_REFUSAL_PREFIX = "[SQL] "
+
+#: §18.5 D3a: the Audit `SEVERITY` token for a finding's severity string.
+#: **A vocabulary CASE translation only** -- `validation/tier2.py`'s
+#: `ValidationIssue.severity` values (`"error"`/`"warning"`, plus
+#: `db/ddl_check.py`'s third value `"notice"`, which the Audit panel shows as
+#: `INFO`) mapped onto their rendered token. The `level -> severity` DECISION
+#: has exactly one home -- `db/ddl_check.py::severity_for_level` -- and must
+#: never be re-decided here; an unknown severity renders `WARNING`, never
+#: `INFO` (D3a's "never silently mapped to INFO").
+_CHECK_SEVERITY_TOKENS = {"error": "ERROR", "warning": "WARNING", "notice": "INFO"}
+
+#: `SandboxController` operation outcomes (§18.5 D2). Never `[Check]` -- that
+#: prefix belongs to the validation ladder, whose lines the panel owns.
+_SANDBOX_PREFIX = "[Sandbox] "
 
 _FIND_ALL_BATCH = 200
 
@@ -477,6 +495,40 @@ class MainWindow(QMainWindow):
         # Injectable seam (mirrors _fetch_db_schema) -- tests patch this to a
         # canned SandboxCapabilities so no real connection is ever opened.
         self._probe_sandbox_capabilities = sandbox_probe
+        #: §18.5 D2/D3a/D4: the one owner of at most one `SandboxSession` for
+        #: the open project. Every `db/sandbox.py` entry point on it is an
+        #: injected seam, kept at production defaults here EXCEPT `prober`,
+        #: which is routed through this window's own already-injectable
+        #: `_probe_sandbox_capabilities` so the whole window probes through one
+        #: seam. Public attribute so tests can replace its seams (and its
+        #: `_run_async`) wholesale.
+        self.sandbox_controller = SandboxController(
+            self,
+            confirm_destructive=self._confirm_destructive_sandbox_operation,
+            prober=lambda params: self._probe_sandbox_capabilities(params),
+        )
+        self.sandbox_controller.session_changed.connect(self._on_sandbox_session_changed)
+        self.sandbox_controller.operation_finished.connect(
+            self._on_sandbox_operation_finished
+        )
+        #: §18.5 D4: `() -> SandboxSession | None`. The ONE attribute the
+        #: sandbox lane repoints -- aimed at the controller's `session`
+        #: accessor, so "is there a session?" has exactly one answer.
+        #: Everything console-related asks `_sandbox_console_available()`,
+        #: which asks this. None (or a None return) means the console is
+        #: ABSENT -- never present-but-refusing.
+        self._sandbox_session_provider = lambda: self.sandbox_controller.session
+        #: Database ▸ Sandbox SQL Console… -- created hidden, shown ONLY by
+        #: `_refresh_sandbox_console_affordances`. Initialised here because
+        #: `_build_database_menu` (called from `_build_menu_bar` below) assigns
+        #: it, and the refresh may run before that on an early call path.
+        self._sandbox_console_action = None
+        #: The §18.5 D3a Check gesture and the two session gestures, all
+        #: VISIBILITY-managed (carve-out 2: absent, never disabled). Same
+        #: before-`_build_menu_bar` initialisation reason as above.
+        self._sandbox_check_action = None
+        self._open_sandbox_session_action = None
+        self._close_sandbox_session_action = None
 
         # Document dirty-state tracking. `_loading` guards programmatic
         # setPlainText calls (load/revert/close) so they don't spuriously
@@ -1750,6 +1802,13 @@ class MainWindow(QMainWindow):
                 self.center_stage.show_edit_xsd()
             self.center_stage.xsd_editor.navigate_to_line(line)
             return
+        if isinstance(target, tuple):
+            # §18.5 D3a: a `[Check]` finding carries the object's
+            # `DdlObjectRef.key` (a tuple) -- focus that tab and place the
+            # caret there. Never falls through to Raw XML: that would navigate
+            # a different document entirely.
+            self._navigate_to_ddl_object(target, line)
+            return
         self.center_stage.setCurrentIndex(self.center_stage.raw_xml_tab_index)
         self.center_stage.xml_editor.navigate_to_line(line)
 
@@ -2685,10 +2744,51 @@ class MainWindow(QMainWindow):
         new_routine_action = menu.addAction("New Function/Procedure…")
         new_routine_action.triggered.connect(lambda: self._on_ddl_new_routine_requested())
         menu.addSeparator()
+        menu.addSeparator()
+        # §18.5 D4: ad-hoc SQL is SANDBOX-ONLY. Created HIDDEN and shown only
+        # by `_refresh_sandbox_console_affordances` when a live session exists
+        # (absent, not disabled -- carve-out 2). There is deliberately NO "run
+        # against target" counterpart here, not even a disabled one: the
+        # boundary is structural (`run_sandbox_query` takes a `SandboxSession`,
+        # never a `ConnectionParams`) and adding one would need a spec change
+        # plus a Supersession Ledger row.
+        self._sandbox_console_action = menu.addAction("Sandbox SQL Console…")
+        self._sandbox_console_action.setVisible(False)
+        self._sandbox_console_action.triggered.connect(
+            lambda: self._open_sandbox_sql_console()
+        )
+        # §18.5 D2: acquiring/releasing the one `SandboxSession`. Deliberately
+        # a user act rather than a side effect of opening a project -- a
+        # session is a real connection to a real database, and
+        # `SandboxController.set_project` is explicit that a project opening
+        # "opens nothing and provisions nothing".
+        self._open_sandbox_session_action = menu.addAction("Open Sandbox Session")
+        self._open_sandbox_session_action.setVisible(False)
+        self._open_sandbox_session_action.triggered.connect(
+            lambda: self._open_sandbox_session()
+        )
+        self._close_sandbox_session_action = menu.addAction("Close Sandbox Session")
+        self._close_sandbox_session_action.setVisible(False)
+        self._close_sandbox_session_action.triggered.connect(
+            lambda: self.sandbox_controller.close_session()
+        )
+        # §18.5 D3a's Check gesture. VISIBILITY follows `can_check` (carve-out
+        # 2's "no dead controls"), and is deliberately NOT gated on
+        # `plpgsql_check_state`: an unavailable tier 3 is a REPORTED OUTCOME,
+        # so the gesture stays present and states what it could not check.
+        self._sandbox_check_action = menu.addAction("Check Object in Sandbox")
+        self._sandbox_check_action.setVisible(False)
+        self._sandbox_check_action.triggered.connect(
+            lambda: self._check_active_ddl_object()
+        )
+        menu.addSeparator()
         # §18.8: opening the window is itself a probe trigger, not a passive
         # read of a cached result -- see _open_project_status.
         project_status_action = menu.addAction("Project Status…")
         project_status_action.triggered.connect(lambda: self._open_project_status())
+        # Every sandbox-dependent entry above was created hidden; this is the
+        # one place that decides which of them the current state earns.
+        self._refresh_sandbox_affordances()
 
     def _prompt_missing_connection(self) -> None:
         """No configured DB connection: in projectless mode this opens the
@@ -2856,6 +2956,9 @@ class MainWindow(QMainWindow):
         self._ddl_project_folder = folder
         self._ddl_project_settings = settings
         self._close_ddl_project_action.setEnabled(True)
+        # §18.5 D2: the controller follows the project. `set_project` drops any
+        # session that belonged to the previous project and connects to nothing.
+        self._bind_sandbox_controller_to_project()
         self._refresh_project_dependent_actions()
         self._update_title()
         self.refresh_project_capability_status()
@@ -3003,6 +3106,10 @@ class MainWindow(QMainWindow):
         # so the project's probe result must not outlive it as a stale error
         # against the app-level connection.
         self._ddl_target_probe_error = None
+        # §18.5 D2: no stale session may outlive the project it belonged to --
+        # `clear_project` releases it and announces the release, and the
+        # refresh inside takes the console and every tab affordance with it.
+        self._bind_sandbox_controller_to_project()
         self._close_ddl_project_action.setEnabled(False)
         self._refresh_project_dependent_actions()
         self._update_title()
@@ -3153,6 +3260,10 @@ class MainWindow(QMainWindow):
         settings = dialog.settings()
         save_settings(self._ddl_project_folder, settings)
         self._ddl_project_settings = settings
+        # The sandbox/target profiles may have just changed under a live
+        # session: rebind (which drops it) rather than keep a session pointed at
+        # a database this project no longer calls its sandbox.
+        self._bind_sandbox_controller_to_project()
         self.statusBar().showMessage("Project settings saved.", 5000)
 
     # -- Database/XML Coherence (§17, FQ-003) ---------------------------------
@@ -3402,6 +3513,7 @@ class MainWindow(QMainWindow):
             lambda _dirty, ref=ref: self.center_stage.update_ddl_object_tab(ref)
         )
         panel.format_refused.connect(self._report_ddl_format_refusal)
+        self._wire_ddl_object_panel_reporting(panel, ref)
 
     # --- §18.8: the Project Status window ------------------------------------
     def _project_status_target(self):
@@ -3661,6 +3773,7 @@ class MainWindow(QMainWindow):
             lambda _dirty, ref=ref, key=key: self.center_stage.update_ddl_object_tab(ref, key=key)
         )
         panel.format_refused.connect(self._report_ddl_format_refusal)
+        self._wire_ddl_object_panel_reporting(panel, ref)
 
     def _report_ddl_checkout_drift(self, ref, relpath, live_source) -> None:
         """Checkout semantics step 4 (§18.2): if the live DB has drifted from
@@ -3744,6 +3857,404 @@ class MainWindow(QMainWindow):
                 f"{_SQL_REFUSAL_PREFIX}line {issue.start_line}: {issue.message}"
             )
             self.audit_panel.addItem(item)
+
+    # --- §18.5 D3a: the two Audit channels of a Check run -------------------
+    def _report_check_lines(self, lines) -> None:
+        """The NARRATIVE channel (`DdlObjectEditorPanel.check_reported`).
+
+        The lines arrive ALREADY prefixed with `[Check] ` (the panel owns that
+        reservation), so they are appended verbatim -- never re-prefixed -- and
+        carry NO roles: narrative lines are unclickable, exactly the treatment
+        `[SQL]` refusals and the `[Find]` summary line get (carve-out 6)."""
+        for line in lines:
+            self.audit_panel.addItem(QListWidgetItem(str(line)))
+
+    def _report_check_findings(self, findings, ref) -> None:
+        """The CLICKABLE channel (`DdlObjectEditorPanel.check_findings`).
+
+        One Audit line per duck-typed `db/ddl_check.py::CheckFinding`, with the
+        buffer line on `UserRole` and the object's `DdlObjectRef.key` on
+        `UserRole+1` so `_on_audit_item_clicked` can focus that object's tab and
+        place the caret (§18.5 D3a). `UserRole+2` is left alone -- it is Verify
+        XSD's mode slot.
+
+        A finding whose line could not be mapped (`line is None`) is rendered
+        with no line and **neither role**, so it is inert rather than navigating
+        somewhere wrong."""
+        key = getattr(ref, "key", None)
+        for finding in findings:
+            severity = str(getattr(finding, "severity", "") or "").strip().lower()
+            # Unknown severity -> WARNING (D3a: never silently INFO). The
+            # level->severity decision itself stays in `severity_for_level`.
+            token = _CHECK_SEVERITY_TOKENS.get(severity, "WARNING")
+            message = getattr(finding, "message", "") or ""
+            # `lineno` is `CheckFinding`'s BUFFER-line alias and wins; `line` is
+            # the same fact on a `(severity, line, message)` test stub. The raw
+            # `source_lineno` is a prosrc-relative trap and is never read here.
+            line = getattr(finding, "lineno", None)
+            if line is None:
+                line = getattr(finding, "line", None)
+            if line is None:
+                item = QListWidgetItem(f"{CHECK_PREFIX}{token}: {message}")
+                self.audit_panel.addItem(item)
+                continue
+            item = QListWidgetItem(f"{CHECK_PREFIX}{token} line {line}: {message}")
+            item.setData(Qt.ItemDataRole.UserRole, line)
+            item.setData(Qt.ItemDataRole.UserRole + 1, key)
+            self.audit_panel.addItem(item)
+
+    def _navigate_to_ddl_object(self, key, line) -> None:
+        """Focus the DDL object tab whose `ref.key` is `key` and place the
+        caret on `line` (§18.5 D3a's click-to-navigate).
+
+        Resolved by **`panel.ref.key` identity** over the open panels, NOT by
+        tab key: a checked-out object's tab is keyed on its `ddl/*.sql` path
+        (§18.2), so a `ddl_object_tab(key)` lookup would miss exactly that case.
+
+        If no tab is open for the object, this does NOTHING -- falling through
+        to Raw XML would navigate a different document, and reopening would
+        resurrect a tab the user closed. Neither is an honest answer."""
+        for panel in self.center_stage.ddl_object_panels():
+            if getattr(getattr(panel, "ref", None), "key", None) == key:
+                self.center_stage.setCurrentWidget(panel)
+                panel.navigate_to_line(line)
+                return
+
+    # --- §18.5 D4: the Sandbox SQL Console ----------------------------------
+    def _sandbox_console_available(self) -> bool:
+        """Whether a live `SandboxSession` can be had right now.
+
+        The console is **absent, not disabled**, without one (§18.5 D4's safety
+        boundary / carve-out 2), so this is what its menu action's VISIBILITY
+        and every object tab's bridge seam are gated on."""
+        provider = self._sandbox_session_provider
+        if provider is None:
+            return False
+        try:
+            return provider() is not None
+        except Exception:  # pragma: no cover - a broken injected seam
+            return False
+
+    def _open_sandbox_sql_console(self):
+        """Database ▸ Sandbox SQL Console… -- open, or focus, the single
+        console tab. Returns the panel, or None (creating NOTHING) when there
+        is no live session: a console that refuses every Run is worse than no
+        console at all."""
+        if not self._sandbox_console_available():
+            self.statusBar().showMessage(
+                "No sandbox session — open the project's sandbox from "
+                "Database ▸ Project Status… first.",
+                5000,
+            )
+            return None
+        panel = self.center_stage.open_sandbox_sql_tab(
+            session_provider=self._sandbox_session_provider
+        )
+        panel.set_schema_index(self._ddl_schema_index)
+        # Idempotent: `open_sandbox_sql_tab` is single-instance, so a re-invoke
+        # hands back the SAME panel and must not stack a second connection.
+        if not getattr(panel, "_pgtp_refusal_wired", False):
+            panel.format_refused.connect(self._report_ddl_format_refusal)
+            panel._pgtp_refusal_wired = True
+        panel.set_session_available(True)
+        panel.focus_editor()
+        return panel
+
+    def _run_selection_in_sandbox_console(self, sql: str) -> None:
+        """The object tab's "Run in Sandbox Console" bridge (§18.5 D4).
+
+        Copies text and focuses the console -- it **executes nothing**: there is
+        exactly one execution surface and pressing Run on it is the user's act,
+        not this bridge's. APPENDS rather than replaces, so a second push cannot
+        destroy the first."""
+        panel = self._open_sandbox_sql_console()
+        if panel is None:
+            return
+        panel.append_sql(sql)
+        panel.focus_editor()
+
+    def _refresh_sandbox_console_affordances(self) -> None:
+        """Make the console's presence follow the session's (§18.5 D4).
+
+        Shows/hides the menu action, wires/unwires every open object tab's
+        bridge seam, and -- if the session died under an already-open console --
+        CLOSES it, rather than leaving a console that refuses every Run."""
+        available = self._sandbox_console_available()
+        if self._sandbox_console_action is not None:
+            self._sandbox_console_action.setVisible(available)
+        seam = self._run_selection_in_sandbox_console if available else None
+        for panel in self.center_stage.ddl_object_panels():
+            panel.set_run_in_console(seam)
+        if not available and self.center_stage.sandbox_sql_tab() is not None:
+            self.center_stage.close_sandbox_sql_tab()
+
+    def _wire_ddl_object_panel_reporting(self, panel, ref) -> None:
+        """Connect a freshly opened DDL object tab's §18.5 reporting channels,
+        its D4 console bridge and its sandbox apply seams. Shared by both
+        tab-open sites (Edit… and Check Out for Versioning) so the two can
+        never drift apart."""
+        panel.check_reported.connect(self._report_check_lines)
+        panel.check_findings.connect(
+            lambda findings, ref=ref: self._report_check_findings(findings, ref)
+        )
+        if self._sandbox_console_available():
+            panel.set_run_in_console(self._run_selection_in_sandbox_console)
+        self._wire_ddl_object_apply_seams(panel)
+
+    # --- §18.5 D2/D3a: the SandboxController's session and its gestures ------
+    def _refresh_sandbox_affordances(self) -> None:
+        """The single "make every sandbox-dependent affordance match the
+        session's actual state" entry point -- called on every session-state
+        change and whenever the project binding changes.
+
+        Everything here binds VISIBILITY, never enabled-state (§18.5 carve-out
+        2: with no live session the control is ABSENT, not greyed out)."""
+        controller = self.sandbox_controller
+        has_session = controller.has_session
+        if self._sandbox_check_action is not None:
+            self._sandbox_check_action.setVisible(controller.can_check)
+        if self._open_sandbox_session_action is not None:
+            self._open_sandbox_session_action.setVisible(
+                not has_session and bool(self._configured_sandbox_params())
+            )
+        if self._close_sandbox_session_action is not None:
+            self._close_sandbox_session_action.setVisible(has_session)
+        for panel in self.center_stage.ddl_object_panels():
+            self._wire_ddl_object_apply_seams(panel)
+        self._refresh_sandbox_console_affordances()
+
+    def _configured_sandbox_params(self):
+        """The open project's sandbox `ConnectionParams`, or None when there is
+        no project or its sandbox has no host -- the same "configured means a
+        host is set" reading `refresh_project_capability_status` uses, so the
+        two can never disagree about whether a sandbox exists."""
+        settings = self._ddl_project_settings
+        if settings is None or not settings.sandbox.host:
+            return None
+        return settings.sandbox
+
+    def _bind_sandbox_controller_to_project(self) -> None:
+        """Point the controller at the currently-open project (or at nothing).
+
+        `set_project` drops any session belonging to the previous project and
+        deliberately opens/provisions nothing, so this is safe on every project
+        transition -- no connection happens as a side effect of a project
+        opening."""
+        settings = self._ddl_project_settings
+        if settings is None:
+            self.sandbox_controller.clear_project()
+        else:
+            self.sandbox_controller.set_project(
+                sandbox_params=settings.sandbox,
+                target_params=settings.target,
+                mode=settings.sandbox_mode,
+                configured=bool(settings.sandbox.host),
+            )
+        self._refresh_sandbox_affordances()
+
+    def _open_sandbox_session(self) -> None:
+        """Database ▸ Open Sandbox Session -- probe, then open the one session
+        through the controller's single ownership gate. The outcome (including
+        every distinguishable refusal reason) lands in the Audit panel via
+        `_on_sandbox_operation_finished`; nothing is swallowed."""
+        if self._configured_sandbox_params() is None:
+            self.statusBar().showMessage(
+                "No sandbox configured for this project — set one up in "
+                "Project Settings.",
+                5000,
+            )
+            return
+        self.sandbox_controller.open_session()
+
+    def _confirm_destructive_sandbox_operation(self, warning: str) -> bool:
+        """The controller's `confirm_destructive` gate. A controller with no
+        gate refuses every destructive operation, so this must exist for
+        Reset/data-clone to be possible at all -- and it never guesses: the
+        warning text is the controller's own."""
+        return (
+            QMessageBox.question(
+                self,
+                "Sandbox Operation",
+                warning,
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            )
+            == QMessageBox.StandardButton.Yes
+        )
+
+    def _on_sandbox_session_changed(self, _available: bool) -> None:
+        """The session came up or went away: every sandbox-dependent
+        affordance follows it in one place."""
+        self._refresh_sandbox_affordances()
+
+    def _on_sandbox_operation_finished(self, result) -> None:
+        """Route one `SandboxOperationResult` by its `operation` and SURFACE
+        its stated reason -- a failed sandbox operation is never swallowed.
+
+        `CHECK` is the one operation whose success is reported elsewhere (the
+        panel renders `result.report` over both Audit channels), so only a
+        check that produced NO report is reported here -- a refused or crashed
+        check must never read as a clean one, and must not be double-reported
+        either."""
+        operation = getattr(result, "operation", None)
+        reason = (getattr(result, "reason", "") or "").strip()
+        if operation is SandboxOperation.CHECK:
+            if getattr(result, "report", None) is None:
+                self.audit_panel.addItem(
+                    QListWidgetItem(
+                        f"{CHECK_PREFIX}check did not run"
+                        + (f": {reason}" if reason else ".")
+                    )
+                )
+            return
+        name = operation.value if operation is not None else "sandbox"
+        if result.ok:
+            text = f"{_SANDBOX_PREFIX}{name}: " + (reason or "done.")
+        else:
+            text = f"{_SANDBOX_PREFIX}{name} failed" + (f": {reason}" if reason else ".")
+        self.audit_panel.addItem(QListWidgetItem(text))
+
+    # --- §18.5 D3: Apply to Sandbox ------------------------------------------
+    def _wire_ddl_object_apply_seams(self, panel) -> None:
+        """Wire (or unwire) one object tab's apply lane to the live session.
+
+        Only Apply to Sandbox is wired: Apply to Target needs the live-identity
+        seam its precondition 1 cannot be enforced without, and an
+        unenforceable precondition must remove the gesture rather than weaken
+        it (the panel enforces exactly that via `has_target_apply`).
+
+        `set_apply_seams` replaces the whole set and rebuilds the button row, so
+        it is only called when the answer actually changes."""
+        wanted = self.sandbox_controller.has_session
+        if wanted == panel.has_sandbox_apply:
+            return
+        if wanted:
+            panel.set_apply_seams(
+                apply_to_sandbox=self._apply_ddl_object_to_sandbox,
+                sandbox_database_label=self._sandbox_database_label,
+                confirm=self._confirm_sandbox_apply,
+            )
+        else:
+            # Empty set: the seam that went away takes its affordance with it.
+            panel.set_apply_seams()
+
+    def _sandbox_database_label(self) -> str:
+        """The sandbox database name an apply confirmation must NAME. Read off
+        the live session's own params, never off the project file: the
+        confirmation must name the database the write will actually hit."""
+        session = self.sandbox_controller.session
+        if session is not None:
+            return session.params.database or ""
+        params = self._configured_sandbox_params()
+        return params.database if params is not None else ""
+
+    def _confirm_sandbox_apply(self, title: str, text: str) -> bool:
+        """The panel's confirmation gate for the apply gestures. The text is
+        the PANEL's (it names the object and the database); this only shows it,
+        so no confirmation wording is duplicated here."""
+        return (
+            QMessageBox.question(
+                self,
+                title,
+                text,
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            )
+            == QMessageBox.StandardButton.Yes
+        )
+
+    def _apply_ddl_object_to_sandbox(self, ref, text):
+        """The panel's `apply_to_sandbox(ref, text)` write seam (§18.5 D3).
+
+        Goes through `SandboxSession.apply`, the ONE committing call that runs
+        the DDL and its `applied` working-set bookkeeping in a single
+        transaction -- never a bare `apply_ddl` that would leave the working set
+        lying about what the sandbox contains. The `ref` it takes is the
+        `(kind, schema_name, object_name, table_name)` 4-tuple that IS the
+        bookkeeping table's primary key.
+
+        Returns a duck-typed `db/apply.py::ApplyOutcome` because the panel
+        reports and RECORDS whatever comes back (precondition 2), so a failure
+        must come back as a stated outcome rather than an exception. Synchronous
+        by the panel's contract -- `apply_to_sandbox()` consumes the return
+        value -- so this is the one sandbox write that is not marshalled off the
+        GUI thread.
+        """
+        session = self.sandbox_controller.session
+        if session is None:
+            # Unreachable through the wiring (the seam is only wired while a
+            # session exists), but a stated outcome beats a crash.
+            return ApplyOutcome.failed(
+                "no sandbox session is open -- nothing was applied"
+            )
+        key = (ref.kind, ref.schema, ref.name, ref.table or "")
+        try:
+            session.apply(key, text)
+        except Exception as exc:  # noqa: BLE001 -- the DB's message IS the result
+            return ApplyOutcome.failed(str(exc) or exc.__class__.__name__)
+        return ApplyOutcome.succeeded((), committed=True)
+
+    # --- §18.5 D3a: the Check gesture ----------------------------------------
+    def _check_active_ddl_object(self) -> None:
+        """Database ▸ Check Object in Sandbox -- run D3a's ladder over the
+        ACTIVE object tab's buffer. Exactly one object per run (D3a): there is
+        no implicit multi-object sweep.
+
+        The `CheckRequest` is built HERE, not in the controller, because a
+        trigger's referenced function is knowledge the ref alone does not carry
+        and the controller must not guess it. When it cannot be supplied, the
+        request goes out without it and `db/ddl_check.py` reports its own
+        "which function does this trigger call?" outcome -- an unavailable tier
+        is a reported fact, never a silent no-op.
+        """
+        panel = self.center_stage.active_ddl_object_panel()
+        if panel is None:
+            self.statusBar().showMessage(
+                "Check runs on an open DDL object tab — open one first.", 5000
+            )
+            return
+        text = panel.text()
+        ref = panel.ref
+        request = CheckRequest.from_ref(
+            ref, text, **self._trigger_function_for(ref, text)
+        )
+
+        def on_done(result, panel=panel, text=text) -> None:
+            report = getattr(result, "report", None)
+            if report is None:
+                # The refusal's own reason is reported by
+                # `_on_sandbox_operation_finished`; nothing is derived from it
+                # here, and an absent report is never shown as a clean check.
+                return
+            # Record for precondition 2 AND show it: the panel keeps those two
+            # acts separate, so both are asked for explicitly.
+            panel.record_check_report(report, text)
+            panel.report_check_result(report)
+
+        self.sandbox_controller.run_check(request, on_done)
+
+    def _trigger_function_for(self, ref, text) -> dict:
+        """`CheckRequest.from_ref` kwargs naming the function a TRIGGER calls.
+
+        Read off the buffer's own `EXECUTE [PROCEDURE|FUNCTION] fn()` clause --
+        the statement in the tab is the authority on what this trigger will
+        call. Empty for a non-trigger, and empty (never a guess from the
+        trigger's own name) when the clause cannot be read: `db/ddl_check.py`
+        then reports tier 3 as unavailable with its own reason.
+        """
+        if not getattr(ref, "is_trigger", False):
+            return {}
+        match = re.search(
+            r"\bEXECUTE\s+(?:PROCEDURE|FUNCTION)\s+([\w\".]+)", text or "", re.I
+        )
+        if match is None:
+            return {}
+        qualified = match.group(1).replace('"', "")
+        schema, _, name = qualified.rpartition(".")
+        if not name:
+            return {}
+        return {
+            "function_schema": schema or ref.schema,
+            "function_name": name,
+        }
 
     def _on_db_rename_requested(self, kind, old):
         new = self._prompt_rename(old)

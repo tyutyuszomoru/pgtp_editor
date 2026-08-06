@@ -44,6 +44,14 @@ sandbox seam there is no sandbox button and no sandbox row at all.
 nor Apply to Target, nor "Deploy this edit…": *an irreversible outward effect
 must not be one keystroke away* (§18.5). Every apply is confirm-gated behind a
 confirmation naming **both the object and the database** it will hit.
+
+**Findings no longer travel on `check_reported`** -- §18.5 D3a splits the Audit
+report into two channels and explicitly overrides §28's shipped behavior (which
+folded findings into the narrative lines as `"  finding: …"` strings): the
+narrative channel `check_reported` stays unclickable, while findings go out as
+OBJECTS on `check_findings`, because a pre-formatted string cannot carry the
+`UserRole` line and `UserRole+1` object key that click-to-navigate needs. A
+future reader looking for the `finding:` lines should read §18.5 D3a, not §28.
 """
 from __future__ import annotations
 
@@ -469,6 +477,20 @@ class DdlObjectEditorPanel(QWidget):
     #: MainWindow" precedent as `format_refused`.
     check_reported = Signal(list)
 
+    #: The CLICKABLE second Audit channel (§18.5 D3a). Carries the duck-typed
+    #: `CheckFinding` OBJECTS -- never pre-formatted strings, because a string
+    #: cannot carry the `UserRole` line and the `UserRole+1` object key that
+    #: click-to-navigate needs. The host (`MainWindow`) renders them
+    #: (`"[Check] {SEVERITY} line {N}: {message}"`) and owns those roles; the
+    #: panel only emits. Payload objects are read BY ATTRIBUTE only --
+    #: `severity`, `message`, `lineno`/`line` -- the same duck-typing
+    #: discipline `tier_outcomes`/`report_blockers` already use, so a test
+    #: stub is as good as a real `db/ddl_check.py::CheckFinding`. The payload
+    #: deliberately carries no `ref`: object identity reaches the host through
+    #: the per-panel `lambda findings, ref=ref:` closure at the wiring site,
+    #: which keeps the signature literally `check_findings(list)`.
+    check_findings = Signal(list)
+
     #: Emitted when "Deploy this edit…" picks the SAVE destination. The panel
     #: does not save: it delegates to the host's existing Save gesture
     #: (`MainWindow._save_ddl_object_editor`) so there is exactly one save path
@@ -550,6 +572,15 @@ class DdlObjectEditorPanel(QWidget):
         #: diverged buffer emits a `[Check]` caveat instead of silently
         #: validating a stale version. Written by `apply_to_sandbox`.
         self.applied_sha1: str | None = None
+
+        #: §18.5 D4's "Run in Sandbox Console" bridge -- a one-way seam that
+        #: hands the SELECTION to the console tab (which is the ONE execution
+        #: surface) and returns nothing. `Callable[[str], None]`: text in,
+        #: nothing out, so there is no result path for a later edit to hook up
+        #: and this panel stays non-executable. Context-menu only, no button,
+        #: no shortcut; absent (not disabled) while unwired -- carve-out 2: a
+        #: bridge to a console that cannot exist is a dead control.
+        self._run_in_console: Callable[[str], None] | None = None
 
         # Schema-aware Ctrl+Space completion (§18.6). Injected the same way
         # `XmlEditor.set_schema_model` is (§11): None disables it entirely.
@@ -728,6 +759,14 @@ class DdlObjectEditorPanel(QWidget):
         menu.addSeparator()
         action = menu.addAction("Format Selection", self.format_selection)
         action.setEnabled(self.editor.textCursor().hasSelection())
+        # §18.5 D4's console bridge -- placed with Format Selection and BEFORE
+        # the separator that opens the apply group, so an execution-adjacent
+        # copy gesture is not visually grouped with the irreversible applies.
+        # Absent while the seam is unwired (carve-out 2), and -- like Format
+        # Selection -- disabled without a selection. No shortcut.
+        if self.has_run_in_console:
+            console_action = menu.addAction("Run in Sandbox Console", self.run_in_sandbox_console)
+            console_action.setEnabled(self.editor.textCursor().hasSelection())
         # The apply gestures (§18.5). Present only when their seam is wired
         # (carve-out 2) and NONE of them carries a shortcut -- an irreversible
         # outward effect must not be one keystroke away.
@@ -793,6 +832,40 @@ class DdlObjectEditorPanel(QWidget):
         confirmation gate must both be wired. Its affordance is absent when
         they are not -- there is no unconfirmed apply path."""
         return self._apply_to_sandbox is not None and self._confirm_seam is not None
+
+    @property
+    def has_run_in_console(self) -> bool:
+        """Whether "Run in Sandbox Console" is offered (§18.5 D4). True only
+        when the seam is wired: with no console there is no entry at all
+        rather than a disabled one (carve-out 2). Note this is NOT an apply
+        gesture and takes no confirmation -- it executes nothing."""
+        return self._run_in_console is not None
+
+    def set_run_in_console(self, seam: Callable[[str], None] | None) -> None:
+        """Wire (or unwire) §18.5 D4's console bridge.
+
+        Deliberately NOT folded into `set_apply_seams`: that call replaces the
+        whole apply SET and rebuilds the button row, while this affordance is
+        context-menu-only, has no button, and is not an apply -- putting it
+        there would make wiring the apply lane silently drop it, or wiring the
+        console rebuild a button row it has nothing to do with."""
+        self._run_in_console = seam
+
+    def run_in_sandbox_console(self) -> bool:
+        """Hand the current SELECTION to the Sandbox SQL Console (§18.5 D4).
+
+        Copies text and nothing else: no apply seam, no session, no SQL, no
+        result. Returns False and does nothing when there is no selection or no
+        console; True when the seam was handed the text."""
+        if self._run_in_console is None:
+            return False
+        cursor = self.editor.textCursor()
+        if not cursor.hasSelection():
+            return False
+        # QTextCursor.selectedText() joins lines with U+2029 (paragraph
+        # separator), never "\n" -- the same conversion `format_selection` does.
+        self._run_in_console(cursor.selectedText().replace(" ", "\n"))
+        return True
 
     @property
     def has_target_apply(self) -> bool:
@@ -880,9 +953,8 @@ class DdlObjectEditorPanel(QWidget):
         digest = _sha1(text)
         self.applied_sha1 = digest
         self._last_check = (digest, report)
-        self._report(
-            [f"applied {self._ref.qualified} to sandbox database {database}."]
-            + self._result_lines(report)
+        self._report_result(
+            [f"applied {self._ref.qualified} to sandbox database {database}."], report
         )
         return True
 
@@ -930,8 +1002,8 @@ class DdlObjectEditorPanel(QWidget):
             self._report([f"apply to target of {self._ref.qualified} cancelled; nothing was applied."])
             return False
         outcome = self._apply_to_target(self._ref, text)
-        self._report(
-            [f"applied {self._ref.qualified} to database {database}."] + self._result_lines(outcome)
+        self._report_result(
+            [f"applied {self._ref.qualified} to database {database}."], outcome
         )
         return True
 
@@ -1138,10 +1210,38 @@ class DdlObjectEditorPanel(QWidget):
             return
         self.check_reported.emit([CHECK_PREFIX + line for line in lines])
 
+    def _report_result(self, headline: list[str], result: Any) -> None:
+        """Report a ladder result over BOTH Audit channels (§18.5 D3a): the
+        narrative lines (`headline` + tiers + caveats + failure) on
+        `check_reported`, and the findings -- as objects -- on
+        `check_findings`.
+
+        A finding NEVER appears in the narrative channel; `check_findings` is
+        not emitted at all when there are none, so the host never renders an
+        empty findings batch."""
+        self._report(headline + self._result_lines(result))
+        findings = list(getattr(result, "findings", None) or [])
+        if findings:
+            self.check_findings.emit(findings)
+
+    def report_check_result(self, result: Any) -> None:
+        """Make a ladder result VISIBLE -- both channels, no headline.
+
+        Deliberately separate from `record_check_report`, which only RECORDS a
+        result for precondition 2: recording and showing stay two acts, so a
+        host can do either without implying the other."""
+        self._report_result([], result)
+
     def _result_lines(self, result: Any) -> list[str]:
-        """Render a duck-typed `CheckReport` / `ApplyOutcome` as Audit text:
-        one line per tier ALWAYS (an unavailable tier is stated, never
-        collapsed into the overall OK state), then findings, then caveats."""
+        """Render a duck-typed `CheckReport` / `ApplyOutcome` as NARRATIVE
+        Audit text: one line per tier ALWAYS (an unavailable tier is stated,
+        never collapsed into the overall OK state), then caveats, then the
+        `ok is False` failure line.
+
+        **Findings are NOT here** (§18.5 D3a's ledger override of §28). They go
+        out as objects on `check_findings`, because a pre-formatted string
+        cannot carry the `UserRole` line and `UserRole+1` object key that the
+        host needs to make a finding clickable."""
         if result is None:
             return []
         lines = []
@@ -1149,10 +1249,6 @@ class DdlObjectEditorPanel(QWidget):
             reason = _reason(outcome)
             status = _status(outcome) or "unknown"
             lines.append(f"  {name}: {status}" + (f" -- {reason}" if reason else ""))
-        for finding in list(getattr(result, "findings", None) or []):
-            message = str(getattr(finding, "message", finding))
-            line_no = getattr(finding, "lineno", None) or getattr(finding, "line", None)
-            lines.append(f"  finding: {f'line {line_no}: ' if line_no else ''}{message}")
         for caveat in list(getattr(result, "caveats", None) or []):
             lines.append(f"  caveat: {caveat}")
         ok = getattr(result, "ok", None)
