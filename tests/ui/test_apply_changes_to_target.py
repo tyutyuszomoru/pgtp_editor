@@ -1,4 +1,4 @@
-"""Tests for MainWindow._apply_changes_to_target -- see
+"""Tests for DiffMergeController.apply_changes_to_target -- see
 docs/superpowers/specs/2026-07-12-pgtp-editor-diff-merge-writeback-design.md §7.
 """
 from unittest.mock import patch
@@ -41,7 +41,7 @@ def _compare(window, source_path, target_path):
         "pgtp_editor.ui.modals.QFileDialog.getOpenFileName",
         side_effect=[(source_path, ""), (target_path, "")],
     ):
-        window._compare_merge_two_files()
+        window._diff_ui.compare_two_files()
 
 
 def test_apply_with_nothing_checked_shows_information_and_does_not_touch_target(qtbot, tmp_path):
@@ -53,7 +53,7 @@ def test_apply_with_nothing_checked_shows_information_and_does_not_touch_target(
     original_target_bytes = open(target_path, "rb").read()
 
     with patch("pgtp_editor.ui.modals.QMessageBox.information") as mock_info:
-        window._apply_changes_to_target()
+        window._diff_ui.apply_changes_to_target()
 
     mock_info.assert_called_once()
     assert open(target_path, "rb").read() == original_target_bytes
@@ -75,7 +75,7 @@ def test_apply_with_ambiguous_checked_difference_refuses_entire_batch(qtbot, tmp
     leaves[0].setCheckState(0, Qt.CheckState.Checked)
 
     with patch("pgtp_editor.ui.modals.QMessageBox.critical") as mock_critical:
-        window._apply_changes_to_target()
+        window._diff_ui.apply_changes_to_target()
 
     mock_critical.assert_called_once()
     args, _kwargs = mock_critical.call_args
@@ -142,7 +142,7 @@ def test_apply_with_mixed_ambiguous_and_non_ambiguous_checked_differences_refuse
         leaf.setCheckState(0, Qt.CheckState.Checked)
 
     with patch("pgtp_editor.ui.modals.QMessageBox.critical") as mock_critical:
-        window._apply_changes_to_target()
+        window._diff_ui.apply_changes_to_target()
 
     mock_critical.assert_called_once()
     args, _kwargs = mock_critical.call_args
@@ -174,7 +174,7 @@ def test_apply_successful_writes_bak_and_mutates_target_and_reloads_project_tree
     _check_all_leaves(panel)
 
     with patch("pgtp_editor.ui.modals.QMessageBox.information") as mock_info:
-        window._apply_changes_to_target()
+        window._diff_ui.apply_changes_to_target()
 
     mock_info.assert_called_once()
 
@@ -205,14 +205,14 @@ def test_apply_second_run_overwrites_previous_bak_with_first_runs_merged_content
     _check_all_leaves(panel)
 
     with patch("pgtp_editor.ui.modals.QMessageBox.information"):
-        window._apply_changes_to_target()
+        window._diff_ui.apply_changes_to_target()
 
     first_merged_bytes = open(target_path, "rb").read()
 
     # Re-run Apply a second time on the same (now-stale) checked-differences
     # list without re-comparing.
     with patch("pgtp_editor.ui.modals.QMessageBox.information"):
-        window._apply_changes_to_target()
+        window._diff_ui.apply_changes_to_target()
 
     bak_path = target_path + ".bak"
     assert open(bak_path, "rb").read() == first_merged_bytes
@@ -236,7 +236,7 @@ def test_apply_partial_failure_writes_nothing_and_names_the_unresolvable_differe
     diff.path = ["page_that_no_longer_exists"]
 
     with patch("pgtp_editor.ui.modals.QMessageBox.critical") as mock_critical:
-        window._apply_changes_to_target()
+        window._diff_ui.apply_changes_to_target()
 
     mock_critical.assert_called_once()
     args, _kwargs = mock_critical.call_args

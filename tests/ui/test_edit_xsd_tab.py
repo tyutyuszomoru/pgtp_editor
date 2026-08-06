@@ -108,9 +108,9 @@ def test_ctrl_s_routes_to_active_tab(window):
 def test_find_bar_routing(window):
     _seed(window)
     window._xsd_ui.open()
-    assert window._active_find_bar() is window.center_stage.xsd_find_replace_bar
+    assert window._find_ui.active_find_bar() is window.center_stage.xsd_find_replace_bar
     window.center_stage.setCurrentIndex(window.center_stage.raw_xml_tab_index)
-    assert window._active_find_bar() is window.center_stage.find_replace_bar
+    assert window._find_ui.active_find_bar() is window.center_stage.find_replace_bar
 
 
 def test_close_event_xsd_dirty_discard_closes(window, monkeypatch):

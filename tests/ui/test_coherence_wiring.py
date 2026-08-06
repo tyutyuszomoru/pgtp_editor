@@ -249,7 +249,7 @@ def test_relation_double_click_really_finds_the_tableName_token(qtbot, tmp_path)
     # Offscreen the top-level window is never shown, so isVisible() is False
     # regardless; assert the hidden flag the handler toggles.
     assert not window.audit_dock.isHidden()
-    assert window._find_all_term == 'tableName="pr.orders"'
+    assert window._find_ui.find_all_term == 'tableName="pr.orders"'
     assert (
         window.center_stage.xml_editor.textCursor().selectedText()
         == 'tableName="pr.orders"'

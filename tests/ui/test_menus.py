@@ -374,7 +374,7 @@ def test_tools_menu_contents(qtbot):
 
 def test_validate_project_action_populates_audit(qtbot):
     from pgtp_editor.model.parser import load_project_from_text
-    from pgtp_editor.ui.main_window import _VALIDATION_PREFIX
+    from pgtp_editor.ui.find_controller import _VALIDATION_PREFIX
 
     window = MainWindow()
     qtbot.addWidget(window)

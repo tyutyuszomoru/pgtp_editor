@@ -119,8 +119,8 @@ def test_active_find_bar_and_bookmark_editor_route_to_the_ddl_object_tab(qtbot, 
     window._on_ddl_edit_requested(_REF, "text")
     panel = window.center_stage.ddl_object_tab(_REF.key)
 
-    assert window._active_find_bar() is panel.find_replace_bar
-    assert window._active_bookmark_editor() is panel.editor
+    assert window._find_ui.active_find_bar() is panel.find_replace_bar
+    assert window._find_ui.active_bookmark_editor() is panel.editor
 
 
 def test_closing_a_clean_ddl_object_tab_closes_without_prompting(qtbot, tmp_path, monkeypatch):

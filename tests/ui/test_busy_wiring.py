@@ -37,7 +37,7 @@ def test_validate_shows_validating_message_and_restores_cursor(qtbot, tmp_path, 
     _open(window, tmp_path)
     messages = _record_status(window, monkeypatch)
 
-    window._validate_project()
+    window._find_ui.validate_project()
 
     assert any(m.startswith("Validating ") for m in messages), messages
     assert QApplication.overrideCursor() is None

@@ -13,14 +13,12 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-import copy
 import logging
 import os
 import re
 import shutil
 from pathlib import Path
 
-from lxml import etree
 from PySide6.QtCore import Qt, QSettings, QTimer
 from PySide6.QtGui import (
     QAction,
@@ -41,18 +39,13 @@ from PySide6.QtWidgets import (
 )
 
 from pgtp_editor import debuglog
-from pgtp_editor.diff.apply import apply_differences
-from pgtp_editor.diff.differ import compare_block, diff_project
-from pgtp_editor.diff.resolve import ResolutionError, resolve_path
 from pgtp_editor.model.encoding import read_pgtp_text
 from pgtp_editor.model.line_index import node_at_line
 from pgtp_editor.model.parser import (
     PgtpParseError,
-    _build_project_model,
     load_project,
     load_project_from_text,
 )
-from pgtp_editor.validation.tier2 import validate_project
 from pgtp_editor.ui._stub_action import add_stub_action
 from pgtp_editor.ui.about import show_about_dialog
 from pgtp_editor.ui.caption_find_replace_dialog import CaptionFindReplaceDialog
@@ -103,6 +96,8 @@ from pgtp_editor.ui.project_status_panel import ProjectStatusPanel
 from pgtp_editor.ui.project_settings_dialog import ProjectSettingsDialog
 from pgtp_editor.ui.coherence_controller import CoherenceController
 from pgtp_editor.ui.coherence_panel import CoherencePanel
+from pgtp_editor.ui.diff_merge_controller import DiffMergeController
+from pgtp_editor.ui.find_controller import FindValidateController
 from pgtp_editor.ui.ddl_buffer_panel import BrowserPanel
 from pgtp_editor.ui.code_editor import CodeEditorDialog
 from pgtp_editor.ui.history import SnapshotHistory
@@ -124,16 +119,11 @@ from pgtp_editor.ui.event_body import (
 from pgtp_editor.model.nodes import classify_event_side
 from pgtp_editor.model.event_handlers import language_for_side
 from pgtp_editor.ui import caption_scan
-from pgtp_editor.ui import search
 from pgtp_editor.ui.project_tree import ProjectTreePanel
 from pgtp_editor.ui.properties_panel import PropertiesPanel
 from pgtp_editor.ui.theme import apply_theme
 
 _log = logging.getLogger(__name__)
-
-_FIND_RESULT_PREFIX = "[Find] "
-
-_VALIDATION_PREFIX = "[Validate] "
 
 #: Format Selection refusals (§18.4/§18.5). Not clickable, no line role
 #: (carve-out 6) -- the offending span is already underlined in the tab.
@@ -152,8 +142,6 @@ _CHECK_SEVERITY_TOKENS = {"error": "ERROR", "warning": "WARNING", "notice": "INF
 #: `SandboxController` operation outcomes (§18.5 D2). Never `[Check]` -- that
 #: prefix belongs to the validation ladder, whose lines the panel owns.
 _SANDBOX_PREFIX = "[Sandbox] "
-
-_FIND_ALL_BATCH = 200
 
 
 class MainWindow(QMainWindow):
@@ -245,8 +233,14 @@ class MainWindow(QMainWindow):
 
         self.project_tree = ProjectTreePanel(
             on_stub_action=self._not_implemented,
-            on_compare_page=self._compare_page_with,
-            on_compare_detail=self._compare_detail_with,
+            # Lambdas: the Compare/Merge lane (`_diff_ui`) is constructed after
+            # this panel, because it needs the `UiShell` built further down.
+            on_compare_page=lambda node: self._diff_ui.compare_page_with(node),
+            on_compare_detail=(
+                lambda node, source_path: self._diff_ui.compare_detail_with(
+                    node, source_path
+                )
+            ),
             on_selection_changed=self._on_tree_selection_changed,
             on_activate_node=self._on_tree_activate_node,
             on_jump_to_xml=self._on_tree_jump_to_xml,
@@ -356,15 +350,15 @@ class MainWindow(QMainWindow):
             self.manual_contents.set_chapters(parse_chapters(manual_text))
 
         self.center_stage.xml_editor.line_clicked.connect(self._on_editor_line_clicked)
-        self.center_stage.find_replace_bar.set_on_find_all(self._populate_find_all_results)
-        self.center_stage.find_replace_bar.set_on_stop_find_all(self._stop_find_all)
+        # Lambdas: the find/validate lane (`_find_ui`) owns the whole streaming
+        # Find-All run but is constructed after the `UiShell` further down.
+        self.center_stage.find_replace_bar.set_on_find_all(
+            lambda term: self._find_ui.find_all(term)
+        )
+        self.center_stage.find_replace_bar.set_on_stop_find_all(
+            lambda: self._find_ui.stop_find_all()
+        )
         self.center_stage.find_replace_bar.set_on_status(self.statusBar().showMessage)
-        self._find_all_timer = None
-        self._find_all_iter = None
-        self._find_all_stop = False
-        self._find_all_count = 0
-        self._find_all_term = ""
-        self._find_all_target = "raw"
         self.audit_panel.itemClicked.connect(self._on_audit_item_clicked)
         self.center_stage.caption_management_panel._on_apply = self._apply_caption_edits
         self.center_stage.caption_management_panel._on_close = self._close_caption_mode
@@ -399,7 +393,7 @@ class MainWindow(QMainWindow):
             self._on_read_only_edit_attempted
         )
         self.center_stage.xml_editor.find_selected_text.connect(
-            self._on_find_selected_text
+            lambda text: self._find_ui.on_find_selected_text(text)
         )
         self.center_stage.xml_editor.edit_code_requested.connect(
             self._on_edit_code_requested
@@ -431,8 +425,6 @@ class MainWindow(QMainWindow):
 
         self._current_project = None
         self._current_project_path = None
-        self._current_diff_target_project = None
-        self._current_diff_target_path = None
 
         # Local DDL-versioning project state (spec §18.2) -- deliberately
         # separate from _current_project (the open .pgtp): a project here is
@@ -527,9 +519,11 @@ class MainWindow(QMainWindow):
         stage.xsd_editor.redo_requested.connect(stage.xsd_editor.redo)
         stage.xsd_find_replace_bar.set_on_status(self.statusBar().showMessage)
         stage.xsd_find_replace_bar.set_on_find_all(
-            lambda term: self._populate_find_all_results(term, target="xsd")
+            lambda term: self._find_ui.find_all(term, target="xsd")
         )
-        stage.xsd_find_replace_bar.set_on_stop_find_all(self._stop_find_all)
+        stage.xsd_find_replace_bar.set_on_stop_find_all(
+            lambda: self._find_ui.stop_find_all()
+        )
 
         #: The narrow contract every collaborator object gets instead of this
         #: window (see `ui/ui_shell.py`). Built BEFORE the menu bar, because a
@@ -587,21 +581,51 @@ class MainWindow(QMainWindow):
             default_output_dir=self._dialog_default_dir,
         )
 
+        #: The find / replace / bookmarks / validate lane
+        #: (`ui/find_controller.py`): the per-tab find-bar and bookmark-editor
+        #: routing, the Bookmarks menu (owned outright, so it builds it), the
+        #: Edit-menu Find…/Replace… actions, the whole streaming Find-All run and
+        #: Tier-2 validation. Built before the menu bar because
+        #: `_build_menu_bar` calls `build_bookmarks_menu` and `_build_edit_menu`
+        #: hands it the two actions it owns. Validation reads the open document
+        #: through the same two providers `_gen_ui` uses.
+        self._find_ui = FindValidateController(
+            self._shell,
+            parent=self,
+            project=lambda: self._current_project,
+            project_path=lambda: self._current_project_path,
+        )
+
+        #: The §7 Compare/Merge lane (`ui/diff_merge_controller.py`): the three
+        #: comparison entry points, the comparison target they set, and Apply
+        #: Changes to Target. `reload` re-opens the file Apply just wrote and
+        #: points at the host's public `open_project_file` (which `main.py` also
+        #: calls); when `PgtpDocumentController` lands only that line moves.
+        self._diff_ui = DiffMergeController(
+            self._shell,
+            parent=self,
+            project=lambda: self._current_project,
+            # A lambda, not the bound method: resolved at CALL time so a test (or
+            # a later wave) that replaces `open_project_file` on the finished
+            # window is honoured.
+            reload=lambda path: self.open_project_file(path),
+        )
+
         #: The §17/FQ-003 coherence lane (`ui/coherence_controller.py`): the
         #: Database/XML Coherence view, its cached schema and the SP3
         #: create-from-table gestures. Built before the menu bar because
         #: `_build_database_menu` hands it the toggle action it owns.
         #:
-        #: `find_all` is the host's Find-All entry point, which moves to
-        #: `FindValidateController` in a later wave -- injected so only this one
-        #: line changes then. `prompt_missing_connection` is the BUG-024 reroute
-        #: shared with the DDL Explorer, which moves with that lane. The three
-        #: dock/tab callables are gestures `UiShell` has no field for.
+        #: `find_all` is the find lane's streaming Find-All entry point (this is
+        #: the one wiring line the find extraction repointed).
+        #: `prompt_missing_connection` is the BUG-024 reroute shared with the
+        #: DDL Explorer, which moves with that lane. The three dock/tab
+        #: callables are gestures `UiShell` has no field for.
         self._db_ui = CoherenceController(
             self._shell,
             self.coherence_panel,
             parent=self,
-            find_all=self._populate_find_all_results,
+            find_all=self._find_ui.find_all,
             prompt_missing_connection=self._prompt_missing_connection,
             show_left_dock=self._show_left_dock,
             show_audit_dock=self._show_audit_dock,
@@ -675,58 +699,6 @@ class MainWindow(QMainWindow):
             self._php_tabs.save_active_tab()
             return
         self._save_project()
-
-    def _active_find_bar(self):
-        """The FindReplaceBar of the active editor tab; defaults to the Raw
-        XML bar (revealing that tab) when no editor tab is active."""
-        stage = self.center_stage
-        if stage.currentIndex() == stage.xsd_tab_index:
-            return stage.xsd_find_replace_bar
-        if stage.currentIndex() == stage.ddl_tab_index:
-            # The DDL Explorer buffer has its own bar (spec §18.1, per-tab
-            # document routing) -- without this branch Ctrl+F on the DDL tab
-            # used to bounce the user back to Raw XML.
-            return stage.ddl_editor_panel.find_replace_bar
-        panel = stage.active_ddl_object_panel()
-        if panel is not None:
-            # The editable object tab's own bar (spec §18.5) -- Replace is
-            # LIVE here, unlike the read-only DDL Explorer above.
-            return panel.find_replace_bar
-        php_tab = stage.active_php_file_tab()
-        if php_tab is not None:
-            # §21: the PHP tab owns its own FindReplaceBar. Without this branch
-            # Ctrl+F on a PHP tab yanked the user over to Raw XML (the fallback
-            # below REVEALS that tab) and searched the wrong document.
-            return php_tab.find_replace_bar
-        self._reveal_raw_xml_tab()
-        return stage.find_replace_bar
-
-    def _active_bookmark_editor(self):
-        """The editor the Bookmarks menu/shortcuts act on: whichever editor
-        tab is active (§8). Every editor carries the same bookmark API from
-        the shared gutter base (`ui/editor_gutter.py`), so this dispatch is
-        the only thing needed to make the menu follow focus -- it mirrors
-        `_active_find_bar`'s per-tab routing.
-
-        Unlike `_active_find_bar` this deliberately does NOT reveal the Raw
-        XML tab as a side effect: toggling a bookmark must never yank the
-        user to a different tab. Any non-editor tab falls back to the Raw XML
-        editor, where bookmarks lived before the DDL Explorer existed.
-        """
-        stage = self.center_stage
-        if stage.currentIndex() == stage.xsd_tab_index:
-            return stage.xsd_editor
-        if stage.currentIndex() == stage.ddl_tab_index:
-            return stage.ddl_editor_panel.editor
-        panel = stage.active_ddl_object_panel()
-        if panel is not None:
-            return panel.editor
-        php_tab = stage.active_php_file_tab()
-        if php_tab is not None:
-            # §21: its `CodeEditor` carries the same gutter bookmark API (§8),
-            # so the Bookmarks menu follows a PHP tab like any other editor.
-            return php_tab.editor
-        return stage.xml_editor
 
     def _restore_window_state(self):
         geometry = self._settings.value("geometry")
@@ -1195,140 +1167,6 @@ class MainWindow(QMainWindow):
             return
         self.statusBar().showMessage(f"Opened: {path}", 5000)
 
-    def _populate_find_all_results(self, term: str, target: str = "raw") -> None:
-        """Start a streaming Find All: results are appended to the Audit panel
-        a batch at a time on a 0ms QTimer, yielding to the event loop between
-        batches so the UI stays responsive and Stop takes effect promptly.
-
-        `target` selects which editor tab the search runs over -- "raw" (the
-        Raw XML tab, the default) or "xsd" (the Edit XSD tab) -- and is
-        stashed with each result so clicking it navigates the right editor.
-        """
-        self._cancel_find_all_timer()
-        self._clear_find_results()
-        self._find_all_term = term
-        self._find_all_target = target
-        self._find_all_count = 0
-        self._find_all_stop = False
-        editor = self.center_stage.xsd_editor if target == "xsd" else self.center_stage.xml_editor
-        bar = self.center_stage.xsd_find_replace_bar if target == "xsd" else self.center_stage.find_replace_bar
-        text = editor.toPlainText()
-        self._find_all_iter = search.iter_matches(text, term)
-        bar.set_find_all_running(True)
-        self.statusBar().showMessage(f'Finding "{term}"…')
-        self._find_all_timer = QTimer(self)
-        self._find_all_timer.timeout.connect(self._find_all_step)
-        self._find_all_timer.start(0)
-
-    def _find_all_step(self) -> None:
-        if self._find_all_stop:
-            self._finish_find_all(stopped=True)
-            return
-        for _ in range(_FIND_ALL_BATCH):
-            try:
-                match = next(self._find_all_iter)
-            except StopIteration:
-                self._finish_find_all(stopped=False)
-                return
-            item = QListWidgetItem(f"{_FIND_RESULT_PREFIX}line {match.line}: {match.preview}")
-            item.setData(Qt.ItemDataRole.UserRole, match.line)
-            item.setData(Qt.ItemDataRole.UserRole + 1, self._find_all_target)
-            self.audit_panel.addItem(item)
-            self._find_all_count += 1
-        self.statusBar().showMessage(
-            f'Finding "{self._find_all_term}"… found {self._find_all_count}'
-        )
-
-    def _finish_find_all(self, stopped: bool) -> None:
-        self._cancel_find_all_timer()
-        summary = QListWidgetItem(
-            f'{_FIND_RESULT_PREFIX}{self._find_all_count} match(es) for "{self._find_all_term}"'
-        )
-        self.audit_panel.addItem(summary)  # no line data -> clicking is a no-op
-        bar = (
-            self.center_stage.xsd_find_replace_bar
-            if self._find_all_target == "xsd"
-            else self.center_stage.find_replace_bar
-        )
-        bar.set_find_all_running(False)
-        if stopped:
-            self.statusBar().showMessage(
-                f"Find All stopped — found {self._find_all_count} item(s)"
-            )
-        else:
-            self.statusBar().showMessage(f"Found {self._find_all_count} item(s)")
-
-    def _stop_find_all(self) -> None:
-        """Request that an in-flight streaming Find All stop; the next
-        _find_all_step tick finishes the run, keeping results found so far."""
-        self._find_all_stop = True
-
-    def _cancel_find_all_timer(self) -> None:
-        if self._find_all_timer is not None:
-            self._find_all_timer.stop()
-            # deleteLater the C++ QTimer so repeated Find All runs don't
-            # accumulate stopped timer children on the window.
-            self._find_all_timer.deleteLater()
-            self._find_all_timer = None
-        # Drop the (possibly large) generator so we don't hold its closure
-        # over the snapshotted document text between runs.
-        self._find_all_iter = None
-
-    def _clear_find_results(self) -> None:
-        """Remove only prior [Find]-prefixed entries, leaving schema-learning
-        / validation entries intact. Iterates from the bottom so removals
-        don't shift not-yet-visited indices."""
-        for row in range(self.audit_panel.count() - 1, -1, -1):
-            item = self.audit_panel.item(row)
-            if item.text().startswith(_FIND_RESULT_PREFIX):
-                self.audit_panel.takeItem(row)
-
-    def _clear_validation_results(self) -> None:
-        """Remove only prior [Validate]-prefixed audit entries, leaving find /
-        schema-learning entries intact. Iterates from the bottom so removals
-        don't shift not-yet-visited indices."""
-        for row in range(self.audit_panel.count() - 1, -1, -1):
-            item = self.audit_panel.item(row)
-            if item.text().startswith(_VALIDATION_PREFIX):
-                self.audit_panel.takeItem(row)
-
-    def _validate_project(self) -> None:
-        """Run the Tier-2 structural-sanity checks and report into the Audit
-        panel; each issue is click-to-navigable via its source line."""
-        if self._current_project is None:
-            self.statusBar().showMessage("Open a project to validate.", 5000)
-            return
-        name = (
-            Path(self._current_project_path).name
-            if self._current_project_path else "project"
-        )
-        self._clear_validation_results()
-        with busy_status(self.statusBar(), f"Validating {name}…"):
-            issues = validate_project(self._current_project)
-            n_err = 0
-            n_warn = 0
-            for issue in issues:
-                if issue.severity == "error":
-                    n_err += 1
-                else:
-                    n_warn += 1
-                if issue.line is None:
-                    text = f"{_VALIDATION_PREFIX}{issue.severity.upper()}: {issue.message}"
-                else:
-                    text = (
-                        f"{_VALIDATION_PREFIX}{issue.severity.upper()} "
-                        f"line {issue.line}: {issue.message}"
-                    )
-                item = QListWidgetItem(text)
-                item.setData(Qt.ItemDataRole.UserRole, issue.line)
-                self.audit_panel.addItem(item)
-        if issues:
-            self.statusBar().showMessage(
-                f"Validation: {n_err} error(s), {n_warn} warning(s)", 5000
-            )
-        else:
-            self.statusBar().showMessage("Validation passed — no issues.", 5000)
-
     def _on_audit_item_clicked(self, item) -> None:
         line = item.data(Qt.ItemDataRole.UserRole)
         if line is None:
@@ -1449,151 +1287,6 @@ class MainWindow(QMainWindow):
         )
         if exc.line is not None:
             self.center_stage.xml_editor.highlight_error_line(exc.line)
-
-    def _compare_merge_two_files(self):
-        source = self._current_project
-        if source is None:
-            source_path, _filter = modals.QFileDialog.getOpenFileName(
-                self, "Select Source Project", self._dialog_default_dir(), "PGTP files (*.pgtp)"
-            )
-            if not source_path:
-                return
-            try:
-                source = load_project(source_path)
-            except Exception as exc:
-                modals.QMessageBox.critical(
-                    self, "Failed to Open Source Project", f"Could not open '{source_path}':\n\n{exc}"
-                )
-                return
-
-        target_path, _filter = modals.QFileDialog.getOpenFileName(
-            self, "Select Target Project", self._dialog_default_dir(), "PGTP files (*.pgtp)"
-        )
-        if not target_path:
-            return
-        try:
-            target = load_project(target_path)
-        except Exception as exc:
-            modals.QMessageBox.critical(
-                self, "Failed to Open Target Project", f"Could not open '{target_path}':\n\n{exc}"
-            )
-            return
-
-        self._current_diff_target_project = target
-        self._current_diff_target_path = target_path
-        differences = diff_project(source, target)
-        self.center_stage.diff_merge_panel.show_differences(differences)
-        self.center_stage.setCurrentIndex(self.center_stage.diff_merge_tab_index)
-
-    def _compare_page_with(self, page_node):
-        target_path, _filter = modals.QFileDialog.getOpenFileName(
-            self, "Select Target Project", self._dialog_default_dir(), "PGTP files (*.pgtp)"
-        )
-        if not target_path:
-            return
-        try:
-            target = load_project(target_path)
-        except Exception as exc:
-            modals.QMessageBox.critical(
-                self, "Failed to Open Target Project", f"Could not open '{target_path}':\n\n{exc}"
-            )
-            return
-
-        target_page = next((p for p in target.pages if p.file_name == page_node.file_name), None)
-        if target_page is None:
-            modals.QMessageBox.critical(
-                self,
-                "Page Not Found",
-                f"No Page with fileName '{page_node.file_name}' exists in '{target_path}'.",
-            )
-            return
-
-        self._current_diff_target_project = target
-        self._current_diff_target_path = target_path
-        differences = compare_block(page_node, target_page, path=[page_node.file_name], node_kind="page")
-        self.center_stage.diff_merge_panel.show_differences(differences)
-        self.center_stage.setCurrentIndex(self.center_stage.diff_merge_tab_index)
-
-    def _compare_detail_with(self, detail_node, source_path):
-        target_path_str, _filter = modals.QFileDialog.getOpenFileName(
-            self, "Select Target Project", self._dialog_default_dir(), "PGTP files (*.pgtp)"
-        )
-        if not target_path_str:
-            return
-        try:
-            target = load_project(target_path_str)
-        except Exception as exc:
-            modals.QMessageBox.critical(
-                self, "Failed to Open Target Project", f"Could not open '{target_path_str}':\n\n{exc}"
-            )
-            return
-
-        result = resolve_path(target, source_path)
-        if isinstance(result, ResolutionError):
-            modals.QMessageBox.critical(self, "Detail Not Found", result.message)
-            return
-
-        self._current_diff_target_project = target
-        self._current_diff_target_path = target_path_str
-        differences = compare_block(detail_node, result, path=source_path, node_kind="detail")
-        self.center_stage.diff_merge_panel.show_differences(differences)
-        self.center_stage.setCurrentIndex(self.center_stage.diff_merge_tab_index)
-
-    def _apply_changes_to_target(self):
-        checked = self.center_stage.diff_merge_panel.checked_differences()
-        if not checked:
-            modals.QMessageBox.information(
-                self, "Apply Changes to Target", "No differences are checked to apply."
-            )
-            return
-
-        ambiguous = [d for d in checked if d.ambiguous]
-        if ambiguous:
-            details = "\n".join(
-                f"- {'/'.join(d.path)} ({d.node_kind}/{d.attribute}: {d.kind})" for d in ambiguous
-            )
-            modals.QMessageBox.critical(
-                self,
-                "Cannot Apply: Ambiguous Differences Checked",
-                "The following checked differences are ambiguous (matched via "
-                "positional pairing of duplicate siblings) and cannot be safely "
-                "applied automatically. Uncheck them and re-run Apply, or verify "
-                "the pairing by hand in the detail view first:\n\n" + details,
-            )
-            return
-
-        target_project = self._current_diff_target_project
-        target_path = self._current_diff_target_path
-
-        working_tree = copy.deepcopy(target_project.tree)
-        working_project = _build_project_model(working_tree, source_description=target_path)
-        result = apply_differences(working_project, checked)
-
-        if result.failed:
-            details = "\n".join(f"- {'/'.join(f.difference.path)}: {f.message}" for f in result.failed)
-            modals.QMessageBox.critical(
-                self,
-                "Apply Failed -- No Changes Written",
-                f"{len(result.failed)} of {len(checked)} checked differences could not "
-                f"be applied (Target may have changed since this comparison was run). "
-                f"No changes were written to '{target_path}'.\n\n" + details,
-            )
-            return
-
-        backup_path = target_path + ".bak"
-        shutil.copy2(target_path, backup_path)
-        serialized = etree.tostring(
-            working_tree, xml_declaration=False, encoding="UTF-8", pretty_print=False
-        )
-        with open(target_path, "wb") as f:
-            f.write(serialized)
-
-        modals.QMessageBox.information(
-            self,
-            "Apply Changes to Target",
-            f"Applied {len(checked)} change(s) to '{target_path}'.\nBackup saved to '{backup_path}'.",
-        )
-        self.open_project_file(target_path)
 
     def _write_project_text(self, path) -> None:
         """Write the Raw XML editor buffer verbatim to `path` as UTF-8. If
@@ -1783,7 +1476,9 @@ class MainWindow(QMainWindow):
         self._xsd_ui.build_menu(self.menuBar(), self.addAction)
         self._build_database_menu()
         self._build_tools_menu()
-        self._build_bookmarks_menu()
+        # The Bookmarks menu is owned outright by the find/validate lane, so it
+        # builds it -- called from here so the menu keeps its position in the bar.
+        self._find_ui.build_bookmarks_menu(self.menuBar())
         # The Generation menu is owned outright by the generation lane, so it
         # builds it -- called from here so the menu keeps its position in the bar.
         self._gen_ui.build_menu(self.menuBar())
@@ -1860,27 +1555,30 @@ class MainWindow(QMainWindow):
         self._add_stub_action(menu, "Delete")
         menu.addSeparator()
 
+        # The five find/replace entries belong to the find/validate lane; the
+        # Find… / Replace… pair is handed over to it below because Caption Mode
+        # gates their enabled state.
         find_action = menu.addAction("Find...")
         find_action.setShortcut("Ctrl+F")
-        find_action.triggered.connect(self._show_find_bar)
-        self._editor_find_action = find_action
+        find_action.triggered.connect(self._find_ui.show_find)
 
         find_next_action = menu.addAction("Find Next")
         find_next_action.setShortcut("F3")
-        find_next_action.triggered.connect(self._find_next)
+        find_next_action.triggered.connect(self._find_ui.find_next)
 
         find_all_action = menu.addAction("Find All")
         find_all_action.setShortcut("Ctrl+Shift+F")
-        find_all_action.triggered.connect(self._find_all)
+        find_all_action.triggered.connect(self._find_ui.find_all_in_active_bar)
 
         replace_action = menu.addAction("Replace...")
         replace_action.setShortcut("Ctrl+R")
-        replace_action.triggered.connect(self._show_replace_bar)
-        self._editor_replace_action = replace_action
+        replace_action.triggered.connect(self._find_ui.show_replace)
 
         replace_all_action = menu.addAction("Replace All")
         replace_all_action.setShortcut("Ctrl+Alt+Return")
-        replace_all_action.triggered.connect(self._replace_all)
+        replace_all_action.triggered.connect(self._find_ui.replace_all)
+
+        self._find_ui.set_find_actions(find_action, replace_action)
 
         menu.addSeparator()
 
@@ -1962,24 +1660,6 @@ class MainWindow(QMainWindow):
         self.center_stage.set_raw_xml_tab_visible(True)
         self._raw_xml_panel_action.setChecked(True)
         self.center_stage.setCurrentIndex(self.center_stage.raw_xml_tab_index)
-
-    def _show_find_bar(self):
-        self._active_find_bar().show_find()
-
-    def _show_replace_bar(self):
-        self._active_find_bar().show_replace()
-
-    def _find_next(self):
-        self._active_find_bar().find_next()
-
-    def _on_find_selected_text(self, text: str) -> None:
-        """Editor right-click "Find": reveal the Raw XML tab, prefill the find
-        bar with the selection, and run Find Next -- the same path Edit ->
-        Find/Find Next drives."""
-        self._reveal_raw_xml_tab()
-        self.center_stage.find_replace_bar.show_find()
-        self.center_stage.find_replace_bar.set_find_text(text)
-        self.center_stage.find_replace_bar.find_next()
 
     def _on_edit_code_requested(self, start_line: int) -> None:
         """Editor "Edit code…": open the dedicated CodeEditorDialog prefilled
@@ -2091,12 +1771,6 @@ class MainWindow(QMainWindow):
         dialog.setModal(True)
         dialog.show()
 
-    def _find_all(self):
-        self._active_find_bar().find_all()
-
-    def _replace_all(self):
-        self._active_find_bar().replace_all()
-
     def _enter_caption_mode(self) -> bool:
         """Tools -> Manage Captions...: snapshot the frozen Raw XML, scan it,
         load the grid, and enter caption mode (Raw XML hidden). Requires
@@ -2118,8 +1792,7 @@ class MainWindow(QMainWindow):
         # shortcut, so there is no ambiguous-shortcut conflict).
         self._caption_filter_shortcut.setEnabled(True)
         self._caption_replace_shortcut.setEnabled(True)
-        self._editor_find_action.setEnabled(False)
-        self._editor_replace_action.setEnabled(False)
+        self._find_ui.set_find_actions_enabled(False)
         return True
 
     def enter_caption_mode_for_table(self, table_name: str) -> None:
@@ -2165,8 +1838,7 @@ class MainWindow(QMainWindow):
         # editor Find…/Replace… actions (and their Ctrl+F / Ctrl+R shortcuts).
         self._caption_filter_shortcut.setEnabled(False)
         self._caption_replace_shortcut.setEnabled(False)
-        self._editor_find_action.setEnabled(True)
-        self._editor_replace_action.setEnabled(True)
+        self._find_ui.set_find_actions_enabled(True)
 
     def _caption_go_to_line(self, line: int) -> None:
         """Caption panel Go-to-line callback: switch to the Raw XML tab (which
@@ -3691,7 +3363,7 @@ class MainWindow(QMainWindow):
         caption_filter_action.triggered.connect(self._open_caption_filter_dialog)
         menu.addSeparator()
         validate_action = menu.addAction("Validate Project")
-        validate_action.triggered.connect(self._validate_project)
+        validate_action.triggered.connect(self._find_ui.validate_project)
         menu.addSeparator()
         # §22 PHP lint. Directly under Validate Project because it is the same
         # kind of gesture one tier down (this file, not the project), and all
@@ -3711,46 +3383,13 @@ class MainWindow(QMainWindow):
         reparse_action.triggered.connect(self._reparse_raw_xml)
         menu.addSeparator()
         compare_action = menu.addAction("Compare / Merge Two Files...")
-        compare_action.triggered.connect(self._compare_merge_two_files)
+        compare_action.triggered.connect(self._diff_ui.compare_two_files)
         next_action = menu.addAction("Next Difference")
         next_action.triggered.connect(self.center_stage.diff_merge_panel.select_next_difference)
         prev_action = menu.addAction("Prev Difference")
         prev_action.triggered.connect(self.center_stage.diff_merge_panel.select_previous_difference)
         apply_action = menu.addAction("Apply Changes to Target")
-        apply_action.triggered.connect(self._apply_changes_to_target)
-
-    def _build_bookmarks_menu(self):
-        # Each action resolves the target editor at TRIGGER time via
-        # _active_bookmark_editor, not at build time -- the shared gutter base
-        # (§8) puts the same bookmark API on the Raw XML, Edit XSD and DDL
-        # Explorer editors, so the menu follows whichever is active instead of
-        # being bound to Raw XML forever.
-        menu = self.menuBar().addMenu("Bookmarks")
-
-        toggle_action = menu.addAction("Toggle Bookmark")
-        toggle_action.setShortcut("Ctrl+F2")
-        toggle_action.triggered.connect(
-            lambda: self._active_bookmark_editor().toggle_bookmark_at_cursor()
-        )
-
-        next_action = menu.addAction("Next Bookmark")
-        next_action.setShortcut("F2")
-        next_action.triggered.connect(
-            lambda: self._active_bookmark_editor().goto_next_bookmark()
-        )
-
-        prev_action = menu.addAction("Previous Bookmark")
-        prev_action.setShortcut("Shift+F2")
-        prev_action.triggered.connect(
-            lambda: self._active_bookmark_editor().goto_prev_bookmark()
-        )
-
-        menu.addSeparator()
-        clear_action = menu.addAction("Clear All Bookmarks")
-        clear_action.triggered.connect(
-            lambda: self._active_bookmark_editor().clear_bookmarks()
-        )
-
+        apply_action.triggered.connect(self._diff_ui.apply_changes_to_target)
 
     def _build_help_menu(self):
         menu = self.menuBar().addMenu("Help")

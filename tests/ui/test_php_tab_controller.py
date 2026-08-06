@@ -612,7 +612,7 @@ def test_ctrl_f_with_a_php_tab_focused_uses_that_tabs_own_find_bar(qtbot, tmp_pa
     window = _window(qtbot, tmp_path)
     tab = window._php_tabs.open_path(_php(tmp_path))
 
-    assert window._active_find_bar() is tab.find_replace_bar
+    assert window._find_ui.active_find_bar() is tab.find_replace_bar
     # ... and it did NOT yank the user over to Raw XML on the way.
     assert window.center_stage.currentWidget() is tab
 
@@ -621,7 +621,7 @@ def test_the_bookmarks_menu_follows_a_php_tab(qtbot, tmp_path):
     window = _window(qtbot, tmp_path)
     tab = window._php_tabs.open_path(_php(tmp_path))
 
-    assert window._active_bookmark_editor() is tab.editor
+    assert window._find_ui.active_bookmark_editor() is tab.editor
 
 
 def test_the_window_accepts_drops_and_routes_them(qtbot, tmp_path):

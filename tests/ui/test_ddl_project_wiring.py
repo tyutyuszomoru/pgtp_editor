@@ -1260,7 +1260,7 @@ def test_compare_merge_two_files_dialogs_default_to_the_project_folder(qtbot, tm
 
     monkeypatch.setattr("pgtp_editor.ui.modals.QFileDialog.getOpenFileName", fake_open)
 
-    window._compare_merge_two_files()
+    window._diff_ui.compare_two_files()
 
     # No `_current_project` is open, so the source picker runs first and
     # returning "" (cancelled) short-circuits before the target picker --
@@ -1284,7 +1284,7 @@ def test_compare_merge_two_files_target_dialog_also_defaults_to_the_project_fold
 
     monkeypatch.setattr("pgtp_editor.ui.modals.QFileDialog.getOpenFileName", fake_open)
 
-    window._compare_merge_two_files()
+    window._diff_ui.compare_two_files()
 
     assert captured["directory"] == str(project_dir)
 
@@ -1318,7 +1318,7 @@ def test_compare_page_with_dialog_defaults_to_the_project_folder(qtbot, tmp_path
 
     monkeypatch.setattr("pgtp_editor.ui.modals.QFileDialog.getOpenFileName", fake_open)
 
-    window._compare_page_with(page_node)
+    window._diff_ui.compare_page_with(page_node)
 
     assert captured["directory"] == str(project_dir)
 
@@ -1342,7 +1342,7 @@ def test_compare_detail_with_dialog_defaults_to_the_project_folder(qtbot, tmp_pa
 
     monkeypatch.setattr("pgtp_editor.ui.modals.QFileDialog.getOpenFileName", fake_open)
 
-    window._compare_detail_with(detail_node, str(source_pgtp))
+    window._diff_ui.compare_detail_with(detail_node, str(source_pgtp))
 
     assert captured["directory"] == str(project_dir)
 

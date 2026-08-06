@@ -437,12 +437,12 @@ def test_on_db_rename_requested_cancelled_prompt_no_change(qtbot):
 def _drain_find_all(window):
     """Synchronously exhaust the streaming Find-all timer (mirrors the pattern in
     test_main_window): stop the 0ms QTimer and step until the summary lands."""
-    if window._find_all_timer is not None:
-        window._find_all_timer.stop()
+    if window._find_ui.find_all_timer is not None:
+        window._find_ui.find_all_timer.stop()
     for _ in range(10):
-        if window._find_all_iter is None:
+        if window._find_ui.find_all_iter is None:
             break
-        window._find_all_step()
+        window._find_ui._find_all_step()
 
 
 def test_on_db_jump_requested_lists_all_and_selects_first(qtbot):
@@ -458,7 +458,7 @@ def test_on_db_jump_requested_lists_all_and_selects_first(qtbot):
     # First occurrence selected in the editor.
     assert editor.textCursor().selectedText() == 'fieldName="id"'
     # Find-all streaming started for the same token; results land in the panel.
-    assert window._find_all_term == 'fieldName="id"'
+    assert window._find_ui.find_all_term == 'fieldName="id"'
     _drain_find_all(window)
     find_rows = [
         window.audit_panel.item(i).text() for i in range(window.audit_panel.count())
@@ -519,16 +519,16 @@ def test_f3_steps_through_occurrences_after_db_jump(qtbot):
     # First occurrence selected (line 3).
     first = editor.textCursor().selectionStart()
 
-    window._find_next()  # F3
+    window._find_ui.find_next()  # F3
     second = editor.textCursor().selectionStart()
     assert second > first
     assert editor.textCursor().selectedText() == 'tableName="pr.a"'
 
-    window._find_next()  # F3 -> third
+    window._find_ui.find_next()  # F3 -> third
     third = editor.textCursor().selectionStart()
     assert third > second
 
-    window._find_next()  # F3 -> wraps back to first
+    window._find_ui.find_next()  # F3 -> wraps back to first
     assert editor.textCursor().selectionStart() == first
 
 
@@ -572,13 +572,13 @@ def test_on_db_jump_column_lists_all_and_f3_steps(qtbot):
     # 3 occurrence rows + 1 summary row.
     assert sum('fieldName="dup"' in r and "line" in r for r in find_rows) == 3
 
-    window._find_next()  # F3 -> 2nd
+    window._find_ui.find_next()  # F3 -> 2nd
     second = editor.textCursor().selectionStart()
     assert second > first
-    window._find_next()  # F3 -> 3rd
+    window._find_ui.find_next()  # F3 -> 3rd
     third = editor.textCursor().selectionStart()
     assert third > second
-    window._find_next()  # F3 -> wraps to 1st
+    window._find_ui.find_next()  # F3 -> wraps to 1st
     assert editor.textCursor().selectionStart() == first
 
 
@@ -592,7 +592,7 @@ def test_f3_single_occurrence_wraps_to_itself(qtbot):
     start = editor.textCursor().selectionStart()
     assert editor.textCursor().selectedText() == 'fieldName="id"'
 
-    window._find_next()  # F3 -> wraps back to the same match
+    window._find_ui.find_next()  # F3 -> wraps back to the same match
     assert editor.textCursor().selectionStart() == start
     assert editor.textCursor().selectedText() == 'fieldName="id"'
 
@@ -642,7 +642,7 @@ def test_missing_token_leaves_find_field_and_selection_untouched(qtbot):
     assert 'No tableName="pr.absent" in the buffer' in window.statusBar().currentMessage()
     assert bar._find_field.text() == "SENTINEL"  # untouched
     assert editor.textCursor().selectedText() == pre_sel  # untouched
-    assert window._find_all_term != 'tableName="pr.absent"'
+    assert window._find_ui.find_all_term != 'tableName="pr.absent"'
 
 
 def test_db_jump_reveals_hidden_audit_dock(qtbot):
