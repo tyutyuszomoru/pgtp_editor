@@ -22,6 +22,7 @@ from pgtp_editor.ui.ddl_object_editor import DdlObjectEditorPanel
 from pgtp_editor.ui.diff_merge_panel import DiffMergePanel
 from pgtp_editor.ui.find_replace_bar import FindReplaceBar
 from pgtp_editor.ui.manual_panel import ManualPanel
+from pgtp_editor.ui.php_file_tab import PhpFileTab, php_tab_key
 from pgtp_editor.ui.xml_editor import XmlEditor
 
 
@@ -48,6 +49,12 @@ class CenterStage(QTabWidget):
     # like Edit XSD -- so this signals intent rather than closing directly.
     ddl_object_close_requested = Signal(tuple)
 
+    # Emitted when a custom-PHP file tab's ✕ is clicked (spec §21). Carries
+    # the tab's key (its resolved absolute path, or a minted "untitled:N").
+    # Same reason as the two signals above: an editable tab's close must go
+    # through MainWindow's unsaved-changes prompt first.
+    php_file_close_requested = Signal(str)
+
     def __init__(self, parent=None):
         super().__init__(parent)
         # Dynamic per-object tabs (spec §18.5): always appended AFTER the
@@ -57,6 +64,12 @@ class CenterStage(QTabWidget):
         # (`DdlObjectRef.key`), never on a remembered index -- close/reorder
         # must not be able to make a lookup stale.
         self._ddl_object_tabs: dict[tuple, DdlObjectEditorPanel] = {}
+        # Dynamic custom-PHP file tabs (spec §21), appended after the fixed
+        # set for exactly the same reason, and keyed on the file's resolved
+        # absolute path -- opening the same file twice must focus the tab that
+        # is already open, never add a second one.
+        self._php_file_tabs: dict[str, PhpFileTab] = {}
+        self._untitled_php_counter = 0
         self.diff_merge_panel = DiffMergePanel()
         self.diff_merge_tab_index = self.addTab(self.diff_merge_panel, "Diff / Merge")
 
@@ -129,14 +142,19 @@ class CenterStage(QTabWidget):
             # Edit XSD, which routes through MainWindow's dirty check).
             self.hide_ddl_explorer()
         else:
-            # Falls through to a dynamic DDL object tab (§18.5) -- these are
-            # never at a fixed index, so the only way to identify one is a
-            # map lookup by widget, not by index.
+            # Falls through to a dynamic tab -- a DDL object editor (§18.5) or
+            # a custom-PHP file (§21). These are never at a fixed index, so
+            # the only way to identify one is a map lookup by widget, not by
+            # index.
             widget = self.widget(index)
             for key, panel in self._ddl_object_tabs.items():
                 if panel is widget:
                     self.ddl_object_close_requested.emit(key)
-                    break
+                    return
+            for key, tab in self._php_file_tabs.items():
+                if tab is widget:
+                    self.php_file_close_requested.emit(key)
+                    return
 
     def set_raw_xml_tab_visible(self, visible):
         self.setTabVisible(self.raw_xml_tab_index, visible)
@@ -263,3 +281,82 @@ class CenterStage(QTabWidget):
         `set_schema_index` on each, mirroring how a schema refresh updates
         `XmlEditor.set_schema_model` (§11)."""
         return list(self._ddl_object_tabs.values())
+
+    # --- Dynamic custom-PHP file tabs (spec §21) ---------------------------
+    def php_file_tab(self, key):
+        """The open `PhpFileTab` for `key`, or None."""
+        return self._php_file_tabs.get(key)
+
+    def open_php_file_tab(self, path=None, text="", resolve_save_path=None, writer=None):
+        """Focus the tab already open for `path` if there is one; otherwise
+        create it, append it (always AFTER the fixed set), and focus that.
+
+        `path` may be None for a text-only buffer, which gets a minted
+        `"untitled:N"` key instead. Reading the file is the CALLER's job (§21:
+        the tab never touches the filesystem behind the caller's back) -- the
+        already-read `text` is handed in, and `resolve_save_path`/`writer` are
+        the injected save seams, exactly as for `open_ddl_object_tab`."""
+        if path is not None:
+            key = php_tab_key(path)
+            existing = self._php_file_tabs.get(key)
+            if existing is not None:
+                self.setCurrentWidget(existing)
+                return existing
+        else:
+            self._untitled_php_counter += 1
+            key = f"untitled:{self._untitled_php_counter}"
+
+        tab = PhpFileTab(path, text, resolve_save_path=resolve_save_path, writer=writer)
+        index = self.addTab(tab, tab.tab_title())
+        self.setTabToolTip(index, tab.tab_tooltip())
+        self._php_file_tabs[key] = tab
+        self.setCurrentWidget(tab)
+        return tab
+
+    def close_php_file_tab(self, key):
+        """Actually remove the PHP file tab for `key`. Called only after
+        MainWindow has resolved any unsaved-changes prompt -- never directly
+        from `_on_tab_close_requested`, mirroring `close_ddl_object_tab`."""
+        tab = self._php_file_tabs.pop(key, None)
+        if tab is None:
+            return
+        index = self.indexOf(tab)
+        if index != -1:
+            self.removeTab(index)
+        tab.deleteLater()
+
+    def update_php_file_tab(self, key):
+        """Refresh a PHP file tab's title/tooltip from its current dirty state
+        and path -- call after any edit that may have crossed the clean/dirty
+        boundary, and after a Save As… renamed it."""
+        tab = self._php_file_tabs.get(key)
+        if tab is None:
+            return
+        index = self.indexOf(tab)
+        if index == -1:
+            return
+        self.setTabText(index, tab.tab_title())
+        self.setTabToolTip(index, tab.tab_tooltip())
+
+    def php_file_tab_key(self, tab):
+        """The map key a given `PhpFileTab` is filed under, or None. Lets a
+        host that holds the widget (e.g. from `active_php_file_tab`) reach the
+        key the close/update APIs take, without duplicating the key rule."""
+        for key, candidate in self._php_file_tabs.items():
+            if candidate is tab:
+                return key
+        return None
+
+    def active_php_file_tab(self):
+        """The `PhpFileTab` currently active, or None if some other tab has
+        focus (mirrors `active_ddl_object_panel`)."""
+        widget = self.currentWidget()
+        if isinstance(widget, PhpFileTab):
+            return widget
+        return None
+
+    def php_file_tabs(self):
+        """Every currently open `PhpFileTab`, keyed as the close/update APIs
+        expect. Used by the host's app-close flow to prompt for each dirty
+        one."""
+        return dict(self._php_file_tabs)
