@@ -48,17 +48,34 @@ PHP fold-region provider is §21's explicitly sequenced follow-up #1, a separate
 pass. Likewise absent on purpose: the custom-code file-tree dock and Find in
 Files (follow-ups #2 and #3), and any code intelligence at all -- §21 records
 "no LSP, no parse-based autocomplete" as a scope decision, not a gap.
+
+**Lint (§22) hangs off this tab, and only advisorily.** The tab is where §22's
+"the active custom-PHP tab's content" lives, so it owns the on-save toggle
+(`lint_on_save`) and the `request_lint()` gesture Tools ▸ Lint Current File
+calls. It reports outward through `lint_reported` -- a list of already
+`[Lint]`-prefixed `LintAuditLine`s the host appends verbatim -- exactly like
+`DdlObjectEditorPanel.check_reported`, and for the same reason: a panel widget
+never reaches into `MainWindow`. Two hard rules hold here: the lint runs on a
+`run_async` worker (a `php -l` against a dead network share would otherwise
+freeze the window for the whole timeout), and **nothing about linting can fail a
+save** -- `save()` returns True the instant the bytes are written, whatever the
+linter subsequently does or fails to do.
 """
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Callable
 
 from PySide6.QtCore import QEvent, Qt, Signal
 from PySide6.QtWidgets import QVBoxLayout, QWidget
 
+from pgtp_editor.lint.findings import LintOutcome, LintStatus, audit_lines
+from pgtp_editor.ui.async_task import run_async
 from pgtp_editor.ui.code_editor import CodeEditor
 from pgtp_editor.ui.find_replace_bar import FindReplaceBar
+
+_log = logging.getLogger(__name__)
 
 #: The label a tab with no path yet carries (a text-only open).
 UNTITLED_TITLE = "Untitled"
@@ -101,12 +118,23 @@ class PhpFileTab(QWidget):
     #: shows a modal.
     save_failed = Signal(str)
 
+    #: Emitted after every lint attempt with a list of
+    #: `lint/findings.py::LintAuditLine` -- text already carrying the `[Lint]`
+    #: prefix (§7/§22), plus the 1-based line to navigate to (None = not
+    #: navigable). NEVER empty: "no linter configured" is a visible row, not
+    #: silence, because silence in the Audit panel reads as "the file is
+    #: clean". The host appends them and wires the click; this widget never
+    #: touches the panel or shows a modal.
+    lint_reported = Signal(list)
+
     def __init__(
         self,
         path=None,
         text: str = "",
         resolve_save_path: Callable[[], Path | None] | None = None,
         writer: Callable[[Path, str], None] | None = None,
+        lint_service=None,
+        lint_on_save: bool = False,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -119,6 +147,18 @@ class PhpFileTab(QWidget):
             resolve_save_path if resolve_save_path is not None else self._remembered_save_path
         )
         self._writer: Callable[[Path, str], None] = writer or _default_writer
+
+        # §22's two seams. `lint_service` stays None until a host injects one
+        # (a `lint/service.py::LintService`), so a tab opened by a test or by
+        # a host that does not care about linting costs nothing. `_run_async`
+        # is a plain attribute -- the project's established convention
+        # (`sandbox_controller`, `connection_setup_dialog`) for a threading
+        # seam a test replaces with a synchronous stand-in.
+        self._lint_service = lint_service
+        #: §22's toggle: lint automatically after each successful save.
+        #: Advisory -- see `save()`; flipping it on can never make a save fail.
+        self.lint_on_save = bool(lint_on_save)
+        self._run_async = run_async
 
         # The EXISTING editor widget, in PHP mode (§8's highlighter already
         # covers PHP) -- never a second, parallel editor implementation.
@@ -227,7 +267,105 @@ class PhpFileTab(QWidget):
         self.remember_save_path(path)
         self.mark_clean()
         self.saved.emit(str(path))
+        self._lint_after_save()
         return True
+
+    def _lint_after_save(self) -> None:
+        """§22's on-save hook -- deliberately the LAST thing a successful save
+        does, and deliberately incapable of changing its outcome.
+
+        The save is already complete and committed above: the bytes are on
+        disk, the tab is clean, `saved` has fired. Anything that goes wrong
+        from here (no linter, a wedged linter, an exception out of an injected
+        service) is swallowed into a log line, because §22 is advisory-only:
+        "a lint failure must never block or undo a save". Note the ordering is
+        also why linting cannot be used as a save gate by a later caller --
+        there is nothing left to gate.
+        """
+        if not self.lint_on_save:
+            return
+        try:
+            self.request_lint()
+        except Exception:  # noqa: BLE001 -- advisory; the save already succeeded
+            _log.exception("Lint-on-save failed; the save itself was unaffected")
+
+    # --- Lint (§22) -------------------------------------------------------
+    @property
+    def lint_service(self):
+        """The injected `lint/service.py::LintService`, or None."""
+        return self._lint_service
+
+    def set_lint_service(self, service) -> None:
+        """Inject (or clear, with None) the lint service. Hosts build one per
+        window and hand the same instance to every PHP tab -- the config lookup
+        lives inside the service, so re-locating the linter takes effect
+        everywhere without re-wiring tabs."""
+        self._lint_service = service
+
+    def set_lint_on_save(self, enabled: bool) -> None:
+        """Toggle §22's lint-on-save. Plain setter so a checkable QAction can
+        connect to it directly."""
+        self.lint_on_save = bool(enabled)
+
+    def lint_display_name(self) -> str:
+        """The name `[Lint]` rows call this buffer. The bare file name (or
+        `Untitled`) -- never the temp path the linter actually saw, which names
+        a file the user cannot open."""
+        return self._path.name if self._path is not None else UNTITLED_TITLE
+
+    def request_lint(self) -> bool:
+        """Run the linter over the CURRENT buffer, off the GUI thread.
+
+        This is what Tools ▸ Lint Current File calls. Returns True when a lint
+        was actually dispatched; False when it could not be -- but either way
+        `lint_reported` fires, so the panel never stays silent about a lint the
+        user explicitly asked for. Linting the buffer rather than the file on
+        disk is what makes the gesture meaningful on a dirty or Untitled tab.
+        """
+        name = self.lint_display_name()
+        service = self._lint_service
+        if service is None:
+            self._report_lint(
+                LintOutcome(status=LintStatus.NOT_CONFIGURED, display_name=name)
+            )
+            return False
+
+        text = self.text()
+
+        def work():
+            return service.lint_text(text, name)
+
+        def on_error(exc: BaseException) -> None:
+            self._report_lint(
+                LintOutcome(
+                    status=LintStatus.FAILED_TO_START,
+                    detail=f"{type(exc).__name__}: {exc}",
+                    display_name=name,
+                )
+            )
+
+        try:
+            self._run_async(work, on_result=self._report_lint, on_error=on_error)
+        except Exception as exc:  # noqa: BLE001 -- e.g. no threadpool available
+            on_error(exc)
+            return False
+        return True
+
+    def _report_lint(self, outcome) -> None:
+        """Turn an outcome into `[Lint]` rows and hand them to the host.
+
+        Runs on the GUI thread (`run_async` marshals it back), so it is safe
+        for the receiving slot to touch the Audit panel. A non-`LintOutcome`
+        (a broken injected service) is reported as a failure rather than
+        dropped -- dropping it would be the silent no-op §22 forbids.
+        """
+        if not isinstance(outcome, LintOutcome):
+            outcome = LintOutcome(
+                status=LintStatus.FAILED_TO_START,
+                detail=f"the lint service returned {type(outcome).__name__}",
+                display_name=self.lint_display_name(),
+            )
+        self.lint_reported.emit(audit_lines(outcome))
 
     # --- Per-tab Ctrl+Z / Ctrl+Y / Ctrl+S ---------------------------------
     def eventFilter(self, obj, event) -> bool:

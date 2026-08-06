@@ -1,5 +1,8 @@
-"""Tests for `ui/php_file_tab.py` -- §21 Phase 1, the "Notepad++ baseline"."""
+"""Tests for `ui/php_file_tab.py` -- §21 Phase 1 (the "Notepad++ baseline")
+plus §22's advisory lint hook."""
 from pathlib import Path
+
+import pytest
 
 from PySide6.QtCore import QEvent, Qt
 from PySide6.QtGui import QKeyEvent
@@ -343,3 +346,290 @@ def test_save_defaults_to_the_opened_path_via_the_stage(qtbot, tmp_path):
     tab.editor.insertPlainText("// note\n")
     assert tab.save() is True
     assert Path(path).read_text(encoding="utf-8") == tab.text()
+
+
+# --- Lint integration (§22) -------------------------------------------------
+# The service is injected and `_run_async` is replaced with a synchronous
+# stand-in (the project's convention), so no test here spawns `php`, threads,
+# or waits on anything.
+from pgtp_editor.lint.findings import LINT_PREFIX, LintOutcome, LintStatus  # noqa: E402
+from pgtp_editor.lint.runner import LintProcessResult  # noqa: E402
+from pgtp_editor.lint.service import LintService  # noqa: E402
+
+_CLEAN = "No syntax errors detected in /tmp/pgtp_lint_x/buffer.php\n"
+_BROKEN = "Parse error: syntax error, unexpected ';' in /tmp/x/buffer.php on line 4\n"
+
+
+def _sync(tab):
+    """Replace the threading seam with a synchronous call."""
+    def _run(fn, on_result, on_error=None, **kwargs):
+        try:
+            value = fn()
+        except BaseException as exc:  # noqa: BLE001
+            if on_error is not None:
+                on_error(exc)
+            return None
+        on_result(value)
+        return None
+
+    tab._run_async = _run
+    return tab
+
+
+def _service(process_result, executable="/usr/bin/php"):
+    return LintService(
+        executable_provider=lambda: executable,
+        runner=lambda exe, text, timeout: process_result,
+        resolver=lambda path: path,
+    )
+
+
+def _lint_texts(tab):
+    captured = []
+    tab.lint_reported.connect(lambda lines: captured.extend(lines))
+    tab.request_lint()
+    return captured
+
+
+def test_lint_is_off_and_unwired_by_default(qtbot):
+    tab = PhpFileTab(None, "<?php\n")
+    qtbot.addWidget(tab)
+    assert tab.lint_on_save is False
+    assert tab.lint_service is None
+
+
+def test_request_lint_with_no_service_still_reports_a_lint_line(qtbot):
+    """A silent no-op would read as 'the file is clean' (§22)."""
+    tab = _sync(PhpFileTab(None, "<?php\n"))
+    qtbot.addWidget(tab)
+    lines = _lint_texts(tab)
+    assert lines
+    assert lines[0].text.startswith(LINT_PREFIX)
+    assert "Locate PHP Linter" in lines[0].text
+
+
+def test_clean_lint_reports_ok(qtbot, tmp_path):
+    path = _write(tmp_path)
+    tab = _sync(PhpFileTab(path, "<?php\n"))
+    qtbot.addWidget(tab)
+    tab.set_lint_service(_service(LintProcessResult(exit_code=0, stdout=_CLEAN)))
+    lines = _lint_texts(tab)
+    assert len(lines) == 1
+    assert lines[0].text.startswith(LINT_PREFIX + "OK")
+    assert "page.php" in lines[0].text  # the tab's name, not the temp path
+    assert lines[0].line is None
+
+
+def test_findings_are_navigable_and_lint_prefixed(qtbot, tmp_path):
+    path = _write(tmp_path)
+    tab = _sync(PhpFileTab(path, "<?php ;;"))
+    qtbot.addWidget(tab)
+    tab.set_lint_service(_service(LintProcessResult(exit_code=255, stdout=_BROKEN)))
+    lines = _lint_texts(tab)
+    navigable = [ln for ln in lines if ln.line is not None]
+    assert [ln.line for ln in navigable] == [4]
+    assert all(ln.text.startswith(LINT_PREFIX) for ln in lines)
+    # The line number the host navigates to must actually work on this editor.
+    tab.navigate_to_line(navigable[0].line)
+
+
+def test_lint_never_emits_the_check_or_sql_prefixes(qtbot, tmp_path):
+    """`[Lint]` is PHP-only; `[Check]` is §18.5's and `[SQL]` is §18.4's."""
+    path = _write(tmp_path)
+    for result in (
+        LintProcessResult(exit_code=0, stdout=_CLEAN),
+        LintProcessResult(exit_code=255, stdout=_BROKEN),
+        LintProcessResult(exit_code=139, stderr="Segmentation fault"),
+        LintProcessResult(exit_code=0),
+        LintProcessResult(exit_code=None, timed_out=True),
+    ):
+        tab = _sync(PhpFileTab(path, "<?php\n"))
+        qtbot.addWidget(tab)
+        tab.set_lint_service(_service(result))
+        for line in _lint_texts(tab):
+            assert line.text.startswith(LINT_PREFIX)
+            assert "[Check]" not in line.text
+            assert "[SQL]" not in line.text
+
+
+def test_lint_runs_on_the_current_buffer_not_the_file_on_disk(qtbot, tmp_path):
+    path = _write(tmp_path, text="<?php\n")
+    seen = {}
+
+    def _runner(exe, text, timeout):
+        seen["text"] = text
+        return LintProcessResult(exit_code=0, stdout=_CLEAN)
+
+    service = LintService(
+        executable_provider=lambda: "/usr/bin/php",
+        runner=_runner,
+        resolver=lambda p: p,
+    )
+    tab = _sync(PhpFileTab(path, "<?php\n"))
+    qtbot.addWidget(tab)
+    tab.set_lint_service(service)
+    tab.editor.insertPlainText("echo 'unsaved';")
+    tab.request_lint()
+    assert "unsaved" in seen["text"]
+    assert "unsaved" not in path.read_text(encoding="utf-8")
+
+
+def test_an_untitled_tab_lints_under_its_placeholder_name(qtbot):
+    tab = _sync(PhpFileTab(None, "<?php ;;"))
+    qtbot.addWidget(tab)
+    tab.set_lint_service(_service(LintProcessResult(exit_code=255, stdout=_BROKEN)))
+    assert any("Untitled" in ln.text for ln in _lint_texts(tab))
+
+
+# --- Lint on save: advisory, never blocking ---------------------------------
+def test_lint_on_save_lints_after_a_successful_save(qtbot, tmp_path):
+    path = _write(tmp_path)
+    tab = _sync(PhpFileTab(path, "<?php\n"))
+    qtbot.addWidget(tab)
+    tab.set_lint_service(_service(LintProcessResult(exit_code=0, stdout=_CLEAN)))
+    tab.set_lint_on_save(True)
+    captured = []
+    tab.lint_reported.connect(lambda lines: captured.extend(lines))
+    tab.editor.insertPlainText("// x\n")
+    assert tab.save() is True
+    assert captured and captured[0].text.startswith(LINT_PREFIX + "OK")
+
+
+def test_lint_on_save_off_by_default_does_not_lint(qtbot, tmp_path):
+    path = _write(tmp_path)
+    tab = _sync(PhpFileTab(path, "<?php\n"))
+    qtbot.addWidget(tab)
+    tab.set_lint_service(_service(LintProcessResult(exit_code=0, stdout=_CLEAN)))
+    captured = []
+    tab.lint_reported.connect(lambda lines: captured.extend(lines))
+    tab.editor.insertPlainText("// x\n")
+    assert tab.save() is True
+    assert captured == []
+
+
+def test_a_lint_finding_does_not_block_or_undo_the_save(qtbot, tmp_path):
+    """§22: advisory only. Broken PHP still saves, and stays saved."""
+    path = _write(tmp_path)
+    tab = _sync(PhpFileTab(path, "<?php\n"))
+    qtbot.addWidget(tab)
+    tab.set_lint_service(_service(LintProcessResult(exit_code=255, stdout=_BROKEN)))
+    tab.set_lint_on_save(True)
+    tab.editor.insertPlainText("<?php ;;")
+    assert tab.save() is True
+    assert tab.is_dirty() is False
+    assert path.read_text(encoding="utf-8") == tab.text()
+
+
+def test_a_crashing_lint_service_does_not_break_the_save(qtbot, tmp_path):
+    class _Exploding:
+        def lint_text(self, text, name):
+            raise RuntimeError("linter subsystem on fire")
+
+    path = _write(tmp_path)
+    tab = _sync(PhpFileTab(path, "<?php\n"))
+    qtbot.addWidget(tab)
+    tab.set_lint_service(_Exploding())
+    tab.set_lint_on_save(True)
+    captured = []
+    tab.lint_reported.connect(lambda lines: captured.extend(lines))
+    tab.editor.insertPlainText("// x\n")
+    assert tab.save() is True
+    assert tab.is_dirty() is False
+    assert path.read_text(encoding="utf-8") == tab.text()
+    # ...and the crash is reported, not swallowed into silence.
+    assert captured and "could not be started" in captured[0].text
+
+
+def test_a_timing_out_linter_does_not_block_the_save(qtbot, tmp_path):
+    path = _write(tmp_path)
+    tab = _sync(PhpFileTab(path, "<?php\n"))
+    qtbot.addWidget(tab)
+    tab.set_lint_service(_service(LintProcessResult(exit_code=None, timed_out=True)))
+    tab.set_lint_on_save(True)
+    captured = []
+    tab.lint_reported.connect(lambda lines: captured.extend(lines))
+    tab.editor.insertPlainText("// x\n")
+    assert tab.save() is True
+    assert captured and "timed out" in captured[0].text
+
+
+def test_a_missing_linter_does_not_block_the_save(qtbot, tmp_path):
+    path = _write(tmp_path)
+    tab = _sync(PhpFileTab(path, "<?php\n"))
+    qtbot.addWidget(tab)
+    tab.set_lint_service(
+        LintService(
+            executable_provider=lambda: "/usr/bin/nope",
+            runner=lambda *a: pytest.fail("must not run a missing linter"),
+            resolver=lambda p: None,
+        )
+    )
+    tab.set_lint_on_save(True)
+    captured = []
+    tab.lint_reported.connect(lambda lines: captured.extend(lines))
+    tab.editor.insertPlainText("// x\n")
+    assert tab.save() is True
+    assert captured and "missing or not" in captured[0].text
+
+
+def test_a_failed_save_does_not_lint(qtbot, tmp_path):
+    """Nothing was written, so there is nothing to report on."""
+    def _boom(path, text):
+        raise OSError("read-only filesystem")
+
+    tab = _sync(PhpFileTab(tmp_path / "page.php", "<?php\n", writer=_boom))
+    qtbot.addWidget(tab)
+    tab.set_lint_service(_service(LintProcessResult(exit_code=0, stdout=_CLEAN)))
+    tab.set_lint_on_save(True)
+    captured = []
+    tab.lint_reported.connect(lambda lines: captured.extend(lines))
+    tab.editor.insertPlainText("// x\n")
+    assert tab.save() is False
+    assert captured == []
+
+
+def test_a_broken_threading_seam_still_reports(qtbot, tmp_path):
+    path = _write(tmp_path)
+    tab = PhpFileTab(path, "<?php\n")
+    qtbot.addWidget(tab)
+    tab.set_lint_service(_service(LintProcessResult(exit_code=0, stdout=_CLEAN)))
+
+    def _explode(*args, **kwargs):
+        raise RuntimeError("no threadpool")
+
+    tab._run_async = _explode
+    captured = []
+    tab.lint_reported.connect(lambda lines: captured.extend(lines))
+    assert tab.request_lint() is False
+    assert captured and "could not be started" in captured[0].text
+
+
+def test_a_service_returning_junk_is_reported_not_dropped(qtbot, tmp_path):
+    class _Junk:
+        def lint_text(self, text, name):
+            return "not an outcome"
+
+    tab = _sync(PhpFileTab(_write(tmp_path), "<?php\n"))
+    qtbot.addWidget(tab)
+    tab.set_lint_service(_Junk())
+    lines = _lint_texts(tab)
+    assert lines and lines[0].text.startswith(LINT_PREFIX)
+
+
+def test_lint_runs_off_the_gui_thread_via_the_run_async_seam(qtbot, tmp_path):
+    """The seam must actually be used -- a direct call would freeze the window
+    for the whole `php -l` timeout on a slow filesystem."""
+    tab = PhpFileTab(_write(tmp_path), "<?php\n")
+    qtbot.addWidget(tab)
+    tab.set_lint_service(_service(LintProcessResult(exit_code=0, stdout=_CLEAN)))
+    used = []
+    tab._run_async = lambda fn, on_result, on_error=None, **kw: used.append(fn)
+    tab.request_lint()
+    assert len(used) == 1
+    # Nothing was reported yet: the work has not been executed.
+    assert callable(used[0])
+
+
+def test_outcome_construction_is_importable_for_hosts():
+    outcome = LintOutcome(status=LintStatus.CLEAN, display_name="x.php")
+    assert outcome.ok is True
