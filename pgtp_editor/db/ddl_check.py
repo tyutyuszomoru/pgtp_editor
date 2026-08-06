@@ -156,7 +156,8 @@ REASON_TIER0_COLLAPSED = (
 #: fall back to, which is the honest statement of the same design decision.
 REASON_TIER0_NO_SANDBOX = (
     "there is no offline syntax checker: tier 0 is PostgreSQL's own parser via "
-    "tier 2, and tier 2 did not run."
+    "tier 2, and tier 2 did not run. Use Database \u25b8 Check Object Without "
+    "Applying to really compile this buffer -- it commits nothing."
 )
 
 #: Tier 2 has no DDL to compile -- an empty buffer. Refused rather than reported
@@ -222,8 +223,10 @@ REASON_UNKNOWN_CAPABILITY = (
 #: must not read as "clean".
 REASON_OBJECT_ABSENT = (
     "the object was not found in the sandbox -- it was never applied, or it "
-    "failed to compile there. Apply it to the sandbox first; nothing was "
-    "linted."
+    "failed to compile there, so there was nothing to lint. Use "
+    "Database \u25b8 Check Object Without Applying to compile and lint this "
+    "buffer without changing the sandbox, or Apply to Sandbox to put it "
+    "there for good."
 )
 
 REASON_RELATION_ABSENT = (
