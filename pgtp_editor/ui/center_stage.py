@@ -571,6 +571,21 @@ class CenterStage(QTabWidget):
                 return key
         return None
 
+    def active_draft_fragment_tab(self):
+        """The `DraftFragmentTab` currently active, or None (mirrors
+        `active_php_file_tab`).
+
+        Needed because a draft tab owns a real `XmlEditor` and a real
+        `FindReplaceBar`, but is NOT a `DdlObjectEditorPanel` -- so without an
+        accessor of its own, `FindValidateController`'s per-tab routing fell
+        through to the Raw XML fallback and Ctrl+F searched the wrong document
+        while the draft's own bar sat hidden and unreachable (FQ-006).
+        """
+        widget = self.currentWidget()
+        if isinstance(widget, DraftFragmentTab):
+            return widget
+        return None
+
     def active_php_file_tab(self):
         """The `PhpFileTab` currently active, or None if some other tab has
         focus (mirrors `active_ddl_object_panel`)."""

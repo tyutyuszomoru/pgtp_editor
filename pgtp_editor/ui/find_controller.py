@@ -339,6 +339,13 @@ class FindValidateController(QObject):
             # Ctrl+F on a PHP tab yanked the user over to Raw XML (the fallback
             # below REVEALS that tab) and searched the wrong document.
             return php_tab.find_replace_bar
+        draft = stage.active_draft_fragment_tab()
+        if draft is not None:
+            # FQ-006: a draft tab builds its own bar over its own XmlEditor, so
+            # searching it must not fall through to Raw XML. Replace is live --
+            # a draft is a scratch buffer with no save path, so there is nothing
+            # to protect.
+            return draft.find_replace_bar
         self._shell.reveal_raw_xml()
         return stage.find_replace_bar
 
@@ -367,6 +374,10 @@ class FindValidateController(QObject):
             # §21: its `CodeEditor` carries the same gutter bookmark API (§8),
             # so the Bookmarks menu follows a PHP tab like any other editor.
             return php_tab.editor
+        draft = stage.active_draft_fragment_tab()
+        if draft is not None:
+            # FQ-006: its XmlEditor carries the same gutter bookmark API (§8).
+            return draft.editor
         return stage.xml_editor
 
     # -- the Edit-menu gestures (act on the active bar) -----------------------

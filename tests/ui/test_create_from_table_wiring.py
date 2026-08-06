@@ -277,3 +277,44 @@ def test_create_unknown_kind_opens_nothing(qtbot):
     window = _window(qtbot)
     window._db_ui.on_create_requested("nonsense", "pr.equipment")
     assert _drafts(window) == []
+
+
+# -- FQ-006 follow-up: a draft tab's own Find bar must be reachable ----------
+#
+# The draft tab builds an `XmlEditor` and a `FindReplaceBar`, but
+# `FindValidateController`'s per-tab routing dispatches through
+# `active_ddl_object_panel()` / `active_php_file_tab()`. A draft tab is neither,
+# so Ctrl+F fell through to the Raw XML fallback -- which REVEALS that tab and
+# searches the wrong document -- while the draft's own bar sat hidden and
+# unreachable. Found by a manual-maintainer pass verifying the docs against the
+# code, not by any test, which is why these exist.
+
+
+def test_ctrl_f_in_a_draft_tab_searches_the_draft_not_raw_xml(qtbot):
+    window = _window(qtbot)
+    window._db_ui.on_create_requested("page", "pr.equipment")
+    draft = _only_draft(window)
+
+    assert window.center_stage.active_draft_fragment_tab() is draft
+    assert window._find_ui.active_find_bar() is draft.find_replace_bar
+    # The Raw XML fallback would also have switched tabs; it must not have.
+    assert window.center_stage.currentWidget() is draft
+
+
+def test_bookmarks_in_a_draft_tab_act_on_the_draft_editor(qtbot):
+    window = _window(qtbot)
+    window._db_ui.on_create_requested("detail", "pr.equipment")
+    draft = _only_draft(window)
+
+    assert window._find_ui.active_bookmark_editor() is draft.editor
+
+
+def test_routing_falls_back_once_the_draft_tab_is_closed(qtbot):
+    window = _window(qtbot)
+    window._db_ui.on_create_requested("lookup", "pr.equipment")
+    draft = _only_draft(window)
+    key = window.center_stage.draft_fragment_tab_key(draft)
+    window.center_stage.close_draft_fragment_tab(key)
+
+    assert window.center_stage.active_draft_fragment_tab() is None
+    assert window._find_ui.active_find_bar() is window.center_stage.find_replace_bar
