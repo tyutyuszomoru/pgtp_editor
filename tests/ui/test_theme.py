@@ -88,32 +88,110 @@ def test_apply_theme_dark_applies_qdarkstyle_stylesheet(qapp, _reset_app_palette
 
 
 def test_apply_theme_dark_light_dark_reuses_cached_stylesheet(qapp, _reset_app_palette):
-    """BUG-010 round-trip: toggling dark -> light -> dark re-applies the same
-    cached QDarkStyleSheet text without error -- _dark_stylesheet() loads the
-    QSS once and every later dark application reuses the cache."""
-    from pgtp_editor.ui.theme import _dark_stylesheet
+    """BUG-010 round-trip, extended for the light QSS: toggling
+    dark -> light -> dark re-applies the SAME cached QDarkStyleSheet text for
+    each theme without error -- _qdarkstyle_stylesheet(light) loads each
+    variant once and every later application of that theme reuses its cache
+    entry. Light and dark are symmetric: both are non-empty, both contain
+    "QMenu::indicator" (it's a full-widget stylesheet either way, not a
+    dark-exclusive rule -- confirmed below by checking the actual QSS text),
+    and they are genuinely different QSS strings from each other."""
+    from pgtp_editor.ui.theme import _qdarkstyle_stylesheet
 
     app = qapp
     apply_theme(app, False)
-    first_qss = app.styleSheet()
+    first_dark_qss = app.styleSheet()
+    assert first_dark_qss
+    assert "QMenu::indicator" in first_dark_qss
+
     apply_theme(app, True)
-    assert app.styleSheet() == ""
+    first_light_qss = app.styleSheet()
+    assert first_light_qss
+    assert "QMenu::indicator" in first_light_qss
+    assert first_light_qss != first_dark_qss
+
     apply_theme(app, False)
-    assert app.styleSheet() == first_qss
-    assert "QMenu::indicator" in app.styleSheet()
-    # Same object both times: the module-level cache is populated once.
-    assert _dark_stylesheet() is _dark_stylesheet()
+    assert app.styleSheet() == first_dark_qss
+
+    apply_theme(app, True)
+    assert app.styleSheet() == first_light_qss
+
+    # Same object every time per theme: the module-level cache dict is
+    # populated once per key, not reloaded on every apply_theme() call.
+    assert _qdarkstyle_stylesheet(True) is _qdarkstyle_stylesheet(True)
+    assert _qdarkstyle_stylesheet(False) is _qdarkstyle_stylesheet(False)
+    assert _qdarkstyle_stylesheet(True) is not _qdarkstyle_stylesheet(False)
 
 
-def test_apply_theme_light_clears_dark_stylesheet(qapp, _reset_app_palette):
-    """The light theme always assigns the empty stylesheet, so a dark->light
-    toggle leaves no stale dark QSS behind (BUG-010 round-trip)."""
+def test_apply_theme_light_and_dark_get_distinct_qdarkstyle_stylesheets(qapp, _reset_app_palette):
+    """Light and dark are now symmetric (no more "light theme has no
+    stylesheet" special case): each gets its own real, non-empty QSS, and
+    toggling between them replaces one with the other cleanly -- no light QSS
+    text leaks into the dark stylesheet or vice versa. Verified via
+    palette-specific hex markers baked into each QSS variant
+    (qdarkstyle.dark.palette.DarkPalette.COLOR_ACCENT_1 appears only in the
+    dark QSS; qdarkstyle.light.palette.LightPalette.COLOR_BACKGROUND_1
+    appears only in the light one) rather than mere non-emptiness, to prove
+    which palette's stylesheet is actually active."""
+    from qdarkstyle.dark.palette import DarkPalette
+    from qdarkstyle.light.palette import LightPalette
+
     app = qapp
+
     apply_theme(app, False)
-    assert app.styleSheet()
+    dark_qss = app.styleSheet()
+    assert dark_qss
+    assert DarkPalette.COLOR_ACCENT_1 in dark_qss
+    assert LightPalette.COLOR_BACKGROUND_1 not in dark_qss
+
     apply_theme(app, True)
-    assert app.styleSheet() == ""
-    assert "QMenu::indicator" not in app.styleSheet()
+    light_qss = app.styleSheet()
+    assert light_qss
+    assert LightPalette.COLOR_BACKGROUND_1 in light_qss
+    assert DarkPalette.COLOR_ACCENT_1 not in light_qss
+    assert light_qss != dark_qss
+
+    # Toggle back: the dark-specific marker returns and the light one is gone
+    # again -- no cross-contamination from caching both variants.
+    apply_theme(app, False)
+    assert DarkPalette.COLOR_ACCENT_1 in app.styleSheet()
+    assert LightPalette.COLOR_BACKGROUND_1 not in app.styleSheet()
+
+
+def test_apply_theme_light_keeps_hand_rolled_palette_under_the_qss(qapp, _reset_app_palette):
+    """FQ-005 made the light theme carry a qdarkstyle QSS, but the QPalette
+    source stays hand-rolled for BOTH themes: applying the light QSS must not
+    replace/override light_palette()'s roles, because palette-reading custom
+    widgets (XmlEditor.apply_theme_colors keys off its palette's Base
+    lightness) would otherwise disagree with the stylesheet's look. Asserted
+    by exact rgb, symmetric with the dark-side assertions."""
+    app = qapp
+    expected = light_palette()
+    apply_theme(app, True)
+
+    assert app.styleSheet()  # the light QSS really is applied ...
+    for role in (
+        QPalette.ColorRole.Window,
+        QPalette.ColorRole.Base,
+        QPalette.ColorRole.Text,
+        QPalette.ColorRole.Link,
+    ):
+        # ... and the hand-rolled light palette is still what the app reports.
+        assert app.palette().color(role).rgb() == expected.color(role).rgb(), role
+
+
+def test_qss_cache_holds_one_entry_per_theme(qapp, _reset_app_palette):
+    """The BUG-010 single-string cache became a per-theme dict (FQ-005): both
+    variants coexist, keyed by the `light` bool, so neither toggle direction
+    evicts or reloads the other's QSS."""
+    from pgtp_editor.ui import theme as theme_mod
+
+    apply_theme(qapp, False)
+    apply_theme(qapp, True)
+
+    assert set(theme_mod._qss_cache) == {True, False}
+    assert theme_mod._qss_cache[True] and theme_mod._qss_cache[False]
+    assert theme_mod._qss_cache[True] != theme_mod._qss_cache[False]
 
 
 # -- BUG-010 gap coverage: the tests/ui/conftest.py autouse stylesheet reset -
@@ -155,10 +233,28 @@ def test_light_palette_sets_highlight_and_disabled_text():
     assert 96 < disabled_text.lightness() < 200
 
 
-def test_apply_theme_uses_fusion_and_light_palette(qapp, _reset_app_palette):
+def test_apply_theme_uses_fusion_and_light_palette(qapp, _reset_app_palette, monkeypatch):
+    """Fusion is genuinely requested via app.setStyle("Fusion") -- but reading
+    it back via app.style().objectName() afterwards is unreliable now that
+    the light theme also applies a non-empty app-global stylesheet (like dark
+    already did): Qt wraps ANY styled app in an internal QStyleSheetStyle
+    proxy whose objectName() is "" regardless of the underlying style name.
+    Confirmed live: this already happened for the dark theme before this
+    change (see test_apply_theme_uses_fusion_and_dark_palette below) -- it
+    was simply never asserted for light because light previously carried no
+    stylesheet at all. Spy on QApplication.setStyle instead of reading back
+    style().objectName() post-stylesheet."""
     app = qapp
+    calls = []
+    # Patch the CLASS, not the instance: patching an instance attribute on the
+    # QApplication singleton (`app.setStyle = ...`) leaves shiboken's method
+    # resolution for that PySide6 wrapped slot broken even after monkeypatch
+    # deletes the shadowing instance attribute on teardown -- confirmed by
+    # reproducing a leak into a later test file (test_main_window_theme.py)
+    # when patched this way; class-level patching does not have this problem.
+    monkeypatch.setattr(QApplication, "setStyle", lambda self, name: calls.append(name))
     apply_theme(app, True)
-    assert app.style().objectName().lower() == "fusion"
+    assert calls == ["Fusion"]
     assert app.palette().color(QPalette.ColorRole.Window).lightness() > 200
 
 

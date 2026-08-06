@@ -29,14 +29,25 @@ def _reset_app_theme():
         app.setPalette(original_palette)
 
 
-def test_toggle_light_switches_to_fusion_and_keeps_icons(qtbot, _reset_app_theme):
+def test_toggle_light_switches_to_fusion_and_keeps_icons(qtbot, _reset_app_theme, monkeypatch):
+    """Fusion is genuinely requested via QApplication.setStyle("Fusion") --
+    asserted via a spy rather than a post-hoc style().objectName() read-back,
+    which is unreliable once ANY non-empty app-global stylesheet is applied
+    (Qt wraps the style in an internal QStyleSheetStyle proxy whose
+    objectName() is "" regardless of the underlying style). This is true for
+    light now too, since the light theme also carries a qdarkstyle QSS
+    (previously only the dark theme did, so this quirk was already present
+    for dark and simply never exercised for light)."""
+    calls = []
+    monkeypatch.setattr(QApplication, "setStyle", lambda self, name: calls.append(name))
     window = MainWindow()
     qtbot.addWidget(window)
+    calls.clear()  # only care about the toggle below, not MainWindow() construction
 
     window._on_light_theme_toggled(True)
 
     app = QApplication.instance()
-    assert app.style().objectName().lower() == "fusion"
+    assert calls == ["Fusion"]
     assert app.palette().color(QPalette.ColorRole.Window).lightness() > 200
     icons = [action.icon() for action in window._toolbar.actions()]
     assert icons and all(not icon.isNull() for icon in icons)
@@ -80,10 +91,13 @@ def test_fresh_window_defaults_to_explicit_dark_palette(qtbot, _reset_app_theme)
 # -- BUG-004 gap coverage: persistence round-trip of the "lightTheme" bool ----
 
 
-def test_toggle_on_persists_and_restores_light_theme(qtbot, tmp_path, _reset_app_theme):
+def test_toggle_on_persists_and_restores_light_theme(qtbot, tmp_path, _reset_app_theme, monkeypatch):
     """Toggling Light Theme on writes lightTheme=True; a NEW window reading
     the same settings restores the light state (checked action + light
-    palette), i.e. the preference survives an app restart."""
+    palette), i.e. the preference survives an app restart. Fusion is
+    asserted via a setStyle spy rather than style().objectName() read-back,
+    which is unreliable once a non-empty app-global stylesheet is applied
+    (true for light now too -- see test_toggle_light_switches_to_fusion_and_keeps_icons)."""
     settings = _ini_settings(tmp_path)
     window = MainWindow(settings=settings)
     qtbot.addWidget(window)
@@ -93,11 +107,13 @@ def test_toggle_on_persists_and_restores_light_theme(qtbot, tmp_path, _reset_app
     settings2 = _ini_settings(tmp_path)
     assert settings2.value("lightTheme", False, type=bool) is True
 
+    calls = []
+    monkeypatch.setattr(QApplication, "setStyle", lambda self, name: calls.append(name))
     window2 = MainWindow(settings=settings2)
     qtbot.addWidget(window2)
     app = QApplication.instance()
     assert window2._light_theme_action.isChecked() is True
-    assert app.style().objectName().lower() == "fusion"
+    assert "Fusion" in calls
     assert app.palette().color(QPalette.ColorRole.Window).rgb() == light_palette().color(
         QPalette.ColorRole.Window
     ).rgb()
@@ -126,18 +142,23 @@ def test_toggle_off_persists_false_and_restores_dark(qtbot, tmp_path, _reset_app
     ).rgb()
 
 
-def test_restore_theme_from_preseeded_light_setting(qtbot, tmp_path, _reset_app_theme):
+def test_restore_theme_from_preseeded_light_setting(qtbot, tmp_path, _reset_app_theme, monkeypatch):
     """A settings file that already says lightTheme=true (written by a prior
-    session) makes a fresh window start light with the menu action checked."""
+    session) makes a fresh window start light with the menu action checked.
+    Fusion is asserted via a setStyle spy (see note on
+    test_toggle_light_switches_to_fusion_and_keeps_icons for why
+    style().objectName() is unreliable here)."""
     seed = _ini_settings(tmp_path)
     seed.setValue("lightTheme", True)
     seed.sync()
 
+    calls = []
+    monkeypatch.setattr(QApplication, "setStyle", lambda self, name: calls.append(name))
     window = MainWindow(settings=_ini_settings(tmp_path))
     qtbot.addWidget(window)
     app = QApplication.instance()
     assert window._light_theme_action.isChecked() is True
-    assert app.style().objectName().lower() == "fusion"
+    assert "Fusion" in calls
     assert app.palette().color(QPalette.ColorRole.Window).rgb() == light_palette().color(
         QPalette.ColorRole.Window
     ).rgb()
