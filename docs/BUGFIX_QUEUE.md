@@ -2846,7 +2846,7 @@ rejected sandbox hypothesis was the only reason it was cited. Do not edit `CONSO
 ---
 
 ## BUG-033: Editing a function's DDL shows no "*" changed marker in the DDL Objects tree
-**Status:** OPEN
+**Status:** RESOLVED (4bc73b6) — THREE causes, and the third was decisive: (a) `dirty_changed` was wired only to the tab title, so `BrowserPanel` had no dirty channel; (b) `_save_ddl_object_editor` never recomputed markers — but a refresh alone would have changed NOTHING, because (c) `_checkout_and_edit` registered no `DeployedObject` and `compute_drift_markers` iterates `settings.deployed` alone, leaving the marker inert regardless. Checkout now registers `content_hash(live_source)`, NOT FQ-002's never-deployed sentinel `""` — the sentinel would make every fresh checkout read as `*` the instant it happened. An existing entry is never overwritten, since a real deploy reference outranks this inference. The two markers collapse in one place: dirty + drift `*` → `*`, drift `!` + dirty → `*!`, never `**`; keyed on `DdlObjectRef.key` so it survives `set_schema` rebuilds, and a trigger's two leaves both mark. The unsaved marker works PROJECTLESS by design — it is a property of the editor buffer, not of the project's deploy state.
 **Reported:** 2026-08-06
 **Report (verbatim):** "I modified a ddl of a function, but in the DDL Objects window I can't see the * that it was changed"
 
@@ -2876,7 +2876,7 @@ Gotchas: (i) `drift_markers` is `None`/empty projectless (ddl_buffer_panel.py:18
 ---
 
 ## BUG-034: Project Settings never imports the .pgtp's connection (quality fields empty) yet the app still connects from a different source
-**Status:** OPEN
+**Status:** RESOLVED (4bc73b6) — both halves confirmed: nothing ever WROTE `ProjectSettings.target`, and two of the three consumers never READ it (`_open_ddl_explorer` and `CoherenceController.run_check` each called `seed_params(tree, self._settings)` privately), so the app could genuinely connect with credentials the dialog was not showing. One source of truth now: `active_target_params(tree=None)` — project open ⇒ `ProjectSettings.target`, projectless ⇒ `seed_params` — which every consumer asks, the coherence lane by INJECTION rather than duplicating the selection. The `.pgtp` connection imports on open via the existing `connection_from_tree` (saved wins; the sandbox is never seeded). The password is prompted LAZILY at first connect, so opening a project raises no modal and a project you never connect from never asks for a secret; cancelling stores nothing and lets the connection fail visibly rather than substituting another credential. A fresh no-target project (FQ-007) shows blank and "Not configured.", explicitly NOT backfilled from app QSettings — silent backfilling is what made this invisible. DRIVE-BY of the same class: `_link_pgtp_to_project_if_needed` and `_deploy_pgtp` rebuilt `ProjectSettings` field-by-field and silently DROPPED `sandbox_mode`, quietly turning a "with data" project schema-only; both now use `dataclasses.replace`.
 **Reported:** 2026-08-06
 **Report (verbatim):** "the Project Settings is not picking up the database connection from the pgtp: the strange situation is that in Project settings I have quality fields empty yet it's connecting to the database. the expected behaviour is that opening the pgtp picks up database name, port, user, and password is requested, then saved in the json."
 
