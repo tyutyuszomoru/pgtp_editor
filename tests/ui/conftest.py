@@ -16,7 +16,7 @@ otherwise, can leak into another.
 from pathlib import Path
 
 import pytest
-from PySide6.QtCore import QSettings, Qt
+from PySide6.QtCore import QCoreApplication, QEvent, QSettings, Qt
 from PySide6.QtGui import QGuiApplication, QPalette
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QWidget
@@ -78,3 +78,32 @@ def _reset_keyboard_modifiers():
     yield
     if QGuiApplication.instance() is not None and QGuiApplication.keyboardModifiers():
         QTest.keyClick(QWidget(), Qt.Key.Key_Shift, Qt.KeyboardModifier.NoModifier)
+
+
+@pytest.fixture(autouse=True)
+def _flush_deferred_deletes(qapp):
+    """Actually destroy the widgets each test left behind.
+
+    `qtbot.addWidget` schedules teardown via `deleteLater()`, which only posts
+    a `DeferredDelete` event -- and pytest-qt never runs an event loop that
+    delivers it. `QApplication.processEvents()` does not deliver it either.
+    So every widget every test created stayed alive for the whole worker
+    process: measured at a constant 13 top-level widgets leaked per
+    `MainWindow` (11 QMenu + the window + a QFrame), accumulating linearly --
+    13, 26, 39 ... 104 after only eight tests.
+
+    That is why the suite was unusable. Construction is O(live widgets): eight
+    MainWindow tests took 12.85s with the corpse pile and 4.46s without, and a
+    worker running hundreds of them degrades until it dies -- the "runs for
+    10-30 minutes and has no conclusions" symptom.
+
+    `sendPostedEvents(None, DeferredDelete)` is the one call that actually
+    delivers those events. **This is a test-harness fix, not an app fix**: the
+    application itself frees everything correctly, because its real event loop
+    delivers `DeferredDelete` normally. Verified by constructing and dropping
+    MainWindows outside pytest -- with this flush, every instance is freed and
+    the top-level count stays at zero.
+    """
+    yield
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    qapp.processEvents()
