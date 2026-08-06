@@ -3,6 +3,7 @@
 The dialog is driven via its slot methods and accessors; never `.exec()`'d.
 """
 from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QDialog
 
 from pgtp_editor.ui.customize_toolbar_dialog import CustomizeToolbarDialog
 
@@ -267,3 +268,72 @@ def test_choose_icon_without_a_selection_is_a_no_op(qtbot):
     dialog.toolbar_list.setCurrentRow(-1)
     dialog._choose_icon()
     assert dialog.icon_assignments() == {}
+
+
+def _patch_picker(monkeypatch, *, accepted, chosen):
+    """Stub out the modal picker: never `.exec()` a real dialog in a test."""
+    from pgtp_editor.ui import icon_picker_dialog as picker_module
+
+    seen = {}
+
+    class _StubPicker:
+        def __init__(self, current_icon_id, color, parent=None):
+            seen["current"] = current_icon_id
+
+        def exec(self):
+            return (
+                QDialog.DialogCode.Accepted if accepted else QDialog.DialogCode.Rejected
+            )
+
+        def chosen_icon_id(self):
+            return chosen
+
+    monkeypatch.setattr(picker_module, "IconPickerDialog", _StubPicker)
+    return seen
+
+
+def test_choose_icon_applies_the_pickers_choice_to_the_selected_row(
+    qtbot, monkeypatch
+):
+    dialog = _menu_dialog(qtbot, ["file.open", "file.save-as"])
+    seen = _patch_picker(monkeypatch, accepted=True, chosen="zoom-in")
+    dialog._select_toolbar("file.save-as")
+    dialog._choose_icon()
+    # The picker is seeded with that row's current assignment (none yet)...
+    assert seen["current"] is None
+    # ...and its choice lands on that row only.
+    assert dialog.icon_assignments() == {"file.save-as": "zoom-in"}
+    assert dialog.effective_icon_id("file.open") == "open"
+
+
+def test_choose_icon_seeds_the_picker_with_the_rows_existing_assignment(
+    qtbot, monkeypatch
+):
+    dialog = _menu_dialog(qtbot, ["file.save-as"])
+    dialog.assign_icon("file.save-as", "zoom-in")
+    seen = _patch_picker(monkeypatch, accepted=True, chosen="document-save-as")
+    dialog._select_toolbar("file.save-as")
+    dialog._choose_icon()
+    assert seen["current"] == "zoom-in"
+    assert dialog.icon_assignments() == {"file.save-as": "document-save-as"}
+
+
+def test_choose_icon_reset_to_default_clears_the_assignment(qtbot, monkeypatch):
+    """The picker's "Default" cell yields `None`, which must remove the
+    assignment rather than store a null one."""
+    dialog = _menu_dialog(qtbot, ["file.open"])
+    dialog.assign_icon("file.open", "zoom-in")
+    _patch_picker(monkeypatch, accepted=True, chosen=None)
+    dialog._select_toolbar("file.open")
+    dialog._choose_icon()
+    assert dialog.icon_assignments() == {}
+    assert dialog.effective_icon_id("file.open") == "open"
+
+
+def test_cancelling_the_picker_leaves_the_assignment_untouched(qtbot, monkeypatch):
+    dialog = _menu_dialog(qtbot, ["file.save-as"])
+    dialog.assign_icon("file.save-as", "zoom-in")
+    _patch_picker(monkeypatch, accepted=False, chosen="document-save-as")
+    dialog._select_toolbar("file.save-as")
+    dialog._choose_icon()
+    assert dialog.icon_assignments() == {"file.save-as": "zoom-in"}

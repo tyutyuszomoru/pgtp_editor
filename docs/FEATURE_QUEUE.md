@@ -269,7 +269,7 @@ action naming/shortcut) are left to whoever designs this into §17's spec text a
 ---
 
 ## FQ-004: Choose a Breeze icon for any toolbar button in Customize Toolbar
-**Status:** QUEUED
+**Status:** PROCESSED (a12b522)
 **Requested:** 2026-08-06
 **Idea (verbatim/summarized):** "the menu points I'm adding with customize toolbar have no icons. there
 should be an option to add icons. I'm already referencing an icon pack, let's offer from that pack to
