@@ -26,8 +26,12 @@ from pgtp_editor.ui.sql_results_panel import (
     EMPTY_SQL_TEXT,
     IDLE_TEXT,
     NULL_TEXT,
+    RunReport,
     SqlResultsPanel,
+    StatementRun,
     render_value,
+    run_status_lines,
+    statement_status,
 )
 
 
@@ -229,3 +233,132 @@ def test_panel_imports_nothing_that_can_open_a_connection(panel):
         assert name not in exported
     assert not hasattr(panel, "session")
     assert not hasattr(panel, "params")
+
+
+# -- a whole Run: RunReport rendering (§18.5 D4) ----------------------------
+
+
+def make_run(index, sql, result, *, start_line=1, error_line=None, kind="read"):
+    return StatementRun(
+        index=index,
+        sql=sql,
+        classification=kind,
+        result=result,
+        start_line=start_line,
+        error_line=error_line,
+    )
+
+
+def no_rows(status, **kwargs) -> QueryResult:
+    base = dict(outcome=QueryOutcome.NO_ROWS, sql="", status=status, elapsed_ms=1.0)
+    base.update(kwargs)
+    return QueryResult(**base)
+
+
+def test_statement_status_leads_with_postgresqls_own_command_tag():
+    """A row-returning statement's tag is not in `status_line`, so it is added;
+    a no-result-set statement already carries it and must not get it twice."""
+    with_rows = make_run(1, "SELECT id FROM t", rows_result(status="SELECT 2"))
+    assert statement_status(with_rows).startswith("1. SELECT 2 — 2 rows")
+
+    updated = make_run(2, "UPDATE t SET x = 1", no_rows("UPDATE 3", affected=3))
+    line = statement_status(updated)
+    assert line.startswith("2. UPDATE 3")
+    assert line.count("UPDATE 3") == 1
+
+
+def test_run_status_lines_list_every_statement_when_all_succeed():
+    report = RunReport(
+        runs=(
+            make_run(1, "SELECT id FROM t", rows_result(status="SELECT 2")),
+            make_run(2, "UPDATE t SET x = 1", no_rows("UPDATE 3", affected=3)),
+            make_run(3, "CREATE INDEX i ON t (x)", no_rows("CREATE INDEX")),
+        ),
+        total=3,
+    )
+
+    lines = run_status_lines(report)
+
+    assert len(lines) == 3
+    assert "SELECT 2" in lines[0]
+    assert "UPDATE 3" in lines[1]
+    assert "CREATE INDEX" in lines[2]
+    assert report.failure is None
+
+
+def test_run_status_lines_attribute_the_failure_and_state_what_committed():
+    failing = QueryResult.failed("UPDATE t SET x = 1/0", "division by zero")
+    report = RunReport(
+        runs=(
+            make_run(1, "SELECT 1", no_rows("SELECT 1")),
+            make_run(2, "UPDATE t SET x = 1/0", failing, start_line=2, error_line=3),
+        ),
+        total=4,
+    )
+
+    lines = run_status_lines(report)
+    joined = "\n".join(lines)
+
+    assert "division by zero" in joined
+    assert "Statement 2 of 4 FAILED — buffer line 3" in joined
+    assert "UPDATE t SET x = 1/0" in joined  # identifiable
+    assert "COMMITTED" in joined
+    assert "remaining 2 statements were not run" in joined
+    # The failing statement is described once, not also as a command status.
+    assert not any(line.startswith("2. ") for line in lines)
+
+
+def test_show_run_fills_the_grid_from_the_last_row_returning_statement(panel):
+    last_rows = rows_result(columns=("n",), rows=((7,),), status="SELECT 1")
+    report = RunReport(
+        runs=(
+            make_run(1, "SELECT id, name FROM t", rows_result(status="SELECT 2")),
+            make_run(2, "SELECT n FROM u", last_rows),
+            make_run(3, "UPDATE t SET x = 1", no_rows("UPDATE 3", affected=3)),
+        ),
+        total=3,
+    )
+
+    panel.show_run(report)
+
+    assert panel.run_report is report
+    assert panel.result is last_rows
+    assert panel.table.isVisibleTo(panel) is True
+    assert panel.table.columnCount() == 1
+    assert panel.table.item(0, 0).text() == "7"
+    assert "UPDATE 3" in panel.status_label.text()
+
+
+def test_show_run_hides_the_grid_when_no_statement_returned_rows(panel):
+    report = RunReport(
+        runs=(make_run(1, "CREATE TABLE t (id int)", no_rows("CREATE TABLE")),),
+        total=1,
+    )
+
+    panel.show_run(report)
+
+    assert panel.table.isVisibleTo(panel) is False
+    assert "CREATE TABLE" in panel.status_label.text()
+
+
+def test_report_notice_clears_any_previous_result(panel):
+    panel.show_result(rows_result())
+    assert panel.result is not None
+
+    panel.report_notice("Run cancelled — nothing was executed.")
+
+    assert panel.result is None
+    assert panel.run_report is None
+    assert panel.table.isVisibleTo(panel) is False
+    assert panel.status_label.text().startswith("Run cancelled")
+
+
+def test_show_result_clears_a_previous_run_report(panel):
+    panel.show_run(
+        RunReport(runs=(make_run(1, "SELECT 1", rows_result()),), total=1)
+    )
+    assert panel.run_report is not None
+
+    panel.show_result(rows_result())
+
+    assert panel.run_report is None

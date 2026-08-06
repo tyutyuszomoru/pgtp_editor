@@ -35,6 +35,14 @@ hidden), and an error (the database's own message, in the error colour, grid
 hidden). A `SELECT` that matched nothing therefore reads differently from an
 `UPDATE`, because they are different answers.
 
+**A Run is a sequence of statements, and the report says so** (§18.5 D4's
+"every statement's `command_status` is listed in the status strip"). `show_run`
+renders a `RunReport`: one status line per executed statement carrying **its
+own** command status, the grid filled from the **last row-returning**
+statement, and -- on a failure -- which statement failed, at which **buffer**
+line, plus what did and did not run. `show_result` (one `QueryResult`) is still
+the single-statement entry point and is unchanged.
+
 **Truncation is shouted, not whispered.** When `QueryResult.truncated`, the
 status line says so in the warning colour and names the cap -- a silently short
 result set is a wrong answer, which is this project's worst failure class.
@@ -51,6 +59,7 @@ colour is palette-derived so both the dark QSS and the light theme work, and no
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any
 
 from PySide6.QtCore import Qt, Signal
@@ -69,7 +78,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ..db.sandbox_query import QueryOutcome, QueryResult, status_line
+from ..db.sandbox_query import QueryOutcome, QueryResult, error_text, status_line
 
 #: How a NULL prints. Upper-case, and additionally italic + dimmed below, so it
 #: can never be mistaken for the four-character string `'NULL'` either.
@@ -93,6 +102,158 @@ _WARN_COLOR = QColor("#d08a1a")
 #: `text` value -- content-sized up to here, then clamped (the full value stays
 #: readable in the cell's tooltip).
 _MAX_COLUMN_WIDTH = 320
+
+
+#: How much of a statement is echoed when naming it in the status strip. Long
+#: enough to recognise, short enough not to turn the strip into a second editor.
+_ECHO_CHARS = 72
+
+
+@dataclass(frozen=True)
+class StatementRun:
+    """One statement of a Run, and what the sandbox said about **it**.
+
+    Pure data, so every sentence the status strip shows is assertable without a
+    widget. Built by the console (`ui/sql_console_panel.py`) from a
+    `sql/statements.py::Statement` plus the `QueryResult` that statement
+    produced -- this panel never splits, classifies or executes anything.
+    """
+
+    #: 1-based position in the Run, as shown ("Statement 2 of 3").
+    index: int
+    #: The statement text exactly as it was sent.
+    sql: str
+    #: `sql/statements.py::classify_statement`'s verdict for `sql`.
+    classification: str
+    #: What came back.
+    result: QueryResult
+    #: 1-based line of the statement's first character **in the buffer**.
+    start_line: int = 1
+    #: 1-based line of the failure **in the buffer** -- `Statement.line_offset`
+    #: plus `db/apply.py::line_of_position`, computed by the console because
+    #: only the splitter knows the offset. None when the statement succeeded or
+    #: the server reported no position: never a guessed line.
+    error_line: int | None = None
+
+    @property
+    def ok(self) -> bool:
+        return self.result.ok
+
+    @property
+    def echo(self) -> str:
+        """The statement's first line, clipped -- what makes the statement the
+        strip is talking about identifiable at a glance."""
+        first = self.sql.strip().splitlines()[0] if self.sql.strip() else ""
+        if len(first) > _ECHO_CHARS:
+            return f"{first[:_ECHO_CHARS].rstrip()}…"
+        return first
+
+
+@dataclass(frozen=True)
+class RunReport:
+    """One Run gesture's complete answer: the statements that **executed**, in
+    order, plus how many the Run contained.
+
+    `total` is deliberately separate from `len(runs)`: a Run that aborted at
+    statement 2 of 5 executed two statements and left three unrun, and both
+    halves of that sentence have to be sayable.
+    """
+
+    runs: tuple[StatementRun, ...] = ()
+    total: int = 0
+
+    @property
+    def failure(self) -> StatementRun | None:
+        """The statement that failed, or None. At most one: a Run stops at the
+        first failure, so a failure is never attributed to a later statement."""
+        for run in self.runs:
+            if not run.ok:
+                return run
+        return None
+
+    @property
+    def grid_run(self) -> StatementRun | None:
+        """Whose rows the grid shows: the **last row-returning** statement
+        (§18.5 D4). None when no statement in the Run returned a result set --
+        in which case the grid stays hidden rather than showing a stale one."""
+        for run in reversed(self.runs):
+            if run.result.returns_rows:
+                return run
+        return None
+
+    @property
+    def committed(self) -> tuple[StatementRun, ...]:
+        """The statements that ran successfully -- and, because each statement
+        of a Run is its own committing `SandboxExecutor.fetch` call, therefore
+        **committed**. Named for what actually happened, so the failure report
+        can say what is still in the sandbox."""
+        return tuple(run for run in self.runs if run.ok)
+
+    @property
+    def unrun(self) -> int:
+        """How many statements the Run never reached (a failure aborts it)."""
+        return max(self.total - len(self.runs), 0)
+
+
+def statement_status(run: StatementRun) -> str:
+    """One executed statement's line in the status strip.
+
+    Always leads with **PostgreSQL's own command tag** when there is one, so a
+    statement that returned no rows still says *what it did* (§18.5 D4:
+    `SELECT 100`, `UPDATE 3`, `CREATE FUNCTION`) instead of contributing an
+    empty grid. `db/sandbox_query.py::status_line` supplies the rest verbatim --
+    one wording, not a second copy of it.
+    """
+    body = status_line(run.result)
+    tag = (run.result.status or "").strip()
+    if tag and run.result.outcome is QueryOutcome.ROWS:
+        # NO_ROWS already carries the tag through `status_line`; ROWS does not.
+        body = f"{tag} — {body}"
+    return f"{run.index}. {body}"
+
+
+def run_status_lines(report: RunReport) -> list[str]:
+    """The whole status strip for one Run, as lines -- **pure**, so the exact
+    sentences are testable without a widget.
+
+    A failure produces three things, none of them optional: which statement
+    failed (index **and** buffer line **and** an echo of the statement), the
+    server's own message, and an honest statement of what is now in the
+    sandbox. §18.5 D4 forbids leaving partial application of a multi-statement
+    Run unmentioned, and each statement here really did commit on its own (see
+    `RunReport.committed`).
+    """
+    if not report.runs:
+        return []
+    # Only the statements that RAN get a command-status line; the one that
+    # failed is described by the attribution block instead, so its message is
+    # not printed twice.
+    lines = [statement_status(run) for run in report.runs if run.ok]
+    failure = report.failure
+    if failure is None:
+        return lines
+    where = (
+        f"buffer line {failure.error_line}"
+        if failure.error_line is not None
+        else f"starting at buffer line {failure.start_line}"
+    )
+    lines.append(f"Error: {error_text(failure.result.error)}")
+    lines.append(
+        f"Statement {failure.index} of {report.total} FAILED — {where}"
+        + (f" — {failure.echo}" if failure.echo else "")
+    )
+    done = len(report.committed)
+    if done:
+        noun = "statement" if done == 1 else "statements"
+        lines.append(
+            f"{done} earlier {noun} already ran and COMMITTED (each statement "
+            "of a Run is its own transaction). Reset Sandbox re-establishes a "
+            "known state."
+        )
+    if report.unrun:
+        noun = "statement was" if report.unrun == 1 else "statements were"
+        lines.append(f"The remaining {report.unrun} {noun} not run.")
+    return lines
 
 
 def render_value(value: Any) -> str:
@@ -142,6 +303,7 @@ class SqlResultsPanel(QWidget):
         self._on_execute = on_execute
         self._sql_provider = sql_provider
         self._result: QueryResult | None = None
+        self._run_report: RunReport | None = None
 
         self.sql_edit = QPlainTextEdit()
         self.sql_edit.setPlaceholderText("SELECT … — runs against the sandbox")
@@ -214,6 +376,12 @@ class SqlResultsPanel(QWidget):
         return self._result
 
     @property
+    def run_report(self) -> RunReport | None:
+        """The multi-statement report currently shown, or None (before the
+        first Run, or after a single-`QueryResult` `show_result`)."""
+        return self._run_report
+
+    @property
     def sql_text(self) -> str:
         """The statement Run would send: the injected provider's text, or this
         panel's editor. Stripped -- trailing whitespace is not a statement."""
@@ -258,6 +426,7 @@ class SqlResultsPanel(QWidget):
         set, so "no rows came back" and "no result set exists" stay visibly
         different answers."""
         self._result = result
+        self._run_report = None
         if result.outcome is QueryOutcome.ERROR:
             self._clear_table()
             self.table.setVisible(False)
@@ -275,11 +444,54 @@ class SqlResultsPanel(QWidget):
             status_line(result), _WARN_COLOR if result.truncated else None
         )
 
+    def show_run(self, report: RunReport) -> None:
+        """Render one whole Run (§18.5 D4): every executed statement's own
+        command status in the strip, the **last row-returning** statement's rows
+        in the grid, and -- on a failure -- which statement failed, where in the
+        buffer, and what is nonetheless committed.
+
+        The grid is filled from the row-returning statement even when a *later*
+        statement failed, because those rows are a true answer to a statement
+        that really ran; the failure sits above them in the strip, in the error
+        colour, so it cannot be missed.
+        """
+        self._run_report = report
+        grid_run = report.grid_run
+        self._result = grid_run.result if grid_run is not None else (
+            report.runs[-1].result if report.runs else None
+        )
+        text = "\n".join(run_status_lines(report)) or EMPTY_SQL_TEXT
+        failure = report.failure
+        if grid_run is None:
+            self._clear_table()
+            self.table.setVisible(False)
+        else:
+            self._fill_table(grid_run.result)
+            self.table.setVisible(True)
+        colour = None
+        if failure is not None:
+            colour = _ERROR_COLOR
+        elif grid_run is not None and grid_run.result.truncated:
+            colour = _WARN_COLOR
+        self._set_status(text, colour)
+
+    def report_notice(self, text: str, *, warning: bool = True) -> None:
+        """Show one stated sentence with **no** result -- a refusal (a declined
+        confirmation, a buffer holding nothing executable). The grid is cleared
+        rather than left showing an older Run's rows, which would read as if
+        this Run had produced them."""
+        self._result = None
+        self._run_report = None
+        self._clear_table()
+        self.table.setVisible(False)
+        self._set_status(text, _WARN_COLOR if warning else None)
+
     def clear(self) -> None:
         """Back to the "nothing run yet" state (project closed, sandbox
         released). Leaves the typed SQL alone -- losing someone's statement
         because a session dropped would be its own bug."""
         self._result = None
+        self._run_report = None
         self._clear_table()
         self.table.setVisible(False)
         self._set_status(IDLE_TEXT)

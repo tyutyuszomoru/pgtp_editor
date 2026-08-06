@@ -52,28 +52,72 @@ cap and a result that was cut off therefore stay distinguishable -- reporting a
 truncated set as complete is the silent-wrong-result class this project
 refuses.
 
+**A Run is split into statements first, and every one of them reports.** The
+buffer (or selection) goes through the pure `sql/statements.py::split_statements`
+-- built on §18.4's tokenizer, so a `;` inside a string, a comment or a
+`$$ … $$` routine body never splits anything -- and each statement is executed
+in order through the **same** `run_query` seam. Each carries its own command
+status into the status strip (`SELECT 100`, `UPDATE 3`, `CREATE FUNCTION`), the
+grid shows the last row-returning statement, and a failure is attributed to the
+statement that produced it: **its index and its buffer line**, via
+`Statement.line_offset + db/apply.py::line_of_position` -- the one
+implementation of that rule.
+
+**Transaction discipline, stated because it diverges from the spec's wording.**
+§18.5 D4 asks for all statements of a Run in *one* transaction that commits.
+The sanctioned seam is `db/sandbox.py::SandboxExecutor.fetch`, which is
+documented as *"run **one** statement … commits on success"* and opens one
+connection per call, so **each statement of a Run is its own committing
+transaction**. The seam that does span statements atomically (`execute`) returns
+no rows and no status message, so it cannot answer D4's own requirements (a
+grid, plus each statement's command status). Rather than reach into `db/` from
+the UI, the console runs statement-by-statement, **stops at the first failure**,
+and *says* what already committed -- the one thing D4 forbids is leaving partial
+application unmentioned.
+
+**Object-changing statements ask first.** When any statement classifies as
+`ddl` or `unknown` (`sql/statements.py::CHANGES_OBJECTS`, the single home of
+"unknown is treated as ddl"), the Run is gated behind the injected
+`confirm(title, text)` seam -- exactly the Apply gestures' seam, so no test can
+reach a modal (§30) -- naming that the sandbox's applied working set may no
+longer match what the open tabs believe, and that Reset Sandbox re-establishes a
+known state. The prompt says the classifier *could not tell* for `unknown`
+rather than asserting DDL. Answering with `remember` set suppresses the question
+**for that sandbox session only**: a new session asks again.
+
 **Nothing blocks the GUI thread and nothing here reaches a modal.** The query
 goes out through the injected `run_async` seam (`ui/async_task.py::run_async`
 by default, a synchronous stub in tests), Run is disabled while a run is in
 flight, and a failure comes back as a `QueryResult` carrying the database's own
 message -- never an empty grid.
+
+**Still missing from D4, deliberately, and reported rather than faked:** the
+mandatory per-statement timeout. `SandboxExecutor.fetch(params, sql, *,
+max_rows)` has no timeout parameter, so there is nowhere for the UI to pass one;
+inventing a channel here would change the `db/` contract from the UI. There is
+likewise no Cancel button (D4's own stated gap).
 """
 from __future__ import annotations
 
-from collections.abc import Callable
+import weakref
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QKeySequence, QShortcut, QTextCursor
 from PySide6.QtWidgets import (
+    QCheckBox,
     QHBoxLayout,
     QLabel,
+    QMessageBox,
     QSpinBox,
     QSplitter,
     QVBoxLayout,
     QWidget,
 )
 
+from ..db.apply import line_of_position
 from ..db.sandbox_query import (
     DEFAULT_MAX_ROWS,
     QueryResult,
@@ -81,10 +125,17 @@ from ..db.sandbox_query import (
 )
 from ..sql.caret_context import DOTTED_PATH, resolve_caret_context
 from ..sql.formatter import format_selection as _format_selection_text
+from ..sql.statements import (
+    CHANGES_OBJECTS,
+    UNKNOWN,
+    Statement,
+    classify_statement,
+    split_statements,
+)
 from .async_task import run_async
 from .code_editor import CodeEditor
 from .completion_popup import CompletionPopupHostMixin
-from .sql_results_panel import SqlResultsPanel
+from .sql_results_panel import RunReport, SqlResultsPanel, StatementRun
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from ..db.sandbox import SandboxSession
@@ -122,6 +173,196 @@ NO_SESSION_TEXT = (
 #: Shown while a run is in flight (Run is disabled for the duration).
 RUNNING_TEXT = "Running against the sandbox…"
 
+#: Refused when the buffer holds no executable statement at all -- e.g. only a
+#: comment. Said out loud rather than sending an empty query the server would
+#: answer with a confusing driver-level error.
+NOTHING_EXECUTABLE_TEXT = (
+    "Nothing to run — the buffer holds no SQL statement (only comments or "
+    "whitespace)."
+)
+
+#: What a declined object-change confirmation reports. **Nothing executed** --
+#: not the read statements either: the user declined the Run, not part of it.
+DECLINED_TEXT = (
+    "Run cancelled — the object-change confirmation was declined. Nothing was "
+    "executed."
+)
+
+#: The confirmation's title (the injected `confirm(title, text)` seam's first
+#: argument).
+OBJECT_CHANGE_TITLE = "This Run changes objects in the sandbox"
+
+#: The title when every object-changing statement is merely *unclassifiable*.
+#: It must not assert DDL -- the classifier said it could not tell.
+UNKNOWN_CHANGE_TITLE = "This Run may change objects in the sandbox"
+
+#: The consequence, §18.5 D4's own sentence, verbatim.
+OBJECT_CHANGE_CONSEQUENCE = (
+    "The sandbox's applied working set (and what your open tabs believe is "
+    "applied) may no longer match. Reset Sandbox re-establishes a known state."
+)
+
+#: The checkbox's label. Scoped to the **session**, and the label says so, so
+#: nobody reads it as a permanent preference.
+REMEMBER_LABEL = "Don't ask again for this sandbox session"
+
+
+@dataclass(frozen=True)
+class ObjectChangeConfirmation:
+    """A richer answer than `bool` for the one confirmation that carries a
+    checkbox (§18.5 D4's *"don't ask again for this sandbox session"*).
+
+    The seam signature stays the codebase's established
+    `confirm(title, text) -> bool`: a host wired to a plain yes/no dialog keeps
+    working unchanged and simply never remembers. A host (or test) that offers
+    the checkbox returns one of these instead, and `as_confirmation` normalises
+    either shape -- so there is one confirmation seam, not a second one invented
+    for this feature.
+    """
+
+    confirmed: bool
+    #: Whether the user asked not to be asked again **for this session**.
+    #: Meaningless unless `confirmed` -- a declined Run remembers nothing.
+    remember: bool = False
+
+
+def as_confirmation(answer: Any) -> ObjectChangeConfirmation:
+    """Normalise whatever the injected `confirm` seam returned.
+
+    A bare truthy/falsey value is a plain yes/no with no memory; an object
+    carrying `confirmed`/`remember` (this module's `ObjectChangeConfirmation`,
+    or any duck-typed stand-in) is taken as-is. `remember` is forced off on a
+    refusal: "no, and don't ask again" is not a thing this gate may express,
+    because it would silently suppress a *refusal* forever.
+    """
+    if isinstance(answer, ObjectChangeConfirmation):
+        confirmed, remember = answer.confirmed, answer.remember
+    elif hasattr(answer, "confirmed"):
+        confirmed = bool(getattr(answer, "confirmed"))
+        remember = bool(getattr(answer, "remember", False))
+    else:
+        confirmed, remember = bool(answer), False
+    return ObjectChangeConfirmation(
+        confirmed=bool(confirmed), remember=bool(confirmed and remember)
+    )
+
+
+def object_change_prompt(
+    statements: Sequence[Statement], classifications: Sequence[str]
+) -> str:
+    """The confirmation's body: which statements change objects, what that
+    costs, and -- for `unknown` -- an honest *"could not tell"*.
+
+    Pure, so the exact wording is assertable without a dialog. The two variants
+    are not cosmetic: telling a user that `DO $$ … $$` "changes objects" would
+    be asserting something the classifier explicitly did not establish, and
+    §18.5 D4 requires the prompt to say the classifier could not tell instead.
+    """
+    changing = [
+        (index, statement, kind)
+        for index, (statement, kind) in enumerate(
+            zip(statements, classifications), start=1
+        )
+        if kind in CHANGES_OBJECTS
+    ]
+    ddl_count = sum(1 for _i, _s, kind in changing if kind != UNKNOWN)
+    unknown_count = len(changing) - ddl_count
+
+    if ddl_count and unknown_count:
+        head = (
+            f"{ddl_count} statement(s) of this Run change objects in the "
+            f"sandbox, and {unknown_count} could not be classified at all."
+        )
+    elif ddl_count:
+        noun = "statement changes" if ddl_count == 1 else "statements change"
+        head = f"{ddl_count} {noun} objects in the sandbox."
+    else:
+        noun = "statement" if unknown_count == 1 else "statements"
+        head = (
+            f"The classifier could not tell what {unknown_count} {noun} of this "
+            "Run does, so it is treated as if it changed objects — an "
+            "unclassifiable statement is never assumed harmless."
+        )
+
+    lines = [head, "", OBJECT_CHANGE_CONSEQUENCE, ""]
+    for index, statement, kind in changing:
+        note = (
+            "could not be classified"
+            if kind == UNKNOWN
+            else "changes objects"
+        )
+        first = statement.text.strip().splitlines()[0] if statement.text.strip() else ""
+        if len(first) > 72:
+            first = f"{first[:72].rstrip()}…"
+        lines.append(
+            f"Statement {index} (line {statement.start_line}, {note}): {first}"
+        )
+    lines.append("")
+    lines.append("Run these statements against the sandbox?")
+    return "\n".join(lines)
+
+
+def _statement_run(
+    index: int, statement: Statement, classification: str, result: QueryResult
+) -> StatementRun:
+    """Pair one statement with its result, converting the server's
+    statement-local error position into a **buffer** line.
+
+    `Statement.line_offset` is the piece a caller cannot recompute, and
+    `db/apply.py::line_of_position` is the one implementation of the
+    position -> line rule (§18.5 D4 states it once, deliberately, so the console,
+    the apply path and the validation ladder cannot drift). `position` indexes
+    the statement we sent, which is exactly `statement.text`, so the sum is
+    exact rather than mapped -- and `None` stays `None`: a failure without a
+    reported position gets no line at all rather than a guessed one.
+    """
+    error = result.error
+    error_line: int | None = None
+    if error is not None:
+        local = line_of_position(statement.text, error.position)
+        if local is None:
+            # `QueryError.line` is itself statement-local (derived by the same
+            # rule inside `db/`), so it needs the same offset.
+            local = error.line
+        if local is not None:
+            error_line = statement.line_offset + local
+    return StatementRun(
+        index=index,
+        sql=statement.text,
+        classification=classification,
+        result=result,
+        start_line=statement.start_line,
+        error_line=error_line,
+    )
+
+
+def default_object_change_confirm(title: str, text: str) -> ObjectChangeConfirmation:
+    """The console's own object-change dialog, used when no host wired a
+    `confirm` seam.
+
+    It exists because an unwired seam must not silently *skip* the question --
+    which is what would happen with a permissive default -- and must not make
+    every DDL Run impossible either, which is what a refusing default would do
+    in the shipped app. It is the only modal in this file, it is reached only by
+    a Run that really does change objects, and every test injects `confirm`
+    instead (§30).
+    """
+    box = QMessageBox()
+    box.setIcon(QMessageBox.Icon.Warning)
+    box.setWindowTitle(title)
+    box.setText(title)
+    box.setInformativeText(text)
+    box.setStandardButtons(
+        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+    )
+    box.setDefaultButton(QMessageBox.StandardButton.No)
+    checkbox = QCheckBox(REMEMBER_LABEL)
+    box.setCheckBox(checkbox)
+    confirmed = box.exec() == QMessageBox.StandardButton.Yes
+    return ObjectChangeConfirmation(
+        confirmed=confirmed, remember=confirmed and checkbox.isChecked()
+    )
+
 
 class SqlConsolePanel(CompletionPopupHostMixin, QWidget):
     """Editor + results grid for ad-hoc SQL against this project's sandbox.
@@ -143,19 +384,32 @@ class SqlConsolePanel(CompletionPopupHostMixin, QWidget):
     ``run_async(fn, on_result=…, on_error=…)``
         The off-GUI-thread seam, `ui/async_task.py::run_async` by default and a
         synchronous stub in tests -- the `SandboxController` convention.
+    ``confirm(title, text) -> bool | ObjectChangeConfirmation``
+        The object-change gate, the same `confirm(title, text)` seam the Apply
+        gestures use, defaulting to this module's
+        `default_object_change_confirm`. Returning an
+        `ObjectChangeConfirmation` is how a host reports the
+        *"don't ask again for this sandbox session"* checkbox; a plain `bool`
+        host keeps working and simply never remembers.
 
     Wiring surface for the host: `set_schema_index`, `set_session_available`,
     `set_sql`, `append_sql`, `focus_editor`, `run`, `row_limit`,
-    `set_row_limit`, `clear`, the read-only `sql_text`/`current_sql`/`result`,
-    and the `execute_requested` / `result_ready` / `format_refused` signals.
+    `set_row_limit`, `clear`, the read-only
+    `sql_text`/`current_sql`/`result`/`run_report`, and the
+    `execute_requested` / `result_ready` / `run_finished` / `format_refused`
+    signals.
     """
 
     #: Emitted with the SQL actually being sent, so a host can mirror it in a
     #: status bar or log.
     execute_requested = Signal(str)
     #: Emitted with the finished `QueryResult` (`object`, so the dataclass rides
-    #: across as-is), after it has been rendered.
+    #: across as-is), after it has been rendered. For a multi-statement Run this
+    #: is the result the grid shows -- `run_finished` carries the whole Run.
     result_ready = Signal(object)
+    #: Emitted with the finished `ui/sql_results_panel.py::RunReport` -- every
+    #: executed statement, its command status, and any failure's attribution.
+    run_finished = Signal(object)
     #: Emitted with `sql/issues.py` issues when Format Selection refuses
     #: (§18.4's contract: the text is left byte-for-byte unchanged).
     format_refused = Signal(list)
@@ -167,6 +421,7 @@ class SqlConsolePanel(CompletionPopupHostMixin, QWidget):
         session_provider: Callable[[], "SandboxSession | None"] | None = None,
         run_query: Callable[..., QueryResult] = run_sandbox_query,
         run_async: Callable[..., Any] = run_async,
+        confirm: Callable[[str, str], Any] = default_object_change_confirm,
     ) -> None:
         super().__init__(parent)
         self._session_provider = session_provider
@@ -174,8 +429,17 @@ class SqlConsolePanel(CompletionPopupHostMixin, QWidget):
         # Plain attribute, replaced wholesale by a synchronous stub in tests --
         # the SandboxController/ConnectionSetupDialog convention.
         self._run_async = run_async
+        self._confirm = confirm
         self._running = False
         self._session_available = session_provider is not None
+        # "Don't ask again" is scoped to ONE sandbox session, so what is
+        # remembered is the session it was granted for -- identified by a
+        # weakref where the object supports one (never keeping the session
+        # alive, which is the reason this panel does not hold one) plus its
+        # id() for the objects that do not. A different session, or the same
+        # id() after the original died, asks again.
+        self._ack_ref: Any = None
+        self._ack_id: int | None = None
 
         # §18.6 completion, injected exactly as into a DDL object tab: None
         # (the default) disables it entirely. This panel never imports
@@ -333,6 +597,9 @@ class SqlConsolePanel(CompletionPopupHostMixin, QWidget):
         if available:
             self.results.set_enabled(not self._running)
         else:
+            # The session this console was running against is gone, so the
+            # "don't ask again for this sandbox session" grant goes with it.
+            self._forget_object_change_ack()
             self.results.set_enabled(False, reason or NO_SESSION_TEXT)
 
     # --- running ------------------------------------------------------------
@@ -344,9 +611,10 @@ class SqlConsolePanel(CompletionPopupHostMixin, QWidget):
         self.results.run()
 
     def _execute(self, sql: str) -> None:
-        """The results panel's `on_execute` seam: fetch the session, hand the
-        statement to `run_query` off the GUI thread, and render whatever comes
-        back. Never opens a connection and never builds `ConnectionParams`."""
+        """The results panel's `on_execute` seam: split the Run into statements,
+        gate it on the object-change confirmation, then execute the statements
+        in order off the GUI thread and render the whole Run. Never opens a
+        connection and never builds `ConnectionParams`."""
         if self._running:
             return
         session = (
@@ -356,22 +624,45 @@ class SqlConsolePanel(CompletionPopupHostMixin, QWidget):
             self.results.set_enabled(False, NO_SESSION_TEXT)
             return
 
+        statements = split_statements(sql)
+        if not statements:
+            self.results.report_notice(NOTHING_EXECUTABLE_TEXT)
+            return
+        classifications = [classify_statement(stmt.text) for stmt in statements]
+
+        if not self._object_change_allowed(session, statements, classifications):
+            self.results.report_notice(DECLINED_TEXT)
+            return
+
         max_rows = self.row_limit()
         self._running = True
         self.results.set_enabled(False, RUNNING_TEXT)
         self.execute_requested.emit(sql)
 
-        def work() -> QueryResult:
-            return self._run_query(session, sql, max_rows=max_rows)
+        def work() -> RunReport:
+            # Statement by statement, **stopping at the first failure**: each
+            # `run_query` call is one `SandboxExecutor.fetch`, i.e. its own
+            # committing transaction, so continuing past a failure would pile
+            # more committed changes on top of a broken Run.
+            runs: list[StatementRun] = []
+            for index, (statement, kind) in enumerate(
+                zip(statements, classifications), start=1
+            ):
+                result = self._run_query(session, statement.text, max_rows=max_rows)
+                runs.append(_statement_run(index, statement, kind, result))
+                if not result.ok:
+                    break
+            return RunReport(runs=tuple(runs), total=len(statements))
 
-        def on_result(result: QueryResult) -> None:
-            self._finish(result)
+        def on_result(report: RunReport) -> None:
+            self._finish(report)
 
         def on_error(exc: BaseException) -> None:
             # `run_sandbox_query` never raises, so this is the seam itself
             # failing (a thread-pool or programming error). Reported as an
-            # error result rather than swallowed into an empty grid.
-            self._finish(
+            # error result rather than swallowed into an empty grid. It is NOT
+            # attributed to any statement: we do not know which one it died on.
+            self._finish_result(
                 QueryResult.failed(
                     sql, str(exc).strip() or exc.__class__.__name__, max_rows=max_rows
                 )
@@ -379,16 +670,91 @@ class SqlConsolePanel(CompletionPopupHostMixin, QWidget):
 
         self._run_async(work, on_result=on_result, on_error=on_error)
 
-    def _finish(self, result: QueryResult) -> None:
+    def _finish(self, report: RunReport) -> None:
+        self._running = False
+        self.results.set_enabled(self._session_available)
+        self.results.show_run(report)
+        if self.results.result is not None:
+            self.result_ready.emit(self.results.result)
+        self.run_finished.emit(report)
+
+    def _finish_result(self, result: QueryResult) -> None:
+        """The seam-level failure path: one `QueryResult` that belongs to no
+        particular statement."""
         self._running = False
         self.results.set_enabled(self._session_available)
         self.results.show_result(result)
         self.result_ready.emit(result)
 
+    # --- the ddl/unknown confirmation (§18.5 D4) ----------------------------
+
+    def _object_change_allowed(
+        self,
+        session: Any,
+        statements: Sequence[Statement],
+        classifications: Sequence[str],
+    ) -> bool:
+        """Whether the Run may proceed: True when nothing in it changes objects,
+        when this session already answered *"don't ask again"*, or when the
+        confirmation seam says yes. A refusal executes **nothing at all** --
+        not even the Run's read statements."""
+        if not any(kind in CHANGES_OBJECTS for kind in classifications):
+            return True
+        if self._object_change_acknowledged(session):
+            return True
+        title = (
+            UNKNOWN_CHANGE_TITLE
+            if all(
+                kind == UNKNOWN
+                for kind in classifications
+                if kind in CHANGES_OBJECTS
+            )
+            else OBJECT_CHANGE_TITLE
+        )
+        answer = as_confirmation(
+            self._confirm(title, object_change_prompt(statements, classifications))
+        )
+        if not answer.confirmed:
+            return False
+        if answer.remember:
+            self._remember_object_change_ack(session)
+        return True
+
+    def _object_change_acknowledged(self, session: Any) -> bool:
+        """Whether *this* session already carries the "don't ask again" grant."""
+        if self._ack_id is None or self._ack_id != id(session):
+            return False
+        if self._ack_ref is not None and self._ack_ref() is not session:
+            # Same id(), different object: the acknowledged session died and
+            # its address was reused. A new session asks again.
+            return False
+        return True
+
+    def _remember_object_change_ack(self, session: Any) -> None:
+        try:
+            self._ack_ref = weakref.ref(session)
+        except TypeError:  # objects that do not support weak references
+            self._ack_ref = None
+        self._ack_id = id(session)
+
+    def _forget_object_change_ack(self) -> None:
+        """Drop the grant -- the session it was given for is gone, so the next
+        one must ask again."""
+        self._ack_ref = None
+        self._ack_id = None
+
     @property
     def result(self) -> QueryResult | None:
-        """The result currently shown, or None before the first run."""
+        """The result currently shown, or None before the first run. For a
+        multi-statement Run this is the **last row-returning** statement's
+        result (or the last statement's, if none returned rows)."""
         return self.results.result
+
+    @property
+    def run_report(self) -> RunReport | None:
+        """The whole last Run -- every executed statement, its command status
+        and any failure's index/buffer line. None before the first Run."""
+        return self.results.run_report
 
     def clear(self) -> None:
         """Back to "nothing run yet" (project closed, sandbox released).

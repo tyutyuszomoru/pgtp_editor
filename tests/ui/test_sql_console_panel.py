@@ -27,14 +27,21 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QKeySequence
 from PySide6.QtWidgets import QSpinBox, QSplitter
 
-from pgtp_editor.db.sandbox_query import QueryOutcome, QueryResult
+from pgtp_editor.db.sandbox_query import QueryError, QueryOutcome, QueryResult
 from pgtp_editor.ui.code_editor import CodeEditor
 from pgtp_editor.ui.sql_console_panel import (
+    DECLINED_TEXT,
     DEFAULT_ROW_LIMIT,
     MAX_ROW_LIMIT,
     MIN_ROW_LIMIT,
     NO_SESSION_TEXT,
+    NOTHING_EXECUTABLE_TEXT,
+    OBJECT_CHANGE_CONSEQUENCE,
+    OBJECT_CHANGE_TITLE,
+    UNKNOWN_CHANGE_TITLE,
+    ObjectChangeConfirmation,
     SqlConsolePanel,
+    as_confirmation,
 )
 from pgtp_editor.ui.sql_results_panel import SqlResultsPanel
 
@@ -80,12 +87,64 @@ def rows_result(**kwargs) -> QueryResult:
     return QueryResult(**base)
 
 
-def make_console(qtbot, query: RecordingQuery | None = None, *, session=SESSION):
+class ScriptedQuery:
+    """A `run_sandbox_query` stand-in that answers **per statement**, so a
+    multi-statement Run can be asserted statement by statement.
+
+    `answers` maps the statement text to the `QueryResult` it produces;
+    anything unlisted comes back as a generic "completed, no result set" with a
+    command tag derived from its leading keyword.
+    """
+
+    def __init__(self, answers: dict[str, QueryResult] | None = None) -> None:
+        self.answers = answers or {}
+        self.calls: list[tuple[object, str, int]] = []
+
+    def __call__(self, session, sql, *, max_rows):
+        self.calls.append((session, sql, max_rows))
+        if sql in self.answers:
+            return self.answers[sql]
+        return QueryResult(
+            outcome=QueryOutcome.NO_ROWS,
+            sql=sql,
+            status=sql.split()[0].upper() if sql.split() else "",
+            elapsed_ms=1.0,
+        )
+
+    @property
+    def statements(self) -> list[str]:
+        return [sql for _session, sql, _rows in self.calls]
+
+
+class RecordingConfirm:
+    """The injected `confirm(title, text)` seam. Records every prompt and
+    answers with a canned `ObjectChangeConfirmation` -- so no test ever reaches
+    a modal (§30)."""
+
+    def __init__(self, *, confirmed: bool = True, remember: bool = False) -> None:
+        self.answer = ObjectChangeConfirmation(confirmed=confirmed, remember=remember)
+        self.prompts: list[tuple[str, str]] = []
+
+    def __call__(self, title, text):
+        self.prompts.append((title, text))
+        return self.answer
+
+
+def make_console(
+    qtbot,
+    query: RecordingQuery | None = None,
+    *,
+    session=SESSION,
+    confirm=None,
+):
     query = query if query is not None else RecordingQuery()
     console = SqlConsolePanel(
         session_provider=lambda: session,
         run_query=query,
         run_async=sync_run_async,
+        # Never the real dialog: an unwired seam would fall back to
+        # `default_object_change_confirm`, which is a modal.
+        confirm=confirm if confirm is not None else RecordingConfirm(),
     )
     qtbot.addWidget(console)
     return console, query
@@ -188,7 +247,9 @@ def test_the_run_gesture_sends_the_selection_when_there_is_one(qtbot):
 
     console.run()
 
-    assert query.calls[0][1] == "SELECT 1;"
+    # The splitter strips the terminating `;` (and only that): what goes on the
+    # wire is one statement, not a buffer fragment.
+    assert query.calls[0][1] == "SELECT 1"
 
 
 def test_an_error_renders_as_an_error_not_an_empty_grid(qtbot):
@@ -202,8 +263,11 @@ def test_an_error_renders_as_an_error_not_an_empty_grid(qtbot):
 
     assert console.result is failure
     assert console.results.table.isVisibleTo(console.results) is False
-    assert 'relation "nope" does not exist' in console.results.status_label.text()
-    assert console.results.status_label.text().lower().startswith("error")
+    text = console.results.status_label.text()
+    assert 'relation "nope" does not exist' in text
+    assert text.lower().startswith("error")
+    # And it is attributed: one statement, so statement 1 of 1.
+    assert "Statement 1 of 1 FAILED" in text
 
 
 def test_a_no_rows_statement_reports_its_command_status(qtbot):
@@ -457,3 +521,320 @@ def test_ctrl_return_is_refused_without_a_session_like_the_run_button(qtbot):
 
     assert query.calls == []
     assert console.results.status_label.text() == NO_SESSION_TEXT
+
+
+# -- per-statement execution (§18.5 D4) ------------------------------------
+
+
+def test_a_multi_statement_run_executes_each_statement_and_reports_its_status(qtbot):
+    """§18.5 D4: the Run is split first, and **every** statement's own command
+    status is listed -- so a statement returning no rows still says what it
+    did, instead of contributing an empty grid."""
+    selected = QueryResult(
+        outcome=QueryOutcome.ROWS,
+        sql="SELECT id FROM t",
+        columns=("id",),
+        rows=((1,), (2,)),
+        status="SELECT 2",
+        elapsed_ms=3.0,
+    )
+    query = ScriptedQuery(
+        {
+            "SELECT id FROM t": selected,
+            "UPDATE t SET x = 1": QueryResult(
+                outcome=QueryOutcome.NO_ROWS,
+                sql="UPDATE t SET x = 1",
+                status="UPDATE 3",
+                affected=3,
+                elapsed_ms=2.0,
+            ),
+        }
+    )
+    console, _query = make_console(qtbot, query)
+    console.set_sql("SELECT id FROM t;\nUPDATE t SET x = 1;\nCREATE INDEX i ON t (x);")
+
+    console.run()
+
+    # One `run_query` call per statement, in order, terminators stripped.
+    assert query.statements == [
+        "SELECT id FROM t",
+        "UPDATE t SET x = 1",
+        "CREATE INDEX i ON t (x)",
+    ]
+    report = console.run_report
+    assert report is not None
+    assert report.total == 3
+    assert [run.index for run in report.runs] == [1, 2, 3]
+    assert report.failure is None
+
+    text = console.results.status_label.text()
+    assert "SELECT 2" in text
+    assert "UPDATE 3" in text
+    assert "3 rows affected" in text
+    assert "CREATE" in text
+    # The grid shows the last ROW-RETURNING statement's rows.
+    assert console.result is selected
+    assert console.results.table.rowCount() == 2
+
+
+def test_a_dollar_quoted_routine_body_stays_one_statement(qtbot):
+    """The case a naive splitter breaks: every `;` inside `$$`/`$tag$` belongs
+    to the routine body, so this whole buffer is ONE statement."""
+    body = (
+        "CREATE OR REPLACE FUNCTION app.f() RETURNS int LANGUAGE plpgsql AS $$\n"
+        "DECLARE n int;\n"
+        "BEGIN\n"
+        "  n := 1;\n"
+        "  RAISE NOTICE 'a; b';\n"
+        "  RETURN n;\n"
+        "END;\n"
+        "$$;\n"
+        "CREATE OR REPLACE FUNCTION app.g() RETURNS int LANGUAGE plpgsql AS $tag$\n"
+        "BEGIN RETURN 2; END;\n"
+        "$tag$;"
+    )
+    query = ScriptedQuery()
+    console, _query = make_console(qtbot, query)
+    console.set_sql(body)
+
+    console.run()
+
+    assert len(query.statements) == 2
+    assert query.statements[0].startswith("CREATE OR REPLACE FUNCTION app.f()")
+    assert query.statements[0].endswith("$$")
+    assert "RAISE NOTICE 'a; b'" in query.statements[0]
+    assert query.statements[1].endswith("$tag$")
+    assert console.run_report.total == 2
+
+
+def test_a_failure_is_attributed_to_its_statement_and_its_buffer_line(qtbot):
+    """Statement 2 fails; the report says statement **2**, and the line is the
+    line in the BUFFER (`Statement.line_offset` + `line_of_position`), not the
+    line inside the statement."""
+    buffer = "SELECT 1;\nUPDATE t\n   SET x = 1/0;\nSELECT 3;"
+    # Statement 2 is "UPDATE t\n   SET x = 1/0": its local line 2 is buffer
+    # line 3. Position 13 (1-based) sits in that local line 2.
+    failure = QueryResult.failed(
+        "UPDATE t\n   SET x = 1/0",
+        QueryError(message="division by zero", sqlstate="22012", position=13),
+    )
+    query = ScriptedQuery({"UPDATE t\n   SET x = 1/0": failure})
+    console, _query = make_console(qtbot, query)
+    console.set_sql(buffer)
+
+    console.run()
+
+    report = console.run_report
+    assert report.total == 3
+    # Aborted at the failure: statement 3 was never sent.
+    assert query.statements == ["SELECT 1", "UPDATE t\n   SET x = 1/0"]
+    assert report.failure.index == 2
+    assert report.failure.error_line == 3
+    assert report.failure.start_line == 2
+    assert len(report.committed) == 1
+    assert report.unrun == 1
+
+    text = console.results.status_label.text()
+    assert "Statement 2 of 3 FAILED" in text
+    assert "buffer line 3" in text
+    assert "division by zero" in text
+    # The failing statement is identifiable, and the honest partial-commit
+    # statement is present.
+    assert "SET x = 1/0" in text or "UPDATE t" in text
+    assert "COMMITTED" in text
+    assert "not run" in text
+
+
+def test_a_failure_without_a_position_reports_no_guessed_line(qtbot):
+    failure = QueryResult.failed("DROP TABLE gone", QueryError(message="no such table"))
+    query = ScriptedQuery({"DROP TABLE gone": failure})
+    console, _query = make_console(qtbot, query)
+    console.set_sql("SELECT 1;\nDROP TABLE gone;")
+
+    console.run()
+
+    run = console.run_report.failure
+    assert run.index == 2
+    assert run.error_line is None
+    assert "starting at buffer line 2" in console.results.status_label.text()
+
+
+def test_a_buffer_of_only_comments_is_refused_with_a_stated_reason(qtbot):
+    console, query = make_console(qtbot)
+    console.set_sql("-- nothing here\n/* not this either */")
+
+    console.run()
+
+    assert query.calls == []
+    assert console.results.status_label.text() == NOTHING_EXECUTABLE_TEXT
+
+
+# -- the ddl/unknown confirmation (§18.5 D4) -------------------------------
+
+
+def test_a_read_only_run_asks_nothing(qtbot):
+    confirm = RecordingConfirm()
+    console, query = make_console(qtbot, ScriptedQuery(), confirm=confirm)
+    console.set_sql("SELECT 1;\nWITH x AS (SELECT 1) SELECT * FROM x;\nEXPLAIN SELECT 1;")
+
+    console.run()
+
+    assert confirm.prompts == []
+    assert len(query.statements) == 3
+
+
+def test_a_write_only_run_asks_nothing(qtbot):
+    """`INSERT`/`UPDATE`/`DELETE`/`TRUNCATE` change rows, not object
+    definitions, so the object-desync prompt would state something untrue."""
+    confirm = RecordingConfirm()
+    console, query = make_console(qtbot, ScriptedQuery(), confirm=confirm)
+    console.set_sql("INSERT INTO t VALUES (1);\nDELETE FROM t;\nTRUNCATE t;")
+
+    console.run()
+
+    assert confirm.prompts == []
+    assert len(query.statements) == 3
+
+
+def test_a_run_containing_ddl_asks_once_and_names_the_consequence(qtbot):
+    confirm = RecordingConfirm()
+    console, query = make_console(qtbot, ScriptedQuery(), confirm=confirm)
+    console.set_sql("SELECT 1;\nCREATE TABLE t (id int);\nDROP TABLE t;")
+
+    console.run()
+
+    assert len(confirm.prompts) == 1
+    title, text = confirm.prompts[0]
+    assert title == OBJECT_CHANGE_TITLE
+    assert OBJECT_CHANGE_CONSEQUENCE in text
+    assert "Reset Sandbox" in text
+    # It names WHICH statements, with their buffer lines.
+    assert "Statement 2 (line 2" in text
+    assert "Statement 3 (line 3" in text
+    assert "could not" not in text  # both are genuinely DDL
+    assert len(query.statements) == 3  # confirmed, so it all ran
+
+
+def test_an_unknown_statement_says_the_classifier_could_not_tell(qtbot):
+    """§18.5 D4: `unknown` is treated as `ddl`, but the prompt must NOT assert
+    the statement is DDL -- it says the classifier could not tell."""
+    confirm = RecordingConfirm()
+    console, _query = make_console(qtbot, ScriptedQuery(), confirm=confirm)
+    console.set_sql("SELECT 1;\nDO $$ BEGIN PERFORM 1; END $$;")
+
+    console.run()
+
+    title, text = confirm.prompts[0]
+    assert title == UNKNOWN_CHANGE_TITLE
+    assert "could not tell" in text
+    assert "could not be classified" in text
+    assert "changes objects in the sandbox." not in text
+    assert OBJECT_CHANGE_CONSEQUENCE in text
+
+
+def test_a_declined_confirmation_executes_nothing_at_all(qtbot):
+    """Not even the Run's read statements: the user declined the Run."""
+    confirm = RecordingConfirm(confirmed=False)
+    console, query = make_console(qtbot, ScriptedQuery(), confirm=confirm)
+    console.set_sql("SELECT 1;\nDROP TABLE t;")
+
+    console.run()
+
+    assert query.calls == []
+    assert console.run_report is None
+    assert console.result is None
+    assert console.results.status_label.text() == DECLINED_TEXT
+    assert console.is_running is False
+
+
+def test_dont_ask_again_suppresses_the_prompt_for_this_session(qtbot):
+    confirm = RecordingConfirm(confirmed=True, remember=True)
+    console, query = make_console(qtbot, ScriptedQuery(), confirm=confirm)
+    console.set_sql("DROP TABLE t;")
+
+    console.run()
+    assert len(confirm.prompts) == 1
+
+    console.run()
+
+    assert len(confirm.prompts) == 1  # asked once, for this session
+    assert len(query.statements) == 2  # and both Runs executed
+
+
+def test_a_new_sandbox_session_asks_again(qtbot):
+    """The grant is scoped to ONE session: a different session re-asks."""
+    confirm = RecordingConfirm(confirmed=True, remember=True)
+    session = {"generation": 1}
+    query = ScriptedQuery()
+    console = SqlConsolePanel(
+        session_provider=lambda: session,
+        run_query=query,
+        run_async=sync_run_async,
+        confirm=confirm,
+    )
+    qtbot.addWidget(console)
+    console.set_sql("DROP TABLE t;")
+
+    console.run()
+    assert len(confirm.prompts) == 1
+
+    session = {"generation": 2}  # a new session object
+    console.run()
+
+    assert len(confirm.prompts) == 2
+
+
+def test_losing_the_session_forgets_the_dont_ask_again_grant(qtbot):
+    confirm = RecordingConfirm(confirmed=True, remember=True)
+    console, _query = make_console(qtbot, ScriptedQuery(), confirm=confirm)
+    console.set_sql("DROP TABLE t;")
+
+    console.run()
+    assert len(confirm.prompts) == 1
+
+    console.set_session_available(False)
+    console.set_session_available(True)
+    console.run()
+
+    assert len(confirm.prompts) == 2
+
+
+def test_a_plain_boolean_confirm_seam_still_works_and_never_remembers(qtbot):
+    """The seam signature is the codebase's `confirm(title, text) -> bool`; a
+    host that offers no checkbox simply gets asked every time."""
+    prompts = []
+
+    def confirm(title, text):
+        prompts.append(title)
+        return True
+
+    console, query = make_console(qtbot, ScriptedQuery(), confirm=confirm)
+    console.set_sql("DROP TABLE t;")
+
+    console.run()
+    console.run()
+
+    assert len(prompts) == 2
+    assert len(query.statements) == 2
+
+
+def test_as_confirmation_normalises_both_shapes_and_never_remembers_a_refusal():
+    assert as_confirmation(True) == ObjectChangeConfirmation(True, False)
+    assert as_confirmation(False) == ObjectChangeConfirmation(False, False)
+    assert as_confirmation(
+        ObjectChangeConfirmation(True, True)
+    ) == ObjectChangeConfirmation(True, True)
+    # "No, and don't ask again" must never suppress a refusal forever.
+    assert as_confirmation(
+        ObjectChangeConfirmation(False, True)
+    ) == ObjectChangeConfirmation(False, False)
+
+
+def test_there_is_no_statement_timeout_control_yet(qtbot):
+    """§18.5 D4 asks for one, but `SandboxExecutor.fetch` has no parameter to
+    pass it to, so the console does NOT fake one. Asserted so the gap stays
+    visible rather than being quietly "implemented" as a no-op control."""
+    console, _query = make_console(qtbot)
+
+    assert not hasattr(console, "timeout_spin")
+    assert not hasattr(console, "statement_timeout_ms")
