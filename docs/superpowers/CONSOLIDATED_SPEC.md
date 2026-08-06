@@ -1,6 +1,6 @@
 # PGTP Editor — Consolidated Specification
 
-> **Status:** living document · **Last synthesized:** 2026-08-06 (previously 2026-08-05: §18.8 corrected to the 5-node model, then given its concrete per-node state enumeration + dark-mode asset convention, then a same-day fix to the Quality node's locked/gray semantic and the Sandbox2 install-state-vs-lint-result semantic; later the same day, BUG-020/021/022/023/024/025 folded in — Captions' preset row-predicate filter + active-filter banner + Unify scope prompt, §18.2's Open-Project validity gate + auto-open of the linked `.pgtp`, the tabbed Project Settings dialog, and Connection Setup… becoming projectless-mode-only; later still the same day, §18.1's Tables branch widened to every table (not just trigger-owning ones) plus click-to-Properties-panel column detail, with `ColumnInfo.comment` added; and finally BUG-021/026/027/028 — §18.2's project-action lambda wiring that made the `.pgtp` auto-open actually reachable, §17's role-split `(P# D# L#)` DB→XML counts and any-role mismatch rule, §7's toolbar widened to every menu command with menu-path ids, and §13's active-filter banner extended to the whole-row find filter). **2026-08-06:** FQ-001 folded into §18.2 — per-group Test buttons on the Project Settings dialog's Connections tab (generic connectivity for Target, superuser probe for Sandbox). Same day: the §18.2 project actions' menu location corrected from Database to **File**, matching the shipped `_build_file_menu` (§26, ledger 2026-08-06). Same day: FQ-002 folded in — §18.1 gains "Creating brand-new objects from the Explorer" (Add Trigger… on a table node, one New Function/Procedure… action on the routines-branch root and the Database menu, the shipped pure `db/ddl_skeleton.py` contract, and manifest registration of the new object so the existing §18.3/§18.4 deploy flow sees it), with §18.5 D1 gaining the third (creation) entry point into the same editable tab and two ledger rows (§28). Same day: FQ-003 folded in — §17 gains **the Database/XML Coherence view**, one merged left-dock surface replacing the two DB-check directions *and* §15's standalone Table References tab (direction toggle eliminated on the "DB is always the truth" framing; a recursive, depth-faithful Pages branch; one global mismatch toggle spanning both branches), with §15 reduced to a pointer, §26's View-menu "Find table reference" and the two Database-menu check items replaced by one Database-menu toggle, and two ledger rows (§28). **Same day, a status-accuracy audit against the shipped code** (no design changes): §17's coherence view, §18.1's FQ-002 creation entries, §18.4's formatter *consumer*, §18.6's completion and §18.8's Project Status window were all marked "not yet implemented" while shipping, and are now marked implemented; §18.5 is split honestly into the shipped editor half vs. the unbuilt Apply/sandbox/ladder half; §18.3 is restated as "every module ships, nothing reaches them"; §5's module tree/table, §7's tab & routing notes, §26 and §27 were swept for the same drift. One genuine design narrowing was recorded with a ledger row: §18.3 step 2's deploy blockers are **`*!` only**. **Also 2026-08-06, owner decision — the sandbox becomes *executable*, not merely inspectable:** §18.5 gains **D3a** (the Check gesture's concrete run contract — what `plpgsql_check_function_tb` is invoked with, how the four `plpgsql_check_state` values gate a run, and how findings reach the `[Check]` Audit lines with click-to-navigate) and **D4** (ad-hoc SQL execution against the sandbox — the **Sandbox SQL Console** tab, `db/sandbox_query.py`, `ui/sql_results_panel.py`, a 1 000-row cap, a mandatory statement timeout, and the **sandbox-only, structurally enforced** safety rule). §29's *"Execution against the sandbox … is not designed"* open question is **closed** by that pass; §5/§7/§26/§27/§18.8 updated to match, with five ledger rows (§28). **Finally, also 2026-08-06:** FQ-005 folded into §7's theme paragraph and §4 — the QDarkStyleSheet QSS layer now covers **both** themes (`_qdarkstyle_stylesheet(light)` / `_qss_cache`, explicit `LightPalette`/`DarkPalette`), retiring the *"light always assigns the empty stylesheet"* invariant and the dark-only attribution, with one ledger row (§28).
+> **Status:** living document · **Last synthesized:** 2026-08-06 (previously 2026-08-05: §18.8 corrected to the 5-node model, then given its concrete per-node state enumeration + dark-mode asset convention, then a same-day fix to the Quality node's locked/gray semantic and the Sandbox2 install-state-vs-lint-result semantic; later the same day, BUG-020/021/022/023/024/025 folded in — Captions' preset row-predicate filter + active-filter banner + Unify scope prompt, §18.2's Open-Project validity gate + auto-open of the linked `.pgtp`, the tabbed Project Settings dialog, and Connection Setup… becoming projectless-mode-only; later still the same day, §18.1's Tables branch widened to every table (not just trigger-owning ones) plus click-to-Properties-panel column detail, with `ColumnInfo.comment` added; and finally BUG-021/026/027/028 — §18.2's project-action lambda wiring that made the `.pgtp` auto-open actually reachable, §17's role-split `(P# D# L#)` DB→XML counts and any-role mismatch rule, §7's toolbar widened to every menu command with menu-path ids, and §13's active-filter banner extended to the whole-row find filter). **2026-08-06:** FQ-001 folded into §18.2 — per-group Test buttons on the Project Settings dialog's Connections tab (generic connectivity for Target, superuser probe for Sandbox). Same day: the §18.2 project actions' menu location corrected from Database to **File**, matching the shipped `_build_file_menu` (§26, ledger 2026-08-06). Same day: FQ-002 folded in — §18.1 gains "Creating brand-new objects from the Explorer" (Add Trigger… on a table node, one New Function/Procedure… action on the routines-branch root and the Database menu, the shipped pure `db/ddl_skeleton.py` contract, and manifest registration of the new object so the existing §18.3/§18.4 deploy flow sees it), with §18.5 D1 gaining the third (creation) entry point into the same editable tab and two ledger rows (§28). Same day: FQ-003 folded in — §17 gains **the Database/XML Coherence view**, one merged left-dock surface replacing the two DB-check directions *and* §15's standalone Table References tab (direction toggle eliminated on the "DB is always the truth" framing; a recursive, depth-faithful Pages branch; one global mismatch toggle spanning both branches), with §15 reduced to a pointer, §26's View-menu "Find table reference" and the two Database-menu check items replaced by one Database-menu toggle, and two ledger rows (§28). **Same day, a status-accuracy audit against the shipped code** (no design changes): §17's coherence view, §18.1's FQ-002 creation entries, §18.4's formatter *consumer*, §18.6's completion and §18.8's Project Status window were all marked "not yet implemented" while shipping, and are now marked implemented; §18.5 is split honestly into the shipped editor half vs. the unbuilt Apply/sandbox/ladder half; §18.3 is restated as "every module ships, nothing reaches them"; §5's module tree/table, §7's tab & routing notes, §26 and §27 were swept for the same drift. One genuine design narrowing was recorded with a ledger row: §18.3 step 2's deploy blockers are **`*!` only**. **Also 2026-08-06, owner decision — the sandbox becomes *executable*, not merely inspectable:** §18.5 gains **D3a** (the Check gesture's concrete run contract — what `plpgsql_check_function_tb` is invoked with, how the four `plpgsql_check_state` values gate a run, and how findings reach the `[Check]` Audit lines with click-to-navigate) and **D4** (ad-hoc SQL execution against the sandbox — the **Sandbox SQL Console** tab, `db/sandbox_query.py`, `ui/sql_results_panel.py`, a 1 000-row cap, a mandatory statement timeout, and the **sandbox-only, structurally enforced** safety rule). §29's *"Execution against the sandbox … is not designed"* open question is **closed** by that pass; §5/§7/§26/§27/§18.8 updated to match, with five ledger rows (§28). **Finally, also 2026-08-06:** FQ-005 folded into §7's theme paragraph and §4 — the QDarkStyleSheet QSS layer now covers **both** themes (`_qdarkstyle_stylesheet(light)` / `_qss_cache`, explicit `LightPalette`/`DarkPalette`), retiring the *"light always assigns the empty stylesheet"* invariant and the dark-only attribution, with one ledger row (§28). **Also 2026-08-06, a second status-accuracy sweep against the shipped code** (no design changes): stale absence claims flipped for `db/routine_refs.py`'s pure layer (§18/§18.1/§29 — shipped, richer than sketched; its UI consumer is the remaining gap), the `lint/` and `mcp/` packages (§5/§7/§22/§23 — built, not fully wired), §21's `ui/php_file_tab.py` phase 1 (built, hosted by `CenterStage`, no File-menu entry yet), §18.2's since-built sandbox provisioning layer, §8/§27's gutter double-click bookmark toggle (shipped as designed), §18.1/§18.5 D1's `EditorPanel` span retention (done; `set_ddl_text` gained a third `schema` parameter) and §18.1's ddl_table row-pairing cue (shipped as the alternating shade); §18.8's stale menu-entry open bullet deleted and §28's FQ-003 row trailer corrected in place. No new ledger rows — these are status corrections, not supersessions. **Also 2026-08-06, a menu/shortcut/signal reference-accuracy batch from the 8-reviewer code-vs-spec audit** (no design changes, no ledger rows): §13/§26/§27's caption-mode shortcuts corrected to the shipped window-scoped, mode-gated Ctrl+F (Filter) / Ctrl+R (Replace) pair with a shortcut-less Tools menu item and a non-modal `show()` dialog (plus a caption-override row in §27's table); the DDL-object-editor fourth branch added to §15/§8/§26's `_active_find_bar`/`_active_bookmark_editor` dispatch lists; §17's coherence-panel jump signals corrected to `jump_requested(object)` + `name_jump_requested(kind, name)`; §15's `FindReplaceBar` signature corrected to `(editor, on_find_all=None)` with setter-injected callbacks; §9's reparse hook restated as the coherence-view refresh (`_refresh_db_check_if_open`, legacy name); §11's Schema-menu position fixed to between View and Database; §10's `show_node` kinds gained `"lookup"`/`"ddl_table"`; §27 gained the three-context Ctrl+Space row; §26 gained Edit ▸ History… (Undo/Redo step directly, §7), dropped the nonexistent Help ▸ Documentation, and clarified the two same-label "New Project" actions; and §5/§15 record that `ui/table_references_panel.py` **and** `ui/db_check_panel.py` (plus their tests) are now physically deleted. **Also 2026-08-06, the §18-area reference/status batch from the same audit** (stale-reference and false-status fixes; one ledger row): per-object tab keying corrected to `DdlObjectRef.key` (§18.1/§18.2); the write-seam wording re-scoped to writes **to the target** with sandbox writes through the sandbox session's named seams (§18.2/§18.5, matching D2's ownership table and the three-seams invariant); §18.3's reachability claim narrowed (the close-time deploy reminder ships — only the bundle/compare flow is unreachable), its step 3 restated to the shipped verbatim-text `db/deploy_bundle.py` assembly (the diff engine's second entry point is §18.5's Generate Deployment SQL), and `diff_schemas` pinned to its shipped `SchemaDiffResult` return; §18.4's stale "no live consumer" sentence dropped; §18.5's `apply_ddl`/`ApplyOutcome` sketches replaced by the shipped signatures (no `autocommit` parameter — `db/sandbox.py::_run_autocommit` owns that path; per-statement `results: tuple[StatementResult, ...]`); §18.6's consumer count widened to include the D4 console as a third completion consumer; §18.2/§18.7's `ProfileKey` claims re-marked as **target design, not implemented** (`db/config.py` ships only the hardcoded `"db"` group; no ConnectionSetupDialog profile selector exists — §17's own profile block deliberately untouched, its rewrite pending a human decision); and §18.8's asset pipeline pinned to the shipped `.svg`-only, stateless-connector `ui/project_status_model.py` layer (ledger row, §28). **Also 2026-08-06, the closing batch of the same audit** (structural/reference corrections plus one never-folded shipped feature): **FQ-004's Breeze toolbar icon picker** folded into §7/§5 (`ui/icon_picker_dialog.py`, `ui/icons.py`'s catalog, the `toolbarIconIds` assignments — shipped commit `a12b522`; one ledger row, §28, superseding "icon-less by design"); §5's false dependency claims corrected to the true arrows (`diff/` is Qt-free and imports only `model/`, consumed by `ui/`/`mcp/`; `model/` owns parse+serialization but is not the only lxml importer); `sql/caret_context.py` added to §5's tree and §18.4's "five modules" count scoped to the formatter feature; §7's tab-close dispatch restated as shipped (fixed indices first, dynamic tabs in the else branch by map lookup — behaviorally equivalent); §11's curated.xsd attribute count refreshed to 254 with a counts-drift caveat; §24's manual chapter enumeration replaced by a non-enumerating statement (the `manual-maintainer` agent owns the list; `manual.md`'s headings are the source of truth); §29 pruned of answered items (overload-rename trimmed to its timing sub-question; D2a's PATH-only/`--format=custom`/probe-fold answers pinned to the shipped `db/sandbox.py`; the debug-exclusions/`PROFILER_ID` item resolved against `debuglog.py`; the handler-body-storage *answer* moved into §6's `EventNode`); §30's test-environment summary rewritten to CLAUDE.md's platform-dependent interpreter + offscreen + `-n 10` parallel-suite rules; and §20.4's duplicated deferred-git paragraph reduced to a pointer at §21's canonical copy.
 > **Source of truth:** this file is the single reconciled specification for PGTP Editor, and the **only**
 > place specification content is written. It was originally synthesized from the dated design specs under
 > [`docs/superpowers/specs/`](specs/) — a folder now **frozen as historical record** (read for rationale;
@@ -32,7 +32,7 @@
 16. [Validation](#16-validation)
 17. [Database](#17-database) — includes [the Database/XML Coherence view](#the-databasexml-coherence-view) — *implemented (FQ-003, 2026-08-06): `db/coherence.py`, `ui/coherence_panel.py`, the Database-menu toggle*
 18. [DDL versioning (standalone Postgres mode)](#18-ddl-versioning-standalone-postgres-mode) — *partly implemented — see each subsection*
-    - [18.1 Routines & triggers browsing (DDL Explorer)](#181-routines--triggers-browsing-ddl-explorer) — *implemented, including object **creation** (FQ-002, 2026-08-06); the one gap is XML cross-refs (`db/routine_refs.py`)*
+    - [18.1 Routines & triggers browsing (DDL Explorer)](#181-routines--triggers-browsing-ddl-explorer) — *implemented, including object **creation** (FQ-002, 2026-08-06); XML cross-refs' pure layer (`db/routine_refs.py`) shipped — its UI consumer is the remaining gap*
     - [18.2 Projects, checkout & state markers](#182-projects-checkout--state-markers) — *implemented (git integration is an explicit TBD placeholder)*
     - [18.3 Deploy workflow & schema diff/migration](#183-deploy-workflow--schema-diffmigration) — *all the pieces ship (diff/migration engine, `db/schema_snapshot.py`, `db/deploy_bundle.py`, `ui/schema_compare_panel.py`); **none are reachable** — no menu entries, no flow driving them*
     - [18.4 SQL/plpgsql selection formatter](#184-sqlplpgsql-selection-formatter) — *implemented, core + consumer: `Ctrl+Alt+F` / context-menu Format Selection in the DDL object editor, `[SQL]` Audit refusals wired*
@@ -43,9 +43,9 @@
 19. [PHP generation (vendor) & Save](#19-php-generation-vendor--save)
 20. [re_phpgen — own generator & gap loop](#20-re_phpgen--own-generator--gap-loop)
     - [20.4 Production cutover](#204-production-cutover-target-design--not-yet-reached) — *planned*
-21. [Custom PHP editing](#21-custom-php-editing) — *planned*
-22. [Lint integration](#22-lint-integration) — *planned*
-23. [MCP integration](#23-mcp-integration) — *planned*
+21. [Custom PHP editing](#21-custom-php-editing) — *phase 1 built, not fully wired (`ui/php_file_tab.py` + `CenterStage` hosting ship; the File-menu opener is the remaining gap)*
+22. [Lint integration](#22-lint-integration) — *built, not fully wired (`pgtp_editor/lint/` ships, consumed by `PhpFileTab`; the Tools-menu / Audit-append host wiring is the remaining gap)*
+23. [MCP integration](#23-mcp-integration) — *built, not fully wired (`pgtp_editor/mcp/` ships, headless `--mcp` works; the Tools-menu entry is the remaining gap)*
 24. [In-app manual](#24-in-app-manual)
 25. [Debug mode](#25-debug-mode)
 26. [Consolidated menu bar](#26-consolidated-menu-bar)
@@ -200,7 +200,9 @@ naming with what shipped:
 pgtp_editor/
 ├── main.py            # argparse (--debug, optional positional file), QApplication bootstrap
 ├── debuglog.py        # always-on error log + --debug tracing
-├── model/             # lxml-backed model — the ONLY code touching raw lxml
+├── model/             # lxml-backed model — owns parsing + serialization of the project tree
+│   │                  # (other modules also import lxml to work on trees/elements it hands out:
+│   │                  # diff/apply.py, generation/from_table.py, ui/main_window.py, ui/caption_scan.py)
 │   ├── nodes.py       # PageNode/DetailNode/ColumnNode/EventNode/ChildElement/RepresentationVisibility, identity, classify_event_side
 │   ├── parser.py      # load_project(path) / load_project_from_text(text) / _build_project_model(tree)
 │   ├── event_handlers.py  # authoritative 40-handler list, language_for_side
@@ -265,18 +267,42 @@ pgtp_editor/
 │   ├── keywords.py    # SQL_KEYWORDS — the ONE dialect source, shared with ui/code_editor.py's highlighter
 │   ├── issues.py      # Issue{message, start, end, start_line/col, end_line/col, fatal} (+ .line alias)
 │   ├── tokenizer.py   # Token + tokenize(text) → list[Token] (verbatim, never raises)
+│   ├── caret_context.py # resolve_caret_context(text, pos) → CaretContext | None — pure caret parsing
+│   │                  # (dotted identifier path / NEW.·OLD. row variable) over that same tokenizer,
+│   │                  # for §18.6's schema-aware Ctrl+Space completion; knows nothing of a live schema
 │   ├── statements.py  # TARGET DESIGN (§18.5 D4) — split_statements(text) over that same tokenizer:
 │   │                  # top-level `;` only, never inside a dollar-quoted body, string or comment
 │   └── formatter.py   # format_selection(text, *, indent_unit="    ") → FormatResult; _Reindenter frame walk
+├── lint/              # §22 PHP linting — SHIPS (commit 90c6806), consumed by ui/php_file_tab.py (§21);
+│   │                  # Qt-free except config.py (QStandardPaths, the generation/config.py precedent)
+│   ├── findings.py    # pure: linter stdout/stderr/exit code → LintOutcome/LintStatus + ready-to-append
+│   │                  # [Lint] audit_lines — no filesystem, no subprocess, no PySide6
+│   ├── runner.py      # the ONE place a linter process spawns (php -l), injectable everywhere it is
+│   │                  # used (the db/introspect.py runner= precedent), DEFAULT_TIMEOUT_SECONDS
+│   ├── config.py      # lint_executable_path key, stored in generation/config.py's generator_config.json
+│   └── service.py     # LintService.lint_text = config + runner + parser; NEVER raises (advisory-only —
+│                      # a lint failure must not unwind a save, §22)
+├── mcp/               # §23 MCP server — SHIPS (commit 09db778): six read-only tools; headless --mcp
+│   │                  # works (main.py), the Tools-menu "Start MCP Server" entry is NOT wired yet.
+│   │                  # Importing the package starts nothing — no server, thread, socket or connection
+│   ├── tools.py       # ToolRegistry + the six §23 tools: read_project / list_pages / get_node /
+│   │                  # diff_projects / list_db_tables / list_db_routines — thin adapter, no new logic
+│   ├── serialize.py   # pure data → JSON translation; never renders a password
+│   ├── providers.py   # LiveProjectProvider (GUI's open in-memory model) / FileProjectProvider (headless)
+│   ├── server.py      # stdio JSON-RPC transport: serve_stdio (--mcp) / start_server_thread (GUI)
+│   └── __main__.py    # python -m pgtp_editor.mcp
 └── ui/                # all PySide6 widgets (see below)
 ```
 
 Key `ui/` modules: `main_window.py`, `center_stage.py`, `project_tree.py`, `xml_editor.py`,
 `xml_structure.py`, `editor_gutter.py` (the one shared gutter/bookmark/fold implementation, §8),
-`code_editor.py`, `event_body.py`, `properties_panel.py`, `find_replace_bar.py`,
+`code_editor.py`, `php_file_tab.py` (§21's per-file standalone PHP tab — **ships**, hosted in
+`CenterStage`'s dynamic key→widget map `_php_file_tabs`; no File-menu opener wired yet),
+`event_body.py`, `properties_panel.py`, `find_replace_bar.py`,
 `search.py`, `history.py`, `theme.py`, `toolbar_registry.py`, `customize_toolbar_dialog.py`,
+`icon_picker_dialog.py` (FQ-004's searchable Breeze icon picker, §7),
 `diff_merge_panel.py`, `caption_management_panel.py`, `caption_find_replace_dialog.py`,
-`caption_scan.py`, `db_check_panel.py`,
+`caption_scan.py`,
 `connection_setup_dialog.py`, `coherence_panel.py` (§17's merged view), `ddl_editor_panel.py`,
 `ddl_buffer_panel.py`, `ddl_object_editor.py` (§18.5's editable single-object tab),
 `completion_popup.py` (the `_CompletionPopup` shared by `xml_editor.py` and `ddl_object_editor.py`,
@@ -288,19 +314,24 @@ runs every sandbox operation off the GUI thread through its injectable `self._ru
 every destructive operation unless the injected `confirm_destructive` approves; it opens no dialog),
 `sql_console_panel.py` / `sql_results_panel.py` (§18.5 D4's Sandbox SQL Console tab and its result grid —
 **target design**),
-`manual_panel.py`, `about.py`, `icons.py`, plus the two off-GUI-thread helpers
+`manual_panel.py`, `about.py`, `icons.py` (the vendored-Breeze icon catalog + recolor/render
+pipeline, §7 — the string helpers are Qt-free, only `themed_icon` touches Qt), plus the two off-GUI-thread helpers
 `async_task.py` (`run_async(fn, on_result, on_error=None, pool=None)` — the executor behind MainWindow's
 injectable `self._run_async`) and `busy.py` (`busy_status(status_bar, message)` context manager,
 `format_size`).
 `ui/ddl_object_editor.py::DdlObjectEditorPanel` — the editable single-object DDL tab (**specified once,
 in §18.5**) — **ships**; it is a distinct tab type from the read-only `ddl_editor_panel.py::EditorPanel`,
-which stays read-only permanently. `ui/table_references_panel.py` still exists but is **no longer
-constructed by `MainWindow`** (superseded by `coherence_panel.py`, FQ-003) — dead code pending deletion.
+which stays read-only permanently. `ui/table_references_panel.py` and `ui/db_check_panel.py` were
+**deleted** (2026-08-06, superseded by `coherence_panel.py`, FQ-003 — §15's code note).
 (Deleted with the curated-XSD pivot, §11: `schema_learning/sync.py`, `schema_learning/merge.py`,
 `ui/annotate_popover.py`, `ui/team_sync_dialog.py`, `ui/merge_conflicts_dialog.py`,
 `ui/schema_viewer.py`, `ui/schema_viewer_data.py`.)
 
-**Dependency rule:** `model/` touches lxml; nothing in `model/` or `ui/` depends on `diff/`; pure-logic
+**Dependency rule:** `model/` owns parse + serialization of the project tree (other modules may touch
+lxml trees/elements it hands out — see the tree comment above). `diff/` is **Qt-free and imports only
+`model/`**; consumers sit above it — `ui/main_window.py` imports `diff.apply`/`diff.differ`/
+`diff.resolve`, and `mcp/tools.py` imports `diff.differ` (verified in the code; nothing in `diff/`
+imports `ui/` or `mcp/`). Pure-logic
 modules (`search`, `history`, `caption_scan`, `settings_index`, `xsd_load`, `xsd_verify`, `tier2`,
 `analysis/*`, `type_map`, `from_table`, `xml_structure`, `sql/*`) are Qt-free and unit-testable without a
 `QApplication`.
@@ -351,6 +382,8 @@ retained reference to its live `lxml` element (for write-back):
   `is_calculated` → `attrib.get("isCalculated") == "true"` (lowercase-string boolean convention,
   same as `visible="false"`); consumed by the DB check (§17).
 - `EventNode` — identity = parent + handler tag; `{tag_name, side("C"/"S"), text, sourceline, element}`.
+  `text` is the handler body as **plain XML-escaped element text** — confirmed, never CDATA; `<`/`&`
+  are escaped on write (§2's storage invariant).
 - `ChildElement` — `{attrib, sourceline, element}`; does not descend into its own children.
 - `RepresentationVisibility` — `{name, visible: bool|None, sourceline: int|None}`.
 - `ProjectModel` — `pages`, plus retained `tree: etree._ElementTree` (needed for serialization).
@@ -406,7 +439,8 @@ non-Raw-XML tabs hidden until invoked). Every one of those is a **fixed** tab, c
 `ddl_tab_index`, …), shown/hidden with `setTabVisible`.
 
 > **Stated invariant — append-only creation, tail-only removal.** Runtime-created tabs (the per-object
-> DDL object editor tabs, §18.5 — **implemented**; §18.5 D4's single **Sandbox SQL Console** tab, keyed
+> DDL object editor tabs, §18.5 — **implemented**; the per-file **PHP file tabs**, §21, keyed by
+> `php_tab_key` in `CenterStage._php_file_tabs` — **implemented**; §18.5 D4's single **Sandbox SQL Console** tab, keyed
 > `("sandbox-sql",)` in the same key→widget map so re-invoking focuses the existing one rather than
 > opening a second; and §18.5's read-only deployment-script preview tab, both still target design) are
 > **always appended after the fixed set** (`addTab`, **never** `insertTab`) and removed only from the
@@ -420,9 +454,12 @@ non-Raw-XML tabs hidden until invoked). Every one of those is a **fixed** tab, c
 > single `insertTab` anywhere ahead of the fixed set silently re-points all of them. Because the
 > invariant is otherwise implicit, **a regression test is mandatory, not optional**: open two dynamic
 > tabs, close the first, and assert every fixed index still resolves to its original widget
-> (`widget(raw_xml_tab_index) is raw_xml_tab`, …). `_on_tab_close_requested` gains a **first** branch
-> that recognizes a dynamic tab by widget type and emits its close-request signal, *before* any
-> static-index comparison.
+> (`widget(raw_xml_tab_index) is raw_xml_tab`, …). As shipped, `_on_tab_close_requested` checks the
+> **fixed indices first** (`manual_tab_index` / `xsd_tab_index` / `ddl_tab_index`) and handles dynamic
+> tabs in the **else** branch, where the tab is identified by a **key→widget map lookup, never by
+> index** (`center_stage.py`). This is behaviorally equivalent to dispatching the dynamic case first —
+> a dynamic tab can never occupy a fixed index — and the load-bearing part of the rule is the map
+> lookup, not the branch order.
 >
 > One convenient consequence and one trap. Convenient: `setTabsClosable(True)` is already global, so an
 > appended tab gets its ✕ for free. Trap: the `_closable = (manual_tab_index, xsd_tab_index,
@@ -439,7 +476,7 @@ quietly annex another's prefix, and no fourth SQL-ish prefix may be added:
 |---|---|---|---|
 | `[SQL]` | §18.4 formatter, hosted by §18.5's tab | **Format Selection refusals** — layout only, no DB involved | **wired** (non-clickable, no line role) |
 | `[Check]` | §18.5 sandbox validation ladder | **SQL/plpgsql validation findings** (`db/ddl_check.py`) on **two channels** — narrative lines (per-tier outcome, caveats, apply/cancel notices; non-clickable) and **findings** (`[Check] SEVERITY line N: message`, line on `UserRole`, the object's `DdlObjectRef.key` on `UserRole+1`, click-to-navigate). A finding whose line could not be mapped (§18.5 D3's mandatory `None`) is rendered **without** a line and **without** roles — never a guessed line | partly wired: `DdlObjectEditorPanel.check_reported` emits the narrative channel today; the findings channel arrives with `db/ddl_check.py` (§18.5 D3a) |
-| `[Lint]` | §22 | **PHP** linting only (`php -l` / `phpcs`) | reserved — §22 is unbuilt |
+| `[Lint]` | §22 | **PHP** linting only (`php -l` / `phpcs`) | partly wired: `pgtp_editor/lint/` and the tab-side emission ship (§21/§22 — `PhpFileTab.lint_reported` carries already-`[Lint]`-prefixed `LintAuditLine`s); the MainWindow append host and the Tools-menu entry are the remaining gap |
 
 **No fourth SQL-ish prefix — and §18.5 D4's SQL console deliberately introduces none.** Ad-hoc query
 results, query **errors** and the console's own caveats render **inside the Sandbox SQL Console's own
@@ -513,8 +550,10 @@ state (`.bak`, `_current_project_path`, reparse) is untouched by XSD-tab and DDL
 **Undo/redo snapshot history** (`ui/history.py`, Qt-free): `SnapshotHistory(max_len=10)` with
 `push/undo/redo/jump_to/entries/current_index`, coalescing identical consecutive text, truncating the
 redo tail on a new push. Editor `textChanged` is debounced (~400 ms QTimer) and pushes only on change;
-apply is guarded by a `_restoring` flag. **Ctrl+Z**/**Ctrl+Y** single-step; Edit ▸ Undo/Redo open a
-non-modal newest-first `QListWidget` jump popup.
+apply is guarded by a `_restoring` flag. **Ctrl+Z**/**Ctrl+Y** single-step, and the Edit ▸ Undo/Redo menu
+items **step directly too** (same handlers as the shortcuts); the **separate Edit ▸ History… action**
+(`_open_history_jump_list`) is what opens the non-modal newest-first `QListWidget` jump popup, where
+moving back = undo and forward = redo.
 
 **Theme** (`ui/theme.py`): View ▸ "Light Theme" checkable toggles between **two explicit, symmetric,
 platform-independent themes** — there is no third "restore the native/OS style+palette" state.
@@ -591,9 +630,32 @@ default), `LEGACY_ID_ALIASES`, `DEFAULT_TOOLBAR_IDS`, `ICON_ID_BY_COMMAND`, plus
   sync) and shortcut for free and can never drift. Corollary: repopulating uses
   `removeAction` in a loop, **never `QToolBar.clear()`**, which in PySide *deletes* the underlying
   QActions and would destroy live menu items.
-- **Icons are optional.** Only the legacy seven have vendored SVGs (`ICON_ID_BY_COMMAND` maps menu-path
-  id → `icons.ACTION_ICON_FILES` key); every other command is icon-less by design — an icon is never a
-  precondition for putting a command on the toolbar, and text-beside-icon copes. `_set_action_icon` also
+- **Icons are optional — and, since FQ-004 (shipped, commit `a12b522`), user-assignable.** Only the
+  legacy seven carry a *default* icon (`ICON_ID_BY_COMMAND` maps menu-path id →
+  `icons.ACTION_ICON_FILES` key); an icon is never a precondition for putting a command on the toolbar,
+  and text-beside-icon copes. But **any** toolbar button can be decorated (or re-decorated) from the
+  vendored **Breeze catalog**: `ui/icons.py` vendors a curated common-action subset of Breeze SVGs
+  under `resources/icons/breeze/` and exposes an enumerable catalog over it — `icon_catalog()` (a lazy
+  one-time directory scan cached in `_CATALOG_CACHE`, yielding `(icon_id, filename, human_name)`
+  sorted by id; no checked-in manifest to drift), plus `catalog_ids`/`catalog_filename`/
+  `search_catalog(query)` (every whitespace term must match id or human name, case-insensitively) and
+  `human_name_for` — all Qt-free; only `themed_icon` touches Qt. **Two id spaces meet deliberately:**
+  the seven *legacy action ids* (`open`, `save`, …) naming the built-in defaults, and *catalog icon
+  ids* — simply SVG filename stems (`document-save-as`) — which are what a user assignment stores;
+  `load_svg_text`/`themed_icon` accept either, legacy first. Rendering: Breeze SVGs express color via
+  `fill:currentColor` plus an embedded `.ColorScheme-Text { color:#232629; }` stylesheet, and QtSvg
+  does **not** reliably resolve `currentColor`, so `recolor_svg` substitutes a literal fill for
+  **both** before rendering; `themed_icon(action_id, color)` renders 22 px + 44 px (hi-dpi) pixmaps
+  tinted to the app palette's window-text color. **Assignments** are `{command_id: catalog_icon_id}`,
+  persisted in the sibling QSettings key **`toolbarIconIds`**
+  (`toolbar_registry.ICON_ASSIGNMENTS_SETTINGS_KEY`) as sorted `"command_id=icon_id"` strings
+  (`serialize_icon_assignments`/`parse_icon_assignments`, tolerant of every shape QSettings hands
+  back); `resolve_icon_assignments` prunes on load against the live menu commands and the vendored
+  catalog (legacy command ids mapped through `LEGACY_ID_ALIASES` first) — the same self-healing
+  `resolve_ids` applies to the id list. `icon_id_for(command_id, assignments)` is the single lookup:
+  the user's assignment wins, else the legacy default, else `None` (icon-less). **Absence of an
+  assignment means "use the default"** — which is what keeps a pre-FQ-004 saved toolbar behaving
+  exactly as before. `_set_action_icon` also
   calls `setIconVisibleInMenu(False)`, so decorating a shared action for the toolbar does not change how
   the menu looks. `_refresh_toolbar_icons` re-tints on every theme change.
 - **Back-compat.** Saved toolbars from before the widening hold legacy ids; `resolve_ids` maps them
@@ -602,10 +664,22 @@ default), `LEGACY_ID_ALIASES`, `DEFAULT_TOOLBAR_IDS`, `ICON_ID_BY_COMMAND`, plus
   `valid_ids` filters, so an existing user's toolbar survives instead of silently emptying to the
   default. `DEFAULT_TOOLBAR_IDS` is those seven aliases in legacy order.
 
-**Customize Toolbar** dialog (two lists + Add/Remove/Up/Down) writes an ordered id list, persisted in
-QSettings key `toolbarIds`. The **Available list shows all menu commands in menu order, always**, each
+**Customize Toolbar** dialog (two lists + Add/Remove/Up/Down + **Choose Icon…**, FQ-004) writes an
+ordered id list, persisted in
+QSettings key `toolbarIds`, plus the icon-assignment map (`toolbarIconIds`, applied and saved together
+on OK via `_apply_and_save_toolbar_ids(ids, icon_assignments)`). The **Available list shows all menu
+commands in menu order, always**, each
 labelled by its menu path (`File › Save As`) so the long list stays scannable; commands already on the
-toolbar are shown **disabled** (not removed). Test seams `selected_ids()`/`set_ids()`; never `.exec()` in
+toolbar are shown **disabled** (not removed). Each **On-Toolbar row shows the icon that button will
+carry** (assigned, or the command's built-in default), previewed through the same `themed_icon`
+pipeline tinted to the palette window-text color so it matches the real button under either theme.
+**Choose Icon…** — or double-clicking the row — opens
+`ui/icon_picker_dialog.py::IconPickerDialog`: a searchable icon-mode `QListWidget` grid over the
+Breeze catalog (`icons.search_catalog`), with an always-present leading **"Default" cell** (sentinel
+`DEFAULT_CHOICE = None`) that clears the assignment back to the command's built-in icon or to none;
+double-clicking a cell accepts the dialog. Test seams `selected_ids()`/`set_ids()`, FQ-004's
+`icon_assignments()`/`set_icon_assignments()`/`assign_icon()` (which stands in for the picker), and
+the picker's own `set_filter`/`visible_icon_ids`/`select_icon`/`chosen_icon_id`; never `.exec()` in
 tests.
 
 ---
@@ -698,11 +772,11 @@ bookmark strip toggles that line's bookmark (`self._editor.toggle_bookmark(block
 click in the fold zone toggles that line's fold (`self._editor._toggle_fold(block)`); a **single** click
 in the line-number zone is a no-op.
 
-**Target design, not yet implemented — double-click on the line number also toggles a bookmark**
-(settled 2026-08-01; a second, larger click target for the same toggle, alongside the existing 12px
-strip): the block-lookup loop currently duplicated inside `mousePressEvent` is to be extracted into a
-shared helper `_EditorGutter._block_at_y(click_y) -> QTextBlock | None`; a new `mouseDoubleClickEvent`
-handler then checks `event.position().x() >= _BOOKMARK_STRIP_WIDTH + _FOLD_GLYPH_WIDTH` (i.e. the
+**Implemented (commit `828fe02`, exactly as designed 2026-08-01) — double-click on the line number also
+toggles a bookmark** (a second, larger click target for the same toggle, alongside the existing 12px
+strip): the block-lookup loop formerly duplicated inside `mousePressEvent` is extracted into the
+shared helper `_EditorGutter._block_at_y(click_y) -> QTextBlock | None`; the `mouseDoubleClickEvent`
+handler checks `event.position().x() >= _BOOKMARK_STRIP_WIDTH + _FOLD_GLYPH_WIDTH` (i.e. the
 line-number zone), and if so calls `toggle_bookmark` on `_block_at_y(event.position().y())` and repaints
 the gutter. Purely additive: the single-click no-op in the line-number zone is unchanged.
 
@@ -779,20 +853,21 @@ below): `self._bookmarks: set[int]` (block numbers), reset on
 `None` when empty), `clear_bookmarks()`, plus cursor-line wrappers `toggle_bookmark_at_cursor()` and
 `goto_next_bookmark()`/`goto_prev_bookmark()` (center the target line). Rendered by
 `_EditorGutter._draw_bookmark_tag` as an accent-colored (`_bookmark_color()`, theme-aware) rounded tag
-in the gutter's bookmark strip — toggled by a single click in the strip, and (target design, not yet
-implemented — see above) by a double-click in the line-number zone. **Bookmarks menu**
+in the gutter's bookmark strip — toggled by a single click in the strip, and (implemented — see above)
+by a double-click in the line-number zone. **Bookmarks menu**
 (`main_window.py::_build_bookmarks_menu`, top-level menu bar, between Tools and Generation — §26): Toggle
 Bookmark (Ctrl+F2 → `toggle_bookmark_at_cursor`), Next Bookmark (F2 → `goto_next_bookmark`), Previous
 Bookmark (Shift+F2 → `goto_prev_bookmark`), separator, Clear All Bookmarks (no shortcut →
 `clear_bookmarks`). **The menu follows the active editor tab** (settled 2026-08-01): `_build_bookmarks_menu`
 captures **no** editor at build time; each of the four actions is connected to a lambda that resolves its
 target at **trigger** time via `main_window.py::_active_bookmark_editor()` — Edit XSD tab →
-`stage.xsd_editor`, DDL Explorer tab → `stage.ddl_editor_panel.editor`, any other tab → `stage.xml_editor`.
+`stage.xsd_editor`, DDL Explorer tab → `stage.ddl_editor_panel.editor`, an active DDL object editor tab
+(`stage.active_ddl_object_panel()`, §18.5) → `panel.editor`, any other tab → `stage.xml_editor`.
 This mirrors `_active_find_bar`'s per-tab dispatch with **one deliberate difference: it does NOT reveal /
 switch to the Raw XML tab** as a fallback side effect (`_active_find_bar` calls `_reveal_raw_xml_tab()`;
 this must not), because toggling a bookmark may never yank the user to a different tab; a non-editor tab
 simply falls back to the Raw XML editor. The dispatch is the *only* thing needed, because
-`GutterBookmarkFoldMixin` puts the identical bookmark API on all three editors. The **"Edit code…"
+`GutterBookmarkFoldMixin` puts the identical bookmark API on all four editors. The **"Edit code…"
 `CodeEditorDialog` is a separate dialog, not a center-stage tab**, so the main window's Bookmarks menu does
 not reach it — its gutter bookmark strip stays mouse-only. Out-of-range block numbers
 are ignored defensively. No persistence, no list panel, no names.
@@ -803,7 +878,7 @@ of its four actions as attributes, so `_enter_caption_mode`/`_close_caption_mode
 / True)` the menu **and every child action together** — disabling only the `QMenu` grays out the
 menu-bar entry but does not disable the actions' keyboard shortcuts in Qt (the same reason
 `_editor_find_action`/`_editor_replace_action` are disabled individually today, not just their menu).
-**Gutter bookmark toggling (single-click strip and the planned double-click on the line number) is
+**Gutter bookmark toggling (single-click strip and the double-click on the line number) is
 explicitly NOT gated by Caption Mode** and stays usable — bookmarks are a UI overlay independent of the
 read-only editing state; only the Bookmarks menu (and therefore its shortcuts) is gated.
 
@@ -873,9 +948,11 @@ selects the Raw XML tab. Does not update `_current_project`/path or repopulate t
 - **Double-click a tree node** → reveal Raw XML + `navigate_to_line(node.sourceline)`. Single click →
   Properties only.
 - **Reparse** — `_reparse_raw_xml(silent: bool = False)`: `load_project_from_text(editor_text)`; on
-  success (shared by every caller, manual or automatic) repopulate tree, set `_current_project`, refresh
-  the Table References panel if visible, clear Properties, show a status-bar confirmation, and refresh
-  the Database Check panel if open (`_refresh_db_check_if_open`). On `PgtpParseError` the two modes
+  success (shared by every caller, manual or automatic) repopulate tree, set `_current_project`, clear
+  Properties, show a status-bar confirmation, and refresh the **Database/XML Coherence view** if open
+  (`_refresh_db_check_if_open` — a legacy name; it rebuilds the coherence tree against the **cached**
+  schema via `_populate_db_check`, no live re-query, §17. The former separate Table References and
+  Database Check panel refreshes are gone with those panels, FQ-003). On `PgtpParseError` the two modes
   diverge, both **preserving** the existing model/tree (neither re-reads the file nor touches the path):
   - `silent=False` (**Tools ▸ "Reparse Raw XML into Tree"**, the manual, explicit path) —
     `_handle_reparse_failure`: `QMessageBox.critical` + `highlight_error_line` jump to the error line.
@@ -909,8 +986,12 @@ unaffected by the toggle and always uses `silent=False`.
 `ui/properties_panel.py::PropertiesPanel(QWidget)` — **strictly read-only / navigate-only** (no cell is
 editable, no write path). Header label + two-column (`Property`/`Value`) table + empty state.
 
-`show_node(node, kind)` dispatches on `"page"|"detail"|"column"|"event"` (else empty state) to a
-`RowSpec`-building pure function. `RowSpec{property_label, value, target_line, attr_name}`:
+`show_node(node, kind)` dispatches on `"page"|"detail"|"column"|"lookup"|"event"|"ddl_table"` (else
+empty state) to a `RowSpec`-building pure function (`_ROW_BUILDERS`): `"lookup"` (§17's coherence-view
+lookup references) reuses the column row builder with the `Column: {field_name}` header, and
+`"ddl_table"` (§18.1's DDL Explorer table nodes) uses `_rows_for_ddl_table` with the `Table: {name}`
+header and the paired alternating-shade row rendering.
+`RowSpec{property_label, value, target_line, attr_name}`:
 
 **Curated-label display** (§11): an attribute row whose value has a label in the curated XSD (explicit
 `label="…"` or derived `sums` combination) renders the value as `value — label` (e.g.
@@ -940,7 +1021,7 @@ Properties panel.** The vendored learning engine keeps running, but only as a di
 |---|---|---|
 | `curated.xsd` | `curated_xsd_path()` | **Official schema.** Hand-edited only (Edit XSD tab); never machine-written except the one-time first-run seed. Sole feed for completion / hover / Properties labels — **no learned fallback**. |
 | `learned.xsd` | `learned_xsd_path()` | Generated discovery artifact. Regenerated by auto-learning on File ▸ Open; a reference for newly observed elements/attributes/values; never feeds completion; never touches `curated.xsd`. Openable read/write for analysis via **Schema ▸ Edit AutoXSD** in the same center-stage tab as Edit XSD (mode-aware, below). |
-| bundled `resources/curated.xsd` | `storage.bundled_curated_xsd_text()` | **Curated v1.2** shipped with the app (`pgtp_editor/resources/curated.xsd`, in `[tool.setuptools.package-data]`; 109 elements / 252 attribute definitions, hand-commented, curated dialect). Version-marked by the XML comment `<!-- PGTP Editor curated schema v1.2 -->` and `storage.CURATED_BUNDLED_VERSION = "1.2"`. The **primary** seed source for the user's `curated.xsd` on first run. |
+| bundled `resources/curated.xsd` | `storage.bundled_curated_xsd_text()` | **Curated v1.2** shipped with the app (`pgtp_editor/resources/curated.xsd`, in `[tool.setuptools.package-data]`; 109 elements / 254 `xs:attribute` definitions as of 2026-08-06 — the counts drift with curation, the XSD file itself is the source of truth; hand-commented, curated dialect). Version-marked by the XML comment `<!-- PGTP Editor curated schema v1.2 -->` and `storage.CURATED_BUNDLED_VERSION = "1.2"`. The **primary** seed source for the user's `curated.xsd` on first run. |
 | `schema_model.json` | `schema_model_path()` | The learning engine's **private internal state** (counts, enum overflow). Feeds `learned.xsd` only. |
 
 **One-time first-run seed:** on first run, if `curated.xsd` is absent, it is seeded by **copying the
@@ -1085,7 +1166,8 @@ curated mode, and navigates to the `<xs:attribute name="…">` definition line v
 `element_lines[chain]` (the element's type definition); otherwise a status-bar message. Lines come
 from the **last successful parse** — navigation targets the saved file content, not unsaved tab edits.
 
-**Schema menu — five items** (between Bookmarks and Database; see consolidated menu, §26):
+**Schema menu — five items** (between View and Database — the menubar build order is File · Edit · View ·
+Schema · Database · Tools · Bookmarks · Generation · Help; see consolidated menu, §26):
 - **Edit XSD** — open (or switch) the mode-aware tab in curated mode.
 - **Edit AutoXSD** — open (or switch) the same tab in learned mode on `learned.xsd` (analysis).
 - **Verify XSD** — dialect rules via `schema_learning/xsd_verify.py::verify_curated(text) →
@@ -1263,11 +1345,18 @@ it rather than ever driving a live modal — asks **"Filtered rows only" / "Enti
 "Filtered rows only" calls `unify_from_row(source_row, restrict_to=self._visible_source_rows())`;
 "Entire project" calls the unrestricted form; Cancel does nothing.
 
-**Caption find/replace modal** (`caption_find_replace_dialog.py::CaptionFindReplaceDialog`) — Tools ▸
-"Caption Filter…" / Ctrl+R. Find/Replace fields, Search Mode (Normal/Extended/Regex), Match case, Scope
-(In selection[default] / Global), buttons Filter / Replace All / Close (no Find Next). As a filter it
-sets the proxy regex filter; as replace it writes results into each in-scope row's **New Value**
-(non-destructive). Never `.exec()` in tests.
+**Caption find/replace dialog** (`caption_find_replace_dialog.py::CaptionFindReplaceDialog`) — shown
+**non-modally** via `show()`, never `.exec()` (in the app or in tests; `MainWindow` keeps a reference so
+the non-modal dialog is not garbage-collected). Entry points: the Tools ▸ **"Caption Filter…"** menu item
+(**no shortcut**) opens it in filter-only mode; while **Caption Mode is active**, two window-scoped,
+mode-gated `QShortcut`s (created disabled in `__init__`, flipped by
+`_enter_caption_mode`/`_close_caption_mode`) open it regardless of focus — **Ctrl+F** → filter-only mode,
+**Ctrl+R** → Replace mode (`replace_enabled=True`, Find-what pre-loaded with the grid's currently-active
+filter pattern). Both shortcuts are disabled outside Caption Mode (where Ctrl+F/Ctrl+R belong to the
+Edit-menu Find…/Replace… actions, §15/§27). Find/Replace fields, Search Mode (Normal/Extended/Regex),
+Match case, Scope (In selection[default] / Global), buttons Filter / Replace All / Close (no Find Next).
+As a filter it sets the proxy regex filter; as replace it writes results into each in-scope row's
+**New Value** (non-destructive).
 
 **Caption Mode** (`center_stage.py` + `main_window.py`): Tools ▸ "Manage Captions…". On enter, the Raw
 XML editor **stays visible but read-only** (a persistent status-bar label reads "Caption Mode (XML
@@ -1316,8 +1405,10 @@ regex/whole-word/case toggles, no options UI): `find_next(text, term, from_pos, 
 `Match{start, line(1-based), preview}`. Non-overlapping scan (advance by `len(term)`).
 
 **Find/Replace bar** (`ui/find_replace_bar.py::FindReplaceBar(QWidget)`) — modeless, shown **below** the
-editor inside the Raw XML tab (`center_stage.raw_xml_tab` container). Constructed with the editor +
-injected callbacks (`on_find_all`, `on_stop_find_all`, `on_status`). Find/Replace fields + Find Next /
+editor inside the Raw XML tab (`center_stage.raw_xml_tab` container). Constructed as
+`FindReplaceBar(editor, on_find_all=None)`; the other two callbacks are **setter-injected after
+construction** (`set_on_stop_find_all(cb)`, `set_on_status(cb)` — a `set_on_find_all(cb)` also exists
+for rebinding), not constructor parameters. Find/Replace fields + Find Next /
 Find All(↔Stop) / Replace / Replace All. `show_find`/`show_replace` prefill from selection; Esc hides &
 returns focus. Replace-all rewrites all matches in one undo block (right-to-left). The editor gains
 `replace_current_selection(text)`.
@@ -1326,11 +1417,13 @@ returns focus. Replace-all rewrites all matches in one undo block (right-to-left
 (Ctrl+R), Replace All (Ctrl+Alt+Return). Each handler routes through
 `main_window.py::_active_find_bar()` to the **active** center-stage editing tab's `FindReplaceBar` — Edit
 XSD tab → `stage.xsd_find_replace_bar`, **DDL Explorer tab → `stage.ddl_editor_panel.find_replace_bar`**
-(§18.1), any other tab → reveal Raw XML and use `stage.find_replace_bar` (§7 per-tab routing) — and
-delegates to the same `FindReplaceBar` method the button uses. The Edit XSD tab and the DDL Explorer tab
-each host their own `FindReplaceBar` instance; the Edit XSD one has full Find All parity (the DDL buffer
-is read-only, so its Replace path no-ops via `CodeEditor.replace_current_selection`, §8). (The old
-"Find & Replace…" Ctrl+H stub was removed.)
+(§18.1), **an active DDL object editor tab (resolved via `stage.active_ddl_object_panel()`) → that
+panel's own `find_replace_bar`** (§18.5 — Replace is **live** there, unlike the read-only Explorer),
+any other tab → reveal Raw XML and use `stage.find_replace_bar` (§7 per-tab routing) — and
+delegates to the same `FindReplaceBar` method the button uses. The Edit XSD, DDL Explorer and DDL object
+editor tabs each host their own `FindReplaceBar` instance; the Edit XSD one has full Find All parity (the
+DDL Explorer buffer is read-only, so its Replace path no-ops via
+`CodeEditor.replace_current_selection`, §8). (The old "Find & Replace…" Ctrl+H stub was removed.)
 
 **Find All → Audit panel, streaming:** `_populate_find_all_results(term)` starts a chunked,
 `QTimer`-driven run (batch **200** matches/tick, snapshot text once, cancel any in-flight run). Items
@@ -1347,9 +1440,9 @@ and as the whole **Pages** branch. The standalone "Table references" `left_tabs`
 (`table_refs_tab_index`) and the **View menu** checkable "Find table reference" cease to exist as entry
 points; the single Database-menu **Database/XML Coherence** toggle replaces them (§26). The still-earlier
 Tools ▸ "Find Reused Tables…" modal, its handler and `reused_tables_window.py` remain removed/deleted.
-**Code note (2026-08-06 audit):** the module `ui/table_references_panel.py` and its test file physically
-remain in the tree but are **no longer constructed or imported by `MainWindow`** — dead code pending
-deletion, not a second live surface.
+**Code note (2026-08-06):** both superseded modules — `ui/table_references_panel.py` **and**
+`ui/db_check_panel.py` — plus their two test files were **deleted** the same day (FQ-003 left them with
+zero importers; the ui suite ran green after the deletion — 2216 passed). Neither exists in the tree.
 
 ---
 
@@ -1545,9 +1638,12 @@ signal, `ColumnCheck.ok` the single column-level one. Carried over from `DbCheck
 header (`user@host:port/db` + mismatch count, minus the direction label), the `(T)`/`(V)`/`(M)` relation
 prefixes, the uniform 4-tuple UserRole payload `(kind, name, ok, is_calculated)` on relation and column
 items (relations always `False`), and the signals `rename_requested(kind, old)` (XML-side not-found,
-non-calculated nodes), `jump_requested(kind, name)` / `jump_requested(line)` (double-click → reveal Raw XML
-+ `navigate_to_line`, the mechanism `TableReferencesPanel` already uses) and `create_requested(kind, name)`
-(relation nodes → Create Page/Detail/Lookup, below). `selection_changed(node, kind)` → Properties keeps its
+non-calculated nodes) and `create_requested(kind, name)` (relation nodes → Create Page/Detail/Lookup,
+below). The jump gesture is **two** signals as shipped (`coherence_panel.py`): a line-only
+`jump_requested(object)` (1-based line or `None`; double-click on an **XML-sourced** row → reveal Raw XML
++ `navigate_to_line`, the mechanism `TableReferencesPanel` already used) plus
+`name_jump_requested(kind: str, name: str)` (double-click on a **DB-sourced** relation/column
+row). `selection_changed(node, kind)` → Properties keeps its
 existing semantic that a lookup reference targets its **owning `ColumnNode`**.
 
 **Left open as implementation detail, deliberately not invented here:** the exact tree-widget structure,
@@ -1598,7 +1694,7 @@ golden "freshly-added table" oracle; defaults are corpus-derived and **not yet f
 >
 > | Subsection | State |
 > |---|---|
-> | 18.1 Browsing (DDL Explorer) | **Implemented**, including FQ-002 object *creation*. One gap: `db/routine_refs.py` (XML cross-refs) — still absent. |
+> | 18.1 Browsing (DDL Explorer) | **Implemented**, including FQ-002 object *creation*. XML cross-refs: the pure layer (`db/routine_refs.py`) shipped; its UI consumer is the remaining gap. |
 > | 18.2 Projects, checkout, markers | **Implemented** (git remains an explicit TBD placeholder). |
 > | 18.3 Deploy workflow & schema diff | **Pieces implemented, flow absent.** `db/schema_diff.py`, `db/migration_gen.py`, `db/schema_snapshot.py`, `db/deploy_bundle.py`, `ui/schema_compare_panel.py` all exist and are tested; **nothing reaches any of them** — no menu entries, no caller. |
 > | 18.4 Selection formatter | **Implemented, core + consumer** (`Ctrl+Alt+F` / context menu in the §18.5 tab, `[SQL]` Audit refusals wired). |
@@ -1623,8 +1719,9 @@ golden "freshly-added table" oracle; defaults are corpus-derived and **not yet f
 > the new `RoutineInfo.args`), and composite trigger leaves with bracketed timing/event indicators; and
 > (d) **top-aligned** DDL navigation. See the Supersession Ledger (§28) for each override.
 >
-> Still not built for §18.1: `db/routine_refs.py` (XML cross-referencing — **the one remaining §18.1
-> piece**). §18.1's FQ-002 object-*creation* entry points (Add Trigger…, New Function/Procedure…) **have
+> §18.1's XML cross-referencing has its **pure layer shipped** (`db/routine_refs.py`, commit `956e8fb`,
+> tested); **the remaining §18.1 piece is its UI consumer** — nothing in `ui/` calls the module yet.
+> §18.1's FQ-002 object-*creation* entry points (Add Trigger…, New Function/Procedure…) **have
 > since shipped** — see that subsection.
 >
 > **§18.3's modules all exist; nothing calls them.** `db/schema_diff.py` and `db/migration_gen.py` are
@@ -1828,8 +1925,9 @@ types **everywhere in this pipeline, with no exceptions**:
 - A zero-argument routine and an overload set are not special-cased against each other: `f()` and
   `f(integer)` are two ordinary siblings, the first rendering its empty `()` per the existing rule.
 - Each overload's tree row navigates to **its own** banner line, and right-click ▸ Edit… (§18.5) opens
-  **one tab per overload**, keyed on the span identity — `DdlObjectSpan.signature` /
-  `RoutineInfo.signature` — not on a bare `arg_types` tuple.
+  **one tab per overload**, keyed on `DdlObjectRef.key` (§18.5 — the hashable tuple
+  `ui/ddl_object_editor.py` derives from the span's identity, which carries `DdlObjectSpan.signature` /
+  `RoutineInfo.signature` for routines) — not on a bare `arg_types` tuple.
 
 **One synthesized buffer, not per-object viewers — reuses the Raw XML editor's proven shape
 (`TagSpan`/§8 + `node_at_line`/§9: one shared text buffer, a structural span index over it, and a tree
@@ -1854,14 +1952,18 @@ trigger:**
   comments) added alongside the existing JS/PHP ones in that same file (§8). Has its own
   `FindReplaceBar` instance, following the same per-tab document-routing precedent as the Edit XSD tab
   (§7/§15) and the planned Custom PHP tabs (§21). The tab sits in `CenterStage` between Edit XSD and
-  Manual (`ddl_tab_index`, hidden by default), and is **closable** via a tab-bar ✕ that hides it
+  Manual (`ddl_tab_index`, hidden by default — a fixed index that becomes a **role-keyed dynamic tab**
+  per §18.7), and is **closable** via a tab-bar ✕ that hides it
   directly (`hide_ddl_explorer()`) — read-only, so unlike Edit XSD there is no dirty prompt to route
   through. `CenterStage` exposes `show_ddl_explorer()`/`hide_ddl_explorer()` and a
-  `ddl_explorer_visibility_changed = Signal(bool)`. API: `EditorPanel.set_ddl_text(text, spans=None)`
+  `ddl_explorer_visibility_changed = Signal(bool)`. API: `EditorPanel.set_ddl_text(text, spans=None,
+  schema=None)`
   (a fresh `build_ddl_text` result — text plus its `DdlObjectSpan` list, which drives the fold regions,
-  below; today the spans are converted to fold regions and then **dropped** — **target design (§18.5):
-  the panel must additionally retain the span list** (e.g. `self._spans`), because the right-click ▸
-  Edit entry point resolves the clicked line to the object whose `start_line..end_line` contains it)
+  below; the panel converts the spans to fold regions **and retains the list** as `self._spans` —
+  §18.5's once-required amendment, **done** — because the right-click ▸
+  Edit entry point resolves the clicked line to the object whose `start_line..end_line` contains it;
+  the third parameter retains the live `DatabaseSchema` alongside, for that same edit resolution via
+  `ddl_buffer_panel.resolve_edit_target`)
   and `EditorPanel.navigate_to_line(line)` (delegates to
   `CodeEditor.navigate_to_line`, §8, then focuses the editor). This tab is **read-only, DB-sourced,
   live/synthesized** (`editor.setReadOnly(True)`; `CodeEditor.replace_current_selection` no-ops on
@@ -1880,7 +1982,7 @@ trigger:**
   `ddl_editor_panel.py::_fold_regions_for_spans(spans)` (pure) translates each `DdlObjectSpan` into the
   triple `(start_line - 1, start_line, end_line - 1)` — fold triggered on the **banner** block,
   containing the **body only**, so the banner stays visible when collapsed; a span with
-  `end_line <= start_line` contributes **no** region. `EditorPanel.set_ddl_text(text, spans=None)` takes
+  `end_line <= start_line` contributes **no** region. `EditorPanel.set_ddl_text(text, spans=None, schema=None)` takes
   that span list alongside the text and installs the regions via `CodeEditor.set_fold_regions`; passing
   `None`/`[]` simply leaves nothing foldable. `XmlEditor` keeps its **XML-span** fold provider
   (`_foldable_region_starting_at` over `_spans`/`TagSpan`, §8).
@@ -1912,7 +2014,7 @@ appears in the tree in **both** of its relationship places, not just one:
   that invoke it (reverse reference via `TriggerInfo.function_name`).
 - A trigger is therefore **two tree leaves pointing at the same underlying `DdlObjectSpan`** (same
   buffer location) — clicking either jumps to the identical line in the `EditorPanel` tab. This mirrors
-  the existing Table References panel's precedent (§15, `TableUsage.references`) of showing the same
+  the table-references precedent (now §17's coherence view, `TableUsage.references`) of showing the same
   object from multiple relationship angles rather than forcing a single parent — it is **not** a novel
   pattern, it already exists elsewhere in the app.
 - Click on any leaf in `BrowserPanel` (function, procedure, or either trigger occurrence) → reveal the
@@ -1986,15 +2088,41 @@ public.dont_delete_standards() [T]
 └─ public.phpgen_users.dont_delete_model_users [B][D]
 ```
 
-**XML cross-references — a third relationship angle, still not implemented (the one remaining §18.1
-piece), unchanged in mechanism:**
+**XML cross-references — a third relationship angle. The pure layer shipped (`db/routine_refs.py`,
+commit `956e8fb`, tested); the UI consumer is the remaining §18.1 gap — nothing in `ui/` calls it yet:**
 
-- `db/routine_refs.py` (does not exist yet): cross-references routine/trigger names against the XML (event-handler bodies
-  via `EventNode.text`, and SQL-bearing attributes) via **best-effort name matching** — same "no false
-  confidence" ethos as `analysis/reused_tables.py` — producing `RoutineReference{routine_name, node,
-  kind, line}` so a DB-side routine can be traced to where the XML calls it. This is **approximate, not
+- `db/routine_refs.py` (Qt-free, psycopg-free, I/O-free): cross-references routine/trigger names against
+  the XML (event-handler bodies via `EventNode.text`, and **every** attribute value — deliberately not a
+  hard-coded "SQL-bearing" attribute list, which would silently miss whichever attribute a project
+  actually keeps its SQL in; the call-shaped match requirement below is what rejects prose) via
+  **best-effort name matching** — same "no false confidence" ethos as `analysis/reused_tables.py` — so a
+  DB-side routine can be traced to where the XML calls it. This is **approximate, not
   guaranteed-complete**: it is name matching, not a SQL parser, and must not claim completeness it
-  cannot deliver. Unlike the table/function tree groupings (which navigate within the single DDL
+  cannot deliver. As shipped, the module is richer than first sketched:
+  - `RoutineReference{routine_name, breadcrumb, node, kind, line, ref_type}` — one XML occurrence.
+    `breadcrumb` is the human-readable path (`Page 'Orders' ▸ Event 'OnBeforeInsert'`), reusing
+    `analysis/reused_tables.py`'s `_page_label`/`_detail_label` fallback order so breadcrumbs read the
+    same here as in the coherence tree (§17); `ref_type` is `"call"` (a call-shaped occurrence —
+    `name(` / `schema.name(`, case-insensitive, with a `(?<![\w.])` guard so `other_schema.foo(` never
+    matches `public.foo`) or `"mention"` (a trigger's bare-whole-word match — a trigger has no call
+    syntax, so the weaker signal is labelled as such). `kind` is `"page" | "detail" | "column" |
+    "event"`; `line` is the 1-based `.pgtp` jump target or `None`; several hits on one line collapse to
+    one reference.
+  - `RoutineUsage{key, name, kind, ambiguous, info, references}` (+ the `referenced` property) — one DB
+    routine or trigger with every reference found for it, keyed by `RoutineInfo.signature` (routines —
+    consumed verbatim, never re-rendered, BUG-018) or `schema.table.name` (triggers, matching how
+    `DatabaseSchema.triggers` is keyed). **Overloads are not conflated, and not invented either**: two
+    overloads of one `schema.name` get separate `RoutineUsage` records sharing the same references, both
+    marked `ambiguous=True` — reporting the ambiguity is honest; guessing an overload from the argument
+    count would not be.
+  - `collect_routine_references(project, schema) → list[RoutineUsage]` — every routine/trigger in the
+    schema gets exactly one record, **including** the ones referenced nowhere (an empty `references`
+    list answers "can I change this freely?"); returns `[]` when no `.pgtp` is linked rather than a
+    list of routines misleadingly labelled unreferenced. `routine_reference_index(project, schema)` is
+    the same keyed by `RoutineUsage.key` — the lookup a `BrowserPanel` leaf can do without a scan,
+    since it already holds the signature.
+
+  Unlike the table/function tree groupings (which navigate within the single DDL
   buffer), this angle navigates **across** buffers — `EditorPanel` tab → Raw XML tab — two separate
   documents, two separate `navigate_to_line` targets, not the same underlying span. This angle only
   applies when a project has a linked `.pgtp` (§18.2) — it is meaningless in a `.pgtp`-free project.
@@ -2014,7 +2142,8 @@ piece), unchanged in mechanism:**
   a one-line wrapper around `fetch_routines_and_triggers(params)`, mirroring `_fetch_db_schema`; tests
   patch it to return a canned `DatabaseSchema`) through the shared `self._run_async` threadpool seam
   (the same off-thread executor the Database Check fetch uses, so a slow/dead host never freezes the
-  window). On result: `text, spans = build_ddl_text(schema)` → `EditorPanel.set_ddl_text(text, spans)` +
+  window). On result: `text, spans = build_ddl_text(schema)` → `EditorPanel.set_ddl_text(text, spans,
+  schema=schema)` +
   `BrowserPanel.set_schema(schema, spans)` + `show_ddl_explorer()` + a status-bar summary
   (`DDL Explorer: N routine(s), M trigger(s).`).
 - **Standalone-mode friendly (§18):** connection params come from
@@ -2099,11 +2228,12 @@ Tables branch's original scope, not a new feature:**
   `attr_name=None` and `target_line=None` (no navigation, see above). This split is a deliberate
   **compact-identity / free-text-detail** grouping — the identity line (name, type, nullability) is
   what a reader scans first; the wider, more variable-length detail line (default expressions can be
-  arbitrary SQL, comments arbitrary prose) is set apart underneath it. **Flagged for implementation:**
-  `PropertiesPanel`'s row rendering has no existing "these N rows are one record" convention (today every
-  row already stands alone); a lightweight pairing cue — e.g. an alternating background shade per
-  column-pair, or a thin separator every 2 rows — should be added so the eye groups each column's two
-  rows without needing a third "group ID" data field on `RowSpec` itself. Exact pixel/color treatment is
+  arbitrary SQL, comments arbitrary prose) is set apart underneath it. **Shipped — the pairing cue is
+  implemented** as an alternating background shade per column-pair
+  (`properties_panel.py::_PAIR_SHADE_COLOR`, a subtle `QColor(0, 0, 0, 18)` tint applied by
+  `_populate_table(..., paired=(kind == "ddl_table"))` to every other 2-row record — rows 4–5, 8–9, … —
+  a pure row-index computation), with no third "group ID" data field on `RowSpec`; every other `kind`
+  passes `paired=False` and still emits exactly one row per attribute. Exact pixel/color treatment was
   left to implementation, consistent with this spec's general behavior-over-pixel-layout stance; the
   **row content and pairing order** (identity row, then detail row, per column, columns in `TableInfo`'s
   existing declared order) is the settled, reproducible part.
@@ -2290,10 +2420,10 @@ of the rejection, not a contradiction of it.)
 > `MainWindow._checkout_and_edit`/`_ddl_checkout_relpath`) are all in place, as is the `.pgtp`-as-checked-
 > out-artifact machinery (`MainWindow._link_pgtp_to_project_if_needed`, `_resolve_pgtp_project_path`,
 > `_is_ddl_project_pgtp_working_copy`, `_deploy_pgtp`). The **New Project superuser Test button** reuses
-> the §18.5 D2 capability probe (`db/sandbox.py::SandboxCapabilities`/`probe`) as specified — that module
-> is deliberately only the probe slice; the accumulating `SandboxSession`, `build_baseline_sql`, and the
-> rest of the provisioning ladder remain genuinely unbuilt, per §18.5 D2/D3's still-deferred sandbox lane
-> (one of the six carve-outs, not a gap in this subsection). Likewise, git integration throughout this
+> the §18.5 D2 capability probe (`db/sandbox.py::SandboxCapabilities`/`probe`) as specified — at the time
+> that button shipped, the module was only the probe slice; the accumulating `SandboxSession`,
+> `build_baseline_sql`, and the rest of the provisioning ladder **have since been built** in that same
+> module (§18.5 D2/D2a — either way, not a gap in this subsection). Likewise, git integration throughout this
 > subsection is an **explicit, intentional TBD/placeholder** (see "Git is optional and TBD" below) — it
 > was never meant to be built in this pass, so its absence is not implementation drift. §18.1's browsing
 > substrate and §18.5's editable tab are what this builds on, both also implemented.
@@ -2612,11 +2742,14 @@ connection neither writes `settings.json` nor mutates the active project's live 
 reports.
 
 **Connection profile persistence — reconciled with §17's `ProfileKey` scheme, least-invention reading.**
-§17 already generalizes `db/config.py` to a keyed `ProfileKey(project, role)` scheme backed by QSettings,
-for exactly this project+role dimensionality. This revision changes **where the project-scoped
+§17 specifies (**target design — not implemented**: `db/config.py` today still has only the single
+hardcoded `"db"` QSettings group, no `ProfileKey`) a keyed `ProfileKey(project, role)` scheme backed by
+QSettings, for exactly this project+role dimensionality. This revision changes **where the project-scoped
 connection profile is persisted — into the project's own JSON file — not how it is selected or edited
-at the UI layer.** `ConnectionSetupDialog`'s profile selector (§17/§18.5 D2) is unchanged: the user still
-picks `target` or `sandbox` in the same dialog. What changes is the **backing store** for a
+at the UI layer.** `ConnectionSetupDialog`'s profile selector (§17/§18.5 D2) is likewise target design —
+**no selector has been built** (the shipped dialog carries no profile code, and is disabled outright
+while a project is open, BUG-024); as designed, the user would pick `target` or `sandbox` in that same
+dialog. What changes is the **backing store** for a
 project-scoped `ProfileKey`: instead of (or in addition to, as a migration convenience — unresolved,
 §29) a `db_profiles/<slug(project)>/<role>` QSettings group, the project's own connection profiles are
 read from and written to its `.ddlproject/settings.json`. The **non-project-scoped** default profile
@@ -2647,8 +2780,10 @@ second tab type and not a second editor.
 
 Checkout itself never opens a database write transaction: it only reads, through
 `db/introspect.py::run_queries` — the sole **read** seam, which only ever `execute`s + `fetchall`s and
-never commits (§17). Database *writes* exist in exactly one place, the separate `db/apply.py` seam
-introduced by §18.5, and checkout does not use it.
+never commits (§17). Database writes **to the target database** exist in exactly one place, the separate
+`db/apply.py` seam introduced by §18.5; sandbox-scoped writes go through the sandbox session's own named
+seams (`db/sandbox.py::SandboxExecutor`, §18.5 D2/D4 — the three-seams invariant, §18.5). Checkout uses
+none of them.
 
 **Save vs. Apply under a project — and how this relates to §18.3.** Once the tab's save callback points
 at a checked-out file, **Ctrl+S / Save writes that `ddl/*.sql` file and nothing else** (UTF-8;
@@ -2690,7 +2825,8 @@ the authoritative path**; single-object Apply exists for the edit/validate loop,
 **Tab key under a project.** §18.5's dynamic-tab map is keyed by a stable per-object key; once an object
 is checked out, that key is the **resolved absolute `ddl/*.sql` path**, so re-invoking Edit on a
 checked-out object focuses the existing tab rather than opening a second one. (Project-less, the key is
-the object's `DdlObjectSpan` identity — §18.5.)
+`DdlObjectRef.key` — the hashable tuple derived from the object's `DdlObjectSpan` identity, the same key
+`CenterStage._ddl_object_tabs` is addressed by — §18.5.)
 
 **State markers — combinable, not a new third symbol.** Rendered on `BrowserPanel` (§18.1) tree items:
 
@@ -2771,7 +2907,10 @@ checked-out `ddl/*.sql` file:
 > | **The `Database ▸ "Compare Schemas…"` and `"Save Schema Snapshot…"` menu entries** | **Absent.** `MainWindow._build_database_menu` has no such actions. |
 > | **The flow that drives a batch through review → git → execute (step 4)** | **Absent.** Nothing constructs a `DeployPlan`, nothing hosts `SchemaComparePanel`, nothing calls `write_snapshot`. `schema_compare_panel` and `deploy_bundle` are referenced nowhere else in `pgtp_editor/`. |
 >
-> Concretely: **there is no user gesture anywhere in the app that reaches §18.3.** §18.5's
+> Concretely: **no user gesture anywhere in the app reaches §18.3's deploy-bundle/compare flow.** The
+> close-time reminder *is* wired (`MainWindow._remind_pending_ddl_deploys_on_close` — the "Project close
+> is a reminder point" paragraph below, shipped as designed), but it only reminds about `*`-flagged
+> candidates; it opens no bundle, no compare view and no snapshot. §18.5's
 > sandbox-validation ladder is expected to reuse this same engine rather than re-implementing it.
 
 **Deploy workflow:**
@@ -2793,12 +2932,15 @@ checked-out `ddl/*.sql` file:
      `plan.refusal_message` naming every blocker plus the recovery. "Nothing to deploy" (no candidates,
      an empty bundle) is a *distinct*, deliberately unconflated outcome.
 3. Assembled into a single reviewed SQL bundle — **statement order is adjustable, content is not
-   editable there** (editing only happens in the single-object editor tabs, §18.5). This is
-   explicitly **NOT** a second diff/generation engine — it invokes the **same** underlying
-   diff/assembly machinery specified below, just from an edit-driven entry point (comparing local
-   `ddl/` files against the last-deployed reference) rather than a schema-compare-driven entry point
-   (comparing two `DatabaseSchema` snapshots). **One diff/generation engine, two entry points** — there
-   are not two separate "assemble SQL" mechanisms.
+   editable there** (editing only happens in the single-object editor tabs, §18.5). As shipped, this
+   edit-driven bundle is assembled from the checked-out `ddl/*.sql` files' **verbatim saved text**
+   (`db/deploy_bundle.py` — `DeployCandidate`/`DeployBundle.sql_text` concatenate exactly what the user
+   saved, and a candidate with no SQL is the named refusal `MissingCandidateSql`, never a silent gap; the
+   module imports nothing from `db/schema_diff.py`), **not** by running the schema-diff engine over the
+   files — what the user reviews is byte-for-byte what was saved. It is still not a second
+   diff/generation engine, because it is not a diff/generation engine at all: the diff engine's
+   **second entry point** is §18.5's **Generate Deployment SQL** (sandbox vs. target — ledger §28), and
+   "one diff/generation engine, two entry points" lives there and in the schema-compare command below.
 4. Once the bundle is approved: (a) commit/push to git with versioning — **explicit placeholder, not
    designed, mechanism TBD** — and (b) execute against the live database. Reuses the existing "never
    auto-execute DDL silently" non-goal below — this is a reviewed, explicit action, not automatic.
@@ -2820,7 +2962,10 @@ whose working copies have pending changes:
 - New pure module `db/schema_diff.py` (mirrors `diff/differ.py`'s contract shape but is
   DB-object-keyed, not XML-node-keyed): `SchemaDifference{kind: added|removed|changed, object_kind:
   table|column|routine|trigger, identity: str, old_def, new_def}`; `diff_schemas(source:
-  DatabaseSchema, target: DatabaseSchema) → list[SchemaDifference]`.
+  DatabaseSchema, target: DatabaseSchema) → SchemaDiffResult` — a `list[SchemaDifference]` **subclass**
+  carrying the `.unsupported` sidecar (the not-compared names) that this subsection's viewer header and
+  refusal behavior load-bear on (`db/schema_diff.py`; read `.unsupported` at the call site, before any
+  list-producing transform drops it).
 - `db/schema_snapshot.py`: `dump_schema`/`load_schema` — lets a live DB be diffed against a checked-in
   JSON snapshot file, not only DB-to-DB, so a target/desired schema can be versioned.
 - `db/migration_gen.py::generate_migration(differences) → str` — ordered CREATE→ALTER→(guarded,
@@ -2844,19 +2989,20 @@ whose working copies have pending changes:
   **"Save Schema Snapshot…"**.
 
 > **Settled: separate commands, one shared engine, target design.** The schema-compare entry point
-> above stays a **fully separate sibling command**, not absorbed into the deploy workflow's UI — the
-> "one diff/generation engine, two entry points" framing already stated above was correct all along;
-> what was actually undecided was the UI surface, not the engine:
+> above stays a **fully separate sibling command**, not absorbed into the deploy workflow's UI; the
+> diff/generation engine stays one engine with two entry points (as shipped: **Compare Schemas…** here
+> and §18.5's **Generate Deployment SQL** — the deploy bundle itself is the verbatim-text assembly of
+> step 3, not an engine consumer):
 >
 > - **`Database ▸ "Compare Schemas…"`** stays its own lightweight, **no-project-required** command
 >   (live-vs-live, live-vs-snapshot) — useful even with zero DDL-versioning projects involved (e.g.
 >   comparing staging vs. prod ad hoc).
 > - The DDL-versioning project's **`Deploy`** command (§18.3 steps 1–4 above) is a separate, dedicated
->   flow — it carries the checkout-awareness, the `!`-blocks-batch ambiguity gate, and the git-commit
+>   flow — it carries the checkout-awareness, the `*!`-blocks-batch ambiguity gate, and the git-commit
 >   step that a generic compare tool should not be burdened with.
-> - Both commands invoke the **same** `db/schema_diff.py`/`db/migration_gen.py` engine underneath — no
->   duplicated diff/generation logic, just two distinct entry points with two distinct UIs suited to
->   their two distinct audiences/guardrails.
+> - There is never a **second** diff/generation engine: everything that diffs schemas or generates
+>   migration SQL goes through the one `db/schema_diff.py`/`db/migration_gen.py` engine, just from
+>   distinct entry points with distinct UIs suited to their distinct audiences/guardrails.
 > - **Rejected alternative:** a single unified Compare/Deploy screen. Rejected because it would either
 >   overload the simple compare tool with project/git machinery it doesn't need, or dilute the deploy
 >   workflow's guardrails into a generic diff viewer.
@@ -2901,7 +3047,9 @@ structure (`BEGIN`/`END`, `IF`/`ELSIF`/`END IF`, `LOOP`/`END LOOP`, `CASE`/`WHEN
 **whitespace and line breaks only** — keyword casing, identifier casing, comma placement/style, and
 literal values are never touched.
 
-**Module shape (five modules, Qt-free, no DB/network I/O; `tests/sql/` mirrors it):** the package
+**Module shape (the formatter's five modules — the `sql/` package as a whole has since grown beyond
+them: `caret_context.py` for §18.6, `statements.py` for §18.5 D4, see §5's tree; Qt-free, no DB/network
+I/O; `tests/sql/` mirrors it):** the package
 **`pgtp_editor/sql/`** (name follows the existing `db/`/`schema_learning/`/`analysis/`/`diff/` convention
 of §5's layout) contains `keywords.py` (dialect set) → `tokenizer.py` (`Token`, `tokenize`) →
 `formatter.py` (`FormatResult`, `format_selection`, the private `_Reindenter`) + `issues.py` (`Issue`),
@@ -3079,8 +3227,8 @@ explicit exclusions below). Clause-level incompleteness is *not* a refusal reaso
    `EditorPanel` made editable — that panel stays read-only permanently). This subsection still covers
    only the reusable formatter core; the tab, its context menu, the `Ctrl+Alt+F` action, the
    selection-only enablement, the single-undo-step replacement and the `[SQL]` Audit reporting all
-   belong to §18.5. As of today neither the tab nor the wiring exists — the formatter core is shipped
-   and tested but has **no live consumer**.
+   belong to §18.5 — and all ship (this subsection's own status header above: implemented, core **and**
+   consumer).
 2. **Semantic/existence linting** (verifying that referenced tables/columns/functions actually exist) —
    **no longer merely deferred: it is designed in §18.5** as the sandbox-backed validation ladder
    (schema-only scratch PostgreSQL + the `okbob/plpgsql_check` extension). It remains **entirely outside
@@ -3215,9 +3363,10 @@ this table.)
 | `BrowserPanel.tree` (§18.1, left dock "DDL Objects") | right-click an **object row** ▸ **Edit…** | the row's `DdlObjectSpan` (`Qt.ItemDataRole.UserRole`, `_SPAN_ROLE`) |
 | DDL `EditorPanel`'s read-only SQL buffer (center "DDL Explorer" tab) | right-click inside an object's span ▸ **Edit \<schema>.\<name>(\<argtypes>)…** (the span's full signature, so two overloads' menu entries differ; triggers read **Edit \<schema>.\<table>.\<name>…**) | the retained `DdlObjectSpan` whose `start_line..end_line` contains the clicked line |
 
-- **`EditorPanel` must retain its span list** (e.g. `self._spans`) for the second entry point. Today
-  `set_ddl_text(text, spans)` converts the spans to fold regions and **drops** them (§18.1) — that is a
-  required amendment, not an optional one.
+- **`EditorPanel` retains its span list** (`self._spans`) for the second entry point — the
+  once-required amendment is **done**: `set_ddl_text(text, spans=None, schema=None)` keeps the spans
+  after converting them to fold regions (§18.1), and its third parameter additionally retains the live
+  `DatabaseSchema` the edit resolution (`resolve_edit_target`) needs alongside them.
 - **Left-click behavior is unchanged** on both surfaces: the tree still emits `navigate_requested(line)`
   and the buffer still navigates top-aligned (§18.1).
 - **Argument-name child leaves are not editable targets** — they carry no span (`_SPAN_ROLE` unset,
@@ -3225,7 +3374,7 @@ this table.)
   occurrences) do.
 - **Widget idioms, matching what this codebase already does:** the tree uses
   `setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)` + `customContextMenuRequested` (the
-  `db_check_panel.py` / `project_tree.py` pattern); the editor overrides `contextMenuEvent` and extends
+  `coherence_panel.py` / `project_tree.py` pattern); the editor overrides `contextMenuEvent` and extends
   `createStandardContextMenu()` (the `xml_editor.py` pattern), moving the caret to the clicked document
   position first so the resolved span reflects the click and not a stale caret.
 - Neither entry point writes to a database. With a project open, §18.2 adds a second variant of the
@@ -3534,13 +3683,17 @@ write. The design is deliberately conservative:
 > statement-indexed failure); `QueryFailure` is unnecessary because `ApplyOutcome.statement_index`
 > carries the same information **as data** rather than as an exception. `run_queries` is never widened.
 > The plan file's Phase 1 text is stale on this point — the spec is authoritative.
-- **Shape.** `apply_ddl(params, statements: list[str], *, commit: bool, autocommit: bool = False,
-  connect_timeout: int = 10) -> ApplyOutcome`. It opens one connection, executes the statements in
-  order, then **explicitly** `commit()`s when `commit=True` and **explicitly** `rollback()`s otherwise —
-  never relying on implicit close-time rollback for correctness — and closes in a `finally`.
-  `autocommit=True` exists for the single statement PostgreSQL forbids inside a transaction block,
-  `CREATE DATABASE` for an app-owned sandbox; it is invalid to combine with `commit=True` and callers
-  other than sandbox provisioning must not use it.
+- **Shape (as shipped).** `apply_ddl(target, statements: Sequence[str], *, commit: bool = True,
+  runner: ApplyRunner = DEFAULT_APPLY_RUNNER, clock: Callable[[], float] = time.perf_counter) ->
+  ApplyOutcome` (`db/apply.py`). `target` is a `ConnectionParams`, or anything carrying one as `.params`
+  (a `db/sandbox.py::SandboxSession` — the ladder hands its session straight in; Apply-to-Target hands
+  in the target's params). It runs the statements as **one transaction**, then **explicitly**
+  `commit()`s when `commit=True` and **explicitly** `rollback()`s otherwise — never relying on implicit
+  close-time rollback for correctness — with the single psycopg touchpoint injected as `runner`.
+  **There is no `autocommit` parameter.** The one statement PostgreSQL forbids inside a transaction
+  block — `CREATE DATABASE` for an app-owned sandbox — is owned by `db/sandbox.py::_run_autocommit`,
+  called only from `create_sandbox_database`, exactly as D2's ownership table below states; it never
+  routes through `apply_ddl`.
 - **It must execute a *mixed* statement list — this is a hard correctness requirement, not an
   optimization.** The ladder is necessarily **one** call: the session/transaction has to span
   `SET plpgsql.extra_*` → the DDL → the `plpgsql_check_function_tb` **SELECT**. So `apply_ddl` runs
@@ -3548,9 +3701,11 @@ write. The design is deliberately conservative:
   `CREATE EXTENSION`, `CREATE DATABASE`, the bookkeeping `INSERT`) alongside statements that **do**
   (the check SELECT). **In psycopg 3, `cursor.fetchall()` after a non-row-returning statement raises
   `ProgrammingError: the last operation didn't produce a result`** — so `apply_ddl` **must guard on
-  `cursor.description is None`** and record an empty row list for that statement instead of fetching.
-  Results are returned **positionally 1:1 with the statement list** (`ApplyOutcome.rows`), which is what
-  lets the caller attribute each result to the tier that produced it. `db/introspect.py::run_queries`
+  `cursor.description is None`** and record a row-less `StatementResult` for that statement instead of
+  fetching. Results are returned **per statement, in order, for the statements that ran**
+  (`ApplyOutcome.results: tuple[StatementResult, ...]`, each entry carrying its `index` into the
+  statement list), which is what lets the caller attribute each result to the tier that produced it —
+  the ladder reads its check SELECT's rows off the last entry. `db/introspect.py::run_queries`
   does **not** get this guard, because it does not get writes — it keeps its unconditional `fetchall()`
   over read-only queries.
 - **Notice capture is part of the seam, because tier 1 has no other channel.**
@@ -3560,9 +3715,14 @@ write. The design is deliberately conservative:
   `Notice{severity, message, detail, hint, context, sqlstate}`** (duck-typed `getattr` over the
   driver object), collected on `ApplyOutcome.notices`. Nothing downstream of the seam ever touches a
   psycopg object.
-- **`ApplyOutcome`** captures failure as data rather than raising raw psycopg exceptions:
-  `{ok: bool, statement_index: int | None, sqlstate, message, detail, hint, position, rows:
-  list[list[tuple]], notices: list[Notice]}` — the diagnostic fields are the same ones `CheckFinding`
+- **`ApplyOutcome`** captures failure as data rather than raising raw psycopg exceptions (shipped
+  shape, `db/apply.py` — a frozen dataclass): `{ok: bool, statement_index: int | None, statement: str,
+  committed: bool, results: tuple[StatementResult, ...], notices: tuple[Notice, ...], notices_captured:
+  bool, sqlstate, message, detail, hint, position: int | None, line: int | None, elapsed_ms: float}`,
+  where each `StatementResult` is `{index, statement, columns: tuple[str, ...] | None, rows:
+  tuple[tuple, ...], affected: int | None, status: str}` (`columns is None` exactly when the statement
+  produced no result set — the driver's `cursor.description`, never guessed from the SQL text; `status`
+  is `cursor.statusmessage`, shown verbatim). The diagnostic fields are the same ones `CheckFinding`
   carries, so a failed apply and a validation finding render identically. **`statement_index` is the
   tier-attribution mechanism**: without it, a `plpgsql_check` call that itself fails gets misreported as
   *"your DDL is broken"* — precisely the silent-wrong-result class this project refuses. Its `message`
@@ -4230,7 +4390,8 @@ thrown away, and no second "assemble SQL" mechanism is created.**
 - `SchemaDifference{kind ∈ added|removed|changed, object_kind ∈ table|column|routine|trigger, identity:
   str, old_def: str | None, new_def: str | None}` — **verbatim §18.3**. Do not "improve" the field names;
   §18.3's full engine populates the same type.
-- `diff_schemas(source: DatabaseSchema, target: DatabaseSchema) -> list[SchemaDifference]`, keyed on
+- `diff_schemas(source: DatabaseSchema, target: DatabaseSchema) -> SchemaDiffResult` (the
+  `list[SchemaDifference]` subclass carrying `.unsupported`, §18.3), keyed on
   `DatabaseSchema.routines`/`.triggers`, which `fetch_routines_and_triggers` already populates for **any**
   connection — sandbox or production — with no new catalog query.
 - **Routine identity is the full signature**, `schema.name(argtype, argtype)`, built from
@@ -4348,7 +4509,7 @@ inherited verbatim).
 | Need | Existing thing to reuse |
 |---|---|
 | SQL **reads** | `db/introspect.py::run_queries` — the sole read seam, read-only; every new function takes `runner: Runner = run_queries` so the suite runs with psycopg absent |
-| SQL **writes** | the new `db/apply.py::apply_ddl` — the sole write seam (above); `applier: Applier = apply_ddl` injectable the same way. **Never a third connection-opening function.** |
+| SQL **writes** | `db/apply.py::apply_ddl` — the sole write seam **to the target database** (above); sandbox-scoped writes go through the sandbox session's own named seams (`db/sandbox.py::SandboxExecutor` + `_run_autocommit`, D2/D4 — the three-seams invariant below, ledger §28). `applier: Applier = apply_ddl` injectable the same way. **Never an unnamed fourth connection-opening function.** |
 | Connection profile & dialog | `db/config.py::ConnectionParams` + `ui/connection_setup_dialog.py` — add a profile dimension (§17/§18.2); **no second dialog** |
 | Diagnostics surface | the existing Audit/Problems panel (§7): `"[Check] SEVERITY line N: message"`, line on `UserRole`, target on `UserRole+1`, click-to-navigate — **no new diagnostics panel** |
 | Diagnostic record | the shape of `validation/tier2.py::ValidationIssue{severity, message, line}` |
@@ -4514,8 +4675,11 @@ covers only plpgsql routines, i.e. exactly the ones that need no ordering.
 > `tests/ui/test_ddl_schema_index_wiring.py`.
 >
 > The 2026-08-04 placement gate recommended **EXTEND**, not a new top-level feature, and the shipped shape
-> honoured it: one popup widget serving two editors, one widened introspection fetch rather than a
-> parallel one. Still scoped to §18.5's **editable** `DdlObjectEditorPanel` only; the `CodeEditor`-level
+> honoured it: one popup widget serving multiple editors, one widened introspection fetch rather than a
+> parallel one. No longer scoped to §18.5's **editable** `DdlObjectEditorPanel` alone: the §18.5 **D4
+> Sandbox SQL Console** is a **third completion consumer** (`ui/sql_console_panel.py` imports
+> `sql/caret_context.py::resolve_caret_context` and the shared popup host from `ui/completion_popup.py`,
+> with its own Ctrl+Space wiring — ledger §28); the `CodeEditor`-level
 > pluggable provider below remains the un-built natural extension.
 
 **What it is.** Pressing **Ctrl+Space** inside the DDL object editor tab (§18.5,
@@ -4530,13 +4694,15 @@ three contexts:
 | `NEW.`/`OLD.` inside an **unattached** trigger function | same trigger-context syntax, but no `TriggerInfo` currently references this routine | tells the user no trigger is defined for this function, then prompts a table pick (a small picker reusing an existing simple-selection-dialog idiom); once picked, offers that table's columns |
 
 **Popup widget — reused, not rebuilt.** §11's `_CompletionPopup(QListWidget)` was **extracted out of
-`ui/xml_editor.py` into its own module `pgtp_editor/ui/completion_popup.py`** and is now imported by both
-consumers (`xml_editor.py` re-exports the name so §11's call sites and tests are unchanged) — one widget
-class, two instantiations, no clone. Its contract is unchanged: frameless
+`ui/xml_editor.py` into its own module `pgtp_editor/ui/completion_popup.py`** and is now imported by its
+consumers — `ui/xml_editor.py` (which re-exports the name so §11's call sites and tests are unchanged),
+`ui/ddl_object_editor.py`, and the §18.5 D4 sandbox SQL console — one widget
+class, three instantiations, no clone. Its contract is unchanged: frameless
 (`Qt.WindowType.Popup`), non-modal, `(key, display)` master list with a running prefix filter, ↑/↓
 navigate, Enter/Tab/click choose, Esc/focus-out cancel, printable characters filter — the exact same
-shape and keyboard contract §11 already ships, so this feature adds a **second instantiation of the same
-class/pattern** in the DDL object editor's module, not a second popup implementation. `_CompletionPopup`
+shape and keyboard contract §11 already ships, so this feature added a **second instantiation of the same
+class/pattern** in the DDL object editor's module (the D4 console later added the third), not a second
+popup implementation. `_CompletionPopup`
 itself needs no XML-specific change to be reused here; it already only deals in `(key, display)` pairs.
 
 **Caret-context resolution — new Qt-free module under `sql/`.** Alongside `sql/keywords.py` and
@@ -4705,7 +4871,7 @@ other instance's tree at all, exactly as if it were the only connection open.
 | Tree widget + rendering rules | `ui/ddl_buffer_panel.py::BrowserPanel` (§18.1) — instantiated twice, unchanged internals |
 | Read-only synthesized buffer + editor | `ui/ddl_editor_panel.py::EditorPanel` (§18.1) — instantiated twice, unchanged internals |
 | Introspection fetch | `db/introspect.py::fetch_routines_and_triggers` (§18.1/§18.6) — called once per role with that role's `ConnectionParams` |
-| Second connection profile | `role = sandbox` (§18.5 D2), already generalized into `db/config.py`'s keyed `ProfileKey` scheme (§17) — no new connection mechanism |
+| Second connection profile | `role = sandbox` (§18.5 D2). §17's keyed `ProfileKey` scheme is **target design, not implemented** — what ships today is `db/config.py`'s single hardcoded `"db"` QSettings group plus the project-scoped profiles in the project's own `.ddlproject/settings.json` (`ProjectSettings.target`/`.sandbox`, §18.2, ledger 2026-08-03) — no new connection mechanism either way |
 | Dynamic, key-addressed tabs (not index-addressed) | §18.5's per-object `DdlObjectEditorPanel` tabs and their append-only/tail-only invariant + regression test (§18.5 carve-out 9) — the same pattern, keyed on connection role instead of object identity |
 | Drift markers | §18.2's `*`/`!` computation (`compute_drift_markers`) — invoked per connection, not shared |
 | "No dead controls" posture | §18.5 carve-out 2 (no sandbox button row until the sandbox lane exists) — mirrored here as "no second DDL Explorer entry until a sandbox exists" |
@@ -4768,24 +4934,26 @@ and, per this subsection, again on demand whenever this window itself is opened.
 | **Sandbox** | 3rd, its own full node (not a connector) | The sandbox database's **live connectivity**: not-set-up / connection-ok / offline / connected-but-tools-missing | `SandboxCapabilities` (probe reachability) + `SandboxMode`/`data_clone_available` for the tools-missing state — see the state table below |
 | **Sandbox1** | upper-right | The sandbox's **data-fill** status: schema-only vs. data-cloned via `pg_restore` (§18.5 D2/D2a), and whether that provisioning succeeded | D2a's clone outcome / `db/ddl_project.py::ProjectSettings.sandbox_mode` (`SandboxMode.SCHEMA_ONLY` / `WITH_DATA`) plus success/failure of the last provisioning run |
 | **Sandbox2** | lower-right | Whether the **`plpgsql_check` Postgres extension is installed** in the sandbox database — a capability/installation marker, **not** a per-object lint pass/fail result (that already lives in the DDL object editor's Audit panel, §18.5 D3) | `SandboxCapabilities.plpgsql_check_state`, **but see the corrected 2-state reading below** — the property's own 4 values don't map 1:1 onto this node (flagged, not glossed over) |
-| **Connectors** | between each pair | Line art linking quality→app, app→sandbox, and sandbox→(sandbox1, sandbox2); the sandbox→sandbox1/2 connector visually splits into two after the sandbox node | Carries state too, but see "not yet specified" below |
+| **Connectors** | between each pair | Line art linking quality→app, app→sandbox, and sandbox→(sandbox1, sandbox2); the sandbox→sandbox1/2 connector visually splits into two after the sandbox node | **Stateless — position-keyed, one asset each** (`ui/project_status_model.py::ConnectorKind`: `connector_quality-app` / `connector_app-sandbox` / `connector_sandbox-db`, the third being the visually-splitting one), plus `_drk` variants; resolved 2026-08-06, ledger §28 |
 
 The owner's diagram depicts the Sandbox node with its own icon (a monitor/screen bearing a Postgres
 elephant logo plus a database icon) — visually distinct from a connector, confirming it is a fifth node
 family, not a richer connector state grafted onto the app→sandbox1/2 link.
 
-**Image asset convention.** Each node/connector is rendered from a pre-made image, named
-`[position]_[status]` — e.g. `app_project_setup`, `sandbox_connection_ok`, `sandbox1_...`,
-`connector_...`. The owner has already saved these assets in a local images folder; wiring them into the
-app (locating/bundling the folder, a lookup table from state to filename, `QPixmap` loading) is an
-**implementation task**, not a further design decision — this subsection specifies the states each
-family must be able to render, not the asset pipeline.
+**Image asset convention — shipped.** Each node/connector is rendered from a pre-made bundled image in
+`pgtp_editor/resources/status/`, named `[position]_[status]` — e.g. `app_project_setup`,
+`sandbox_connected`, `sandbox1_filled`, `connector_quality-app`. Assets are **`.svg` only**
+(`ui/project_status_model.py::ASSET_EXTENSION = ".svg"`, per BUG-029 — the earlier `.png` slices were
+deleted), and the lookup table **is** the state enums: each per-family enum's *value* is the filename
+stem, resolved through `asset_filename(stem, dark) -> "<stem>[_drk].svg"`, with `all_asset_stems()`
+backing the test that guards against a typo'd stem shipping as a silently missing image.
 
 **Dark-mode asset convention — every asset has a `_drk` counterpart.** For each `[position]_[status]`
 base file there is a same-named dark-theme variant with a `_drk` suffix appended before the extension —
-e.g. `quality_ok.png` / `quality_ok_drk.png`, `sandbox_connection_ok.png` /
-`sandbox_connection_ok_drk.png`. The lookup-table/loading code (implementation task, above) must select
-the `_drk` file whenever the app is currently running in its dark theme, and the plain file otherwise.
+e.g. `quality_connection_ok.svg` / `quality_connection_ok_drk.svg`, `sandbox_connected.svg` /
+`sandbox_connected_drk.svg` (`DARK_SUFFIX = "_drk"`, applied by `asset_filename(stem, dark)`). The
+loading code selects the `_drk` file whenever the app is currently running in its dark theme, and the
+plain file otherwise.
 **Verified against the codebase, not assumed:** the app has no OS/system dark-mode *detection* — theme
 selection is an explicit, user-toggled menu checkbox, **Light Theme** (`MainWindow`, `main_window.py`,
 unchecked by default, i.e. dark-by-default), applied via `ui/theme.py::apply_theme(app, light: bool)`.
@@ -4795,22 +4963,23 @@ tracks (`MainWindow._light_theme_action.isChecked()` / the `light` argument last
 `apply_theme`), not a new or different signal — reusing the existing toggle, not adding a second
 theme-detection mechanism.
 
-**Per-node state enumeration — concrete, from the owner's reference images (saved locally, not yet
-wired into the app).** This supersedes nothing added above; it fills in the exact state lists the
-node-family table and the App/Sandbox state tables already reference, plus gives Quality, Sandbox1 and
-Sandbox2 their first explicit enumerations.
+**Per-node state enumeration — concrete, from the owner's reference images, now shipped as the enums in
+`ui/project_status_model.py`** (`QualityState`/`AppState`/`SandboxState`/`Sandbox1State`/`Sandbox2State`,
+whose values are the asset filename stems). This supersedes nothing added above; it fills in the exact
+state lists the node-family table and the App/Sandbox state tables already reference, plus gives
+Quality, Sandbox1 and Sandbox2 their first explicit enumerations.
 
 | Node | States (icon look) | Notes |
 |---|---|---|
-| **Quality** | `quality_connection_not_set_up` (locked/gray padlock over a database icon); `error` (red — connection attempted but failed/unreachable); `connection_ok` (green — connected, healthy) | **Corrected 2026-08-05:** the locked/gray icon is **not** a distinct auth-failure mode alongside a general error state — its actual filename is `quality_connection_not_set_up`, i.e. the quality/target connection is simply **not configured yet**, the same semantic category as the Sandbox node's `sandbox_not_set_up` state. This mirrors the Sandbox node's not_set_up/offline/connection_ok pattern exactly: `not_set_up` (never configured) / `error` (configured but unreachable) / `connection_ok` (configured and healthy). The earlier "is locked/gray a distinct failure mode from red?" open question is resolved by this — there is no ambiguity once locked/gray is understood as "not set up," not "auth failed" |
+| **Quality** | `quality_connection_not_set_up` (locked/gray padlock over a database icon); `quality_offline` (red — connection attempted but failed/unreachable); `quality_connection_ok` (green — connected, healthy) | **Corrected 2026-08-05:** the locked/gray icon is **not** a distinct auth-failure mode alongside a general error state — its actual filename is `quality_connection_not_set_up`, i.e. the quality/target connection is simply **not configured yet**, the same semantic category as the Sandbox node's `sandbox_not_set_up` state. This mirrors the Sandbox node's not_set_up/offline/connected pattern exactly: `not_set_up` (never configured) / `offline` (configured but unreachable) / `connection_ok` (configured and healthy). The earlier "is locked/gray a distinct failure mode from red?" open question is resolved by this — there is no ambiguity once locked/gray is understood as "not set up," not "auth failed" |
 | **App** | `app_standalone` (a generic "\<XML\>" editor-window icon — the plain-editor-no-project look); `app_project_not_setup` (gray/inactive gear+lightbulb); `app_project_setup` (green gear+lightbulb) | Matches the already-specified 3-state, tier-only model above one-for-one; this row only supplies the concrete icon look per state |
-| **Sandbox** | **red** (offline/unreachable); **gray** (not set up); **green** (connection ok) | **Only 3 visual states, not 4.** The previously-noted `sandbox_tools_missing` condition (sandbox reachable but `psql`/`pg_restore` absent) is **not** a distinct icon — it still renders the same green/connection-ok icon, with the missing-tool detail surfaced only in the node's click-through status/help window (consistent with this subsection's existing click-through description above: name the missing tool, link to help). The Sandbox node's state table earlier in this subsection listed `sandbox_tools_missing` as one of four *backing states*; that backing-state distinction is still real (`SandboxCapabilities`/`degraded_reason` still tell tools-missing apart from offline), but **it now maps onto the same icon as `sandbox_connection_ok`**, not a fourth icon — corrected here from any earlier reading that implied a 4th visual state |
-| **Sandbox1** (data-fill) | **not-filled** (lighter/schema-only look); **filled** (fuller green — data cloned via `pg_restore`, §18.5 D2a) | 2 visual states shown in the reference images. **Open point (§29):** no distinct "clone in progress" or "clone failed" icon has been provided yet — flagged as a gap to confirm with the owner, not invented here |
+| **Sandbox** | `sandbox_offline` (red — offline/unreachable); `sandbox_not_set_up` (gray — not set up); `sandbox_connected` (green — connection ok) | **Only 3 visual states, not 4.** The previously-noted `sandbox_tools_missing` condition (sandbox reachable but `psql`/`pg_restore` absent) is **not** a distinct icon — it still renders the same green/connected icon, with the missing-tool detail surfaced only in the node's click-through status/help window (consistent with this subsection's existing click-through description above: name the missing tool, link to help). The Sandbox node's state table earlier in this subsection listed `sandbox_tools_missing` as one of four *backing states*; that backing-state distinction is still real (`SandboxCapabilities`/`degraded_reason` still tell tools-missing apart from offline, kept as `SandboxDegradation` for the click-through window), but **it maps onto the same icon as `sandbox_connected`**, not a fourth icon — corrected here from any earlier reading that implied a 4th visual state |
+| **Sandbox1** (data-fill) | `sandbox1_empty` (lighter/schema-only look — schema-only, or a with-data sandbox whose clone has not yet landed); `sandbox1_filled` (fuller green — data cloned via `pg_restore`, §18.5 D2a) | 2 visual states. **Open point (§29):** no distinct "clone in progress" or "clone failed" icon has been provided yet — flagged as a gap to confirm with the owner, not invented here |
 | **Sandbox2** (`plpgsql_check` capability) | `sandbox2_plpgsql_check_not_installed` (red X over a magnifying-glass-on-database icon); `sandbox2_plpgsql_check_installed` (teal/cyan check-mark, same magnifying-glass-on-database motif) | **Corrected 2026-08-05:** these are **install-state** icons, not run-result icons — the red-X state means "the `plpgsql_check` extension is not installed in this sandbox," and the check-mark state means "it is installed." This is **not** whether a specific routine passed or failed a lint check (that per-object result lives in the DDL object editor's Audit panel, §18.5 D3) — this node shows environment/capability status only. The earlier "no distinct not-yet-run icon" open question no longer applies: there is no run result to represent here, only installed/not-installed, and 2 states fully cover that |
 
-Each state name in this table is the state, not necessarily the owner-verbatim asset filename stem (as
-already caveated above for the Sandbox node's candidate names) — verify against the owner's actual saved
-image filenames before wiring, same caution as already stated for the Sandbox row's candidate names.
+Each state name in this table **is** the shipped asset filename stem — the enum values in
+`ui/project_status_model.py` are the stems, and `tests/ui/` guards that every stem's `.svg` (and `_drk`
+variant) actually ships in `resources/status/`; the earlier verify-before-wiring caveat is retired.
 
 **App node — 3 states, project tier only (corrected from the 4-state conflated model):**
 
@@ -4839,21 +5008,21 @@ window's App-node rendering logic needs an explicit "is a project open at all?" 
 `ProjectCapabilityStatus`.
 
 **Sandbox node — NEW, distinct node; the live-connectivity counterpart to the App node's tier state.**
-Not yet given owner-verbatim asset names beyond the `[position]_[status]` convention. **3 visual states**
+Shipped stems: `ui/project_status_model.py::SandboxState`. **3 visual states**
 (confirmed against the owner's reference images, below), backed by a 4-way distinction in the underlying
 capability model — the 4th backing condition (tools-missing) does not get its own icon:
 
-| Visual state (candidate name) | Icon look | Meaning | Backing state |
+| Visual state (shipped stem) | Icon look | Meaning | Backing state |
 |---|---|---|---|
-| `sandbox_not_set_up` | gray | No sandbox is configured for this project at all | `ProjectCapabilityStatus.degraded_reason == "no local sandbox configured for this project"` |
-| `sandbox_connection_ok` | green | A sandbox is configured and reachable — **also covers the tools-missing condition below**, which renders identically | `ProjectCapabilityStatus.tier is ProjectTier.DEVELOPMENT`; **or** reachable with `SandboxMode is WITH_DATA` and `psql`/`pg_restore` missing from `PATH` (see the tools-missing row) |
+| `sandbox_not_set_up` | gray | No sandbox is configured for this project at all | `ProjectCapabilityStatus.degraded_reason == "no local sandbox configured for this project"` (`NO_SANDBOX_REASON`, compared exactly) |
+| `sandbox_connected` | green | A sandbox is configured and reachable — **also covers the tools-missing condition below**, which renders identically | `ProjectCapabilityStatus.tier is ProjectTier.DEVELOPMENT`; **or** reachable with `SandboxMode is WITH_DATA` and `psql`/`pg_restore` missing from `PATH` (see the tools-missing row) |
 | `sandbox_offline` | red | A sandbox is configured but currently unreachable | `ProjectCapabilityStatus.tier is ProjectTier.QUALITY` with a `degraded_reason` naming an unreachable probe (e.g. `"sandbox unreachable: …"`) |
 
 **Tools-missing is a backing condition, not a 4th icon.** When the sandbox database itself is reachable
 but `psql`/`pg_restore` are not on `PATH` (relevant only when `SandboxMode is WITH_DATA`, matching D2a's
 existing capability distinction; `ProjectCapabilityStatus.tier is ProjectTier.QUALITY` with
 `degraded_reason` naming `pg_dump`/`pg_restore` missing), the node still renders the plain
-`sandbox_connection_ok` (green) icon — there is no separate `sandbox_tools_missing` asset. The detail is
+`sandbox_connected` (green) icon — there is no separate `sandbox_tools_missing` asset. The detail is
 surfaced only in the node's click-through status/help window (below: names the missing tool, links to
 help). **Corrected here** from an earlier reading of this subsection that could be taken to imply a
 4th visual state; the click-through behavior described later in this subsection was already right, this
@@ -4861,10 +5030,8 @@ table is what's been tightened to match it.
 
 This is the fine-grained, live-connectivity state the old conflated `app_*` node used to carry
 (`app_sandbox_not_set_up` / `app_sandbox_connection_ok` / `app_sandbox_offline` from the superseded pass
-map onto `sandbox_not_set_up` / `sandbox_connection_ok` / `sandbox_offline` here). The exact asset-name
-strings above are the spec-maintainer's inference from `ProjectCapabilityStatus.degraded_reason`'s
-existing string shapes, not owner-verbatim — verify against the owner's actual saved image filenames
-before wiring.
+map onto `sandbox_not_set_up` / `sandbox_connected` / `sandbox_offline` here). The stems above are the
+shipped `SandboxState` enum values — the earlier inferred-not-owner-verbatim caveat is retired.
 
 **Absence rule — no sandbox means the sandbox nodes are ABSENT, not grayed out — now covering three
 node families, not two.** When `ProjectCapabilityStatus.degraded_reason == "no local sandbox configured
@@ -4892,7 +5059,7 @@ one uniform "opens an action window":**
   question from the first pass — flagged again in §29, not invented here).
 - **Sandbox — one-step status/help window.** Clicking the Sandbox node opens a window showing
   status/connection details; if the underlying condition is specifically tools-missing (a reachable
-  sandbox with `psql`/`pg_restore` absent from `PATH` — rendered as the same `sandbox_connection_ok`
+  sandbox with `psql`/`pg_restore` absent from `PATH` — rendered as the same `sandbox_connected`
   icon, not a distinct one, per the state table above), the window **names the missing tool** and links
   to a help section. **Verified:**
   the app's only existing help surface is the general **in-app manual** (§24, `resources/manual.md`,
@@ -4917,10 +5084,6 @@ one uniform "opens an action window":**
   action windows are described.
 
 **Explicitly not yet specified (recorded, not blocking):**
-- **Connector states.** Connectors carry state (asset names follow the same `connector_[status]`
-  convention) but the exact state set per connector — e.g. whether the quality→app connector merely
-  mirrors the quality node's reachability, or carries its own richer state — has not been enumerated by
-  the owner.
 - **The App node's action-window contents/behavior.** Flagged explicitly in §29 as an open question —
   implementers must not invent this; it needs a further owner pass. (Quality's, Sandbox's, Sandbox1's and
   Sandbox2's click-through *patterns* are now specified above; App's is the one node whose action-window
@@ -4929,9 +5092,6 @@ one uniform "opens an action window":**
   only existing help surface is the general in-app manual (§24), which has no topic-anchored deep-link
   mechanism today — both the tool-installation help content and any way to jump straight to it are new
   work, not reuse (see above).
-- **Menu/shortcut entry point.** Not designed here: whether "Project Status…" is a Database-menu action,
-  a toolbar button, or something else. Left as an implementation detail, consistent with how §18.7 left
-  its own menu wording unspecified.
 
 **Reuse map.**
 
@@ -5039,18 +5199,22 @@ percentage threshold. phpgen (vendor CLI/GUI) remains available **indefinitely**
 fallback/reference oracle: parity regressions in `re_phpgen` output are caught by diffing against
 phpgen, never assumed away once cutover happens.
 
-**Deferred, not designed here:** once production cutover and/or the custom-PHP editing surface (new
-top-level section, below) exist, a minimal Git integration scoped to `re_phpgen`'s per-project output
-folder becomes a natural next step (status/commit/diff, subprocess-based) — see the forward-reference
-note in the "Custom PHP editing" section; no section number is spent on it yet.
+**Deferred, not designed here:** a minimal Git integration scoped to `re_phpgen`'s per-project output
+folder — see §21's forward-reference paragraph, which is the canonical statement of this deferral.
 
 ---
 
 ## 21. Custom PHP editing
 
-> **Status: target design, not yet implemented.** Nothing in this section exists in the codebase yet
-> — this whole section is specification only, written ahead of build to keep the big picture clear.
-> Scope is deliberately narrow, in the owner's own words: *"php ide from my point of view is a rich
+> **Status: phase 1 built, not fully wired (2026-08-06 audit).** `ui/php_file_tab.py::PhpFileTab`
+> ships (commit `82af729`) — one standalone `.php`/text file per tab, its own dirty state, its own
+> `FindReplaceBar`, save through an injected `resolve_save_path` + `writer` pair, the Ctrl+Z event-filter
+> carve-out, and §22's lint seams (`lint_on_save`, `request_lint()`, `lint_reported`) — and `CenterStage`
+> hosts it in the dynamic key→widget map (`_php_file_tabs`, keyed by `php_tab_key`;
+> `open_php_file_tab`/`close_php_file_tab`/`update_php_file_tab`/`active_php_file_tab`, re-invoking
+> focuses the existing tab). **Remaining gap: the entry point** — `MainWindow` builds no
+> **File ▸ "Open PHP File…"** action (nor drag-drop) yet, so the tab type is unreachable in the running
+> app. Scope is deliberately narrow, in the owner's own words: *"php ide from my point of view is a rich
 > text editor like we already have, adding features one by one. the goal is to have something as
 > useful as notepad++."* This is **not** a new IDE architecture and **not** code intelligence/LSP —
 > it reuses the existing `ui/code_editor.py::CodeEditor` widget (already implemented; already does PHP
@@ -5092,9 +5256,15 @@ folder is the natural next step. Explicitly deferred; no section number spent on
 
 ## 22. Lint integration
 
-> **Status: target design, not yet implemented.** Depends on §21 (Custom PHP editing) existing first —
-> there is nothing to lint before a custom-PHP tab exists. Sequence this **after** §21 in any future
-> work, not concurrently with it.
+> **Status: built, not fully wired (2026-08-06 audit).** The `pgtp_editor/lint/` package ships (commit
+> `90c6806`: `findings.py` — pure stdout/stderr/exit-code parsing into `LintOutcome`/`LintStatus` and
+> ready-to-append `[Lint]` `audit_lines`; `runner.py` — the one injectable process spawn;
+> `config.py` — the `lint_executable_path` key; `service.py` — `LintService.lint_text`, which **never
+> raises**), and `ui/php_file_tab.py` consumes it (§21): the tab owns `lint_on_save`, `request_lint()`
+> and the `lint_reported` signal, and runs the lint off the GUI thread. **Remaining gap: the MainWindow
+> host side** — Tools ▸ "Lint Current File", the "Locate PHP Linter…" action and the Audit-panel append
+> consuming `lint_reported` are not wired yet. The §21-first sequencing held: the lint hangs off §21's
+> tab, which itself shipped first.
 
 - Runs an external linter (`php -l`, optionally full `phpcs`) against the active custom-PHP tab's
   content (§21), either on save (toggleable) or via **Tools ▸ "Lint Current File"**.
@@ -5113,7 +5283,14 @@ folder is the natural next step. Explicitly deferred; no section number spent on
 
 ## 23. MCP integration
 
-> **Status: target design, not yet implemented.** No MCP server/adapter exists in the codebase yet.
+> **Status: built, not fully wired (2026-08-06 audit).** `pgtp_editor/mcp/` ships (commit `09db778`:
+> `server.py` — the stdio JSON-RPC transport, `serve_stdio`/`start_server_thread`; `tools.py` — exactly
+> the six tools below; `providers.py` — `LiveProjectProvider`/`FileProjectProvider`; `serialize.py` —
+> pure data→JSON, never renders a password; plus `__main__.py` for `python -m pgtp_editor.mcp`), and
+> `main.py` carries the **`--mcp`** flag, which runs the headless stdio server instead of the GUI.
+> Importing the package starts nothing — a session begins only via `serve_stdio` or
+> `start_server_thread`. **Remaining gap: the Tools ▸ "Start MCP Server" menu entry** (the GUI-side
+> `LiveProjectProvider` wiring in `MainWindow`) is not wired yet.
 
 - An optional embedded MCP server, **off by default** (opt-in in Preferences) — it exposes project
   data to any connected MCP client, so it must not be silent or default-on.
@@ -5135,11 +5312,11 @@ English Markdown manual bundled at `pgtp_editor/resources/manual.md` (via
 `parse_chapters(md)→list[Chapter{level, title}]` (ATX headings, skips fenced code), `ManualPanel(QTextBrowser)`
 (read-only, external links, `set_markdown`, `scroll_to_chapter(index)`), `ManualContentsPanel(QWidget)`
 (`QTreeWidget`, `chapter_selected(int)`). Center-stage **Manual** tab + left-dock **Contents** tab; **Help
-▸ Manual (F1)**. **20 `##` chapters**, in order: Getting Started · The Project Tree · Properties · The
-Raw XML Editor · Bookmarks · Find, Replace & Find All · The Code Editor · Caption Management · Schema
-Tools · Database Check · DDL Explorer · Table References · Diff / Merge · Validation · Generating PHP ·
-A note on busy feedback · Appearance & Layout · Keyboard Shortcuts · The Manual · Troubleshooting: debug
-mode. Offline, read-only (no editing/searching, single language).
+▸ Manual (F1)**. **The chapter list is owned by the `manual-maintainer` agent** and evolves with every
+feature — this spec deliberately does not enumerate it. `manual.md`'s `##` ATX headings are the source
+of truth, and the Contents tree is derived from them by `parse_chapters`; a feature is not done until
+the manual reflects it (`CLAUDE.md`'s manual policy). Offline, read-only (no editing/searching, single
+language).
 
 ---
 
@@ -5165,7 +5342,9 @@ Only new module: `debuglog.py`. Log dir `%LOCALAPPDATA%\MDS\PGTP Editor\logs\` (
 ## 26. Consolidated menu bar
 
 Final reconciled state (after all overrides — the original top-level "Diff/Merge" menu was folded into
-Tools; "New Project" removed; line-wrap moved to editor context menu):
+Tools; "New Project" removed; line-wrap moved to editor context menu). The removed "New Project" was the
+2026-07-15 **generation stub** (ledger §28); the **New Project…** listed under File below is §18.2's
+later, distinct DDL-project action that merely reuses the same label:
 
 - **File:** Open (Ctrl+O), Open Recent, ⎯, **the §18.2 project action group** (see below), ⎯,
   Save (Ctrl+S), Save As (Ctrl+Shift+S), Revert, Close (Ctrl+W), ⎯, Exit. Real build order in
@@ -5183,7 +5362,8 @@ Tools; "New Project" removed; line-wrap moved to editor context menu):
     full project JSON — identity, `.pgtp` link, both connection profiles including password, deploy
     manifest), and **Deploy .pgtp** (on-demand push of the local `.pgtp` working copy back to the
     sshfs-mounted source; also offered as a close-time convenience prompt, §18.3).
-- **Edit:** Undo (Ctrl+Z), Redo (Ctrl+Y), Cut/Copy/Paste/Delete, Find… (Ctrl+F), Find Next (F3), Find All
+- **Edit:** Undo (Ctrl+Z), Redo (Ctrl+Y), History… (no shortcut — opens the non-modal history-jump
+  navigator, §7), Cut/Copy/Paste/Delete, Find… (Ctrl+F), Find Next (F3), Find All
   (Ctrl+Shift+F), Replace… (Ctrl+R), Replace All (Ctrl+Alt+Return), Select Enclosing Block (Ctrl+Shift+B),
   Select Parent Block (Ctrl+Shift+A), ☐ Auto Parse XML (§9; unchecked by default, in-memory only),
   Preferences.
@@ -5197,8 +5377,9 @@ Tools; "New Project" removed; line-wrap moved to editor context menu):
 - **Bookmarks:** Toggle Bookmark (Ctrl+F2), Next Bookmark (F2), Previous Bookmark (Shift+F2), Clear All
   Bookmarks. Between Tools and Generation. **All four actions follow the active editor tab** (§8): the
   target is resolved at trigger time by `_active_bookmark_editor()` — Edit XSD tab → `stage.xsd_editor`,
-  DDL Explorer tab → `stage.ddl_editor_panel.editor`, any other tab → `stage.xml_editor` — and the menu
-  never switches/reveals a tab. Target design (2026-08-01, not yet implemented, §8/§13): the whole menu
+  DDL Explorer tab → `stage.ddl_editor_panel.editor`, an active DDL object editor tab
+  (`stage.active_ddl_object_panel()`, §18.5) → `panel.editor`, any other tab → `stage.xml_editor` — and
+  the menu never switches/reveals a tab. Target design (2026-08-01, not yet implemented, §8/§13): the whole menu
   and its four actions are disabled together while Caption Mode is active (gutter bookmark toggling stays
   usable).
 - **Schema:** Edit XSD, Edit AutoXSD, Verify XSD, Export XSD, Import XSD — five items (§11). Verify /
@@ -5273,11 +5454,13 @@ Tools; "New Project" removed; line-wrap moved to editor context menu):
   **copies the selection into the console and focuses it without executing** — is a context-menu item
   only, on that tab, with no menu-bar entry and no shortcut: it is a navigation gesture, not a second
   execution path.)
-- **Tools:** Manage Captions…, Caption Filter… (Ctrl+R in caption context), Reparse Raw XML into Tree,
+- **Tools:** Manage Captions…, Caption Filter… (no shortcut on the menu item itself; while Caption Mode
+  is active, window-scoped **Ctrl+F** opens the same non-modal filter dialog and **Ctrl+R** its Replace
+  variant — §13/§27), Reparse Raw XML into Tree,
   Validate Project, Compare/Merge Two Files…, Next/Previous Difference, Apply Changes to Target.
 - **Generation:** Locate PHP Generator Executable…, Generate PHP…, Open Output Folder, panGen (Generate
   Own PHP), rePHPgen (Analyze Gap), Save reJSON…, Locate panGen Runtime….
-- **Help:** Manual (F1), Open Log Folder, Documentation, About.
+- **Help:** Manual (F1), Open Log Folder, About.
 
 Toolbar default: Open, Save, Undo, Redo, Find, Validate, Generate (customizable).
 
@@ -5290,12 +5473,14 @@ Toolbar default: Open, Save, Undo, Redo, Find, Validate, Generate (customizable)
 | Ctrl+O / Ctrl+S / Ctrl+Shift+S / Ctrl+W | Open / Save / Save As / Close | Window. **Save** routes to the active center-stage tab: Raw XML, Edit XSD, or (**implemented**, §18.5) the active DDL object editor tab, where Save persists text only and **never** executes DDL (§7); on that tab the **first** Ctrl+S opens **Save As… (`*.sql`)** and remembers the path, and cancelling that dialog from the close-confirmation prompt **aborts the close**. **Ctrl+Shift+S stays project-only** (`_save_project_as`) and deliberately does **not** re-route to the object tab (§18.5) |
 | Ctrl+Z / Ctrl+Y | Undo / Redo (single step) | Window — project snapshot history (`MainWindow._undo`). **Exception, pinned (implemented, §18.5 carve-out 1):** with the Edit XSD tab or a **DDL object editor tab** active, Ctrl+Z/Ctrl+Y drive **that editor's own native undo stack**. The object tab realizes it with an **event filter** on its editor that accepts the key and calls `editor.undo()`/`redo()` itself, because `CodeEditor` neither consumes nor re-emits the key and the window shortcut would otherwise revert the **Raw XML project buffer** |
 | Ctrl+F / F3 / Ctrl+Shift+F | Find / Find Next / Find All | The **active center-stage tab's own** `FindReplaceBar`, resolved by `_active_find_bar()` — Edit XSD → `stage.xsd_find_replace_bar`, DDL Explorer → `stage.ddl_editor_panel.find_replace_bar`, the DDL object editor tab → its own bar (§18.5, **implemented**), otherwise `stage.find_replace_bar` (revealing the Raw XML tab) (§7/§15). **Find All (Ctrl+Shift+F) is inert in both DDL tabs** — `_populate_find_all_results` understands only `target="raw"`/`"xsd"` (§18.1/§18.5) |
-| Ctrl+R / Ctrl+Alt+Return | Replace / Replace All | Same per-tab routing as Find, but **inert in the DDL Explorer** — that buffer is read-only (`CodeEditor.replace_current_selection` returns early on `isReadOnly()`) — and **live** in the DDL object editor tab (§18.5, **implemented**) (caption: Ctrl+R = Caption Filter) |
+| Ctrl+R / Ctrl+Alt+Return | Replace / Replace All | Same per-tab routing as Find, but **inert in the DDL Explorer** — that buffer is read-only (`CodeEditor.replace_current_selection` returns early on `isReadOnly()`) — and **live** in the DDL object editor tab (§18.5, **implemented**) (overridden while Caption Mode is active — next row) |
+| Ctrl+F / Ctrl+R (Caption Mode override) | Open the caption **Filter** dialog / **Replace** dialog (the shared non-modal `CaptionFindReplaceDialog`, shown via `show()` — §13) | Window-scoped `QShortcut`s enabled **only while Caption Mode is active** (flipped by `_enter_caption_mode`/`_close_caption_mode`, alongside the individually-disabled Edit-menu Find…/Replace… actions); outside Caption Mode both keys mean the Edit-menu Find/Replace rows above. The Tools ▸ Caption Filter… menu item itself carries **no** shortcut |
 | Ctrl+Shift+B / Ctrl+Shift+A | Select Enclosing / Parent Block | Raw XML editor (menu-owned) |
 | Ctrl+click / Alt+click | Jump to matching tag / parent tag | Raw XML editor |
 | Ctrl+F2 / F2 / Shift+F2 | Toggle / Next / Previous Bookmark | The **active editor tab** — Raw XML / Edit XSD / DDL Explorer, plus the DDL object editor tab (§18.5, **implemented**) — resolved at trigger time by `_active_bookmark_editor()`, never switching tabs (Bookmarks menu, §8; disabled in Caption Mode, §13 — target design 2026-08-01) |
-| double-click (line-number gutter zone) | Toggle bookmark on that line | Raw XML editor gutter (target design 2026-08-01, not yet implemented, §8 — additive alongside the existing single-click 12px bookmark strip; NOT gated by Caption Mode) |
+| double-click (line-number gutter zone) | Toggle bookmark on that line | Raw XML editor gutter (settled 2026-08-01, **implemented** — commit `828fe02`, §8 — additive alongside the existing single-click 12px bookmark strip; NOT gated by Caption Mode) |
 | Ctrl+L | Go To XSD (jump to the attribute's definition in curated.xsd; always forces curated mode) | Window-level QAction (also in the Raw XML editor context menu) |
+| Ctrl+Space | Completion popup (`_CompletionPopup`, frameless, non-modal) | Three shipped contexts: the **Raw XML editor**'s schema-driven attribute/value completion (§11), the **DDL object editor tab**'s schema-aware SQL completion (§18.6), and the **Sandbox SQL Console tab** (per the manual's Keyboard Shortcuts chapter, which lists all three; §18.5 D4) |
 | Ctrl+Alt+F | **Format Selection** (§18.4's `format_selection` on the current selection; single undo step on success, `[SQL]` Audit lines + transient underline on refusal) | The DDL object editor tab (**implemented**, §18.5) and — target design, §18.5 D4 — the **Sandbox SQL Console** tab; in both cases only with a non-empty selection, and also a context-menu item. The formatter itself is unchanged: its host set widens from one tab to two. `Ctrl+Shift+F` stays Find All. |
 | Ctrl+Return | **Run** — execute the selection, or the whole buffer when there is no selection, against the **sandbox** (§18.5 D4, target design 2026-08-06) | **Sandbox SQL Console tab only.** This is the one execution gesture that *does* carry a shortcut, and it does not reopen the *"an irreversible outward effect must not be one keystroke away"* rule — that rule is about **irreversibility**, and the sandbox is disposable and `reset()`-able by construction, which is the same asymmetry that authorizes ad-hoc execution at all (D4's safety boundary). Object-changing statements still pass the injected confirmation; there is **no target-database Run**, with or without a shortcut |
 | *(no shortcut, deliberately)* | **Check DDL Object** / **Check without applying** / **Apply to Sandbox** / **Apply to Target Database…** / **Generate Deployment SQL…** / **Deploy this edit…** | Database menu, the DDL object editor tab's context menu, and (for the three check/apply gestures) its button row (§18.5. **Status 2026-08-06:** the tab's own **Apply to Sandbox / Apply to Target… / Deploy this edit…** ship, with the button row appearing only when the corresponding seam is wired; the **Check** gestures wait on `db/ddl_check.py` (D3a), and none of the Database-menu twins exists yet). Apply is an **irreversible outward effect** and must not be one keystroke away; the target-database variant additionally requires a green sandbox validation, refuses a changed signature outright, and confirms naming the object **and** the database. **Deploy this edit…** (§18.5, settled 2026-08-05) is a picker in front of these same three destinations (Apply to Sandbox / Save / Apply to Target Database…) and reuses their existing wiring rather than adding a fourth gesture — likewise deliberately unshortcut. |
@@ -5420,7 +5605,7 @@ is authoritative** (and is what appears in the body above).
 | 2026-08-06 | §18.1 (2026-08-05, Tables-branch widening): *"A DDL table node is **click-only, no context menu** — right-click ▸ Edit…/Check Out remain routine- and trigger-leaf-only, since a whole table has no single `DdlObjectSpan`/source text to hand those entry points"*; mirrored in code by `BrowserPanel.table_selected`'s docstring | **Carve-out for creation (FQ-002).** A table node **does** get a context menu, holding exactly one entry — **Add Trigger…** — which opens the new-trigger dialog (name · timing · events · level · existing-trigger-function chooser) and then a §18.5 editor tab on a `db/ddl_skeleton.py::trigger_skeleton` result. The original narrowing stands **for editing**: Edit… / Check Out for Versioning stay routine- and trigger-leaf-only, because they need a source span. A not-yet-existing object has no source text, so the span limitation does not apply to it. Left-click behavior (`table_selected(TableInfo)` → shared `PropertiesPanel`) is unchanged |
 | 2026-08-06 | §18.5 D1: *"**Two entry points, both right-click, converging on one operation**"* — the editable `DdlObjectEditorPanel` tab was reachable only by Edit… on `BrowserPanel.tree` or inside a span in the read-only `EditorPanel` (plus §18.2's Check Out variant), all of which resolve an **existing** object through `resolve_edit_target` against the live `DatabaseSchema` | **A third, non-edit gesture opens the same tab: creation (FQ-002).** The §18.1 Add Trigger / Add Function-or-Procedure dialogs build a `DdlObjectRef` for an object the database has never heard of and call the same `CenterStage.open_ddl_object_tab(ref, text, …)` with **generated skeleton text** instead of an introspected `RoutineInfo.source`/`TriggerInfo.definition`. `resolve_edit_target` is **not** on this path (it correctly returns `None` for a non-existent object) and remains the single identity-derivation point for the two edit entry points. The panel gains **no** new capability and must not branch on whether the object exists |
 | 2026-08-06 | §18.2/§26 placed the five project actions (**New Project…**, **Open Project…**, **Close Project**, **Project Settings…**, **Deploy .pgtp**) on the **Database** menu, "alongside the existing Connection Setup / Check / DDL Explorer entries", and §26's Database bullet carried their full descriptions | **Spec-vs-reality drift corrected in favor of the shipped code — the five live on the FILE menu**, owner-confirmed. `MainWindow._build_file_menu` builds them as their own separator-delimited group between `Open…` and `Save` (`New Project…`, `Open Project…`, `Close Project`, `Project Settings…`, `Deploy .pgtp`); `_build_database_menu` contains **no** project action. §26's File bullet now carries the group and its descriptions, and the Database bullet states explicitly that these five are not on it (Connection Setup / Check / DDL Explorer and the §18.5 sandbox entries genuinely are). Nothing about the actions' behavior, gating or wiring changes — **menu location only**. `pgtp_editor/resources/manual.md` already documented them as **File ▸ …** and was correct throughout |
-| 2026-08-06 | §17's **two-direction DB Check framing**: two Database-menu items (*Check: XML→Database* / *Check: Database→XML*) driving one `DbCheckPanel` in a hidden `left_tabs` tab, with a direction label in its header, a direction-dependent per-table count suffix (`(P# D# L#)` for DB→XML vs. the aggregate `(×N)` for XML→DB) and a `_last_db_check_direction` cache consulted on reparse | **One Database-menu checkable toggle, one merged "Database/XML Coherence" view, no direction control anywhere** (FQ-003). The direction toggle is **eliminated, not merged**: once DB state and XML state are shown together per relation, there is no remaining choice about which side is ground truth for display — **the DB always is, and the XML is always the interface being checked against it** (requester's core framing). The view has two branches over the same data layer: **Tables and Views** (DB-sourced; per relation a *Database columns* sub-section = today's `ColumnCheck` list with calculated columns shown but never flagged, BUG-006, and a *References* sub-section badge-summarized from the existing `TableCheck.page_count`/`.detail_count`/`.lookup_count` rollups, BUG-026, expandable to the full breadcrumbs) and **Pages** (a **recursive** tree mirroring the real XML depth — Page → bound table + lookup columns → nested Details, each with their own table/lookups/further Details, exactly `visit_detail`'s unlimited recursion; the UI must **not** flatten it to a fixed "Page > Details > Detail > Lookups" shape, and the `"lookup with insert"` `ref_type` stays a distinct badge). One **global mismatch toggle** filters both branches: a Pages node whose target relation is absent from the live DB is flagged **at that reference point** (never as a phantom row under Tables and Views, which stays purely DB-sourced); a real relation with `page_count == detail_count == lookup_count == 0` **is** flagged (requester-confirmed — the toggle is "things needing attention," not strictly "things that are broken"); `ColumnCheck.ok == False` folds in, excluding calculated columns. No mismatch-type enum exists today, so the toggle carries its own predicate. `collect_table_usages` and the existing rollup fields must be reused wholesale — **no parallel counting logic**. The `(P# D# L#)` badge survives as the relation-level form; the aggregate `(×N)` and `_last_db_check_direction` go away with the direction. Rejected alternatives recorded in §17: the connection-optional hybrid with a cross-navigation link (superseded — the motivation is architectural, not a UI convenience), and §18.3's unified-Compare/Deploy rejection, **explicitly distinguished rather than silently re-decided** (that turned on **risk asymmetry** — Compare read-only vs. Deploy destructive — and both surfaces merged here are read-only diagnostics with no write path). Settled design, **not yet implemented** |
+| 2026-08-06 | §17's **two-direction DB Check framing**: two Database-menu items (*Check: XML→Database* / *Check: Database→XML*) driving one `DbCheckPanel` in a hidden `left_tabs` tab, with a direction label in its header, a direction-dependent per-table count suffix (`(P# D# L#)` for DB→XML vs. the aggregate `(×N)` for XML→DB) and a `_last_db_check_direction` cache consulted on reparse | **One Database-menu checkable toggle, one merged "Database/XML Coherence" view, no direction control anywhere** (FQ-003). The direction toggle is **eliminated, not merged**: once DB state and XML state are shown together per relation, there is no remaining choice about which side is ground truth for display — **the DB always is, and the XML is always the interface being checked against it** (requester's core framing). The view has two branches over the same data layer: **Tables and Views** (DB-sourced; per relation a *Database columns* sub-section = today's `ColumnCheck` list with calculated columns shown but never flagged, BUG-006, and a *References* sub-section badge-summarized from the existing `TableCheck.page_count`/`.detail_count`/`.lookup_count` rollups, BUG-026, expandable to the full breadcrumbs) and **Pages** (a **recursive** tree mirroring the real XML depth — Page → bound table + lookup columns → nested Details, each with their own table/lookups/further Details, exactly `visit_detail`'s unlimited recursion; the UI must **not** flatten it to a fixed "Page > Details > Detail > Lookups" shape, and the `"lookup with insert"` `ref_type` stays a distinct badge). One **global mismatch toggle** filters both branches: a Pages node whose target relation is absent from the live DB is flagged **at that reference point** (never as a phantom row under Tables and Views, which stays purely DB-sourced); a real relation with `page_count == detail_count == lookup_count == 0` **is** flagged (requester-confirmed — the toggle is "things needing attention," not strictly "things that are broken"); `ColumnCheck.ok == False` folds in, excluding calculated columns. No mismatch-type enum exists today, so the toggle carries its own predicate. `collect_table_usages` and the existing rollup fields must be reused wholesale — **no parallel counting logic**. The `(P# D# L#)` badge survives as the relation-level form; the aggregate `(×N)` and `_last_db_check_direction` go away with the direction. Rejected alternatives recorded in §17: the connection-optional hybrid with a cross-navigation link (superseded — the motivation is architectural, not a UI convenience), and §18.3's unified-Compare/Deploy rejection, **explicitly distinguished rather than silently re-decided** (that turned on **risk asymmetry** — Compare read-only vs. Deploy destructive — and both surfaces merged here are read-only diagnostics with no write path). Settled design, **not yet implemented** *\[status correction, 2026-08-06 audit — the trailing clause was stale when written into this row: the view has since shipped (`db/coherence.py`, `ui/coherence_panel.py`, the Database-menu toggle; see §17 and the TOC). The design content of this row is unchanged\]* |
 | 2026-08-06 | §18.3 step 2: *"**Any `!`-flagged object blocks deploy of the batch it's part of**"* — read literally, every live-drifted object in the project, whether or not it is part of the batch | **Narrowed to `*!` only: a blocker is a deploy *candidate* (`*`, locally edited) that is **also** live-drifted (`!`).** A `!`-only object is **not** a blocker — with no pending local edit it is not in the batch and nothing would overwrite it, and since §18.5's single-object Apply routinely leaves objects `!`, blocking every deploy on unrelated `!` markers would make the gate un-actionable rather than protective. Everything else about the gate is unchanged: one blocker refuses the **whole** batch, the refusal names **every** blocker, recovery is resolve-then-re-run. Implemented as `db/deploy_bundle.py::deploy_blockers` (candidates ∩ `live_drifted`), with blocked-ness expressed as **data** (`DeployPlan.blockers` non-empty + `bundle is None` + `refusal_message`), and "nothing to deploy" kept as a deliberately distinct outcome |
 | 2026-08-06 | §15's **Table References tab** as an independent left-dock surface: `TableReferencesPanel` in its own hidden `left_tabs` tab ("Table references", `table_refs_tab_index`), revealed by the **View menu** checkable "Find table reference", refreshed on reparse when visible — specified in §15 as a sibling of Search/Find All and cross-referenced from §17 | **Folded into §17's Database/XML Coherence view** (FQ-003, row above). Table references are no longer independently toggleable: they appear as the per-relation **References** sub-section of the *Tables and Views* branch and as the whole **Pages** branch of the merged view. The `table_refs_tab_index` hidden tab and the **View ▸ Find table reference** checkable both **disappear as standalone entry points** (§26's View bullet loses that item); the single Database ▸ **Database/XML Coherence** toggle is the only entry point. §15 keeps a pointer only. The pure analyzer `analysis/reused_tables.py::collect_table_usages` and its `TableUsage`/`TableReference` shapes are **unchanged** and must be reused wholesale by the merged view — this row moves presentation, not analysis. The earlier removal of Tools ▸ "Find Reused Tables…" / `reused_tables_window.py` stands |
 | 2026-08-06 | §29 open question: *"**Execution against the sandbox (§18.5)** — running a function and seeing its results is not designed. It is the difference between a validator and an IDE… Scope it as a follow-on feature or fold it into v1 — undecided."*, mirrored by §18's tier-3 row (*"see the open item below for running a routine against sandbox rows, which is separate and not yet designed"*) | **Closed by owner decision — designed as §18.5 D4, the Sandbox SQL Console.** A single dynamic center tab (`ui/sql_console_panel.py`, keyed `("sandbox-sql",)`) pairing `CodeEditor(language="sql")` with `ui/sql_results_panel.py::SqlResultsPanel`; the Qt-free `db/sandbox_query.py::run_sandbox_query(session, sql, …) -> QueryResult{columns, rows, truncated, row_limit, command_status, duration_ms, error}` running through the **existing** `SandboxSession.executor` (one new `fetch` method with the `cursor.description is None` guard) — **never a new connection-opening function**; `DEFAULT_ROW_LIMIT = 1000` enforced client-side by `fetchmany(row_limit + 1)` (never by rewriting the user's SQL), `truncated` a first-class field so an at-the-cap result and a cut-off result are distinguishable; a **mandatory** `DEFAULT_STATEMENT_TIMEOUT_MS = 30_000` with no "unlimited" setting and **no Cancel button in v1** (stated, with the reason: per-call connections leave no handle to `cancel()`); multi-statement Runs split by the new pure `sql/statements.py::split_statements` over §18.4's **existing** tokenizer, executed in **one committing transaction**, aborted and rolled back whole on failure; object-changing statements (`classify_statement` → `ddl`/`unknown`) gated by the same injected `confirm` seam the Apply gestures use, with the working-set-divergence caveat surfaced rather than papered over. **Safety rule, stated so nobody generalizes it: sandbox-only, enforced structurally** — `run_sandbox_query` takes a `SandboxSession`, never `ConnectionParams`, so execution can only reach an `open_sandbox`-gated, app-owned, `reset()`-able database. The distinction from §18.3's never-auto-execute non-goal is **reversibility**, not deliberateness. No `[Run]`/`[Query]` Audit prefix is created: results and errors live in the console's own panel |
@@ -5429,6 +5614,8 @@ is authoritative** (and is what appears in the body above).
 | 2026-08-06 | §18.5 invariant 1: *"**Two seams, one direction each:** `run_queries` … `apply_ddl` … **Never a third connection-opening function.**"* — written before `db/sandbox.py`'s `SandboxExecutor` shipped, which is in fact a third | **Corrected to three seams, each with one job, and never a fourth**: `run_queries` (read-only, never widened), `apply_ddl` (the DDL write seam, mixed-statement guard + notice capture), and `SandboxExecutor` (`execute`/`query`/`fetch`) — the **sandbox lane's** seam, reachable **only** through an ownership-gated `SandboxSession`, used by `apply`/`applied`/`reset`, `install_plpgsql_check` and D4's `run_sandbox_query`. Its narrowness is not an accident to be tidied away: it *is* D4's safety property, and it is why ad-hoc SQL can never reach production. A code correction is **not** implied — the code was right and the invariant's wording was stale |
 | 2026-08-06 | The one-click **Install plpgsql_check** action had **two specified homes with no stated relationship** — §18.5 D2/§26 (*"inside the Sandbox Setup dialog next to the probe result … not as a separate menu item"*) and §18.8's Sandbox2 action window (*"offers an 'install the plpgsql_check extension' action button … now also reachable from here"*) — flagged as a conflict by the 2026-08-06 audit | **Resolved as one action with two entry points, neither a duplicate.** The single action is `SandboxController.install_plpgsql_check()` → the pure `install_gate` → `db/sandbox.py::install_plpgsql_check(session)`. **Sandbox Setup… is the primary home** (next to the probe result it depends on); §18.8's Sandbox2 window is a **second entry point to that same method**, wired through the shipped zero-argument adapter `on_install_plpgsql_check`, re-deriving no gate, re-typing no reason string and opening no session of its own. Both surfaces show `install_gate`'s reason verbatim on refusal and the same *"already installed."* line when there is nothing to do. Still **no top-level menu item** for it |
 | 2026-08-06 | §7/§4 theme: the QSS layer was **dark-only** — `apply_theme` did `app.setStyleSheet("" if light else _dark_stylesheet())`, with a single `_dark_qss_cache: str \| None` global, and *"light **always** assigns the empty stylesheet … so a light↔dark round-trip never leaves stale dark QSS behind"* was a stated invariant (BUG-010 row, 2026-08-01). Light was therefore Fusion + `light_palette()` only — stock, unstyled chrome | **Both themes get the QDarkStyleSheet QSS** (FQ-005): `_dark_stylesheet()` → **`_qdarkstyle_stylesheet(light: bool)`** caching both variants in **`_qss_cache: dict[bool, str]`** and passing `palette=LightPalette if light else DarkPalette` **explicitly** (dark previously relied on qdarkstyle's implicit default); `apply_theme` calls `app.setStyleSheet(_qdarkstyle_stylesheet(light))` **unconditionally**. **Zero new dependencies** — `qdarkstyle>=3.2` was already pinned and ships `qdarkstyle.light.palette.LightPalette`. The empty-stylesheet clause is **retired**: the new invariant is that a toggle always *replaces* the entire app QSS, so staleness is impossible without an empty state. `light_palette()`/`dark_palette()` are **unchanged** — only the QSS *source* changed, so `XmlEditor.apply_theme_colors` (keyed off palette Base lightness) is unaffected. Rejected vehicles, recorded: `qtass-pyside6` (no license, `requires-python<3.14` vs. the installed 3.14.6, near-zero maintenance signal) and, as the moot fallback, `qt-material` (BSD-2-Clause) — no dependency was needed. Consequent **test-contract** change: a non-empty app QSS wraps the style in Qt's `QStyleSheetStyle` proxy (`objectName() == ""`), which already silently held for dark but was masked by the light-only `"fusion"` read-back assertions; tests now **spy on `QApplication.setStyle`** instead of reading `app.style().objectName()`. Not a functional regression — Fusion is still requested and still governs anything the QSS leaves alone |
+| 2026-08-06 | §18.8's asset pipeline as designed: images "saved locally, not yet wired", `.png` examples (`quality_ok.png`/`quality_ok_drk.png`), wiring left as an "implementation task", state names flagged candidate/not-owner-verbatim (`sandbox_connection_ok`, a Quality `error` state), and **connectors "carry state"** with a `connector_[status]` state set left to enumerate (§29) | **Pinned to the shipped `ui/project_status_model.py` layer.** Assets are **`.svg`-only** in `resources/status/` (`ASSET_EXTENSION = ".svg"`, BUG-029 — the `.png` slices were deleted); each per-family enum's *value* IS the filename stem, resolved via `asset_filename(stem, dark)` with `DARK_SUFFIX = "_drk"` and guarded by `all_asset_stems()`-parametrized tests. Shipped stems: `quality_connection_not_set_up`/`quality_offline`/`quality_connection_ok`; `app_standalone`/`app_project_not_setup`/`app_project_setup`; `sandbox_not_set_up`/`sandbox_connected`/`sandbox_offline`; `sandbox1_empty`/`sandbox1_filled`; `sandbox2_plpgsql_check_installed`/`sandbox2_plpgsql_check_not_installed`. **Connectors are position-keyed and STATELESS** — exactly three assets (`ConnectorKind`: `connector_quality-app`/`connector_app-sandbox`/`connector_sandbox-db`, the third visually splitting after the Sandbox node), no per-state variants; the §29 "connector state set" open question is closed. The 4-way tools-missing backing distinction survives as `SandboxDegradation` for the click-through window, still with no icon of its own |
+| 2026-08-06 | §7: *"Icons are optional. Only the legacy seven have vendored SVGs … every other command is icon-less by design"* — a closed icon universe (seven vendored Breeze SVGs via `ACTION_ICON_FILES`, `ICON_ID_BY_COMMAND` defaults) with no way for a user to assign an icon to any other toolbar command (BUG-027 row, 2026-08-05) | **Any toolbar button is user-decoratable from a vendored Breeze catalog** (FQ-004 — shipped in commit `a12b522`; this row is the mandatory-policy catch-up, folding an already-shipped design into the spec). `ui/icons.py` widens the vendored pack to a curated common-action subset and adds an enumerable, lazily-directory-scanned catalog (`icon_catalog`/`catalog_ids`/`catalog_filename`/`search_catalog`/`human_name_for`; catalog icon ids = SVG filename stems, a second id space beside the legacy action ids, both accepted by `load_svg_text`/`themed_icon`). The Customize Toolbar dialog gains per-row icon previews plus a **Choose Icon…** button / row double-click opening `ui/icon_picker_dialog.py::IconPickerDialog` (searchable icon grid over the catalog; always-first "Default" cell, sentinel `DEFAULT_CHOICE = None`, clears the assignment; test seams `set_filter`/`visible_icon_ids`/`select_icon`/`chosen_icon_id`, never `.exec()`). Assignments `{command_id: catalog_icon_id}` persist in the sibling QSettings key **`toolbarIconIds`** (`serialize_icon_assignments`/`parse_icon_assignments`), pruned on load by `toolbar_registry.resolve_icon_assignments` (legacy ids through `LEGACY_ID_ALIASES`; vanished commands/icons dropped) and resolved per button by `icon_id_for` — assignment wins, else legacy default, else icon-less. "Icons are optional" itself **stands**: an icon is still never a precondition, and with no assignment stored, behavior is exactly pre-FQ-004 |
 
 ---
 
@@ -5448,9 +5635,12 @@ is authoritative** (and is what appears in the body above).
   twice-generate diff runs); flag-mapping residual ambiguity; 8 parked edge pages (471/479 cap).
 - **Event tag naming variants** (e.g. `_SimpleHandler` suffix) — verify normalization before matching the
   9/31 list.
-- **Handler body storage** — confirmed plain XML-escaped text (not CDATA); `<`/`&` escaped on write.
-- **Debug** exclusion list + exact seam set finalized during implementation; `PROFILER_ID` may be taken
-  (must fail gracefully).
+- **~~Debug exclusion list / `PROFILER_ID` availability~~ — RESOLVED (shipped in `debuglog.py`):** the
+  hot-path exclusion list and the seam set are implemented, and the tracer registers as
+  `_TOOL_ID = sys.monitoring.PROFILER_ID` with the existing failure-safe behavior (tracer failure →
+  WARNING + continue, §25). *(The former "handler body storage" entry here stated an answer, not a
+  question — the fact lives in §2's storage invariants and §6's `EventNode`, and was removed from this
+  list.)*
 - **Fold re-scan performance** and `line_index` O(N²) — accepted for now; optimize only if profiling
   demands.
 - **~~§18.4 formatter host, shortcut and audit prefix~~ — RESOLVED 2026-08-02 (§18.5):** the host is the
@@ -5463,11 +5653,11 @@ is authoritative** (and is what appears in the body above).
   sandbox and the target database, each its own explicit, confirm-gated gesture, through the new
   `db/apply.py` write seam; Save and Apply are separate gestures; §18.3's reviewed batch deploy stays
   authoritative when both could apply (§18.2/§18.5, ledger §28).
-- **Overload-rename git handling (§18.2):** when a second overload of an already-checked-out routine
-  first appears, `ddl/public.fmt.sql` must become `ddl/public.fmt(integer).sql`. *When* the tool performs
-  that rename (eagerly at the next introspection, lazily at the next checkout of either overload, or only
-  on explicit user confirmation), and whether it shells out to `git mv` at all — given §18.2's stated
-  preference for keeping correctness-critical logic independent of git plumbing — is unresolved. Doing
+- **Overload-rename *timing* (§18.2):** the collision scheme itself is settled — the `_n` numeric-suffix
+  filenames (ledger §28, the "*Numeric `_n` suffix instead*" row), with a mid-set addition renaming via
+  `git mv` (§18.2). What survives of the original question is only *when* the tool performs that rename:
+  eagerly at the next introspection, lazily at the next checkout of either overload, or only on explicit
+  user confirmation — unresolved. Doing
   nothing is not an option: two overloads would otherwise contend for one path.
 - **The deployment script's content model (§18.5)** — **(a) working set** (everything in the sandbox's
   `applied` table; already available, needs no extra connection, but may carry no-op statements for
@@ -5515,9 +5705,10 @@ is authoritative** (and is what appears in the body above).
   runs automatically on every project **open** (so a sandbox that died between sessions correctly degrades
   the project to quality-project mode for that session) and again on demand whenever the **Project Status
   window (§18.8, RESOLVED 2026-08-05 — see below)** is brought up — it is not cached from creation time.
-  Still open: whether a `pg_dump`/`pg_restore`-on-`PATH` check is folded into the same probe (to
-  gate/offer D2a's "with data" choice) or deferred until "with data" is actually chosen and then fails
-  lazily and namedly.
+  The `pg_dump`/`pg_restore`-on-`PATH` sub-question is also resolved, by the shipped `db/sandbox.py`:
+  the check is **folded into the same probe** (`SandboxCapabilities.pg_dump_path`/`.pg_restore_path`,
+  filled via the injectable `which=shutil.which` seam), and `require_data_clone_tools` re-checks
+  namedly at clone time.
 - **~~The "Project Status" window/screen — layout and behavior~~ — RESOLVED 2026-08-05 (§18.8), corrected
   same day to a 5-node model:** the window is a small node-and-connector diagram, read as a horizontal
   chain: **quality → app → sandbox → (sandbox1 / sandbox2)**, the last connector splitting after the
@@ -5539,11 +5730,12 @@ is authoritative** (and is what appears in the body above).
   need a live `SandboxSession` no UI can create until §18.5's sandbox lane lands, so `MainWindow` passes
   `None` for both callbacks and the panel hides them (§18.8). The window's **entry point is settled and
   shipped: Database ▸ Project Status…, no shortcut** (§26/§18.8).
-  Also still unspecified: the exact connector state set (asset names follow `connector_[status]` but the
-  states themselves aren't enumerated), and the
+  The connector-state question is **resolved** (2026-08-06, ledger §28): connectors shipped
+  **stateless and position-keyed** (`ConnectorKind`, one asset each), so no per-connector state set
+  remains to enumerate. Still unspecified: the
   Sandbox node's tools-missing help-section content/deep-link mechanism (verified: the app's only
   existing help surface, the in-app manual §24, has no topic-anchor/deep-link mechanism today — both are
-  new work) — all left as either a future spec detail or an implementation detail per §18.8.
+  new work) — left as either a future spec detail or an implementation detail per §18.8.
   **Implementation note:** `ProjectTier`
   (`pgtp_editor/db/sandbox.py`) is a 2-member enum (`QUALITY`/`DEVELOPMENT`) with no tier-1 member at
   all — the corrected 3-state App node's `app_standalone` state must be derived from "no project is
@@ -5570,19 +5762,25 @@ is authoritative** (and is what appears in the body above).
      `unknown`) while this node has only 2 icons; collapsing `installable`/`absent`/`unknown` onto the
      single `not_installed` icon is a reasonable implementation default but is not owner-confirmed (§18.8
      reuse map).
-  3. **Dark-mode asset convention — confirmed reuse, not a new mechanism, but verify the hook point at
-     implementation time.** Every image asset gets a `_drk`-suffixed dark-theme counterpart
-     (`quality_ok.png` / `quality_ok_drk.png`). The app's theme selection is the existing user-toggled
+  3. **Dark-mode asset convention — confirmed reuse, not a new mechanism; shipped.** Every image asset
+     gets a `_drk`-suffixed dark-theme counterpart (`quality_connection_ok.svg` /
+     `quality_connection_ok_drk.svg` — `.svg`-only per BUG-029, resolved through
+     `ui/project_status_model.py::asset_filename(stem, dark)`). The app's theme selection is the existing user-toggled
      **Light Theme** menu checkbox (`ui/theme.py::apply_theme`, `MainWindow._light_theme_action`) — there
      is no OS/system dark-mode *detection* anywhere in `pgtp_editor/` today. The `_drk`-vs-plain asset
      choice should key off this existing toggle's boolean state, not a new detection mechanism; this is
      recorded as confirmed-available reuse, not a gap, but is called out here because it was easy to
      mistake for requiring new OS-theme-detection capability.
-- **`db/routine_refs.py` (§18.1's one unbuilt piece)** — XML↔routine cross-referencing, answering *"which
-  `.pgtp` pages break if I change this function?"* before a deployment script is generated. **No other
-  tool can do this**, and it is the XML↔DB sync the owner describes as the point of the app (§1). Not
-  designed; a strong candidate for the next design pass rather than an open question about existing
-  design.
+- **`db/routine_refs.py`'s UI consumer (§18.1's remaining gap)** — XML↔routine cross-referencing,
+  answering *"which `.pgtp` pages break if I change this function?"* before a deployment script is
+  generated. **No other tool can do this**, and it is the XML↔DB sync the owner describes as the point
+  of the app (§1). The pure layer is **no longer the open part**: `db/routine_refs.py` shipped (commit
+  `956e8fb`, tested — `RoutineReference` with `breadcrumb`/`ref_type`, `RoutineUsage` with the overload
+  `ambiguous` flag, `collect_routine_references`/`routine_reference_index`, §18.1). What remains
+  undesigned is the **UI consumer**: which surface presents the usages (a `BrowserPanel` sub-branch,
+  the Properties panel, §17's coherence view, …) and drives the cross-buffer `EditorPanel`-tab →
+  Raw-XML-tab navigation. Nothing in `ui/` calls the module yet; a strong candidate for the next
+  design pass.
 - **Project-relative paths when the folder moves (§18.2).** *(Narrowed 2026-08-03: the merged project
   JSON now holds the connection profiles directly, so the QSettings-key portion of this question is
   largely moot for project-scoped connections — see §18.2's "Path computation"/"Project settings"
@@ -5594,12 +5792,14 @@ is authoritative** (and is what appears in the body above).
   revision (probably not, since nothing has shipped yet); (b) whether the optional `.pgtp` link inside
   the JSON is stored relative to the project root or absolute (relative survives a folder move without
   edits; absolute is simpler to implement first).
-- **§18.5 D2a — `pg_dump`/`pg_restore` invocation details.** Not designed: whether the app searches
-  `PATH` only or also offers a configurable binary location (mirroring §26's "Locate PHP Generator
-  Executable…" precedent, which this feature's Database-menu text explicitly declines to add a parallel
-  of for v1); the exact dump format/flags (custom-format `-Fc` is the natural default for piping into
-  `pg_restore`, but this is not pinned); whether large-database cloning needs a progress indicator beyond
-  the existing `busy_status` spinner; and whether/how a version mismatch between the target server's
+- **§18.5 D2a — `pg_dump`/`pg_restore` invocation details — largely ANSWERED by the shipped
+  `db/sandbox.py`:** binaries are found on **`PATH` only**, via the injectable `which=shutil.which`
+  seam (`probe` / `require_data_clone_tools`) — no configurable binary location shipped; the dump
+  format is pinned to **`--format=custom`** (`clone_data`); and the on-`PATH` check is folded into the
+  capability probe (`SandboxCapabilities.pg_dump_path`/`.pg_restore_path`), with
+  `require_data_clone_tools` failing namedly at clone time. Still open: whether large-database cloning
+  needs a progress indicator beyond
+  the existing `busy_status` spinner, and whether/how a version mismatch between the target server's
   `pg_dump` requirements and the binary found on `PATH` is detected and reported. Flag back to the user
   rather than guess.
 - **§18.7 — sandbox destroyed/reset while its DDL Explorer instance is open.** Not designed: whether the
@@ -5620,8 +5820,17 @@ is authoritative** (and is what appears in the body above).
 - Every completed feature triggers the **`feature-tester`** agent and produces a `docs/TEST_LOG.md`
   entry (append-only, newest at top). A feature without a green feature-tester run + log entry is not
   done.
-- Use the **system `python`** (editable install with pytest/pytest-qt); the repo `venv\` is bare.
-  Full suite: `$env:QT_QPA_PLATFORM='offscreen'; python -m pytest -q`.
+- **The interpreter is platform-dependent — confirm by import check, never assume.** On Windows the
+  project is typically installed editable into the **system `python`** (the repo `venv\` is a bare
+  leftover without pytest); on Linux it is the reverse — the repo's **`venv/bin/python`** carries
+  pytest/pytest-qt/pytest-xdist and the system `python` does not. Use whichever
+  `… -c "import pytest, PySide6"` succeeds.
+- Qt runs headless via **`QT_QPA_PLATFORM=offscreen`**, and the **full suite runs in parallel with
+  `-n 10`** (pytest-xdist, ~2.5 min) — serial runs take ~8 min and can produce spurious per-test
+  pytest-timeout failures that do **not** reproduce under `-n 10`; never diagnose those as regressions,
+  re-run in parallel first. PowerShell: `$env:QT_QPA_PLATFORM='offscreen'; python -m pytest -q -n 10`;
+  bash/zsh: `QT_QPA_PLATFORM=offscreen venv/bin/python -m pytest -q -n 10`. Never pipe a suite run
+  through `tail` (it discards the failing test's name) — filter with `grep -E "passed|failed|^FAILED"`.
 - Tests mirror the package: `pgtp_editor/<area>/foo.py` → `tests/<area>/test_foo.py`.
 - **Never let a test reach an un-patched modal Qt call** (`QDialog.exec`, `QMessageBox.*`,
   `QFileDialog.*`, `QMenu.exec`) — monkeypatch them. Widgets expose test seams (`selected_ids`,
