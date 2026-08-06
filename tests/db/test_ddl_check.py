@@ -10,6 +10,8 @@ did not run must never be reportable as clean. Each "could not check" path is
 asserted to produce its OWN reason, not merely a falsy finding list.
 """
 
+import dataclasses
+
 import pytest
 
 from pgtp_editor.db import ddl_check
@@ -34,7 +36,7 @@ from pgtp_editor.db.ddl_check import (
     run_plpgsql_check,
     severity_for_level,
 )
-from pgtp_editor.db.sandbox import SandboxCapabilities, UnsafeIdentifierError
+from pgtp_editor.db.sandbox import AppliedObject, SandboxCapabilities, UnsafeIdentifierError
 
 PARAMS = ConnectionParams(host="h", port=5432, database="pgtp_sandbox_x", user="u")
 
@@ -468,6 +470,179 @@ def test_from_ref_reads_a_duck_typed_ddl_object_ref():
     request = CheckRequest.from_ref(ref, BUFFER)
     assert request.identity == "pr.f(integer)"
     assert request.buffer_text == BUFFER
+
+
+# --- the working-set sweep (§18.5 D3a) ------------------------------------
+#
+# The sweep is specified as a PURE LOOP over `SandboxSession.applied()` that
+# calls the same `recheck` entry point per row, so these tests assert the seam
+# and the loop -- never a second reporting path. A stub session and a stub
+# `recheck` mean nothing here can reach a database.
+
+class _SweepSession:
+    """A `SandboxSession` slice with a canned `applied()` working set."""
+
+    def __init__(self, *rows):
+        self.params = PARAMS
+        self.executor = self
+        self.rows = list(rows)
+
+    def applied(self):
+        return list(self.rows)
+
+    def query(self, params, sql):  # pragma: no cover -- must never be called
+        raise AssertionError("the sweep must never reach an executor")
+
+
+def _applied(kind="function", schema_name="pr", object_name="f", table_name=""):
+    """One real `applied` bookkeeping row -- the shape the sweep iterates."""
+    return AppliedObject(
+        kind=kind,
+        schema_name=schema_name,
+        object_name=object_name,
+        table_name=table_name,
+        applied_at="2026-08-06T00:00:00+00:00",
+        text_sha1="deadbeef",
+    )
+
+
+class _StubRecheck:
+    """A stub `recheck`: records every call and returns a queued report (or
+    raises a queued exception) per invocation."""
+
+    def __init__(self, *results):
+        self.results = list(results)
+        self.calls = []
+
+    def __call__(self, session, request, caps, *, query=None):
+        self.calls.append((session, request, caps, query))
+        result = self.results.pop(0) if self.results else _passed("queued out")
+        if isinstance(result, Exception):
+            raise result
+        return result
+
+
+def _passed(reason="clean"):
+    return CheckReport(tier3=ddl_check.TierOutcome(status=STATUS_PASSED, reason=reason))
+
+
+def test_sweep_of_an_empty_working_set_is_an_empty_dict():
+    stub = _StubRecheck()
+    reports = ddl_check.check_working_set(_SweepSession(), _caps(), recheck=stub)
+    assert reports == {}
+    assert stub.calls == []
+
+
+def test_sweep_maps_each_row_to_its_own_report():
+    session = _SweepSession(
+        _applied(object_name="f"),
+        _applied(kind="procedure", object_name="p"),
+        _applied(kind="trigger", object_name="trg", table_name="orders"),
+    )
+    first, second, third = _passed("f"), _passed("p"), _passed("trg")
+    stub = _StubRecheck(first, second, third)
+
+    reports = ddl_check.check_working_set(session, _caps(), recheck=stub)
+
+    assert reports == {
+        ("function", "pr", "f", ""): first,
+        ("procedure", "pr", "p", ""): second,
+        ("trigger", "pr", "trg", "orders"): third,
+    }
+    # Every value is the report `recheck` produced, untouched -- the sweep is
+    # not a second reporting path.
+    assert [r.tier3.reason for r in reports.values()] == ["f", "p", "trg"]
+
+
+def test_sweep_calls_the_recheck_seam_once_per_row_with_that_row_s_ref():
+    session = _SweepSession(
+        _applied(object_name="f"),
+        _applied(schema_name="app", object_name="g"),
+    )
+    stub = _StubRecheck()
+    query = _Query()  # never popped from: the stub never runs SQL
+
+    ddl_check.check_working_set(session, _caps(), recheck=stub, query=query)
+
+    assert len(stub.calls) == len(session.rows)
+    identities = [call[1].identity for call in stub.calls]
+    assert identities == ["pr.f()", "app.g()"]
+    for call_session, _request, caps, passed_query in stub.calls:
+        assert call_session is session       # the same session, not a copy
+        assert caps is not None and passed_query is query
+    assert query.sql == []
+
+
+def test_sweep_passes_no_sql_of_its_own_and_composes_no_request_for_a_trigger():
+    # A trigger row carries no referenced function, so the request the sweep
+    # builds is the one `recheck` already reports as unavailable -- the sweep
+    # does not invent a function name for it.
+    session = _SweepSession(_applied(kind="trigger", object_name="trg", table_name="orders"))
+    stub = _StubRecheck()
+    ddl_check.check_working_set(session, _caps(), recheck=stub)
+    (request,) = [call[1] for call in stub.calls]
+    assert request.is_trigger
+    assert request.function_name is None
+    assert request.table == "orders"
+    # ...and the real entry point reports that honestly rather than guessing.
+    report = recheck(_Session(), request, _caps(), query=_Query())
+    assert report.tier3.status == STATUS_UNAVAILABLE
+    assert report.tier3.reason == ddl_check.REASON_TRIGGER_FUNCTION_UNKNOWN
+
+
+def test_sweep_row_whose_recheck_raises_does_not_abort_the_sweep():
+    session = _SweepSession(
+        _applied(object_name="f"),
+        _applied(object_name="boom"),
+        _applied(object_name="g"),
+    )
+    good, other = _passed("f"), _passed("g")
+    stub = _StubRecheck(good, UnsafeIdentifierError("boom"), other)
+
+    reports = ddl_check.check_working_set(session, _caps(), recheck=stub)
+
+    # Every applied row still has an entry -- a dropped row would read as a
+    # smaller working set.
+    assert set(reports) == {
+        ("function", "pr", "f", ""),
+        ("function", "pr", "boom", ""),
+        ("function", "pr", "g", ""),
+    }
+    failed = reports[("function", "pr", "boom", "")]
+    assert failed.tier3.status == STATUS_ERRORED
+    assert "boom" in failed.tier3.reason
+    assert failed.ran is False        # never readable as green
+    assert failed.findings == ()
+    # The rows after the failure were still checked.
+    assert reports[("function", "pr", "g", "")] is other
+    assert len(stub.calls) == 3
+
+
+def test_sweep_default_recheck_is_the_modules_own_gesture():
+    import inspect
+
+    default = inspect.signature(ddl_check.check_working_set).parameters["recheck"].default
+    assert default is ddl_check.recheck
+
+
+def test_request_from_applied_degrades_honestly_rather_than_guessing():
+    request = ddl_check.request_from_applied(_applied(object_name="f"))
+    assert request.arg_types == ()      # the bookkeeping table records none
+    assert request.buffer_text == ""    # so findings get no line, not a wrong one
+    assert ddl_check.applied_ref(_applied()) == ("function", "pr", "f", "")
+
+
+def test_sweep_reads_the_real_applied_object_shape():
+    # Guards against the row shape being guessed from prose: these are the
+    # bookkeeping table's actual columns.
+    assert [f.name for f in dataclasses.fields(AppliedObject)] == [
+        "kind",
+        "schema_name",
+        "object_name",
+        "table_name",
+        "applied_at",
+        "text_sha1",
+    ]
 
 
 # --- read-only / no connection --------------------------------------------

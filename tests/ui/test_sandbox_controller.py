@@ -29,6 +29,7 @@ from pgtp_editor.db.sandbox import (
     SandboxSession,
 )
 from pgtp_editor.ui.sandbox_controller import (
+    DESTRUCTIVE_OPERATIONS,
     SandboxController,
     SandboxOperation,
 )
@@ -86,6 +87,27 @@ class RecordingSession(SandboxSession):
         self.reset_calls += 1
 
 
+class FakeTier:
+    """A duck-typed `ddl_check.TierOutcome` -- the controller reads `status`,
+    `reason` and (through the report) `ran`, nothing else."""
+
+    def __init__(self, status="passed", reason="") -> None:
+        self.status = status
+        self.reason = reason
+
+
+class FakeReport:
+    """A duck-typed `ddl_check.CheckReport`. The controller must read reports by
+    attribute (the same discipline `tier_outcomes`/`report_blockers` use), so a
+    three-attribute stub has to be enough -- if it ever isn't, the controller has
+    started depending on `ddl_check`'s concrete types."""
+
+    def __init__(self, *, ran=True, findings=(), tier3=None) -> None:
+        self.ran = ran
+        self.findings = tuple(findings)
+        self.tier3 = tier3 if tier3 is not None else FakeTier()
+
+
 class Layer:
     """One recording stand-in for every injected `db/sandbox.py` seam."""
 
@@ -100,9 +122,14 @@ class Layer:
         self.install_calls: list[SandboxSession] = []
         self.snapshot_calls: list[ConnectionParams] = []
         #: Set to an exception to make the matching seam raise.
+        self.check_calls: list[tuple] = []
+        #: What the injected ladder seam hands back (§18.5 D3a).
+        self.report = FakeReport()
+        #: Set to an exception to make the matching seam raise.
         self.open_error: BaseException | None = None
         self.clone_error: BaseException | None = None
         self.install_error: BaseException | None = None
+        self.check_error: BaseException | None = None
 
     def prober(self, params):
         self.probe_calls.append(params)
@@ -135,6 +162,12 @@ class Layer:
         self.snapshot_calls.append(target_params)
         return "SNAPSHOT"
 
+    def checker(self, session, request, caps, **kwargs):
+        self.check_calls.append((session, request, caps))
+        if self.check_error is not None:
+            raise self.check_error
+        return self.report
+
 
 class SyncRunner:
     """The synchronous stand-in for `ui/async_task.py::run_async` — records
@@ -160,7 +193,10 @@ class SyncRunner:
 def _controller(layer: Layer, *, confirm=True, mode=SandboxMode.SCHEMA_ONLY, **kwargs):
     """A controller wired to `layer`, bound to a project, with a synchronous
     executor seam. Returns `(controller, runner, results)`."""
-    confirm_seam = None if confirm is None else (lambda warning: confirm)
+    if callable(confirm):  # a spy, for tests that assert it is NOT consulted
+        confirm_seam = confirm
+    else:
+        confirm_seam = None if confirm is None else (lambda warning: confirm)
     controller = SandboxController(
         confirm_destructive=confirm_seam,
         prober=layer.prober,
@@ -170,6 +206,7 @@ def _controller(layer: Layer, *, confirm=True, mode=SandboxMode.SCHEMA_ONLY, **k
         cloner=layer.cloner,
         installer=layer.installer,
         snapshotter=layer.snapshotter,
+        checker=layer.checker,
         **kwargs,
     )
     runner = SyncRunner()
@@ -519,6 +556,174 @@ def test_install_plpgsql_check_reports_the_gates_reason_when_absent():
     assert layer.install_calls == []
     assert results[-1].ok is False
     assert "C library on disk" in results[-1].reason
+
+
+# ---------------------------------------------------------------------------
+# 5. §18.5 D3a -- the Check run
+#
+# The ladder itself lives in db/ddl_check.py and is proven there; these tests
+# assert only what the *host* can get wrong: that CHECK is non-destructive, that
+# it runs off the GUI thread, and that no outcome of it is ever silent.
+# ---------------------------------------------------------------------------
+REQUEST = object()  # opaque on purpose: the controller must pass it through
+
+
+def test_check_is_not_a_destructive_operation():
+    assert SandboxOperation.CHECK not in DESTRUCTIVE_OPERATIONS
+    assert SandboxController.is_destructive(SandboxOperation.CHECK) is False
+    assert SandboxController.destructive_warning(SandboxOperation.CHECK) == ""
+
+
+def test_a_check_run_never_consults_the_confirmation_seam():
+    asked = []
+    layer = Layer()
+    controller, _, results = _controller(layer, confirm=lambda warning: asked.append(warning) or True)
+    controller.open_session()
+
+    controller.run_check(REQUEST)
+
+    assert asked == []  # D3a: non-destructive -- no confirm_destructive prompt
+    assert results[-1].operation is SandboxOperation.CHECK
+    assert results[-1].ok is True
+
+
+def test_check_runs_off_thread_and_reports_the_report_it_got():
+    layer = Layer()
+    controller, runner, results = _controller(layer)
+    controller.open_session()
+    before = runner.calls
+
+    controller.run_check(REQUEST)
+
+    # The ladder was called once, with the live session, the request verbatim
+    # and the probed capabilities -- and off the GUI thread.
+    assert layer.check_calls == [(layer.session, REQUEST, layer.caps)]
+    assert runner.calls == before + 1
+    result = results[-1]
+    assert result.operation is SandboxOperation.CHECK
+    assert result.ok is True and result.reason == ""
+    assert result.report is layer.report
+
+
+def test_check_with_findings_is_not_ok_and_still_delivers_the_report():
+    layer = Layer()
+    layer.report = FakeReport(
+        findings=(("ERROR", 3, "too few parameters"), ("WARNING", 4, "unused")),
+        tier3=FakeTier(status="found_issues"),
+    )
+    controller, _, results = _controller(layer)
+    controller.open_session()
+
+    controller.run_check(REQUEST)
+
+    assert results[-1].ok is False
+    assert "2 findings" in results[-1].reason
+    # The findings channel is the report, not the reason string.
+    assert results[-1].report is layer.report
+
+
+def test_an_unavailable_tier_reports_that_tiers_own_reason_verbatim():
+    layer = Layer()
+    layer.report = FakeReport(
+        ran=False,
+        tier3=FakeTier(status="unavailable", reason="plpgsql_check is not installed."),
+    )
+    controller, _, results = _controller(layer)
+    controller.open_session()
+
+    controller.run_check(REQUEST)
+
+    assert results[-1].ok is False
+    assert results[-1].reason == "plpgsql_check is not installed."
+    assert results[-1].report is layer.report
+
+
+def test_a_report_that_did_not_run_and_states_nothing_is_still_not_clean():
+    layer = Layer()
+    layer.report = FakeReport(ran=False, tier3=FakeTier(status="", reason=""))
+    controller, _, results = _controller(layer)
+    controller.open_session()
+
+    controller.run_check(REQUEST)
+
+    assert results[-1].ok is False
+    assert "did not run" in results[-1].reason
+
+
+def test_a_raising_ladder_is_a_stated_failure_not_an_exception():
+    layer = Layer()
+    layer.check_error = RuntimeError("relation \"pg_proc\" does not exist")
+    controller, _, results = _controller(layer)
+    controller.open_session()
+
+    controller.run_check(REQUEST)  # must not raise
+
+    assert results[-1].ok is False
+    assert results[-1].reason == 'relation "pg_proc" does not exist'
+    assert results[-1].report is None  # no report is NOT a clean report
+
+
+def test_check_without_a_session_is_a_stated_refusal_and_no_gesture():
+    layer = Layer()
+    controller, runner, results = _controller(layer)
+
+    assert controller.can_check is False  # the host hides the control entirely
+    controller.run_check(REQUEST)
+
+    assert results[-1].operation is SandboxOperation.CHECK
+    assert results[-1].ok is False
+    assert "no sandbox session" in results[-1].reason
+    assert results[-1].report is None
+    assert layer.check_calls == [] and runner.calls == 0
+
+
+def test_can_check_follows_the_live_session():
+    layer = Layer()
+    controller, _, _ = _controller(layer)
+    controller.open_session()
+    assert controller.can_check is True
+
+    controller.close_session()
+    assert controller.can_check is False
+
+
+def test_can_check_stays_true_when_plpgsql_check_is_absent():
+    # An unavailable tier 3 is a reported OUTCOME, not a missing gesture.
+    layer = Layer(caps=_caps(available_extensions=frozenset()))
+    controller, _, _ = _controller(layer)
+    controller.open_session()
+
+    assert controller.can_check is True
+
+
+def test_check_without_a_request_is_a_stated_refusal():
+    layer = Layer()
+    controller, runner, results = _controller(layer)
+    controller.open_session()
+    before = runner.calls
+
+    controller.run_check(None)
+
+    assert results[-1].ok is False
+    assert "nothing to check" in results[-1].reason
+    assert layer.check_calls == [] and runner.calls == before
+
+
+def test_check_probes_inside_the_worker_when_capabilities_are_unknown():
+    layer = Layer()
+    controller, _, results = _controller(layer)
+    controller.open_session()
+    controller._capabilities = None  # as if nothing had probed yet
+    before = len(layer.probe_calls)
+
+    controller.run_check(REQUEST)
+
+    # Capabilities are never guessed: a fresh probe feeds the ladder's gate,
+    # and the result is cached and reported.
+    assert len(layer.probe_calls) == before + 1
+    assert layer.check_calls[-1][2] == layer.caps
+    assert controller.capabilities == layer.caps
+    assert results[-1].capabilities == layer.caps
 
 
 def test_zero_argument_adapters_match_the_project_status_panels_callbacks():

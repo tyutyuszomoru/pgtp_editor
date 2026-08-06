@@ -819,6 +819,120 @@ def recheck(
     return run_plpgsql_check(session, request, caps, query=query)
 
 
+# ---------------------------------------------------------------------------
+# Working-set sweep -- a loop over `recheck`, deliberately not a mechanism
+# ---------------------------------------------------------------------------
+
+#: The key of one working-set row: the `(kind, schema_name, object_name,
+#: table_name)` 4-tuple that is the `applied` bookkeeping table's PRIMARY KEY
+#: and *already* what `SandboxSession.apply` calls a `ref`. Reused verbatim
+#: rather than invented here so the sweep's dict keys join up with the rows the
+#: deployment generator reads -- and so nothing has to hash an `AppliedObject`
+#: whose `applied_at`/`text_sha1` change on every re-apply.
+WorkingSetRef = tuple[str, str, str, str]
+
+#: Reason for a row whose `recheck` raised instead of returning a report. See
+#: `check_working_set` for why the sweep catches this rather than propagating.
+REASON_SWEEP_ROW_ERRORED = (
+    "checking this working-set row raised instead of reporting: {error} -- the "
+    "sweep continued with the remaining rows; this one was NOT linted."
+)
+
+
+def applied_ref(row: Any) -> WorkingSetRef:
+    """The `WorkingSetRef` of one duck-typed `db/sandbox.py::AppliedObject`."""
+    return (
+        str(getattr(row, "kind", "")),
+        str(getattr(row, "schema_name", "")),
+        str(getattr(row, "object_name", "")),
+        str(getattr(row, "table_name", "")),
+    )
+
+
+def request_from_applied(row: Any) -> CheckRequest:
+    """Adapt one `applied` bookkeeping row into a `CheckRequest`.
+
+    **This is an adapter, not a second request builder.** The bookkeeping table
+    records `(kind, schema_name, object_name, table_name, applied_at,
+    text_sha1)` and nothing else — notably **no argument types, no buffer text
+    and, for a trigger, no referenced function**. So the honest consequences,
+    all of which land on paths this module already reports rather than on new
+    ones:
+
+    - an overloaded routine resolves as `schema.name()` and, when no zero-arg
+      overload exists, comes back `REASON_OBJECT_ABSENT` — unavailable, never
+      clean;
+    - a trigger row has no `function_schema`/`function_name`, so `recheck`
+      returns `REASON_TRIGGER_FUNCTION_UNKNOWN` — again unavailable;
+    - `buffer_text` is empty, so every finding's `line` is `None` and is
+      rendered without a line (§18.5 D3's "never guess").
+
+    A caller that *has* the tabs (which do carry arg types and buffer text) is
+    expected to pass its own `request_for=` to `check_working_set` instead of
+    accepting these degradations.
+    """
+    kind, schema_name, object_name, table_name = applied_ref(row)
+    return CheckRequest(
+        kind=kind,
+        schema=schema_name,
+        name=object_name,
+        table=table_name or None,
+    )
+
+
+def check_working_set(
+    session: Any,
+    caps: SandboxCapabilities,
+    *,
+    recheck: Callable[..., CheckReport] = recheck,
+    request_for: Callable[[Any], CheckRequest] = request_from_applied,
+    query: Query | None = None,
+) -> dict[WorkingSetRef, CheckReport]:
+    """Check every object in the sandbox's working set: `{ref: CheckReport}`.
+
+    §18.5 D3a specifies this as a **pure loop, not a second mechanism** — it
+    iterates `SandboxSession.applied()` and calls the *same* `recheck` entry
+    point once per row. It composes no SQL, knows nothing about tiers or
+    findings, and is not a second reporting path: every value in the returned
+    dict is whatever `recheck` produced, unmodified. Anything a sweep would
+    want to "improve" belongs in `recheck`, where the single-object gesture
+    gets it too.
+
+    `recheck` is injected (keyword-only, defaulting to this module's real
+    gesture) purely so a test can assert the seam is called once per row
+    without a database; `query` is passed straight through to it, per this
+    module's "no entry point opens a connection" rule.
+
+    **It exists for Generate Deployment SQL's future "is everything in the
+    desired state green?" question and deliberately gets no menu entry, no
+    button and no other UI in this pass** — a control for a consumer that does
+    not exist yet is a dead control (§18.5 carve-out 2). Do not wire it.
+
+    **A row that fails does not abort the sweep, and does not vanish from the
+    result either.** `recheck` is documented never to raise for a runtime
+    problem, but it deliberately lets a `UnsafeIdentifierError` through, and an
+    injected `recheck` is not bound by that contract at all. Dropping such a
+    row would shrink the result, and a shorter result is indistinguishable from
+    a smaller working set — the same lie `parse_findings` refuses to tell about
+    findings. So the exception becomes that row's own `errored` `CheckReport`
+    (`verified` False, `ran` False): the caller sees one entry per applied row,
+    and the failed one reads as "could not check", never as green.
+    """
+    reports: dict[WorkingSetRef, CheckReport] = {}
+    for row in session.applied():
+        ref = applied_ref(row)
+        try:
+            reports[ref] = recheck(session, request_for(row), caps, query=query)
+        except Exception as exc:  # noqa: BLE001 -- per-row containment; see docstring
+            reports[ref] = _unavailable_report(
+                TierOutcome(
+                    status=STATUS_ERRORED,
+                    reason=REASON_SWEEP_ROW_ERRORED.format(error=exc),
+                )
+            )
+    return reports
+
+
 #: Kept for callers that want the caveat list without running anything (e.g.
 #: a "what does Check actually cover?" affordance). A tuple, not a list, so a
 #: caller cannot mutate the shared text.
@@ -842,6 +956,7 @@ __all__ = [
     "REASON_NOT_INSTALLED",
     "REASON_OBJECT_ABSENT",
     "REASON_RELATION_ABSENT",
+    "REASON_SWEEP_ROW_ERRORED",
     "REASON_TIER_NOT_BUILT",
     "REASON_TRIGGER_FUNCTION_UNKNOWN",
     "REASON_UNKNOWN_CAPABILITY",
@@ -851,14 +966,18 @@ __all__ = [
     "STATUS_UNAVAILABLE",
     "TIER_NOT_BUILT",
     "TierOutcome",
+    "WorkingSetRef",
+    "applied_ref",
     "blind_spots",
     "body_line_offset",
     "build_check_sql",
     "build_resolve_sql",
     "capability_outcome",
+    "check_working_set",
     "map_lineno",
     "parse_findings",
     "recheck",
+    "request_from_applied",
     "run_plpgsql_check",
     "severity_for_level",
 ]

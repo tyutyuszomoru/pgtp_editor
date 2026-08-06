@@ -14,7 +14,7 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 # pgtp_editor/ui/sandbox_controller.py
-"""The sandbox lane's lifecycle host (§18.5 D2/D2a) -- who owns the one live
+"""The sandbox lane's lifecycle host (§18.5 D2/D2a/D3a) -- who owns the one live
 `SandboxSession` for the open project, and who runs the sandbox layer's
 blocking calls off the GUI thread.
 
@@ -56,6 +56,15 @@ project"), `SandboxCapabilities.probe_error`, `install_gate`'s four exact reason
 strings, and `ForeignDatabaseError`'s own message. Every operation ends in one
 `SandboxOperationResult` carrying `ok` plus a human-readable `reason`.
 
+**It is also the Check gesture's host (§18.5 D3a),** for the same reason: the
+ladder needs the live session and a thread, and both live here. `run_check`
+supplies them to `db/ddl_check.py::recheck` (an injected seam like every other
+`db/` call) and reports the `CheckReport` on the ordinary
+`SandboxOperationResult`/`operation_finished` path. `CHECK` is **not**
+destructive and never reaches `confirm_destructive`; with no live session the
+host should not offer the gesture at all (`can_check`), and a call that arrives
+anyway is a stated refusal -- never an empty report, which would read as clean.
+
 Qt-light on purpose: a `QObject` so wiring can connect to `session_changed` /
 `operation_finished`, but it constructs headless, touches no widget, opens no
 dialog, and needs no `QApplication` interaction beyond `QObject.__init__`.
@@ -69,6 +78,7 @@ from enum import Enum
 from PySide6.QtCore import QObject, Signal
 
 from ..db.config import ConnectionParams
+from ..db.ddl_check import recheck
 from ..db.introspect import BaselineSnapshot, DatabaseSchema, snapshot_for_baseline
 from ..db.sandbox import (
     SandboxCapabilities,
@@ -104,6 +114,13 @@ class SandboxOperation(str, Enum):
     CLONE_DATA = "clone_data"
     INSTALL_PLPGSQL_CHECK = "install_plpgsql_check"
     RESET = "reset"
+    #: §18.5 D3a's Check gesture -- runs the validation ladder against the
+    #: sandbox as it currently stands. **Read-only and deliberately absent from
+    #: `DESTRUCTIVE_OPERATIONS`:** it applies nothing, drops nothing and must
+    #: never reach `confirm_destructive` (D3a, "the ladder gestures join
+    #: `SandboxOperation` as `CHECK` (non-destructive -- no
+    #: `confirm_destructive` prompt)").
+    CHECK = "check"
 
 
 #: The operations that drop and recreate schemas (or overwrite the sandbox's
@@ -143,6 +160,15 @@ _NO_SESSION_REASON = (
     "no sandbox session is open -- open or provision the project's sandbox first"
 )
 
+#: A `CHECK` was asked for with nothing to check. Cannot happen through the
+#: intended wiring (the gesture starts from an open object tab), so it is
+#: reported as a stated refusal rather than defended against with an assert --
+#: the controller's rule is that no operation ever raises at its caller.
+_NO_CHECK_REQUEST_REASON = (
+    "nothing to check -- the Check gesture needs the object whose tab it was "
+    "invoked from"
+)
+
 
 @dataclass(frozen=True)
 class SandboxOperationResult:
@@ -151,12 +177,21 @@ class SandboxOperationResult:
 
     `reason` is empty only on a bare success; a successful operation may still
     carry an explanatory line (e.g. `install_gate`'s *"already installed."*).
+
+    `report` is set **only** by `SandboxOperation.CHECK`, and carries the
+    `db/ddl_check.py::CheckReport` the ladder produced (typed `object` for the
+    same reason `operation_finished` is: this module reads it duck-typed and
+    never widens `ddl_check`'s types). It is None whenever no report was
+    produced -- a refused or crashed check -- so *"no report"* and *"a clean
+    report"* stay different facts (D3a: a missing sandbox is never reported as
+    a clean check).
     """
 
     operation: SandboxOperation
     ok: bool
     reason: str = ""
     capabilities: SandboxCapabilities | None = None
+    report: object | None = None
 
 
 class SandboxController(QObject):
@@ -182,13 +217,20 @@ class SandboxController(QObject):
         `probe`, `open_sandbox`, `provision_sandbox`, `create_sandbox_database`,
         `clone_data`, `install_plpgsql_check` and
         `db/introspect.py::snapshot_for_baseline` respectively.
+    ``checker``
+        `db/ddl_check.py::recheck` -- §18.5 D3a's ladder entry point,
+        `(session, request, caps) -> CheckReport`. Injected like every other
+        `db/` seam; **the ladder is not re-composed here and no SQL is built
+        here**, this module only supplies the session, the capabilities and the
+        thread.
 
     Wiring surface for the main session: `set_project`/`clear_project`,
     `open_session`/`close_session`/`reset_session`, `provision`,
-    `run_data_clone`, `install_plpgsql_check`, `refresh_capabilities`, the
-    zero-argument §18.8 adapters `on_run_data_clone`/`on_install_plpgsql_check`,
-    the read-only `has_session`/`session`/`capabilities`/`capability_status`,
-    and the two signals below.
+    `run_data_clone`, `install_plpgsql_check`, `run_check`,
+    `refresh_capabilities`, the zero-argument §18.8 adapters
+    `on_run_data_clone`/`on_install_plpgsql_check`, the read-only
+    `has_session`/`session`/`capabilities`/`can_check`/`capability_status`, and
+    the two signals below.
     """
 
     #: True when a live session exists, False when it is gone -- the signal the
@@ -211,6 +253,7 @@ class SandboxController(QObject):
         cloner: Callable[..., None] = clone_data,
         installer: Callable[[SandboxSession], None] = install_plpgsql_check,
         snapshotter: Callable[..., BaselineSnapshot] = snapshot_for_baseline,
+        checker: Callable[..., object] = recheck,
     ) -> None:
         super().__init__(parent)
         # Plain attribute, replaced wholesale by a synchronous stub in tests --
@@ -226,6 +269,7 @@ class SandboxController(QObject):
         self._cloner = cloner
         self._installer = installer
         self._snapshotter = snapshotter
+        self._checker = checker
 
         self._session: SandboxSession | None = None
         self._capabilities: SandboxCapabilities | None = None
@@ -284,6 +328,26 @@ class SandboxController(QObject):
         """The live session, or None. The single object every sandbox write
         (`apply`, `install_plpgsql_check`, `reset`) must go through."""
         return self._session
+
+    @property
+    def can_check(self) -> bool:
+        """Whether the §18.5 D3a **Check** gesture should exist at all.
+
+        The host binds the Check control's *visibility* to this (carve-out 2's
+        "no dead controls": with no live `SandboxSession` there is no button and
+        no enabled menu item, the same posture as the absent apply row) -- not
+        its enabled state. It is deliberately a separate name from
+        `has_session` even though it currently returns the same fact, so the
+        host expresses the intent it means and this predicate can grow a second
+        precondition without every caller being revisited.
+
+        **The extension's absence is not a precondition here.** Tier 3 being
+        `unavailable` is a *reported outcome* of a run (D3a's four
+        `plpgsql_check_state` rows), so the gesture stays present and states
+        what it could not check; hiding it would be the silent no-op D3a
+        forbids.
+        """
+        return self._session is not None
 
     @property
     def capabilities(self) -> SandboxCapabilities | None:
@@ -592,6 +656,89 @@ class SandboxController(QObject):
             SandboxOperation.INSTALL_PLPGSQL_CHECK, on_done
         ))
 
+    def run_check(
+        self,
+        request: object,
+        on_done: Callable[[SandboxOperationResult], None] | None = None,
+    ) -> None:
+        """**Non-destructive.** Run §18.5 D3a's validation ladder against one
+        object in the live sandbox and report the `CheckReport` it produced.
+
+        `request` is a `db/ddl_check.py::CheckRequest` -- built by the host from
+        the invoking tab's `DdlObjectRef` (`CheckRequest.from_ref(ref, text)`),
+        because a trigger's referenced function is knowledge the ref alone does
+        not carry and this controller must not guess it. It is passed through
+        untouched: **the ladder's composition, its SQL and its outcome
+        vocabulary all live in `db/ddl_check.py`** and none of it is duplicated
+        or re-decided here. Exactly one object per run (D3a) -- there is no
+        multi-object entry point, and `check_working_set` is deliberately not
+        wired in this pass.
+
+        Confirmation is never asked for: `CHECK` is not in
+        `DESTRUCTIVE_OPERATIONS`, applies nothing and writes nothing, so
+        `confirm_destructive` is not consulted even when one is wired.
+
+        Capabilities gate tier 3, and they come from the
+        `PostgresBackend.capabilities()` contract, never from a bare
+        `try/except` (D3a): the cached probe is reused when there is one, and a
+        controller that has never probed probes *inside the worker* rather than
+        passing "unknown" off as a fact. The gate itself is
+        `db/ddl_check.py`'s -- this method reads no `plpgsql_check_state`.
+
+        `ok` means **the ladder ran and reported nothing**:
+
+        | Situation | `ok` | `reason` | `report` |
+        |---|---|---|---|
+        | tier 3 ran, no findings | True | empty | the report |
+        | tier 3 ran, findings | False | how many findings | the report |
+        | tier 3 `unavailable`/`errored` | False | that tier's own reason, verbatim | the report |
+        | no live session | False | `_NO_SESSION_REASON` | None |
+        | the worker raised | False | the exception's message | None |
+
+        A findings-bearing or unavailable report is still a *delivered* report:
+        the host renders it (narrative lines plus the clickable
+        `check_findings` channel) from `result.report` and does not re-derive
+        any of it from `reason`.
+        """
+        session = self._session
+        if session is None:
+            # Carve-out 2 means the host should not have offered the gesture at
+            # all (see `can_check`); if it did, the answer is a stated reason --
+            # never a crash, and never an empty report that would read as clean.
+            self._finish(SandboxOperation.CHECK, False, _NO_SESSION_REASON, on_done)
+            return
+        if request is None:
+            self._finish(
+                SandboxOperation.CHECK, False, _NO_CHECK_REQUEST_REASON, on_done
+            )
+            return
+
+        cached_caps = self._capabilities
+        params = session.params
+
+        def work() -> tuple[object, SandboxCapabilities]:
+            caps = cached_caps if cached_caps is not None else self._prober(params)
+            return self._checker(session, request, caps), caps
+
+        def on_result(outcome: tuple[object, SandboxCapabilities]) -> None:
+            report, caps = outcome
+            self._capabilities = caps
+            ok, reason = self._check_outcome(report)
+            result = SandboxOperationResult(
+                operation=SandboxOperation.CHECK,
+                ok=ok,
+                reason=reason,
+                capabilities=caps,
+                report=report,
+            )
+            if on_done is not None:
+                on_done(result)
+            self.operation_finished.emit(result)
+
+        self._run_async(work, on_result=on_result, on_error=self._error_handler(
+            SandboxOperation.CHECK, on_done
+        ))
+
     def reset_session(
         self, on_done: Callable[[SandboxOperationResult], None] | None = None
     ) -> None:
@@ -668,6 +815,37 @@ class SandboxController(QObject):
             )
             return False
         return True
+
+    @staticmethod
+    def _check_outcome(report: object) -> tuple[bool, str]:
+        """`(ok, reason)` for one `CheckReport`, read **duck-typed** (`ran`,
+        `tier3`, `findings`) exactly as `ui/ddl_object_editor.py` reads it, so a
+        test stub with those three attributes is a valid report and this module
+        never imports `ddl_check`'s types for anything but the default seam.
+
+        Nothing is re-worded: an unavailable/errored tier's reason is D3's own
+        sentence, passed through. A report object that carries none of these
+        attributes is reported as not-run rather than as clean -- the one
+        direction this must never fail in.
+        """
+        findings = tuple(getattr(report, "findings", ()) or ())
+        tier3 = getattr(report, "tier3", None)
+        if not getattr(report, "ran", False):
+            reason = str(getattr(tier3, "reason", "") or "").strip()
+            status = str(getattr(tier3, "status", "") or "").strip()
+            if not reason:
+                reason = (
+                    f"the check did not run ({status})."
+                    if status
+                    else "the check did not run, and reported no reason -- nothing "
+                    "about this object was verified."
+                )
+            return False, reason
+        if findings:
+            count = len(findings)
+            plural = "" if count == 1 else "s"
+            return False, f"plpgsql_check reported {count} finding{plural}."
+        return True, ""
 
     def _error_handler(
         self,
