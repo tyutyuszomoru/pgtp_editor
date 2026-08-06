@@ -736,3 +736,204 @@ def test_zero_argument_adapters_match_the_project_status_panels_callbacks():
 
     assert layer.clone_calls == [(TARGET, SANDBOX)]
     assert layer.install_calls == [layer.session]
+
+
+# ---------------------------------------------------------------------------
+# 8. SandboxOperation.APPLY -- Apply to Sandbox (§18.5 D3)
+# ---------------------------------------------------------------------------
+
+
+class FakeLadderReport:
+    """A duck-typed `ddl_check.CheckReport` as an APPLY reads it: `green`,
+    `committed`, plus the four tiers."""
+
+    def __init__(self, *, green=True, committed=True, tiers=None) -> None:
+        self.green = green
+        self.committed = committed
+        default = FakeTier() if green else FakeTier("unavailable", "the reason")
+        for name in ("tier0", "tier1", "tier2", "tier3"):
+            setattr(self, name, (tiers or {}).get(name, default))
+        self.findings = ()
+        self.ran = green
+
+
+class LadderLayer(Layer):
+    """`Layer` plus the two writing ladder seams."""
+
+    def __init__(self, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.apply_calls: list[tuple] = []
+        self.probe_check_calls: list[tuple] = []
+        self.ladder_report = FakeLadderReport()
+        self.apply_error: BaseException | None = None
+
+    def applier(self, session, request, caps, *, ddl_text=None):
+        self.apply_calls.append((session, request, caps, ddl_text))
+        if self.apply_error is not None:
+            raise self.apply_error
+        return self.ladder_report
+
+    def probe_checker(self, session, request, caps, *, ddl_text=None):
+        self.probe_check_calls.append((session, request, caps, ddl_text))
+        return self.ladder_report
+
+
+def _ladder_controller(layer: LadderLayer, **kwargs):
+    controller, runner, results = _controller(
+        layer, applier=layer.applier, probe_checker=layer.probe_checker, **kwargs
+    )
+    return controller, runner, results
+
+
+def test_apply_is_a_named_operation():
+    assert SandboxOperation.APPLY.value == "apply"
+
+
+def test_apply_is_not_destructive():
+    """`DESTRUCTIVE_OPERATIONS` means "drops and recreates schemas / overwrites
+    the sandbox wholesale". An apply does none of that: `CREATE OR REPLACE` is
+    idempotent and §18.5 D2 says the sandbox is MEANT to accumulate applied
+    edits. Putting it behind the destructive prompt would train the user to click
+    through the prompt that protects reset/provision/clone."""
+    assert SandboxOperation.APPLY not in DESTRUCTIVE_OPERATIONS
+    assert SandboxController.is_destructive(SandboxOperation.APPLY) is False
+    assert SandboxController.destructive_warning(SandboxOperation.APPLY) == ""
+
+
+def test_apply_never_consults_the_confirmation_seam():
+    asked = []
+    layer = LadderLayer()
+    controller, _, results = _ladder_controller(
+        layer, confirm=lambda warning: asked.append(warning) or True
+    )
+    controller.open_session()
+
+    controller.run_apply("REQUEST")
+
+    assert asked == []
+    assert results[-1].operation is SandboxOperation.APPLY
+    assert results[-1].ok is True
+
+
+def test_apply_runs_the_ladder_off_the_gui_thread_and_reports_the_report():
+    layer = LadderLayer()
+    controller, runner, results = _ladder_controller(layer)
+    controller.open_session()
+    before = runner.calls
+
+    controller.run_apply("REQUEST", ddl_text="CREATE FUNCTION ...")
+
+    assert runner.calls == before + 1
+    session, request, caps, ddl_text = layer.apply_calls[0]
+    assert session is layer.session
+    assert request == "REQUEST"
+    assert caps is layer.caps
+    assert ddl_text == "CREATE FUNCTION ..."
+    assert results[-1].report is layer.ladder_report
+    assert results[-1].ok is True
+    assert results[-1].reason == ""
+
+
+def test_apply_with_no_session_is_a_stated_refusal_not_a_clean_report():
+    layer = LadderLayer()
+    controller, _, results = _ladder_controller(layer)
+
+    controller.run_apply("REQUEST")
+
+    assert results[-1].operation is SandboxOperation.APPLY
+    assert results[-1].ok is False
+    assert results[-1].report is None
+    assert "no sandbox session" in results[-1].reason
+    assert layer.apply_calls == []
+
+
+def test_apply_with_no_request_is_a_stated_refusal():
+    layer = LadderLayer()
+    controller, _, results = _ladder_controller(layer)
+    controller.open_session()
+
+    controller.run_apply(None)
+
+    assert results[-1].ok is False
+    assert "nothing to apply" in results[-1].reason
+
+
+def test_an_unverified_tier_makes_the_apply_not_ok_and_names_it():
+    """§18.5 D3's hard rule: an unavailable tier is never folded into the OK
+    state, and the reason is that tier's own sentence."""
+    layer = LadderLayer()
+    layer.ladder_report = FakeLadderReport(
+        green=False,
+        tiers={"tier3": FakeTier("unavailable", "plpgsql_check is not installed")},
+    )
+    controller, _, results = _ladder_controller(layer)
+    controller.open_session()
+
+    controller.run_apply("REQUEST")
+
+    assert results[-1].ok is False
+    assert "plpgsql_check is not installed" in results[-1].reason
+    assert results[-1].report is layer.ladder_report
+
+
+def test_a_green_ladder_that_did_not_commit_is_not_a_successful_apply():
+    """The one direction this must never be silent in -- the user pressed
+    Apply."""
+    layer = LadderLayer()
+    layer.ladder_report = FakeLadderReport(green=True, committed=False)
+    controller, _, results = _ladder_controller(layer)
+    controller.open_session()
+
+    controller.run_apply("REQUEST")
+
+    assert results[-1].ok is False
+    assert "NOTHING WAS APPLIED" in results[-1].reason
+
+
+def test_probe_uses_the_probe_seam_and_is_never_reported_as_applied():
+    layer = LadderLayer()
+    layer.ladder_report = FakeLadderReport(green=True, committed=False)
+    controller, _, results = _ladder_controller(layer)
+    controller.open_session()
+
+    controller.run_apply("REQUEST", probe=True)
+
+    assert layer.apply_calls == []
+    assert len(layer.probe_check_calls) == 1
+    assert results[-1].ok is False
+    assert "without applying" in results[-1].reason
+    assert results[-1].report is layer.ladder_report
+
+
+def test_an_exploding_ladder_reports_the_message_and_no_report():
+    layer = LadderLayer()
+    layer.apply_error = RuntimeError("thread pool died")
+    controller, _, results = _ladder_controller(layer)
+    controller.open_session()
+
+    controller.run_apply("REQUEST")
+
+    assert results[-1].ok is False
+    assert "thread pool died" in results[-1].reason
+    assert results[-1].report is None
+
+
+def test_apply_probes_inside_the_worker_when_capabilities_are_unknown():
+    """Capabilities come from the probe contract, never from a guess (D3a)."""
+    layer = LadderLayer()
+    controller, _, _ = _ladder_controller(layer)
+    controller._session = layer.session
+    controller._capabilities = None
+
+    controller.run_apply("REQUEST")
+
+    assert layer.probe_calls  # probed, rather than passing "unknown" off as fact
+    assert layer.apply_calls[0][2] is layer.caps
+
+
+def test_the_default_ladder_seams_are_ddl_checks_own_entry_points():
+    from pgtp_editor.db.ddl_check import apply_and_check, probe_check
+
+    controller = SandboxController()
+    assert controller._applier is apply_and_check
+    assert controller._probe_checker is probe_check

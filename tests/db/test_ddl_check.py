@@ -346,10 +346,14 @@ def test_unknown_capability_carries_the_probe_error_as_detail():
 # --- tiers 0-2 are reported as unbuilt, never omitted ----------------------
 
 def test_tiers_zero_to_two_are_explicitly_unavailable():
+    """`run_plpgsql_check` is tier 3 alone -- it applies nothing, so the compile
+    tiers must be *stated* as unverified rather than omitted (an omitted tier
+    reads as a complete report). The tiers that DO compile are
+    `apply_and_check`/`probe_check`."""
     report = run_plpgsql_check(_Session(), _request(), _caps(), query=_Query(_resolved(), []))
     for tier in (report.tier0, report.tier1, report.tier2):
         assert tier.status == STATUS_UNAVAILABLE
-        assert "db/apply.py" in tier.reason
+        assert tier.reason
         assert tier.verified is False
 
 
@@ -769,3 +773,616 @@ def test_no_test_in_this_module_spawns_a_connection():
 def test_dataclasses_are_frozen():
     for cls in (CheckFinding, CheckReport, CheckRequest, ddl_check.TierOutcome):
         assert cls.__dataclass_params__.frozen
+
+
+# ===========================================================================
+# The one-call ladder: tiers 0-2 through db/apply.py (§18.5 D3 / D3a)
+# ===========================================================================
+
+from pgtp_editor.db.apply import ApplyOutcome, Notice, StatementResult  # noqa: E402
+from pgtp_editor.db.ddl_check import (  # noqa: E402
+    CAVEAT_PROBE_ONLY,
+    CAVEAT_ROLLED_BACK,
+    CAVEAT_STALE_BUFFER,
+    REASON_NO_NOTICE_CHANNEL,
+    REASON_OBJECT_ABSENT,
+    TIER1_SET_SQL,
+    apply_and_check,
+    build_guarded_check_sql,
+    build_ladder,
+    build_trigger_drop_sql,
+    findings_from_notices,
+    needs_trigger_drop,
+    notice_line,
+    probe_check,
+)
+
+
+def _trigger_request(**kwargs):
+    kwargs.setdefault("kind", "trigger")
+    kwargs.setdefault("schema", "pr")
+    kwargs.setdefault("name", "trg_audit")
+    kwargs.setdefault("table", "orders")
+    kwargs.setdefault("function_schema", "pr")
+    kwargs.setdefault("function_name", "audit_fn")
+    kwargs.setdefault("buffer_text", BUFFER)
+    return CheckRequest(**kwargs)
+
+
+class _RecordingApplier:
+    """A stand-in for `db/apply.py::apply_ddl`: records the composed statement
+    list and the `commit` flag, and replays a canned `ApplyOutcome`."""
+
+    def __init__(self, outcome=None, error=None):
+        self.outcome = outcome
+        self.error = error
+        self.calls = []
+
+    def __call__(self, target, statements, *, commit):
+        self.calls.append((target, list(statements), commit))
+        if self.error is not None:
+            raise self.error
+        if self.outcome is not None:
+            return self.outcome
+        return _succeeded(list(statements))
+
+    @property
+    def statements(self):
+        return self.calls[0][1]
+
+
+def _succeeded(statements, *, rows_at=None, committed=True, notices=(), captured=True):
+    """An `ApplyOutcome` for a whole statement list that ran, with `rows_at`
+    mapping a statement index to the rows it returned."""
+    rows_at = rows_at or {}
+    results = []
+    for index, statement in enumerate(statements):
+        rows = rows_at.get(index)
+        results.append(
+            StatementResult(
+                index=index,
+                statement=statement,
+                columns=None if rows is None else ("c",),
+                rows=() if rows is None else tuple(rows),
+            )
+        )
+    return ApplyOutcome.succeeded(
+        results, committed=committed, notices=notices, notices_captured=captured
+    )
+
+
+def _failed_at(statements, index, message="ERROR:  boom", **kwargs):
+    """An `ApplyOutcome` whose statement `index` failed -- the tier-attribution
+    input every one of these tests turns on."""
+    kwargs.setdefault("notices_captured", True)
+    return ApplyOutcome.failed(
+        message,
+        statement_index=index,
+        statement=statements[index],
+        results=[
+            StatementResult(index=i, statement=s) for i, s in enumerate(statements[:index])
+        ],
+        **kwargs,
+    )
+
+
+# --- statement composition -------------------------------------------------
+
+
+def test_the_ladder_is_one_ordered_statement_list_with_tier_indices():
+    plan = build_ladder(_request(), _caps(), BUFFER, record_applied=True)
+
+    assert plan.statements[plan.lint_index] == TIER1_SET_SQL
+    assert plan.statements[plan.ddl_index] == BUFFER
+    assert "INSERT INTO" in plan.statements[plan.bookkeeping_index]
+    assert "to_regprocedure" in plan.statements[plan.resolve_index]
+    assert "plpgsql_check_function_tb" in plan.statements[plan.check_index]
+    # Order is load-bearing: the SET must precede the DDL it changes the
+    # compilation of, and the check must follow the object's creation.
+    assert plan.lint_index < plan.ddl_index < plan.check_index
+    assert plan.resolve_index < plan.check_index
+
+
+def test_a_probe_writes_no_bookkeeping_row():
+    plan = build_ladder(_request(), _caps(), BUFFER, record_applied=False)
+
+    assert plan.bookkeeping_index is None
+    assert not any("INSERT INTO" in s for s in plan.statements)
+
+
+def test_tier3_statements_are_omitted_when_the_extension_is_not_installed():
+    """Sending them would abort the transaction -- and so the apply -- over a
+    missing extension. D3: losing tier 3 costs the semantic analysis, not the
+    compile check."""
+    plan = build_ladder(_request(), _caps("absent"), BUFFER, record_applied=True)
+
+    assert plan.check_index is None
+    assert plan.resolve_index is None
+    assert plan.ddl_index is not None
+    assert plan.lint_index is not None
+
+
+def test_an_empty_buffer_composes_no_ddl_statement():
+    plan = build_ladder(_request(buffer_text=""), _caps(), "   ", record_applied=True)
+
+    assert plan.ddl_index is None
+    assert plan.bookkeeping_index is None
+
+
+# --- PG<14 DROP TRIGGER IF EXISTS gating (§18.5) ---------------------------
+
+
+def test_a_trigger_on_pg13_gets_a_drop_trigger_if_exists_first():
+    request = _trigger_request()
+    caps = _caps(server_version=(13, 0, 12))
+
+    assert needs_trigger_drop(request, caps) is True
+    plan = build_ladder(request, caps, "CREATE TRIGGER ...", record_applied=True)
+    assert plan.trigger_drop_index is not None
+    assert plan.trigger_drop_index < plan.ddl_index
+    assert plan.statements[plan.trigger_drop_index] == (
+        'DROP TRIGGER IF EXISTS "trg_audit" ON "pr"."orders"'
+    )
+
+
+def test_a_trigger_on_pg14_needs_no_drop_because_create_or_replace_exists():
+    request = _trigger_request()
+    caps = _caps(server_version=(14, 0, 0))
+
+    assert needs_trigger_drop(request, caps) is False
+    plan = build_ladder(request, caps, "CREATE OR REPLACE TRIGGER ...", record_applied=True)
+    assert plan.trigger_drop_index is None
+
+
+def test_an_unknown_server_version_emits_the_drop():
+    """The two mistakes are not symmetric: omitting the DROP on PG13 fails a
+    legitimate re-apply and blames the user's DDL, while an extra
+    `DROP ... IF EXISTS` on PG14+ is a no-op in the same transaction."""
+    assert needs_trigger_drop(_trigger_request(), _caps(server_version=())) is True
+
+
+def test_a_function_never_gets_a_drop_trigger():
+    assert needs_trigger_drop(_request(), _caps(server_version=(11, 0, 0))) is False
+    assert build_trigger_drop_sql(_request()) is None
+
+
+def test_the_version_comes_from_a_real_server_capability():
+    """Not a guess and not the buffer text: `SandboxCapabilities.server_version`
+    is `probe`'s decoded `current_setting('server_version_num')`."""
+    caps = SandboxCapabilities(
+        server_version=(13, 0, 1), installed_extensions=frozenset({"plpgsql_check"})
+    )
+    assert needs_trigger_drop(_trigger_request(), caps) is True
+
+
+def test_a_hostile_trigger_identifier_is_refused_not_interpolated():
+    with pytest.raises(UnsafeIdentifierError):
+        build_trigger_drop_sql(_trigger_request(name='weird"name'))
+
+
+# --- the guarded, in-transaction check SELECT -----------------------------
+
+
+def test_the_guarded_check_sql_cannot_run_with_a_null_oid():
+    sql = build_guarded_check_sql(_request())
+
+    assert "to_regprocedure" in sql
+    assert "IS NOT NULL" in sql
+    assert "LATERAL" in sql
+    # The named-notation call-shape rules still hold in the guarded form.
+    assert "fatal_errors => false" in sql
+    assert "all_warnings => true" in sql
+    assert 'c."position"' in sql
+
+
+def test_the_guarded_check_sql_guards_a_triggers_relation_too():
+    sql = build_guarded_check_sql(_trigger_request())
+
+    assert "to_regclass" in sql
+    assert "relid => r.relid" in sql
+    assert sql.count("IS NOT NULL") == 2
+
+
+# --- tier 1: the notice channel -------------------------------------------
+
+
+def test_tier1_is_unavailable_without_a_notice_channel():
+    """§18.5 D3: "where that channel is not available, tier 1 must report
+    `unavailable`, not `passed`" -- an empty notice list from a runner that
+    cannot capture notices says nothing about the routine."""
+    applier = _RecordingApplier()
+    plan = build_ladder(_request(), _caps(), BUFFER, record_applied=True)
+    applier.outcome = _succeeded(list(plan.statements), captured=False)
+
+    report = apply_and_check(_Session(), _request(), _caps(), applier=applier)
+
+    assert report.tier1.status == STATUS_UNAVAILABLE
+    assert report.tier1.reason == REASON_NO_NOTICE_CHANNEL
+    assert report.tier1.verified is False
+    assert report.green is False
+
+
+def test_tier1_passes_when_the_channel_was_live_and_silent():
+    applier = _RecordingApplier()
+    plan = build_ladder(_request(), _caps(), BUFFER, record_applied=True)
+    applier.outcome = _succeeded(
+        list(plan.statements),
+        rows_at={plan.resolve_index: _resolved(), plan.check_index: []},
+        captured=True,
+    )
+
+    report = apply_and_check(_Session(), _request(), _caps(), applier=applier)
+
+    assert report.tier1.status == STATUS_PASSED
+    assert report.green is True
+
+
+def test_tier1_findings_come_from_the_notices_and_map_onto_buffer_lines():
+    plan = build_ladder(_request(), _caps(), BUFFER, record_applied=True)
+    notice = Notice(
+        message='variable "i" shadows a previously defined variable',
+        severity="WARNING",
+        context='compilation of PL/pgSQL function "f" near line 2',
+        sqlstate="42000",
+    )
+    applier = _RecordingApplier(
+        _succeeded(
+            list(plan.statements),
+            rows_at={plan.resolve_index: _resolved(), plan.check_index: []},
+            notices=(notice,),
+            captured=True,
+        )
+    )
+
+    report = apply_and_check(_Session(), _request(), _caps(), applier=applier)
+
+    assert report.tier1.status == STATUS_FOUND_ISSUES
+    (finding,) = [f for f in report.findings if f.tier == 1]
+    assert finding.severity == "warning"
+    assert "shadows" in finding.message
+    # `near line 2` is prosrc-relative; BUFFER's body opens on line 4, so
+    # prosrc line 2 is buffer line 5 -- the same map_lineno tier 3 uses.
+    assert finding.source_lineno == 2
+    assert finding.line == map_lineno(BUFFER, 2)
+    assert finding.line == 5
+
+
+def test_plain_notices_are_not_tier1_findings():
+    """`DROP TRIGGER IF EXISTS` emits "trigger ... does not exist, skipping" on
+    every first apply; rendering that as a lint finding would train the user to
+    ignore the channel that carries the real warnings."""
+    chatter = Notice(
+        message='trigger "trg_audit" for relation "orders" does not exist, skipping',
+        severity="NOTICE",
+    )
+    assert findings_from_notices([chatter], _request()) == []
+
+
+def test_notice_line_is_none_when_the_context_names_none():
+    assert notice_line(Notice(message="m", severity="WARNING")) is None
+    assert notice_line(Notice(context="near line 7")) == 7
+
+
+def test_a_failing_lint_set_is_errored_not_silently_skipped():
+    plan = build_ladder(_request(), _caps(), BUFFER, record_applied=True)
+    applier = _RecordingApplier(
+        _failed_at(
+            list(plan.statements),
+            plan.lint_index,
+            'ERROR:  unrecognized configuration parameter "plpgsql.extra_warnings"',
+        )
+    )
+
+    report = apply_and_check(_Session(), _request(), _caps(), applier=applier)
+
+    assert report.tier1.status == STATUS_ERRORED
+    assert "extra_warnings" in report.tier1.reason
+    # And nothing downstream is claimed to have been verified.
+    assert report.tier2.status == STATUS_ERRORED
+    assert report.tier3.status == STATUS_UNAVAILABLE
+    assert report.green is False
+
+
+def test_extra_errors_is_never_set():
+    """`plpgsql.extra_errors = 'all'` would turn every tier-1 lint into a hard
+    ERROR and so refuse an apply because of a warning. D3 flags it as unpinned;
+    tier 1 reports warnings, it does not redefine what compiles."""
+    plan = build_ladder(_request(), _caps(), BUFFER, record_applied=True)
+    assert not any("extra_errors" in s for s in plan.statements)
+
+
+# --- tier 2 (and tier 0 by collapse) --------------------------------------
+
+
+def test_tier2_passes_when_the_ddl_applied():
+    plan = build_ladder(_request(), _caps(), BUFFER, record_applied=True)
+    applier = _RecordingApplier(
+        _succeeded(list(plan.statements), rows_at={plan.resolve_index: _resolved(), plan.check_index: []})
+    )
+
+    report = apply_and_check(_Session(), _request(), _caps(), applier=applier)
+
+    assert report.tier2.status == STATUS_PASSED
+    assert report.committed is True
+
+
+def test_a_rejected_ddl_is_a_tier2_finding_not_an_errored_tier():
+    """The check worked perfectly; the answer is "this DDL does not apply",
+    which is a real finding and a hard Apply-to-Target blocker."""
+    plan = build_ladder(_request(), _caps(), BUFFER, record_applied=True)
+    applier = _RecordingApplier(
+        _failed_at(
+            list(plan.statements),
+            plan.ddl_index,
+            'ERROR:  column "missing" does not exist',
+            sqlstate="42703",
+            position=None,
+        )
+    )
+
+    report = apply_and_check(_Session(), _request(), _caps(), applier=applier)
+
+    assert report.tier2.status == STATUS_FOUND_ISSUES
+    (finding,) = [f for f in report.findings if f.tier == 2]
+    assert finding.severity == "error"
+    assert "does not exist" in finding.message
+    assert finding.sqlstate == "42703"
+    assert report.committed is False
+    assert CAVEAT_ROLLED_BACK in report.caveats
+
+
+def test_tier0_collapses_into_tier2():
+    """D3's licensing caveat: PostgreSQL's own parser is the syntax checker, so
+    no GPL-only offline grammar is a dependency."""
+    plan = build_ladder(_request(), _caps(), BUFFER, record_applied=True)
+    applier = _RecordingApplier(
+        _succeeded(list(plan.statements), rows_at={plan.resolve_index: _resolved(), plan.check_index: []})
+    )
+
+    report = apply_and_check(_Session(), _request(), _caps(), applier=applier)
+
+    assert report.tier0.status == report.tier2.status == STATUS_PASSED
+    assert "PostgreSQL's own parser" in report.tier0.reason
+
+
+def test_tier0_is_unavailable_when_tier2_could_not_run():
+    plan = build_ladder(_request(), _caps(), BUFFER, record_applied=True)
+    applier = _RecordingApplier(
+        _failed_at(list(plan.statements), plan.lint_index, "ERROR:  nope")
+    )
+
+    report = apply_and_check(_Session(), _request(), _caps(), applier=applier)
+
+    assert report.tier0.status == STATUS_UNAVAILABLE
+    assert "no offline syntax checker" in report.tier0.reason
+
+
+# --- tier attribution: a failing CHECK is never a broken DDL ---------------
+
+
+def test_a_failure_in_the_check_call_is_not_reported_as_a_broken_ddl():
+    """§18.5 D3a's whole reason for `statement_index`."""
+    plan = build_ladder(_request(), _caps(), BUFFER, record_applied=True)
+    applier = _RecordingApplier(
+        _failed_at(
+            list(plan.statements),
+            plan.check_index,
+            "ERROR:  function plpgsql_check_function_tb does not exist",
+        )
+    )
+
+    report = apply_and_check(_Session(), _request(), _caps(), applier=applier)
+
+    assert report.tier2.status == STATUS_PASSED
+    assert report.tier2.verified is True
+    assert report.tier3.status == STATUS_ERRORED
+    assert not [f for f in report.findings if f.tier == 2]
+    assert report.green is False
+
+
+def test_tier3_findings_are_parsed_from_the_check_statements_rows():
+    plan = build_ladder(_request(), _caps(), BUFFER, record_applied=True)
+    applier = _RecordingApplier(
+        _succeeded(list(plan.statements), rows_at={plan.resolve_index: _resolved(), plan.check_index: [_row()]})
+    )
+
+    report = apply_and_check(_Session(), _request(), _caps(), applier=applier)
+
+    assert report.tier3.status == STATUS_FOUND_ISSUES
+    (finding,) = [f for f in report.findings if f.tier == 3]
+    assert finding.sqlstate == "42703"
+    assert set(ddl_check.BLIND_SPOT_CAVEATS) <= set(report.caveats)
+
+
+def test_an_object_absent_after_the_apply_is_unavailable_not_clean():
+    """The guarded check SELECT returns zero rows for a missing oid, which must
+    never be read as "plpgsql_check found nothing"."""
+    plan = build_ladder(_request(), _caps(), BUFFER, record_applied=True)
+    applier = _RecordingApplier(
+        _succeeded(
+            list(plan.statements),
+            rows_at={plan.resolve_index: [(None, None)], plan.check_index: []},
+        )
+    )
+
+    report = apply_and_check(_Session(), _request(), _caps(), applier=applier)
+
+    assert report.tier3.status == STATUS_UNAVAILABLE
+    assert report.tier3.reason == REASON_OBJECT_ABSENT
+    assert report.findings == ()
+
+
+def test_tier3_stays_unavailable_for_a_missing_extension_while_1_and_2_run():
+    """D3a: "in all three non-`installed` cases tiers 1 and 2 still run"."""
+    caps = _caps("absent")
+    plan = build_ladder(_request(), caps, BUFFER, record_applied=True)
+    applier = _RecordingApplier(_succeeded(list(plan.statements)))
+
+    report = apply_and_check(_Session(), _request(), caps, applier=applier)
+
+    assert report.tier1.status == STATUS_PASSED
+    assert report.tier2.status == STATUS_PASSED
+    assert report.tier3.status == STATUS_UNAVAILABLE
+    assert report.green is False
+
+
+# --- apply vs. probe ------------------------------------------------------
+
+
+def test_apply_and_check_commits_and_writes_the_working_set_row():
+    applier = _RecordingApplier()
+    apply_and_check(_Session(), _request(), _caps(), applier=applier)
+
+    target, statements, commit = applier.calls[0]
+    assert commit is True
+    assert any("INSERT INTO" in s and "applied" in s for s in statements)
+
+
+def test_probe_check_rolls_back_and_records_nothing():
+    applier = _RecordingApplier()
+    plan = build_ladder(_request(), _caps(), BUFFER, record_applied=False)
+    applier.outcome = _succeeded(
+        list(plan.statements), rows_at={plan.resolve_index: _resolved(), plan.check_index: []}, committed=False
+    )
+
+    report = probe_check(_Session(), _request(), _caps(), applier=applier)
+
+    _target, statements, commit = applier.calls[0]
+    assert commit is False
+    assert not any("INSERT INTO" in s for s in statements)
+    assert report.committed is False
+    assert CAVEAT_PROBE_ONLY in report.caveats
+    assert CAVEAT_ROLLED_BACK not in report.caveats
+
+
+def test_the_probe_is_the_same_ladder_minus_the_bookkeeping_row():
+    """A probe that diverged from the real apply would validate something the
+    user is not about to run."""
+    apply_applier = _RecordingApplier()
+    probe_applier = _RecordingApplier()
+    apply_and_check(_Session(), _request(), _caps(), applier=apply_applier)
+    probe_check(_Session(), _request(), _caps(), applier=probe_applier)
+
+    applied = [s for s in apply_applier.statements if "INSERT INTO" not in s]
+    assert applied == probe_applier.statements
+
+
+def test_both_entry_points_pass_the_session_straight_to_the_write_seam():
+    session = _Session()
+    applier = _RecordingApplier()
+    apply_and_check(session, _request(), _caps(), applier=applier)
+    assert applier.calls[0][0] is session
+
+
+def test_an_exploding_write_seam_is_errored_never_clean():
+    applier = _RecordingApplier(error=RuntimeError("thread pool died"))
+
+    report = apply_and_check(_Session(), _request(), _caps(), applier=applier)
+
+    for tier in report.tiers:
+        assert tier.status == STATUS_ERRORED
+        assert tier.verified is False
+    assert report.ran is False
+    assert CAVEAT_ROLLED_BACK in report.caveats
+
+
+def test_a_hostile_identifier_still_raises_rather_than_reporting_unchecked():
+    with pytest.raises(UnsafeIdentifierError):
+        apply_and_check(
+            _Session(),
+            _request(schema='weird"name'),
+            _caps(),
+            applier=_RecordingApplier(),
+        )
+
+
+def test_ddl_text_defaults_to_the_buffer_but_can_be_overridden():
+    applier = _RecordingApplier()
+    apply_and_check(
+        _Session(), _request(), _caps(), ddl_text="CREATE FUNCTION other()", applier=applier
+    )
+    assert "CREATE FUNCTION other()" in applier.statements
+
+
+# --- recheck's tier 2, from the bookkeeping table --------------------------
+
+
+class _AppliedSession(_Session):
+    def __init__(self, rows=(), error=None):
+        super().__init__()
+        self.rows = list(rows)
+        self.error = error
+
+    def applied(self):
+        if self.error is not None:
+            raise self.error
+        return self.rows
+
+
+def _applied_row(text=BUFFER, applied_at="2026-08-06T10:00:00+00:00"):
+    from pgtp_editor.db.sandbox import text_sha1
+
+    return AppliedObject(
+        kind="function",
+        schema_name="pr",
+        object_name="f",
+        table_name="",
+        applied_at=applied_at,
+        text_sha1=text_sha1(text),
+    )
+
+
+def test_recheck_tier2_reports_the_applied_timestamp():
+    session = _AppliedSession([_applied_row()])
+    report = recheck(
+        session, _request(), _caps(), query=_Query(_resolved(), [])
+    )
+
+    assert report.tier2.status == STATUS_PASSED
+    assert "2026-08-06T10:00:00+00:00" in report.tier2.reason
+    assert report.committed is False
+
+
+def test_recheck_warns_when_the_buffer_differs_from_what_was_applied():
+    """§18.5 D3: never silently check a stale version."""
+    session = _AppliedSession([_applied_row(text="an older version")])
+    report = recheck(session, _request(), _caps(), query=_Query(_resolved(), []))
+
+    assert any("has changed since it was last applied" in c for c in report.caveats)
+
+
+def test_recheck_tier2_is_unavailable_for_an_object_not_in_the_working_set():
+    session = _AppliedSession([])
+    report = recheck(session, _request(), _caps(), query=_Query(_resolved(), []))
+
+    assert report.tier2.status == STATUS_UNAVAILABLE
+    assert "not in the sandbox's working set" in report.tier2.reason
+
+
+def test_recheck_tier2_never_reads_an_unreadable_table_as_not_applied():
+    session = _AppliedSession(error=RuntimeError("no such table"))
+    report = recheck(session, _request(), _caps(), query=_Query(_resolved(), []))
+
+    assert report.tier2.status == STATUS_UNAVAILABLE
+    assert "could not be read" in report.tier2.reason
+
+
+def test_recheck_applies_nothing():
+    """The gesture writes nothing at all -- no statement list, no write seam."""
+    session = _AppliedSession([_applied_row()])
+    report = recheck(session, _request(), _caps(), query=_Query(_resolved(), []))
+    assert report.committed is False
+
+
+# --- the report's own honesty --------------------------------------------
+
+
+def test_green_requires_every_tier_to_have_passed():
+    passed = ddl_check.TierOutcome(status=STATUS_PASSED)
+    unavailable = ddl_check.TierOutcome(status=STATUS_UNAVAILABLE, reason="r")
+    assert CheckReport(
+        tier0=passed, tier1=passed, tier2=passed, tier3=passed
+    ).green is True
+    assert CheckReport(
+        tier0=passed, tier1=unavailable, tier2=passed, tier3=passed
+    ).green is False

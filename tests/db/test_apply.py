@@ -335,3 +335,188 @@ def test_module_is_qt_free():
     source = inspect.getsource(module)
     assert "PySide6" not in source
     assert "QtCore" not in source
+
+
+# -- the notice channel (§18.5 D3's tier 1 has no other one) ----------------
+
+
+class FakeDiagnostic:
+    """A stand-in for psycopg's `Diagnostic`, read by `getattr` -- the real
+    driver object and this double are interchangeable by construction."""
+
+    def __init__(
+        self,
+        message_primary="",
+        severity_nonlocalized="WARNING",
+        severity="WARNUNG",
+        message_detail="",
+        message_hint="",
+        context="",
+        sqlstate="",
+    ):
+        self.message_primary = message_primary
+        self.severity_nonlocalized = severity_nonlocalized
+        self.severity = severity
+        self.message_detail = message_detail
+        self.message_hint = message_hint
+        self.context = context
+        self.sqlstate = sqlstate
+
+
+def test_normalize_notice_prefers_the_nonlocalized_severity():
+    """A server under a non-English `lc_messages` localizes `severity`; anything
+    matching on "WARNING" would then silently miss every finding."""
+    from pgtp_editor.db.apply import normalize_notice
+
+    notice = normalize_notice(
+        FakeDiagnostic(
+            message_primary="variable \"x\" shadows a previously defined variable",
+            context='compilation of PL/pgSQL function "f" near line 3',
+            sqlstate="42000",
+            message_detail="d",
+            message_hint="h",
+        )
+    )
+    assert notice.severity == "WARNING"
+    assert "shadows" in notice.message
+    assert notice.context.endswith("near line 3")
+    assert (notice.sqlstate, notice.detail, notice.hint) == ("42000", "d", "h")
+
+
+def test_normalize_notice_never_raises_on_a_hostile_diagnostic():
+    from pgtp_editor.db.apply import normalize_notice
+
+    class Hostile:
+        @property
+        def message_primary(self):
+            raise RuntimeError("boom")
+
+    assert normalize_notice(Hostile()).message == ""
+
+
+def test_notices_reach_the_outcome_when_the_runner_captures_them():
+    from pgtp_editor.db.apply import Notice, RunOutcome
+
+    notice = Notice(message="too many rows", severity="WARNING", context="near line 2")
+
+    def runner(params, statements, *, commit):
+        return RunOutcome(
+            results=tuple(
+                StatementResult(index=i, statement=s) for i, s in enumerate(statements)
+            ),
+            notices=(notice,),
+        )
+
+    outcome = apply_ddl(PARAMS, LADDER, commit=True, runner=runner)
+
+    assert outcome.ok is True
+    assert outcome.notices == (notice,)
+    assert outcome.notices_captured is True
+
+
+def test_a_runner_that_returns_a_bare_list_did_not_capture_notices():
+    """The distinction tier 1 depends on: "there were no warnings" and "nobody
+    was listening" must never be the same answer (§18.5 D3)."""
+    outcome = apply_ddl(PARAMS, LADDER, commit=True, runner=RecordingRunner())
+
+    assert outcome.ok is True
+    assert outcome.notices == ()
+    assert outcome.notices_captured is False
+
+
+def test_notices_collected_before_a_failure_are_not_discarded():
+    """Extra-warnings are emitted WHILE `CREATE FUNCTION` compiles, so a
+    statement can produce real findings and then fail."""
+    from pgtp_editor.db.apply import Notice
+
+    notice = Notice(message="shadowed variable", severity="WARNING")
+
+    def runner(params, statements, *, commit):
+        raise StatementFailure(
+            DDL_INDEX,
+            statements[DDL_INDEX],
+            FakePgError("ERROR:  syntax error", sqlstate="42601"),
+            notices=[notice],
+            notices_captured=True,
+            results=[StatementResult(index=0, statement=statements[0])],
+        )
+
+    outcome = apply_ddl(PARAMS, LADDER, commit=True, runner=runner)
+
+    assert outcome.ok is False
+    assert outcome.statement_index == DDL_INDEX
+    assert outcome.notices == (notice,)
+    assert outcome.notices_captured is True
+    # The statements that DID run are kept, so tier attribution still works.
+    assert outcome.reached(0) is True
+    assert outcome.reached(DDL_INDEX) is False
+
+
+def test_the_real_runner_registers_a_notice_handler():
+    """The psycopg 3 API actually used: `Connection.add_notice_handler`."""
+    import inspect
+
+    from pgtp_editor.db import apply as module
+
+    source = inspect.getsource(module._psycopg_runner)
+    assert "add_notice_handler" in source
+    assert "normalize_notice" in source
+
+
+# -- tier attribution primitives -------------------------------------------
+
+
+def test_result_at_and_reached_answer_per_statement():
+    outcome = apply_ddl(PARAMS, LADDER, commit=True, runner=RecordingRunner())
+
+    assert outcome.result_at(CHECK_INDEX).statement == LADDER[CHECK_INDEX]
+    assert outcome.reached(CHECK_INDEX) is True
+    assert outcome.result_at(99) is None
+    assert outcome.reached(None) is False
+
+
+def test_a_check_failure_leaves_the_ddl_statement_reported_as_reached():
+    """The misattribution this seam exists to prevent, as data."""
+
+    def runner(params, statements, *, commit):
+        raise StatementFailure(
+            CHECK_INDEX,
+            statements[CHECK_INDEX],
+            FakePgError("ERROR:  function does not exist", sqlstate="42883"),
+            results=[
+                StatementResult(index=i, statement=s)
+                for i, s in enumerate(statements[:CHECK_INDEX])
+            ],
+        )
+
+    outcome = apply_ddl(PARAMS, LADDER, commit=True, runner=runner)
+
+    assert outcome.statement_index == CHECK_INDEX
+    assert outcome.reached(DDL_INDEX) is True
+    assert outcome.reached(CHECK_INDEX) is False
+
+
+# -- the shared diagnostics reader ------------------------------------------
+
+
+def test_diagnose_reads_the_shared_fields_once():
+    from pgtp_editor.db.apply import diagnose
+
+    fields = diagnose(
+        FakePgError(
+            "ERROR:  syntax error", sqlstate="42601", detail="d", hint="h", position=10
+        ),
+        "SELECT 1\nFROM oops",
+    )
+    assert fields.message == "ERROR:  syntax error"
+    assert fields.sqlstate == "42601"
+    assert (fields.detail, fields.hint) == ("d", "h")
+    assert fields.position == 10
+    assert fields.line == 2
+
+
+def test_diagnose_of_nothing_is_empty_not_a_guess():
+    from pgtp_editor.db.apply import diagnose
+
+    assert diagnose(None).message == ""
+    assert diagnose(None).line is None

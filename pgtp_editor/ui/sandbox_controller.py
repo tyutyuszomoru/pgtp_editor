@@ -78,7 +78,7 @@ from enum import Enum
 from PySide6.QtCore import QObject, Signal
 
 from ..db.config import ConnectionParams
-from ..db.ddl_check import recheck
+from ..db.ddl_check import apply_and_check, probe_check, recheck
 from ..db.introspect import BaselineSnapshot, DatabaseSchema, snapshot_for_baseline
 from ..db.sandbox import (
     SandboxCapabilities,
@@ -121,12 +121,37 @@ class SandboxOperation(str, Enum):
     #: `SandboxOperation` as `CHECK` (non-destructive -- no
     #: `confirm_destructive` prompt)").
     CHECK = "check"
+    #: §18.5 D3's **Apply to Sandbox** -- `db/ddl_check.py::apply_and_check`:
+    #: the ladder, committing, with the working-set row written in the same
+    #: transaction.
+    #:
+    #: **Also deliberately absent from `DESTRUCTIVE_OPERATIONS`, and that needs
+    #: saying out loud because an apply DOES change the sandbox.**
+    #: `DESTRUCTIVE_OPERATIONS` means one specific thing here -- an operation
+    #: that *drops and recreates schemas or overwrites the sandbox wholesale*
+    #: (`PROVISION`, `CLONE_DATA`, `RESET`, each of which loses everything
+    #: already applied). An apply is the opposite: `CREATE OR REPLACE` is
+    #: idempotent, it destroys no schema, and §18.5 D2 is explicit that **the
+    #: sandbox is STATEFUL and accumulates applied edits -- that is its
+    #: purpose**. Putting an apply behind `confirm_destructive` would demand a
+    #: confirmation on every iteration of the edit/validate loop, which is both
+    #: the wrong claim (nothing is being destroyed) and actively harmful: it
+    #: trains the user to click through the one prompt that protects the three
+    #: operations that really do wipe the sandbox. The confirmation an apply
+    #: *does* need is the panel's own (`ui/ddl_object_editor.py`'s injected
+    #: `confirm` seam), which names the object -- a different question from
+    #: "may I destroy this sandbox?".
+    APPLY = "apply"
 
 
 #: The operations that drop and recreate schemas (or overwrite the sandbox's
 #: contents wholesale). Each is refused unless `confirm_destructive` approves it
 #: -- §18.5 D2a's "refreshing means destroying and recreating the sandbox" is a
 #: deliberate user act, never a side effect.
+#:
+#: **`APPLY` and `CHECK` are not here on purpose** -- see `SandboxOperation.APPLY`
+#: for why "it changes the sandbox" is not the same as "it destroys the sandbox",
+#: and why widening this set would weaken the prompt rather than strengthen it.
 DESTRUCTIVE_OPERATIONS = frozenset(
     {SandboxOperation.PROVISION, SandboxOperation.CLONE_DATA, SandboxOperation.RESET}
 )
@@ -169,6 +194,57 @@ _NO_CHECK_REQUEST_REASON = (
     "invoked from"
 )
 
+#: The same stated refusal for `run_apply`. Separate wording because the two
+#: gestures are separate sentences to the user, not because the situation
+#: differs.
+_NO_APPLY_REQUEST_REASON = (
+    "nothing to apply -- Apply to Sandbox needs the object whose tab it was "
+    "invoked from"
+)
+
+#: A green probe is still not an apply. Stated rather than reported as success,
+#: so *"it would have worked"* and *"it is now in the sandbox"* stay apart.
+_PROBE_NOT_APPLIED_REASON = (
+    "checked without applying: the ladder ran green inside a transaction that "
+    "was then rolled back, so the sandbox is unchanged."
+)
+
+#: The ladder was green but the transaction did not commit -- the one direction
+#: this must never be silent in, because the user pressed Apply.
+_NOT_COMMITTED_REASON = (
+    "NOTHING WAS APPLIED: the ladder ran green but the transaction did not "
+    "commit, so the sandbox is unchanged."
+)
+
+#: The four tier attribute names on a `db/ddl_check.py::CheckReport`, in ladder
+#: order -- the same four `ui/ddl_object_editor.py` reads. Both take the
+#: vocabulary from `db/ddl_check.py`; see `_tier_rows` for why this module does
+#: not import the panel's copy.
+_TIER_ATTRS = ("tier0", "tier1", "tier2", "tier3")
+
+
+def _tier_rows(report: object) -> list[tuple[str, str, str]]:
+    """`[(name, status, reason), …]` for the tiers a report carries, read
+    duck-typed exactly as `ui/ddl_object_editor.py::tier_outcomes` does.
+
+    Kept here rather than imported from the panel because this module must not
+    depend on a widget module to interpret a `db/` dataclass; the *vocabulary*
+    is `db/ddl_check.py`'s and both readers take it from there.
+    """
+    rows: list[tuple[str, str, str]] = []
+    for name in _TIER_ATTRS:
+        outcome = getattr(report, name, None)
+        if outcome is None:
+            continue
+        rows.append(
+            (
+                name,
+                str(getattr(outcome, "status", "") or ""),
+                str(getattr(outcome, "reason", "") or "no reason given"),
+            )
+        )
+    return rows
+
 
 @dataclass(frozen=True)
 class SandboxOperationResult:
@@ -178,7 +254,7 @@ class SandboxOperationResult:
     `reason` is empty only on a bare success; a successful operation may still
     carry an explanatory line (e.g. `install_gate`'s *"already installed."*).
 
-    `report` is set **only** by `SandboxOperation.CHECK`, and carries the
+    `report` is set **only** by `SandboxOperation.CHECK`/`APPLY`, and carries the
     `db/ddl_check.py::CheckReport` the ladder produced (typed `object` for the
     same reason `operation_finished` is: this module reads it duck-typed and
     never widens `ddl_check`'s types). It is None whenever no report was
@@ -217,16 +293,16 @@ class SandboxController(QObject):
         `probe`, `open_sandbox`, `provision_sandbox`, `create_sandbox_database`,
         `clone_data`, `install_plpgsql_check` and
         `db/introspect.py::snapshot_for_baseline` respectively.
-    ``checker``
-        `db/ddl_check.py::recheck` -- §18.5 D3a's ladder entry point,
-        `(session, request, caps) -> CheckReport`. Injected like every other
-        `db/` seam; **the ladder is not re-composed here and no SQL is built
-        here**, this module only supplies the session, the capabilities and the
-        thread.
+    ``checker`` / ``applier`` / ``probe_checker``
+        §18.5 D3's three ladder entry points -- `db/ddl_check.py::recheck`
+        (`(session, request, caps) -> CheckReport`), `apply_and_check` (commits)
+        and `probe_check` (rolled back). Injected like every other `db/` seam;
+        **the ladder is not re-composed here and no SQL is built here**, this
+        module only supplies the session, the capabilities and the thread.
 
     Wiring surface for the main session: `set_project`/`clear_project`,
     `open_session`/`close_session`/`reset_session`, `provision`,
-    `run_data_clone`, `install_plpgsql_check`, `run_check`,
+    `run_data_clone`, `install_plpgsql_check`, `run_check`, `run_apply`,
     `refresh_capabilities`, the zero-argument §18.8 adapters
     `on_run_data_clone`/`on_install_plpgsql_check`, the read-only
     `has_session`/`session`/`capabilities`/`can_check`/`capability_status`, and
@@ -254,6 +330,8 @@ class SandboxController(QObject):
         installer: Callable[[SandboxSession], None] = install_plpgsql_check,
         snapshotter: Callable[..., BaselineSnapshot] = snapshot_for_baseline,
         checker: Callable[..., object] = recheck,
+        applier: Callable[..., object] = apply_and_check,
+        probe_checker: Callable[..., object] = probe_check,
     ) -> None:
         super().__init__(parent)
         # Plain attribute, replaced wholesale by a synchronous stub in tests --
@@ -270,6 +348,8 @@ class SandboxController(QObject):
         self._installer = installer
         self._snapshotter = snapshotter
         self._checker = checker
+        self._applier = applier
+        self._probe_checker = probe_checker
 
         self._session: SandboxSession | None = None
         self._capabilities: SandboxCapabilities | None = None
@@ -739,6 +819,86 @@ class SandboxController(QObject):
             SandboxOperation.CHECK, on_done
         ))
 
+    def run_apply(
+        self,
+        request: object,
+        on_done: Callable[[SandboxOperationResult], None] | None = None,
+        *,
+        ddl_text: str | None = None,
+        probe: bool = False,
+    ) -> None:
+        """**Apply to Sandbox** (§18.5 D3): apply one object's DDL to the live
+        sandbox and run the whole ladder over it, in one transaction.
+
+        Mirrors `run_check` exactly -- same session precondition, same
+        `_run_async` seam, same `SandboxOperationResult`/`operation_finished`
+        path, same duck-typed reading of the report -- and differs only in which
+        `db/ddl_check.py` entry point it calls. **No SQL and no ladder logic live
+        here**: `apply_and_check` composes the statement list and `db/apply.py`
+        runs it.
+
+        `probe=True` switches to D3's *"Check without applying"* probe
+        (`probe_check`), which runs the identical ladder rolled back. It is a
+        flag rather than a second method because the two differ in exactly one
+        boolean, and the difference is reported as data (`CheckReport.committed`
+        plus the probe caveat) rather than inferred by the caller from which
+        method it happened to call.
+
+        `ddl_text` defaults to the request's own `buffer_text`.
+
+        **`confirm_destructive` is never consulted** -- `APPLY` is not in
+        `DESTRUCTIVE_OPERATIONS` (see `SandboxOperation.APPLY` for the full
+        argument). The confirmation an apply needs names the *object* and belongs
+        to the panel that invoked it.
+
+        `ok` means **the whole ladder ran green and the transaction committed**:
+
+        | Situation | `ok` | `reason` | `report` |
+        |---|---|---|---|
+        | every tier passed, committed | True | empty | the report |
+        | a tier found something | False | that tier's own reason | the report |
+        | a tier could not run | False | that tier's own reason, verbatim | the report |
+        | it applied but was rolled back (or `probe=True`) | False | the rollback/probe caveat | the report |
+        | no live session | False | `_NO_SESSION_REASON` | None |
+        | the worker raised | False | the exception's message | None |
+        """
+        session = self._session
+        if session is None:
+            self._finish(SandboxOperation.APPLY, False, _NO_SESSION_REASON, on_done)
+            return
+        if request is None:
+            self._finish(
+                SandboxOperation.APPLY, False, _NO_APPLY_REQUEST_REASON, on_done
+            )
+            return
+
+        cached_caps = self._capabilities
+        params = session.params
+        run_ladder = self._probe_checker if probe else self._applier
+
+        def work() -> tuple[object, SandboxCapabilities]:
+            caps = cached_caps if cached_caps is not None else self._prober(params)
+            return run_ladder(session, request, caps, ddl_text=ddl_text), caps
+
+        def on_result(outcome: tuple[object, SandboxCapabilities]) -> None:
+            report, caps = outcome
+            self._capabilities = caps
+            ok, reason = self._apply_outcome(report, probe=probe)
+            result = SandboxOperationResult(
+                operation=SandboxOperation.APPLY,
+                ok=ok,
+                reason=reason,
+                capabilities=caps,
+                report=report,
+            )
+            if on_done is not None:
+                on_done(result)
+            self.operation_finished.emit(result)
+
+        self._run_async(work, on_result=on_result, on_error=self._error_handler(
+            SandboxOperation.APPLY, on_done
+        ))
+
     def reset_session(
         self, on_done: Callable[[SandboxOperationResult], None] | None = None
     ) -> None:
@@ -815,6 +975,37 @@ class SandboxController(QObject):
             )
             return False
         return True
+
+    @staticmethod
+    def _apply_outcome(report: object, *, probe: bool) -> tuple[bool, str]:
+        """`(ok, reason)` for one `CheckReport` produced by an **apply**, read
+        duck-typed like `_check_outcome`.
+
+        Stricter than `_check_outcome` in the two ways an apply is stricter: it
+        requires **every** tier to have passed (`green`, §18.5 D3's hard rule --
+        an unavailable tier is never folded into the OK state), and it requires
+        the transaction to have **committed**, because "it compiled and was rolled
+        back" must never be reported as a successful apply. A probe is expected
+        not to commit, so it is reported as `ok=False` with the reason saying so
+        rather than as a failure of the DDL.
+        """
+        green = bool(getattr(report, "green", False))
+        committed = bool(getattr(report, "committed", False))
+        if not green:
+            unverified = [
+                f"{name}: {status} ({reason})"
+                for name, status, reason in _tier_rows(report)
+                if status != "passed"
+            ]
+            return False, "; ".join(unverified) or (
+                "the ladder reported nothing about this object -- nothing was "
+                "verified."
+            )
+        if probe:
+            return False, _PROBE_NOT_APPLIED_REASON
+        if not committed:
+            return False, _NOT_COMMITTED_REASON
+        return True, ""
 
     @staticmethod
     def _check_outcome(report: object) -> tuple[bool, str]:

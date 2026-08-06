@@ -27,6 +27,7 @@ from pgtp_editor.db.config import ConnectionParams
 from pgtp_editor.db.sandbox import SandboxMode, SandboxSession
 from pgtp_editor.db.sandbox_query import (
     DEFAULT_MAX_ROWS,
+    QueryError,
     QueryOutcome,
     QueryResult,
     RawResult,
@@ -157,7 +158,7 @@ def test_error_with_empty_message_still_names_something():
     result = run_sandbox_query(
         make_session(), "SELECT 1", runner=RecordingRunner(error=ValueError(""))
     )
-    assert result.error == "ValueError"
+    assert result.error.message == "ValueError"
 
 
 def test_run_sandbox_query_never_raises():
@@ -211,22 +212,57 @@ def test_default_cap_is_sane():
 # -- no connection ---------------------------------------------------------
 
 
-def test_no_connection_is_opened(monkeypatch):
-    """The default runner is the only psycopg touchpoint; with a runner
-    injected it must never be consulted, so importing/using this module cannot
-    open a socket."""
+def test_this_module_opens_no_connection_of_its_own():
+    """The fourth-seam guard: this module must not contain a psycopg call site
+    at all. Its runs go through `db/sandbox.py::SandboxExecutor.fetch`, the
+    sandbox lane's seam, which is reachable only through an ownership-gated
+    session (§18.5 invariant 1's three-seams rule)."""
+    import inspect
+
     import pgtp_editor.db.sandbox_query as module
 
-    def explode(*_args, **_kwargs):  # pragma: no cover - must not be called
-        raise AssertionError("the real psycopg runner was invoked")
+    source = inspect.getsource(module)
+    assert "psycopg.connect" not in source
+    assert "import psycopg" not in source
+    assert not hasattr(module, "_psycopg_runner")
 
-    monkeypatch.setattr(module, "_psycopg_runner", explode)
-    monkeypatch.setattr(module, "DEFAULT_QUERY_RUNNER", explode)
 
-    result = run_sandbox_query(
-        make_session(), "SELECT 1", runner=RecordingRunner(RawResult(columns=("x",), rows=[(1,)]))
+def test_the_default_runner_is_the_sessions_executor_fetch():
+    """With no `runner=`, the statement goes to `session.executor.fetch` --
+    never to a module-level connection opener."""
+
+    class RecordingExecutor:
+        def __init__(self):
+            self.calls = []
+
+        def fetch(self, params, sql, *, max_rows):
+            self.calls.append((params, sql, max_rows))
+            return RawResult(columns=("x",), rows=[(1,)])
+
+        def execute(self, params, statements):  # pragma: no cover - unused here
+            raise AssertionError("execute must not be used for an ad-hoc query")
+
+        def query(self, params, sql):  # pragma: no cover - unused here
+            raise AssertionError("query must not be used for an ad-hoc query")
+
+    executor = RecordingExecutor()
+    session = SandboxSession(
+        params=PARAMS, mode=SandboxMode.SCHEMA_ONLY, executor=executor
     )
+
+    result = run_sandbox_query(session, "SELECT 1", max_rows=7)
+
     assert result.outcome is QueryOutcome.ROWS
+    assert executor.calls == [(PARAMS, "SELECT 1", 7)]
+
+
+def test_raw_result_is_the_seams_own_type():
+    """One raw-result record, not two: `RawResult` IS
+    `db/sandbox.py::FetchedRows`, so the executor's return type and this
+    module's input cannot drift apart."""
+    from pgtp_editor.db.sandbox import FetchedRows
+
+    assert RawResult is FetchedRows
 
 
 # -- timing ----------------------------------------------------------------
@@ -247,5 +283,111 @@ def test_elapsed_is_measured_through_the_injected_clock():
 def test_failed_helper_sets_both_outcome_and_error():
     result = QueryResult.failed("SELECT 1", "boom")
     assert result.outcome is QueryOutcome.ERROR
-    assert result.error == "boom"
+    assert result.error == QueryError(message="boom")
     assert result.ok is False
+
+
+# -- QueryError: the structured, shared failure vocabulary (§18.5 D4) -------
+
+
+def test_query_error_field_names_match_apply_and_finding():
+    """The alignment rule: a failed query, a failed apply and a validation
+    finding must carry the SAME field names so one helper renders all three."""
+    from dataclasses import fields
+
+    from pgtp_editor.db.apply import ApplyOutcome
+    from pgtp_editor.db.ddl_check import CheckFinding
+
+    shared = {"sqlstate", "message", "detail", "hint", "position", "line"}
+    assert shared <= {f.name for f in fields(QueryError)}
+    assert shared <= {f.name for f in fields(ApplyOutcome)}
+    assert shared - {"message"} <= {f.name for f in fields(CheckFinding)}
+
+
+def test_query_error_is_built_from_the_drivers_diagnostics():
+    class Diag:
+        message_detail = "the detail"
+        message_hint = "try harder"
+        statement_position = "10"
+
+    class Failure(Exception):
+        sqlstate = "42601"
+        diag = Diag()
+
+    error = QueryError.from_exception(Failure("ERROR:  syntax error"), "SELECT\n  oops")
+
+    assert error.message == "ERROR:  syntax error"
+    assert error.sqlstate == "42601"
+    assert error.detail == "the detail"
+    assert error.hint == "try harder"
+    assert error.position == 10
+    # position 10 falls on the second line of "SELECT\n  oops" -- derived by
+    # db/apply.py::line_of_position, the single implementation of that rule.
+    assert error.line == 2
+
+
+def test_query_error_without_a_position_has_no_line():
+    """Never a guessed line (§18.5 D3) -- no position means no line at all."""
+    error = QueryError.from_exception(RuntimeError("boom"), "SELECT 1")
+    assert error.position is None
+    assert error.line is None
+
+
+def test_query_error_reuses_apply_line_of_position():
+    """The position -> line rule has ONE implementation, in db/apply.py: this
+    module reimplements no line arithmetic of its own."""
+    import inspect
+
+    from pgtp_editor.db.apply import line_of_position
+    import pgtp_editor.db.sandbox_query as module
+
+    statement = "SELECT 1,\n  2,\n  oops"
+    for position in (1, 11, 18, 99, None):
+        error = QueryError.from_exception(_positioned_failure(position), statement)
+        assert error.line == line_of_position(statement, position)
+
+    source = inspect.getsource(module)
+    assert 'count("\\n"' not in source
+
+
+def _positioned_failure(position):
+    class Diag:
+        statement_position = position
+
+    class Failure(Exception):
+        diag = Diag()
+
+    return Failure("boom")
+
+
+def test_query_error_still_renders_as_the_databases_words():
+    """Compatibility with the rendered value: every surface that showed the
+    server's sentence keeps showing exactly it."""
+    error = QueryError(message='relation "nope" does not exist', sqlstate="42P01")
+    assert str(error) == 'relation "nope" does not exist'
+    assert "nope" in error
+    assert bool(error) is True
+
+
+def test_error_text_renders_the_shared_fields():
+    from pgtp_editor.db.sandbox_query import error_text
+
+    text = error_text(
+        QueryError(message="syntax error", sqlstate="42601", line=3, hint="add a comma")
+    )
+    assert "42601 syntax error" in text
+    assert "line 3" in text
+    assert "hint: add a comma" in text
+
+
+def test_error_text_reads_an_apply_outcome_too():
+    """Duck-typed on purpose: the shared field names mean an ApplyOutcome
+    renders through the SAME helper, not a second copy of these sentences."""
+    from pgtp_editor.db.apply import ApplyOutcome
+    from pgtp_editor.db.sandbox_query import error_text
+
+    outcome = ApplyOutcome.failed(
+        "syntax error", statement="SELECT\n1", sqlstate="42601", position=8
+    )
+    assert "42601 syntax error" in error_text(outcome)
+    assert "line 2" in error_text(outcome)

@@ -45,19 +45,33 @@ rows, a statement that returned none (DML/DDL, carrying the driver's own
 own message**, which is the useful part. Exceptions are never swallowed into an
 empty grid: an error is an error.
 
-Qt-free, and like the rest of `db/`, opens no connection except through the
-injectable `runner` seam -- the whole test suite runs with psycopg absent.
+**It opens no connection of its own -- it goes through the sandbox lane's
+seam.** §18.5's invariant 1 names exactly three connection-opening seams:
+`db/introspect.py::run_queries` (read), `db/apply.py::apply_ddl` (DDL write) and
+`db/sandbox.py::SandboxExecutor` (`execute`/`query`/`fetch`, the sandbox lane,
+reachable only through an ownership-gated session). This module's runs are the
+`fetch` half of that third seam. An earlier version of this file opened its own
+psycopg connection, which was a **fourth** seam and directly contradicted
+the argument above: the safety property is that ad-hoc SQL can reach nothing but
+an app-owned sandbox, and a private connection put this module's connection
+discipline outside the gate that guarantees it. The `runner=` parameter is still
+here as the injection point, but it now *defaults to the session's own
+executor* rather than to a private psycopg call.
+
+Qt-free, and like the rest of `db/`, opens no connection except through that
+seam -- the whole test suite runs with psycopg absent.
 """
 from __future__ import annotations
 
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Protocol
 
+from .apply import diagnose
 from .config import ConnectionParams
-from .sandbox import SandboxSession
+from .sandbox import FetchedRows, SandboxSession
 
 #: How many rows one ad-hoc run may bring back before it is cut off. Chosen to
 #: be comfortably renderable in a `QTableWidget` (a grid this size builds in
@@ -81,40 +95,28 @@ class QueryOutcome(str, Enum):
     ERROR = "error"
 
 
-@dataclass(frozen=True)
-class RawResult:
-    """What a `QueryRunner` hands back -- the driver's raw answer, before any
-    capping or timing. Deliberately dumb: the runner's whole job is the wire,
-    and every decision about truncation, timing and presentation is made in
-    `run_sandbox_query` where it can be tested without a database.
-
-    `columns` is None exactly when the statement produced no result set
-    (psycopg leaves `cursor.description` None for DML/DDL) -- that is the
-    single signal separating `ROWS` from `NO_ROWS`, and it is the driver's, not
-    a guess made by pattern-matching the SQL text.
-
-    `rows` may contain **one row more** than the caller's cap; that extra row
-    is how truncation is detected and is dropped before it reaches a
-    `QueryResult`.
-    """
-
-    columns: tuple[str, ...] | None
-    rows: Sequence[Sequence[Any]] = ()
-    #: `cursor.rowcount` -- rows affected by a DML statement, or -1/None when
-    #: the driver does not know.
-    affected: int | None = None
-    #: `cursor.statusmessage` (e.g. `"UPDATE 3"`, `"CREATE FUNCTION"`), shown
-    #: verbatim for the no-rows case rather than being re-worded here.
-    status: str = ""
+#: This module's historical name for `db/sandbox.py::FetchedRows`, kept because
+#: it is what `QueryRunner` returns and what every test constructs. **One type,
+#: not two**: it moved to `db/sandbox.py` when `SandboxExecutor.fetch` became
+#: the seam that produces it, because a seam owns its own return type -- and two
+#: near-identical raw-result records, one per module, is exactly the duplication
+#: this project treats as drift.
+RawResult = FetchedRows
 
 
 class QueryRunner(Protocol):
-    """The execution seam, sibling of `db/introspect.py::Runner` and
-    `db/sandbox.py::SandboxExecutor`. One call, one connection, one statement.
+    """The execution seam -- **`db/sandbox.py::SandboxExecutor.fetch`'s
+    signature**, named here for the injection point.
 
-    `max_rows` is passed down rather than applied afterwards so a real
-    implementation can `fetchmany` instead of dragging a million rows across
-    the wire first and discarding them.
+    One call, one connection, one statement. `max_rows` is passed down rather
+    than applied afterwards so a real implementation can `fetchmany` instead of
+    dragging a million rows across the wire first and discarding them.
+
+    There is deliberately **no module-level default implementation** any more:
+    the default is the *session's* executor, read off the session inside
+    `run_sandbox_query`. That is not a style change -- a module-level default
+    would be a connection-opening function reachable without a session, which is
+    the one thing this module's safety argument forbids.
     """
 
     def __call__(
@@ -123,58 +125,81 @@ class QueryRunner(Protocol):
         ...
 
 
-def _psycopg_runner(
-    params: ConnectionParams, sql: str, *, max_rows: int
-) -> RawResult:
-    """The real `QueryRunner`. Lazily imports psycopg exactly like
-    `db/introspect.py::run_queries` and `db/sandbox.py`'s executors do, so
-    importing this module never requires the driver.
+@dataclass(frozen=True)
+class QueryError:
+    """One failed statement's error, **structured** (§18.5 D4).
 
-    Fetches `max_rows + 1` rows: the extra one never reaches the UI, it only
-    proves the result set was longer than the cap. Commits, because an ad-hoc
-    statement may legitimately be DML against the (disposable) sandbox and
-    leaving it in a rolled-back limbo would be the surprising behaviour;
-    a failure rolls back and re-raises, so nothing lands half-applied.
+    **The field names are `db/apply.py::ApplyOutcome`'s and
+    `db/ddl_check.py::CheckFinding`'s, deliberately** -- `sqlstate`, `message`,
+    `detail`, `hint`, `position`, `line` -- so a failed query, a failed apply and
+    a validation finding render identically through one formatting helper, the
+    same pattern-extension discipline §18.4 set with `xsd_verify.Issue`. An
+    unstructured `str` could not do that: `position`/`line` are what make an
+    error *clickable*, and `sqlstate` is what lets a caller recognise a specific
+    failure (D4's statement-timeout `57014`) without regexing English prose.
+
+    `line` is derived from `position` by `db/apply.py::line_of_position` -- the
+    one implementation of that rule. `position` is a character offset into the
+    statement we sent, which **is** the buffer, so no `map_lineno` is involved:
+    there is no `prosrc`/`pg_get_functiondef` offset here (§18.5 D4).
+
+    **It also still behaves like the string it replaced** (`str()`, `in`, `len`,
+    truthiness all read `message`), so every existing surface that treated
+    `QueryResult.error` as the database's words keeps working and keeps showing
+    the same sentence. That is compatibility with the *rendered* value, not a
+    second representation: `message` is the single source of it.
     """
-    import psycopg  # noqa: PLC0415 -- lazy on purpose (see module docstring)
 
-    connection = psycopg.connect(
-        host=params.host or None,
-        port=params.port or None,
-        dbname=params.database or None,
-        user=params.user or None,
-        password=params.password or None,
-    )
-    try:
-        with connection.cursor() as cursor:
-            cursor.execute(sql)
-            description = cursor.description
-            if description is None:
-                result = RawResult(
-                    columns=None,
-                    rows=(),
-                    affected=cursor.rowcount,
-                    status=cursor.statusmessage or "",
-                )
-            else:
-                result = RawResult(
-                    columns=tuple(str(column[0]) for column in description),
-                    rows=cursor.fetchmany(max_rows + 1),
-                    affected=cursor.rowcount,
-                    status=cursor.statusmessage or "",
-                )
-        connection.commit()
-        return result
-    except Exception:
-        connection.rollback()
-        raise
-    finally:
-        connection.close()
+    message: str = ""
+    sqlstate: str = ""
+    detail: str = ""
+    hint: str = ""
+    #: 1-based character offset into the statement, as the server reported it.
+    position: int | None = None
+    #: The line of `position` within the statement, or None when the server gave
+    #: no position -- never a guess (§18.5 D3's "render with no line at all").
+    line: int | None = None
 
+    @classmethod
+    def from_exception(cls, exc: BaseException, statement: str = "") -> QueryError:
+        """The database's own words plus its diagnostics, read through
+        `db/apply.py::diagnose` so psycopg's `sqlstate`/`diag.*` layout has
+        exactly one reader in the codebase."""
+        fields = diagnose(exc, statement)
+        return cls(
+            message=fields.message,
+            sqlstate=fields.sqlstate,
+            detail=fields.detail,
+            hint=fields.hint,
+            position=fields.position,
+            line=fields.line,
+        )
 
-#: The default, real `QueryRunner` -- module-level so callers can default to it
-#: the way `probe`/`open_sandbox` default to `run_queries`/the real executor.
-DEFAULT_QUERY_RUNNER: QueryRunner = _psycopg_runner
+    @classmethod
+    def of(cls, error: QueryError | str) -> QueryError:
+        """`error` as a `QueryError` -- itself, or a bare message promoted to
+        one with no diagnostics. The promotion path exists for the failures that
+        genuinely have none (a thread pool that died before the statement was
+        ever sent), not as a way to keep passing strings around."""
+        if isinstance(error, QueryError):
+            return error
+        return cls(message=str(error))
+
+    # -- string compatibility (see the class docstring) ----------------------
+
+    def __str__(self) -> str:
+        return self.message
+
+    def __contains__(self, needle: object) -> bool:
+        return str(needle) in self.message
+
+    def __len__(self) -> int:
+        return len(self.message)
+
+    def __bool__(self) -> bool:
+        # An error object always IS an error, even with an empty message -- the
+        # alternative would make a message-less failure read as "no error".
+        return True
 
 
 @dataclass(frozen=True)
@@ -202,25 +227,29 @@ class QueryResult:
     affected: int | None = None
     #: The driver's own status line (e.g. `"UPDATE 3"`), never re-worded.
     status: str = ""
-    #: The database's own error message, verbatim. Set iff `outcome is ERROR`.
-    error: str | None = None
+    #: The structured failure -- the database's own message plus its
+    #: `sqlstate`/`detail`/`hint`/`position`/`line`. Set iff `outcome is ERROR`.
+    error: QueryError | None = None
     elapsed_ms: float = 0.0
 
     @classmethod
     def failed(
         cls,
         sql: str,
-        error: str,
+        error: QueryError | str,
         *,
         elapsed_ms: float = 0.0,
         max_rows: int = DEFAULT_MAX_ROWS,
     ) -> QueryResult:
         """The error case, spelled out so no caller has to remember to set
-        both `outcome` and `error` consistently."""
+        both `outcome` and `error` consistently. A bare message is promoted to a
+        `QueryError` (see `QueryError.of`) so a caller with nothing but a
+        sentence -- a seam that died before the statement was sent -- still
+        produces the one shape every surface renders."""
         return cls(
             outcome=QueryOutcome.ERROR,
             sql=sql,
-            error=error,
+            error=QueryError.of(error),
             elapsed_ms=elapsed_ms,
             max_rows=max_rows,
         )
@@ -250,7 +279,7 @@ def run_sandbox_query(
     sql: str,
     *,
     max_rows: int = DEFAULT_MAX_ROWS,
-    runner: QueryRunner = DEFAULT_QUERY_RUNNER,
+    runner: QueryRunner | None = None,
     clock: Callable[[], float] = time.perf_counter,
 ) -> QueryResult:
     """Run one ad-hoc statement against `session`'s sandbox and model the
@@ -265,6 +294,12 @@ def run_sandbox_query(
     function, deliberately (§18.3's never-execute-silently non-goal is untouched
     for every database that is not the disposable sandbox).
 
+    **The run goes through `session.executor.fetch`** -- the sandbox lane's
+    seam -- unless a `runner` is injected. This module opens no connection
+    itself: the executor is reached only through the ownership-gated session, so
+    "which database can this reach?" is answered by the same object that proves
+    the database is disposable.
+
     Blocking -- call it through `ui/sandbox_controller.py`'s `_run_async` seam
     (or any other off-GUI-thread runner), never on the GUI thread.
     """
@@ -276,14 +311,15 @@ def run_sandbox_query(
     # is a programming error that must be loud, never a tidy "error result"
     # that reads as "the server said no".
     params = _sandbox_params(session)
+    fetch: QueryRunner = runner if runner is not None else session.executor.fetch
 
     started = clock()
     try:
-        raw = runner(params, sql, max_rows=max_rows)
+        raw = fetch(params, sql, max_rows=max_rows)
     except Exception as exc:  # noqa: BLE001 -- the DB's message IS the result
         return QueryResult.failed(
             sql,
-            _error_message(exc),
+            QueryError.from_exception(exc, sql),
             elapsed_ms=(clock() - started) * 1000.0,
             max_rows=max_rows,
         )
@@ -331,12 +367,28 @@ def _sandbox_params(session: SandboxSession) -> ConnectionParams:
     return session.params
 
 
-def _error_message(exc: BaseException) -> str:
-    """The database's own words where there are any -- psycopg's exception
-    `str()` is the server's `ERROR: …` line, which is the whole reason to show
-    an error at all. Falls back to the class name so an exception with an empty
-    message never renders as a blank "error"."""
-    return str(exc).strip() or exc.__class__.__name__
+def error_text(error: QueryError | None) -> str:
+    """One `QueryError` as one line: the server's message, then whichever of
+    `sqlstate`/`line`/`hint` it actually has.
+
+    **The shared renderer §18.5 D4 asks for**, living where the shared field
+    names do. It reads its input duck-typed (`getattr`), so a
+    `db/apply.py::ApplyOutcome` and a `db/ddl_check.py::CheckFinding` -- which
+    carry the same names on purpose -- render through it verbatim rather than
+    through a second, drifting copy of these sentences.
+    """
+    if error is None:
+        return ""
+    message = str(getattr(error, "message", "") or "").strip()
+    sqlstate = str(getattr(error, "sqlstate", "") or "").strip()
+    line = getattr(error, "line", None)
+    hint = str(getattr(error, "hint", "") or "").strip()
+    parts = [f"{sqlstate} {message}".strip() if sqlstate else message]
+    if line:
+        parts.append(f"line {line}")
+    if hint:
+        parts.append(f"hint: {hint}")
+    return " — ".join(part for part in parts if part)
 
 
 def status_line(result: QueryResult) -> str:
@@ -349,7 +401,7 @@ def status_line(result: QueryResult) -> str:
     applies, an explicit truncation notice naming the cap.
     """
     if result.outcome is QueryOutcome.ERROR:
-        return f"Error: {result.error}"
+        return f"Error: {error_text(result.error)}"
 
     elapsed = f"{result.elapsed_ms:.0f} ms"
     if result.outcome is QueryOutcome.NO_ROWS:

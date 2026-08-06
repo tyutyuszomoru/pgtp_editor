@@ -33,30 +33,41 @@ output we could not parse, and a genuine clean run each produce a different
 `TierOutcome` with its own reason string. `passed` is emitted in exactly one
 situation: the extension ran, we parsed its result, and there were no rows.
 
-**Scope of this pass — tier 3 only, stated rather than implied.** D3's ladder
-has four tiers; tiers 0–2 all hang off the write seam `db/apply.py::apply_ddl`
-(tier 1 needs its notice channel, tier 2 *is* the apply). That module now
-exists (`apply_ddl`/`ApplyOutcome`/`StatementFailure`), but **nothing in this
-driver is wired through it yet** — no path here composes a statement list or
-calls `apply_ddl`, so tiers 0–2 still verify nothing.
-Rather than omit them from the report — which would let the UI
-render a tier-3-only report as a complete one — `CheckReport` carries tiers
-0–2 as explicit `unavailable` outcomes naming the missing seam. The report
-therefore composes, unchanged, with the panel that already reads it:
-`ui/ddl_object_editor.py` reads `CheckReport{tier0..tier3, findings, caveats}`
-and `TierOutcome{status, reason, detail}` duck-typed and treats
-`unavailable`/`errored` as "could not check" — never as OK.
+**All four tiers now run, and the ladder is ONE call.** Tiers 0-2 hang off the
+write seam `db/apply.py::apply_ddl`, and they cannot be separate round trips:
+`SET plpgsql.extra_*` is session-scoped, and the `plpgsql_check_function_tb`
+SELECT must see the object the DDL just created — in a `probe_check` that object
+exists only inside the uncommitted transaction. So `apply_and_check`/
+`probe_check` **compose one statement list**, hand it to `apply_ddl`, and read
+the tiers back off it:
 
-**Read-only.** This module runs a *read-only analysis function*; it applies no
-DDL, writes nothing, and alters nothing (§18.3's never-auto-execute posture).
-Applying an edit to the sandbox is `SandboxSession.apply`'s job and stays
-there. Consequently this module reaches the database only through the
-session's `query` side, never `execute` — a fact the caller can rely on.
+| Tier | Where its answer comes from |
+|---|---|
+| 0 | collapses into tier 2 — PostgreSQL's own parser is the syntax checker, so no `pglast`/GPL grammar dependency is taken (§18.5 D3's licensing note) |
+| 1 | `ApplyOutcome.notices` — the `SET plpgsql.extra_warnings = 'all'` lint returns **no rows**, so its findings exist only on the notice channel; **`notices_captured is False` means `unavailable`, never `passed`** |
+| 2 | whether the DDL statement itself ran, by `ApplyOutcome.statement_index` |
+| 3 | the check SELECT's rows, read off `ApplyOutcome.result_at(check_index)` |
+
+**`statement_index` is the whole reason this is safe.** Run as one call, a naive
+"it raised" report would show a failure *in the check call* as *"your DDL is
+broken"*. Every tier here is attributed by the index this module itself chose
+for that tier's statement, so each failure lands on the tier that actually
+produced it and no other tier is reported as verified because of it.
+
+**Two gestures write, one does not, and that difference is user-visible.**
+`apply_and_check` commits (the DDL *and* the `applied` bookkeeping row, in the
+same transaction); `probe_check` runs the identical list with
+`apply_ddl(..., commit=False)` — the **one** narrow place rollback survives
+(§18.5 D2: a convenience for *"what would this do?"*, not a safety mechanism),
+which is why it is a `commit` boolean rather than a second code path that could
+validate something other than what Apply will run. `recheck` writes nothing at
+all: it reads the sandbox as it currently stands.
 
 Qt-free and, like `db/introspect.py` and `db/sandbox.py`, opens no connection
-except through an injectable seam: every entry point takes `query=`
-(defaulting to the session's executor), so the whole test suite runs with
-psycopg absent and never touches a real database.
+except through an injectable seam: the read entry points take `query=`
+(defaulting to the session's executor) and the writing ones take `applier=`
+(defaulting to `apply_ddl`), so the whole test suite runs with psycopg absent
+and never touches a real database.
 """
 from __future__ import annotations
 
@@ -65,8 +76,16 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any, Protocol
 
+from .apply import ApplyOutcome, apply_ddl
 from .config import ConnectionParams
-from .sandbox import SandboxCapabilities, UnsafeIdentifierError, install_gate, quote_ident
+from .sandbox import (
+    SandboxCapabilities,
+    UnsafeIdentifierError,
+    applied_upsert_sql,
+    install_gate,
+    quote_ident,
+    text_sha1,
+)
 
 #: Injectable read seam, mirroring `db/introspect.py::Runner` and
 #: `db/sandbox.py::SandboxExecutor.query`: one SQL string in, rows out. The
@@ -98,13 +117,75 @@ STATUS_FOUND_ISSUES = "found_issues"
 STATUS_UNAVAILABLE = "unavailable"
 STATUS_ERRORED = "errored"
 
-#: Reason text for a tier that is specified but not built in this pass. Named
-#: so the UI's "what was NOT checked" enumeration says something actionable
-#: instead of "unavailable ()".
+#: Reason text for a tier that no gesture on this path can produce. `recheck`
+#: applies nothing, so tiers 0-2 -- which are *about* applying -- have no answer
+#: for it beyond the bookkeeping table (see `recheck`). Named so the UI's "what
+#: was NOT checked" enumeration says something actionable instead of
+#: "unavailable ()".
 REASON_TIER_NOT_BUILT = (
-    "not built yet: tiers 0-2 run through the write seam db/apply.py, which "
-    "now exists but is not yet wired into this driver -- nothing about this "
-    "DDL was verified by this tier."
+    "nothing was applied in this run, so this tier had nothing to compile: the "
+    "compile check runs on Apply to Sandbox and on Check-without-applying."
+)
+
+#: Tier 1 exists only on the notice channel (§18.5 D3). A runner that cannot
+#: capture notices yields an empty finding list that is indistinguishable from a
+#: clean routine -- so it must report `unavailable`, never `passed`.
+REASON_NO_NOTICE_CHANNEL = (
+    "the extra-warnings lint reports through PostgreSQL's asynchronous NOTICE "
+    "channel and this run had no notice capture, so nothing it said was "
+    "received -- this routine has NOT been lint-checked."
+)
+
+#: The transaction stopped at an earlier statement, so this tier's statement was
+#: never reached. Formatted with the failing statement's index and message.
+REASON_NOT_REACHED = (
+    "the transaction stopped at statement {index} before this tier's statement "
+    "ran ({message}) -- nothing was verified by this tier."
+)
+
+#: Tier 0's reason whenever tier 2 ran: D3's *"tier 0 collapses into tier 2 when
+#: a sandbox is available"*. Stated rather than left blank so the always-printed
+#: tier-0 line says which parser actually judged the syntax.
+REASON_TIER0_COLLAPSED = (
+    "syntax was checked by PostgreSQL's own parser as part of tier 2 (the "
+    "offline grammar option, pglast, is GPL-only and is deliberately not a "
+    "dependency)."
+)
+
+#: Tier 0 when tier 2 could not run: there is no separate offline checker to
+#: fall back to, which is the honest statement of the same design decision.
+REASON_TIER0_NO_SANDBOX = (
+    "there is no offline syntax checker: tier 0 is PostgreSQL's own parser via "
+    "tier 2, and tier 2 did not run."
+)
+
+#: Tier 2 has no DDL to compile -- an empty buffer. Refused rather than reported
+#: as a clean compile of nothing.
+REASON_NO_DDL_TEXT = (
+    "there is no DDL text to apply, so nothing was compiled or checked."
+)
+
+#: The whole ladder was rolled back. Emitted as a caveat, because a user who
+#: pressed **Apply** must never be left believing it landed.
+CAVEAT_ROLLED_BACK = (
+    "NOTHING WAS APPLIED: the transaction was rolled back, so the sandbox is "
+    "unchanged by this run."
+)
+
+#: `probe_check`'s standing caveat -- the probe is explicitly rolled back, which
+#: is not a failure but must still be said out loud.
+CAVEAT_PROBE_ONLY = (
+    "this was a check WITHOUT applying: the DDL was compiled inside a "
+    "transaction that was then rolled back, so the sandbox still holds the "
+    "previously applied version."
+)
+
+#: `recheck`'s stale-buffer warning (§18.5 D3): the sandbox holds a different
+#: text than the caller's buffer, so the findings are about the OLD version.
+CAVEAT_STALE_BUFFER = (
+    "this buffer has changed since it was last applied to the sandbox: these "
+    "findings describe the version applied at {applied_at}, not what you are "
+    "looking at. Apply it again to check the current text."
 )
 
 #: `plpgsql_check_state == "installable"`, first sentence: why the check did not
@@ -257,6 +338,12 @@ class CheckFinding:
     #: `schema.name(argtypes)` of the object checked -- so a finding stays
     #: attributable after being merged into one Audit panel with others.
     identity: str = ""
+    #: Which ladder tier produced this finding (§18.5 D3a's "the source tier").
+    #: Defaults to 3 because `plpgsql_check` was the only source until tiers 0-2
+    #: were wired; tier 1's notice-derived findings and tier 2's compile failure
+    #: set it explicitly. Kept on the finding rather than inferred from its shape
+    #: so a report that mixes tiers can still say which check spoke.
+    tier: int = 3
 
     @property
     def lineno(self) -> int | None:
@@ -283,12 +370,35 @@ class CheckReport:
     tier2: TierOutcome = TIER_NOT_BUILT
     findings: tuple[CheckFinding, ...] = ()
     caveats: tuple[str, ...] = ()
+    #: Whether the ladder's transaction committed. **False for a `probe_check`
+    #: (by design), for every failed apply, and for a `recheck` (which applies
+    #: nothing)** -- stated as a fact rather than inferred, because "it compiled
+    #: but was rolled back on purpose" and "it compiled and is now in the
+    #: sandbox" are the two things a user most needs told apart (§18.5 D2's
+    #: retraction of the always-rollback model).
+    committed: bool = False
 
     @property
     def ran(self) -> bool:
         """Whether tier 3 actually executed. `not ran` means "could not
         check" -- never "clean"."""
         return self.tier3.verified
+
+    @property
+    def tiers(self) -> tuple[TierOutcome, ...]:
+        """The four tiers in order -- `(tier0, tier1, tier2, tier3)`."""
+        return (self.tier0, self.tier1, self.tier2, self.tier3)
+
+    @property
+    def green(self) -> bool:
+        """Whether **every** tier ran and none of them found anything.
+
+        The strict reading §18.5 D3's hard rule requires: an `unavailable` or
+        `errored` tier makes the report not-green, so "green" can never mean
+        "the tiers that happened to run were happy". Apply-to-Target's
+        precondition 2 gates on exactly this, with its named override for what
+        `report_unverified` enumerates."""
+        return all(tier.status == STATUS_PASSED for tier in self.tiers)
 
 
 class MalformedCheckOutputError(RuntimeError):
@@ -446,6 +556,24 @@ class CheckRequest:
         return f"{quote_ident(schema)}.{quote_ident(name)}({args})"
 
     @property
+    def working_set_ref(self) -> tuple[str, str, str, str]:
+        """This object's `(kind, schema_name, object_name, table_name)` key --
+        the `applied` bookkeeping table's PRIMARY KEY, and what
+        `db/sandbox.py::applied_upsert_sql` and `applied_ref` both use. One
+        spelling of the key, so `apply_and_check`'s row and a later sweep's
+        lookup cannot miss each other."""
+        return (self.kind, self.schema, self.name, self.table or "")
+
+    @property
+    def trigger_drop_target(self) -> tuple[str, str, str] | None:
+        """`(trigger, schema, table)` for a trigger whose `CREATE` may need a
+        `DROP TRIGGER IF EXISTS` in front of it, or None. See
+        `needs_trigger_drop`."""
+        if not self.is_trigger or not self.table or not self.name:
+            return None
+        return (self.name, self.schema, self.table)
+
+    @property
     def regclass_text(self) -> str | None:
         """The `to_regclass` lookup string for a trigger's relation, or None
         when this request needs no relation."""
@@ -552,8 +680,13 @@ def build_resolve_sql(request: CheckRequest) -> str:
     )
 
 
-def build_check_sql(request: CheckRequest, funcoid: int, relid: int | None = None) -> str:
-    """The `plpgsql_check_function_tb` SELECT for one already-resolved oid.
+def _check_call(
+    request: CheckRequest, funcoid_expr: str, relid_expr: str | None
+) -> str:
+    """The `plpgsql_check_function_tb(...)` call itself, from SQL *expressions*
+    for its oids -- shared by the pre-resolved (`build_check_sql`) and the
+    in-transaction (`build_guarded_check_sql`) shapes so the call-shape rules
+    below exist once.
 
     **Named notation throughout, never positional** — the shipped signature's
     positional order is `other_warnings, performance_warnings, extra_warnings`,
@@ -567,18 +700,224 @@ def build_check_sql(request: CheckRequest, funcoid: int, relid: int | None = Non
     - `relid => <table oid>` for a trigger function; omitting it errors with
       *"missing trigger relation"*.
     """
-    arguments = [f"funcoid => {int(funcoid)}"]
-    if relid is not None:
-        arguments.append(f"relid => {int(relid)}")
+    arguments = [f"funcoid => {funcoid_expr}"]
+    if relid_expr is not None:
+        arguments.append(f"relid => {relid_expr}")
         if request.oldtable:
             arguments.append(f"oldtable => {_sql_literal(request.oldtable)}")
         if request.newtable:
             arguments.append(f"newtable => {_sql_literal(request.newtable)}")
     arguments.append("fatal_errors => false")
     arguments.append("all_warnings => true")
+    return f"{_CHECK_FUNCTION}({', '.join(arguments)})"
+
+
+def build_check_sql(request: CheckRequest, funcoid: int, relid: int | None = None) -> str:
+    """The `plpgsql_check_function_tb` SELECT for one **already-resolved** oid --
+    `recheck`'s shape, where a preceding round trip established that the object
+    exists (and reported `REASON_OBJECT_ABSENT` if it did not)."""
     return (
-        f"SELECT {', '.join(CHECK_COLUMNS)} FROM {_CHECK_FUNCTION}({', '.join(arguments)})"
+        f"SELECT {', '.join(CHECK_COLUMNS)} FROM "
+        f"{_check_call(request, str(int(funcoid)), None if relid is None else str(int(relid)))}"
     )
+
+
+def build_guarded_check_sql(request: CheckRequest) -> str:
+    """The `plpgsql_check_function_tb` SELECT for the **one-transaction ladder**,
+    where the oid cannot be resolved in advance: the object may not exist until
+    the DDL statement two positions earlier in the same list has run.
+
+    **The oid guard is structural, and it has to be.** `to_regprocedure` yields
+    NULL rather than raising for a missing object, but handing a NULL `funcoid`
+    to `plpgsql_check_function_tb` is not defined to be harmless — and if it
+    raised, the *whole* transaction would abort, which for `apply_and_check`
+    would throw away a DDL statement that applied perfectly well. So the oids are
+    resolved in a subquery whose `WHERE` makes it return **zero rows** when
+    either is absent; a `LATERAL` join over an empty left side never evaluates
+    the function at all. The absent-object case then arrives as an empty result
+    set instead of an aborted transaction, and is told apart from a genuinely
+    clean run by the resolve statement's own row (which is why the ladder sends
+    both).
+
+    **Needs live-server confirmation** alongside the rest of §30's env-gated
+    facts: that the LATERAL form binds `r.funcoid` as expected and that the
+    empty-left-side case really does not invoke the SRF.
+    """
+    proc = request.regprocedure_text
+    if proc is None:
+        raise ValueError("CheckRequest names no function to check")
+    relation = request.regclass_text
+    columns = ", ".join(f"c.{column}" for column in CHECK_COLUMNS)
+    guards = [f"to_regprocedure({_sql_literal(proc)}) IS NOT NULL"]
+    selected = [f"to_regprocedure({_sql_literal(proc)})::oid AS funcoid"]
+    relid_expr = None
+    if relation is not None:
+        guards.append(f"to_regclass({_sql_literal(relation)}) IS NOT NULL")
+        selected.append(f"to_regclass({_sql_literal(relation)})::oid AS relid")
+        relid_expr = "r.relid"
+    return (
+        f"SELECT {columns} FROM "
+        f"(SELECT {', '.join(selected)} WHERE {' AND '.join(guards)}) r, "
+        f"LATERAL {_check_call(request, 'r.funcoid', relid_expr)} c"
+    )
+
+
+# ---------------------------------------------------------------------------
+# The statement list -- one transaction, one call, tiers attributed by index
+# ---------------------------------------------------------------------------
+
+#: Tier 1 (§18.5 D3). `'all'` turns on `shadowed_variables`,
+#: `strict_multi_assignment` and `too_many_rows`, which report as asynchronous
+#: `WARNING` notices while `CREATE FUNCTION` compiles the body.
+#:
+#: **`plpgsql.extra_errors` is deliberately NOT set.** D3 lists it in
+#: parentheses but flags it as unpinned, and setting it to `'all'` would convert
+#: every one of those lints into a hard `ERROR` — which would fail the DDL
+#: statement and, in `apply_and_check`, refuse an apply because of a *warning*.
+#: Tier 1's job is to report warnings, not to redefine what compiles. Revisit
+#: only with the live-server confirmation D3 asks for.
+TIER1_SET_SQL = "SET plpgsql.extra_warnings = 'all'"
+
+#: `CREATE OR REPLACE TRIGGER` exists only on **PG 14+** (§18.5's plpgsql_check
+#: integration specifics). Below it, re-applying a trigger needs an explicit
+#: `DROP TRIGGER IF EXISTS` first or the `CREATE` fails with *"already
+#: exists"* — which would be reported as tier 2 finding the user's DDL broken
+#: when in fact the server is just old.
+TRIGGER_REPLACE_MIN_MAJOR = 14
+
+
+def needs_trigger_drop(request: CheckRequest, caps: SandboxCapabilities) -> bool:
+    """Whether the statement list must be preceded by `DROP TRIGGER IF EXISTS`.
+
+    §18.5's rule is *"`CREATE OR REPLACE TRIGGER` exists only on PG 14+: below
+    that the statement list must be preceded by a `DROP TRIGGER IF EXISTS`,
+    gated on `caps.server_version`"*. The version comes from
+    `SandboxCapabilities.server_version` — `probe`'s decoded
+    `current_setting('server_version_num')`, an actual server capability — never
+    from a guess or from parsing the buffer.
+
+    **An unknown version (an empty `server_version`, i.e. the probe failed)
+    emits the DROP.** The two errors are not symmetric: omitting it on PG 13
+    makes a legitimate re-apply fail and blames the user's DDL, while an extra
+    `DROP TRIGGER IF EXISTS` on PG 14+ is a no-op inside the same transaction
+    that immediately recreates the trigger. The recoverable direction wins.
+    """
+    if request.trigger_drop_target is None:
+        return False
+    version = caps.server_version
+    if not version:
+        return True
+    return int(version[0]) < TRIGGER_REPLACE_MIN_MAJOR
+
+
+def build_trigger_drop_sql(request: CheckRequest) -> str | None:
+    """`DROP TRIGGER IF EXISTS <trigger> ON <schema>.<table>`, or None when this
+    request is not a trigger with a known table. Every identifier goes through
+    `quote_ident`'s strict allowlist (§18.5 D2) — an adversarial name is refused,
+    never interpolated."""
+    target = request.trigger_drop_target
+    if target is None:
+        return None
+    trigger, schema, table = target
+    return (
+        f"DROP TRIGGER IF EXISTS {quote_ident(trigger)} ON "
+        f"{quote_ident(schema)}.{quote_ident(table)}"
+    )
+
+
+@dataclass(frozen=True)
+class LadderPlan:
+    """The ladder's statement list **plus the index of each tier's statement**.
+
+    The indices are the whole point: `db/apply.py::ApplyOutcome.statement_index`
+    says which statement failed, and this record is what turns that number back
+    into *which tier*. Without it a failure in the `plpgsql_check` SELECT would
+    be reported as *"your DDL is broken"* — the exact misattribution the write
+    seam exists to prevent (§18.5 D3a).
+
+    An index is None when that statement is not in the list at all: no lint SET
+    on a run that cannot capture notices, no bookkeeping row on a probe, no check
+    SELECT when tier 3 is unavailable. `None` therefore reads as *"this tier was
+    never going to run"*, which is a different fact from *"it ran and passed"*.
+    """
+
+    statements: tuple[str, ...] = ()
+    lint_index: int | None = None
+    trigger_drop_index: int | None = None
+    ddl_index: int | None = None
+    bookkeeping_index: int | None = None
+    resolve_index: int | None = None
+    check_index: int | None = None
+
+
+def build_ladder(
+    request: CheckRequest,
+    caps: SandboxCapabilities,
+    ddl_text: str,
+    *,
+    record_applied: bool,
+) -> LadderPlan:
+    """Compose the one statement list D3's ladder runs as a single transaction.
+
+    Order is load-bearing, not stylistic:
+
+    1. `SET plpgsql.extra_warnings` — must precede the DDL, since it changes how
+       the DDL's body is compiled (tier 1);
+    2. `DROP TRIGGER IF EXISTS` — only for a trigger on a server without
+       `CREATE OR REPLACE TRIGGER` (see `needs_trigger_drop`);
+    3. the DDL itself (tier 2, and tier 0 by collapse);
+    4. the `applied` bookkeeping upsert — **only** when this is an apply, and in
+       this same transaction so the row can never exist without the DDL or vice
+       versa (§18.5 D2's *"one committing, atomic call"*);
+    5. the oid resolve SELECT — so *"the object is not there"* is a reportable
+       outcome rather than something inferred from an empty check result;
+    6. the `plpgsql_check_function_tb` SELECT (tier 3) — after the object exists,
+       in the same transaction, which is what makes catalog-based checking work
+       on an uncommitted `probe_check`.
+
+    Statements 5 and 6 are omitted entirely when `caps` say tier 3 cannot run:
+    sending them would fail the transaction (and so the apply) over a missing
+    extension, and D3 is explicit that losing tier 3 costs the semantic analysis,
+    not the compile check.
+    """
+    statements: list[str] = []
+    indices: dict[str, int | None] = {
+        "lint_index": None,
+        "trigger_drop_index": None,
+        "ddl_index": None,
+        "bookkeeping_index": None,
+        "resolve_index": None,
+        "check_index": None,
+    }
+
+    def add(key: str, sql: str) -> None:
+        indices[key] = len(statements)
+        statements.append(sql)
+
+    add("lint_index", TIER1_SET_SQL)
+
+    if needs_trigger_drop(request, caps):
+        drop_sql = build_trigger_drop_sql(request)
+        if drop_sql is not None:
+            add("trigger_drop_index", drop_sql)
+
+    if ddl_text.strip():
+        add("ddl_index", ddl_text)
+        if record_applied:
+            add(
+                "bookkeeping_index",
+                applied_upsert_sql(request.working_set_ref, ddl_text),
+            )
+
+    if (
+        capability_outcome(caps) is None
+        and request.checked_schema
+        and request.checked_name
+    ):
+        add("resolve_index", build_resolve_sql(request))
+        add("check_index", build_guarded_check_sql(request))
+
+    return LadderPlan(statements=tuple(statements), **indices)  # type: ignore[arg-type]
 
 
 # ---------------------------------------------------------------------------
@@ -735,6 +1074,77 @@ def parse_findings(rows: Sequence[Any], request: CheckRequest) -> list[CheckFind
                 position=_as_int(position),
                 source_lineno=source_lineno,
                 identity=request.identity,
+            )
+        )
+    return findings
+
+
+# ---------------------------------------------------------------------------
+# Tier 1 -- findings parsed out of the notice channel (§18.5 D3)
+# ---------------------------------------------------------------------------
+
+#: PostgreSQL's `CONTEXT` for an extra-warning raised while a body compiles:
+#: `compilation of PL/pgSQL function "f" near line 3`. The line number exists
+#: **nowhere else** for tier 1 -- there are no rows to read it off.
+_NOTICE_LINE_RE = re.compile(r"near line (\d+)")
+
+#: Notice severities that are tier-1 *findings*. Deliberately narrow: a plain
+#: `NOTICE` is chatter the ladder itself provokes -- `DROP TRIGGER IF EXISTS`
+#: emits *"trigger ... does not exist, skipping"* on every first apply -- and
+#: rendering that as a lint finding would train the user to ignore the channel
+#: that carries the real warnings. Anything at WARNING or above is kept.
+NOTICE_FINDING_SEVERITIES = frozenset({"WARNING", "ERROR", "FATAL", "PANIC", "EXCEPTION"})
+
+
+def notice_line(notice: Any) -> int | None:
+    """The `prosrc`-relative line a notice's `CONTEXT` names, or None.
+
+    None is a real answer: a notice with no `near line N` (or a `context` the
+    driver never populated) is rendered with no line rather than line 1.
+    """
+    match = _NOTICE_LINE_RE.search(str(getattr(notice, "context", "") or ""))
+    if match is None:
+        return None
+    return int(match.group(1))
+
+
+def is_finding_notice(notice: Any) -> bool:
+    """Whether this notice is a tier-1 finding rather than ladder chatter --
+    see `NOTICE_FINDING_SEVERITIES`."""
+    severity = str(getattr(notice, "severity", "") or "").strip().upper()
+    return severity in NOTICE_FINDING_SEVERITIES
+
+
+def findings_from_notices(
+    notices: Sequence[Any], request: CheckRequest
+) -> list[CheckFinding]:
+    """Tier 1's findings: the captured notices, mapped onto `CheckFinding`s.
+
+    The line goes through the **same** `map_lineno` tier 3 uses, because the
+    number in `near line N` is likewise `prosrc`-relative while the buffer is
+    `pg_get_functiondef` output — one offset rule, one implementation, and a
+    `None` (rendered with no line) whenever the dollar-quote opener cannot be
+    located (§18.5 D3's "never guess").
+    """
+    findings: list[CheckFinding] = []
+    for notice in notices:
+        if not is_finding_notice(notice):
+            continue
+        raw_level = str(getattr(notice, "severity", "") or "")
+        source_lineno = notice_line(notice)
+        findings.append(
+            CheckFinding(
+                severity=severity_for_level(raw_level),
+                message=_as_text(getattr(notice, "message", "")),
+                line=map_lineno(request.buffer_text, source_lineno),
+                level=raw_level,
+                sqlstate=_as_text(getattr(notice, "sqlstate", "")),
+                detail=_as_text(getattr(notice, "detail", "")),
+                hint=_as_text(getattr(notice, "hint", "")),
+                context=_as_text(getattr(notice, "context", "")),
+                source_lineno=source_lineno,
+                identity=request.identity,
+                tier=1,
             )
         )
     return findings
@@ -911,6 +1321,377 @@ def _read_resolution(rows: Any) -> tuple[int | None, int | None]:
     return (_as_int(values[0]), _as_int(values[1]))
 
 
+# ---------------------------------------------------------------------------
+# The one-call ladder -- tiers 0-2 (and 3) through db/apply.py::apply_ddl
+# ---------------------------------------------------------------------------
+
+#: The write seam, as an injected callable: `(target, statements, *, commit) ->
+#: ApplyOutcome`. Defaults to `db/apply.py::apply_ddl`; every test passes its
+#: own, so no test can open a connection or execute DDL.
+Applier = Callable[..., ApplyOutcome]
+
+
+def apply_and_check(
+    session: CheckSession,
+    request: CheckRequest,
+    caps: SandboxCapabilities,
+    *,
+    ddl_text: str | None = None,
+    applier: Applier = apply_ddl,
+) -> CheckReport:
+    """§18.5 D3's **"Apply to Sandbox"** gesture: apply this object's DDL to the
+    sandbox and run the whole ladder over it, **committing**.
+
+    One `apply_ddl` call, one transaction: the `SET`, the DDL, the `applied`
+    bookkeeping row and the `plpgsql_check` SELECT together. Tier 2's outcome
+    **is** the apply's outcome, and the working-set row is written in the same
+    transaction — so the sandbox can never hold the DDL without the bookkeeping
+    row that records what is in it, nor the row without the DDL.
+
+    `ddl_text` defaults to `request.buffer_text` (the tab's text, which is what
+    the user is applying); it is a separate parameter only so a caller that
+    formats or normalizes before applying can say so explicitly rather than
+    mutate the request.
+
+    **Never raises for a database problem.** A rejected statement leaves the
+    sandbox untouched (the transaction rolls back) and is reported as the tier
+    that produced it, with `CAVEAT_ROLLED_BACK` stating out loud that nothing
+    was applied — a user who pressed Apply must never be left believing it
+    landed.
+    """
+    return _run_ladder(
+        session,
+        request,
+        caps,
+        ddl_text=ddl_text,
+        applier=applier,
+        commit=True,
+        record_applied=True,
+    )
+
+
+def probe_check(
+    session: CheckSession,
+    request: CheckRequest,
+    caps: SandboxCapabilities,
+    *,
+    ddl_text: str | None = None,
+    applier: Applier = apply_ddl,
+) -> CheckReport:
+    """§18.5 D3's **"Check without applying"** probe: the identical ladder, run
+    with `apply_ddl(..., commit=False)`.
+
+    **This is the one narrow place rollback survives** (§18.5 D2): a convenience
+    for *"what would this do?"*, not a safety mechanism, and not threaded through
+    the rest of the code — the sandbox's real safety property is the ownership
+    guard, and the sandbox is *meant* to accumulate applied edits.
+
+    It differs from `apply_and_check` in exactly two things — `commit=False` and
+    no bookkeeping row — and shares everything else *by construction*, because a
+    probe that diverged from the real apply would validate something the user is
+    not about to run. Both leave the reported tiers identical; only `committed`
+    and the caveats differ.
+    """
+    return _run_ladder(
+        session,
+        request,
+        caps,
+        ddl_text=ddl_text,
+        applier=applier,
+        commit=False,
+        record_applied=False,
+    )
+
+
+def _run_ladder(
+    session: CheckSession,
+    request: CheckRequest,
+    caps: SandboxCapabilities,
+    *,
+    ddl_text: str | None,
+    applier: Applier,
+    commit: bool,
+    record_applied: bool,
+) -> CheckReport:
+    """`apply_and_check`/`probe_check`'s shared body -- one composed statement
+    list, one `apply_ddl` call, one report assembled by statement index."""
+    text = request.buffer_text if ddl_text is None else ddl_text
+    plan = build_ladder(request, caps, text, record_applied=record_applied)
+
+    try:
+        outcome = applier(session, plan.statements, commit=commit)
+    except UnsafeIdentifierError:
+        # A hostile identifier is a programming/allowlist failure, not a check
+        # result, and must not be laundered into "could not check".
+        raise
+    except Exception as exc:  # noqa: BLE001 -- the seam failing is "errored", never "clean"
+        reason = f"the sandbox write seam raised instead of reporting: {exc}"
+        errored = TierOutcome(status=STATUS_ERRORED, reason=reason)
+        return CheckReport(
+            tier0=errored,
+            tier1=errored,
+            tier2=errored,
+            tier3=errored,
+            caveats=(CAVEAT_ROLLED_BACK,) if commit else (CAVEAT_PROBE_ONLY,),
+        )
+
+    return _report_from_outcome(
+        request, caps, outcome, plan, commit=commit, ddl_text=text
+    )
+
+
+def _report_from_outcome(
+    request: CheckRequest,
+    caps: SandboxCapabilities,
+    outcome: ApplyOutcome,
+    plan: LadderPlan,
+    *,
+    commit: bool,
+    ddl_text: str,
+) -> CheckReport:
+    """Turn one `ApplyOutcome` into a four-tier `CheckReport`.
+
+    **Every tier is attributed by the index this module chose for it.** Nothing
+    is inferred from `outcome.ok`: a run that failed in the check SELECT has a
+    perfectly good tier 2, and a run that failed in the DDL has a tier 3 that
+    never happened. Reading `ok` alone would collapse both into one wrong story.
+    """
+    findings: list[CheckFinding] = []
+    caveats: list[str] = []
+
+    tier1, tier1_findings = _tier1_outcome(outcome, plan, request)
+    findings.extend(tier1_findings)
+
+    tier2, tier2_findings = _tier2_outcome(outcome, plan, ddl_text, request)
+    findings.extend(tier2_findings)
+
+    tier0 = _tier0_outcome(tier2)
+
+    tier3, tier3_findings, tier3_caveats = _tier3_outcome(outcome, plan, caps, request)
+    findings.extend(tier3_findings)
+    caveats.extend(tier3_caveats)
+
+    if any(f.line is None and f.source_lineno for f in findings):
+        caveats.append(CAVEAT_UNMAPPED_LINES)
+
+    committed = bool(outcome.committed)
+    if commit and not committed:
+        caveats.append(CAVEAT_ROLLED_BACK)
+    elif not commit:
+        caveats.append(CAVEAT_PROBE_ONLY)
+
+    return CheckReport(
+        tier0=tier0,
+        tier1=tier1,
+        tier2=tier2,
+        tier3=tier3,
+        findings=tuple(findings),
+        caveats=tuple(caveats),
+        committed=committed,
+    )
+
+
+def _not_reached_reason(outcome: ApplyOutcome) -> str:
+    """Why a statement never ran: the earlier failure, quoted."""
+    return REASON_NOT_REACHED.format(
+        index="?" if outcome.statement_index is None else outcome.statement_index,
+        message=outcome.message or "no message",
+    )
+
+
+def _tier1_outcome(
+    outcome: ApplyOutcome, plan: LadderPlan, request: CheckRequest
+) -> tuple[TierOutcome, list[CheckFinding]]:
+    """Tier 1 -- the extra-warnings lint, whose entire output is the notice
+    channel. `unavailable` whenever that channel was not live, because an empty
+    notice list from a runner that cannot capture notices is indistinguishable
+    from a clean routine (§18.5 D3)."""
+    if not outcome.notices_captured:
+        return TierOutcome(status=STATUS_UNAVAILABLE, reason=REASON_NO_NOTICE_CHANNEL), []
+    if plan.lint_index is not None and outcome.statement_index == plan.lint_index:
+        return (
+            TierOutcome(
+                status=STATUS_ERRORED,
+                reason=(
+                    "the extra-warnings lint could not be switched on "
+                    f"({outcome.message}) -- nothing was lint-checked."
+                ),
+                detail=outcome.sqlstate,
+            ),
+            [],
+        )
+    if not outcome.reached(plan.ddl_index):
+        # The lint is only ever observed while the DDL compiles; if the DDL
+        # never ran there is nothing to have warned about.
+        return (
+            TierOutcome(status=STATUS_UNAVAILABLE, reason=_not_reached_reason(outcome)),
+            [],
+        )
+    findings = findings_from_notices(outcome.notices, request)
+    if findings:
+        return (
+            TierOutcome(
+                status=STATUS_FOUND_ISSUES,
+                reason=f"the extra-warnings lint reported {len(findings)} warning(s)",
+            ),
+            findings,
+        )
+    return (
+        TierOutcome(
+            status=STATUS_PASSED,
+            reason="the extra-warnings lint reported nothing",
+        ),
+        [],
+    )
+
+
+def _tier2_outcome(
+    outcome: ApplyOutcome, plan: LadderPlan, ddl_text: str, request: CheckRequest
+) -> tuple[TierOutcome, list[CheckFinding]]:
+    """Tier 2 -- did the DDL apply at all (parse + `check_function_bodies` +
+    dependency resolution).
+
+    A rejected statement is `found_issues`, not `errored`: the check worked
+    perfectly and the answer is *"this DDL does not apply"*, which is a real
+    finding and a hard, non-overridable Apply-to-Target blocker. `errored` is
+    reserved for the check machinery itself failing.
+    """
+    if plan.ddl_index is None:
+        return TierOutcome(status=STATUS_UNAVAILABLE, reason=REASON_NO_DDL_TEXT), []
+    if outcome.statement_index == plan.ddl_index:
+        finding = CheckFinding(
+            severity="error",
+            message=outcome.message,
+            line=outcome.line,
+            level="error",
+            sqlstate=outcome.sqlstate,
+            statement=outcome.statement,
+            detail=outcome.detail,
+            hint=outcome.hint,
+            position=outcome.position,
+            identity=request.identity,
+            tier=2,
+        )
+        return (
+            TierOutcome(
+                status=STATUS_FOUND_ISSUES,
+                reason=f"the DDL was rejected by the sandbox: {outcome.message}",
+                detail=outcome.sqlstate,
+            ),
+            [finding],
+        )
+    if outcome.reached(plan.ddl_index):
+        return (
+            TierOutcome(
+                status=STATUS_PASSED,
+                reason="the DDL applied to the sandbox",
+            ),
+            [],
+        )
+    return (
+        TierOutcome(status=STATUS_ERRORED, reason=_not_reached_reason(outcome)),
+        [],
+    )
+
+
+def _tier0_outcome(tier2: TierOutcome) -> TierOutcome:
+    """Tier 0 -- **collapsed into tier 2** (§18.5 D3's licensing caveat): the
+    syntax check is PostgreSQL's own parser, reached by executing the DDL, so
+    there is no separate offline checker and no GPL-only grammar dependency. It
+    therefore mirrors tier 2's status exactly, with a reason that says which
+    parser judged the syntax -- never a silently-passing extra line."""
+    if tier2.verified:
+        return TierOutcome(status=tier2.status, reason=REASON_TIER0_COLLAPSED)
+    return TierOutcome(status=STATUS_UNAVAILABLE, reason=REASON_TIER0_NO_SANDBOX)
+
+
+def _tier3_outcome(
+    outcome: ApplyOutcome,
+    plan: LadderPlan,
+    caps: SandboxCapabilities,
+    request: CheckRequest,
+) -> tuple[TierOutcome, list[CheckFinding], list[str]]:
+    """Tier 3 -- `plpgsql_check`'s rows, read off the check statement's result.
+
+    The capability gate comes first and is `capability_outcome`'s, never a bare
+    `try/except` (§18.5 D3a). After that, "the check statement never ran" and
+    "it ran and returned nothing" are kept apart by `ApplyOutcome.result_at`,
+    and "it returned nothing because the object is not there" by the resolve
+    statement's own row.
+    """
+    unavailable = capability_outcome(caps)
+    if unavailable is not None:
+        return unavailable, [], []
+    if plan.check_index is None:
+        return (
+            TierOutcome(
+                status=STATUS_UNAVAILABLE, reason=REASON_TRIGGER_FUNCTION_UNKNOWN
+            ),
+            [],
+            [],
+        )
+    if outcome.statement_index == plan.check_index:
+        return (
+            TierOutcome(
+                status=STATUS_ERRORED,
+                reason=f"plpgsql_check could not be run: {outcome.message}",
+                detail=outcome.sqlstate,
+            ),
+            [],
+            [],
+        )
+    result = outcome.result_at(plan.check_index)
+    if result is None:
+        return (
+            TierOutcome(status=STATUS_UNAVAILABLE, reason=_not_reached_reason(outcome)),
+            [],
+            [],
+        )
+
+    resolved = outcome.result_at(plan.resolve_index)
+    funcoid, relid = _read_resolution(() if resolved is None else resolved.rows)
+    if funcoid is None:
+        return (
+            TierOutcome(status=STATUS_UNAVAILABLE, reason=REASON_OBJECT_ABSENT),
+            [],
+            [],
+        )
+    if request.regclass_text is not None and relid is None:
+        return (
+            TierOutcome(status=STATUS_UNAVAILABLE, reason=REASON_RELATION_ABSENT),
+            [],
+            [],
+        )
+
+    try:
+        findings = parse_findings(list(result.rows), request)
+    except MalformedCheckOutputError as exc:
+        return (
+            TierOutcome(status=STATUS_ERRORED, reason=str(exc), detail=exc.detail),
+            [],
+            [],
+        )
+
+    caveats = list(BLIND_SPOT_CAVEATS)
+    if findings:
+        return (
+            TierOutcome(
+                status=STATUS_FOUND_ISSUES,
+                reason=f"plpgsql_check reported {len(findings)} finding(s)",
+            ),
+            findings,
+            caveats,
+        )
+    return (
+        TierOutcome(
+            status=STATUS_PASSED,
+            reason=f"plpgsql_check found nothing in {request.identity}",
+        ),
+        [],
+        caveats,
+    )
+
+
 def recheck(
     session: CheckSession,
     request: CheckRequest,
@@ -921,15 +1702,97 @@ def recheck(
     """§18.5 D3's **"Check"** gesture: run the ladder against the sandbox **as
     it currently stands**, applying nothing.
 
-    Today that is exactly tier 3, so this is a thin, named alias of
-    `run_plpgsql_check` — named because the gesture is user-visible and the
-    panel's Check button wants an entry point to bind to, not because it adds
-    behaviour. D3's other two entry points, `apply_and_check` (commits) and
-    `probe_check` (rolled back), both drive `db/apply.py`'s write seam; that
-    module exists now, but wiring them through it is separate, unstarted work,
-    so they are not built here -- do not "finish" them by making this one write.
+    Nothing new is applied, so **tiers 0-2 have nothing to compile in this run**
+    and say so: they are *about* applying, and reporting them as `passed` because
+    an earlier apply once succeeded would be exactly the never-report-clean-when-
+    unchecked violation D3 forbids. What tier 2 *can* honestly report is the
+    bookkeeping fact — *"applied &lt;timestamp&gt;"* from the `applied` table —
+    which `_recheck_tier2` reads when the session can supply it, together with
+    D3's mandatory **stale-buffer caveat** when the caller's buffer hash differs
+    from `applied.text_sha1`. Applying is `apply_and_check`; checking without
+    applying is `probe_check`; this gesture writes nothing, deliberately.
     """
-    return run_plpgsql_check(session, request, caps, query=query)
+    report = run_plpgsql_check(session, request, caps, query=query)
+    tier2, caveats = _recheck_tier2(session, request)
+    return CheckReport(
+        tier0=_tier0_outcome(tier2),
+        tier1=report.tier1,
+        tier2=tier2,
+        tier3=report.tier3,
+        findings=report.findings,
+        caveats=report.caveats + tuple(caveats),
+        committed=False,
+    )
+
+
+#: `recheck`'s tier 2: the object is in the sandbox and the bookkeeping table
+#: says when it got there. `passed` is honest here -- it *did* compile, at that
+#: timestamp -- and the stale-buffer caveat carries the rest of the truth.
+REASON_ALREADY_APPLIED = (
+    "not re-compiled in this run; the sandbox already holds this object, "
+    "applied {applied_at}."
+)
+
+#: The bookkeeping table has no row for this object, so nothing can be said
+#: about when (or whether) it compiled.
+REASON_NOT_IN_WORKING_SET = (
+    "this object is not in the sandbox's working set, so nothing is recorded "
+    "about it ever having compiled there -- apply it to the sandbox first."
+)
+
+#: The working-set table could not be read, so even the "applied when?" fact is
+#: unknown. Never degraded to "not applied" -- see `SandboxCapabilities`.
+REASON_WORKING_SET_UNREADABLE = (
+    "the sandbox's working-set table could not be read ({error}), so it is "
+    "unknown whether or when this object was applied."
+)
+
+
+def _recheck_tier2(
+    session: Any, request: CheckRequest
+) -> tuple[TierOutcome, list[str]]:
+    """`recheck`'s tier 2 and its caveats, from the `applied` bookkeeping table.
+
+    Read duck-typed (`session.applied()` may not exist on a stub, and this
+    module's `CheckSession` protocol deliberately requires only `params` and
+    `executor`), and every failure lands on a *stated* outcome: a missing row,
+    an unreadable table and a stale hash are three different facts and none of
+    them is "clean".
+    """
+    applied = getattr(session, "applied", None)
+    if not callable(applied):
+        return TierOutcome(status=STATUS_UNAVAILABLE, reason=REASON_TIER_NOT_BUILT), []
+    try:
+        rows = list(applied() or [])
+    except Exception as exc:  # noqa: BLE001 -- unreadable is not "not applied"
+        return (
+            TierOutcome(
+                status=STATUS_UNAVAILABLE,
+                reason=REASON_WORKING_SET_UNREADABLE.format(error=exc),
+            ),
+            [],
+        )
+
+    wanted = request.working_set_ref
+    row = next((r for r in rows if applied_ref(r) == wanted), None)
+    if row is None:
+        return (
+            TierOutcome(status=STATUS_UNAVAILABLE, reason=REASON_NOT_IN_WORKING_SET),
+            [],
+        )
+
+    applied_at = str(getattr(row, "applied_at", "") or "an unknown time")
+    caveats: list[str] = []
+    recorded = str(getattr(row, "text_sha1", "") or "")
+    if request.buffer_text and recorded and recorded != text_sha1(request.buffer_text):
+        caveats.append(CAVEAT_STALE_BUFFER.format(applied_at=applied_at))
+    return (
+        TierOutcome(
+            status=STATUS_PASSED,
+            reason=REASON_ALREADY_APPLIED.format(applied_at=applied_at),
+        ),
+        caveats,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1058,8 +1921,16 @@ def blind_spots() -> tuple[str, ...]:
 
 __all__ = [
     "BLIND_SPOT_CAVEATS",
+    "CAVEAT_PROBE_ONLY",
+    "CAVEAT_ROLLED_BACK",
+    "CAVEAT_STALE_BUFFER",
     "CAVEAT_UNMAPPED_LINES",
     "CHECK_COLUMNS",
+    "NOTICE_FINDING_SEVERITIES",
+    "TIER1_SET_SQL",
+    "TRIGGER_REPLACE_MIN_MAJOR",
+    "Applier",
+    "LadderPlan",
     "CheckFinding",
     "CheckReport",
     "CheckRequest",
@@ -1067,15 +1938,23 @@ __all__ = [
     "KNOWN_LEVELS",
     "MalformedCheckOutputError",
     "Query",
+    "REASON_ALREADY_APPLIED",
     "REASON_INSTALL_LOCATIONS",
     "REASON_NOT_INSTALLED",
     "REASON_NOT_INSTALLED_BASE",
+    "REASON_NOT_IN_WORKING_SET",
+    "REASON_NOT_REACHED",
+    "REASON_NO_DDL_TEXT",
+    "REASON_NO_NOTICE_CHANNEL",
     "REASON_OBJECT_ABSENT",
     "REASON_RELATION_ABSENT",
     "REASON_SWEEP_ROW_ERRORED",
+    "REASON_TIER0_COLLAPSED",
+    "REASON_TIER0_NO_SANDBOX",
     "REASON_TIER_NOT_BUILT",
     "REASON_TRIGGER_FUNCTION_UNKNOWN",
     "REASON_UNKNOWN_CAPABILITY",
+    "REASON_WORKING_SET_UNREADABLE",
     "STATUS_ERRORED",
     "STATUS_FOUND_ISSUES",
     "STATUS_PASSED",
@@ -1083,18 +1962,27 @@ __all__ = [
     "TIER_NOT_BUILT",
     "TierOutcome",
     "WorkingSetRef",
+    "apply_and_check",
     "applied_ref",
     "blind_spots",
     "body_line_offset",
     "build_check_sql",
+    "build_guarded_check_sql",
+    "build_ladder",
     "build_resolve_sql",
+    "build_trigger_drop_sql",
     "capability_outcome",
     "check_working_set",
+    "findings_from_notices",
+    "is_finding_notice",
     "is_known_level",
     "map_lineno",
     "message_for_level",
+    "needs_trigger_drop",
     "not_installed_reason",
+    "notice_line",
     "parse_findings",
+    "probe_check",
     "recheck",
     "request_from_applied",
     "run_plpgsql_check",

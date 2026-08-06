@@ -65,10 +65,22 @@ Qt-free, and like the rest of `db/`, opens no connection except through the
 injectable `runner` seam — the whole test suite runs with psycopg absent and
 never touches a real database.
 
-**Unwired in this pass.** Nothing imports this module yet:
-`db/ddl_check.py`'s tiers 0-2 still report `TIER_NOT_BUILT` and
-`ui/ddl_object_editor.py`'s `apply_to_target` seam is still unbound. Rewiring
-those callers is a separate, serial step.
+**The notice channel is part of the seam, because tier 1 has no other one.**
+`SET plpgsql.extra_warnings = 'all'` returns **no rows at all**: PostgreSQL
+delivers its findings as asynchronous `WARNING` diagnostics during
+`CREATE FUNCTION`. A row-fetching runner therefore yields nothing from tier 1,
+forever. So the psycopg runner registers a connection notice handler and
+normalizes each diagnostic into a **psycopg-free** frozen `Notice`, collected on
+`ApplyOutcome.notices`; nothing downstream of this module ever touches a driver
+object. `notices_captured` is carried **separately** from "the list is empty",
+because §18.5 D3 requires tier 1 to report `unavailable` — never `passed` —
+where the channel is not available, and a runner that cannot capture notices is
+indistinguishable from a clean routine unless it says so.
+
+`db/ddl_check.py::apply_and_check`/`probe_check` are this module's callers:
+they compose the ladder's statement list and read the tiers back off
+`statement_index`, `notices` and the last statement's `rows`.
+`ui/ddl_object_editor.py`'s `apply_to_target` seam is still unbound.
 """
 from __future__ import annotations
 
@@ -108,6 +120,81 @@ class StatementResult:
         return self.columns is not None
 
 
+@dataclass(frozen=True)
+class Notice:
+    """One asynchronous server diagnostic (`NOTICE`/`WARNING`), normalized
+    **away from psycopg** (§18.5 D3's tier-1 channel).
+
+    Field names are the shared failure vocabulary `ApplyOutcome`,
+    `db/sandbox_query.py::QueryError` and `db/ddl_check.py::CheckFinding` all
+    use, so one formatting helper renders all of them.
+
+    `context` is the load-bearing field, not decoration: tier 1's line numbers
+    exist nowhere else. PostgreSQL emits `CONTEXT: compilation of PL/pgSQL
+    function "f" near line 3` alongside each extra-warning, and
+    `db/ddl_check.py` regexes the line out of it and maps it through
+    `map_lineno`. A `Notice` with an empty `context` is therefore reported with
+    no line at all rather than a guessed one.
+    """
+
+    message: str = ""
+    severity: str = ""
+    detail: str = ""
+    hint: str = ""
+    context: str = ""
+    sqlstate: str = ""
+
+
+def normalize_notice(diagnostic: Any) -> Notice:
+    """One psycopg `Diagnostic` (or any duck-typed stand-in) as a `Notice`.
+
+    Read entirely by `getattr` so this module still imports no psycopg and a
+    test can hand in a plain object. psycopg 3 names the fields
+    `severity`/`severity_nonlocalized`/`message_primary`/`message_detail`/
+    `message_hint`/`context`/`sqlstate`; `severity_nonlocalized` is preferred
+    because a server running under a non-English `lc_messages` localizes
+    `severity`, and anything matching on `"WARNING"` would then silently miss.
+    """
+    return Notice(
+        message=_attr(diagnostic, "message_primary"),
+        severity=(
+            _attr(diagnostic, "severity_nonlocalized") or _attr(diagnostic, "severity")
+        ),
+        detail=_attr(diagnostic, "message_detail"),
+        hint=_attr(diagnostic, "message_hint"),
+        context=_attr(diagnostic, "context"),
+        sqlstate=_attr(diagnostic, "sqlstate"),
+    )
+
+
+def _attr(obj: Any, name: str) -> str:
+    """One attribute of a driver diagnostic as a string, never raising --
+    reading a diagnostic must not be able to fail the run that produced it."""
+    try:
+        return str(getattr(obj, name, "") or "")
+    except Exception:  # noqa: BLE001 -- diagnostics must never mask the result
+        return ""
+
+
+@dataclass(frozen=True)
+class RunOutcome:
+    """What an `ApplyRunner` hands back: the per-statement results **and** the
+    notices the connection collected while they ran.
+
+    A runner may instead return a bare sequence of `StatementResult` -- that is
+    the "no notice channel" answer, and `apply_ddl` records it as
+    `notices_captured=False` so tier 1 reports `unavailable` rather than
+    `passed`. `notices_captured` is a field rather than `bool(notices)` for
+    exactly that reason: *"there were no warnings"* and *"nobody was listening"*
+    are different facts, and conflating them is the never-report-clean-when-
+    unchecked violation §18.5 D3 forbids.
+    """
+
+    results: tuple[StatementResult, ...] = ()
+    notices: tuple[Notice, ...] = ()
+    notices_captured: bool = True
+
+
 class StatementFailure(Exception):
     """Raised by an `ApplyRunner` when a *specific* statement failed.
 
@@ -124,6 +211,10 @@ class StatementFailure(Exception):
         statement_index: int,
         statement: str,
         cause: BaseException | None = None,
+        *,
+        notices: Sequence[Notice] = (),
+        notices_captured: bool = False,
+        results: Sequence[StatementResult] = (),
     ) -> None:
         super().__init__(
             f"statement {statement_index} failed: {_error_message(cause) if cause else 'unknown'}"
@@ -131,6 +222,16 @@ class StatementFailure(Exception):
         self.statement_index = statement_index
         self.statement = statement
         self.cause = cause
+        #: Notices collected *before* the failure. Carried on the failure path
+        #: on purpose: tier 1's warnings are emitted while `CREATE FUNCTION`
+        #: compiles, so a DDL statement can produce real lint findings and
+        #: *then* fail -- dropping them would hide the warnings that explain
+        #: the failure.
+        self.notices = tuple(notices)
+        self.notices_captured = notices_captured
+        #: The statements that did complete, so tier attribution can still say
+        #: which tiers ran before the list stopped.
+        self.results = tuple(results)
 
 
 class ApplyRunner(Protocol):
@@ -151,6 +252,13 @@ class ApplyRunner(Protocol):
     Anything else raised (a connection failure, say) is reported by `apply_ddl`
     with `statement_index is None`, which is the honest reading: no statement
     of the caller's was ever judged.
+
+    **Return `RunOutcome` if you can capture notices, a bare list if you
+    cannot.** Tier 1 exists only on the notice channel, so a runner that
+    returns a plain list of results is recorded as *"no notice channel"* and
+    tier 1 reports `unavailable`. Returning `RunOutcome(results, ())` instead
+    asserts the opposite -- that the channel was live and the server said
+    nothing -- which is what lets tier 1 report `passed`.
     """
 
     def __call__(
@@ -159,7 +267,7 @@ class ApplyRunner(Protocol):
         statements: Sequence[str],
         *,
         commit: bool,
-    ) -> list[StatementResult]:
+    ) -> RunOutcome | list[StatementResult]:
         ...
 
 
@@ -168,13 +276,17 @@ def _psycopg_runner(
     statements: Sequence[str],
     *,
     commit: bool,
-) -> list[StatementResult]:
+) -> RunOutcome:
     """The real `ApplyRunner`. Lazily imports psycopg exactly like
     `db/introspect.py::run_queries` and `db/sandbox.py`'s executors do, so
     importing this module never requires the driver to be installed.
 
-    One connection, one implicit transaction, statements in order. A failure is
-    rolled back and re-raised as `StatementFailure` carrying the index; a
+    One connection, one implicit transaction, statements in order, **with the
+    notice handler registered before the first statement runs** -- psycopg 3's
+    `Connection.add_notice_handler(cb)` calls `cb(Diagnostic)` for every
+    asynchronous `NOTICE`/`WARNING` the server sends, which is the only place
+    tier 1's findings exist. A failure is rolled back and re-raised as
+    `StatementFailure` carrying the index *and the notices collected so far*; a
     `commit=False` run is rolled back on the way out even on success, which is
     what makes `probe_check` a probe.
     """
@@ -188,6 +300,10 @@ def _psycopg_runner(
         password=params.password or None,
     )
     results: list[StatementResult] = []
+    notices: list[Notice] = []
+    connection.add_notice_handler(lambda diagnostic: notices.append(
+        normalize_notice(diagnostic)
+    ))
     try:
         try:
             with connection.cursor() as cursor:
@@ -195,7 +311,14 @@ def _psycopg_runner(
                     try:
                         cursor.execute(statement)
                     except Exception as exc:
-                        raise StatementFailure(index, statement, exc) from exc
+                        raise StatementFailure(
+                            index,
+                            statement,
+                            exc,
+                            notices=notices,
+                            notices_captured=True,
+                            results=results,
+                        ) from exc
                     description = cursor.description
                     results.append(
                         StatementResult(
@@ -206,6 +329,11 @@ def _psycopg_runner(
                                 if description is None
                                 else tuple(str(column[0]) for column in description)
                             ),
+                            # psycopg 3 RAISES `ProgrammingError` on fetchall()
+                            # after a statement that produced no result set, so
+                            # the `description is None` guard is a hard
+                            # requirement of the mixed statement list, not a
+                            # tidy-up (§18.5's write-seam correction).
                             rows=(
                                 ()
                                 if description is None
@@ -222,7 +350,9 @@ def _psycopg_runner(
             connection.commit()
         else:
             connection.rollback()
-        return results
+        return RunOutcome(
+            results=tuple(results), notices=tuple(notices), notices_captured=True
+        )
     finally:
         connection.close()
 
@@ -265,6 +395,16 @@ class ApplyOutcome:
     #: Per-statement results, in order, for the statements that ran. The
     #: ladder reads its check SELECT's rows from the last entry.
     results: tuple[StatementResult, ...] = ()
+    #: --- The tier-1 channel (§18.5 D3) -------------------------------------
+    #: Every asynchronous diagnostic the server sent while the statements ran,
+    #: in order, normalized away from psycopg. This is tier 1's ONLY output:
+    #: `SET plpgsql.extra_warnings = 'all'` returns no rows.
+    notices: tuple[Notice, ...] = ()
+    #: Whether a notice channel was actually listening. **False means tier 1
+    #: reports `unavailable`, never `passed`** -- an empty `notices` on a runner
+    #: that cannot capture them says nothing about the routine (§18.5 D3's
+    #: "where that channel is not available, tier 1 must report `unavailable`").
+    notices_captured: bool = False
     #: --- The shared failure vocabulary (`QueryError`/`CheckFinding`) --------
     sqlstate: str = ""
     #: The database's own message, verbatim — the useful part of a failure.
@@ -286,6 +426,8 @@ class ApplyOutcome:
         *,
         committed: bool,
         elapsed_ms: float = 0.0,
+        notices: Sequence[Notice] = (),
+        notices_captured: bool = False,
     ) -> ApplyOutcome:
         """The success case, spelled out so no caller has to remember that a
         successful outcome must leave `statement_index` None."""
@@ -293,6 +435,8 @@ class ApplyOutcome:
             ok=True,
             committed=committed,
             results=tuple(results),
+            notices=tuple(notices),
+            notices_captured=notices_captured,
             elapsed_ms=elapsed_ms,
         )
 
@@ -309,6 +453,8 @@ class ApplyOutcome:
         position: int | None = None,
         results: Sequence[StatementResult] = (),
         elapsed_ms: float = 0.0,
+        notices: Sequence[Notice] = (),
+        notices_captured: bool = False,
     ) -> ApplyOutcome:
         """The failure case, with `line` derived from `position` in the one
         place that derivation is allowed to happen."""
@@ -318,6 +464,8 @@ class ApplyOutcome:
             statement=statement,
             committed=False,
             results=tuple(results),
+            notices=tuple(notices),
+            notices_captured=notices_captured,
             sqlstate=sqlstate,
             message=message,
             detail=detail,
@@ -344,6 +492,26 @@ class ApplyOutcome:
         """Each executed statement's driver status line, in order, verbatim."""
         return tuple(result.status for result in self.results)
 
+    def result_at(self, index: int | None) -> StatementResult | None:
+        """The result of statement `index`, or None when that statement never
+        ran. **The tier-attribution primitive**: the ladder knows which index it
+        put each tier's statement at, so `result_at(check_index) is None`
+        reads as *"the check never ran"* rather than *"the check found
+        nothing"*. Matched by position in the list the caller passed, not by
+        position in `results`, which is the same thing precisely because the
+        runner stops at the first failure."""
+        if index is None or index < 0:
+            return None
+        for result in self.results:
+            if result.index == index:
+                return result
+        return None
+
+    def reached(self, index: int | None) -> bool:
+        """Whether statement `index` ran to completion. The honest reading of
+        "did this tier happen at all?"."""
+        return self.result_at(index) is not None
+
 
 def line_of_position(statement: str, position: int | None) -> int | None:
     """The 1-based line of a 1-based character `position` within `statement`.
@@ -358,6 +526,44 @@ def line_of_position(statement: str, position: int | None) -> int | None:
     if position > len(statement) + 1:
         return None
     return statement.count("\n", 0, position - 1) + 1
+
+
+@dataclass(frozen=True)
+class ErrorDiagnostics:
+    """A database failure's fields, in the **shared** vocabulary
+    (`ApplyOutcome`, `db/sandbox_query.py::QueryError`,
+    `db/ddl_check.py::CheckFinding`) -- so a failed apply, a failed ad-hoc query
+    and a validation finding render through one helper (§18.5 D4's alignment
+    rule)."""
+
+    message: str = ""
+    sqlstate: str = ""
+    detail: str = ""
+    hint: str = ""
+    position: int | None = None
+    line: int | None = None
+
+
+def diagnose(exc: BaseException | None, statement: str = "") -> ErrorDiagnostics:
+    """Pull the shared failure fields off a driver exception, **once**.
+
+    The single place psycopg's `sqlstate`/`diag.*` layout is read (by `getattr`,
+    so this module still imports no psycopg and a plain `RuntimeError` or a test
+    double works). `line` comes from `line_of_position`, so the
+    `position` → line rule has exactly one implementation for the write seam,
+    the SQL console and tier 2 alike.
+    """
+    if exc is None:
+        return ErrorDiagnostics()
+    position = _position(exc)
+    return ErrorDiagnostics(
+        message=_error_message(exc),
+        sqlstate=_sqlstate(exc),
+        detail=_diag(exc, "message_detail"),
+        hint=_diag(exc, "message_hint"),
+        position=position,
+        line=line_of_position(statement, position),
+    )
 
 
 def apply_ddl(
@@ -395,36 +601,56 @@ def apply_ddl(
 
     started = clock()
     try:
-        results = runner(params, prepared, commit=commit)
+        raw = runner(params, prepared, commit=commit)
     except StatementFailure as failure:
         cause = failure.cause
         statement = failure.statement or _at(prepared, failure.statement_index)
+        fields = diagnose(cause if cause is not None else failure, statement)
         return ApplyOutcome.failed(
-            _error_message(cause if cause is not None else failure),
+            fields.message,
             statement_index=failure.statement_index,
             statement=statement,
-            sqlstate=_sqlstate(cause),
-            detail=_diag(cause, "message_detail"),
-            hint=_diag(cause, "message_hint"),
-            position=_position(cause),
+            sqlstate=fields.sqlstate,
+            detail=fields.detail,
+            hint=fields.hint,
+            position=fields.position,
+            results=failure.results,
+            notices=failure.notices,
+            notices_captured=failure.notices_captured,
             elapsed_ms=(clock() - started) * 1000.0,
         )
     except Exception as exc:  # noqa: BLE001 -- the DB's message IS the result
         # No index: nothing of the caller's was judged (a connection failure,
         # typically). Reported with statement_index None so no tier is blamed.
+        fields = diagnose(exc)
         return ApplyOutcome.failed(
-            _error_message(exc),
-            sqlstate=_sqlstate(exc),
-            detail=_diag(exc, "message_detail"),
-            hint=_diag(exc, "message_hint"),
+            fields.message,
+            sqlstate=fields.sqlstate,
+            detail=fields.detail,
+            hint=fields.hint,
             elapsed_ms=(clock() - started) * 1000.0,
         )
 
+    outcome = _run_outcome(raw)
     return ApplyOutcome.succeeded(
-        list(results or ()),
+        outcome.results,
         committed=commit,
+        notices=outcome.notices,
+        notices_captured=outcome.notices_captured,
         elapsed_ms=(clock() - started) * 1000.0,
     )
+
+
+def _run_outcome(raw: Any) -> RunOutcome:
+    """A runner's return value as a `RunOutcome`.
+
+    A bare sequence of `StatementResult` is accepted and recorded as
+    `notices_captured=False` -- the honest reading of a runner with no notice
+    channel, which makes tier 1 `unavailable` instead of falsely `passed`.
+    """
+    if isinstance(raw, RunOutcome):
+        return raw
+    return RunOutcome(results=tuple(raw or ()), notices=(), notices_captured=False)
 
 
 def _prepared_statements(statements: Sequence[str]) -> list[str]:
@@ -523,8 +749,13 @@ __all__ = [
     "DEFAULT_APPLY_RUNNER",
     "ApplyOutcome",
     "ApplyRunner",
+    "ErrorDiagnostics",
+    "Notice",
+    "RunOutcome",
     "StatementFailure",
     "StatementResult",
     "apply_ddl",
+    "diagnose",
     "line_of_position",
+    "normalize_notice",
 ]
