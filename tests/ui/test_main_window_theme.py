@@ -49,7 +49,7 @@ def test_toggle_light_switches_to_fusion_and_keeps_icons(qtbot, _reset_app_theme
     app = QApplication.instance()
     assert calls == ["Fusion"]
     assert app.palette().color(QPalette.ColorRole.Window).lightness() > 200
-    icons = [action.icon() for action in window._toolbar.actions()]
+    icons = [action.icon() for action in window._toolbar_ui.toolbar.actions()]
     assert icons and all(not icon.isNull() for icon in icons)
 
 
@@ -168,7 +168,7 @@ def test_restore_theme_from_preseeded_light_setting(qtbot, tmp_path, _reset_app_
 
 
 def _first_icon_image(window):
-    actions = window._toolbar.actions()
+    actions = window._toolbar_ui.toolbar.actions()
     assert actions
     pixmap = actions[0].icon().pixmap(22, 22)
     assert not pixmap.isNull()

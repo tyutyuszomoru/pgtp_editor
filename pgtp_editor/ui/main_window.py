@@ -25,7 +25,6 @@ from PySide6.QtCore import Qt, QSettings, QSignalBlocker, QTimer, QUrl
 from PySide6.QtGui import (
     QAction,
     QKeySequence,
-    QPalette,
     QShortcut,
 )
 from PySide6.QtWidgets import (
@@ -37,7 +36,6 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QMainWindow,
     QTabWidget,
-    QToolBar,
     QVBoxLayout,
     QWidget,
 )
@@ -138,21 +136,9 @@ from pgtp_editor.ui.project_settings_dialog import ProjectSettingsDialog
 from pgtp_editor.ui.coherence_panel import CoherencePanel
 from pgtp_editor.ui.ddl_buffer_panel import BrowserPanel
 from pgtp_editor.ui.code_editor import CodeEditorDialog
-from pgtp_editor.ui.customize_toolbar_dialog import CustomizeToolbarDialog
 from pgtp_editor.ui.history import SnapshotHistory
-from pgtp_editor.ui.icons import catalog_ids as icon_catalog_ids, themed_icon
-from pgtp_editor.ui.toolbar_registry import (
-    DEFAULT_TOOLBAR_IDS,
-    ICON_ASSIGNMENTS_SETTINGS_KEY,
-    ICON_ID_BY_COMMAND,
-    command_id_for,
-    icon_id_for,
-    menu_path_label,
-    parse_icon_assignments,
-    resolve_ids,
-    resolve_icon_assignments,
-    serialize_icon_assignments,
-)
+from pgtp_editor.ui.toolbar_controller import ToolbarController
+from pgtp_editor.ui.ui_shell import UiShell
 from pgtp_editor.ui.event_body import (
     extract_event_body,
     insert_event_handler,
@@ -211,6 +197,31 @@ _SCHEMA_REPORT_TEMPLATES = {
 
 
 class MainWindow(QMainWindow):
+    #: The ONE sanctioned bridge while a lane is mid-extraction: legacy host
+    #: attribute name -> dotted path to resolve on the host instead
+    #: (e.g. ``{"_toolbar": "_toolbar_ui.toolbar"}``). Served by the single
+    #: ``__getattr__`` below — **never** by hand-written delegating methods,
+    #: which are invisible to review and never get removed.
+    #:
+    #: It must be EMPTY at every wave boundary: a decomposition wave that ends
+    #: with entries here has not finished moving its callers, and
+    #: ``tests/ui/test_mainwindow_surface.py`` fails on a non-empty dict.
+    _LEGACY_DELEGATES: dict[str, str] = {}
+
+    def __getattr__(self, name):
+        """Resolve a `_LEGACY_DELEGATES` entry, else behave like any attribute
+        error. Python only calls this when normal lookup has already failed, so
+        it costs nothing on the hot path and cannot shadow a real attribute."""
+        target = type(self)._LEGACY_DELEGATES.get(name)
+        if target is None:
+            raise AttributeError(
+                f"{type(self).__name__!r} object has no attribute {name!r}"
+            )
+        obj = self
+        for part in target.split("."):
+            obj = getattr(obj, part)
+        return obj
+
     def __init__(
         self,
         schema_storage_dir: Path | None = None,
@@ -577,11 +588,31 @@ class MainWindow(QMainWindow):
 
         self._build_menu_bar()
 
-        # Customizable icon bar (Sub-project E). Built after the slots and menus
-        # exist. objectName "main_toolbar" so D's saveState/restoreState covers
-        # it. The Customize dialog reference is held so it isn't GC'd while shown.
-        self._customize_toolbar_dialog = None
-        self._build_toolbar()
+        #: The narrow contract every collaborator object gets instead of this
+        #: window (see `ui/ui_shell.py`). Built after the menu bar so
+        #: `_light_theme_action` exists, but every field is late-bound anyway:
+        #: they are bound methods that resolve host state at CALL time, which
+        #: is what keeps post-construction seam injection
+        #: (`window._run_async = ...`) working for collaborators too.
+        self._shell = UiShell(
+            window=self,
+            stage=self.center_stage,
+            audit=self.audit_panel,
+            status=self._shell_status,
+            settings=self._settings,
+            run_async=self._shell_run_async,
+            default_dir=self._dialog_default_dir,
+            reveal_left_panel=self._reveal_left_panel,
+            set_left_panel_visible=self._set_left_panel_visible,
+            reveal_raw_xml=self._reveal_raw_xml_tab,
+            is_light_theme=self._is_light_theme,
+        )
+
+        # Customizable icon bar (Sub-project E), owned by ToolbarController.
+        # Constructed LAST of the collaborators and built here because `build`
+        # walks the FINISHED menu bar to derive the command universe (BUG-027).
+        self._toolbar_ui = ToolbarController(self._shell, parent=self)
+        self._toolbar_ui.build(self.menuBar(), self.addToolBar)
 
         # Restore persisted window geometry/dock state and theme (Sub-project D).
         # Done after docks/toolbars/menus exist so restoreState can match dock
@@ -1015,7 +1046,7 @@ class MainWindow(QMainWindow):
         # icons to whichever theme was just applied (BUG-004: the "off"
         # state is now a real, explicit dark palette, not a native/OS
         # passthrough) so they stay legible.
-        self._refresh_toolbar_icons()
+        self._toolbar_ui.refresh_icons()
 
     def closeEvent(self, event):
         # Edit XSD tab (spec §11): unsaved XSD edits get their own
@@ -1043,234 +1074,7 @@ class MainWindow(QMainWindow):
         apply_theme(QApplication.instance(), checked)
         self._settings.setValue("lightTheme", checked)
         # The palette flipped -- re-tint the toolbar icons so they stay legible.
-        self._refresh_toolbar_icons()
-
-    # -- Customizable toolbar (Sub-project E) --------------------------------
-
-    def _build_toolbar(self):
-        """Create the Main Toolbar and restore its command set from settings."""
-        self._toolbar = self.addToolBar("Main Toolbar")
-        # objectName so D's saveState()/restoreState() persists this toolbar's
-        # position along with the docks.
-        self._toolbar.setObjectName("main_toolbar")
-        # Icon + label: each command carries a Breeze icon beside its text.
-        self._toolbar.setToolButtonStyle(
-            Qt.ToolButtonStyle.ToolButtonTextBesideIcon
-        )
-        # BUG-027: the toolbar's command universe IS the menu bar. Built here
-        # (after `_build_menu_bar`, which __init__ calls first) rather than
-        # from a static registry, so every command the app has -- present and
-        # future -- is offerable in Customize Toolbar with no bookkeeping.
-        self._menu_commands = {}
-        self._menu_command_pairs = []
-        # Strong refs to every QMenu the walk descends into -- see
-        # `_walk_menu_actions`; without these PySide destroys them.
-        self._menu_keepalive = []
-        self._menu_keepalive_seen = set()
-        self._collect_menu_commands()
-        self._toolbar_ids = []
-        # FQ-004: command_id -> chosen icon id. Restored before the first
-        # _apply_toolbar_ids so the very first paint already honours the
-        # user's choices rather than flashing the defaults.
-        self._toolbar_icon_ids = self._restore_toolbar_icon_ids()
-        self._apply_toolbar_ids(self._restore_toolbar_ids())
-
-    def _collect_menu_commands(self):
-        """Refresh `_menu_commands` (id -> QAction) and `_menu_command_pairs`
-        ((id, "File › Save As") in menu order) from the live menu bar."""
-        self._menu_command_pairs = self._all_menu_commands()
-        self._menu_commands = {
-            command_id: action for command_id, _label, action in self._walk_menu_actions()
-        }
-        return self._menu_command_pairs
-
-    def _walk_menu_actions(self, menu=None, path=(), seen=None):
-        """Depth-first walk of the menu bar yielding (id, label, QAction) for
-        every *leaf* command.
-
-        Skips separators and submenu placeholders (an action that opens a
-        submenu is not itself a command). The dynamic "Open Recent" submenu is
-        skipped wholesale -- its children are transient per-session file
-        entries and must never be pinned to the toolbar. Duplicate ids (two
-        identically-labelled actions in one menu) get a numeric suffix so an
-        id always resolves to exactly one action.
-
-        CAUTION: `QAction.menu()` hands the returned QMenu's ownership to
-        Python, so letting that wrapper go out of scope DESTROYS the real menu
-        and every action in it (this crashed startup with "Internal C++ object
-        (QAction) already deleted" the moment `_restore_theme` touched the
-        View menu). Every submenu we descend into is therefore pinned in
-        `_menu_keepalive` for the window's lifetime."""
-        if seen is None:
-            seen = {}
-        actions = self.menuBar().actions() if menu is None else menu.actions()
-        for action in actions:
-            if action.isSeparator():
-                continue
-            label = action.text()
-            submenu = action.menu()
-            if submenu is not None:
-                # Pin BOTH the submenu and the action that owns it: dropping
-                # either one takes the whole branch's actions down with it.
-                # Never CLEAR this list to re-pin -- releasing the last ref is
-                # exactly what destroys the menus.
-                for obj in (action, submenu):
-                    if id(obj) not in self._menu_keepalive_seen:
-                        self._menu_keepalive_seen.add(id(obj))
-                        self._menu_keepalive.append(obj)
-                if "recent" in menu_path_label([label]).lower():
-                    continue
-                yield from self._walk_menu_actions(submenu, path + (label,), seen)
-                continue
-            full_path = path + (label,)
-            command_id = command_id_for(full_path)
-            if not command_id:
-                continue
-            seen[command_id] = seen.get(command_id, 0) + 1
-            if seen[command_id] > 1:
-                command_id = f"{command_id}-{seen[command_id]}"
-            yield command_id, menu_path_label(full_path), action
-
-    def _all_menu_commands(self):
-        """Ordered (id, label) pairs for every menu command -- what the
-        Customize Toolbar dialog offers in its Available list."""
-        return [
-            (command_id, label) for command_id, label, _action in self._walk_menu_actions()
-        ]
-
-    def _restore_toolbar_ids(self):
-        """Read the stored toolbar ids, tolerant of the backend returning a
-        list, a comma-separated string, or None; fall back to the default set
-        when nothing valid is stored.
-
-        BUG-027: goes through `resolve_ids`, which maps the pre-BUG-027 legacy
-        ids (`save`, `undo`, ...) onto their menu-path ids -- without that,
-        every existing user's saved toolbar would be dropped as unknown."""
-        stored = self._settings.value("toolbarIds")
-        if stored is None:
-            ids = DEFAULT_TOOLBAR_IDS
-        elif isinstance(stored, str):
-            ids = stored.split(",")
-        else:
-            ids = list(stored)
-        known = self._menu_commands
-        ids = resolve_ids(ids, known)
-        return ids if ids else resolve_ids(DEFAULT_TOOLBAR_IDS, known)
-
-    def _apply_toolbar_ids(self, ids):
-        """Clear and repopulate the toolbar from an ordered id list (unknown
-        and duplicate ids are dropped).
-
-        BUG-027: adds the **real menu QAction**, not a lookalike wired to a
-        slot table. The button therefore shares the menu item's enabled state,
-        checked state and shortcut for free, and can never drift from what the
-        menu does."""
-        ids = resolve_ids(ids, self._menu_commands)
-        # NOT `self._toolbar.clear()`: PySide's clear() DELETES the underlying
-        # QActions, which since BUG-027 are the menus' own actions -- that
-        # destroyed live menu items (and crashed the next `setChecked` on one).
-        # removeAction detaches without taking ownership.
-        for existing in list(self._toolbar.actions()):
-            self._toolbar.removeAction(existing)
-        color = self._toolbar_icon_color()
-        for command_id in ids:
-            action = self._menu_commands[command_id]
-            self._set_action_icon(action, command_id, color)
-            self._toolbar.addAction(action)
-        self._toolbar_ids = ids
-
-    def _toolbar_icon_color(self):
-        """The current palette's window-text color -- what the toolbar icons
-        are tinted to so they stay legible against either theme. Reads the
-        APP palette (not self.palette()) so it reflects the just-applied theme
-        even in the window whose toggle triggered the change."""
-        return QApplication.instance().palette().color(QPalette.ColorRole.WindowText)
-
-    def _set_action_icon(self, action, command_id, color) -> None:
-        """Tint and assign the Breeze icon for `command_id` to `action`.
-
-        BUG-027: only the legacy seven have a vendored SVG, and the toolbar now
-        hosts real menu QActions -- so an id with no icon is the normal case,
-        not an error, and is left icon-less (text-beside-icon copes). The icon
-        is hidden in menus so decorating a shared action for the toolbar does
-        not change how the menu looks.
-
-        FQ-004: a user-chosen icon (Customize Toolbar ▸ Choose Icon…) wins over
-        the legacy default, so any button can be decorated or re-decorated from
-        the vendored Breeze catalog. With no assignment stored the lookup falls
-        straight through to `ICON_ID_BY_COMMAND` and behavior is unchanged."""
-        icon_id = icon_id_for(command_id, self._toolbar_icon_ids)
-        if icon_id is None:
-            return
-        try:
-            action.setIcon(themed_icon(icon_id, color))
-            action.setIconVisibleInMenu(False)
-        except Exception:  # pragma: no cover - vendored set is always present
-            pass
-
-    def _refresh_toolbar_icons(self) -> None:
-        """Re-tint every current toolbar action's icon to the current palette
-        color, without rebuilding the toolbar. Called after a theme change so
-        the icons recolor to stay legible when the palette flips."""
-        color = self._toolbar_icon_color()
-        for action, command_id in zip(self._toolbar.actions(), self._toolbar_ids):
-            self._set_action_icon(action, command_id, color)
-
-    def _save_toolbar_ids(self):
-        """Persist the current toolbar ids (stored as a list)."""
-        self._settings.setValue("toolbarIds", self._toolbar_ids)
-
-    def _restore_toolbar_icon_ids(self):
-        """Read the stored per-command icon assignments (FQ-004).
-
-        Pruned through `resolve_icon_assignments` against the live menu
-        commands and the vendored catalog, so an assignment naming a command
-        or an icon that no longer exists is dropped rather than raising later
-        -- the same self-healing `resolve_ids` already applies to the id list.
-        """
-        stored = parse_icon_assignments(
-            self._settings.value(ICON_ASSIGNMENTS_SETTINGS_KEY)
-        )
-        if not stored:
-            return {}
-        self._collect_menu_commands()
-        return resolve_icon_assignments(stored, self._menu_commands, icon_catalog_ids())
-
-    def _save_toolbar_icon_ids(self) -> None:
-        self._settings.setValue(
-            ICON_ASSIGNMENTS_SETTINGS_KEY,
-            serialize_icon_assignments(self._toolbar_icon_ids),
-        )
-
-    def _apply_and_save_toolbar_ids(self, ids, icon_assignments=None):
-        """Apply an id list to the toolbar and persist it (test seam / the
-        Customize dialog's OK path).
-
-        `icon_assignments` (FQ-004) is applied first so the rebuild below
-        already paints the chosen icons; None leaves the current assignments
-        untouched, keeping every existing caller working unchanged.
-        """
-        if icon_assignments is not None:
-            self._toolbar_icon_ids = dict(icon_assignments)
-            self._save_toolbar_icon_ids()
-        self._apply_toolbar_ids(ids)
-        self._save_toolbar_ids()
-
-    def _open_customize_toolbar(self):
-        """Open the (non-modal) Customize Toolbar dialog; on OK, apply and
-        persist the chosen ordered id list."""
-        # BUG-027: offer every menu command, re-enumerated at open time so
-        # anything the menus gained since startup is included.
-        dialog = CustomizeToolbarDialog(
-            self._collect_menu_commands(), self._toolbar_ids, self, self._toolbar_icon_ids
-        )
-        dialog.accepted.connect(
-            lambda: self._apply_and_save_toolbar_ids(
-                dialog.result_ids(), dialog.result_icon_assignments()
-            )
-        )
-        self._customize_toolbar_dialog = dialog
-        dialog.show()
+        self._toolbar_ui.refresh_icons()
 
     def _not_implemented(self, label):
         self.statusBar().showMessage(f"Not yet implemented: {label}", 5000)
@@ -1382,6 +1186,44 @@ class MainWindow(QMainWindow):
         to: the active §18.2 local project's folder, or '' (Qt's own
         last-used-directory default) when no project is open."""
         return str(self._ddl_project_folder) if self._ddl_project_folder is not None else ""
+
+    # -- UiShell accessors ---------------------------------------------------
+    # The host side of `ui/ui_shell.py`. Each is a thin, late-binding forwarder
+    # so a collaborator constructed early in __init__ still observes the
+    # finished window -- and, critically, so a seam a test replaces AFTER
+    # construction (`window._run_async = _sync_run`) is honoured.
+
+    def _shell_status(self, *args, **kwargs) -> None:
+        """`UiShell.status` -- forwards to the status bar, resolved at call
+        time rather than captured, matching `showMessage(text[, timeout])`."""
+        self.statusBar().showMessage(*args, **kwargs)
+
+    def _shell_run_async(self, *args, **kwargs):
+        """`UiShell.run_async` trampoline. Reads `self._run_async` at CALL time,
+        which is the whole point: the suite injects a synchronous stand-in by
+        assigning `window._run_async` after the window is built, and a shell
+        that had captured the original would silently keep using the threadpool
+        (hanging the test, or asserting on results that never arrived)."""
+        return self._run_async(*args, **kwargs)
+
+    def _reveal_left_panel(self, panel) -> None:
+        """`UiShell.reveal_left_panel` -- show a left-dock tab and focus it."""
+        index = self.left_tabs.indexOf(panel)
+        if index < 0:
+            return
+        self.left_tabs.setTabVisible(index, True)
+        self.left_tabs.setCurrentWidget(panel)
+
+    def _set_left_panel_visible(self, panel, visible: bool) -> None:
+        """`UiShell.set_left_panel_visible` -- visibility only, no focus."""
+        index = self.left_tabs.indexOf(panel)
+        if index < 0:
+            return
+        self.left_tabs.setTabVisible(index, visible)
+
+    def _is_light_theme(self) -> bool:
+        """`UiShell.is_light_theme` -- the View ▸ Light Theme toggle's state."""
+        return self._light_theme_action.isChecked()
 
     def _on_tree_selection_changed(self, node, kind):
         self.properties_panel.show_node(node, kind)
@@ -2399,7 +2241,9 @@ class MainWindow(QMainWindow):
 
         menu.addSeparator()
         customize_toolbar_action = menu.addAction("Customize Toolbar…")
-        customize_toolbar_action.triggered.connect(self._open_customize_toolbar)
+        customize_toolbar_action.triggered.connect(
+            lambda: self._toolbar_ui.open_customize_dialog()
+        )
 
     def _add_stub_action(self, menu, label):
         return add_stub_action(menu, label, self._not_implemented)

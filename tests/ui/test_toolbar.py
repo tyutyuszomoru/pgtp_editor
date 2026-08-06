@@ -1,4 +1,10 @@
-"""Sub-project E -- customizable toolbar wiring in MainWindow.
+"""Sub-project E -- the customizable toolbar, owned by `ToolbarController`.
+
+The lane lives in `ui/toolbar_controller.py` and is reached as
+`window._toolbar_ui`; `MainWindow` keeps only `addToolBar`/`menuBar()` (the
+`QMainWindow` gestures) and hands both to `ToolbarController.build`. These tests
+still drive a real `MainWindow` because the command universe *is* its live menu
+bar — the assertions are unchanged from before the extraction, only retargeted.
 
 QSettings is isolated via an injected temp ini file.
 
@@ -31,28 +37,28 @@ def _ini_settings(tmp_path, name="s.ini"):
 
 
 def _toolbar_labels(window):
-    return [a.text() for a in window._toolbar.actions()]
+    return [a.text() for a in window._toolbar_ui.toolbar.actions()]
 
 
 def test_default_toolbar_has_seven_actions_in_order(qtbot, tmp_path):
     window = MainWindow(settings=_ini_settings(tmp_path))
     qtbot.addWidget(window)
     assert _toolbar_labels(window) == DEFAULT_LABELS
-    assert window._toolbar.objectName() == "main_toolbar"
+    assert window._toolbar_ui.toolbar.objectName() == "main_toolbar"
 
 
 def test_apply_toolbar_ids_reorders_and_subsets(qtbot, tmp_path):
     window = MainWindow(settings=_ini_settings(tmp_path))
     qtbot.addWidget(window)
-    window._apply_toolbar_ids(["file.save", "file.open"])
+    window._toolbar_ui.apply_ids(["file.save", "file.open"])
     assert _toolbar_labels(window) == ["Save", "Open..."]
-    assert window._toolbar_ids == ["file.save", "file.open"]
+    assert window._toolbar_ui.command_ids == ["file.save", "file.open"]
 
 
 def test_apply_toolbar_ids_drops_unknowns(qtbot, tmp_path):
     window = MainWindow(settings=_ini_settings(tmp_path))
     qtbot.addWidget(window)
-    window._apply_toolbar_ids(["tools.validate-project", "bogus", "edit.find"])
+    window._toolbar_ui.apply_ids(["tools.validate-project", "bogus", "edit.find"])
     assert _toolbar_labels(window) == ["Validate Project", "Find..."]
 
 
@@ -62,20 +68,20 @@ def test_toolbar_action_is_the_menu_action_itself(qtbot, tmp_path):
     menu item's slot, enabled state and shortcut."""
     window = MainWindow(settings=_ini_settings(tmp_path))
     qtbot.addWidget(window)
-    window._apply_toolbar_ids(["tools.validate-project"])
+    window._toolbar_ui.apply_ids(["tools.validate-project"])
     menu_action = find_action(find_top_menu(window, "Tools"), "Validate Project")
-    assert window._toolbar.actions() == [menu_action]
+    assert window._toolbar_ui.toolbar.actions() == [menu_action]
 
 
 def test_toolbar_action_triggers_slot(qtbot, tmp_path):
     window = MainWindow(settings=_ini_settings(tmp_path))
     qtbot.addWidget(window)
     called = []
-    window._apply_toolbar_ids(["tools.validate-project"])
+    window._toolbar_ui.apply_ids(["tools.validate-project"])
     # The shared action carries the menu's connection; add our own spy to it
     # rather than patching the bound slot, which would not rewire it.
-    window._toolbar.actions()[0].triggered.connect(lambda: called.append(True))
-    window._toolbar.actions()[0].trigger()
+    window._toolbar_ui.toolbar.actions()[0].triggered.connect(lambda: called.append(True))
+    window._toolbar_ui.toolbar.actions()[0].trigger()
     assert called == [True]
 
 
@@ -83,7 +89,7 @@ def test_apply_and_save_persists_and_round_trips(qtbot, tmp_path):
     settings = _ini_settings(tmp_path)
     window = MainWindow(settings=settings)
     qtbot.addWidget(window)
-    window._apply_and_save_toolbar_ids(["edit.find", "file.save"])
+    window._toolbar_ui.apply_and_save(["edit.find", "file.save"])
     assert _toolbar_labels(window) == ["Find...", "Save"]
 
     # A new window reading the same store restores that toolbar.
@@ -117,20 +123,20 @@ def test_empty_stored_ids_fall_back_to_default(qtbot, tmp_path):
     settings.sync()
     window = MainWindow(settings=settings)
     qtbot.addWidget(window)
-    assert window._toolbar_ids == DEFAULT_TOOLBAR_IDS
+    assert window._toolbar_ui.command_ids == DEFAULT_TOOLBAR_IDS
 
 
 def test_no_stored_ids_uses_default(qtbot, tmp_path):
     window = MainWindow(settings=_ini_settings(tmp_path))
     qtbot.addWidget(window)
-    assert window._toolbar_ids == DEFAULT_TOOLBAR_IDS
+    assert window._toolbar_ui.command_ids == DEFAULT_TOOLBAR_IDS
 
 
 # -- BUG-027: the available set is every menu command ----------------------
 def test_available_commands_come_from_the_menus_not_a_fixed_seven(qtbot, tmp_path):
     window = MainWindow(settings=_ini_settings(tmp_path))
     qtbot.addWidget(window)
-    pairs = window._all_menu_commands()
+    pairs = window._toolbar_ui.all_menu_commands()
     ids = [command_id for command_id, _label in pairs]
 
     assert len(pairs) > 7                       # the reported bug: only 7
@@ -145,14 +151,14 @@ def test_available_commands_come_from_the_menus_not_a_fixed_seven(qtbot, tmp_pat
 def test_menu_command_labels_show_their_menu_path(qtbot, tmp_path):
     window = MainWindow(settings=_ini_settings(tmp_path))
     qtbot.addWidget(window)
-    labels = dict(window._all_menu_commands())
+    labels = dict(window._toolbar_ui.all_menu_commands())
     assert labels["file.save-as"] == "File › Save As"
 
 
 def test_menu_command_ids_are_unique(qtbot, tmp_path):
     window = MainWindow(settings=_ini_settings(tmp_path))
     qtbot.addWidget(window)
-    ids = [command_id for command_id, _label in window._all_menu_commands()]
+    ids = [command_id for command_id, _label in window._toolbar_ui.all_menu_commands()]
     assert len(ids) == len(set(ids))
 
 
@@ -161,23 +167,23 @@ def test_recent_files_submenu_is_not_offered(qtbot, tmp_path):
     the toolbar would leave a dead button behind."""
     window = MainWindow(settings=_ini_settings(tmp_path))
     qtbot.addWidget(window)
-    ids = [command_id for command_id, _label in window._all_menu_commands()]
+    ids = [command_id for command_id, _label in window._toolbar_ui.all_menu_commands()]
     assert not [command_id for command_id in ids if "recent" in command_id.lower()]
 
 
 def test_separators_are_not_offered(qtbot, tmp_path):
     window = MainWindow(settings=_ini_settings(tmp_path))
     qtbot.addWidget(window)
-    for command_id, label in window._all_menu_commands():
+    for command_id, label in window._toolbar_ui.all_menu_commands():
         assert command_id and label
 
 
 def test_a_previously_unavailable_command_can_go_on_the_toolbar(qtbot, tmp_path):
     window = MainWindow(settings=_ini_settings(tmp_path))
     qtbot.addWidget(window)
-    window._apply_and_save_toolbar_ids(["file.save-as"])
+    window._toolbar_ui.apply_and_save(["file.save-as"])
     assert _toolbar_labels(window) == ["Save As..."]
-    assert window._toolbar.actions()[0] is find_action(
+    assert window._toolbar_ui.toolbar.actions()[0] is find_action(
         find_top_menu(window, "File"), "Save As..."
     )
 
@@ -187,8 +193,8 @@ def test_checkable_menu_toggle_stays_checkable_on_the_toolbar(qtbot, tmp_path):
     checked state in sync between menu and toolbar for free."""
     window = MainWindow(settings=_ini_settings(tmp_path))
     qtbot.addWidget(window)
-    window._apply_toolbar_ids(["view.light-theme"])
-    action = window._toolbar.actions()[0]
+    window._toolbar_ui.apply_ids(["view.light-theme"])
+    action = window._toolbar_ui.toolbar.actions()[0]
     assert action.isCheckable()
     assert action is find_action(find_top_menu(window, "View"), "Light Theme")
 
@@ -202,7 +208,7 @@ def test_legacy_stored_ids_still_restore(qtbot, tmp_path):
     settings.sync()
     window = MainWindow(settings=settings)
     qtbot.addWidget(window)
-    assert window._toolbar_ids == ["file.save", "edit.find", "edit.undo"]
+    assert window._toolbar_ui.command_ids == ["file.save", "edit.find", "edit.undo"]
     assert _toolbar_labels(window) == ["Save", "Find...", "Undo"]
 
 
@@ -226,21 +232,21 @@ def test_customize_toolbar_action_in_view_menu(qtbot, tmp_path):
 def test_opening_customize_toolbar_does_not_block(qtbot, tmp_path):
     window = MainWindow(settings=_ini_settings(tmp_path))
     qtbot.addWidget(window)
-    window._open_customize_toolbar()  # non-modal show(), must not raise/block
-    assert window._customize_toolbar_dialog is not None
-    assert window._customize_toolbar_dialog.selected_ids() == window._toolbar_ids
+    window._toolbar_ui.open_customize_dialog()  # non-modal show(), must not raise/block
+    assert window._toolbar_ui.customize_dialog is not None
+    assert window._toolbar_ui.customize_dialog.selected_ids() == window._toolbar_ui.command_ids
 
 
 def test_customize_dialog_is_offered_every_menu_command(qtbot, tmp_path):
     window = MainWindow(settings=_ini_settings(tmp_path))
     qtbot.addWidget(window)
-    window._open_customize_toolbar()
-    dialog = window._customize_toolbar_dialog
+    window._toolbar_ui.open_customize_dialog()
+    dialog = window._toolbar_ui.customize_dialog
     offered = dialog._available_ids()
-    assert offered == [command_id for command_id, _label in window._all_menu_commands()]
+    assert offered == [command_id for command_id, _label in window._toolbar_ui.all_menu_commands()]
     assert len(offered) > 7
     # Everything already on the toolbar is listed but greyed, never removed.
-    assert set(window._toolbar_ids).isdisjoint(dialog._available_enabled_ids())
+    assert set(window._toolbar_ui.command_ids).isdisjoint(dialog._available_enabled_ids())
 
 
 def test_toolbar_shows_text_beside_icon(qtbot, tmp_path):
@@ -250,17 +256,17 @@ def test_toolbar_shows_text_beside_icon(qtbot, tmp_path):
     qtbot.addWidget(window)
     # Icon + label: the actions now carry Breeze icons alongside their text.
     assert (
-        window._toolbar.toolButtonStyle()
+        window._toolbar_ui.toolbar.toolButtonStyle()
         == Qt.ToolButtonStyle.ToolButtonTextBesideIcon
     )
-    labels = [a.text() for a in window._toolbar.actions()]
+    labels = [a.text() for a in window._toolbar_ui.toolbar.actions()]
     assert all(labels)  # no empty labels
 
 
 def test_every_default_toolbar_action_has_a_non_null_icon(qtbot, tmp_path):
     window = MainWindow(settings=_ini_settings(tmp_path))
     qtbot.addWidget(window)
-    actions = window._toolbar.actions()
+    actions = window._toolbar_ui.toolbar.actions()
     assert actions
     assert all(not a.icon().isNull() for a in actions)
 
@@ -270,7 +276,7 @@ def test_icons_are_hidden_in_menus(qtbot, tmp_path):
     suppressed in the menu or adding a button would restyle the menu too."""
     window = MainWindow(settings=_ini_settings(tmp_path))
     qtbot.addWidget(window)
-    assert all(not a.isIconVisibleInMenu() for a in window._toolbar.actions())
+    assert all(not a.isIconVisibleInMenu() for a in window._toolbar_ui.toolbar.actions())
 
 
 def test_an_icon_less_command_is_still_addable(qtbot, tmp_path):
@@ -278,8 +284,8 @@ def test_an_icon_less_command_is_still_addable(qtbot, tmp_path):
     legacy seven have vendored SVGs."""
     window = MainWindow(settings=_ini_settings(tmp_path))
     qtbot.addWidget(window)
-    window._apply_toolbar_ids(["file.save-as"])
-    action = window._toolbar.actions()[0]
+    window._toolbar_ui.apply_ids(["file.save-as"])
+    action = window._toolbar_ui.toolbar.actions()[0]
     assert action.icon().isNull()
     assert action.text() == "Save As..."
 
@@ -288,7 +294,7 @@ def test_toggling_light_theme_keeps_icons_non_null(qtbot, tmp_path):
     window = MainWindow(settings=_ini_settings(tmp_path))
     qtbot.addWidget(window)
     window._on_light_theme_toggled(True)
-    actions = window._toolbar.actions()
+    actions = window._toolbar_ui.toolbar.actions()
     assert actions
     assert all(not a.icon().isNull() for a in actions)
 
@@ -303,12 +309,12 @@ def test_repopulating_the_toolbar_does_not_destroy_the_menu_action(qtbot, tmp_pa
     qtbot.addWidget(window)
     validate = find_action(find_top_menu(window, "Tools"), "Validate Project")
 
-    window._apply_toolbar_ids(["tools.validate-project"])
-    window._apply_toolbar_ids(["file.save"])          # drops validate again
-    window._apply_toolbar_ids(["tools.validate-project"])
+    window._toolbar_ui.apply_ids(["tools.validate-project"])
+    window._toolbar_ui.apply_ids(["file.save"])          # drops validate again
+    window._toolbar_ui.apply_ids(["tools.validate-project"])
 
     # Still the same, still-alive object, still in the Tools menu.
-    assert window._toolbar.actions() == [validate]
+    assert window._toolbar_ui.toolbar.actions() == [validate]
     assert validate.text() == "Validate Project"
     assert find_action(find_top_menu(window, "Tools"), "Validate Project") is validate
     called = []
@@ -321,9 +327,9 @@ def test_removed_toolbar_action_survives_and_stays_in_its_menu(qtbot, tmp_path):
     window = MainWindow(settings=_ini_settings(tmp_path))
     qtbot.addWidget(window)
     save_as = find_action(find_top_menu(window, "File"), "Save As...")
-    window._apply_toolbar_ids(["file.save-as"])
-    window._apply_toolbar_ids(["file.save"])
-    assert save_as not in window._toolbar.actions()
+    window._toolbar_ui.apply_ids(["file.save-as"])
+    window._toolbar_ui.apply_ids(["file.save"])
+    assert save_as not in window._toolbar_ui.toolbar.actions()
     assert save_as.text() == "Save As..."          # C++ object still alive
     assert find_action(find_top_menu(window, "File"), "Save As...") is save_as
 
@@ -337,15 +343,15 @@ def test_menu_walk_keepalive_survives_garbage_collection(qtbot, tmp_path):
 
     window = MainWindow(settings=_ini_settings(tmp_path))
     qtbot.addWidget(window)
-    window._collect_menu_commands()
+    window._toolbar_ui.collect_menu_commands()
     gc.collect()
 
     light = find_action(find_top_menu(window, "View"), "Light Theme")
     assert light is not None
     light.setChecked(light.isChecked())            # would raise if deleted
     # Every walked command is still a usable QAction after the collection.
-    for command_id, _label in window._all_menu_commands():
-        assert window._menu_commands[command_id].text()
+    for command_id, _label in window._toolbar_ui.all_menu_commands():
+        assert window._toolbar_ui.menu_commands[command_id].text()
 
 
 def test_keepalive_is_never_cleared_when_recollecting(qtbot, tmp_path):
@@ -354,13 +360,13 @@ def test_keepalive_is_never_cleared_when_recollecting(qtbot, tmp_path):
     menus."""
     window = MainWindow(settings=_ini_settings(tmp_path))
     qtbot.addWidget(window)
-    first = list(window._menu_keepalive)
+    first = list(window._toolbar_ui.menu_keepalive)
     assert first
-    window._collect_menu_commands()
-    window._collect_menu_commands()
-    assert window._menu_keepalive[: len(first)] == first
+    window._toolbar_ui.collect_menu_commands()
+    window._toolbar_ui.collect_menu_commands()
+    assert window._toolbar_ui.menu_keepalive[: len(first)] == first
     # Idempotent: re-walking pins no duplicates.
-    assert len(window._menu_keepalive) == len(first)
+    assert len(window._toolbar_ui.menu_keepalive) == len(first)
 
 
 # -- BUG-027: id derivation edge cases on the live menu bar -----------------
@@ -373,31 +379,31 @@ def test_duplicate_menu_labels_get_a_numeric_suffix(qtbot, tmp_path):
     original = find_action(tools, "Validate Project")
     twin = tools.addAction("Validate Project")
 
-    pairs = window._collect_menu_commands()
+    pairs = window._toolbar_ui.collect_menu_commands()
     ids = [command_id for command_id, _label in pairs]
     assert "tools.validate-project" in ids
     assert "tools.validate-project-2" in ids
     assert len(ids) == len(set(ids))
-    assert window._menu_commands["tools.validate-project"] is original
-    assert window._menu_commands["tools.validate-project-2"] is twin
+    assert window._toolbar_ui.menu_commands["tools.validate-project"] is original
+    assert window._toolbar_ui.menu_commands["tools.validate-project-2"] is twin
 
     tools.removeAction(twin)
 
 
 def test_customize_dialog_reenumerates_commands_added_after_startup(qtbot, tmp_path):
-    """`_open_customize_toolbar` re-walks the menus, so a command the app grew
+    """`open_customize_dialog` re-walks the menus, so a command the app grew
     since startup is offered without a restart."""
     window = MainWindow(settings=_ini_settings(tmp_path))
     qtbot.addWidget(window)
-    before = [command_id for command_id, _label in window._all_menu_commands()]
+    before = [command_id for command_id, _label in window._toolbar_ui.all_menu_commands()]
     assert "tools.brand-new-command" not in before
 
     tools = find_top_menu(window, "Tools")
     fresh = tools.addAction("Brand New Command")
-    window._open_customize_toolbar()
-    offered = window._customize_toolbar_dialog._available_ids()
+    window._toolbar_ui.open_customize_dialog()
+    offered = window._toolbar_ui.customize_dialog._available_ids()
     assert "tools.brand-new-command" in offered
-    assert window._menu_commands["tools.brand-new-command"] is fresh
+    assert window._toolbar_ui.menu_commands["tools.brand-new-command"] is fresh
 
     tools.removeAction(fresh)
 
@@ -412,14 +418,14 @@ def test_submenu_commands_are_offered_with_their_full_path(qtbot, tmp_path):
     submenu = tools.addMenu("Extra Stuff")
     nested_action = submenu.addAction("Deep Command")
 
-    labels = dict(window._collect_menu_commands())
+    labels = dict(window._toolbar_ui.collect_menu_commands())
     assert labels["tools.extra-stuff.deep-command"] == "Tools › Extra Stuff › Deep Command"
-    assert window._menu_commands["tools.extra-stuff.deep-command"] is nested_action
+    assert window._toolbar_ui.menu_commands["tools.extra-stuff.deep-command"] is nested_action
     # The placeholder action that merely opens the submenu is not a command.
     assert "tools.extra-stuff" not in labels
 
-    window._apply_toolbar_ids(["tools.extra-stuff.deep-command"])
-    assert window._toolbar.actions() == [nested_action]
+    window._toolbar_ui.apply_ids(["tools.extra-stuff.deep-command"])
+    assert window._toolbar_ui.toolbar.actions() == [nested_action]
 
 
 def test_no_offered_id_contains_uppercase_or_whitespace(qtbot, tmp_path):
@@ -427,7 +433,7 @@ def test_no_offered_id_contains_uppercase_or_whitespace(qtbot, tmp_path):
     (they round-trip through a comma-joined string)."""
     window = MainWindow(settings=_ini_settings(tmp_path))
     qtbot.addWidget(window)
-    for command_id, _label in window._all_menu_commands():
+    for command_id, _label in window._toolbar_ui.all_menu_commands():
         assert command_id == command_id.lower()
         assert " " not in command_id and "," not in command_id
 
@@ -438,9 +444,9 @@ def test_refresh_toolbar_icons_tolerates_icon_less_commands(qtbot, tmp_path):
     must be a no-op for those, not a crash or a blanked icon."""
     window = MainWindow(settings=_ini_settings(tmp_path))
     qtbot.addWidget(window)
-    window._apply_toolbar_ids(["file.save-as", "file.save"])
-    window._refresh_toolbar_icons()
-    save_as, save = window._toolbar.actions()
+    window._toolbar_ui.apply_ids(["file.save-as", "file.save"])
+    window._toolbar_ui.refresh_icons()
+    save_as, save = window._toolbar_ui.toolbar.actions()
     assert save_as.icon().isNull()
     assert not save.icon().isNull()
 
@@ -451,7 +457,7 @@ def test_icon_less_command_keeps_its_menu_icon_visibility(qtbot, tmp_path):
     window = MainWindow(settings=_ini_settings(tmp_path))
     qtbot.addWidget(window)
     save_as = find_action(find_top_menu(window, "File"), "Save As...")
-    window._apply_toolbar_ids(["file.save-as"])
+    window._toolbar_ui.apply_ids(["file.save-as"])
     assert save_as.isIconVisibleInMenu() is True
 
 
@@ -459,7 +465,7 @@ def test_saved_ids_are_menu_path_ids_in_settings(qtbot, tmp_path):
     settings = _ini_settings(tmp_path)
     window = MainWindow(settings=settings)
     qtbot.addWidget(window)
-    window._apply_and_save_toolbar_ids(["file.save-as", "edit.replace"])
+    window._toolbar_ui.apply_and_save(["file.save-as", "edit.replace"])
     stored = settings.value("toolbarIds")
     stored = stored.split(",") if isinstance(stored, str) else list(stored)
     assert stored == ["file.save-as", "edit.replace"]
@@ -486,8 +492,8 @@ def test_icon_assignments_round_trip_through_settings(qtbot, tmp_path):
     path = str(tmp_path / "s.ini")
     window = MainWindow(settings=QSettings(path, QSettings.Format.IniFormat))
     qtbot.addWidget(window)
-    window._apply_and_save_toolbar_ids(
-        window._toolbar_ids, {"file.save": "document-print"}
+    window._toolbar_ui.apply_and_save(
+        window._toolbar_ui.command_ids, {"file.save": "document-print"}
     )
     window._settings.sync()
 
@@ -495,7 +501,7 @@ def test_icon_assignments_round_trip_through_settings(qtbot, tmp_path):
     qtbot.addWidget(reopened)
 
     assert reopened._settings.value(ICON_ASSIGNMENTS_SETTINGS_KEY) is not None
-    assert reopened._toolbar_icon_ids.get("file.save") == "document-print"
+    assert reopened._toolbar_ui.icon_ids.get("file.save") == "document-print"
 
 
 def test_an_unknown_assignment_is_dropped_on_load(qtbot, tmp_path):
@@ -517,7 +523,7 @@ def test_an_unknown_assignment_is_dropped_on_load(qtbot, tmp_path):
     window = MainWindow(settings=QSettings(path, QSettings.Format.IniFormat))
     qtbot.addWidget(window)
 
-    assert "no.such.command" not in window._toolbar_icon_ids
+    assert "no.such.command" not in window._toolbar_ui.icon_ids
 
 
 def test_no_assignments_leaves_toolbar_behavior_unchanged(qtbot, tmp_path):
@@ -527,4 +533,4 @@ def test_no_assignments_leaves_toolbar_behavior_unchanged(qtbot, tmp_path):
     )
     qtbot.addWidget(window)
 
-    assert window._toolbar_icon_ids == {}
+    assert window._toolbar_ui.icon_ids == {}
