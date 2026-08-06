@@ -5,8 +5,8 @@ opens the generator's `.pgtp` project files directly, lets you inspect and edit
 them safely, manage captions in bulk, edit event-handler code comfortably, compare
 project versions, check the project against a live database, validate structure,
 work on your database's own functions and triggers — trying them out in a
-throwaway sandbox first — and drive PHP generation, all without fighting the
-generator's own UI.
+throwaway sandbox first — edit your own standalone PHP files and check their
+syntax, and drive PHP generation, all without fighting the generator's own UI.
 
 The editor never rewrites your file behind your back: every change you make is one
 you asked for, and the on-disk bytes are preserved except where you edit.
@@ -33,8 +33,9 @@ file just opens into that project. The window has three areas:
 - **Center — Raw XML / Caption Management / Diff-Merge / Edit XSD / DDL Explorer /
   Manual:** the working area. It opens on **Raw XML**; the other tabs appear when
   you invoke them. Editing an individual function, procedure, or trigger opens
-  one more tab per object (see *DDL Explorer*), and a live sandbox session adds
-  the **Sandbox SQL** console tab (see *The Sandbox*).
+  one more tab per object (see *DDL Explorer*), each PHP file you open adds one
+  tab of its own (see *Editing PHP Files*), and a live sandbox session adds the
+  **Sandbox SQL** console tab (see *The Sandbox*).
 - **Right — Properties:** a read-only inspector for whatever you select in the tree.
 
 When you open a file, the status bar shows a live message such as
@@ -47,12 +48,13 @@ busy feedback*.
 
 - **File ▸ Save** (Ctrl+S) saves the **active tab**: the project file when you're
   in Raw XML (or any project view), the schema the XSD tab currently holds —
-  curated or auto — when that tab is active (see *Schema Tools*), or the `.sql`
+  curated or auto — when that tab is active (see *Schema Tools*), the `.sql`
   file behind an open DDL object editor tab when that tab is active (see *DDL
-  Explorer*).
+  Explorer*), or the PHP file behind an open PHP tab (see *Editing PHP Files*).
 - **File ▸ Save As** (Ctrl+Shift+S) writes a copy of the **project** to a new
   path — this is unaffected by which tab is active, including a DDL object
-  editor tab (which has its own, separate Save As… the first time you save it).
+  editor tab (which has its own, separate Save As… the first time you save it)
+  and a PHP tab (which has no Save As at all).
 - **File ▸ Close** (Ctrl+W) closes the project; if you have unsaved changes it
   prompts you to **Save**, **Discard**, or **Cancel**.
 - **File ▸ Revert** discards your edits and reloads the last saved version from the
@@ -197,17 +199,19 @@ session and are not written to the file.
 
 Both mouse gestures work in **every** editor that has a gutter — the Raw XML
 editor, **Edit XSD** / **Edit AutoXSD**, the read-only **DDL Explorer**, an open
-**DDL object editor tab**, the **Sandbox SQL** console (see *The Sandbox*), and
-the **Edit code…** dialog — and they keep working in Caption Mode, where the Raw
-XML editor itself is read-only.
+**DDL object editor tab**, an open **PHP file tab** (see *Editing PHP Files*),
+the **Sandbox SQL** console (see *The Sandbox*), and the **Edit code…** dialog —
+and they keep working in Caption Mode, where the Raw XML editor itself is
+read-only.
 
 The **Bookmarks** menu and its shortcuts follow the tab you are working in: with
 the **Edit XSD** (or **Edit AutoXSD**) tab active they act on the schema editor,
-with the **DDL Explorer** tab or an open **DDL object editor tab** active they
-act on that tab's own editor, and on any other tab — including the **Sandbox
-SQL** console, whose buffer is a scratch pad rather than a document — they act on
-the **Raw XML** editor. Using them never switches tabs on you — a bookmark is
-always set or found in the editor you are already looking at.
+with the **DDL Explorer** tab, an open **DDL object editor tab**, or an open
+**PHP file tab** active they act on that tab's own editor, and on any other tab —
+including the **Sandbox SQL** console, whose buffer is a scratch pad rather than
+a document — they act on the **Raw XML** editor. Using them never switches tabs
+on you — a bookmark is always set or found in the editor you are already looking
+at.
 
 The **Edit code…** dialog has the same bookmark strip, but as a separate dialog
 it is out of the Bookmarks menu's reach: there you set and clear bookmarks with the
@@ -227,18 +231,18 @@ The search bar under the Raw XML editor provides:
 - **Replace** (Ctrl+R) and **Replace All** (Ctrl+Alt+Enter) — Replace All reports
   how many replacements it made in the status bar.
 
-The **Edit XSD** tab (see *Schema Tools*), the **DDL Explorer** tab, and an open
-**DDL object editor tab** (see *DDL Explorer*) each have their own search bar;
-the shortcuts and the Edit menu act on whichever tab is active, searching that
-tab's own document. On a tab without its own search bar, Find reveals the
-**Raw XML** tab and searches there.
+The **Edit XSD** tab (see *Schema Tools*), the **DDL Explorer** tab, an open
+**DDL object editor tab** (see *DDL Explorer*), and an open **PHP file tab** (see
+*Editing PHP Files*) each have their own search bar; the shortcuts and the Edit
+menu act on whichever tab is active, searching that tab's own document. On a tab
+without its own search bar, Find reveals the **Raw XML** tab and searches there.
 
 Because the DDL Explorer buffer is **read-only**, only the searching half applies
 there: Find, Find Next and Find All work as usual, while Replace and Replace All
-have nothing they can change. A DDL object editor tab is the opposite case:
-it's fully editable, so **Find, Find Next, Replace, and Replace All all work**
-there — only **Find All** stays inert and returns no results, the one gap
-carried over from the read-only DDL Explorer's search bar.
+have nothing they can change. A DDL object editor tab and a PHP file tab are the
+opposite case: they're fully editable, so **Find, Find Next, Replace, and Replace
+All all work** there — only **Find All** stays inert and returns no results, the
+one gap carried over from the read-only DDL Explorer's search bar.
 
 ---
 
@@ -283,6 +287,154 @@ list distinguishes **client-side** handlers (JavaScript, run in the browser) fro
 **server-side** handlers (PHP, run on the server). Handlers the page already has are
 greyed out. Choosing one opens an empty Code Editor; saving inserts a new
 `<EventHandlers>` / `<OnXxx enabled="true">` block in the right place.
+
+---
+
+## Editing PHP Files
+
+Not all of your PHP lives inside the `.pgtp`. The custom include files, helper
+libraries, and hand-written pages that sit next to a generated application are
+ordinary files on disk, and PGTP Editor opens them as ordinary tabs so you don't
+have to leave the app to touch them.
+
+A PHP tab has **no tie to your project at all**: it opens whether or not a
+`.pgtp` is loaded, editing it never marks the project as changed, and saving it
+never touches the project file. It is a comfortable text editor for one file —
+nothing more is promised.
+
+### Opening a PHP file
+
+- **File ▸ Open PHP File…** — the entry sits right below **Open Recent**, above
+  the project actions, because it *is* an open gesture. You can **select several
+  files at once**; each one opens as its own tab. The dialog offers PHP file
+  types first (`.php`, `.phtml`, `.phps`, `.inc`), then common text types, then
+  **All files (*)** — the filter is a convenience, not a restriction.
+- **Drag files onto the window** — drop one or several and they open the same
+  way. Drop onto the tab bar or a dock rather than straight into an editor: an
+  editor accepts a dropped file as *pasted text*, which is the text widget's own
+  behavior and not something the editor overrides.
+
+The status bar confirms each open with `Opened <path>`. The tab is labelled with
+the bare file name plus the familiar `" *"` marker once you edit it, and its
+tooltip shows the full path — which is what tells two folders' `index.php` apart.
+
+**Opening a file that is already open focuses the tab you already have** instead
+of reloading it from disk. That is deliberate: a second Open must never be able
+to throw away edits you haven't saved yet.
+
+A dropped **`.pgtp`** is not treated as text — it goes to the normal project-open
+path, chooser dialog and all (see *Getting Started ▸ Opening a project*).
+
+### Why a file is sometimes refused
+
+Dropping a file is a gesture you can make by accident, so a drop is classified
+rather than trusted. When something can't be opened, the status bar says which
+file and why — never a silent no-op:
+
+- **a folder, or a file that can't be read** — nothing to open.
+- **a binary file** (anything with a NUL byte near its start) — opening a JPEG as
+  "PHP source" and letting your next Ctrl+S write the mangled result back is data
+  loss, not convenience.
+- **a file that is not valid UTF-8** — refused for the same reason. Decoding it
+  loosely would substitute replacement characters, and the tab's very first save
+  would write those over your file. This is stricter than a general-purpose text
+  editor, on purpose.
+
+The UTF-8 check applies to **File ▸ Open PHP File…** too. The binary sniff is the
+drop path's own guard, since a file you picked in a dialog is an explicit choice.
+
+### Working in a PHP tab
+
+The tab hosts the same editor the **Edit code…** dialog uses, in PHP mode:
+
+- **PHP syntax highlighting** and a **line-number gutter** with the usual
+  bookmark strip (see *Bookmarks*).
+- **Auto-close** for `()`, `[]`, `{}`, `''`, `""`, **selection-wrap**, and
+  **Ctrl+Shift+B** to select the enclosing bracket span.
+- Its **own Find/Replace bar** — **Ctrl+F**, **F3**, **Ctrl+R** and
+  **Ctrl+Alt+Enter** search and replace in *this file*, not in the Raw XML. (Find
+  All is the one inert control here, as in a DDL object editor tab.)
+- **Ctrl+Z / Ctrl+Y undo and redo only this tab's own edits.** They never reach
+  the project's Raw XML history, exactly as in a DDL object editor tab.
+- **No fold chevrons yet.** The gutter has the folding machinery, but nothing
+  computes fold regions for PHP in this version, so the chevron column stays
+  empty here.
+
+### Saving and closing
+
+- **Ctrl+S** (or **File ▸ Save**) with a PHP tab active writes **that file**,
+  straight back to where it came from, in UTF-8 and keeping the line endings the
+  buffer holds. The status bar reports `Saved <path>`; if the write fails, a
+  **Save Failed** dialog shows the reason and the tab stays marked as changed.
+- **There is no Save As for a PHP tab.** **Ctrl+Shift+S** always means the
+  `.pgtp` project, whichever tab is active.
+- **Closing a tab** with its **✕** prompts **Save**, **Discard**, or **Cancel**
+  if it has unsaved edits. A save that fails — or that you cancel — **aborts the
+  close**: the tab stays open with your text in it rather than being discarded.
+
+> **Closing the whole application does not prompt for unsaved PHP tabs.** Only
+> unsaved schema edits (the **Edit XSD** tab) stop the app from closing; PHP tabs
+> and DDL object tabs are alike in this. Save the files you care about before you
+> quit.
+
+---
+
+## Checking PHP Syntax
+
+The **Tools** menu can run PHP's own syntax check over the file in front of you —
+the same kind of gesture as **Validate Project** one tier down: this file rather
+than the whole project. The three entries sit directly under **Validate
+Project**.
+
+Everything here is **advisory**. A lint failure never blocks, delays, or undoes a
+save: by the time the check runs, your bytes are already on disk.
+
+### Pointing the editor at a PHP executable
+
+The check needs a `php` program to run. **Tools ▸ Locate PHP Linter…** opens a
+file picker for it; the path is remembered with your other tool paths, alongside
+the PHP Generator executable (see *Generating PHP*), so everything you had to
+locate lives in one place. Both a full path and a bare `php` found on your `PATH`
+are accepted.
+
+A newly located linter takes effect **immediately, in tabs that are already
+open** — nothing needs reopening.
+
+### Running the check
+
+- **Tools ▸ Lint Current File** checks the **active PHP tab's current buffer** —
+  including unsaved edits, since it is the text in front of you that matters, not
+  the last version on disk.
+- **Tools ▸ Lint on Save** is a checkable toggle: with it on, every successful
+  save of a PHP tab is followed by a check. Your choice is remembered across
+  restarts and applies to tabs that are already open the moment you flip it.
+
+The check runs off the UI thread, so a wedged linter or a slow network share
+can't freeze the window; one that never answers is abandoned after ten seconds
+and reported as such.
+
+### Reading the results
+
+Results land in the existing **Audit/Problems** panel, each row prefixed
+**`[Lint]`** so you can tell them apart from `[Validate]`, `[Check]` and
+`[Schema]` lines. **Click a finding to jump to it** — the right PHP tab is
+focused and the caret is placed on that line.
+
+**Every attempt produces at least one visible row**, and that is the point: a
+silent panel would read as "the file is clean". So you always get a line, whether
+the answer is `OK: no syntax errors detected in …`, a numbered finding, or one of
+the honest non-answers — no linter configured, the configured linter is missing
+or not executable, it timed out, it printed nothing, it printed something
+unrecognizable, or no PHP tab was active when you asked. The rows that could not
+be tied to a line are inert when clicked rather than sending you somewhere
+plausible but wrong.
+
+> **A clean result means "no error found *before this point*", not "no errors".**
+> The check is PHP's own `php -l`, which stops at the **first** syntax error in a
+> file. When a finding is reported, the panel says so next to it: fix that one
+> and check again, because more may follow. And the check is a *syntax* check
+> only — no style rules, no `phpcs`, and nothing that inspects what your code
+> actually does.
 
 ---
 
@@ -1443,6 +1595,9 @@ example duplicate top-level page file names, missing expected attributes, or
 unexpected children in container elements. Select an issue to jump to it; clearing
 validation removes the results.
 
+This checks the **project's structure**. For the syntax of a PHP file you have
+open in a tab, see *Checking PHP Syntax* — the same menu, one tier down.
+
 ---
 
 ## Generating PHP
@@ -1567,27 +1722,27 @@ exists is quietly discarded rather than breaking the toolbar.
 | Shortcut | Where | Action |
 |----------|-------|--------|
 | **Ctrl+O** | Global | Open a `.pgtp` file |
-| **Ctrl+S** | Global | Save the active tab (project, or the open schema from the XSD tab) |
-| **Ctrl+Shift+S** | Global | Save As |
+| **Ctrl+S** | Global | Save the active tab (the project, the open schema from the XSD tab, a DDL object editor tab's `.sql` file, or a PHP file tab's file) |
+| **Ctrl+Shift+S** | Global | Save As — always the `.pgtp` project, whichever tab is active |
 | **Ctrl+W** | Global | Close project |
 | **F1** | Global | Open the Manual |
 | **Ctrl+F2** | Active editor tab | Toggle bookmark |
 | **F2** / **Shift+F2** | Active editor tab | Next / previous bookmark |
 | **Ctrl+Z** / **Ctrl+Y** | Raw XML | Undo / redo (snapshot history) |
-| **Ctrl+Z** / **Ctrl+Y** | DDL object editor tab | Undo / redo (that tab's own history only — never the project's) |
+| **Ctrl+Z** / **Ctrl+Y** | DDL object editor tab / PHP file tab | Undo / redo (that tab's own history only — never the project's) |
 | **Ctrl+Space** | Raw XML | Attribute / value completion |
 | **Ctrl+Space** | DDL object editor tab | Schema-aware name completion (schema/table names, or `NEW.`/`OLD.` column names) |
 | **Ctrl+Space** | Sandbox SQL console | Schema / table name completion |
 | **Ctrl+L** | Raw XML | Go To XSD (attribute's definition in the Edit XSD tab) |
 | **Ctrl+click** | Raw XML (mouse) | Jump to matching open/close tag |
 | **Alt+click** | Raw XML (mouse) | Jump to parent tag start |
-| **Ctrl+Shift+B** | Raw XML / Code Editor | Select enclosing block (caret to start) |
+| **Ctrl+Shift+B** | Raw XML / Code Editor / PHP file tab | Select enclosing block (caret to start) |
 | **Ctrl+Shift+A** | Raw XML | Select parent block |
-| **Ctrl+F** | Raw XML / Edit XSD / DDL Explorer / DDL object editor tab | Find |
-| **F3** | Raw XML / Edit XSD / DDL Explorer / DDL object editor tab | Find next |
-| **Ctrl+Shift+F** | Raw XML / Edit XSD / DDL Explorer / DDL object editor tab | Find all (inert in the DDL Explorer and DDL object editor tabs) |
-| **Ctrl+R** | Raw XML / Edit XSD / DDL object editor tab | Replace (not in the read-only DDL Explorer) |
-| **Ctrl+Alt+Enter** | Raw XML / Edit XSD / DDL object editor tab | Replace all (not in the read-only DDL Explorer) |
+| **Ctrl+F** | Raw XML / Edit XSD / DDL Explorer / DDL object editor tab / PHP file tab | Find |
+| **F3** | Raw XML / Edit XSD / DDL Explorer / DDL object editor tab / PHP file tab | Find next |
+| **Ctrl+Shift+F** | Raw XML / Edit XSD / DDL Explorer / DDL object editor tab / PHP file tab | Find all (inert in the DDL Explorer, DDL object editor and PHP file tabs) |
+| **Ctrl+R** | Raw XML / Edit XSD / DDL object editor tab / PHP file tab | Replace (not in the read-only DDL Explorer) |
+| **Ctrl+Alt+Enter** | Raw XML / Edit XSD / DDL object editor tab / PHP file tab | Replace all (not in the read-only DDL Explorer) |
 | **Ctrl+Alt+F** | DDL object editor tab / Sandbox SQL console | Format Selection (reindent the current selection) |
 | **Ctrl+Return** | Sandbox SQL console | Run the selection, or the whole buffer, against the sandbox |
 | **Ctrl+F** | Caption Mode | Open Find/Filter |
