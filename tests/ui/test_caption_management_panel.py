@@ -4,6 +4,7 @@ from PySide6.QtGui import QGuiApplication
 
 from pgtp_editor.ui.caption_scan import CaptionEntry
 from pgtp_editor.ui.caption_management_panel import (
+    CaptionFindReplaceBar,
     CaptionManagementPanel,
     NULL_SENTINEL,
     _CHANGED_BACKGROUND,
@@ -1818,3 +1819,391 @@ def test_find_banner_row_counts_track_the_find_filter(qtbot):
     assert "showing 2 of 3 rows" in panel._filter_banner_label.text()
     panel.apply_find_filter("Cart", "normal", False)
     assert "showing 1 of 3 rows" in panel._filter_banner_label.text()
+
+
+# ---------------------------------------------------------------------------
+# The Caption grid's live Find/Replace bar (§13)
+# ---------------------------------------------------------------------------
+
+
+def _new_value_column(panel):
+    """Every SOURCE row's New Value, in source order (the preview writes into
+    source rows, so this sees rows the filter currently hides too)."""
+    model = panel._model
+    return [
+        model.index(r, _NEW_VALUE_COLUMN).data(Qt.ItemDataRole.DisplayRole)
+        for r in range(model.rowCount())
+    ]
+
+
+def test_bar_is_a_hidden_non_modal_child_widget(qtbot):
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    bar = panel.find_replace_bar
+    assert isinstance(bar, CaptionFindReplaceBar)
+    assert bar.parent() is panel
+    assert bar.isHidden()
+    assert bar.is_active() is False
+    # Not a dialog: there is nothing to exec().
+    assert not hasattr(bar, "exec")
+
+
+def test_bar_offers_the_three_real_search_modes(qtbot):
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    combo = panel.find_replace_bar.mode_combo
+    labels = [combo.itemText(i) for i in range(combo.count())]
+    modes = [combo.itemData(i) for i in range(combo.count())]
+    assert labels == [
+        "Normal (plain string)",
+        "Extended (\\n \\t \\0 \\xNN)",
+        "Regular expression",
+    ]
+    assert modes == ["normal", "extended", "regular"]
+    assert panel.find_replace_bar.selected_mode() == "normal"
+
+
+def test_live_replace_updates_proposals_as_the_pattern_is_typed(qtbot):
+    """The headline behavior: no Replace All button — each keystroke rewrites
+    the New Value column, and the previous keystroke's proposal is rolled back
+    rather than accumulated."""
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    panel.load_entries(_replace_entries())
+    bar = panel.find_replace_bar
+    bar.show_bar()
+    bar.replace_field.setText("Screen")
+
+    bar.find_field.setText("P")
+    assert _new_value_column(panel) == ["Home Screenage", "Orders Screenage", ""]
+
+    # Typing one more character re-derives from the ORIGINAL values.
+    bar.find_field.setText("Pa")
+    assert _new_value_column(panel) == ["Home Screenge", "Orders Screenge", ""]
+
+    bar.find_field.setText("Page")
+    assert _new_value_column(panel) == ["Home Screen", "Orders Screen", ""]
+
+    # Editing the replacement is just as live.
+    bar.replace_field.setText("View")
+    assert _new_value_column(panel) == ["Home View", "Orders View", ""]
+
+    # Clearing Find restores the grid exactly.
+    bar.find_field.setText("")
+    assert _new_value_column(panel) == ["", "", ""]
+
+
+def test_live_replace_reports_the_proposed_row_count(qtbot):
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    panel.load_entries(_replace_entries())
+    bar = panel.find_replace_bar
+    bar.show_bar()
+    bar.replace_field.setText("Screen")
+    bar.find_field.setText("Page")
+    assert bar.status_label.text() == "2 row(s) proposed"
+    bar.find_field.setText("zzz")
+    assert bar.status_label.text() == ""
+
+
+def test_live_replace_never_touches_the_read_only_value_column(qtbot):
+    """Replace in caption mode populates PROPOSED new values; the scanned
+    Value column and the XML behind it are untouched."""
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    panel.load_entries(_replace_entries())
+    bar = panel.find_replace_bar
+    bar.show_bar()
+    bar.replace_field.setText("Screen")
+    bar.find_field.setText("Page")
+    assert _visible_value_column(panel) == ["Home Page", "Orders Page", "Cart"]
+    assert [e.value for e in panel._model.entries()] == [
+        "Home Page",
+        "Orders Page",
+        "Cart",
+    ]
+    # The proposals are ordinary changed_edits, ready for the explicit Apply.
+    assert [v for _, v in panel.changed_edits()] == ["Home Screen", "Orders Screen"]
+
+
+def test_live_replace_normal_mode_is_case_insensitive_until_match_case(qtbot):
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    panel.load_entries(_replace_entries())
+    bar = panel.find_replace_bar
+    bar.show_bar()
+    bar.replace_field.setText("X")
+    bar.find_field.setText("home")
+    assert _new_value_column(panel) == ["X Page", "", ""]
+    bar.match_case_checkbox.setChecked(True)
+    assert _new_value_column(panel) == ["", "", ""]
+
+
+def test_live_replace_extended_mode_decodes_escapes(qtbot):
+    """Extended mode reaches apply_find_replace's escape decoding: \\x20 is a
+    space, so it matches where the literal string "\\x20" never would."""
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    panel.load_entries(_replace_entries())
+    bar = panel.find_replace_bar
+    bar.show_bar()
+    bar.replace_field.setText("_")
+    bar.find_field.setText("\\x20")
+    # Still Normal mode: the literal backslash-x-2-0 matches nothing.
+    assert _new_value_column(panel) == ["", "", ""]
+    bar.set_mode("extended")
+    assert bar.selected_mode() == "extended"
+    assert _new_value_column(panel) == ["Home_Page", "Orders_Page", ""]
+
+
+def test_live_replace_regular_mode_supports_capture_groups(qtbot):
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    panel.load_entries(_replace_entries())
+    bar = panel.find_replace_bar
+    bar.show_bar()
+    bar.set_mode("regular")
+    bar.replace_field.setText(r"\1!")
+    bar.find_field.setText(r"^(\w+) Page$")
+    assert _new_value_column(panel) == ["Home!", "Orders!", ""]
+
+
+def test_invalid_regex_shows_an_inline_message_instead_of_raising(qtbot):
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    panel.load_entries(_replace_entries())
+    bar = panel.find_replace_bar
+    bar.show_bar()
+    bar.set_mode("regular")
+    bar.replace_field.setText("X")
+    bar.find_field.setText("Page")
+    assert _new_value_column(panel) == ["Home X", "Orders X", ""]
+
+    # A half-typed group is invalid: reported inline, and the stale preview is
+    # rolled back rather than left behind.
+    bar.find_field.setText("Page(")
+    assert "Invalid regular expression" in bar.error_label.text()
+    assert bar.status_label.text() == ""
+    assert _new_value_column(panel) == ["", "", ""]
+
+    # Completing the pattern clears the error and previews again.
+    bar.find_field.setText("(Page)")
+    assert bar.error_label.text() == ""
+    assert _new_value_column(panel) == ["Home X", "Orders X", ""]
+
+
+def test_invalid_regex_is_reported_even_when_no_rows_are_in_scope(qtbot):
+    """The pattern is compile-checked up front, so an empty scope cannot
+    silently swallow a broken regex."""
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    panel.load_entries(_replace_entries())
+    panel.apply_find_filter("no-such-caption", "normal", False)
+    assert panel._proxy.rowCount() == 0
+    bar = panel.find_replace_bar
+    bar.show_bar()
+    bar.set_mode("regular")
+    bar.find_field.setText("Page(")
+    assert "Invalid regular expression" in bar.error_label.text()
+
+
+def test_bar_filter_button_pushes_the_find_filter_and_refreshes_the_banner(qtbot):
+    """Filter stays an explicit button press (not live) and goes through the
+    same apply_find_filter path the modal uses."""
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    panel.load_entries(_replace_entries())
+    bar = panel.find_replace_bar
+    bar.show_bar()
+    bar.find_field.setText("Page")
+    # Typing alone must not have filtered anything.
+    assert panel._proxy.rowCount() == 3
+    bar.apply_filter()
+    assert _visible_value_column(panel) == ["Home Page", "Orders Page"]
+    assert 'Find "Page"' in panel._filter_banner_label.text()
+    assert "showing 2 of 3 rows" in panel._filter_banner_label.text()
+
+
+def test_bar_filter_button_reports_invalid_regex_inline(qtbot):
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    panel.load_entries(_replace_entries())
+    bar = panel.find_replace_bar
+    bar.show_bar()
+    bar.set_mode("regular")
+    bar.set_find_text("Page(")
+    bar.apply_filter()
+    assert "Invalid regular expression" in bar.error_label.text()
+    # BUG-028's ordering invariant still holds: a rejected pattern never
+    # reaches the proxy and never advertises itself in the banner.
+    assert panel._proxy.find_pattern() == ""
+    assert panel._filter_banner.isHidden()
+
+
+def test_live_replace_is_scoped_to_the_visible_rows_when_a_filter_is_active(qtbot):
+    """DECISION (spec silent): the live preview only ever writes into rows the
+    active filters leave visible — a live edit the user cannot see contradicts
+    §13's visible-state discipline. Global stays the modal's explicit option."""
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    panel.load_entries(_replace_entries())
+    panel.apply_find_filter("Home", "normal", False)
+    assert _visible_value_column(panel) == ["Home Page"]
+    bar = panel.find_replace_bar
+    bar.show_bar()
+    bar.replace_field.setText("Screen")
+    bar.find_field.setText("Page")
+    # "Orders Page" also matches the pattern but is filtered out: untouched.
+    assert _new_value_column(panel) == ["Home Screen", "", ""]
+
+
+def test_live_replace_rescopes_when_the_filter_moves(qtbot):
+    """Rows that leave the visible set get their previous New Value back; rows
+    that enter it pick the proposal up."""
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    panel.load_entries(_replace_entries())
+    panel.apply_find_filter("Home", "normal", False)
+    bar = panel.find_replace_bar
+    bar.show_bar()
+    bar.replace_field.setText("Screen")
+    bar.find_field.setText("Page")
+    assert _new_value_column(panel) == ["Home Screen", "", ""]
+
+    # Widen the filter: the second row is now in scope, the first still is.
+    panel.apply_find_filter("Page", "normal", False)
+    assert _new_value_column(panel) == ["Home Screen", "Orders Screen", ""]
+
+    # Narrow to the other row: the first row's proposal is rolled back.
+    panel.apply_find_filter("Orders", "normal", False)
+    assert _new_value_column(panel) == ["", "Orders Screen", ""]
+
+    # clear_all_filters — the single clear path — widens the scope to the
+    # whole grid and does NOT clear the (non-filter) live preview.
+    panel.clear_all_filters()
+    assert _new_value_column(panel) == ["Home Screen", "Orders Screen", ""]
+    assert panel._filter_banner.isHidden()
+
+
+def test_live_replace_rescopes_for_a_preset_predicate_filter(qtbot):
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    panel.load_entries(_context_entries())
+    bar = panel.find_replace_bar
+    bar.show_bar()
+    bar.replace_field.setText("-")
+    bar.find_field.setText("t")
+    before = _new_value_column(panel)
+    # "Equipment", "Attachments", "Other" contain a "t"; "WBS"/"Name" do not.
+    assert before == ["Equipmen-", "", "A--achmen-s", "", "O-her"]
+    panel.filter_to_table("pr.equip")
+    assert _new_value_column(panel) == ["Equipmen-", "", "", "", ""]
+
+
+def test_live_replace_rescopes_for_a_header_value_filter(qtbot):
+    """The header popup's OK re-scopes the preview too — without putting the
+    header filter into the banner (it keeps its exclusive ▼ marker)."""
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    panel.load_entries(_replace_entries())
+    bar = panel.find_replace_bar
+    bar.show_bar()
+    bar.replace_field.setText("Screen")
+    bar.find_field.setText("Page")
+    assert _new_value_column(panel) == ["Home Screen", "Orders Screen", ""]
+
+    popup = panel.open_header_filter(_ANCHOR_COLUMN)
+    qtbot.addWidget(popup)
+    for i, label in enumerate(popup.item_labels()):
+        popup.set_checked(i, label == "home")
+    popup.apply_filter()
+    assert _new_value_column(panel) == ["Home Screen", "", ""]
+    assert panel._proxy.filtered_columns() == {_ANCHOR_COLUMN}
+    assert panel._filter_banner.isHidden()
+
+
+def test_live_replace_preserves_a_hand_typed_new_value_it_overwrote(qtbot):
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    panel.load_entries(_replace_entries())
+    panel._model.set_new_value(0, "Hand written")
+    bar = panel.find_replace_bar
+    bar.show_bar()
+    bar.replace_field.setText("Screen")
+    bar.find_field.setText("Page")
+    assert _new_value_column(panel) == ["Home Screen", "Orders Screen", ""]
+    bar.find_field.setText("")
+    assert _new_value_column(panel) == ["Hand written", "", ""]
+
+
+def test_closing_the_bar_keeps_the_proposals_and_stops_tracking(qtbot):
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    panel.load_entries(_replace_entries())
+    bar = panel.find_replace_bar
+    bar.show_bar()
+    bar.replace_field.setText("Screen")
+    bar.find_field.setText("Page")
+    bar.close_bar()
+    assert bar.isHidden()
+    assert bar.is_active() is False
+    assert panel._live_replace_baseline == {}
+    # The proposals survive as ordinary New Values.
+    assert _new_value_column(panel) == ["Home Screen", "Orders Screen", ""]
+    # And a later filter change no longer rewrites them.
+    panel.apply_find_filter("Cart", "normal", False)
+    assert _new_value_column(panel) == ["Home Screen", "Orders Screen", ""]
+
+
+def test_show_find_replace_bar_seeds_from_the_active_pattern_without_previewing(qtbot):
+    """Seeding Find-what must not fire the live replace: with an empty
+    Replace-with that would instantly propose deleting the pattern."""
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    panel.load_entries(_replace_entries())
+    panel.apply_find_filter("Page", "normal", False)
+    panel.show_find_replace_bar()
+    bar = panel.find_replace_bar
+    assert bar.find_field.text() == "Page"
+    assert bar.is_active() is True
+    assert _new_value_column(panel) == ["", "", ""]
+
+
+def test_find_replace_bar_in_context_menu_wired(qtbot, monkeypatch):
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    panel.load_entries(_replace_entries())
+    captured = {}
+
+    class _FakeMenu:
+        def __init__(self, *a, **k):
+            self._actions = []
+
+        def addAction(self, label, cb=None):
+            self._actions.append((label, cb))
+            return (label, cb)
+
+        def addSeparator(self):
+            pass
+
+        def addMenu(self, label):
+            return _FakeMenu()
+
+        def exec(self, *a, **k):
+            captured["actions"] = self._actions
+
+    monkeypatch.setattr("pgtp_editor.ui.caption_management_panel.QMenu", _FakeMenu)
+    panel._show_context_menu(panel._table.viewport().rect().center())
+    cb = dict(captured["actions"])["Find / Replace bar"]
+    assert cb == panel.show_find_replace_bar
+
+
+def test_escape_closes_the_bar(qtbot):
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    panel.load_entries(_replace_entries())
+    bar = panel.find_replace_bar
+    bar.show_bar()
+    qtbot.keyClick(bar, Qt.Key.Key_Escape)
+    assert bar.isHidden()
+    assert bar.is_active() is False

@@ -50,8 +50,11 @@ from PySide6.QtWidgets import (
 
 from pgtp_editor.ui.caption_scan import SEARCH_MODES
 
-# Search-mode radio labels, in display order, paired with the caption_scan mode.
-_MODE_LABELS: tuple[tuple[str, str], ...] = (
+# Search-mode labels, in display order, paired with the caption_scan mode. Public
+# because the Caption grid's live Find/Replace bar
+# (``caption_management_panel.CaptionFindReplaceBar``) presents the very same
+# three modes and must not spell them a second, drifting way.
+MODE_LABELS: tuple[tuple[str, str], ...] = (
     ("Normal (plain string)", "normal"),
     ("Extended (\\n \\t \\0 \\xNN)", "extended"),
     ("Regular expression", "regular"),
@@ -99,7 +102,7 @@ class CaptionFindReplaceDialog(QDialog):
         mode_layout = QVBoxLayout(mode_box)
         self._mode_group = QButtonGroup(self)
         self._mode_buttons: dict[str, QRadioButton] = {}
-        for label, mode in _MODE_LABELS:
+        for label, mode in MODE_LABELS:
             button = QRadioButton(label)
             self._mode_group.addButton(button)
             mode_layout.addWidget(button)
