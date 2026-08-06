@@ -156,7 +156,10 @@ def test_view_menu_contents(qtbot):
     qtbot.addWidget(window)
     view_menu = find_top_menu(window, "View")
     assert action_labels(view_menu) == [
-        "Project Tree", "Properties Panel", "Find table reference",
+        # "Find table reference" retired by FQ-003: table references are now
+        # the References sub-section / Pages branch of the Database ▸
+        # Database/XML Coherence view, with no standalone entry point.
+        "Project Tree", "Properties Panel",
         "Audit/Problems Panel", "Raw XML Panel",
         "―",
         "Expand All", "Collapse All",

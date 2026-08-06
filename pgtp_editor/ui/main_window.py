@@ -20,7 +20,7 @@ import shutil
 from pathlib import Path
 
 from lxml import etree
-from PySide6.QtCore import Qt, QSettings, QTimer, QUrl
+from PySide6.QtCore import Qt, QSettings, QSignalBlocker, QTimer, QUrl
 from PySide6.QtGui import (
     QAction,
     QDesktopServices,
@@ -98,7 +98,7 @@ from pgtp_editor.ui.manual_panel import (
     parse_chapters,
 )
 from pgtp_editor.db.config import load_connection, save_connection, seed_params
-from pgtp_editor.db.compare import check_db_against_xml, check_xml_against_db
+from pgtp_editor.db.coherence import build_coherence_tree
 from pgtp_editor.db.ddl_buffer import build_ddl_text
 from pgtp_editor.db.migration_gen import connection_summary
 from pgtp_editor.db.ddl_project import (
@@ -134,7 +134,7 @@ from pgtp_editor.ui.new_trigger_dialog import NewTriggerDialog
 from pgtp_editor.ui.project_status_model import build_diagram, quality_state
 from pgtp_editor.ui.project_status_panel import ProjectStatusPanel
 from pgtp_editor.ui.project_settings_dialog import ProjectSettingsDialog
-from pgtp_editor.ui.db_check_panel import DbCheckPanel
+from pgtp_editor.ui.coherence_panel import CoherencePanel
 from pgtp_editor.ui.ddl_buffer_panel import BrowserPanel
 from pgtp_editor.ui.code_editor import CodeEditorDialog
 from pgtp_editor.ui.customize_toolbar_dialog import CustomizeToolbarDialog
@@ -163,8 +163,6 @@ from pgtp_editor.ui import caption_scan
 from pgtp_editor.ui import search
 from pgtp_editor.ui.project_tree import ProjectTreePanel
 from pgtp_editor.ui.properties_panel import PropertiesPanel
-from pgtp_editor.analysis.reused_tables import collect_table_usages
-from pgtp_editor.ui.table_references_panel import TableReferencesPanel
 from pgtp_editor.ui.theme import apply_theme
 
 _log = logging.getLogger(__name__)
@@ -237,9 +235,11 @@ class MainWindow(QMainWindow):
         self._last_gap_json: Path | None = None
         # Connection Setup dialog, held so it is not GC'd while shown non-modally.
         self._connection_dialog = None
-        # Direction of the last Database Check run, so a rename can re-run it.
-        self._last_db_check_direction = None
-        # Cached schema + connection summary from the last Database Check run:
+        # The Database ▸ "Database/XML Coherence" checkable toggle (§17/§26).
+        # Held on self so the project-close teardown can un-check it; None
+        # until _build_database_menu runs later in __init__.
+        self._coherence_action = None
+        # Cached schema + connection summary from the last coherence run:
         # a reparse refreshes the panel without re-querying, and a right-click
         # "create from table" reuses the column metadata without re-querying.
         self._last_db_schema = None
@@ -256,7 +256,7 @@ class MainWindow(QMainWindow):
         #: The §18.8 Project Status window, kept so re-invoking the menu entry
         #: raises the existing one instead of stacking duplicates.
         self._project_status_window = None
-        # Off-thread executor seam. The Database Check schema fetch opens a
+        # Off-thread executor seam. The coherence-check schema fetch opens a
         # connection; running it here would freeze the window on a slow/dead
         # host. Default marshals it to a threadpool worker; tests inject a
         # synchronous stub so the result path stays deterministic.
@@ -288,19 +288,25 @@ class MainWindow(QMainWindow):
         # Contents rides with the Manual: hidden until the Manual is shown, and
         # hidden again when the Manual closes.
         self.left_tabs.setTabVisible(self.contents_tab_index, False)
-        # Database Check results ride in their own hidden tab, revealed and
-        # focused when a check runs (mirrors the Contents tab pattern).
-        self.db_check_panel = DbCheckPanel()
-        self.db_check_tab_index = self.left_tabs.addTab(
-            self.db_check_panel, "Database Check"
+        # The merged Database/XML Coherence view (§17, FQ-003) rides in its own
+        # hidden tab, revealed and focused when the check runs (mirrors the
+        # Contents tab pattern). It replaced three surfaces: the two DB-check
+        # directions and the standalone "Table references" tab.
+        self.coherence_panel = CoherencePanel()
+        self.coherence_tab_index = self.left_tabs.addTab(
+            self.coherence_panel, "Database/XML Coherence"
         )
-        self.left_tabs.setTabVisible(self.db_check_tab_index, False)
-        self.db_check_panel.rename_requested.connect(self._on_db_rename_requested)
-        self.db_check_panel.jump_requested.connect(self._on_db_jump_requested)
-        self.db_check_panel.create_requested.connect(self._on_db_create_requested)
+        self.left_tabs.setTabVisible(self.coherence_tab_index, False)
+        self.coherence_panel.rename_requested.connect(self._on_db_rename_requested)
+        # Two jump signals because Qt cannot overload one name: DB-sourced rows
+        # carry a (kind, name) pair, XML-sourced rows a 1-based line number.
+        self.coherence_panel.name_jump_requested.connect(self._on_db_jump_requested)
+        self.coherence_panel.jump_requested.connect(self._tree_jump_to_line)
+        self.coherence_panel.create_requested.connect(self._on_db_create_requested)
+        self.coherence_panel.selection_changed.connect(self._on_table_ref_selection)
         # The DDL Explorer's object tree rides in its own hidden tab (spec
         # §18.1), revealed together with the center DDL Explorer tab by the
-        # Database > "DDL Explorer" toggle (mirrors the Database Check tab).
+        # Database > "DDL Explorer" toggle (mirrors the coherence tab).
         self.ddl_browser_panel = BrowserPanel()
         self.ddl_browser_tab_index = self.left_tabs.addTab(
             self.ddl_browser_panel, "DDL Objects"
@@ -325,15 +331,6 @@ class MainWindow(QMainWindow):
         self.ddl_browser_panel.new_routine_requested.connect(
             self._on_ddl_new_routine_requested
         )
-        # Table references ride in their own hidden tab, revealed by the
-        # View > "Find table reference" toggle (mirrors the Database Check tab).
-        self.table_refs_panel = TableReferencesPanel()
-        self.table_refs_tab_index = self.left_tabs.addTab(
-            self.table_refs_panel, "Table references"
-        )
-        self.left_tabs.setTabVisible(self.table_refs_tab_index, False)
-        self.table_refs_panel.selection_changed.connect(self._on_table_ref_selection)
-        self.table_refs_panel.jump_requested.connect(self._tree_jump_to_line)
         self.tree_dock.setWidget(self.left_tabs)
         self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self.tree_dock)
 
@@ -1336,23 +1333,6 @@ class MainWindow(QMainWindow):
     def _on_table_ref_selection(self, node, kind):
         self.properties_panel.show_node(node, kind)
 
-    def _toggle_table_references(self, checked: bool) -> None:
-        """View > "Find table reference": show/hide the Table references tab.
-        On show, (re)compute usages from the current project; if none is open,
-        surface a status message and leave the action unchecked."""
-        if checked:
-            if self._current_project is None:
-                self.statusBar().showMessage("Open a project first.", 5000)
-                self._table_refs_action.setChecked(False)
-                return
-            self.table_refs_panel.set_usages(
-                collect_table_usages(self._current_project)
-            )
-            self.left_tabs.setTabVisible(self.table_refs_tab_index, True)
-            self.left_tabs.setCurrentIndex(self.table_refs_tab_index)
-        else:
-            self.left_tabs.setTabVisible(self.table_refs_tab_index, False)
-
     # -- Phase D: tree context-menu + double-click callbacks -----------------
 
     def _tree_jump_to_line(self, line) -> None:
@@ -1833,10 +1813,6 @@ class MainWindow(QMainWindow):
                 # SUCCESS: rebuild tree + adopt the new model so click-sync realigns.
                 self.project_tree.populate_from_project(project)
                 self._current_project = project
-                if self.left_tabs.isTabVisible(self.table_refs_tab_index):
-                    self.table_refs_panel.set_usages(
-                        collect_table_usages(self._current_project)
-                    )
                 # Properties has no valid selection against the freshly rebuilt
                 # tree (populate_from_project cleared it); show the empty state
                 # until the user clicks again. show_node(None, None) resets it.
@@ -1849,24 +1825,23 @@ class MainWindow(QMainWindow):
         self._refresh_db_check_if_open(project)
 
     def _refresh_db_check_if_open(self, project) -> None:
-        """After a reparse, re-run the last DB check's comparison against the
-        CACHED schema (no re-query) so the open panel reflects the edited XML.
-        No-op unless the Database Check tab is visible and a check already ran.
+        """After a reparse, rebuild the coherence tree against the CACHED
+        schema (no re-query) so the open view reflects the edited XML. No-op
+        unless the coherence tab is visible and a run already happened.
         `project` is the freshly parsed model from _reparse_raw_xml."""
         if (
-            not self.left_tabs.isTabVisible(self.db_check_tab_index)
-            or self._last_db_check_direction is None
+            not self.left_tabs.isTabVisible(self.coherence_tab_index)
             or self._last_db_schema is None
         ):
             return
         self._populate_db_check(
-            self._last_db_check_direction,
             self._last_db_schema,
             project,
             self._last_db_summary or "",
         )
         self.statusBar().showMessage(
-            "Database check refreshed against the last database snapshot.", 4000
+            "Database/XML Coherence refreshed against the last database snapshot.",
+            4000,
         )
 
     def _handle_reparse_failure(self, exc: PgtpParseError) -> None:
@@ -2137,14 +2112,16 @@ class MainWindow(QMainWindow):
         # into the emptied editor.
         self._history.clear()
         self._set_dirty(False)
-        # Database Check results are project-tied (BUG-011): hide the tab and
-        # drop the cached direction/schema/summary so a later reparse or
-        # rename re-run can't act on the closed project's stale state. Only
-        # here on the committed-close path -- a cancelled close (returns
-        # above) must leave the still-open project's tab alone, and
+        # Coherence results are project-tied (BUG-011, §17): hide the tab,
+        # clear the panel and drop the cached schema/summary so a later
+        # reparse or rename re-run can't act on the closed project's stale
+        # state. Only here on the committed-close path -- a cancelled close
+        # (returns above) must leave the still-open project's tab alone, and
         # _revert_project keeps the project loaded so it doesn't tear down.
-        self.left_tabs.setTabVisible(self.db_check_tab_index, False)
-        self._last_db_check_direction = None
+        self.left_tabs.setTabVisible(self.coherence_tab_index, False)
+        self.coherence_panel.clear()
+        if self._coherence_action is not None:
+            self._coherence_action.setChecked(False)
         self._last_db_schema = None
         self._last_db_summary = None
         _log.info("file: close outcome=%s", outcome)
@@ -2330,12 +2307,6 @@ class MainWindow(QMainWindow):
         properties_action.toggled.connect(self.properties_dock.setVisible)
         self.properties_dock.visibilityChanged.connect(properties_action.setChecked)
         self._properties_action = properties_action
-
-        table_refs_action = menu.addAction("Find table reference")
-        table_refs_action.setCheckable(True)
-        table_refs_action.setChecked(False)
-        table_refs_action.toggled.connect(self._toggle_table_references)
-        self._table_refs_action = table_refs_action
 
         audit_action = menu.addAction("Audit/Problems Panel")
         audit_action.setCheckable(True)
@@ -2684,10 +2655,13 @@ class MainWindow(QMainWindow):
         self._connection_setup_action.triggered.connect(self._open_connection_setup)
         self._connection_setup_action.setEnabled(self._ddl_project_folder is None)
         menu.addSeparator()
-        check_xml_action = menu.addAction("Check: XML → Database")
-        check_xml_action.triggered.connect(lambda: self._run_db_check("xml_to_db"))
-        check_db_action = menu.addAction("Check: Database → XML")
-        check_db_action.triggered.connect(lambda: self._run_db_check("db_to_xml"))
+        # §17/§26 (FQ-003): ONE checkable toggle, no direction control and no
+        # shortcut. It replaced the two "Check: XML → Database" / "Check:
+        # Database → XML" items and View ▸ "Find table reference".
+        self._coherence_action = menu.addAction("Database/XML Coherence")
+        self._coherence_action.setCheckable(True)
+        self._coherence_action.setChecked(False)
+        self._coherence_action.toggled.connect(self._on_coherence_toggled)
         menu.addSeparator()
         # DDL Explorer (spec §18.1): checkable toggle, kept in lockstep with
         # the center tab's real visibility via ddl_explorer_visibility_changed
@@ -3123,7 +3097,7 @@ class MainWindow(QMainWindow):
         self._ddl_project_settings = settings
         self.statusBar().showMessage("Project settings saved.", 5000)
 
-    # -- Database Check (SP2) ------------------------------------------------
+    # -- Database/XML Coherence (§17, FQ-003) ---------------------------------
 
     def _fetch_db_schema(self, params):
         """Introspect the database. Injectable seam — tests patch this to return
@@ -3144,20 +3118,36 @@ class MainWindow(QMainWindow):
 
     def _reveal_db_check_tab(self):
         self.tree_dock.setVisible(True)
-        self.left_tabs.setTabVisible(self.db_check_tab_index, True)
-        self.left_tabs.setCurrentWidget(self.db_check_panel)
+        self.left_tabs.setTabVisible(self.coherence_tab_index, True)
+        self.left_tabs.setCurrentWidget(self.coherence_panel)
 
-    def _populate_db_check(self, direction, schema, project, summary):
-        """Compare `project` against `schema` for `direction` and show the
-        result. Shared by the live check (_run_db_check) and the cached-schema
+    def _populate_db_check(self, schema, project, summary):
+        """Build the coherence tree for `project` against `schema` and show
+        it. Shared by the live run (_run_db_check) and the cached-schema
         refresh (_refresh_db_check_if_open)."""
-        if direction == "xml_to_db":
-            checks = check_xml_against_db(project, schema)
-        else:
-            checks = check_db_against_xml(project, schema)
-        self.db_check_panel.set_result(direction, checks, summary)
+        self.coherence_panel.set_result(
+            build_coherence_tree(project, schema), summary
+        )
 
-    def _run_db_check(self, direction):
+    def _uncheck_coherence_action(self):
+        """Un-check the Database-menu toggle after a failed/refused run, so the
+        menu never claims a view is open that is not (the BUG-007 lesson)."""
+        if self._coherence_action is not None and self._coherence_action.isChecked():
+            self._coherence_action.setChecked(False)
+
+    def _on_coherence_toggled(self, checked):
+        """Database ▸ "Database/XML Coherence" (checkable, no shortcut).
+
+        On → fetch the schema and reveal the tab; on any failure the action
+        un-checks itself so the menu never lies about what is on screen.
+        Off → just hide the tab (the cached schema survives, so toggling back
+        on is a fresh, honest re-run rather than a stale redisplay)."""
+        if checked:
+            self._run_db_check()
+        else:
+            self.left_tabs.setTabVisible(self.coherence_tab_index, False)
+
+    def _run_db_check(self):
         # Compare against a model parsed from the CURRENT buffer, not the
         # last-parsed self._current_project -- so renames (and any manual edit)
         # made since the last load are reflected and the reconcile loop
@@ -3166,6 +3156,7 @@ class MainWindow(QMainWindow):
         text = self.center_stage.xml_editor.toPlainText()
         if not text.strip():
             self.statusBar().showMessage("Open a project first.", 5000)
+            self._uncheck_coherence_action()
             return
         try:
             project = load_project_from_text(text, source_description="<editor>")
@@ -3173,9 +3164,11 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(
                 f"Database check needs valid XML: {exc}", 8000
             )
+            self._uncheck_coherence_action()
             return
         params = seed_params(project.tree, self._settings)
         if not params.host:
+            self._uncheck_coherence_action()
             self._prompt_missing_connection()
             return
         # The schema fetch opens a DB connection -- move ONLY that off the GUI
@@ -3183,21 +3176,29 @@ class MainWindow(QMainWindow):
         # here; the compare + panel population happen in on_result, back on the
         # GUI thread, so they may safely touch widgets.
         self.statusBar().showMessage("Checking database…")
-        _log.info("db: check %s started %s", direction, debuglog.redacted(params))
+        _log.info("db: coherence check started %s", debuglog.redacted(params))
 
         def on_result(schema):
             summary = f"{params.user}@{params.host}:{params.port}/{params.database}"
-            self._last_db_check_direction = direction
             self._last_db_schema = schema
             self._last_db_summary = summary
-            self._populate_db_check(direction, schema, project, summary)
+            self._populate_db_check(schema, project, summary)
             self._reveal_db_check_tab()
-            self.statusBar().showMessage("Database check complete.", 3000)
-            _log.info("db: check %s finished", direction)
+            # Sync the menu's checkmark WITHOUT re-entering the toggle slot:
+            # a plain setChecked here would fire toggled(True) and start a
+            # second fetch (the run can also be entered from the rename
+            # re-run, not only from the menu).
+            if self._coherence_action is not None:
+                blocker = QSignalBlocker(self._coherence_action)
+                self._coherence_action.setChecked(True)
+                del blocker
+            self.statusBar().showMessage("Database/XML Coherence complete.", 3000)
+            _log.info("db: coherence check finished")
 
         def on_error(exc):
-            _log.info("db: check %s failed %s", direction, exc)
+            _log.info("db: coherence check failed %s", exc)
             self.statusBar().showMessage(f"Database check failed: {exc}", 8000)
+            self._uncheck_coherence_action()
 
         self._run_async(
             lambda: self._fetch_db_schema(params),
@@ -3683,8 +3684,11 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(
             f"Renamed {kind} '{old}' → '{new}' ({count} occurrence(s)).", 5000
         )
-        if self._last_db_check_direction is not None:
-            self._run_db_check(self._last_db_check_direction)
+        # Re-run the coherence check so the rename's effect shows immediately.
+        # Gated on a prior run: without a cached schema there is nothing the
+        # user asked to keep in sync (§17).
+        if self._last_db_schema is not None:
+            self._run_db_check()
 
     def _on_db_jump_requested(self, kind, name):
         """Double-click on a DB tree node: list EVERY occurrence of the node's
@@ -3731,12 +3735,13 @@ class MainWindow(QMainWindow):
         return choice == QMessageBox.StandardButton.Yes
 
     def _on_db_create_requested(self, what, name):
-        """Right-click on a Database → XML table node: synthesize a page (insert
-        into the buffer) or a detail/lookup (copy to clipboard)."""
+        """Right-click on a relation node in the coherence view's Tables and
+        Views branch: synthesize a page (insert into the buffer) or a
+        detail/lookup (copy to clipboard)."""
         schema = self._last_db_schema
         if schema is None or schema.table(name) is None:
             self.statusBar().showMessage(
-                f"No schema for '{name}' — run a Database check first.", 5000
+                f"No schema for '{name}' — run Database/XML Coherence first.", 5000
             )
             return
         try:

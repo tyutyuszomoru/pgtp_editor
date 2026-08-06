@@ -116,7 +116,8 @@ def test_create_without_schema_shows_status(qtbot):
     window.center_stage.xml_editor.setPlainText(_RAW_XML)
     window._last_db_schema = None
     window._on_db_create_requested("page", "pr.equipment")
-    assert "Database check" in window.statusBar().currentMessage()
+    # FQ-003: the hint now names the merged view, not the retired check.
+    assert "Database/XML Coherence" in window.statusBar().currentMessage()
 
 
 def test_create_page_unknown_table_shows_status(qtbot):
