@@ -467,6 +467,13 @@ class MainWindow(QMainWindow):
         # not-yet-built Project Status screen via refresh_project_capability_status().
         # None until the first probe completes for the currently-open project.
         self._ddl_project_capability_status: ProjectCapabilityStatus | None = None
+        # BUG-030: last target-connection reachability probe result -- None
+        # means "the last probe succeeded" (or nothing to probe / not probed
+        # yet), a string is the failure text `test_connection` reported. The
+        # Quality node in §18.8's diagram reads this instead of assuming a
+        # configured profile is a reachable one. Deliberately optimistic
+        # before the first result lands so a healthy target never flashes red.
+        self._ddl_target_probe_error: str | None = None
         # Injectable seam (mirrors _fetch_db_schema) -- tests patch this to a
         # canned SandboxCapabilities so no real connection is ever opened.
         self._probe_sandbox_capabilities = sandbox_probe
@@ -2877,7 +2884,13 @@ class MainWindow(QMainWindow):
         2 for this session. No-op (and clears the stored status) when no
         project is open. Runs off the GUI thread so an unreachable sandbox
         host can't freeze the window.
+
+        **BUG-030:** this is the single "re-probe everything the Project
+        Status window shows" entry point, so it also probes the *target*
+        connection's reachability (below) -- which happens with or without a
+        project open, since projectless mode still has an app-level target.
         """
+        self._refresh_target_connection_status()
         if self._ddl_project_folder is None or self._ddl_project_settings is None:
             self._ddl_project_capability_status = None
             return
@@ -2903,6 +2916,47 @@ class MainWindow(QMainWindow):
             # injected seam in tests/future callers, never silently swallowed.
             self.audit_panel.addItem(
                 QListWidgetItem(f"[Project] Capability probe failed unexpectedly: {exc}")
+            )
+
+        self._run_async(do_probe, on_result=on_result, on_error=on_error)
+
+    def _refresh_target_connection_status(self) -> None:
+        """Re-probe the *target* connection's reachability (BUG-030).
+
+        §18.8's Quality node means "the target is reachable", not merely "a
+        target profile exists", so it needs a real `SELECT 1` -- the same
+        check the DDL Explorer / coherence path opens -- against the very
+        `ConnectionParams` the summary line uses (BUG-024's selection). Runs
+        off the GUI thread for the same reason the sandbox probe does: a dead
+        host can hang on TCP connect and must never freeze the window. The
+        stored result is only *corrected* when the answer lands, and an
+        already-open Project Status window is re-rendered then, so nothing
+        ever flashes red while the probe is still in flight.
+        """
+        target = self._project_status_target()
+        if target is None or not target.host:
+            # Nothing to reach: `quality_state`'s not-configured branch owns
+            # that case, and a host-less profile has not failed -- it has
+            # not been tried. Never let a stale error outlive the profile.
+            self._ddl_target_probe_error = None
+            return
+
+        def do_probe() -> str | None:
+            ok, message = db_test_connection(target)
+            return None if ok else message
+
+        def on_result(probe_error: str | None) -> None:
+            self._ddl_target_probe_error = probe_error
+            window = self._project_status_window
+            if window is not None:
+                window.set_diagram(self._build_project_status_diagram())
+
+        def on_error(exc: BaseException) -> None:
+            # `test_connection` never raises (it returns `(False, msg)`), so
+            # this only guards a broken injected seam -- surfaced, never
+            # silently swallowed.
+            self.audit_panel.addItem(
+                QListWidgetItem(f"[Project] Target connection probe failed unexpectedly: {exc}")
             )
 
         self._run_async(do_probe, on_result=on_result, on_error=on_error)
@@ -2945,6 +2999,10 @@ class MainWindow(QMainWindow):
         self._ddl_project_folder = None
         self._ddl_project_settings = None
         self._ddl_project_capability_status = None
+        # BUG-030: the target changes with the project (BUG-024's selection),
+        # so the project's probe result must not outlive it as a stale error
+        # against the app-level connection.
+        self._ddl_target_probe_error = None
         self._close_ddl_project_action.setEnabled(False)
         self._refresh_project_dependent_actions()
         self._update_title()
@@ -3346,21 +3404,32 @@ class MainWindow(QMainWindow):
         panel.format_refused.connect(self._report_ddl_format_refusal)
 
     # --- §18.8: the Project Status window ------------------------------------
+    def _project_status_target(self):
+        """The target `ConnectionParams` the Quality node speaks for, or None.
+
+        One place for BUG-024's selection -- with a project open its own
+        target profile is authoritative; projectless, the app-level saved
+        connection is -- so the diagram, the summary line and the
+        reachability probe can never drift onto different connections.
+        """
+        settings = self._ddl_project_settings
+        return settings.target if settings is not None else load_connection(self._settings)
+
     def _build_project_status_diagram(self):
         """Current `ProjectStatusDiagram`, or None when nothing to show.
 
         Quality has no backing field on `ProjectCapabilityStatus` (which
-        models the sandbox side only), so it is derived here from whether a
-        target connection is configured at all -- §18.8's not_set_up / error /
-        connection_ok trio, mirroring the Sandbox node's own pattern.
+        models the sandbox side only), so it is assembled here from whether a
+        target connection is configured at all plus the last reachability
+        probe's result (BUG-030: green must mean "reachable", not merely
+        "a profile exists") -- §18.8's not_set_up / error / connection_ok
+        trio, mirroring the Sandbox node's own pattern.
         """
         settings = self._ddl_project_settings
-        # With a project open its own target profile is authoritative
-        # (BUG-024); projectless, the app-level saved connection is.
-        target = (
-            settings.target if settings is not None else load_connection(self._settings)
+        target = self._project_status_target()
+        quality = quality_state(
+            configured=target is not None, probe_error=self._ddl_target_probe_error
         )
-        quality = quality_state(configured=target is not None, probe_error=None)
         sandbox_mode = settings.sandbox_mode if settings is not None else SandboxMode.SCHEMA_ONLY
         return build_diagram(
             status=self._ddl_project_capability_status,
@@ -3392,6 +3461,16 @@ class MainWindow(QMainWindow):
         if existing is not None:
             self.refresh_project_capability_status()
             existing.set_diagram(self._build_project_status_diagram())
+            # BUG-031: closing the window only HIDES it (no WA_DeleteOnClose,
+            # so `destroyed` never fires and the cached instance is never
+            # reset) -- without an explicit re-show, raise_()/activateWindow()
+            # on a hidden window are silent no-ops and the menu entry appears
+            # dead for the rest of the session. show() on an already-visible
+            # window is harmless, so this covers both re-invoke cases.
+            existing.show()
+            existing.setWindowState(
+                existing.windowState() & ~Qt.WindowState.WindowMinimized
+            )
             existing.raise_()
             existing.activateWindow()
             return
@@ -3412,9 +3491,7 @@ class MainWindow(QMainWindow):
             on_refresh=on_refresh,
             on_reconnect_quality=on_refresh,
             on_show_help=self._show_manual,
-            quality_summary=self._connection_summary_for(
-                settings.target if settings is not None else load_connection(self._settings)
-            ),
+            quality_summary=self._connection_summary_for(self._project_status_target()),
             sandbox_summary=self._connection_summary_for(
                 settings.sandbox if settings is not None else None
             ),

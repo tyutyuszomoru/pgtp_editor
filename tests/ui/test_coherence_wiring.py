@@ -131,6 +131,40 @@ def test_selection_drives_properties_panel(qtbot, tmp_path):
     assert node is not None
 
 
+def test_selecting_a_lookup_row_really_populates_properties(qtbot, tmp_path):
+    """BUG-032 facet B: the test above patches show_node, so it could not see
+    that the real call raised KeyError: 'lookup' inside the Qt slot. Drive the
+    unpatched path end to end: no exception, and a populated panel."""
+    window = _window(qtbot, tmp_path)
+    window._run_db_check()
+    panel = window.coherence_panel
+
+    lookups = _rows_of_kind(panel, "lookup")
+    assert lookups
+
+    panel.tree.setCurrentItem(lookups[0])
+
+    assert window.properties_panel.is_showing_empty_state() is False
+    # The owning ColumnNode is what the panel shows — the column carrying the
+    # <Lookup tableName="kb.x_objecttype">.
+    assert window.properties_panel.header_text() == "Column: objecttype"
+
+
+def test_no_row_in_the_tree_can_crash_the_properties_panel(qtbot, tmp_path):
+    """BUG-032 facet B generalized: the coherence tree mints more kinds than the
+    Properties panel has builders for (`lookup` was one; `reference` is another),
+    and an unmapped kind used to raise KeyError straight out of a Qt slot.
+    Walking every row is the net that catches the next such kind."""
+    window = _window(qtbot, tmp_path)
+    window._run_db_check()
+    panel = window.coherence_panel
+    rows = _rows(panel)
+    assert len(rows) > 1
+
+    for item in rows:
+        panel.tree.setCurrentItem(item)  # must never raise, whatever the kind
+
+
 def test_page_row_selection_drives_properties_with_the_page_node(qtbot, tmp_path):
     window = _window(qtbot, tmp_path)
     window._run_db_check()

@@ -5,7 +5,7 @@ procedure from the DDL Explorer) and for §18.8's Project Status entry point.
 No live DB and no modal calls: both creation dialogs are shown non-modally,
 and the tab-opening path is driven through the same seam Edit… uses.
 """
-from PySide6.QtCore import QSettings
+from PySide6.QtCore import QSettings, Qt
 
 from pgtp_editor.db.ddl_project import ProjectSettings, save_settings
 from pgtp_editor.db.introspect import DatabaseSchema, RoutineInfo, TableInfo
@@ -198,3 +198,52 @@ def test_reopening_project_status_reuses_the_same_window(qtbot, tmp_path):
     window._open_project_status()
 
     assert window._project_status_window is first
+
+
+def test_project_status_can_be_reopened_after_being_closed(qtbot, tmp_path):
+    """BUG-031 regression lock: closing the window only hides it (there is no
+    WA_DeleteOnClose, so `destroyed` never fires and the cached instance is
+    never reset), and raise_()/activateWindow() on a hidden window are silent
+    no-ops -- so without an explicit re-show the menu entry appeared dead for
+    the rest of the session."""
+    window = _window(qtbot, tmp_path)
+    window.show()
+
+    window._open_project_status()
+    panel = window._project_status_window
+    assert panel is not None
+    assert panel.isVisible()
+
+    panel.close()
+    assert not panel.isVisible()
+    # Documents *why* the re-show is needed: the close did not destroy it, so
+    # the cache still points at the hidden panel and the reuse branch runs.
+    assert window._project_status_window is panel
+
+    window._open_project_status()
+
+    assert window._project_status_window is panel  # same instance, not a stack
+    assert panel.isVisible()
+    assert not panel.windowState() & Qt.WindowState.WindowMinimized
+
+
+def test_reopening_after_a_close_reprobes_and_rerenders(qtbot, tmp_path):
+    """The reuse branch's re-probe is load-bearing and must survive BUG-031's
+    re-show fix: `ProjectStatusPanel.showEvent` only probes on the *first* show
+    (its `_refreshed_on_show` guard), so a window reopened after the sandbox or
+    target died would otherwise come back showing stale state."""
+    window = _window(qtbot, tmp_path)
+    window.show()
+    window._open_project_status()
+    panel = window._project_status_window
+    probes = []
+    window.refresh_project_capability_status = lambda: probes.append(True)
+    pushed = []
+    panel.set_diagram = lambda diagram: pushed.append(diagram)
+
+    panel.close()
+    window._open_project_status()
+
+    assert probes == [True]
+    assert len(pushed) == 1
+    assert pushed[0] is not None
