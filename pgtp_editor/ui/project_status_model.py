@@ -63,8 +63,11 @@ from importlib.resources import files
 from ..db.sandbox import ProjectCapabilityStatus, ProjectTier, SandboxCapabilities, SandboxMode
 
 #: Bundled image extension. Every state stem and connector stem exists twice in
-#: `resources/status/`: `<stem>.png` (light) and `<stem>_drk.png` (dark).
-ASSET_EXTENSION = ".png"
+#: `resources/status/`: `<stem>.svg` (light) and `<stem>_drk.svg` (dark).
+#: Vector, not raster: the panel renders each asset at the exact device size it
+#: displays it at, so the diagram is crisp at any DPI (the earlier `.png` slices
+#: were tiny and had to be magnified, which is what made them look blurry).
+ASSET_EXTENSION = ".svg"
 
 #: Appended to a stem to reach its dark-theme counterpart.
 DARK_SUFFIX = "_drk"
@@ -300,7 +303,7 @@ def sandbox2_state(capabilities: SandboxCapabilities) -> Sandbox2State:
 # Asset resolution
 # ---------------------------------------------------------------------------
 def asset_filename(stem: str, dark: bool) -> str:
-    """`("app_standalone", dark=True)` -> `"app_standalone_drk.png"`.
+    """`("app_standalone", dark=True)` -> `"app_standalone_drk.svg"`.
 
     `stem` accepts a bare string or any of this module's state enums (whose
     values are stems), since they are `str` subclasses.

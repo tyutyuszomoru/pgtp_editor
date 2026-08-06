@@ -20,11 +20,17 @@ Nothing here can reach a modal call: the panel opens non-modal `QDialog`s with
 involved.
 """
 import pytest
+from PySide6.QtCore import QSize
 
 from pgtp_editor.db.sandbox import SandboxCapabilities, SandboxMode, determine_project_tier
 from pgtp_editor.ui import project_status_model as psm
 from pgtp_editor.ui.project_status_model import NodeFamily, QualityState, build_diagram
-from pgtp_editor.ui.project_status_panel import ProjectStatusPanel
+from pgtp_editor.ui.project_status_panel import (
+    ProjectStatusPanel,
+    _boxed_pixmap,
+    _logical_size,
+    _scaled_pixmap,
+)
 
 pytestmark = pytest.mark.usefixtures("qapp")
 
@@ -107,11 +113,114 @@ def test_no_diagram_renders_an_empty_state_without_crashing():
 
 def test_icons_are_aligned_on_one_centre_line():
     """Every chain node's icon box is the same height, which is what makes the
-    connectors line up; a per-asset height would break the diagram silently."""
-    panel = ProjectStatusPanel(diagram=_full_diagram())
+    connectors line up; a per-asset height would break the diagram silently.
+
+    And no box may be *smaller* than the art it holds: `_boxed_pixmap` used to
+    clamp the centering offset at zero, which silently cropped an icon that
+    overflowed its box (BUG-029, the "cut" half). The box fitting the icon in
+    both axes is what makes that clamp unreachable.
+    """
+    diagram = _full_diagram()
+    panel = ProjectStatusPanel(diagram=diagram)
     chain = [NodeFamily.QUALITY, NodeFamily.APP, NodeFamily.SANDBOX]
     heights = {panel.node_widget(f).icon_label.height() for f in chain}
     assert len(heights) == 1
+
+    for node in diagram.nodes:
+        icon = _scaled_pixmap(node.asset, panel._rendered_dpr)
+        assert not icon.isNull(), node.asset
+        box = panel.node_widget(node.family).icon_label.size()
+        pad = panel.node_widget(node.family).icon_label.pixmap()
+        for measured in (box, _logical_size(pad)):
+            assert measured.width() >= _logical_size(icon).width(), node.asset
+            assert measured.height() >= _logical_size(icon).height(), node.asset
+
+
+def test_a_box_smaller_than_its_icon_grows_instead_of_cropping():
+    """The clamp's failure mode, forced directly: a box one pixel too small in
+    each axis must produce a pad that still contains the whole icon."""
+    icon = _scaled_pixmap("quality_connection_ok.svg", 1.0)
+    assert not icon.isNull()
+    size = _logical_size(icon)
+    pad = _boxed_pixmap(icon, size - QSize(1, 1), 1.0)
+    assert _logical_size(pad).width() >= size.width()
+    assert _logical_size(pad).height() >= size.height()
+
+
+def test_a_pixmap_built_at_another_dpr_still_is_not_clipped():
+    """The build-vs-paint DPR mismatch: an icon rendered for a 2x screen padded
+    into a box measured for a 1x one. Pad and icon are sized from one threaded
+    `dpr` now, so nothing overflows."""
+    icon = _scaled_pixmap("sandbox_connected.svg", 2.0)
+    box = _logical_size(_scaled_pixmap("sandbox_connected.svg", 1.0))
+    pad = _boxed_pixmap(icon, box, 2.0)
+    assert pad.width() >= icon.width()
+    assert pad.height() >= icon.height()
+    assert _logical_size(pad).width() >= _logical_size(icon).width()
+    assert _logical_size(pad).height() >= _logical_size(icon).height()
+
+
+def test_a_high_dpi_panel_clips_no_icon_and_rebuilds_on_a_ratio_change(monkeypatch):
+    """Same guarantee through the whole widget at a stubbed 2x ratio — plus the
+    ratio-change hook: a diagram rendered for 1x re-renders for 2x rather than
+    leaving a pad and an icon sized for two different screens."""
+    diagram = _full_diagram()
+    panel = ProjectStatusPanel(diagram=diagram)
+    assert panel._rendered_dpr == pytest.approx(1.0)
+    boxes_at_1x = {f: panel.node_widget(f).icon_label.size() for f in NodeFamily}
+
+    monkeypatch.setattr(ProjectStatusPanel, "_current_dpr", lambda self: 2.0)
+    panel._on_device_pixel_ratio_changed()
+    assert panel._rendered_dpr == pytest.approx(2.0)
+
+    for node in diagram.nodes:
+        icon = _logical_size(_scaled_pixmap(node.asset, 2.0))
+        box = panel.node_widget(node.family).icon_label.size()
+        assert box.width() >= icon.width(), node.asset
+        assert box.height() >= icon.height(), node.asset
+        # The ratio buys sharpness, never a different layout.
+        assert box == boxes_at_1x[node.family], node.asset
+
+
+def test_connector_label_is_never_shorter_than_its_art():
+    """Connector art is only a few pixels tall, so a label pinned a hair short of
+    the pixmap crops the whole line, not an edge."""
+    panel = ProjectStatusPanel(diagram=_full_diagram())
+    for asset in ("connector_quality-app.svg", "connector_app-sandbox.svg",
+                  "connector_sandbox-db.svg"):
+        pixmap = _scaled_pixmap(asset, 1.0)
+        assert not pixmap.isNull(), asset
+        label = panel._make_connector(pixmap)
+        assert label.width() >= _logical_size(pixmap).width(), asset
+        assert label.height() >= _logical_size(pixmap).height(), asset
+
+
+def test_icons_are_rendered_at_device_resolution_not_upscaled():
+    """The "very low resolution" half of BUG-029: the art is *rendered* from its
+    vector source straight to `logical x dpr` device pixels, so there is no
+    magnification of a small raster to soften it."""
+    for dpr in (1.0, 2.0):
+        pixmap = _scaled_pixmap("quality_connection_ok.svg", dpr)
+        assert not pixmap.isNull()
+        assert pixmap.devicePixelRatio() == pytest.approx(dpr)
+        logical = _logical_size(pixmap)
+        assert pixmap.width() == round(logical.width() * dpr)
+        assert pixmap.height() == round(logical.height() * dpr)
+    # Doubling the ratio really buys device pixels (a fixed-size raster upscale
+    # would have given the same device size at both ratios).
+    assert (
+        _scaled_pixmap("quality_connection_ok.svg", 2.0).width()
+        == 2 * _scaled_pixmap("quality_connection_ok.svg", 1.0).width()
+    )
+
+
+@pytest.mark.parametrize("stem", psm.all_asset_stems())
+@pytest.mark.parametrize("dark", [False, True])
+def test_every_bundled_asset_actually_renders(stem, dark):
+    """The model's suite proves the files exist; this proves Qt can turn each one
+    into pixels. An unreadable asset is a silent gap in the diagram."""
+    pixmap = _scaled_pixmap(psm.asset_filename(stem, dark), 1.0)
+    assert not pixmap.isNull(), psm.asset_filename(stem, dark)
 
 
 # ---------------------------------------------------------------------------
@@ -266,18 +375,18 @@ def test_refresh_without_callback_is_a_no_op():
 # ---------------------------------------------------------------------------
 def test_theme_flip_swaps_every_asset():
     panel = ProjectStatusPanel(diagram=_full_diagram(dark=True))
-    assert all(asset.endswith("_drk.png") for asset in panel.diagram.assets())
+    assert all(asset.endswith("_drk.svg") for asset in panel.diagram.assets())
     states_before = [node.state for node in panel.diagram.nodes]
 
     panel.set_dark(False)
-    assert not any(asset.endswith("_drk.png") for asset in panel.diagram.assets())
+    assert not any(asset.endswith("_drk.svg") for asset in panel.diagram.assets())
     assert panel.diagram.dark is False
     # State is never re-derived by a theme change, only the filenames change.
     assert [node.state for node in panel.diagram.nodes] == states_before
     assert set(panel.node_widgets) == set(NodeFamily)
 
     panel.set_light_theme(False)
-    assert all(asset.endswith("_drk.png") for asset in panel.diagram.assets())
+    assert all(asset.endswith("_drk.svg") for asset in panel.diagram.assets())
 
 
 def test_set_dark_with_no_diagram_is_safe():

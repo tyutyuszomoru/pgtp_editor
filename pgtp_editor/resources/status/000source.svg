@@ -24,9 +24,9 @@
      inkscape:pagecheckerboard="0"
      inkscape:deskcolor="#d1d1d1"
      inkscape:document-units="mm"
-     inkscape:zoom="1.4601735"
-     inkscape:cx="420.84039"
-     inkscape:cy="177.03375"
+     inkscape:zoom="2.0649972"
+     inkscape:cx="225.18191"
+     inkscape:cy="511.62298"
      inkscape:window-width="2560"
      inkscape:window-height="1368"
      inkscape:window-x="0"
@@ -140,7 +140,7 @@
        id="g41"
        inkscape:label="quality_server_reachable"
        transform="translate(-13.680595,29.807388)"
-       inkscape:export-filename="quality_connection_ok"
+       inkscape:export-filename="quality_connection_ok.svg"
        inkscape:export-xdpi="96"
        inkscape:export-ydpi="96"><rect
          style="fill:#f2f2f2;stroke:#000000;stroke-width:0.264583"
@@ -224,7 +224,7 @@
        id="g40"
        inkscape:label="quality_server_unreachable"
        transform="translate(-26.364588,9.6941963)"
-       inkscape:export-filename="quality_offline"
+       inkscape:export-filename="quality_offline.svg"
        inkscape:export-xdpi="96"
        inkscape:export-ydpi="96"><rect
          style="fill:#f2f2f2;stroke:#000000;stroke-width:0.264583"
@@ -308,7 +308,7 @@
        id="g67"
        inkscape:label="no_quality_server_setup"
        transform="translate(-0.48031754,-10.158779)"
-       inkscape:export-filename="quality_connection_not_set_up"
+       inkscape:export-filename="quality_connection_not_set_up.svg"
        inkscape:export-xdpi="96"
        inkscape:export-ydpi="96"><rect
          style="fill:#f2f2f2;stroke:#000000;stroke-width:0.264583"
@@ -432,7 +432,7 @@
        cx="72.668922"
        cy="63.422096"
        r="0.44844693"
-       inkscape:export-filename="app-db"
+       inkscape:export-filename="app-db.svg"
        inkscape:export-xdpi="96"
        inkscape:export-ydpi="96" /><circle
        style="fill:#f2f2f2;stroke:#000000;stroke-width:0.264583"
@@ -443,7 +443,7 @@
        id="g138"
        inkscape:label="sandbox_filled"
        transform="translate(4.9661356,-0.18119989)"
-       inkscape:export-filename="sandbox_filled"
+       inkscape:export-filename="sandbox_filled.svg"
        inkscape:export-xdpi="96"
        inkscape:export-ydpi="96"><rect
          style="fill:#aade87;fill-opacity:1;stroke:#000000;stroke-width:0.121647;stroke-dasharray:none"
@@ -529,7 +529,7 @@
        id="g112"
        inkscape:label="plpgsql_check_installed"
        transform="translate(4.0483087,23.607445)"
-       inkscape:export-filename="plpgsql_check_installed.png"
+       inkscape:export-filename="plpgsql_check_installed.svg"
        inkscape:export-xdpi="96"
        inkscape:export-ydpi="96"><g
          id="g82"
@@ -598,7 +598,7 @@
        id="g120"
        inkscape:label="plpgsql_check_not_installed"
        transform="translate(-12.014878,12.420804)"
-       inkscape:export-filename="plpgsql_check_not_installed.png"
+       inkscape:export-filename="plpgsql_check_not_installed.svg"
        inkscape:export-xdpi="96"
        inkscape:export-ydpi="96"><g
          id="g116"
@@ -666,7 +666,7 @@
        id="g137"
        inkscape:label="sandbox_empty"
        transform="translate(-29.263788,-4.7111986)"
-       inkscape:export-filename="sandbox_empty"
+       inkscape:export-filename="sandbox_empty.svg"
        inkscape:export-xdpi="96"
        inkscape:export-ydpi="96"><path
          id="path103"
@@ -754,7 +754,7 @@
        cx="23.040112"
        cy="55.800377"
        r="0.44844693"
-       inkscape:export-filename="connector_quality_app.png"
+       inkscape:export-filename="connector_quality_app.svg"
        inkscape:export-xdpi="96"
        inkscape:export-ydpi="96" /><circle
        style="fill:#f2f2f2;stroke:#000000;stroke-width:0.264583"
@@ -780,7 +780,7 @@
        inkscape:export-xdpi="96"
        inkscape:export-ydpi="96" /><g
        id="g190"
-       inkscape:export-filename="app_project_not_setup.png"
+       inkscape:export-filename="app_project_not_setup.svg"
        inkscape:export-xdpi="96"
        inkscape:export-ydpi="96"
        transform="translate(13.136995,12.049795)"><rect
@@ -820,7 +820,7 @@
        transform="scale(0.26458333)" /><g
        id="g171"
        transform="translate(-1.5008805,24.475648)"
-       inkscape:export-filename="app_project_setup.png"
+       inkscape:export-filename="app_project_setup.svg"
        inkscape:export-xdpi="96"
        inkscape:export-ydpi="96"><rect
          style="fill:#f2f2f2;fill-opacity:1;stroke:#000000;stroke-width:0.264999;stroke-dasharray:none"
@@ -862,23 +862,23 @@
        id="path171" /><path
        style="fill:#000000;fill-opacity:1;stroke:#000000;stroke-width:0.264999;stroke-dasharray:none"
        d="m 23.525123,55.854877 h 7.383895"
-       id="path172" /><path
-       style="fill:#5fd35f;fill-opacity:1;stroke:none;stroke-width:0.264999;stroke-dasharray:none"
-       d="m 25.730389,59.931876 7.836896,0.0453"
-       id="path174" /><circle
+       id="path172" /><circle
        style="fill:#f2f2f2;stroke:#000000;stroke-width:0.264583"
        id="circle174"
        cx="47.178974"
        cy="55.787346"
        r="0.44844693"
-       inkscape:export-filename="connector_app_sandbox.png"
+       inkscape:export-filename="connector_app_sandbox.svg"
        inkscape:export-xdpi="96"
        inkscape:export-ydpi="96" /><path
        style="fill:#ffffff;fill-opacity:1;stroke:#000000;stroke-width:0.264999;stroke-dasharray:none"
        d="M 47.648131,55.764512 H 52.22343"
        id="path175" /><g
        id="g209"
-       transform="translate(-44.756382,6.7949972)"><rect
+       transform="translate(-44.756382,6.7949972)"
+       inkscape:export-filename="app_standalone.svg"
+       inkscape:export-xdpi="96"
+       inkscape:export-ydpi="96"><rect
          style="fill:#f2f2f2;fill-opacity:1;stroke:#000000;stroke-width:0.264999;stroke-dasharray:none"
          id="rect32"
          width="12.412194"
@@ -924,7 +924,10 @@
        cx="52.116673"
        cy="55.742046"
        r="0.44844693" /><g
-       id="g212"><g
+       id="g212"
+       inkscape:export-filename="sandbox_ok"
+       inkscape:export-xdpi="96"
+       inkscape:export-ydpi="96"><g
          id="g188"
          transform="translate(-17.319026,36.511785)"
          inkscape:export-filename="sandbox_connected.png"
@@ -1042,7 +1045,10 @@
            stroke-width="0.227849"
            d="m 47.675834,140.10405 c 0.01577,0.29234 -0.06297,0.49147 -0.0729,0.80267 -0.01469,0.45235 0.21568,0.9701 -0.131448,1.48849"
            id="path26-5" /></g></g><g
-       id="g211"><g
+       id="g211"
+       inkscape:export-filename="sandbox_not_set_up"
+       inkscape:export-xdpi="96"
+       inkscape:export-ydpi="96"><g
          id="g189"
          transform="translate(-30.260388,25.277389)"
          inkscape:export-filename="sanbox_not_set_up.png"
@@ -1162,7 +1168,10 @@
            stroke-width="0.227849"
            d="m 47.675834,140.10405 c 0.01577,0.29234 -0.06297,0.49147 -0.0729,0.80267 -0.01469,0.45235 0.21568,0.9701 -0.131448,1.48849"
            id="path199" /></g></g><g
-       id="g210"><g
+       id="g210"
+       inkscape:export-filename="sandbox_offline"
+       inkscape:export-xdpi="96"
+       inkscape:export-ydpi="96"><g
          id="g187"
          inkscape:export-filename="sandbox_offline.png"
          inkscape:export-xdpi="96"
@@ -1290,7 +1299,7 @@
        id="g41-5"
        inkscape:label="quality_server_reachable"
        transform="translate(-9.3346136,137.28624)"
-       inkscape:export-filename="quality_connection_ok_drk.png"
+       inkscape:export-filename="quality_connection_ok_drk.svg"
        inkscape:export-xdpi="96"
        inkscape:export-ydpi="96"
        style="fill:#002255;stroke:#e6e6e6"><rect
@@ -1375,7 +1384,7 @@
        id="g40-4"
        inkscape:label="quality_server_unreachable"
        transform="translate(-22.018607,117.17305)"
-       inkscape:export-filename="quality_offline_drk.png"
+       inkscape:export-filename="quality_offline_drk.svg"
        inkscape:export-xdpi="96"
        inkscape:export-ydpi="96"
        style="fill:#002255;stroke:#e6e6e6"><rect
@@ -1460,7 +1469,7 @@
        id="g67-1"
        inkscape:label="no_quality_server_setup"
        transform="translate(3.8656636,97.320071)"
-       inkscape:export-filename="quality_connection_not_set_up_drk.png"
+       inkscape:export-filename="quality_connection_not_set_up_drk.svg"
        inkscape:export-xdpi="96"
        inkscape:export-ydpi="96"
        style="stroke:#e6e6e6;fill:#002255"><rect
@@ -1586,7 +1595,7 @@
        cx="77.0149"
        cy="170.90094"
        r="0.44844693"
-       inkscape:export-filename="connector_sandbox-db_drk.png"
+       inkscape:export-filename="connector_sandbox-db_drk.svg"
        inkscape:export-xdpi="96"
        inkscape:export-ydpi="96" /><circle
        style="fill:#002255;stroke:#e6e6e6;stroke-width:0.264583"
@@ -1597,7 +1606,7 @@
        id="g138-6"
        inkscape:label="sandbox_filled"
        transform="translate(9.3121167,107.29765)"
-       inkscape:export-filename="sandbox_filled_drk.png"
+       inkscape:export-filename="sandbox_filled_drk.svg"
        inkscape:export-xdpi="96"
        inkscape:export-ydpi="96"
        style="fill:#002255;stroke:#e6e6e6"><rect
@@ -1684,7 +1693,7 @@
        id="g112-9"
        inkscape:label="plpgsql_check_installed"
        transform="translate(8.3942898,131.0863)"
-       inkscape:export-filename="plpgsql_check_installed_drk.png"
+       inkscape:export-filename="plpgsql_check_installed_drk.svg"
        inkscape:export-xdpi="96"
        inkscape:export-ydpi="96"
        style="stroke:#e6e6e6"><g
@@ -1756,7 +1765,7 @@
        id="g120-4"
        inkscape:label="plpgsql_check_not_installed"
        transform="translate(-7.6688966,119.89965)"
-       inkscape:export-filename="plpgsql_check_not_installed_drk.png"
+       inkscape:export-filename="plpgsql_check_not_installed_drk.svg"
        inkscape:export-xdpi="96"
        inkscape:export-ydpi="96"
        style="stroke:#e6e6e6;fill:#002255"><g
@@ -1827,7 +1836,7 @@
        id="g137-8"
        inkscape:label="sandbox_empty"
        transform="translate(-24.917807,102.76765)"
-       inkscape:export-filename="sandbox_empty_drk.png"
+       inkscape:export-filename="sandbox_empty_drk.svg"
        inkscape:export-xdpi="96"
        inkscape:export-ydpi="96"
        style="stroke:#e6e6e6"><path
@@ -1916,7 +1925,7 @@
        cx="27.386093"
        cy="163.27922"
        r="0.44844693"
-       inkscape:export-filename="connector_quality-app_drk.png"
+       inkscape:export-filename="connector_quality-app_drk.svg"
        inkscape:export-xdpi="96"
        inkscape:export-ydpi="96" /><circle
        style="fill:#003380;stroke:#e6e6e6;stroke-width:0.264583;fill-opacity:1"
@@ -1936,7 +1945,7 @@
        d="m 72.618814,163.11523 h 4.575299"
        id="path141-3" /><g
        id="g190-8"
-       inkscape:export-filename="app_project_not_setup_drk.png"
+       inkscape:export-filename="app_project_not_setup_drk.svg"
        inkscape:export-xdpi="96"
        inkscape:export-ydpi="96"
        transform="translate(17.482976,119.52865)"
@@ -1973,7 +1982,7 @@
          sodipodi:nodetypes="ccccccccccccccccccsssssscccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccsccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc" /></g><g
        id="g171-9"
        transform="translate(2.8451006,131.9545)"
-       inkscape:export-filename="app_project_setup_drk.png"
+       inkscape:export-filename="app_project_setup_drk.svg"
        inkscape:export-xdpi="96"
        inkscape:export-ydpi="96"><rect
          style="fill:#002255;fill-opacity:1;stroke:#e6e6e6;stroke-width:0.264999;stroke-dasharray:none;stroke-opacity:1"
@@ -2024,7 +2033,7 @@
        cx="51.524956"
        cy="163.26619"
        r="0.44844693"
-       inkscape:export-filename="connector_app-sandbox_drk.png"
+       inkscape:export-filename="connector_app-sandbox_drk.svg"
        inkscape:export-xdpi="96"
        inkscape:export-ydpi="96" /><path
        style="fill:#ffffff;fill-opacity:1;stroke:#e6e6e6;stroke-width:0.264999;stroke-dasharray:none;stroke-opacity:1"
@@ -2033,7 +2042,7 @@
        id="g209-0"
        transform="translate(-40.410401,114.27385)"
        style="fill:#002255;stroke:#e6e6e6"
-       inkscape:export-filename="app_standalone_drk.png"
+       inkscape:export-filename="app_standalone_drk.svg"
        inkscape:export-xdpi="96"
        inkscape:export-ydpi="96"><rect
          style="fill:#002255;fill-opacity:1;stroke:#e6e6e6;stroke-width:0.264999;stroke-dasharray:none"
@@ -2084,7 +2093,7 @@
        id="g212-7"
        transform="translate(4.3459811,107.47885)"
        style="fill:#002255;stroke:#e6e6e6"
-       inkscape:export-filename="sandbox_connected_drk.png"
+       inkscape:export-filename="sandbox_connected_drk.svg"
        inkscape:export-xdpi="96"
        inkscape:export-ydpi="96"><g
          id="g188-7"
@@ -2221,7 +2230,7 @@
        id="g211-5"
        transform="translate(4.3459811,107.47885)"
        style="fill:#002255;stroke:#e6e6e6"
-       inkscape:export-filename="sandbox_offline_drk.png"
+       inkscape:export-filename="sandbox_offline_drk.svg"
        inkscape:export-xdpi="96"
        inkscape:export-ydpi="96"><g
          id="g189-8"
@@ -2358,7 +2367,7 @@
        id="g210-9"
        transform="translate(4.3459811,107.47885)"
        style="fill:#002255;stroke:#e6e6e6"
-       inkscape:export-filename="sandbox_not_set_up_drk.png"
+       inkscape:export-filename="sandbox_not_set_up_drk.svg"
        inkscape:export-xdpi="96"
        inkscape:export-ydpi="96"><g
          id="g187-6"

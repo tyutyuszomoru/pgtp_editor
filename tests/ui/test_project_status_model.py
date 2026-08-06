@@ -234,14 +234,14 @@ def test_quality_not_configured_wins_over_a_stale_error():
 # Theme suffix selection
 # ---------------------------------------------------------------------------
 def test_asset_filename_theme_suffix():
-    assert psm.asset_filename("app_standalone", dark=False) == "app_standalone.png"
-    assert psm.asset_filename("app_standalone", dark=True) == "app_standalone_drk.png"
+    assert psm.asset_filename("app_standalone", dark=False) == "app_standalone.svg"
+    assert psm.asset_filename("app_standalone", dark=True) == "app_standalone_drk.svg"
 
 
 def test_asset_filename_accepts_state_enums_directly():
     assert (
         psm.asset_filename(psm.SandboxState.CONNECTED.value, dark=True)
-        == "sandbox_connected_drk.png"
+        == "sandbox_connected_drk.svg"
     )
 
 
@@ -255,7 +255,7 @@ def test_build_diagram_dark_flag_drives_every_asset():
         assert diagram.dark is dark
         assert diagram.assets()  # non-empty
         for asset in diagram.assets():
-            assert asset.endswith("_drk.png") is dark, asset
+            assert asset.endswith("_drk.svg") is dark, asset
 
 
 # ---------------------------------------------------------------------------
@@ -336,16 +336,16 @@ def test_diagram_node_state_and_asset_agree():
         status=_status_unreachable(), quality=psm.QualityState.OFFLINE, dark=True
     )
     for node in diagram.nodes:
-        assert node.asset == f"{node.state}_drk.png"
+        assert node.asset == f"{node.state}_drk.svg"
     for connector in diagram.connectors:
-        assert connector.asset == f"{connector.kind.value}_drk.png"
+        assert connector.asset == f"{connector.kind.value}_drk.svg"
 
 
 # ---------------------------------------------------------------------------
 # The asset sweep -- the guard against a typo'd stem
 # ---------------------------------------------------------------------------
 def test_asset_path_uses_the_bundled_resources_dir():
-    path = psm.asset_path("app_standalone.png")
+    path = psm.asset_path("app_standalone.svg")
     assert path.is_file()
     assert (files("pgtp_editor") / "resources" / "status").is_dir()
 
@@ -353,8 +353,26 @@ def test_asset_path_uses_the_bundled_resources_dir():
 @pytest.mark.parametrize("stem", psm.all_asset_stems())
 @pytest.mark.parametrize("dark", [False, True])
 def test_every_asset_exists_on_disk(stem, dark):
+    """Both theme variants of every stem exist -- and hold actual image bytes.
+
+    Existence alone let a 0-byte or half-written export pass as a shipped asset,
+    so this also sniffs the content. The assets are SVG (`ASSET_EXTENSION`), but
+    the check accepts a raster magic number too: one bundled file
+    (`sandbox_offline.svg`) is a PNG the owner saved under an `.svg` name, and the
+    panel renders it through a raster fallback rather than dropping the node.
+    Whether a file *renders* is Qt's business and is asserted in
+    `tests/ui/test_project_status_panel.py::test_every_bundled_asset_actually_renders`;
+    this module stays Qt-free.
+    """
     filename = psm.asset_filename(stem, dark)
-    assert psm.asset_path(filename).is_file(), filename
+    assert filename.endswith(psm.ASSET_EXTENSION), filename
+    path = psm.asset_path(filename)
+    assert path.is_file(), filename
+    head = path.read_bytes()[:512]
+    assert head, f"{filename} is empty"
+    is_svg = b"<svg" in head
+    is_raster = head.startswith((b"\x89PNG", b"\xff\xd8\xff", b"GIF8"))
+    assert is_svg or is_raster, f"{filename} is not image data"
 
 
 def test_all_asset_stems_covers_every_family_and_connector():

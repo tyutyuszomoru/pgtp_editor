@@ -22,7 +22,7 @@ Reads left to right as a chain that splits at the end::
     [quality] --> [app] --> [sandbox] --> [sandbox1]  (upper)
                                       \\-> [sandbox2]  (lower)
 
-Every node and connector is one bundled PNG from ``resources/status/`` (a light
+Every node and connector is one bundled SVG from ``resources/status/`` (a light
 and a ``_drk`` dark variant each). This module **paints**; it decides nothing.
 All state derivation, the absence rule, and theme-variant filename selection
 live in the pure `project_status_model`, and this widget only iterates
@@ -31,13 +31,16 @@ order and already contain **only what renders**. When no sandbox was ever
 configured, the sandbox trio is simply not in those lists and the diagram ends at
 the app node (absent, never a dead disabled control — §18.5 carve-out 2, §18.7).
 
-**Geometry.** The assets were exported from one drawing at one scale, so they are
-all magnified by the same `ASSET_SCALE` rather than fitted to a common box. Each
-asset is then centered into a transparent padding pixmap of a shared box height,
-which is what makes every icon's vertical centre line up across the chain without
-per-asset fudge factors; the branch column and the splitting sandbox→db connector
-are offset from the same computed centre line. Pixmaps are built at the widget's
-device pixel ratio and tagged with it, so they stay crisp on high-DPI screens.
+**Geometry.** The assets were sliced from one drawing at one scale, so they are
+all displayed at the same `ASSET_SCALE` multiple of their own intrinsic size
+rather than fitted to a common box. Each asset is then centered into a
+transparent padding pixmap of a shared box height, which is what makes every
+icon's vertical centre line up across the chain without per-asset fudge factors;
+the branch column and the splitting sandbox→db connector are offset from the same
+computed centre line. Nothing is ever magnified past its own resolution: the SVG
+is *rendered* straight to ``logical × devicePixelRatio`` device pixels and the
+pixmap is tagged with that ratio, so the diagram is crisp at any DPI, and a
+change of screen ratio rebuilds it rather than stretching stale pixmaps.
 
 **Click-through — two patterns, exactly as §18.8 specifies.**
 
@@ -71,9 +74,11 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import replace
+from math import ceil
 
-from PySide6.QtCore import QPoint, QRectF, QSize, Qt, Signal
-from PySide6.QtGui import QColor, QFont, QPainter, QPalette, QPixmap
+from PySide6.QtCore import QByteArray, QPoint, QRectF, QSize, Qt, Signal
+from PySide6.QtGui import QColor, QFont, QImage, QPainter, QPalette, QPixmap
+from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
@@ -98,10 +103,22 @@ from .project_status_model import (
     asset_path,
 )
 
-#: Logical pixels per asset pixel. The bundled art is small (20–72 px tall) and
-#: came from a single drawing, so one shared magnification keeps the diagram's
-#: internal proportions truthful.
-ASSET_SCALE = 2.0
+#: Logical pixels per unit of an asset's own intrinsic (SVG ``defaultSize``) size.
+#: The art came from a single drawing, so one shared factor keeps the diagram's
+#: internal proportions truthful — it is *layout*, not magnification: the SVG is
+#: rendered at the resulting size, never stretched to it.
+#:
+#: The value reproduces the sizes the diagram was laid out at when the assets
+#: were rasters: those slices were 96 dpi exports of the same millimetre-sized
+#: drawing shown at 2×, while Qt reads an SVG's ``mm`` dimensions at 90 dpi — so
+#: ``2 × 96/90`` lands the vector render within a pixel of the old layout instead
+#: of shrinking the whole diagram by 7%.
+ASSET_SCALE = 2.0 * (96.0 / 90.0)
+
+#: `ASSET_SCALE` for an asset that turns out to be a raster rather than a vector
+#: (see `_raster_fallback_pixmap`): a 96 dpi export of the same drawing is already
+#: 96/90 larger than Qt's reading of the SVG, so it needs only the plain 2×.
+_RASTER_ASSET_SCALE = 2.0
 
 #: Fixed node width — captions wrap inside it, so a long state line can never
 #: shove the chain out of alignment.
@@ -168,23 +185,80 @@ _CHAIN_CONNECTOR_AFTER = {
 }
 
 
-def _scaled_pixmap(filename: str, dpr: float) -> QPixmap:
-    """Load one bundled asset, magnified by `ASSET_SCALE`, crisp at `dpr`.
+def _asset_bytes(filename: str) -> QByteArray | None:
+    """Read one bundled asset, or None when it is missing/unreadable.
 
-    Returns a null pixmap when the file is missing or unreadable — the caller
-    still reserves the box, so a missing asset leaves a gap rather than
-    collapsing the diagram's alignment.
+    Goes through `importlib.resources` bytes rather than a filesystem path so it
+    keeps working from a zip/wheel install, exactly like `ui/icons.py`.
     """
-    path = asset_path(filename)
-    source = QPixmap(str(path))
-    if source.isNull():
-        return source
-    target = QSize(
-        max(1, round(source.width() * ASSET_SCALE * dpr)),
-        max(1, round(source.height() * ASSET_SCALE * dpr)),
+    try:
+        return QByteArray(asset_path(filename).read_bytes())
+    except (OSError, ValueError):
+        return None
+
+
+def _scaled_pixmap(filename: str, dpr: float) -> QPixmap:
+    """Render one bundled asset at `ASSET_SCALE` logical size, crisp at `dpr`.
+
+    Vector all the way to the device pixels: the SVG is rendered directly into a
+    ``logical × dpr`` image, so there is no upscaling step that could soften it.
+    The pixmap is tagged with `dpr`, which is what makes its *logical* size come
+    back out at exactly the intended layout size.
+
+    Falls back to loading the file as a raster when it is not valid SVG — one
+    bundled asset is a PNG that was saved under an ``.svg`` name, and rendering
+    it slightly soft beats dropping the node out of the diagram. Returns a null
+    pixmap when the file is missing or unreadable altogether: the caller still
+    reserves the box, so a missing asset leaves a gap rather than collapsing the
+    diagram's alignment.
+    """
+    data = _asset_bytes(filename)
+    if data is None:
+        return QPixmap()
+    renderer = QSvgRenderer(data)
+    native = renderer.defaultSize() if renderer.isValid() else QSize()
+    if not renderer.isValid() or native.isEmpty():
+        return _raster_fallback_pixmap(data, dpr)
+    logical = QSize(
+        max(1, round(native.width() * ASSET_SCALE)),
+        max(1, round(native.height() * ASSET_SCALE)),
+    )
+    device = QSize(
+        max(1, round(logical.width() * dpr)), max(1, round(logical.height() * dpr))
+    )
+    image = QImage(device, QImage.Format.Format_ARGB32_Premultiplied)
+    image.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(image)
+    try:
+        renderer.render(painter)
+    finally:
+        painter.end()
+    rendered = QPixmap.fromImage(image)
+    rendered.setDevicePixelRatio(dpr)
+    return rendered
+
+
+def _raster_fallback_pixmap(data: QByteArray, dpr: float) -> QPixmap:
+    """Last resort for an asset that is not valid SVG: treat it as an image.
+
+    Scaled by `_RASTER_ASSET_SCALE`, which puts a 96 dpi raster slice at the same
+    displayed size as the 90 dpi-read vector rendering of the same drawing, so
+    the diagram's proportions and alignment do not depend on which asset happens
+    to be a raster. This one *does* stretch (smoothly), because a raster has no
+    other option — the fix for softness there is a real SVG, not more code.
+    """
+    source = QPixmap()
+    if not source.loadFromData(data):
+        return QPixmap()
+    logical = QSize(
+        max(1, round(source.width() * _RASTER_ASSET_SCALE)),
+        max(1, round(source.height() * _RASTER_ASSET_SCALE)),
+    )
+    device = QSize(
+        max(1, round(logical.width() * dpr)), max(1, round(logical.height() * dpr))
     )
     scaled = source.scaled(
-        target,
+        device,
         Qt.AspectRatioMode.KeepAspectRatio,
         Qt.TransformationMode.SmoothTransformation,
     )
@@ -193,11 +267,34 @@ def _scaled_pixmap(filename: str, dpr: float) -> QPixmap:
 
 
 def _logical_size(pixmap: QPixmap) -> QSize:
-    """A pixmap's size in layout (logical) pixels, honouring its DPR."""
+    """A pixmap's size in layout (logical) pixels, honouring its DPR.
+
+    Deliberately a **ceiling**, not a rounding. Device pixels need not divide
+    evenly by a fractional DPR (1.25, 1.5, 1.75 …), and rounding down would hand
+    out a box a fraction of a pixel shorter than the art it must hold — shaved
+    off the edge, invisible on a chunky icon but fatal on a connector only a few
+    pixels tall. A ceiling can only ever leave a sub-pixel of transparent slack.
+
+    This is the *single* definition of "how big is this pixmap in the layout":
+    the shared box heights, the pads and the connector labels all come from it,
+    so they cannot disagree by a rounding.
+    """
     if pixmap.isNull():
         return QSize(0, 0)
     ratio = pixmap.devicePixelRatio() or 1.0
-    return QSize(round(pixmap.width() / ratio), round(pixmap.height() / ratio))
+    return QSize(ceil(pixmap.width() / ratio), ceil(pixmap.height() / ratio))
+
+
+def _padded_box(pixmap: QPixmap, box: QSize) -> QSize:
+    """The box `pixmap` is actually padded into: `box`, grown to fit if needed.
+
+    `box` carries the row's shared height, which is what aligns the icons — but
+    it is only ever *shared*, never a promise that the art fits inside it. When
+    an icon is larger than `box` in either axis, growing the box is the only
+    non-destructive answer: the alternative (clamping the centering offset at
+    zero) silently crops whatever overflows.
+    """
+    return box.expandedTo(_logical_size(pixmap))
 
 
 def _boxed_pixmap(pixmap: QPixmap, box: QSize, dpr: float) -> QPixmap:
@@ -206,19 +303,25 @@ def _boxed_pixmap(pixmap: QPixmap, box: QSize, dpr: float) -> QPixmap:
     This is the whole alignment trick: every node's icon label ends up exactly
     the same height, so their optical centres share one line no matter how
     differently proportioned the underlying art is.
+
+    `dpr` is passed in rather than read off `pixmap`: the pad and the icon must
+    be sized for one single ratio, and the caller is the only place that knows
+    which ratio the whole diagram was built for.
     """
-    device = QSize(max(1, round(box.width() * dpr)), max(1, round(box.height() * dpr)))
+    box = _padded_box(pixmap, box)
+    # Ceiling again, for the same reason `_logical_size` uses one: the pad must
+    # be at least as many device pixels as the icon it holds, and `round` can
+    # land a device pixel short of `box * dpr`.
+    device = QSize(max(1, ceil(box.width() * dpr)), max(1, ceil(box.height() * dpr)))
     padded = QPixmap(device)
     padded.setDevicePixelRatio(dpr)
     padded.fill(Qt.GlobalColor.transparent)
     if not pixmap.isNull():
         size = _logical_size(pixmap)
+        # `box` fits `size` by construction now, so neither offset can clamp.
         painter = QPainter(padded)
         painter.drawPixmap(
-            QPoint(
-                max(0, (box.width() - size.width()) // 2),
-                max(0, (box.height() - size.height()) // 2),
-            ),
+            QPoint((box.width() - size.width()) // 2, (box.height() - size.height()) // 2),
             pixmap,
         )
         painter.end()
@@ -476,6 +579,10 @@ class ProjectStatusPanel(QWidget):
         self._quality_summary = quality_summary
         self._sandbox_summary = sandbox_summary
         self._refreshed_on_show = False
+        #: The device pixel ratio the current pixmaps were rendered for, and the
+        #: window whose ratio changes we are already listening to.
+        self._rendered_dpr = 0.0
+        self._dpr_window = None
 
         #: Live node widgets by family — the click seam for tests and wiring.
         self.node_widgets: dict[NodeFamily, _DiagramNode] = {}
@@ -625,9 +732,48 @@ class ProjectStatusPanel(QWidget):
     def showEvent(self, event) -> None:  # noqa: N802 - Qt naming
         """First show triggers the on-open re-probe seam."""
         super().showEvent(event)
+        self._watch_device_pixel_ratio()
+        if self._diagram is not None and self._rendered_dpr != self._current_dpr():
+            # Shown for the first time on a screen whose ratio differs from the
+            # one the constructor saw (an unparented widget reports 1.0).
+            self._rebuild()
         if not self._refreshed_on_show:
             self._refreshed_on_show = True
             self.refresh()
+
+    # -- device pixel ratio -------------------------------------------------
+
+    def _current_dpr(self) -> float:
+        """The ratio the diagram should be rendered for right now.
+
+        One seam, read in one place (`_rebuild`) and threaded down from there —
+        so the pad and the icon it holds are never sized for two ratios.
+        """
+        return self.devicePixelRatioF() or 1.0
+
+    def _watch_device_pixel_ratio(self) -> None:
+        """Listen for the top-level window's ratio changing under us.
+
+        The pixmaps are *rendered* at one ratio, so a move to a differently
+        scaled screen cannot be absorbed by the layout — pad and icon would have
+        been sized for two different ratios, and the vector art would be shown at
+        the wrong resolution. Re-rendering is the only correct response, and it is
+        cheap (this diagram is five icons and three connectors).
+        """
+        handle = self.window().windowHandle()
+        if handle is None or handle is self._dpr_window:
+            return
+        self._dpr_window = handle
+        for name in ("devicePixelRatioChanged", "screenChanged"):
+            signal = getattr(handle, name, None)
+            if signal is not None:
+                signal.connect(self._on_device_pixel_ratio_changed)
+
+    def _on_device_pixel_ratio_changed(self, *_args) -> None:
+        """Re-render at the new ratio — but only when it really changed, so a
+        plain screen move (same scaling) costs nothing."""
+        if self._diagram is not None and self._rendered_dpr != self._current_dpr():
+            self._rebuild()
 
     # -- rendering ----------------------------------------------------------
 
@@ -653,7 +799,8 @@ class ProjectStatusPanel(QWidget):
             self._diagram_layout.addStretch(1)
             return
 
-        dpr = self.devicePixelRatioF() or 1.0
+        dpr = self._current_dpr()
+        self._rendered_dpr = dpr
         node_pixmaps = {
             node.family: _scaled_pixmap(node.asset, dpr) for node in diagram.nodes
         }
@@ -701,7 +848,7 @@ class ProjectStatusPanel(QWidget):
 
         self._diagram_layout.addStretch(1)
         for node in chain:
-            widget = self._make_node(node, node_pixmaps[node.family], chain_box_h)
+            widget = self._make_node(node, node_pixmaps[node.family], chain_box_h, dpr)
             self._diagram_layout.addWidget(
                 self._offset(widget, chain_top), 0, Qt.AlignmentFlag.AlignTop
             )
@@ -733,7 +880,9 @@ class ProjectStatusPanel(QWidget):
             column_layout.setSpacing(branch_gap)
             for node in branches:
                 column_layout.addWidget(
-                    self._make_node(node, node_pixmaps[node.family], branch_box_h)
+                    self._make_node(
+                        node, node_pixmaps[node.family], branch_box_h, dpr
+                    )
                 )
             column_layout.addStretch(1)
             self._diagram_layout.addWidget(
@@ -754,20 +903,32 @@ class ProjectStatusPanel(QWidget):
         layout.addStretch(1)
         return holder
 
-    def _make_node(self, node: StatusNode, pixmap: QPixmap, box_h: int) -> _DiagramNode:
+    def _make_node(
+        self, node: StatusNode, pixmap: QPixmap, box_h: int, dpr: float
+    ) -> _DiagramNode:
+        """One node widget. `dpr` is the ratio the whole diagram was rendered at —
+        threaded in from `_rebuild` rather than re-read off `pixmap`, so the pad
+        and the icon can never be sized for two different ratios."""
         widget = _DiagramNode(
             node.family, _NODE_TITLES[node.family], self._state_caption(node)
         )
-        dpr = pixmap.devicePixelRatio() or self.devicePixelRatioF() or 1.0
-        box = QSize(NODE_WIDTH - 8, box_h)
+        # The label gets the box the pad was *actually* built at: if the art
+        # exceeded the row's shared height, `_boxed_pixmap` grew the pad instead
+        # of cropping, and a smaller fixed size here would crop it right back.
+        box = _padded_box(pixmap, QSize(NODE_WIDTH - 8, box_h))
         widget.set_pixmap(_boxed_pixmap(pixmap, box, dpr), box)
         widget.clicked.connect(lambda family=node.family: self._on_node_clicked(family))
         self.node_widgets[node.family] = widget
         return widget
 
     def _make_connector(self, pixmap: QPixmap) -> QLabel:
+        """A connector's label. Sized to at least the pixmap's logical extent —
+        `_logical_size` rounds *up* for exactly this reason: some connector art is
+        only a few pixels tall, so a size pinned a hair short of it would crop the
+        whole line rather than an edge."""
         label = QLabel()
         label.setPixmap(pixmap)
+        label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         label.setFixedSize(_logical_size(pixmap))
         label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         return label
