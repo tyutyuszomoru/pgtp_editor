@@ -35,7 +35,10 @@ from pgtp_editor.db.introspect import ColumnInfo, DatabaseSchema, TableInfo
 from pgtp_editor.model.nodes import ChildElement, ColumnNode, DetailNode, PageNode, ProjectModel
 from pgtp_editor.ui.coherence_panel import (
     COHERENT_TEXT,
+    NO_MATCHES_TEXT,
     NOT_COMPARED_TEXT,
+    _HOST_KIND,
+    _IDENTITY_HOST_KINDS,
     CoherencePanel,
 )
 
@@ -426,3 +429,305 @@ def test_rename_is_offered_for_a_dangling_reference_but_not_a_calculated_column(
 
     calculated = _find_in_panel(panel, "~ computed")
     assert panel.rename_menu_label(calculated) is None
+
+
+# --- the P>1/D>1/L>1 role filters (FQ-008) -----------------------------------
+
+
+def _role_project():
+    """Role counts that differ per table, so the three filters can be told
+    apart: ``pr.hot`` P2 D2 L2, ``pr.pages`` P2, ``pr.looks`` L2, ``pr.one``
+    P1, and ``pr.cold`` referenced nowhere at all."""
+    host = PageNode(
+        identity="host",
+        attrib={"tableName": "pr.one", "caption": "Host"},
+        columns=[
+            _lookup_col("l1", "pr.looks"),
+            _lookup_col("l2", "pr.looks"),
+            _lookup_col("h1", "pr.hot"),
+            _lookup_col("h2", "pr.hot"),
+        ],
+        details=[
+            DetailNode(identity="da", attrib={"tableName": "pr.hot", "caption": "Hot A"}),
+            DetailNode(identity="db", attrib={"tableName": "pr.hot", "caption": "Hot B"}),
+        ],
+    )
+    return ProjectModel(
+        pages=[
+            PageNode(identity="h1", attrib={"tableName": "pr.hot", "caption": "Hot one"}),
+            PageNode(identity="h2", attrib={"tableName": "pr.hot", "caption": "Hot two"}),
+            PageNode(identity="p1", attrib={"tableName": "pr.pages", "caption": "Pages one"}),
+            PageNode(identity="p2", attrib={"tableName": "pr.pages", "caption": "Pages two"}),
+            host,
+        ]
+    )
+
+
+def _role_schema():
+    return DatabaseSchema(
+        tables={
+            # `orphan` is a DB column no page binds: a flagged row sitting UNDER
+            # a P>1 relation, which is what makes the composition testable.
+            "pr.hot": TableInfo(name="pr.hot", kind="table", columns=[_info("orphan")]),
+            "pr.pages": TableInfo(name="pr.pages", kind="table", columns=[]),
+            "pr.looks": TableInfo(name="pr.looks", kind="table", columns=[]),
+            "pr.one": TableInfo(
+                name="pr.one",
+                kind="table",
+                columns=[_info("l1"), _info("l2"), _info("h1"), _info("h2")],
+            ),
+            "pr.cold": TableInfo(name="pr.cold", kind="table", columns=[]),
+        }
+    )
+
+
+def _populate_roles(panel):
+    return _populate(panel, project=_role_project(), schema=_role_schema())
+
+
+def _relation_labels(panel):
+    """Relation labels currently shown in the Tables and Views branch, with the
+    glyph/prefix decoration stripped."""
+    return [item.text(0).split()[-1] for item in _children(_top_items(panel)[0])]
+
+
+def _check(panel, *roles, mismatches=False):
+    panel.filter_checkbox.setChecked(mismatches)
+    for role, box in panel.role_checkboxes.items():
+        box.setChecked(role in roles)
+
+
+def test_the_three_role_checkboxes_exist_with_the_badge_wording(panel):
+    assert list(panel.role_checkboxes) == ["page", "detail", "lookup"]
+    assert [box.text() for box in panel.role_checkboxes.values()] == ["P>1", "D>1", "L>1"]
+    # The tooltip spells out what the abbreviation means and how it composes.
+    tip = panel.role_checkboxes["page"].toolTip()
+    assert "more than one Page" in tip
+    assert "must hold" in tip
+
+
+@pytest.mark.parametrize(
+    "roles, expected",
+    [
+        (("page",), ["pr.hot", "pr.pages"]),
+        (("detail",), ["pr.hot"]),
+        (("lookup",), ["pr.hot", "pr.looks"]),
+        # Every combination narrows (AND), never widens (OR would have kept
+        # pr.pages and pr.looks here).
+        (("page", "detail"), ["pr.hot"]),
+        (("page", "lookup"), ["pr.hot"]),
+        (("detail", "lookup"), ["pr.hot"]),
+        (("page", "detail", "lookup"), ["pr.hot"]),
+    ],
+)
+def test_role_checkboxes_filter_and_compose_with_and(panel, roles, expected):
+    _populate_roles(panel)
+    _check(panel, *roles)
+    assert _relation_labels(panel) == expected
+
+
+def test_a_role_filter_keeps_the_relations_columns_and_references(panel):
+    _populate_roles(panel)
+    _check(panel, "detail")
+    relation = _children(_top_items(panel)[0])[0]
+    assert [item.text(0) for item in _children(relation)] == [
+        COLUMNS_GROUP_LABEL,
+        REFERENCES_GROUP_LABEL,
+    ]
+    assert _find_item(relation, "orphan") is not None
+
+
+def test_a_role_filter_prunes_the_pages_branch_too(panel):
+    _populate_roles(panel)
+    _check(panel, "detail")  # only pr.hot qualifies
+    pages = _top_items(panel)[1]
+    labels = [item.text(0) for item in _children(pages)]
+    assert labels == ["✓ Page 'Hot one'", "✓ Page 'Hot two'", "✓ Page 'Host'"]
+    host = _children(pages)[-1]
+    # Only the reference points that target an in-scope table survive: the
+    # pr.hot lookups and details, not the pr.looks ones.
+    assert [item.text(0) for item in _children(host)] == [
+        "✓ Column 'h1'",
+        "✓ Column 'h2'",
+        "✓ Detail 'Hot A'",
+        "✓ Detail 'Hot B'",
+    ]
+
+
+def test_role_filter_composes_with_the_mismatch_toggle(panel):
+    """Roles scope, the mismatch toggle then selects within that scope. The
+    flagged row here is a column, which has no role counts of its own — a naive
+    per-row AND would have silently hidden it."""
+    _populate_roles(panel)
+    _check(panel, "page", mismatches=True)
+    assert _relation_labels(panel) == ["pr.hot"]
+    relation = _children(_top_items(panel)[0])[0]
+    assert [item.text(0) for item in _children(relation)] == [COLUMNS_GROUP_LABEL]
+    assert [item.text(0) for item in _children(_children(relation)[0])] == ["✗ orphan"]
+    # pr.cold is flagged (unreferenced) but out of the P>1 scope.
+    assert _find_in_panel(panel, "pr.cold") is None
+
+    # The mismatch toggle alone would have shown pr.cold as well.
+    _check(panel, mismatches=True)
+    assert "pr.cold" in _relation_labels(panel)
+
+
+def test_role_filter_that_matches_nothing_says_so_without_blaming_the_toggle(panel):
+    _populate(panel)  # base fixture: no table is used on more than one page
+    _check(panel, "page")
+    assert not panel.tree.isVisible()
+    assert panel.empty_label.text() == NO_MATCHES_TEXT
+    assert "Show only mismatches" not in NO_MATCHES_TEXT
+    # ...and the banner still says what is filtering, next to that message.
+    assert panel.filter_banner.isVisibleTo(panel)
+
+
+# --- the active-filter banner ------------------------------------------------
+
+
+def test_banner_is_hidden_until_a_filter_is_active(panel):
+    _populate_roles(panel)
+    assert not panel.filter_banner.isVisibleTo(panel)
+    panel.role_checkboxes["page"].setChecked(True)
+    assert panel.filter_banner.isVisibleTo(panel)
+    panel.role_checkboxes["page"].setChecked(False)
+    assert not panel.filter_banner.isVisibleTo(panel)
+
+
+@pytest.mark.parametrize(
+    "roles, mismatches, expected",
+    [
+        ((), True, "mismatches only"),
+        (("page",), False, "more than one Page (P>1)"),
+        (("detail",), False, "more than one Detail (D>1)"),
+        (("lookup",), False, "more than one Lookup (L>1)"),
+        (
+            ("page", "lookup"),
+            False,
+            "more than one Page (P>1) AND more than one Lookup (L>1)",
+        ),
+        (
+            ("page", "detail", "lookup"),
+            False,
+            "more than one Page (P>1) AND more than one Detail (D>1) "
+            "AND more than one Lookup (L>1)",
+        ),
+        (
+            ("page",),
+            True,
+            "mismatches only AND more than one Page (P>1)",
+        ),
+        (
+            ("page", "detail", "lookup"),
+            True,
+            "mismatches only AND more than one Page (P>1) AND more than one Detail (D>1) "
+            "AND more than one Lookup (L>1)",
+        ),
+    ],
+)
+def test_banner_names_every_active_filter_and_the_combination(
+    panel, roles, mismatches, expected
+):
+    tree = _populate_roles(panel)
+    _check(panel, *roles, mismatches=mismatches)
+    assert panel.filter_description() == expected
+    text = panel.filter_banner_label.text()
+    assert text.startswith(f"Filtered: {expected} — showing ")
+    assert text.endswith(f" of {tree.row_count} rows")
+
+
+def test_banner_row_count_reflects_what_survived_the_filter(panel):
+    tree = _populate_roles(panel)
+    _check(panel, "detail")
+    shown = tree.scoped_to_tables(tree.role_qualifying_tables(("detail",))).row_count
+    assert f"showing {shown} of {tree.row_count} rows" in panel.filter_banner_label.text()
+    assert 0 < shown < tree.row_count
+
+
+def test_clear_filters_unticks_everything_and_restores_the_full_tree(panel):
+    _populate_roles(panel)
+    _check(panel, "page", "detail", "lookup", mismatches=True)
+    assert panel.filter_banner.isVisibleTo(panel)
+    full = ["pr.cold", "pr.hot", "pr.looks", "pr.one", "pr.pages"]
+    assert _relation_labels(panel) != full
+
+    panel.clear_filters()
+    assert not panel.filter_checkbox.isChecked()
+    assert not any(box.isChecked() for box in panel.role_checkboxes.values())
+    assert not panel.filter_banner.isVisibleTo(panel)
+    assert panel.filter_description() == ""
+    assert _relation_labels(panel) == full
+    assert [item.text(0) for item in _children(_top_items(panel)[1])] == [
+        "✓ Page 'Hot one'",
+        "✓ Page 'Hot two'",
+        "✓ Page 'Pages one'",
+        "✓ Page 'Pages two'",
+        "✓ Page 'Host'",
+    ]
+
+
+def test_clear_filters_rebuilds_once(panel, monkeypatch):
+    """Unticking four boxes must not rebuild the tree four times — the boxes'
+    signals are blocked and one rebuild follows."""
+    _populate_roles(panel)
+    _check(panel, "page", "detail", "lookup", mismatches=True)
+    calls = []
+    original = panel._rebuild
+    monkeypatch.setattr(panel, "_rebuild", lambda: (calls.append(1), original())[1])
+    panel.clear_filters()
+    assert len(calls) == 1
+
+
+def test_the_header_count_ignores_the_role_filters_too(panel):
+    _populate_roles(panel)
+    before = panel.header_label.text()
+    _check(panel, "page", "detail", "lookup", mismatches=True)
+    assert panel.header_label.text() == before
+
+
+# --- host-kind mapping totality (BUG-032's bug class) ------------------------
+
+#: Every `CoherenceNode.kind` the model documents (see `CoherenceNode`'s
+#: docstring in `db/coherence.py`). Kept here as the explicit contract the host
+#: mapping must be total over.
+DOCUMENTED_KINDS = frozenset(
+    {"branch", "relation", "group", "column", "reference", "page", "detail", "lookup"}
+)
+
+
+def _emitted_kinds():
+    """Kinds a real tree actually contains, across both fixtures."""
+    kinds = set()
+
+    def walk(node):
+        kinds.add(node.kind)
+        for child in node.children:
+            walk(child)
+
+    for project, schema in (
+        (_make_project(), _make_schema()),
+        (_role_project(), _role_schema()),
+    ):
+        for branch in build_coherence_tree(project, schema).branches:
+            walk(branch)
+    return kinds
+
+
+@pytest.mark.parametrize("kind", sorted(DOCUMENTED_KINDS))
+def test_host_kind_mapping_is_total_over_every_emitted_kind(kind):
+    """BUG-032 facet A was an internal kind reaching MainWindow untranslated.
+    `_HOST_KIND` is now the one translation — so every kind the panel can emit
+    must be either mapped by it or *deliberately* identity-passed, and never
+    silently neither."""
+    assert (kind in _HOST_KIND) ^ (kind in _IDENTITY_HOST_KINDS), kind
+
+
+def test_the_two_host_kind_sets_cover_exactly_the_documented_vocabulary():
+    assert set(_HOST_KIND) | set(_IDENTITY_HOST_KINDS) == DOCUMENTED_KINDS
+    assert _HOST_KIND == {"relation": "table"}
+
+
+def test_the_fixtures_exercise_the_documented_kind_vocabulary():
+    """Keeps the totality test honest: if the model grows a kind the fixtures
+    never build, this is what notices."""
+    assert _emitted_kinds() == DOCUMENTED_KINDS

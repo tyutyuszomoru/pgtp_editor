@@ -33,6 +33,15 @@ own flagged counts next to each other, which is the first thing a reader wants
 after flipping the toggle. Two columns — label, then badges — keep the badge
 text out of the deep Pages indentation so it stays readable at depth.
 
+**Filtering is one composable mechanism, not several (FQ-008).** The mismatch
+toggle and the three role filters ("P>1"/"D>1"/"L>1", over the very
+`page_count`/`detail_count`/`lookup_count` numbers the relation badge already
+prints) all feed one `_apply_filters` call on the model tree: the role filters
+AND each other, and their result is AND-ed with the mismatch toggle, so ticking
+another box can only ever narrow. Whatever is active is spelled out — combination
+included — in the active-filter banner with a Clear button, because a filter the
+reader cannot see is the bug BUG-020 was raised for.
+
 Nothing here re-derives state. `flagged`, the badges, the recursion and the
 pruning all come from `db/coherence.py`; the panel only maps them to glyphs,
 colours and rows. It opens no connection and runs no SQL.
@@ -54,9 +63,11 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QBrush, QColor
 from PySide6.QtWidgets import (
     QCheckBox,
+    QHBoxLayout,
     QHeaderView,
     QLabel,
     QMenu,
+    QPushButton,
     QTreeWidget,
     QTreeWidgetItem,
     QVBoxLayout,
@@ -68,6 +79,7 @@ from pgtp_editor.db.coherence import (
     BADGE_MISSING_IN_DB,
     BADGE_NOT_IN_XML,
     BADGE_UNREFERENCED,
+    ROLE_COUNT_ATTRS,
     CoherenceNode,
     CoherenceTree,
     flagged_count,
@@ -83,6 +95,12 @@ _CALC_COLOR = QColor("#d08a1a")
 
 _KIND_PREFIX = {"table": "(T) ", "view": "(V) ", "matview": "(M) "}
 
+#: The Caption panel's active-filter accent (`caption_management_panel.py`'s
+#: `_FILTER_HEADER_FOREGROUND`), repeated as a literal rather than imported so
+#: this panel keeps no dependency on that one; "a filter is active" should look
+#: the same in both surfaces.
+_FILTER_BANNER_FOREGROUND = QColor("#4fc3f7")
+
 #: Badges that mean "this row is the problem", used to colour the badge cell.
 _PROBLEM_BADGES = frozenset({BADGE_MISSING_IN_DB, BADGE_NOT_IN_XML, BADGE_UNREFERENCED})
 
@@ -94,6 +112,30 @@ NOT_COMPARED_TEXT = (
 )
 COHERENT_TEXT = "Compared: the XML and the database agree. Nothing needs attention."
 NO_MISMATCHES_TEXT = "No mismatches to show. Untick “Show only mismatches” to see everything."
+#: The role filters (or a role filter combined with the mismatch toggle) matched
+#: nothing. Distinct from NO_MISMATCHES_TEXT because "untick Show only
+#: mismatches" would be wrong advice when a P/D/L box is what emptied the tree.
+NO_MATCHES_TEXT = "No rows match the active filters — use “Clear filters” to see everything."
+
+#: Role -> ("checkbox label", "what the filter means") for the P>1/D>1/L>1
+#: filters (FQ-008). The short form matches the "(P# D# L#)" relation badge this
+#: same view already prints, so the checkbox and the number it filters on are
+#: recognizably the same thing; the long form is the tooltip and the wording the
+#: active-filter banner uses, so nothing about the filter is left to guess.
+_ROLE_FILTERS = (
+    ("page", "P>1", "more than one Page"),
+    ("detail", "D>1", "more than one Detail"),
+    ("lookup", "L>1", "more than one Lookup"),
+)
+
+#: The banner's name for the mismatch toggle, in the same voice as the role
+#: descriptions above so a combined filter reads as one sentence.
+_MISMATCH_DESCRIPTION = "mismatches only"
+
+#: How the banner joins two active filters. Spelled out because the composition
+#: is the one thing a reader must not have to guess: every active condition has
+#: to hold (AND), so ticking a second box always narrows the result.
+_FILTER_CONJUNCTION = " AND "
 
 #: Internal `CoherenceNode.kind` -> the host-facing kind vocabulary MainWindow's
 #: name-based slots speak (`_on_db_jump_requested` / `_on_db_rename_requested`
@@ -103,6 +145,17 @@ NO_MISMATCHES_TEXT = "No mismatches to show. Untick “Show only mismatches” t
 #: must be normalized on the way out — the omission of exactly this was BUG-032
 #: facet A. `contextual_rename` already did it by hand; this is the one mapping.
 _HOST_KIND = {"relation": "table"}
+
+#: The internal kinds deliberately passed through to the host unchanged, i.e.
+#: the ones whose internal spelling *is* the host spelling. Together with
+#: `_HOST_KIND` this must cover every kind `db/coherence.py` can put in a node —
+#: a kind in neither is an unmapped kind reaching MainWindow, which is exactly
+#: BUG-032 facet A. `tests/ui/test_coherence_panel.py` asserts that totality
+#: over the kinds a real tree actually contains, so adding a kind to the model
+#: without deciding its host spelling fails there rather than in the host.
+_IDENTITY_HOST_KINDS = frozenset(
+    {"branch", "group", "column", "reference", "page", "detail", "lookup"}
+)
 
 _ROW_ROLE = Qt.ItemDataRole.UserRole  # (kind, name, ok, is_calculated) — DbCheckPanel shape
 _NODE_ROLE = Qt.ItemDataRole.UserRole + 1  # the CoherenceNode itself
@@ -136,9 +189,51 @@ class CoherencePanel(QWidget):
         self.filter_checkbox = QCheckBox("Show only mismatches")
         self.filter_checkbox.setToolTip(
             "Prune both branches to the rows needing attention, keeping the path "
-            "down to each one."
+            "down to each one. Combines with P>1/D>1/L>1: every ticked condition "
+            "must hold."
         )
         self.filter_checkbox.toggled.connect(self._rebuild)
+
+        # The P>1/D>1/L>1 role filters (FQ-008). Independent checkboxes, one
+        # rebuild path shared with the mismatch toggle, and every active one
+        # named in the banner below — a filter nobody can see is the bug
+        # BUG-020 was raised for.
+        self.role_checkboxes: dict[str, QCheckBox] = {}
+        role_row = QHBoxLayout()
+        role_row.setContentsMargins(0, 0, 0, 0)
+        for role, short, description in _ROLE_FILTERS:
+            box = QCheckBox(short)
+            box.setToolTip(
+                f"Show only relations the XML uses in {description} "
+                f"({ROLE_COUNT_ATTRS[role].replace('_', ' ')} > 1, the same number the "
+                "“(P# D# L#)” badge prints). Combines with the other boxes and "
+                "with “Show only mismatches”: every ticked condition must hold."
+            )
+            box.toggled.connect(self._rebuild)
+            self.role_checkboxes[role] = box
+            role_row.addWidget(box)
+        role_row.addStretch(1)
+
+        # Active-filter banner (BUG-020's rule applied here): the moment any
+        # filter is on, say which one — including the combination — and offer a
+        # single way out. Deliberately the panel's own one-label row, not the
+        # Caption panel's proxy-model apparatus: three booleans plus a toggle
+        # need no proxy.
+        self.filter_banner_label = QLabel("")
+        self.filter_banner_label.setWordWrap(True)
+        # The same accent the Caption panel's active-filter banner uses, so
+        # "something is filtering" looks the same wherever the user meets it.
+        self.filter_banner_label.setStyleSheet(
+            f"font-weight: bold; color: {_FILTER_BANNER_FOREGROUND.name()};"
+        )
+        self.clear_filters_button = QPushButton("Clear filters")
+        self.clear_filters_button.clicked.connect(self.clear_filters)
+        self.filter_banner = QWidget()
+        banner_row = QHBoxLayout(self.filter_banner)
+        banner_row.setContentsMargins(0, 0, 0, 0)
+        banner_row.addWidget(self.filter_banner_label, 1)
+        banner_row.addWidget(self.clear_filters_button)
+        self.filter_banner.setVisible(False)
 
         self.tree = QTreeWidget()
         self.tree.setColumnCount(2)
@@ -166,6 +261,8 @@ class CoherencePanel(QWidget):
         layout = QVBoxLayout(self)
         layout.addWidget(self.header_label)
         layout.addWidget(self.filter_checkbox)
+        layout.addLayout(role_row)
+        layout.addWidget(self.filter_banner)
         layout.addWidget(self.tree, 1)
         layout.addWidget(self.empty_label, 1)
 
@@ -206,27 +303,102 @@ class CoherencePanel(QWidget):
             f"Database/XML Coherence   {self._connection_summary}   —   {count} {noun}"
         )
 
+    # -- filtering (FQ-008) --------------------------------------------------
+
+    def active_roles(self) -> list[str]:
+        """The ticked role filters, in P/D/L order."""
+        return [
+            role
+            for role, _short, _desc in _ROLE_FILTERS
+            if self.role_checkboxes[role].isChecked()
+        ]
+
+    def any_filter_active(self) -> bool:
+        return self.filter_checkbox.isChecked() or bool(self.active_roles())
+
+    def clear_filters(self) -> None:
+        """Untick every filter and rebuild once (the banner's Clear button)."""
+        boxes = [self.filter_checkbox, *self.role_checkboxes.values()]
+        for box in boxes:
+            box.blockSignals(True)
+            box.setChecked(False)
+            box.blockSignals(False)
+        self._rebuild()
+
+    def filter_description(self) -> str:
+        """Every active filter, joined by " AND ", or "" when none is active.
+
+        The order is fixed (mismatch toggle first, then P, D, L) so the same
+        combination always reads the same way.
+        """
+        parts: list[str] = []
+        if self.filter_checkbox.isChecked():
+            parts.append(_MISMATCH_DESCRIPTION)
+        parts += [
+            f"{description} ({short})"
+            for role, short, description in _ROLE_FILTERS
+            if self.role_checkboxes[role].isChecked()
+        ]
+        return _FILTER_CONJUNCTION.join(parts)
+
+    def _apply_filters(self, tree: CoherenceTree) -> CoherenceTree:
+        """`tree` narrowed by every active filter.
+
+        Composition, in one place: the role filters AND each other (a relation
+        must satisfy every ticked one), and the result is AND-ed with the
+        mismatch toggle. Mechanically the roles run first as a *scope* over
+        relations and the mismatch toggle then selects rows *within* that scope
+        — the reading that cannot silently drop a row, because a flagged column
+        or reference under an in-scope relation has no role counts of its own
+        and would vanish under a naive per-row AND.
+        """
+        roles = self.active_roles()
+        if roles:
+            tree = tree.scoped_to_tables(tree.role_qualifying_tables(roles))
+        if self.filter_checkbox.isChecked():
+            tree = tree.filtered()
+        return tree
+
+    def _refresh_filter_banner(self, shown: CoherenceTree | None) -> None:
+        """Name the active filter combination and how much it hid. Hidden only
+        when nothing is filtering."""
+        description = self.filter_description()
+        if self._tree is None or not description:
+            self.filter_banner.setVisible(False)
+            return
+        total = self._tree.row_count
+        visible = shown.row_count if shown is not None else 0
+        self.filter_banner_label.setText(
+            f"Filtered: {description} — showing {visible} of {total} rows"
+        )
+        self.filter_banner.setVisible(True)
+
     def _rebuild(self) -> None:
         self.tree.clear()
         if self._tree is None:
+            self._refresh_filter_banner(None)
             self._show_placeholder(NOT_COMPARED_TEXT)
             return
 
-        only_mismatches = self.filter_checkbox.isChecked()
-        shown = self._tree.filtered() if only_mismatches else self._tree
+        shown = self._apply_filters(self._tree)
+        self._refresh_filter_banner(shown)
         branches = [self._make_branch_item(branch) for branch in shown.branches]
         if not any(branch.childCount() for branch in branches):
-            # Two honest, distinguishable "nothing to show" states: the tree is
-            # genuinely clean, versus the filter hid everything that was there.
-            self._show_placeholder(
-                COHERENT_TEXT if self._tree.flagged_count == 0 else NO_MISMATCHES_TEXT
-            )
+            # Three honest, distinguishable "nothing to show" states: the tree
+            # is genuinely clean; the mismatch toggle alone hid everything; or a
+            # role filter is part of what emptied it, where "untick Show only
+            # mismatches" would be the wrong advice.
+            if self.active_roles():
+                text = NO_MATCHES_TEXT
+            else:
+                text = COHERENT_TEXT if self._tree.flagged_count == 0 else NO_MISMATCHES_TEXT
+            self._show_placeholder(text)
             return
 
         self.tree.addTopLevelItems(branches)
         for branch in branches:
             branch.setExpanded(True)
-        if only_mismatches:
+        if self.any_filter_active():
             # The pruned tree is small and every surviving row is there for a
             # reason — showing it collapsed would hide the answer.
             self.tree.expandAll()
