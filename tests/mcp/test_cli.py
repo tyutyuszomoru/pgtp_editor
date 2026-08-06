@@ -256,6 +256,20 @@ def test_module_main_accepts_the_redundant_mcp_flag(monkeypatch, project_path):
     assert calls == [project_path]
 
 
+def test_module_main_with_no_arguments_serves_the_default_provider(monkeypatch):
+    """`python -m pgtp_editor.mcp` with no file is a supported invocation (the
+    per-tool `path` argument then carries the project), so it must reach the same
+    one entry point with `None` rather than erroring on a missing path."""
+    import pgtp_editor.mcp.__main__ as module_main
+
+    calls = []
+    monkeypatch.setattr(module_main, "run_mcp_server",
+                        lambda path: calls.append(path) or 0)
+
+    assert module_main.main([]) == 0
+    assert calls == [None]
+
+
 def test_module_main_missing_file_exits_nonzero(tmp_path, capsys):
     import pgtp_editor.mcp.__main__ as module_main
 

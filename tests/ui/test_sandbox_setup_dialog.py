@@ -385,6 +385,71 @@ def test_data_clone_consults_the_seam_and_aborts_on_decline(qtbot):
     assert controller.called("run_data_clone") == []
 
 
+def test_with_no_confirm_seam_the_gestures_reach_the_controller_unprompted(qtbot):
+    """Mode 1 of the documented two-mode contract: `confirm=None` (the default)
+    means the dialog pre-confirms NOTHING -- the controller's own
+    `confirm_destructive` is the single prompt, so every destructive gesture must
+    reach it rather than being swallowed here. The dialog cannot install itself as
+    that gate (it is constructor-only and private), which is why this mode
+    exists at all."""
+    controller = FakeController(
+        capabilities=_caps(), session=FakeSession(), mode=SandboxMode.WITH_DATA
+    )
+    dialog, _ = _dialog(
+        qtbot,
+        controller,
+        settings=_settings(sandbox_mode=SandboxMode.WITH_DATA),
+    )
+    assert dialog._confirm is None
+
+    dialog._reset_button.click()
+    dialog._clone_button.click()
+    dialog._provision_button.click()
+
+    assert controller.called("reset_session") == [{}]
+    assert controller.called("run_data_clone") == [{}]
+    assert len(controller.called("provision")) == 1
+    # Nothing was reported as cancelled: the dialog declined nothing.
+    assert "ancelled" not in dialog.result_text()
+
+
+def test_a_controller_declined_operation_surfaces_as_its_cancelled_result(qtbot):
+    """The other half of mode 1, end to end against the REAL controller: with no
+    gate of its own the controller refuses and reports; the dialog must render
+    that sentence rather than looking like nothing happened. The wording is the
+    controller's own -- nothing is retyped here."""
+    controller = SandboxController(confirm_destructive=None)
+    controller.set_project(
+        sandbox_params=ConnectionParams(
+            host="localhost", port="5432", database="pgtp_sandbox_erp", user="dev"
+        ),
+        target_params=ConnectionParams(host="db01", port="5432", database="erp", user="dev"),
+    )
+    dialog, _ = _dialog(qtbot, FakeController(capabilities=_caps()))
+
+    controller.provision(dialog._on_operation)
+
+    text = dialog.result_text()
+    assert "not confirmed" in text
+    assert SandboxController.destructive_warning(SandboxOperation.PROVISION) in text
+
+
+def test_the_dialog_module_never_reaches_a_modal_qt_call():
+    """The confirmation is an injected callable precisely so no test can reach a
+    modal (CLAUDE.md's hard rule). A future edit adding a bare `QMessageBox` here
+    would give the dialog a second, un-patchable confirmation surface."""
+    import inspect
+
+    source = inspect.getsource(
+        __import__("pgtp_editor.ui.sandbox_setup_dialog", fromlist=["x"])
+    )
+    code = "\n".join(
+        line.split("#", 1)[0] for line in source.splitlines()
+    )
+    for name in ("QMessageBox(", "QMessageBox.", "QFileDialog", "QInputDialog"):
+        assert name not in code
+
+
 def test_approved_destructive_gestures_reach_the_controller(qtbot):
     controller = FakeController(
         capabilities=_caps(), session=FakeSession(), mode=SandboxMode.WITH_DATA

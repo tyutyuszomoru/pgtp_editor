@@ -883,6 +883,34 @@ def test_the_ladder_is_one_ordered_statement_list_with_tier_indices():
     assert plan.resolve_index < plan.check_index
 
 
+def test_the_ladders_bookkeeping_row_is_the_shared_upsert_verbatim():
+    """"The ladder writes the identical row `SandboxSession.apply` does" is only
+    true while both compose it through `sandbox.applied_upsert_sql`. Asserted by
+    EQUALITY, not by an "INSERT INTO" substring, and with a `ddl_text` that
+    differs from the buffer so the recorded hash is provably the hash of what was
+    applied rather than of what the tab happened to hold."""
+    import re
+
+    from pgtp_editor.db.sandbox import applied_upsert_sql, text_sha1
+
+    def without_the_timestamp(sql: str) -> str:
+        """`applied_at` is `now()`-ish per call, so it is the one literal two
+        composers of the same row legitimately disagree on."""
+        return re.sub(r"\d{4}-\d\d-\d\dT[\d:.+\-]+", "<applied_at>", sql)
+
+    request = _request()
+    applied_text = "CREATE OR REPLACE FUNCTION pr.f(i integer) RETURNS void ..."
+    plan = build_ladder(request, _caps(), applied_text, record_applied=True)
+    row = plan.statements[plan.bookkeeping_index]
+
+    assert without_the_timestamp(row) == without_the_timestamp(
+        applied_upsert_sql(request.working_set_ref, applied_text)
+    )
+    # The hash is of the text actually applied, never of the tab's buffer.
+    assert text_sha1(applied_text) in row
+    assert text_sha1(BUFFER) not in row
+
+
 def test_a_probe_writes_no_bookkeeping_row():
     plan = build_ladder(_request(), _caps(), BUFFER, record_applied=False)
 
@@ -1372,6 +1400,35 @@ def test_recheck_applies_nothing():
     session = _AppliedSession([_applied_row()])
     report = recheck(session, _request(), _caps(), query=_Query(_resolved(), []))
     assert report.committed is False
+
+
+def test_recheck_has_no_write_seam_at_all_so_it_cannot_compile():
+    """Structural, not behavioural: `apply_and_check`/`probe_check` take an
+    `applier=`, `recheck` deliberately does not. It is the entry point the wired
+    Check gesture uses (`SandboxController(checker=recheck)`), so this is what
+    makes "the Check gesture cannot run tiers 0-2" a property of the API rather
+    than of one canned session."""
+    import inspect
+
+    assert "applier" not in inspect.signature(recheck).parameters
+    for compiling in (ddl_check.apply_and_check, ddl_check.probe_check):
+        assert "applier" in inspect.signature(compiling).parameters
+
+
+def test_recheck_claims_no_lint_pass_and_says_it_recompiled_nothing():
+    """§18.5 D3's never-report-clean-when-unchecked rule, on the one path a user
+    can actually reach today: tier 1 has no notices to read because nothing was
+    compiled in this run, and tier 2's `passed` names the bookkeeping fact
+    instead of claiming a fresh compile."""
+    session = _AppliedSession([_applied_row()])
+    report = recheck(session, _request(), _caps(), query=_Query(_resolved(), []))
+
+    assert report.tier1.status == STATUS_UNAVAILABLE
+    assert report.tier1.reason
+    assert report.tier2.status == STATUS_PASSED
+    assert "not re-compiled in this run" in report.tier2.reason
+    # ...and the whole report is therefore never green, however clean tier 3 was.
+    assert report.green is False
 
 
 # --- the report's own honesty --------------------------------------------
