@@ -1163,10 +1163,20 @@ you can always navigate elsewhere.
 - **Name** and **Description** — optional, free text.
 - **Project folder** — pick a folder with **Browse…**; that folder *is* the
   project. There's no separate bootstrap step.
-- **Local sandbox (optional)** — a Postgres connection (Host, Port, Database,
-  User, Password) with its own **Test** button. Testing here checks something
-  specific: that the connected user is a **superuser**, since sandbox
-  provisioning needs `CREATE EXTENSION`. It reports one of:
+- **Local sandbox (optional)** — the Postgres **server** the sandbox should live
+  on: **Host**, **Port**, **User**, and **Password**. **There is deliberately no
+  "Database:" field.** You never name the sandbox database, because PGTP Editor
+  **creates** it itself, with a name it generates
+  (`pgtp_sandbox_<project>_<random>`) plus the ownership marker that is the only
+  thing making a sandbox safe for the app to write to. An existing database is
+  never reused, overwritten, or dropped — the caveat line in the group says as
+  much.
+
+  The group's own **Test** button checks something specific: that the connected
+  user is a **superuser**, since sandbox provisioning needs `CREATE EXTENSION`.
+  It probes the server's `postgres` maintenance database — the exact connection
+  the `CREATE DATABASE` will use, since there is no sandbox database to probe
+  before one is created. It reports one of:
   - **"Connected — superuser."**
   - **"Connected, but NOT a superuser — sandbox provisioning needs CREATE
     EXTENSION."**
@@ -1175,15 +1185,68 @@ you can always navigate elsewhere.
   - the raw connection error, if it couldn't connect at all.
 
   The same group also carries the provisioning choice — **Without data (schema
-  only, default)**, the schema-only baseline, or **With data**, which is meant to
-  clone the target database via `pg_dump`/`pg_restore`. **Creating a project
-  provisions nothing**: the choice is recorded and applies whenever a sandbox is
-  provisioned or reset, and that gesture is not available from any menu in this
-  version (see *The Sandbox*).
+  only, default)**, the schema-only baseline, or **With data**, which clones the
+  target database via `pg_dump`/`pg_restore`. It is a **one-shot** choice, made
+  here: cloning happens once, at creation, and refreshing the data later means
+  destroying and recreating the sandbox. See *The sandbox is created with the
+  project*, below, for what pressing **OK** then actually does.
 - **Git (optional — not yet used)** — Server, User, and Checkout branch
   fields. These are captured and saved with the project, but git integration
   isn't built yet: nothing is cloned, committed, or pushed. They're recorded
   now so the intent isn't lost later.
+
+### The sandbox is created with the project
+
+If you filled the **Local sandbox** group in, pressing **OK** doesn't just record
+those fields — it **creates and provisions the sandbox**, in the background so the
+window stays responsive, and last of all, after the project folder itself is
+written. Leaving the group blank simply means the project has no sandbox, which is
+a perfectly good way to work (see *Project Status* for what that costs you).
+
+The run does five things:
+
+1. connects to the server's `postgres` maintenance database and
+   **`CREATE DATABASE`**s an auto-named `pgtp_sandbox_…` database — Postgres
+   forbids creating a database from inside the one being created, which is why
+   the maintenance database is used and why no extra "admin connection" field
+   exists;
+2. **provisions** it: the schema-only baseline taken from the project's **target**
+   connection, or a `pg_dump`/`pg_restore` clone if you chose **With data**;
+3. installs the **`plpgsql_check`** extension, so the validation ladder's tier 3
+   works from the start (see *The Sandbox ▸ Checking an object in the sandbox*);
+4. **records the created name** in the project's settings file
+   (`.ddlproject/settings.json`), so a later provisioning or reset run reopens
+   the same database instead of making a second one; and
+5. **leaves the session open.** That is why **Database ▸ Check Object in
+   Sandbox**, **Apply to Sandbox** and **Database ▸ Sandbox SQL Console…** are
+   usable immediately after you create a project — no separate **Open Sandbox
+   Session** needed (see *The Sandbox*).
+
+The status bar confirms with `Created and provisioned sandbox database: <name>`.
+
+**If a generated name is already taken on the server, a different random name is
+tried.** An existing database is never reused, never written into, and never
+dropped. In the very unlikely case that every generated name is taken, the step
+stops with a message saying so, and nothing on the server is touched.
+
+**A sandbox failure never costs you the project.** If creating, provisioning, or
+`CREATE EXTENSION` fails, the project is still created — it just has no working
+sandbox (a tier-2 *quality project*, see *Project Status*). The exact reason
+appears in the Audit panel on a line prefixed **`[Sandbox]`**, and the project
+records **no** sandbox database, so nothing later claims a sandbox that isn't
+there. Its sandbox *server* details are kept, so you can fix the cause and try
+again.
+
+**If the project has no target connection yet** — likely, since you have just
+created it — there is nothing to build a baseline from, so the sandbox is created
+**empty** and the Audit panel says exactly that, pointing you at **Project
+Settings** to set the target and at re-provisioning afterwards. Choosing **With
+data** without a target likewise clones nothing and says so; your recorded choice
+is left alone, so it still applies once a target exists.
+
+> Those Audit lines mention re-provisioning from **Sandbox Setup**. That dialog
+> is built but is **not reachable from any menu in this version**, so in practice
+> project creation is where a sandbox comes into being — see *The Sandbox*.
 
 ### Opening a project
 
@@ -1230,7 +1293,12 @@ fields are grouped into four tabs:
   path — the sshfs-mounted original — the working copy path, and the last-known
   source checksum).
 - **Connections** — **Target connection** and **Sandbox connection**, both
-  connection profiles in full, including their password fields. Each group has
+  connection profiles in full, including their password fields. The sandbox
+  group's **Database** field here holds the name the app generated and created
+  when the project was made (see *The sandbox is created with the project*) — it
+  is shown so you can see which database you are working against, not so you can
+  point the sandbox at one of your own; a database PGTP Editor didn't create is
+  refused when a session is opened. Each group has
   its own **Test** button (see *Testing the project's connections*, below). The
   Sandbox connection group also carries the sandbox provisioning mode —
   **Without data (schema only)** or **With data**. Changing that mode here does
@@ -1265,7 +1333,10 @@ connections have different success conditions:
 - **Sandbox connection ▸ Test** is stricter: it checks for a **superuser**,
   not merely that the connection works, because setting up a sandbox needs
   `CREATE EXTENSION`. It is the same check as the **New Project…** dialog's
-  sandbox Test button, and reports, in this order:
+  sandbox Test button — the only difference being what it connects to: here the
+  sandbox database the project already has, there the server's `postgres`
+  maintenance database, since no sandbox exists yet at that point. It reports, in
+  this order:
   - the raw connection error, in red, if it couldn't probe at all;
   - **"Connected, but NOT a superuser — sandbox provisioning needs CREATE
     EXTENSION."**, in red;
@@ -1334,10 +1405,13 @@ run a routine before anyone else has to live with it: apply your edit there,
 validate it, poke at it with ad-hoc SQL, and only then decide what to do with it.
 Nothing in this chapter can reach your real database.
 
-The sandbox is a **local DDL-versioning project** concept: it is configured in
-**File ▸ Project Settings… ▸ Connections** (or when you create the project — see
-*Local DDL-Versioning Projects*), so everything below requires a project to be
-open.
+The sandbox is a **local DDL-versioning project** concept, so everything below
+requires a project to be open. It is **created for you by File ▸ New Project…**
+when you fill in that dialog's *Local sandbox* group — the app creates the
+database itself, auto-named, provisions it, installs `plpgsql_check`, and leaves
+the session open (see *Local DDL-Versioning Projects ▸ The sandbox is created with
+the project*). Its connection details, and the created database's name, are
+afterwards visible and editable in **File ▸ Project Settings… ▸ Connections**.
 
 ### Opening and closing a sandbox session
 
@@ -1352,7 +1426,12 @@ different depending on whether a session is open.
 
 **Opening a project connects nothing.** A session is a real connection to a real
 database, so it is always something you asked for; the app never opens one, and
-never creates or fills a sandbox, as a side effect of opening a project.
+never creates or fills a sandbox, as a side effect of opening an *existing*
+project. Creating a **new** one is the single exception, and only because you
+asked for it there: filling in **New Project…**'s sandbox group creates the
+sandbox and hands you an open session straight away, so **Open Sandbox Session**
+is what you use in **later** sessions, on a project whose sandbox already
+exists.
 
 The outcome lands in the Audit panel as a `[Sandbox]` line, and a refusal always
 says which refusal it was: the sandbox is unreachable, the user is not a
@@ -1364,12 +1443,14 @@ when it creates one, because a database name alone can be faked. Pointing the
 sandbox connection at a database you made by hand is refused rather than written
 to.
 
-> **The gesture that *creates* a sandbox is not available from any menu yet.**
-> Provisioning, cloning data into a sandbox, installing `plpgsql_check`, and
-> resetting a sandbox are all built but unreachable in this version. So in
-> practice **Open Sandbox Session** can only succeed against a sandbox database
-> that a previous provisioning run created for you. Everything else in this
-> chapter then works normally.
+> **Creating a sandbox happens in exactly one place: File ▸ New Project….**
+> Re-provisioning, cloning data into an existing sandbox, and resetting a sandbox
+> are built but not reachable from any menu in this version. So **Open Sandbox
+> Session** succeeds against the sandbox database your project creation made for
+> you (its name is recorded in the project settings) — and if that step failed at
+> the time, the way to get a working sandbox today is to create the project
+> again with the sandbox details corrected. Everything else in this chapter then
+> works normally.
 
 Closing the session (or closing the project) takes every sandbox-only affordance
 with it, including the Sandbox SQL console tab — a console that can only refuse
@@ -1568,10 +1649,12 @@ and re-probes, so the diagram can't keep claiming the state from before you
 acted.
 
 > In this version the Quality window's **Reconnect**, the Sandbox window's help
-> link and both windows' connection detail lines are live. Running a data clone
-> and installing the `plpgsql_check` extension are **not offered anywhere yet**,
-> so the **Sandbox data** and **plpgsql_check** windows stay status-only rather
-> than showing a button that cannot work. This window is a report, not a
+> link and both windows' connection detail lines are live. Cloning data into an
+> existing sandbox and installing `plpgsql_check` into one are **not offered from
+> these windows**: both happen once, when the project (and with it the sandbox) is
+> created — see *Local DDL-Versioning Projects ▸ The sandbox is created with the
+> project* — so the **Sandbox data** and **plpgsql_check** windows stay
+> status-only rather than showing a button that cannot work. This window is a report, not a
 > control panel: connecting to the sandbox is its own gesture on the Database
 > menu (see *The Sandbox*). Everything the diagram reports is live and accurate
 > today.

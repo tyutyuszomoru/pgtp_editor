@@ -19,6 +19,7 @@ from pgtp_editor.ui.new_project_dialog import NewProjectDialog
 from pgtp_editor.ui.project_settings_dialog import ProjectSettingsDialog
 
 from ._menu_helpers import find_action, find_top_menu
+from ._sandbox_stubs import stub_sandbox_provisioning
 from pgtp_editor.ui import modals
 
 
@@ -29,6 +30,10 @@ def _empty_settings(tmp_path):
 def _window(qtbot, tmp_path):
     window = MainWindow(settings=_empty_settings(tmp_path))
     qtbot.addWidget(window)
+    # FQ-007: New Project now CREATES + provisions the sandbox database, so the
+    # controller's db/sandbox.py seams are stubbed here -- no test may reach a
+    # real server, and none of these tests is about provisioning.
+    stub_sandbox_provisioning(window)
     return window
 
 

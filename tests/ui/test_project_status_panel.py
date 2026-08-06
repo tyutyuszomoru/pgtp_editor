@@ -24,6 +24,7 @@ from PySide6.QtCore import QSize
 
 from pgtp_editor.db.sandbox import SandboxCapabilities, SandboxMode, determine_project_tier
 from pgtp_editor.ui import project_status_model as psm
+from pgtp_editor.ui import project_status_panel
 from pgtp_editor.ui.project_status_model import NodeFamily, QualityState, build_diagram
 from pgtp_editor.ui.project_status_panel import (
     ProjectStatusPanel,
@@ -303,11 +304,65 @@ def test_sandbox1_is_two_step_clone_action():
 
 def test_sandbox1_offers_redo_when_data_is_already_cloned():
     panel = ProjectStatusPanel(
-        diagram=_full_diagram(sandbox_mode=SandboxMode.WITH_DATA, data_clone_done=True),
+        diagram=_full_diagram(
+            sandbox_schema_present=psm.SandboxFact.PRESENT,
+            sandbox_data_present=psm.SandboxFact.PRESENT,
+        ),
         on_run_data_clone=lambda: None,
     )
     panel.node_widget(NodeFamily.SANDBOX1).click()
     assert panel.last_window.action_button.text() == "Redo data clone"
+
+
+def test_sandbox1_never_says_schema_unless_a_schema_was_seen():
+    """BUG-035: the reported symptom was the literal word "schema" appearing for
+    a sandbox that had none. Neither the caption nor the detail line may claim
+    one in the unknown or not-provisioned states."""
+    for schema_fact in (psm.SandboxFact.UNKNOWN, psm.SandboxFact.ABSENT):
+        for data_fact in psm.SandboxFact:
+            panel = ProjectStatusPanel(
+                diagram=_full_diagram(
+                    sandbox_schema_present=schema_fact, sandbox_data_present=data_fact
+                )
+            )
+            state = panel.diagram.node(NodeFamily.SANDBOX1).state
+            caption = panel.node_widget(NodeFamily.SANDBOX1).state_label.text()
+            assert "schema" not in caption.lower(), (state, caption)
+            panel.node_widget(NodeFamily.SANDBOX1).click()
+            body = panel.last_window.body_text
+            assert "holds the schema" not in body.lower(), (state, body)
+
+
+def test_sandbox1_unknown_says_it_could_not_check_not_that_it_is_empty():
+    panel = ProjectStatusPanel(
+        diagram=_full_diagram(sandbox_schema_present=psm.SandboxFact.UNKNOWN)
+    )
+    assert panel.diagram.node(NodeFamily.SANDBOX1).state == "sandbox1_unknown"
+    assert panel.node_widget(NodeFamily.SANDBOX1).state_label.text() == "Not checked"
+    panel.node_widget(NodeFamily.SANDBOX1).click()
+    body = panel.last_window.body_text.lower()
+    assert "could not be inspected" in body
+    assert "not a report that it is empty" in body
+
+
+def test_sandbox1_not_provisioned_says_nothing_is_there_yet():
+    panel = ProjectStatusPanel(
+        diagram=_full_diagram(sandbox_schema_present=psm.SandboxFact.ABSENT)
+    )
+    node = panel.diagram.node(NodeFamily.SANDBOX1)
+    assert node.state == "sandbox1_not_provisioned"
+    # Interim art reuse (documented in the model): the node must still RENDER.
+    assert node.asset == "sandbox1_empty_drk.svg"
+    assert not panel.node_widget(NodeFamily.SANDBOX1).icon_label.pixmap().isNull()
+    assert (
+        panel.node_widget(NodeFamily.SANDBOX1).state_label.text() == "Nothing provisioned"
+    )
+
+
+def test_every_sandbox1_state_has_a_caption_and_a_detail_line():
+    for state in psm.Sandbox1State:
+        assert state.value in project_status_panel._STATE_CAPTIONS, state
+        assert state.value in ProjectStatusPanel._SANDBOX1_LINES, state
 
 
 def test_sandbox2_offers_install_only_when_not_installed():

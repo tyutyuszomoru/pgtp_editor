@@ -19,15 +19,30 @@
 A local project is a **folder the user chooses** -- not necessarily a git
 repository. This dialog collects that folder plus two OPTIONAL sections:
 
-- **Local sandbox** -- a Postgres connection whose **Test** button has one
-  specific job: verifying the connected user is a **superuser** (sandbox
-  provisioning needs `CREATE EXTENSION`), reusing `db/sandbox.py::probe` as
-  the same capability probe the later sandbox lane uses -- not a second,
-  ad hoc superuser check. This step also presents the **"with data" /
-  "without data"** provisioning choice (§18.5 D2a, settled 2026-08-05):
-  "without data" (the default) is the existing schema-only baseline path;
-  "with data" clones the target database via `pg_dump`/`pg_restore`
-  instead, once, at creation time -- never re-toggled later.
+- **Local sandbox** -- a Postgres **server** connection (host/port/user/
+  password) whose **Test** button has one specific job: verifying the
+  connected user is a **superuser** (sandbox provisioning needs
+  `CREATE EXTENSION`), reusing `db/sandbox.py::probe` as the same capability
+  probe the later sandbox lane uses -- not a second, ad hoc superuser check.
+  This step also presents the **"with data" / "without data"** provisioning
+  choice (§18.5 D2a, settled 2026-08-05): "without data" (the default) is the
+  existing schema-only baseline path; "with data" clones the target database
+  via `pg_dump`/`pg_restore` instead, once, at creation time -- never
+  re-toggled later.
+
+  **There is deliberately no "Database:" field (FQ-007).** The app does not ask
+  for an existing database and does not accept a typed name: the sandbox
+  database is **created** by the app, with a name it generates itself
+  (`ui/sandbox_controller.py::generate_sandbox_database_names`), because §18.5
+  D2's ownership convention -- `pgtp_sandbox_*` **plus** the
+  `pgtp-editor-sandbox:` `pg_database` comment marker -- is the only thing that
+  makes a sandbox safe to wipe, and `open_sandbox` refuses anything without
+  both. A user-typed name cannot satisfy it. `sandbox_params()` therefore
+  carries an **empty** `database`, and the created name is recorded into
+  `ProjectSettings.sandbox.database` by the host once provisioning succeeds.
+  The **Test** button probes the *maintenance* database
+  (`MAINTENANCE_DATABASE`), which is exactly the connection
+  `create_sandbox_database` will use.
 - **Git** -- server/user/checkout-branch fields, captured but **inert**
   (§18.2: "explicit TBD/placeholder only, not designed"). No Test button,
   no validation beyond being present -- nothing reads these fields yet
@@ -42,6 +57,7 @@ write themselves -- this dialog persists nothing on its own.
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import replace
 
 from PySide6.QtWidgets import (
     QDialog,
@@ -60,8 +76,17 @@ from PySide6.QtWidgets import (
 
 from pgtp_editor.db.config import ConnectionParams
 from pgtp_editor.db.ddl_project import GitConfig
-from pgtp_editor.db.sandbox import SandboxCapabilities, SandboxMode, probe
+from pgtp_editor.db.sandbox import (
+    SANDBOX_DB_PREFIX,
+    SandboxCapabilities,
+    SandboxMode,
+    probe,
+)
 from pgtp_editor.ui.async_task import run_async
+from pgtp_editor.ui.sandbox_controller import (
+    MAINTENANCE_DATABASE,
+    generate_sandbox_database_names,
+)
 
 Prober = Callable[[ConnectionParams], SandboxCapabilities]
 
@@ -101,16 +126,26 @@ class NewProjectDialog(QDialog):
         sandbox_group = QGroupBox("Local sandbox (optional)")
         self._sandbox_host_edit = QLineEdit()
         self._sandbox_port_edit = QLineEdit()
-        self._sandbox_database_edit = QLineEdit()
         self._sandbox_user_edit = QLineEdit()
         self._sandbox_password_edit = QLineEdit()
         self._sandbox_password_edit.setEchoMode(QLineEdit.EchoMode.Password)
         sandbox_form = QFormLayout()
         sandbox_form.addRow("Host:", self._sandbox_host_edit)
         sandbox_form.addRow("Port:", self._sandbox_port_edit)
-        sandbox_form.addRow("Database:", self._sandbox_database_edit)
         sandbox_form.addRow("User:", self._sandbox_user_edit)
         sandbox_form.addRow("Password:", self._sandbox_password_edit)
+        # FQ-007: no "Database:" row on purpose -- see the module docstring. The
+        # app creates the sandbox database itself, auto-named, so the ownership
+        # convention (`pgtp_sandbox_*` + marker comment) always holds.
+        self._sandbox_database_caveat = QLabel(
+            "PGTP Editor CREATES the sandbox database on this server itself, "
+            f"named '{SANDBOX_DB_PREFIX}…' with its own ownership marker, and "
+            "provisions it (plus plpgsql_check) when the project is created. "
+            "It only ever writes to a database it created, so there is nothing "
+            "to name or create by hand — and no existing database is touched."
+        )
+        self._sandbox_database_caveat.setWordWrap(True)
+        sandbox_form.addRow(self._sandbox_database_caveat)
         self._sandbox_test_button = QPushButton("Test")
         self._sandbox_test_button.clicked.connect(self.test_sandbox)
         self._sandbox_status_label = QLabel("")
@@ -201,13 +236,29 @@ class NewProjectDialog(QDialog):
         return self._folder_edit.text()
 
     def sandbox_params(self) -> ConnectionParams:
+        """The sandbox **server** connection. `database` is deliberately empty
+        (FQ-007): the database does not exist yet and is not named by the user --
+        the host fills this in with whatever `provision_new_database` created."""
         return ConnectionParams(
             host=self._sandbox_host_edit.text(),
             port=self._sandbox_port_edit.text(),
-            database=self._sandbox_database_edit.text(),
+            database="",
             user=self._sandbox_user_edit.text(),
             password=self._sandbox_password_edit.text(),
         )
+
+    def sandbox_admin_params(self) -> ConnectionParams:
+        """The same connection pointed at the **maintenance** database -- what
+        `create_sandbox_database` needs, since PostgreSQL forbids
+        `CREATE DATABASE` inside the database being created. No separate
+        admin-connection field exists on purpose (FQ-007 Q3)."""
+        return replace(self.sandbox_params(), database=MAINTENANCE_DATABASE)
+
+    def sandbox_database_names(self) -> list[str]:
+        """The auto-generated `pgtp_sandbox_*` candidate names for this project,
+        in the order the host should try them: the first one free on the server
+        is created, a taken one is skipped (never reused, never dropped)."""
+        return generate_sandbox_database_names(self.name())
 
     def sandbox_mode(self) -> SandboxMode:
         """The sandbox provisioning choice (§18.5 D2a) -- "without data"
@@ -229,11 +280,15 @@ class NewProjectDialog(QDialog):
         """Verify the sandbox connection specifically for **superuser**, not
         merely "can connect" -- sandbox provisioning needs `CREATE EXTENSION`
         (§18.5 D2). Reuses `db/sandbox.py::probe`, run off the GUI thread so
-        an unreachable host can't freeze the dialog."""
+        an unreachable host can't freeze the dialog.
+
+        Probes the **maintenance** database (FQ-007), because that is the exact
+        connection project creation will use to `CREATE DATABASE`: there is no
+        sandbox database to probe yet."""
         self._sandbox_test_button.setEnabled(False)
         self._sandbox_status_label.setStyleSheet("")
         self._sandbox_status_label.setText("Testing…")
-        params = self.sandbox_params()
+        params = self.sandbox_admin_params()
 
         def on_result(caps: SandboxCapabilities) -> None:
             self._apply_sandbox_probe_result(caps)

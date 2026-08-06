@@ -17,6 +17,7 @@ import logging
 import os
 import re
 import shutil
+from dataclasses import replace
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QSettings, QTimer
@@ -91,7 +92,7 @@ from pgtp_editor.ui.ddl_object_editor import CHECK_PREFIX, DdlObjectRef
 from pgtp_editor.ui.sandbox_controller import SandboxController, SandboxOperation
 from pgtp_editor.ui.new_routine_dialog import NewRoutineDialog
 from pgtp_editor.ui.new_trigger_dialog import NewTriggerDialog
-from pgtp_editor.ui.project_status_model import build_diagram, quality_state
+from pgtp_editor.ui.project_status_model import SandboxFact, build_diagram, quality_state
 from pgtp_editor.ui.project_status_panel import ProjectStatusPanel
 from pgtp_editor.ui.project_settings_dialog import ProjectSettingsDialog
 from pgtp_editor.ui.coherence_controller import CoherenceController
@@ -2068,6 +2069,69 @@ class MainWindow(QMainWindow):
         save_settings(folder, settings)
         self._set_active_ddl_project(folder, settings)
         self.statusBar().showMessage(f"Created project: {folder}", 5000)
+        # FQ-007: the sandbox step CREATES and provisions the sandbox database
+        # now, rather than recording a name the user typed. Last, so a failed
+        # sandbox never costs the user the project (§18's tier-2 degrade).
+        self._provision_new_project_sandbox(dialog)
+
+    def _provision_new_project_sandbox(self, dialog: NewProjectDialog) -> None:
+        """Create + provision + `plpgsql_check`-install this project's sandbox
+        database, off the GUI thread, through the one `SandboxController`
+        (FQ-007, §18.2/§18.5 D2).
+
+        The user supplies only the **server** connection and the with-data /
+        without-data choice; the database itself is created here with an
+        auto-generated `pgtp_sandbox_*` name (`dialog.sandbox_database_names()`),
+        against the maintenance database (`dialog.sandbox_admin_params()`) since
+        `CREATE DATABASE` cannot run inside the database being created.
+
+        No-op when the sandbox group was left blank -- a project with no sandbox
+        is a perfectly good tier-2 "quality project", not an error, and nothing
+        may connect anywhere as a side effect of creating one.
+        """
+        settings = self._ddl_project_settings
+        if settings is None or not settings.sandbox.host:
+            return
+        candidates = dialog.sandbox_database_names()
+        self.sandbox_controller.provision_new_database(
+            self._on_new_project_sandbox_provisioned,
+            admin_params=dialog.sandbox_admin_params(),
+            name_candidates=candidates,
+        )
+
+    def _on_new_project_sandbox_provisioned(self, result) -> None:
+        """Record what the sandbox provisioning ACTUALLY did (FQ-007).
+
+        On success the created database name is written into
+        `ProjectSettings.sandbox` so a later Sandbox Setup…/`reset()` re-opens the
+        same database. The recorded `sandbox_mode` is **not** rewritten -- D2a's
+        mode is the user's one-time choice; when a run could not honor it (a
+        "with data" sandbox with no target to clone from) the result's reason says
+        so rather than the project quietly becoming a different kind of sandbox.
+
+        On failure **nothing is recorded**: the project keeps its sandbox
+        *server* details (so the user can retry) but claims no sandbox database,
+        which is what makes the reported capability tier honest rather than
+        derived from what was asked for. Either way the reason string rides the
+        ordinary `operation_finished` path into the Audit panel, never swallowed.
+        """
+        settings = self._ddl_project_settings
+        folder = self._ddl_project_folder
+        if settings is None or folder is None:
+            return
+        database = (getattr(result, "database_name", "") or "").strip()
+        if getattr(result, "ok", False) and database:
+            updated = replace(
+                settings, sandbox=replace(settings.sandbox, database=database)
+            )
+            save_settings(folder, updated)
+            self._ddl_project_settings = updated
+            self.statusBar().showMessage(
+                f"Created and provisioned sandbox database: {database}", 5000
+            )
+        # Re-probe either way: the stored tier/capability status must describe the
+        # sandbox that now exists (or the one that does not), never the intent.
+        self.refresh_project_capability_status()
 
     def _open_ddl_project(self, on_ready=None) -> None:
         folder = modals.QFileDialog.getExistingDirectory(
@@ -2615,6 +2679,15 @@ class MainWindow(QMainWindow):
         self._wire_ddl_object_panel_reporting(panel, ref)
 
     # --- §18.8: the Project Status window ------------------------------------
+    #: BUG-035: the last sandbox *contents* inspection, as
+    #: `(sandbox ConnectionParams, schema fact, data fact)`, or None when the
+    #: sandbox has never been inspected. The params are stored alongside the
+    #: facts on purpose: a result is only used for the very connection it was
+    #: measured against, so switching or closing a project cannot leave a
+    #: previous sandbox's facts describing the current one. Class-level default
+    #: so no instance ever reads it before the first inspection.
+    _ddl_sandbox_content_facts = None
+
     def _project_status_target(self):
         """The target `ConnectionParams` the Quality node speaks for, or None.
 
@@ -2626,36 +2699,201 @@ class MainWindow(QMainWindow):
         settings = self._ddl_project_settings
         return settings.target if settings is not None else load_connection(self._settings)
 
+    @staticmethod
+    def _target_is_configured(target) -> bool:
+        """Whether `target` is a real, usable target profile (BUG-030 facet a).
+
+        `ProjectSettings.target` is `field(default_factory=ConnectionParams)`,
+        so with a project open it is **never None** -- an `is not None` test
+        answers "does the dataclass exist", which is always yes, and made
+        `QualityState.NOT_SET_UP` unreachable while a brand-new project's
+        blank target rendered green "Connected". Configured therefore means
+        "has a host", the same convention the sandbox side already uses
+        (`sandbox_configured = bool(sandbox_params.host)`). One place, because
+        the diagram's state and the click-through's details must agree about
+        it.
+        """
+        return target is not None and bool(target.host)
+
+    def _project_status_sandbox_facts(self):
+        """The verified `(schema, data)` facts for the CURRENT sandbox.
+
+        `(UNKNOWN, UNKNOWN)` whenever no project is open, no sandbox is
+        configured, or the stored inspection belongs to a different sandbox
+        connection -- never a definite answer inherited from elsewhere.
+        """
+        settings = self._ddl_project_settings
+        facts = self._ddl_sandbox_content_facts
+        if settings is None or not settings.sandbox.host or facts is None:
+            return SandboxFact.UNKNOWN, SandboxFact.UNKNOWN
+        params, schema_fact, data_fact = facts
+        if params != settings.sandbox:
+            return SandboxFact.UNKNOWN, SandboxFact.UNKNOWN
+        return schema_fact, data_fact
+
     def _build_project_status_diagram(self):
         """Current `ProjectStatusDiagram`, or None when nothing to show.
 
         Quality has no backing field on `ProjectCapabilityStatus` (which
         models the sandbox side only), so it is assembled here from whether a
-        target connection is configured at all plus the last reachability
+        target connection is really configured (`_target_is_configured`, not
+        "the dataclass exists" -- BUG-030 facet a) plus the last reachability
         probe's result (BUG-030: green must mean "reachable", not merely
         "a profile exists") -- §18.8's not_set_up / error / connection_ok
         trio, mirroring the Sandbox node's own pattern.
+
+        Sandbox1 is fed the two VERIFIED facts from
+        `_refresh_sandbox_provisioning_status`, never the recorded
+        `sandbox_mode` (BUG-035): the mode is a radio button, and reading it
+        back as "the schema is provisioned" is what made an empty sandbox
+        report "Schema only". Un-inspected stays `UNKNOWN`.
         """
-        settings = self._ddl_project_settings
         target = self._project_status_target()
         quality = quality_state(
-            configured=target is not None, probe_error=self._ddl_target_probe_error
+            configured=self._target_is_configured(target),
+            probe_error=self._ddl_target_probe_error,
         )
-        sandbox_mode = settings.sandbox_mode if settings is not None else SandboxMode.SCHEMA_ONLY
+        schema_fact, data_fact = self._project_status_sandbox_facts()
         return build_diagram(
             status=self._ddl_project_capability_status,
             quality=quality,
-            sandbox_mode=sandbox_mode,
-            data_clone_done=sandbox_mode is SandboxMode.WITH_DATA,
+            sandbox_schema_present=schema_fact,
+            sandbox_data_present=data_fact,
             dark=not self._light_theme_action.isChecked(),
         )
 
-    @staticmethod
-    def _connection_summary_for(params) -> str:
+    def _inspect_sandbox_provisioning(self, params):
+        """Ask the sandbox database what it actually contains (BUG-035).
+
+        Returns `(schema fact, data fact)`. **Never raises** -- every failure
+        becomes `SandboxFact.UNKNOWN`, mirroring `db/sandbox.py::probe`'s
+        never-raises contract, because "could not check" must never be
+        reported as "genuinely not there".
+
+        Two facts, one connection:
+
+        1. *Schema presence* counts relations + routines living outside the
+           system schemas and outside the reserved bookkeeping schema (which a
+           bare-but-owned sandbox always has, so counting it would make every
+           unprovisioned sandbox look provisioned). Extension-owned objects are
+           excluded via `pg_depend`, so installing `plpgsql_check` cannot pass
+           for provisioning.
+        2. *Data presence* asks each of those base tables for one row via
+           `query_to_xml` -- `LIMIT 1`, so it is an existence test rather than
+           a full count, and exact rather than a guess off `reltuples` (which
+           `pg_restore` leaves at -1 and which would therefore read a freshly
+           cloned database as empty).
+
+        The data query needs XML support in the server build; if it fails, the
+        schema question is re-asked on its own so a missing `query_to_xml`
+        costs only the data fact, never the schema fact this bug was about.
+
+        This is the injectable seam for tests: replace it on the instance
+        (`window._inspect_sandbox_provisioning = fake`) exactly like
+        `_probe_sandbox_capabilities`.
+        """
+        from pgtp_editor.db.introspect import run_queries  # noqa: PLC0415 -- lazy driver
+        from pgtp_editor.db.sandbox import BOOKKEEPING_SCHEMA  # noqa: PLC0415
+
+        # A fixed, validated identifier constant -- not user input; quoted as a
+        # SQL string literal because it is compared as a NAME, not spelled as one.
+        reserved = "'" + BOOKKEEPING_SCHEMA.replace("'", "''") + "'"
+        app_schema = f"n.nspname <> {reserved} AND n.nspname !~ '^pg_' AND n.nspname <> 'information_schema'"
+        schema_sql = f"""
+            SELECT count(*) FROM (
+                SELECT c.oid FROM pg_class c
+                  JOIN pg_namespace n ON n.oid = c.relnamespace
+                 WHERE c.relkind IN ('r', 'p', 'v', 'm', 'f') AND {app_schema}
+                   AND NOT EXISTS (
+                       SELECT 1 FROM pg_depend d
+                        WHERE d.objid = c.oid AND d.classid = 'pg_class'::regclass
+                          AND d.deptype = 'e')
+                UNION ALL
+                SELECT p.oid FROM pg_proc p
+                  JOIN pg_namespace n ON n.oid = p.pronamespace
+                 WHERE {app_schema}
+                   AND NOT EXISTS (
+                       SELECT 1 FROM pg_depend d
+                        WHERE d.objid = p.oid AND d.classid = 'pg_proc'::regclass
+                          AND d.deptype = 'e')
+            ) app_objects
+        """
+        data_sql = f"""
+            SELECT count(*) FROM pg_class c
+              JOIN pg_namespace n ON n.oid = c.relnamespace
+             WHERE c.relkind IN ('r', 'p') AND {app_schema}
+               AND NOT EXISTS (
+                   SELECT 1 FROM pg_depend d
+                    WHERE d.objid = c.oid AND d.classid = 'pg_class'::regclass
+                      AND d.deptype = 'e')
+               AND (xpath('/row/present/text()', query_to_xml(
+                       format('SELECT count(*) AS present FROM '
+                              '(SELECT 1 FROM %I.%I LIMIT 1) probe',
+                              n.nspname, c.relname),
+                       false, true, '')))[1]::text::bigint > 0
+        """
+
+        def fact(rows) -> SandboxFact:
+            return SandboxFact.PRESENT if int(rows[0][0]) > 0 else SandboxFact.ABSENT
+
+        try:
+            schema_rows, data_rows = run_queries(params, [schema_sql, data_sql])
+        except Exception:  # noqa: BLE001 -- unknown, never a definite absence
+            try:
+                (schema_rows,) = run_queries(params, [schema_sql])
+            except Exception:  # noqa: BLE001
+                return SandboxFact.UNKNOWN, SandboxFact.UNKNOWN
+            return fact(schema_rows), SandboxFact.UNKNOWN
+        return fact(schema_rows), fact(data_rows)
+
+    def _refresh_sandbox_provisioning_status(self) -> None:
+        """Re-inspect what the sandbox database actually holds (BUG-035).
+
+        The Sandbox1 node's own probe, deliberately separate from the sandbox
+        *capability* probe: that one answers "can we reach it and what can it
+        do", this one answers "what is in it". Runs off the GUI thread for the
+        same reason, and clears the stored facts to nothing (rather than to a
+        default) whenever there is no sandbox to ask.
+        """
+        settings = self._ddl_project_settings
+        if settings is None or not settings.sandbox.host:
+            self._ddl_sandbox_content_facts = None
+            return
+        sandbox_params = settings.sandbox
+
+        def do_inspect():
+            return self._inspect_sandbox_provisioning(sandbox_params)
+
+        def on_result(facts) -> None:
+            schema_fact, data_fact = facts
+            self._ddl_sandbox_content_facts = (sandbox_params, schema_fact, data_fact)
+            window = self._project_status_window
+            if window is not None:
+                window.set_diagram(self._build_project_status_diagram())
+
+        def on_error(exc: BaseException) -> None:
+            # `_inspect_sandbox_provisioning` never raises, so this only guards
+            # a broken injected seam -- surfaced, never silently swallowed, and
+            # the facts stay UNKNOWN rather than degrading to "absent".
+            self._ddl_sandbox_content_facts = None
+            self.audit_panel.addItem(
+                QListWidgetItem(f"[Project] Sandbox content inspection failed: {exc}")
+            )
+
+        self._run_async(do_inspect, on_result=on_result, on_error=on_error)
+
+    def _connection_summary_for(self, params) -> str:
         """`user@host:port/db` for a status window, or a plain "not
         configured" line. Routed through `connection_summary` so no password
-        can reach the window text."""
-        if params is None:
+        can reach the window text.
+
+        BUG-030 facet a: a host-less `ConnectionParams` is *not* a connection,
+        so it gets the "Not configured." line too. Without this the Quality
+        click-through printed a degenerate `@:/`-shaped summary -- phantom
+        details for a connection that does not exist -- next to a status line
+        that (also wrongly) said "Connected".
+        """
+        if not self._target_is_configured(params):
             return "Not configured."
         return connection_summary(params)
 
@@ -2671,6 +2909,7 @@ class MainWindow(QMainWindow):
         existing = self._project_status_window
         if existing is not None:
             self.refresh_project_capability_status()
+            self._refresh_sandbox_provisioning_status()
             existing.set_diagram(self._build_project_status_diagram())
             # BUG-031: closing the window only HIDES it (no WA_DeleteOnClose,
             # so `destroyed` never fires and the cached instance is never
@@ -2688,6 +2927,10 @@ class MainWindow(QMainWindow):
 
         def on_refresh():
             self.refresh_project_capability_status()
+            # BUG-035: Sandbox1's facts are re-inspected on the same trigger as
+            # everything else the window shows, so "opening the window is a
+            # fresh probe" (§18.8) holds for the node's contents too.
+            self._refresh_sandbox_provisioning_status()
             return self._build_project_status_diagram()
 
         # Sandbox1's "run data clone" and Sandbox2's "install plpgsql_check"

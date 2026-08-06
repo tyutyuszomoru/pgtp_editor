@@ -174,16 +174,49 @@ def test_sandbox_node_has_exactly_three_visual_states():
 # ---------------------------------------------------------------------------
 # Sandbox1 -- data fill
 # ---------------------------------------------------------------------------
-def test_sandbox1_schema_only_is_empty_regardless_of_clone_flag():
-    assert psm.sandbox1_state(SandboxMode.SCHEMA_ONLY, False) is psm.Sandbox1State.EMPTY
-    assert psm.sandbox1_state(SandboxMode.SCHEMA_ONLY, True) is psm.Sandbox1State.EMPTY
+def test_sandbox1_unverified_schema_is_unknown_never_a_definite_state():
+    """BUG-035: "could not check" must never be reported as "not there" -- and
+    certainly never as "Schema only"."""
+    for data in psm.SandboxFact:
+        assert (
+            psm.sandbox1_state(psm.SandboxFact.UNKNOWN, data) is psm.Sandbox1State.UNKNOWN
+        )
 
 
-def test_sandbox1_with_data_is_filled_only_once_the_clone_landed():
-    assert psm.sandbox1_state(SandboxMode.WITH_DATA, True) is psm.Sandbox1State.FILLED
-    # No "clone in progress"/"clone failed" asset exists and inventing one is
-    # forbidden: both fall back to EMPTY, since the data is not there.
-    assert psm.sandbox1_state(SandboxMode.WITH_DATA, False) is psm.Sandbox1State.EMPTY
+def test_sandbox1_verified_absent_schema_is_not_provisioned():
+    for data in psm.SandboxFact:
+        assert (
+            psm.sandbox1_state(psm.SandboxFact.ABSENT, data)
+            is psm.Sandbox1State.NOT_PROVISIONED
+        )
+
+
+def test_sandbox1_schema_only_needs_a_schema_that_was_actually_seen():
+    assert (
+        psm.sandbox1_state(psm.SandboxFact.PRESENT, psm.SandboxFact.ABSENT)
+        is psm.Sandbox1State.EMPTY
+    )
+    # Unverified data resolves DOWNWARD: never a claim that a clone landed.
+    assert (
+        psm.sandbox1_state(psm.SandboxFact.PRESENT, psm.SandboxFact.UNKNOWN)
+        is psm.Sandbox1State.EMPTY
+    )
+
+
+def test_sandbox1_is_filled_only_from_data_actually_found():
+    assert (
+        psm.sandbox1_state(psm.SandboxFact.PRESENT, psm.SandboxFact.PRESENT)
+        is psm.Sandbox1State.FILLED
+    )
+
+
+def test_sandbox1_state_takes_no_sandbox_mode_at_all():
+    """The whole point of BUG-035: the configured mode is a radio button, not a
+    fact about the sandbox, so it must not be reachable from this derivation."""
+    names = psm.sandbox1_state.__code__.co_varnames[
+        : psm.sandbox1_state.__code__.co_argcount
+    ]
+    assert names == ("schema_present", "data_present")
 
 
 # ---------------------------------------------------------------------------
@@ -265,8 +298,8 @@ def test_diagram_full_shape_for_a_working_project():
     diagram = psm.build_diagram(
         status=_status_development(),
         quality=psm.QualityState.CONNECTION_OK,
-        sandbox_mode=SandboxMode.WITH_DATA,
-        data_clone_done=True,
+        sandbox_schema_present=psm.SandboxFact.PRESENT,
+        sandbox_data_present=psm.SandboxFact.PRESENT,
     )
     assert [node.family for node in diagram.nodes] == [
         psm.NodeFamily.QUALITY,
@@ -336,7 +369,9 @@ def test_diagram_node_state_and_asset_agree():
         status=_status_unreachable(), quality=psm.QualityState.OFFLINE, dark=True
     )
     for node in diagram.nodes:
-        assert node.asset == f"{node.state}_drk.svg"
+        # Aliased states (BUG-035's two new Sandbox1 rungs, which have no art
+        # yet) resolve to the file that exists; every other state is identity.
+        assert node.asset == f"{psm.resolve_asset_stem(node.state)}_drk.svg"
     for connector in diagram.connectors:
         assert connector.asset == f"{connector.kind.value}_drk.svg"
 
@@ -378,10 +413,32 @@ def test_every_asset_exists_on_disk(stem, dark):
 def test_all_asset_stems_covers_every_family_and_connector():
     stems = psm.all_asset_stems()
     assert len(stems) == len(set(stems))  # no duplicates
-    # 3 quality + 3 app + 3 sandbox + 2 sandbox1 + 2 sandbox2 + 3 connectors
+    # 3 quality + 3 app + 3 sandbox + 2 sandbox1 (4 states, 2 drawn) +
+    # 2 sandbox2 + 3 connectors
     assert len(stems) == 16
     for family in ("quality_", "app_", "sandbox_", "sandbox1_", "sandbox2_", "connector_"):
         assert any(stem.startswith(family) for stem in stems), family
+
+
+def test_every_aliased_stem_names_a_real_state_and_a_drawn_target():
+    """BUG-035's interim aliases must point *from* a real state *to* real art —
+    an alias to a stem that does not exist would ship as a blank node, which is
+    the failure mode the alias table exists to avoid."""
+    vocabulary = set(psm.all_state_stems())
+    drawn = set(psm.all_asset_stems())
+    for alias, target in psm.ASSET_STEM_ALIASES.items():
+        assert alias in vocabulary, alias
+        assert target in drawn, target
+        assert alias not in drawn, f"{alias} is aliased yet also demanded as a file"
+
+
+def test_state_vocabulary_is_wider_than_the_drawn_asset_set():
+    """Guards the alias mechanism itself: if someone deletes an alias without
+    adding art, `all_asset_stems` starts demanding the missing file and the
+    on-disk sweep fails loudly instead of a node silently going blank."""
+    assert set(psm.all_asset_stems()) < set(psm.all_state_stems())
+    assert "sandbox1_unknown" not in psm.all_asset_stems()
+    assert "sandbox1_not_provisioned" not in psm.all_asset_stems()
 
 
 def test_every_diagram_the_model_can_build_resolves_to_real_files():
@@ -401,14 +458,14 @@ def test_every_diagram_the_model_can_build_resolves_to_real_files():
     seen = 0
     for status in statuses:
         for quality in psm.QualityState:
-            for mode in SandboxMode:
-                for clone_done in (False, True):
+            for schema_fact in psm.SandboxFact:
+                for data_fact in psm.SandboxFact:
                     for dark in (False, True):
                         diagram = psm.build_diagram(
                             status=status,
                             quality=quality,
-                            sandbox_mode=mode,
-                            data_clone_done=clone_done,
+                            sandbox_schema_present=schema_fact,
+                            sandbox_data_present=data_fact,
                             dark=dark,
                         )
                         for asset in diagram.assets():
