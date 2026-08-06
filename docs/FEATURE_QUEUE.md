@@ -155,7 +155,7 @@ menu-location details folded into "Proposed approach" above) before this entry w
 ---
 
 ## FQ-003: Unify DB Check (both directions) + Table References into one "Database/XML Coherence" view
-**Status:** QUEUED
+**Status:** PROCESSED (113fbfa) — the merged Database/XML Coherence view shipped; this entry was never flipped at the time.
 **Requested:** 2026-08-06
 **Idea (verbatim/summarized):** "Unite the Database→XML check, XML→Database check, and Table References
 panel into a single 'Database/XML Coherence' view. Our truth is always the db. The xml represents the
@@ -425,7 +425,7 @@ request, so no future queue-processing pass re-proposes it.
 ---
 
 ## FQ-006: Create Page/Detail/Lookup should open a new draft tab, not splice/copy-to-clipboard
-**Status:** QUEUED
+**Status:** PROCESSED (f1ec13c) — all three kinds open a draft tab; the `</Pages>` splice, the clipboard copy and `_dedupe_file_name` are DELETED, and the duplicate check is now a non-blocking status note.
 **Requested:** 2026-08-06
 **Idea (verbatim/summarized):** "when a new page, new detail is created from database view, that new
 page and detail should land in a new tab editor window. not on clipboard and not in the main xml editor,
@@ -538,7 +538,7 @@ unless code review says otherwise).
 ---
 
 ## FQ-007: New Project sandbox step should CREATE + provision the sandbox DB (auto-named), not ask for an existing one
-**Status:** QUEUED
+**Status:** PROCESSED (1c1a2c1) — New Project takes a server connection only and creates + provisions the auto-named database itself. NOTE two honest limits: a fresh project has no target, so the sandbox is provisioned EMPTY (usable, but an object referencing target tables fails until a target is set and the sandbox re-provisioned); and the retry/collision logic lives in `ui/sandbox_controller.py` rather than `db/sandbox.py` as the entry proposed. Spec fold-in for §18.2 / §18.5 D2 still owed.
 **Requested:** 2026-08-06
 **Idea (verbatim/summarized):** "Project creation: sandbox setup asks for database name, and checks for
 existence. instead it should create the database and use it as sandbox (installing also plpgsql_check
@@ -654,5 +654,195 @@ whether collision detection probes `pg_database` up front or catches the duplica
 retries; exact off-thread progress/status affordance in the dialog vs. the main window during eager
 provisioning; and precise degrade-reason wording surfaced to the user beyond `install_gate`'s existing
 strings.
+
+---
+
+## FQ-008: Composable P>1/D>1/L>1 checkboxes in the Database/XML Coherence view
+**Status:** PROCESSED (eb7aa50) — three AND-composing role checkboxes with the panel's own filter banner. Composition with the mismatch toggle is scope-then-select, NOT a per-row AND, because a per-row AND silently hides flagged column/reference rows under a qualifying relation. Spec note owed: §17's line saying the mismatch toggle "needs its own filter predicate … nothing pre-packaged covers it" is now stale.
+**Requested:** 2026-08-06
+**Idea (verbatim/summarized):** "in the Database coherence window I'd like to have filter for P>1 D>1
+L>1, also in combination" — checkboxes to filter the coherence view down to tables/views used on more
+than one Page, more than one Detail, and/or more than one Lookup, combinable. Converged through three
+rounds of direct clarifying Q&A with the requester plus a code-verification pass; this entry records the
+settled design, not an open elaboration.
+
+**Problem:** The merged "Database/XML Coherence" view (shipped from FQ-003) in
+`pgtp_editor/ui/coherence_panel.py` has exactly one existing filter mechanism today: a plain `QCheckBox`
+labeled "Show only mismatches" (`self.filter_checkbox`, line 136), wired to `_rebuild()` (line 141).
+`_rebuild()` (lines 209-233) is a **binary, non-composable** rebuild: `only_mismatches =
+self.filter_checkbox.isChecked()` then `shown = self._tree.filtered() if only_mismatches else
+self._tree` (lines 215-216) — either the full tree or the one hardcoded filtered tree, never a
+composition of independent predicates. `CoherenceTree.filtered()` (`pgtp_editor/db/coherence.py`, lines
+149-158) builds a pruned tree via `_prune_branch` (line 189) calling `filter_flagged` (line 174), which
+recursively keeps only flagged nodes and their ancestors, applied to both the "Tables and Views" branch
+and the "Pages" branch — the precedent for "a filter spans both branches," which the requester wants
+matched. The "(P# D# L#)" badge is already rendered per relation-level row
+(`coherence_panel.py::_badge_text()`, line 325), reading directly from `db/compare.py`'s
+`TableCheck.page_count`/`.detail_count`/`.lookup_count` — the exact three numbers the new filter tests.
+This data is already computed and already displayed; the filter needs no new data source, only a new
+predicate over data that already exists on every row.
+
+**Proposed approach:** Add three `QCheckBox`es ("P>1"/"D>1"/"L>1") next to the existing "Show only
+mismatches" checkbox in `coherence_panel.py`, all wired to the same `_rebuild()` path. Generalize
+`CoherenceTree.filtered()`/`filter_flagged` (`db/coherence.py`) to accept an injected predicate function
+over a `TableCheck`-bearing node (rather than the current hardcoded "is this node flagged" check), so
+`_rebuild()` builds one combined predicate — `is_mismatch_flagged` (only if that checkbox is on) AND
+`page_count > 1` (only if P>1 is checked) AND `detail_count > 1` (only if D>1 is checked) AND
+`lookup_count > 1` (only if L>1 is checked) — and passes that single predicate through the existing
+both-branches pruning machinery unchanged. No new data source needed (`page_count`/`detail_count`/
+`lookup_count` already exist on every `TableCheck`); this is purely a predicate-composition and
+small-UI change, not new plumbing. Three settled decisions from direct Q&A with the requester:
+1. **The three P/D/L checkboxes combine with AND, not OR.** Checking more than one narrows the result
+   further — a table must satisfy every checked condition, matching how checkbox filters normally
+   stack. Confirmed: "ALL checked must hold (AND)."
+2. **Composes with the existing "Show only mismatches" toggle — both can be active simultaneously.**
+   E.g. "Show only mismatches" + "P>1" together shows only mismatched tables that are also used on more
+   than one page. This requires reworking `_rebuild()`'s current binary `only_mismatches` bool into a
+   composable predicate — build one combined predicate function (mismatch-flagged AND
+   all-checked-P/D/L-conditions) and pass it into a generalized `CoherenceTree.filtered(predicate)`
+   rather than the current hardcoded `filter_flagged`. Confirmed: "Yes, compose."
+3. **The filter prunes both branches — "Tables and Views" and "Pages" — matching the mismatch toggle's
+   existing precedent.** A table hidden by the P/D/L filter also disappears from the "Pages" tree's
+   Page/Detail/Lookup reference nodes that point at it, keeping the two branches consistent with each
+   other while the filter is active. Confirmed: "Both branches."
+
+**Alternatives considered:** An OR-combination reading ("any of the checked conditions") was considered
+and rejected — confirmed with the requester (AND is what "in combination" means here), since OR would
+answer a different question ("find any kind of heavy reuse") than what was asked ("narrow down by
+combined criteria"). A `QSortFilterProxyModel`-based approach mirroring the Caption Management panel's
+heavier multi-filter apparatus (`pgtp_editor/ui/caption_management_panel.py`'s preset predicate +
+find/regex + per-column checkbox dropdowns + active-filter banner + `_CaptionFilterProxyModel`, roughly
+lines 324-500) was considered as a UI-consistency option and rejected as over-scoped for three fixed
+boolean conditions — the coherence panel's existing plain-`QCheckBox` style (matching the current
+mismatch toggle) is the right-sized fit, not a proxy-model/banner-based approach. Noted explicitly so
+whoever implements this doesn't over-build.
+
+**Suggested placement:** EXTEND §17 (Database/XML Coherence view) in `CONSOLIDATED_SPEC.md`, in the same
+subsection that documents the mismatch toggle ("3. Mismatch toggle...", spec lines ~1618-1631) — this is
+a direct sibling of that toggle, not a new section. Whoever implements this should generalize the
+mismatch predicate into the same composable-predicate mechanism the P/D/L checkboxes use, so the spec
+text currently reading "the toggle needs its own filter predicate spanning both branches — nothing
+pre-packaged covers it" (spec lines ~1629-1631) gets updated to describe the resulting general
+composable-predicate design instead of the current one-off. Verified still accurate against code at
+triage time: `pgtp_editor/ui/coherence_panel.py` (`filter_checkbox` line 136, `_rebuild` lines 209-233,
+`_badge_text` line 325) and `pgtp_editor/db/coherence.py` (`CoherenceTree` line 134, `filtered()` line
+149, `filter_flagged` line 174, `_prune_branch` line 189).
+
+**Open questions:** none — all three (AND vs. OR combination, composability with the mismatch toggle,
+both-branches pruning) were resolved directly with the requester and are folded into "Proposed approach"
+above. Implementation-level details left to whoever picks this up: exact checkbox layout/ordering
+relative to the existing "Show only mismatches" checkbox; exact predicate-injection signature for
+`CoherenceTree.filtered()`/`filter_flagged` (e.g. `Callable[[CoherenceNode], bool]` vs. a small predicate
+object); and whether "P>1" etc. should be full words in a tooltip (e.g. "more than one Page") given the
+existing "(P# D# L#)" badge already establishes the P/D/L abbreviation convention in this same view.
+
+---
+
+## FQ-009: Offer "run on sandbox / run on quality" when deploying a DDL object edit
+**Status:** QUEUED
+**Requested:** 2026-08-06
+**Idea (verbatim/summarized):** "DDL explorer: neither checkout nor edit has the option to save to the
+database. There should be on Ctrl+S after saving the option to run on sandbox or run on quality node."
+
+**Problem:** The requester correctly observes that saving a DDL object in the editable DDL object tab
+(`pgtp_editor/ui/ddl_object_editor.py`, opened from the DDL Explorer via checkout or edit) only persists
+LOCALLY. `MainWindow._save_ddl_object_editor` (`pgtp_editor/ui/main_window.py:2893`) writes the buffer to
+a `.sql` path and "Never touches a database" — there is no save-time affordance to apply the DDL to an
+actual database. What the requester is asking for — a post-save choice to run the edited DDL against the
+SANDBOX or the QUALITY (target) node — is **already a settled, named design** in the spec: the
+**"Deploy this edit…"** picker (§18.5, settled 2026-08-05, `CONSOLIDATED_SPEC.md` lines ~3612-3650),
+which presents the three coexisting per-edit destinations (Apply to Sandbox / Save for a future batch
+deploy / Apply to Target) and delegates to each gesture's existing wiring. So this is NOT a missing
+feature at the design level; it is (a) a discoverability gap — the affordance exists but the requester
+didn't find it — and (b) a partially-built lane, since only Apply to Sandbox is wired today and Apply to
+Target ("quality node") is deliberately unwired pending its preconditions. The requester has confirmed
+(2026-08-06) that the resolution is exactly this: keep the picker, make it discoverable, and wire the
+quality leg — NOT a save-time prompt (see Proposed approach / Open questions for the settled decisions).
+
+Concretely, what already exists in code vs. what is missing:
+- **"Deploy this edit…" picker** — BUILT in the panel: context-menu item at
+  `ddl_object_editor.py:777` (`menu.addAction("Deploy this edit…", self.deploy_this_edit)`), the
+  `deploy_this_edit()` method (line ~1102), and the three-destination enum (line ~94). Also surfaced as a
+  Database-menu entry (spec lines ~5421-5435). The exact picker UI (modal vs. QMenu fly-out) is still an
+  open spec question (lines ~5809-5812).
+- **Apply to Sandbox** — BUILT and WIRED: `_apply_ddl_object_to_sandbox`
+  (`main_window.py:3263`) through `SandboxSession.apply`, confirm-gated by `_confirm_sandbox_apply`
+  (line 3249), wired via `_wire_ddl_object_apply_seams` (line 3216) only while a live sandbox session
+  exists. Requires a provisioned sandbox (FQ-007 / §18.5 D2).
+- **Apply to Target ("run on quality node")** — DESIGNED in the panel (`has_target_apply`,
+  `set_apply_seams(apply_to_target=…)`, `ddl_object_editor.py:870`) but **deliberately NOT wired**:
+  `_wire_ddl_object_apply_seams` (line 3219) states Apply to Target "needs the live-identity seam its
+  precondition 1 cannot be enforced without" and an unenforceable precondition must remove the gesture.
+  Blocked on the target connection actually being populated — see BUG-034 (`.pgtp` target never imported
+  into `ProjectSettings.target`) and BUG-030 (quality node status). Its four hard preconditions are
+  spec'd at lines ~3639-3642.
+
+**Proposed approach (settled 2026-08-06 with the requester):** Keep Ctrl+S EXACTLY as it is today — a
+plain local file save that never touches a database. The §18.5 safety invariant (lines ~3614/3626)
+stays intact; do NOT add a post-save run prompt and do NOT add a Ctrl+S variant, and no
+`spec-maintainer` reconciliation of that invariant is needed. The work is two parts, both extensions of
+the already-settled "Deploy this edit…" lane:
+1. **DISCOVERABILITY — surface the existing "Deploy this edit…" picker so users find it.** The picker
+   (`ddl_object_editor.py:777`, `deploy_this_edit()` ~line 1102) is exactly what the requester wanted
+   but could not find. Make the affordance clearly visible from the DDL object editor / checkout flow —
+   a visible button or prominent menu item, not a buried context-menu entry. Implementer's choice among
+   the still-open picker-UI decision (spec lines ~5809-5812), a clearer action label/tooltip, and a
+   toolbar surface (explicitly allowed by spec line 3627). This is the crux of the requester's complaint.
+2. **Wire the Apply-to-Target ("run on quality") leg** that is currently designed-but-deliberately-
+   unwired. Scope: **routines first** — functions / stored routines / triggers, via CREATE OR REPLACE,
+   matching §18.3's current routine-only reach. Table DDL (ALTER-vs-CREATE diffing) is **explicitly OUT
+   OF SCOPE** for this entry (possible future extension). Route it through the existing `apply_to_target`
+   seam and its four hard preconditions (signature-change refusal, green-sandbox-validation gate with
+   named override, the no-revert-snapshot transactional caveat, and the confirmation naming object AND
+   database), reusing `db/apply.py` — no new write path, per the spec's explicit "No new write path"
+   clause (line 3643). Apply to Target is a real, possibly production-facing write, so it MUST go through
+   a confirmation gate and should reuse the run-results surfacing already built for the sandbox run path
+   (the Audit `[Check]` channel and the sandbox results view). Apply-to-Sandbox stays as-is
+   (`main_window.py:3263`, already wired).
+
+**Dependencies (state prominently, this leg is ordered-after them):** Wiring Apply-to-Target requires the
+quality/target connection to actually be populated and reachable, so it is BLOCKED ON / ordered-after
+**BUG-034** (import the `.pgtp` connection into `ProjectSettings.target`) and **BUG-030** (the quality
+node status must be a real reachability probe, not "configured"). Until BUG-034 lands, the live-identity
+seam Apply-to-Target's precondition 1 needs cannot be supplied, and the gesture correctly stays absent.
+The discoverability work (part 1) has no such dependency and can land independently.
+
+**Alternatives considered:**
+- **Auto-prompt after every Ctrl+S (the requester's literal phrasing: "on Ctrl+S after saving the option
+  to run on sandbox or run on quality node").** REJECTED — and the requester confirmed the rejection on
+  2026-08-06. It directly contradicts a stated safety invariant: the spec insists "Ctrl+S remains exactly
+  what it is today — a plain file save that never touches a database" (line 3614) and "an irreversible
+  outward effect must not be one keystroke away" (line 3626), which is exactly why Apply and "Deploy this
+  edit…" carry no shortcut. An always-shown post-save prompt also becomes intrusive on every save. The
+  requester was surfacing a discoverability gap, not asking to reopen the invariant; the resolution is
+  the picker + discoverability + wiring the quality leg, with the Ctrl+S invariant left untouched.
+- **A brand-new "Apply to DB" action separate from "Deploy this edit…".** REJECTED — it would duplicate
+  the picker that already exists and re-introduce the "which of three gestures do I want" problem the
+  picker was created to solve (spec lines 3617-3619).
+- **Raw ad-hoc exec of the CREATE OR REPLACE text against quality.** REJECTED for the target/quality
+  path — the spec routes target applies through `db/apply.py` with its four preconditions and Audit
+  `[Check]` reporting; a bare exec would bypass the signature-change refusal and the green-sandbox gate.
+  (For the sandbox, `SandboxSession.apply` is already the sanctioned committing call.)
+
+**Suggested placement:** EXTEND §18.5 (the editable DDL object tab and its Save/Apply gestures) in
+`CONSOLIDATED_SPEC.md`, specifically the "Deploy this edit…" subsection (lines ~3612-3650) and the
+Apply-to-Target wiring — this is finishing an already-specified lane, NOT a new section. No change to
+the Ctrl+S invariant (it stays exactly as today). Nothing new is being invented; the write seam
+(`db/apply.py`), the picker (`deploy_this_edit()`), and the sandbox apply already exist and must be
+reused, not forked. Cross-references: **BUG-034** and **BUG-030** (target/quality must be populated and
+probed before Apply-to-Target can be wired — this leg is ordered after both), FQ-007 (sandbox must be
+provisioned for Apply-to-Sandbox to have a session).
+
+**Open questions:** None blocking — both prior questions were resolved with the requester on 2026-08-06:
+(1) keep the existing separate "Deploy this edit…" picker, make it discoverable, and wire the quality
+leg — NO save-time prompt, Ctrl+S invariant untouched; (2) scope Apply-to-Target to functions / stored
+routines / triggers first (CREATE OR REPLACE), with table DDL explicitly out of scope. Settled
+constraints folded into "Proposed approach": Apply-to-Target must be confirm-gated and must reuse the
+sandbox run-results surfacing (Audit `[Check]` channel + sandbox results view; consistent with spec line
+3642, "target apply still reports to the Audit panel under `[Check]`"). Implementation-level details left
+to whoever picks this up: the exact discoverability surface for the picker (visible button vs. prominent
+menu item vs. toolbar) and the still-open picker-UI idiom (modal dialog vs. QMenu fly-out, spec lines
+~5809-5812); whether Apply-to-Target runs plpgsql_check after applying (spec implies yes for the sandbox
+validation gate that precedes a target apply).
 
 ---
