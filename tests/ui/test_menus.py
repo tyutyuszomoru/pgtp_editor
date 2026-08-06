@@ -36,14 +36,18 @@ def test_file_menu_shortcuts(qtbot):
         assert action.shortcut().toString() == combo
 
 
-def test_open_recent_is_an_empty_submenu(qtbot):
+def test_open_recent_shows_a_disabled_placeholder_when_the_mru_is_empty(qtbot):
+    """§26: the submenu is real and populated from the persisted MRU list. With
+    an empty store it carries one disabled placeholder rather than nothing at
+    all, which reads as a broken menu. (See test_open_recent.py for the store.)"""
     window = MainWindow()
     qtbot.addWidget(window)
     file_menu = find_top_menu(window, "File")
     open_recent_action = find_action(file_menu, "Open Recent")
     open_recent_menu = open_recent_action.menu()
     assert open_recent_menu is not None
-    assert open_recent_menu.actions() == []
+    assert action_labels(open_recent_menu) == ["(no recent files)"]
+    assert open_recent_menu.actions()[0].isEnabled() is False
 
 
 def test_exit_action_closes_window(qtbot):
@@ -64,6 +68,9 @@ def test_edit_menu_contents(qtbot):
         "Cut", "Copy", "Paste", "Delete", "―",
         "Find...", "Find Next", "Find All", "Replace...", "Replace All", "―",
         "Select Enclosing Block", "Select Parent Block", "―",
+        # §9's checkable auto-parse toggle, between the selection group and
+        # Preferences (§26).
+        "Auto Parse XML", "―",
         "Preferences...",
     ]
 
@@ -368,7 +375,9 @@ def test_tools_menu_contents(qtbot):
         "Lint Current File", "Lint on Save", "Locate PHP Linter…", "―",
         "Reparse Raw XML into Tree", "―",
         "Compare / Merge Two Files...", "Next Difference", "Prev Difference",
-        "Apply Changes to Target",
+        "Apply Changes to Target", "―",
+        # §23's embedded MCP server: one checkable entry, off at startup.
+        "Start MCP Server",
     ]
 
 

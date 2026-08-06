@@ -515,12 +515,25 @@ class DdlObjectEditorPanel(CompletionPopupHostMixin, QWidget):
         """The apply seams (all optional; an unwired seam means the affordance
         is ABSENT, never a disabled control -- §18.5 carve-out 2):
 
-        ``apply_to_sandbox(ref, ddl_text) -> CheckReport``
+        ``apply_to_sandbox(ref, ddl_text) -> CheckReport | None``
             §18.5 D3's `apply_and_check(session, ref, ddl_text, caps)` entry
             point with the session and capabilities already bound by the host
             (the sandbox controller). The panel owns no session and executes
             no SQL. Its return value is recorded as this buffer's validation
             result and drives Apply-to-target's precondition 2.
+
+            **It may return `None`, meaning "the result will arrive later".**
+            The real host runs the ladder off the GUI thread
+            (`SandboxController.run_apply` through its `_run_async` seam), so
+            there is nothing to return at call time; blocking the event loop on
+            a `CREATE OR REPLACE` plus a `plpgsql_check` SELECT to keep this
+            seam synchronous would defeat the reason that seam exists. A `None`
+            return therefore records NOTHING here -- neither
+            `applied_sha1` nor a precondition-2 clearance, both of which would
+            be claims about an apply whose outcome is still unknown -- and the
+            host is expected to land the report through `record_apply_result`
+            when the worker finishes. A seam that returns a report keeps the
+            fully synchronous behavior.
         ``apply_to_target(ref, ddl_text) -> ApplyOutcome``
             The real-database write, run only after all four hard
             preconditions pass. Wired to `db/apply.py::apply_ddl` behind the
@@ -949,6 +962,17 @@ class DdlObjectEditorPanel(CompletionPopupHostMixin, QWidget):
             self._report([f"apply to sandbox of {self._ref.qualified} cancelled; nothing was applied."])
             return False
         report = self._apply_to_sandbox(self._ref, text)
+        if report is None:
+            # ASYNCHRONOUS seam (see `__init__`): the ladder is running off the
+            # GUI thread. Say so, and record nothing -- the outcome lands later
+            # through `record_apply_result`.
+            self._report(
+                [
+                    f"applying {self._ref.qualified} to sandbox database "
+                    f"{database}…"
+                ]
+            )
+            return True
         digest = _sha1(text)
         self.applied_sha1 = digest
         self._last_check = (digest, report)
@@ -956,6 +980,31 @@ class DdlObjectEditorPanel(CompletionPopupHostMixin, QWidget):
             [f"applied {self._ref.qualified} to sandbox database {database}."], report
         )
         return True
+
+    def record_apply_result(self, report: Any, text: str | None = None) -> None:
+        """Land an **asynchronous** Apply-to-Sandbox outcome (§18.5 D3): record
+        it for precondition 2, mark the buffer as applied *only if it actually
+        committed*, and render it over both Audit channels.
+
+        The committed check is the whole point of the split: `apply_and_check`
+        rolls the transaction back when any statement is rejected, so a report
+        that is not `committed` means the sandbox does NOT hold this text -- and
+        `applied_sha1` claiming otherwise is precisely the "lying about what the
+        sandbox contains" §18.5 forbids. The headline says which of the two
+        happened; the tiers, caveats and findings are the report's own.
+        """
+        applied = self.text() if text is None else text
+        self.record_check_report(report, applied)
+        database = self._database_label(self._sandbox_database_label) or "the sandbox"
+        if bool(getattr(report, "committed", False)):
+            self.applied_sha1 = _sha1(applied)
+            headline = [f"applied {self._ref.qualified} to sandbox database {database}."]
+        else:
+            headline = [
+                f"{self._ref.qualified} was NOT applied to sandbox database "
+                f"{database}; the transaction did not commit."
+            ]
+        self._report_result(headline, report)
 
     def apply_to_target(self) -> bool:
         """Execute this buffer against the REAL target database, behind §18.5's

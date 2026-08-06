@@ -237,12 +237,54 @@ def test_revert_no_project_path_shows_message(qtbot, tmp_path):
     assert window.statusBar().currentMessage() == "Nothing to revert to."
 
 
-def test_revert_menu_action_wired(qtbot, tmp_path):
+def test_revert_menu_action_is_gated_on_the_bak_and_wired(qtbot, tmp_path):
+    """§7: "enabled only when `<current>.bak` exists". Previously the action was
+    always enabled and only reported "Nothing to revert to." after the click."""
     window = _window(qtbot, tmp_path)
     file_menu = find_top_menu(window, "File")
-    # No project loaded -> message path, no modal, no crash.
-    find_action(file_menu, "Revert").trigger()
+    revert = find_action(file_menu, "Revert")
+    # No project at all -> nothing to revert to, so the item is not offered.
+    assert revert.isEnabled() is False
+
+    path = _make_project(tmp_path)
+    window.open_project_file(str(path))
+    # A project, but no .bak yet.
+    assert revert.isEnabled() is False
+
+    window.center_stage.xml_editor.setPlainText(_MINIMAL_PGTP)
+    window._save_project()  # writes demo.pgtp.bak
+    assert revert.isEnabled() is True
+
+    revert.trigger()
+    assert window.statusBar().currentMessage().startswith("Reverted to ")
+
+
+def test_closing_the_project_disables_revert_again(qtbot, tmp_path):
+    window = _window(qtbot, tmp_path)
+    path = _make_project(tmp_path)
+    window.open_project_file(str(path))
+    window._save_project()
+    assert window._revert_action.isEnabled() is True
+
+    window._close_project(confirm="discard")
+
+    assert window._revert_action.isEnabled() is False
+
+
+def test_revert_still_defends_at_runtime_when_the_bak_vanishes(qtbot, tmp_path):
+    """The enable gate is not the only guard: the toolbar mirrors the action and
+    the `.bak` can disappear between the last refresh and the click."""
+    window = _window(qtbot, tmp_path)
+    path = _make_project(tmp_path)
+    window.open_project_file(str(path))
+    window._save_project()
+    assert window._revert_action.isEnabled() is True
+
+    (tmp_path / "demo.pgtp.bak").unlink()
+    window._revert_project()
+
     assert window.statusBar().currentMessage() == "Nothing to revert to."
+    assert window._revert_action.isEnabled() is False
 
 
 # -- failed open must not mark dirty (C1 regression) ------------------------

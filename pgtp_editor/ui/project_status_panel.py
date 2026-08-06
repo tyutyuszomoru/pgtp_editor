@@ -1111,6 +1111,25 @@ class ProjectStatusPanel(QWidget):
             )
         return window
 
+    def set_sandbox_actions(
+        self,
+        *,
+        on_run_data_clone: Callable[[], None] | None = None,
+        on_install_plpgsql_check: Callable[[], None] | None = None,
+    ) -> None:
+        """Re-wire (or unwire) the two session-dependent sandbox node actions
+        after construction.
+
+        Both need a live `SandboxSession`, which comes and goes independently of
+        this window's lifetime -- and this window is cached and re-shown rather
+        than rebuilt, so the constructor's answer goes stale. Passing `None`
+        removes the affordance entirely (the node windows are built on
+        activation, so the next click reflects the new wiring): a button whose
+        operation cannot run is absent, never present-but-refusing.
+        """
+        self._on_run_data_clone = on_run_data_clone
+        self._on_install_plpgsql_check = on_install_plpgsql_check
+
     def _wrap_action(self, callback: Callable[[], None]) -> Callable[[], None]:
         """Run an injected action, then close its window and re-probe — the
         diagram must not keep claiming the pre-action state."""

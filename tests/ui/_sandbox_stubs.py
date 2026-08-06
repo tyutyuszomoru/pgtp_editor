@@ -26,10 +26,22 @@ def sync_run(fn, on_result, on_error=None):
         (on_error or (lambda _e: None))(exc)
 
 
-def fake_session(params=None, schema_names=frozenset()):
+def fake_session(params=None, schema_names=frozenset(), applied_rows=()):
     """The minimum a `SandboxSession` stand-in needs for the provisioning path:
-    the params it was opened on and the schema set the controller records."""
-    return SimpleNamespace(params=params, schema_names=schema_names, mode=None)
+    the params it was opened on and the schema set the controller records.
+
+    `applied()` and `executor` are here because two other surfaces read them off
+    a live session -- `ui/sandbox_setup_dialog.py`'s working-set table and
+    `db/ddl_check.py`'s `CheckSession` protocol -- and a stub that lacks them
+    makes the dialog raise inside a Qt slot rather than fail a test.
+    """
+    return SimpleNamespace(
+        params=params,
+        schema_names=schema_names,
+        mode=None,
+        executor=None,
+        applied=lambda: list(applied_rows),
+    )
 
 
 def stub_sandbox_provisioning(window, *, created=None):

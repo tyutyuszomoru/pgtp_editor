@@ -90,6 +90,7 @@ from pgtp_editor.db.apply import ApplyOutcome
 from pgtp_editor.db.ddl_check import CheckRequest
 from pgtp_editor.ui.ddl_object_editor import CHECK_PREFIX, DdlObjectRef
 from pgtp_editor.ui.sandbox_controller import SandboxController, SandboxOperation
+from pgtp_editor.ui.sandbox_setup_dialog import SandboxSetupDialog
 from pgtp_editor.ui.new_routine_dialog import NewRoutineDialog
 from pgtp_editor.ui.new_trigger_dialog import NewTriggerDialog
 from pgtp_editor.ui.project_status_model import SandboxFact, build_diagram, quality_state
@@ -224,6 +225,19 @@ class MainWindow(QMainWindow):
         #: The §18.8 Project Status window, kept so re-invoking the menu entry
         #: raises the existing one instead of stacking duplicates.
         self._project_status_window = None
+        #: §23's embedded MCP server, OFF BY DEFAULT: the `(server, thread)`
+        #: pair `mcp.start_server_thread` returns while a session is running,
+        #: None otherwise. Nothing here imports `pgtp_editor.mcp` at startup --
+        #: the import happens inside the menu handler, so the GUI never pays for
+        #: a feature nobody opted into.
+        self._mcp_session = None
+        #: Injectable stand-in for `mcp.start_server_thread`; None means "resolve
+        #: the real one lazily". Tests assign it so no suite ever enters a real
+        #: stdio loop (`serve` would block on stdin).
+        self._mcp_start = None
+        #: The Tools ▸ Start MCP Server checkable action, assigned by
+        #: `_build_tools_menu`.
+        self._mcp_action = None
         # Off-thread executor seam. The coherence-check schema fetch opens a
         # connection; running it here would freeze the window on a slow/dead
         # host. Default marshals it to a threadpool worker; tests inject a
@@ -480,8 +494,18 @@ class MainWindow(QMainWindow):
         #: VISIBILITY-managed (carve-out 2: absent, never disabled). Same
         #: before-`_build_menu_bar` initialisation reason as above.
         self._sandbox_check_action = None
+        #: §18.5 D3's "Check without applying" probe, gated on the same
+        #: `can_check` as Check itself.
+        self._sandbox_probe_check_action = None
         self._open_sandbox_session_action = None
         self._close_sandbox_session_action = None
+        #: Database ▸ Sandbox Setup… -- always present (see `_build_database_menu`
+        #: for why it is not session-gated), so unlike the four above it needs no
+        #: visibility management. Kept on `self` only so the non-modal dialog it
+        #: opens outlives the handler's stack frame (the same keep-alive pattern
+        #: `_project_settings_dialog` uses).
+        self._sandbox_setup_action = None
+        self._sandbox_setup_dialog = None
 
         # Document dirty-state tracking. `_loading` guards programmatic
         # setPlainText calls (load/revert/close) so they don't spuriously
@@ -499,6 +523,28 @@ class MainWindow(QMainWindow):
         self._snapshot_timer.setSingleShot(True)
         self._snapshot_timer.setInterval(400)
         self._snapshot_timer.timeout.connect(self._capture_snapshot_now)
+
+        # §9 auto-parse. OFF by default and IN-MEMORY ONLY (no QSettings key --
+        # it always starts unchecked, deliberately): a background reparse is a
+        # convenience, not a mode to inherit silently from a previous session.
+        # The checkable Edit-menu action is created later by `_build_edit_menu`,
+        # so the attribute exists as None first -- `blockCountChanged` is
+        # connected here and could in principle fire before the menu exists.
+        # 400 ms mirrors `_snapshot_timer` above, and the timer RESTARTS on each
+        # firing so a burst of edits triggers one reparse after it settles.
+        self._auto_parse_action = None
+        self._auto_parse_timer = QTimer(self)
+        self._auto_parse_timer.setSingleShot(True)
+        self._auto_parse_timer.setInterval(400)
+        self._auto_parse_timer.timeout.connect(self._auto_parse_now)
+        # `blockCountChanged`, not `textChanged`: it fires once when the line
+        # count changes (Enter, a multi-line paste, a join) rather than on every
+        # keystroke, which is the cheapest signal that correlates with the XML
+        # structure having plausibly changed.
+        self.center_stage.xml_editor.blockCountChanged.connect(
+            self._on_editor_block_count_changed
+        )
+
         self._undo_shortcut = QShortcut(QKeySequence("Ctrl+Z"), self)
         self._undo_shortcut.activated.connect(self._undo)
         self._redo_shortcut = QShortcut(QKeySequence("Ctrl+Y"), self)
@@ -759,6 +805,11 @@ class MainWindow(QMainWindow):
         self._settings.setValue("geometry", self.saveGeometry())
         self._settings.setValue("windowState", self.saveState())
         self._settings.sync()
+        # §23: end an MCP session with the window that opted into it. The thread
+        # is a daemon so it would not hold the process open, but a client
+        # deserves a clean EOF rather than a half-dead peer.
+        if self._mcp_session is not None and self._mcp_action is not None:
+            self._mcp_action.setChecked(False)
         super().closeEvent(event)
 
     def _on_light_theme_toggled(self, checked):
@@ -1166,6 +1217,11 @@ class MainWindow(QMainWindow):
         if parse_error is not None:
             self._handle_parse_failure(path, parse_error)
             return
+        # §26 Open Recent + §7 Revert gating: both keyed off the file that just
+        # became the open project. Only on the SUCCESS path -- a file that would
+        # not parse is not something to offer re-opening from a menu.
+        self._remember_recent_file(path)
+        self._refresh_revert_action()
         self.statusBar().showMessage(f"Opened: {path}", 5000)
 
     def _on_audit_item_clicked(self, item) -> None:
@@ -1253,7 +1309,57 @@ class MainWindow(QMainWindow):
         self._raw_xml_panel_action.setChecked(True)
         self.center_stage.setCurrentIndex(self.center_stage.raw_xml_tab_index)
 
-    def _reparse_raw_xml(self):
+    # -- §9 auto-parse -------------------------------------------------------
+
+    def _auto_parse_enabled(self) -> bool:
+        """Whether Edit ▸ Auto Parse XML is currently checked. The action is the
+        single source of truth (None before the Edit menu is built)."""
+        return (
+            self._auto_parse_action is not None
+            and self._auto_parse_action.isChecked()
+        )
+
+    def _on_auto_parse_toggled(self, checked: bool) -> None:
+        """Turning the toggle off must also cancel a reparse already in flight,
+        otherwise one more parse lands after the user opted out."""
+        if not checked:
+            self._auto_parse_timer.stop()
+
+    def _on_editor_block_count_changed(self, _new_count=0) -> None:
+        """Raw XML line count changed: (re)start the auto-parse debounce.
+
+        No-ops when the toggle is off or while `_loading`/`_restoring` -- the
+        same two guard flags that gate snapshot-history capture -- so a
+        programmatic `setPlainText` (file open, revert, undo/redo restore) never
+        triggers a reparse of text the user did not type. No Caption Mode gating
+        is needed: the Raw XML editor is read-only in that mode, so the signal
+        cannot come from typing there.
+        """
+        if self._loading or self._restoring or not self._auto_parse_enabled():
+            return
+        self._auto_parse_timer.start()
+
+    def _auto_parse_now(self) -> None:
+        """Fire-time handler for the debounce timer (called directly in tests).
+        Re-checks the same guards, since the toggle can flip or a load can start
+        during the 400 ms window."""
+        if self._loading or self._restoring or not self._auto_parse_enabled():
+            return
+        self._reparse_raw_xml(silent=True)
+
+    def _reparse_raw_xml(self, *, silent: bool = False):
+        """Reparse the Raw XML buffer into the tree/model.
+
+        `silent` is KEYWORD-ONLY and defaults to False, so every pre-existing
+        caller -- Tools ▸ "Reparse Raw XML into Tree" (whose `triggered` signal
+        passes no positional argument to a callable with no positional
+        parameters), the coherence rename path and the tests -- keeps exactly
+        today's behavior, modal failure dialog included. Only §9's auto-parse
+        passes `silent=True`, which downgrades a `PgtpParseError` to a transient
+        status-bar line: it fires while the user is mid-edit, where a modal (or a
+        cursor jump) would be an interruption, and half-typed XML is expected to
+        be malformed. Either way the last-good model and tree survive.
+        """
         text = self.center_stage.xml_editor.toPlainText()
         parse_error = None
         with busy_status(self.statusBar(), "Reparsing…"):
@@ -1271,9 +1377,20 @@ class MainWindow(QMainWindow):
                 self.properties_panel.show_node(None, None)
         # Cursor restored before any failure dialog.
         if parse_error is not None:
+            if silent:
+                # §9: NO modal and NO cursor jump while auto-parsing -- the user
+                # is typing. A transient status-bar line only; the tree keeps its
+                # last-good state (nothing above touched it on this path).
+                self.statusBar().showMessage(
+                    "Auto-parse: XML not well-formed yet — tree not updated", 5000
+                )
+                return
             self._handle_reparse_failure(parse_error)
             return
-        self.statusBar().showMessage("Reparsed raw XML into tree", 5000)
+        if silent:
+            self.statusBar().showMessage("Auto-parsed raw XML into tree", 3000)
+        else:
+            self.statusBar().showMessage("Reparsed raw XML into tree", 5000)
         self._db_ui.refresh_if_open(project)
 
     def _handle_reparse_failure(self, exc: PgtpParseError) -> None:
@@ -1321,6 +1438,9 @@ class MainWindow(QMainWindow):
             modals.QMessageBox.critical(self, "Save Failed", f"Could not save:\n\n{exc}")
             return
         self._set_dirty(False)
+        # The save just wrote `<path>.bak` (unless this is a §18.2 working
+        # copy), so Revert's availability may have flipped.
+        self._refresh_revert_action()
         self.statusBar().showMessage(f"Saved {Path(self._current_project_path).name}", 5000)
 
     def _save_project_as(self) -> None:
@@ -1336,6 +1456,8 @@ class MainWindow(QMainWindow):
             return
         self._current_project_path = path
         self._set_dirty(False)
+        self._remember_recent_file(path)
+        self._refresh_revert_action()
         self.statusBar().showMessage(f"Saved as {Path(path).name}", 5000)
 
     def _ensure_project_saved(self, save_as: bool = False) -> bool:
@@ -1415,12 +1537,99 @@ class MainWindow(QMainWindow):
         # into the emptied editor.
         self._history.clear()
         self._set_dirty(False)
+        # No project, no `.bak` to revert to (§7).
+        self._refresh_revert_action()
         # Coherence results are project-tied (BUG-011, §17). Only here on the
         # committed-close path -- a cancelled close (returns above) must leave
         # the still-open project's tab alone, and _revert_project keeps the
         # project loaded so it doesn't tear down.
         self._db_ui.teardown_for_project_close()
         _log.info("file: close outcome=%s", outcome)
+
+    def _backup_path(self) -> "str | None":
+        """The `<current>.bak` path Revert would read, or None when no project
+        is open. ONE definition, shared by `_revert_project` and the enable
+        gate below so the menu item can never disagree with what Revert does."""
+        if not self._current_project_path:
+            return None
+        return str(self._current_project_path) + ".bak"
+
+    def _refresh_revert_action(self) -> None:
+        """Gate File ▸ Revert on the `.bak` actually existing (§7).
+
+        Called from every point that can change the answer -- open, save, save
+        as, revert, close -- rather than from `_set_dirty`, which fires on every
+        keystroke and would turn this `exists()` into a per-keystroke `stat`
+        (the `.pgtp` may live on an sshfs mount, §18.2). Guarded on the action
+        existing because the refresh runs during `_build_file_menu` itself.
+        """
+        action = getattr(self, "_revert_action", None)
+        if action is None:
+            return
+        bak_path = self._backup_path()
+        action.setEnabled(bak_path is not None and Path(bak_path).exists())
+
+    # -- Open Recent (§26) ---------------------------------------------------
+
+    #: QSettings key holding the recent-projects list, and its cap. Persisted
+    #: through the SAME injectable `self._settings` store the window already
+    #: uses for geometry/theme, so a test pointed at a temp ini gets a private
+    #: MRU list for free.
+    _RECENT_FILES_KEY = "recentFiles"
+    _RECENT_FILES_MAX = 10
+
+    def _recent_files(self) -> list:
+        """The persisted MRU list, most-recent first, pruned of entries whose
+        file no longer exists and capped. Reading prunes but does not write --
+        `_remember_recent_file` is the only writer."""
+        stored = self._settings.value(self._RECENT_FILES_KEY, [])
+        if isinstance(stored, str):
+            # A single-element QStringList round-trips through the ini format
+            # as a bare string.
+            stored = [stored]
+        elif stored is None:
+            stored = []
+        paths = []
+        for entry in stored:
+            path = str(entry)
+            if path in paths or not Path(path).is_file():
+                continue
+            paths.append(path)
+        return paths[: self._RECENT_FILES_MAX]
+
+    def _remember_recent_file(self, path) -> None:
+        """Push `path` to the head of the MRU list and persist it."""
+        path = str(path)
+        paths = [p for p in self._recent_files() if p != path]
+        paths.insert(0, path)
+        self._settings.setValue(
+            self._RECENT_FILES_KEY, paths[: self._RECENT_FILES_MAX]
+        )
+
+    def _rebuild_recent_menu(self) -> None:
+        """Repopulate the Open Recent submenu from the pruned MRU list.
+
+        Every entry goes through the ONE project-open path (`open_project_file`
+        via `_open_pgtp_path`, so §18.2's New/Open/Edit-Standalone chooser still
+        applies) -- never a second loader. An empty list shows a single disabled
+        placeholder rather than an empty menu that looks broken.
+        """
+        menu = getattr(self, "_recent_menu", None)
+        if menu is None:
+            return
+        menu.clear()
+        paths = self._recent_files()
+        if not paths:
+            placeholder = menu.addAction("(no recent files)")
+            placeholder.setEnabled(False)
+            return
+        for path in paths:
+            action = menu.addAction(Path(path).name)
+            action.setToolTip(path)
+            # Default-argument binding, not a closure over the loop variable.
+            action.triggered.connect(
+                lambda _checked=False, target=path: self._open_pgtp_path(target)
+            )
 
     def _revert_project(self) -> None:
         """Reload the project from its `<path>.bak` backup, if one exists.
@@ -1430,12 +1639,13 @@ class MainWindow(QMainWindow):
         The buffer then differs from the on-disk file, so the document is
         marked dirty.
         """
-        if not self._current_project_path:
+        bak_path = self._backup_path()
+        if bak_path is None or not Path(bak_path).exists():
+            # Still defended at runtime even though the menu item is now gated
+            # on the same condition: the toolbar mirrors the action, and the
+            # `.bak` can vanish between the last refresh and the click.
             self.statusBar().showMessage("Nothing to revert to.", 5000)
-            return
-        bak_path = str(self._current_project_path) + ".bak"
-        if not Path(bak_path).exists():
-            self.statusBar().showMessage("Nothing to revert to.", 5000)
+            self._refresh_revert_action()
             return
 
         _log.info("file: revert %s", bak_path)
@@ -1462,6 +1672,7 @@ class MainWindow(QMainWindow):
         self.project_tree.populate_from_project(project)
         self._current_project = project
         self._set_dirty(True)
+        self._refresh_revert_action()
         self.statusBar().showMessage(
             f"Reverted to {Path(bak_path).name}", 5000
         )
@@ -1490,7 +1701,15 @@ class MainWindow(QMainWindow):
         open_action = menu.addAction("Open...")
         open_action.setShortcut("Ctrl+O")
         open_action.triggered.connect(self._open_project)
-        menu.addMenu("Open Recent")
+        # §26 File ▸ Open Recent. The submenu itself is built once and kept
+        # (`QMenu.addMenu` returns a wrapper Python then owns -- see
+        # `toolbar_controller.py`'s keepalive note), and its CHILDREN are rebuilt
+        # from the persisted MRU list every time it is about to be shown, so an
+        # entry whose file was deleted meanwhile disappears instead of
+        # misfiring. It is skipped wholesale by the toolbar's menu walk (§7).
+        self._recent_menu = menu.addMenu("Open Recent")
+        self._recent_menu.aboutToShow.connect(self._rebuild_recent_menu)
+        self._rebuild_recent_menu()
         # §21: the standalone custom-PHP editor's entry point. Sits beside
         # "Open..." because it IS an open gesture, and deliberately ABOVE the
         # project separator: a `.php` file has no structural tie to a `.pgtp`
@@ -1526,6 +1745,10 @@ class MainWindow(QMainWindow):
         revert_action = menu.addAction("Revert")
         revert_action.triggered.connect(self._revert_project)
         self._revert_action = revert_action
+        # §7: "enabled only when `<current>.bak` exists". Starts disabled (no
+        # project is open yet) and is refreshed by `_refresh_revert_action` at
+        # every point the answer can change: open, save, save-as, revert, close.
+        self._refresh_revert_action()
         close_action = menu.addAction("Close")
         close_action.setShortcut("Ctrl+W")
         close_action.triggered.connect(lambda: self._close_project())
@@ -1594,6 +1817,16 @@ class MainWindow(QMainWindow):
         select_parent_action.triggered.connect(
             self.center_stage.xml_editor.select_parent_block
         )
+
+        menu.addSeparator()
+        # §9 Edit ▸ Auto Parse XML: checkable, unchecked at every launch (the
+        # state is in-memory only -- see the timer setup in __init__). The
+        # action IS the toggle's storage; nothing else records it.
+        auto_parse_action = menu.addAction("Auto Parse XML")
+        auto_parse_action.setCheckable(True)
+        auto_parse_action.setChecked(False)
+        auto_parse_action.toggled.connect(self._on_auto_parse_toggled)
+        self._auto_parse_action = auto_parse_action
 
         menu.addSeparator()
         self._add_stub_action(menu, "Preferences...")
@@ -1794,6 +2027,12 @@ class MainWindow(QMainWindow):
         self._caption_filter_shortcut.setEnabled(True)
         self._caption_replace_shortcut.setEnabled(True)
         self._find_ui.set_find_actions_enabled(False)
+        # §8/§13: the Raw XML editor is read-only in Caption Mode, so the
+        # Bookmarks menu and its four shortcuts go with it. The lane that owns
+        # the menu disables the menu AND every child action (a disabled QMenu
+        # alone would leave Ctrl+F2 / F2 / Shift+F2 live). Gutter bookmark
+        # toggling stays usable, deliberately.
+        self._find_ui.set_bookmarks_enabled(False)
         return True
 
     def enter_caption_mode_for_table(self, table_name: str) -> None:
@@ -1840,6 +2079,7 @@ class MainWindow(QMainWindow):
         self._caption_filter_shortcut.setEnabled(False)
         self._caption_replace_shortcut.setEnabled(False)
         self._find_ui.set_find_actions_enabled(True)
+        self._find_ui.set_bookmarks_enabled(True)
 
     def _caption_go_to_line(self, line: int) -> None:
         """Caption panel Go-to-line callback: switch to the Raw XML tab (which
@@ -1986,6 +2226,30 @@ class MainWindow(QMainWindow):
         self._sandbox_check_action.setVisible(False)
         self._sandbox_check_action.triggered.connect(
             lambda: self._check_active_ddl_object()
+        )
+        # §18.5 D3's *"Check without applying"* -- the rolled-back probe
+        # (`db/ddl_check.py::probe_check`, `commit=False`), which is the ONE
+        # narrow place rollback survives. It sits directly next to Check because
+        # the two answer neighbouring questions ("what does the sandbox say about
+        # what is in it?" vs. "what would this buffer do if I applied it?"), and
+        # it shares Check's visibility gate for the same carve-out-2 reason.
+        self._sandbox_probe_check_action = menu.addAction(
+            "Check Object Without Applying"
+        )
+        self._sandbox_probe_check_action.setVisible(False)
+        self._sandbox_probe_check_action.triggered.connect(
+            lambda: self._probe_check_active_ddl_object()
+        )
+        menu.addSeparator()
+        # §18.5 D2/D2a's provisioning surface. Deliberately NOT gated on a
+        # session or even on an open project: this is the ONE entry point that
+        # can CREATE a sandbox, so hiding it whenever there is no sandbox would
+        # make it unreachable exactly when it is needed. The dialog itself
+        # applies carve-out 2 internally -- every control whose operation cannot
+        # run is absent, with the reason stated in its place.
+        self._sandbox_setup_action = menu.addAction("Sandbox Setup…")
+        self._sandbox_setup_action.triggered.connect(
+            lambda: self._open_sandbox_setup()
         )
         menu.addSeparator()
         # §18.8: opening the window is itself a probe trigger, not a passive
@@ -2933,17 +3197,25 @@ class MainWindow(QMainWindow):
             self._refresh_sandbox_provisioning_status()
             return self._build_project_status_diagram()
 
-        # Sandbox1's "run data clone" and Sandbox2's "install plpgsql_check"
-        # are deliberately NOT wired: both need a live `SandboxSession`, which
-        # only `open_sandbox` can create and which this window has no way to
-        # obtain yet (§18.5 D2's provisioning UI is not built). The panel hides
-        # an affordance whose callback is None, so those windows stay
-        # status-only rather than offering a button that cannot work.
+        # Sandbox1's "run data clone" and Sandbox2's "install plpgsql_check" go
+        # to the controller's zero-argument §18.8 adapters -- but only while a
+        # live `SandboxSession` exists, because that is what both operations run
+        # through. `_refresh_project_status_sandbox_actions` keeps this answer
+        # current for the rest of the window's life (it is cached and re-shown,
+        # not rebuilt), and the destructive one keeps the controller's own
+        # `confirm_destructive` prompt: no second dialog is opened here.
         settings = self._ddl_project_settings
+        alive = self.sandbox_controller.has_session
         panel = ProjectStatusPanel(
             diagram=self._build_project_status_diagram(),
             on_refresh=on_refresh,
             on_reconnect_quality=on_refresh,
+            on_run_data_clone=(
+                self.sandbox_controller.on_run_data_clone if alive else None
+            ),
+            on_install_plpgsql_check=(
+                self.sandbox_controller.on_install_plpgsql_check if alive else None
+            ),
             on_show_help=self._show_manual,
             quality_summary=self._connection_summary_for(self._project_status_target()),
             sandbox_summary=self._connection_summary_for(
@@ -3284,8 +3556,12 @@ class MainWindow(QMainWindow):
         console at all."""
         if not self._sandbox_console_available():
             self.statusBar().showMessage(
-                "No sandbox session — open the project's sandbox from "
-                "Database ▸ Project Status… first.",
+                # Points at the two gestures that can actually produce a session
+                # (Project Status… only ever reported on one). Both really exist
+                # in the Database menu.
+                "No sandbox session — open one with Database ▸ Open Sandbox "
+                "Session, or provision the sandbox from Database ▸ Sandbox "
+                "Setup… first.",
                 5000,
             )
             return None
@@ -3355,6 +3631,11 @@ class MainWindow(QMainWindow):
         has_session = controller.has_session
         if self._sandbox_check_action is not None:
             self._sandbox_check_action.setVisible(controller.can_check)
+        if self._sandbox_probe_check_action is not None:
+            # The probe is the same ladder against the same session, so it earns
+            # exactly the same gate -- one predicate, never a second reading of
+            # "is there a session?".
+            self._sandbox_probe_check_action.setVisible(controller.can_check)
         if self._open_sandbox_session_action is not None:
             self._open_sandbox_session_action.setVisible(
                 not has_session and bool(self._configured_sandbox_params())
@@ -3364,6 +3645,33 @@ class MainWindow(QMainWindow):
         for panel in self.center_stage.ddl_object_panels():
             self._wire_ddl_object_apply_seams(panel)
         self._refresh_sandbox_console_affordances()
+        self._refresh_project_status_sandbox_actions()
+
+    def _refresh_project_status_sandbox_actions(self) -> None:
+        """Keep §18.8's two session-dependent node actions (Sandbox1's "run data
+        clone", Sandbox2's "install plpgsql_check") wired to the controller's
+        zero-argument adapters exactly while a session exists.
+
+        Both operations go through the live `SandboxSession`, so without one they
+        are ABSENT rather than refusing (carve-out 2) -- and the panel already
+        renders a `None` callback as no button at all, which is why this hands it
+        `None` instead of a wrapper that would state a refusal after the click.
+        The destructive one keeps the controller's own `confirm_destructive`
+        gate: `on_run_data_clone` -> `run_data_clone` -> `_confirmed(CLONE_DATA)`
+        -> `_confirm_destructive_sandbox_operation`, so the warning text is the
+        controller's and no second dialog is opened here.
+        """
+        window = self._project_status_window
+        if window is None:
+            return
+        controller = self.sandbox_controller
+        alive = controller.has_session
+        window.set_sandbox_actions(
+            on_run_data_clone=controller.on_run_data_clone if alive else None,
+            on_install_plpgsql_check=(
+                controller.on_install_plpgsql_check if alive else None
+            ),
+        )
 
     def _configured_sandbox_params(self):
         """The open project's sandbox `ConnectionParams`, or None when there is
@@ -3408,6 +3716,71 @@ class MainWindow(QMainWindow):
             return
         self.sandbox_controller.open_session()
 
+    def _open_sandbox_setup(self):
+        """Database ▸ Sandbox Setup… -- §18.5 D2/D2a's provisioning surface, and
+        the ONE re-provisioning entry point in the app (§18.2's New Project step
+        provisions once, at creation time, and has no way back).
+
+        Non-modal (`show()`, never `exec()`), like every other dialog here, so
+        the long-running provisioning it kicks off does not block the window.
+
+        **`confirm=None` on purpose: the CONTROLLER owns the single destructive
+        prompt.** The dialog's two-mode contract means passing `confirm=` here as
+        well would ask the user twice for one Provision/Re-clone/Reset, and the
+        controller's gate is the one that must exist anyway -- a controller built
+        without `confirm_destructive` refuses every destructive operation, and
+        this window has always supplied `_confirm_destructive_sandbox_operation`
+        for exactly that. A decline still surfaces in the dialog, as the
+        controller's own stated "cancelled -- this operation was not confirmed."
+        result.
+        """
+        dialog = SandboxSetupDialog(
+            self.sandbox_controller,
+            self,
+            settings=self._ddl_project_settings,
+            project_dir=self._ddl_project_folder,
+            confirm=None,
+        )
+        # A provisioning gesture may record a new `sandbox_mode` or a
+        # newly created sandbox database name; adopt the dialog's OWN
+        # `ProjectSettings` rather than re-reading the file it just wrote.
+        dialog.finished.connect(
+            lambda _result, dlg=dialog: self._adopt_sandbox_setup_settings(dlg)
+        )
+        self._sandbox_setup_dialog = dialog
+        dialog.show()
+        return dialog
+
+    def _adopt_sandbox_setup_settings(self, dialog=None) -> None:
+        """Take over whatever the Sandbox Setup dialog recorded in the project's
+        `ProjectSettings` (D2a's `sandbox_mode`, and the database name a
+        "create one for me" gesture chose).
+
+        Adoption is deliberately NOT `_bind_sandbox_controller_to_project()`:
+        that calls `set_project`, which drops the live session -- and the session
+        this would drop is the one the dialog just provisioned. The dialog has
+        already pointed the controller at the right sandbox (`set_project` before
+        provisioning) and already persisted the settings through its
+        `settings_saver`, so the host's remaining job is only to stop describing
+        the previous sandbox.
+        """
+        dialog = self._sandbox_setup_dialog if dialog is None else dialog
+        if dialog is None or self._ddl_project_settings is None:
+            return
+        settings = dialog.settings()
+        if settings is None or settings == self._ddl_project_settings:
+            return
+        self._ddl_project_settings = settings
+        self._refresh_project_status_window()
+
+    def _refresh_project_status_window(self) -> None:
+        """Re-render the §18.8 status window, if one is open, from the settings
+        as they now stand. No probe of its own -- the callers that change what a
+        node reports trigger their own."""
+        window = self._project_status_window
+        if window is not None:
+            window.set_diagram(self._build_project_status_diagram())
+
     def _confirm_destructive_sandbox_operation(self, warning: str) -> bool:
         """The controller's `confirm_destructive` gate. A controller with no
         gate refuses every destructive operation, so this must exist for
@@ -3432,22 +3805,29 @@ class MainWindow(QMainWindow):
         """Route one `SandboxOperationResult` by its `operation` and SURFACE
         its stated reason -- a failed sandbox operation is never swallowed.
 
-        `CHECK` is the one operation whose success is reported elsewhere (the
-        panel renders `result.report` over both Audit channels), so only a
-        check that produced NO report is reported here -- a refused or crashed
-        check must never read as a clean one, and must not be double-reported
-        either."""
+        `CHECK` and `APPLY` are the two operations whose outcome is reported
+        elsewhere (the invoking panel renders `result.report` over both Audit
+        channels), so only a run that produced NO report is reported here -- a
+        refused or crashed ladder must never read as a clean one, and must not
+        be double-reported either."""
         operation = getattr(result, "operation", None)
         reason = (getattr(result, "reason", "") or "").strip()
-        if operation is SandboxOperation.CHECK:
+        if operation in (SandboxOperation.CHECK, SandboxOperation.APPLY):
             if getattr(result, "report", None) is None:
+                label = "check" if operation is SandboxOperation.CHECK else "apply"
                 self.audit_panel.addItem(
                     QListWidgetItem(
-                        f"{CHECK_PREFIX}check did not run"
+                        f"{CHECK_PREFIX}{label} did not run"
                         + (f": {reason}" if reason else ".")
                     )
                 )
             return
+        if operation is SandboxOperation.PROVISION:
+            # A provisioning run may have recorded a new mode or a newly created
+            # database name in the Sandbox Setup dialog's settings; adopt them
+            # now rather than only when the (non-modal, possibly long-lived)
+            # dialog is closed.
+            self._adopt_sandbox_setup_settings()
         name = operation.value if operation is not None else "sandbox"
         if result.ok:
             text = f"{_SANDBOX_PREFIX}{name}: " + (reason or "done.")
@@ -3506,39 +3886,89 @@ class MainWindow(QMainWindow):
     def _apply_ddl_object_to_sandbox(self, ref, text):
         """The panel's `apply_to_sandbox(ref, text)` write seam (§18.5 D3).
 
-        Goes through `SandboxSession.apply`, the ONE committing call that runs
-        the DDL and its `applied` working-set bookkeeping in a single
-        transaction -- never a bare `apply_ddl` that would leave the working set
-        lying about what the sandbox contains. The `ref` it takes is the
-        `(kind, schema_name, object_name, table_name)` 4-tuple that IS the
-        bookkeeping table's primary key.
+        Goes through `SandboxController.run_apply`, i.e.
+        `db/ddl_check.py::apply_and_check`: the DDL, the `applied` working-set
+        bookkeeping row and the whole validation ladder in **one transaction**,
+        committing. That is the difference from the bare `SandboxSession.apply`
+        this used to call: an apply now COMPILE-CHECKS the object (tier 2), lints
+        it (tier 1) and runs `plpgsql_check` over it (tier 3), and a rejected
+        statement rolls the whole thing back with the tier that produced it
+        named. A bare `apply` reported nothing but "no exception", which is how
+        tiers 0-2 came to have never run on a user gesture.
 
-        Returns a duck-typed `db/apply.py::ApplyOutcome` because the panel
-        reports and RECORDS whatever comes back (precondition 2), so a failure
-        must come back as a stated outcome rather than an exception. Synchronous
-        by the panel's contract -- `apply_to_sandbox()` consumes the return
-        value -- so this is the one sandbox write that is not marshalled off the
-        GUI thread.
+        **Returns None -- asynchronously by design.** `run_apply` marshals the
+        work off the GUI thread through the controller's `_run_async` seam, so
+        there is no report to hand back at return time. `apply_to_sandbox()`'s
+        seam contract was widened for exactly this (see its docstring): `None`
+        means *"the result will arrive later"*, and it arrives through
+        `DdlObjectEditorPanel.record_apply_result`, the panel method that owns
+        both halves (recording the report for precondition 2, and rendering it
+        over the two Audit channels). The alternative -- keeping the seam
+        synchronous -- would mean blocking the event loop on a `CREATE OR
+        REPLACE` plus a `plpgsql_check` SELECT, which is exactly what
+        `_run_async` exists to prevent.
+
+        The `CheckRequest` is built HERE for the same reason `_check_active_ddl_
+        object` builds it here: a trigger's referenced function is knowledge the
+        ref alone does not carry, and the controller must not guess it.
         """
-        session = self.sandbox_controller.session
-        if session is None:
+        if self.sandbox_controller.session is None:
             # Unreachable through the wiring (the seam is only wired while a
-            # session exists), but a stated outcome beats a crash.
+            # session exists), but a stated outcome beats a crash -- and a
+            # synchronous return here is honest, because nothing was started.
             return ApplyOutcome.failed(
                 "no sandbox session is open -- nothing was applied"
             )
-        key = (ref.kind, ref.schema, ref.name, ref.table or "")
-        try:
-            session.apply(key, text)
-        except Exception as exc:  # noqa: BLE001 -- the DB's message IS the result
-            return ApplyOutcome.failed(str(exc) or exc.__class__.__name__)
-        return ApplyOutcome.succeeded((), committed=True)
+        request = CheckRequest.from_ref(
+            ref, text, **self._trigger_function_for(ref, text)
+        )
+        panel = self.center_stage.ddl_object_tab(getattr(ref, "key", None))
 
-    # --- §18.5 D3a: the Check gesture ----------------------------------------
+        def on_done(result, panel=panel, text=text) -> None:
+            report = getattr(result, "report", None)
+            if report is None or panel is None:
+                # The refusal's own reason is reported by
+                # `_on_sandbox_operation_finished`; an absent report is never
+                # shown as a successful apply.
+                return
+            panel.record_apply_result(report, text)
+
+        self.sandbox_controller.run_apply(request, on_done, ddl_text=text)
+        return None
+
+    # --- §18.5 D3/D3a: the two check gestures --------------------------------
     def _check_active_ddl_object(self) -> None:
-        """Database ▸ Check Object in Sandbox -- run D3a's ladder over the
-        ACTIVE object tab's buffer. Exactly one object per run (D3a): there is
-        no implicit multi-object sweep.
+        """Database ▸ Check Object in Sandbox -- D3a's `recheck`, run over the
+        ACTIVE object tab's buffer.
+
+        **Applies nothing**, which is what it costs: tiers 0-2 are *about*
+        applying, so `recheck` reports tier 1 as unavailable and tier 2 as the
+        bookkeeping fact ("the sandbox already holds this, applied <when>") plus
+        the stale-buffer caveat. The gesture that actually compiles this buffer
+        is Check Object Without Applying (or Apply to Sandbox).
+        """
+        self._run_ladder_on_active_ddl_object(probe=False)
+
+    def _probe_check_active_ddl_object(self) -> None:
+        """Database ▸ Check Object Without Applying -- §18.5 D3's rolled-back
+        probe (`db/ddl_check.py::probe_check`, `apply_ddl(..., commit=False)`).
+
+        The **whole** ladder runs, on this buffer, exactly as Apply to Sandbox
+        would run it -- tier 2 really compiles the DDL, tier 1 really lints it,
+        tier 3 really calls `plpgsql_check` -- and then the transaction is rolled
+        back, so the sandbox is unchanged and no working-set row is written.
+        This is the one narrow place rollback survives in §18 (D2), and it is
+        the gesture that answers *"would this compile?"* without committing.
+
+        The result is recorded for Apply-to-Target's precondition 2, because it
+        IS a green-for-this-buffer ladder run; what it deliberately does not
+        touch is `applied_sha1`, since nothing was applied.
+        """
+        self._run_ladder_on_active_ddl_object(probe=True)
+
+    def _run_ladder_on_active_ddl_object(self, *, probe: bool) -> None:
+        """The shared body of the two Database-menu check gestures. Exactly one
+        object per run (D3a): there is no implicit multi-object sweep.
 
         The `CheckRequest` is built HERE, not in the controller, because a
         trigger's referenced function is knowledge the ref alone does not carry
@@ -3571,7 +4001,12 @@ class MainWindow(QMainWindow):
             panel.record_check_report(report, text)
             panel.report_check_result(report)
 
-        self.sandbox_controller.run_check(request, on_done)
+        if probe:
+            self.sandbox_controller.run_apply(
+                request, on_done, ddl_text=text, probe=True
+            )
+        else:
+            self.sandbox_controller.run_check(request, on_done)
 
     def _trigger_function_for(self, ref, text) -> dict:
         """`CheckRequest.from_ref` kwargs naming the function a TRIGGER calls.
@@ -3633,6 +4068,84 @@ class MainWindow(QMainWindow):
         prev_action.triggered.connect(self.center_stage.diff_merge_panel.select_previous_difference)
         apply_action = menu.addAction("Apply Changes to Target")
         apply_action.triggered.connect(self._diff_ui.apply_changes_to_target)
+        menu.addSeparator()
+        # §23 Tools ▸ Start MCP Server. CHECKABLE and unchecked at startup:
+        # §23's "off by default … must not be silent or default-on" needs the
+        # running/not-running state to be visible, and unchecking is the stop
+        # gesture (`server.stop()`), so one menu entry covers both directions
+        # rather than a Start/Stop pair the spec does not list.
+        #
+        # §23 words the opt-in as living "in Preferences", but Preferences is
+        # still a stub (`_add_stub_action` -> "Not yet implemented"), so there is
+        # nowhere to opt in FROM. This menu action is the honest interim: it is
+        # the explicit, per-session opt-in gesture, and no persisted preference
+        # can start the server behind the user's back. When a real Preferences
+        # dialog lands it should gain a matching entry, not replace this one.
+        mcp_action = menu.addAction("Start MCP Server")
+        mcp_action.setCheckable(True)
+        mcp_action.setChecked(False)
+        mcp_action.toggled.connect(self._on_mcp_server_toggled)
+        self._mcp_action = mcp_action
+
+    # -- §23 MCP server ------------------------------------------------------
+
+    def _on_mcp_server_toggled(self, checked: bool) -> None:
+        """Start or stop §23's embedded MCP server from Tools ▸ Start MCP Server.
+
+        Starting hands `start_server_thread` a `LiveProjectProvider` reading the
+        host's open document at CALL time, which is the whole point of the in-app
+        server: §23's "when the GUI is running it shares the currently-open
+        in-memory model". The provider is a plain zero-argument callable, so the
+        `mcp` package stays Qt-free, and a path-less tool call answers from the
+        editor's live model -- including unsaved edits already reparsed into it --
+        while a call naming some other `.pgtp` still falls back to loading it
+        from disk.
+
+        The server runs on a DAEMON thread (`start_server_thread`) because
+        `serve` blocks on stdin and the GUI thread must not. Unchecking calls
+        `server.stop()`; the thread finishes after the message in flight.
+        A failure to start is reported and the checkbox snapped back, never left
+        claiming a session that does not exist.
+        """
+        if checked:
+            if self._mcp_session is not None:
+                return
+            # Imported here, not at module scope: importing the package starts
+            # nothing (§23), but a feature nobody enabled should not cost the
+            # GUI an import either. The PROVIDER is always the real one -- only
+            # the thread-starting call is injectable, so a test still exercises
+            # the live-model sharing without entering a stdio loop.
+            from pgtp_editor.mcp import LiveProjectProvider, start_server_thread
+
+            starter = self._mcp_start if self._mcp_start is not None else start_server_thread
+            try:
+                provider = LiveProjectProvider(
+                    lambda: (self._current_project_path, self._current_project)
+                )
+                self._mcp_session = starter(provider)
+            except Exception as exc:  # pragma: no cover - defensive
+                _log.warning("mcp: start failed: %s", exc)
+                self.statusBar().showMessage(
+                    f"Could not start the MCP server: {exc}", 5000
+                )
+                if self._mcp_action is not None:
+                    self._mcp_action.setChecked(False)
+                return
+            _log.info("mcp: server started")
+            self.statusBar().showMessage("MCP server running on stdio.", 5000)
+            return
+
+        session = self._mcp_session
+        self._mcp_session = None
+        if session is None:
+            return
+        server = session[0]
+        try:
+            server.stop()
+        except Exception as exc:  # pragma: no cover - defensive
+            _log.warning("mcp: stop failed: %s", exc)
+        _log.info("mcp: server stopped")
+        self.statusBar().showMessage("MCP server stopped.", 5000)
 
     def _build_help_menu(self):
         menu = self.menuBar().addMenu("Help")
