@@ -83,6 +83,7 @@ from pgtp_editor.lint.config import load_lint_executable_path, save_lint_executa
 from pgtp_editor.lint.findings import LINT_AUDIT_TARGET, LINT_PREFIX
 from pgtp_editor.lint.service import LintService
 from pgtp_editor.ui import modals
+from pgtp_editor.ui.file_filters import executable_filter
 from pgtp_editor.ui.ui_shell import UiShell
 
 _log = logging.getLogger(__name__)
@@ -217,7 +218,7 @@ class LintController(QObject):
             self._shell.window,
             "Locate PHP Linter",
             self._shell.default_dir(),
-            "Executables (*.exe);;All files (*)",
+            executable_filter(),
         )
         return path or ""
 

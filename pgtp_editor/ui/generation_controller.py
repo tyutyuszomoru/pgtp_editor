@@ -95,6 +95,7 @@ from pgtp_editor.generation.re_runner import (
 )
 from pgtp_editor.generation.runner import GeneratorRunner, build_generate_command
 from pgtp_editor.ui import modals
+from pgtp_editor.ui.file_filters import executable_filter
 from pgtp_editor.ui.ui_shell import UiShell
 
 _log = logging.getLogger(__name__)
@@ -223,7 +224,7 @@ class GenerationController(QObject):
             self._shell.window,
             "Locate PHP Generator Executable",
             "",
-            "Executables (*.exe);;All files (*)",
+            executable_filter(),
         )
         if not path:
             return
