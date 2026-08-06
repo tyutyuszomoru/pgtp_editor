@@ -75,7 +75,7 @@ from PySide6.QtWidgets import (
 from pgtp_editor.sql.caret_context import DOTTED_PATH, ROW_VARIABLE, resolve_caret_context
 from pgtp_editor.sql.formatter import format_selection as _format_selection_text
 from pgtp_editor.ui.code_editor import CodeEditor
-from pgtp_editor.ui.completion_popup import _CompletionPopup
+from pgtp_editor.ui.completion_popup import CompletionPopupHostMixin
 from pgtp_editor.ui.find_replace_bar import FindReplaceBar
 
 if TYPE_CHECKING:  # pragma: no cover -- import-cycle/Qt-purity avoidance only
@@ -451,7 +451,7 @@ def report_unverified(report: Any) -> list[str]:
     return unverified
 
 
-class DdlObjectEditorPanel(QWidget):
+class DdlObjectEditorPanel(CompletionPopupHostMixin, QWidget):
     """One editable DDL object, one tab (§18.5).
 
     Layout mirrors `EditorPanel`: the editor above, its own `FindReplaceBar`
@@ -588,8 +588,7 @@ class DdlObjectEditorPanel(QWidget):
         # connection is -- it only ever sees this already-built, Qt-free
         # `SchemaIndex` (§18.5 D1's "never talks to a database" invariant).
         self._schema_index: "SchemaIndex | None" = None
-        self._completion_popup: _CompletionPopup | None = None
-        self._popup_wired = False
+        self._init_completion_popup()
         # Session-only unattached-trigger table association (§18.6): NEVER
         # persisted anywhere -- not settings.json, not a sidecar file next to
         # a checked-out ddl/*.sql. Lives only in this tab's memory and is
@@ -1273,30 +1272,10 @@ class DdlObjectEditorPanel(QWidget):
         and callers that need to check whether completion is available."""
         return self._schema_index
 
-    def _ensure_completion_popup(self) -> _CompletionPopup:
-        if self._completion_popup is None:
-            self._completion_popup = _CompletionPopup(self)
-        return self._completion_popup
-
-    def _popup_at_caret(self, popup: _CompletionPopup) -> None:
-        """Show ``popup`` just below the caret and give it focus."""
-        rect = self.editor.cursorRect()
-        point = self.editor.viewport().mapToGlobal(rect.bottomLeft())
-        popup.move(point)
-        popup.show()
-        popup.setFocus()
-
-    def _rewire_popup(self, popup: _CompletionPopup, on_chosen) -> None:
-        """Point the shared popup's signals at the current completion stage
-        (the `xml_editor.py` precedent, §11): only disconnect a previous wiring
-        when the popup was actually wired before, so a fresh popup's first use
-        never triggers a PySide6 RuntimeWarning."""
-        if self._popup_wired:
-            popup.chosen.disconnect()
-            popup.cancelled.disconnect()
-        popup.chosen.connect(on_chosen)
-        popup.cancelled.connect(popup.hide)
-        self._popup_wired = True
+    def _completion_editor(self):
+        """CompletionPopupHostMixin hook: this panel wraps its editor rather
+        than being one, so caret geometry comes off `self.editor`."""
+        return self.editor
 
     def _show_completions(self) -> None:
         """Ctrl+Space entry point (§18.6). Resolves the caret context and

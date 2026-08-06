@@ -83,7 +83,7 @@ from ..sql.caret_context import DOTTED_PATH, resolve_caret_context
 from ..sql.formatter import format_selection as _format_selection_text
 from .async_task import run_async
 from .code_editor import CodeEditor
-from .completion_popup import _CompletionPopup
+from .completion_popup import CompletionPopupHostMixin
 from .sql_results_panel import SqlResultsPanel
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -123,7 +123,7 @@ NO_SESSION_TEXT = (
 RUNNING_TEXT = "Running against the sandbox…"
 
 
-class SqlConsolePanel(QWidget):
+class SqlConsolePanel(CompletionPopupHostMixin, QWidget):
     """Editor + results grid for ad-hoc SQL against this project's sandbox.
 
     Constructor seams (all keyword-only; nothing here opens a connection):
@@ -181,8 +181,7 @@ class SqlConsolePanel(QWidget):
         # (the default) disables it entirely. This panel never imports
         # `db/introspect.py` and never learns what a connection is.
         self._schema_index: "SchemaIndex | None" = None
-        self._completion_popup: _CompletionPopup | None = None
-        self._popup_wired = False
+        self._init_completion_popup()
 
         self.editor = CodeEditor(language="sql")
         self.editor.setReadOnly(False)
@@ -466,28 +465,10 @@ class SqlConsolePanel(QWidget):
         self._rewire_popup(popup, self._complete_identifier)
         self._popup_at_caret(popup)
 
-    def _ensure_completion_popup(self) -> _CompletionPopup:
-        if self._completion_popup is None:
-            self._completion_popup = _CompletionPopup(self)
-        return self._completion_popup
-
-    def _rewire_popup(self, popup: _CompletionPopup, on_chosen) -> None:
-        """Point the shared popup's signals at this stage, disconnecting a
-        previous wiring only when there was one (a fresh popup's first use must
-        not raise a PySide6 RuntimeWarning) -- the `xml_editor.py` precedent."""
-        if self._popup_wired:
-            popup.chosen.disconnect()
-            popup.cancelled.disconnect()
-        popup.chosen.connect(on_chosen)
-        popup.cancelled.connect(popup.hide)
-        self._popup_wired = True
-
-    def _popup_at_caret(self, popup: _CompletionPopup) -> None:
-        rect = self.editor.cursorRect()
-        point = self.editor.viewport().mapToGlobal(rect.bottomLeft())
-        popup.move(point)
-        popup.show()
-        popup.setFocus()
+    def _completion_editor(self):
+        """CompletionPopupHostMixin hook: this panel wraps its editor rather
+        than being one, so caret geometry comes off `self.editor`."""
+        return self.editor
 
     def _complete_identifier(self, name: str) -> None:
         """Insert `name` at the caret, replacing the partial prefix already
