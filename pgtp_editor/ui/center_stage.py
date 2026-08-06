@@ -26,6 +26,59 @@ from pgtp_editor.ui.php_file_tab import PhpFileTab, php_tab_key
 from pgtp_editor.ui.sql_console_panel import CONSOLE_TAB_KEY, SqlConsolePanel
 from pgtp_editor.ui.xml_editor import XmlEditor
 
+#: First element of every generated-fragment draft tab's key (FQ-006). Draft
+#: keys are 4-tuples `(DRAFT_TAB_KEY_KIND, kind, table_name, serial)`, which
+#: cannot collide with anything else filed in `CenterStage._ddl_object_tabs`:
+#: a `DdlObjectRef.key` is a 5-tuple, a checked-out object's override key is a
+#: `str` (its resolved path), and the Sandbox SQL Console's key is a 1-tuple.
+#: The monotonic `serial` additionally makes every draft distinct from every
+#: other draft, because drafts are explicitly MULTI-instance (unlike the
+#: console): creating a Page from table A and then another Page from table A
+#: must leave two tabs open, never silently overwrite the first.
+DRAFT_TAB_KEY_KIND = "draft-fragment"
+
+
+class DraftFragmentTab(QWidget):
+    """A generated-fragment **draft** (FQ-006): the destination for "create
+    page / detail / lookup from a DB table".
+
+    Nothing here saves anywhere and nothing pastes the draft back into the
+    project — the user reviews/edits the fragment and copies it out (or never
+    does). That is why it is a plain `XmlEditor` + `FindReplaceBar` (syntax
+    highlighting and find/replace for free, no schema model required) with no
+    save path, no `is_dirty()` and no unsaved-changes concept at all.
+    """
+
+    def __init__(self, kind, table_name, text, parent=None):
+        super().__init__(parent)
+        #: "page" / "detail" / "lookup" -- what was generated.
+        self.kind = kind
+        #: The source DB table/view the fragment was generated from.
+        self.table_name = table_name
+        self.editor = XmlEditor()
+        self.editor.setPlainText(text)
+        self.find_replace_bar = FindReplaceBar(self.editor)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        layout.addWidget(self.editor)
+        layout.addWidget(self.find_replace_bar)
+
+    def toPlainText(self):
+        """The draft's current text (the user may have edited it)."""
+        return self.editor.toPlainText()
+
+    def tab_title(self):
+        """e.g. ``"New Page: customers"`` -- names both kind and source table
+        (FQ-006), so several drafts open at once stay tellable apart."""
+        return f"New {self.kind.capitalize()}: {self.table_name}"
+
+    def tab_tooltip(self):
+        return (
+            f"Generated {self.kind} draft for '{self.table_name}' — edit it and "
+            "copy it into your project. Nothing here is saved anywhere."
+        )
+
 
 class CenterStage(QTabWidget):
     # Emitted when the Manual tab is revealed (True) or hidden (False), so the
@@ -75,7 +128,14 @@ class CenterStage(QTabWidget):
         # `_on_tab_close_requested` intercepts the console's X before the
         # object loop, and `ddl_object_panels()` filters by type so the
         # console is never handed to a caller expecting `.ref`/`.is_dirty()`.
+        #
+        # Generated-fragment DRAFT tabs (FQ-006) are filed in the same map for
+        # the same reason and behind the same two guards, under 4-tuple keys
+        # `(DRAFT_TAB_KEY_KIND, kind, table, serial)` -- see that constant.
         self._ddl_object_tabs: dict[tuple, DdlObjectEditorPanel] = {}
+        # Monotonic serial for draft keys: drafts are multi-instance, so each
+        # one needs an identity of its own (never a reused/shared scratch tab).
+        self._draft_counter = 0
         # Dynamic custom-PHP file tabs (spec §21), appended after the fixed
         # set for exactly the same reason, and keyed on the file's resolved
         # absolute path -- opening the same file twice must focus the tab that
@@ -170,6 +230,20 @@ class CenterStage(QTabWidget):
                 # would land in MainWindow's handler and call `is_dirty()` on
                 # the console -- an AttributeError that crashes the app.
                 self.close_sandbox_sql_tab()
+                return
+            if isinstance(widget, DraftFragmentTab):
+                # A generated-fragment draft (FQ-006) shares the object-tab map
+                # too, and closes directly with NO dirty-check prompt (the
+                # Manual tab's precedent, not Edit XSD's): the draft was never
+                # saved anywhere and the real source of truth -- the DB table
+                # -- is untouched by closing it. Must stay AHEAD of the loop
+                # below for the same crash reason as the console: emitting
+                # `ddl_object_close_requested` for a draft would reach
+                # MainWindow's handler and call `is_dirty()` on a widget that
+                # has no such method -- an AttributeError.
+                key = self.draft_fragment_tab_key(widget)
+                if key is not None:
+                    self.close_draft_fragment_tab(key)
                 return
             for key, panel in self._ddl_object_tabs.items():
                 if panel is widget:
@@ -305,15 +379,64 @@ class CenterStage(QTabWidget):
         `set_schema_index` on each, mirroring how a schema refresh updates
         `XmlEditor.set_schema_model` (§11).
 
-        Type-filtered on purpose: the Sandbox SQL Console (§18.5 D4) lives in
-        the same map, and every caller of this accessor assumes a per-object
-        panel (`.ref`, `.is_dirty()`). Use `sandbox_sql_tab()` for the
-        console."""
+        Type-filtered on purpose: the Sandbox SQL Console (§18.5 D4) and the
+        generated-fragment draft tabs (FQ-006) live in the same map, and every
+        caller of this accessor assumes a per-object panel (`.ref`,
+        `.is_dirty()`). Use `sandbox_sql_tab()` / `draft_fragment_tabs()` for
+        those."""
         return [
             panel
             for panel in self._ddl_object_tabs.values()
             if isinstance(panel, DdlObjectEditorPanel)
         ]
+
+    # --- Generated-fragment draft tabs (FQ-006) ----------------------------
+    def open_draft_fragment_tab(self, kind, table_name, text):
+        """Open a NEW draft tab holding the serialized fragment `text`, append
+        it (always AFTER the fixed set) and focus it.
+
+        Deliberately NOT single-instance, unlike `open_sandbox_sql_tab`: every
+        "create page/detail/lookup from a DB table" gesture gets its own tab
+        (FQ-006), so an in-progress edit can never be clobbered by the next
+        creation. Nothing is saved and nothing is spliced anywhere -- the
+        caller hands over already-serialized text and the user copies it out."""
+        self._draft_counter += 1
+        key = (DRAFT_TAB_KEY_KIND, kind, table_name, self._draft_counter)
+        tab = DraftFragmentTab(kind, table_name, text)
+        index = self.addTab(tab, tab.tab_title())
+        self.setTabToolTip(index, tab.tab_tooltip())
+        self._ddl_object_tabs[key] = tab
+        self.setCurrentWidget(tab)
+        return tab
+
+    def draft_fragment_tab_key(self, tab):
+        """The map key a given `DraftFragmentTab` is filed under, or None."""
+        for key, candidate in self._ddl_object_tabs.items():
+            if candidate is tab:
+                return key
+        return None
+
+    def draft_fragment_tabs(self):
+        """Every open `DraftFragmentTab`, keyed as `close_draft_fragment_tab`
+        expects. The type-safe way to reach drafts -- `ddl_object_panels()`
+        filters them out on purpose."""
+        return {
+            key: tab
+            for key, tab in self._ddl_object_tabs.items()
+            if isinstance(tab, DraftFragmentTab)
+        }
+
+    def close_draft_fragment_tab(self, key):
+        """Remove a draft tab. No unsaved-changes prompt, by design (FQ-006):
+        a draft was never saved anywhere, so there is nothing a warning would
+        protect -- mirrors `close_sandbox_sql_tab`, not `close_ddl_object_tab`."""
+        tab = self._ddl_object_tabs.pop(key, None)
+        if tab is None:
+            return
+        index = self.indexOf(tab)
+        if index != -1:
+            self.removeTab(index)
+        tab.deleteLater()
 
     # --- Sandbox SQL Console tab (spec §18.5 D4) ---------------------------
     def sandbox_sql_tab(self):
@@ -446,6 +569,21 @@ class CenterStage(QTabWidget):
         for key, candidate in self._php_file_tabs.items():
             if candidate is tab:
                 return key
+        return None
+
+    def active_draft_fragment_tab(self):
+        """The `DraftFragmentTab` currently active, or None (mirrors
+        `active_php_file_tab`).
+
+        Needed because a draft tab owns a real `XmlEditor` and a real
+        `FindReplaceBar`, but is NOT a `DdlObjectEditorPanel` -- so without an
+        accessor of its own, `FindValidateController`'s per-tab routing fell
+        through to the Raw XML fallback and Ctrl+F searched the wrong document
+        while the draft's own bar sat hidden and unreachable (FQ-006).
+        """
+        widget = self.currentWidget()
+        if isinstance(widget, DraftFragmentTab):
+            return widget
         return None
 
     def active_php_file_tab(self):

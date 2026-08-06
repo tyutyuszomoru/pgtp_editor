@@ -157,6 +157,12 @@ _STATE_CAPTIONS = {
     "sandbox_not_set_up": "Not configured",
     "sandbox_connected": "Connected",
     "sandbox_offline": "Unreachable",
+    # BUG-035: "Schema only" is now only ever shown once the schema has been
+    # SEEN in the sandbox. The two states below are the honest lower rungs
+    # that used to be mislabelled as it; neither may contain the word
+    # "schema" as a claim.
+    "sandbox1_unknown": "Not checked",
+    "sandbox1_not_provisioned": "Nothing provisioned",
     "sandbox1_empty": "Schema only",
     "sandbox1_filled": "Data cloned",
     "sandbox2_plpgsql_check_installed": "Installed",
@@ -1039,20 +1045,39 @@ class ProjectStatusPanel(QWidget):
             window.add_line(diagram.degraded_reason)
         return window
 
+    #: Sandbox1's detail sentence, one per verified state (BUG-035). Keyed by
+    #: state stem so it cannot drift from `_STATE_CAPTIONS`. The `unknown` and
+    #: `not_provisioned` lines say what was (not) established — they never
+    #: describe a schema the panel has not been told exists.
+    _SANDBOX1_LINES = {
+        "sandbox1_unknown": (
+            "The sandbox database could not be inspected, so what it holds is "
+            "unknown — this is not a report that it is empty. Re-check once the "
+            "sandbox is reachable."
+        ),
+        "sandbox1_not_provisioned": (
+            "The sandbox database is reachable but nothing has been provisioned "
+            "into it yet — no tables, views or routines of your own were found."
+        ),
+        "sandbox1_empty": (
+            "The sandbox holds the schema only — no data was found in it."
+        ),
+        "sandbox1_filled": "The sandbox holds a copy of the quality database's data.",
+    }
+
     def _sandbox1_window(self) -> NodeWindow:
         """Two-step status + embedded clone action (never a one-click trigger)."""
         window = self._new_window(NodeFamily.SANDBOX1, "Sandbox data")
         state = self._node_state(NodeFamily.SANDBOX1)
         window.add_line(self._state_line(NodeFamily.SANDBOX1))
-        filled = state == "sandbox1_filled"
         window.add_line(
-            "The sandbox holds a copy of the quality database's data."
-            if filled
-            else "The sandbox holds the schema only — no data has been cloned into it."
+            self._SANDBOX1_LINES.get(
+                state, "The sandbox's contents have not been established."
+            )
         )
         if self._on_run_data_clone is not None:
             window.add_action(
-                "Redo data clone" if filled else "Run data clone now",
+                "Redo data clone" if state == "sandbox1_filled" else "Run data clone now",
                 self._wrap_action(self._on_run_data_clone),
             )
         return window
@@ -1085,6 +1110,25 @@ class ProjectStatusPanel(QWidget):
                 self._wrap_action(self._on_install_plpgsql_check),
             )
         return window
+
+    def set_sandbox_actions(
+        self,
+        *,
+        on_run_data_clone: Callable[[], None] | None = None,
+        on_install_plpgsql_check: Callable[[], None] | None = None,
+    ) -> None:
+        """Re-wire (or unwire) the two session-dependent sandbox node actions
+        after construction.
+
+        Both need a live `SandboxSession`, which comes and goes independently of
+        this window's lifetime -- and this window is cached and re-shown rather
+        than rebuilt, so the constructor's answer goes stale. Passing `None`
+        removes the affordance entirely (the node windows are built on
+        activation, so the next click reflects the new wiring): a button whose
+        operation cannot run is absent, never present-but-refusing.
+        """
+        self._on_run_data_clone = on_run_data_clone
+        self._on_install_plpgsql_check = on_install_plpgsql_check
 
     def _wrap_action(self, callback: Callable[[], None]) -> Callable[[], None]:
         """Run an injected action, then close its window and re-probe — the

@@ -25,7 +25,8 @@ Audit panel*, plus the two menus that are nothing but that:
   tab is active (Raw XML / Edit XSD / DDL Explorer / an editable DDL object /
   a §21 PHP tab);
 * the **Bookmarks menu** — a menu owned outright by one collaborator moves with
-  it, so this lane builds it (:meth:`build_bookmarks_menu`);
+  it, so this lane builds it (:meth:`build_bookmarks_menu`) and gates it during
+  Caption Mode (:meth:`set_bookmarks_enabled`, §8/§13);
 * the **Edit-menu Find… / Replace… actions**, handed over by the host after the
   Edit menu is built (:meth:`set_find_actions`), because the rest of that menu
   (undo/redo/history/selection) belongs elsewhere. Caption Mode gates them
@@ -158,6 +159,13 @@ class FindValidateController(QObject):
         self._find_action = None
         self._replace_action = None
 
+        #: The Bookmarks menu and its four actions, retained by
+        #: `build_bookmarks_menu` so `set_bookmarks_enabled` can gate the menu
+        #: **and every child action** during Caption Mode (§8/§13). None / empty
+        #: until the menu is built.
+        self._bookmarks_menu = None
+        self._bookmark_actions: tuple = ()
+
         #: The streaming Find-All run's whole state. PLAIN ATTRIBUTES, read back
         #: through the identity-preserving properties below -- see the module
         #: docstring, "The Find-All iteration state is DIRECTLY REACHABLE".
@@ -198,6 +206,17 @@ class FindValidateController(QObject):
         return self._find_all_target
 
     @property
+    def bookmarks_menu(self):
+        """The Bookmarks ``QMenu`` (None before :meth:`build_bookmarks_menu`)."""
+        return self._bookmarks_menu
+
+    @property
+    def bookmark_actions(self) -> tuple:
+        """The four Bookmarks ``QAction``s, in menu order (empty before
+        :meth:`build_bookmarks_menu`). The separator is not included."""
+        return self._bookmark_actions
+
+    @property
     def find_action(self):
         """The Edit ▸ Find… ``QAction`` (None before :meth:`set_find_actions`)."""
         return self._find_action
@@ -217,8 +236,14 @@ class FindValidateController(QObject):
         (§8) puts the same bookmark API on the Raw XML, Edit XSD and DDL
         Explorer editors, so the menu follows whichever is active instead of
         being bound to Raw XML forever.
+
+        The menu and its four actions are RETAINED (`_bookmarks_menu` /
+        `_bookmark_actions`) so `set_bookmarks_enabled` can gate them together
+        while Caption Mode is active (§8/§13) -- disabling only the `QMenu`
+        grays out the menu-bar entry but leaves the actions' shortcuts live.
         """
         menu = menu_bar.addMenu("Bookmarks")
+        self._bookmarks_menu = menu
 
         toggle_action = menu.addAction("Toggle Bookmark")
         toggle_action.setShortcut("Ctrl+F2")
@@ -243,6 +268,29 @@ class FindValidateController(QObject):
         clear_action.triggered.connect(
             lambda: self.active_bookmark_editor().clear_bookmarks()
         )
+
+        self._bookmark_actions = (
+            toggle_action,
+            next_action,
+            prev_action,
+            clear_action,
+        )
+
+    def set_bookmarks_enabled(self, enabled: bool) -> None:
+        """Enable/disable the Bookmarks menu **and its four actions** (§8/§13).
+
+        Called by the host on entering/leaving Caption Mode, where the Raw XML
+        editor is read-only. Both halves are needed: disabling the `QMenu` alone
+        grays out the menu-bar entry while Ctrl+F2 / F2 / Shift+F2 keep firing
+        (Qt only drops a shortcut when the *action* is disabled) -- the same
+        reason `set_find_actions_enabled` disables its two actions individually.
+        Gutter bookmark toggling is deliberately NOT gated: bookmarks are a UI
+        overlay independent of the editor's read-only state.
+        """
+        if self._bookmarks_menu is not None:
+            self._bookmarks_menu.setEnabled(enabled)
+        for action in self._bookmark_actions:
+            action.setEnabled(enabled)
 
     def set_find_actions(self, find_action, replace_action) -> None:
         """Adopt the Edit-menu Find… / Replace… actions.
@@ -291,6 +339,13 @@ class FindValidateController(QObject):
             # Ctrl+F on a PHP tab yanked the user over to Raw XML (the fallback
             # below REVEALS that tab) and searched the wrong document.
             return php_tab.find_replace_bar
+        draft = stage.active_draft_fragment_tab()
+        if draft is not None:
+            # FQ-006: a draft tab builds its own bar over its own XmlEditor, so
+            # searching it must not fall through to Raw XML. Replace is live --
+            # a draft is a scratch buffer with no save path, so there is nothing
+            # to protect.
+            return draft.find_replace_bar
         self._shell.reveal_raw_xml()
         return stage.find_replace_bar
 
@@ -319,6 +374,10 @@ class FindValidateController(QObject):
             # §21: its `CodeEditor` carries the same gutter bookmark API (§8),
             # so the Bookmarks menu follows a PHP tab like any other editor.
             return php_tab.editor
+        draft = stage.active_draft_fragment_tab()
+        if draft is not None:
+            # FQ-006: its XmlEditor carries the same gutter bookmark API (§8).
+            return draft.editor
         return stage.xml_editor
 
     # -- the Edit-menu gestures (act on the active bar) -----------------------

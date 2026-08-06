@@ -89,19 +89,21 @@ def test_accept_with_a_folder_closes_normally(qtbot, tmp_path):
 
 # --- Sandbox connection fields + superuser Test -----------------------------
 def test_sandbox_params_round_trip(qtbot):
+    """FQ-007: the server connection round-trips, and `database` is EMPTY --
+    there is no field for it, because the app creates the database itself."""
     dialog = NewProjectDialog()
     qtbot.addWidget(dialog)
     dialog._sandbox_host_edit.setText("localhost")
     dialog._sandbox_port_edit.setText("5432")
-    dialog._sandbox_database_edit.setText("sandbox")
     dialog._sandbox_user_edit.setText("dev")
     dialog._sandbox_password_edit.setText("pw")
 
     params = dialog.sandbox_params()
 
     assert params == ConnectionParams(
-        host="localhost", port="5432", database="sandbox", user="dev", password="pw"
+        host="localhost", port="5432", database="", user="dev", password="pw"
     )
+    assert not hasattr(dialog, "_sandbox_database_edit")
 
 
 def test_sandbox_password_field_uses_password_echo_mode(qtbot):

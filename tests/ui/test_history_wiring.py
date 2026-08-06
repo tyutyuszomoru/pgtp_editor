@@ -321,13 +321,13 @@ def test_revert_seeds_snapshot(qtbot, tmp_path):
     window.open_project_file(str(path))
     # Create a .bak by saving over the file (pre-save content becomes .bak).
     window.center_stage.xml_editor.setPlainText(_MINIMAL_PGTP)
-    window._save_project()
+    window._doc_ui.save_project()
     assert (tmp_path / "demo.pgtp.bak").exists()
     window.center_stage.xml_editor.setPlainText("something else entirely")
     window._capture_snapshot_now()
     n_before = len(window._history._texts())
 
-    window._revert_project()
+    window._doc_ui.revert()
 
     # A revert pushes exactly one snapshot whose text is the shown (reverted)
     # buffer, and it becomes the current head.
@@ -379,7 +379,7 @@ def test_close_project_clears_history(qtbot, tmp_path):
     window = _window(qtbot, tmp_path)
     path = _make_project(tmp_path)
     window.open_project_file(str(path))
-    window._close_project(confirm="discard")
+    window._doc_ui.close(confirm="discard")
     assert window._history.entries() == []
     assert window._history.can_undo() is False
 

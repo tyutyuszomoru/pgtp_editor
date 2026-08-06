@@ -342,7 +342,7 @@ def test_reparse_refreshes_the_visible_coherence_view(qtbot, tmp_path):
     assert fetches == [1]
 
     window.center_stage.xml_editor.setPlainText(PGTP_TWO_LOOKUPS)
-    window._reparse_raw_xml()
+    window._doc_ui.reparse()
 
     assert fetches == [1]  # cached schema reused
     # The new lookup's target is a relation the DB does not have, so it shows

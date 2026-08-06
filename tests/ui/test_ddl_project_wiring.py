@@ -14,11 +14,13 @@ from PySide6.QtWidgets import QMessageBox
 
 from pgtp_editor.db.config import ConnectionParams
 from pgtp_editor.db.ddl_project import GitConfig, PgtpLink, ProjectSettings, load_settings
+from pgtp_editor.ui.ddl_project_controller import DdlProjectController
 from pgtp_editor.ui.main_window import MainWindow
 from pgtp_editor.ui.new_project_dialog import NewProjectDialog
 from pgtp_editor.ui.project_settings_dialog import ProjectSettingsDialog
 
 from ._menu_helpers import find_action, find_top_menu
+from ._sandbox_stubs import stub_sandbox_provisioning
 from pgtp_editor.ui import modals
 
 
@@ -29,6 +31,10 @@ def _empty_settings(tmp_path):
 def _window(qtbot, tmp_path):
     window = MainWindow(settings=_empty_settings(tmp_path))
     qtbot.addWidget(window)
+    # FQ-007: New Project now CREATES + provisions the sandbox database, so the
+    # controller's db/sandbox.py seams are stubbed here -- no test may reach a
+    # real server, and none of these tests is about provisioning.
+    stub_sandbox_provisioning(window)
     return window
 
 
@@ -43,7 +49,7 @@ def test_database_menu_has_new_open_close_project_actions(qtbot, tmp_path):
 
 def test_close_project_action_starts_disabled(qtbot, tmp_path):
     window = _window(qtbot, tmp_path)
-    assert window._close_ddl_project_action.isEnabled() is False
+    assert window._ddl_project_ui.close_project_action.isEnabled() is False
 
 
 # --- New Project ----------------------------------------------------------
@@ -56,7 +62,7 @@ def test_new_ddl_project_creates_the_folder_and_settings_file(qtbot, tmp_path):
     dialog._folder_edit.setText(str(project_dir))
     dialog._sandbox_host_edit.setText("localhost")
 
-    window._create_ddl_project(dialog)
+    window._ddl_project_ui.create_project(dialog)
 
     assert project_dir.exists()
     loaded = load_settings(project_dir)
@@ -71,11 +77,11 @@ def test_new_ddl_project_becomes_the_active_project(qtbot, tmp_path):
     qtbot.addWidget(dialog)
     dialog._folder_edit.setText(str(project_dir))
 
-    window._create_ddl_project(dialog)
+    window._ddl_project_ui.create_project(dialog)
 
     assert window._ddl_project_folder == project_dir
     assert window._ddl_project_settings is not None
-    assert window._close_ddl_project_action.isEnabled() is True
+    assert window._ddl_project_ui.close_project_action.isEnabled() is True
 
 
 def test_new_ddl_project_captures_git_config_inert(qtbot, tmp_path):
@@ -87,7 +93,7 @@ def test_new_ddl_project_captures_git_config_inert(qtbot, tmp_path):
     dialog._git_server_edit.setText("git.example.com")
     dialog._git_branch_edit.setText("feature/x")
 
-    window._create_ddl_project(dialog)
+    window._ddl_project_ui.create_project(dialog)
 
     loaded = load_settings(project_dir)
     assert loaded.git == GitConfig(server="git.example.com", checkout_branch="feature/x")
@@ -104,7 +110,7 @@ def test_new_ddl_project_on_an_existing_folder_reuses_it(qtbot, tmp_path):
     qtbot.addWidget(dialog)
     dialog._folder_edit.setText(str(project_dir))
 
-    window._create_ddl_project(dialog)
+    window._ddl_project_ui.create_project(dialog)
 
     assert (project_dir / "unrelated.txt").read_text(encoding="utf-8") == "keep me"
 
@@ -122,11 +128,11 @@ def test_open_ddl_project_loads_existing_settings(qtbot, tmp_path, monkeypatch):
         staticmethod(lambda *a, **k: str(project_dir)),
     )
 
-    window._open_ddl_project()
+    window._ddl_project_ui.open_project()
 
     assert window._ddl_project_settings.name == "Prior work"
     assert window._ddl_project_folder == project_dir
-    assert window._close_ddl_project_action.isEnabled() is True
+    assert window._ddl_project_ui.close_project_action.isEnabled() is True
 
 
 def test_open_ddl_project_cancelled_picker_does_nothing(qtbot, tmp_path, monkeypatch):
@@ -137,10 +143,10 @@ def test_open_ddl_project_cancelled_picker_does_nothing(qtbot, tmp_path, monkeyp
         staticmethod(lambda *a, **k: ""),  # Cancel
     )
 
-    window._open_ddl_project()
+    window._ddl_project_ui.open_project()
 
     assert window._ddl_project_folder is None
-    assert window._close_ddl_project_action.isEnabled() is False
+    assert window._ddl_project_ui.close_project_action.isEnabled() is False
 
 
 def test_open_ddl_project_on_a_non_project_folder_is_rejected(qtbot, tmp_path, monkeypatch):
@@ -157,11 +163,11 @@ def test_open_ddl_project_on_a_non_project_folder_is_rejected(qtbot, tmp_path, m
     )
     monkeypatch.setattr(modals.QMessageBox, "warning", lambda *a, **k: None)
 
-    window._open_ddl_project()
+    window._ddl_project_ui.open_project()
 
     assert window._ddl_project_folder is None
     assert window._ddl_project_settings is None
-    assert window._close_ddl_project_action.isEnabled() is False
+    assert window._ddl_project_ui.close_project_action.isEnabled() is False
 
 
 def test_open_ddl_project_on_a_valid_project_folder_proceeds(qtbot, tmp_path, monkeypatch):
@@ -179,11 +185,11 @@ def test_open_ddl_project_on_a_valid_project_folder_proceeds(qtbot, tmp_path, mo
         staticmethod(lambda *a, **k: str(project_dir)),
     )
 
-    window._open_ddl_project()
+    window._ddl_project_ui.open_project()
 
     assert window._ddl_project_settings == ProjectSettings()
     assert window._ddl_project_folder == project_dir
-    assert window._close_ddl_project_action.isEnabled() is True
+    assert window._ddl_project_ui.close_project_action.isEnabled() is True
 
 
 def test_open_ddl_project_folder_picker_shows_dirs_only(qtbot, tmp_path, monkeypatch):
@@ -203,7 +209,7 @@ def test_open_ddl_project_folder_picker_shows_dirs_only(qtbot, tmp_path, monkeyp
         staticmethod(fake_get_existing_directory),
     )
 
-    window._open_ddl_project()
+    window._ddl_project_ui.open_project()
 
     options = captured["args"][3] if len(captured["args"]) > 3 else captured["kwargs"].get("options")
     assert modals.QFileDialog.Option.ShowDirsOnly in modals.QFileDialog.Options(options)
@@ -228,7 +234,7 @@ def test_open_ddl_project_auto_opens_the_linked_working_copy(qtbot, tmp_path, mo
         staticmethod(lambda *a, **k: str(project_dir)),
     )
 
-    window._open_ddl_project()
+    window._ddl_project_ui.open_project()
 
     assert window._current_project_path == str(working_copy)
     assert window._current_project is not None
@@ -269,19 +275,20 @@ def test_open_project_action_signal_path_auto_opens_the_linked_working_copy(
 def test_new_project_action_signal_path_does_not_treat_checked_as_on_ready(
     qtbot, tmp_path, monkeypatch
 ):
-    """BUG-021, parallel latent defect: `_new_ddl_project` is wired the same
+    """BUG-021, parallel latent defect: `new_project` is wired the same
     way, so the dialog's accepted handler would call `False()` (TypeError)."""
     window = _window(qtbot, tmp_path)
     created = []
     monkeypatch.setattr(
-        MainWindow, "_create_ddl_project", lambda self, dialog: created.append(dialog)
+        DdlProjectController, "create_project",
+        lambda self, dialog: created.append(dialog),
     )
 
     action = find_action(find_top_menu(window, "File"), "New Project…")
     assert action is not None
     action.trigger()
 
-    dialog = window._new_project_dialog
+    dialog = window._ddl_project_ui.new_project_dialog
     assert isinstance(dialog, NewProjectDialog)
     dialog.accepted.emit()  # must not raise TypeError: 'bool' object is not callable
     assert created == [dialog]
@@ -299,7 +306,7 @@ def test_open_ddl_project_with_no_linked_pgtp_does_nothing(qtbot, tmp_path, monk
         staticmethod(lambda *a, **k: str(project_dir)),
     )
 
-    window._open_ddl_project()  # must not raise
+    window._ddl_project_ui.open_project()  # must not raise
 
     assert window._current_project is None
     assert window._current_project_path is None
@@ -321,7 +328,7 @@ def test_open_ddl_project_with_exactly_one_unlinked_pgtp_auto_opens_it(qtbot, tm
         staticmethod(lambda *a, **k: str(project_dir)),
     )
 
-    window._open_ddl_project()
+    window._ddl_project_ui.open_project()
 
     assert window._current_project_path == str(only_pgtp)
 
@@ -342,7 +349,7 @@ def test_open_ddl_project_with_multiple_unlinked_pgtp_reports_via_audit_and_gues
         staticmethod(lambda *a, **k: str(project_dir)),
     )
 
-    window._open_ddl_project()
+    window._ddl_project_ui.open_project()
 
     assert window._current_project is None  # never guessed which one
     texts = [window.audit_panel.item(i).text() for i in range(window.audit_panel.count())]
@@ -383,7 +390,7 @@ def test_open_ddl_project_via_prompt_pgtp_open_mode_does_not_double_load(qtbot, 
         return original_open(path)
 
     window.open_project_file = tracking_open
-    window._open_ddl_project(on_ready=lambda: window.open_project_file(str(source)))
+    window._ddl_project_ui.open_project(on_ready=lambda: window.open_project_file(str(source)))
 
     # Only the caller's own path was opened -- never the linked working copy.
     assert opened == [str(source)]
@@ -412,7 +419,7 @@ def test_open_reports_unchanged_source_pgtp(qtbot, tmp_path, monkeypatch):
         staticmethod(lambda *a, **k: str(project_dir)),
     )
 
-    window._open_ddl_project()
+    window._ddl_project_ui.open_project()
 
     texts = [window.audit_panel.item(i).text() for i in range(window.audit_panel.count())]
     assert any("unchanged" in t.lower() for t in texts if t.startswith("[Project]"))
@@ -440,7 +447,7 @@ def test_open_reports_drifted_source_pgtp(qtbot, tmp_path, monkeypatch):
         staticmethod(lambda *a, **k: str(project_dir)),
     )
 
-    window._open_ddl_project()
+    window._ddl_project_ui.open_project()
 
     texts = [window.audit_panel.item(i).text() for i in range(window.audit_panel.count())]
     assert any(
@@ -461,7 +468,7 @@ def test_open_with_no_pgtp_link_reports_nothing(qtbot, tmp_path, monkeypatch):
     )
     before = window.audit_panel.count()
 
-    window._open_ddl_project()
+    window._ddl_project_ui.open_project()
 
     assert window.audit_panel.count() == before
 
@@ -481,7 +488,7 @@ def test_open_reports_unreadable_source_pgtp_gracefully(qtbot, tmp_path, monkeyp
         staticmethod(lambda *a, **k: str(project_dir)),
     )
 
-    window._open_ddl_project()  # must not raise
+    window._ddl_project_ui.open_project()  # must not raise
 
     texts = [window.audit_panel.item(i).text() for i in range(window.audit_panel.count())]
     assert any("could not read" in t.lower() for t in texts)
@@ -493,18 +500,18 @@ def test_close_ddl_project_clears_state_and_disables_action(qtbot, tmp_path):
     dialog = NewProjectDialog(parent=window)
     qtbot.addWidget(dialog)
     dialog._folder_edit.setText(str(tmp_path / "p"))
-    window._create_ddl_project(dialog)
+    window._ddl_project_ui.create_project(dialog)
 
-    window._close_ddl_project()
+    window._ddl_project_ui.close_project()
 
     assert window._ddl_project_folder is None
     assert window._ddl_project_settings is None
-    assert window._close_ddl_project_action.isEnabled() is False
+    assert window._ddl_project_ui.close_project_action.isEnabled() is False
 
 
 def test_close_ddl_project_when_none_open_is_a_no_op(qtbot, tmp_path):
     window = _window(qtbot, tmp_path)
-    window._close_ddl_project()  # must not raise
+    window._ddl_project_ui.close_project()  # must not raise
     assert window._ddl_project_folder is None
 
 
@@ -520,12 +527,12 @@ def test_project_settings_opens_directly_when_a_project_is_already_active(qtbot,
     dialog = NewProjectDialog(parent=window)
     qtbot.addWidget(dialog)
     dialog._folder_edit.setText(str(tmp_path / "p"))
-    window._create_ddl_project(dialog)
+    window._ddl_project_ui.create_project(dialog)
 
-    window._open_ddl_project_settings()
+    window._ddl_project_ui.open_settings()
 
-    assert isinstance(window._project_settings_dialog, ProjectSettingsDialog)
-    assert window._project_settings_dialog.settings() == window._ddl_project_settings
+    assert isinstance(window._ddl_project_ui.project_settings_dialog, ProjectSettingsDialog)
+    assert window._ddl_project_ui.project_settings_dialog.settings() == window._ddl_project_settings
 
 
 def test_saving_project_settings_writes_to_disk_and_updates_state(qtbot, tmp_path):
@@ -534,10 +541,10 @@ def test_saving_project_settings_writes_to_disk_and_updates_state(qtbot, tmp_pat
     new_project_dialog = NewProjectDialog(parent=window)
     qtbot.addWidget(new_project_dialog)
     new_project_dialog._folder_edit.setText(str(project_dir))
-    window._create_ddl_project(new_project_dialog)
+    window._ddl_project_ui.create_project(new_project_dialog)
 
-    window._open_ddl_project_settings()
-    settings_dialog = window._project_settings_dialog
+    window._ddl_project_ui.open_settings()
+    settings_dialog = window._ddl_project_ui.project_settings_dialog
     settings_dialog._name_edit.setText("renamed")
 
     settings_dialog.accepted.emit()
@@ -577,10 +584,10 @@ def test_project_required_create_path(qtbot, tmp_path, monkeypatch):
     monkeypatch.setattr("pgtp_editor.ui.modals.QMessageBox", _FakeBox)
     got = []
 
-    window._require_ddl_project(lambda: got.append(True))
+    window._ddl_project_ui.require_project(lambda: got.append(True))
 
     # The Create… path opened NewProjectDialog; complete it as the user would.
-    dialog = window._new_project_dialog
+    dialog = window._ddl_project_ui.new_project_dialog
     dialog._folder_edit.setText(str(project_dir))
     dialog.accepted.emit()
 
@@ -617,7 +624,7 @@ def test_project_required_cancel_path_never_calls_on_ready(qtbot, tmp_path, monk
     monkeypatch.setattr("pgtp_editor.ui.modals.QMessageBox", _FakeBox)
     got = []
 
-    window._require_ddl_project(lambda: got.append(True))
+    window._ddl_project_ui.require_project(lambda: got.append(True))
 
     assert got == []
     assert window._ddl_project_folder is None
@@ -628,14 +635,14 @@ def test_project_required_skips_the_dialog_entirely_when_already_open(qtbot, tmp
     dialog = NewProjectDialog(parent=window)
     qtbot.addWidget(dialog)
     dialog._folder_edit.setText(str(tmp_path / "p"))
-    window._create_ddl_project(dialog)
+    window._ddl_project_ui.create_project(dialog)
     monkeypatch.setattr(
         "pgtp_editor.ui.modals.QMessageBox",
         lambda *a, **k: (_ for _ in ()).throw(AssertionError("must not prompt")),
     )
     got = []
 
-    window._require_ddl_project(lambda: got.append(True))
+    window._ddl_project_ui.require_project(lambda: got.append(True))
 
     assert got == [True]
 
@@ -645,7 +652,7 @@ def _open_project(window, folder):
     from pgtp_editor.db.ddl_project import ProjectSettings, save_settings
 
     save_settings(folder, ProjectSettings())
-    window._set_active_ddl_project(folder, ProjectSettings())
+    window._ddl_project_ui.set_active_project(folder, ProjectSettings())
 
 
 def test_checkout_seeds_the_file_when_absent(qtbot, tmp_path):
@@ -779,7 +786,7 @@ def test_checkout_reports_drift_from_the_last_deployed_reference(qtbot, tmp_path
         deployed={"ddl/pr.recalc.sql": DeployedObject(content_hash="stale-hash")}
     )
     save_settings(project_dir, settings)
-    window._set_active_ddl_project(project_dir, settings)
+    window._ddl_project_ui.set_active_project(project_dir, settings)
     ref = DdlObjectRef(kind="function", schema="pr", name="recalc")
 
     window._checkout_and_edit(ref, "CREATE FUNCTION pr.recalc() ... -- drifted")
@@ -804,7 +811,7 @@ def test_checkout_reports_no_drift_when_hash_matches_the_deployed_reference(qtbo
         deployed={"ddl/pr.recalc.sql": DeployedObject(content_hash=content_hash(live_source))}
     )
     save_settings(project_dir, settings)
-    window._set_active_ddl_project(project_dir, settings)
+    window._ddl_project_ui.set_active_project(project_dir, settings)
     ref = DdlObjectRef(kind="function", schema="pr", name="recalc")
     before = window.audit_panel.count()
 
@@ -902,7 +909,7 @@ def test_saving_the_linked_working_copy_writes_no_bak(qtbot, tmp_path):
     window.open_project_file(str(source))
     working_copy = Path(window._current_project_path)
 
-    window._save_project()  # re-save over the same (existing) working copy
+    window._doc_ui.save_project()  # re-save over the same (existing) working copy
 
     assert not Path(str(working_copy) + ".bak").exists()
 
@@ -939,7 +946,7 @@ def test_reopening_the_same_linked_source_then_saving_still_writes_no_bak(qtbot,
     window.open_project_file(str(source))
     window.open_project_file(str(source))  # re-open the identical source path
 
-    window._save_project()
+    window._doc_ui.save_project()
 
     assert not Path(str(source) + ".bak").exists()
 
@@ -952,7 +959,7 @@ def test_saving_a_no_project_pgtp_still_writes_bak_as_before(qtbot, tmp_path):
     source.write_text(_VALID_PGTP, encoding="utf-8")
     window.open_project_file(str(source))
 
-    window._save_project()
+    window._doc_ui.save_project()
 
     assert Path(str(source) + ".bak").exists()
 
@@ -968,7 +975,7 @@ def test_deploy_pgtp_pushes_the_working_copy_back_to_the_source(qtbot, tmp_path)
     edited_text = _VALID_PGTP.replace("<Pages/>", "<Pages><!--edited--></Pages>")
     working_copy.write_text(edited_text, encoding="utf-8")
 
-    window._deploy_pgtp()
+    window._ddl_project_ui.deploy_pgtp()
 
     assert source.read_text(encoding="utf-8") == edited_text
 
@@ -984,7 +991,7 @@ def test_deploy_pgtp_updates_the_checksum_so_open_reports_unchanged_next_time(qt
     edited_text = _VALID_PGTP.replace("<Pages/>", "<Pages><!--edited--></Pages>")
     working_copy.write_text(edited_text, encoding="utf-8")
 
-    window._deploy_pgtp()
+    window._ddl_project_ui.deploy_pgtp()
 
     from pgtp_editor.db.ddl_project import content_hash
 
@@ -993,7 +1000,7 @@ def test_deploy_pgtp_updates_the_checksum_so_open_reports_unchanged_next_time(qt
 
 def test_deploy_pgtp_with_no_project_is_a_status_message_not_a_crash(qtbot, tmp_path):
     window = _window(qtbot, tmp_path)
-    window._deploy_pgtp()  # must not raise
+    window._ddl_project_ui.deploy_pgtp()  # must not raise
     assert "no project" in window.statusBar().currentMessage().lower()
 
 
@@ -1002,7 +1009,7 @@ def test_deploy_pgtp_with_a_project_but_no_pgtp_linked_is_a_status_message(qtbot
     project_dir = tmp_path / "proj"
     _open_project(window, project_dir)
 
-    window._deploy_pgtp()  # must not raise
+    window._ddl_project_ui.deploy_pgtp()  # must not raise
 
     assert "no .pgtp" in window.statusBar().currentMessage().lower()
 
@@ -1022,7 +1029,7 @@ def test_close_project_offers_deploy_pgtp_when_working_copy_has_pending_changes(
         staticmethod(lambda *a, **k: QMessageBox.StandardButton.Yes),
     )
 
-    window._close_ddl_project()
+    window._ddl_project_ui.close_project()
 
     assert source.read_text(encoding="utf-8") == edited_text  # deployed on close
 
@@ -1042,7 +1049,7 @@ def test_close_project_declining_the_deploy_prompt_still_closes_without_deployin
         staticmethod(lambda *a, **k: QMessageBox.StandardButton.No),
     )
 
-    window._close_ddl_project()
+    window._ddl_project_ui.close_project()
 
     assert source.read_text(encoding="utf-8") == _VALID_PGTP  # NOT deployed
     assert window._ddl_project_folder is None  # but still closed
@@ -1060,7 +1067,7 @@ def test_close_project_with_no_pending_pgtp_changes_never_prompts(qtbot, tmp_pat
         staticmethod(lambda *a, **k: (_ for _ in ()).throw(AssertionError("must not prompt"))),
     )
 
-    window._close_ddl_project()  # unchanged working copy -- nothing pending
+    window._ddl_project_ui.close_project()  # unchanged working copy -- nothing pending
 
     assert window._ddl_project_folder is None
 
@@ -1074,7 +1081,7 @@ def test_close_project_with_no_pgtp_linked_never_prompts(qtbot, tmp_path, monkey
         staticmethod(lambda *a, **k: (_ for _ in ()).throw(AssertionError("must not prompt"))),
     )
 
-    window._close_ddl_project()
+    window._ddl_project_ui.close_project()
 
     assert window._ddl_project_folder is None
 
@@ -1091,14 +1098,14 @@ def test_close_project_reminds_about_pending_ddl_deploys(qtbot, tmp_path):
     from pgtp_editor.db.ddl_project import save_settings
 
     save_settings(project_dir, settings)
-    window._set_active_ddl_project(project_dir, settings)
+    window._ddl_project_ui.set_active_project(project_dir, settings)
     (project_dir / "ddl").mkdir()
     (project_dir / "ddl" / "pr.recalc.sql").write_text("-- hand-edited\n", encoding="utf-8")
     window.ddl_browser_panel._schema = DatabaseSchema(
         routines={"pr.recalc()": RoutineInfo(schema="pr", name="recalc", source="live def")}
     )
 
-    window._close_ddl_project()
+    window._ddl_project_ui.close_project()
 
     texts = [window.audit_panel.item(i).text() for i in range(window.audit_panel.count())]
     assert any(
@@ -1111,7 +1118,7 @@ def test_close_project_with_no_ddl_explorer_loaded_never_raises(qtbot, tmp_path)
     project_dir = tmp_path / "proj"
     _open_project(window, project_dir)
 
-    window._close_ddl_project()  # ddl_browser_panel._schema is still None
+    window._ddl_project_ui.close_project()  # ddl_browser_panel._schema is still None
 
     assert window._ddl_project_folder is None
 
@@ -1135,7 +1142,7 @@ def test_window_title_shows_the_project_folder_name_once_active(qtbot, tmp_path)
     qtbot.addWidget(dialog)
     dialog._folder_edit.setText(str(project_dir))
 
-    window._create_ddl_project(dialog)
+    window._ddl_project_ui.create_project(dialog)
 
     assert "Project: my-project" in window.windowTitle()
 
@@ -1146,9 +1153,9 @@ def test_window_title_drops_the_project_on_close(qtbot, tmp_path):
     dialog = NewProjectDialog(parent=window)
     qtbot.addWidget(dialog)
     dialog._folder_edit.setText(str(project_dir))
-    window._create_ddl_project(dialog)
+    window._ddl_project_ui.create_project(dialog)
 
-    window._close_ddl_project()
+    window._ddl_project_ui.close_project()
 
     assert "Project:" not in window.windowTitle()
 
@@ -1166,7 +1173,7 @@ def test_open_pgtp_dialog_defaults_to_the_project_folder(qtbot, tmp_path, monkey
 
     monkeypatch.setattr("pgtp_editor.ui.modals.QFileDialog.getOpenFileName", fake_open)
 
-    window._open_project()
+    window._doc_ui.open_dialog()
 
     assert captured["directory"] == str(project_dir)
 
@@ -1183,7 +1190,7 @@ def test_save_project_as_dialog_defaults_to_the_project_folder(qtbot, tmp_path, 
 
     monkeypatch.setattr("pgtp_editor.ui.modals.QFileDialog.getSaveFileName", fake_save)
 
-    window._save_project_as()
+    window._doc_ui.save_as()
 
     assert captured["directory"] == str(project_dir)
 
@@ -1198,7 +1205,7 @@ def test_open_pgtp_dialog_defaults_to_empty_with_no_project(qtbot, tmp_path, mon
 
     monkeypatch.setattr("pgtp_editor.ui.modals.QFileDialog.getOpenFileName", fake_open)
 
-    window._open_project()
+    window._doc_ui.open_dialog()
 
     assert captured["directory"] == ""
 
@@ -1412,10 +1419,10 @@ def test_open_with_no_project_prompts_and_new_project_choice_creates_one(qtbot, 
 
     monkeypatch.setattr("pgtp_editor.ui.modals.QMessageBox", _FakeBox)
 
-    window._open_project()
+    window._doc_ui.open_dialog()
 
     project_dir = tmp_path / "new-proj"
-    dialog = window._new_project_dialog
+    dialog = window._ddl_project_ui.new_project_dialog
     dialog._folder_edit.setText(str(project_dir))
     dialog.accepted.emit()
 
@@ -1445,7 +1452,7 @@ def test_open_with_no_project_prompts_and_open_project_choice_links_it(qtbot, tm
         lambda *a, **k: str(existing_project),
     )
 
-    window._open_project()
+    window._doc_ui.open_dialog()
 
     assert window._ddl_project_folder == existing_project
     assert window._current_project_path is not None
@@ -1461,7 +1468,7 @@ def test_open_with_no_project_edit_standalone_choice_opens_plainly(qtbot, tmp_pa
     )
     monkeypatch.setattr("pgtp_editor.ui.modals.QMessageBox", _FakeChooserBox)
 
-    window._open_project()
+    window._doc_ui.open_dialog()
 
     assert window._ddl_project_folder is None
     assert window._current_project_path == str(source)
@@ -1482,7 +1489,7 @@ def test_open_with_a_project_already_active_never_prompts(qtbot, tmp_path, monke
         lambda *a, **k: (_ for _ in ()).throw(AssertionError("must not prompt")),
     )
 
-    window._open_project()
+    window._doc_ui.open_dialog()
 
     assert window._current_project_path is not None
 
@@ -1494,7 +1501,7 @@ def test_ddl_project_state_is_independent_of_current_project(qtbot, tmp_path):
     qtbot.addWidget(dialog)
     dialog._folder_edit.setText(str(tmp_path / "p"))
 
-    window._create_ddl_project(dialog)
+    window._ddl_project_ui.create_project(dialog)
 
     assert window._current_project is None  # untouched -- no .pgtp opened
     assert window._ddl_project_folder is not None
@@ -1524,7 +1531,7 @@ def test_open_ddl_project_treats_a_non_callable_on_ready_as_absent(
         staticmethod(lambda *a, **k: str(project_dir)),
     )
 
-    window._open_ddl_project(on_ready=False)
+    window._ddl_project_ui.open_project(on_ready=False)
 
     assert window._current_project_path == str(working_copy)
 
@@ -1535,13 +1542,14 @@ def test_new_ddl_project_treats_a_non_callable_on_ready_as_absent(
     window = _window(qtbot, tmp_path)
     created = []
     monkeypatch.setattr(
-        MainWindow, "_create_ddl_project", lambda self, dialog: created.append(dialog)
+        DdlProjectController, "create_project",
+        lambda self, dialog: created.append(dialog),
     )
 
-    window._new_ddl_project(on_ready=False)
-    window._new_project_dialog.accepted.emit()   # must not raise
+    window._ddl_project_ui.new_project(on_ready=False)
+    window._ddl_project_ui.new_project_dialog.accepted.emit()   # must not raise
 
-    assert created == [window._new_project_dialog]
+    assert created == [window._ddl_project_ui.new_project_dialog]
 
 
 def test_a_real_on_ready_callback_still_runs_on_open(qtbot, tmp_path, monkeypatch):
@@ -1559,7 +1567,7 @@ def test_a_real_on_ready_callback_still_runs_on_open(qtbot, tmp_path, monkeypatc
         staticmethod(lambda *a, **k: str(project_dir)),
     )
     ran = []
-    window._open_ddl_project(on_ready=lambda: ran.append(True))
+    window._ddl_project_ui.open_project(on_ready=lambda: ran.append(True))
 
     assert ran == [True]
     assert window._ddl_project_folder == project_dir
@@ -1571,10 +1579,241 @@ def test_close_project_action_signal_path_closes_the_project(qtbot, tmp_path):
     window = _window(qtbot, tmp_path)
     project_dir = tmp_path / "proj"
     project_dir.mkdir()
-    window._set_active_ddl_project(project_dir, ProjectSettings())
-    assert window._close_ddl_project_action.isEnabled() is True
+    window._ddl_project_ui.set_active_project(project_dir, ProjectSettings())
+    assert window._ddl_project_ui.close_project_action.isEnabled() is True
 
-    window._close_ddl_project_action.trigger()
+    window._ddl_project_ui.close_project_action.trigger()
 
     assert window._ddl_project_folder is None
-    assert window._close_ddl_project_action.isEnabled() is False
+    assert window._ddl_project_ui.close_project_action.isEnabled() is False
+
+
+# --- BUG-034: the `.pgtp`'s connection becomes the project's target ---------
+_PGTP_WITH_CONNECTION = """\
+<?xml version="1.0" encoding="UTF-8"?>
+<Project>
+  <ConnectionOptions host="dbhost" port="5433" login="erp" database="erpdb" password="xx"/>
+  <Presentation>
+    <Pages/>
+  </Presentation>
+</Project>
+"""
+
+
+def test_opening_a_pgtp_imports_its_connection_options_into_the_project_target(
+    qtbot, tmp_path
+):
+    """The reported symptom: Project Settings showed empty target fields for a
+    project the app was happily connecting to. Nothing ever copied the
+    `.pgtp`'s `<ConnectionOptions>` into `ProjectSettings.target`."""
+    window = _window(qtbot, tmp_path)
+    project_dir = tmp_path / "proj"
+    _open_project(window, project_dir)
+    source = tmp_path / "erp.pgtp"
+    source.write_text(_PGTP_WITH_CONNECTION, encoding="utf-8")
+
+    window.open_project_file(str(source))
+
+    target = window._ddl_project_settings.target
+    assert (target.host, target.port, target.database, target.user) == (
+        "dbhost", "5433", "erpdb", "erp"
+    )
+    # …and it is PERSISTED, not just held in memory.
+    assert load_settings(project_dir).target.host == "dbhost"
+
+
+def test_the_imported_target_never_carries_a_password_from_the_xml(qtbot, tmp_path):
+    """§17: the password is never read from the XML (it is obfuscated there).
+    It is prompted for at first connect instead."""
+    window = _window(qtbot, tmp_path)
+    project_dir = tmp_path / "proj"
+    _open_project(window, project_dir)
+    source = tmp_path / "erp.pgtp"
+    source.write_text(_PGTP_WITH_CONNECTION, encoding="utf-8")
+
+    window.open_project_file(str(source))
+
+    assert window._ddl_project_settings.target.password == ""
+
+
+def test_importing_the_target_never_clobbers_one_the_user_already_set(qtbot, tmp_path):
+    """"Saved wins" -- the same precedence `seed_params` encodes. A host the
+    user corrected in Project Settings must survive reopening the project."""
+    from pgtp_editor.db.ddl_project import save_settings
+
+    window = _window(qtbot, tmp_path)
+    project_dir = tmp_path / "proj"
+    edited = ProjectSettings(
+        target=ConnectionParams(
+            host="127.0.0.1", port="5432", database="mine", user="me", password="pw"
+        )
+    )
+    save_settings(project_dir, edited)
+    window._ddl_project_ui.set_active_project(project_dir, edited)
+    source = tmp_path / "erp.pgtp"
+    source.write_text(_PGTP_WITH_CONNECTION, encoding="utf-8")
+
+    window.open_project_file(str(source))
+
+    assert window._ddl_project_settings.target.host == "127.0.0.1"
+    assert window._ddl_project_settings.target.password == "pw"
+
+
+def test_importing_the_target_never_seeds_the_sandbox(qtbot, tmp_path):
+    """§17: `<ConnectionOptions>` is the TARGET. Seeding a sandbox from it is
+    how a sandbox ends up pointed at production."""
+    window = _window(qtbot, tmp_path)
+    project_dir = tmp_path / "proj"
+    _open_project(window, project_dir)
+    source = tmp_path / "erp.pgtp"
+    source.write_text(_PGTP_WITH_CONNECTION, encoding="utf-8")
+
+    window.open_project_file(str(source))
+
+    assert window._ddl_project_settings.sandbox.host == ""
+
+
+def test_a_pgtp_without_connection_options_leaves_the_target_alone(qtbot, tmp_path):
+    window = _window(qtbot, tmp_path)
+    project_dir = tmp_path / "proj"
+    _open_project(window, project_dir)
+    source = tmp_path / "plain.pgtp"
+    source.write_text(_VALID_PGTP, encoding="utf-8")
+
+    window.open_project_file(str(source))
+
+    assert window._ddl_project_settings.target.host == ""
+
+
+def test_a_pgtp_opened_with_no_project_open_imports_nothing(qtbot, tmp_path):
+    """Projectless there is no `settings.json` to import into; the app-level
+    `seed_params` path is unchanged there (BUG-024 keeps Connection Setup…
+    projectless-only for exactly this split)."""
+    window = _window(qtbot, tmp_path)
+    source = tmp_path / "erp.pgtp"
+    source.write_text(_PGTP_WITH_CONNECTION, encoding="utf-8")
+
+    window.open_project_file(str(source))  # must not raise
+
+    assert window._ddl_project_settings is None
+
+
+def test_linking_a_pgtp_does_not_reset_the_recorded_sandbox_mode(qtbot, tmp_path):
+    """The link step rebuilt `ProjectSettings` field-by-field and silently
+    dropped `sandbox_mode`, quietly turning a "with data" project into a
+    schema-only one."""
+    from pgtp_editor.db.ddl_project import save_settings
+    from pgtp_editor.db.sandbox import SandboxMode
+
+    window = _window(qtbot, tmp_path)
+    project_dir = tmp_path / "proj"
+    settings = ProjectSettings(sandbox_mode=SandboxMode.WITH_DATA)
+    save_settings(project_dir, settings)
+    window._ddl_project_ui.set_active_project(project_dir, settings)
+    source = tmp_path / "erp.pgtp"
+    source.write_text(_VALID_PGTP, encoding="utf-8")
+
+    window.open_project_file(str(source))
+
+    assert window._ddl_project_settings.sandbox_mode is SandboxMode.WITH_DATA
+    assert load_settings(project_dir).sandbox_mode is SandboxMode.WITH_DATA
+
+
+# --- BUG-034: one source of truth for "the target connection" ---------------
+def test_active_target_params_prefers_the_project_profile_over_app_settings(
+    qtbot, tmp_path
+):
+    from pgtp_editor.db.config import save_connection
+
+    window = _window(qtbot, tmp_path)
+    save_connection(
+        window._settings,
+        ConnectionParams(host="app-level", port="1", database="a", user="a", password="a"),
+    )
+    window._ddl_project_ui.set_active_project(
+        tmp_path / "proj", ProjectSettings(target=ConnectionParams(host="project-level"))
+    )
+
+    assert window.active_target_params().host == "project-level"
+
+
+def test_active_target_params_falls_back_to_seed_params_projectless(qtbot, tmp_path):
+    from pgtp_editor.db.config import save_connection
+
+    window = _window(qtbot, tmp_path)
+    save_connection(
+        window._settings,
+        ConnectionParams(host="app-level", port="1", database="a", user="a", password="a"),
+    )
+
+    assert window.active_target_params().host == "app-level"
+
+
+def test_a_fresh_no_target_project_reads_as_not_configured(qtbot, tmp_path):
+    """FQ-007: New Project collects no target at all, so an empty target is
+    legitimate -- and must read as "not configured" rather than be silently
+    backfilled from the app-level connection."""
+    from pgtp_editor.db.config import save_connection
+
+    window = _window(qtbot, tmp_path)
+    save_connection(
+        window._settings,
+        ConnectionParams(host="app-level", port="1", database="a", user="a", password="a"),
+    )
+    window._ddl_project_ui.set_active_project(tmp_path / "proj", ProjectSettings())
+
+    target = window.active_target_params()
+    assert target.host == ""  # NOT backfilled from the app-level connection
+    assert window._target_is_configured(target) is False
+    assert window._connection_summary_for(target) == "Not configured."
+
+
+def test_the_target_password_is_prompted_once_and_persisted(qtbot, tmp_path):
+    """The report: "password is requested, then saved in the json"."""
+    from pgtp_editor.db.ddl_project import save_settings
+
+    window = _window(qtbot, tmp_path)
+    project_dir = tmp_path / "proj"
+    settings = ProjectSettings(
+        target=ConnectionParams(host="dbhost", port="5433", database="erpdb", user="erp")
+    )
+    save_settings(project_dir, settings)
+    window._ddl_project_ui.set_active_project(project_dir, settings)
+    asked = []
+    window._prompt_target_password = lambda params: asked.append(params) or "s3cret"
+
+    first = window._target_params_for_fetch()
+
+    assert first.password == "s3cret"
+    assert load_settings(project_dir).target.password == "s3cret"
+    # Asked ONCE: the persisted password short-circuits every later gesture.
+    assert window._target_params_for_fetch().password == "s3cret"
+    assert len(asked) == 1
+
+
+def test_cancelling_the_password_prompt_persists_nothing(qtbot, tmp_path):
+    from pgtp_editor.db.ddl_project import save_settings
+
+    window = _window(qtbot, tmp_path)
+    project_dir = tmp_path / "proj"
+    settings = ProjectSettings(target=ConnectionParams(host="dbhost", user="erp"))
+    save_settings(project_dir, settings)
+    window._ddl_project_ui.set_active_project(project_dir, settings)
+    window._prompt_target_password = lambda params: None
+
+    params = window._target_params_for_fetch()
+
+    assert params.password == ""
+    assert load_settings(project_dir).target.password == ""
+
+
+def test_no_password_prompt_projectless_or_without_a_host(qtbot, tmp_path):
+    window = _window(qtbot, tmp_path)
+    asked = []
+    window._prompt_target_password = lambda params: asked.append(params) or "x"
+
+    window._target_params_for_fetch()  # projectless
+    window._ddl_project_ui.set_active_project(tmp_path / "proj", ProjectSettings())
+    window._target_params_for_fetch()  # project open, no host configured
+
+    assert asked == []

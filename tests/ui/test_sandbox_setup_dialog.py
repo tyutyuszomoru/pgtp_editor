@@ -15,18 +15,23 @@ from pgtp_editor.db.config import ConnectionParams
 from pgtp_editor.db.ddl_project import ProjectSettings
 from pgtp_editor.db.sandbox import (
     OWNER_MARKER_PREFIX,
+    SANDBOX_DB_PREFIX,
     AppliedObject,
     ForeignDatabaseError,
     SandboxCapabilities,
     SandboxMode,
+    create_sandbox_database,
     determine_project_tier,
 )
 from pgtp_editor.ui.sandbox_controller import (
+    MAINTENANCE_DATABASE,
     SandboxController,
     SandboxOperation,
     SandboxOperationResult,
+    sandbox_name_stem,
 )
 from pgtp_editor.ui.sandbox_setup_dialog import (
+    DEFAULT_MAINTENANCE_DATABASE,
     NO_PROJECT_REASON,
     SCHEMA_ONLY_CLONE_REASON,
     SandboxSetupDialog,
@@ -671,3 +676,49 @@ def test_settings_reflects_what_the_dialog_recorded(qtbot):
     assert dialog.settings() == replace(
         _settings(), sandbox_mode=SandboxMode.WITH_DATA
     )
+
+
+# -- FQ-007: the suggested name shares the New Project step's slug rule --------
+
+
+def test_the_suggested_database_name_is_a_convention_satisfying_name(qtbot):
+    """`_suggested_database_name` now derives its stem from the same helper the
+    §18.2 New Project step auto-names with, so the two surfaces cannot drift into
+    suggesting differently-shaped names -- and this one must still be a name
+    `create_sandbox_database` accepts, since it is pre-filled for the user."""
+    controller = FakeController(
+        capabilities=_caps(), sandbox_params=ConnectionParams(host="localhost")
+    )
+    dialog, _ = _dialog(
+        qtbot, controller, settings=_settings(name="ERP overhaul!! 2026")
+    )
+
+    suggested = dialog._suggested_database_name()
+
+    assert suggested == f"{SANDBOX_DB_PREFIX}{sandbox_name_stem('ERP overhaul!! 2026')}"
+    assert suggested == "pgtp_sandbox_erp_overhaul_2026"
+    create_sandbox_database(
+        ConnectionParams(host="localhost", database=DEFAULT_MAINTENANCE_DATABASE),
+        suggested,
+        runner=lambda _params, _sql: None,
+    )
+
+
+def test_an_already_app_named_sandbox_is_suggested_back_unchanged(qtbot):
+    controller = FakeController(capabilities=_caps())
+    dialog, _ = _dialog(qtbot, controller)
+
+    assert dialog._suggested_database_name() == "pgtp_sandbox_erp"
+
+
+def test_a_nameless_project_suggests_the_fallback_stem(qtbot):
+    controller = FakeController(
+        capabilities=_caps(), sandbox_params=ConnectionParams(host="localhost")
+    )
+    dialog, _ = _dialog(qtbot, controller, settings=_settings(name=""))
+
+    assert dialog._suggested_database_name() == f"{SANDBOX_DB_PREFIX}project"
+
+
+def test_the_maintenance_database_default_is_the_controllers_one_constant():
+    assert DEFAULT_MAINTENANCE_DATABASE is MAINTENANCE_DATABASE == "postgres"

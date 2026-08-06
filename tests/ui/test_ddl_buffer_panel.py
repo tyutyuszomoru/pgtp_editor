@@ -1,6 +1,7 @@
 from pgtp_editor.db.ddl_buffer import build_ddl_text
 from pgtp_editor.db.introspect import ColumnInfo, DatabaseSchema, RoutineInfo, TableInfo, TriggerInfo
 from pgtp_editor.ui.ddl_buffer_panel import BrowserPanel, resolve_edit_target
+from pgtp_editor.ui.ddl_object_editor import DdlObjectRef
 
 # DatabaseSchema is used directly (not just via _schema()) in several tests
 # below to exercise empty/dangling-reference/cross-schema edge cases.
@@ -1236,3 +1237,155 @@ def test_context_menu_on_the_tables_branch_root_offers_nothing(qtbot):
     panel = _table_panel(qtbot)
 
     assert panel._menu_for_item(panel.tree.topLevelItem(0)) is None
+
+
+# --- BUG-033: the unsaved-in-editor `*` overlay ------------------------------
+def _dirty_panel(qtbot, **kwargs):
+    schema = _schema()
+    _text, spans = build_ddl_text(schema)
+    panel = BrowserPanel()
+    qtbot.addWidget(panel)
+    panel.set_schema(schema, spans, **kwargs)
+    return panel
+
+
+def _calc_total_ref():
+    return DdlObjectRef(
+        kind="function", schema="pr", name="calc_total",
+        arg_types=("integer", "numeric"),
+    )
+
+
+def test_set_object_dirty_adds_a_star_to_the_matching_routine_row(qtbot):
+    """The reported symptom: editing a function must mark its tree row, with
+    no project and therefore no drift markers involved at all."""
+    panel = _dirty_panel(qtbot)
+    row = panel.tree.topLevelItem(1).child(1)
+    assert row.text(0) == "pr.calc_total [F]"
+
+    panel.set_object_dirty(_calc_total_ref(), True)
+
+    assert row.text(0) == "pr.calc_total [F] *"
+
+
+def test_set_object_dirty_false_removes_the_star_again(qtbot):
+    panel = _dirty_panel(qtbot)
+    ref = _calc_total_ref()
+    panel.set_object_dirty(ref, True)
+
+    panel.set_object_dirty(ref, False)
+
+    assert panel.tree.topLevelItem(1).child(1).text(0) == "pr.calc_total [F]"
+    assert panel.is_object_dirty(ref) is False
+
+
+def test_dirty_overlay_marks_only_the_named_object(qtbot):
+    panel = _dirty_panel(qtbot)
+
+    panel.set_object_dirty(_calc_total_ref(), True)
+
+    audit_log_row = panel.tree.topLevelItem(1).child(0)
+    assert audit_log_row.text(0) == "pr.audit_log() [T]"
+
+
+def test_dirty_overlay_is_keyed_on_arg_types_so_an_overload_is_not_marked(qtbot):
+    """`DdlObjectRef.key` carries the argument types; a sibling overload is a
+    different object and must not inherit the marker."""
+    schema = DatabaseSchema(
+        routines={
+            "pr.fmt(integer)": RoutineInfo(
+                schema="pr", name="fmt", arg_types=["integer"], return_type="text",
+                language="sql", source="a", kind="function", args=[("v", "integer")],
+            ),
+            "pr.fmt(text)": RoutineInfo(
+                schema="pr", name="fmt", arg_types=["text"], return_type="text",
+                language="sql", source="b", kind="function", args=[("v", "text")],
+            ),
+        }
+    )
+    _text, spans = build_ddl_text(schema)
+    panel = BrowserPanel()
+    qtbot.addWidget(panel)
+    panel.set_schema(schema, spans)
+
+    panel.set_object_dirty(
+        DdlObjectRef(kind="function", schema="pr", name="fmt", arg_types=("text",)), True
+    )
+
+    rows = [panel.tree.topLevelItem(1).child(i).text(0) for i in range(2)]
+    assert rows == ["pr.fmt [F]", "pr.fmt [F] *"]
+
+
+def test_dirty_overlay_does_not_double_mark_a_drift_starred_row(qtbot):
+    """§18.2's `*` and the unsaved-edit `*` collapse to ONE glyph -- the user
+    must never see `**`."""
+    from pgtp_editor.db.ddl_project import DriftMarkers
+
+    panel = _dirty_panel(
+        qtbot,
+        drift_markers={"ddl/pr.calc_total.sql": DriftMarkers(locally_edited=True)},
+    )
+
+    panel.set_object_dirty(_calc_total_ref(), True)
+
+    assert panel.tree.topLevelItem(1).child(1).text(0) == "pr.calc_total [F] *"
+
+
+def test_dirty_overlay_combines_with_a_bang_as_the_established_star_bang(qtbot):
+    from pgtp_editor.db.ddl_project import DriftMarkers
+
+    panel = _dirty_panel(
+        qtbot,
+        drift_markers={"ddl/pr.calc_total.sql": DriftMarkers(live_drifted=True)},
+    )
+
+    panel.set_object_dirty(_calc_total_ref(), True)
+
+    assert panel.tree.topLevelItem(1).child(1).text(0) == "pr.calc_total [F] *!"
+
+
+def test_dirty_overlay_survives_a_set_schema_rebuild(qtbot):
+    """The tree is rebuilt wholesale by every refresh; a still-open, still-dirty
+    tab's marker must come back with it (nothing may be keyed on an index)."""
+    panel = _dirty_panel(qtbot)
+    panel.set_object_dirty(_calc_total_ref(), True)
+
+    schema = _schema()
+    _text, spans = build_ddl_text(schema)
+    panel.set_schema(schema, spans)
+
+    assert panel.tree.topLevelItem(1).child(1).text(0) == "pr.calc_total [F] *"
+
+
+def test_dirty_overlay_marks_both_leaves_of_a_trigger(qtbot):
+    """A trigger renders twice (§18.1); one object, one dirty state, both rows."""
+    panel = _dirty_panel(qtbot)
+    ref = DdlObjectRef(kind="trigger", schema="pr", name="trg_audit", table="equipment")
+
+    panel.set_object_dirty(ref, True)
+
+    under_table = panel.tree.topLevelItem(0).child(0).child(0)
+    under_function = panel.tree.topLevelItem(1).child(0).child(0)
+    assert under_table.text(0).endswith("*")
+    assert under_function.text(0).endswith("*")
+    assert under_table.text(0) == under_function.text(0)
+
+
+def test_set_object_dirty_accepts_a_bare_key_tuple(qtbot):
+    panel = _dirty_panel(qtbot)
+
+    panel.set_object_dirty(_calc_total_ref().key, True)
+
+    assert panel.tree.topLevelItem(1).child(1).text(0) == "pr.calc_total [F] *"
+
+
+def test_dirty_overlay_never_marks_argument_or_group_rows(qtbot):
+    """Only object rows carry an identity; argument leaves and branch roots must
+    be untouched whatever is marked dirty."""
+    panel = _dirty_panel(qtbot)
+    panel.set_object_dirty(_calc_total_ref(), True)
+
+    calc_total = panel.tree.topLevelItem(1).child(1)
+    assert calc_total.child(0).text(0) == "item_id (integer)"
+    assert panel.tree.topLevelItem(1).text(0) == "Functions & Procedures"
+    assert panel.tree.topLevelItem(0).text(0) == "Tables"

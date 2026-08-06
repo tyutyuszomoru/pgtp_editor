@@ -12,6 +12,7 @@ from PySide6.QtCore import QSettings, Qt
 from PySide6.QtGui import QTextCursor
 from PySide6.QtTest import QTest
 
+from pgtp_editor.db.config import ConnectionParams
 from pgtp_editor.db.introspect import DatabaseSchema, RoutineInfo
 from pgtp_editor.ui.ddl_object_editor import DdlObjectRef
 from pgtp_editor.ui.main_window import MainWindow
@@ -29,6 +30,10 @@ def _window(qtbot, tmp_path):
 
 
 _REF = DdlObjectRef(kind="function", schema="pr", name="recalc")
+
+#: BUG-034: a project's own `ProjectSettings.target` is the connection every
+#: fetch gesture uses, so a project used in a fetch test must carry one.
+_TARGET = ConnectionParams(host="h", port="5432", database="d", user="u", password="p")
 
 
 class _FakeProject:
@@ -311,3 +316,144 @@ def test_reopening_ddl_explorer_leaves_open_object_tabs_untouched(qtbot, tmp_pat
     assert window.center_stage.count() == tabs_before
     # The read-only DDL Explorer buffer, meanwhile, DID refresh.
     assert "a DIFFERENT live definition now" in window.center_stage.ddl_editor_panel.editor.toPlainText()
+
+
+# --- BUG-033: the DDL Objects tree must show the edit ------------------------
+def _recalc_schema(source="-- live recalc\n"):
+    return DatabaseSchema(
+        routines={
+            "pr.recalc()": RoutineInfo(
+                schema="pr", name="recalc", arg_types=[], return_type="void",
+                language="plpgsql", source=source, kind="function",
+            )
+        }
+    )
+
+
+def _load_explorer(window, monkeypatch, schema=None):
+    """Populate the tree the way a real fetch does, with no DB and no modal."""
+    monkeypatch.setattr(window, "_run_async", lambda fn, on_result, on_error=None: on_result(fn()))
+    monkeypatch.setattr(window, "_fetch_ddl_schema", lambda params: schema or _recalc_schema())
+    window._open_ddl_explorer()
+
+
+def _recalc_row(window):
+    return window.ddl_browser_panel.tree.topLevelItem(1).child(0)
+
+
+def test_editing_an_open_tab_marks_its_row_in_the_ddl_objects_tree(qtbot, tmp_path, monkeypatch):
+    """The verbatim report: a modified function's DDL shows no `*` in the DDL
+    Objects window. `dirty_changed` reached only the tab title before."""
+    window = _window(qtbot, tmp_path)
+    window._current_project = _project_with_connection()
+    _load_explorer(window, monkeypatch)
+    window._on_ddl_edit_requested(_REF, "-- live recalc\n")
+    assert _recalc_row(window).text(0) == "pr.recalc() [F]"
+
+    window.center_stage.ddl_object_tab(_REF.key).editor.insertPlainText("-- edited\n")
+
+    assert _recalc_row(window).text(0) == "pr.recalc() [F] *"
+
+
+def test_the_unsaved_marker_works_with_no_project_open(qtbot, tmp_path, monkeypatch):
+    """An unsaved edit is a property of the editor buffer, not of a project's
+    deploy state, so it must mark the row projectless -- where `drift_markers`
+    is None and the §18.2 `*` channel does not exist at all."""
+    window = _window(qtbot, tmp_path)
+    window._current_project = _project_with_connection()
+    _load_explorer(window, monkeypatch)
+    assert window._ddl_project_folder is None
+    window._on_ddl_edit_requested(_REF, "-- live recalc\n")
+
+    window.center_stage.ddl_object_tab(_REF.key).editor.insertPlainText("x")
+
+    assert _recalc_row(window).text(0).endswith("*")
+
+
+def test_saving_the_tab_clears_the_unsaved_marker(qtbot, tmp_path, monkeypatch):
+    window = _window(qtbot, tmp_path)
+    window._current_project = _project_with_connection()
+    _load_explorer(window, monkeypatch)
+    window._on_ddl_edit_requested(_REF, "-- live recalc\n")
+    panel = window.center_stage.ddl_object_tab(_REF.key)
+    panel.editor.insertPlainText("-- edited\n")
+    monkeypatch.setattr(
+        modals.QFileDialog, "getSaveFileName",
+        staticmethod(lambda *a, **k: (str(tmp_path / "pr.recalc.sql"), "")),
+    )
+
+    window._save_ddl_object_editor(panel)
+
+    assert _recalc_row(window).text(0) == "pr.recalc() [F]"
+
+
+def test_discarding_a_dirty_tab_drops_the_marker(qtbot, tmp_path, monkeypatch):
+    window = _window(qtbot, tmp_path)
+    window._current_project = _project_with_connection()
+    _load_explorer(window, monkeypatch)
+    window._on_ddl_edit_requested(_REF, "-- live recalc\n")
+    window.center_stage.ddl_object_tab(_REF.key).editor.insertPlainText("-- edited\n")
+    assert _recalc_row(window).text(0).endswith("*")
+    monkeypatch.setattr(window, "_confirm_close_ddl_object", lambda ref: "discard")
+
+    window._on_ddl_object_close_requested(_REF.key)
+
+    assert _recalc_row(window).text(0) == "pr.recalc() [F]"
+
+
+def test_saving_a_checked_out_object_makes_the_file_level_star_appear(qtbot, tmp_path, monkeypatch):
+    """Layer (b): after Save the §18.2 file-vs-last-deployed `*` must be
+    recomputed immediately, not only after a manual Explorer refresh."""
+    from pgtp_editor.db.ddl_project import ProjectSettings, load_settings, save_settings
+
+    window = _window(qtbot, tmp_path)
+    window._current_project = _project_with_connection()
+    project_dir = tmp_path / "proj"
+    # BUG-034: with a project open, its own target is what the fetch uses.
+    settings = ProjectSettings(target=_TARGET)
+    save_settings(project_dir, settings)
+    window._ddl_project_ui.set_active_project(project_dir, settings)
+    _load_explorer(window, monkeypatch)
+
+    window._checkout_and_edit(_REF, "-- live recalc\n")
+    # A fresh checkout is NOT locally edited -- the reference recorded is the
+    # live definition it was taken from.
+    assert _recalc_row(window).text(0) == "pr.recalc() [F]"
+    assert load_settings(project_dir).deployed["ddl/pr.recalc.sql"].content_hash != ""
+
+    key = str((project_dir / "ddl" / "pr.recalc.sql").resolve())
+    panel = window.center_stage.ddl_object_tab(key)
+    panel.editor.insertPlainText("-- edited\n")
+    window._save_ddl_object_editor(panel)
+
+    # Clean tab (no overlay), but the FILE now differs from the reference.
+    assert panel.is_dirty() is False
+    assert _recalc_row(window).text(0) == "pr.recalc() [F] *"
+
+
+def test_checkout_registers_the_live_hash_and_never_overwrites_a_real_reference(
+    qtbot, tmp_path, monkeypatch
+):
+    from pgtp_editor.db.ddl_project import (
+        DeployedObject,
+        ProjectSettings,
+        load_settings,
+        save_settings,
+    )
+
+    window = _window(qtbot, tmp_path)
+    window._current_project = _project_with_connection()
+    project_dir = tmp_path / "proj"
+    settings = ProjectSettings(
+        target=_TARGET,
+        deployed={"ddl/pr.recalc.sql": DeployedObject(content_hash="the-real-deploy")},
+    )
+    save_settings(project_dir, settings)
+    window._ddl_project_ui.set_active_project(project_dir, settings)
+    _load_explorer(window, monkeypatch)
+
+    window._checkout_and_edit(_REF, "-- live recalc\n")
+
+    assert load_settings(project_dir).deployed["ddl/pr.recalc.sql"].content_hash == (
+        "the-real-deploy"
+    )

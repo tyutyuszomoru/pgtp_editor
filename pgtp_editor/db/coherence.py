@@ -54,6 +54,7 @@ below. Qt-free, psycopg-free, I/O-free.
 """
 from __future__ import annotations
 
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, replace
 
 # `_page_label`/`_detail_label` are imported rather than re-derived on purpose:
@@ -89,6 +90,12 @@ BADGE_NOT_IN_XML = "not in XML"
 BADGE_CALCULATED = "calculated"
 #: A Page/Detail element with no `tableName` at all — structural, not an error.
 BADGE_NO_TABLE = "no table"
+
+#: Role name -> the `TableCheck` rollup attribute holding that role's reference
+#: count (BUG-026's role split, the same three numbers the "(P# D# L#)" badge
+#: prints). The P>1/D>1/L>1 filters (FQ-008) read these and nothing else — no
+#: second counting pass, no re-introspection.
+ROLE_COUNT_ATTRS = {"page": "page_count", "detail": "detail_count", "lookup": "lookup_count"}
 
 
 @dataclass(frozen=True)
@@ -146,6 +153,11 @@ class CoherenceTree:
     def flagged_count(self) -> int:
         return sum(flagged_count(branch) for branch in self.branches)
 
+    @property
+    def row_count(self) -> int:
+        """Rows in both branches, excluding the two branch roots themselves."""
+        return sum(row_count(branch) - 1 for branch in self.branches)
+
     def filtered(self) -> "CoherenceTree":
         """This tree pruned to flagged nodes and their ancestors.
 
@@ -157,8 +169,63 @@ class CoherenceTree:
             pages=_prune_branch(self.pages),
         )
 
+    # -- role-count scoping (FQ-008) ----------------------------------------
 
-# --- the mismatch predicate -------------------------------------------------
+    def role_qualifying_tables(self, roles: Iterable[str]) -> set[str]:
+        """Relation names whose reference count is **> 1 in every** role in
+        `roles` (a subset of `ROLE_COUNT_ATTRS`).
+
+        `roles` combine with AND: asking for `("page", "detail")` returns only
+        relations used on more than one page *and* in more than one detail —
+        checking a second box narrows, never widens (FQ-008).
+
+        The counts come straight off the `TableCheck` each relation row already
+        carries (BUG-026's `page_count`/`detail_count`/`lookup_count`); nothing
+        is recounted and no schema is touched. An empty `roles` means "no role
+        condition", so every named relation qualifies.
+        """
+        attrs = [ROLE_COUNT_ATTRS[role] for role in roles]
+        names: set[str] = set()
+        for relation in self.tables_and_views.children:
+            if not relation.table_name:
+                continue
+            check = relation.payload
+            if check is None:
+                continue
+            if all(getattr(check, attr, 0) > 1 for attr in attrs):
+                names.add(relation.table_name)
+        return names
+
+    def scoped_to_tables(self, names: Iterable[str]) -> "CoherenceTree":
+        """This tree narrowed to the relations in `names`, spanning both
+        branches (FQ-008's third settled decision).
+
+        The two branches are narrowed differently because they mean different
+        things:
+
+        * **Tables and Views** keeps each surviving relation's *whole* subtree —
+          its DB columns and its References group are what the row is for, and a
+          relation row with its children stripped would answer nothing.
+        * **Pages** keeps only the reference points that target a surviving
+          relation, plus the ancestors needed to reach them — exactly the
+          mismatch toggle's reachability rule. A table excluded here therefore
+          also disappears from the Page/Detail/lookup rows that point at it, so
+          the two branches never disagree about what is in scope.
+        """
+        wanted = set(names)
+
+        def in_scope(node: CoherenceNode) -> bool:
+            return bool(node.table_name) and node.table_name in wanted
+
+        return CoherenceTree(
+            tables_and_views=_prune_branch(
+                self.tables_and_views, in_scope, keep_subtree=True
+            ),
+            pages=_prune_branch(self.pages, in_scope),
+        )
+
+
+# --- pruning predicates ------------------------------------------------------
 
 
 def flagged_count(node: CoherenceNode) -> int:
@@ -166,28 +233,70 @@ def flagged_count(node: CoherenceNode) -> int:
     return int(node.flagged) + sum(flagged_count(child) for child in node.children)
 
 
+def row_count(node: CoherenceNode) -> int:
+    """How many rows `node`'s subtree contains, `node` itself included. Used by
+    the panel's active-filter banner to say "showing N of M rows" without a
+    second walk of the widget tree."""
+    return 1 + sum(row_count(child) for child in node.children)
+
+
 def has_flagged(node: CoherenceNode) -> bool:
     """Whether `node` or anything below it is flagged."""
     return node.flagged or any(has_flagged(child) for child in node.children)
 
 
-def filter_flagged(node: CoherenceNode) -> CoherenceNode | None:
-    """Return `node` pruned to flagged rows and the paths that reach them.
+def is_flagged(node: CoherenceNode) -> bool:
+    """The mismatch toggle's predicate, named so it can be passed around like
+    any other (FQ-008 turned the one-off toggle into one composable
+    mechanism)."""
+    return node.flagged
 
-    `None` when nothing in the subtree is flagged. A flagged leaf must stay
-    *reachable*, so every ancestor of a surviving row is kept even though the
-    ancestor itself is not flagged; an ancestor's unflagged siblings are not.
+
+def filter_nodes(
+    node: CoherenceNode,
+    predicate: Callable[[CoherenceNode], bool],
+    *,
+    keep_subtree: bool = False,
+) -> CoherenceNode | None:
+    """Return `node` pruned to the rows `predicate` accepts and the paths that
+    reach them, or `None` when the subtree has no accepted row.
+
+    An accepted leaf must stay *reachable*, so every ancestor of a surviving
+    row is kept even though the ancestor itself was not accepted; an ancestor's
+    rejected siblings are not.
+
+    `keep_subtree=True` keeps an accepted node's children verbatim instead of
+    pruning them too — for scoping filters that select a *subject* (a relation)
+    rather than a *row* (a mismatch), where stripping the children would leave
+    the surviving row unable to answer anything.
     """
+    if keep_subtree and predicate(node):
+        return node
     kept = tuple(
-        pruned for pruned in (filter_flagged(child) for child in node.children) if pruned is not None
+        pruned
+        for pruned in (
+            filter_nodes(child, predicate, keep_subtree=keep_subtree) for child in node.children
+        )
+        if pruned is not None
     )
-    if node.flagged or kept:
+    if predicate(node) or kept:
         return replace(node, children=kept)
     return None
 
 
-def _prune_branch(branch: CoherenceNode) -> CoherenceNode:
-    pruned = filter_flagged(branch)
+def filter_flagged(node: CoherenceNode) -> CoherenceNode | None:
+    """Return `node` pruned to flagged rows and the paths that reach them
+    (`filter_nodes` under the mismatch predicate)."""
+    return filter_nodes(node, is_flagged)
+
+
+def _prune_branch(
+    branch: CoherenceNode,
+    predicate: Callable[[CoherenceNode], bool] = is_flagged,
+    *,
+    keep_subtree: bool = False,
+) -> CoherenceNode:
+    pruned = filter_nodes(branch, predicate, keep_subtree=keep_subtree)
     return pruned if pruned is not None else replace(branch, children=())
 
 

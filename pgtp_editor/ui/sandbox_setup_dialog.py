@@ -122,12 +122,19 @@ from pgtp_editor.db.sandbox import (
     is_app_owned,
 )
 from pgtp_editor.ui.async_task import run_async
-from pgtp_editor.ui.sandbox_controller import SandboxController, SandboxOperation
+from pgtp_editor.ui.sandbox_controller import (
+    MAINTENANCE_DATABASE,
+    SandboxController,
+    SandboxOperation,
+    sandbox_name_stem,
+)
 
 #: The maintenance database `create_sandbox_database` connects to, since
 #: PostgreSQL forbids `CREATE DATABASE` inside a transaction block against the
-#: database being created. Overridable per-instance.
-DEFAULT_MAINTENANCE_DATABASE = "postgres"
+#: database being created. Overridable per-instance. An **alias** of
+#: `ui/sandbox_controller.py::MAINTENANCE_DATABASE`, not a second literal --
+#: §18.2's New Project step derives its admin connection from the same name.
+DEFAULT_MAINTENANCE_DATABASE = MAINTENANCE_DATABASE
 
 _WORKING_SET_COLUMNS = ("Kind", "Schema", "Object", "Table", "Applied at")
 
@@ -478,11 +485,10 @@ class SandboxSetupDialog(QDialog):
         current = params.database if params is not None else ""
         if current.startswith(SANDBOX_DB_PREFIX):
             return current
-        stem = "".join(
-            char if char.isalnum() else "_"
-            for char in (self._settings.name if self._settings else "")
-        ).strip("_").lower()
-        return f"{SANDBOX_DB_PREFIX}{stem or 'project'}"
+        # The same slug rule §18.2's New Project auto-naming uses, imported
+        # rather than re-derived, so the two surfaces suggest the same shape of
+        # name (this one stays user-editable; New Project's is not typed at all).
+        return f"{SANDBOX_DB_PREFIX}{sandbox_name_stem(self._settings.name if self._settings else '')}"
 
     def _on_mode_toggled(self, _checked: bool) -> None:
         self._chosen_mode = self.chosen_mode()

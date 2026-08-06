@@ -468,3 +468,33 @@ def test_test_buttons_and_status_labels_live_on_the_connections_tab(qtbot):
         dialog._sandbox_status_label,
     ):
         assert connections_page.isAncestorOf(widget)
+
+
+# --- BUG-034: the target the app really uses, shown here --------------------
+def test_a_target_imported_from_the_pgtp_renders_populated(qtbot):
+    """Guards the reported symptom directly: quality/target fields came up
+    empty because nothing ever populated `ProjectSettings.target` from the
+    `.pgtp`. Given a populated `.target`, the dialog must show it."""
+    settings = ProjectSettings(
+        target=ConnectionParams(
+            host="dbhost", port="5433", database="erpdb", user="erp", password=""
+        )
+    )
+    dialog = ProjectSettingsDialog(settings)
+    qtbot.addWidget(dialog)
+
+    assert dialog._target_host_edit.text() == "dbhost"
+    assert dialog._target_port_edit.text() == "5433"
+    assert dialog._target_database_edit.text() == "erpdb"
+    assert dialog._target_user_edit.text() == "erp"
+    assert dialog._target_password_edit.text() == ""
+    assert dialog.target_params() == settings.target
+
+
+def test_the_target_group_states_that_it_is_the_connection_actually_used(qtbot):
+    dialog = ProjectSettingsDialog(ProjectSettings())
+    qtbot.addWidget(dialog)
+
+    note = dialog._target_note.text()
+    assert "actually use" in note
+    assert "Blank means no target is configured yet." in note

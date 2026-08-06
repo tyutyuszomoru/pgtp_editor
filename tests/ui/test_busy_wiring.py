@@ -49,7 +49,7 @@ def test_reparse_shows_reparsing_message_and_restores_cursor(qtbot, tmp_path, mo
     _open(window, tmp_path)
     messages = _record_status(window, monkeypatch)
 
-    window._reparse_raw_xml()
+    window._doc_ui.reparse()
 
     assert any(m.startswith("Reparsing") for m in messages), messages
     assert any(m == "Reparsed raw XML into tree" for m in messages), messages
@@ -73,7 +73,7 @@ def test_reparse_parse_failure_restores_cursor_before_dialog(qtbot, tmp_path):
                 AssertionError("cursor not restored before dialog")
             )
         )
-        window._reparse_raw_xml()
+        window._doc_ui.reparse()
 
     mock_critical.assert_called_once()
     assert QApplication.overrideCursor() is None

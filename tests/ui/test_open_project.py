@@ -92,13 +92,13 @@ def test_open_action_triggers_file_dialog(qtbot, tmp_path):
     qtbot.addWidget(window)
     path = tmp_path / "valid.pgtp"
     path.write_text(VALID_PGTP, encoding="utf-8")
-    window._prompt_pgtp_open_mode = window.open_project_file
+    window._doc_ui.prompt_open_mode = window.open_project_file
 
     with patch(
         "pgtp_editor.ui.modals.QFileDialog.getOpenFileName",
         return_value=(str(path), "PGTP files (*.pgtp)"),
     ):
-        window._open_project()
+        window._doc_ui.open_dialog()
 
     assert window.project_tree.topLevelItemCount() == 1
 
@@ -111,7 +111,7 @@ def test_open_action_cancelled_dialog_does_nothing(qtbot):
         "pgtp_editor.ui.modals.QFileDialog.getOpenFileName",
         return_value=("", ""),
     ):
-        window._open_project()
+        window._doc_ui.open_dialog()
 
     assert window.project_tree.topLevelItemCount() == 0
 
@@ -145,7 +145,7 @@ def test_open_with_pathlib_path_then_revert_does_not_crash(qtbot, tmp_path):
     assert isinstance(window._current_project_path, str)
 
     # Would raise TypeError (Path + ".bak") before the fix.
-    window._revert_project()
+    window._doc_ui.revert()
 
     assert window._current_project is not None
     assert window.project_tree.topLevelItemCount() == 1
@@ -170,7 +170,7 @@ def test_revert_after_pathlib_open_restores_bak_content(qtbot, tmp_path):
     window.open_project_file(path)
     assert window.center_stage.xml_editor.toPlainText() == VALID_PGTP
 
-    window._revert_project()
+    window._doc_ui.revert()
 
     assert window.center_stage.xml_editor.toPlainText() == REVERTED_PGTP
     assert window._current_project.pages[0].file_name == "old_equipment"
@@ -195,7 +195,7 @@ def test_save_after_pathlib_open_writes_without_crash(qtbot, tmp_path):
 
     # No dialog: existing path is used directly. A modal would hang the test,
     # so its absence is itself the assertion that none is shown.
-    window._save_project()
+    window._doc_ui.save_project()
 
     assert (tmp_path / "valid.pgtp").read_text(encoding="utf-8") == "NEW CONTENT"
     assert (tmp_path / "valid.pgtp.bak").read_text(encoding="utf-8") == VALID_PGTP
@@ -328,7 +328,7 @@ def test_open_project_file_succeeds_even_when_raw_reread_hits_oserror(qtbot, tmp
     # failing while load_project's own read succeeded, by making the shared
     # read helper raise for main_window only. load_project uses the model
     # layer's own read path and is unaffected.
-    with patch("pgtp_editor.ui.main_window.read_pgtp_text", side_effect=OSError("boom")):
+    with patch("pgtp_editor.ui.pgtp_document_controller.read_pgtp_text", side_effect=OSError("boom")):
         window.open_project_file(str(path))
 
     assert window.project_tree.topLevelItemCount() == 1

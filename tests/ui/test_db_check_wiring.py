@@ -127,7 +127,7 @@ def test_close_project_hides_db_check_tab_and_clears_caches(qtbot):
     window._db_ui.run_check()
     assert window.left_tabs.isTabVisible(window.coherence_tab_index)
 
-    window._close_project(confirm="discard")
+    window._doc_ui.close(confirm="discard")
 
     assert not window.left_tabs.isTabVisible(window.coherence_tab_index)
     assert window._db_ui.last_schema is None
@@ -139,10 +139,10 @@ def test_close_clean_buffer_hides_db_check_tab_and_clears_caches(qtbot):
     # is also a committed close and must tear down the db-check surface.
     window = _window_with_project(qtbot)
     window._db_ui.run_check()
-    window._set_dirty(False)
+    window._doc_ui.set_dirty(False)
     assert window.left_tabs.isTabVisible(window.coherence_tab_index)
 
-    window._close_project()  # clean: no confirm seam consulted, no modal
+    window._doc_ui.close()  # clean: no confirm seam consulted, no modal
 
     assert not window.left_tabs.isTabVisible(window.coherence_tab_index)
     assert window._db_ui.last_schema is None
@@ -154,10 +154,10 @@ def test_close_via_successful_save_hides_db_check_tab(qtbot):
     # commits the close and tears down the db-check surface.
     window = _window_with_project(qtbot)
     window._db_ui.run_check()
-    window._set_dirty(True)
-    window._save_project = lambda: window._set_dirty(False)  # save succeeds
+    window._doc_ui.set_dirty(True)
+    window._doc_ui.save_project = lambda: window._doc_ui.set_dirty(False)  # save succeeds
 
-    window._close_project(confirm="save")
+    window._doc_ui.close(confirm="save")
 
     assert not window.left_tabs.isTabVisible(window.coherence_tab_index)
     assert window._db_ui.last_schema is None
@@ -170,10 +170,10 @@ def test_close_via_cancelled_save_keeps_db_check_tab_and_caches(qtbot):
     # project's tab and caches must survive.
     window = _window_with_project(qtbot)
     window._db_ui.run_check()
-    window._set_dirty(True)
-    window._save_project = lambda: None  # save cancelled: stays dirty
+    window._doc_ui.set_dirty(True)
+    window._doc_ui.save_project = lambda: None  # save cancelled: stays dirty
 
-    window._close_project(confirm="save")
+    window._doc_ui.close(confirm="save")
 
     assert window._dirty is True  # close aborted
     assert window.left_tabs.isTabVisible(window.coherence_tab_index)
@@ -186,7 +186,7 @@ def test_fresh_db_check_after_close_reveals_and_repopulates(qtbot):
     # fresh check re-reveals the tab and repopulates the panel + caches.
     window = _window_with_project(qtbot)
     window._db_ui.run_check()
-    window._close_project(confirm="discard")
+    window._doc_ui.close(confirm="discard")
     assert not window.left_tabs.isTabVisible(window.coherence_tab_index)
 
     # "Open" a new project (same seams as _window_with_project).
@@ -205,9 +205,9 @@ def test_cancelled_close_leaves_db_check_tab_and_caches(qtbot):
     # alone (BUG-011 gotcha: teardown only on the committed-close path).
     window = _window_with_project(qtbot)
     window._db_ui.run_check()
-    window._set_dirty(True)  # dirty so the confirm seam is consulted
+    window._doc_ui.set_dirty(True)  # dirty so the confirm seam is consulted
 
-    window._close_project(confirm="cancel")
+    window._doc_ui.close(confirm="cancel")
 
     assert window.left_tabs.isTabVisible(window.coherence_tab_index)
     assert window._db_ui.last_schema is not None
@@ -354,7 +354,7 @@ def test_run_db_check_without_connection_and_project_open_reroutes_to_project_se
 
     window = MainWindow()
     qtbot.addWidget(window)
-    window._set_active_ddl_project(tmp_path / "proj", ProjectSettings())
+    window._ddl_project_ui.set_active_project(tmp_path / "proj", ProjectSettings())
     window._current_project = _project_no_connection()
     window.center_stage.xml_editor.setPlainText(_RAW_XML_NO_CONNECTION)
     fetches = []
@@ -364,7 +364,7 @@ def test_run_db_check_without_connection_and_project_open_reroutes_to_project_se
     window._db_ui.run_check()
 
     assert window._connection_dialog is None  # standalone Connection Setup NOT opened
-    assert window._project_settings_dialog is not None  # Project Settings opened instead
+    assert window._ddl_project_ui.project_settings_dialog is not None  # Project Settings opened instead
     assert fetches == []
     assert window.coherence_panel.tree.topLevelItemCount() == 0
 
@@ -410,7 +410,7 @@ def test_run_db_check_shows_busy_status_then_populates_on_result(qtbot):
 def test_on_db_rename_requested_updates_buffer_marks_dirty_and_reruns(qtbot):
     window = _window_with_project(qtbot)
     window._db_ui.run_check()
-    window._set_dirty(False)
+    window._doc_ui.set_dirty(False)
 
     window._db_ui.prompt_rename = lambda old: "pr.renamed"
 
@@ -731,7 +731,7 @@ def test_reparse_refreshes_open_db_check_with_cached_schema(qtbot):
     edited = _RAW_XML.replace('fieldName="id"', 'fieldName="nonexistent"')
     window.center_stage.xml_editor.setPlainText(edited)
 
-    window._reparse_raw_xml()
+    window._doc_ui.reparse()
 
     assert fetches == [1]                       # NO re-query — cached schema reused
     assert len(calls) == 1                       # panel repopulated once by reparse
@@ -751,7 +751,7 @@ def test_reparse_no_refresh_when_db_tab_hidden(qtbot):
     window.left_tabs.setTabVisible(window.coherence_tab_index, False)
     calls = []
     window.coherence_panel.set_result = lambda *a: calls.append(a)
-    window._reparse_raw_xml()
+    window._doc_ui.reparse()
     assert calls == []
 
 
@@ -760,7 +760,7 @@ def test_reparse_no_refresh_without_prior_check(qtbot):
     # no check run: cache empty, tab hidden by default
     calls = []
     window.coherence_panel.set_result = lambda *a: calls.append(a)
-    window._reparse_raw_xml()
+    window._doc_ui.reparse()
     assert calls == []
 
 
@@ -778,7 +778,7 @@ def test_reparse_refresh_covers_both_branches(qtbot):
 
     edited = _RAW_XML.replace('fieldName="id"', 'fieldName="renamed"')
     window.center_stage.xml_editor.setPlainText(edited)
-    window._reparse_raw_xml()
+    window._doc_ui.reparse()
 
     assert len(calls) == 1
     tree, _summary = calls[0]
@@ -811,7 +811,7 @@ def test_reparse_edit_resolving_mismatch_shows_fewer_problems(qtbot):
     # Fix the buffer: old_col -> new_col, then reparse (refresh uses cache).
     edited = _RENAME_XML.replace('fieldName="old_col"', 'fieldName="new_col"')
     window.center_stage.xml_editor.setPlainText(edited)
-    window._reparse_raw_xml()
+    window._doc_ui.reparse()
 
     assert window.coherence_panel.result.flagged_count < before
     assert window.coherence_panel.result.flagged_count == 0
@@ -827,7 +827,7 @@ def test_reparse_refresh_does_not_mutate_cache(qtbot):
 
     edited = _RAW_XML.replace('fieldName="id"', 'fieldName="nonexistent"')
     window.center_stage.xml_editor.setPlainText(edited)
-    window._reparse_raw_xml()
+    window._doc_ui.reparse()
 
     assert window._db_ui.last_schema is cached_schema      # same object, not re-fetched
     assert window._db_ui.last_summary == cached_summary
@@ -842,7 +842,7 @@ def test_reparse_refresh_passes_cached_summary_to_panel(qtbot):
     calls = []
     real_set = window.coherence_panel.set_result
     window.coherence_panel.set_result = lambda *a: (calls.append(a), real_set(*a))[1]
-    window._reparse_raw_xml()
+    window._doc_ui.reparse()
 
     assert len(calls) == 1
     assert calls[0][1] == "custom@snapshot:1/db"
@@ -862,7 +862,50 @@ def test_reparse_invalid_buffer_leaves_panel_untouched(qtbot, monkeypatch):
     calls = []
     window.coherence_panel.set_result = lambda *a: calls.append(a)
     window.center_stage.xml_editor.setPlainText("<Project><broken")
-    window._reparse_raw_xml()  # must not raise
+    window._doc_ui.reparse()  # must not raise
 
     assert calls == []  # refresh skipped
     assert window.coherence_panel.tree.topLevelItemCount() == populated  # untouched
+
+
+# --- BUG-034: the coherence fetch uses the project's target, not seed_params -
+def test_run_check_with_a_project_open_connects_with_the_project_target(qtbot, tmp_path):
+    """The reported "strange situation": Project Settings showed one thing (or
+    nothing) while the app connected with the app-level/`.pgtp`-seeded
+    credentials this lane picked for itself. One selector now, so the dialog
+    shows what will actually be used."""
+    from pgtp_editor.db.config import ConnectionParams, save_connection
+    from pgtp_editor.db.ddl_project import ProjectSettings
+
+    window = _window_with_project(qtbot)
+    save_connection(
+        window._settings,
+        ConnectionParams(host="app-level", port="1", database="a", user="a", password="a"),
+    )
+    window._ddl_project_ui.set_active_project(
+        tmp_path / "proj",
+        ProjectSettings(
+            target=ConnectionParams(
+                host="project-host", port="5433", database="pdb", user="pu", password="pp"
+            )
+        ),
+    )
+    used = []
+    window._db_ui.fetch_schema = lambda params: used.append(params) or _schema()
+
+    window._db_ui.run_check()
+
+    assert [p.host for p in used] == ["project-host"]
+    assert used[0].database == "pdb"
+
+
+def test_run_check_projectless_still_uses_seed_params(qtbot):
+    """Projectless mode is untouched: the app-level saved connection merged
+    with the `.pgtp`'s `<ConnectionOptions>` (BUG-024's other half)."""
+    window = _window_with_project(qtbot)
+    used = []
+    window._db_ui.fetch_schema = lambda params: used.append(params) or _schema()
+
+    window._db_ui.run_check()
+
+    assert used and used[0].host == "h"

@@ -71,8 +71,10 @@ dialog, and needs no `QApplication` interaction beyond `QObject.__init__`.
 """
 from __future__ import annotations
 
-from collections.abc import Callable
-from dataclasses import dataclass
+import re
+import secrets
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass, replace
 from enum import Enum
 
 from PySide6.QtCore import QObject, Signal
@@ -81,6 +83,7 @@ from ..db.config import ConnectionParams
 from ..db.ddl_check import apply_and_check, probe_check, recheck
 from ..db.introspect import BaselineSnapshot, DatabaseSchema, snapshot_for_baseline
 from ..db.sandbox import (
+    SANDBOX_DB_PREFIX,
     SandboxCapabilities,
     SandboxMode,
     SandboxSession,
@@ -103,6 +106,110 @@ from ..db.sandbox import (
     REASON_REQUIRES_SUPERUSER as REQUIRES_SUPERUSER_REASON,
 )
 from .async_task import run_async
+
+
+#: The maintenance database `create_sandbox_database`'s admin connection targets,
+#: since PostgreSQL forbids `CREATE DATABASE` inside the database being created.
+#: Defined here, once, because three surfaces need the same answer (§18.2's New
+#: Project step, `ui/sandbox_setup_dialog.py`, and this module's own
+#: `provision_new_database` callers); `DEFAULT_MAINTENANCE_DATABASE` in the setup
+#: dialog is an alias of this name, never a second literal.
+MAINTENANCE_DATABASE = "postgres"
+
+#: `db/sandbox.py::_SANDBOX_DB_NAME_RE` is `^pgtp_sandbox_[a-z0-9_]{1,40}$`, so
+#: everything after `SANDBOX_DB_PREFIX` must fit in 40 characters of
+#: `[a-z0-9_]`. The generated name spends that budget as
+#: `<stem>_<suffix>`: a readable, slugified project stem plus a random suffix
+#: that makes collisions vanishingly unlikely in the first place.
+_NAME_BUDGET = 40
+#: Random suffix length, in hex characters (4 bytes -> 8 chars, ~4e9 values).
+_SUFFIX_LENGTH = 8
+_STEM_BUDGET = _NAME_BUDGET - _SUFFIX_LENGTH - 1
+#: How many distinct names the New Project flow generates before giving up.
+#: Collisions are already improbable; this bounds the pathological case rather
+#: than expecting to be used (§18.2/FQ-007: on collision, generate a *different*
+#: random name -- never reuse and never drop an existing database).
+DEFAULT_NAME_ATTEMPTS = 6
+
+_NON_SLUG_RE = re.compile(r"[^a-z0-9]+")
+
+#: PostgreSQL's `duplicate_database` SQLSTATE -- the one error
+#: `create_sandbox_database` may raise that means "pick another name" rather
+#: than "this failed".
+DUPLICATE_DATABASE_SQLSTATE = "42P04"
+
+
+def sandbox_name_stem(project_name: str = "") -> str:
+    """The readable half of a generated sandbox database name: `project_name`
+    slugified into `[a-z0-9_]`, collapsed, trimmed and truncated to the budget
+    the name regex leaves. Pure. Falls back to `"project"` for a nameless
+    project, so the result is always a legal stem."""
+    slug = _NON_SLUG_RE.sub("_", (project_name or "").strip().casefold()).strip("_")
+    return slug[:_STEM_BUDGET].strip("_") or "project"
+
+
+def generate_sandbox_database_name(project_name: str = "", *, suffix: str | None = None) -> str:
+    """One auto-generated, convention-satisfying sandbox database name (§18.2,
+    FQ-007: **the user never types a sandbox database name**).
+
+    `SANDBOX_DB_PREFIX` + a slugified project stem + a random suffix, built so it
+    matches `db/sandbox.py`'s `^pgtp_sandbox_[a-z0-9_]{1,40}$` by construction --
+    the *validation* stays `create_sandbox_database`'s (it validates rather than
+    sanitizes, and nothing here weakens that). Pure apart from the random
+    suffix, which `suffix=` pins for tests.
+    """
+    token = (suffix or secrets.token_hex(_SUFFIX_LENGTH // 2))[:_SUFFIX_LENGTH]
+    return f"{SANDBOX_DB_PREFIX}{sandbox_name_stem(project_name)}_{token}"
+
+
+def generate_sandbox_database_names(
+    project_name: str = "", *, count: int = DEFAULT_NAME_ATTEMPTS
+) -> list[str]:
+    """`count` *distinct* candidate names for one provisioning attempt -- the
+    retry list `provision_new_database` walks, taking the first free one."""
+    names: list[str] = []
+    while len(names) < max(1, count):
+        name = generate_sandbox_database_name(project_name)
+        if name not in names:
+            names.append(name)
+    return names
+
+
+def is_duplicate_database_error(exc: BaseException) -> bool:
+    """Whether `exc` means *"a database with that name already exists"* -- the
+    one failure of `create_sandbox_database` that is answered by trying the next
+    generated name instead of reporting it.
+
+    Read duck-typed (psycopg's `sqlstate`) with a message fallback, so this
+    module needs no psycopg import and a test's fake creator can raise a plain
+    exception carrying either signal.
+    """
+    if getattr(exc, "sqlstate", None) == DUPLICATE_DATABASE_SQLSTATE:
+        return True
+    if getattr(getattr(exc, "diag", None), "sqlstate", None) == DUPLICATE_DATABASE_SQLSTATE:
+        return True
+    text = str(exc).casefold()
+    return "already exists" in text and "database" in text
+
+
+class SandboxNameCollisionError(RuntimeError):
+    """Every generated `pgtp_sandbox_*` name was already taken on the server.
+
+    A stated, actionable failure -- **and the point at which the flow stops**:
+    an existing database is never dropped and never provisioned into, so no data
+    can be lost to a name collision (FQ-007 rejects both the reuse-if-app-owned
+    and the drop-and-recreate branches).
+    """
+
+    def __init__(self, names: Sequence[str]) -> None:
+        self.names = tuple(names)
+        listed = ", ".join(self.names) or "(none generated)"
+        super().__init__(
+            "could not create a sandbox database: every name PGTP Editor "
+            f"generated already exists on this server ({listed}). Nothing was "
+            "created and no existing database was touched -- retry, or remove "
+            "the leftover sandbox databases first."
+        )
 
 
 class SandboxOperation(str, Enum):
@@ -202,6 +309,32 @@ _NO_APPLY_REQUEST_REASON = (
     "invoked from"
 )
 
+#: `provision_new_database` was called with nothing to name the database. Stated
+#: rather than silently generating one here, because the *caller* owns the
+#: project name the stem comes from.
+_NO_NAME_CANDIDATES_REASON = (
+    "no sandbox database name was generated, so nothing was created -- the "
+    "caller must supply the auto-generated candidate names"
+)
+
+#: Provisioned with no target connection to build a baseline from. The sandbox is
+#: real, app-owned and usable (bookkeeping table included), it just starts empty
+#: -- said out loud rather than passed off as a full baseline.
+_NO_TARGET_BASELINE_NOTE = (
+    "The sandbox was created EMPTY: the project has no target connection yet, "
+    "so there was no database to build a baseline from. Set the target in "
+    "Project Settings, then re-provision from Sandbox Setup."
+)
+
+#: A "with data" sandbox with no target to clone from cannot be cloned *yet*.
+#: Said out loud instead of failing (or pretending rows arrived); the project's
+#: recorded mode is left alone, since D2a's mode is the user's choice.
+_WITH_DATA_NEEDS_TARGET_NOTE = (
+    "'With data' was requested but the project has no target connection to "
+    "clone from, so no data was cloned. Set the target in Project Settings, "
+    "then re-run the data clone from Sandbox Setup."
+)
+
 #: A green probe is still not an apply. Stated rather than reported as success,
 #: so *"it would have worked"* and *"it is now in the sandbox"* stay apart.
 _PROBE_NOT_APPLIED_REASON = (
@@ -268,6 +401,11 @@ class SandboxOperationResult:
     reason: str = ""
     capabilities: SandboxCapabilities | None = None
     report: object | None = None
+    #: The sandbox database `provision_new_database` actually created, so the
+    #: host can record THAT name in `ProjectSettings.sandbox` -- empty for every
+    #: other operation, and empty on failure precisely so a project can never end
+    #: up claiming a sandbox database that was not created.
+    database_name: str = ""
 
 
 class SandboxController(QObject):
@@ -302,6 +440,8 @@ class SandboxController(QObject):
 
     Wiring surface for the main session: `set_project`/`clear_project`,
     `open_session`/`close_session`/`reset_session`, `provision`,
+    `provision_new_database` (§18.2's New Project step: create an auto-named
+    database, then provision it),
     `run_data_clone`, `install_plpgsql_check`, `run_check`, `run_apply`,
     `refresh_capabilities`, the zero-argument §18.8 adapters
     `on_run_data_clone`/`on_install_plpgsql_check`, the read-only
@@ -637,6 +777,154 @@ class SandboxController(QObject):
         self._run_async(work, on_result=on_result, on_error=self._error_handler(
             SandboxOperation.PROVISION, on_done
         ))
+
+    def provision_new_database(
+        self,
+        on_done: Callable[[SandboxOperationResult], None] | None = None,
+        *,
+        admin_params: ConnectionParams,
+        name_candidates: Sequence[str],
+    ) -> None:
+        """§18.2's New Project sandbox step (FQ-007): **create** a brand-new
+        app-owned sandbox database, provision it, install `plpgsql_check`, and
+        hold the resulting session -- one operation, off the GUI thread, reported
+        as `PROVISION` with the created name on `SandboxOperationResult`.
+
+        The one piece of behavior that is new here rather than in `db/sandbox.py`
+        is *which* name gets created: `name_candidates` is walked in order and the
+        **first free one wins**. A name already taken on the server raises
+        `duplicate_database` from `create_sandbox_database`, which is caught (see
+        `is_duplicate_database_error`) and answered with the next candidate;
+        anything else is a real failure and propagates. Exhausting the list is
+        `SandboxNameCollisionError`.
+
+        **Nothing is ever destroyed, so nothing needs confirming.** Unlike
+        `provision`, this does not go through `confirm_destructive`: it writes
+        only into a database it created microseconds earlier, an existing
+        database is *skipped* rather than reused or dropped (FQ-007 rejects both
+        of those branches), and the exhausted-candidates case fails without
+        touching anything. `provision`/`run_data_clone`/`reset_session` -- the
+        operations that really do overwrite a sandbox -- keep their gate exactly
+        as it was.
+
+        The baseline comes from the project's **target** profile via
+        `snapshot_for_baseline`, as D2 specifies. A brand-new project may not have
+        a target yet; rather than fail (or connect to nothing), the sandbox is
+        provisioned from an **empty** `BaselineSnapshot` -- still a real,
+        app-owned, bookkeeping-equipped sandbox -- and the result says so
+        (`_NO_TARGET_BASELINE_NOTE`). For the same reason a `WITH_DATA` request
+        with no target is provisioned schema-only and **recorded** as
+        schema-only, because the recorded mode is what a later `reset()` re-runs.
+
+        `plpgsql_check` is installed in the same operation, gated by the pure
+        `install_gate` and never re-litigated here. A refused or failed install
+        does **not** fail the operation: the sandbox exists and works, tier 3
+        merely cannot lint, so the gate's own reason string rides along on the
+        successful result -- §18's graceful-degradation posture, not an error.
+        """
+        candidates = [name for name in (name_candidates or ()) if name]
+        if not candidates:
+            self._finish(
+                SandboxOperation.PROVISION, False, _NO_NAME_CANDIDATES_REASON, on_done
+            )
+            return
+        params = self._sandbox_params
+        if params is None:
+            self._finish(
+                SandboxOperation.PROVISION,
+                False,
+                "no local sandbox configured for this project",
+                on_done,
+            )
+            return
+
+        target_params = self._target_params
+        has_target = target_params is not None and bool(target_params.host)
+        # The RECORDED mode (D2a) is the user's choice and is not rewritten here;
+        # what can change is only what this one run was able to do. A "with data"
+        # sandbox with no target to clone from is provisioned schema-only for
+        # now, and the result says so -- the recorded intent survives, so a later
+        # data clone (once a target exists) is still the mode the project asks
+        # for, and the honest tier keeps reflecting that recorded choice.
+        mode = self._mode
+        notes: list[str] = []
+        if mode is SandboxMode.WITH_DATA and not has_target:
+            mode = SandboxMode.SCHEMA_ONLY
+            notes.append(_WITH_DATA_NEEDS_TARGET_NOTE)
+
+        def work():
+            created = self._create_first_free_database(admin_params, candidates)
+            sandbox_params = replace(params, database=created)
+            local_notes = list(notes)
+            if has_target:
+                snapshot = self._snapshotter(target_params)
+            else:
+                snapshot = BaselineSnapshot()
+                local_notes.append(_NO_TARGET_BASELINE_NOTE)
+            session = self._provisioner(
+                snapshot,
+                sandbox_params,
+                mode,
+                target_params=target_params if has_target else None,
+            )
+            caps = self._prober(sandbox_params)
+            offered, reason = install_gate(caps)
+            if offered:
+                try:
+                    self._installer(session)
+                except Exception as exc:  # noqa: BLE001 -- degrade, never abort
+                    local_notes.append(
+                        "plpgsql_check was not installed: "
+                        f"{str(exc) or exc.__class__.__name__}"
+                    )
+                else:
+                    caps = self._prober(sandbox_params)
+            elif caps.plpgsql_check_state != "installed":
+                local_notes.append(f"plpgsql_check was not installed: {reason}")
+            return created, sandbox_params, session, snapshot, caps, local_notes
+
+        def on_result(outcome) -> None:
+            created, sandbox_params, session, snapshot, caps, local_notes = outcome
+            # Adopt what was actually created, so `capability_status()` and the
+            # recorded settings can never describe a different database than the
+            # one this controller now holds a session on.
+            self._sandbox_params = sandbox_params
+            self._configured = True
+            self._capabilities = caps
+            self._baseline = snapshot
+            self._schema_names = getattr(session, "schema_names", frozenset())
+            self._set_session(session)
+            self._finish(
+                SandboxOperation.PROVISION,
+                True,
+                " ".join(note for note in local_notes if note),
+                on_done,
+                caps,
+                database_name=created,
+            )
+
+        self._run_async(work, on_result=on_result, on_error=self._error_handler(
+            SandboxOperation.PROVISION, on_done
+        ))
+
+    def _create_first_free_database(
+        self, admin_params: ConnectionParams, candidates: Sequence[str]
+    ) -> str:
+        """`create_sandbox_database` the first candidate name that is free, and
+        return it. Runs on the worker thread; raises
+        `SandboxNameCollisionError` when every candidate is taken and re-raises
+        anything that is not a name collision."""
+        taken: list[str] = []
+        for name in candidates:
+            try:
+                self._database_creator(admin_params, name)
+            except Exception as exc:  # noqa: BLE001 -- only collisions are retried
+                if not is_duplicate_database_error(exc):
+                    raise
+                taken.append(name)
+                continue
+            return name
+        raise SandboxNameCollisionError(taken)
 
     def run_data_clone(
         self, on_done: Callable[[SandboxOperationResult], None] | None = None
@@ -1059,9 +1347,14 @@ class SandboxController(QObject):
         reason: str,
         on_done: Callable[[SandboxOperationResult], None] | None,
         capabilities: SandboxCapabilities | None = None,
+        database_name: str = "",
     ) -> None:
         result = SandboxOperationResult(
-            operation=operation, ok=ok, reason=reason, capabilities=capabilities
+            operation=operation,
+            ok=ok,
+            reason=reason,
+            capabilities=capabilities,
+            database_name=database_name,
         )
         if on_done is not None:
             on_done(result)

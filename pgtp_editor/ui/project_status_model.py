@@ -34,7 +34,7 @@ passes — the app has no OS dark-mode detection, only the explicit **Light
 Theme** menu toggle (`ui/theme.py::apply_theme`), and this module must not
 reach for global state to rediscover it.
 
-Three places where the spec's state *set* is wider than the asset set, resolved
+Four places where the spec's state *set* is wider than the asset set, resolved
 here as implementation detail (§18.8 authorizes each):
 
 - **Sandbox has 4 backing conditions but 3 icons.** Reachable-but-tools-missing
@@ -44,6 +44,12 @@ here as implementation detail (§18.8 authorizes each):
 - **`plpgsql_check_state` has 4 values but Sandbox2 has 2 icons.** `"installed"`
   is installed; `"installable"`, `"absent"` and `"unknown"` all mean *not*
   installed, differing only in why, and there is no third icon to say why with.
+- **Sandbox1 has 4 states but 2 icons.** BUG-035 added `sandbox1_unknown` and
+  `sandbox1_not_provisioned` so the node can stop claiming a schema it has
+  never verified; no artwork exists for either yet, so both alias onto
+  `sandbox1_empty`'s icon via `ASSET_STEM_ALIASES` while carrying their own
+  captions. The alias is interim and marked as such at its definition -- what
+  was wrong was the *text*, and the text is now right.
 - **Connectors carry no per-state assets.** §18.8 says connectors "carry state"
   but leaves the state set explicitly unspecified, and only one asset per
   connector exists. Each connector therefore resolves to its single image
@@ -60,7 +66,7 @@ from dataclasses import dataclass
 from enum import Enum
 from importlib.resources import files
 
-from ..db.sandbox import ProjectCapabilityStatus, ProjectTier, SandboxCapabilities, SandboxMode
+from ..db.sandbox import ProjectCapabilityStatus, ProjectTier, SandboxCapabilities
 
 #: Bundled image extension. Every state stem and connector stem exists twice in
 #: `resources/status/`: `<stem>.svg` (light) and `<stem>_drk.svg` (dark).
@@ -125,11 +131,24 @@ class SandboxState(str, Enum):
 
 
 class Sandbox1State(str, Enum):
-    """The sandbox's data-fill status (§18.5 D2a)."""
+    """The sandbox's provisioning + data-fill status (§18.5 D2a).
 
-    #: Schema-only, or a with-data sandbox whose clone has not (yet) landed.
+    **Every member is backed by a verified fact about the sandbox database**
+    (BUG-035): the configured `sandbox_mode` is a radio button the user
+    picked, never evidence of what is actually in the sandbox, so it no
+    longer participates in this derivation at all.
+    """
+
+    #: The sandbox could not be inspected, so nothing is claimed either way.
+    #: Never collapsed into `NOT_PROVISIONED`: "could not check" and
+    #: "genuinely not there" are different facts (§18.5 D2/D3 discipline).
+    UNKNOWN = "sandbox1_unknown"
+    #: Verified: the sandbox is reachable but holds no app schema objects at
+    #: all -- freshly created, or `reset()` between drop and re-provision.
+    NOT_PROVISIONED = "sandbox1_not_provisioned"
+    #: Verified: the app schema is present, but no data was found in it.
     EMPTY = "sandbox1_empty"
-    #: Data cloned in via `pg_restore`.
+    #: Verified: the app schema is present AND holds data.
     FILLED = "sandbox1_filled"
 
 
@@ -215,6 +234,25 @@ def missing_clone_tools(reason: str | None) -> tuple[str, ...]:
     return tuple(tool for tool in _CLONE_TOOLS if reason is not None and tool in reason)
 
 
+class SandboxFact(str, Enum):
+    """A tri-state answer to "is X really in the sandbox database?" (BUG-035).
+
+    Deliberately NOT a `bool`. A boolean forces "could not check" to be spelled
+    as one of the two definite answers, and whichever one is picked becomes a
+    lie -- which is how the Sandbox1 node came to report "Schema only" for a
+    sandbox with no schema. `UNKNOWN` must never be collapsed into `ABSENT`;
+    that is the same rule `SandboxCapabilities.plpgsql_check_state` follows.
+    """
+
+    #: The sandbox could not be inspected (unreachable, query failed, or the
+    #: inspection has not run yet). Not an answer -- the absence of one.
+    UNKNOWN = "unknown"
+    #: Inspected, and the thing is genuinely not there.
+    ABSENT = "absent"
+    #: Inspected, and the thing is there.
+    PRESENT = "present"
+
+
 # ---------------------------------------------------------------------------
 # Per-node state derivation
 # ---------------------------------------------------------------------------
@@ -267,18 +305,32 @@ def sandbox_state(status: ProjectCapabilityStatus) -> SandboxState:
     return SandboxState.OFFLINE
 
 
-def sandbox1_state(mode: SandboxMode, data_clone_done: bool) -> Sandbox1State:
-    """The Sandbox1 node's data-fill state.
+def sandbox1_state(
+    schema_present: SandboxFact, data_present: SandboxFact
+) -> Sandbox1State:
+    """The Sandbox1 node's state, from two **verified** facts (BUG-035).
 
-    `SCHEMA_ONLY` is always `EMPTY` -- it never clones data. `WITH_DATA` is
-    `FILLED` only once the clone has actually landed (`data_clone_done`).
+    Neither input may be derived from `ProjectSettings.sandbox_mode`: that is
+    the radio button the user picked at New Project time, and reading it back
+    as if it described the sandbox's contents is exactly the defect this
+    signature exists to make impossible ("Schema only" for a sandbox with no
+    schema). Both inputs are tri-state so a failed/absent inspection stays
+    `UNKNOWN` instead of being reported as a definite absence.
 
-    No "clone in progress" or "clone failed" asset exists, and §18.8 forbids
-    inventing one, so both conditions fall back to `EMPTY`: whatever the clone
-    is doing, the data is not in the sandbox yet, and `EMPTY` is the honest
-    state of the two available.
+    The ladder, lowest claim first:
+
+    - `schema_present is UNKNOWN` -> `UNKNOWN`. Could not look; claim nothing.
+    - `schema_present is ABSENT`  -> `NOT_PROVISIONED`. Verified empty.
+    - schema present, `data_present is PRESENT` -> `FILLED`.
+    - schema present, data absent **or unknown** -> `EMPTY` ("schema only").
+      Unknown data resolves DOWNWARD: `FILLED` is a positive claim that a
+      clone landed and is never made without having seen the data.
     """
-    if mode is SandboxMode.WITH_DATA and data_clone_done:
+    if schema_present is SandboxFact.UNKNOWN:
+        return Sandbox1State.UNKNOWN
+    if schema_present is SandboxFact.ABSENT:
+        return Sandbox1State.NOT_PROVISIONED
+    if data_present is SandboxFact.PRESENT:
         return Sandbox1State.FILLED
     return Sandbox1State.EMPTY
 
@@ -302,13 +354,44 @@ def sandbox2_state(capabilities: SandboxCapabilities) -> Sandbox2State:
 # ---------------------------------------------------------------------------
 # Asset resolution
 # ---------------------------------------------------------------------------
+#: **Interim** art reuse, BUG-035. Two Sandbox1 states were added to stop the
+#: node claiming a schema it had never seen; the owner's asset set predates
+#: them and no artwork exists for either yet. Rather than ship a stem with no
+#: file (which renders as a silently blank node, per §18.8's pipeline), each
+#: aliases onto the closest existing icon and carries its own honest *caption*
+#: -- the caption, not the icon, is what was lying. Delete an entry the moment
+#: real `<stem>.svg`/`<stem>_drk.svg` art lands; nothing else has to change,
+#: because `asset_filename` is the single place stems become filenames.
+ASSET_STEM_ALIASES = {
+    # An unprovisioned sandbox is empty, so the empty-database icon is at
+    # least not wrong -- only less specific than it should be.
+    Sandbox1State.NOT_PROVISIONED.value: Sandbox1State.EMPTY.value,
+    Sandbox1State.UNKNOWN.value: Sandbox1State.EMPTY.value,
+}
+
+
+def resolve_asset_stem(stem: str) -> str:
+    """The stem whose file actually exists for `stem` (see `ASSET_STEM_ALIASES`).
+
+    Identity for every stem that owns its own artwork. `stem` may be a bare
+    string or one of this module's state enums; the enum's `.value` is taken
+    explicitly rather than via `str()`/`f"{}"`, both of which yield
+    `"Family.MEMBER"` (not the stem) for a `str`/`Enum` mixin on modern
+    Pythons.
+    """
+    key = getattr(stem, "value", stem)
+    return ASSET_STEM_ALIASES.get(key, key)
+
+
 def asset_filename(stem: str, dark: bool) -> str:
     """`("app_standalone", dark=True)` -> `"app_standalone_drk.svg"`.
 
     `stem` accepts a bare string or any of this module's state enums (whose
-    values are stems), since they are `str` subclasses.
+    values are stems), since they are `str` subclasses. Aliased stems
+    (`ASSET_STEM_ALIASES`) resolve here, so `StatusNode.state` keeps naming the
+    TRUE state while `StatusNode.asset` names a file that exists.
     """
-    return f"{stem}{DARK_SUFFIX if dark else ''}{ASSET_EXTENSION}"
+    return f"{resolve_asset_stem(stem)}{DARK_SUFFIX if dark else ''}{ASSET_EXTENSION}"
 
 
 def asset_path(filename: str):
@@ -321,11 +404,10 @@ def asset_path(filename: str):
     return files("pgtp_editor") / "resources" / "status" / filename
 
 
-def all_asset_stems() -> tuple[str, ...]:
-    """Every stem this module can emit -- all node states plus all connectors.
+def all_state_stems() -> tuple[str, ...]:
+    """Every state/connector stem this module can name, aliases included.
 
-    The guard for a typo'd stem shipping as a silently missing image: a test
-    walks this and asserts both theme variants exist on disk.
+    This is the *vocabulary*, not the file list -- see `all_asset_stems`.
     """
     stems: list[str] = []
     for enum_type in (
@@ -338,6 +420,21 @@ def all_asset_stems() -> tuple[str, ...]:
     ):
         stems.extend(member.value for member in enum_type)
     return tuple(stems)
+
+
+def all_asset_stems() -> tuple[str, ...]:
+    """Every stem that must exist as a file on disk, de-duplicated.
+
+    The guard for a typo'd stem shipping as a silently missing image: a test
+    walks this and asserts both theme variants exist on disk. Aliased stems
+    (`ASSET_STEM_ALIASES`) are resolved first, so an alias never demands
+    artwork that deliberately does not exist yet -- and a stem that is neither
+    aliased nor drawn still fails the test, which is the point.
+    """
+    seen: dict[str, None] = {}
+    for stem in all_state_stems():
+        seen.setdefault(resolve_asset_stem(stem), None)
+    return tuple(seen)
 
 
 # ---------------------------------------------------------------------------
@@ -401,8 +498,8 @@ def build_diagram(
     *,
     status: ProjectCapabilityStatus | None,
     quality: QualityState,
-    sandbox_mode: SandboxMode = SandboxMode.SCHEMA_ONLY,
-    data_clone_done: bool = False,
+    sandbox_schema_present: SandboxFact = SandboxFact.UNKNOWN,
+    sandbox_data_present: SandboxFact = SandboxFact.UNKNOWN,
     dark: bool = True,
 ) -> ProjectStatusDiagram:
     """Derive the whole diagram from one capability probe plus the caller's
@@ -415,9 +512,13 @@ def build_diagram(
         quality: the Quality node's state, derived by the caller from the
             target connection profile (`quality_state`), which the project
             capability probe says nothing about.
-        sandbox_mode: the project's recorded `ProjectSettings.sandbox_mode`.
-        data_clone_done: whether D2a's clone has actually landed in the
-            sandbox. Only consulted for `WITH_DATA`.
+        sandbox_schema_present: VERIFIED -- whether the sandbox database
+            actually holds app schema objects. Defaults to `UNKNOWN`, so a
+            caller that has not inspected the sandbox gets the honest
+            "could not determine" node rather than a cheerful default
+            (BUG-035). Never pass a value derived from `sandbox_mode`.
+        sandbox_data_present: VERIFIED -- whether those schemas actually hold
+            data. Same `UNKNOWN` default and the same prohibition.
         dark: the app's current theme -- True selects the `_drk` assets. A
             plain boolean, passed in: this module reads no Qt and no globals.
 
@@ -449,7 +550,7 @@ def build_diagram(
     # drawn disabled.
     if status is not None and degradation is not SandboxDegradation.NOT_CONFIGURED:
         sandbox = sandbox_state(status)
-        fill = sandbox1_state(sandbox_mode, data_clone_done)
+        fill = sandbox1_state(sandbox_schema_present, sandbox_data_present)
         check = sandbox2_state(status.capabilities)
         nodes.extend(
             (

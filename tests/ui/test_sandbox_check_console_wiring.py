@@ -214,7 +214,7 @@ def test_navigation_resolves_a_checked_out_tab_keyed_on_its_path(qtbot, tmp_path
     project_dir = tmp_path / "proj"
     save_settings(project_dir, ProjectSettings())
     window = _window(qtbot, tmp_path)
-    window._set_active_ddl_project(project_dir, ProjectSettings())
+    window._ddl_project_ui.set_active_project(project_dir, ProjectSettings())
 
     window._checkout_and_edit(_REF, _SOURCE)
 
@@ -392,16 +392,59 @@ def _sync_run(fn, on_result, on_error=None):
 
 
 class _FakeSession:
-    """Minimal `SandboxSession` stand-in: records what was applied."""
+    """Minimal `SandboxSession` stand-in: records what was applied.
+
+    Carries `executor` because the ladder's `CheckSession` protocol wants it --
+    it is never used here, since every test replaces the ladder seam itself.
+    """
 
     def __init__(self, database="pgtp_sandbox_x"):
         from pgtp_editor.db.config import ConnectionParams
 
         self.params = ConnectionParams(host="localhost", database=database)
+        self.executor = None
         self.applied_calls = []
 
     def apply(self, ref, ddl_text):
         self.applied_calls.append((ref, ddl_text))
+
+
+def _green_report(committed=True):
+    """A four-tier all-passed `CheckReport`, as `apply_and_check` produces for a
+    body that compiled and linted clean."""
+    from pgtp_editor.db.ddl_check import CheckReport, TierOutcome
+
+    passed = TierOutcome(status="passed", reason="")
+    return CheckReport(
+        tier0=passed, tier1=passed, tier2=passed, tier3=passed, committed=committed
+    )
+
+
+def _stub_ladder(controller, report=None, *, probe_report=None, raises=None):
+    """Replace the controller's `apply_and_check` / `probe_check` seams with
+    recorders, so an apply exercises the whole `run_apply` path without a server.
+
+    Returns `(apply_calls, probe_calls)`; each entry is
+    `(session, request, caps, ddl_text)`.
+    """
+    apply_calls = []
+    probe_calls = []
+
+    def applier(session, request, caps, *, ddl_text=None):
+        apply_calls.append((session, request, caps, ddl_text))
+        if raises is not None:
+            raise raises
+        return report if report is not None else _green_report()
+
+    def prober(session, request, caps, *, ddl_text=None):
+        probe_calls.append((session, request, caps, ddl_text))
+        if raises is not None:
+            raise raises
+        return probe_report if probe_report is not None else _green_report(committed=False)
+
+    controller._applier = applier
+    controller._probe_checker = prober
+    return apply_calls, probe_calls
 
 
 def _project_window(qtbot, tmp_path, monkeypatch, sandbox_host="localhost"):
@@ -418,14 +461,14 @@ def _project_window(qtbot, tmp_path, monkeypatch, sandbox_host="localhost"):
     save_settings(project_dir, settings)
     window = _window(qtbot, tmp_path)
     window._run_async = _sync_run
-    window._probe_sandbox_capabilities = lambda params: SandboxCapabilities(
+    window._ddl_project_ui.probe_sandbox_capabilities = lambda params: SandboxCapabilities(
         is_superuser=True
     )
     controller = window.sandbox_controller
     controller._run_async = _sync_run
     session = _FakeSession()
     controller._opener = lambda *a, **k: session
-    window._set_active_ddl_project(project_dir, settings)
+    window._ddl_project_ui.set_active_project(project_dir, settings)
     return window, controller, session
 
 
@@ -483,7 +526,7 @@ def test_closing_the_project_leaves_no_stale_session(qtbot, tmp_path, monkeypatc
     window._open_sandbox_session()
     assert controller.has_session
 
-    window._close_ddl_project()
+    window._ddl_project_ui.close_project()
 
     assert controller.session is None
     assert not window._sandbox_check_action.isVisible()
@@ -491,9 +534,27 @@ def test_closing_the_project_leaves_no_stale_session(qtbot, tmp_path, monkeypatc
     assert window.center_stage.sandbox_sql_tab() is None
 
 
-def test_apply_to_sandbox_reaches_the_controllers_session(qtbot, tmp_path, monkeypatch):
-    window, _controller, session = _project_window(qtbot, tmp_path, monkeypatch)
+def test_the_controllers_ladder_seams_are_ddl_checks_real_entry_points():
+    """The proof that tiers 0-2 actually compile on an apply: the default seams
+    ARE `apply_and_check`/`probe_check`, not `recheck` (which applies nothing)."""
+    from pgtp_editor.db import ddl_check
+    from pgtp_editor.ui.sandbox_controller import SandboxController
+
+    controller = SandboxController()
+
+    assert controller._applier is ddl_check.apply_and_check
+    assert controller._probe_checker is ddl_check.probe_check
+    assert controller._checker is ddl_check.recheck
+
+
+def test_apply_to_sandbox_runs_the_whole_ladder_against_the_session(
+    qtbot, tmp_path, monkeypatch
+):
+    """§18.5 D3: Apply to Sandbox goes through `apply_and_check`, not the bare
+    `SandboxSession.apply` -- so applying an object COMPILE-CHECKS it."""
+    window, controller, session = _project_window(qtbot, tmp_path, monkeypatch)
     window._open_sandbox_session()
+    apply_calls, _probe = _stub_ladder(controller)
     window._on_ddl_edit_requested(_REF, _SOURCE)
     panel = window.center_stage.ddl_object_tab(_REF.key)
     assert panel.has_sandbox_apply  # the seam is wired -- the row is present
@@ -501,9 +562,129 @@ def test_apply_to_sandbox_reaches_the_controllers_session(qtbot, tmp_path, monke
 
     assert panel.apply_to_sandbox() is True
 
-    assert session.applied_calls == [(("function", "pr", "recalc", ""), _SOURCE)]
-    # The applied buffer is now recorded for precondition 2.
+    # The ladder ran, on the controller's own session, over the tab's buffer.
+    assert len(apply_calls) == 1
+    ladder_session, request, _caps, ddl_text = apply_calls[0]
+    assert ladder_session is session
+    assert ddl_text == _SOURCE
+    assert request.working_set_ref == ("function", "pr", "recalc", "")
+    # The bare `session.apply` path is gone: bookkeeping is the ladder's, in the
+    # same transaction.
+    assert session.applied_calls == []
+    # The applied buffer is recorded for precondition 2, and marked as applied
+    # because the report says it COMMITTED.
     assert panel.last_check_report() is not None
+    assert panel.applied_sha1 == panel.text_sha1()
+
+
+def test_a_bad_function_body_yields_a_real_clickable_compile_error(
+    qtbot, tmp_path, monkeypatch
+):
+    """The whole point of the wire: a user pressing Apply to Sandbox on a broken
+    body gets tier 2's compile error, as a CLICKABLE Audit finding.
+
+    Only the psycopg call is faked -- the REAL `apply_and_check` composes the
+    ladder and attributes the failing statement index to tier 2, so this pins the
+    attribution rather than a hand-built report.
+    """
+    from pgtp_editor.db import ddl_check
+    from pgtp_editor.db.apply import ApplyOutcome
+
+    window, controller, _session = _project_window(qtbot, tmp_path, monkeypatch)
+    window._open_sandbox_session()
+
+    def fake_apply_ddl(target, statements, *, commit=True):
+        # Statement 0 is the tier-1 SET; statement 1 is the DDL itself. Rejecting
+        # the DDL is what a broken body really does.
+        return ApplyOutcome.failed(
+            'syntax error at or near "END"',
+            statement_index=1,
+            statement=statements[1],
+            sqlstate="42601",
+            # A real server reports a character position; `ApplyOutcome.failed`
+            # derives the line from it in the ONE place that derivation is
+            # allowed, and that line is what makes the Audit row clickable.
+            position=_SOURCE.index("END\n") + 1,
+            notices_captured=True,
+        )
+
+    controller._applier = lambda session, request, caps, **kwargs: (
+        ddl_check.apply_and_check(
+            session, request, caps, applier=fake_apply_ddl, **kwargs
+        )
+    )
+    window._on_ddl_edit_requested(_REF, _SOURCE)
+    panel = window.center_stage.ddl_object_tab(_REF.key)
+    _accept_confirmations(monkeypatch)
+
+    panel.apply_to_sandbox()
+
+    report = panel.last_check_report()
+    assert report.tier2.status == "found_issues"
+    assert "syntax error" in report.tier2.reason
+    assert report.tier0.status == "found_issues"  # collapsed into tier 2
+    assert not report.committed
+    # The finding reached the CLICKABLE channel with the object's key on it.
+    finding_items = [
+        item
+        for item in _audit_items(window)
+        if "syntax error" in item.text() and item.text().startswith(CHECK_PREFIX)
+    ]
+    assert finding_items
+    assert any(
+        item.data(Qt.ItemDataRole.UserRole + 1) == _REF.key for item in finding_items
+    )
+    # And it never claims the sandbox now holds this text.
+    assert panel.applied_sha1 is None
+
+
+def test_a_rolled_back_apply_never_claims_the_buffer_was_applied(
+    qtbot, tmp_path, monkeypatch
+):
+    window, controller, _session = _project_window(qtbot, tmp_path, monkeypatch)
+    window._open_sandbox_session()
+    _stub_ladder(controller, report=_green_report(committed=False))
+    window._on_ddl_edit_requested(_REF, _SOURCE)
+    panel = window.center_stage.ddl_object_tab(_REF.key)
+    _accept_confirmations(monkeypatch)
+
+    panel.apply_to_sandbox()
+
+    assert panel.applied_sha1 is None
+    assert any("was NOT applied" in text for text in _audit_texts(window))
+
+
+def test_check_without_applying_runs_the_rolled_back_probe(
+    qtbot, tmp_path, monkeypatch
+):
+    """§18.5 D3's probe: the same ladder, `commit=False`, and its result counts
+    for precondition 2 without ever claiming the object was applied."""
+    window, controller, session = _project_window(qtbot, tmp_path, monkeypatch)
+    window._open_sandbox_session()
+    _apply_calls, probe_calls = _stub_ladder(controller)
+    window._on_ddl_edit_requested(_REF, _SOURCE)
+    panel = window.center_stage.ddl_object_tab(_REF.key)
+    window.center_stage.setCurrentWidget(panel)
+
+    assert window._sandbox_probe_check_action.isVisible()
+    window._probe_check_active_ddl_object()
+
+    assert len(probe_calls) == 1
+    assert probe_calls[0][0] is session
+    assert probe_calls[0][3] == _SOURCE
+    assert _apply_calls == []
+    assert panel.last_check_report() is not None
+    assert panel.applied_sha1 is None  # nothing was applied
+    assert session.applied_calls == []
+
+
+def test_the_probe_gesture_is_absent_without_a_session(qtbot, tmp_path, monkeypatch):
+    window, _controller, _session = _project_window(qtbot, tmp_path, monkeypatch)
+
+    assert not window._sandbox_probe_check_action.isVisible()
+
+    window._open_sandbox_session()
+    assert window._sandbox_probe_check_action.isVisible()
 
 
 def test_apply_affordance_is_absent_without_a_session(qtbot, tmp_path, monkeypatch):
@@ -529,13 +710,12 @@ def test_a_dying_session_takes_the_apply_affordance_with_it(
 
 
 def test_a_failed_apply_comes_back_as_a_stated_outcome(qtbot, tmp_path, monkeypatch):
-    window, _controller, session = _project_window(qtbot, tmp_path, monkeypatch)
+    window, controller, _session = _project_window(qtbot, tmp_path, monkeypatch)
     window._open_sandbox_session()
-
-    def boom(ref, text):
-        raise RuntimeError("syntax error at or near \"BEGIN\"")
-
-    session.apply = boom
+    # The ladder seam itself raising is the worst case: it must arrive as a
+    # stated, reported failure (no report -> "apply did not run"), never as a
+    # silent success.
+    _stub_ladder(controller, raises=RuntimeError('syntax error at or near "BEGIN"'))
     window._on_ddl_edit_requested(_REF, _SOURCE)
     panel = window.center_stage.ddl_object_tab(_REF.key)
     _accept_confirmations(monkeypatch)
@@ -634,3 +814,82 @@ def test_the_trigger_functions_name_is_read_off_the_buffer_not_guessed(
     }
     # No EXECUTE clause -> nothing is guessed from the trigger's own name.
     assert window._trigger_function_for(ref, "CREATE TRIGGER t_audit ...") == {}
+
+
+# --- FQ-009: the "Deploy this edit…" picker, host side ----------------------
+def test_deploy_this_edit_is_a_database_menu_entry_that_needs_no_sandbox(
+    qtbot, tmp_path
+):
+    """FQ-009's discoverability half. Unlike the two check gestures the entry is
+    always visible: its Save destination works with no database at all."""
+    window = _window(qtbot, tmp_path)
+
+    action = window._deploy_this_edit_action
+    assert action is not None
+    assert action.text() == "Deploy This Edit…"
+    assert action.isVisible()
+    # §18.5: no shortcut on anything that can write outward.
+    assert action.shortcut().isEmpty()
+
+
+def test_deploy_this_edit_menu_entry_runs_the_active_tabs_picker(
+    qtbot, tmp_path, monkeypatch
+):
+    window, _controller, _session = _project_window(qtbot, tmp_path, monkeypatch)
+    window._on_ddl_edit_requested(_REF, _SOURCE)
+    panel = window.center_stage.ddl_object_tab(_REF.key)
+    window.center_stage.setCurrentWidget(panel)
+    monkeypatch.setattr(panel, "_prompt_destination", lambda: None)
+
+    assert window._deploy_active_ddl_object_edit() is None
+
+
+def test_deploy_this_edit_with_no_object_tab_states_it_instead_of_crashing(
+    qtbot, tmp_path
+):
+    window = _window(qtbot, tmp_path)
+
+    assert window._deploy_active_ddl_object_edit() is None
+    assert "open one first" in window.statusBar().currentMessage()
+
+
+def test_the_pickers_save_destination_actually_writes_the_file(
+    qtbot, tmp_path, monkeypatch
+):
+    """`save_requested` had no host connection, so choosing Save in the picker
+    was a silent no-op. It now runs the host's one existing save gesture."""
+    window, _controller, _session = _project_window(qtbot, tmp_path, monkeypatch)
+    window._on_ddl_edit_requested(_REF, _SOURCE)
+    panel = window.center_stage.ddl_object_tab(_REF.key)
+    window.center_stage.setCurrentWidget(panel)
+    destination = tmp_path / "recalc.sql"
+    monkeypatch.setattr(panel, "_resolve_save_path", lambda: destination)
+    monkeypatch.setattr(panel, "_prompt_destination", lambda: "save")
+
+    window._deploy_active_ddl_object_edit()
+
+    assert destination.read_text(encoding="utf-8") == _SOURCE
+
+
+def test_apply_to_target_stays_absent_and_the_picker_says_why(
+    qtbot, tmp_path, monkeypatch
+):
+    """FQ-009 wired the sandbox leg's discoverability, NOT the target leg: the
+    live-identity seam precondition 1 needs has no trustworthy source until
+    BUG-034/BUG-030 land. The gesture is absent (carve-out 2) -- but the picker
+    now states that, and points at the reviewable deployment-script path,
+    instead of leaving a silent gap."""
+    window, _controller, _session = _project_window(qtbot, tmp_path, monkeypatch)
+    window._open_sandbox_session()
+    window._on_ddl_edit_requested(_REF, _SOURCE)
+    panel = window.center_stage.ddl_object_tab(_REF.key)
+
+    assert panel.has_sandbox_apply is True
+    assert panel.has_target_apply is False
+    assert panel.target_button is None
+    labels = [a.text() for a in panel._build_context_menu().actions()]
+    assert "Apply to Target…" not in labels
+
+    prompt = panel.deploy_prompt_text()
+    assert "Apply to Target" in prompt
+    assert "Compare Schemas" in prompt

@@ -105,6 +105,19 @@ class ProjectSettingsDialog(QDialog):
         self._target_test_button, self._target_status_label = self._add_test_row(
             target_group, self.test_target
         )
+        # BUG-034: this is now literally the connection every gesture opens
+        # while the project is open, so say so -- and say what BLANK means, so
+        # a fresh FQ-007 project (which collects no target at all) reads as
+        # "not configured yet" rather than as a display bug.
+        self._target_note = QLabel(
+            "This is the connection the DDL Explorer and the database checks"
+            " actually use while this project is open. Imported from the"
+            " .pgtp's <ConnectionOptions> the first time it is opened (the"
+            " password is never in the XML -- it is asked for once, then"
+            " stored here). Blank means no target is configured yet."
+        )
+        self._target_note.setWordWrap(True)
+        target_group.layout().addRow(self._target_note)
 
         sandbox_group = QGroupBox("Sandbox connection")
         (

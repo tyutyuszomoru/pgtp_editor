@@ -180,7 +180,7 @@ def test_opening_project_status_probes_first(qtbot, tmp_path):
     show as offline."""
     window = _window(qtbot, tmp_path)
     probes = []
-    window.refresh_project_capability_status = lambda: probes.append(True)
+    window._ddl_project_ui.refresh_capability_status = lambda: probes.append(True)
 
     window._open_project_status()
 
@@ -237,7 +237,7 @@ def test_reopening_after_a_close_reprobes_and_rerenders(qtbot, tmp_path):
     window._open_project_status()
     panel = window._project_status_window
     probes = []
-    window.refresh_project_capability_status = lambda: probes.append(True)
+    window._ddl_project_ui.refresh_capability_status = lambda: probes.append(True)
     pushed = []
     panel.set_diagram = lambda diagram: pushed.append(diagram)
 
