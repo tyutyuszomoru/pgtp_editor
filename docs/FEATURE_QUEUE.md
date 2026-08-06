@@ -367,7 +367,8 @@ affordance).
 ---
 
 ## FQ-005: Give the light theme the same professional QSS polish as the dark theme
-**Status:** PROCESSED (uncommitted — implemented directly this session, not via the normal QUEUED wait)
+**Status:** PROCESSED (e8f853f — spec §7/§4 + 2026-08-06 ledger row; user-verified in the running app)
+— implemented directly, not via the normal QUEUED wait
 **Requested:** 2026-08-06
 **Idea (verbatim/summarized):** Started as a `/product-brainstorming` request to evaluate adopting a
 third-party Qt stylesheet library (`Qt-Advanced-Stylesheets` / its PySide6 port `qtass-pyside6`) so the
