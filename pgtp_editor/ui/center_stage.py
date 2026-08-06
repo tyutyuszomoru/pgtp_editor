@@ -23,6 +23,7 @@ from pgtp_editor.ui.diff_merge_panel import DiffMergePanel
 from pgtp_editor.ui.find_replace_bar import FindReplaceBar
 from pgtp_editor.ui.manual_panel import ManualPanel
 from pgtp_editor.ui.php_file_tab import PhpFileTab, php_tab_key
+from pgtp_editor.ui.sql_console_panel import CONSOLE_TAB_KEY, SqlConsolePanel
 from pgtp_editor.ui.xml_editor import XmlEditor
 
 
@@ -63,6 +64,17 @@ class CenterStage(QTabWidget):
         # MainWindow stays correct. Keyed on the object's stable identity
         # (`DdlObjectRef.key`), never on a remembered index -- close/reorder
         # must not be able to make a lookup stale.
+        #
+        # The Sandbox SQL Console (§18.5 D4) is filed in THIS SAME map under
+        # `CONSOLE_TAB_KEY == ("sandbox-sql",)`, exactly as the spec asks
+        # ("the same key->widget map the per-object tabs use"). That cannot
+        # collide: a `DdlObjectRef.key` is always a 5-tuple
+        # `(kind, schema, name, table, arg_types)`, and a checked-out object's
+        # override key is a `str` (its resolved path) -- while the console's
+        # key is a 1-tuple. Two guards keep the sharing safe:
+        # `_on_tab_close_requested` intercepts the console's X before the
+        # object loop, and `ddl_object_panels()` filters by type so the
+        # console is never handed to a caller expecting `.ref`/`.is_dirty()`.
         self._ddl_object_tabs: dict[tuple, DdlObjectEditorPanel] = {}
         # Dynamic custom-PHP file tabs (spec §21), appended after the fixed
         # set for exactly the same reason, and keyed on the file's resolved
@@ -147,6 +159,18 @@ class CenterStage(QTabWidget):
             # the only way to identify one is a map lookup by widget, not by
             # index.
             widget = self.widget(index)
+            if widget is self._ddl_object_tabs.get(CONSOLE_TAB_KEY):
+                # The Sandbox SQL Console (§18.5 D4) shares the object-tab map
+                # but is a scratch surface: it holds no document, has no save
+                # path and no dirty concept, so it closes directly here (like
+                # the read-only DDL Explorer's X) instead of routing through
+                # MainWindow's unsaved-changes prompt, which would need a save
+                # gesture that does not exist. Must stay AHEAD of the loop
+                # below: emitting `ddl_object_close_requested(("sandbox-sql",))`
+                # would land in MainWindow's handler and call `is_dirty()` on
+                # the console -- an AttributeError that crashes the app.
+                self.close_sandbox_sql_tab()
+                return
             for key, panel in self._ddl_object_tabs.items():
                 if panel is widget:
                     self.ddl_object_close_requested.emit(key)
@@ -279,8 +303,62 @@ class CenterStage(QTabWidget):
         order. Used to push a freshly (re)built `db/schema_index.py::SchemaIndex`
         (§18.6) into every already-open tab after a DDL Explorer refresh --
         `set_schema_index` on each, mirroring how a schema refresh updates
-        `XmlEditor.set_schema_model` (§11)."""
-        return list(self._ddl_object_tabs.values())
+        `XmlEditor.set_schema_model` (§11).
+
+        Type-filtered on purpose: the Sandbox SQL Console (§18.5 D4) lives in
+        the same map, and every caller of this accessor assumes a per-object
+        panel (`.ref`, `.is_dirty()`). Use `sandbox_sql_tab()` for the
+        console."""
+        return [
+            panel
+            for panel in self._ddl_object_tabs.values()
+            if isinstance(panel, DdlObjectEditorPanel)
+        ]
+
+    # --- Sandbox SQL Console tab (spec §18.5 D4) ---------------------------
+    def sandbox_sql_tab(self):
+        """The open `SqlConsolePanel`, or None. Single-instance by design."""
+        panel = self._ddl_object_tabs.get(CONSOLE_TAB_KEY)
+        return panel if isinstance(panel, SqlConsolePanel) else None
+
+    def open_sandbox_sql_tab(self, *, session_provider=None, **panel_kwargs):
+        """Focus the Sandbox SQL Console if it is already open; otherwise
+        create it, append it (always AFTER the fixed set) and focus that.
+
+        Single-instance, exactly `open_ddl_object_tab`'s rule (§18.5 D4:
+        "re-invoking the command focuses the existing tab rather than opening a
+        second console"). `session_provider` and any further `panel_kwargs`
+        (`run_query`, `run_async`) are forwarded to `SqlConsolePanel`
+        untouched, so hosts and tests inject the same seams the panel already
+        declares."""
+        existing = self.sandbox_sql_tab()
+        if existing is not None:
+            self.setCurrentWidget(existing)
+            return existing
+
+        panel = SqlConsolePanel(session_provider=session_provider, **panel_kwargs)
+        index = self.addTab(panel, panel.tab_title())
+        self.setTabToolTip(
+            index,
+            "Ad-hoc SQL against this project's sandbox database only — "
+            "never the target database (spec §18.5 D4)",
+        )
+        self._ddl_object_tabs[CONSOLE_TAB_KEY] = panel
+        self.setCurrentWidget(panel)
+        return panel
+
+    def close_sandbox_sql_tab(self):
+        """Remove the Sandbox SQL Console tab. No unsaved-changes prompt: the
+        console is a scratch buffer with no save path (mirrors
+        `hide_ddl_explorer`'s direct close, not `close_ddl_object_tab`'s
+        prompt-first route)."""
+        panel = self._ddl_object_tabs.pop(CONSOLE_TAB_KEY, None)
+        if panel is None:
+            return
+        index = self.indexOf(panel)
+        if index != -1:
+            self.removeTab(index)
+        panel.deleteLater()
 
     # --- Dynamic custom-PHP file tabs (spec §21) ---------------------------
     def php_file_tab(self, key):
