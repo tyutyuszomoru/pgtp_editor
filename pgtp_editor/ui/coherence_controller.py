@@ -27,9 +27,13 @@ What it owns
   (:attr:`last_schema` / :attr:`last_summary`) — what makes a reparse refresh
   and a "create page/detail/lookup" free of a second round trip;
 * the **rename-in-XML** gesture and the **name jump** into Find-All;
-* **create page / detail / lookup from a DB table** (SP3), including the
-  duplicate-page prompt, the ``fileName`` de-duplication and the ``</Pages>``
-  splice.
+* **create page / detail / lookup from a DB table** (SP3), which since FQ-006
+  opens each generated fragment as a **draft tab** in the center stage. It no
+  longer splices a ``<Page>`` into the live buffer, no longer copies a
+  ``<Detail>``/``<Lookup>`` to the clipboard, and no longer blocks on a
+  duplicate-page modal or auto-renames a colliding ``fileName``: a collision is
+  a non-blocking status-bar heads-up, because nothing reaches the real XML until
+  the user pastes the draft in themselves.
 
 It parses the BUFFER, not the project model
 -------------------------------------------
@@ -52,9 +56,9 @@ search for a table name. Both halves of that fix are needed; keep both.
 
 The replaceable seams are ATTRIBUTES
 ------------------------------------
-:attr:`fetch_schema`, :attr:`prompt_rename` and :attr:`confirm_duplicate_page`
-are plain instance attributes, not methods, because the suite assigns over them
-(a live DB connection and two modals respectively). :attr:`last_schema` and
+:attr:`fetch_schema` and :attr:`prompt_rename` are plain instance attributes,
+not methods, because the suite assigns over them (a live DB connection and a
+modal respectively). :attr:`last_schema` and
 :attr:`last_summary` are plain writable attributes for the same reason and one
 sharper one: the create/rename tests *write* ``last_schema`` and then invoke the
 handler that reads it, so the write must land on the very object the handler
@@ -85,7 +89,6 @@ import logging
 from collections.abc import Callable
 
 from PySide6.QtCore import QObject, QSignalBlocker
-from PySide6.QtWidgets import QApplication
 
 from pgtp_editor import debuglog
 from pgtp_editor.db.coherence import build_coherence_tree
@@ -140,10 +143,9 @@ class CoherenceController(QObject):
 
         #: Replaceable seams -- ATTRIBUTES, not methods. See the module
         #: docstring: the suite assigns over them to keep a live DB connection
-        #: and two modals out of the test run.
+        #: and a modal out of the test run.
         self.fetch_schema = self._fetch_schema
         self.prompt_rename = self._prompt_rename
-        self.confirm_duplicate_page = self._confirm_duplicate_page
 
     # -- read-only surface ---------------------------------------------------
 
@@ -190,21 +192,6 @@ class CoherenceController(QObject):
             text=old,
         )
         return text if ok else None
-
-    def _confirm_duplicate_page(self, table_name):
-        """Warn that a page for `table_name` already exists; return True to
-        proceed (with a de-duplicated fileName) or False to cancel. Reached
-        through the replaceable `confirm_duplicate_page` attribute so tests
-        bypass the modal."""
-        choice = modals.QMessageBox.question(
-            self._shell.window,
-            "Page Already Exists",
-            f"A page for '{table_name}' already exists in this project.\n\n"
-            "Create another one anyway (with a de-duplicated fileName)?",
-            modals.QMessageBox.StandardButton.Yes | modals.QMessageBox.StandardButton.No,
-            modals.QMessageBox.StandardButton.No,
-        )
-        return choice == modals.QMessageBox.StandardButton.Yes
 
     # -- the coherence view --------------------------------------------------
 
@@ -391,85 +378,72 @@ class CoherenceController(QObject):
         bar.find_next()
         editor.setFocus()
 
-    # -- Create page/detail/lookup from a DB table (SP3) ---------------------
+    # -- Create page/detail/lookup from a DB table (SP3, FQ-006) -------------
+
+    #: What each `what` is called in user-facing text.
+    _CREATE_LABELS = {"page": "Page", "detail": "Detail", "lookup": "Lookup"}
 
     def on_create_requested(self, what, name) -> None:
         """Right-click on a relation node in the coherence view's Tables and
-        Views branch: synthesize a page (insert into the buffer) or a
-        detail/lookup (copy to clipboard)."""
+        Views branch: synthesize a page/detail/lookup and open it as a DRAFT in
+        a new center-stage tab (FQ-006).
+
+        All three kinds land in the same place. Nothing is written to the
+        project buffer and nothing goes to the clipboard: the draft is the
+        user's to review, edit and copy out of — or to close unused."""
         schema = self.last_schema
         if schema is None or schema.table(name) is None:
             self._shell.status(
                 f"No schema for '{name}' — run Database/XML Coherence first.", 5000
             )
             return
+        builders = {
+            "page": table_gen.build_page,
+            "detail": table_gen.build_detail,
+            "lookup": table_gen.build_lookup,
+        }
+        build = builders.get(what)
+        if build is None:
+            return
         try:
-            if what == "page":
-                self._create_page_from_table(schema, name)
-            elif what == "detail":
-                element = table_gen.build_detail(schema, name)
-                self._copy_fragment_to_clipboard(element, "Detail", name)
-            elif what == "lookup":
-                element = table_gen.build_lookup(schema, name)
-                self._copy_fragment_to_clipboard(element, "Lookup", name)
+            element = build(schema, name)
         except table_gen.GenerationError as exc:
             self._shell.status(f"Could not create {what}: {exc}", 8000)
-
-    def _copy_fragment_to_clipboard(self, element, label, name) -> None:
-        text = table_gen.serialize(element, indent=0)
-        QApplication.clipboard().setText(text)
-        self._shell.status(
-            f"{label} for '{name}' copied to clipboard — paste it into the "
-            "target page.",
-            6000,
-        )
-
-    def _create_page_from_table(self, schema, name) -> None:
-        element = table_gen.build_page(schema, name)
-        stage = self._shell.stage
-        buffer = stage.xml_editor.toPlainText()
-
-        file_name = element.get("fileName")
-        if f'tableName="{name}"' in buffer or f'fileName="{file_name}"' in buffer:
-            if not self.confirm_duplicate_page(name):
-                self._shell.status("Page creation cancelled.", 3000)
-                return
-            file_name = self._dedupe_file_name(buffer, file_name)
-            element.set("fileName", file_name)
-
-        updated, insert_line = self._insert_page_before_pages_close(buffer, element)
-        if updated is None:
-            self._shell.status(
-                "Could not find </Pages> to insert the new page.", 8000
-            )
             return
-        stage.xml_editor.setPlainText(updated)
-        stage.setCurrentIndex(stage.raw_xml_tab_index)
-        stage.xml_editor.navigate_to_line(insert_line)
-        stage.xml_editor.select_enclosing_block()
-        self._shell.status(f"Page for '{name}' added.", 5000)
+        self._open_draft_tab(what, name, element)
 
-    @staticmethod
-    def _dedupe_file_name(buffer, file_name):
-        candidate = file_name
-        suffix = 2
-        while f'fileName="{candidate}"' in buffer:
-            candidate = f"{file_name}_{suffix}"
-            suffix += 1
-        return candidate
+    def _open_draft_tab(self, what, name, element) -> None:
+        """Serialize `element` at indent 0 (generation itself is untouched) and
+        hand it to a fresh `CenterStage` draft tab."""
+        # The duplicate scan runs BEFORE the tab opens but can never stop it:
+        # since nothing auto-inserts into the real XML any more, a collision
+        # only matters when the user manually pastes the draft in later — which
+        # the app cannot observe — so this is a heads-up, not a gate (FQ-006).
+        note = self._duplicate_note(name, element)
+        self._shell.stage.open_draft_fragment_tab(
+            what, name, table_gen.serialize(element, indent=0)
+        )
+        label = self._CREATE_LABELS.get(what, what)
+        message = (
+            f"{label} draft for '{name}' opened in a new tab — edit it, then "
+            "copy it into your project when you are ready."
+        )
+        if note:
+            message = f"{message} {note}"
+        self._shell.status(message, 8000)
 
-    @staticmethod
-    def _insert_page_before_pages_close(buffer, element):
-        """Splice a serialized <Page> immediately before </Pages>, indented to
-        match the existing <Page> depth. Returns (new_text, page_open_line) or
-        (None, 0) if </Pages> is absent."""
-        close_index = buffer.rfind("</Pages>")
-        if close_index == -1:
-            return None, 0
-        line_start = buffer.rfind("\n", 0, close_index) + 1
-        close_indent = buffer[line_start:close_index]
-        indent_depth = close_indent.count("\t") + 1  # one level deeper than </Pages>
-        fragment = table_gen.serialize(element, indent=indent_depth)
-        new_text = buffer[:line_start] + fragment + "\n" + buffer[line_start:]
-        page_open_line = buffer.count("\n", 0, line_start) + 1
-        return new_text, page_open_line
+    def _duplicate_note(self, name, element) -> str:
+        """A non-blocking heads-up about a fileName/tableName that already
+        exists in the buffer, or "" when there is nothing to flag. Purely
+        informational — the draft keeps whatever `fileName` the generator
+        produced (FQ-006 dropped the old auto-rename outright)."""
+        buffer = self._shell.stage.xml_editor.toPlainText()
+        file_name = element.get("fileName") or ""
+        if file_name and f'fileName="{file_name}"' in buffer:
+            return (
+                f'Note: fileName="{file_name}" already exists in the project — '
+                "rename it in the draft before pasting."
+            )
+        if f'tableName="{name}"' in buffer:
+            return f"Note: '{name}' is already referenced in the project XML."
+        return ""

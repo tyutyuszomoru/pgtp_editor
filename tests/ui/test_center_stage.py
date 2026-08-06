@@ -1,4 +1,8 @@
-from pgtp_editor.ui.center_stage import CenterStage
+from pgtp_editor.ui.center_stage import (
+    DRAFT_TAB_KEY_KIND,
+    CenterStage,
+    DraftFragmentTab,
+)
 from pgtp_editor.ui.ddl_object_editor import DdlObjectEditorPanel, DdlObjectRef
 from pgtp_editor.ui.sql_console_panel import CONSOLE_TAB_KEY, SqlConsolePanel
 
@@ -456,6 +460,153 @@ def test_sandbox_sql_tab_close_button_closes_directly_without_signaling(qtbot):
     assert stage.sandbox_sql_tab() is None
     assert stage.ddl_object_tab(CONSOLE_TAB_KEY) is None
     assert stage.count() == fixed_count
+
+
+# --- Generated-fragment draft tabs (FQ-006) ---------------------------------
+def test_open_draft_fragment_tab_appends_after_the_fixed_set(qtbot):
+    stage = CenterStage()
+    qtbot.addWidget(stage)
+    fixed_count = stage.count()
+    fixed = (
+        stage.diff_merge_tab_index,
+        stage.caption_management_tab_index,
+        stage.raw_xml_tab_index,
+        stage.xsd_tab_index,
+        stage.ddl_tab_index,
+        stage.manual_tab_index,
+    )
+
+    tab = stage.open_draft_fragment_tab("page", "pr.customers", "<Page/>")
+
+    assert isinstance(tab, DraftFragmentTab)
+    assert stage.count() == fixed_count + 1
+    assert stage.indexOf(tab) == fixed_count  # appended, not inserted
+    assert stage.currentWidget() is tab
+    assert stage.tabText(stage.indexOf(tab)) == "New Page: pr.customers"
+    assert stage.tabToolTip(stage.indexOf(tab))
+    assert tab.toPlainText() == "<Page/>"
+    assert tab.kind == "page"
+    assert tab.table_name == "pr.customers"
+    assert fixed == (
+        stage.diff_merge_tab_index,
+        stage.caption_management_tab_index,
+        stage.raw_xml_tab_index,
+        stage.xsd_tab_index,
+        stage.ddl_tab_index,
+        stage.manual_tab_index,
+    )
+
+
+def test_open_draft_fragment_tab_is_multi_instance(qtbot):
+    """Explicitly NOT single-instance (the console's rule inverted): the same
+    kind + table twice must yield two independently-keyed tabs."""
+    stage = CenterStage()
+    qtbot.addWidget(stage)
+    fixed_count = stage.count()
+
+    first = stage.open_draft_fragment_tab("page", "pr.customers", "a")
+    second = stage.open_draft_fragment_tab("page", "pr.customers", "b")
+
+    assert second is not first
+    assert stage.count() == fixed_count + 2
+    assert first.toPlainText() == "a"
+    assert second.toPlainText() == "b"
+    keys = list(stage.draft_fragment_tabs())
+    assert len(set(keys)) == 2
+    assert stage.draft_fragment_tab_key(first) != stage.draft_fragment_tab_key(second)
+
+
+def test_draft_keys_cannot_collide_with_object_or_console_keys(qtbot):
+    """Draft keys are 4-tuples, a `DdlObjectRef.key` is a 5-tuple, a
+    checked-out object's override key is a `str`, the console's key is a
+    1-tuple."""
+    stage = CenterStage()
+    qtbot.addWidget(stage)
+    tab = stage.open_draft_fragment_tab("detail", "pr.orders", "<Detail/>")
+    key = stage.draft_fragment_tab_key(tab)
+
+    assert key[0] == DRAFT_TAB_KEY_KIND
+    assert len(key) == 4
+    assert len(_REF.key) == 5
+    assert len(CONSOLE_TAB_KEY) == 1
+
+
+def test_draft_tabs_share_the_object_map_but_not_ddl_object_panels(qtbot):
+    """A draft has no `.ref`/`.is_dirty()`, so it must never be handed to a
+    caller of `ddl_object_panels()` / `active_ddl_object_panel()`."""
+    stage = CenterStage()
+    qtbot.addWidget(stage)
+    obj = stage.open_ddl_object_tab(_REF, "text")
+    draft = stage.open_draft_fragment_tab("lookup", "pr.customers", "<Lookup/>")
+
+    assert stage.ddl_object_panels() == [obj]
+    assert draft not in stage.ddl_object_panels()
+    assert stage.active_ddl_object_panel() is None  # the draft is current
+    assert stage.sandbox_sql_tab() is None
+    assert list(stage.draft_fragment_tabs().values()) == [draft]
+    stage.setCurrentWidget(obj)
+    assert stage.active_ddl_object_panel() is obj
+
+
+def test_draft_tab_close_button_closes_directly_without_signaling(qtbot):
+    """Crash regression, the console's lesson applied to drafts: the ✕ must be
+    intercepted before the object loop, or ddl_object_close_requested reaches
+    MainWindow and calls `is_dirty()` on a widget that has none. No dirty
+    prompt either — a draft was never saved anywhere (FQ-006)."""
+    stage = CenterStage()
+    qtbot.addWidget(stage)
+    fixed_count = stage.count()
+    draft = stage.open_draft_fragment_tab("page", "pr.customers", "<Page/>")
+    draft.editor.setPlainText("edited since")  # "dirty" by any other tab's rule
+    got = []
+    stage.ddl_object_close_requested.connect(got.append)
+
+    stage.tabCloseRequested.emit(stage.indexOf(draft))
+
+    assert got == []  # no unsaved-changes round trip
+    assert stage.draft_fragment_tabs() == {}
+    assert stage.count() == fixed_count
+
+
+def test_closing_one_draft_leaves_the_others_open(qtbot):
+    stage = CenterStage()
+    qtbot.addWidget(stage)
+    fixed_count = stage.count()
+    first = stage.open_draft_fragment_tab("page", "pr.a", "<Page/>")
+    second = stage.open_draft_fragment_tab("detail", "pr.b", "<Detail/>")
+
+    stage.tabCloseRequested.emit(stage.indexOf(first))
+
+    assert list(stage.draft_fragment_tabs().values()) == [second]
+    assert stage.count() == fixed_count + 1
+
+
+def test_close_draft_fragment_tab_is_idempotent(qtbot):
+    stage = CenterStage()
+    qtbot.addWidget(stage)
+    fixed_count = stage.count()
+    tab = stage.open_draft_fragment_tab("page", "pr.customers", "<Page/>")
+    key = stage.draft_fragment_tab_key(tab)
+
+    stage.close_draft_fragment_tab(key)
+    stage.close_draft_fragment_tab(key)  # no-op, must not raise
+
+    assert stage.count() == fixed_count
+    assert stage.draft_fragment_tabs() == {}
+    assert stage.draft_fragment_tab_key(tab) is None
+
+
+def test_draft_tab_has_its_own_editor_and_find_bar(qtbot):
+    """Reuses `XmlEditor` + `FindReplaceBar`; independent of the Raw XML one."""
+    stage = CenterStage()
+    qtbot.addWidget(stage)
+    stage.xml_editor.setPlainText("<Project/>")
+    tab = stage.open_draft_fragment_tab("page", "pr.customers", "<Page/>")
+
+    assert tab.editor is not stage.xml_editor
+    assert tab.find_replace_bar.parent() is tab
+    tab.editor.setPlainText("<Page>edited</Page>")
+    assert stage.xml_editor.toPlainText() == "<Project/>"
 
 
 def test_close_sandbox_sql_tab_is_idempotent(qtbot):
