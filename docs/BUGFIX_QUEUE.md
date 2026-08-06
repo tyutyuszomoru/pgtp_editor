@@ -2444,7 +2444,9 @@ if existing is not None:
 ---
 
 ## BUG-029: Project Status window PNGs are clipped and blurry ("cut and very low resolution")
-**Status:** OPEN
+**Status:** RESOLVED (acb813f) — root cause was BOTH halves the entry named. Blur: the pipeline MAGNIFIED small rasters (2x at dpr 1.0, 4x on HiDPI), which cannot add detail. Now rendered from the owner-supplied SVGs through `QSvgRenderer` into a `QImage` sized `logical x dpr`. Logical size is `defaultSize() * 2.133`, not `defaultSize()` raw — Qt reads these SVGs' millimetre dims at 90 dpi while the deleted PNGs were 96 dpi exports of the same drawing, so the 96/90 correction keeps every size within 1-2 px of the old layout. Clipping: pad is now `box.expandedTo(icon)` with the `max(0, ...)` clamps removed, ONE dpr threaded `_rebuild`->`_make_node`->`_boxed_pixmap`, connector labels ceil-sized with AlignCenter, and a `devicePixelRatioChanged`/`screenChanged` rebuild. The 1px drift class is gone as a clipping cause (`_logical_size` ceils). Packaging verified: pyproject's `resources/status/*` glob is extension-agnostic, so SVGs ship.
+
+**Remaining ASSET issue, needs the owner (no code fix will follow):** `resources/status/sandbox_offline.svg` is not an SVG — it is a 40x34 PNG saved under an `.svg` name. `QSvgRenderer` rejects it, which would have left the offline sandbox node a blank gap, so `_scaled_pixmap` falls back to raster loading at 2x for non-SVG content. That one state therefore renders SOFT while its `_drk` counterpart (a real SVG) is crisp. Re-export it as true SVG and it becomes crisp with no code change. Cosmetic aside: `sandbox_not_set_up.svg` is 41x31 vs its dark twin's 37x32, so the light icon is ~10% wider; alignment is unaffected.
 **Reported:** 2026-08-06
 **Report (verbatim):** "PNGs are cut and very low resolution."
 
