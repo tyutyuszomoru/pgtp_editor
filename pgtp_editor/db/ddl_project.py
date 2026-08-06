@@ -514,7 +514,19 @@ def compute_drift_markers(
 
     An object with no last-deployed reference at all (never deployed) has
     no entry here -- there is nothing to compare it against yet, which is
-    distinct from "compared and found unchanged." An object that no longer
+    distinct from "compared and found unchanged." Deliberate exception
+    (§18.6 creation flow): a freshly created, never-deployed object IS
+    registered in `settings.deployed` with an empty-string `content_hash`
+    as the never-deployed sentinel, so with no special-casing here its
+    existing local file hashes unequal to `""` (-> `locally_edited`, the
+    `*` marker) while its absence from the live `schema` leaves
+    `live_drifted` False -- it renders as exactly `*`. A **checked-out**
+    object (BUG-033) is registered too, but with the hash of the live
+    definition the checkout was taken from -- not the sentinel -- so a fresh
+    checkout reads as unmodified and starts showing `*` only once its file is
+    actually edited. Either way, an object that is in NO `deployed` entry gets
+    no markers at all however often the tree is refreshed; that absence, not a
+    missing refresh, is what makes a marker inert. An object that no longer
     exists in the live `schema` (dropped from the database) is reported as
     NOT live-drifted here -- there is no live definition to compare against,
     so this deliberately avoids manufacturing a false positive; its absence

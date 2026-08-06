@@ -1583,3 +1583,234 @@ def test_close_project_action_signal_path_closes_the_project(qtbot, tmp_path):
 
     assert window._ddl_project_folder is None
     assert window._close_ddl_project_action.isEnabled() is False
+
+
+# --- BUG-034: the `.pgtp`'s connection becomes the project's target ---------
+_PGTP_WITH_CONNECTION = """\
+<?xml version="1.0" encoding="UTF-8"?>
+<Project>
+  <ConnectionOptions host="dbhost" port="5433" login="erp" database="erpdb" password="xx"/>
+  <Presentation>
+    <Pages/>
+  </Presentation>
+</Project>
+"""
+
+
+def test_opening_a_pgtp_imports_its_connection_options_into_the_project_target(
+    qtbot, tmp_path
+):
+    """The reported symptom: Project Settings showed empty target fields for a
+    project the app was happily connecting to. Nothing ever copied the
+    `.pgtp`'s `<ConnectionOptions>` into `ProjectSettings.target`."""
+    window = _window(qtbot, tmp_path)
+    project_dir = tmp_path / "proj"
+    _open_project(window, project_dir)
+    source = tmp_path / "erp.pgtp"
+    source.write_text(_PGTP_WITH_CONNECTION, encoding="utf-8")
+
+    window.open_project_file(str(source))
+
+    target = window._ddl_project_settings.target
+    assert (target.host, target.port, target.database, target.user) == (
+        "dbhost", "5433", "erpdb", "erp"
+    )
+    # …and it is PERSISTED, not just held in memory.
+    assert load_settings(project_dir).target.host == "dbhost"
+
+
+def test_the_imported_target_never_carries_a_password_from_the_xml(qtbot, tmp_path):
+    """§17: the password is never read from the XML (it is obfuscated there).
+    It is prompted for at first connect instead."""
+    window = _window(qtbot, tmp_path)
+    project_dir = tmp_path / "proj"
+    _open_project(window, project_dir)
+    source = tmp_path / "erp.pgtp"
+    source.write_text(_PGTP_WITH_CONNECTION, encoding="utf-8")
+
+    window.open_project_file(str(source))
+
+    assert window._ddl_project_settings.target.password == ""
+
+
+def test_importing_the_target_never_clobbers_one_the_user_already_set(qtbot, tmp_path):
+    """"Saved wins" -- the same precedence `seed_params` encodes. A host the
+    user corrected in Project Settings must survive reopening the project."""
+    from pgtp_editor.db.ddl_project import save_settings
+
+    window = _window(qtbot, tmp_path)
+    project_dir = tmp_path / "proj"
+    edited = ProjectSettings(
+        target=ConnectionParams(
+            host="127.0.0.1", port="5432", database="mine", user="me", password="pw"
+        )
+    )
+    save_settings(project_dir, edited)
+    window._set_active_ddl_project(project_dir, edited)
+    source = tmp_path / "erp.pgtp"
+    source.write_text(_PGTP_WITH_CONNECTION, encoding="utf-8")
+
+    window.open_project_file(str(source))
+
+    assert window._ddl_project_settings.target.host == "127.0.0.1"
+    assert window._ddl_project_settings.target.password == "pw"
+
+
+def test_importing_the_target_never_seeds_the_sandbox(qtbot, tmp_path):
+    """§17: `<ConnectionOptions>` is the TARGET. Seeding a sandbox from it is
+    how a sandbox ends up pointed at production."""
+    window = _window(qtbot, tmp_path)
+    project_dir = tmp_path / "proj"
+    _open_project(window, project_dir)
+    source = tmp_path / "erp.pgtp"
+    source.write_text(_PGTP_WITH_CONNECTION, encoding="utf-8")
+
+    window.open_project_file(str(source))
+
+    assert window._ddl_project_settings.sandbox.host == ""
+
+
+def test_a_pgtp_without_connection_options_leaves_the_target_alone(qtbot, tmp_path):
+    window = _window(qtbot, tmp_path)
+    project_dir = tmp_path / "proj"
+    _open_project(window, project_dir)
+    source = tmp_path / "plain.pgtp"
+    source.write_text(_VALID_PGTP, encoding="utf-8")
+
+    window.open_project_file(str(source))
+
+    assert window._ddl_project_settings.target.host == ""
+
+
+def test_a_pgtp_opened_with_no_project_open_imports_nothing(qtbot, tmp_path):
+    """Projectless there is no `settings.json` to import into; the app-level
+    `seed_params` path is unchanged there (BUG-024 keeps Connection Setup…
+    projectless-only for exactly this split)."""
+    window = _window(qtbot, tmp_path)
+    source = tmp_path / "erp.pgtp"
+    source.write_text(_PGTP_WITH_CONNECTION, encoding="utf-8")
+
+    window.open_project_file(str(source))  # must not raise
+
+    assert window._ddl_project_settings is None
+
+
+def test_linking_a_pgtp_does_not_reset_the_recorded_sandbox_mode(qtbot, tmp_path):
+    """The link step rebuilt `ProjectSettings` field-by-field and silently
+    dropped `sandbox_mode`, quietly turning a "with data" project into a
+    schema-only one."""
+    from pgtp_editor.db.ddl_project import save_settings
+    from pgtp_editor.db.sandbox import SandboxMode
+
+    window = _window(qtbot, tmp_path)
+    project_dir = tmp_path / "proj"
+    settings = ProjectSettings(sandbox_mode=SandboxMode.WITH_DATA)
+    save_settings(project_dir, settings)
+    window._set_active_ddl_project(project_dir, settings)
+    source = tmp_path / "erp.pgtp"
+    source.write_text(_VALID_PGTP, encoding="utf-8")
+
+    window.open_project_file(str(source))
+
+    assert window._ddl_project_settings.sandbox_mode is SandboxMode.WITH_DATA
+    assert load_settings(project_dir).sandbox_mode is SandboxMode.WITH_DATA
+
+
+# --- BUG-034: one source of truth for "the target connection" ---------------
+def test_active_target_params_prefers_the_project_profile_over_app_settings(
+    qtbot, tmp_path
+):
+    from pgtp_editor.db.config import save_connection
+
+    window = _window(qtbot, tmp_path)
+    save_connection(
+        window._settings,
+        ConnectionParams(host="app-level", port="1", database="a", user="a", password="a"),
+    )
+    window._set_active_ddl_project(
+        tmp_path / "proj", ProjectSettings(target=ConnectionParams(host="project-level"))
+    )
+
+    assert window.active_target_params().host == "project-level"
+
+
+def test_active_target_params_falls_back_to_seed_params_projectless(qtbot, tmp_path):
+    from pgtp_editor.db.config import save_connection
+
+    window = _window(qtbot, tmp_path)
+    save_connection(
+        window._settings,
+        ConnectionParams(host="app-level", port="1", database="a", user="a", password="a"),
+    )
+
+    assert window.active_target_params().host == "app-level"
+
+
+def test_a_fresh_no_target_project_reads_as_not_configured(qtbot, tmp_path):
+    """FQ-007: New Project collects no target at all, so an empty target is
+    legitimate -- and must read as "not configured" rather than be silently
+    backfilled from the app-level connection."""
+    from pgtp_editor.db.config import save_connection
+
+    window = _window(qtbot, tmp_path)
+    save_connection(
+        window._settings,
+        ConnectionParams(host="app-level", port="1", database="a", user="a", password="a"),
+    )
+    window._set_active_ddl_project(tmp_path / "proj", ProjectSettings())
+
+    target = window.active_target_params()
+    assert target.host == ""  # NOT backfilled from the app-level connection
+    assert window._target_is_configured(target) is False
+    assert window._connection_summary_for(target) == "Not configured."
+
+
+def test_the_target_password_is_prompted_once_and_persisted(qtbot, tmp_path):
+    """The report: "password is requested, then saved in the json"."""
+    from pgtp_editor.db.ddl_project import save_settings
+
+    window = _window(qtbot, tmp_path)
+    project_dir = tmp_path / "proj"
+    settings = ProjectSettings(
+        target=ConnectionParams(host="dbhost", port="5433", database="erpdb", user="erp")
+    )
+    save_settings(project_dir, settings)
+    window._set_active_ddl_project(project_dir, settings)
+    asked = []
+    window._prompt_target_password = lambda params: asked.append(params) or "s3cret"
+
+    first = window._target_params_for_fetch()
+
+    assert first.password == "s3cret"
+    assert load_settings(project_dir).target.password == "s3cret"
+    # Asked ONCE: the persisted password short-circuits every later gesture.
+    assert window._target_params_for_fetch().password == "s3cret"
+    assert len(asked) == 1
+
+
+def test_cancelling_the_password_prompt_persists_nothing(qtbot, tmp_path):
+    from pgtp_editor.db.ddl_project import save_settings
+
+    window = _window(qtbot, tmp_path)
+    project_dir = tmp_path / "proj"
+    settings = ProjectSettings(target=ConnectionParams(host="dbhost", user="erp"))
+    save_settings(project_dir, settings)
+    window._set_active_ddl_project(project_dir, settings)
+    window._prompt_target_password = lambda params: None
+
+    params = window._target_params_for_fetch()
+
+    assert params.password == ""
+    assert load_settings(project_dir).target.password == ""
+
+
+def test_no_password_prompt_projectless_or_without_a_host(qtbot, tmp_path):
+    window = _window(qtbot, tmp_path)
+    asked = []
+    window._prompt_target_password = lambda params: asked.append(params) or "x"
+
+    window._target_params_for_fetch()  # projectless
+    window._set_active_ddl_project(tmp_path / "proj", ProjectSettings())
+    window._target_params_for_fetch()  # project open, no host configured
+
+    assert asked == []

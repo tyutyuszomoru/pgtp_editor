@@ -721,11 +721,15 @@ def test_apply_refuses_when_the_database_cannot_be_named(qtbot):
 
 
 # --- Affordances are absent when unwired (carve-out 2) ----------------------
-def test_no_apply_row_when_no_seam_is_wired(qtbot):
+def test_no_apply_buttons_when_no_seam_is_wired(qtbot):
+    """Carve-out 2 applies to the two APPLY buttons, which need a seam. The row
+    itself and its "Deploy this edit…" button survive (FQ-009): the picker's
+    Save destination needs no seam, so that button is never a dead control."""
     panel = _panel(qtbot)
     assert panel.has_sandbox_apply is False
     assert panel.has_target_apply is False
-    assert panel.apply_row is None
+    assert panel.apply_row is not None
+    assert panel.deploy_button is not None
     assert panel.sandbox_button is None and panel.target_button is None
     assert panel.apply_to_sandbox() is False
     assert panel.apply_to_target() is False
@@ -750,7 +754,7 @@ def test_wired_seams_add_their_buttons_and_menu_entries(qtbot):
     assert "Apply to Sandbox" in labels and "Apply to Target…" in labels
 
 
-def test_apply_row_appears_and_disappears_with_the_seams(qtbot):
+def test_apply_buttons_appear_and_disappear_with_the_seams(qtbot):
     seams = _Seams()
     panel = _panel(qtbot)
     panel.set_apply_seams(
@@ -763,7 +767,10 @@ def test_apply_row_appears_and_disappears_with_the_seams(qtbot):
 
     panel.set_apply_seams()
 
-    assert panel.apply_row is None and panel.sandbox_button is None
+    assert panel.sandbox_button is None and panel.target_button is None
+    # The row and the picker button outlive the seams -- see
+    # test_no_apply_buttons_when_no_seam_is_wired.
+    assert panel.apply_row is not None and panel.deploy_button is not None
 
 
 def test_apply_is_absent_without_a_confirmation_gate(qtbot):
@@ -1197,6 +1204,95 @@ def test_deploy_destinations_omit_gestures_whose_seam_is_unwired(qtbot):
     seams = _Seams()
     wired = _wired(qtbot, seams)
     assert wired.deploy_destinations() == [DEST_SANDBOX, DEST_SAVE, DEST_TARGET]
+
+
+# --- FQ-009: the picker is discoverable, and says what is NOT on offer -------
+def test_deploy_button_is_always_present_and_runs_the_picker(qtbot, monkeypatch):
+    """The crux of FQ-009: the one gesture that answers "where does this edit
+    go?" is a visible button, not a right-click-only entry -- and it is there
+    with no seam wired at all, because Save always works."""
+    panel = _panel(qtbot)
+    assert panel.deploy_button is not None
+    assert panel.deploy_button.text() == "Deploy this edit…"
+    assert panel.deploy_button.isVisible() or panel.deploy_button.parent() is not None
+    picked = []
+    monkeypatch.setattr(panel, "_prompt_destination", lambda: picked.append(1) or None)
+
+    panel.deploy_button.click()
+
+    assert picked == [1]
+
+
+def test_deploy_button_carries_no_shortcut_and_is_not_a_default_button(qtbot):
+    """Discoverable is not the same as one keystroke away (§18.5)."""
+    panel = _panel(qtbot)
+    assert panel.deploy_button.shortcut().isEmpty()
+    assert panel.deploy_button.autoDefault() is False
+    assert panel.deploy_button.isDefault() is False
+
+
+def test_unavailable_destinations_name_the_sandbox_and_target_with_reasons(qtbot):
+    panel = _panel(qtbot)
+    missing = dict(panel.unavailable_destinations())
+    assert set(missing) == {DEST_SANDBOX, DEST_TARGET}
+    assert "Open Sandbox Session" in missing[DEST_SANDBOX]
+    assert "precondition 1" in missing[DEST_TARGET]
+    # Save is never listed -- it needs no seam.
+    assert DEST_SAVE not in missing
+
+
+def test_unavailable_destinations_shrinks_as_seams_are_wired(qtbot):
+    seams = _Seams()
+    panel = _wired(qtbot, seams)
+    assert panel.unavailable_destinations() == []
+
+
+def test_deploy_prompt_text_states_why_a_destination_is_missing(qtbot):
+    """The requester's complaint was that there was "no option to save to the
+    database"; an absent entry cannot say why. The prose does."""
+    panel = _panel(qtbot)
+    text = panel.deploy_prompt_text()
+    assert _PLAIN.qualified in text
+    assert "Not available right now:" in text
+    assert "Apply to Sandbox" in text and "Apply to Target" in text
+    assert "Compare Schemas" in text
+
+
+def test_deploy_prompt_text_is_just_the_question_when_all_seams_are_wired(qtbot):
+    seams = _Seams()
+    panel = _wired(qtbot, seams)
+    assert "Not available" not in panel.deploy_prompt_text()
+
+
+# --- FQ-009: precondition 1 cannot be cleared by an unreachable target -------
+def test_a_failing_live_identity_lookup_refuses_instead_of_reading_as_absent(
+    qtbot,
+):
+    """`live_identity` returning None means "the target does not have this
+    object" -- a real, precondition-1-clearing fact. A lookup that FAILED must
+    never be reported that way, so any raise is a stated refusal."""
+
+    def boom(_ref):
+        raise RuntimeError("could not connect to quality")
+
+    seams = _Seams()
+    panel = _panel(
+        qtbot,
+        text=_TARGET_SRC,
+        apply_to_target=seams.apply_to_target,
+        live_identity=boom,
+        target_database_label=lambda: seams.target_db,
+        confirm=seams.confirm,
+    )
+    panel.record_check_report(_green())
+    lines = _audit(panel)
+
+    assert panel.apply_to_target() is False
+
+    assert seams.target_calls == []
+    assert seams.confirms == []
+    assert any("could not read the live object's identity" in line for line in lines)
+    assert any("could not connect to quality" in line for line in lines)
 
 
 # --- No apply gesture is ever one keystroke away (a safety property) --------

@@ -32,7 +32,14 @@ never trust prior state" posture for DB-sourced data (§18's truth model).
 from __future__ import annotations
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import QMenu, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget
+from PySide6.QtWidgets import (
+    QMenu,
+    QTreeWidget,
+    QTreeWidgetItem,
+    QTreeWidgetItemIterator,
+    QVBoxLayout,
+    QWidget,
+)
 
 from pgtp_editor.db.ddl_buffer import DdlObjectSpan
 from pgtp_editor.db.ddl_project import DriftMarkers, routine_ddl_paths, trigger_ddl_path
@@ -49,6 +56,21 @@ _TABLE_ROLE = Qt.ItemDataRole.UserRole + 1
 #: context menu can offer FQ-002's creation entries on a root without
 #: string-matching the visible label.
 _BRANCH_ROLE = Qt.ItemDataRole.UserRole + 2
+#: An object row's `DdlObjectRef.key` -- the SAME identity `CenterStage` keys
+#: editable tabs on (BUG-033). Carried on the row so the "an open tab has
+#: unsaved edits for this object" overlay can find its rows without
+#: re-deriving overload disambiguation through `resolve_edit_target`, and
+#: without any index-based tracking that a `set_schema` rebuild would stale.
+_OBJKEY_ROLE = Qt.ItemDataRole.UserRole + 3
+#: `(label without the unsaved-edit marker, drift already showed a "*")`, so
+#: the overlay can be applied and removed repeatedly without re-parsing the
+#: visible text or ever stacking two `*`s on one row.
+_LABEL_ROLE = Qt.ItemDataRole.UserRole + 4
+
+#: The one unsaved/changed glyph in this app (§11/§18.2/§18.5): the editable
+#: tab's title marker and the §18.2 `locally_edited` drift marker are both
+#: `*`, so the tree uses it too rather than inventing a third glyph.
+_DIRTY_MARKER = "*"
 
 _TIMING_LETTERS = {"before": "B", "after": "A", "instead of": "I"}
 _EVENT_LETTERS = {"insert": "I", "update": "U", "delete": "D", "truncate": "T"}
@@ -152,6 +174,18 @@ class BrowserPanel(QWidget):
         # status without the tree items carrying redundant copies of it.
         self._schema: DatabaseSchema | None = None
 
+        #: `DdlObjectRef.key`s whose editable tab currently holds unsaved
+        #: edits (BUG-033 layer a). Held on the PANEL, not on tree items: the
+        #: tree is rebuilt wholesale by every `set_schema`, so anything keyed
+        #: on an item/index would go stale on the next refresh -- this set
+        #: survives the rebuild and is re-applied to the new rows.
+        #:
+        #: Deliberately independent of `drift_markers`, which is `None`
+        #: projectless: an unsaved edit is a property of the editor buffer,
+        #: not of a project's deploy state, so this marker works with no
+        #: project open at all.
+        self._dirty_keys: set[tuple] = set()
+
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self.tree)
@@ -186,6 +220,66 @@ class BrowserPanel(QWidget):
         markers = drift_markers or {}
         self._build_tables_branch(schema, span_by_trigger, markers)
         self._build_routines_branch(schema, span_by_routine, span_by_trigger, markers)
+        # Re-apply the surviving unsaved-edit overlay to the rows that were
+        # just rebuilt (BUG-033): a refresh must not drop the `*` of a tab
+        # that is still open and still dirty.
+        self._apply_dirty_markers()
+
+    # -- unsaved-edit overlay (BUG-033) ---------------------------------------
+
+    def set_object_dirty(self, ref, dirty: bool) -> None:
+        """Record whether the editable tab for `ref` holds unsaved edits, and
+        repaint its row(s) accordingly (BUG-033 layer a).
+
+        `ref` is a `DdlObjectRef` (or any object exposing `.key`), or the key
+        tuple itself. The `*` this adds is the SAME glyph §18.2's
+        `locally_edited` drift marker uses, and the two collapse rather than
+        stack: a row already carrying a drift `*` gains nothing, so the user
+        never sees `**`. Semantically they are distinct facts ("the checked-out
+        file differs from the last-deployed reference" vs. "an open tab has
+        unsaved changes"), but both mean "this object has changes that are not
+        in the database yet", which is what the glyph promises.
+
+        Works with no project open -- see `_dirty_keys`.
+        """
+        key = getattr(ref, "key", ref)
+        if dirty:
+            self._dirty_keys.add(key)
+        else:
+            self._dirty_keys.discard(key)
+        self._apply_dirty_markers()
+
+    def is_object_dirty(self, ref) -> bool:
+        """Whether `ref` is currently overlaid as having unsaved edits."""
+        return getattr(ref, "key", ref) in self._dirty_keys
+
+    def _apply_dirty_markers(self) -> None:
+        """Relabel every object row from its stored base label + the current
+        dirty overlay. Relabelling in place rather than re-running
+        `set_schema` keeps this independent of the `spans` the tree was built
+        from, so a dirty-state change costs no re-derivation."""
+        iterator = QTreeWidgetItemIterator(self.tree)
+        while iterator.value() is not None:
+            item = iterator.value()
+            stored = item.data(0, _LABEL_ROLE)
+            if stored is not None:
+                base, drift_text = stored
+                marker = drift_text
+                if item.data(0, _OBJKEY_ROLE) in self._dirty_keys and _DIRTY_MARKER not in marker:
+                    # Prepended, not appended, so a `!`-drifted object with an
+                    # unsaved edit reads as the established `*!` combination
+                    # rather than a novel `! *`.
+                    marker = _DIRTY_MARKER + marker
+                item.setText(0, f"{base} {marker}" if marker else base)
+            iterator += 1
+
+    @staticmethod
+    def _remember_label(item: QTreeWidgetItem, base: str, key: tuple, drift) -> None:
+        """Stash an object row's identity, its marker-free label and its §18.2
+        drift marker text, so `_apply_dirty_markers` can compose the two
+        idempotently instead of string-editing the visible text."""
+        item.setData(0, _OBJKEY_ROLE, key)
+        item.setData(0, _LABEL_ROLE, (base, drift.marker_text if drift is not None else ""))
 
     def _build_tables_branch(self, schema: DatabaseSchema, span_by_trigger, markers) -> None:
         """Every table in `schema.tables` gets a node (2026-08-05 widening --
@@ -258,9 +352,17 @@ class BrowserPanel(QWidget):
                 f"{qualified} [{marker}]" if routine.args else f"{qualified}() [{marker}]"
             )
             drift = markers.get(routine_paths.get(routine.signature))
-            if drift is not None and drift.marker_text:
-                label = f"{label} {drift.marker_text}"
+            # The §18.2 `*`/`!` marker text is NOT appended here: it is stored
+            # alongside the base label and composed with the unsaved-edit
+            # overlay by `_apply_dirty_markers`, which `set_schema` runs once
+            # the whole tree is built. One place composes markers.
             routine_item = QTreeWidgetItem([label])
+            self._remember_label(
+                routine_item,
+                label,
+                (routine.kind, routine.schema, routine.name, None, tuple(routine.arg_types)),
+                drift,
+            )
             span = span_by_routine.get(routine.signature)
             if span is not None:
                 routine_item.setData(0, _SPAN_ROLE, span)
@@ -283,20 +385,26 @@ class BrowserPanel(QWidget):
 
     def _add_trigger_leaf(self, parent: QTreeWidgetItem, trigger, span, markers=None) -> None:
         """Composite trigger label, identical in both branches (§18.1):
-        ``schema.table.name`` + timing indicator + one indicator per event,
-        plus the `*`/`!` drift marker text (§18.2) when `markers` names one
-        for this trigger's `ddl/*.sql` path."""
+        ``schema.table.name`` + timing indicator + one indicator per event.
+        The `*`/`!` drift marker (§18.2) named by `markers` for this trigger's
+        `ddl/*.sql` path is stored, not appended -- `_apply_dirty_markers`
+        composes it with the unsaved-edit overlay (BUG-033)."""
         timing = _TIMING_LETTERS.get(trigger.timing, "?")
         events = "".join(
             f"[{_EVENT_LETTERS.get(event, '?')}]" for event in trigger.events
         )
         label = f"{trigger.schema}.{trigger.table}.{trigger.name} [{timing}]{events}"
+        drift = None
         if markers:
             relpath = trigger_ddl_path(trigger.schema, trigger.table, trigger.name)
             drift = markers.get(relpath)
-            if drift is not None and drift.marker_text:
-                label = f"{label} {drift.marker_text}"
         leaf = QTreeWidgetItem([label])
+        # A trigger renders as TWO leaves (Tables branch + under its function,
+        # §18.1); both carry the same key, so the overlay marks both -- one
+        # object, consistently marked wherever it is shown.
+        self._remember_label(
+            leaf, label, ("trigger", trigger.schema, trigger.name, trigger.table, ()), drift
+        )
         if span is not None:
             leaf.setData(0, _SPAN_ROLE, span)
         parent.addChild(leaf)

@@ -866,3 +866,46 @@ def test_reparse_invalid_buffer_leaves_panel_untouched(qtbot, monkeypatch):
 
     assert calls == []  # refresh skipped
     assert window.coherence_panel.tree.topLevelItemCount() == populated  # untouched
+
+
+# --- BUG-034: the coherence fetch uses the project's target, not seed_params -
+def test_run_check_with_a_project_open_connects_with_the_project_target(qtbot, tmp_path):
+    """The reported "strange situation": Project Settings showed one thing (or
+    nothing) while the app connected with the app-level/`.pgtp`-seeded
+    credentials this lane picked for itself. One selector now, so the dialog
+    shows what will actually be used."""
+    from pgtp_editor.db.config import ConnectionParams, save_connection
+    from pgtp_editor.db.ddl_project import ProjectSettings
+
+    window = _window_with_project(qtbot)
+    save_connection(
+        window._settings,
+        ConnectionParams(host="app-level", port="1", database="a", user="a", password="a"),
+    )
+    window._set_active_ddl_project(
+        tmp_path / "proj",
+        ProjectSettings(
+            target=ConnectionParams(
+                host="project-host", port="5433", database="pdb", user="pu", password="pp"
+            )
+        ),
+    )
+    used = []
+    window._db_ui.fetch_schema = lambda params: used.append(params) or _schema()
+
+    window._db_ui.run_check()
+
+    assert [p.host for p in used] == ["project-host"]
+    assert used[0].database == "pdb"
+
+
+def test_run_check_projectless_still_uses_seed_params(qtbot):
+    """Projectless mode is untouched: the app-level saved connection merged
+    with the `.pgtp`'s `<ConnectionOptions>` (BUG-024's other half)."""
+    window = _window_with_project(qtbot)
+    used = []
+    window._db_ui.fetch_schema = lambda params: used.append(params) or _schema()
+
+    window._db_ui.run_check()
+
+    assert used and used[0].host == "h"

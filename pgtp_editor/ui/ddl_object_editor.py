@@ -104,6 +104,26 @@ DESTINATION_LABELS = {
     DEST_TARGET: "Apply to Target",
 }
 
+#: Why a destination is NOT on offer, stated to the user in the picker rather
+#: than left as a silent absence (FQ-009: the requester's complaint was "there
+#: is no option to save to the database" -- which was true of the *reachable*
+#: destinations and invisible as a reason). Carve-out 2 still holds: an
+#: unavailable destination is not a selectable-but-dead entry; it is named in
+#: the picker's prose, with what would make it available, and cannot be chosen.
+DESTINATION_UNAVAILABLE_REASONS = {
+    DEST_SANDBOX: (
+        "no sandbox session is open — Database ▸ Open Sandbox Session "
+        "(or Sandbox Setup… first)"
+    ),
+    DEST_TARGET: (
+        "the target ('quality') apply lane is not wired in this build — it "
+        "needs a live target connection to re-check the object's signature "
+        "against, which §18.5 precondition 1 cannot be enforced without. "
+        "Deploy to the target through the reviewable deployment-script path "
+        "(Database ▸ Compare Schemas…)"
+    ),
+}
+
 
 @dataclass(frozen=True)
 class DdlObjectRef:
@@ -545,6 +565,12 @@ class DdlObjectEditorPanel(CompletionPopupHostMixin, QWidget):
             declares; **Apply to Target is absent unless this seam is wired**,
             because an unverifiable signature change is the one failure mode
             no confirmation can catch.
+
+            `None` means *"introspection succeeded and the object is not
+            there"* — never *"the lookup failed"*, which would silently clear
+            precondition 1 on an unreachable database. A host that cannot read
+            the catalog must **raise**; the panel turns any exception into a
+            stated refusal (see `_precondition_signature`).
         ``sandbox_database_label() / target_database_label() -> str``
             e.g. ``"prod on db01:5432"`` -- what the confirmation names. A
             confirmation that does not say WHICH DATABASE is not compliant
@@ -617,10 +643,18 @@ class DdlObjectEditorPanel(CompletionPopupHostMixin, QWidget):
         self.editor.setReadOnly(False)
         self.find_replace_bar = FindReplaceBar(self.editor)
 
-        # The apply row (§18.5). Built from the seams that are actually wired
-        # and NOT ADDED AT ALL when none is -- carve-out 2's "no dead controls"
-        # posture, the same convention `project_status_panel.py` uses.
+        # The deploy/apply row (§18.5). The two APPLY buttons are built from the
+        # seams that are actually wired and are absent when none is -- carve-out
+        # 2's "no dead controls" posture, the same convention
+        # `project_status_panel.py` uses.
+        #
+        # The row itself, and the "Deploy this edit…" button in it, are
+        # ALWAYS present (FQ-009): the picker's Save destination needs no seam
+        # and always works, so the button is never a dead control -- and burying
+        # the one gesture that answers "where does this edit go?" in a
+        # right-click menu was precisely the discoverability gap FQ-009 reports.
         self.apply_row: QWidget | None = None
+        self.deploy_button: QPushButton | None = None
         self.sandbox_button: QPushButton | None = None
         self.target_button: QPushButton | None = None
 
@@ -1074,7 +1108,25 @@ class DdlObjectEditorPanel(CompletionPopupHostMixin, QWidget):
                 ]
             )
             return False
-        live_ref = self._live_identity(self._ref)
+        # The seam reaches a real catalog, so it can FAIL -- and its `None`
+        # already means something else entirely ("the target does not have this
+        # object; applying will create it"). A host that reported a connection
+        # failure as `None` would turn an unreachable database into a cleared
+        # precondition 1, which is the one failure mode no confirmation can
+        # catch. So any raise is a REFUSAL naming the error, never a fall-through
+        # and never an unhandled exception out of a button click. (FQ-009: this
+        # closes the hole before the seam is wired, not after.)
+        try:
+            live_ref = self._live_identity(self._ref)
+        except Exception as exc:  # noqa: BLE001 -- any driver's error, refused alike
+            self._report(
+                [
+                    "refused: could not read the live object's identity from the "
+                    f"target ({type(exc).__name__}: {exc}), so a changed "
+                    "signature cannot be ruled out. Nothing was applied."
+                ]
+            )
+            return False
         if live_ref is None:
             self._report(
                 [
@@ -1181,6 +1233,34 @@ class DdlObjectEditorPanel(CompletionPopupHostMixin, QWidget):
             destinations.append(DEST_TARGET)
         return destinations
 
+    def unavailable_destinations(self) -> list[tuple[str, str]]:
+        """The destinations NOT reachable right now, each with the reason --
+        `[(destination, reason), …]` (FQ-009).
+
+        Carve-out 2 says an unwired affordance is absent, not a dead control,
+        and that stays true: nothing here is selectable. But "absent" was being
+        read by users as "this app cannot deploy to a database at all", so the
+        picker states which destinations are missing and what would bring them
+        back. Save is never listed -- it needs no seam."""
+        missing: list[tuple[str, str]] = []
+        if not self.has_sandbox_apply:
+            missing.append((DEST_SANDBOX, DESTINATION_UNAVAILABLE_REASONS[DEST_SANDBOX]))
+        if not self.has_target_apply:
+            missing.append((DEST_TARGET, DESTINATION_UNAVAILABLE_REASONS[DEST_TARGET]))
+        return missing
+
+    def deploy_prompt_text(self) -> str:
+        """The picker's prose: the question, plus any destination that is not on
+        offer and why (FQ-009). Split out so a test can read the explanation
+        without driving the modal."""
+        text = f"Where should this edit to {self._ref.qualified} go?"
+        missing = self.unavailable_destinations()
+        if missing:
+            text += "\n\nNot available right now:"
+            for destination, reason in missing:
+                text += f"\n  • {DESTINATION_LABELS[destination]}: {reason}."
+        return text
+
     def _prompt_destination(self) -> str | None:
         """The picker itself -- `QInputDialog.getItem`, the app's existing
         simple-selection idiom (§18.6's unattached-trigger picker). Split out
@@ -1190,7 +1270,7 @@ class DdlObjectEditorPanel(CompletionPopupHostMixin, QWidget):
         choice, ok = QInputDialog.getItem(
             self,
             "Deploy This Edit",
-            f"Where should this edit to {self._ref.qualified} go?",
+            self.deploy_prompt_text(),
             labels,
             0,
             False,
@@ -1204,23 +1284,37 @@ class DdlObjectEditorPanel(CompletionPopupHostMixin, QWidget):
 
     # --- Apply plumbing ----------------------------------------------------
     def _build_apply_row(self, layout) -> None:
-        """(Re)build the apply button row. With no seam wired there is no row
-        at all -- an affordance whose seam is unwired is ABSENT, not disabled
-        (§18.5 carve-out 2)."""
+        """(Re)build the deploy/apply button row.
+
+        The row and its "Deploy this edit…" button always exist (FQ-009 -- the
+        picker's Save destination needs no seam, so the button is not a dead
+        control). The two APPLY buttons appear only with their seam wired: an
+        affordance whose seam is unwired is ABSENT, not disabled (§18.5
+        carve-out 2)."""
         if self.apply_row is not None:
             layout.removeWidget(self.apply_row)
             self.apply_row.setParent(None)
             self.apply_row.deleteLater()
             self.apply_row = None
+        self.deploy_button = None
         self.sandbox_button = None
         self.target_button = None
-        if not (self.has_sandbox_apply or self.has_target_apply):
-            return
         row = QWidget(self)
         box = QHBoxLayout(row)
         box.setContentsMargins(6, 3, 6, 3)
         box.setSpacing(6)
         box.addStretch(1)
+        # Leftmost: the umbrella gesture. No shortcut and no default-button
+        # role -- picking a destination stays a deliberate act, and Apply to
+        # Target behind it still runs all four hard preconditions.
+        self.deploy_button = QPushButton("Deploy this edit…", row)
+        self.deploy_button.setToolTip(
+            "Choose where this edit goes: apply it to the sandbox, save it for "
+            "a future batch deploy, or apply it to the target database."
+        )
+        self.deploy_button.setAutoDefault(False)
+        self.deploy_button.clicked.connect(lambda: self.deploy_this_edit())
+        box.addWidget(self.deploy_button)
         if self.has_sandbox_apply:
             self.sandbox_button = QPushButton("Apply to Sandbox", row)
             self.sandbox_button.clicked.connect(lambda: self.apply_to_sandbox())

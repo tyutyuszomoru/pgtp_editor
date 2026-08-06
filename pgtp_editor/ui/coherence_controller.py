@@ -115,6 +115,7 @@ class CoherenceController(QObject):
         *,
         find_all: Callable[..., None],
         prompt_missing_connection: Callable[[], None],
+        target_params: Callable[..., object] | None = None,
         show_left_dock: Callable[[], None],
         show_audit_dock: Callable[[], None],
         panel_visible: Callable[[], bool],
@@ -126,6 +127,15 @@ class CoherenceController(QObject):
         self._panel = panel
         self._find_all = find_all
         self._prompt_missing_connection = prompt_missing_connection
+        #: BUG-034: "the target connection to use", selected by the host's ONE
+        #: selector (`MainWindow.active_target_params`, via
+        #: `_target_params_for_fetch`) -- with a §18.2 project open that is the
+        #: project's own `ProjectSettings.target`, the store Project Settings
+        #: displays. This lane used to call `seed_params` itself, so it could
+        #: connect with app-level QSettings credentials while Project Settings
+        #: showed something else entirely. Injected rather than duplicated;
+        #: `None` (no host wired it) keeps the old `seed_params` behavior.
+        self._target_params = target_params
         self._show_left_dock = show_left_dock
         self._show_audit_dock = show_audit_dock
         self._panel_visible = panel_visible
@@ -240,7 +250,11 @@ class CoherenceController(QObject):
             self._shell.status(f"Database check needs valid XML: {exc}", 8000)
             self._uncheck_toggle()
             return
-        params = seed_params(project.tree, self._settings)
+        params = (
+            self._target_params(project.tree)
+            if self._target_params is not None
+            else seed_params(project.tree, self._settings)
+        )
         if not params.host:
             self._uncheck_toggle()
             self._prompt_missing_connection()

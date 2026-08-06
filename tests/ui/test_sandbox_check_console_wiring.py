@@ -814,3 +814,82 @@ def test_the_trigger_functions_name_is_read_off_the_buffer_not_guessed(
     }
     # No EXECUTE clause -> nothing is guessed from the trigger's own name.
     assert window._trigger_function_for(ref, "CREATE TRIGGER t_audit ...") == {}
+
+
+# --- FQ-009: the "Deploy this edit…" picker, host side ----------------------
+def test_deploy_this_edit_is_a_database_menu_entry_that_needs_no_sandbox(
+    qtbot, tmp_path
+):
+    """FQ-009's discoverability half. Unlike the two check gestures the entry is
+    always visible: its Save destination works with no database at all."""
+    window = _window(qtbot, tmp_path)
+
+    action = window._deploy_this_edit_action
+    assert action is not None
+    assert action.text() == "Deploy This Edit…"
+    assert action.isVisible()
+    # §18.5: no shortcut on anything that can write outward.
+    assert action.shortcut().isEmpty()
+
+
+def test_deploy_this_edit_menu_entry_runs_the_active_tabs_picker(
+    qtbot, tmp_path, monkeypatch
+):
+    window, _controller, _session = _project_window(qtbot, tmp_path, monkeypatch)
+    window._on_ddl_edit_requested(_REF, _SOURCE)
+    panel = window.center_stage.ddl_object_tab(_REF.key)
+    window.center_stage.setCurrentWidget(panel)
+    monkeypatch.setattr(panel, "_prompt_destination", lambda: None)
+
+    assert window._deploy_active_ddl_object_edit() is None
+
+
+def test_deploy_this_edit_with_no_object_tab_states_it_instead_of_crashing(
+    qtbot, tmp_path
+):
+    window = _window(qtbot, tmp_path)
+
+    assert window._deploy_active_ddl_object_edit() is None
+    assert "open one first" in window.statusBar().currentMessage()
+
+
+def test_the_pickers_save_destination_actually_writes_the_file(
+    qtbot, tmp_path, monkeypatch
+):
+    """`save_requested` had no host connection, so choosing Save in the picker
+    was a silent no-op. It now runs the host's one existing save gesture."""
+    window, _controller, _session = _project_window(qtbot, tmp_path, monkeypatch)
+    window._on_ddl_edit_requested(_REF, _SOURCE)
+    panel = window.center_stage.ddl_object_tab(_REF.key)
+    window.center_stage.setCurrentWidget(panel)
+    destination = tmp_path / "recalc.sql"
+    monkeypatch.setattr(panel, "_resolve_save_path", lambda: destination)
+    monkeypatch.setattr(panel, "_prompt_destination", lambda: "save")
+
+    window._deploy_active_ddl_object_edit()
+
+    assert destination.read_text(encoding="utf-8") == _SOURCE
+
+
+def test_apply_to_target_stays_absent_and_the_picker_says_why(
+    qtbot, tmp_path, monkeypatch
+):
+    """FQ-009 wired the sandbox leg's discoverability, NOT the target leg: the
+    live-identity seam precondition 1 needs has no trustworthy source until
+    BUG-034/BUG-030 land. The gesture is absent (carve-out 2) -- but the picker
+    now states that, and points at the reviewable deployment-script path,
+    instead of leaving a silent gap."""
+    window, _controller, _session = _project_window(qtbot, tmp_path, monkeypatch)
+    window._open_sandbox_session()
+    window._on_ddl_edit_requested(_REF, _SOURCE)
+    panel = window.center_stage.ddl_object_tab(_REF.key)
+
+    assert panel.has_sandbox_apply is True
+    assert panel.has_target_apply is False
+    assert panel.target_button is None
+    labels = [a.text() for a in panel._build_context_menu().actions()]
+    assert "Apply to Target…" not in labels
+
+    prompt = panel.deploy_prompt_text()
+    assert "Apply to Target" in prompt
+    assert "Compare Schemas" in prompt

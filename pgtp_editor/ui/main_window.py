@@ -31,6 +31,7 @@ from PySide6.QtWidgets import (
     QDialog,
     QDockWidget,
     QLabel,
+    QLineEdit,
     QListWidget,
     QListWidgetItem,
     QMainWindow,
@@ -58,7 +59,11 @@ from pgtp_editor.ui.manual_panel import (
     load_manual_text,
     parse_chapters,
 )
-from pgtp_editor.db.config import load_connection, save_connection, seed_params
+from pgtp_editor.db.config import (
+    connection_from_tree,
+    save_connection,
+    seed_params,
+)
 from pgtp_editor.db.ddl_buffer import build_ddl_text
 from pgtp_editor.db.migration_gen import connection_summary
 from pgtp_editor.db.ddl_project import (
@@ -499,6 +504,9 @@ class MainWindow(QMainWindow):
         self._sandbox_probe_check_action = None
         self._open_sandbox_session_action = None
         self._close_sandbox_session_action = None
+        #: §18.5's "Deploy this edit…" picker as a menu entry (FQ-009). Always
+        #: visible -- no session gate, because its Save destination needs none.
+        self._deploy_this_edit_action = None
         #: Database ▸ Sandbox Setup… -- always present (see `_build_database_menu`
         #: for why it is not session-gated), so unlike the four above it needs no
         #: visibility management. Kept on `self` only so the non-modal dialog it
@@ -674,6 +682,10 @@ class MainWindow(QMainWindow):
             parent=self,
             find_all=self._find_ui.find_all,
             prompt_missing_connection=self._prompt_missing_connection,
+            # BUG-034: the ONE "which target connection" selector, injected --
+            # this lane must not pick its own, or the app connects with one set
+            # of credentials while Project Settings shows another.
+            target_params=self._target_params_for_fetch,
             show_left_dock=self._show_left_dock,
             show_audit_dock=self._show_audit_dock,
             panel_visible=self._coherence_tab_visible,
@@ -1192,6 +1204,11 @@ class MainWindow(QMainWindow):
                 # instead of the QFileDialog string.
                 self._current_project_path = str(path)
                 self._link_pgtp_to_project_if_needed()
+                # BUG-034: the `.pgtp`'s design-time connection becomes the
+                # project's target profile. Here, next to the link step,
+                # because both are "this `.pgtp` just became part of this
+                # project" bookkeeping and both need the freshly parsed tree.
+                self._import_pgtp_connection_into_target()
                 raw_text = self._read_raw_text(path)
                 if raw_text is not None:
                     self._loading = True
@@ -2240,6 +2257,17 @@ class MainWindow(QMainWindow):
         self._sandbox_probe_check_action.triggered.connect(
             lambda: self._probe_check_active_ddl_object()
         )
+        # §18.5's "Deploy this edit…" picker, as a menu entry beside the two
+        # check gestures (FQ-009's discoverability half). Unlike them it is
+        # ALWAYS visible and needs no sandbox: its Save destination works with
+        # no database at all, and when a destination is missing the picker now
+        # says which and why instead of leaving a silent gap. Deliberately NO
+        # shortcut -- §18.5: "an irreversible outward effect must not be one
+        # keystroke away".
+        self._deploy_this_edit_action = menu.addAction("Deploy This Edit…")
+        self._deploy_this_edit_action.triggered.connect(
+            lambda: self._deploy_active_ddl_object_edit()
+        )
         menu.addSeparator()
         # §18.5 D2/D2a's provisioning surface. Deliberately NOT gated on a
         # session or even on an open project: this is the ONE entry point that
@@ -2729,22 +2757,61 @@ class MainWindow(QMainWindow):
         if not working_copy_path.exists():
             working_copy_path.write_text(source_text, encoding="utf-8", newline="")
         settings = self._ddl_project_settings
-        updated = ProjectSettings(
-            name=settings.name,
-            description=settings.description,
+        # `replace`, not a field-by-field `ProjectSettings(...)` rebuild: the
+        # hand-listed form silently dropped `sandbox_mode` back to its default,
+        # i.e. linking a `.pgtp` could quietly turn a "with data" project into
+        # a schema-only one. Copy-with-changes cannot forget a field.
+        updated = replace(
+            settings,
             pgtp=PgtpLink(
                 source_path=str(source_path),
                 working_copy_path=str(working_copy_path),
                 last_known_source_checksum=content_hash(source_text),
             ),
-            target=settings.target,
-            sandbox=settings.sandbox,
-            git=settings.git,
-            deployed=settings.deployed,
         )
         save_settings(self._ddl_project_folder, updated)
         self._ddl_project_settings = updated
         self._current_project_path = str(working_copy_path)
+
+    def _import_pgtp_connection_into_target(self) -> None:
+        """Import the open `.pgtp`'s `<ConnectionOptions>` into the project's
+        `ProjectSettings.target` (BUG-034).
+
+        The `.pgtp` carries its design-time connection as a single
+        `<ConnectionOptions host= port= login= database=/>` element; nothing
+        ever copied it into the project's own settings, so Project Settings
+        showed empty target fields for a project the app was quite happily
+        connecting to (through `seed_params`, a competing source). Reuses
+        `db/config.py::connection_from_tree` -- there is exactly one
+        `<ConnectionOptions>` parser in this codebase and this is not a second
+        one -- so the `login`→`user` mapping and the always-blank password come
+        from the same place `seed_params` gets them.
+
+        Runs only when a `.pgtp` is loaded while a project is active, and only
+        when `.target.host` is still empty: "saved wins", the same precedence
+        `seed_params` already encodes, so a host the user corrected in Project
+        Settings is never silently reverted to the XML's value on reopen. The
+        password is NOT imported (the XML has none) -- it is prompted for at
+        first connect, see `_target_params_for_fetch`.
+
+        The **sandbox** is deliberately not seeded from this element: §17
+        defines `<ConnectionOptions>` as the *target*, and seeding a sandbox
+        from it is how a sandbox ends up pointed at production.
+        """
+        folder = self._ddl_project_folder
+        settings = self._ddl_project_settings
+        if folder is None or settings is None or settings.target.host:
+            return
+        project = self._current_project
+        imported = connection_from_tree(project.tree if project is not None else None)
+        if imported is None or not imported.host:
+            return
+        self._store_project_target(imported)
+        self.statusBar().showMessage(
+            f"Imported the .pgtp's connection into the project target: "
+            f"{imported.user}@{imported.host}:{imported.port}/{imported.database}",
+            5000,
+        )
 
     def _deploy_pgtp(self) -> None:
         """Push the local `.pgtp` working copy back to the sshfs-mounted
@@ -2765,18 +2832,15 @@ class MainWindow(QMainWindow):
             modals.QMessageBox.critical(self, "Deploy Failed", f"Could not deploy .pgtp:\n\n{exc}")
             return
         settings = self._ddl_project_settings
-        updated = ProjectSettings(
-            name=settings.name,
-            description=settings.description,
+        # `replace` for the same reason `_link_pgtp_to_project_if_needed` uses
+        # it: the hand-listed rebuild dropped `sandbox_mode`.
+        updated = replace(
+            settings,
             pgtp=PgtpLink(
                 source_path=link.source_path,
                 working_copy_path=link.working_copy_path,
                 last_known_source_checksum=content_hash(working_text),
             ),
-            target=settings.target,
-            sandbox=settings.sandbox,
-            git=settings.git,
-            deployed=settings.deployed,
         )
         save_settings(self._ddl_project_folder, updated)
         self._ddl_project_settings = updated
@@ -2824,7 +2888,10 @@ class MainWindow(QMainWindow):
             if self._current_project is not None
             else None
         )
-        params = seed_params(tree, self._settings)
+        # BUG-034: the ONE selector, not a private `seed_params` call -- with a
+        # project open its `ProjectSettings.target` is what connects, so what
+        # Project Settings shows is what the fetch uses.
+        params = self._target_params_for_fetch(tree)
         if not params.host:
             self._ddl_explorer_action.setChecked(False)
             self._prompt_missing_connection()
@@ -2936,9 +3003,7 @@ class MainWindow(QMainWindow):
         panel = self.center_stage.open_ddl_object_tab(ref, source, resolve_save_path=resolver)
         box["panel"] = panel
         panel.set_schema_index(self._ddl_schema_index)
-        panel.dirty_changed.connect(
-            lambda _dirty, ref=ref: self.center_stage.update_ddl_object_tab(ref)
-        )
+        self._wire_ddl_object_dirty(panel, ref)
         panel.format_refused.connect(self._report_ddl_format_refusal)
         self._wire_ddl_object_panel_reporting(panel, ref)
 
@@ -2952,16 +3017,98 @@ class MainWindow(QMainWindow):
     #: so no instance ever reads it before the first inspection.
     _ddl_sandbox_content_facts = None
 
-    def _project_status_target(self):
-        """The target `ConnectionParams` the Quality node speaks for, or None.
+    def active_target_params(self, tree=None):
+        """**The** target connection, for every consumer (BUG-034).
 
-        One place for BUG-024's selection -- with a project open its own
-        target profile is authoritative; projectless, the app-level saved
-        connection is -- so the diagram, the summary line and the
-        reachability probe can never drift onto different connections.
+        One selector, BUG-024's rule: with a §18.2 project open its own
+        `ProjectSettings.target` profile is authoritative -- blank or not --
+        and projectless the app-level saved connection (merged with the open
+        `.pgtp`'s `<ConnectionOptions>` by `seed_params`) is.
+
+        Before BUG-034 this rule was implemented HERE for the §18.8 Project
+        Status window only, while the two gestures that actually open a
+        connection (`_open_ddl_explorer`, `CoherenceController.run_check`)
+        each called `seed_params` on their own. That is precisely how the app
+        could connect with one set of credentials while Project Settings
+        displayed another (or nothing): the dialog owned neither the
+        population nor the live use of `.target`. Every consumer now asks
+        here, so the Quality node, the reachability probe, the DDL Explorer
+        fetch and the coherence fetch cannot diverge.
+
+        `tree` is the open `.pgtp`'s XML tree, used only in the projectless
+        branch (a project's target is not seeded from XML at call time -- it
+        was imported into `settings.json` once, see
+        `_import_pgtp_connection_into_target`). Public because the coherence
+        lane is injected with it as a seam.
+
+        Never None: an unconfigured target is a host-less `ConnectionParams`,
+        which `_target_is_configured` and every `if not params.host` guard
+        already read as "not configured".
         """
         settings = self._ddl_project_settings
-        return settings.target if settings is not None else load_connection(self._settings)
+        if settings is not None:
+            return settings.target
+        return seed_params(tree, self._settings)
+
+    def _project_status_target(self):
+        """The target the §18.8 Quality node speaks for -- `active_target_params`
+        with no `.pgtp` tree, kept as its own name because Project Status is a
+        passive reader that must never trigger BUG-034's password prompt."""
+        return self.active_target_params()
+
+    def _target_params_for_fetch(self, tree=None):
+        """`active_target_params`, plus the one-time password prompt (BUG-034).
+
+        The `.pgtp` deliberately never yields a usable password
+        (`connection_from_tree` forces `""` -- §17: the password is never read
+        from the XML), so an imported target arrives password-less. The prompt
+        is raised HERE, at the first gesture that actually needs to connect,
+        rather than at project-open time: opening a project must not raise a
+        modal, and a project the user never connects from must never ask for a
+        secret. Answered once -- the password is persisted into
+        `settings.json` (plaintext, as `target`/`sandbox` already are, §18.2)
+        so later gestures go straight through.
+
+        Cancelling leaves the password blank and returns the params anyway:
+        the connection will fail and be reported the ordinary way, which is
+        better than silently substituting some other stored credential --
+        exactly the confusion this bug was about.
+        """
+        params = self.active_target_params(tree)
+        if self._ddl_project_settings is None or not params.host or params.password:
+            return params
+        password = self._prompt_target_password(params)
+        if not password:
+            return params
+        params = replace(params, password=password)
+        self._store_project_target(params)
+        return params
+
+    def _prompt_target_password(self, params) -> str | None:
+        """Ask for the project target's password once (BUG-034). Returns the
+        typed text, or None if cancelled.
+
+        Its own method for the same reason `_confirm_close_ddl_object` is:
+        tests monkeypatch THIS instead of ever driving a real modal. Routed
+        through `modals` so the patch target survives further decomposition.
+        """
+        text, ok = modals.QInputDialog.getText(
+            self,
+            "Database Password",
+            f"Password for {params.user}@{params.host}:{params.port}/{params.database}:",
+            QLineEdit.EchoMode.Password,
+        )
+        return text if ok else None
+
+    def _store_project_target(self, params) -> None:
+        """Persist `params` as the project's target profile (BUG-034) -- the
+        one store Project Settings displays and every gesture now reads."""
+        settings = self._ddl_project_settings
+        if settings is None or self._ddl_project_folder is None:
+            return
+        updated = replace(settings, target=params)
+        save_settings(self._ddl_project_folder, updated)
+        self._ddl_project_settings = updated
 
     @staticmethod
     def _target_is_configured(target) -> bool:
@@ -3375,6 +3522,9 @@ class MainWindow(QMainWindow):
             text = source
 
         self._report_ddl_checkout_drift(ref, relpath, source)
+        # Registered AFTER the drift report, which must see the PREVIOUS
+        # last-deployed reference (or its absence), never the one written here.
+        self._register_checked_out_object(relpath, source)
 
         def resolver():
             return ddl_path
@@ -3383,11 +3533,41 @@ class MainWindow(QMainWindow):
             ref, text, resolve_save_path=resolver, key=key
         )
         panel.set_schema_index(self._ddl_schema_index)
-        panel.dirty_changed.connect(
-            lambda _dirty, ref=ref, key=key: self.center_stage.update_ddl_object_tab(ref, key=key)
-        )
+        self._wire_ddl_object_dirty(panel, ref, key=key)
         panel.format_refused.connect(self._report_ddl_format_refusal)
         self._wire_ddl_object_panel_reporting(panel, ref)
+
+    def _register_checked_out_object(self, relpath, live_source) -> None:
+        """Give a freshly checked-out object its last-deployed reference
+        (BUG-033, the cause behind the inert `*`).
+
+        `compute_drift_markers` iterates `ProjectSettings.deployed` ALONE, so an
+        object with no entry there gets no markers at all -- no `*` however
+        many times the tree is refreshed. Creation (FQ-002,
+        `_register_created_object`) already registers its objects; checkout
+        wrote the `ddl/*.sql` and registered nothing, which is why editing a
+        checked-out function could never light the marker up.
+
+        The reference recorded is the hash of the **live definition the
+        checkout was taken from** -- not FQ-002's empty-string never-deployed
+        sentinel. The two cases are genuinely different: a created object has
+        never been deployed, so `""` correctly makes it read as `*` from birth,
+        whereas a checked-out object's live definition IS what is deployed
+        right now, so hashing it makes a fresh checkout read as *unmodified*
+        (no `*`) and start showing `*` only once the user actually edits and
+        saves the file. Using the sentinel here would flag every checkout as
+        locally edited the instant it happened.
+
+        Never overwrites an existing entry: a real deploy's reference outranks
+        this inference, and a re-checkout must not silently re-baseline drift.
+        """
+        settings = self._ddl_project_settings
+        if self._ddl_project_folder is None or settings is None:
+            return
+        if relpath in settings.deployed:
+            return
+        settings.deployed[relpath] = DeployedObject(content_hash=content_hash(live_source))
+        save_settings(self._ddl_project_folder, settings)
 
     def _report_ddl_checkout_drift(self, ref, relpath, live_source) -> None:
         """Checkout semantics step 4 (§18.2): if the live DB has drifted from
@@ -3423,8 +3603,58 @@ class MainWindow(QMainWindow):
         panel.remember_save_path(path)
         panel.mark_clean()
         self.center_stage.update_ddl_object_tab(panel.ref)
+        # BUG-033: the tab is clean again, so the tree's unsaved-edit overlay
+        # must go -- and the file on disk has just changed, so the §18.2
+        # file-vs-last-deployed `*` must be recomputed. Without both, the
+        # marker the user looks for appeared only after a manual DDL Explorer
+        # refresh. `mark_clean` does not re-emit `dirty_changed` for an
+        # already-clean document, so the overlay is dropped explicitly.
+        self.ddl_browser_panel.set_object_dirty(panel.ref, False)
+        self._refresh_ddl_drift_markers()
         self.statusBar().showMessage(f"Saved {path}", 5000)
         return True
+
+    def _wire_ddl_object_dirty(self, panel, ref, key=None) -> None:
+        """The one place an editable DDL tab's dirty state is published
+        (BUG-033).
+
+        Two consumers, one wire: the CenterStage tab title's `" *"` (§18.5)
+        and -- new -- the DDL Objects tree row's `*` overlay (§18.1/§18.2),
+        which previously had no channel to hear about an unsaved edit at all.
+        Called from BOTH tab-opening paths (`_on_ddl_edit_requested` and
+        `_checkout_and_edit`) so the two can never again wire different sets
+        of consumers; `key` is the checkout path's file-path tab key.
+        """
+
+        def on_dirty(dirty, ref=ref, key=key):
+            self.center_stage.update_ddl_object_tab(ref, key=key)
+            self.ddl_browser_panel.set_object_dirty(ref, dirty)
+
+        panel.dirty_changed.connect(on_dirty)
+
+    def _refresh_ddl_drift_markers(self) -> None:
+        """Recompute §18.2's `*`/`!` markers and repaint the DDL Objects tree
+        against the schema it is already showing (BUG-033 layer b).
+
+        Reuses the exact fetch-path plumbing -- `compute_drift_markers` +
+        `BrowserPanel.set_schema` -- rather than a parallel refresh, and
+        re-derives `spans` from the retained schema with the same pure
+        `build_ddl_text` the fetch used, so no second span source exists. No
+        DB round trip: this is a re-read of local `ddl/*.sql` files plus the
+        schema already in hand. No-op when the Explorer has never been loaded
+        (nothing to repaint); projectless it repaints with no markers, which
+        is what keeps the unsaved-edit overlay working with no project open.
+        """
+        schema = getattr(self.ddl_browser_panel, "_schema", None)
+        if schema is None:
+            return
+        drift_markers = (
+            compute_drift_markers(self._ddl_project_folder, self._ddl_project_settings, schema)
+            if self._ddl_project_folder is not None and self._ddl_project_settings is not None
+            else None
+        )
+        _text, spans = build_ddl_text(schema)
+        self.ddl_browser_panel.set_schema(schema, spans, drift_markers=drift_markers)
 
     def _confirm_close_ddl_object(self, ref) -> str:
         """Ask the user how to resolve unsaved changes in a DDL object tab
@@ -3460,7 +3690,12 @@ class MainWindow(QMainWindow):
             if choice == "save":
                 if not self._save_ddl_object_editor(panel):
                     return  # Save As… cancelled: stays open and dirty
+        # BUG-033: a DISCARDED edit must drop the tree's unsaved-edit `*` too
+        # -- there is no longer an open tab holding changes for this object.
+        # (A saved one was already cleared by `_save_ddl_object_editor`.)
+        ref = panel.ref
         self.center_stage.close_ddl_object_tab(key)
+        self.ddl_browser_panel.set_object_dirty(ref, False)
 
     def _report_ddl_format_refusal(self, issues) -> None:
         """Format Selection refusal (§18.4/§18.5): one `[SQL]`-prefixed Audit
@@ -3614,6 +3849,16 @@ class MainWindow(QMainWindow):
         panel.check_reported.connect(self._report_check_lines)
         panel.check_findings.connect(
             lambda findings, ref=ref: self._report_check_findings(findings, ref)
+        )
+        # "Deploy this edit…" ▸ Save delegates outward rather than saving itself
+        # (§18.5: the picker is "a picker in front of the three gestures, not a
+        # fourth thing that writes DDL or files on its own"). Without this
+        # connection that destination was a SILENT NO-OP -- the picker returned
+        # "save" and nothing was written. Found while making the picker
+        # discoverable (FQ-009), which is exactly the kind of dead path a buried
+        # affordance hides.
+        panel.save_requested.connect(
+            lambda panel=panel: self._save_ddl_object_editor(panel)
         )
         if self._sandbox_console_available():
             panel.set_run_in_console(self._run_selection_in_sandbox_console)
@@ -3844,6 +4089,35 @@ class MainWindow(QMainWindow):
         unenforceable precondition must remove the gesture rather than weaken
         it (the panel enforces exactly that via `has_target_apply`).
 
+        **FQ-009 deliberately did NOT wire Apply to Target ("run on quality"),
+        and this is where that decision lives.** Three separate reasons, none of
+        them "the user might be careless":
+
+        1. *The identity seam has no source yet.* `live_identity` needs the
+           project's target `ConnectionParams`, and the only place that holds
+           them is `SandboxController.target_params` — fed from
+           `ProjectSettings.target`, which **BUG-034** says is never populated
+           from the `.pgtp` file. Wiring against it today would either offer a
+           gesture that cannot resolve a database, or hard-code a second,
+           parallel target-resolution path in exactly the file BUG-034 is
+           rewriting. When BUG-034 lands, `sandbox_controller.target_params` is
+           the one provider to read; nothing else here needs to change.
+        2. *Reachability is not yet a fact.* **BUG-030**'s quality-node status
+           is "configured", not probed, so "there is a target" is currently an
+           unverified claim.
+        3. *The asymmetry that makes this different from the sandbox.* Apply to
+           Sandbox is undoable (Reset Sandbox) and the sandbox is disposable;
+           Apply to Target has **no revert snapshot**. §18.5 precondition 2's
+           override is by design reachable with *nothing* verified (an
+           un-checked buffer reports as "the ladder has not been run over this
+           buffer", which is overridable — see
+           `DdlObjectEditorPanel._precondition_validation`), so wiring this leg
+           puts an irreversible production write two clicks and one override
+           behind a context menu. That may well be the right end state, but it
+           is a posture change worth landing on purpose, with the target
+           resolution it depends on already trustworthy — not as a side effect
+           of a discoverability fix.
+
         `set_apply_seams` replaces the whole set and rebuilds the button row, so
         it is only called when the answer actually changes."""
         wanted = self.sandbox_controller.has_session
@@ -3965,6 +4239,24 @@ class MainWindow(QMainWindow):
         touch is `applied_sha1`, since nothing was applied.
         """
         self._run_ladder_on_active_ddl_object(probe=True)
+
+    def _deploy_active_ddl_object_edit(self) -> str | None:
+        """Database ▸ Deploy This Edit… -- §18.5's destination picker run over
+        the ACTIVE object tab (FQ-009's discoverability half).
+
+        Adds no gesture and no write path of its own: it calls the panel's
+        `deploy_this_edit()`, which delegates to Apply to Sandbox / the host's
+        Save / Apply to Target and runs each one's full gate. Returns the chosen
+        destination (or None) so a test can assert the delegation without
+        reading the panel back."""
+        panel = self.center_stage.active_ddl_object_panel()
+        if panel is None:
+            self.statusBar().showMessage(
+                "Deploy This Edit runs on an open DDL object tab — open one first.",
+                5000,
+            )
+            return None
+        return panel.deploy_this_edit()
 
     def _run_ladder_on_active_ddl_object(self, *, probe: bool) -> None:
         """The shared body of the two Database-menu check gestures. Exactly one
