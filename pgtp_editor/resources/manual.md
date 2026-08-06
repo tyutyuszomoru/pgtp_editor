@@ -25,9 +25,9 @@ file just opens into that project. The window has three areas:
 
 - **Left — Project Tree:** the structure of your project (pages, details, columns,
   event handlers). More tabs share this dock: **Contents** (this manual's
-  chapters), **Table references** (when you turn it on from the View menu),
-  **Database Check** (after you run a database check), and **DDL Objects** (while
-  the DDL Explorer is on — see *DDL Explorer*).
+  chapters), **Database/XML Coherence** (while that view is on — see
+  *Database/XML Coherence*), and **DDL Objects** (while the DDL Explorer is on —
+  see *DDL Explorer*).
 - **Center — Raw XML / Caption Management / Diff-Merge / Edit XSD / DDL Explorer /
   Manual:** the working area. It opens on **Raw XML**; the other tabs appear when
   you invoke them. Editing an individual function, procedure, or trigger opens
@@ -132,8 +132,9 @@ The **Raw XML** tab is a full text editor over the project file.
   **matching tag** is highlighted too.
 - **Folding:** a chevron in the gutter marks every multi-line element. Click it to
   collapse or expand that block.
-- **Bookmarks:** click the narrow strip at the left edge of the gutter to set a
-  bookmark on a line (see *Bookmarks*).
+- **Bookmarks:** click the narrow strip at the left edge of the gutter — or
+  double-click the line number itself — to set a bookmark on a line (see
+  *Bookmarks*).
 - **Event-handler code regions** are shown with a distinct, subdued background and a
   monospace band, so JS/PHP bodies stand out from the surrounding XML. Right-click
   inside a body for **Edit code…** (see *The Code Editor*).
@@ -181,10 +182,20 @@ it).
 Bookmarks let you mark lines and jump between them. They live for the current
 session and are not written to the file.
 
-- **Ctrl+F2** (or clicking the bookmark strip in the gutter) toggles a bookmark on
-  the current line; a tag marker appears in the strip.
+- **Ctrl+F2** toggles a bookmark on the current line; a tag marker appears in the
+  strip.
+- With the mouse there are two targets in the gutter, whichever suits you:
+  **single-click the narrow bookmark strip** at the gutter's left edge, or
+  **double-click anywhere in the line-number area** to the right of the fold
+  chevrons. Both toggle that line's bookmark. (A single click in the line-number
+  area still does nothing, so the two never fire together.)
 - **F2** / **Shift+F2** jump to the next / previous bookmark.
 - The **Bookmarks** menu holds the same actions plus **Clear All Bookmarks**.
+
+Both mouse gestures work in **every** editor that has a gutter — the Raw XML
+editor, **Edit XSD** / **Edit AutoXSD**, the read-only **DDL Explorer**, an open
+**DDL object editor tab**, and the **Edit code…** dialog — and they keep working
+in Caption Mode, where the Raw XML editor itself is read-only.
 
 The **Bookmarks** menu and its shortcuts follow the tab you are working in: with
 the **Edit XSD** (or **Edit AutoXSD**) tab active they act on the schema editor,
@@ -194,8 +205,8 @@ editor. Using them never switches tabs on you — a bookmark is always set or
 found in the editor you are already looking at.
 
 The **Edit code…** dialog has the same bookmark strip, but as a separate dialog
-it is out of the Bookmarks menu's reach: there you set and clear bookmarks by
-clicking the strip in the gutter. Each editor keeps its own set, and loading a
+it is out of the Bookmarks menu's reach: there you set and clear bookmarks with the
+mouse, in the gutter. Each editor keeps its own set, and loading a
 new document into an editor clears its bookmarks.
 
 ---
@@ -245,8 +256,9 @@ The Code Editor is a modal window with:
 
 - **Syntax highlighting** — JavaScript for client-side handlers, PHP for
   server-side handlers.
-- A **line-number gutter**, with a bookmark strip at its left edge: click it to
-  mark a line while you work through a long handler (see *Bookmarks*). There is
+- A **line-number gutter**, with a bookmark strip at its left edge: click it —
+  or double-click the line number — to mark a line while you work through a long
+  handler (see *Bookmarks*). There is
   nothing to fold in a code body, so the gutter shows no fold chevrons here.
 - **Auto-close** for `()`, `[]`, `{}`, `''`, and `""` — the caret lands between the
   pair, and typing the matching closer "types through" it.
@@ -487,10 +499,10 @@ is in **Edit AutoXSD**.
 
 ---
 
-## Database Check
+## Database/XML Coherence
 
-The **Database** menu compares the tables and columns your project references
-against a live PostgreSQL database.
+The **Database** menu compares your project's XML against a live PostgreSQL
+database and shows both sides together in one view.
 
 ### Connecting
 
@@ -504,8 +516,8 @@ DDL-versioning project open (see *Local DDL-Versioning Projects*). Once a projec
 is open, its connection lives in **Project Settings…** (the **Connections** tab —
 see *Local DDL-Versioning Projects ▸ Project Settings*) instead, and the menu
 action is disabled while that project stays active; it re-enables the moment you
-close the project. If something that needs a connection (Database Check, DDL
-Explorer) finds none configured while a project is open, it points you at Project
+close the project. If something that needs a connection (Database/XML Coherence,
+DDL Explorer) finds none configured while a project is open, it points you at Project
 Settings via a status-bar message rather than opening the now-meaningless
 standalone dialog.
 
@@ -513,48 +525,93 @@ standalone dialog.
 > to IPv6 first and stall the connection. The check runs off the UI thread with a
 > timeout, so an unreachable server reports an error instead of freezing the app.
 
-### Checking
+### Running the check
 
-- **Check: XML → Database** verifies every table and column the project references
-  actually exists in the database. Results appear in the **Database Check** tab in
-  the left dock as a tree: a green **✓** marks a match and a red **✗** a mismatch.
-  Each table shows its kind — `(T)` table, `(V)` view, `(M)` materialized view — and
-  how many times the project references it `(×N)` (the other direction splits this
-  count by role — see below); each column shows its datatype,
-  primary keys are underlined, foreign keys are marked `(fk)`, and
-  nullability/defaults are noted. **Calculated columns** (marked
-  `isCalculated="true"` in the XML) are generator-computed and have no physical
-  database column by design, so they are shown with an orange **~** instead of a red
-  ✗ — they don't count as mismatches. A **Show only mismatches** checkbox and a
-  mismatch count in the header help you focus; calculated columns are excluded from
-  both (the filter hides them entirely). **Double-click** a result — including a
-  calculated column — to jump to its place in the XML. If a table or column isn't
-  found, right-click it for **Rename table/column in XML…** (a project-wide
-  replace) and re-run the check; the action isn't offered for calculated columns,
-  since there is nothing database-side to reconcile.
-- **Check: Database → XML** is the reverse: it lists tables and columns that exist
-  in the database but the project doesn't reference. Here each table's reference
-  count is **split by the role it is referenced in** — `(P3 D1 L2)` means three page
-  bindings, one detail binding, and two column lookups. A table counts as a match
-  (green **✓**) as soon as **any** role references it, so a table used only as a
-  lookup target — `(P0 D0 L1)` — is not a mismatch. Such a table's columns still
-  show as absent from the project, which is informational: a lookup only ever binds
-  a link field and a display field, so the rest of the table legitimately goes
-  unreferenced. Only a table no role references at all — `(P0 D0 L0)` — is flagged
-  red.
+**Database ▸ Database/XML Coherence** is a checkable toggle (it has no keyboard
+shortcut). Turning it on fetches the database schema, compares it against the XML
+currently in the Raw XML buffer, and reveals the **Database/XML Coherence** tab in
+the left dock. Turning it off hides the tab again. If the fetch fails — or there is
+no project text, or no connection configured — the menu entry un-checks itself, so
+it never claims a view is open that isn't.
 
-Results are tied to the project they were checked against: **File ▸ Close** closes
-the **Database Check** tab and discards its results (cancelling the close, or
-**File ▸ Revert**, leaves them in place). Running a check on the next project
-brings the tab back as usual.
+**There is no direction to choose.** The database is always the truth and the XML is
+the interface being checked against it, so both sides are shown together, per
+relation, in a single tree. The old **Check: XML → Database** and **Check: Database
+→ XML** items, and the separate **Table references** tab, are gone: this one view
+replaces all three.
+
+The header line above the tree names the connection (`user@host:port/db`) and the
+total number of mismatches found. **File ▸ Close** closes the tab and discards its
+results, since they belong to the project they were checked against (cancelling the
+close, or **File ▸ Revert**, leaves them in place). After **Tools ▸ Reparse Raw XML
+into Tree** the open view refreshes against the last database snapshot — no new
+query is made — so you can see the effect of an edit right away.
 
 The password is stored with the connection settings and is never written to any log.
 
+### The two branches
+
+The tree has two top-level branches, each showing how many rows in it are flagged.
+
+**Tables and Views** is rooted in the live database, so it can only ever contain
+relations that really exist. Each relation shows its kind — `(T)` table, `(V)` view,
+`(M)` materialized view — and carries two groups:
+
+- **Database columns** — every column the database has, with its datatype;
+  primary keys are underlined, foreign keys are marked `fk`, and `not null` is
+  noted. Columns the XML names but the database lacks appear here too, badged
+  **missing in DB**; database columns no page or detail binds are badged **not in
+  XML**. A green **✓** marks a coherent row and a red **✗** a flagged one.
+  **Calculated columns** (marked `isCalculated="true"` in the XML) are
+  generator-computed and have no physical database column by design, so they are
+  shown with an orange **~** and are never flagged.
+- **References** — where the XML uses this relation. The group is badge-summarized
+  by role, and the relation row itself carries the role split
+  **`(P3 D1 L2)`** — three page bindings, one detail binding, two column lookups.
+  Expand the group for the full breadcrumb of each individual reference.
+
+**Pages** mirrors the XML's own structure recursively: each Page shows its bound
+table and its lookup columns, then nests its child Details, each of which does the
+same — to whatever depth your document actually has, not a fixed three levels. A
+lookup that also carries an on-the-fly insert page is badged **lookup with insert**
+rather than a plain lookup, and a Page or Detail with no `tableName` at all is
+badged **no table** (structural, not an error).
+
+### Show only mismatches
+
+One **Show only mismatches** checkbox filters **both** branches at once, pruning the
+tree to the rows needing attention plus the path down to each of them. Three things
+are flagged:
+
+- In **Pages**, a Page, Detail, or lookup whose target table or view **does not
+  exist in the database** — badged **missing in DB** at that exact reference point.
+  This is where a renamed or dropped table surfaces.
+- In **Tables and Views**, a real relation the XML references **nowhere at all** —
+  no page, no detail, no lookup — badged **unreferenced**.
+- Failing **columns**, in either direction — but **never calculated columns**.
+
+Read the toggle as **"things needing attention"**, not strictly "things that are
+broken". An unreferenced database table is not an error the way a dangling XML
+reference is; it is surfaced on purpose so you can decide. With the filter on and
+nothing left to show, the panel says so — and distinguishes "the XML and the
+database agree" from "no mismatches match this filter".
+
+### Navigating and fixing
+
+- **Double-click** a Page, Detail, lookup, or reference row to jump to its line in
+  the Raw XML editor. Double-clicking a relation or column row instead lists every
+  occurrence of its `tableName=`/`fieldName=` token in the Find-all results panel
+  and seeds the Find bar, so **F3** steps through them.
+- **Single-click** any row to load the matching node in the **Properties** panel.
+- Where the XML names something the database does not have, right-click the row for
+  **Rename table in XML…** or **Rename column in XML…** — a project-wide replace,
+  after which the check re-runs automatically. Neither is offered for calculated
+  columns, since there is nothing database-side to reconcile.
+
 ### Creating pages, details, and lookups from a table
 
-After a **Check: Database → XML** run, **right-click a table or view row** (not a
-column row) in the results tree to synthesize project XML from that table's live
-schema:
+**Right-click a relation row** in the **Tables and Views** branch (not a column row)
+to synthesize project XML from that table's live schema:
 
 - **Create new page from this table** builds a complete `<Page>` — column
   presentations, captions, and view/edit types derived from the database column
@@ -572,9 +629,9 @@ schema:
   column, best effort) and **copies it to the clipboard** — paste it into the
   target column.
 
-These actions are offered only in the **Database → XML** direction, because they
-need the schema captured by the last check; if that schema is no longer available,
-the status bar asks you to run a Database check first.
+These actions work from the schema captured by the last coherence run; if that
+schema is no longer available, the status bar asks you to run **Database/XML
+Coherence** first.
 
 ---
 
@@ -586,7 +643,7 @@ It needs only a database connection: you can use it with **no `.pgtp` file open
 at all**. If no connection is configured yet: in projectless mode, **Connection
 Setup…** opens automatically — save a connection, then toggle the explorer
 again; with a local DDL-versioning project open, a status-bar message points you
-at **Project Settings…** instead (see *Database Check ▸ Connecting* and *Local
+at **Project Settings…** instead (see *Database/XML Coherence ▸ Connecting* and *Local
 DDL-Versioning Projects*).
 
 Turning it on fetches all routines and triggers from the connected PostgreSQL
@@ -657,7 +714,7 @@ by themselves. With no project open, no markers are shown.
 
 Clicking any table node under **Tables** — whether it owns triggers or not —
 populates the **Properties** panel (the same right-hand dock the Project Tree
-and Table References use, see *Properties*) with that table's full column
+and the coherence view use, see *Properties*) with that table's full column
 list. Each column is shown as **two rows**: a compact identity line — the
 column name, its data type, and whether it's nullable (`NULL` / `NOT NULL`) —
 followed by a detail line with its default value and comment (an unset
@@ -681,8 +738,9 @@ navigation comforts as the Raw XML editor:
 - **Folding per DDL object:** a chevron on each object's banner comment line
   collapses that object's body away, leaving the banner visible — handy for
   skimming a long database's worth of definitions.
-- **Bookmarks:** click the bookmark strip at the left edge of the gutter to mark
-  a line, or use **Ctrl+F2** / **F2** / **Shift+F2** and the **Bookmarks** menu —
+- **Bookmarks:** click the bookmark strip at the left edge of the gutter (or
+  double-click the line number) to mark a line, or use **Ctrl+F2** / **F2** /
+  **Shift+F2** and the **Bookmarks** menu —
   while this tab is active they act on its editor (see *Bookmarks*).
 - **Find:** this tab has its own search bar, so **Ctrl+F**, **F3** and
   **Ctrl+Shift+F** search the DDL buffer itself instead of bouncing you to Raw
@@ -1024,8 +1082,8 @@ The two buttons deliberately do **different** checks, because the two
 connections have different success conditions:
 
 - **Target connection ▸ Test** is a plain connectivity check — the same one
-  the standalone Connection Setup dialog performs (see *Database Check ▸
-  Connecting*). It shows **"Testing connection…"**, then the outcome in green
+  the standalone Connection Setup dialog performs (see *Database/XML
+  Coherence ▸ Connecting*). It shows **"Testing connection…"**, then the outcome in green
   on success or in red with the driver's error message on failure.
 - **Sandbox connection ▸ Test** is stricter: it checks for a **superuser**,
   not merely that the connection works, because setting up a sandbox needs
@@ -1147,12 +1205,10 @@ you work:
 - **Sandbox** — the sandbox's status and connection details. In the
   tools-missing case it **names the missing tool** and notes that schema-only
   work is unaffected, alongside an **Open help** button.
-- **Sandbox data** — explains the current fill state and offers **Run data clone
-  now** (or **Redo data clone** when data is already there).
-- **plpgsql_check** — explains the install state and offers **Install the
-  plpgsql_check extension**. Once the extension is installed the window is
-  purely informational and offers no button, because there is nothing left to
-  do.
+- **Sandbox data** — explains the current fill state (see the note below: this
+  window is status-only in this version).
+- **plpgsql_check** — explains whether the extension is installed (likewise
+  status-only in this version).
 
 An action is never a single click on the node itself: you always land in the
 node's window first and press the button there. Running one closes that window
@@ -1160,38 +1216,11 @@ and re-probes, so the diagram can't keep claiming the state from before you
 acted.
 
 > In this version the Quality window's **Reconnect**, the Sandbox window's help
-> link and both windows' connection detail lines are live. The two sandbox
-> *action* buttons — **Run data clone** and **Install the plpgsql_check
-> extension** — are not yet offered: both need a live sandbox session, which
-> arrives with sandbox provisioning. Rather than show a button that cannot
-> work, those windows stay status-only for now. Everything the diagram reports
-> is live and accurate today.
-
----
-
-## Table References
-
-**View ▸ Find table reference** is a checkable toggle that opens the **Table
-references** tab in the left dock. It lists every database table and view your
-project references, grouped so you can see where a change to one table's
-presentation may need mirroring elsewhere.
-
-- Each **top-level row** is a table/view name with a usage count, e.g.
-  `kb.x_objecttype  (3)`.
-- Each **child row** is one reference, shown as a breadcrumb of where it lives
-  (page ▸ detail ▸ column). Lookup references are labelled **(lookup)**, or
-  **(lookup with insert)** when the lookup also has an on-the-fly insert page.
-
-- **Single-click** a reference to load its node in the **Properties** panel — a
-  lookup reference selects its owning column.
-- **Double-click** a reference to **jump to it in the Raw XML editor**: a lookup
-  jumps to its `<Lookup>` line, while a page or detail reference jumps to its own
-  opening tag. This makes the tab a second way to scroll through the XML,
-  alongside the Project Tree.
-
-Turn the toggle off to hide the tab. The list needs an open project (otherwise a
-status-bar message asks you to open one first), and it refreshes to match your
-edits after **Tools ▸ Reparse Raw XML into Tree** while the tab is showing.
+> link and both windows' connection detail lines are live. Running a data clone
+> and installing the `plpgsql_check` extension both need a live sandbox session,
+> which arrives with sandbox provisioning, so no button for either is offered
+> yet: rather than show a control that cannot work, those two windows stay
+> status-only. Everything the diagram reports is live and accurate today.
 
 ---
 
@@ -1259,10 +1288,10 @@ simply reads as busy instead of stalled.
   **Audit/Problems Panel**, and **Raw XML Panel**. Each checkbox always reflects
   whether its panel is currently visible — closing a panel with the ✕ on its own
   title bar unchecks the menu entry too, and re-checking it brings the panel
-  back. **View ▸ Find table reference** toggles the **Table references** tab
-  (see *Table References*).
-- **View ▸ Customize Toolbar…** chooses which commands appear on the toolbar (see
-  *The toolbar*, below).
+  back.
+- **View ▸ Expand All** / **Collapse All** open or fold the whole Project Tree.
+- **View ▸ Customize Toolbar…** chooses which commands appear on the toolbar and
+  what icon each one carries (see *The toolbar*, below).
 - Your window size and position, dock layout, theme, and toolbar arrangement are
   remembered between sessions.
 
@@ -1274,8 +1303,8 @@ the box it carries seven commands — **File ▸ Open**, **File ▸ Save**, **Ed
 Generate PHP** — but it is not limited to them.
 
 **View ▸ Customize Toolbar…** opens a two-list dialog: **Available** on the left,
-**On Toolbar** on the right, with **Add →**, **← Remove**, **Up**, and **Down**
-between them, and **OK** / **Cancel** at the bottom.
+**On Toolbar** on the right, with **Add →**, **← Remove**, **Up**, **Down**, and
+**Choose Icon…** between them, and **OK** / **Cancel** at the bottom.
 
 - The Available list offers **every command in the menu bar**, listed by its menu
   path — `File › Save As`, `Schema › Verify XSD`, `Database › DDL Explorer`, and so
@@ -1290,10 +1319,11 @@ between them, and **OK** / **Cancel** at the bottom.
 - **Up** / **Down** reorder the On-Toolbar list; **OK** applies the arrangement and
   remembers it for future sessions, **Cancel** discards your changes.
 
-**Most commands have no icon** — only the original seven ship with one. That is
-by design, not a missing piece: a toolbar button shows its label beside its icon, so
-an icon-less command simply reads as text. An icon is never a precondition for
-putting a command on the toolbar.
+**Out of the box most commands have no icon** — only the original seven ship with
+one — and that is fine: a toolbar button shows its label beside its icon, so an
+icon-less command simply reads as text. An icon is never a precondition for putting
+a command on the toolbar. But you can give any button one yourself — see
+*Choosing a button's icon*, below.
 
 A toolbar button *is* the menu item, not a copy of it. It therefore shares that
 menu item's enabled state (a command disabled in the menu is disabled on the
@@ -1301,6 +1331,32 @@ toolbar), its checked state for toggles such as **Database ▸ DDL Explorer** or
 **View ▸ Light Theme**, and its keyboard shortcut — the button and the menu entry
 can never drift apart. Toolbars you arranged in an earlier version of the editor
 are carried over unchanged.
+
+### Choosing a button's icon
+
+Each row in the **On Toolbar** list shows the icon that button will actually
+carry — the one you assigned, or the command's built-in default. To change it,
+select the row and press **Choose Icon…**, or just **double-click the row**.
+
+The **Choose Icon** dialog is a grid of the roughly 106 Breeze icons bundled with
+the editor, with a **search box** at the top: type any part of an icon's name
+(`save`, `database`, `arrow up`) to narrow the grid. Every term you type has to
+match, so `document save` finds the save-related document icons only. Double-click
+a cell to pick it and close the dialog, or select it and press **OK**.
+
+- The first cell is always **Default**, which **clears** the assignment: the button
+  falls back to its built-in icon, or to no icon at all if it has none.
+- **Any** button can be given an icon — including the seven that already ship with
+  one, whose default you simply override.
+- The icon is shown **only on the toolbar**. The matching menu entry keeps its plain
+  text appearance, so decorating a button never changes how the menus look.
+- The preview in the dialog is tinted the same way the real button is, so what you
+  see is what you get under both the light and the dark theme.
+
+Your icon choices are saved with the toolbar arrangement when you press **OK** and
+survive across restarts. Removing a button from the toolbar drops its icon
+assignment with it, and an assignment naming an icon or a command that no longer
+exists is quietly discarded rather than breaking the toolbar.
 
 ---
 
