@@ -23,6 +23,8 @@ The "session" is an opaque sentinel: the panel must hand it straight to
 sandbox-only boundary (a `SandboxSession`, never `ConnectionParams`).
 """
 import pytest
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QKeySequence
 from PySide6.QtWidgets import QSpinBox, QSplitter
 
 from pgtp_editor.db.sandbox_query import QueryOutcome, QueryResult
@@ -415,3 +417,43 @@ def test_format_selection_requires_a_selection_and_reindents_in_place(qtbot):
     console.format_selection()
 
     assert "select 1" in console.sql_text
+
+
+# -- §27's Ctrl+Return = Run -----------------------------------------------
+
+
+def test_ctrl_return_shortcut_exists_and_is_scoped_to_the_panel(qtbot):
+    """§27: Ctrl+Return = Run, Sandbox SQL Console tab ONLY. Scoped
+    `WidgetWithChildrenShortcut`, the same mechanism (and for the same reason)
+    as the panel's Ctrl+Space and Ctrl+Alt+F, so it cannot fire from an
+    unrelated tab."""
+    console, _query = make_console(qtbot)
+
+    shortcut = console._run_shortcut
+    assert shortcut.key() == QKeySequence("Ctrl+Return")
+    assert shortcut.context() == Qt.ShortcutContext.WidgetWithChildrenShortcut
+    assert shortcut.parent() is console
+
+
+def test_ctrl_return_runs_once_through_the_same_run_gesture(qtbot):
+    """It drives the panel's own `run()` -- the very method the results panel's
+    Run button calls -- so there is exactly one execution path, not two."""
+    console, query = make_console(qtbot)
+    console.set_sql("SELECT 1")
+
+    console._run_shortcut.activated.emit()
+
+    assert query.calls == [(SESSION, "SELECT 1", DEFAULT_ROW_LIMIT)]
+    assert console.result is query.result
+
+
+def test_ctrl_return_is_refused_without_a_session_like_the_run_button(qtbot):
+    """The shortcut adds no way around the sandbox-only boundary: with no
+    session there is nothing to run against and nothing is sent."""
+    console, query = make_console(qtbot, session=None)
+    console.set_sql("SELECT 1")
+
+    console._run_shortcut.activated.emit()
+
+    assert query.calls == []
+    assert console.results.status_label.text() == NO_SESSION_TEXT

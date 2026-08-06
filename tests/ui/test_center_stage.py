@@ -469,3 +469,58 @@ def test_close_sandbox_sql_tab_is_idempotent(qtbot):
 
     assert stage.count() == fixed_count
     assert stage.sandbox_sql_tab() is None
+
+
+# --- §22's injection seam on the custom-PHP tab -----------------------------
+# The two `lint_service` / `lint_on_save` parameters exist so a host can
+# physically inject §22's service into a tab it opens; without them the four
+# remaining §22 wiring items have nowhere to attach. They must default exactly
+# as `PhpFileTab.__init__` defaults them, so every pre-§22 caller is unchanged.
+from pgtp_editor.ui.php_file_tab import PhpFileTab, php_tab_key
+
+
+class _StubLintService:
+    """Stands in for `lint/service.py::LintService`: the tab must store it and
+    hand it back untouched, so nothing here needs to run a linter."""
+
+
+def test_open_php_file_tab_injects_the_lint_seams_into_the_tab(qtbot, tmp_path):
+    stage = CenterStage()
+    qtbot.addWidget(stage)
+    path = tmp_path / "page.php"
+    path.write_text("<?php\n", encoding="utf-8")
+    service = _StubLintService()
+
+    tab = stage.open_php_file_tab(
+        path, "<?php\n", lint_service=service, lint_on_save=True
+    )
+
+    assert isinstance(tab, PhpFileTab)
+    assert tab.lint_service is service
+    assert tab.lint_on_save is True
+    assert stage.php_file_tab(php_tab_key(path)) is tab
+
+
+def test_open_php_file_tab_without_the_lint_seams_is_unchanged(qtbot, tmp_path):
+    """The pre-§22 call: neither parameter given, so the tab is linting-free
+    and costs nothing -- the defaults must match `PhpFileTab.__init__`."""
+    stage = CenterStage()
+    qtbot.addWidget(stage)
+    path = tmp_path / "page.php"
+    path.write_text("<?php\n", encoding="utf-8")
+
+    tab = stage.open_php_file_tab(path, "<?php\n")
+
+    assert tab.lint_service is None
+    assert tab.lint_on_save is False
+
+
+def test_open_php_file_tab_lint_seams_reach_an_untitled_buffer_too(qtbot):
+    stage = CenterStage()
+    qtbot.addWidget(stage)
+    service = _StubLintService()
+
+    tab = stage.open_php_file_tab(None, "<?php\n", lint_service=service)
+
+    assert tab.lint_service is service
+    assert tab.lint_on_save is False

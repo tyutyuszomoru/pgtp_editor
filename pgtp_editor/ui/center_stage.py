@@ -365,7 +365,15 @@ class CenterStage(QTabWidget):
         """The open `PhpFileTab` for `key`, or None."""
         return self._php_file_tabs.get(key)
 
-    def open_php_file_tab(self, path=None, text="", resolve_save_path=None, writer=None):
+    def open_php_file_tab(
+        self,
+        path=None,
+        text="",
+        resolve_save_path=None,
+        writer=None,
+        lint_service=None,
+        lint_on_save: bool = False,
+    ):
         """Focus the tab already open for `path` if there is one; otherwise
         create it, append it (always AFTER the fixed set), and focus that.
 
@@ -373,7 +381,15 @@ class CenterStage(QTabWidget):
         `"untitled:N"` key instead. Reading the file is the CALLER's job (§21:
         the tab never touches the filesystem behind the caller's back) -- the
         already-read `text` is handed in, and `resolve_save_path`/`writer` are
-        the injected save seams, exactly as for `open_ddl_object_tab`."""
+        the injected save seams, exactly as for `open_ddl_object_tab`.
+
+        `lint_service`/`lint_on_save` are §22's two seams, passed straight
+        through to `PhpFileTab` (a `lint/service.py::LintService` and the
+        after-save toggle). Both are optional and default exactly as the tab
+        defaults them, so a host that does not care about linting -- or an
+        existing caller written before §22 -- opens a tab with no linting and
+        costs nothing. Without these parameters a host could not physically
+        inject the service into a tab it opens."""
         if path is not None:
             key = php_tab_key(path)
             existing = self._php_file_tabs.get(key)
@@ -384,7 +400,14 @@ class CenterStage(QTabWidget):
             self._untitled_php_counter += 1
             key = f"untitled:{self._untitled_php_counter}"
 
-        tab = PhpFileTab(path, text, resolve_save_path=resolve_save_path, writer=writer)
+        tab = PhpFileTab(
+            path,
+            text,
+            resolve_save_path=resolve_save_path,
+            writer=writer,
+            lint_service=lint_service,
+            lint_on_save=lint_on_save,
+        )
         index = self.addTab(tab, tab.tab_title())
         self.setTabToolTip(index, tab.tab_tooltip())
         self._php_file_tabs[key] = tab

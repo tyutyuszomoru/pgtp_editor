@@ -245,6 +245,21 @@ class SqlConsolePanel(QWidget):
         self._format_shortcut.setEnabled(False)
         self.editor.selectionChanged.connect(self._update_format_shortcut_enabled)
 
+        # §27's Ctrl+Return = Run, the one execution gesture that carries a
+        # shortcut (§18.5 D4: the sandbox is disposable and `reset()`-able, so
+        # this does not reopen the "an irreversible outward effect must not be
+        # one keystroke away" rule -- and there is no target-database Run to
+        # reach with or without a key). Same mechanism as the two shortcuts
+        # above -- a `QShortcut` scoped `WidgetWithChildrenShortcut` so it can
+        # only fire while focus is inside this console and never from an
+        # unrelated tab -- and it calls the SAME `run()` the results panel's Run
+        # button calls, so there is exactly one execution path.
+        self._run_shortcut = QShortcut(QKeySequence("Ctrl+Return"), self)
+        self._run_shortcut.setContext(
+            Qt.ShortcutContext.WidgetWithChildrenShortcut
+        )
+        self._run_shortcut.activated.connect(self.run)
+
         if not self._session_available:
             self.results.set_enabled(False, NO_SESSION_TEXT)
 
