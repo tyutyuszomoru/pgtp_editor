@@ -8,7 +8,8 @@ in `test_coherence_panel.py`; what is asserted here is only what MainWindow
 owns: the panel's signals reaching the Properties panel and the editor, and
 the retired entry points staying retired.
 
-No live DB — `_fetch_db_schema` and `_run_async` are injected seams.
+No live DB — `CoherenceController.fetch_schema` and `_run_async` are injected
+seams.
 """
 from unittest.mock import patch
 
@@ -66,7 +67,7 @@ def _window(qtbot, tmp_path, text=PGTP_WITH_LOOKUP):
     path = tmp_path / "p.pgtp"
     path.write_text(text, encoding="utf-8")
     window.open_project_file(str(path))
-    window._fetch_db_schema = lambda params: _schema()
+    window._db_ui.fetch_schema = lambda params: _schema()
     window._run_async = _sync_run
     return window
 
@@ -96,7 +97,7 @@ def _rows_of_kind(panel, kind):
 def test_coherence_run_reveals_the_tab_and_shows_the_reference_side(qtbot, tmp_path):
     window = _window(qtbot, tmp_path)
 
-    window._run_db_check()
+    window._db_ui.run_check()
 
     idx = window.coherence_tab_index
     assert window.left_tabs.isTabVisible(idx) is True
@@ -115,7 +116,7 @@ def test_selection_drives_properties_panel(qtbot, tmp_path):
     """The panel's selection_changed reaches the shared Properties panel —
     unchanged from the Table references tab."""
     window = _window(qtbot, tmp_path)
-    window._run_db_check()
+    window._db_ui.run_check()
     panel = window.coherence_panel
 
     lookups = _rows_of_kind(panel, "lookup")
@@ -136,7 +137,7 @@ def test_selecting_a_lookup_row_really_populates_properties(qtbot, tmp_path):
     that the real call raised KeyError: 'lookup' inside the Qt slot. Drive the
     unpatched path end to end: no exception, and a populated panel."""
     window = _window(qtbot, tmp_path)
-    window._run_db_check()
+    window._db_ui.run_check()
     panel = window.coherence_panel
 
     lookups = _rows_of_kind(panel, "lookup")
@@ -156,7 +157,7 @@ def test_no_row_in_the_tree_can_crash_the_properties_panel(qtbot, tmp_path):
     and an unmapped kind used to raise KeyError straight out of a Qt slot.
     Walking every row is the net that catches the next such kind."""
     window = _window(qtbot, tmp_path)
-    window._run_db_check()
+    window._db_ui.run_check()
     panel = window.coherence_panel
     rows = _rows(panel)
     assert len(rows) > 1
@@ -167,7 +168,7 @@ def test_no_row_in_the_tree_can_crash_the_properties_panel(qtbot, tmp_path):
 
 def test_page_row_selection_drives_properties_with_the_page_node(qtbot, tmp_path):
     window = _window(qtbot, tmp_path)
-    window._run_db_check()
+    window._db_ui.run_check()
     panel = window.coherence_panel
 
     pages = _rows_of_kind(panel, "page")
@@ -186,7 +187,7 @@ def test_double_click_on_an_xml_row_jumps_the_editor_to_its_line(qtbot, tmp_path
     """jump_requested(line) is wired to _tree_jump_to_line — the mechanism the
     Table references tab already used."""
     window = _window(qtbot, tmp_path)
-    window._run_db_check()
+    window._db_ui.run_check()
     panel = window.coherence_panel
     item = next(
         item
@@ -206,12 +207,12 @@ def test_double_click_on_a_relation_row_goes_through_the_name_jump(qtbot, tmp_pa
     """name_jump_requested(kind, name) is a SEPARATE signal (Qt cannot overload
     one name) and must land on the name-based handler, not the line one."""
     window = _window(qtbot, tmp_path)
-    window._run_db_check()
+    window._db_ui.run_check()
     panel = window.coherence_panel
     relations = _rows_of_kind(panel, "relation")
     assert relations
 
-    with patch.object(window, "_on_db_jump_requested") as name_jump, patch.object(
+    with patch.object(window._db_ui, "on_jump_requested") as name_jump, patch.object(
         window, "_tree_jump_to_line"
     ) as line_jump:
         panel.tree.itemDoubleClicked.emit(relations[0], 0)
@@ -232,7 +233,7 @@ def test_relation_double_click_really_finds_the_tableName_token(qtbot, tmp_path)
     XML, seed the Find bar with that token and list the occurrences — never the
     "does not reference" message."""
     window = _window(qtbot, tmp_path)
-    window._run_db_check()
+    window._db_ui.run_check()
     panel = window.coherence_panel
     relation = next(
         item
@@ -262,8 +263,8 @@ def test_an_unreferenced_relation_says_the_xml_does_not_reference_it(qtbot, tmp_
     window = _window(qtbot, tmp_path)
     schema = _schema()
     schema.tables["pr.orphan"] = TableInfo(name="pr.orphan", kind="table", columns=[])
-    window._fetch_db_schema = lambda params: schema
-    window._run_db_check()
+    window._db_ui.fetch_schema = lambda params: schema
+    window._db_ui.run_check()
     panel = window.coherence_panel
     orphan = next(
         item
@@ -285,7 +286,7 @@ def test_selecting_a_reference_row_really_populates_properties(qtbot, tmp_path):
     the owning node. Drive the unpatched path: populated, with the owning node's
     own header."""
     window = _window(qtbot, tmp_path)
-    window._run_db_check()
+    window._db_ui.run_check()
     panel = window.coherence_panel
     references = _rows_of_kind(panel, "reference")
     assert references
@@ -335,9 +336,9 @@ def test_reparse_refreshes_the_visible_coherence_view(qtbot, tmp_path):
     against the merged tree — and against the CACHED schema, no re-query."""
     window = _window(qtbot, tmp_path)
     fetches = []
-    base = window._fetch_db_schema
-    window._fetch_db_schema = lambda p: (fetches.append(1), base(p))[1]
-    window._run_db_check()
+    base = window._db_ui.fetch_schema
+    window._db_ui.fetch_schema = lambda p: (fetches.append(1), base(p))[1]
+    window._db_ui.run_check()
     assert fetches == [1]
 
     window.center_stage.xml_editor.setPlainText(PGTP_TWO_LOOKUPS)

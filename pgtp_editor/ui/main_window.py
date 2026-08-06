@@ -21,7 +21,7 @@ import shutil
 from pathlib import Path
 
 from lxml import etree
-from PySide6.QtCore import Qt, QSettings, QSignalBlocker, QTimer, QUrl
+from PySide6.QtCore import Qt, QSettings, QTimer
 from PySide6.QtGui import (
     QAction,
     QKeySequence,
@@ -42,23 +42,6 @@ from PySide6.QtWidgets import (
 
 from pgtp_editor import debuglog
 from pgtp_editor.diff.apply import apply_differences
-from pgtp_editor.generation.config import (
-    generator_config_path,
-    load_executable_path,
-    load_re_phpgen_root,
-    save_executable_path,
-    save_re_phpgen_root,
-)
-from pgtp_editor.generation.runner import GeneratorRunner, build_generate_command
-from pgtp_editor.generation.re_runner import (
-    PANGEN_SUBFOLDER,
-    build_analyze_command,
-    build_pangen_command,
-    resolve_re_phpgen_python,
-    validate_re_phpgen_root,
-)
-from pgtp_editor.generation.gap_summary import summarize_gap_json
-from pgtp_editor.generation import from_table as table_gen
 from pgtp_editor.diff.differ import compare_block, diff_project
 from pgtp_editor.diff.resolve import ResolutionError, resolve_path
 from pgtp_editor.model.encoding import read_pgtp_text
@@ -82,7 +65,6 @@ from pgtp_editor.ui.manual_panel import (
     parse_chapters,
 )
 from pgtp_editor.db.config import load_connection, save_connection, seed_params
-from pgtp_editor.db.coherence import build_coherence_tree
 from pgtp_editor.db.ddl_buffer import build_ddl_text
 from pgtp_editor.db.migration_gen import connection_summary
 from pgtp_editor.db.ddl_project import (
@@ -98,9 +80,7 @@ from pgtp_editor.db.ddl_project import (
     trigger_ddl_path,
 )
 from pgtp_editor.db.introspect import RoutineInfo, fetch_routines_and_triggers
-from pgtp_editor.db.introspect import fetch_schema as db_fetch_schema
 from pgtp_editor.db.introspect import test_connection as db_test_connection
-from pgtp_editor.db.rename import rename_field, rename_table
 from pgtp_editor.db.schema_index import SchemaIndex
 from pgtp_editor.db.sandbox import (
     ProjectCapabilityStatus,
@@ -121,6 +101,7 @@ from pgtp_editor.ui.new_trigger_dialog import NewTriggerDialog
 from pgtp_editor.ui.project_status_model import build_diagram, quality_state
 from pgtp_editor.ui.project_status_panel import ProjectStatusPanel
 from pgtp_editor.ui.project_settings_dialog import ProjectSettingsDialog
+from pgtp_editor.ui.coherence_controller import CoherenceController
 from pgtp_editor.ui.coherence_panel import CoherencePanel
 from pgtp_editor.ui.ddl_buffer_panel import BrowserPanel
 from pgtp_editor.ui.code_editor import CodeEditorDialog
@@ -129,6 +110,7 @@ from pgtp_editor.ui.history import SnapshotHistory
 # is the `UserRole + 1` tag a `[Lint]` Audit row carries, read by
 # `_on_audit_item_clicked` to route the click to a PHP tab.
 from pgtp_editor.lint.findings import LINT_AUDIT_TARGET
+from pgtp_editor.ui.generation_controller import GenerationController
 from pgtp_editor.ui.lint_controller import LintController
 from pgtp_editor.ui.php_tab_controller import PhpTabController
 from pgtp_editor.ui.toolbar_controller import ToolbarController
@@ -152,8 +134,6 @@ _log = logging.getLogger(__name__)
 _FIND_RESULT_PREFIX = "[Find] "
 
 _VALIDATION_PREFIX = "[Validate] "
-
-_GENERATOR_OUTPUT_PREFIX = "[PHP] "
 
 #: Format Selection refusals (§18.4/§18.5). Not clickable, no line role
 #: (carve-out 6) -- the offending span is already underlined in the tab.
@@ -234,22 +214,15 @@ class MainWindow(QMainWindow):
         # constructor parameter the whole suite reads off the finished window --
         # and is handed to `XsdController`, which owns everything under it.
         self._schema_storage_dir = schema_storage_dir
+        # Injectable root of the generator/linter config. Stays a HOST
+        # constructor seam (like `_schema_storage_dir`) because TWO lanes read
+        # the same directory -- `GenerationController` and `LintController`.
         self._generator_config_dir = generator_config_dir
-        self._generator_runner = generator_runner if generator_runner is not None else GeneratorRunner()
-        self._current_output_folder = None
-        self._is_generating = False
-        self._last_gap_json: Path | None = None
+        # `generator_runner` is NOT stored here: it is handed straight to
+        # `GenerationController` below (the local stays in scope), which owns the
+        # runner outright -- nothing else on the host touches it.
         # Connection Setup dialog, held so it is not GC'd while shown non-modally.
         self._connection_dialog = None
-        # The Database ▸ "Database/XML Coherence" checkable toggle (§17/§26).
-        # Held on self so the project-close teardown can un-check it; None
-        # until _build_database_menu runs later in __init__.
-        self._coherence_action = None
-        # Cached schema + connection summary from the last coherence run:
-        # a reparse refreshes the panel without re-querying, and a right-click
-        # "create from table" reuses the column metadata without re-querying.
-        self._last_db_schema = None
-        self._last_db_summary = None
         # Schema-aware Ctrl+Space completion (§18.6): the Qt-free lookup index
         # built once per DDL Explorer connect/refresh from the (now widened,
         # §18.6) fetch's `DatabaseSchema`, and handed to every open/newly
@@ -303,12 +276,12 @@ class MainWindow(QMainWindow):
             self.coherence_panel, "Database/XML Coherence"
         )
         self.left_tabs.setTabVisible(self.coherence_tab_index, False)
-        self.coherence_panel.rename_requested.connect(self._on_db_rename_requested)
         # Two jump signals because Qt cannot overload one name: DB-sourced rows
         # carry a (kind, name) pair, XML-sourced rows a 1-based line number.
-        self.coherence_panel.name_jump_requested.connect(self._on_db_jump_requested)
+        # The (kind, name) half -- plus rename and create -- belongs to
+        # `CoherenceController` and is wired where that lane is constructed,
+        # below; the line-based jump and the Properties feed are the host's.
         self.coherence_panel.jump_requested.connect(self._tree_jump_to_line)
-        self.coherence_panel.create_requested.connect(self._on_db_create_requested)
         self.coherence_panel.selection_changed.connect(self._on_table_ref_selection)
         # The DDL Explorer's object tree rides in its own hidden tab (spec
         # §18.1), revealed together with the center DDL Explorer tab by the
@@ -478,8 +451,9 @@ class MainWindow(QMainWindow):
         # configured profile is a reachable one. Deliberately optimistic
         # before the first result lands so a healthy target never flashes red.
         self._ddl_target_probe_error: str | None = None
-        # Injectable seam (mirrors _fetch_db_schema) -- tests patch this to a
-        # canned SandboxCapabilities so no real connection is ever opened.
+        # Injectable seam (mirrors `CoherenceController.fetch_schema`) -- tests
+        # patch this to a canned SandboxCapabilities so no real connection
+        # is ever opened.
         self._probe_sandbox_capabilities = sandbox_probe
         #: §18.5 D2/D3a/D4: the one owner of at most one `SandboxSession` for
         #: the open project. Every `db/sandbox.py` entry point on it is an
@@ -590,6 +564,52 @@ class MainWindow(QMainWindow):
             parent=self,
             feed_properties_schema=self.properties_panel.set_schema_model,
         )
+
+        #: The generation lane (`ui/generation_controller.py`): the Generation
+        #: menu, the vendor PHP Generator run and panGen/rePHPgen. Built before
+        #: the menu bar because it owns its menu outright.
+        #:
+        #: The FIRST lane that consumes document state, so it does so through
+        #: PROVIDERS rather than a reference to whoever holds it: `project` /
+        #: `project_path` read the host's current model and path at call time,
+        #: and `ensure_saved` runs the project's own Save / Save As (the
+        #: generator reads the `.pgtp` from disk, so every run saves first).
+        #: When `PgtpDocumentController` lands in a later wave, only these four
+        #: lines are repointed -- the collaborator does not change.
+        self._gen_ui = GenerationController(
+            self._shell,
+            self._generator_config_dir,
+            parent=self,
+            runner=generator_runner,
+            project=lambda: self._current_project,
+            project_path=lambda: self._current_project_path,
+            ensure_saved=self._ensure_project_saved,
+            default_output_dir=self._dialog_default_dir,
+        )
+
+        #: The §17/FQ-003 coherence lane (`ui/coherence_controller.py`): the
+        #: Database/XML Coherence view, its cached schema and the SP3
+        #: create-from-table gestures. Built before the menu bar because
+        #: `_build_database_menu` hands it the toggle action it owns.
+        #:
+        #: `find_all` is the host's Find-All entry point, which moves to
+        #: `FindValidateController` in a later wave -- injected so only this one
+        #: line changes then. `prompt_missing_connection` is the BUG-024 reroute
+        #: shared with the DDL Explorer, which moves with that lane. The three
+        #: dock/tab callables are gestures `UiShell` has no field for.
+        self._db_ui = CoherenceController(
+            self._shell,
+            self.coherence_panel,
+            parent=self,
+            find_all=self._populate_find_all_results,
+            prompt_missing_connection=self._prompt_missing_connection,
+            show_left_dock=self._show_left_dock,
+            show_audit_dock=self._show_audit_dock,
+            panel_visible=self._coherence_tab_visible,
+        )
+        self.coherence_panel.rename_requested.connect(self._db_ui.on_rename_requested)
+        self.coherence_panel.name_jump_requested.connect(self._db_ui.on_jump_requested)
+        self.coherence_panel.create_requested.connect(self._db_ui.on_create_requested)
 
         self._build_menu_bar()
 
@@ -918,6 +938,24 @@ class MainWindow(QMainWindow):
         if index < 0:
             return
         self.left_tabs.setTabVisible(index, visible)
+
+    # Three dock/tab gestures `UiShell` has no field for, injected into
+    # `CoherenceController` instead: the docks themselves are host furniture,
+    # and exactly one lane needs each of these.
+
+    def _show_left_dock(self) -> None:
+        """Un-hide the left dock. Revealing a left-dock TAB is not enough if a
+        prior action hid the dock that carries it."""
+        self.tree_dock.setVisible(True)
+
+    def _show_audit_dock(self) -> None:
+        """Un-hide the bottom Audit dock, so results just listed are visible."""
+        self.audit_dock.setVisible(True)
+
+    def _coherence_tab_visible(self) -> bool:
+        """Whether the Database/XML Coherence tab is currently visible -- what
+        gates the reparse-driven refresh of an already-open view."""
+        return self.left_tabs.isTabVisible(self.coherence_tab_index)
 
     def _is_light_theme(self) -> bool:
         """`UiShell.is_light_theme` -- the View ▸ Light Theme toggle's state."""
@@ -1397,27 +1435,7 @@ class MainWindow(QMainWindow):
             self._handle_reparse_failure(parse_error)
             return
         self.statusBar().showMessage("Reparsed raw XML into tree", 5000)
-        self._refresh_db_check_if_open(project)
-
-    def _refresh_db_check_if_open(self, project) -> None:
-        """After a reparse, rebuild the coherence tree against the CACHED
-        schema (no re-query) so the open view reflects the edited XML. No-op
-        unless the coherence tab is visible and a run already happened.
-        `project` is the freshly parsed model from _reparse_raw_xml."""
-        if (
-            not self.left_tabs.isTabVisible(self.coherence_tab_index)
-            or self._last_db_schema is None
-        ):
-            return
-        self._populate_db_check(
-            self._last_db_schema,
-            project,
-            self._last_db_summary or "",
-        )
-        self.statusBar().showMessage(
-            "Database/XML Coherence refreshed against the last database snapshot.",
-            4000,
-        )
+        self._db_ui.refresh_if_open(project)
 
     def _handle_reparse_failure(self, exc: PgtpParseError) -> None:
         # Mirror the Tier-1 open-failure pattern (_handle_parse_failure), but
@@ -1626,6 +1644,22 @@ class MainWindow(QMainWindow):
         self._set_dirty(False)
         self.statusBar().showMessage(f"Saved as {Path(path).name}", 5000)
 
+    def _ensure_project_saved(self, save_as: bool = False) -> bool:
+        """`GenerationController`'s save seam: run the project's own Save (or
+        Save As) and answer whether the project now exists on disk.
+
+        The generation lane must not know *how* a project is saved -- it only
+        needs "is the editor's content on disk now?", because the generator
+        reads the `.pgtp` from there. False means there is nothing to generate
+        from (Save As was cancelled). This is the single line a later wave
+        repoints at `PgtpDocumentController`.
+        """
+        if save_as:
+            self._save_project_as()
+        else:
+            self._save_project()
+        return bool(self._current_project_path)
+
     # -- Close / Revert ------------------------------------------------------
 
     def _confirm_close(self) -> str:
@@ -1687,18 +1721,11 @@ class MainWindow(QMainWindow):
         # into the emptied editor.
         self._history.clear()
         self._set_dirty(False)
-        # Coherence results are project-tied (BUG-011, §17): hide the tab,
-        # clear the panel and drop the cached schema/summary so a later
-        # reparse or rename re-run can't act on the closed project's stale
-        # state. Only here on the committed-close path -- a cancelled close
-        # (returns above) must leave the still-open project's tab alone, and
-        # _revert_project keeps the project loaded so it doesn't tear down.
-        self.left_tabs.setTabVisible(self.coherence_tab_index, False)
-        self.coherence_panel.clear()
-        if self._coherence_action is not None:
-            self._coherence_action.setChecked(False)
-        self._last_db_schema = None
-        self._last_db_summary = None
+        # Coherence results are project-tied (BUG-011, §17). Only here on the
+        # committed-close path -- a cancelled close (returns above) must leave
+        # the still-open project's tab alone, and _revert_project keeps the
+        # project loaded so it doesn't tear down.
+        self._db_ui.teardown_for_project_close()
         _log.info("file: close outcome=%s", outcome)
 
     def _revert_project(self) -> None:
@@ -1757,7 +1784,9 @@ class MainWindow(QMainWindow):
         self._build_database_menu()
         self._build_tools_menu()
         self._build_bookmarks_menu()
-        self._build_generation_menu()
+        # The Generation menu is owned outright by the generation lane, so it
+        # builds it -- called from here so the menu keeps its position in the bar.
+        self._gen_ui.build_menu(self.menuBar())
         self._build_help_menu()
 
     def _build_file_menu(self):
@@ -2225,10 +2254,13 @@ class MainWindow(QMainWindow):
         # §17/§26 (FQ-003): ONE checkable toggle, no direction control and no
         # shortcut. It replaced the two "Check: XML → Database" / "Check:
         # Database → XML" items and View ▸ "Find table reference".
-        self._coherence_action = menu.addAction("Database/XML Coherence")
-        self._coherence_action.setCheckable(True)
-        self._coherence_action.setChecked(False)
-        self._coherence_action.toggled.connect(self._on_coherence_toggled)
+        # Created here (this is the Database menu) but OWNED by
+        # `CoherenceController`, which connects it and un-checks it on a failed
+        # or refused run.
+        coherence_action = menu.addAction("Database/XML Coherence")
+        coherence_action.setCheckable(True)
+        coherence_action.setChecked(False)
+        self._db_ui.set_toggle_action(coherence_action)
         menu.addSeparator()
         # DDL Explorer (spec §18.1): checkable toggle, kept in lockstep with
         # the center tab's real visibility via ddl_explorer_visibility_changed
@@ -2296,7 +2328,8 @@ class MainWindow(QMainWindow):
         standalone Connection Setup dialog (unchanged behavior); with a
         §18.2 project open, that dialog is meaningless (BUG-024) -- point the
         user at Project Settings (target/sandbox) instead. Shared by
-        _run_db_check and _open_ddl_explorer, the two internal callers that
+        `CoherenceController.run_check` and _open_ddl_explorer, the two internal
+        callers that
         used to always open Connection Setup on a missing host."""
         if self._ddl_project_folder is not None:
             self.statusBar().showMessage(
@@ -2315,7 +2348,8 @@ class MainWindow(QMainWindow):
         # connection lives in Project Settings (target/sandbox) -- this
         # app-level dialog would be a meaningless, redundant shadow of it.
         # The menu action is already disabled in that state, but internal
-        # callers (_run_db_check, _open_ddl_explorer) also invoke this method
+        # callers (`CoherenceController.run_check`, _open_ddl_explorer) also
+        # invoke this method
         # directly on a missing connection, so guard here too.
         if self._ddl_project_folder is not None:
             self.statusBar().showMessage(
@@ -2767,120 +2801,12 @@ class MainWindow(QMainWindow):
         self._bind_sandbox_controller_to_project()
         self.statusBar().showMessage("Project settings saved.", 5000)
 
-    # -- Database/XML Coherence (§17, FQ-003) ---------------------------------
-
-    def _fetch_db_schema(self, params):
-        """Introspect the database. Injectable seam — tests patch this to return
-        a canned `DatabaseSchema` so no live connection (or psycopg) is needed."""
-        return db_fetch_schema(params)
-
-    def _prompt_rename(self, old):
-        """Ask for a new name (modal QInputDialog). Test seam — patched in tests
-        to bypass the modal. Returns the new name, or None if cancelled."""
-        text, ok = modals.QInputDialog.getText(
-            self,
-            "Rename in XML",
-            f"New name for '{old}' — replaces every matching "
-            "fieldName/tableName occurrence in the file:",
-            text=old,
-        )
-        return text if ok else None
-
-    def _reveal_db_check_tab(self):
-        self.tree_dock.setVisible(True)
-        self.left_tabs.setTabVisible(self.coherence_tab_index, True)
-        self.left_tabs.setCurrentWidget(self.coherence_panel)
-
-    def _populate_db_check(self, schema, project, summary):
-        """Build the coherence tree for `project` against `schema` and show
-        it. Shared by the live run (_run_db_check) and the cached-schema
-        refresh (_refresh_db_check_if_open)."""
-        self.coherence_panel.set_result(
-            build_coherence_tree(project, schema), summary
-        )
-
-    def _uncheck_coherence_action(self):
-        """Un-check the Database-menu toggle after a failed/refused run, so the
-        menu never claims a view is open that is not (the BUG-007 lesson)."""
-        if self._coherence_action is not None and self._coherence_action.isChecked():
-            self._coherence_action.setChecked(False)
-
-    def _on_coherence_toggled(self, checked):
-        """Database ▸ "Database/XML Coherence" (checkable, no shortcut).
-
-        On → fetch the schema and reveal the tab; on any failure the action
-        un-checks itself so the menu never lies about what is on screen.
-        Off → just hide the tab (the cached schema survives, so toggling back
-        on is a fresh, honest re-run rather than a stale redisplay)."""
-        if checked:
-            self._run_db_check()
-        else:
-            self.left_tabs.setTabVisible(self.coherence_tab_index, False)
-
-    def _run_db_check(self):
-        # Compare against a model parsed from the CURRENT buffer, not the
-        # last-parsed self._current_project -- so renames (and any manual edit)
-        # made since the last load are reflected and the reconcile loop
-        # actually resolves. Falls back to no-op with a status message when the
-        # buffer is empty or not valid XML.
-        text = self.center_stage.xml_editor.toPlainText()
-        if not text.strip():
-            self.statusBar().showMessage("Open a project first.", 5000)
-            self._uncheck_coherence_action()
-            return
-        try:
-            project = load_project_from_text(text, source_description="<editor>")
-        except PgtpParseError as exc:
-            self.statusBar().showMessage(
-                f"Database check needs valid XML: {exc}", 8000
-            )
-            self._uncheck_coherence_action()
-            return
-        params = seed_params(project.tree, self._settings)
-        if not params.host:
-            self._uncheck_coherence_action()
-            self._prompt_missing_connection()
-            return
-        # The schema fetch opens a DB connection -- move ONLY that off the GUI
-        # thread. Everything above (buffer parse, seed, guards) is fast and stays
-        # here; the compare + panel population happen in on_result, back on the
-        # GUI thread, so they may safely touch widgets.
-        self.statusBar().showMessage("Checking database…")
-        _log.info("db: coherence check started %s", debuglog.redacted(params))
-
-        def on_result(schema):
-            summary = f"{params.user}@{params.host}:{params.port}/{params.database}"
-            self._last_db_schema = schema
-            self._last_db_summary = summary
-            self._populate_db_check(schema, project, summary)
-            self._reveal_db_check_tab()
-            # Sync the menu's checkmark WITHOUT re-entering the toggle slot:
-            # a plain setChecked here would fire toggled(True) and start a
-            # second fetch (the run can also be entered from the rename
-            # re-run, not only from the menu).
-            if self._coherence_action is not None:
-                blocker = QSignalBlocker(self._coherence_action)
-                self._coherence_action.setChecked(True)
-                del blocker
-            self.statusBar().showMessage("Database/XML Coherence complete.", 3000)
-            _log.info("db: coherence check finished")
-
-        def on_error(exc):
-            _log.info("db: coherence check failed %s", exc)
-            self.statusBar().showMessage(f"Database check failed: {exc}", 8000)
-            self._uncheck_coherence_action()
-
-        self._run_async(
-            lambda: self._fetch_db_schema(params),
-            on_result=on_result,
-            on_error=on_error,
-        )
-
     # -- DDL Explorer (spec §18.1) --------------------------------------------
 
     def _fetch_ddl_schema(self, params):
         """Introspect routines & triggers. Injectable seam — tests patch this
-        to return a canned `DatabaseSchema` (mirrors `_fetch_db_schema`)."""
+        to return a canned `DatabaseSchema` (mirrors
+        `CoherenceController.fetch_schema`)."""
         return fetch_routines_and_triggers(params)
 
     def _on_ddl_explorer_toggled(self, checked):
@@ -3757,165 +3683,6 @@ class MainWindow(QMainWindow):
             "function_name": name,
         }
 
-    def _on_db_rename_requested(self, kind, old):
-        new = self._prompt_rename(old)
-        if not new or new == old:
-            return
-        current = self.center_stage.xml_editor.toPlainText()
-        if kind == "table":
-            updated, count = rename_table(current, old, new)
-        else:
-            updated, count = rename_field(current, old, new)
-        _log.info("db: rename %s -> %s (%d replacements)", old, new, count)
-        # Write through the buffer so the change marks the document dirty and
-        # pushes a snapshot (the editor's textChanged handler does both).
-        self.center_stage.xml_editor.setPlainText(updated)
-        self.statusBar().showMessage(
-            f"Renamed {kind} '{old}' → '{new}' ({count} occurrence(s)).", 5000
-        )
-        # Re-run the coherence check so the rename's effect shows immediately.
-        # Gated on a prior run: without a cached schema there is nothing the
-        # user asked to keep in sync (§17).
-        if self._last_db_schema is not None:
-            self._run_db_check()
-
-    def _on_db_jump_requested(self, kind, name):
-        """Double-click on a DB tree node: list EVERY occurrence of the node's
-        attribute token in the Find-all results panel, select the first one, and
-        seed the Find bar so Find Next / F3 steps through them (reusing the
-        existing Find All + Find Next machinery rather than a one-shot jump)."""
-        # `kind` is the host-facing vocabulary DbCheckPanel established and §17
-        # carried over: a relation is "table". `CoherencePanel` normalizes
-        # "relation" -> "table" on the way out (BUG-032 facet A), and
-        # "relation" is accepted here as well so a future caller emitting the
-        # internal node kind cannot silently reintroduce a fieldName= search
-        # for a table name.
-        is_table = kind in ("table", "relation")
-        token = f'tableName="{name}"' if is_table else f'fieldName="{name}"'
-        editor = self.center_stage.xml_editor
-        if token not in editor.toPlainText():
-            # A genuine miss is now meaningful (it is what an "unreferenced"
-            # relation looks like), so say what was searched and what that
-            # means instead of the bare "not found" that the token bug made
-            # indistinguishable from a malfunction.
-            self.statusBar().showMessage(
-                f"No {token} in the buffer — the XML does not reference {name}.", 5000
-            )
-            return
-        self.center_stage.setCurrentIndex(self.center_stage.raw_xml_tab_index)
-        # Clear any selection so the first Find Next lands on the first match.
-        cursor = editor.textCursor()
-        cursor.setPosition(0)
-        editor.setTextCursor(cursor)
-        # Seed the Find bar so Find Next / F3 step through occurrences of the
-        # token. show_find()'s prefill is a no-op now that the selection is clear.
-        bar = self.center_stage.find_replace_bar
-        bar.set_find_text(token)
-        bar.show_find()
-        # List every occurrence in the bottom panel (reuses Find All), and
-        # reveal the panel in case a prior DB check left it hidden.
-        self._populate_find_all_results(token)
-        self.audit_dock.setVisible(True)
-        # Select the first occurrence; F3 (Find Next) continues from there.
-        bar.find_next()
-        editor.setFocus()
-
-    # -- Create page/detail/lookup from a DB table (SP3) ---------------------
-
-    def _confirm_duplicate_page(self, table_name):
-        """Warn that a page for `table_name` already exists; return True to
-        proceed (with a de-duplicated fileName) or False to cancel. Test seam —
-        patched to bypass the modal."""
-        choice = modals.QMessageBox.question(
-            self,
-            "Page Already Exists",
-            f"A page for '{table_name}' already exists in this project.\n\n"
-            "Create another one anyway (with a de-duplicated fileName)?",
-            modals.QMessageBox.StandardButton.Yes | modals.QMessageBox.StandardButton.No,
-            modals.QMessageBox.StandardButton.No,
-        )
-        return choice == modals.QMessageBox.StandardButton.Yes
-
-    def _on_db_create_requested(self, what, name):
-        """Right-click on a relation node in the coherence view's Tables and
-        Views branch: synthesize a page (insert into the buffer) or a
-        detail/lookup (copy to clipboard)."""
-        schema = self._last_db_schema
-        if schema is None or schema.table(name) is None:
-            self.statusBar().showMessage(
-                f"No schema for '{name}' — run Database/XML Coherence first.", 5000
-            )
-            return
-        try:
-            if what == "page":
-                self._create_page_from_table(schema, name)
-            elif what == "detail":
-                element = table_gen.build_detail(schema, name)
-                self._copy_fragment_to_clipboard(element, "Detail", name)
-            elif what == "lookup":
-                element = table_gen.build_lookup(schema, name)
-                self._copy_fragment_to_clipboard(element, "Lookup", name)
-        except table_gen.GenerationError as exc:
-            self.statusBar().showMessage(f"Could not create {what}: {exc}", 8000)
-
-    def _copy_fragment_to_clipboard(self, element, label, name):
-        text = table_gen.serialize(element, indent=0)
-        QApplication.clipboard().setText(text)
-        self.statusBar().showMessage(
-            f"{label} for '{name}' copied to clipboard — paste it into the "
-            "target page.",
-            6000,
-        )
-
-    def _create_page_from_table(self, schema, name):
-        element = table_gen.build_page(schema, name)
-        buffer = self.center_stage.xml_editor.toPlainText()
-
-        file_name = element.get("fileName")
-        if f'tableName="{name}"' in buffer or f'fileName="{file_name}"' in buffer:
-            if not self._confirm_duplicate_page(name):
-                self.statusBar().showMessage("Page creation cancelled.", 3000)
-                return
-            file_name = self._dedupe_file_name(buffer, file_name)
-            element.set("fileName", file_name)
-
-        updated, insert_line = self._insert_page_before_pages_close(buffer, element)
-        if updated is None:
-            self.statusBar().showMessage(
-                "Could not find </Pages> to insert the new page.", 8000
-            )
-            return
-        self.center_stage.xml_editor.setPlainText(updated)
-        self.center_stage.setCurrentIndex(self.center_stage.raw_xml_tab_index)
-        self.center_stage.xml_editor.navigate_to_line(insert_line)
-        self.center_stage.xml_editor.select_enclosing_block()
-        self.statusBar().showMessage(f"Page for '{name}' added.", 5000)
-
-    @staticmethod
-    def _dedupe_file_name(buffer, file_name):
-        candidate = file_name
-        suffix = 2
-        while f'fileName="{candidate}"' in buffer:
-            candidate = f"{file_name}_{suffix}"
-            suffix += 1
-        return candidate
-
-    @staticmethod
-    def _insert_page_before_pages_close(buffer, element):
-        """Splice a serialized <Page> immediately before </Pages>, indented to
-        match the existing <Page> depth. Returns (new_text, page_open_line) or
-        (None, 0) if </Pages> is absent."""
-        close_index = buffer.rfind("</Pages>")
-        if close_index == -1:
-            return None, 0
-        line_start = buffer.rfind("\n", 0, close_index) + 1
-        close_indent = buffer[line_start:close_index]
-        indent_depth = close_indent.count("\t") + 1  # one level deeper than </Pages>
-        fragment = table_gen.serialize(element, indent=indent_depth)
-        new_text = buffer[:line_start] + fragment + "\n" + buffer[line_start:]
-        page_open_line = buffer.count("\n", 0, line_start) + 1
-        return new_text, page_open_line
-
     def _build_tools_menu(self):
         menu = self.menuBar().addMenu("Tools")
         manage_captions_action = menu.addAction("Manage Captions...")
@@ -3984,360 +3751,6 @@ class MainWindow(QMainWindow):
             lambda: self._active_bookmark_editor().clear_bookmarks()
         )
 
-    def _build_generation_menu(self):
-        menu = self.menuBar().addMenu("Generation")
-        locate_action = menu.addAction("Locate PHP Generator Executable...")
-        locate_action.triggered.connect(self._locate_generator)
-        menu.addSeparator()
-        generate_action = menu.addAction("Generate PHP...")
-        generate_action.triggered.connect(self._generate_php)
-        menu.addSeparator()
-        open_output_action = menu.addAction("Open Output Folder")
-        open_output_action.triggered.connect(self._open_output_folder)
-        menu.addSeparator()
-        locate_pangen_action = menu.addAction("Locate panGen Runtime...")
-        locate_pangen_action.triggered.connect(self._locate_pangen_runtime)
-        pangen_action = menu.addAction("panGen (Generate Own PHP)")
-        pangen_action.triggered.connect(self._pangen)
-        re_phpgen_action = menu.addAction("rePHPgen (Analyze Gap)")
-        re_phpgen_action.triggered.connect(self._re_phpgen_analyze)
-        self._save_rejson_action = menu.addAction("Save reJSON...")
-        self._save_rejson_action.triggered.connect(self._save_rejson)
-        self._save_rejson_action.setEnabled(False)
-
-    def _locate_generator(self) -> None:
-        path, _filter = modals.QFileDialog.getOpenFileName(
-            self, "Locate PHP Generator Executable", "", "Executables (*.exe);;All files (*)"
-        )
-        if not path:
-            return
-        save_executable_path(path, base_dir=self._generator_config_dir)
-        self.statusBar().showMessage(f"PHP Generator set: {Path(path).name}", 5000)
-
-    def _project_output_folder_default(self) -> str:
-        """Prefill for the output-folder dialog: when a local §18.2 project
-        is open, its folder wins ahead of both fallbacks below -- still a
-        prefill, not a silent redirect (the picker itself is unchanged, the
-        user can always choose differently). Otherwise: the project's
-        Project@outputPath if readable, else the directory of the current
-        project file, else ''. Inert in no-project mode (§18.2's "no-project
-        mode is completely unaffected" principle)."""
-        if self._ddl_project_folder is not None:
-            return str(self._ddl_project_folder)
-        project = self._current_project
-        if project is not None and project.tree is not None:
-            root = project.tree.getroot()
-            if root is not None:
-                declared = root.get("outputPath")
-                if declared:
-                    return declared
-        if self._current_project_path:
-            return str(Path(self._current_project_path).parent)
-        return ""
-
-    def _clear_generator_output(self) -> None:
-        """Remove only prior [PHP]-prefixed Audit entries (leave [Find]/[Schema])."""
-        for row in range(self.audit_panel.count() - 1, -1, -1):
-            if self.audit_panel.item(row).text().startswith(_GENERATOR_OUTPUT_PREFIX):
-                self.audit_panel.takeItem(row)
-
-    def _generate_php(self) -> None:
-        # 0. Reject a second run while one is in flight (avoid overlapping
-        # QProcess instances orphaning the first).
-        if self._is_generating:
-            self.statusBar().showMessage("A generation is already in progress.", 5000)
-            return
-
-        # 1. Require an open project (a tracked model or non-empty editor).
-        if self._current_project is None and not self.center_stage.xml_editor.toPlainText().strip():
-            self.statusBar().showMessage("Open a project before generating.", 5000)
-            return
-
-        # 2. Require a configured executable.
-        exe = load_executable_path(base_dir=self._generator_config_dir)
-        if exe is None:
-            modals.QMessageBox.information(
-                self,
-                "Generate PHP",
-                "Locate the PHP Generator executable first (Generation > Locate PHP Generator Executable...).",
-            )
-            return
-
-        # 3. Save vs Save As vs Cancel so on-disk content matches the editor.
-        choice = modals.QMessageBox.question(
-            self,
-            "Save Before Generating",
-            "The generator reads the project from disk. Save the current editor "
-            "contents before generating?",
-            modals.QMessageBox.StandardButton.Save
-            | modals.QMessageBox.StandardButton.SaveAll  # used as the "Save As..." button
-            | modals.QMessageBox.StandardButton.Cancel,
-        )
-        if choice == modals.QMessageBox.StandardButton.Cancel:
-            return
-        if choice == modals.QMessageBox.StandardButton.SaveAll:
-            self._save_project_as()
-        else:
-            self._save_project()  # delegates to Save As when there's no path yet
-        if not self._current_project_path:
-            return  # Save As was cancelled -> nothing on disk to generate from
-
-        # 4. Output folder (prefilled).
-        output_folder = modals.QFileDialog.getExistingDirectory(
-            self, "Select Output Folder", self._project_output_folder_default()
-        )
-        if not output_folder:
-            return
-
-        # 5. Run via the injected runner.
-        self._clear_generator_output()
-        command = build_generate_command(exe, self._current_project_path, output_folder)
-        self._current_output_folder = output_folder
-        self._is_generating = True
-        self.statusBar().showMessage("Generating PHP…")
-        _log.info("generate: started")
-        self._generator_runner.run(
-            command,
-            on_output=self._append_generator_output,
-            on_finished=self._on_generation_finished,
-        )
-
-    def _append_generator_output(self, line: str) -> None:
-        self.audit_panel.addItem(f"{_GENERATOR_OUTPUT_PREFIX}{line}")
-
-    def _on_generation_finished(self, exit_code: int) -> None:
-        _log.info("generate: rc=%s", exit_code)
-        self._is_generating = False
-        self.audit_panel.addItem(f"{_GENERATOR_OUTPUT_PREFIX}Generation finished (exit {exit_code})")
-        if exit_code == 0:
-            modals.QMessageBox.information(self, "Generate PHP", "Generation succeeded.")
-            self.statusBar().showMessage("Generation succeeded", 5000)
-        else:
-            modals.QMessageBox.critical(
-                self,
-                "Generate PHP",
-                f"Generation failed (exit {exit_code}). See the Audit / Problems panel for the generator log.",
-            )
-            self.statusBar().showMessage(f"Generation failed (exit {exit_code})", 5000)
-
-    def _open_output_folder(self) -> None:
-        if not self._current_output_folder:
-            self.statusBar().showMessage("No output folder yet — run Generate PHP first.", 5000)
-            return
-        modals.QDesktopServices.openUrl(QUrl.fromLocalFile(self._current_output_folder))
-
-    # -- panGen / rePHPgen (own generator + gap analysis) --------------------
-
-    def _gap_json_work_path(self) -> Path:
-        """Scratch path for the analyze command's JSON output (next to the
-        generator config, out of the user's project tree)."""
-        return generator_config_path(self._generator_config_dir).parent / "last_gap.json"
-
-    def _re_phpgen_runtime(self) -> tuple[str, str, dict[str, str]] | None:
-        """(python, root, extra_env) or None after showing guidance."""
-        root = load_re_phpgen_root(base_dir=self._generator_config_dir)
-        if not validate_re_phpgen_root(root):
-            modals.QMessageBox.information(
-                self,
-                "panGen",
-                "re_phpgen runtime not found. Set it via "
-                "Generation > Locate panGen Runtime...",
-            )
-            return None
-        python = resolve_re_phpgen_python(root)
-        # Merge-prepend PYTHONPATH: our src first (wins shadowing), user's
-        # pre-existing entries preserved (never clobber their environment).
-        src = str(Path(root) / "src")
-        existing = os.environ.get("PYTHONPATH", "")
-        pythonpath = src + (os.pathsep + existing if existing else "")
-        return python, root, {"PYTHONPATH": pythonpath}
-
-    def _prepare_generation_run(self) -> str | None:
-        """Shared preamble: in-flight guard, open project, save prompt, output
-        folder. Returns the output folder or None. Mirrors _generate_php steps
-        (no vendor-exe check)."""
-        if self._is_generating:
-            self.statusBar().showMessage("A generation is already in progress.", 5000)
-            return None
-        if self._current_project is None and not self.center_stage.xml_editor.toPlainText().strip():
-            self.statusBar().showMessage("Open a project first.", 5000)
-            return None
-        choice = modals.QMessageBox.question(
-            self,
-            "Save Before Running",
-            "panGen reads the project from disk. Save the current editor contents first?",
-            modals.QMessageBox.StandardButton.Save
-            | modals.QMessageBox.StandardButton.SaveAll
-            | modals.QMessageBox.StandardButton.Cancel,
-        )
-        if choice == modals.QMessageBox.StandardButton.Cancel:
-            return None
-        if choice == modals.QMessageBox.StandardButton.SaveAll:
-            self._save_project_as()
-        else:
-            self._save_project()
-        if not self._current_project_path:
-            return None
-        output_folder = modals.QFileDialog.getExistingDirectory(
-            self, "Select Output Folder", self._project_output_folder_default()
-        )
-        return output_folder or None
-
-    def _pangen(self) -> None:
-        runtime = self._re_phpgen_runtime()
-        if runtime is None:
-            return
-        python, root, extra_env = runtime
-        output_folder = self._prepare_generation_run()
-        if output_folder is None:
-            return
-        self._clear_generator_output()
-        self._current_output_folder = output_folder
-        self._is_generating = True
-        self.statusBar().showMessage("panGen: generating…")
-        _log.info("pangen: started")
-        self._generator_runner.run(
-            build_pangen_command(python, self._current_project_path, output_folder),
-            on_output=self._append_generator_output,
-            on_finished=self._on_pangen_finished,
-            cwd=root,
-            extra_env=extra_env,
-        )
-
-    def _on_pangen_finished(self, exit_code: int) -> None:
-        _log.info("pangen: rc=%s", exit_code)
-        self._is_generating = False
-        if exit_code == 0:
-            self.statusBar().showMessage("panGen finished", 5000)
-        else:
-            modals.QMessageBox.warning(
-                self,
-                "panGen",
-                f"panGen failed (exit {exit_code}). See the Audit / Problems panel "
-                "for the generator log.",
-            )
-            self.statusBar().showMessage(f"panGen failed (exit {exit_code})", 5000)
-
-    def _re_phpgen_analyze(self) -> None:
-        runtime = self._re_phpgen_runtime()
-        if runtime is None:
-            return
-        python, root, extra_env = runtime
-        output_folder = self._prepare_generation_run()
-        if output_folder is None:
-            return
-        if Path(output_folder).name == PANGEN_SUBFOLDER:
-            modals.QMessageBox.information(
-                self, "rePHPgen",
-                "This is panGen's own output subfolder — select the folder that "
-                "contains the vendor-generated .php files instead.",
-            )
-            return
-        if not any(Path(output_folder).glob("*.php")):
-            modals.QMessageBox.information(
-                self,
-                "rePHPgen",
-                "No vendor output found in this folder. Generate the project from "
-                "the PHP Generator GUI into this folder first, then run rePHPgen.",
-            )
-            return
-
-        self._clear_generator_output()
-        self._current_output_folder = output_folder
-        self._is_generating = True
-        self._save_rejson_action.setEnabled(False)
-        json_path = self._gap_json_work_path()
-        pgtp = self._current_project_path
-        pangen_command = build_pangen_command(python, pgtp, output_folder)
-        analyze_command = build_analyze_command(python, pgtp, output_folder, str(json_path))
-        self.statusBar().showMessage("rePHPgen: generating…")
-        _log.info("re_phpgen: pangen started")
-
-        def _on_analyze_finished(exit_code: int) -> None:
-            _log.info("re_phpgen: analyze rc=%s", exit_code)
-            self._is_generating = False
-            if exit_code != 0:
-                modals.QMessageBox.warning(
-                    self,
-                    "rePHPgen",
-                    f"Gap analysis failed (exit {exit_code}). See the Audit / "
-                    "Problems panel for the log.",
-                )
-                self.statusBar().showMessage(f"rePHPgen failed (exit {exit_code})", 5000)
-                return
-            self._last_gap_json = json_path
-            self._save_rejson_action.setEnabled(True)
-            summary = summarize_gap_json(json_path)
-            self._append_generator_output(summary.replace("\n", " | "))
-            self.statusBar().showMessage("rePHPgen: gap analysis complete", 5000)
-            modals.QMessageBox.information(self, "rePHPgen — Gap Summary", summary)
-
-        def _on_pangen_done(exit_code: int) -> None:
-            _log.info("re_phpgen: pangen rc=%s", exit_code)
-            if exit_code != 0:
-                self._is_generating = False
-                modals.QMessageBox.warning(
-                    self,
-                    "rePHPgen",
-                    f"panGen failed (exit {exit_code}). See the Audit / Problems "
-                    "panel for the generator log.",
-                )
-                self.statusBar().showMessage(f"rePHPgen failed (exit {exit_code})", 5000)
-                return
-            _log.info("re_phpgen: analyze started")
-            self._generator_runner.run(
-                analyze_command,
-                on_output=self._append_generator_output,
-                on_finished=_on_analyze_finished,
-                cwd=root,
-                extra_env=extra_env,
-            )
-
-        self._generator_runner.run(
-            pangen_command,
-            on_output=self._append_generator_output,
-            on_finished=_on_pangen_done,
-            cwd=root,
-            extra_env=extra_env,
-        )
-
-    def _save_rejson(self) -> None:
-        if self._last_gap_json is None or not Path(self._last_gap_json).is_file():
-            self.statusBar().showMessage("No gap JSON yet — run rePHPgen first.", 5000)
-            return
-        stem = Path(self._current_project_path).stem if self._current_project_path else "project"
-        default_dir = self._current_output_folder or ""
-        path, _filter = modals.QFileDialog.getSaveFileName(
-            self,
-            "Save reJSON",
-            str(Path(default_dir) / f"{stem}_gap.json"),
-            "JSON (*.json)",
-        )
-        if not path:
-            return
-        Path(path).write_text(
-            Path(self._last_gap_json).read_text(encoding="utf-8"), encoding="utf-8"
-        )
-        self.statusBar().showMessage(f"Saved reJSON to {Path(path).name}", 5000)
-
-    def _locate_pangen_runtime(self) -> None:
-        root = modals.QFileDialog.getExistingDirectory(
-            self,
-            "Locate panGen Runtime (re_phpgen repo)",
-            load_re_phpgen_root(base_dir=self._generator_config_dir),
-        )
-        if not root:
-            return
-        if not validate_re_phpgen_root(root):
-            modals.QMessageBox.warning(
-                self,
-                "panGen",
-                "That folder does not look like the re_phpgen repo "
-                "(missing src\\re_phpgen).",
-            )
-            return
-        save_re_phpgen_root(root, base_dir=self._generator_config_dir)
-        self.statusBar().showMessage(f"panGen runtime set: {root}", 5000)
 
     def _build_help_menu(self):
         menu = self.menuBar().addMenu("Help")

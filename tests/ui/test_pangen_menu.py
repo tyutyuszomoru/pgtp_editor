@@ -1,7 +1,7 @@
 """Generation-menu panGen / rePHPgen / Save reJSON actions (Task 8).
 
 Fixture pattern mirrors tests/ui/test_generation.py: a FakeRunner is injected,
-`_generator_config_dir` is a tmp override, and every modal (QMessageBox.*,
+`generator_config_dir` is a tmp override, and every modal (QMessageBox.*,
 QFileDialog.*) is monkeypatched so no test reaches an un-patched modal.
 """
 import json
@@ -71,7 +71,7 @@ def test_pangen_runs_cli_with_command_cwd_and_pythonpath(qtbot, tmp_path):
         "pgtp_editor.ui.modals.QFileDialog.getExistingDirectory",
         return_value=str(out_dir),
     ):
-        window._pangen()
+        window._gen_ui.pangen()
 
     assert len(fake.calls) == 1
     command, cwd, extra_env = fake.calls[0]
@@ -86,14 +86,14 @@ def test_pangen_without_runtime_shows_guidance_and_stops(qtbot, tmp_path):
     _prep_project(window, tmp_path)
 
     with patch("pgtp_editor.ui.modals.QMessageBox.information") as mock_info:
-        window._pangen()
+        window._gen_ui.pangen()
 
     assert mock_info.called
     assert fake.calls == []
 
 
 # --------------------------------------------------------------------------- #
-# 2. _re_phpgen_analyze precondition: no vendor .php -> info + no runs.
+# 2. analyze_gap precondition: no vendor .php -> info + no runs.
 # --------------------------------------------------------------------------- #
 def test_analyze_without_vendor_php_shows_info_and_stops(qtbot, tmp_path):
     window, fake, cfg, root = _configured_window(qtbot, tmp_path)
@@ -110,7 +110,7 @@ def test_analyze_without_vendor_php_shows_info_and_stops(qtbot, tmp_path):
     ), patch(
         "pgtp_editor.ui.modals.QMessageBox.information"
     ) as mock_info:
-        window._re_phpgen_analyze()
+        window._gen_ui.analyze_gap()
 
     assert mock_info.called
     assert "vendor output" in mock_info.call_args.args[2]
@@ -136,7 +136,7 @@ def test_analyze_rejects_pangen_output_folder_as_vendor_baseline(qtbot, tmp_path
     ), patch(
         "pgtp_editor.ui.modals.QMessageBox.information"
     ) as mock_info:
-        window._re_phpgen_analyze()
+        window._gen_ui.analyze_gap()
 
     assert mock_info.called
     assert "panGen's own output" in mock_info.call_args.args[2]
@@ -144,7 +144,7 @@ def test_analyze_rejects_pangen_output_folder_as_vendor_baseline(qtbot, tmp_path
 
 
 # --------------------------------------------------------------------------- #
-# 3. _re_phpgen_analyze happy path + chaining + failure branch.
+# 3. analyze_gap happy path + chaining + failure branch.
 # --------------------------------------------------------------------------- #
 def _valid_gap_json(path):
     path.write_text(
@@ -179,28 +179,28 @@ def test_analyze_chains_pangen_then_analyze_and_summarizes(qtbot, tmp_path):
         "pgtp_editor.ui.modals.QFileDialog.getExistingDirectory",
         return_value=str(out_dir),
     ):
-        window._re_phpgen_analyze()
+        window._gen_ui.analyze_gap()
 
     # First call is pangen.
     assert len(fake.calls) == 1
     assert fake.calls[0][0][3] == "pangen"
-    assert window._save_rejson_action.isEnabled() is False
+    assert window._gen_ui.save_rejson_action.isEnabled() is False
 
     # pangen succeeds -> analyze is launched.
     fake.pending[0](0)
     assert len(fake.calls) == 2
     assert fake.calls[1][0][3] == "analyze"
-    assert window._save_rejson_action.isEnabled() is False
+    assert window._gen_ui.save_rejson_action.isEnabled() is False
 
     # analyze produces a gap JSON at the work path; firing its finished
     # callback summarizes it and enables the save action.
-    _valid_gap_json(window._gap_json_work_path())
+    _valid_gap_json(window._gen_ui.gap_json_work_path())
     with patch("pgtp_editor.ui.modals.QMessageBox.information") as mock_info:
         fake.pending[1](0)
 
-    assert window._is_generating is False
-    assert window._save_rejson_action.isEnabled() is True
-    assert window._last_gap_json == window._gap_json_work_path()
+    assert window._gen_ui.is_generating is False
+    assert window._gen_ui.save_rejson_action.isEnabled() is True
+    assert window._gen_ui.last_gap_json == window._gen_ui.gap_json_work_path()
     assert "pages" in mock_info.call_args.args[2]
 
 
@@ -218,50 +218,50 @@ def test_analyze_pangen_failure_skips_analyze_and_warns(qtbot, tmp_path):
         "pgtp_editor.ui.modals.QFileDialog.getExistingDirectory",
         return_value=str(out_dir),
     ):
-        window._re_phpgen_analyze()
+        window._gen_ui.analyze_gap()
 
     with patch("pgtp_editor.ui.modals.QMessageBox.warning") as mock_warn:
         fake.pending[0](1)
 
     assert mock_warn.called
     assert len(fake.calls) == 1  # no analyze call
-    assert window._is_generating is False
+    assert window._gen_ui.is_generating is False
 
 
 # --------------------------------------------------------------------------- #
-# 4. _save_rejson copies the last gap JSON to the chosen target.
+# 4. save_rejson copies the last gap JSON to the chosen target.
 # --------------------------------------------------------------------------- #
 def test_save_rejson_copies_last_gap_json(qtbot, tmp_path):
     window, fake, cfg, root = _configured_window(qtbot, tmp_path)
     src = tmp_path / "last_gap.json"
     src.write_text('{"summary": {}}', encoding="utf-8")
-    window._last_gap_json = src
+    window._gen_ui.last_gap_json = src
     target = tmp_path / "saved_gap.json"
 
     with patch(
         "pgtp_editor.ui.modals.QFileDialog.getSaveFileName",
         return_value=(str(target), "JSON (*.json)"),
     ):
-        window._save_rejson()
+        window._gen_ui.save_rejson()
 
     assert target.read_text(encoding="utf-8") == '{"summary": {}}'
 
 
 def test_save_rejson_without_gap_json_is_a_noop(qtbot, tmp_path):
     window, fake, cfg, root = _configured_window(qtbot, tmp_path)
-    assert window._last_gap_json is None
+    assert window._gen_ui.last_gap_json is None
 
     with patch(
         "pgtp_editor.ui.modals.QFileDialog.getSaveFileName"
     ) as mock_save:
-        window._save_rejson()
+        window._gen_ui.save_rejson()
 
     assert not mock_save.called
     assert "rePHPgen" in window.statusBar().currentMessage()
 
 
 # --------------------------------------------------------------------------- #
-# 5. _locate_pangen_runtime rejects invalid, accepts valid.
+# 5. locate_pangen_runtime rejects invalid, accepts valid.
 # --------------------------------------------------------------------------- #
 def test_locate_runtime_rejects_invalid_dir(qtbot, tmp_path):
     window, fake, cfg, root = _configured_window(qtbot, tmp_path, with_root=False)
@@ -272,7 +272,7 @@ def test_locate_runtime_rejects_invalid_dir(qtbot, tmp_path):
         "pgtp_editor.ui.modals.QFileDialog.getExistingDirectory",
         return_value=str(bad),
     ), patch("pgtp_editor.ui.modals.QMessageBox.warning") as mock_warn:
-        window._locate_pangen_runtime()
+        window._gen_ui.locate_pangen_runtime()
 
     assert mock_warn.called
     # Nothing valid saved: still the machine default (bad root not persisted).
@@ -287,7 +287,7 @@ def test_locate_runtime_accepts_valid_dir(qtbot, tmp_path):
         "pgtp_editor.ui.modals.QFileDialog.getExistingDirectory",
         return_value=str(root),
     ):
-        window._locate_pangen_runtime()
+        window._gen_ui.locate_pangen_runtime()
 
     assert load_re_phpgen_root(base_dir=cfg) == str(root)
 
@@ -309,7 +309,7 @@ def test_pythonpath_merge_prepends_user_entries(qtbot, tmp_path, monkeypatch):
         "pgtp_editor.ui.modals.QFileDialog.getExistingDirectory",
         return_value=str(out_dir),
     ):
-        window._pangen()
+        window._gen_ui.pangen()
 
     extra_env = fake.calls[0][2]
     assert extra_env["PYTHONPATH"] == str(root / "src") + os.pathsep + r"C:\userlibs"
@@ -338,10 +338,10 @@ def test_generation_menu_has_new_actions(qtbot, tmp_path):
 def test_pangen_blocked_while_generation_in_flight(qtbot, tmp_path):
     window, fake, cfg, root = _configured_window(qtbot, tmp_path)
     _prep_project(window, tmp_path)
-    window._is_generating = True
+    window._gen_ui.is_generating = True
 
     # The in-flight guard fires before any dialog is reached, so nothing to patch.
-    window._pangen()
+    window._gen_ui.pangen()
 
     assert fake.calls == []
     assert "already in progress" in window.statusBar().currentMessage()
@@ -354,7 +354,7 @@ def test_pangen_without_open_project_stops(qtbot, tmp_path):
     window._current_project = None
     window._current_project_path = None
 
-    window._pangen()
+    window._gen_ui.pangen()
 
     assert fake.calls == []
     assert "Open a project first" in window.statusBar().currentMessage()
@@ -370,12 +370,12 @@ def test_pangen_cancel_save_prompt_stops(qtbot, tmp_path):
     ), patch(
         "pgtp_editor.ui.modals.QFileDialog.getExistingDirectory"
     ) as mock_dir:
-        window._pangen()
+        window._gen_ui.pangen()
 
     assert fake.calls == []
     # Cancelling the save prompt short-circuits before the folder dialog.
     assert not mock_dir.called
-    assert window._is_generating is False
+    assert window._gen_ui.is_generating is False
 
 
 def test_pangen_cancel_output_folder_stops(qtbot, tmp_path):
@@ -389,10 +389,10 @@ def test_pangen_cancel_output_folder_stops(qtbot, tmp_path):
         "pgtp_editor.ui.modals.QFileDialog.getExistingDirectory",
         return_value="",  # user cancelled the folder dialog
     ):
-        window._pangen()
+        window._gen_ui.pangen()
 
     assert fake.calls == []
-    assert window._is_generating is False
+    assert window._gen_ui.is_generating is False
 
 
 def test_pangen_saveall_uses_save_as_and_runs(qtbot, tmp_path):
@@ -412,11 +412,12 @@ def test_pangen_saveall_uses_save_as_and_runs(qtbot, tmp_path):
         "pgtp_editor.ui.modals.QFileDialog.getExistingDirectory",
         return_value=str(out_dir),
     ):
-        window._pangen()
+        window._gen_ui.pangen()
 
     assert len(fake.calls) == 1
     command = fake.calls[0][0]
-    # SaveAll routed through _save_project_as, which set the project path used
+    # SaveAll routed through `ensure_saved(save_as=True)` -> the host's
+    # _save_project_as, which set the project path used
     # to build the pangen command.
     assert str(saved_pgtp) in command
     assert saved_pgtp.is_file()
@@ -438,14 +439,14 @@ def test_pangen_nonzero_exit_warns_and_clears_flag(qtbot, tmp_path):
         "pgtp_editor.ui.modals.QFileDialog.getExistingDirectory",
         return_value=str(out_dir),
     ):
-        window._pangen()
+        window._gen_ui.pangen()
 
-    assert window._is_generating is True  # runner is "running"
+    assert window._gen_ui.is_generating is True  # runner is "running"
     with patch("pgtp_editor.ui.modals.QMessageBox.warning") as mock_warn:
         fake.pending[0](3)
 
     assert mock_warn.called
-    assert window._is_generating is False
+    assert window._gen_ui.is_generating is False
     assert "exit 3" in window.statusBar().currentMessage()
 
 
@@ -466,7 +467,7 @@ def test_analyze_step_failure_warns_and_leaves_save_disabled(qtbot, tmp_path):
         "pgtp_editor.ui.modals.QFileDialog.getExistingDirectory",
         return_value=str(out_dir),
     ):
-        window._re_phpgen_analyze()
+        window._gen_ui.analyze_gap()
 
     fake.pending[0](0)  # pangen succeeds -> analyze launched
     assert len(fake.calls) == 2
@@ -474,9 +475,9 @@ def test_analyze_step_failure_warns_and_leaves_save_disabled(qtbot, tmp_path):
         fake.pending[1](2)  # analyze fails
 
     assert mock_warn.called
-    assert window._is_generating is False
-    assert window._save_rejson_action.isEnabled() is False
-    assert window._last_gap_json is None
+    assert window._gen_ui.is_generating is False
+    assert window._gen_ui.save_rejson_action.isEnabled() is False
+    assert window._gen_ui.last_gap_json is None
 
 
 def test_analyze_without_runtime_shows_guidance_and_stops(qtbot, tmp_path):
@@ -484,7 +485,7 @@ def test_analyze_without_runtime_shows_guidance_and_stops(qtbot, tmp_path):
     _prep_project(window, tmp_path)
 
     with patch("pgtp_editor.ui.modals.QMessageBox.information") as mock_info:
-        window._re_phpgen_analyze()
+        window._gen_ui.analyze_gap()
 
     assert mock_info.called
     assert fake.calls == []
@@ -507,14 +508,14 @@ def test_analyze_command_json_matches_work_path(qtbot, tmp_path):
         "pgtp_editor.ui.modals.QFileDialog.getExistingDirectory",
         return_value=str(out_dir),
     ):
-        window._re_phpgen_analyze()
+        window._gen_ui.analyze_gap()
 
     fake.pending[0](0)  # launch analyze
     analyze_cmd = fake.calls[1][0]
     assert analyze_cmd[3] == "analyze"
     # The --json argument is the same file summarize_gap_json / Save reJSON use.
     json_arg = analyze_cmd[analyze_cmd.index("--json") + 1]
-    assert json_arg == str(window._gap_json_work_path())
+    assert json_arg == str(window._gen_ui.gap_json_work_path())
     # --ours is the _pangen sibling of the chosen vendor output folder.
     ours_arg = analyze_cmd[analyze_cmd.index("--ours") + 1]
     assert ours_arg.endswith("_pangen")
@@ -530,13 +531,13 @@ def test_save_rejson_cancel_dialog_writes_nothing(qtbot, tmp_path):
     work.mkdir()
     src = work / "last_gap.json"
     src.write_text('{"summary": {}}', encoding="utf-8")
-    window._last_gap_json = src
+    window._gen_ui.last_gap_json = src
 
     with patch(
         "pgtp_editor.ui.modals.QFileDialog.getSaveFileName",
         return_value=("", ""),  # user cancelled
     ):
-        window._save_rejson()  # must not raise
+        window._gen_ui.save_rejson()  # must not raise
 
     # No target file was written next to the project; source untouched.
     assert list(tmp_path.glob("*_gap.json")) == []
@@ -551,7 +552,7 @@ def test_locate_runtime_cancel_dialog_is_noop(qtbot, tmp_path):
         "pgtp_editor.ui.modals.QFileDialog.getExistingDirectory",
         return_value="",  # cancelled
     ), patch("pgtp_editor.ui.modals.QMessageBox.warning") as mock_warn:
-        window._locate_pangen_runtime()
+        window._gen_ui.locate_pangen_runtime()
 
     assert not mock_warn.called
     assert load_re_phpgen_root(base_dir=cfg) == before
