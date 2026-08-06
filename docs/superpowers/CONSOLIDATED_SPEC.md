@@ -1,6 +1,6 @@
 # PGTP Editor — Consolidated Specification
 
-> **Status:** living document · **Last synthesized:** 2026-08-06 (previously 2026-08-05: §18.8 corrected to the 5-node model, then given its concrete per-node state enumeration + dark-mode asset convention, then a same-day fix to the Quality node's locked/gray semantic and the Sandbox2 install-state-vs-lint-result semantic; later the same day, BUG-020/021/022/023/024/025 folded in — Captions' preset row-predicate filter + active-filter banner + Unify scope prompt, §18.2's Open-Project validity gate + auto-open of the linked `.pgtp`, the tabbed Project Settings dialog, and Connection Setup… becoming projectless-mode-only; later still the same day, §18.1's Tables branch widened to every table (not just trigger-owning ones) plus click-to-Properties-panel column detail, with `ColumnInfo.comment` added; and finally BUG-021/026/027/028 — §18.2's project-action lambda wiring that made the `.pgtp` auto-open actually reachable, §17's role-split `(P# D# L#)` DB→XML counts and any-role mismatch rule, §7's toolbar widened to every menu command with menu-path ids, and §13's active-filter banner extended to the whole-row find filter). **2026-08-06:** FQ-001 folded into §18.2 — per-group Test buttons on the Project Settings dialog's Connections tab (generic connectivity for Target, superuser probe for Sandbox). Same day: the §18.2 project actions' menu location corrected from Database to **File**, matching the shipped `_build_file_menu` (§26, ledger 2026-08-06). Same day: FQ-002 folded in — §18.1 gains "Creating brand-new objects from the Explorer" (Add Trigger… on a table node, one New Function/Procedure… action on the routines-branch root and the Database menu, the shipped pure `db/ddl_skeleton.py` contract, and manifest registration of the new object so the existing §18.3/§18.4 deploy flow sees it), with §18.5 D1 gaining the third (creation) entry point into the same editable tab and two ledger rows (§28). Same day: FQ-003 folded in — §17 gains **the Database/XML Coherence view**, one merged left-dock surface replacing the two DB-check directions *and* §15's standalone Table References tab (direction toggle eliminated on the "DB is always the truth" framing; a recursive, depth-faithful Pages branch; one global mismatch toggle spanning both branches), with §15 reduced to a pointer, §26's View-menu "Find table reference" and the two Database-menu check items replaced by one Database-menu toggle, and two ledger rows (§28). **Same day, a status-accuracy audit against the shipped code** (no design changes): §17's coherence view, §18.1's FQ-002 creation entries, §18.4's formatter *consumer*, §18.6's completion and §18.8's Project Status window were all marked "not yet implemented" while shipping, and are now marked implemented; §18.5 is split honestly into the shipped editor half vs. the unbuilt Apply/sandbox/ladder half; §18.3 is restated as "every module ships, nothing reaches them"; §5's module tree/table, §7's tab & routing notes, §26 and §27 were swept for the same drift. One genuine design narrowing was recorded with a ledger row: §18.3 step 2's deploy blockers are **`*!` only**.
+> **Status:** living document · **Last synthesized:** 2026-08-06 (previously 2026-08-05: §18.8 corrected to the 5-node model, then given its concrete per-node state enumeration + dark-mode asset convention, then a same-day fix to the Quality node's locked/gray semantic and the Sandbox2 install-state-vs-lint-result semantic; later the same day, BUG-020/021/022/023/024/025 folded in — Captions' preset row-predicate filter + active-filter banner + Unify scope prompt, §18.2's Open-Project validity gate + auto-open of the linked `.pgtp`, the tabbed Project Settings dialog, and Connection Setup… becoming projectless-mode-only; later still the same day, §18.1's Tables branch widened to every table (not just trigger-owning ones) plus click-to-Properties-panel column detail, with `ColumnInfo.comment` added; and finally BUG-021/026/027/028 — §18.2's project-action lambda wiring that made the `.pgtp` auto-open actually reachable, §17's role-split `(P# D# L#)` DB→XML counts and any-role mismatch rule, §7's toolbar widened to every menu command with menu-path ids, and §13's active-filter banner extended to the whole-row find filter). **2026-08-06:** FQ-001 folded into §18.2 — per-group Test buttons on the Project Settings dialog's Connections tab (generic connectivity for Target, superuser probe for Sandbox). Same day: the §18.2 project actions' menu location corrected from Database to **File**, matching the shipped `_build_file_menu` (§26, ledger 2026-08-06). Same day: FQ-002 folded in — §18.1 gains "Creating brand-new objects from the Explorer" (Add Trigger… on a table node, one New Function/Procedure… action on the routines-branch root and the Database menu, the shipped pure `db/ddl_skeleton.py` contract, and manifest registration of the new object so the existing §18.3/§18.4 deploy flow sees it), with §18.5 D1 gaining the third (creation) entry point into the same editable tab and two ledger rows (§28). Same day: FQ-003 folded in — §17 gains **the Database/XML Coherence view**, one merged left-dock surface replacing the two DB-check directions *and* §15's standalone Table References tab (direction toggle eliminated on the "DB is always the truth" framing; a recursive, depth-faithful Pages branch; one global mismatch toggle spanning both branches), with §15 reduced to a pointer, §26's View-menu "Find table reference" and the two Database-menu check items replaced by one Database-menu toggle, and two ledger rows (§28). **Same day, a status-accuracy audit against the shipped code** (no design changes): §17's coherence view, §18.1's FQ-002 creation entries, §18.4's formatter *consumer*, §18.6's completion and §18.8's Project Status window were all marked "not yet implemented" while shipping, and are now marked implemented; §18.5 is split honestly into the shipped editor half vs. the unbuilt Apply/sandbox/ladder half; §18.3 is restated as "every module ships, nothing reaches them"; §5's module tree/table, §7's tab & routing notes, §26 and §27 were swept for the same drift. One genuine design narrowing was recorded with a ledger row: §18.3 step 2's deploy blockers are **`*!` only**. **Also 2026-08-06, owner decision — the sandbox becomes *executable*, not merely inspectable:** §18.5 gains **D3a** (the Check gesture's concrete run contract — what `plpgsql_check_function_tb` is invoked with, how the four `plpgsql_check_state` values gate a run, and how findings reach the `[Check]` Audit lines with click-to-navigate) and **D4** (ad-hoc SQL execution against the sandbox — the **Sandbox SQL Console** tab, `db/sandbox_query.py`, `ui/sql_results_panel.py`, a 1 000-row cap, a mandatory statement timeout, and the **sandbox-only, structurally enforced** safety rule). §29's *"Execution against the sandbox … is not designed"* open question is **closed** by that pass; §5/§7/§26/§27/§18.8 updated to match, with five ledger rows (§28).
 > **Source of truth:** this file is the single reconciled specification for PGTP Editor, and the **only**
 > place specification content is written. It was originally synthesized from the dated design specs under
 > [`docs/superpowers/specs/`](specs/) — a folder now **frozen as historical record** (read for rationale;
@@ -36,7 +36,7 @@
     - [18.2 Projects, checkout & state markers](#182-projects-checkout--state-markers) — *implemented (git integration is an explicit TBD placeholder)*
     - [18.3 Deploy workflow & schema diff/migration](#183-deploy-workflow--schema-diffmigration) — *all the pieces ship (diff/migration engine, `db/schema_snapshot.py`, `db/deploy_bundle.py`, `ui/schema_compare_panel.py`); **none are reachable** — no menu entries, no flow driving them*
     - [18.4 SQL/plpgsql selection formatter](#184-sqlplpgsql-selection-formatter) — *implemented, core + consumer: `Ctrl+Alt+F` / context-menu Format Selection in the DDL object editor, `[SQL]` Audit refusals wired*
-    - [18.5 The DDL object editor, apply & sandbox validation](#185-the-ddl-object-editor-apply--sandbox-validation) — *partly implemented: the editable tab, Save/Save As, formatting and completion ship, and as of 2026-08-06 so do **Apply to Sandbox / Apply to Target / "Deploy this edit…"** (`ui/ddl_object_editor.py`, with all four Apply-to-Target preconditions enforced) and the **sandbox session controller** (`ui/sandbox_controller.py`, the host for `db/sandbox.py`'s previously unreachable `open_sandbox`). Still **not** built: the MainWindow wiring that hands the controller's operations to the panel's apply seams (so the affordances are absent in the running app), the validation ladder's per-tier reporting beyond the `[Check]` contract, and the deployment-script generation. The deliverable remains the generated deployment SQL script.*
+    - [18.5 The DDL object editor, apply & sandbox validation](#185-the-ddl-object-editor-apply--sandbox-validation) — *partly implemented: the editable tab, Save/Save As, formatting and completion ship, and as of 2026-08-06 so do **Apply to Sandbox / Apply to Target / "Deploy this edit…"** (`ui/ddl_object_editor.py`, with all four Apply-to-Target preconditions enforced) and the **sandbox session controller** (`ui/sandbox_controller.py`, the host for `db/sandbox.py`'s previously unreachable `open_sandbox`). Still **not** built: the MainWindow wiring that hands the controller's operations to the panel's apply seams (so the affordances are absent in the running app), `db/ddl_check.py` and the validation ladder (D3/**D3a**, the Check run contract settled 2026-08-06), **D4's Sandbox SQL Console** (`db/sandbox_query.py`, `ui/sql_console_panel.py`, `ui/sql_results_panel.py` — ad-hoc sandbox-only SQL execution with a visible result set, settled 2026-08-06), and the deployment-script generation. The deliverable remains the generated deployment SQL script.*
     - [18.6 Schema-aware Ctrl+Space completion in the DDL object editor](#186-schema-aware-ctrlspace-completion-in-the-ddl-object-editor) — *implemented*
     - [18.7 Two live DDL Explorer instances — target vs. sandbox](#187-two-live-ddl-explorer-instances--target-vs-sandbox) — *settled design (2026-08-05), not yet implemented*
     - [18.8 The Project Status window](#188-the-project-status-window) — *implemented (5-node diagram, per-node click-through windows, Database ▸ Project Status…); two affordances deliberately withheld pending §18.5's sandbox lane, and the App node's action window is still the flagged placeholder (§29)*
@@ -230,11 +230,17 @@ pgtp_editor/
 │   ├── ddl_buffer.py  # build_ddl_text(schema) → (text, [DdlObjectSpan]) — DDL Explorer buffer (§18.1)
 │   ├── apply.py       # TARGET DESIGN, does not exist yet — the sole DB **write** seam: apply_ddl(...)
 │   │                  # (explicit commit/rollback, ApplyOutcome); the codebase's first write path (§18.5)
-│   ├── sandbox.py     # PARTIAL — the capability-probe slice ships (SandboxCapabilities/probe/
-│   │                  # ProjectCapabilityStatus/ProjectTier); SandboxSession, open_sandbox,
-│   │                  # build_baseline_sql and the ownership guard are TARGET DESIGN (§18.5)
+│   ├── sandbox.py     # SHIPS, complete for D2/D2a: SandboxCapabilities/probe/ProjectCapabilityStatus/
+│   │                  # ProjectTier, build_baseline_sql, quote_ident, is_app_owned/ForeignDatabaseError/
+│   │                  # open_sandbox/create_sandbox_database, SandboxSession(apply/applied/reset) +
+│   │                  # its SandboxExecutor seam, provision_sandbox, clone_data, install_gate/
+│   │                  # install_plpgsql_check, LocalPostgresBackend (§18.5 D2/D2a)
 │   ├── ddl_check.py   # TARGET DESIGN, does not exist yet — validation-ladder driver: CheckRequest →
-│   │                  # CheckReport{per-tier outcome, [CheckFinding]} (§18.5)
+│   │                  # CheckReport{per-tier outcome, [CheckFinding]}; probe_check/apply_and_check/
+│   │                  # recheck/check_working_set, body_line_offset/map_lineno (§18.5 D3/D3a)
+│   ├── sandbox_query.py # TARGET DESIGN, does not exist yet — ad-hoc sandbox SQL: run_sandbox_query(
+│   │                  # session, sql, …) → QueryResult{columns, rows, truncated, …}, classify_statement,
+│   │                  # QueryError; takes a SandboxSession, never ConnectionParams (§18.5 D4)
 │   ├── ddl_project.py # pure DDL-project paths: object → ddl/*.sql filename (_n overload suffix,
 │   │                  # sanitization), ProjectSettings/settings.json shape, DriftMarkers (§18.2)
 │   ├── ddl_skeleton.py  # pure CREATE-skeleton generation for brand-new objects (FQ-002, §18.1)
@@ -259,6 +265,8 @@ pgtp_editor/
 │   ├── keywords.py    # SQL_KEYWORDS — the ONE dialect source, shared with ui/code_editor.py's highlighter
 │   ├── issues.py      # Issue{message, start, end, start_line/col, end_line/col, fatal} (+ .line alias)
 │   ├── tokenizer.py   # Token + tokenize(text) → list[Token] (verbatim, never raises)
+│   ├── statements.py  # TARGET DESIGN (§18.5 D4) — split_statements(text) over that same tokenizer:
+│   │                  # top-level `;` only, never inside a dollar-quoted body, string or comment
 │   └── formatter.py   # format_selection(text, *, indent_unit="    ") → FormatResult; _Reindenter frame walk
 └── ui/                # all PySide6 widgets (see below)
 ```
@@ -275,6 +283,11 @@ Key `ui/` modules: `main_window.py`, `center_stage.py`, `project_tree.py`, `xml_
 §11/§18.6), `new_trigger_dialog.py` / `new_routine_dialog.py` (FQ-002 creation),
 `schema_compare_panel.py` (§18.3's diff viewer — **built, not yet reachable**),
 `project_status_model.py` / `project_status_panel.py` (§18.8),
+`sandbox_controller.py` (§18.5's sandbox-lifecycle host — **ships**: owns the one `SandboxSession`,
+runs every sandbox operation off the GUI thread through its injectable `self._run_async`, and refuses
+every destructive operation unless the injected `confirm_destructive` approves; it opens no dialog),
+`sql_console_panel.py` / `sql_results_panel.py` (§18.5 D4's Sandbox SQL Console tab and its result grid —
+**target design**),
 `manual_panel.py`, `about.py`, `icons.py`, plus the two off-GUI-thread helpers
 `async_task.py` (`run_async(fn, on_result, on_error=None, pool=None)` — the executor behind MainWindow's
 injectable `self._run_async`) and `busy.py` (`busy_status(status_bar, message)` context manager,
@@ -303,8 +316,8 @@ are therefore enumerated rather than assumed:
 | `db/` module | Qt-free? | Status |
 |---|---|---|
 | `introspect.py`, `compare.py`, `rename.py`, `ddl_buffer.py`, `ddl_project.py`, `ddl_skeleton.py`, `coherence.py`, `schema_index.py`, `schema_diff.py`, `migration_gen.py`, `schema_snapshot.py`, `deploy_bundle.py` | yes (verified — no `PySide6` import in any of them) | implemented (`schema_snapshot.py`/`deploy_bundle.py` have **no caller yet**, §18.3) |
-| `sandbox.py` | yes — **required** | partial: the capability probe ships; the session/provisioning half is target design (§18.5) |
-| `apply.py`, `ddl_check.py` | yes — **required** | target design, do not exist yet (§18.5) |
+| `sandbox.py` | yes (verified — no `PySide6` import) | **implemented in full** for D2/D2a, including `SandboxSession`/`open_sandbox`/`provision_sandbox`/`clone_data`/`install_plpgsql_check` and the `SandboxExecutor` seam. Its UI host is `ui/sandbox_controller.py` (§18.5 D2) |
+| `apply.py`, `ddl_check.py`, `sandbox_query.py` | yes — **required** | target design, do not exist yet (§18.5 D3/D3a/D4) |
 | `config.py` | **no** — `QtCore.QSettings` at module scope | implemented; the one accepted exception |
 
 The arrow points **ui → core, never core → ui**: `sql/` is the live, test-enforced
@@ -393,8 +406,9 @@ non-Raw-XML tabs hidden until invoked). Every one of those is a **fixed** tab, c
 `ddl_tab_index`, …), shown/hidden with `setTabVisible`.
 
 > **Stated invariant — append-only creation, tail-only removal.** Runtime-created tabs (the per-object
-> DDL object editor tabs, §18.5 — **implemented**; and §18.5's read-only deployment-script preview tab,
-> still target design) are
+> DDL object editor tabs, §18.5 — **implemented**; §18.5 D4's single **Sandbox SQL Console** tab, keyed
+> `("sandbox-sql",)` in the same key→widget map so re-invoking focuses the existing one rather than
+> opening a second; and §18.5's read-only deployment-script preview tab, both still target design) are
 > **always appended after the fixed set** (`addTab`, **never** `insertTab`) and removed only from the
 > tail, and are addressed by a **key→widget map**, never a remembered index. This is not a stylistic
 > preference: those **stored fixed indices are load-bearing in five places**, verified in the code —
@@ -424,8 +438,14 @@ quietly annex another's prefix, and no fourth SQL-ish prefix may be added:
 | Prefix | Owner | Reports | State |
 |---|---|---|---|
 | `[SQL]` | §18.4 formatter, hosted by §18.5's tab | **Format Selection refusals** — layout only, no DB involved | **wired** (non-clickable, no line role) |
-| `[Check]` | §18.5 sandbox validation ladder | **SQL/plpgsql validation findings** (`db/ddl_check.py`) | reserved — the ladder is unbuilt |
+| `[Check]` | §18.5 sandbox validation ladder | **SQL/plpgsql validation findings** (`db/ddl_check.py`) on **two channels** — narrative lines (per-tier outcome, caveats, apply/cancel notices; non-clickable) and **findings** (`[Check] SEVERITY line N: message`, line on `UserRole`, the object's `DdlObjectRef.key` on `UserRole+1`, click-to-navigate). A finding whose line could not be mapped (§18.5 D3's mandatory `None`) is rendered **without** a line and **without** roles — never a guessed line | partly wired: `DdlObjectEditorPanel.check_reported` emits the narrative channel today; the findings channel arrives with `db/ddl_check.py` (§18.5 D3a) |
 | `[Lint]` | §22 | **PHP** linting only (`php -l` / `phpcs`) | reserved — §22 is unbuilt |
+
+**No fourth SQL-ish prefix — and §18.5 D4's SQL console deliberately introduces none.** Ad-hoc query
+results, query **errors** and the console's own caveats render **inside the Sandbox SQL Console's own
+result panel** (`ui/sql_results_panel.py`), never in the Audit panel: a query error is not a validation
+finding, and inventing `[Run]`/`[Query]`/`[Exec]` would breach the reservation above. The Audit panel
+keeps exactly the prefixes in this table.
 
 Right dock is the **Properties** panel.
 
@@ -1572,7 +1592,7 @@ golden "freshly-added table" oracle; defaults are corpus-derived and **not yet f
 > | 18.2 Projects, checkout, markers | **Implemented** (git remains an explicit TBD placeholder). |
 > | 18.3 Deploy workflow & schema diff | **Pieces implemented, flow absent.** `db/schema_diff.py`, `db/migration_gen.py`, `db/schema_snapshot.py`, `db/deploy_bundle.py`, `ui/schema_compare_panel.py` all exist and are tested; **nothing reaches any of them** — no menu entries, no caller. |
 > | 18.4 Selection formatter | **Implemented, core + consumer** (`Ctrl+Alt+F` / context menu in the §18.5 tab, `[SQL]` Audit refusals wired). |
-> | 18.5 DDL object editor / apply / sandbox | **Partly implemented.** The editable tab ships; **Apply, `db/apply.py`, the sandbox lane, `db/ddl_check.py`'s ladder, the `[Check]` Audit results and the deployment-script generation do not.** |
+> | 18.5 DDL object editor / apply / sandbox | **Partly implemented.** The editable tab ships, and so do the tab's **Apply to Sandbox / Apply to Target / "Deploy this edit…"** gestures (`ui/ddl_object_editor.py`, all four Apply-to-Target preconditions enforced), the complete Qt-free sandbox layer (`db/sandbox.py`) and its lifecycle host (`ui/sandbox_controller.py`). Still absent: `db/apply.py`, `db/ddl_check.py`'s ladder (so the `[Check]` findings channel, D3a), `db/sandbox_query.py` + the D4 SQL console, the MainWindow wiring that hands the controller's operations to the panel's apply seams, and the deployment-script generation. |
 > | 18.6 Ctrl+Space completion | **Implemented.** |
 > | 18.7 Two DDL Explorer instances | **Not implemented** — still exactly one `BrowserPanel`, one dock tab, one connection. |
 > | 18.8 Project Status window | **Implemented** (Database ▸ Project Status…), with two deliberately withheld buttons and one flagged placeholder — see §18.8. |
@@ -1616,11 +1636,15 @@ golden "freshly-added table" oracle; defaults are corpus-derived and **not yet f
 > **§18.5 is partly implemented.** The editable tab exists and works —
 > `ui/ddl_object_editor.py::DdlObjectEditorPanel`/`DdlObjectRef`, opened by key through
 > `CenterStage.open_ddl_object_tab`, with Save/Save As over the injected `resolve_save_path` seam,
-> Format Selection, and §18.6 completion. **What does not exist is the whole write/validate half**:
-> `db/apply.py` (the codebase's would-be **first DB write path**), any Apply-to-Sandbox / Apply-to-Target
-> gesture, "Deploy this edit…", `db/ddl_check.py`'s validation ladder, the `[Check]` Audit results, and
-> the deployment-script generation. `db/sandbox.py` exists but only as the **capability-probe slice**
-> §18.2 reuses — there is no `SandboxSession`, no `open_sandbox`, and no UI that can create one. The
+> Format Selection, and §18.6 completion — and so do the **Apply to Sandbox / Apply to Target /
+> "Deploy this edit…"** gestures on it, the **whole Qt-free sandbox layer** (`db/sandbox.py`:
+> `SandboxSession`, `open_sandbox`'s ownership gate, `provision_sandbox`, `clone_data`,
+> `install_plpgsql_check`, the `SandboxExecutor` seam) and its UI host `ui/sandbox_controller.py`.
+> **What does not exist is the validate/execute half**: `db/apply.py` (the codebase's would-be **first DB
+> write path**), `db/ddl_check.py`'s validation ladder and its `[Check]` findings channel (D3/D3a),
+> `db/sandbox_query.py` + the **Sandbox SQL Console** (D4), the MainWindow wiring that binds the
+> controller's session to the panel's apply seams (so the affordances are absent in the running app), and
+> the deployment-script generation. The
 > ladder, when built, must reuse the **already-landed** `db/schema_diff.py`/`db/migration_gen.py` (§18.3)
 > rather than building them again. The tab is
 > deliberately **decoupled from §18.2's git project for v1** — no
@@ -1693,7 +1717,7 @@ project's own machine can actually run one (see the capability check below).
 |---|---|---|---|
 | **1** | **Standalone** | No project open. DDL Explorer (§18.1) is browsable — **read-only, permanently** — against any configured connection. No checkout, no editing beyond the read-only buffer, no linting, no deploy. **Database ▸ Connection Setup… is available only in this mode** (BUG-024, below). | A configured DB connection only — zero `.pgtp` files, zero local projects (§18.1's existing "standalone-mode friendly" framing, unchanged) |
 | **2** | **Quality project** | A local project (§18.2) with **no working sandbox** — either the user never configured one, or the local machine doesn't meet the sandbox requirements below (graceful degradation, not an error). Gets: DDL editing (§18.5's object tab), local **Save** + §18.3's batch `deploy.sql` assembly, and **Apply to Target** (direct, confirm-gated deploy to the quality/target database). | A local project folder (§18.2); a `target` connection profile |
-| **3** | **Development project** | A quality project **plus** a working local sandbox: reachable local Postgres, a schema (optionally with data, §18.5 D2a) cloned into it. Gets **everything in quality project mode, plus**: `plpgsql_check` linting (D3 tier 3), `SET plpgsql.extra_warnings` linting (D3 tier 1), sandbox-execution linting (D3 tier 2 — compiles/applies against the sandbox; see the open item below for *running* a routine against sandbox rows, which is separate and not yet designed), **Apply to Sandbox**, the sandbox-scoped second DDL Explorer instance (§18.7), and **Generate Deployment SQL** (§18.5's headline deliverable, which needs the sandbox as its desired-state source). | Everything in tier 2, **plus** a reachable local Postgres superuser connection (§18.2's New Project Test button) |
+| **3** | **Development project** | A quality project **plus** a working local sandbox: reachable local Postgres, a schema (optionally with data, §18.5 D2a) cloned into it. Gets **everything in quality project mode, plus**: `plpgsql_check` linting (D3 tier 3), `SET plpgsql.extra_warnings` linting (D3 tier 1), sandbox-execution linting (D3 tier 2 — compiles/applies against the sandbox), **ad-hoc SQL execution against the sandbox with a visible result set** (§18.5 D4's Sandbox SQL Console — *running* a routine and seeing what it did, settled 2026-08-06, previously the open item), **Apply to Sandbox**, the sandbox-scoped second DDL Explorer instance (§18.7), and **Generate Deployment SQL** (§18.5's headline deliverable, which needs the sandbox as its desired-state source). | Everything in tier 2, **plus** a reachable local Postgres superuser connection (§18.2's New Project Test button) |
 
 - **Tier 1 already matches shipped behavior** (§18.1's "Editing is deliberately NOT hosted here" /
   `EditorPanel` stays read-only permanently) — naming it "standalone" here is a label on existing design,
@@ -3059,9 +3083,9 @@ explicit exclusions below). Clause-level incompleteness is *not* a refusal reaso
 
 ### 18.5 The DDL object editor, apply & sandbox validation
 
-> **Status (audited 2026-08-06): partly implemented — the *editor* half ships, the *apply/validate*
-> half does not.** The v1 carve-outs below pinned exactly this split, and reality now matches them; read
-> the two lists rather than the subsection as a whole.
+> **Status (audited 2026-08-06, re-audited the same day after the Apply/sandbox-controller work landed):
+> partly implemented — the *editor* half and the *apply/sandbox-lifecycle* half ship; the
+> *validate/execute* half does not.**
 >
 > **Ships:**
 > - `ui/ddl_object_editor.py::DdlObjectEditorPanel` + `DdlObjectRef` — the editable single-object tab.
@@ -3075,19 +3099,29 @@ explicit exclusions below). Clause-level incompleteness is *not* a refusal reaso
 > - **Save / Save As** over the injected `resolve_save_path` seam (§18.2's entire hook).
 > - **Format Selection** (`Ctrl+Alt+F` / context menu, §18.4) and **§18.6 Ctrl+Space completion**
 >   (`set_schema_index`, injected per open tab), including the unattached-trigger table picker.
+> - **The tab's Apply gestures and the `[Check]` contract**: `apply_to_sandbox()`/`apply_to_target()`/
+>   **"Deploy this edit…"**, the conditional button row (absent when a seam is unwired — carve-out 2
+>   honoured), all four Apply-to-Target preconditions, `record_check_report`/`last_check_report`/
+>   `text_sha1`/`applied_sha1`, and the duck-typed `CheckReport`/`ApplyOutcome` readers
+>   (`tier_outcomes`/`report_blockers`/`report_unverified`) — the panel imports neither `db/ddl_check.py`
+>   nor `db/apply.py`, by design.
+> - **The whole Qt-free sandbox layer, `db/sandbox.py`** — `SandboxSession` (`apply`/`applied`/`reset`)
+>   and its `SandboxExecutor` seam, `open_sandbox`'s ownership gate, `create_sandbox_database`,
+>   `provision_sandbox`, `build_baseline_sql`, D2a's `clone_data`, `install_gate`/
+>   `install_plpgsql_check`, `LocalPostgresBackend` — **and its UI host**
+>   `ui/sandbox_controller.py::SandboxController`, which owns the one session, runs every operation off
+>   the GUI thread and refuses each destructive one unless the injected `confirm_destructive` approves.
 >
-> **Does not ship — the entire write/validate lane:**
-> - `db/apply.py` — the codebase's would-be **first DB write path**. Absent. There is **no Apply
->   anywhere**: no Apply-to-Sandbox, no Apply-to-Target, no `apply_and_check`, no sandbox button row
->   (carve-out 2's "no dead controls" posture, honoured), and no **"Deploy this edit…"** command.
-> - `db/ddl_check.py` and the **D3 validation ladder**; consequently the **`[Check]` Audit-panel
->   results** are still a contract, not wiring (§18.4's `[SQL]` refusals *are* wired — do not confuse the
->   two prefixes).
-> - **The sandbox lane.** `db/sandbox.py` exists, but only as the **capability-probe slice** §18.2's New
->   Project Test button and §18.8 reuse (`SandboxCapabilities`/`probe`/`ProjectCapabilityStatus`). There
->   is **no `SandboxSession`, no `open_sandbox`, no `build_baseline_sql`, no D2a data clone** — nothing in
->   `pgtp_editor/ui/` can obtain a live session, which is why §18.8's two provisioning buttons are
->   deliberately withheld.
+> **Does not ship — the validate/execute lane:**
+> - `db/apply.py` — the codebase's would-be **first DB write path**, with the notice-capture channel tier
+>   1 depends on. Absent; the panel's `apply_to_target` seam therefore has nothing real behind it yet.
+> - `db/ddl_check.py` and the **D3 validation ladder**; consequently the **`[Check]` findings channel**
+>   (D3a) is still a contract — only the narrative channel (`check_reported`) exists (§18.4's `[SQL]`
+>   refusals *are* wired — do not confuse the two prefixes).
+> - **`db/sandbox_query.py` and the Sandbox SQL Console (D4)** — designed 2026-08-06, nothing built.
+> - **The MainWindow wiring** that constructs the `SandboxController`, opens a session and passes
+>   `apply_to_sandbox`/`apply_to_target`/`live_identity`/the label and confirm seams into each open tab —
+>   without it the button row is absent in the running app even though the panel supports it.
 > - **Generate Deployment SQL — output rank 1 — is not built**, and neither are the Database-menu entries
 >   this subsection specifies.
 >
@@ -3693,8 +3727,18 @@ finding. Provisioning is therefore core, not deferred.
   `caps.is_superuser`; otherwise it returns the exact reason string the UI shows — *"already
   installed."* / *"`CREATE EXTENSION` requires superuser; ask your DBA, or connect the sandbox profile as
   a superuser."* / the platform install text for `absent` (**the app cannot fix that one — it is a C
-  library on disk**) / *"could not probe the server."* The install button lives **inside** the Sandbox
-  Setup dialog next to the probe result it depends on, not as a separate menu item.
+  library on disk**) / *"could not probe the server."*
+
+  > **One action, two entry points — the apparent conflict between §18.5 and §18.8 is resolved this way
+  > (2026-08-06, ledger §28).** There is exactly **one** install action:
+  > `SandboxController.install_plpgsql_check()`, which consults the pure `install_gate` and then calls
+  > `db/sandbox.py::install_plpgsql_check(session)`. Its **primary UI home is Sandbox Setup…**, inside
+  > the dialog, next to the probe result it depends on — never a top-level menu item. §18.8's **Sandbox2
+  > action window** is a **second, equally valid entry point to that same controller method** (wired
+  > through the zero-argument adapter `SandboxController.on_install_plpgsql_check`), not a second
+  > implementation: it re-derives no gate, re-types no reason string and opens no session of its own.
+  > Both surfaces show `install_gate`'s reason verbatim when the gate refuses, and both show the same
+  > *"already installed."* line when there is nothing to do.
 - **Backend interface.** All of this sits behind a Qt-free protocol in `db/sandbox.py` so a managed or
   bundled server can be added later (§29) without the choice leaking into the UI:
 
@@ -3770,9 +3814,11 @@ who wants to run/exercise routines against realistic rows rather than only catal
 - **Everything else about D2/D3 is unaffected.** Ownership-by-naming-convention (`is_app_owned`,
   `open_sandbox`'s single gate), the `applied` working-set bookkeeping table, and the validation ladder
   (D3) apply identically to a with-data sandbox — `plpgsql_check` still reads no rows either way, so the
-  ladder gains no new capability from the presence of data; what data cloning buys is the **separate,
-  not-yet-designed** capability of actually *executing* routines against realistic rows (§29's "Execution
-  against the sandbox" open question), not a new validation tier.
+  ladder gains no new capability from the presence of data; what data cloning buys is the **separate**
+  capability of actually *executing* routines against realistic rows — designed 2026-08-06 as **D4's
+  Sandbox SQL Console**, still a distinct surface and **not** a new validation tier. D4 works against a
+  schema-only sandbox too (you can run anything; there are simply no rows to find), so D2a is what makes
+  it *interesting*, never what makes it *available*.
 
 #### D3 — The validation ladder
 
@@ -3871,6 +3917,283 @@ throwaway `CREATE FUNCTION` inside a rolled-back transaction and let PostgreSQL'
 syntax checker — i.e. tier 0 collapses into tier 2 when a sandbox is available, and is simply reported
 as unavailable when it is not. (§18.4's `format_selection` is **not** a tier: it is a layout formatter
 whose tokenize/balance refusal is not a syntax check and must not be presented as one.)
+
+#### D3a — Running the ladder: the Check gesture's concrete run contract (settled 2026-08-06)
+
+**Owner decision: running `plpgsql_check` against a routine in the sandbox and *getting results back*
+must work — not merely knowing whether the extension is installed.** §18.8's Sandbox2 node reports
+install state and nothing more; this subsection is where the *run* is specified end to end. It adds no
+new tier, no new module and no new prefix: it makes D3's tier 3 concretely invocable, reportable and
+clickable through the seams that already exist.
+
+**What is invoked, and against what.**
+
+| Question | Contract |
+|---|---|
+| Which function | **`plpgsql_check_function_tb`** only — never `plpgsql_check_function` (whose `format` argument would hand back a formatted blob instead of rows) and never `plpgsql_check_all_functions`/`_relations` (whole-database sweeps we neither asked for nor can attribute to a tab). |
+| Call shape | **Named notation, always** (positional order is `other_warnings, performance_warnings, extra_warnings`, *not* the README's), with **`fatal_errors => false`** (else exactly one finding per function) and **`all_warnings => true`** (warnings are off by default). The misspelled **`anyelememttype`** parameter is spelled with the typo verbatim if it is ever passed. `"position"` is **double-quoted** in the select list. |
+| Scope of one run | **Exactly one object — the object the gesture was invoked on** (the active `DdlObjectEditorPanel`'s `DdlObjectRef`). There is no implicit multi-object run: a whole-schema sweep would produce findings nobody asked for, attributable to no tab, and would make the gesture's cost unpredictable. |
+| Working-set sweeps | Specified as a **pure loop, not a second mechanism**: `check_working_set(session, caps, *, recheck=recheck) -> dict[ref, CheckReport]` iterates `SandboxSession.applied()` and calls the same `recheck` entry point per row. It exists for **Generate Deployment SQL**'s future *"is everything in the desired state green?"* question and **gets no menu entry of its own in this pass** — no dead controls, and no second reporting path. |
+| Trigger tabs | Unchanged from D3: **tier 2 is the `CREATE TRIGGER` itself; tier 3 checks the *referenced function* with `relid` set** to the table OID (omitting `relid` errors *"missing trigger relation"*), plus `oldtable => t.tgoldtable, newtable => t.tgnewtable` when the trigger declares transition tables. |
+| OID recovery | D3's `to_regprocedure(format('%s.%s(%s)', …))` primary, with the `xmin = pg_current_xact_id()` in-transaction fallback — the fallback is sandbox-only and **must be confirmed against a live server** before it is relied on (§30's env-gated file). |
+
+**A finding is a `CheckFinding`, and the 11 returned columns map onto it 1:1.**
+`plpgsql_check_function_tb` returns `(functionid regproc, lineno int, statement, sqlstate, message,
+detail, hint, level, "position" int, query, context)`. `db/ddl_check.py::CheckFinding` mirrors and
+extends `validation/tier2.py::ValidationIssue{severity, message, line}` (never widen that type — §18.5's
+reuse map) with `sqlstate`, `level` (plpgsql_check's **raw** level string, kept verbatim), `position`,
+`statement`, `query`, `detail`, `hint`, `context`, the source **tier** that produced it, and the object
+identity. `line` is `map_lineno(buffer_text, lineno)` — **`None` when the dollar-quote opener cannot be
+located, `lineno` is falsy or the result is out of range**, and a `None` line is rendered with no line at
+all (D3; never a guess).
+
+`level → severity` is a fixed, total mapping, applied in exactly one place:
+
+| `level` (raw, preserved) | Audit `SEVERITY` token |
+|---|---|
+| `error` | `ERROR` |
+| `warning`, `warning extra`, `warning performance`, `warning security` | `WARNING` |
+| `compatibility` | `INFO` |
+| anything else (a future level this table does not know) | `WARNING`, and the raw `level` is appended to the message in parentheses — **never dropped, never silently mapped to `INFO`** |
+
+**How findings reach the Audit panel — two channels, and only one of them is clickable.** The shipped
+`DdlObjectEditorPanel` already owns the `[Check]` prefix (`CHECK_PREFIX`, baked into the lines it emits
+so the reservation lives with the feature that owns it) and emits **`check_reported(list[str])`** with
+ready-to-append, already-prefixed lines. That signal is the **narrative channel** and keeps exactly its
+current job:
+
+- one line per tier, **always** — an `unavailable`/`errored` tier is stated, never collapsed into the
+  overall OK state (D3's hard rule);
+- one line per caveat (the baseline's missing extensions/sequences/constraints/defaults/data;
+  `plpgsql_check`'s known blind spots — dynamic `EXECUTE`, `refcursor` fetched into a `record`, runtime
+  temp tables; `recheck`'s stale-buffer warning when the buffer hash differs from `applied.text_sha1`);
+- the apply/cancel/refusal notices the panel already emits.
+
+Narrative lines carry **no line role and are not clickable**, the same treatment `[SQL]` and the `[Find]`
+summary line get.
+
+**Findings move to a second, clickable channel: `check_findings(list)`.** The panel emits the duck-typed
+`CheckFinding` objects (or `(severity, line, message)` triples from a test stub — read by attribute, the
+same duck-typing discipline `tier_outcomes`/`report_blockers` already use), and **`MainWindow` renders
+them**: `"[Check] {SEVERITY} line {N}: {message}"`, the mapped line on `UserRole`, the object's
+`DdlObjectRef.key` on `UserRole+1`, click-to-navigate = focus that object's tab and place the caret on
+that line. A finding with `line is None` is rendered as `"[Check] {SEVERITY}: {message}"` with **neither
+role set**, so it is inert rather than navigating somewhere wrong.
+
+> **This overrides shipped behavior (ledger §28).** `DdlObjectEditorPanel._result_lines` currently folds
+> findings **into** the narrative channel as `"  finding: line N: message"` strings. That was the right
+> placeholder while `db/ddl_check.py` did not exist, but a pre-formatted string cannot carry the
+> `UserRole` line and `UserRole+1` target that the reuse map's click-to-navigate contract requires, and
+> the reuse map is explicit that this feature adds **no new diagnostics panel** — so the navigation has
+> to live on the existing Audit item roles. When `db/ddl_check.py` lands, `_result_lines` stops emitting
+> `finding:` lines and the panel emits them on `check_findings` instead. Tier lines, caveats and the
+> `ok is False` summary stay exactly where they are.
+
+**How the four `plpgsql_check_state` values gate a run — a run is never a silent no-op.** Tier 3's
+availability is derived **only** from `SandboxCapabilities` (the `PostgresBackend.capabilities()`
+contract), never from a bare `try: … except: assume absent`:
+
+| `plpgsql_check_state` | Tier 3 outcome | What the user sees |
+|---|---|---|
+| `installed` | runs; `passed` or `found_issues` | the findings, plus the blind-spots caveat |
+| `installable` | **`unavailable`** with `install_gate`'s reason | `[Check] tier3: unavailable — plpgsql_check is available on this server but not installed in this sandbox.` **plus** a line naming the one-click install and where it lives (*"Install it from Database ▸ Sandbox Setup…, or the Project Status window's plpgsql_check node."*). When `install_gate` refuses because the connection is not a superuser, its exact `CREATE EXTENSION requires superuser` sentence is shown instead — never re-typed |
+| `absent` | **`unavailable`** | `install_gate`'s platform-install text **verbatim** — the extension is a C library on disk and **the app cannot fix it**; the message says so and names the `apt`/`dnf` packages (§18.5's `plpgsql_check` integration specifics) |
+| `unknown` | **`unavailable`** | *"could not probe the server."* — **never** degraded to `absent`, because "could not check" and "genuinely not there" are different facts (D2) |
+
+In all three non-`installed` cases **tiers 1 and 2 still run** and their outcomes are reported normally:
+losing tier 3 costs the semantic analysis, not the compile check. The overall report is **not green** in
+any of them, and the only way past is Apply-to-target's precondition-2 override, which **enumerates
+exactly which tiers could not be checked and why** (`report_unverified`) rather than offering a generic
+"proceed anyway".
+
+**When the gesture itself is unavailable.** With **no live `SandboxSession`** there is no Check gesture at
+all — no button, no enabled menu item (carve-out 2's "no dead controls", the same posture as the
+absent apply row). The user's path back is stated where the absence is visible: **Database ▸ Sandbox
+Setup…**, or the Project Status window (§18.8), whose Sandbox node names the specific degradation
+(`ProjectCapabilityStatus.degraded_reason`, never a bare "sandbox unavailable"). **A missing sandbox is
+never reported as a clean check.**
+
+**Where the run happens.** `db/ddl_check.py` is Qt-free and opens no connection: it composes the
+statement list and hands it to **`db/apply.py::apply_ddl`** (the ladder is necessarily *one* call —
+`SET plpgsql.extra_*` → the DDL → the `plpgsql_check_function_tb` SELECT must share one
+session/transaction), with `ApplyOutcome.statement_index` doing the tier attribution so a failure *in the
+check call* is never reported as *"your DDL is broken"*. The **UI host is
+`ui/sandbox_controller.py`**, which already owns the session and the off-GUI-thread seam: the ladder
+gestures join `SandboxOperation` as `CHECK` (non-destructive — no `confirm_destructive` prompt) and
+report through the same `SandboxOperationResult`/`operation_finished` path as every other sandbox
+operation. The panel keeps knowing nothing: it calls its injected `apply_to_sandbox(ref, text)` seam and
+records whatever report comes back (`record_check_report`, keyed by `text_sha1`).
+
+#### D4 — Ad-hoc SQL execution against the sandbox: the Sandbox SQL Console (settled 2026-08-06)
+
+**Owner decision, closing §29's *"running a function and seeing its results is not designed"*.** It is
+*"the difference between a validator and an IDE"*, and the sandbox is what makes it safe in a way DBeaver
+cannot: the sandbox is **disposable and resettable**, and that single property is the whole argument for
+allowing execution here — and the whole reason the boundary below is where it is.
+
+##### The safety boundary — read this first, because an implementer will otherwise generalize it
+
+**Ad-hoc SQL execution is sandbox-only. It may never target the production/target database — not behind a
+confirmation, not behind a preference, not behind a typed database name, not "read-only queries only".**
+
+- **The boundary is structural, not procedural.** `db/sandbox_query.py::run_sandbox_query` takes a
+  **`SandboxSession`**, never a `ConnectionParams`. A session exists only through `open_sandbox`, the
+  single ownership gate, so an ad-hoc statement can only ever reach a database whose name carries
+  `pgtp_sandbox_` **and** whose `pg_database` comment carries `pgtp-editor-sandbox:` — a database this app
+  created and can wipe with `reset()`. **There is no free function that runs arbitrary SQL against
+  arbitrary `ConnectionParams`, by design** — exactly the sentence `install_plpgsql_check(session)`
+  already carries, and for the same reason.
+- **Why this is compatible with §18.3's never-auto-execute non-goal, rather than a hole in it.** That
+  non-goal is about **automatic** and **unreviewed** execution. Ad-hoc SQL is neither: the user typed it
+  and pressed Run. What separates it from Apply-to-Target is not deliberateness — Apply is deliberate too
+  — it is **reversibility**. Apply-to-Target has *no revert snapshot* (precondition 3): a
+  successful-but-wrong statement against production cannot be undone from inside the app. A
+  successful-but-wrong statement against the sandbox is undone by **Reset Sandbox**. That asymmetry *is*
+  the rule; it is not a judgement about how careful the user is.
+- **Consequently the console is absent, not disabled, without a live sandbox session** (§18.5 carve-out
+  2 / §18.7's posture), and there is **no "run against target" affordance anywhere — not even a disabled
+  one**. Adding one would require a spec change here and a Supersession Ledger row; an implementer must
+  not add it as a convenience.
+- **A read-only production query surface is a different feature and is not authorized by this
+  subsection.** It is neither designed nor implied (§29).
+
+##### Where the user types it
+
+**One new dynamic center tab — the Sandbox SQL Console** (`ui/sql_console_panel.py::SqlConsolePanel`),
+appended after `CenterStage`'s fixed set and keyed `("sandbox-sql",)` in the same key→widget map the
+per-object tabs use (§7): **single-instance** — re-invoking the command focuses the existing tab rather
+than opening a second console. A `QSplitter` with:
+
+- **top:** `ui/code_editor.py::CodeEditor(language="sql")` — the same editor, the same SQL highlighter
+  (`sql/keywords.py`'s one dialect source), the same gutter mixin. §18.6's `SchemaIndex` completion is
+  injected the same way it is into an object tab, so Ctrl+Space works here too. §18.4's **Format
+  Selection** (`Ctrl+Alt+F`) is available here on the same selection-only terms — its host set widens
+  from one tab to two, with no change to the formatter.
+- **bottom:** `ui/sql_results_panel.py::SqlResultsPanel` — the result grid, plus a one-line **status
+  strip** (rows returned, truncation notice, elapsed ms, and each executed statement's command status).
+
+**Rejected: a second bottom dock beside Audit.** The Audit dock is one shared `QListWidget` and a result
+set is not a list; a second bottom dock would compete with it for vertical space; and the results belong
+to the console that produced them, so they live with it. **Rejected: making the DDL object editor
+executable.** One execution surface only. The object tab instead gains one context-menu bridge —
+**"Run in Sandbox Console"**, which **copies the selection into the console tab and focuses it, without
+executing anything**. No second execution path, no second confirmation surface.
+
+##### What a result set is, as data — `db/sandbox_query.py` (Qt-free, opens no connection)
+
+```
+QueryResult{columns: tuple[str, ...], rows: list[tuple], truncated: bool, row_limit: int,
+            command_status: str | None, duration_ms: int | None, statement: str,
+            error: QueryError | None}
+QueryError{sqlstate, message, detail, hint, position, line}
+```
+
+- **`QueryError`'s field names are deliberately `ApplyOutcome`'s and `CheckFinding`'s**, so a failed
+  query, a failed apply and a validation finding render identically and share one formatting helper —
+  the same pattern-extension discipline §18.4 set with `xsd_verify.Issue`.
+- `line` is derived from `position` exactly as D3 does for tier-2 failures — `position` is a character
+  offset into the statement we sent, which **is** the buffer, so
+  `line = statement.count("\n", 0, position) + 1` is exact. No `map_lineno` is involved: there is no
+  `prosrc`/`pg_get_functiondef` offset here.
+- **`truncated` is a first-class field, never inferred from `len(rows) == row_limit`.** A result that is
+  exactly at the cap and a result that was cut off must be distinguishable — reporting a truncated set as
+  complete is precisely the silent-wrong-result class this project refuses.
+- `command_status` carries PostgreSQL's own tag (`SELECT 100`, `UPDATE 3`, `CREATE FUNCTION`) so a
+  statement that returns no rows still reports **what it did**, rather than an empty grid.
+
+**Row cap — pick one and state it: `DEFAULT_ROW_LIMIT = 1000`.** An unbounded `SELECT *` over a
+production-sized table cloned by D2a would freeze or OOM the app, and a model/grid holding a million
+tuples is unusable anyway. The cap is user-adjustable in the console's own spin box, bounded by
+`MAX_ROW_LIMIT = 100_000`; **there is no "unlimited" option.**
+
+- **Enforcement is client-side and exact:** fetch `row_limit + 1` rows (`cursor.fetchmany`); if the extra
+  row came back, set `truncated=True` and drop it. **Never** by rewriting the user's SQL into
+  `SELECT * FROM (…) LIMIT n` — arbitrary input includes multi-statement text, `DO` blocks and DDL, and
+  a rewrite would either fail on them or change their meaning.
+- **Truncation is stated in the UI, not implied by a short grid**: the status strip reads
+  *"first 1 000 of more rows — raise the row limit or add your own LIMIT."*
+
+**The execution seam is the one that already exists.** `run_sandbox_query` runs through
+**`SandboxSession.executor`** — the `SandboxExecutor` protocol `db/sandbox.py` already defines and
+`SandboxSession.apply`/`applied` already use. It is **not** a fourth connection-opening function, and
+`db/sandbox_query.py` itself imports no driver. The protocol gains **one** method, mirroring the guard
+`apply_ddl` needs for the same reason:
+
+```
+fetch(params, sql, *, row_limit: int, statement_timeout_ms: int) -> FetchResult
+    # FetchResult{columns, rows, truncated, command_status}
+```
+
+`_RealSandboxExecutor.fetch` opens one connection (lazy psycopg import, as everywhere else), issues
+`SET LOCAL statement_timeout = '<ms>ms'`, executes, **guards on `cursor.description is None`** (psycopg 3
+raises `ProgrammingError` on `fetchall()` after a non-row-returning statement) and returns an empty row
+list with the command status for those, `fetchmany(row_limit + 1)` for the rest. Tests inject a fake
+executor and never touch a server.
+
+##### Multiple statements, transactions, and what commits
+
+- **The Run gesture executes the selection if there is one, otherwise the whole buffer**, split into
+  statements by the new pure `sql/statements.py::split_statements(text)`, built on §18.4's **existing
+  tokenizer** (verified: `sql/tokenizer.py` already recognizes dollar-quoted bodies with tags, strings,
+  quoted identifiers and both comment forms as single opaque tokens) so a `;` inside a `$$ … $$` routine
+  body, a string or a comment **never** splits a statement. This is reuse, not a second SQL scanner.
+- **All statements of one Run execute in order inside one transaction, which commits.** The grid shows
+  the **last row-returning** statement's result; every statement's `command_status` is listed in the
+  status strip. A failure aborts the run at that statement, rolls the whole transaction back, and reports
+  the `QueryError` with the failing statement's index and text — partial application of a multi-statement
+  Run is never left behind silently.
+- **Yes, it commits — and that is the point.** *"Run my procedure and see what it did to the rows"* is
+  unanswerable under a forced rollback, and the sandbox is the accumulating desired state (D2), not a
+  scratch pad. The counterweight is the reversibility argument above, not a rollback.
+- **Object-changing statements are surfaced, because they can desync the working set.** The pure
+  `classify_statement(sql) -> "read" | "write" | "ddl" | "unknown"` (leading-keyword based, deliberately
+  conservative) gates one confirmation: when any statement in the Run classifies as `ddl` **or**
+  `unknown`, the console asks first — *"This Run changes objects in the sandbox. The sandbox's applied
+  working set (and what your open tabs believe is applied) may no longer match. Reset Sandbox
+  re-establishes a known state."* — with a **"don't ask again for this sandbox session"** checkbox. The
+  confirmation is an **injected `confirm` seam**, exactly like every Apply confirmation, so a test can
+  never reach a modal (§30). `unknown` is treated as `ddl` and the prompt says the classifier could not
+  tell: an unclassifiable statement is never waved through as harmless.
+- **The console never writes the `pgtp_editor_sandbox.applied` bookkeeping table.** That table records
+  what **Apply to Sandbox** put there; an ad-hoc `CREATE OR REPLACE` is not an apply and must not
+  masquerade as one. The divergence it can cause is surfaced (above), never papered over.
+
+##### Long-running statements, and the honest gap
+
+- **Everything runs off the GUI thread**, through `SandboxController` (`self._run_async` +
+  `ui/busy.py::busy_status`) — the console opens nothing itself and blocks the event loop never. Run is
+  disabled while a Run is in flight.
+- **A statement timeout is mandatory, and it is the primary control**:
+  `DEFAULT_STATEMENT_TIMEOUT_MS = 30_000`, adjustable in the console with a **minimum of 1 000 ms and no
+  "unlimited" setting**. A timeout comes back as a named `QueryError` (sqlstate `57014`) reading
+  *"statement cancelled: exceeded the console's statement timeout of N s — raise the timeout or narrow
+  the query"* — never a hang and never a bare stack trace.
+- **Stated gap: there is no in-app Cancel button in v1.** Cancelling a running statement needs
+  `connection.cancel()` on a handle held by another thread, and `SandboxExecutor` implementations open
+  **one connection per call** and close it themselves — there is no reusable handle to cancel. Saying so
+  is better than a button that does nothing. Recorded as open (§29); revisit if a persistent-connection
+  executor ever lands.
+
+##### Reporting, and the prefix that is deliberately not created
+
+Results, errors, truncation notices and the object-change caveat render **in the console's own
+`SqlResultsPanel`**, never in the Audit panel. A query error is not a validation finding, and §7's
+three-way prefix reservation forbids a fourth SQL-ish prefix — **do not add `[Run]`, `[Query]` or
+`[Exec]`.** The only thing the console ever puts in the Audit panel is nothing at all.
+
+##### Reuse map for D4 — what this builds on rather than duplicates
+
+| Need | Existing thing to reuse |
+|---|---|
+| Session, ownership gate, execution | `db/sandbox.py::SandboxSession` + its `SandboxExecutor` (one new `fetch` method) — **never** a new connection-opening function |
+| Session lifecycle, off-thread work, failure reporting | `ui/sandbox_controller.py` (`self._run_async`, `SandboxOperationResult`, `operation_finished`) — the console holds no session |
+| Editor, highlighter, gutter | `ui/code_editor.py::CodeEditor(language="sql")` + `ui/editor_gutter.py` |
+| Statement splitting | `sql/tokenizer.py` via the new pure `sql/statements.py` — **no second SQL scanner** |
+| Completion / formatting in the console | §18.6's injected `SchemaIndex`; §18.4's `format_selection` (`Ctrl+Alt+F`), both unchanged |
+| Diagnostic record shape | `ApplyOutcome`/`CheckFinding`'s field names (`sqlstate`/`message`/`detail`/`hint`/`position`) |
+| Dynamic tab hosting | `CenterStage`'s key→widget map + §7's append-only/tail-only invariant |
+| Confirmation | the injected `confirm(title, text) -> bool` seam the Apply gestures already use |
+| Busy state | `ui/busy.py::busy_status` |
 
 #### Generate Deployment SQL — the deliverable (output rank 1)
 
@@ -4104,12 +4427,23 @@ covers only plpgsql routines, i.e. exactly the ones that need no ordering.
 
 #### Invariants this feature must conform to
 
-1. **Two seams, one direction each:** `db/introspect.py::run_queries` stays the sole **read** seam and
-   stays read-only; `db/apply.py::apply_ddl` is the sole **write** seam. Every new path takes
-   `runner: Runner = run_queries` / `applier: Applier = apply_ddl` so the whole suite runs without
-   psycopg importable. Never a third connection-opening function.
+1. **Three connection-opening seams, each with one job, and never a fourth** *(corrected 2026-08-06 —
+   the earlier "two seams" statement did not account for the sandbox executor that has since shipped;
+   ledger §28)*:
+   - `db/introspect.py::run_queries` — the sole **read** seam, read-only, never widened (no
+     `autocommit=`, no commit path, not "just this one DDL statement"), so *"does this code write to the
+     database?"* stays answerable by **which function is called**, statically.
+   - `db/apply.py::apply_ddl` — the sole **write** seam for DDL applied to *either* database, with the
+     mixed-statement `cursor.description is None` guard and the notice-capture channel.
+   - `db/sandbox.py::SandboxExecutor` (`execute`/`query`/`fetch`) — the **sandbox lane's** execution
+     seam, reachable only through an ownership-gated `SandboxSession`; `SandboxSession.apply`/`applied`/
+     `reset`, `install_plpgsql_check` and D4's `run_sandbox_query` all go through it and nothing else
+     does. Its narrowness *is* the safety property (D4).
+
+   Every new path takes `runner: Runner = run_queries` / `applier: Applier = apply_ddl` / an injected
+   `executor`, so the whole suite runs without psycopg importable.
 2. Every module this feature adds under `db/` — `apply.py`, `sandbox.py`, `ddl_check.py`,
-   `schema_diff.py`, `migration_gen.py` — and `validation/` stay **Qt-free**; only `ui/` imports PySide6
+   `sandbox_query.py`, `schema_diff.py`, `migration_gen.py` — and `validation/` stay **Qt-free**; only `ui/` imports PySide6
    (§5). The one pre-existing exception, `db/config.py`'s module-scope `QSettings`, is **not** to be
    "fixed" by inventing a second store (§5/§17).
 3. Every connection-opening call runs **off the GUI thread** (`self._run_async`) with busy state
@@ -4121,12 +4455,19 @@ covers only plpgsql routines, i.e. exactly the ones that need no ordering.
 6. The byte-for-byte `.pgtp` round-trip (§2) is untouched — **this feature never writes the project
    file**, and works with zero `.pgtp` files open (§18's standalone mode).
 7. Tests mirror the package layout (`tests/db/test_apply.py`, `tests/db/test_sandbox.py`,
-   `tests/db/test_ddl_check.py`, `tests/db/test_schema_diff.py`, `tests/db/test_migration_gen.py`,
-   `tests/ui/test_ddl_object_editor.py`); dialogs use `show()`, never `.exec()`; context menus are built
+   `tests/db/test_ddl_check.py`, `tests/db/test_sandbox_query.py`, `tests/sql/test_statements.py`,
+   `tests/db/test_schema_diff.py`, `tests/db/test_migration_gen.py`,
+   `tests/ui/test_ddl_object_editor.py`, `tests/ui/test_sandbox_controller.py`,
+   `tests/ui/test_sql_console_panel.py`, `tests/ui/test_sql_results_panel.py`);
+   dialogs use `show()`, never `.exec()`; context menus are built
    by a `_context_menu_for(item) -> QMenu | None` helper the test can trigger **without** `exec()`; no
    un-patched modal (§30). **Every Apply confirmation is a test seam** (an injectable `confirm=`
    callable, the `_confirm_close()` precedent) — a test must never be able to reach a real
-   apply-to-target prompt, and must never be able to execute DDL by accident.
+   apply-to-target prompt, and must never be able to execute DDL by accident. **D4's console is held to
+   the same standard**: its object-change confirmation is the same injected `confirm` seam, and
+   `run_sandbox_query` is driven by a fake `SandboxExecutor` in every test — a test must never be able to
+   execute arbitrary SQL against anything real. There is deliberately **no test path that constructs a
+   query against `ConnectionParams`**, because no such API exists.
 8. **No live PostgreSQL in the default suite.** Every DB path takes `runner=`/`applier=` and is driven by
    a fake, exactly as `tests/db/test_introspect.py` does today; `db/sandbox.py`'s pure predicates
    (`is_app_owned`, `install_gate`, `build_baseline_sql`) and both diff/generation modules are tested
@@ -4139,7 +4480,9 @@ covers only plpgsql routines, i.e. exactly the ones that need no ordering.
    requirement; the `xmin = pg_current_xact_id()` OID-recovery fallback; that `CREATE DATABASE` requires
    autocommit and schema-level reset works with a live connection open; and the two ordering claims —
    that a plpgsql body calling a nonexistent function **creates fine**, and that the same is **not** true
-   for a `LANGUAGE sql` function.
+   for a `LANGUAGE sql` function. **Added for D4:** that `SET LOCAL statement_timeout` actually cancels a
+   long statement and surfaces sqlstate **`57014`**, and that `fetchmany(row_limit + 1)` distinguishes a
+   result exactly at the cap from a truncated one.
 9. **`CenterStage`'s append-only / tail-only dynamic-tab invariant (§7) has a mandatory regression test**
    — this feature is the first to create runtime tabs, and five existing call sites depend on the fixed
    indices staying put.
@@ -4382,11 +4725,14 @@ mid-session (an open question, below).
 > 1. **Sandbox1's "run/redo data clone" button is not offered**, and
 > 2. **Sandbox2's "install plpgsql_check" button is not offered** — the panel accepts both as injected
 >    callbacks (`on_run_data_clone`, `on_install_plpgsql_check`) and **hides any affordance whose callback
->    is `None`**, and `MainWindow` passes `None` for both on purpose: each needs a live `SandboxSession`,
->    which only `open_sandbox` can create and which **no UI can create today** because §18.5's sandbox
->    lane is unbuilt. Those two windows are therefore status-only for now. This is the same "no dead
->    controls" posture as §18.5 carve-out 2, not an omission — wiring them is part of §18.5's sandbox
->    lane, not of this subsection.
+>    is `None`**, and `MainWindow` still passes `None` for both. **The reason has narrowed (2026-08-06):**
+>    `ui/sandbox_controller.py::SandboxController` now ships and exposes exactly the two zero-argument
+>    adapters these callbacks want (`on_run_data_clone` / `on_install_plpgsql_check`), each delegating to
+>    `db/sandbox.py` and each already off-thread and confirmation-gated. What is still missing is only the
+>    **MainWindow wiring** that constructs the controller, opens a session and passes those two bound
+>    methods in. Until that lands the two windows stay status-only — the same "no dead controls" posture
+>    as §18.5 carve-out 2. Sandbox2's button is **not** a second install action: it is one of two entry
+>    points to the single one specified in §18.5 D2 (the other being Sandbox Setup…, the primary home).
 > 3. **The App node's action window remains the deliberate placeholder** this subsection already flags as
 >    open in §29: it states the tier plainly (`_APP_TIER_TEXT`) and offers no action. What the App node
 >    should *do* is still undesigned.
@@ -4586,7 +4932,8 @@ one uniform "opens an action window":**
 | Probe trigger | `MainWindow.refresh_project_capability_status()` — called again on this window's open, exactly as it already is on project open |
 | Data-fill state (Sandbox1) | `db/sandbox.py::SandboxMode` (`SCHEMA_ONLY`/`WITH_DATA`) + D2a's clone outcome |
 | plpgsql_check install state (Sandbox2) | `SandboxCapabilities.plpgsql_check_state` — **flagged mismatch:** this property already returns exactly the right *kind* of fact (installed vs. not, never a lint result), confirmed by its own docstring and by `install_plpgsql_check(session)` (§18.5 D2) being the same `CREATE EXTENSION IF NOT EXISTS plpgsql_check` action this node's button fires. But it is **4-valued** (`"installed"` / `"installable"` / `"absent"` / `"unknown"`), while this node has only **2** icons (`sandbox2_plpgsql_check_installed` / `sandbox2_plpgsql_check_not_installed`). The rendering logic must collapse `"installable"`/`"absent"`/`"unknown"` onto the single `not_installed` icon (all three mean "not installed," just for different reasons — extension available-but-uninstalled, unavailable, or probe-failed) — this collapse is not yet owner-confirmed and is left as an implementation detail rather than a further open design question, since the 2-icon set leaves no room for a 4th visual state |
-| Install action (Sandbox2) | `install_plpgsql_check(session)` (§18.5 D2) — the same one-click `CREATE EXTENSION IF NOT EXISTS plpgsql_check`, reachable both from Sandbox Setup and from this window's Sandbox2 action button |
+| Install action (Sandbox2) | **One action, two entry points** (settled 2026-08-06, §18.5 D2, ledger §28): `SandboxController.install_plpgsql_check()` → `install_gate` → `db/sandbox.py::install_plpgsql_check(session)`. **Primary home: Sandbox Setup…**, inside the dialog next to the probe result it depends on. This window's Sandbox2 button is the **second entry point to that same method** (via the `on_install_plpgsql_check` adapter) — it re-derives no gate, re-types no reason string and opens no session of its own |
+| Session, off-thread execution (Sandbox1/Sandbox2 buttons) | `ui/sandbox_controller.py::SandboxController` — the holder of the one `SandboxSession`; this window never calls `open_sandbox` itself |
 | "No dead controls" posture | §18.5 carve-out 2 / §18.7's absent-not-disabled sandbox-instance rule — same principle, now governing the Sandbox node, Sandbox1, Sandbox2, and their connectors together |
 
 ---
@@ -4876,17 +5223,28 @@ Tools; "New Project" removed; line-wrap moved to editor context menu):
     plus the capability-probe result, the one-click **Install plpgsql_check** button *inside* that dialog
     next to the probe result, the working-set list and **Reset Sandbox**, and — when the configured
     database is not app-owned — the refusal together with the mandatory **"Create a sandbox database for
-    me"** offer); **Check DDL Object** (runs the validation ladder against the active DDL object editor
-    tab); **Apply to Sandbox**; **Apply to Target Database…** (the ellipsis marks the confirmation naming
+    me"** offer — the **Install plpgsql_check** button here is the *primary* home of the single install
+    action §18.8's Sandbox2 window is the second entry point to, §18.5 D2); **Check DDL Object** (runs
+    the validation ladder against the active DDL object editor tab, D3a) and **Check without applying**
+    (the same ladder inside an explicitly rolled-back transaction); **Apply to Sandbox**;
+    **Apply to Target Database…** (the ellipsis marks the confirmation naming
     object + database, and it is additionally gated on a green sandbox validation and refused outright on
     a changed signature — §18.5); **Generate Deployment SQL…** (the feature's rank-1 deliverable;
     disabled unless a sandbox profile is configured); and **Deploy this edit…** (§18.5, settled
     2026-08-05 — opens the same 3-way destination picker as the DDL object editor tab's own context-menu
     action of the same name, reusing Apply to Sandbox / Save / Apply to Target Database…'s existing
-    wiring rather than a fourth gesture; deliberately **no shortcut**). **Check DDL Object / Apply to
+    wiring rather than a fourth gesture; deliberately **no shortcut**); and ☐ **Sandbox SQL Console**
+    (§18.5 D4, settled 2026-08-06 — a **checkable toggle** revealing the single dynamic center tab, kept
+    in lockstep with that tab's ✕, exactly like the DDL Explorer toggle. Following §18.7's precedent the
+    entry is **absent, not disabled, until the active project has a sandbox** — it is created when the
+    sandbox lane comes up and removed when the project closes — and there is **no target-database
+    counterpart of it, not even a disabled one**, per D4's safety boundary. Toolbar-customizable for free
+    as `database.sandbox-sql-console` via §7's menu-path id derivation). **Check DDL Object / Check
+    without applying / Apply to
     Sandbox / Apply to Target Database… / Deploy this edit…** are **disabled unless a DDL object editor
     tab is active**, kept in sync on `center_stage.currentChanged`; Apply is never automatic and never
-    implied by Save. Sandbox Setup and Generate Deployment SQL do **not** require an object tab. There is
+    implied by Save. Sandbox Setup, Sandbox SQL Console and Generate Deployment SQL do **not** require an
+    object tab (the console requires a live sandbox **session**, which is a different precondition). There is
     no "locate binary" action — v1 spawns no external process, **except** §18.5 D2a's optional
     `pg_dump`/`pg_restore` sandbox data-cloning path, a narrowly-scoped exception to that invariant (§18.5
     D2a). **None of these entries ships with the editable tab's first increment** — the sandbox lane is a
@@ -4899,8 +5257,12 @@ Tools; "New Project" removed; line-wrap moved to editor context menu):
     engine, the snapshot module and the diff viewer they would drive all ship (§18.3 status).
 
   ("Format Selection" is **not** a menu-bar item: it is a `Ctrl+Alt+F` action plus a context-menu entry
-  scoped to the DDL object editor tab — see §27. "Deploy this edit…" is likewise primarily a **context-menu
-  item** on that same tab, mirrored onto this menu as described above.)
+  scoped to the DDL object editor tab **and (§18.5 D4) the Sandbox SQL Console tab** — see §27. "Deploy
+  this edit…" is likewise primarily a **context-menu item** on the object tab, mirrored onto this menu as
+  described above. **"Run in Sandbox Console"** — §18.5 D4's one bridge from the object tab, which
+  **copies the selection into the console and focuses it without executing** — is a context-menu item
+  only, on that tab, with no menu-bar entry and no shortcut: it is a navigation gesture, not a second
+  execution path.)
 - **Tools:** Manage Captions…, Caption Filter… (Ctrl+R in caption context), Reparse Raw XML into Tree,
   Validate Project, Compare/Merge Two Files…, Next/Previous Difference, Apply Changes to Target.
 - **Generation:** Locate PHP Generator Executable…, Generate PHP…, Open Output Folder, panGen (Generate
@@ -4924,8 +5286,9 @@ Toolbar default: Open, Save, Undo, Redo, Find, Validate, Generate (customizable)
 | Ctrl+F2 / F2 / Shift+F2 | Toggle / Next / Previous Bookmark | The **active editor tab** — Raw XML / Edit XSD / DDL Explorer, plus the DDL object editor tab (§18.5, **implemented**) — resolved at trigger time by `_active_bookmark_editor()`, never switching tabs (Bookmarks menu, §8; disabled in Caption Mode, §13 — target design 2026-08-01) |
 | double-click (line-number gutter zone) | Toggle bookmark on that line | Raw XML editor gutter (target design 2026-08-01, not yet implemented, §8 — additive alongside the existing single-click 12px bookmark strip; NOT gated by Caption Mode) |
 | Ctrl+L | Go To XSD (jump to the attribute's definition in curated.xsd; always forces curated mode) | Window-level QAction (also in the Raw XML editor context menu) |
-| Ctrl+Alt+F | **Format Selection** (§18.4's `format_selection` on the current selection; single undo step on success, `[SQL]` Audit lines + transient underline on refusal) | DDL object editor tab only, and only with a non-empty selection (**implemented**, §18.5). Also a context-menu item there. `Ctrl+Shift+F` stays Find All. |
-| *(no shortcut, deliberately)* | **Check DDL Object** / **Check without applying** / **Apply to Sandbox** / **Apply to Target Database…** / **Generate Deployment SQL…** / **Deploy this edit…** | Database menu, the DDL object editor tab's context menu, and (for the three check/apply gestures) its button row (§18.5, target design 2026-08-02; **none of them ships in the tab's v1** — the sandbox lane is a scope carve-out and v1 has no button row). Apply is an **irreversible outward effect** and must not be one keystroke away; the target-database variant additionally requires a green sandbox validation, refuses a changed signature outright, and confirms naming the object **and** the database. **Deploy this edit…** (§18.5, settled 2026-08-05) is a picker in front of these same three destinations (Apply to Sandbox / Save / Apply to Target Database…) and reuses their existing wiring rather than adding a fourth gesture — likewise deliberately unshortcut. |
+| Ctrl+Alt+F | **Format Selection** (§18.4's `format_selection` on the current selection; single undo step on success, `[SQL]` Audit lines + transient underline on refusal) | The DDL object editor tab (**implemented**, §18.5) and — target design, §18.5 D4 — the **Sandbox SQL Console** tab; in both cases only with a non-empty selection, and also a context-menu item. The formatter itself is unchanged: its host set widens from one tab to two. `Ctrl+Shift+F` stays Find All. |
+| Ctrl+Return | **Run** — execute the selection, or the whole buffer when there is no selection, against the **sandbox** (§18.5 D4, target design 2026-08-06) | **Sandbox SQL Console tab only.** This is the one execution gesture that *does* carry a shortcut, and it does not reopen the *"an irreversible outward effect must not be one keystroke away"* rule — that rule is about **irreversibility**, and the sandbox is disposable and `reset()`-able by construction, which is the same asymmetry that authorizes ad-hoc execution at all (D4's safety boundary). Object-changing statements still pass the injected confirmation; there is **no target-database Run**, with or without a shortcut |
+| *(no shortcut, deliberately)* | **Check DDL Object** / **Check without applying** / **Apply to Sandbox** / **Apply to Target Database…** / **Generate Deployment SQL…** / **Deploy this edit…** | Database menu, the DDL object editor tab's context menu, and (for the three check/apply gestures) its button row (§18.5. **Status 2026-08-06:** the tab's own **Apply to Sandbox / Apply to Target… / Deploy this edit…** ship, with the button row appearing only when the corresponding seam is wired; the **Check** gestures wait on `db/ddl_check.py` (D3a), and none of the Database-menu twins exists yet). Apply is an **irreversible outward effect** and must not be one keystroke away; the target-database variant additionally requires a green sandbox validation, refuses a changed signature outright, and confirms naming the object **and** the database. **Deploy this edit…** (§18.5, settled 2026-08-05) is a picker in front of these same three destinations (Apply to Sandbox / Save / Apply to Target Database…) and reuses their existing wiring rather than adding a fourth gesture — likewise deliberately unshortcut. |
 | *(no shortcut, deliberately)* | **Add Trigger…** / **New Function/Procedure…** | DDL Explorer tree context menus (table node / "Functions & Procedures" root) and, for the routine one, **Database ▸ New Function/Procedure…** (§18.1, FQ-002 — **implemented** 2026-08-06: `db/ddl_skeleton.py`, both dialogs, both context entries and the menu action). Both are dialog-gated and write **nothing** to a database — they only open a §18.5 editor tab on generated skeleton text — so the reason for withholding a shortcut is menu-hygiene, not the irreversible-outward-effect rule above. |
 | *(no shortcut, deliberately)* | **Database/XML Coherence** (checkable) | Database menu (§17/§26, FQ-003, **implemented** 2026-08-06). It replaces three previously unshortcut entry points — Check: XML→Database, Check: Database→XML and View ▸ Find table reference — none of which carried a shortcut either, so nothing is lost; the merged view is read-only and reached by toggle, not by keystroke |
 | Ctrl+G | Go to line in XML | Caption grid |
@@ -4933,7 +5296,8 @@ Toolbar default: Open, Save, Undo, Redo, Find, Validate, Generate (customizable)
 | Ctrl+S / Ctrl+W | Save / Cancel | Code editor dialog |
 | F1 | Manual | Window |
 
-**§18.5 introduces exactly one new binding** (`Ctrl+Alt+F`, which §18.4 had left TBD). Everything else it
+**§18.5 introduces exactly two new bindings** — `Ctrl+Alt+F` (which §18.4 had left TBD, shipped) and, as
+of D4, `Ctrl+Return` scoped to the Sandbox SQL Console tab. Everything else it
 needs joins the **existing** per-tab dispatchers rather than adding shortcuts: `_active_find_bar()`,
 `_active_bookmark_editor()` and `_save_active_tab()` each gain one branch.
 
@@ -5049,6 +5413,11 @@ is authoritative** (and is what appears in the body above).
 | 2026-08-06 | §17's **two-direction DB Check framing**: two Database-menu items (*Check: XML→Database* / *Check: Database→XML*) driving one `DbCheckPanel` in a hidden `left_tabs` tab, with a direction label in its header, a direction-dependent per-table count suffix (`(P# D# L#)` for DB→XML vs. the aggregate `(×N)` for XML→DB) and a `_last_db_check_direction` cache consulted on reparse | **One Database-menu checkable toggle, one merged "Database/XML Coherence" view, no direction control anywhere** (FQ-003). The direction toggle is **eliminated, not merged**: once DB state and XML state are shown together per relation, there is no remaining choice about which side is ground truth for display — **the DB always is, and the XML is always the interface being checked against it** (requester's core framing). The view has two branches over the same data layer: **Tables and Views** (DB-sourced; per relation a *Database columns* sub-section = today's `ColumnCheck` list with calculated columns shown but never flagged, BUG-006, and a *References* sub-section badge-summarized from the existing `TableCheck.page_count`/`.detail_count`/`.lookup_count` rollups, BUG-026, expandable to the full breadcrumbs) and **Pages** (a **recursive** tree mirroring the real XML depth — Page → bound table + lookup columns → nested Details, each with their own table/lookups/further Details, exactly `visit_detail`'s unlimited recursion; the UI must **not** flatten it to a fixed "Page > Details > Detail > Lookups" shape, and the `"lookup with insert"` `ref_type` stays a distinct badge). One **global mismatch toggle** filters both branches: a Pages node whose target relation is absent from the live DB is flagged **at that reference point** (never as a phantom row under Tables and Views, which stays purely DB-sourced); a real relation with `page_count == detail_count == lookup_count == 0` **is** flagged (requester-confirmed — the toggle is "things needing attention," not strictly "things that are broken"); `ColumnCheck.ok == False` folds in, excluding calculated columns. No mismatch-type enum exists today, so the toggle carries its own predicate. `collect_table_usages` and the existing rollup fields must be reused wholesale — **no parallel counting logic**. The `(P# D# L#)` badge survives as the relation-level form; the aggregate `(×N)` and `_last_db_check_direction` go away with the direction. Rejected alternatives recorded in §17: the connection-optional hybrid with a cross-navigation link (superseded — the motivation is architectural, not a UI convenience), and §18.3's unified-Compare/Deploy rejection, **explicitly distinguished rather than silently re-decided** (that turned on **risk asymmetry** — Compare read-only vs. Deploy destructive — and both surfaces merged here are read-only diagnostics with no write path). Settled design, **not yet implemented** |
 | 2026-08-06 | §18.3 step 2: *"**Any `!`-flagged object blocks deploy of the batch it's part of**"* — read literally, every live-drifted object in the project, whether or not it is part of the batch | **Narrowed to `*!` only: a blocker is a deploy *candidate* (`*`, locally edited) that is **also** live-drifted (`!`).** A `!`-only object is **not** a blocker — with no pending local edit it is not in the batch and nothing would overwrite it, and since §18.5's single-object Apply routinely leaves objects `!`, blocking every deploy on unrelated `!` markers would make the gate un-actionable rather than protective. Everything else about the gate is unchanged: one blocker refuses the **whole** batch, the refusal names **every** blocker, recovery is resolve-then-re-run. Implemented as `db/deploy_bundle.py::deploy_blockers` (candidates ∩ `live_drifted`), with blocked-ness expressed as **data** (`DeployPlan.blockers` non-empty + `bundle is None` + `refusal_message`), and "nothing to deploy" kept as a deliberately distinct outcome |
 | 2026-08-06 | §15's **Table References tab** as an independent left-dock surface: `TableReferencesPanel` in its own hidden `left_tabs` tab ("Table references", `table_refs_tab_index`), revealed by the **View menu** checkable "Find table reference", refreshed on reparse when visible — specified in §15 as a sibling of Search/Find All and cross-referenced from §17 | **Folded into §17's Database/XML Coherence view** (FQ-003, row above). Table references are no longer independently toggleable: they appear as the per-relation **References** sub-section of the *Tables and Views* branch and as the whole **Pages** branch of the merged view. The `table_refs_tab_index` hidden tab and the **View ▸ Find table reference** checkable both **disappear as standalone entry points** (§26's View bullet loses that item); the single Database ▸ **Database/XML Coherence** toggle is the only entry point. §15 keeps a pointer only. The pure analyzer `analysis/reused_tables.py::collect_table_usages` and its `TableUsage`/`TableReference` shapes are **unchanged** and must be reused wholesale by the merged view — this row moves presentation, not analysis. The earlier removal of Tools ▸ "Find Reused Tables…" / `reused_tables_window.py` stands |
+| 2026-08-06 | §29 open question: *"**Execution against the sandbox (§18.5)** — running a function and seeing its results is not designed. It is the difference between a validator and an IDE… Scope it as a follow-on feature or fold it into v1 — undecided."*, mirrored by §18's tier-3 row (*"see the open item below for running a routine against sandbox rows, which is separate and not yet designed"*) | **Closed by owner decision — designed as §18.5 D4, the Sandbox SQL Console.** A single dynamic center tab (`ui/sql_console_panel.py`, keyed `("sandbox-sql",)`) pairing `CodeEditor(language="sql")` with `ui/sql_results_panel.py::SqlResultsPanel`; the Qt-free `db/sandbox_query.py::run_sandbox_query(session, sql, …) -> QueryResult{columns, rows, truncated, row_limit, command_status, duration_ms, error}` running through the **existing** `SandboxSession.executor` (one new `fetch` method with the `cursor.description is None` guard) — **never a new connection-opening function**; `DEFAULT_ROW_LIMIT = 1000` enforced client-side by `fetchmany(row_limit + 1)` (never by rewriting the user's SQL), `truncated` a first-class field so an at-the-cap result and a cut-off result are distinguishable; a **mandatory** `DEFAULT_STATEMENT_TIMEOUT_MS = 30_000` with no "unlimited" setting and **no Cancel button in v1** (stated, with the reason: per-call connections leave no handle to `cancel()`); multi-statement Runs split by the new pure `sql/statements.py::split_statements` over §18.4's **existing** tokenizer, executed in **one committing transaction**, aborted and rolled back whole on failure; object-changing statements (`classify_statement` → `ddl`/`unknown`) gated by the same injected `confirm` seam the Apply gestures use, with the working-set-divergence caveat surfaced rather than papered over. **Safety rule, stated so nobody generalizes it: sandbox-only, enforced structurally** — `run_sandbox_query` takes a `SandboxSession`, never `ConnectionParams`, so execution can only reach an `open_sandbox`-gated, app-owned, `reset()`-able database. The distinction from §18.3's never-auto-execute non-goal is **reversibility**, not deliberateness. No `[Run]`/`[Query]` Audit prefix is created: results and errors live in the console's own panel |
+| 2026-08-06 | §18.5 D3 specified the ladder's tiers, report shape and line mapping, but never pinned **how a `plpgsql_check` run is actually invoked, scoped, gated or reported** — §18.8's Sandbox2 node covered only the extension's *install state*, and *"the `[Check]` Audit results"* remained a contract with no rendering rule | **New D3a, the Check gesture's concrete run contract.** `plpgsql_check_function_tb` only (never `plpgsql_check_function`, never the `_all_*` sweeps), **named notation always**, `fatal_errors => false`, `all_warnings => true`, `relid` for trigger functions; **exactly one object per run** (the active tab's `DdlObjectRef`), with working-set sweeps defined as a pure `check_working_set` loop over the same `recheck` entry point and **no menu entry of its own**. The 11 returned columns map 1:1 onto `CheckFinding`; a **total** `level → SEVERITY` mapping is pinned (an unknown future level maps to `WARNING` with the raw level appended, never dropped). **The four `plpgsql_check_state` values each gate the run with a distinct, user-visible outcome** — `installed` runs; `installable` reports `unavailable` plus where the one-click install lives; `absent` reports `install_gate`'s platform text verbatim; `unknown` reports *"could not probe the server."* and **never** degrades to `absent` — with tiers 1 and 2 still running in all three, the report never green, and precondition 2's enumerating override the only way past. With **no session** the gesture is **absent**, and the absence names the way back (Sandbox Setup… / Project Status), never a clean check |
+| 2026-08-06 | `ui/ddl_object_editor.py::_result_lines` **as shipped** folds validation findings into the narrative `check_reported(list[str])` channel as pre-formatted `"  finding: line N: message"` strings | **Findings move to a second, clickable channel, `check_findings(list)`.** A pre-formatted string cannot carry the `UserRole` line and `UserRole+1` target that §18.5's reuse-map contract (*"the existing Audit panel … click-to-navigate — **no new diagnostics panel**"*) requires. `MainWindow` renders each finding as `"[Check] SEVERITY line N: message"` with both roles set; a finding whose line could not be mapped (D3's mandatory `None`) is rendered **without a line and without roles**, inert rather than navigating somewhere wrong. `check_reported` keeps the narrative channel unchanged — one line per tier **always**, caveats, apply/cancel notices, all non-clickable. `_result_lines` stops emitting `finding:` lines when `db/ddl_check.py` lands |
+| 2026-08-06 | §18.5 invariant 1: *"**Two seams, one direction each:** `run_queries` … `apply_ddl` … **Never a third connection-opening function.**"* — written before `db/sandbox.py`'s `SandboxExecutor` shipped, which is in fact a third | **Corrected to three seams, each with one job, and never a fourth**: `run_queries` (read-only, never widened), `apply_ddl` (the DDL write seam, mixed-statement guard + notice capture), and `SandboxExecutor` (`execute`/`query`/`fetch`) — the **sandbox lane's** seam, reachable **only** through an ownership-gated `SandboxSession`, used by `apply`/`applied`/`reset`, `install_plpgsql_check` and D4's `run_sandbox_query`. Its narrowness is not an accident to be tidied away: it *is* D4's safety property, and it is why ad-hoc SQL can never reach production. A code correction is **not** implied — the code was right and the invariant's wording was stale |
+| 2026-08-06 | The one-click **Install plpgsql_check** action had **two specified homes with no stated relationship** — §18.5 D2/§26 (*"inside the Sandbox Setup dialog next to the probe result … not as a separate menu item"*) and §18.8's Sandbox2 action window (*"offers an 'install the plpgsql_check extension' action button … now also reachable from here"*) — flagged as a conflict by the 2026-08-06 audit | **Resolved as one action with two entry points, neither a duplicate.** The single action is `SandboxController.install_plpgsql_check()` → the pure `install_gate` → `db/sandbox.py::install_plpgsql_check(session)`. **Sandbox Setup… is the primary home** (next to the probe result it depends on); §18.8's Sandbox2 window is a **second entry point to that same method**, wired through the shipped zero-argument adapter `on_install_plpgsql_check`, re-deriving no gate, re-typing no reason string and opening no session of its own. Both surfaces show `install_gate`'s reason verbatim on refusal and the same *"already installed."* line when there is nothing to do. Still **no top-level menu item** for it |
 
 ---
 
@@ -5103,14 +5472,33 @@ is authoritative** (and is what appears in the body above).
   this use case. But it changes how the user's own deploy tooling must invoke it. Candidate: emit the
   `BEGIN`/`COMMIT` pair **commented out** in the header with a one-line explanation and let the user
   choose. **Nobody has actually made this decision.**
-- **Execution against the sandbox (§18.5)** — running a function and seeing its results is not designed.
-  It is **the difference between a validator and an IDE**, and the sandbox makes it safe in a way DBeaver
-  cannot. Scope it as a follow-on feature or fold it into v1 — undecided. **This is the same gap the
-  2026-08-05 "three operating modes" taxonomy (top of §18) names as development-project tier 3's
-  "linting with execution on local database"** — owner-named as a distinct mode from D3 tier 2 (which
-  only proves the DDL *applies/compiles*, not that the routine *behaves correctly* against real rows) and
-  from D3 tier 3's static `plpgsql_check` analysis. Naming it does not resolve scope/design; still
-  undecided which of D3's tiers it would extend or whether it is a genuinely new tier/surface.
+- **~~Execution against the sandbox (§18.5)~~ — RESOLVED 2026-08-06 by owner decision (§18.5 D4, ledger
+  §28).** It is **folded in, not deferred**, and it is **not a new ladder tier**: D3's four tiers are
+  unchanged, and execution is a separate *surface* — the **Sandbox SQL Console**, one dynamic center tab
+  pairing `CodeEditor(language="sql")` with `ui/sql_results_panel.py`, backed by the Qt-free
+  `db/sandbox_query.py`. The same pass pinned the **run contract for `plpgsql_check` itself** (D3a), so
+  the two halves of *"the difference between a validator and an IDE"* — semantic analysis with results,
+  and actual execution with results — are both specified. The 2026-08-05 three-modes taxonomy's tier-3
+  row now names this capability instead of pointing here. **Settled and no longer open:** sandbox-only
+  execution enforced structurally (`run_sandbox_query(session, …)`, never `ConnectionParams`); a
+  1 000-row cap with a first-class `truncated` flag; a mandatory 30 s statement timeout; one committing
+  transaction per Run; the object-change confirmation; and results reporting into the console's own panel
+  rather than a fourth Audit prefix. **What remains open is listed as its own item below (cancellation).**
+- **§18.5 D4 — cancelling a running statement.** There is **no Cancel button in v1**, stated rather than
+  faked: cancelling needs `connection.cancel()` on a handle held by another thread, and every
+  `SandboxExecutor` implementation opens **one connection per call** and closes it itself, so no handle
+  survives to cancel. The mandatory statement timeout is the control in its place. Revisit if a
+  persistent-connection executor is ever introduced — which would itself be a design change (the
+  per-call-connection shape is what keeps the executor trivially fake-able in tests).
+- **§18.5 D4 — a read-only *production* query surface is NOT authorized by D4 and is not designed.**
+  Recorded here only so the omission reads as deliberate: D4's boundary is sandbox-only because the
+  sandbox is `reset()`-able, and "but read-only queries are harmless" is exactly the generalization D4
+  forbids an implementer from making on its own. If it is ever wanted, it needs its own design pass, its
+  own gating and its own ledger row — it does not arrive by widening `run_sandbox_query`.
+- **§18.5 D4 — persistence of console buffers.** Not designed: whether the console tab's SQL text
+  survives an app restart (or a project close), and whether a per-project history of executed statements
+  is kept. v1's assumption is **no persistence at all** — the tab is session-only, like the object tab's
+  unattached-trigger association — but this has not been owner-confirmed.
 - **~~Where the tier-2/tier-3 (quality-project vs. development-project) environment-capability check
   runs~~ — RESOLVED 2026-08-05 (top of §18):** the probe (reusing §18.5 D2's `SandboxCapabilities.probe`)
   runs automatically on every project **open** (so a sandbox that died between sessions correctly degrades
