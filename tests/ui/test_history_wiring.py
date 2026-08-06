@@ -302,7 +302,7 @@ def test_parse_failure_seeds_single_snapshot(qtbot, tmp_path):
     path = tmp_path / "broken.pgtp"
     path.write_text(_MALFORMED_PGTP, encoding="utf-8", newline="")
 
-    with patch("pgtp_editor.ui.main_window.QMessageBox.critical"):
+    with patch("pgtp_editor.ui.modals.QMessageBox.critical"):
         window.open_project_file(str(path))
 
     entries = window._history.entries()

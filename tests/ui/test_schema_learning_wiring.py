@@ -124,7 +124,7 @@ def test_parse_failure_does_not_create_schema_model_file(qtbot, tmp_path):
     broken_path = tmp_path / "broken.pgtp"
     broken_path.write_text(MALFORMED_PGTP, encoding="utf-8")
 
-    with patch("pgtp_editor.ui.main_window.QMessageBox.critical"):
+    with patch("pgtp_editor.ui.modals.QMessageBox.critical"):
         window.open_project_file(str(broken_path))
 
     model_path = schema_model_path(storage_dir)
@@ -148,7 +148,7 @@ def test_parse_failure_leaves_pre_seeded_schema_model_byte_for_byte_unchanged(qt
     broken_path = tmp_path / "broken.pgtp"
     broken_path.write_text(MALFORMED_PGTP, encoding="utf-8")
 
-    with patch("pgtp_editor.ui.main_window.QMessageBox.critical"):
+    with patch("pgtp_editor.ui.modals.QMessageBox.critical"):
         window.open_project_file(str(broken_path))
 
     assert model_path.read_text(encoding="utf-8") == seeded_content
@@ -166,7 +166,7 @@ def test_parse_failure_appends_no_schema_audit_entry(qtbot, tmp_path):
 
     # The one-time bundled-seed audit line from __init__ is not under test here.
     window.audit_panel.clear()
-    with patch("pgtp_editor.ui.main_window.QMessageBox.critical"):
+    with patch("pgtp_editor.ui.modals.QMessageBox.critical"):
         window.open_project_file(str(broken_path))
 
     assert window.audit_panel.count() == 0

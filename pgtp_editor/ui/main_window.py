@@ -24,7 +24,6 @@ from lxml import etree
 from PySide6.QtCore import Qt, QSettings, QSignalBlocker, QTimer, QUrl
 from PySide6.QtGui import (
     QAction,
-    QDesktopServices,
     QKeySequence,
     QPalette,
     QShortcut,
@@ -33,13 +32,10 @@ from PySide6.QtWidgets import (
     QApplication,
     QDialog,
     QDockWidget,
-    QFileDialog,
-    QInputDialog,
     QLabel,
     QListWidget,
     QListWidgetItem,
     QMainWindow,
-    QMessageBox,
     QTabWidget,
     QToolBar,
     QVBoxLayout,
@@ -93,6 +89,7 @@ from pgtp_editor.ui.about import show_about_dialog
 from pgtp_editor.ui.caption_find_replace_dialog import CaptionFindReplaceDialog
 from pgtp_editor.ui.busy import busy_status, format_size
 from pgtp_editor.ui.center_stage import CenterStage
+from pgtp_editor.ui import modals
 from pgtp_editor.ui.manual_panel import (
     ManualContentsPanel,
     load_manual_text,
@@ -796,7 +793,7 @@ class MainWindow(QMainWindow):
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(text, encoding="utf-8", newline="")
         except OSError as exc:
-            QMessageBox.critical(self, "Save Failed", f"Could not save:\n\n{exc}")
+            modals.QMessageBox.critical(self, "Save Failed", f"Could not save:\n\n{exc}")
             return
         self._set_xsd_dirty(False)
         self.statusBar().showMessage(f"Saved {path.name}", 5000)
@@ -840,7 +837,7 @@ class MainWindow(QMainWindow):
                 "The XSD tab has unsaved changes — save it first (Ctrl+S).", 5000
             )
             return
-        dest, _filter = QFileDialog.getSaveFileName(
+        dest, _filter = modals.QFileDialog.getSaveFileName(
             self,
             "Export XSD",
             str(Path(self._dialog_default_dir()) / source.name) if self._dialog_default_dir() else source.name,
@@ -851,7 +848,7 @@ class MainWindow(QMainWindow):
         try:
             shutil.copyfile(source, dest)
         except OSError as exc:
-            QMessageBox.critical(self, "Export Failed", f"Could not export:\n\n{exc}")
+            modals.QMessageBox.critical(self, "Export Failed", f"Could not export:\n\n{exc}")
             return
         self.statusBar().showMessage(f"Exported to {Path(dest).name}", 5000)
 
@@ -861,7 +858,7 @@ class MainWindow(QMainWindow):
         importable), back up, replace, then re-feed completion when the active
         mode is curated (spec §11)."""
         mode = self._xsd_mode
-        source, _filter = QFileDialog.getOpenFileName(
+        source, _filter = modals.QFileDialog.getOpenFileName(
             self, "Import XSD", self._dialog_default_dir(), "XSD files (*.xsd);;All files (*)"
         )
         if not source:
@@ -869,22 +866,22 @@ class MainWindow(QMainWindow):
         try:
             text = Path(source).read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError) as exc:
-            QMessageBox.critical(self, "Import Failed", f"Could not read:\n\n{exc}")
+            modals.QMessageBox.critical(self, "Import Failed", f"Could not read:\n\n{exc}")
             return
         issues = verify_curated(text)
         if any(issue.fatal for issue in issues):
-            QMessageBox.critical(
+            modals.QMessageBox.critical(
                 self, "Import Refused",
                 "The file is not well-formed XML:\n\n" + issues[0].message,
             )
             return
         if issues:
-            answer = QMessageBox.question(
+            answer = modals.QMessageBox.question(
                 self, "Import With Warnings",
                 f"The file has {len(issues)} dialect warning(s). Import anyway?",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                modals.QMessageBox.StandardButton.Yes | modals.QMessageBox.StandardButton.No,
             )
-            if answer != QMessageBox.StandardButton.Yes:
+            if answer != modals.QMessageBox.StandardButton.Yes:
                 return
         tab_was_dirty = self._xsd_dirty
         target = self._xsd_path_for_mode(mode)
@@ -894,7 +891,7 @@ class MainWindow(QMainWindow):
                 shutil.copy2(target, str(target) + ".bak")
             target.write_text(text, encoding="utf-8")
         except OSError as exc:
-            QMessageBox.critical(self, "Import Failed", f"Could not write:\n\n{exc}")
+            modals.QMessageBox.critical(self, "Import Failed", f"Could not write:\n\n{exc}")
             return
         self._set_xsd_dirty(False)
         if mode == "curated":
@@ -988,17 +985,17 @@ class MainWindow(QMainWindow):
         closing. Returns "save", "discard", or "cancel". Split out (mirroring
         `_confirm_close`) so tests can monkeypatch it instead of ever driving
         a real modal."""
-        result = QMessageBox.question(
+        result = modals.QMessageBox.question(
             self,
             "Unsaved Changes",
             "The XSD has unsaved changes. Save before closing?",
-            QMessageBox.StandardButton.Save
-            | QMessageBox.StandardButton.Discard
-            | QMessageBox.StandardButton.Cancel,
+            modals.QMessageBox.StandardButton.Save
+            | modals.QMessageBox.StandardButton.Discard
+            | modals.QMessageBox.StandardButton.Cancel,
         )
-        if result == QMessageBox.StandardButton.Save:
+        if result == modals.QMessageBox.StandardButton.Save:
             return "save"
-        if result == QMessageBox.StandardButton.Discard:
+        if result == modals.QMessageBox.StandardButton.Discard:
             return "discard"
         return "cancel"
 
@@ -1518,7 +1515,7 @@ class MainWindow(QMainWindow):
         self.project_tree.select_node(node)  # fires tree -> Properties automatically
 
     def _open_project(self):
-        path, _filter = QFileDialog.getOpenFileName(
+        path, _filter = modals.QFileDialog.getOpenFileName(
             self, "Open PGTP Project", self._dialog_default_dir(), "PGTP files (*.pgtp)"
         )
         if not path:
@@ -1538,12 +1535,12 @@ class MainWindow(QMainWindow):
         (today's plain behavior -- no project, no linking, unaffected). If
         the chooser is dismissed without a button (e.g. the window close
         box), defaults to Standalone -- the safe, non-destructive choice."""
-        box = QMessageBox(self)
+        box = modals.QMessageBox(self)
         box.setWindowTitle("Open .pgtp")
         box.setText("How do you want to work with this file?")
-        new_button = box.addButton("New Project…", QMessageBox.ButtonRole.ActionRole)
-        open_button = box.addButton("Open Project…", QMessageBox.ButtonRole.ActionRole)
-        box.addButton("Edit Standalone", QMessageBox.ButtonRole.ActionRole)
+        new_button = box.addButton("New Project…", modals.QMessageBox.ButtonRole.ActionRole)
+        open_button = box.addButton("Open Project…", modals.QMessageBox.ButtonRole.ActionRole)
+        box.addButton("Edit Standalone", modals.QMessageBox.ButtonRole.ActionRole)
         box.exec()
         clicked = box.clickedButton()
         if clicked is new_button:
@@ -1831,7 +1828,7 @@ class MainWindow(QMainWindow):
             return None
 
     def _handle_parse_failure(self, path, exc: PgtpParseError) -> None:
-        QMessageBox.critical(
+        modals.QMessageBox.critical(
             self,
             "Failed to Open Project",
             f"Could not open '{path}':\n\n{exc}",
@@ -1915,7 +1912,7 @@ class MainWindow(QMainWindow):
         # WITHOUT re-reading a file and WITHOUT touching the existing model or
         # tree: the last-good state must survive a failed reparse so the user
         # can fix the XML and try again.
-        QMessageBox.critical(
+        modals.QMessageBox.critical(
             self,
             "Reparse Failed",
             f"Could not reparse the raw XML:\n\n{exc}",
@@ -1926,7 +1923,7 @@ class MainWindow(QMainWindow):
     def _compare_merge_two_files(self):
         source = self._current_project
         if source is None:
-            source_path, _filter = QFileDialog.getOpenFileName(
+            source_path, _filter = modals.QFileDialog.getOpenFileName(
                 self, "Select Source Project", self._dialog_default_dir(), "PGTP files (*.pgtp)"
             )
             if not source_path:
@@ -1934,12 +1931,12 @@ class MainWindow(QMainWindow):
             try:
                 source = load_project(source_path)
             except Exception as exc:
-                QMessageBox.critical(
+                modals.QMessageBox.critical(
                     self, "Failed to Open Source Project", f"Could not open '{source_path}':\n\n{exc}"
                 )
                 return
 
-        target_path, _filter = QFileDialog.getOpenFileName(
+        target_path, _filter = modals.QFileDialog.getOpenFileName(
             self, "Select Target Project", self._dialog_default_dir(), "PGTP files (*.pgtp)"
         )
         if not target_path:
@@ -1947,7 +1944,7 @@ class MainWindow(QMainWindow):
         try:
             target = load_project(target_path)
         except Exception as exc:
-            QMessageBox.critical(
+            modals.QMessageBox.critical(
                 self, "Failed to Open Target Project", f"Could not open '{target_path}':\n\n{exc}"
             )
             return
@@ -1959,7 +1956,7 @@ class MainWindow(QMainWindow):
         self.center_stage.setCurrentIndex(self.center_stage.diff_merge_tab_index)
 
     def _compare_page_with(self, page_node):
-        target_path, _filter = QFileDialog.getOpenFileName(
+        target_path, _filter = modals.QFileDialog.getOpenFileName(
             self, "Select Target Project", self._dialog_default_dir(), "PGTP files (*.pgtp)"
         )
         if not target_path:
@@ -1967,14 +1964,14 @@ class MainWindow(QMainWindow):
         try:
             target = load_project(target_path)
         except Exception as exc:
-            QMessageBox.critical(
+            modals.QMessageBox.critical(
                 self, "Failed to Open Target Project", f"Could not open '{target_path}':\n\n{exc}"
             )
             return
 
         target_page = next((p for p in target.pages if p.file_name == page_node.file_name), None)
         if target_page is None:
-            QMessageBox.critical(
+            modals.QMessageBox.critical(
                 self,
                 "Page Not Found",
                 f"No Page with fileName '{page_node.file_name}' exists in '{target_path}'.",
@@ -1988,7 +1985,7 @@ class MainWindow(QMainWindow):
         self.center_stage.setCurrentIndex(self.center_stage.diff_merge_tab_index)
 
     def _compare_detail_with(self, detail_node, source_path):
-        target_path_str, _filter = QFileDialog.getOpenFileName(
+        target_path_str, _filter = modals.QFileDialog.getOpenFileName(
             self, "Select Target Project", self._dialog_default_dir(), "PGTP files (*.pgtp)"
         )
         if not target_path_str:
@@ -1996,14 +1993,14 @@ class MainWindow(QMainWindow):
         try:
             target = load_project(target_path_str)
         except Exception as exc:
-            QMessageBox.critical(
+            modals.QMessageBox.critical(
                 self, "Failed to Open Target Project", f"Could not open '{target_path_str}':\n\n{exc}"
             )
             return
 
         result = resolve_path(target, source_path)
         if isinstance(result, ResolutionError):
-            QMessageBox.critical(self, "Detail Not Found", result.message)
+            modals.QMessageBox.critical(self, "Detail Not Found", result.message)
             return
 
         self._current_diff_target_project = target
@@ -2015,7 +2012,7 @@ class MainWindow(QMainWindow):
     def _apply_changes_to_target(self):
         checked = self.center_stage.diff_merge_panel.checked_differences()
         if not checked:
-            QMessageBox.information(
+            modals.QMessageBox.information(
                 self, "Apply Changes to Target", "No differences are checked to apply."
             )
             return
@@ -2025,7 +2022,7 @@ class MainWindow(QMainWindow):
             details = "\n".join(
                 f"- {'/'.join(d.path)} ({d.node_kind}/{d.attribute}: {d.kind})" for d in ambiguous
             )
-            QMessageBox.critical(
+            modals.QMessageBox.critical(
                 self,
                 "Cannot Apply: Ambiguous Differences Checked",
                 "The following checked differences are ambiguous (matched via "
@@ -2044,7 +2041,7 @@ class MainWindow(QMainWindow):
 
         if result.failed:
             details = "\n".join(f"- {'/'.join(f.difference.path)}: {f.message}" for f in result.failed)
-            QMessageBox.critical(
+            modals.QMessageBox.critical(
                 self,
                 "Apply Failed -- No Changes Written",
                 f"{len(result.failed)} of {len(checked)} checked differences could not "
@@ -2061,7 +2058,7 @@ class MainWindow(QMainWindow):
         with open(target_path, "wb") as f:
             f.write(serialized)
 
-        QMessageBox.information(
+        modals.QMessageBox.information(
             self,
             "Apply Changes to Target",
             f"Applied {len(checked)} change(s) to '{target_path}'.\nBackup saved to '{backup_path}'.",
@@ -2097,13 +2094,13 @@ class MainWindow(QMainWindow):
         try:
             self._write_project_text(self._current_project_path)
         except OSError as exc:
-            QMessageBox.critical(self, "Save Failed", f"Could not save:\n\n{exc}")
+            modals.QMessageBox.critical(self, "Save Failed", f"Could not save:\n\n{exc}")
             return
         self._set_dirty(False)
         self.statusBar().showMessage(f"Saved {Path(self._current_project_path).name}", 5000)
 
     def _save_project_as(self) -> None:
-        path, _filter = QFileDialog.getSaveFileName(
+        path, _filter = modals.QFileDialog.getSaveFileName(
             self, "Save Project As", self._dialog_default_dir(), "PGTP files (*.pgtp)"
         )
         if not path:
@@ -2111,7 +2108,7 @@ class MainWindow(QMainWindow):
         try:
             self._write_project_text(path)
         except OSError as exc:
-            QMessageBox.critical(self, "Save Failed", f"Could not save:\n\n{exc}")
+            modals.QMessageBox.critical(self, "Save Failed", f"Could not save:\n\n{exc}")
             return
         self._current_project_path = path
         self._set_dirty(False)
@@ -2126,17 +2123,17 @@ class MainWindow(QMainWindow):
         `_close_project` so tests can pass `confirm=` directly (or
         monkeypatch this) instead of ever driving a real modal.
         """
-        result = QMessageBox.question(
+        result = modals.QMessageBox.question(
             self,
             "Unsaved Changes",
             "The project has unsaved changes. Save before closing?",
-            QMessageBox.StandardButton.Save
-            | QMessageBox.StandardButton.Discard
-            | QMessageBox.StandardButton.Cancel,
+            modals.QMessageBox.StandardButton.Save
+            | modals.QMessageBox.StandardButton.Discard
+            | modals.QMessageBox.StandardButton.Cancel,
         )
-        if result == QMessageBox.StandardButton.Save:
+        if result == modals.QMessageBox.StandardButton.Save:
             return "save"
-        if result == QMessageBox.StandardButton.Discard:
+        if result == modals.QMessageBox.StandardButton.Discard:
             return "discard"
         return "cancel"
 
@@ -2863,9 +2860,9 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(f"Created project: {folder}", 5000)
 
     def _open_ddl_project(self, on_ready=None) -> None:
-        folder = QFileDialog.getExistingDirectory(
+        folder = modals.QFileDialog.getExistingDirectory(
             self, "Open Project Folder", "",
-            QFileDialog.Option.ShowDirsOnly,
+            modals.QFileDialog.Option.ShowDirsOnly,
         )
         if not folder:
             return
@@ -2876,7 +2873,7 @@ class MainWindow(QMainWindow):
         # default ProjectSettings() for a folder that was never a project;
         # reject that instead of guessing.
         if not is_project_dir(folder_path):
-            QMessageBox.warning(
+            modals.QMessageBox.warning(
                 self,
                 "Not a Project Folder",
                 f"{folder_path} is not a PGTP DDL project folder "
@@ -2939,12 +2936,12 @@ class MainWindow(QMainWindow):
         if self._ddl_project_folder is not None:
             on_ready()
             return
-        box = QMessageBox(self)
+        box = modals.QMessageBox(self)
         box.setWindowTitle("Project Required")
         box.setText("This action needs an open project.")
-        create_button = box.addButton("Create…", QMessageBox.ButtonRole.ActionRole)
-        open_button = box.addButton("Open…", QMessageBox.ButtonRole.ActionRole)
-        box.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
+        create_button = box.addButton("Create…", modals.QMessageBox.ButtonRole.ActionRole)
+        open_button = box.addButton("Open…", modals.QMessageBox.ButtonRole.ActionRole)
+        box.addButton("Cancel", modals.QMessageBox.ButtonRole.RejectRole)
         box.exec()
         clicked = box.clickedButton()
         if clicked is create_button:
@@ -3144,14 +3141,14 @@ class MainWindow(QMainWindow):
             return
         if content_hash(working_text) == link.last_known_source_checksum:
             return  # nothing pending
-        choice = QMessageBox.question(
+        choice = modals.QMessageBox.question(
             self,
             "Unpushed .pgtp Changes",
             "This project's .pgtp working copy has changes not yet deployed "
             "to the source. Deploy them now?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            modals.QMessageBox.StandardButton.Yes | modals.QMessageBox.StandardButton.No,
         )
-        if choice == QMessageBox.StandardButton.Yes:
+        if choice == modals.QMessageBox.StandardButton.Yes:
             self._deploy_pgtp()
 
     def _resolve_pgtp_project_path(self, path) -> str:
@@ -3227,7 +3224,7 @@ class MainWindow(QMainWindow):
             working_text = Path(link.working_copy_path).read_text(encoding="utf-8")
             Path(link.source_path).write_text(working_text, encoding="utf-8", newline="")
         except OSError as exc:
-            QMessageBox.critical(self, "Deploy Failed", f"Could not deploy .pgtp:\n\n{exc}")
+            modals.QMessageBox.critical(self, "Deploy Failed", f"Could not deploy .pgtp:\n\n{exc}")
             return
         settings = self._ddl_project_settings
         updated = ProjectSettings(
@@ -3276,7 +3273,7 @@ class MainWindow(QMainWindow):
     def _prompt_rename(self, old):
         """Ask for a new name (modal QInputDialog). Test seam — patched in tests
         to bypass the modal. Returns the new name, or None if cancelled."""
-        text, ok = QInputDialog.getText(
+        text, ok = modals.QInputDialog.getText(
             self,
             "Rename in XML",
             f"New name for '{old}' — replaces every matching "
@@ -3497,7 +3494,7 @@ class MainWindow(QMainWindow):
                 return panel.save_path
             default_dir = self._dialog_default_dir()
             prefill = str(Path(default_dir) / ref.default_file_name) if default_dir else ref.default_file_name
-            path, _filter = QFileDialog.getSaveFileName(
+            path, _filter = modals.QFileDialog.getSaveFileName(
                 self, "Save DDL Object", prefill, "SQL files (*.sql)"
             )
             if not path:
@@ -3804,7 +3801,7 @@ class MainWindow(QMainWindow):
         try:
             path.write_text(panel.text(), encoding="utf-8", newline="")
         except OSError as exc:
-            QMessageBox.critical(self, "Save Failed", f"Could not save:\n\n{exc}")
+            modals.QMessageBox.critical(self, "Save Failed", f"Could not save:\n\n{exc}")
             return False
         panel.remember_save_path(path)
         panel.mark_clean()
@@ -3817,17 +3814,17 @@ class MainWindow(QMainWindow):
         before closing. Returns "save", "discard", or "cancel" (mirrors
         `_confirm_close`/`_confirm_close_xsd`, so tests can monkeypatch this
         instead of ever driving a real modal)."""
-        result = QMessageBox.question(
+        result = modals.QMessageBox.question(
             self,
             "Unsaved Changes",
             f"{ref.qualified} has unsaved changes. Save before closing?",
-            QMessageBox.StandardButton.Save
-            | QMessageBox.StandardButton.Discard
-            | QMessageBox.StandardButton.Cancel,
+            modals.QMessageBox.StandardButton.Save
+            | modals.QMessageBox.StandardButton.Discard
+            | modals.QMessageBox.StandardButton.Cancel,
         )
-        if result == QMessageBox.StandardButton.Save:
+        if result == modals.QMessageBox.StandardButton.Save:
             return "save"
-        if result == QMessageBox.StandardButton.Discard:
+        if result == modals.QMessageBox.StandardButton.Discard:
             return "discard"
         return "cancel"
 
@@ -4072,13 +4069,13 @@ class MainWindow(QMainWindow):
         Reset/data-clone to be possible at all -- and it never guesses: the
         warning text is the controller's own."""
         return (
-            QMessageBox.question(
+            modals.QMessageBox.question(
                 self,
                 "Sandbox Operation",
                 warning,
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                modals.QMessageBox.StandardButton.Yes | modals.QMessageBox.StandardButton.No,
             )
-            == QMessageBox.StandardButton.Yes
+            == modals.QMessageBox.StandardButton.Yes
         )
 
     def _on_sandbox_session_changed(self, _available: bool) -> None:
@@ -4152,13 +4149,13 @@ class MainWindow(QMainWindow):
         the PANEL's (it names the object and the database); this only shows it,
         so no confirmation wording is duplicated here."""
         return (
-            QMessageBox.question(
+            modals.QMessageBox.question(
                 self,
                 title,
                 text,
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                modals.QMessageBox.StandardButton.Yes | modals.QMessageBox.StandardButton.No,
             )
-            == QMessageBox.StandardButton.Yes
+            == modals.QMessageBox.StandardButton.Yes
         )
 
     def _apply_ddl_object_to_sandbox(self, ref, text):
@@ -4325,15 +4322,15 @@ class MainWindow(QMainWindow):
         """Warn that a page for `table_name` already exists; return True to
         proceed (with a de-duplicated fileName) or False to cancel. Test seam —
         patched to bypass the modal."""
-        choice = QMessageBox.question(
+        choice = modals.QMessageBox.question(
             self,
             "Page Already Exists",
             f"A page for '{table_name}' already exists in this project.\n\n"
             "Create another one anyway (with a de-duplicated fileName)?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
+            modals.QMessageBox.StandardButton.Yes | modals.QMessageBox.StandardButton.No,
+            modals.QMessageBox.StandardButton.No,
         )
-        return choice == QMessageBox.StandardButton.Yes
+        return choice == modals.QMessageBox.StandardButton.Yes
 
     def _on_db_create_requested(self, what, name):
         """Right-click on a relation node in the coherence view's Tables and
@@ -4491,7 +4488,7 @@ class MainWindow(QMainWindow):
         self._save_rejson_action.setEnabled(False)
 
     def _locate_generator(self) -> None:
-        path, _filter = QFileDialog.getOpenFileName(
+        path, _filter = modals.QFileDialog.getOpenFileName(
             self, "Locate PHP Generator Executable", "", "Executables (*.exe);;All files (*)"
         )
         if not path:
@@ -4541,7 +4538,7 @@ class MainWindow(QMainWindow):
         # 2. Require a configured executable.
         exe = load_executable_path(base_dir=self._generator_config_dir)
         if exe is None:
-            QMessageBox.information(
+            modals.QMessageBox.information(
                 self,
                 "Generate PHP",
                 "Locate the PHP Generator executable first (Generation > Locate PHP Generator Executable...).",
@@ -4549,18 +4546,18 @@ class MainWindow(QMainWindow):
             return
 
         # 3. Save vs Save As vs Cancel so on-disk content matches the editor.
-        choice = QMessageBox.question(
+        choice = modals.QMessageBox.question(
             self,
             "Save Before Generating",
             "The generator reads the project from disk. Save the current editor "
             "contents before generating?",
-            QMessageBox.StandardButton.Save
-            | QMessageBox.StandardButton.SaveAll  # used as the "Save As..." button
-            | QMessageBox.StandardButton.Cancel,
+            modals.QMessageBox.StandardButton.Save
+            | modals.QMessageBox.StandardButton.SaveAll  # used as the "Save As..." button
+            | modals.QMessageBox.StandardButton.Cancel,
         )
-        if choice == QMessageBox.StandardButton.Cancel:
+        if choice == modals.QMessageBox.StandardButton.Cancel:
             return
-        if choice == QMessageBox.StandardButton.SaveAll:
+        if choice == modals.QMessageBox.StandardButton.SaveAll:
             self._save_project_as()
         else:
             self._save_project()  # delegates to Save As when there's no path yet
@@ -4568,7 +4565,7 @@ class MainWindow(QMainWindow):
             return  # Save As was cancelled -> nothing on disk to generate from
 
         # 4. Output folder (prefilled).
-        output_folder = QFileDialog.getExistingDirectory(
+        output_folder = modals.QFileDialog.getExistingDirectory(
             self, "Select Output Folder", self._project_output_folder_default()
         )
         if not output_folder:
@@ -4595,10 +4592,10 @@ class MainWindow(QMainWindow):
         self._is_generating = False
         self.audit_panel.addItem(f"{_GENERATOR_OUTPUT_PREFIX}Generation finished (exit {exit_code})")
         if exit_code == 0:
-            QMessageBox.information(self, "Generate PHP", "Generation succeeded.")
+            modals.QMessageBox.information(self, "Generate PHP", "Generation succeeded.")
             self.statusBar().showMessage("Generation succeeded", 5000)
         else:
-            QMessageBox.critical(
+            modals.QMessageBox.critical(
                 self,
                 "Generate PHP",
                 f"Generation failed (exit {exit_code}). See the Audit / Problems panel for the generator log.",
@@ -4609,7 +4606,7 @@ class MainWindow(QMainWindow):
         if not self._current_output_folder:
             self.statusBar().showMessage("No output folder yet — run Generate PHP first.", 5000)
             return
-        QDesktopServices.openUrl(QUrl.fromLocalFile(self._current_output_folder))
+        modals.QDesktopServices.openUrl(QUrl.fromLocalFile(self._current_output_folder))
 
     # -- panGen / rePHPgen (own generator + gap analysis) --------------------
 
@@ -4622,7 +4619,7 @@ class MainWindow(QMainWindow):
         """(python, root, extra_env) or None after showing guidance."""
         root = load_re_phpgen_root(base_dir=self._generator_config_dir)
         if not validate_re_phpgen_root(root):
-            QMessageBox.information(
+            modals.QMessageBox.information(
                 self,
                 "panGen",
                 "re_phpgen runtime not found. Set it via "
@@ -4647,23 +4644,23 @@ class MainWindow(QMainWindow):
         if self._current_project is None and not self.center_stage.xml_editor.toPlainText().strip():
             self.statusBar().showMessage("Open a project first.", 5000)
             return None
-        choice = QMessageBox.question(
+        choice = modals.QMessageBox.question(
             self,
             "Save Before Running",
             "panGen reads the project from disk. Save the current editor contents first?",
-            QMessageBox.StandardButton.Save
-            | QMessageBox.StandardButton.SaveAll
-            | QMessageBox.StandardButton.Cancel,
+            modals.QMessageBox.StandardButton.Save
+            | modals.QMessageBox.StandardButton.SaveAll
+            | modals.QMessageBox.StandardButton.Cancel,
         )
-        if choice == QMessageBox.StandardButton.Cancel:
+        if choice == modals.QMessageBox.StandardButton.Cancel:
             return None
-        if choice == QMessageBox.StandardButton.SaveAll:
+        if choice == modals.QMessageBox.StandardButton.SaveAll:
             self._save_project_as()
         else:
             self._save_project()
         if not self._current_project_path:
             return None
-        output_folder = QFileDialog.getExistingDirectory(
+        output_folder = modals.QFileDialog.getExistingDirectory(
             self, "Select Output Folder", self._project_output_folder_default()
         )
         return output_folder or None
@@ -4695,7 +4692,7 @@ class MainWindow(QMainWindow):
         if exit_code == 0:
             self.statusBar().showMessage("panGen finished", 5000)
         else:
-            QMessageBox.warning(
+            modals.QMessageBox.warning(
                 self,
                 "panGen",
                 f"panGen failed (exit {exit_code}). See the Audit / Problems panel "
@@ -4712,14 +4709,14 @@ class MainWindow(QMainWindow):
         if output_folder is None:
             return
         if Path(output_folder).name == PANGEN_SUBFOLDER:
-            QMessageBox.information(
+            modals.QMessageBox.information(
                 self, "rePHPgen",
                 "This is panGen's own output subfolder — select the folder that "
                 "contains the vendor-generated .php files instead.",
             )
             return
         if not any(Path(output_folder).glob("*.php")):
-            QMessageBox.information(
+            modals.QMessageBox.information(
                 self,
                 "rePHPgen",
                 "No vendor output found in this folder. Generate the project from "
@@ -4742,7 +4739,7 @@ class MainWindow(QMainWindow):
             _log.info("re_phpgen: analyze rc=%s", exit_code)
             self._is_generating = False
             if exit_code != 0:
-                QMessageBox.warning(
+                modals.QMessageBox.warning(
                     self,
                     "rePHPgen",
                     f"Gap analysis failed (exit {exit_code}). See the Audit / "
@@ -4755,13 +4752,13 @@ class MainWindow(QMainWindow):
             summary = summarize_gap_json(json_path)
             self._append_generator_output(summary.replace("\n", " | "))
             self.statusBar().showMessage("rePHPgen: gap analysis complete", 5000)
-            QMessageBox.information(self, "rePHPgen — Gap Summary", summary)
+            modals.QMessageBox.information(self, "rePHPgen — Gap Summary", summary)
 
         def _on_pangen_done(exit_code: int) -> None:
             _log.info("re_phpgen: pangen rc=%s", exit_code)
             if exit_code != 0:
                 self._is_generating = False
-                QMessageBox.warning(
+                modals.QMessageBox.warning(
                     self,
                     "rePHPgen",
                     f"panGen failed (exit {exit_code}). See the Audit / Problems "
@@ -4792,7 +4789,7 @@ class MainWindow(QMainWindow):
             return
         stem = Path(self._current_project_path).stem if self._current_project_path else "project"
         default_dir = self._current_output_folder or ""
-        path, _filter = QFileDialog.getSaveFileName(
+        path, _filter = modals.QFileDialog.getSaveFileName(
             self,
             "Save reJSON",
             str(Path(default_dir) / f"{stem}_gap.json"),
@@ -4806,7 +4803,7 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(f"Saved reJSON to {Path(path).name}", 5000)
 
     def _locate_pangen_runtime(self) -> None:
-        root = QFileDialog.getExistingDirectory(
+        root = modals.QFileDialog.getExistingDirectory(
             self,
             "Locate panGen Runtime (re_phpgen repo)",
             load_re_phpgen_root(base_dir=self._generator_config_dir),
@@ -4814,7 +4811,7 @@ class MainWindow(QMainWindow):
         if not root:
             return
         if not validate_re_phpgen_root(root):
-            QMessageBox.warning(
+            modals.QMessageBox.warning(
                 self,
                 "panGen",
                 "That folder does not look like the re_phpgen repo "
@@ -4838,13 +4835,12 @@ class MainWindow(QMainWindow):
         """Open the diagnostic log directory in the system file browser.
         ``opener`` is an injectable seam so tests never spawn Explorer."""
         from PySide6.QtCore import QUrl
-        from PySide6.QtGui import QDesktopServices
 
         from pgtp_editor import debuglog
 
         target = debuglog.log_dir()
         target.mkdir(parents=True, exist_ok=True)
-        open_fn = opener if opener is not None else QDesktopServices.openUrl
+        open_fn = opener if opener is not None else modals.QDesktopServices.openUrl
         open_fn(QUrl.fromLocalFile(str(target)))
 
     def _show_manual(self):

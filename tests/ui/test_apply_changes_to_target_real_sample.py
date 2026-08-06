@@ -54,7 +54,7 @@ def test_apply_changes_to_target_against_real_sample_file(qtbot, tmp_path):
     qtbot.addWidget(window)
 
     with patch(
-        "pgtp_editor.ui.main_window.QFileDialog.getOpenFileName",
+        "pgtp_editor.ui.modals.QFileDialog.getOpenFileName",
         side_effect=[(str(source_path), ""), (str(target_path), "")],
     ):
         window._compare_merge_two_files()
@@ -69,7 +69,7 @@ def test_apply_changes_to_target_against_real_sample_file(qtbot, tmp_path):
     assert len(caption_leaves) == 1
     caption_leaves[0].setCheckState(0, Qt.CheckState.Checked)
 
-    with patch("pgtp_editor.ui.main_window.QMessageBox.information") as mock_info:
+    with patch("pgtp_editor.ui.modals.QMessageBox.information") as mock_info:
         window._apply_changes_to_target()
 
     mock_info.assert_called_once()

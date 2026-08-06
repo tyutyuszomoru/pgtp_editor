@@ -24,6 +24,7 @@ from tests.ui._menu_helpers import find_action, find_top_menu
 from pgtp_editor.schema_learning.storage import curated_xsd_path
 from pgtp_editor.ui.main_window import MainWindow
 from pgtp_editor.ui import main_window as main_window_module
+from pgtp_editor.ui import modals
 
 _MINIMAL = """<?xml version="1.0" encoding="UTF-8"?>
 <xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
@@ -219,7 +220,7 @@ def test_xsd_tab_close_button_save_failure_keeps_tab_open(window, monkeypatch):
         raise OSError("read-only filesystem")
     monkeypatch.setattr(main_window_module.Path, "write_text", _boom)
     monkeypatch.setattr(
-        main_window_module.QMessageBox, "critical", staticmethod(lambda *a, **k: None)
+        modals.QMessageBox, "critical", staticmethod(lambda *a, **k: None)
     )
 
     stage.tabCloseRequested.emit(stage.xsd_tab_index)
@@ -400,7 +401,7 @@ def test_export_copies_curated(window, monkeypatch, tmp_path):
     _seed(window)
     dest = tmp_path / "out.xsd"
     monkeypatch.setattr(
-        main_window_module.QFileDialog, "getSaveFileName",
+        modals.QFileDialog, "getSaveFileName",
         staticmethod(lambda *a, **k: (str(dest), "")),
     )
     window._export_xsd()
@@ -412,12 +413,12 @@ def test_import_refuses_malformed(window, monkeypatch, tmp_path):
     bad = tmp_path / "bad.xsd"
     bad.write_text("<broken", encoding="utf-8")
     monkeypatch.setattr(
-        main_window_module.QFileDialog, "getOpenFileName",
+        modals.QFileDialog, "getOpenFileName",
         staticmethod(lambda *a, **k: (str(bad), "")),
     )
     criticals = []
     monkeypatch.setattr(
-        main_window_module.QMessageBox, "critical",
+        modals.QMessageBox, "critical",
         staticmethod(lambda *a, **k: criticals.append(a)),
     )
     window._import_xsd()
@@ -431,7 +432,7 @@ def test_import_replaces_with_bak_and_reloads(window, monkeypatch, tmp_path):
     incoming = tmp_path / "incoming.xsd"
     incoming.write_text(_MINIMAL.replace('name="a"', 'name="z"'), encoding="utf-8")
     monkeypatch.setattr(
-        main_window_module.QFileDialog, "getOpenFileName",
+        modals.QFileDialog, "getOpenFileName",
         staticmethod(lambda *a, **k: (str(incoming), "")),
     )
     window._import_xsd()
@@ -452,7 +453,7 @@ def test_import_with_dirty_tab_includes_notice(window, monkeypatch, tmp_path):
     incoming = tmp_path / "incoming.xsd"
     incoming.write_text(_MINIMAL.replace('name="a"', 'name="imported"'), encoding="utf-8")
     monkeypatch.setattr(
-        main_window_module.QFileDialog, "getOpenFileName",
+        modals.QFileDialog, "getOpenFileName",
         staticmethod(lambda *a, **k: (str(incoming), "")),
     )
     window._import_xsd()
@@ -479,14 +480,14 @@ def test_import_with_warnings_ask_user_decline(window, monkeypatch, tmp_path):
     ), encoding="utf-8")
 
     monkeypatch.setattr(
-        main_window_module.QFileDialog, "getOpenFileName",
+        modals.QFileDialog, "getOpenFileName",
         staticmethod(lambda *a, **k: (str(with_warning), "")),
     )
 
     # User declines import
     monkeypatch.setattr(
-        main_window_module.QMessageBox, "question",
-        staticmethod(lambda *a, **k: main_window_module.QMessageBox.StandardButton.No),
+        modals.QMessageBox, "question",
+        staticmethod(lambda *a, **k: modals.QMessageBox.StandardButton.No),
     )
     window._import_xsd()
 
@@ -507,14 +508,14 @@ def test_import_with_warnings_ask_user_accept(window, monkeypatch, tmp_path):
     ), encoding="utf-8")
 
     monkeypatch.setattr(
-        main_window_module.QFileDialog, "getOpenFileName",
+        modals.QFileDialog, "getOpenFileName",
         staticmethod(lambda *a, **k: (str(with_warning), "")),
     )
 
     # User accepts import
     monkeypatch.setattr(
-        main_window_module.QMessageBox, "question",
-        staticmethod(lambda *a, **k: main_window_module.QMessageBox.StandardButton.Yes),
+        modals.QMessageBox, "question",
+        staticmethod(lambda *a, **k: modals.QMessageBox.StandardButton.Yes),
     )
     window._import_xsd()
 
@@ -599,7 +600,7 @@ def test_export_without_curated_shows_status_and_no_dialog(window, monkeypatch):
     _unseed(window)
     dialog_calls = []
     monkeypatch.setattr(
-        main_window_module.QFileDialog, "getSaveFileName",
+        modals.QFileDialog, "getSaveFileName",
         staticmethod(lambda *a, **k: dialog_calls.append(a) or ("", "")),
     )
     window._export_xsd()
@@ -614,7 +615,7 @@ def test_export_with_dirty_tab_shows_save_first_and_no_dialog(window, monkeypatc
     assert window._xsd_dirty is True
     dialog_calls = []
     monkeypatch.setattr(
-        main_window_module.QFileDialog, "getSaveFileName",
+        modals.QFileDialog, "getSaveFileName",
         staticmethod(lambda *a, **k: dialog_calls.append(a) or ("", "")),
     )
     window._export_xsd()
@@ -626,12 +627,12 @@ def test_export_with_dirty_tab_shows_save_first_and_no_dialog(window, monkeypatc
 def test_export_cancelled_dialog_is_noop(window, monkeypatch, tmp_path):
     _seed(window)
     monkeypatch.setattr(
-        main_window_module.QFileDialog, "getSaveFileName",
+        modals.QFileDialog, "getSaveFileName",
         staticmethod(lambda *a, **k: ("", "")),
     )
     criticals = []
     monkeypatch.setattr(
-        main_window_module.QMessageBox, "critical",
+        modals.QMessageBox, "critical",
         staticmethod(lambda *a, **k: criticals.append(a)),
     )
     window._export_xsd()
@@ -642,7 +643,7 @@ def test_export_copy_oserror_shows_critical(window, monkeypatch, tmp_path):
     _seed(window)
     dest = tmp_path / "out.xsd"
     monkeypatch.setattr(
-        main_window_module.QFileDialog, "getSaveFileName",
+        modals.QFileDialog, "getSaveFileName",
         staticmethod(lambda *a, **k: (str(dest), "")),
     )
     def _boom(*a, **k):
@@ -650,7 +651,7 @@ def test_export_copy_oserror_shows_critical(window, monkeypatch, tmp_path):
     monkeypatch.setattr(main_window_module.shutil, "copyfile", _boom)
     criticals = []
     monkeypatch.setattr(
-        main_window_module.QMessageBox, "critical",
+        modals.QMessageBox, "critical",
         staticmethod(lambda *a, **k: criticals.append(a)),
     )
     window._export_xsd()
@@ -670,7 +671,7 @@ def test_import_write_oserror_shows_critical_and_keeps_dirty(window, monkeypatch
     incoming = tmp_path / "incoming.xsd"
     incoming.write_text(_MINIMAL.replace('name="a"', 'name="z"'), encoding="utf-8")
     monkeypatch.setattr(
-        main_window_module.QFileDialog, "getOpenFileName",
+        modals.QFileDialog, "getOpenFileName",
         staticmethod(lambda *a, **k: (str(incoming), "")),
     )
     real_write_text = main_window_module.Path.write_text
@@ -682,7 +683,7 @@ def test_import_write_oserror_shows_critical_and_keeps_dirty(window, monkeypatch
     monkeypatch.setattr(main_window_module.Path, "write_text", _guarded_write)
     criticals = []
     monkeypatch.setattr(
-        main_window_module.QMessageBox, "critical",
+        modals.QMessageBox, "critical",
         staticmethod(lambda *a, **k: criticals.append(a)),
     )
     window._import_xsd()
@@ -704,7 +705,7 @@ def test_save_write_oserror_shows_critical_and_keeps_dirty(window, monkeypatch):
     monkeypatch.setattr(main_window_module.Path, "write_text", _boom)
     criticals = []
     monkeypatch.setattr(
-        main_window_module.QMessageBox, "critical",
+        modals.QMessageBox, "critical",
         staticmethod(lambda *a, **k: criticals.append(a)),
     )
     window._save_xsd()
@@ -721,13 +722,13 @@ def test_import_binary_file_shows_error(window, monkeypatch, tmp_path):
     binary.write_bytes(bytes([0xff, 0xfe, 0x00]))
 
     monkeypatch.setattr(
-        main_window_module.QFileDialog, "getOpenFileName",
+        modals.QFileDialog, "getOpenFileName",
         staticmethod(lambda *a, **k: (str(binary), "")),
     )
 
     criticals = []
     monkeypatch.setattr(
-        main_window_module.QMessageBox, "critical",
+        modals.QMessageBox, "critical",
         staticmethod(lambda *a, **k: criticals.append(a)),
     )
     window._import_xsd()

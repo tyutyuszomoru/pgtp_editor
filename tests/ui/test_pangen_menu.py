@@ -65,10 +65,10 @@ def test_pangen_runs_cli_with_command_cwd_and_pythonpath(qtbot, tmp_path):
     out_dir.mkdir()
 
     with patch(
-        "pgtp_editor.ui.main_window.QMessageBox.question",
+        "pgtp_editor.ui.modals.QMessageBox.question",
         return_value=QMessageBox.StandardButton.Save,
     ), patch(
-        "pgtp_editor.ui.main_window.QFileDialog.getExistingDirectory",
+        "pgtp_editor.ui.modals.QFileDialog.getExistingDirectory",
         return_value=str(out_dir),
     ):
         window._pangen()
@@ -85,7 +85,7 @@ def test_pangen_without_runtime_shows_guidance_and_stops(qtbot, tmp_path):
     window, fake, cfg, _ = _configured_window(qtbot, tmp_path, with_root=False)
     _prep_project(window, tmp_path)
 
-    with patch("pgtp_editor.ui.main_window.QMessageBox.information") as mock_info:
+    with patch("pgtp_editor.ui.modals.QMessageBox.information") as mock_info:
         window._pangen()
 
     assert mock_info.called
@@ -102,13 +102,13 @@ def test_analyze_without_vendor_php_shows_info_and_stops(qtbot, tmp_path):
     out_dir.mkdir()  # empty: no .php
 
     with patch(
-        "pgtp_editor.ui.main_window.QMessageBox.question",
+        "pgtp_editor.ui.modals.QMessageBox.question",
         return_value=QMessageBox.StandardButton.Save,
     ), patch(
-        "pgtp_editor.ui.main_window.QFileDialog.getExistingDirectory",
+        "pgtp_editor.ui.modals.QFileDialog.getExistingDirectory",
         return_value=str(out_dir),
     ), patch(
-        "pgtp_editor.ui.main_window.QMessageBox.information"
+        "pgtp_editor.ui.modals.QMessageBox.information"
     ) as mock_info:
         window._re_phpgen_analyze()
 
@@ -128,13 +128,13 @@ def test_analyze_rejects_pangen_output_folder_as_vendor_baseline(qtbot, tmp_path
     (pangen_dir / "page.php").write_text("<?php", encoding="utf-8")
 
     with patch(
-        "pgtp_editor.ui.main_window.QMessageBox.question",
+        "pgtp_editor.ui.modals.QMessageBox.question",
         return_value=QMessageBox.StandardButton.Save,
     ), patch(
-        "pgtp_editor.ui.main_window.QFileDialog.getExistingDirectory",
+        "pgtp_editor.ui.modals.QFileDialog.getExistingDirectory",
         return_value=str(pangen_dir),
     ), patch(
-        "pgtp_editor.ui.main_window.QMessageBox.information"
+        "pgtp_editor.ui.modals.QMessageBox.information"
     ) as mock_info:
         window._re_phpgen_analyze()
 
@@ -173,10 +173,10 @@ def test_analyze_chains_pangen_then_analyze_and_summarizes(qtbot, tmp_path):
     (out_dir / "page.php").write_text("<?php", encoding="utf-8")
 
     with patch(
-        "pgtp_editor.ui.main_window.QMessageBox.question",
+        "pgtp_editor.ui.modals.QMessageBox.question",
         return_value=QMessageBox.StandardButton.Save,
     ), patch(
-        "pgtp_editor.ui.main_window.QFileDialog.getExistingDirectory",
+        "pgtp_editor.ui.modals.QFileDialog.getExistingDirectory",
         return_value=str(out_dir),
     ):
         window._re_phpgen_analyze()
@@ -195,7 +195,7 @@ def test_analyze_chains_pangen_then_analyze_and_summarizes(qtbot, tmp_path):
     # analyze produces a gap JSON at the work path; firing its finished
     # callback summarizes it and enables the save action.
     _valid_gap_json(window._gap_json_work_path())
-    with patch("pgtp_editor.ui.main_window.QMessageBox.information") as mock_info:
+    with patch("pgtp_editor.ui.modals.QMessageBox.information") as mock_info:
         fake.pending[1](0)
 
     assert window._is_generating is False
@@ -212,15 +212,15 @@ def test_analyze_pangen_failure_skips_analyze_and_warns(qtbot, tmp_path):
     (out_dir / "page.php").write_text("<?php", encoding="utf-8")
 
     with patch(
-        "pgtp_editor.ui.main_window.QMessageBox.question",
+        "pgtp_editor.ui.modals.QMessageBox.question",
         return_value=QMessageBox.StandardButton.Save,
     ), patch(
-        "pgtp_editor.ui.main_window.QFileDialog.getExistingDirectory",
+        "pgtp_editor.ui.modals.QFileDialog.getExistingDirectory",
         return_value=str(out_dir),
     ):
         window._re_phpgen_analyze()
 
-    with patch("pgtp_editor.ui.main_window.QMessageBox.warning") as mock_warn:
+    with patch("pgtp_editor.ui.modals.QMessageBox.warning") as mock_warn:
         fake.pending[0](1)
 
     assert mock_warn.called
@@ -239,7 +239,7 @@ def test_save_rejson_copies_last_gap_json(qtbot, tmp_path):
     target = tmp_path / "saved_gap.json"
 
     with patch(
-        "pgtp_editor.ui.main_window.QFileDialog.getSaveFileName",
+        "pgtp_editor.ui.modals.QFileDialog.getSaveFileName",
         return_value=(str(target), "JSON (*.json)"),
     ):
         window._save_rejson()
@@ -252,7 +252,7 @@ def test_save_rejson_without_gap_json_is_a_noop(qtbot, tmp_path):
     assert window._last_gap_json is None
 
     with patch(
-        "pgtp_editor.ui.main_window.QFileDialog.getSaveFileName"
+        "pgtp_editor.ui.modals.QFileDialog.getSaveFileName"
     ) as mock_save:
         window._save_rejson()
 
@@ -269,9 +269,9 @@ def test_locate_runtime_rejects_invalid_dir(qtbot, tmp_path):
     bad.mkdir()
 
     with patch(
-        "pgtp_editor.ui.main_window.QFileDialog.getExistingDirectory",
+        "pgtp_editor.ui.modals.QFileDialog.getExistingDirectory",
         return_value=str(bad),
-    ), patch("pgtp_editor.ui.main_window.QMessageBox.warning") as mock_warn:
+    ), patch("pgtp_editor.ui.modals.QMessageBox.warning") as mock_warn:
         window._locate_pangen_runtime()
 
     assert mock_warn.called
@@ -284,7 +284,7 @@ def test_locate_runtime_accepts_valid_dir(qtbot, tmp_path):
     root = _make_root(tmp_path)
 
     with patch(
-        "pgtp_editor.ui.main_window.QFileDialog.getExistingDirectory",
+        "pgtp_editor.ui.modals.QFileDialog.getExistingDirectory",
         return_value=str(root),
     ):
         window._locate_pangen_runtime()
@@ -303,10 +303,10 @@ def test_pythonpath_merge_prepends_user_entries(qtbot, tmp_path, monkeypatch):
     monkeypatch.setenv("PYTHONPATH", r"C:\userlibs")
 
     with patch(
-        "pgtp_editor.ui.main_window.QMessageBox.question",
+        "pgtp_editor.ui.modals.QMessageBox.question",
         return_value=QMessageBox.StandardButton.Save,
     ), patch(
-        "pgtp_editor.ui.main_window.QFileDialog.getExistingDirectory",
+        "pgtp_editor.ui.modals.QFileDialog.getExistingDirectory",
         return_value=str(out_dir),
     ):
         window._pangen()
@@ -365,10 +365,10 @@ def test_pangen_cancel_save_prompt_stops(qtbot, tmp_path):
     _prep_project(window, tmp_path)
 
     with patch(
-        "pgtp_editor.ui.main_window.QMessageBox.question",
+        "pgtp_editor.ui.modals.QMessageBox.question",
         return_value=QMessageBox.StandardButton.Cancel,
     ), patch(
-        "pgtp_editor.ui.main_window.QFileDialog.getExistingDirectory"
+        "pgtp_editor.ui.modals.QFileDialog.getExistingDirectory"
     ) as mock_dir:
         window._pangen()
 
@@ -383,10 +383,10 @@ def test_pangen_cancel_output_folder_stops(qtbot, tmp_path):
     _prep_project(window, tmp_path)
 
     with patch(
-        "pgtp_editor.ui.main_window.QMessageBox.question",
+        "pgtp_editor.ui.modals.QMessageBox.question",
         return_value=QMessageBox.StandardButton.Save,
     ), patch(
-        "pgtp_editor.ui.main_window.QFileDialog.getExistingDirectory",
+        "pgtp_editor.ui.modals.QFileDialog.getExistingDirectory",
         return_value="",  # user cancelled the folder dialog
     ):
         window._pangen()
@@ -403,13 +403,13 @@ def test_pangen_saveall_uses_save_as_and_runs(qtbot, tmp_path):
     saved_pgtp = tmp_path / "saved.pgtp"
 
     with patch(
-        "pgtp_editor.ui.main_window.QMessageBox.question",
+        "pgtp_editor.ui.modals.QMessageBox.question",
         return_value=QMessageBox.StandardButton.SaveAll,
     ), patch(
-        "pgtp_editor.ui.main_window.QFileDialog.getSaveFileName",
+        "pgtp_editor.ui.modals.QFileDialog.getSaveFileName",
         return_value=(str(saved_pgtp), "PGTP files (*.pgtp)"),
     ), patch(
-        "pgtp_editor.ui.main_window.QFileDialog.getExistingDirectory",
+        "pgtp_editor.ui.modals.QFileDialog.getExistingDirectory",
         return_value=str(out_dir),
     ):
         window._pangen()
@@ -432,16 +432,16 @@ def test_pangen_nonzero_exit_warns_and_clears_flag(qtbot, tmp_path):
     out_dir.mkdir()
 
     with patch(
-        "pgtp_editor.ui.main_window.QMessageBox.question",
+        "pgtp_editor.ui.modals.QMessageBox.question",
         return_value=QMessageBox.StandardButton.Save,
     ), patch(
-        "pgtp_editor.ui.main_window.QFileDialog.getExistingDirectory",
+        "pgtp_editor.ui.modals.QFileDialog.getExistingDirectory",
         return_value=str(out_dir),
     ):
         window._pangen()
 
     assert window._is_generating is True  # runner is "running"
-    with patch("pgtp_editor.ui.main_window.QMessageBox.warning") as mock_warn:
+    with patch("pgtp_editor.ui.modals.QMessageBox.warning") as mock_warn:
         fake.pending[0](3)
 
     assert mock_warn.called
@@ -460,17 +460,17 @@ def test_analyze_step_failure_warns_and_leaves_save_disabled(qtbot, tmp_path):
     (out_dir / "page.php").write_text("<?php", encoding="utf-8")
 
     with patch(
-        "pgtp_editor.ui.main_window.QMessageBox.question",
+        "pgtp_editor.ui.modals.QMessageBox.question",
         return_value=QMessageBox.StandardButton.Save,
     ), patch(
-        "pgtp_editor.ui.main_window.QFileDialog.getExistingDirectory",
+        "pgtp_editor.ui.modals.QFileDialog.getExistingDirectory",
         return_value=str(out_dir),
     ):
         window._re_phpgen_analyze()
 
     fake.pending[0](0)  # pangen succeeds -> analyze launched
     assert len(fake.calls) == 2
-    with patch("pgtp_editor.ui.main_window.QMessageBox.warning") as mock_warn:
+    with patch("pgtp_editor.ui.modals.QMessageBox.warning") as mock_warn:
         fake.pending[1](2)  # analyze fails
 
     assert mock_warn.called
@@ -483,7 +483,7 @@ def test_analyze_without_runtime_shows_guidance_and_stops(qtbot, tmp_path):
     window, fake, cfg, _ = _configured_window(qtbot, tmp_path, with_root=False)
     _prep_project(window, tmp_path)
 
-    with patch("pgtp_editor.ui.main_window.QMessageBox.information") as mock_info:
+    with patch("pgtp_editor.ui.modals.QMessageBox.information") as mock_info:
         window._re_phpgen_analyze()
 
     assert mock_info.called
@@ -501,10 +501,10 @@ def test_analyze_command_json_matches_work_path(qtbot, tmp_path):
     (out_dir / "page.php").write_text("<?php", encoding="utf-8")
 
     with patch(
-        "pgtp_editor.ui.main_window.QMessageBox.question",
+        "pgtp_editor.ui.modals.QMessageBox.question",
         return_value=QMessageBox.StandardButton.Save,
     ), patch(
-        "pgtp_editor.ui.main_window.QFileDialog.getExistingDirectory",
+        "pgtp_editor.ui.modals.QFileDialog.getExistingDirectory",
         return_value=str(out_dir),
     ):
         window._re_phpgen_analyze()
@@ -533,7 +533,7 @@ def test_save_rejson_cancel_dialog_writes_nothing(qtbot, tmp_path):
     window._last_gap_json = src
 
     with patch(
-        "pgtp_editor.ui.main_window.QFileDialog.getSaveFileName",
+        "pgtp_editor.ui.modals.QFileDialog.getSaveFileName",
         return_value=("", ""),  # user cancelled
     ):
         window._save_rejson()  # must not raise
@@ -548,9 +548,9 @@ def test_locate_runtime_cancel_dialog_is_noop(qtbot, tmp_path):
     before = load_re_phpgen_root(base_dir=cfg)
 
     with patch(
-        "pgtp_editor.ui.main_window.QFileDialog.getExistingDirectory",
+        "pgtp_editor.ui.modals.QFileDialog.getExistingDirectory",
         return_value="",  # cancelled
-    ), patch("pgtp_editor.ui.main_window.QMessageBox.warning") as mock_warn:
+    ), patch("pgtp_editor.ui.modals.QMessageBox.warning") as mock_warn:
         window._locate_pangen_runtime()
 
     assert not mock_warn.called

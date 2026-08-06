@@ -226,7 +226,7 @@ def test_reparse_action_exists_and_is_not_a_stub(qtbot):
     # The editor is empty here, so reparse takes the failure path, which shows
     # a modal QMessageBox.critical -- patch it, or the modal event loop blocks
     # the headless test run forever.
-    with patch("pgtp_editor.ui.main_window.QMessageBox.critical"):
+    with patch("pgtp_editor.ui.modals.QMessageBox.critical"):
         action.trigger()
     assert window.statusBar().currentMessage() != "Not yet implemented: Reparse Raw XML into Tree"
 

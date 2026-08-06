@@ -55,7 +55,7 @@ def test_locate_generator_saves_chosen_path(qtbot, tmp_path):
     exe.write_text("", encoding="utf-8")
 
     with patch(
-        "pgtp_editor.ui.main_window.QFileDialog.getOpenFileName",
+        "pgtp_editor.ui.modals.QFileDialog.getOpenFileName",
         return_value=(str(exe), "Executables (*.exe)"),
     ):
         window._locate_generator()
@@ -69,7 +69,7 @@ def test_locate_generator_cancel_is_a_noop(qtbot, tmp_path):
     qtbot.addWidget(window)
 
     with patch(
-        "pgtp_editor.ui.main_window.QFileDialog.getOpenFileName",
+        "pgtp_editor.ui.modals.QFileDialog.getOpenFileName",
         return_value=("", ""),
     ):
         window._locate_generator()
@@ -87,7 +87,7 @@ def test_locate_generator_menu_action_is_wired(qtbot, tmp_path):
     menu = find_top_menu(window, "Generation")
 
     with patch(
-        "pgtp_editor.ui.main_window.QFileDialog.getOpenFileName",
+        "pgtp_editor.ui.modals.QFileDialog.getOpenFileName",
         return_value=(str(exe), "Executables (*.exe)"),
     ):
         find_action(menu, "Locate PHP Generator Executable...").trigger()
@@ -127,7 +127,7 @@ def test_generate_with_no_configured_exe_shows_info_and_stops(qtbot, tmp_path):
     qtbot.addWidget(window)
     window.center_stage.xml_editor.setPlainText("<Project/>")
 
-    with patch("pgtp_editor.ui.main_window.QMessageBox.information") as mock_info:
+    with patch("pgtp_editor.ui.modals.QMessageBox.information") as mock_info:
         window._generate_php()
 
     assert mock_info.called
@@ -144,10 +144,10 @@ def test_generate_is_noop_while_already_generating(qtbot, tmp_path):
     out_dir.mkdir()
 
     with patch(
-        "pgtp_editor.ui.main_window.QMessageBox.question",
+        "pgtp_editor.ui.modals.QMessageBox.question",
         return_value=QMessageBox.StandardButton.Save,
     ), patch(
-        "pgtp_editor.ui.main_window.QFileDialog.getExistingDirectory",
+        "pgtp_editor.ui.modals.QFileDialog.getExistingDirectory",
         return_value=str(out_dir),
     ):
         window._generate_php()
@@ -160,7 +160,7 @@ def test_generate_is_noop_while_already_generating(qtbot, tmp_path):
     assert len(fake.commands) == 1  # still just the one run
 
     # After the first run finishes, a new run is allowed again.
-    with patch("pgtp_editor.ui.main_window.QMessageBox.information"):
+    with patch("pgtp_editor.ui.modals.QMessageBox.information"):
         fake.emit_finished(0)
     assert window._is_generating is False
 
@@ -174,10 +174,10 @@ def test_generate_happy_path_builds_and_runs_command(qtbot, tmp_path):
     out_dir.mkdir()
 
     with patch(
-        "pgtp_editor.ui.main_window.QMessageBox.question",
+        "pgtp_editor.ui.modals.QMessageBox.question",
         return_value=QMessageBox.StandardButton.Save,
     ), patch(
-        "pgtp_editor.ui.main_window.QFileDialog.getExistingDirectory",
+        "pgtp_editor.ui.modals.QFileDialog.getExistingDirectory",
         return_value=str(out_dir),
     ):
         window._generate_php()
@@ -197,10 +197,10 @@ def test_generate_shows_generating_php_status_message(qtbot, tmp_path):
     window.statusBar().showMessage = lambda msg, *a, **k: messages.append(msg)
 
     with patch(
-        "pgtp_editor.ui.main_window.QMessageBox.question",
+        "pgtp_editor.ui.modals.QMessageBox.question",
         return_value=QMessageBox.StandardButton.Save,
     ), patch(
-        "pgtp_editor.ui.main_window.QFileDialog.getExistingDirectory",
+        "pgtp_editor.ui.modals.QFileDialog.getExistingDirectory",
         return_value=str(out_dir),
     ):
         window._generate_php()
@@ -214,7 +214,7 @@ def test_generate_cancel_at_save_prompt_stops(qtbot, tmp_path):
     window._current_project_path = str(tmp_path / "proj.pgtp")
 
     with patch(
-        "pgtp_editor.ui.main_window.QMessageBox.question",
+        "pgtp_editor.ui.modals.QMessageBox.question",
         return_value=QMessageBox.StandardButton.Cancel,
     ):
         window._generate_php()
@@ -228,10 +228,10 @@ def test_generate_cancel_at_output_folder_stops(qtbot, tmp_path):
     window._current_project_path = str(tmp_path / "proj.pgtp")
 
     with patch(
-        "pgtp_editor.ui.main_window.QMessageBox.question",
+        "pgtp_editor.ui.modals.QMessageBox.question",
         return_value=QMessageBox.StandardButton.Save,
     ), patch(
-        "pgtp_editor.ui.main_window.QFileDialog.getExistingDirectory",
+        "pgtp_editor.ui.modals.QFileDialog.getExistingDirectory",
         return_value="",
     ):
         window._generate_php()
@@ -247,10 +247,10 @@ def test_generate_streams_output_lines_into_audit_panel(qtbot, tmp_path):
     out_dir.mkdir()
 
     with patch(
-        "pgtp_editor.ui.main_window.QMessageBox.question",
+        "pgtp_editor.ui.modals.QMessageBox.question",
         return_value=QMessageBox.StandardButton.Save,
     ), patch(
-        "pgtp_editor.ui.main_window.QFileDialog.getExistingDirectory",
+        "pgtp_editor.ui.modals.QFileDialog.getExistingDirectory",
         return_value=str(out_dir),
     ):
         window._generate_php()
@@ -280,10 +280,10 @@ def test_generate_output_folder_prefilled_from_project_output_path(qtbot, tmp_pa
         return ""
 
     with patch(
-        "pgtp_editor.ui.main_window.QMessageBox.question",
+        "pgtp_editor.ui.modals.QMessageBox.question",
         return_value=QMessageBox.StandardButton.Save,
     ), patch(
-        "pgtp_editor.ui.main_window.QFileDialog.getExistingDirectory",
+        "pgtp_editor.ui.modals.QFileDialog.getExistingDirectory",
         side_effect=fake_dir,
     ):
         window._generate_php()
@@ -316,10 +316,10 @@ def test_generate_output_folder_prefers_the_open_local_project_folder(qtbot, tmp
         return ""
 
     with patch(
-        "pgtp_editor.ui.main_window.QMessageBox.question",
+        "pgtp_editor.ui.modals.QMessageBox.question",
         return_value=QMessageBox.StandardButton.Save,
     ), patch(
-        "pgtp_editor.ui.main_window.QFileDialog.getExistingDirectory",
+        "pgtp_editor.ui.modals.QFileDialog.getExistingDirectory",
         side_effect=fake_dir,
     ):
         window._generate_php()
@@ -345,10 +345,10 @@ def test_generate_output_folder_falls_back_normally_with_no_project_open(qtbot, 
         return ""
 
     with patch(
-        "pgtp_editor.ui.main_window.QMessageBox.question",
+        "pgtp_editor.ui.modals.QMessageBox.question",
         return_value=QMessageBox.StandardButton.Save,
     ), patch(
-        "pgtp_editor.ui.main_window.QFileDialog.getExistingDirectory",
+        "pgtp_editor.ui.modals.QFileDialog.getExistingDirectory",
         side_effect=fake_dir,
     ):
         window._generate_php()
@@ -363,10 +363,10 @@ def _run_generation(window, fake, tmp_path):
     out_dir = tmp_path / "out"
     out_dir.mkdir(exist_ok=True)
     with patch(
-        "pgtp_editor.ui.main_window.QMessageBox.question",
+        "pgtp_editor.ui.modals.QMessageBox.question",
         return_value=QMessageBox.StandardButton.Save,
     ), patch(
-        "pgtp_editor.ui.main_window.QFileDialog.getExistingDirectory",
+        "pgtp_editor.ui.modals.QFileDialog.getExistingDirectory",
         return_value=str(out_dir),
     ):
         window._generate_php()
@@ -377,7 +377,7 @@ def test_zero_exit_shows_success_dialog_and_summary(qtbot, tmp_path):
     window, fake, exe = _configured_window(qtbot, tmp_path)
     _run_generation(window, fake, tmp_path)
 
-    with patch("pgtp_editor.ui.main_window.QMessageBox.information") as mock_info:
+    with patch("pgtp_editor.ui.modals.QMessageBox.information") as mock_info:
         fake.emit_finished(0)
 
     assert mock_info.called
@@ -390,7 +390,7 @@ def test_nonzero_exit_shows_failure_dialog(qtbot, tmp_path):
     window, fake, exe = _configured_window(qtbot, tmp_path)
     _run_generation(window, fake, tmp_path)
 
-    with patch("pgtp_editor.ui.main_window.QMessageBox.critical") as mock_critical:
+    with patch("pgtp_editor.ui.modals.QMessageBox.critical") as mock_critical:
         fake.emit_finished(3)
 
     assert mock_critical.called
@@ -402,7 +402,7 @@ def test_open_output_folder_before_any_run_is_a_noop(qtbot, tmp_path):
     qtbot.addWidget(window)
     assert window._current_output_folder is None
 
-    with patch("pgtp_editor.ui.main_window.QDesktopServices.openUrl") as mock_open:
+    with patch("pgtp_editor.ui.modals.QDesktopServices.openUrl") as mock_open:
         window._open_output_folder()
 
     assert not mock_open.called
@@ -412,7 +412,7 @@ def test_open_output_folder_after_run_opens_the_folder(qtbot, tmp_path):
     window, fake, exe = _configured_window(qtbot, tmp_path)
     out_dir = _run_generation(window, fake, tmp_path)
 
-    with patch("pgtp_editor.ui.main_window.QDesktopServices.openUrl") as mock_open:
+    with patch("pgtp_editor.ui.modals.QDesktopServices.openUrl") as mock_open:
         window._open_output_folder()
 
     assert mock_open.called
@@ -427,7 +427,7 @@ def test_open_output_folder_menu_action_is_wired(qtbot, tmp_path):
     _run_generation(window, fake, tmp_path)
     menu = find_top_menu(window, "Generation")
 
-    with patch("pgtp_editor.ui.main_window.QDesktopServices.openUrl") as mock_open:
+    with patch("pgtp_editor.ui.modals.QDesktopServices.openUrl") as mock_open:
         find_action(menu, "Open Output Folder").trigger()
 
     assert mock_open.called

@@ -15,6 +15,7 @@ from pgtp_editor.db.ddl_project import ProjectSettings, save_settings
 from pgtp_editor.db.sandbox import ProjectTier, SandboxCapabilities, SandboxMode
 from pgtp_editor.ui.main_window import MainWindow
 from pgtp_editor.ui.new_project_dialog import NewProjectDialog
+from pgtp_editor.ui import modals
 
 
 def _empty_settings(tmp_path):
@@ -178,7 +179,7 @@ def test_opening_a_project_probes_again_reflecting_the_sandboxs_current_state(
     import pgtp_editor.ui.main_window as main_window_module
 
     monkeypatch.setattr(
-        main_window_module.QFileDialog, "getExistingDirectory",
+        modals.QFileDialog, "getExistingDirectory",
         staticmethod(lambda *a, **k: str(project_dir)),
     )
     window._probe_sandbox_capabilities = lambda params: SandboxCapabilities(is_superuser=True)
@@ -200,7 +201,7 @@ def test_a_sandbox_that_died_between_sessions_is_detected_on_reopen(qtbot, tmp_p
     import pgtp_editor.ui.main_window as main_window_module
 
     monkeypatch.setattr(
-        main_window_module.QFileDialog, "getExistingDirectory",
+        modals.QFileDialog, "getExistingDirectory",
         staticmethod(lambda *a, **k: str(project_dir)),
     )
     window._probe_sandbox_capabilities = lambda params: SandboxCapabilities(

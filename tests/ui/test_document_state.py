@@ -170,7 +170,7 @@ def test_close_save_aborts_if_still_dirty(qtbot, tmp_path):
     from unittest.mock import patch
 
     with patch(
-        "pgtp_editor.ui.main_window.QFileDialog.getSaveFileName",
+        "pgtp_editor.ui.modals.QFileDialog.getSaveFileName",
         return_value=("", ""),
     ):
         window._close_project(confirm="save")
@@ -259,7 +259,7 @@ def test_failed_open_does_not_mark_dirty(qtbot, tmp_path):
 
     bad = tmp_path / "bad.pgtp"
     bad.write_text("<Project><oops>", encoding="utf-8", newline="")
-    with patch("pgtp_editor.ui.main_window.QMessageBox.critical"):
+    with patch("pgtp_editor.ui.modals.QMessageBox.critical"):
         window.open_project_file(str(bad))
 
     # The failed open showed the fallback text but must NOT mark the document

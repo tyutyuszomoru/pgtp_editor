@@ -24,6 +24,7 @@ from tests.ui._menu_helpers import find_action, find_top_menu
 from pgtp_editor.schema_learning.storage import curated_xsd_path, learned_xsd_path
 from pgtp_editor.ui.main_window import MainWindow
 from pgtp_editor.ui import main_window as main_window_module
+from pgtp_editor.ui import modals
 
 _CURATED = """<?xml version="1.0" encoding="UTF-8"?>
 <xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
@@ -203,7 +204,7 @@ def test_mode_switch_save_failure_aborts_switch(window, monkeypatch):
         raise OSError("disk full")
     monkeypatch.setattr(main_window_module.Path, "write_text", _boom)
     monkeypatch.setattr(
-        main_window_module.QMessageBox, "critical",
+        modals.QMessageBox, "critical",
         staticmethod(lambda *a, **k: None),
     )
 
@@ -295,7 +296,7 @@ def test_export_learned_defaults_to_learned_filename(window, monkeypatch, tmp_pa
         captured["default"] = default_name
         return (str(dest), "")
     monkeypatch.setattr(
-        main_window_module.QFileDialog, "getSaveFileName",
+        modals.QFileDialog, "getSaveFileName",
         staticmethod(_fake_save),
     )
     window._export_xsd()
@@ -313,7 +314,7 @@ def test_import_learned_backs_up_and_no_completion_feed(window, monkeypatch, tmp
     incoming = tmp_path / "incoming.xsd"
     incoming.write_text(_LEARNED.replace('name="lrn"', 'name="lrn2"'), encoding="utf-8")
     monkeypatch.setattr(
-        main_window_module.QFileDialog, "getOpenFileName",
+        modals.QFileDialog, "getOpenFileName",
         staticmethod(lambda *a, **k: (str(incoming), "")),
     )
     window._import_xsd()

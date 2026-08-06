@@ -18,6 +18,7 @@ from PySide6.QtCore import QSettings, Qt
 from pgtp_editor.db.ddl_project import ProjectSettings, save_settings
 from pgtp_editor.ui.ddl_object_editor import CHECK_PREFIX, DdlObjectRef
 from pgtp_editor.ui.main_window import MainWindow
+from pgtp_editor.ui import modals
 
 
 def _empty_settings(tmp_path):
@@ -433,12 +434,11 @@ def _accept_confirmations(monkeypatch):
     module imported (never on the window attribute): the panel captured the
     confirmation seam when `set_apply_seams` wired it, so a later attribute
     patch would not be seen -- and an unpatched modal would hang the run."""
-    import pgtp_editor.ui.main_window as main_window_module
 
     monkeypatch.setattr(
-        main_window_module.QMessageBox,
+        modals.QMessageBox,
         "question",
-        staticmethod(lambda *a, **k: main_window_module.QMessageBox.StandardButton.Yes),
+        staticmethod(lambda *a, **k: modals.QMessageBox.StandardButton.Yes),
     )
 
 
