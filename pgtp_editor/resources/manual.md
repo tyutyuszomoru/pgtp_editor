@@ -4,7 +4,9 @@ PGTP Editor is a companion tool for SQL Maestro **PostgreSQL PHP Generator**. It
 opens the generator's `.pgtp` project files directly, lets you inspect and edit
 them safely, manage captions in bulk, edit event-handler code comfortably, compare
 project versions, check the project against a live database, validate structure,
-and drive PHP generation — all without fighting the generator's own UI.
+work on your database's own functions and triggers — trying them out in a
+throwaway sandbox first — and drive PHP generation, all without fighting the
+generator's own UI.
 
 The editor never rewrites your file behind your back: every change you make is one
 you asked for, and the on-disk bytes are preserved except where you edit.
@@ -31,7 +33,8 @@ file just opens into that project. The window has three areas:
 - **Center — Raw XML / Caption Management / Diff-Merge / Edit XSD / DDL Explorer /
   Manual:** the working area. It opens on **Raw XML**; the other tabs appear when
   you invoke them. Editing an individual function, procedure, or trigger opens
-  one more tab per object (see *DDL Explorer*).
+  one more tab per object (see *DDL Explorer*), and a live sandbox session adds
+  the **Sandbox SQL** console tab (see *The Sandbox*).
 - **Right — Properties:** a read-only inspector for whatever you select in the tree.
 
 When you open a file, the status bar shows a live message such as
@@ -194,15 +197,17 @@ session and are not written to the file.
 
 Both mouse gestures work in **every** editor that has a gutter — the Raw XML
 editor, **Edit XSD** / **Edit AutoXSD**, the read-only **DDL Explorer**, an open
-**DDL object editor tab**, and the **Edit code…** dialog — and they keep working
-in Caption Mode, where the Raw XML editor itself is read-only.
+**DDL object editor tab**, the **Sandbox SQL** console (see *The Sandbox*), and
+the **Edit code…** dialog — and they keep working in Caption Mode, where the Raw
+XML editor itself is read-only.
 
 The **Bookmarks** menu and its shortcuts follow the tab you are working in: with
 the **Edit XSD** (or **Edit AutoXSD**) tab active they act on the schema editor,
 with the **DDL Explorer** tab or an open **DDL object editor tab** active they
-act on that tab's own editor, and on any other tab they act on the **Raw XML**
-editor. Using them never switches tabs on you — a bookmark is always set or
-found in the editor you are already looking at.
+act on that tab's own editor, and on any other tab — including the **Sandbox
+SQL** console, whose buffer is a scratch pad rather than a document — they act on
+the **Raw XML** editor. Using them never switches tabs on you — a bookmark is
+always set or found in the editor you are already looking at.
 
 The **Edit code…** dialog has the same bookmark strip, but as a separate dialog
 it is out of the Bookmarks menu's reach: there you set and clear bookmarks with the
@@ -601,8 +606,15 @@ database agree" from "no mismatches match this filter".
 - **Double-click** a Page, Detail, lookup, or reference row to jump to its line in
   the Raw XML editor. Double-clicking a relation or column row instead lists every
   occurrence of its `tableName=`/`fieldName=` token in the Find-all results panel
-  and seeds the Find bar, so **F3** steps through them.
+  and seeds the Find bar, so **F3** steps through them. When there is genuinely
+  nothing to find, the status bar says which token it looked for and what that
+  means, for example *No `tableName="orders"` in the buffer — the XML does not
+  reference orders.* So a real "the XML never mentions this table" (which is what
+  an **unreferenced** relation looks like) never reads as a malfunction.
 - **Single-click** any row to load the matching node in the **Properties** panel.
+  This includes the rows *inside* a relation's **References** group: selecting one
+  shows the properties of the page, detail, or column that does the referencing,
+  not an empty panel.
 - Where the XML names something the database does not have, right-click the row for
   **Rename table in XML…** or **Rename column in XML…** — a project-wide replace,
   after which the check re-runs automatically. Neither is offered for calculated
@@ -762,8 +774,11 @@ shows the error and the toggle unchecks itself.
 ### Editing a single function, procedure, or trigger
 
 Both browsing surfaces double as an entry point into a dedicated, **editable**
-tab for one object at a time — nothing here touches the database; it is purely
-a text editor over the object's current definition.
+tab for one object at a time. Opening and editing such a tab touches no
+database — it is a text editor over the object's current definition — and the one
+gesture in it that *does* write anywhere, **Apply to Sandbox**, appears only while
+a sandbox session is open and only ever writes to the sandbox (see *The
+Sandbox*).
 
 - In the **DDL Objects** tree, right-click a routine or trigger row for
   **Edit `<schema>.<name>(<argtypes>)`…** (or **Edit `<schema>.<table>.<name>`…**
@@ -841,8 +856,15 @@ tabs you already have open — they are not reloaded, marked, or closed, even if
 the live definition changed underneath them; your in-progress edits are never
 silently discarded to resync with the database.
 
-There is no Apply, Check, or sandbox validation in this version — editing and
-saving a `.sql` file to disk is all it does today.
+**Deploy this edit…** (right-click) asks where this edit should go and then runs
+that gesture — it writes nothing of its own. It offers only the destinations that
+actually exist right now: **Save (for a future batch deploy)** always, and
+**Apply to Sandbox** while a sandbox session is open (see *The Sandbox*). There
+is no destination for the real database in this version.
+
+Everything else about this tab — editing, Save, Format Selection — stays purely
+local: nothing here touches a database until you explicitly apply to the sandbox.
+See *The Sandbox* for what an open sandbox session adds to this tab.
 
 ### Creating a new trigger, function, or procedure
 
@@ -1001,8 +1023,11 @@ you can always navigate elsewhere.
   - the raw connection error, if it couldn't connect at all.
 
   The same group also carries the provisioning choice — **Without data (schema
-  only, default)**, the schema-only baseline, or **With data**, which clones
-  the target database via `pg_dump`/`pg_restore` once, at creation time.
+  only, default)**, the schema-only baseline, or **With data**, which is meant to
+  clone the target database via `pg_dump`/`pg_restore`. **Creating a project
+  provisions nothing**: the choice is recorded and applies whenever a sandbox is
+  provisioned or reset, and that gesture is not available from any menu in this
+  version (see *The Sandbox*).
 - **Git (optional — not yet used)** — Server, User, and Checkout branch
   fields. These are captured and saved with the project, but git integration
   isn't built yet: nothing is cloned, committed, or pushed. They're recorded
@@ -1150,6 +1175,175 @@ unresolved:
 
 ---
 
+## The Sandbox
+
+A project's **sandbox** is a throwaway local PostgreSQL database where you can
+run a routine before anyone else has to live with it: apply your edit there,
+validate it, poke at it with ad-hoc SQL, and only then decide what to do with it.
+Nothing in this chapter can reach your real database.
+
+The sandbox is a **local DDL-versioning project** concept: it is configured in
+**File ▸ Project Settings… ▸ Connections** (or when you create the project — see
+*Local DDL-Versioning Projects*), so everything below requires a project to be
+open.
+
+### Opening and closing a sandbox session
+
+- **Database ▸ Open Sandbox Session** connects to the project's sandbox.
+- **Database ▸ Close Sandbox Session** releases that connection.
+
+Only one of the two is ever in the menu, and **Open Sandbox Session appears only
+when the open project actually has a sandbox host configured** — an entry you
+cannot use is left out rather than greyed out. Every other sandbox gesture in this
+chapter appears and disappears the same way, which is why the Database menu looks
+different depending on whether a session is open.
+
+**Opening a project connects nothing.** A session is a real connection to a real
+database, so it is always something you asked for; the app never opens one, and
+never creates or fills a sandbox, as a side effect of opening a project.
+
+The outcome lands in the Audit panel as a `[Sandbox]` line, and a refusal always
+says which refusal it was: the sandbox is unreachable, the user is not a
+superuser, `pg_dump`/`pg_restore` are missing from your `PATH` (only for a **With
+data** sandbox), no sandbox is configured — or the connected database is **not one
+PGTP Editor created**. That last guard is deliberate and absolute: a sandbox must
+both be named `pgtp_sandbox_…` *and* carry the ownership comment the app writes
+when it creates one, because a database name alone can be faked. Pointing the
+sandbox connection at a database you made by hand is refused rather than written
+to.
+
+> **The gesture that *creates* a sandbox is not available from any menu yet.**
+> Provisioning, cloning data into a sandbox, installing `plpgsql_check`, and
+> resetting a sandbox are all built but unreachable in this version. So in
+> practice **Open Sandbox Session** can only succeed against a sandbox database
+> that a previous provisioning run created for you. Everything else in this
+> chapter then works normally.
+
+Closing the session (or closing the project) takes every sandbox-only affordance
+with it, including the Sandbox SQL console tab — a console that can only refuse
+is worse than no console.
+
+### Applying an object to the sandbox
+
+While a session is open, every open **DDL object editor tab** (see *DDL Explorer*)
+grows an **Apply to Sandbox** button under the editor, and the same entry in the
+tab's right-click menu. It commits the tab's current text to the sandbox database
+and records it in the sandbox's working set, so the sandbox holds exactly what you
+last applied.
+
+- It is **never a keyboard shortcut**. An irreversible outward effect should not
+  be one keystroke away, so applying is always a deliberate click or menu pick.
+- It always asks first, and the confirmation **names both the object and the
+  database** it is about to write to — you never confirm a nameless destination.
+- The sandbox is **stateful**: your edit stays there until you apply something
+  else. Applying is not a test that cleans up after itself.
+- An empty buffer is refused outright rather than applied as an empty definition.
+- The result — applied, cancelled, or the database's own error message — is
+  reported as a `[Check]` line in the Audit panel.
+
+**Apply does not run a Check for you.** Applying and validating are two separate
+gestures: an apply reports whether PostgreSQL accepted your statement, and that is
+all it claims. If you want the validation ladder's verdict, press **Check Object in
+Sandbox** (below) yourself afterwards.
+
+**There is no "Apply to Target"** in this version — nothing here can write to your
+real database, and the button is absent rather than disabled.
+
+### Checking an object in the sandbox
+
+**Database ▸ Check Object in Sandbox** runs the validation ladder over the
+**active DDL object editor tab** — exactly one object per run, the one you are
+looking at. If no object tab is active, the status bar says so and nothing runs.
+
+The entry is present whenever a sandbox session is open, and it stays present
+even when the `plpgsql_check` extension is missing. That is on purpose: a tier
+that could not run is a **reported outcome**, not a reason to hide the gesture.
+The report always says what it could *not* check, so a check that could not run
+can never be mistaken for a clean one.
+
+The Audit panel gets one `[Check]` line per tier, always — never a single
+summary that hides an unchecked tier:
+
+- **tier0 — syntax.** PostgreSQL's own parser is the syntax checker, so this tier
+  reports what tier 2 found rather than duplicating it. If tier 2 did not run,
+  tier 0 says plainly that there is no offline syntax checker to fall back on.
+- **tier1 — the extra-warnings lint** (`plpgsql.extra_warnings`). It speaks only
+  through PostgreSQL's notice channel, so a run that captured no notices reports
+  **unavailable**, never "passed".
+- **tier2 — compile.** Whether the definition actually compiled.
+- **tier3 — semantic analysis** by the `plpgsql_check` extension. Without that
+  extension installed in the sandbox, this tier reports unavailable with the
+  reason — the extension is absent, installable, or its state is unknown, and
+  those are three different answers.
+
+This gesture **writes nothing**: it reads the sandbox as it currently stands. So
+tiers that are *about* applying have nothing to compile in a Check run and say so,
+and tier 2 instead reports the bookkeeping fact — that the sandbox already holds
+this object, and when it was applied. If your buffer has changed since it was
+applied, the report carries a **stale-buffer caveat**: the findings describe the
+version in the sandbox, not the text in front of you. So the reliable order is
+**Apply to Sandbox first, then Check** — that way the text you are reading and the
+definition being analysed are the same one.
+
+For a trigger, the ladder needs to know which function the trigger calls; that is
+read from the `EXECUTE FUNCTION …` clause in your buffer. If it can't be read, the
+run says tier 3 was unavailable for that reason instead of guessing a function.
+
+### Clicking a Check finding
+
+Findings arrive in the Audit panel as their own lines, separately from the
+narrative tier lines, each tagged **ERROR**, **WARNING**, or **INFO** and naming
+the line it was found on — for example *[Check] ERROR line 12: …*.
+
+**Click a finding to jump to it:** the object's tab is focused and the caret is
+placed on that line. A finding whose line could not be determined is shown
+**without a line number and does nothing when clicked** — deliberately inert,
+because sending you to a plausible-looking wrong line is worse than not moving.
+
+Findings only navigate while the object's tab is still open; a finding for a tab
+you have since closed does nothing rather than reopening a document you dismissed.
+
+### The Sandbox SQL Console
+
+**Database ▸ Sandbox SQL Console…** opens the **Sandbox SQL** tab in the center
+area: a SQL editor on top, a results grid below it. Like the other sandbox
+gestures the menu entry exists only while a session is open, and there is only
+ever **one** console — invoking the command again focuses the tab you already
+have.
+
+**It is sandbox-only by construction.** This console cannot run anything against
+your production or quality database — not behind a confirmation, not behind a
+preference, and there is deliberately no setting that would let it. It only ever
+knows about the sandbox session.
+
+- **Ctrl+Return runs**, and so does the **Run** button. This is the one execution
+  gesture in the app that carries a shortcut, because the sandbox is disposable
+  and there is no real database within this console's reach.
+- Run sends **your selection if you have one, otherwise the whole buffer**.
+- **Row limit** — a spin box above the editor, 1000 rows by default. There is no
+  "unlimited" setting on purpose. A result cut off at the cap is reported as
+  **TRUNCATED**, naming the cap, so a partial answer is never presented as a
+  complete one.
+- The **status strip** above the grid gives you the row count and the elapsed
+  time, or the driver's own status and affected-row count for a statement that
+  returns no result set, or the database's error message — an error never shows up
+  as a silently empty grid. `NULL` values in the grid are dimmed and italic, so
+  they can't be confused with an empty string or the text `NULL`.
+- **Ctrl+Space** completes schema and table names (from the catalog the DDL
+  Explorer already fetched), and **Ctrl+Alt+F** reformats the selection, exactly
+  as in a DDL object editor tab.
+- The console holds no document, so there is nothing to save and no unsaved
+  prompt when it closes. Losing the session clears the results but leaves your
+  typed SQL alone.
+
+**Run in Sandbox Console** (right-click, in a DDL object editor tab, with text
+selected) sends that selection over to the console and focuses it — and
+**executes nothing**. There is exactly one place SQL runs, and pressing Run there
+is your decision, not a side effect of copying something over. A second push
+appends below the first rather than overwriting it.
+
+---
+
 ## Project Status
 
 **Database ▸ Project Status…** opens a separate **Project Status** window that
@@ -1164,16 +1358,22 @@ below it, the reminder **"Click a node for details and actions."** A
 
 **Opening the window re-probes.** It is never a stale cached reading: a sandbox
 that died since you opened the project shows as unreachable here, and invoking
-the menu entry again on an already-open window probes again rather than just
-raising it. **Re-check** does the same on demand. The diagram follows the app's
-Light/Dark theme automatically (see *Appearance & Layout*).
+the menu entry again probes again rather than just raising the window.
+**Re-check** does the same on demand. Closing the window is never final —
+**Database ▸ Project Status…** brings it back, re-probed, as often as you like.
+
+The diagram follows the app's Light/Dark theme automatically (see *Appearance &
+Layout*) and is drawn as vector artwork, so it stays sharp on a high-resolution
+display and at any interface scale.
 
 ### The nodes
 
 - **Quality database** — the target/production connection this project works
-  against: **Not configured**, **Unreachable**, or **Connected**. Not configured
-  is its own state, distinct from a failed login: an unconfigured connection has
-  not failed, it has not been tried.
+  against: **Not configured**, **Unreachable**, or **Connected**. **Connected
+  means the app actually reached it**, not merely that a connection profile
+  exists — a configured connection whose server is down reads *Unreachable*
+  here. Not configured is its own state, distinct from a failed login: an
+  unconfigured connection has not failed, it has not been tried.
 - **Project** — which tier you are working in: **Standalone editor** (no project
   open), **Quality project** (a project is open but has no working sandbox), or
   **Development project** (a project is open with a working sandbox).
@@ -1217,10 +1417,12 @@ acted.
 
 > In this version the Quality window's **Reconnect**, the Sandbox window's help
 > link and both windows' connection detail lines are live. Running a data clone
-> and installing the `plpgsql_check` extension both need a live sandbox session,
-> which arrives with sandbox provisioning, so no button for either is offered
-> yet: rather than show a control that cannot work, those two windows stay
-> status-only. Everything the diagram reports is live and accurate today.
+> and installing the `plpgsql_check` extension are **not offered anywhere yet**,
+> so the **Sandbox data** and **plpgsql_check** windows stay status-only rather
+> than showing a button that cannot work. This window is a report, not a
+> control panel: connecting to the sandbox is its own gesture on the Database
+> menu (see *The Sandbox*). Everything the diagram reports is live and accurate
+> today.
 
 ---
 
@@ -1375,6 +1577,7 @@ exists is quietly discarded rather than breaking the toolbar.
 | **Ctrl+Z** / **Ctrl+Y** | DDL object editor tab | Undo / redo (that tab's own history only — never the project's) |
 | **Ctrl+Space** | Raw XML | Attribute / value completion |
 | **Ctrl+Space** | DDL object editor tab | Schema-aware name completion (schema/table names, or `NEW.`/`OLD.` column names) |
+| **Ctrl+Space** | Sandbox SQL console | Schema / table name completion |
 | **Ctrl+L** | Raw XML | Go To XSD (attribute's definition in the Edit XSD tab) |
 | **Ctrl+click** | Raw XML (mouse) | Jump to matching open/close tag |
 | **Alt+click** | Raw XML (mouse) | Jump to parent tag start |
@@ -1385,7 +1588,8 @@ exists is quietly discarded rather than breaking the toolbar.
 | **Ctrl+Shift+F** | Raw XML / Edit XSD / DDL Explorer / DDL object editor tab | Find all (inert in the DDL Explorer and DDL object editor tabs) |
 | **Ctrl+R** | Raw XML / Edit XSD / DDL object editor tab | Replace (not in the read-only DDL Explorer) |
 | **Ctrl+Alt+Enter** | Raw XML / Edit XSD / DDL object editor tab | Replace all (not in the read-only DDL Explorer) |
-| **Ctrl+Alt+F** | DDL object editor tab | Format Selection (reindent the current selection) |
+| **Ctrl+Alt+F** | DDL object editor tab / Sandbox SQL console | Format Selection (reindent the current selection) |
+| **Ctrl+Return** | Sandbox SQL console | Run the selection, or the whole buffer, against the sandbox |
 | **Ctrl+F** | Caption Mode | Open Find/Filter |
 | **Ctrl+R** | Caption Mode | Open Replace |
 | **Ctrl+G** | Caption Mode | Go to line in Raw XML |
@@ -1397,6 +1601,12 @@ In Caption Mode, **Ctrl+F** and **Ctrl+R** are rebound to the caption
 Find/Filter/Replace tools for as long as the mode is active; they return to the Raw
 XML editor's Find/Replace when you leave the mode.
 
+**Applying to the sandbox has no shortcut, on purpose** — neither **Apply to
+Sandbox** nor **Deploy this edit…** nor **Check Object in Sandbox** is bound to a
+key, so a write to a database is never one keystroke away. **Ctrl+Return** in the
+Sandbox SQL console is the one exception, because that console can only ever reach
+the disposable sandbox (see *The Sandbox*).
+
 ---
 
 ## The Manual
@@ -1406,6 +1616,46 @@ You're reading it. Open it any time with **F1** or **Help ▸ Manual**.
 - The manual renders in the center **Manual** tab.
 - The **Contents** tab in the left dock lists every chapter. Click a chapter to
   scroll the manual straight to it.
+
+---
+
+## The MCP Server
+
+PGTP Editor can also run as an **MCP server** — a headless, read-only service that
+lets an AI assistant (or any MCP client) ask questions about a `.pgtp` project and
+about a database, using the editor's own parsing and introspection instead of
+guessing at the XML.
+
+**It is off by default and there is no in-app switch for it.** You start it
+yourself, instead of the GUI:
+
+- `python -m pgtp_editor.main --mcp` — optionally followed by a `.pgtp` path.
+- `python -m pgtp_editor.mcp` — the same server, in the module form MCP client
+  configurations expect; it also accepts an optional `.pgtp` path.
+
+The server talks over standard input/output, so no window opens. Naming a `.pgtp`
+file makes it the **default project** for tool calls that don't name one — a
+convenience only; a call may always name its own file. A path that doesn't exist,
+or can't be read, is reported and the server refuses to start, rather than
+answering every later question with the same error.
+
+Six tools are offered, and **all six only read**:
+
+- **read_project** — the project's pages plus the tables and views each one
+  references.
+- **list_pages** — the project's pages.
+- **get_node** — one page, detail, column, or event handler with its attributes,
+  by the identity the other tools report.
+- **diff_projects** — the differences between two `.pgtp` files (added, removed,
+  changed).
+- **list_db_tables** — a database's tables, views, and materialized views with
+  their columns.
+- **list_db_routines** — a database's functions, procedures, and triggers with
+  their source.
+
+The two database tools take connection parameters with the call; the password is
+used to connect and is never echoed back. Nothing an MCP client asks for can
+change your project file or your database.
 
 ---
 
