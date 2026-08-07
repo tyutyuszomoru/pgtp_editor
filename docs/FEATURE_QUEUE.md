@@ -852,3 +852,282 @@ menu item vs. toolbar) and the still-open picker-UI idiom (modal dialog vs. QMen
 validation gate that precedes a target apply).
 
 ---
+
+## FQ-010: Launch modal presenting the four ways into the app (and the removal of Open Recent + double-click open)
+**Status:** QUEUED
+**Requested:** 2026-08-07
+**Idea (verbatim/summarized):** "When I start the software I should have this options clear." · "Let's do a
+modal." Four groups on launch: (1) **Open a pgtp for editing**, (2) **New Project / Open Project**,
+(3) **Open other files**, (4) **Maintenance mode**. Separately, and folded in here because it removes the
+only resumability the launcher could otherwise have offered: "Let's delete Open recent, and I don't want
+the app to open on doubleclick. These features were good for a standalone pgtp editor but we've already
+left that." Converged through one round of direct Q&A with the owner (Q1–Q6 below) plus a code-verification
+pass. **This is step 1 of a deliberate, slow UX review** (`docs/UX_REVIEW.md` holds the wider dossier) —
+the entry is deliberately fenced to the modal and what it presents. FQ-011 owns what a mode *does*.
+
+**Problem:** Opening the app presents **no guidance whatsoever**. `pgtp_editor/main.py::main()` constructs
+`MainWindow`, calls `window.show()`, then optionally opens a `.pgtp` from `argv` — nothing else. The user
+lands in an empty Raw XML tab with an empty Project Tree and must already know which of five workflows
+this app supports and which menu starts it. `CONSOLIDATED_SPEC.md` line 393 states the condition plainly:
+`startup tree is genuinely empty — no placeholder project`. **There is no launcher, welcome screen or
+start page anywhere in the spec** (verified by grepping `launch|startup|Welcome|start page` across all
+~5,8xx lines): §7's only startup statements are `**Startup file:** main() opens a .pgtp passed as argv[1]`
+(line 547), the unconditional `_restore_theme` (lines 593–596) and `Window-state persistence` (598–599).
+
+Two aggravating facts, both verified:
+- **`windowState` IS restored** (`closeEvent` saves `saveGeometry()`/`saveState()`, restored on
+  construction). The app returns with the user's docks, tab layout and toolbar exactly as left — while
+  holding **no document, no project and no connection**. The restored layout is a *false signal of
+  continuity*: it looks like a resumed session and is not one. Any launcher design has to be read against
+  that backdrop.
+- **After the Open-Recent deletion below there is no resumability at all.** `recentFiles` is the only
+  launch-time memory of prior work that exists (`recentProjects`/`lastProject` do not exist — grepped),
+  and it is being deleted. PHP files were never recorded either. So the launcher presents *actions*, not
+  a resume list, and it does so knowingly.
+
+**The five workflows the four groups collapse** (the owner's own taxonomy, recorded so the grouping is not
+re-derived later):
+- **Group 1 ← open a `.pgtp`, edit it with the XML tooling, compare it against its quality database (the
+  Database/XML Coherence view, §17), and generate. No project, no sandbox.** Verified this genuinely works
+  today: the coherence view needs only a non-empty editor buffer, and the connection comes from the
+  projectless-only `Database ▸ Connection Setup…` (disabled while a project is open, BUG-024, §26 line 5389).
+- **Group 2 ← both project workflows:** (a) working on the quality database via a local sandbox for
+  linting/testing with per-object checkout (§18.2/§18.5), and (b) `.pgtp` diff/merge versioning to converge
+  on a deployable file (§12/§18.3).
+- **Group 3 ← editing other files, currently PHP** (§21, `File ▸ Open PHP File…`).
+- **Group 4 ← maintaining the app itself.** See Q3 for its exact, verified contents.
+
+**Proposed approach** (Q1–Q6 all answered by the owner 2026-08-07):
+- **A modal shown from `main.py`, after `window.show()`, behind an injectable seam.** Two hard constraints,
+  both non-negotiable:
+  1. **It must NOT live in `MainWindow.__init__`.** **49 test files construct a `MainWindow`**; a modal
+     there would hang every one of them, and CLAUDE.md forbids a test ever reaching an un-patched modal Qt
+     call (`QDialog.exec`, `QMessageBox.*`, `QFileDialog.*`). It belongs in `main.py` after
+     `window.show()`, behind an injectable seam like every other confirmation in this codebase (the
+     `confirm=` test-seam pattern §7 already uses for `_confirm_close()`).
+  2. **`--mcp` must remain structurally unable to reach it.** `main.py:197` (`if args.mcp: return
+     run_mcp_server(args.file)`) returns **before any Qt import** — stdio is the JSON-RPC transport and a
+     GUI contending for stdout would corrupt every session. State this as an invariant in the spec so
+     nobody later moves the launcher above that early return.
+- **Four groups, exactly as the owner named them:** (1) Open a pgtp for editing · (2) New Project / Open
+  Project · (3) Open other files · (4) Maintenance mode. Each group's entries dispatch to the **existing**
+  menu actions — `File ▸ Open…`, `File ▸ New Project…` / `Open Project…`, `File ▸ Open PHP File…`, the
+  §11 XSD actions and the §20 Generation actions — never a second implementation of any of them.
+- **A group choice sets a PERSISTED MODE (Q1).** The owner chose mode-and-menu-filtering over the
+  navigation-shortcut reading. **This entry owns only the modal, the four groups, the suppression
+  checkbox and the cancel behaviour. FQ-011 owns the persisted mode concept and what it does to the menu
+  bar** — see "Suggested placement" for why the split is not cosmetic. FQ-010 is ordered **first**;
+  FQ-011 is named as its dependent, not its dependency.
+- **Group 4 = XSD + §20 only (Q3).** Owner's words: *"For now XSD only and the menu points of Generation
+  that belong to the development of re_phpgen."* Verified in `ui/generation_controller.py::build_menu` —
+  the split lands **exactly on an existing spec boundary**, which is why the grouping is defensible rather
+  than arbitrary:
+  - **IN (§20 — re_phpgen, own generator + gap loop):** `Locate panGen Runtime...` (:210),
+    `panGen (Generate Own PHP)` (:212), `rePHPgen (Analyze Gap)` (:214), `Save reJSON...` (:216).
+  - **OUT (§19 — vendor PHP generation, used in ordinary development):** `Locate PHP Generator
+    Executable...` (:201), `Generate PHP...` (:204), `Open Output Folder` (:207).
+  - Plus the §11 XSD actions (`Schema ▸ Edit XSD` / `Edit AutoXSD` / `Verify XSD` / `Export XSD` /
+    `Import XSD`; note `Go To XSD` is Ctrl+L with **no menu entry**, `xsd_controller.py:209-213`, so it
+    cannot be presented by path — `docs/UX_REVIEW.md` §A9).
+  - The **label survives triage**: with §20 in it, "Maintenance mode" really is *maintain the app* rather
+    than *use the app*, so the name is honest. **"For now" is the owner's word — do NOT spec this
+    membership as closed**; the log folder (`Help ▸ Open Log Folder`), `View ▸ Customize Toolbar…`,
+    `Tools ▸ Locate PHP Linter…` and `Tools ▸ Start MCP Server` were raised as candidates and neither
+    included nor ruled out.
+- **Suppressible and escapable (Q4).** A persisted **"don't show this again"** checkbox — a new QSettings
+  bool alongside the existing `lightTheme` / `windowState` / `toolbarIds` / `toolbarIconIds` keys in
+  `QSettings("MDS","PGTP Editor")` — and **Escape / window-close lands in the empty app exactly as today,
+  never quits.** Quitting on close would turn the modal into a gate on running the app at all.
+- **No recents in any group (Q5).** Group 1 *could* have listed `.pgtp` recents today, but `recentFiles`
+  is being deleted (below). Groups 2 and 3 never had a store. **A `recentProjects` store is the right
+  memory for a project-centric app** (unlike recent *files*) and is recorded as a **separate, later entry
+  that FQ-010 does NOT depend on**; `db/ddl_project.py::is_project_dir` already exists to validate that a
+  remembered folder really is a project, so whoever builds it has its validator. The launcher ships
+  recent-less and gains a resume list later without a redesign.
+- **DELETE `File ▸ Open Recent` and the `recentFiles` store** (owner instruction, folded in here because
+  it is what makes the launcher recent-less). Verified surface to remove:
+  `ui/pgtp_document_controller.py` — `_RECENT_FILES_KEY = "recentFiles"` (:145),
+  `_RECENT_FILES_MAX = 10` (:146), the `aboutToShow` wiring + initial rebuild (:280-281), the
+  `recent_files` reader (:745-762), `remember_recent_file` (:764-770) and `rebuild_recent_menu` (:773);
+  its **two and only two writers**, `open_file` (:444) and `save_as` (:606); the File-menu submenu itself;
+  and **`tests/ui/test_open_recent.py` (12 tests, verified count)**.
+- **DELETE the GUI's `args.file` open branch (double-click removal) — but KEEP `args.file` itself.**
+  `main.py:198` passes `args.file` to `run_mcp_server(args.file)` as the **headless MCP server's default
+  project** (`_DefaultPathProvider`, §23). So this removes **only** the GUI branch at `main.py:232-238`,
+  not the argument, not the parser entry. The `file` argument's own help text (`main.py:110-115`) currently
+  advertises the Windows verb and must be reworded to describe only the `--mcp` default-project use.
+- **`packaging/linux/pgtp-editor.desktop` — drop the now-meaningless `%f`.** Verified: it has
+  `Exec=pgtp-editor %f` and **no `MimeType=` line**, so **nothing in the repo ever registered a `.pgtp`
+  association**. Nothing dangles on Linux. If the owner wired the Windows "Edit with PGTP Editor" verb by
+  hand it will stop working — the repo never created it, so that is outside what this change can clean up,
+  but it should be stated rather than discovered.
+
+**Alternatives considered:**
+- **A non-modal "Start" tab in `CenterStage` instead of a modal** — the honest alternative, **rejected by
+  the owner ("Let's do a modal"), recorded because it is the best argument on that side.** It fits the
+  existing fixed-tab pattern (§7's `raw_xml_tab_index`/`xsd_tab_index` set, with the append-only /
+  tail-only-removal invariant untouched), needs **no `main.py` seam and carries no test-hanging risk at
+  all** across the 49 `MainWindow`-constructing test files, and can stay open beside real work. The
+  specific reason it is attractive: because `windowState` **is** restored, a modal lands on top of a fully
+  restored dock/tab/toolbar layout that is a *false signal of continuity*, whereas a Start tab sits
+  *inside* that layout and reads as part of it. The modal's real and decisive advantage is that it is
+  unmissable — which is exactly the owner's complaint. Do not silently re-decide this either way.
+- **A navigation-shortcut launcher with no persisted mode and no menu filtering** — proposed at triage and
+  **overridden by the owner (Q1)**. Recorded because it is the smaller-surface reading: it needs no new
+  persisted concept and touches no menu. Its rejection is what created FQ-011.
+- **Keeping `Open Recent` and showing `.pgtp` recents in group 1** — rejected by the owner: recent *files*
+  belong to the standalone-pgtp-editor era the project has left; recent *projects* is the memory a
+  project-centric app should have, and gets its own entry.
+- **Quitting the app when the modal is cancelled** — rejected (Q4): it would make the modal a gate on
+  running the app, hostile to the "I just want the window open" case.
+
+**Suggested placement:** **EXTEND §7 (App shell)** in `CONSOLIDATED_SPEC.md` — a new startup-launcher
+subsection placed beside the existing `**Startup file:**` bullet (line 547), which this change rewrites.
+No new top-level section: the launcher is shell behaviour, and §7 already owns startup (`_restore_theme`,
+window-state restore), the `main.py` seam conventions and the QSettings key inventory this adds a key to.
+**No §26 change belongs in THIS entry** — §26 changes are FQ-011's, with two exceptions that are pure
+deletions of things this entry removes:
+- **§26 line 5349** lists `Open Recent` in the File menu — must be struck when the submenu goes.
+- **§7 lines 617-621** state the toolbar enumeration *"Skipped: … the dynamic **Open Recent** submenu
+  wholesale — its children are transient per-session file entries and must never be pinnable."* That skip
+  rule becomes **stale/dead** once the submenu is deleted; whoever folds this in must remove it rather than
+  leave a rule guarding a menu that no longer exists.
+- **§7 line 547's `**Startup file:**` statement becomes false** (the GUI no longer opens `argv[1]`) and
+  needs a **Supersession Ledger row**, not a silent edit — as does the removal of Open Recent, which is a
+  documented capability being withdrawn.
+Reuse, do not rebuild: the launcher must dispatch to the **existing** `File`/`Schema`/`Generation` QActions
+(the same actions the toolbar hosts directly per §7's "the toolbar hosts the menus' OWN QActions"), and its
+modal must follow the injectable-seam + never-`.exec()`-in-tests convention every other confirmation and
+dialog in this codebase already observes.
+
+**Open questions:** Group 4's membership is explicitly **open** — the owner said *"for now"* XSD + §20, and
+`Help ▸ Open Log Folder` / `View ▸ Customize Toolbar…` / `Tools ▸ Locate PHP Linter…` /
+`Tools ▸ Start MCP Server` were neither included nor ruled out. Implementation-level details left to
+whoever picks this up: the modal's visual shape (four labelled sections vs. four large buttons vs. a
+list); the exact new QSettings key name for the suppression flag; how a suppressed launcher can be
+re-invoked (a `Help ▸`-or-`File ▸` entry to reopen it was not discussed and is worth offering, since a
+persisted "don't show again" is otherwise irreversible without editing settings); whether the modal is
+shown before or after the persisted `windowState` is visibly restored; and the exact wording of each
+group's entries (the review's naming rulings — `docs/UX_REVIEW.md` "Decide these first" — are a **later
+step and explicitly out of scope here**, so avoid inventing new vocabulary the rulings will have to
+re-settle).
+
+---
+
+## FQ-011: Persisted launch mode that filters the menu bar to the chosen workflow
+**Status:** QUEUED
+**Requested:** 2026-08-07
+**Idea (verbatim/summarized):** "Also I don't want to see menus I can't use (eg. if I work on Path2, I
+don't need generate)." The owner's answer to FQ-010's Q1 was that a launcher group choice is **a persisted
+mode that filters the menu bar**, not a one-shot navigation shortcut. **Split out of FQ-010 deliberately,
+at triage's recommendation and with the owner's agreement**, because the launcher can be specified
+coherently on its own while "what a mode does to the menu bar" cannot be — it is the menu-reorganisation
+work the owner's own scope fence for step 1 excluded. **FQ-010 is ordered FIRST; this entry depends on it**
+(there is no mode to persist until something sets one).
+
+**Problem:** With FQ-010's launcher, the user has told the app which of four workflows they are in. Nothing
+consumes that. The owner wants the menu bar to stop showing commands the chosen workflow does not need,
+naming `Generate` in the project workflow as the example.
+
+**Proposed approach:** A persisted "current mode" (the FQ-010 group, stored in the same
+`QSettings("MDS","PGTP Editor")` scope as `lightTheme`/`windowState`/`toolbarIds`), consumed by a single
+refresh entry point that binds **visibility** of menu actions per mode. Follow the one existing precedent
+exactly rather than inventing a second mechanism: `MainWindow._refresh_sandbox_affordances`
+(`pgtp_editor/ui/main_window.py:3050-3075`) is *"the single 'make every X-dependent affordance match the
+actual state' entry point"* and its docstring states **"Everything here binds VISIBILITY, never
+enabled-state (§18.5 carve-out 2: with no live session the control is ABSENT, not greyed out)."** A
+mode-filter must be one such function, called on mode change, not per-menu ad-hoc `setVisible` calls
+scattered through the nine `_build_*_menu` methods.
+
+**THE OBJECTION, RECORDED VERBATIM AND DELIBERATELY NOT SOFTENED.** Raised at triage, **overridden by the
+owner — which is their call** — and preserved here because it is the strongest argument any future reader
+will have against this design. Do not re-litigate it from scratch; do not treat its presence as a reason
+to quietly not build the feature:
+> Today the app hides on **real capability**, never on **user intent**. `_refresh_sandbox_affordances`
+> binds visibility gating on `has_session` / `_configured_sandbox_params()` — facts about what the app
+> *can* do. §26 states the same rule per-feature (Sandbox SQL Console is *"absent, not disabled, until the
+> active project has a sandbox"*, line 5430; §18.7's sandbox DDL Explorer sibling is *"absent entirely when
+> no sandbox exists (no dead controls)"*, line 5410). **Generate genuinely works in a project.** Hiding it
+> because the user picked "project mode" is the app deciding the user did not mean it — a different rule
+> from hiding what is unusable, and the first time this codebase would apply it. Furthermore, per
+> `docs/UX_REVIEW.md` §D6, the app currently has **too little** capability-based hiding, not too much:
+> seven "Not yet implemented" stubs (`Edit ▸ Cut/Copy/Paste/Delete`, `Edit ▸ Preferences...`, tree
+> `Compare Selected` / `Copy Selected to...`) violate its own absent-not-disabled rule, and fixing those
+> is a **cheaper win** at the same complaint ("I don't want to see menus I can't use") than building an
+> intent-filter.
+
+**An escape hatch is required, and the owner may not have weighed this.** Flagged prominently because it
+is the difference between a helpful default and a trap:
+- A mode is **persisted**, so a user who picks "Path 2" once loses `Generate` on **every subsequent
+  launch**, with the launcher itself possibly suppressed (FQ-010's "don't show again"). There must be an
+  always-reachable way to change or clear the mode from **inside** the app — not only by re-answering a
+  modal that may never appear again.
+- Strongly consider making the filter a **default emphasis rather than a lock**: e.g. a persistent
+  "showing: Project mode — show all commands" affordance, or a "Show all commands" toggle that survives
+  in the mode itself. A hidden-and-only-recoverable-through-settings command is worse than a visible one
+  the user ignores.
+- **`Help ▸ Manual` (F1), and whatever surface reveals/clears the mode, must never be filtered out of any
+  mode** — otherwise the app can hide the only documentation explaining why commands are missing.
+
+**Load-bearing constraints the implementer must not trip over** (verified; `docs/UX_REVIEW.md` §L is the
+fuller list):
+- **Hiding is safe for toolbar identity; MOVING or RENAMING is not.** `toolbar_registry.command_id_for`
+  derives ids from menu label **and** menu location (`["File","Save As..."] → "file.save-as"`, §7 lines
+  601-612). Merely calling `setVisible(False)` on an action changes no id — but note that `MainWindow.
+  _walk_menu_actions` walks `menuBar().actions()` and a hidden action is **still enumerated**, so
+  Customize Toolbar would offer commands the current mode hides. **Decide explicitly** whether the
+  Available list filters by mode (and what happens to an already-pinned toolbar button whose command the
+  current mode hides — the toolbar hosts the menus' OWN QActions, §7 line 627, so hiding the menu action
+  affects the button directly). This interaction is the single most likely source of surprise.
+- **`LEGACY_ID_ALIASES` pins two ids** — `"validate" → "tools.validate-project"` and `"generate" →
+  "generation.generate-php"` — which define `DEFAULT_TOOLBAR_IDS` and key `ICON_ID_BY_COMMAND` → the
+  vendored SVGs (§7 lines 661-665). `Generate PHP...` is **one of the seven default toolbar buttons**, and
+  it is the owner's own example of a command to hide in project mode. So mode-filtering `Generate` hides a
+  **default toolbar button** by default, on a fresh install, in the app's primary mode. Resolve this
+  deliberately.
+- **Do not fold this into the naming/menu-reorganisation rulings.** `docs/UX_REVIEW.md` §A2/§A3 propose
+  *moving* commands between menus (Tools is a grab-bag; lint spans two menus) — every such move **breaks
+  saved toolbar ids** (§L2). Mode-filtering is visibility-only and must stay independent of those moves, so
+  the two can land in either order.
+
+**Alternatives considered:**
+- **Capability-based hiding only, no intent mode** (i.e. do not build this; instead fix `docs/UX_REVIEW.md`
+  §D6's seven stubs so the menus stop showing commands that genuinely do nothing). **This is the
+  alternative the objection above argues for, and it is the smaller, cheaper, precedent-consistent
+  change.** Rejected by the owner in favour of the mode. Recorded so a future reader sees it was weighed,
+  not missed — and note the two are **not mutually exclusive**: fixing the stubs is worth doing whichever
+  way this entry goes.
+- **Disable (grey out) rather than hide** — rejected on precedent: §18.5 carve-out 2 and
+  `_refresh_sandbox_affordances` both state *absent, not disabled*. If mode-filtering greyed things out it
+  would introduce a **third** posture (visible-enabled / visible-disabled / absent) into an app that has
+  deliberately kept two. If the owner wants discoverability of what a mode hides, the answer is the
+  "show all commands" escape hatch above, not a menu full of grey.
+- **Filter by mode at launch only, without persisting** — rejected implicitly by the owner's Q1 answer
+  ("persisted mode"), but noted: it would remove the trap the escape hatch exists to cover, at the cost of
+  re-answering the launcher every session.
+
+**Suggested placement:** **EXTEND §26 (Consolidated menu bar)** in `CONSOLIDATED_SPEC.md` (lines
+5342-5465) as the primary home — §26 is the one place that enumerates every menu and already carries
+per-entry visibility rules, so a **global** mode-filter rule belongs there, stated once, rather than
+sprinkled across ten feature sections. **Also EXTEND §7** for (a) the new mode QSettings key, listed
+beside `lightTheme`/`windowState`/`toolbarIds`/`toolbarIconIds`, (b) the single
+`_refresh_*_affordances`-style entry point that applies it, and (c) the Customize Toolbar interaction
+(§7 lines 601-683 own `_walk_menu_actions` / `_all_menu_commands` / the Available list). **CREATE nothing
+new.** Whoever folds this in must reuse `_refresh_sandbox_affordances`'s shape and its
+visibility-never-enabled-state rule verbatim, and must **explicitly reconcile** §26's existing
+capability-based absent-not-disabled statements with the new intent-based hiding so the spec states two
+distinct rules deliberately instead of appearing to contradict itself.
+**Dependency: ordered AFTER FQ-010** — there is no mode until the launcher sets one.
+
+**Open questions:** (1) **The escape hatch** — what it is and where it lives; unresolved and flagged above
+as required. (2) **Per-mode menu membership** — nobody has enumerated which commands each of the four
+modes shows; only `Generate` in project mode was named. That enumeration is the bulk of this entry's
+design work and needs the owner, command by command or by a stated rule. (3) **Customize Toolbar
+interaction** — does the Available list filter by mode, and what happens to a pinned button the current
+mode hides? (4) **`Generate PHP...` is a default toolbar button** (`LEGACY_ID_ALIASES`/
+`DEFAULT_TOOLBAR_IDS`) — is hiding it in project mode acceptable given it empties a default button on a
+fresh install? (5) Whether the mode also affects anything **beyond** the menu bar (docks, the left-dock
+tabs, the toolbar) — this entry assumes **menu bar only** and should be widened only on an explicit
+decision.
+
+---
