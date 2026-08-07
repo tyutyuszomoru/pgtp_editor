@@ -1,6 +1,6 @@
 # PGTP Editor — Consolidated Specification
 
-> **Status:** living document · **Last synthesized:** 2026-08-06 (previously 2026-08-05: §18.8 corrected to the 5-node model, then given its concrete per-node state enumeration + dark-mode asset convention, then a same-day fix to the Quality node's locked/gray semantic and the Sandbox2 install-state-vs-lint-result semantic; later the same day, BUG-020/021/022/023/024/025 folded in — Captions' preset row-predicate filter + active-filter banner + Unify scope prompt, §18.2's Open-Project validity gate + auto-open of the linked `.pgtp`, the tabbed Project Settings dialog, and Connection Setup… becoming projectless-mode-only; later still the same day, §18.1's Tables branch widened to every table (not just trigger-owning ones) plus click-to-Properties-panel column detail, with `ColumnInfo.comment` added; and finally BUG-021/026/027/028 — §18.2's project-action lambda wiring that made the `.pgtp` auto-open actually reachable, §17's role-split `(P# D# L#)` DB→XML counts and any-role mismatch rule, §7's toolbar widened to every menu command with menu-path ids, and §13's active-filter banner extended to the whole-row find filter). **2026-08-06:** FQ-001 folded into §18.2 — per-group Test buttons on the Project Settings dialog's Connections tab (generic connectivity for Target, superuser probe for Sandbox). Same day: the §18.2 project actions' menu location corrected from Database to **File**, matching the shipped `_build_file_menu` (§26, ledger 2026-08-06). Same day: FQ-002 folded in — §18.1 gains "Creating brand-new objects from the Explorer" (Add Trigger… on a table node, one New Function/Procedure… action on the routines-branch root and the Database menu, the shipped pure `db/ddl_skeleton.py` contract, and manifest registration of the new object so the existing §18.3/§18.4 deploy flow sees it), with §18.5 D1 gaining the third (creation) entry point into the same editable tab and two ledger rows (§28). Same day: FQ-003 folded in — §17 gains **the Database/XML Coherence view**, one merged left-dock surface replacing the two DB-check directions *and* §15's standalone Table References tab (direction toggle eliminated on the "DB is always the truth" framing; a recursive, depth-faithful Pages branch; one global mismatch toggle spanning both branches), with §15 reduced to a pointer, §26's View-menu "Find table reference" and the two Database-menu check items replaced by one Database-menu toggle, and two ledger rows (§28). **Same day, a status-accuracy audit against the shipped code** (no design changes): §17's coherence view, §18.1's FQ-002 creation entries, §18.4's formatter *consumer*, §18.6's completion and §18.8's Project Status window were all marked "not yet implemented" while shipping, and are now marked implemented; §18.5 is split honestly into the shipped editor half vs. the unbuilt Apply/sandbox/ladder half; §18.3 is restated as "every module ships, nothing reaches them"; §5's module tree/table, §7's tab & routing notes, §26 and §27 were swept for the same drift. One genuine design narrowing was recorded with a ledger row: §18.3 step 2's deploy blockers are **`*!` only**. **Also 2026-08-06, owner decision — the sandbox becomes *executable*, not merely inspectable:** §18.5 gains **D3a** (the Check gesture's concrete run contract — what `plpgsql_check_function_tb` is invoked with, how the four `plpgsql_check_state` values gate a run, and how findings reach the `[Check]` Audit lines with click-to-navigate) and **D4** (ad-hoc SQL execution against the sandbox — the **Sandbox SQL Console** tab, `db/sandbox_query.py`, `ui/sql_results_panel.py`, a 1 000-row cap, a mandatory statement timeout, and the **sandbox-only, structurally enforced** safety rule). §29's *"Execution against the sandbox … is not designed"* open question is **closed** by that pass; §5/§7/§26/§27/§18.8 updated to match, with five ledger rows (§28). **Finally, also 2026-08-06:** FQ-005 folded into §7's theme paragraph and §4 — the QDarkStyleSheet QSS layer now covers **both** themes (`_qdarkstyle_stylesheet(light)` / `_qss_cache`, explicit `LightPalette`/`DarkPalette`), retiring the *"light always assigns the empty stylesheet"* invariant and the dark-only attribution, with one ledger row (§28). **Also 2026-08-06, a second status-accuracy sweep against the shipped code** (no design changes): stale absence claims flipped for `db/routine_refs.py`'s pure layer (§18/§18.1/§29 — shipped, richer than sketched; its UI consumer is the remaining gap), the `lint/` and `mcp/` packages (§5/§7/§22/§23 — built, not fully wired), §21's `ui/php_file_tab.py` phase 1 (built, hosted by `CenterStage`, no File-menu entry yet), §18.2's since-built sandbox provisioning layer, §8/§27's gutter double-click bookmark toggle (shipped as designed), §18.1/§18.5 D1's `EditorPanel` span retention (done; `set_ddl_text` gained a third `schema` parameter) and §18.1's ddl_table row-pairing cue (shipped as the alternating shade); §18.8's stale menu-entry open bullet deleted and §28's FQ-003 row trailer corrected in place. No new ledger rows — these are status corrections, not supersessions. **Also 2026-08-06, a menu/shortcut/signal reference-accuracy batch from the 8-reviewer code-vs-spec audit** (no design changes, no ledger rows): §13/§26/§27's caption-mode shortcuts corrected to the shipped window-scoped, mode-gated Ctrl+F (Filter) / Ctrl+R (Replace) pair with a shortcut-less Tools menu item and a non-modal `show()` dialog (plus a caption-override row in §27's table); the DDL-object-editor fourth branch added to §15/§8/§26's `_active_find_bar`/`_active_bookmark_editor` dispatch lists; §17's coherence-panel jump signals corrected to `jump_requested(object)` + `name_jump_requested(kind, name)`; §15's `FindReplaceBar` signature corrected to `(editor, on_find_all=None)` with setter-injected callbacks; §9's reparse hook restated as the coherence-view refresh (`_refresh_db_check_if_open`, legacy name); §11's Schema-menu position fixed to between View and Database; §10's `show_node` kinds gained `"lookup"`/`"ddl_table"`; §27 gained the three-context Ctrl+Space row; §26 gained Edit ▸ History… (Undo/Redo step directly, §7), dropped the nonexistent Help ▸ Documentation, and clarified the two same-label "New Project" actions; and §5/§15 record that `ui/table_references_panel.py` **and** `ui/db_check_panel.py` (plus their tests) are now physically deleted. **Also 2026-08-06, the §18-area reference/status batch from the same audit** (stale-reference and false-status fixes; one ledger row): per-object tab keying corrected to `DdlObjectRef.key` (§18.1/§18.2); the write-seam wording re-scoped to writes **to the target** with sandbox writes through the sandbox session's named seams (§18.2/§18.5, matching D2's ownership table and the three-seams invariant); §18.3's reachability claim narrowed (the close-time deploy reminder ships — only the bundle/compare flow is unreachable), its step 3 restated to the shipped verbatim-text `db/deploy_bundle.py` assembly (the diff engine's second entry point is §18.5's Generate Deployment SQL), and `diff_schemas` pinned to its shipped `SchemaDiffResult` return; §18.4's stale "no live consumer" sentence dropped; §18.5's `apply_ddl`/`ApplyOutcome` sketches replaced by the shipped signatures (no `autocommit` parameter — `db/sandbox.py::_run_autocommit` owns that path; per-statement `results: tuple[StatementResult, ...]`); §18.6's consumer count widened to include the D4 console as a third completion consumer; §18.2/§18.7's `ProfileKey` claims re-marked as **target design, not implemented** (`db/config.py` ships only the hardcoded `"db"` group; no ConnectionSetupDialog profile selector exists — §17's own profile block deliberately untouched, its rewrite pending a human decision); and §18.8's asset pipeline pinned to the shipped `.svg`-only, stateless-connector `ui/project_status_model.py` layer (ledger row, §28). **Also 2026-08-06, the closing batch of the same audit** (structural/reference corrections plus one never-folded shipped feature): **FQ-004's Breeze toolbar icon picker** folded into §7/§5 (`ui/icon_picker_dialog.py`, `ui/icons.py`'s catalog, the `toolbarIconIds` assignments — shipped commit `a12b522`; one ledger row, §28, superseding "icon-less by design"); §5's false dependency claims corrected to the true arrows (`diff/` is Qt-free and imports only `model/`, consumed by `ui/`/`mcp/`; `model/` owns parse+serialization but is not the only lxml importer); `sql/caret_context.py` added to §5's tree and §18.4's "five modules" count scoped to the formatter feature; §7's tab-close dispatch restated as shipped (fixed indices first, dynamic tabs in the else branch by map lookup — behaviorally equivalent); §11's curated.xsd attribute count refreshed to 254 with a counts-drift caveat; §24's manual chapter enumeration replaced by a non-enumerating statement (the `manual-maintainer` agent owns the list; `manual.md`'s headings are the source of truth); §29 pruned of answered items (overload-rename trimmed to its timing sub-question; D2a's PATH-only/`--format=custom`/probe-fold answers pinned to the shipped `db/sandbox.py`; the debug-exclusions/`PROFILER_ID` item resolved against `debuglog.py`; the handler-body-storage *answer* moved into §6's `EventNode`); §30's test-environment summary rewritten to CLAUDE.md's platform-dependent interpreter + offscreen + `-n 10` parallel-suite rules; and §20.4's duplicated deferred-git paragraph reduced to a pointer at §21's canonical copy.
+> **Status:** living document · **Last synthesized:** 2026-08-07 — **the UX-review batch FQ-010/FQ-013/FQ-014/FQ-015/FQ-016/FQ-017 folded in, with FQ-011 recorded as mechanism-only.** §7 gains the **startup launch modal** (`ui/launcher_dialog.py`, four groups of menu-path command ids, `launcherSuppressed` + `File ▸ Show Launcher…`, the `--mcp`-can-never-reach-it invariant) and loses both `File ▸ Open Recent`/`recentFiles` and the GUI's `argv[1]` open; §7/§26 gain a **second, fixed Editor menu bar** (History / Select / Parsing / Bookmarks) and record the **Edit menu's dissolution**; §8/§15 make every `FindReplaceBar` **permanently visible** (`Ctrl+F`/`Ctrl+R` become focus gestures, `Escape` returns focus); §8 gains **project-mode-only bookmark persistence** (`.ddlproject/bookmarks.json`) and **`List All Bookmarks`** with a new `[Bookmark]` Audit prefix, plus the `Select` menu and the trigger-time-dispatch fix for the two block-selection commands; §13 **deletes the caption find/replace modal** and makes the caption bar permanent with `Replace All` + `Clear filter` + a filter/project scope dropdown; §27 rewrites the Find/Replace rows, gives **`F3` its own menu-less window-level row** beside `Ctrl+L`, deletes `Ctrl+Shift+F`/`Ctrl+Alt+Return` and the Caption-Mode override row, and adds `Ctrl+A` and `Escape`. **FQ-011's per-mode menu membership is deliberately NOT specified** — only `Generate` in project mode was ever named (§7/§29). Six ledger rows (§28). Also corrected against the shipped code: the menu walk and the Find/Bookmark dispatchers live on `ToolbarController`/`FindValidateController`, not on `MainWindow`. (Previously 2026-08-06; before that 2026-08-05: §18.8 corrected to the 5-node model, then given its concrete per-node state enumeration + dark-mode asset convention, then a same-day fix to the Quality node's locked/gray semantic and the Sandbox2 install-state-vs-lint-result semantic; later the same day, BUG-020/021/022/023/024/025 folded in — Captions' preset row-predicate filter + active-filter banner + Unify scope prompt, §18.2's Open-Project validity gate + auto-open of the linked `.pgtp`, the tabbed Project Settings dialog, and Connection Setup… becoming projectless-mode-only; later still the same day, §18.1's Tables branch widened to every table (not just trigger-owning ones) plus click-to-Properties-panel column detail, with `ColumnInfo.comment` added; and finally BUG-021/026/027/028 — §18.2's project-action lambda wiring that made the `.pgtp` auto-open actually reachable, §17's role-split `(P# D# L#)` DB→XML counts and any-role mismatch rule, §7's toolbar widened to every menu command with menu-path ids, and §13's active-filter banner extended to the whole-row find filter). **2026-08-06:** FQ-001 folded into §18.2 — per-group Test buttons on the Project Settings dialog's Connections tab (generic connectivity for Target, superuser probe for Sandbox). Same day: the §18.2 project actions' menu location corrected from Database to **File**, matching the shipped `_build_file_menu` (§26, ledger 2026-08-06). Same day: FQ-002 folded in — §18.1 gains "Creating brand-new objects from the Explorer" (Add Trigger… on a table node, one New Function/Procedure… action on the routines-branch root and the Database menu, the shipped pure `db/ddl_skeleton.py` contract, and manifest registration of the new object so the existing §18.3/§18.4 deploy flow sees it), with §18.5 D1 gaining the third (creation) entry point into the same editable tab and two ledger rows (§28). Same day: FQ-003 folded in — §17 gains **the Database/XML Coherence view**, one merged left-dock surface replacing the two DB-check directions *and* §15's standalone Table References tab (direction toggle eliminated on the "DB is always the truth" framing; a recursive, depth-faithful Pages branch; one global mismatch toggle spanning both branches), with §15 reduced to a pointer, §26's View-menu "Find table reference" and the two Database-menu check items replaced by one Database-menu toggle, and two ledger rows (§28). **Same day, a status-accuracy audit against the shipped code** (no design changes): §17's coherence view, §18.1's FQ-002 creation entries, §18.4's formatter *consumer*, §18.6's completion and §18.8's Project Status window were all marked "not yet implemented" while shipping, and are now marked implemented; §18.5 is split honestly into the shipped editor half vs. the unbuilt Apply/sandbox/ladder half; §18.3 is restated as "every module ships, nothing reaches them"; §5's module tree/table, §7's tab & routing notes, §26 and §27 were swept for the same drift. One genuine design narrowing was recorded with a ledger row: §18.3 step 2's deploy blockers are **`*!` only**. **Also 2026-08-06, owner decision — the sandbox becomes *executable*, not merely inspectable:** §18.5 gains **D3a** (the Check gesture's concrete run contract — what `plpgsql_check_function_tb` is invoked with, how the four `plpgsql_check_state` values gate a run, and how findings reach the `[Check]` Audit lines with click-to-navigate) and **D4** (ad-hoc SQL execution against the sandbox — the **Sandbox SQL Console** tab, `db/sandbox_query.py`, `ui/sql_results_panel.py`, a 1 000-row cap, a mandatory statement timeout, and the **sandbox-only, structurally enforced** safety rule). §29's *"Execution against the sandbox … is not designed"* open question is **closed** by that pass; §5/§7/§26/§27/§18.8 updated to match, with five ledger rows (§28). **Finally, also 2026-08-06:** FQ-005 folded into §7's theme paragraph and §4 — the QDarkStyleSheet QSS layer now covers **both** themes (`_qdarkstyle_stylesheet(light)` / `_qss_cache`, explicit `LightPalette`/`DarkPalette`), retiring the *"light always assigns the empty stylesheet"* invariant and the dark-only attribution, with one ledger row (§28). **Also 2026-08-06, a second status-accuracy sweep against the shipped code** (no design changes): stale absence claims flipped for `db/routine_refs.py`'s pure layer (§18/§18.1/§29 — shipped, richer than sketched; its UI consumer is the remaining gap), the `lint/` and `mcp/` packages (§5/§7/§22/§23 — built, not fully wired), §21's `ui/php_file_tab.py` phase 1 (built, hosted by `CenterStage`, no File-menu entry yet), §18.2's since-built sandbox provisioning layer, §8/§27's gutter double-click bookmark toggle (shipped as designed), §18.1/§18.5 D1's `EditorPanel` span retention (done; `set_ddl_text` gained a third `schema` parameter) and §18.1's ddl_table row-pairing cue (shipped as the alternating shade); §18.8's stale menu-entry open bullet deleted and §28's FQ-003 row trailer corrected in place. No new ledger rows — these are status corrections, not supersessions. **Also 2026-08-06, a menu/shortcut/signal reference-accuracy batch from the 8-reviewer code-vs-spec audit** (no design changes, no ledger rows): §13/§26/§27's caption-mode shortcuts corrected to the shipped window-scoped, mode-gated Ctrl+F (Filter) / Ctrl+R (Replace) pair with a shortcut-less Tools menu item and a non-modal `show()` dialog (plus a caption-override row in §27's table); the DDL-object-editor fourth branch added to §15/§8/§26's `_active_find_bar`/`_active_bookmark_editor` dispatch lists; §17's coherence-panel jump signals corrected to `jump_requested(object)` + `name_jump_requested(kind, name)`; §15's `FindReplaceBar` signature corrected to `(editor, on_find_all=None)` with setter-injected callbacks; §9's reparse hook restated as the coherence-view refresh (`_refresh_db_check_if_open`, legacy name); §11's Schema-menu position fixed to between View and Database; §10's `show_node` kinds gained `"lookup"`/`"ddl_table"`; §27 gained the three-context Ctrl+Space row; §26 gained Edit ▸ History… (Undo/Redo step directly, §7), dropped the nonexistent Help ▸ Documentation, and clarified the two same-label "New Project" actions; and §5/§15 record that `ui/table_references_panel.py` **and** `ui/db_check_panel.py` (plus their tests) are now physically deleted. **Also 2026-08-06, the §18-area reference/status batch from the same audit** (stale-reference and false-status fixes; one ledger row): per-object tab keying corrected to `DdlObjectRef.key` (§18.1/§18.2); the write-seam wording re-scoped to writes **to the target** with sandbox writes through the sandbox session's named seams (§18.2/§18.5, matching D2's ownership table and the three-seams invariant); §18.3's reachability claim narrowed (the close-time deploy reminder ships — only the bundle/compare flow is unreachable), its step 3 restated to the shipped verbatim-text `db/deploy_bundle.py` assembly (the diff engine's second entry point is §18.5's Generate Deployment SQL), and `diff_schemas` pinned to its shipped `SchemaDiffResult` return; §18.4's stale "no live consumer" sentence dropped; §18.5's `apply_ddl`/`ApplyOutcome` sketches replaced by the shipped signatures (no `autocommit` parameter — `db/sandbox.py::_run_autocommit` owns that path; per-statement `results: tuple[StatementResult, ...]`); §18.6's consumer count widened to include the D4 console as a third completion consumer; §18.2/§18.7's `ProfileKey` claims re-marked as **target design, not implemented** (`db/config.py` ships only the hardcoded `"db"` group; no ConnectionSetupDialog profile selector exists — §17's own profile block deliberately untouched, its rewrite pending a human decision); and §18.8's asset pipeline pinned to the shipped `.svg`-only, stateless-connector `ui/project_status_model.py` layer (ledger row, §28). **Also 2026-08-06, the closing batch of the same audit** (structural/reference corrections plus one never-folded shipped feature): **FQ-004's Breeze toolbar icon picker** folded into §7/§5 (`ui/icon_picker_dialog.py`, `ui/icons.py`'s catalog, the `toolbarIconIds` assignments — shipped commit `a12b522`; one ledger row, §28, superseding "icon-less by design"); §5's false dependency claims corrected to the true arrows (`diff/` is Qt-free and imports only `model/`, consumed by `ui/`/`mcp/`; `model/` owns parse+serialization but is not the only lxml importer); `sql/caret_context.py` added to §5's tree and §18.4's "five modules" count scoped to the formatter feature; §7's tab-close dispatch restated as shipped (fixed indices first, dynamic tabs in the else branch by map lookup — behaviorally equivalent); §11's curated.xsd attribute count refreshed to 254 with a counts-drift caveat; §24's manual chapter enumeration replaced by a non-enumerating statement (the `manual-maintainer` agent owns the list; `manual.md`'s headings are the source of truth); §29 pruned of answered items (overload-rename trimmed to its timing sub-question; D2a's PATH-only/`--format=custom`/probe-fold answers pinned to the shipped `db/sandbox.py`; the debug-exclusions/`PROFILER_ID` item resolved against `debuglog.py`; the handler-body-storage *answer* moved into §6's `EventNode`); §30's test-environment summary rewritten to CLAUDE.md's platform-dependent interpreter + offscreen + `-n 10` parallel-suite rules; and §20.4's duplicated deferred-git paragraph reduced to a pointer at §21's canonical copy.
 > **Source of truth:** this file is the single reconciled specification for PGTP Editor, and the **only**
 > place specification content is written. It was originally synthesized from the dated design specs under
 > [`docs/superpowers/specs/`](specs/) — a folder now **frozen as historical record** (read for rationale;
@@ -20,13 +20,13 @@
 4. [Technology choices](#4-technology-choices)
 5. [Package / module layout](#5-package--module-layout)
 6. [Data model](#6-data-model)
-7. [App shell](#7-app-shell)
-8. [Raw XML editor](#8-raw-xml-editor)
+7. [App shell](#7-app-shell) — *includes the startup launch modal (FQ-010) and the second, fixed **Editor menu bar** (FQ-016), both 2026-08-07*
+8. [Raw XML editor](#8-raw-xml-editor) — *bookmarks gained project-mode-only persistence (FQ-013) and `List All Bookmarks` (FQ-014); the `Select` menu (FQ-015); the permanently visible Find/Replace bar (FQ-016)*
 9. [Editor ↔ Tree sync & Reparse](#9-editor--tree-sync--reparse)
 10. [Properties panel](#10-properties-panel)
 11. [Schema: curated XSD, learning & completion](#11-schema-curated-xsd-learning--completion)
 12. [Diff / Merge](#12-diff--merge)
-13. [Captions](#13-captions)
+13. [Captions](#13-captions) — *the find/replace **modal is deleted**; the in-panel bar is permanent, with `Replace All` + `Clear filter` + a filter/project scope dropdown (FQ-017, 2026-08-07)*
 14. [Columns](#14-columns)
 15. [Search, Find All & Table References](#15-search-find-all--table-references) — *table references folded into §17's Database/XML Coherence view (FQ-003, 2026-08-06); §15 keeps a pointer only*
 16. [Validation](#16-validation)
@@ -43,13 +43,13 @@
 19. [PHP generation (vendor) & Save](#19-php-generation-vendor--save)
 20. [re_phpgen — own generator & gap loop](#20-re_phpgen--own-generator--gap-loop)
     - [20.4 Production cutover](#204-production-cutover-target-design--not-yet-reached) — *planned*
-21. [Custom PHP editing](#21-custom-php-editing) — *phase 1 built, not fully wired (`ui/php_file_tab.py` + `CenterStage` hosting ship; the File-menu opener is the remaining gap)*
-22. [Lint integration](#22-lint-integration) — *built, not fully wired (`pgtp_editor/lint/` ships, consumed by `PhpFileTab`; the Tools-menu / Audit-append host wiring is the remaining gap)*
-23. [MCP integration](#23-mcp-integration) — *built, not fully wired (`pgtp_editor/mcp/` ships, headless `--mcp` works; the Tools-menu entry is the remaining gap)*
+21. [Custom PHP editing](#21-custom-php-editing) — *phase 1 built (`ui/php_file_tab.py` + `CenterStage` hosting + `File ▸ Open PHP File…`, verified present 2026-08-07)*
+22. [Lint integration](#22-lint-integration) — *`pgtp_editor/lint/` ships, consumed by `PhpFileTab`; **the three Tools-menu entries now exist** (`Lint Current File`, ☐ `Lint on Save`, `Locate PHP Linter…` — verified 2026-08-07). Status text inside §22 not yet re-audited*
+23. [MCP integration](#23-mcp-integration) — *`pgtp_editor/mcp/` ships, headless `--mcp` works, and **Tools ▸ ☐ `Start MCP Server` now exists** (verified 2026-08-07). Status text inside §23/§5 not yet re-audited*
 24. [In-app manual](#24-in-app-manual)
 25. [Debug mode](#25-debug-mode)
-26. [Consolidated menu bar](#26-consolidated-menu-bar)
-27. [Consolidated keyboard shortcuts](#27-consolidated-keyboard-shortcuts)
+26. [Consolidated menu bar](#26-consolidated-menu-bar) — ***two** menu bars since FQ-016 (2026-08-07): the window bar, and [the Editor menu bar](#the-editor-menu-bar-fq-016-2026-08-07). `Edit` no longer exists*
+27. [Consolidated keyboard shortcuts](#27-consolidated-keyboard-shortcuts) — *all bindings are **fixed**; FQ-012's rebinding dialog is a separate, un-folded proposal*
 28. [Supersession ledger](#28-supersession-ledger)
 29. [Open questions](#29-open-questions)
 30. [Testing policy](#30-testing-policy)
@@ -297,12 +297,15 @@ pgtp_editor/
 Key `ui/` modules: `main_window.py`, `center_stage.py`, `project_tree.py`, `xml_editor.py`,
 `xml_structure.py`, `editor_gutter.py` (the one shared gutter/bookmark/fold implementation, §8),
 `code_editor.py`, `php_file_tab.py` (§21's per-file standalone PHP tab — **ships**, hosted in
-`CenterStage`'s dynamic key→widget map `_php_file_tabs`; no File-menu opener wired yet),
-`event_body.py`, `properties_panel.py`, `find_replace_bar.py`,
-`search.py`, `history.py`, `theme.py`, `toolbar_registry.py`, `customize_toolbar_dialog.py`,
+`CenterStage`'s dynamic key→widget map `_php_file_tabs`; `File ▸ Open PHP File…` now exists),
+`event_body.py`, `properties_panel.py`, `find_replace_bar.py` (permanently visible since FQ-016, §8/§15),
+`search.py`, `history.py`, `theme.py`, `toolbar_registry.py`, `toolbar_controller.py` (owns the menu-bar
+walk and the toolbar's persistence, §7 — **not** `main_window.py`), `customize_toolbar_dialog.py`,
 `icon_picker_dialog.py` (FQ-004's searchable Breeze icon picker, §7),
-`diff_merge_panel.py`, `caption_management_panel.py`, `caption_find_replace_dialog.py`,
-`caption_scan.py`,
+`launcher_dialog.py` (FQ-010's startup launch modal — `LAUNCHER_GROUPS`, `launcherSuppressed`,
+`show_launcher(window, settings, …, force=False)`; §7),
+`diff_merge_panel.py`, `caption_management_panel.py`,
+`caption_scan.py`, *(`caption_find_replace_dialog.py` is **deleted** — FQ-017, §13)*
 `connection_setup_dialog.py`, `coherence_panel.py` (§17's merged view), `ddl_editor_panel.py`,
 `ddl_buffer_panel.py`, `ddl_object_editor.py` (§18.5's editable single-object tab),
 `completion_popup.py` (the `_CompletionPopup` shared by `xml_editor.py` and `ddl_object_editor.py`,
@@ -446,7 +449,7 @@ non-Raw-XML tabs hidden until invoked). Every one of those is a **fixed** tab, c
 > **always appended after the fixed set** (`addTab`, **never** `insertTab`) and removed only from the
 > tail, and are addressed by a **key→widget map**, never a remembered index. This is not a stylistic
 > preference: those **stored fixed indices are load-bearing in five places**, verified in the code —
-> `main_window.py::_active_find_bar`, `_active_bookmark_editor`, `_save_active_tab` and
+> `FindValidateController.active_find_bar`, `active_bookmark_editor`, `MainWindow._save_active_tab` and
 > `_on_ddl_navigate_requested` (all four compare `stage.currentIndex()` against `xsd_tab_index` /
 > `ddl_tab_index`), plus **every** `CenterStage.hide_*`/`show_*` method (`hide_manual`, `hide_edit_xsd`,
 > `hide_ddl_explorer`, `set_raw_xml_tab_visible`, `enter_caption_mode`/`leave_caption_mode`) and
@@ -476,7 +479,8 @@ quietly annex another's prefix, and no fourth SQL-ish prefix may be added:
 |---|---|---|---|
 | `[SQL]` | §18.4 formatter, hosted by §18.5's tab | **Format Selection refusals** — layout only, no DB involved | **wired** (non-clickable, no line role) |
 | `[Check]` | §18.5 sandbox validation ladder | **SQL/plpgsql validation findings** (`db/ddl_check.py`) on **two channels** — narrative lines (per-tier outcome, caveats, apply/cancel notices; non-clickable) and **findings** (`[Check] SEVERITY line N: message`, line on `UserRole`, the object's `DdlObjectRef.key` on `UserRole+1`, click-to-navigate). A finding whose line could not be mapped (§18.5 D3's mandatory `None`) is rendered **without** a line and **without** roles — never a guessed line | partly wired: `DdlObjectEditorPanel.check_reported` emits the narrative channel today; the findings channel arrives with `db/ddl_check.py` (§18.5 D3a) |
-| `[Lint]` | §22 | **PHP** linting only (`php -l` / `phpcs`) | partly wired: `pgtp_editor/lint/` and the tab-side emission ship (§21/§22 — `PhpFileTab.lint_reported` carries already-`[Lint]`-prefixed `LintAuditLine`s); the MainWindow append host and the Tools-menu entry are the remaining gap |
+| `[Bookmark]` | §8's `List All Bookmarks` (FQ-014, 2026-08-07) | **The active editor's bookmarks** as clickable rows — `[Bookmark] line N: <preview>`, line on `UserRole`, the active editor's existing click-target discriminator on `UserRole+1`; plus a roles-less trailing count row and a roles-less empty-case row. Not SQL-ish, so the no-fourth-SQL-prefix rule below does not block it. **Must be a module constant** beside `_FIND_RESULT_PREFIX`/`_VALIDATION_PREFIX` — never the literal typed inline | target design |
+| `[Lint]` | §22 | **PHP** linting only (`php -l` / `phpcs`) | partly wired: `pgtp_editor/lint/` and the tab-side emission ship (§21/§22 — `PhpFileTab.lint_reported` carries already-`[Lint]`-prefixed `LintAuditLine`s); the **three Tools-menu entries now exist** (verified 2026-08-07), so the MainWindow append host is the remaining gap |
 
 **No fourth SQL-ish prefix — and §18.5 D4's SQL console deliberately introduces none.** Ad-hoc query
 results, query **errors** and the console's own caveats render **inside the Sandbox SQL Console's own
@@ -519,15 +523,22 @@ existing file on save — never on Save-As to a new path, never on a failed/no-o
 `_current_project_path` is normalized to `str`.
 
 **Per-tab document routing** (curated-XSD pivot, §11): the Edit XSD tab hosts a second document with
-its **own dirty state** (tab-title `*` marker, independent of the project's `_dirty`). The Edit-menu
-Find/Replace actions (Find/Find Next/Find All/Replace/Replace All) route to the **active** center-stage
-tab's `FindReplaceBar` via `main_window.py::_active_find_bar()`, which dispatches on
-`center_stage.currentIndex()`: **Edit XSD/Edit AutoXSD tab** → `stage.xsd_find_replace_bar` (the
-mode-aware XSD document, curated.xsd or learned.xsd per `_xsd_mode`, §11); **DDL Explorer tab** →
-`stage.ddl_editor_panel.find_replace_bar` (the read-only DDL buffer's own bar, §18.1 — without this
-branch Ctrl+F on the DDL tab bounced the user back to Raw XML); **the active DDL object editor tab**
-(resolved via `stage.active_ddl_object_panel()`, §18.5 — **implemented**) → its own
-`panel.find_replace_bar`, where Replace is **live** rather than inert; **any other tab** → reveal Raw XML (`_reveal_raw_xml_tab()`) and return `stage.find_replace_bar`.
+its **own dirty state** (tab-title `*` marker, independent of the project's `_dirty`). Find/Replace
+gestures route to the **active** center-stage tab's `FindReplaceBar` via
+`ui/find_controller.py::FindValidateController.active_find_bar()` (*the dispatcher lives on the
+controller, not on `MainWindow` — stale spec reference corrected 2026-08-07*), which dispatches on
+`center_stage.currentIndex()` and then on the dynamic-tab accessors: **Edit XSD/Edit AutoXSD tab** →
+`stage.xsd_find_replace_bar` (the mode-aware XSD document, curated.xsd or learned.xsd per `_xsd_mode`,
+§11); **DDL Explorer tab** → `stage.ddl_editor_panel.find_replace_bar` (the read-only DDL buffer's own
+bar, §18.1 — without this branch Ctrl+F on the DDL tab bounced the user back to Raw XML); **the active
+DDL object editor tab** (`stage.active_ddl_object_panel()`, §18.5) → its own `panel.find_replace_bar`,
+where Replace is **live** rather than inert; **the active PHP file tab**
+(`stage.active_php_file_tab()`, §21) → `php_tab.find_replace_bar`; **the active draft fragment tab**
+(`stage.active_draft_fragment_tab()`, FQ-006) → `draft.find_replace_bar` (Replace live — a draft is a
+scratch buffer with nothing to protect); **any other tab** → reveal Raw XML and return
+`stage.find_replace_bar`. Since FQ-016 the bars are **permanently visible** (§8), so these gestures are
+**focus** operations rather than reveals — whether the Raw-XML reveal in the fallback branch survives a
+pure focus gesture is an open item (§29).
 
 **Ctrl+S routing.** `main_window.py::_save_active_tab()` routes three ways (**implemented**): XSD tab →
 `_save_xsd()`; else the active **DDL object editor tab** (`stage.active_ddl_object_panel()`) →
@@ -537,21 +548,94 @@ else `_save_project()`. **Ctrl+S there is
 `Save` only:** it **never executes anything against a database** — pushing DDL to a database is the
 separate, explicitly confirmed **Apply** gesture (§18.5), never implied by a save and never automatic.
 The read-only DDL Explorer buffer keeps **no** save branch at all — it is DB-synthesized and has no save
-path, the deliberate asymmetry against `_active_find_bar`, which *does* branch for it. Project-level
+path, the deliberate asymmetry against `active_find_bar`, which *does* branch for it. Project-level
 state (`.bak`, `_current_project_path`, reparse) is untouched by XSD-tab and DDL-object-tab saves.
 
 - **File ▸ Close** (Ctrl+W): if dirty, 3-way Save/Discard/Cancel (`_confirm_close()`, test-seam
   `confirm=`); clears editor+tree, resets state.
 - **File ▸ Revert:** enabled only when `<current>.bak` exists; reloads from `.bak`, keeps real path,
   marks dirty.
-- **Startup file:** `main()` opens a `.pgtp` passed as `argv[1]` (Windows "Edit with PGTP Editor"
-  verb) when it is an existing file; else logs a warning.
+**Startup: the launch modal** (FQ-010, settled 2026-08-07). The app presents its four ways in on every
+launch instead of dropping the user into an empty Raw XML tab with no guidance. **The GUI no longer opens
+a file passed on the command line** (ledger §28): `main()` keeps the optional positional `file` argument,
+but only `--mcp` consumes it (as the headless server's default project, §23 `_DefaultPathProvider`); the
+GUI branch that called `window.open_project_file(args.file)` is deleted, and the argument's `--help` text
+describes only the `--mcp` use. `packaging/linux/pgtp-editor.desktop` drops its now-meaningless `%f`
+(it never carried a `MimeType=` line, so the repo never registered a `.pgtp` association; a hand-wired
+Windows "Edit with PGTP Editor" verb, which the repo also never created, stops working).
+
+- **Where it lives.** `ui/launcher_dialog.py` — `LauncherDialog(entries, *, groups, suppressed, parent)`
+  plus the module-level `show_launcher(window, settings, *, groups=LAUNCHER_GROUPS,
+  resolve_entries=None, exec_dialog=None, force=False) -> str | None`, called from `main.py`
+  **after `window.show()`** through a `launcher=` seam (so the persisted `windowState` is visibly restored
+  first and the modal lands on top of it). `resolve_entries`/`exec_dialog` are the test seams — tests drive
+  the dialog's methods and never enter a real modal loop. **It must never be constructed from
+  `MainWindow.__init__`:** ~49 test files construct a `MainWindow`, and a modal there would hang every one
+  of them (§30 forbids a test reaching an un-patched modal Qt call). The **user**-triggered re-open
+  (`File ▸ Show Launcher…`) is a method on the host, like every other dialog.
+- **Invariant: `--mcp` must remain structurally unable to reach it.** `main()`'s `if args.mcp: return
+  run_mcp_server(args.file)` returns **before any Qt import** — stdio is the JSON-RPC transport and a GUI
+  contending for stdout would corrupt every session. The launcher is created below that early return and
+  nothing may move it above it.
+- **Four groups**, held as the module table `LAUNCHER_GROUPS: tuple[tuple[str, tuple[str, ...]], ...]` —
+  `(title, ordered command ids)`, where the ids are **§7's menu-path command ids**
+  (`toolbar_registry.command_id_for`). The table holds **no label, no slot and no duplicate of any menu
+  wiring**: `resolve_menu_entries(window)` reads `command_id → (menu-path label, QAction)` straight off
+  `ToolbarController.collect_menu_commands()`/`menu_commands` (re-walked per call, so a menu built after
+  startup is still found), and the picked entry's **own QAction** does the work via `action.trigger()`.
+  A group whose every id is missing from the menu bar renders **nothing** rather than an empty frame —
+  the launcher must never be able to stop the app from starting. The four groups:
+  1. **Open a `.pgtp` for editing** — `File ▸ Open…`. This is the projectless lane: XML tooling, the
+     §17 Database/XML Coherence view against the quality database (it needs only a non-empty editor
+     buffer plus `Database ▸ Connection Setup…`, which is projectless-only, BUG-024), and generation.
+  2. **New Project / Open Project** — `File ▸ New Project…` / `Open Project…`; covers both project
+     workflows (sandbox/checkout, §18.2/§18.5; and `.pgtp` diff/merge versioning, §12/§18.3).
+  3. **Open other files** — `File ▸ Open PHP File…` (§21).
+  4. **Maintenance mode** — maintaining the app itself: the five §11 Schema actions (`Edit XSD`,
+     `Edit AutoXSD`, `Verify XSD`, `Export XSD`, `Import XSD` — `Go To XSD` is a menu-less `Ctrl+L`
+     action and therefore cannot be presented by path) plus the **§20 re_phpgen** Generation entries
+     only: `Locate panGen Runtime…`, `panGen (Generate Own PHP)`, `rePHPgen (Analyze Gap)`,
+     `Save reJSON…`. **§19's vendor-generation entries are deliberately OUT** (`Locate PHP Generator
+     Executable…`, `Generate PHP…`, `Open Output Folder`) — they are ordinary development, not app
+     maintenance. The split lands exactly on the §19/§20 boundary, which is why the grouping is
+     defensible rather than arbitrary. **This membership is "for now" (owner's word) and explicitly
+     open** — see §29.
+- **A group choice sets the persisted launch mode** consumed by the menu-bar filter (see "Launch mode"
+  below).
+- **Suppressible, escapable and REVERSIBLE.** A persisted **"Don't show this again"** checkbox stores the
+  QSettings bool **`launcherSuppressed`** (`LAUNCHER_SUPPRESSED_SETTINGS_KEY`) alongside `lightTheme` /
+  `windowState` / `toolbarIds` / `toolbarIconIds` in `QSettings("MDS","PGTP Editor")`, read with
+  `type=bool` because the ini backend hands booleans back as `"true"`/`"false"` strings. The flag is
+  persisted on **every** exit path (ticking the box and then picking an entry must persist just as ticking
+  it and closing does). Because a persisted tick would otherwise be a one-way door only a settings edit
+  could undo, **`File ▸ Show Launcher…`** re-opens it with **`force=True`**, bypassing the flag.
+  **Escape / window-close lands in the empty app exactly as today and never quits** — quitting would turn
+  the launcher into a gate on running the app at all.
+- **No recents in any group.** `File ▸ Open Recent` and its `recentFiles` store are **deleted** (see
+  below), so the launcher ships recent-less and knowingly presents *actions*, not a resume list. A
+  `recentProjects` store is the right memory for a project-centric app and is a separate, later
+  decision that this design does not depend on (`db/ddl_project.py::is_project_dir` already exists as
+  its validator).
+- **Read it against the restored window state.** `closeEvent`'s `saveGeometry()`/`saveState()` restore
+  means the modal lands on top of a fully restored dock/tab/toolbar layout while the app holds **no
+  document, no project and no connection** — a *false signal of continuity*. The modal is deliberately
+  unmissable for exactly that reason; a non-modal "Start" tab in `CenterStage` was the honest
+  alternative and was **rejected by the owner** ("Let's do a modal"), recorded so it is not silently
+  re-decided either way.
+
+**`File ▸ Open Recent` and the `recentFiles` store are deleted** (FQ-010; ledger §28 — a documented
+capability withdrawn, not a bug fix). Removed surface: `ui/pgtp_document_controller.py`'s
+`_RECENT_FILES_KEY = "recentFiles"` / `_RECENT_FILES_MAX`, the `aboutToShow` wiring and initial rebuild,
+the `recent_files` reader, `remember_recent_file`, `rebuild_recent_menu`, its two and only two writers
+(`open_file`, `save_as`), the File-menu submenu itself, and `tests/ui/test_open_recent.py`. Owner's
+framing: recent *files* belonged to the standalone-`.pgtp`-editor era the project has left.
 
 **Undo/redo snapshot history** (`ui/history.py`, Qt-free): `SnapshotHistory(max_len=10)` with
 `push/undo/redo/jump_to/entries/current_index`, coalescing identical consecutive text, truncating the
 redo tail on a new push. Editor `textChanged` is debounced (~400 ms QTimer) and pushes only on change;
-apply is guarded by a `_restoring` flag. **Ctrl+Z**/**Ctrl+Y** single-step, and the Edit ▸ Undo/Redo menu
-items **step directly too** (same handlers as the shortcuts); the **separate Edit ▸ History… action**
+apply is guarded by a `_restoring` flag. **Ctrl+Z**/**Ctrl+Y** single-step, and the **Editor menu bar's
+History ▸ Undo/Redo** items **step directly too** (same handlers as the shortcuts); the **separate
+History ▸ History… action**
 (`_open_history_jump_list`) is what opens the non-modal newest-first `QListWidget` jump popup, where
 moving back = undo and forward = redo.
 
@@ -610,15 +694,24 @@ default), `LEGACY_ID_ALIASES`, `DEFAULT_TOOLBAR_IDS`, `ICON_ID_BY_COMMAND`, plus
   toolbar-available with zero bookkeeping; the accepted trade-off is that *renaming* a menu label
   changes its id and drops that one button from an already-saved toolbar (self-healing — the user
   re-adds it).
-- **Enumeration walks the live menu bar.** `MainWindow._walk_menu_actions` is a depth-first walk of
-  `menuBar().actions()` yielding `(id, label, QAction)` for every **leaf** command;
-  `_all_menu_commands()` returns the ordered `(id, label)` pairs and `_collect_menu_commands()` refreshes
-  both `_menu_command_pairs` and the `_menu_commands` id→QAction map (also re-run at
-  `_open_customize_toolbar` time so commands added since startup are offered). **Skipped:** separators,
-  submenu placeholder actions (an action that opens a submenu is not itself a command), and the dynamic
-  **Open Recent** submenu wholesale — its children are transient per-session file entries and must never
-  be pinnable. Duplicate ids get a numeric `-2`, `-3` suffix so an id always resolves to exactly one
-  action.
+- **Enumeration walks the live menu bar(s).** The walk lives on
+  **`ui/toolbar_controller.py::ToolbarController`** (*not* on `MainWindow` — a stale spec reference
+  corrected 2026-08-07): `_walk_menu_actions` is a depth-first walk yielding `(id, label, QAction)` for
+  every **leaf** command, `all_menu_commands()` returns the ordered `(id, label)` pairs and
+  `collect_menu_commands()` refreshes both `_menu_command_pairs` and the `_menu_commands` id→QAction map
+  (also re-run at Customize-Toolbar-open time so commands added since startup are offered). **Skipped:**
+  separators and submenu placeholder actions (an action that opens a submenu is not itself a command).
+  Duplicate ids get a numeric `-2`, `-3` suffix so an id always resolves to exactly one action.
+  *(The dynamic **Open Recent** skip rule is gone with the submenu itself, FQ-010 — a rule guarding a
+  menu that no longer exists.)*
+  > **The walk covers BOTH menu bars** (FQ-016, 2026-08-07). `ToolbarController.build(menu_bar,
+  > add_toolbar)` stored a single `self._menu_bar` and rooted the walk at `self._menu_bar.actions()`;
+  > with the **Editor menu bar** (below) it takes a **sequence of roots**, walked in order — one
+  > mechanism, widened, never a second walk. Everything downstream flows from that single walk:
+  > Customize Toolbar's Available list, command ids, FQ-004 icon assignments, and any future
+  > shortcut-listing surface. Without the widening every command on the Editor menu bar would be
+  > unpinnable and invisible to those features. Ordering is already fine — the container is built
+  > before `build()` is called.
   > **Trap, load-bearing:** `QAction.menu()` hands the returned `QMenu`'s ownership to Python, so letting
   > that wrapper go out of scope **destroys the real menu and every action in it** (this crashed startup
   > with *"Internal C++ object (QAction) already deleted"* the moment `_restore_theme` touched the View
@@ -659,10 +752,29 @@ default), `LEGACY_ID_ALIASES`, `DEFAULT_TOOLBAR_IDS`, `ICON_ID_BY_COMMAND`, plus
   calls `setIconVisibleInMenu(False)`, so decorating a shared action for the toolbar does not change how
   the menu looks. `_refresh_toolbar_icons` re-tints on every theme change.
 - **Back-compat.** Saved toolbars from before the widening hold legacy ids; `resolve_ids` maps them
-  through `LEGACY_ID_ALIASES` (`open→file.open`, `save→file.save`, `undo→edit.undo`, `redo→edit.redo`,
-  `find→edit.find`, `validate→tools.validate-project`, `generate→generation.generate-php`) before
-  `valid_ids` filters, so an existing user's toolbar survives instead of silently emptying to the
-  default. `DEFAULT_TOOLBAR_IDS` is those seven aliases in legacy order.
+  through `LEGACY_ID_ALIASES` before `valid_ids` filters, so an existing user's toolbar survives instead
+  of silently emptying to the default. `DEFAULT_TOOLBAR_IDS` is those seven aliases in legacy order, and
+  `ICON_ID_BY_COMMAND` is the inverse map — so an alias also names which vendored SVG a default button
+  carries. **The alias table is a hard dependency of the Editor-menu-bar move** (FQ-016): three of the
+  seven aliases point at ids that the move changes, and an alias left stale ships a **default toolbar
+  button that is empty and iconless on a fresh install**.
+
+  | Legacy id | Menu-path id before FQ-016 | After the Editor-menu-bar move |
+  |---|---|---|
+  | `open` | `file.open` | unchanged |
+  | `save` | `file.save` | unchanged |
+  | `undo` | `edit.undo` | **`history.undo`** — alias updated in the same commit |
+  | `redo` | `edit.redo` | **`history.redo`** — alias updated in the same commit |
+  | `find` | `edit.find` | **no menu home at all** — Find is a permanent bar, not a menu action. Owner ruling: *"Find unpinnable is fine."* The `find` alias and its `edit-find` SVG go stale and must be retired deliberately, not left dangling |
+  | `validate` | `tools.validate-project` | **`parsing.validate-project`** — alias updated in the same commit (settled 2026-08-07 by the owner's delegated authority, identical in kind to the undo/redo hazard) |
+  | `generate` | `generation.generate-php` | unchanged |
+
+  Non-pinned ids that also move and therefore silently drop off **user-saved** toolbars:
+  `edit.auto-parse-xml`, `edit.history`, `edit.select-enclosing-block`, `edit.select-parent-block`, and
+  `tools.lint-current-file` if lint follows onto `Parsing` (§29). `resolve_ids` already prunes unknown
+  ids, so nothing crashes — those buttons simply vanish and the user re-adds them. **Ids derive from
+  label *and* menu path, so *moving* or *renaming* a command breaks saved ids while merely hiding one
+  (`setVisible(False)`) breaks nothing** — the distinction the launch-mode filter below depends on.
 
 **Customize Toolbar** dialog (two lists + Add/Remove/Up/Down + **Choose Icon…**, FQ-004) writes an
 ordered id list, persisted in
@@ -681,6 +793,97 @@ double-clicking a cell accepts the dialog. Test seams `selected_ids()`/`set_ids(
 `icon_assignments()`/`set_icon_assignments()`/`assign_icon()` (which stands in for the picker), and
 the picker's own `set_filter`/`visible_icon_ids`/`select_icon`/`chosen_icon_id`; never `.exec()` in
 tests.
+
+**The Editor menu bar — a second, FIXED menu bar directly above the central pane** (FQ-016, settled
+2026-08-07). Owner's distinction, verbatim and not to be re-decided: *"that's not a toolbar, that's a
+menubar. Toolbar is just a collection of favourite commands."* **Fixed** = the app decides its contents;
+it is not user-composable, and it is not the customizable toolbar above.
+
+- **Container.** A `QMenuBar` **inside a container widget** that becomes the central widget, with
+  `CenterStage` below it. A `QMainWindow`'s own menu-bar/toolbar *areas* span the full window width
+  including above the docks, so a bar that must sit **strictly** above the central pane cannot use
+  them. The change is one line at the seam (`self.setCentralWidget(self.center_stage)` becomes
+  `setCentralWidget(container)`); **`window.center_stage` keeps pointing at the `CenterStage`**, which
+  is what the ~534 test references address. Exactly one test asserts the coupling
+  (`assert window.centralWidget() is window.center_stage`) and is the only one that must change.
+- **Platform split, stated so it is not discovered later:** macOS absorbs the *window* menu bar into the
+  system menu bar while a **child** `QMenuBar` renders inline, so on macOS the two bars will not look
+  like siblings. This is structural, not styling.
+- **It holds *editing* commands, not strictly per-tab ones** — a deliberate concept name, because
+  `History…` opens the **project snapshot** navigator and `Undo`/`Redo` are project-snapshot actions
+  except on the Edit XSD and DDL object tabs, where §27's pinned carve-out routes `Ctrl+Z`/`Ctrl+Y` to
+  that editor's own native stack. Calling the bar "per-tab" would be false. (Whether `History…` belongs
+  here at all is an open item, §29 — the recorded recommendation is yes, with this naming.)
+- **Its four menus:** **History** (`History…`, `Undo`, `Redo`, in that order), **Select** (FQ-015),
+  **Parsing**, **Bookmarks** — enumerated in §26.
+- **Membership inside `Parsing` is gated by the ACTIVE TAB KIND, never by mode.** The word *"mode"*
+  already carries four meanings in this project (the launch mode below, Caption Mode §13, `_xsd_mode`
+  §11, `DdlObjectRef.kind`) — **use "active tab kind"** in spec and code. This is **capability** gating
+  (the same predicate §26 already uses for `Check DDL Object`, *"disabled unless a DDL object editor tab
+  is active, kept in sync on `center_stage.currentChanged`"*), so it is independent of the intent-based
+  launch-mode filter below; if both exist they **compose**, and neither may be built as the other.
+- **Build every `Parsing` member once and gate with `setVisible`; never create/destroy per tab.**
+  `collect_menu_commands()` is re-walked whenever Customize Toolbar opens, so a menu whose actions are
+  *destroyed* per tab kind would make the Available list vary with the active tab and leave
+  `_menu_commands` holding dead QActions. A sibling `_refresh_editor_menu_affordances()` on
+  `center_stage.currentChanged`, shaped exactly like `_refresh_sandbox_affordances` (*"Everything here
+  binds VISIBILITY, never enabled-state"*), is the pattern to copy.
+- **The Edit menu is DISSOLVED, not emptied** (ledger §28). After the moves and deletions it has no
+  members left: `Undo`/`Redo`/`History…` → **History**; `Cut`/`Copy`/`Paste`/`Delete` and
+  `Preferences...` → **deleted stubs** (five of the seven `_add_stub_action` "Not yet implemented" stubs
+  die here, leaving only the two tree stubs `Compare Selected` / `Copy Selected to...` in violation of
+  the app's own absent-not-disabled rule); the five Find/Replace entries → the permanent bar (§8/§15);
+  the two selection commands → **Select** (§8/FQ-015); `Auto Parse XML` → **Parsing**.
+- **Deleting the five Find/Replace QActions takes their shortcuts with them** — see §27 for the per-key
+  rulings (`Ctrl+F`/`Ctrl+R` become focus actions; **`F3` survives as a window-level shortcut with no
+  menu entry**; `Ctrl+Shift+F` and `Ctrl+Alt+Return` are deleted).
+- **`FindValidateController.set_find_actions` / `set_find_actions_enabled` die with them.** That seam
+  exists **solely** so Caption Mode can disable the Edit-menu Find…/Replace… QActions and let its own
+  `QShortcut`s win; with the QActions gone — and with FQ-017 deleting the caption shortcuts — it is dead
+  on both ends. **FQ-017 must land first or in the same commit**, or there is a window in which nothing
+  owns `Ctrl+F`.
+
+**Launch mode — the mechanism only; its per-mode menu membership is UNDECIDED** (FQ-011, 2026-08-07).
+The launcher group the user picks (above) is persisted as a **launch mode** in the same
+`QSettings("MDS","PGTP Editor")` scope as `lightTheme`/`windowState`/`toolbarIds`/`toolbarIconIds`, and
+consumed by a **single** `_refresh_*_affordances`-style entry point called on mode change — never by
+ad-hoc `setVisible` calls scattered through the `_build_*_menu` methods. What is settled is only the
+mechanism and its consequences:
+
+- **It binds VISIBILITY, never enabled-state**, following the one existing precedent verbatim
+  (`MainWindow._refresh_sandbox_affordances`: *"Everything here binds VISIBILITY, never enabled-state
+  (§18.5 carve-out 2: with no live session the control is ABSENT, not greyed out)"*). Greying out would
+  introduce a **third** posture into an app that has deliberately kept two.
+- **This is *intent*-based hiding and is therefore a deliberate departure from the app's existing
+  *capability*-based rule** — recorded, not softened. Everywhere else the app hides what it genuinely
+  cannot do (`has_session`, `_configured_sandbox_params()`, §26's *absent, not disabled* statements).
+  `Generate` genuinely works in a project; hiding it because the user picked "project mode" is the app
+  deciding the user did not mean it. The counter-proposal — fix the app's seven "Not yet implemented"
+  stubs instead, a cheaper win against the same complaint — was **weighed and overridden by the owner**,
+  which is their call. The two are not mutually exclusive.
+- **An escape hatch is required**: a mode is persisted and the launcher itself may be suppressed, so
+  there must be an always-reachable way to change or clear the mode **from inside** the app. Its shape
+  and location are undecided (§29). Recorded recommendation: make the filter a default *emphasis* (a
+  persistent "showing: <mode> — show all commands" affordance) rather than a lock. **`Help ▸ Manual`
+  (F1) and whatever surface reveals/clears the mode must never be filtered out of any mode**, or the app
+  can hide the only documentation explaining why commands are missing.
+- **Three code interactions the implementer must not trip over**, all verified:
+  1. **A hidden action is still enumerated by `_walk_menu_actions`**, so Customize Toolbar's Available
+     list would offer commands the current mode hides. Whether the Available list filters by mode is
+     undecided (§29).
+  2. **The toolbar hosts the menus' OWN QActions**, so hiding a menu action **empties any pinned toolbar
+     button** built from it. This is the single most likely source of surprise.
+  3. **`Generate PHP...` is one of the seven default toolbar buttons** (`LEGACY_ID_ALIASES`
+     `generate → generation.generate-php` → `DEFAULT_TOOLBAR_IDS` → its vendored `run-build` SVG) **and
+     it is the owner's own example of a command to hide in project mode.** So mode-filtering `Generate`
+     empties a default button, by default, on a fresh install, in the app's primary mode.
+- **Scope: the menu bar only.** Whether a mode affects docks, left-dock tabs or the toolbar is to be
+  widened only on an explicit decision.
+- **UNDECIDED — the per-mode membership itself.** Nobody has enumerated which commands each of the four
+  modes shows; **only `Generate` in project mode has been named.** That enumeration is the bulk of the
+  design and needs the owner, command by command or by a stated rule. **No table is invented here** —
+  see §29. Independently: this filter is visibility-only and must stay independent of any command
+  *relocation* between menus, since a move breaks saved toolbar ids and hiding does not.
 
 ---
 
@@ -821,14 +1024,46 @@ tag's `>`. Typing `<`→`<>`, `"`/`'` after `=`→ paired quotes, `>` completing
 `select_range_on_line(line, start, end)`, `highlight_error_line(line)` (one-shot). `highlight_error_line`
 is reimplemented in terms of `navigate_to_line`.
 
-**Structural selection** (Edit-menu actions, not editor-owned QShortcuts):
+**Structural selection — the `Select` menu** (menu actions, not editor-owned QShortcuts; moved from the
+dissolved Edit menu onto the **Editor menu bar** as its own three-item `Select` menu, FQ-015, settled
+2026-08-07):
+- **Select All** (Ctrl+A) — a **new menu entry for behaviour that already works.** Nothing in the app
+  binds or steals Ctrl+A (the only near chord is `Ctrl+Shift+A` below), so `QPlainTextEdit`'s built-in
+  select-all is already live in every editor; the gap was **discoverability** — a user scanning the menus
+  found the two block commands and no `Select All`. Wire it to the active editor's own `selectAll()`
+  through the same trigger-time dispatch as the other two, so the menu entry and the chord act on the
+  same document and the action can be gated if it ever needs to be.
 - **Select Enclosing Block** (Ctrl+Shift+B): selects `text[open_start:close_end]` (uniform; self-closing
   = open span). No-op when outside all elements.
 - **Select Parent Block** (Ctrl+Shift+A): stateless, re-derived from `cursor.selectionStart()`; walks up
   one level per press; no-op at top level.
-- Both build the selection **caret-at-start** (anchor at end, position at start) then
+- Both block commands build the selection **caret-at-start** (anchor at end, position at start) then
   `ensureCursorVisible()`. Selections are built purely from character offsets — never from visual
   hit-testing — so they work with folded content.
+- **No shortcut changes.** All three chords keep exactly their current keys (Ctrl+A is new and matches
+  the platform default the widget already implements).
+
+> **A real bug this move fixes — the two selection actions were NEVER covered by the app's own
+> per-tab-dispatch rule** (found by FQ-015's triage, verified in the code). Both are **hard-wired to the
+> Raw XML editor at menu-build time**:
+> `select_enclosing_action.triggered.connect(self.center_stage.xml_editor.select_enclosing_block)` (and
+> the same for `select_parent_block`) — bound to the *widget*, not resolved at trigger time. Contrast
+> `build_bookmarks_menu`, whose docstring states the rule: *"Each action resolves the target editor at
+> TRIGGER time via `active_bookmark_editor`, not at build time"*, and `active_find_bar`, which dispatches
+> the same way. So **Ctrl+Shift+B / Ctrl+Shift+A from a PHP tab, a DDL object tab or a draft tab act on
+> the Raw XML document**, not on the tab the user is looking at. Worse, `CodeEditor` has its *own*
+> `select_enclosing_brackets` **and** handles Ctrl+Shift+B in its own `keyPressEvent` (deliberately, "in
+> addition to the QShortcut", because QShortcut activation is unreliable under the offscreen test
+> platform) — **two competing handlers for one chord, one tab-correct and one not.** Moving these onto a
+> per-tab bar makes the mismatch structural, so the fix ships with the move: an
+> `active_selection_editor()`-style trigger-time dispatch mirroring `active_bookmark_editor()`. It must
+> map to **each editor family's own method** — `XmlEditor.select_enclosing_block` selects XML tag spans,
+> `CodeEditor.select_enclosing_brackets` selects bracket pairs; they are different methods with
+> different semantics and one name cannot be assumed. Whether `CodeEditor.keyPressEvent`'s duplicate
+> handler is retired with the fix is an open item (§29) — check the offscreen tests before touching it.
+> **`Select All` is not gated in Caption Mode**, on the bookmarks precedent (a read-only editor keeps
+> Qt's selectable-text interaction flags, and selecting text in one harms nothing) — verify in the
+> running app and test it rather than asserting it (§29).
 
 **Matching-tag highlight & navigation:** on `cursorPositionChanged`, both the opening and closing tag
 of the enclosing element are highlighted (self-closing → none), using the revision-guarded `_spans`
@@ -845,7 +1080,8 @@ stale caret. **Selection right-click ▸ "Find"** prepends to the standard conte
 exists; emits `find_selected_text(str)` → MainWindow reveals Raw XML + prefills the Find bar.
 **Line-wrap** toggle lives in the editor's right-click context menu (checkable), not the View menu.
 
-**Bookmarks** (session-only, per-document; carried by **every** editor that mixes in
+**Bookmarks** (per-document; **session-only unless a project is open** — see "Bookmark persistence"
+below; carried by **every** editor that mixes in
 `GutterBookmarkFoldMixin` — `XmlEditor` *and* every `CodeEditor`, see "Gutter on every code editor"
 below): `self._bookmarks: set[int]` (block numbers), reset on
 `setPlainText`; `toggle_bookmark(block_number)`, `bookmarked_lines()` (sorted ascending),
@@ -855,29 +1091,141 @@ below): `self._bookmarks: set[int]` (block numbers), reset on
 `_EditorGutter._draw_bookmark_tag` as an accent-colored (`_bookmark_color()`, theme-aware) rounded tag
 in the gutter's bookmark strip — toggled by a single click in the strip, and (implemented — see above)
 by a double-click in the line-number zone. **Bookmarks menu**
-(`main_window.py::_build_bookmarks_menu`, top-level menu bar, between Tools and Generation — §26): Toggle
-Bookmark (Ctrl+F2 → `toggle_bookmark_at_cursor`), Next Bookmark (F2 → `goto_next_bookmark`), Previous
-Bookmark (Shift+F2 → `goto_prev_bookmark`), separator, Clear All Bookmarks (no shortcut →
-`clear_bookmarks`). **The menu follows the active editor tab** (settled 2026-08-01): `_build_bookmarks_menu`
-captures **no** editor at build time; each of the four actions is connected to a lambda that resolves its
-target at **trigger** time via `main_window.py::_active_bookmark_editor()` — Edit XSD tab →
-`stage.xsd_editor`, DDL Explorer tab → `stage.ddl_editor_panel.editor`, an active DDL object editor tab
-(`stage.active_ddl_object_panel()`, §18.5) → `panel.editor`, any other tab → `stage.xml_editor`.
-This mirrors `_active_find_bar`'s per-tab dispatch with **one deliberate difference: it does NOT reveal /
-switch to the Raw XML tab** as a fallback side effect (`_active_find_bar` calls `_reveal_raw_xml_tab()`;
-this must not), because toggling a bookmark may never yank the user to a different tab; a non-editor tab
+(`ui/find_controller.py::FindValidateController.build_bookmarks_menu`; **hosted on the Editor menu bar**
+since FQ-016 — §7/§26 — having previously been a top-level window menu between Tools and Generation):
+Toggle Bookmark (Ctrl+F2 → `toggle_bookmark_at_cursor`), Next Bookmark (F2 → `goto_next_bookmark`),
+Previous Bookmark (Shift+F2 → `goto_prev_bookmark`), separator, Clear All Bookmarks (no shortcut →
+`clear_bookmarks`), **List All Bookmarks** (no shortcut — FQ-014, below). **The menu follows the active
+editor tab** (settled 2026-08-01): `build_bookmarks_menu` captures **no** editor at build time; each
+action is connected to a lambda that resolves its target at **trigger** time via
+`FindValidateController.active_bookmark_editor()` (*on the controller, not `MainWindow` — stale spec
+reference corrected 2026-08-07*) — Edit XSD tab → `stage.xsd_editor`, DDL Explorer tab →
+`stage.ddl_editor_panel.editor`, an active DDL object editor tab (`stage.active_ddl_object_panel()`,
+§18.5) → `panel.editor`, an active PHP file tab (`stage.active_php_file_tab()`, §21) → `php_tab.editor`,
+an active draft fragment tab (`stage.active_draft_fragment_tab()`, FQ-006) → `draft.editor`, any other
+tab → `stage.xml_editor`.
+This mirrors `active_find_bar`'s per-tab dispatch with **one deliberate difference: it does NOT reveal /
+switch to the Raw XML tab** as a fallback side effect (`active_find_bar` does; this must not), because
+toggling a bookmark may never yank the user to a different tab; a non-editor tab
 simply falls back to the Raw XML editor. The dispatch is the *only* thing needed, because
-`GutterBookmarkFoldMixin` puts the identical bookmark API on all four editors. The **"Edit code…"
+`GutterBookmarkFoldMixin` puts the identical bookmark API on every editor. The **"Edit code…"
 `CodeEditorDialog` is a separate dialog, not a center-stage tab**, so the main window's Bookmarks menu does
 not reach it — its gutter bookmark strip stays mouse-only. Out-of-range block numbers
-are ignored defensively. No persistence, no list panel, no names.
+are ignored defensively. **Persistence exists in project mode only** (below) and there are still **no
+names** — a bookmark is a bare line, never a labelled entry.
+
+**Bookmark persistence — project mode only** (FQ-013, settled 2026-08-07; ledger §28). Bookmarks were
+session-only *and* document-scoped, and the second half was the sharper loss: the fold-state lifecycle
+**resets `self._bookmarks` to an empty set on every `setPlainText`** (`ui/editor_gutter.py`,
+*"Bookmarks share the fold-state lifecycle: a new document starts with no bookmarks"*), so reopening a
+project, reverting, an XSD mode switch, re-checking-out a DDL object or simply restarting lost every
+bookmark in every editor.
+
+- **Two tiers, gated on whether a §18.2 project is open.** *"Project mode"* here means **a project is
+  open** — the capability fact `DdlProjectController`'s folder/settings already answer — **not** FQ-011's
+  persisted launcher mode. This deliberately keeps the gate on the right side of the app's
+  capability-not-intent rule and gives the feature **no dependency on FQ-010/FQ-011**. With a project
+  open, bookmarks survive document reload **and** app restart. With **no** project open, behaviour is
+  **exactly unchanged** — session only, wiped by `setPlainText`, no store, nothing written anywhere. The
+  projectless path must not regress or acquire a store; that is the status quo by explicit decision.
+- **The store is a sibling file inside the project's already-private directory**, not a new key in
+  `ProjectSettings`: `<project>/.ddlproject/bookmarks.json`, beside `settings.json`, inside the
+  `.ddlproject/` directory `db/ddl_project.py::save_settings` already registers with the idempotent
+  `_ensure_gitignored(project_dir, ".ddlproject/")`. Bookmarks are **personal, not shared**;
+  `ProjectSettings` is the project's shared configuration (connections, deploy manifest, git settings)
+  read and written by several controllers, and mixing them would make every bookmark toggle dirty the
+  file the deploy pipeline depends on.
+- **Keys are project-relative, POSIX-separated.** Absolute paths do not survive a project being moved,
+  cloned, or opened from another mount (the project is explicitly expected to live on an sshfs-mounted
+  share, §18.3), and the project must be portable between the Windows and Linux checkouts — the same
+  discipline `routine_ddl_paths` already follows.
+- **Stale line numbers: restore leniently, drop silently.** Restore every stored line still within the
+  document's block count and discard the out-of-range ones on load, matching the mixin's existing
+  defensive posture. **No content-anchoring in v1** — storing the line's text and re-finding it carries
+  real duplicate-match/moved-block ambiguity and is its own decision, deferred rather than smuggled in.
+- **Which editors persist:** those with a stable project-relative identity — DDL object tabs and PHP file
+  tabs (real files under the project), the Raw XML editor (`ProjectSettings.pgtp.working_copy_path`), and
+  Edit XSD / Edit AutoXSD (their schema files). The **read-only DDL Explorer buffer**, **FQ-006 draft
+  fragment tabs** and the **`Edit code…` `CodeEditorDialog`** have no persistent file to key against and
+  stay session-only even in project mode (§29 — confirm).
+- **Write timing** is deliberately **coarse** — project close / app close, or a debounce — never
+  synchronous inside `toggle_bookmark`, which is a hot single-click gutter gesture that must not do disk
+  I/O (§29 — pick one).
+- Rejected: persisting unconditionally in the app-level QSettings scope — with no project there is no
+  defined root to key against, so it would have to key absolute paths and would accumulate entries for
+  arbitrary files forever, with no owner and no cleanup rule.
+
+**`List All Bookmarks` → clickable `[Bookmark]` Audit rows** (FQ-014, settled 2026-08-07; ledger §28).
+Bookmarks were reachable only **sequentially** (F2 / Shift+F2, wrap-around) with the gutter tags as the
+only overview — and those show the scrolled viewport only, so in a several-thousand-line buffer the user
+could not see how many bookmarks existed, what was at them, or jump to the fourth one directly.
+
+- **Scope: the ACTIVE editor only**, not every open editor. It is the consistent sibling of every other
+  bookmark command (all of which resolve exactly one document via `active_bookmark_editor()`), and a
+  cross-editor list would need click routes the Audit router does not have: `_on_audit_item_clicked`
+  routes on the single `UserRole+1` value (`"xsd"` → `_xsd_ui.reveal_line`; `LINT_AUDIT_TARGET` →
+  `_php_tabs.navigate_to` with the tab key on `UserRole+2`; a **tuple** → `_navigate_to_ddl_object`;
+  **anything else → Raw XML**), so a wrong-document fallback is the default failure — exactly what the
+  `[Check]` branch's comment warns against. A modal dialog's bookmarks cannot be navigated to at all once
+  it closes.
+- **Payload: Find All's two-role shape, unchanged** — line on `Qt.ItemDataRole.UserRole`, the existing
+  target discriminator on `UserRole+1`. `[Find]`'s discriminator vocabulary is the **string `"raw"` or
+  `"xsd"`** (not a `DdlObjectRef.key`); since scope is the active editor, this command reuses whichever
+  discriminator the click router already understands for that editor — no new routes, no `UserRole+2`, no
+  per-row editor label. **Where the active editor has no click route at all** (the read-only DDL Explorer
+  buffer, a draft fragment tab), its rows are emitted **roles-less and inert** rather than carrying a
+  line that would navigate the Raw XML document instead — the same never-navigate-somewhere-wrong rule
+  §7's `[Check]` unmapped-line case states.
+- **Its own `[Bookmark] ` prefix, as a module constant** beside `_FIND_RESULT_PREFIX` /
+  `_VALIDATION_PREFIX` (§7's prefix table). **Not** a reuse of `[Find]`: the two would clear each other,
+  and `[Find]`'s `"raw"|"xsd"` vocabulary cannot carry a DDL-object or PHP-tab payload under one prefix —
+  precisely the overloading the prefix reservation exists to prevent. §7 forbids a fourth *SQL-ish*
+  prefix; `[Bookmark]` is not SQL-ish.
+- **Row grammar: Find All's, verbatim** — `f"{_BOOKMARK_PREFIX}line {line}: {preview}"`; a
+  blank/whitespace-only line renders as just `line N`.
+- **Clears its own rows first**, via a `startswith(_BOOKMARK_PREFIX)` bottom-up sweep in the same shape
+  as `clear_find_results`/`clear_validation_results`. Repeat invocations replace, never stack.
+- **Trailing roles-less count row** (`[Bookmark] 7 bookmark(s)`), matching `_finish_find_all`'s summary
+  (*"no line data → clicking is a no-op"*), and a **roles-less empty-case row** (e.g. `[Bookmark] no
+  bookmarks in <editor>`) plus a status message — Find All always emits its summary even at zero, so a
+  command that produced literally nothing would read as broken.
+- **No shortcut**, matching `Clear All Bookmarks`: this produces a report, and F2/Shift+F2 already own
+  stepping. **Reveals the Audit dock** through the existing injected `_show_audit_dock` callback (the same
+  way `CoherenceController` receives it) rather than reaching for `audit_dock` from a controller —
+  without it the command is a silent no-op whenever the dock is hidden.
+- **A snapshot, not a live view**: toggling a bookmark afterwards does not re-sync the rows. Therefore
+  **the existing bookmark reset must sweep stale `[Bookmark]` rows** — `setPlainText` empties
+  `self._bookmarks`, and without a sweep the rows outlive the bookmarks they describe. This stays
+  necessary **even with persistence**, because projectless editors still wipe on reload and the restore is
+  in-range-only. The gutter mixin is deliberately Qt-widget-level and knows nothing about the Audit panel:
+  expose this as a signal/callback the row-owning controller subscribes to — **never** hand the mixin a
+  reference to the panel.
+- Rejected: a dedicated bookmarks list panel / left-dock tab (the Audit dock already *is* the app's
+  list-of-locations surface, with a working click router, three precedents and a clear-scope convention).
+
+**Every editor's Find/Replace bar is PERMANENTLY VISIBLE** (FQ-016, settled 2026-08-07; full mechanics in
+§15, shortcuts in §27). This is a shared editor behaviour, not a per-tab one: all six `FindReplaceBar`
+construction sites — `center_stage.py` ×3 (Raw XML, Edit XSD, the FQ-006 draft fragment tab),
+`ddl_editor_panel.py`, `php_file_tab.py`, `ddl_object_editor.py` — get a bar that is shown in its
+**expanded** form (both the find row and the replace row) from construction and never hides. Owner's
+words: *"That section must be always visible… not the results, just the fields. no new feature,"* and the
+accepted cost: *"this takes up a bit of space, but more natural to use."* `Ctrl+F`/`Ctrl+R` become
+**focus** gestures and `Escape` **returns focus to the editor** instead of hiding the bar. The rejected
+alternative — keep the bar hideable and merely default it to visible, which would have preserved
+Escape-to-hide and kept `edit.find` pinnable — was **explicitly double-clarified away by the owner**;
+its one honest argument was screen space, which the owner weighed and accepted.
 
 **Bookmarks menu is disabled during Caption Mode** (target design, not yet implemented; settled
 2026-08-01 — see §13): `_build_bookmarks_menu` is to store the menu as `self._bookmarks_menu` and each
 of its four actions as attributes, so `_enter_caption_mode`/`_close_caption_mode` can `setEnabled(False
 / True)` the menu **and every child action together** — disabling only the `QMenu` grays out the
-menu-bar entry but does not disable the actions' keyboard shortcuts in Qt (the same reason
-`_editor_find_action`/`_editor_replace_action` are disabled individually today, not just their menu).
+menu-bar entry but does not disable the actions' keyboard shortcuts in Qt (the precedent was
+`_editor_find_action`/`_editor_replace_action`, disabled individually rather than via their menu — those
+two actions no longer exist since FQ-016 dissolved the Edit menu, but the Qt rule they demonstrated is
+unchanged and is what this gating depends on). **Since FQ-016 the Bookmarks menu lives on the Editor menu
+bar**, whose visibility on the Caption Management tab is itself an open item (§29 — the recorded
+recommendation is to hide the whole bar there, which the visibility refresh gives for free and which would
+subsume this gating).
 **Gutter bookmark toggling (single-click strip and the double-click on the line number) is
 explicitly NOT gated by Caption Mode** and stays usable — bookmarks are a UI overlay independent of the
 read-only editing state; only the Bookmarks menu (and therefore its shortcuts) is gated.
@@ -964,7 +1312,7 @@ selects the Raw XML tab. Does not update `_current_project`/path or repopulate t
   insertion — either explicitly triggered or, when auto-parse is enabled, automatically debounced off
   editor changes.
 
-**Auto-parse XML** (Edit ▸ "Auto Parse XML", checkable, **off by default**, in-memory only — no
+**Auto-parse XML** (Editor menu bar ▸ **Parsing** ▸ "Auto Parse XML", checkable, **off by default**, in-memory only — no
 QSettings persistence, so it always starts unchecked on launch): when enabled, the app listens to
 `XmlEditor.blockCountChanged` (a `QPlainTextEdit` signal that fires once whenever the document's line
 count changes — Enter, multi-line paste, Ctrl+X, or Delete/Backspace joining lines — not once per line)
@@ -1123,7 +1471,7 @@ tracked by `_xsd_mode ∈ {"curated","learned"}`:
   what to hand-add to curated.
 
 The tab title reflects the mode ("Edit XSD" vs "Edit AutoXSD") plus the existing dirty `" *"` suffix.
-The tab owns its dirty state; Ctrl+S and Edit-menu Find/Replace route to the **active** tab (per-tab
+The tab owns its dirty state; Ctrl+S and the Find/Replace gestures route to the **active** tab (per-tab
 document routing, §7). **Switching modes** (Edit XSD ↔ Edit AutoXSD) while the tab has unsaved edits
 prompts the same three-way **Save/Discard/Cancel** used by `closeEvent`.
 
@@ -1345,18 +1693,101 @@ it rather than ever driving a live modal — asks **"Filtered rows only" / "Enti
 "Filtered rows only" calls `unify_from_row(source_row, restrict_to=self._visible_source_rows())`;
 "Entire project" calls the unrestricted form; Cancel does nothing.
 
-**Caption find/replace dialog** (`caption_find_replace_dialog.py::CaptionFindReplaceDialog`) — shown
-**non-modally** via `show()`, never `.exec()` (in the app or in tests; `MainWindow` keeps a reference so
-the non-modal dialog is not garbage-collected). Entry points: the Tools ▸ **"Caption Filter…"** menu item
-(**no shortcut**) opens it in filter-only mode; while **Caption Mode is active**, two window-scoped,
-mode-gated `QShortcut`s (created disabled in `__init__`, flipped by
-`_enter_caption_mode`/`_close_caption_mode`) open it regardless of focus — **Ctrl+F** → filter-only mode,
-**Ctrl+R** → Replace mode (`replace_enabled=True`, Find-what pre-loaded with the grid's currently-active
-filter pattern). Both shortcuts are disabled outside Caption Mode (where Ctrl+F/Ctrl+R belong to the
-Edit-menu Find…/Replace… actions, §15/§27). Find/Replace fields, Search Mode (Normal/Extended/Regex),
-Match case, Scope (In selection[default] / Global), buttons Filter / Replace All / Close (no Find Next).
-As a filter it sets the proxy regex filter; as replace it writes results into each in-scope row's
-**New Value** (non-destructive).
+**The caption find/replace MODAL IS DELETED; the in-panel bar is permanent** (FQ-017, settled
+2026-08-07; ledger §28). Owner's instruction, verbatim: *"forget totally caption filter: delete totally
+the modal and the menu, keep the find and replace bar as is now, always visible, with the same logic as in
+editor window."* Caption find/replace existed **twice** — the non-modal `CaptionFindReplaceDialog`
+(reached from `Tools ▸ Caption Filter…` and from two window-scoped, Caption-Mode-gated `Ctrl+F`/`Ctrl+R`
+`QShortcut`s) and the `CaptionFindReplaceBar` already living inside the Caption Management tab. Two
+surfaces, one job, and the two shortcuts were the same chords the Edit menu advertised for
+`Find…`/`Replace...`, so **the menu advertised one behaviour while the key did another** — a live conflict
+both halves of which disappear together with FQ-016.
+
+**(a) Delete the modal outright.** Removed surface: the module `ui/caption_find_replace_dialog.py`; its
+test file; ~16 references in `main_window.py` (`_make_caption_find_replace_dialog`,
+`_open_caption_filter_dialog`, `_open_caption_replace_dialog`, `_caption_shortcut_open_filter`,
+`_caption_shortcut_open_replace`, the two `QShortcut`s, the `Tools ▸ Caption Filter…` entry and the
+`on_open_filter`/`on_open_replace` injections) plus their references in
+`tests/ui/test_main_window.py` and `tests/ui/test_mainwindow_surface.py`.
+`CaptionManagementPanel.set_regex_filter` **STAYS** — it is the panel's own internal filter path, not the
+modal's. Deleting the two `QShortcut`s is also what lets
+`FindValidateController.set_find_actions`/`set_find_actions_enabled` and their call site go, jointly with
+FQ-016's deletion of the two QActions they gated — **land this first, or in the same commit.**
+> **Load-bearing code detail:** `MODE_LABELS` — the three search modes — used to be defined **in the
+> deleted module** and imported by the survivor. It **moves to `caption_management_panel.py`**, which is
+> now its only consumer and therefore owns it; without that move, deleting the module would break the very
+> bar it is supposed to keep.
+
+**(b) The bar becomes permanent.** `self.hide()` in `CaptionFindReplaceBar.__init__` goes; `show_bar()`
+collapses to a **focus** operation; `Escape` **returns focus to the grid** instead of calling
+`close_bar()`; the grid's context-menu entry *"Find / Replace bar"* becomes *focus the bar* or is removed
+(§29). `show_bar` today also seeds the Find field from `current_filter_pattern()` — with no show, that
+seeding needs a home or must be dropped deliberately (§29).
+
+**(c) `Replace All` plus a scope dropdown — and what the dropdown does NOT do.** The bar's
+`replace_field` is **already fully wired and live**: `textChanged → run_live_replace` → the injected
+`live_replace_preview`, which on **every keystroke** rolls back the previous proposal from
+`_live_replace_baseline` and writes a fresh one into the **New Value** column for the
+currently-visible (filtered) rows; the placeholder text is literally `"Replace with (live)"`. So a
+`Replace All` button is **not** restoring stranded capability for the filtered scope — that scope is
+already covered, continuously. What only the modal could reach was the **project-wide** scope, which
+`replace_all_find(..., in_selection=False)` already implements. Therefore:
+- A **scope dropdown immediately before `Replace All`** offers *"in filtered results"* (**default**) and
+  *"in all project"*.
+- *"in filtered results"* keeps today's live behaviour. ***"in all project" is INERT until `Replace All`
+  is pressed*** — the dropdown selects the scope; the **button** is what authorizes a project-wide write.
+  The alternative (letting the dropdown drive the live preview) is **rejected explicitly**: it would make
+  a single keystroke rewrite every caption in the project, against the panel's own standing rule that
+  *"going project-wide stays an explicit, button-pressed gesture rather than something a keystroke can
+  do."*
+- **Recorded as an intentional semantic change, not a port:** the modal's `on_replace_all(find,
+  replacement, mode, case, in_selection)` was **selection**-scoped; the new dropdown is
+  **filter**-scoped. **Selection-scoped replace is dropped on purpose**, and no `in_selection` parameter
+  whose meaning matches no control on screen may survive in the new call path.
+- The whole design is sufficient protection without a modal because of §13's own staging discipline: a
+  caption edit lands in **New Value** and only an explicit **Apply** touches the XML.
+
+**(d) `Close` is removed — and `Replace All` inherits its commit duty.** The bar was constructed with
+`on_close=self.commit_live_replace`, and `commit_live_replace` *"stop[s] tracking the live preview:
+whatever it proposed becomes an ordinary, hand-editable New Value… it only forgets the rollback
+baseline"* — i.e. `close_bar` was **the handoff from reversible preview to ordinary proposal**. With the
+bar permanent, `on_close` never fires, so `_live_replace_baseline` would never be released and **a hand
+edit of a previewed row's New Value would be silently reverted by the next re-run.** Settled 2026-08-07
+by the owner's delegated authority:
+- **"Active" is redefined as *the Find field is non-empty***, not *between `show_bar` and `close_bar`* —
+  the natural reading once the bar is permanent. `is_active()` and `_refresh_live_replace`'s
+  `if not is_active() and not baseline: return` guard are re-expressed against it.
+- **`Replace All` commits the baseline.** An explicit, deliberate write is exactly the right handoff
+  point, and **emptying the Find field already rolls everything back cleanly**, so the reversibility
+  contract survives the loss of `Close`. This changes *when* a proposal stops being reversible, and that
+  is the intended change.
+
+**(e) `Clear filter`** binds to the **existing** `clear_all_filters()` (which already calls
+`_refresh_live_replace()` afterwards) — do not write a second clear path. Note the mismatch to settle
+(§29): that method clears **all** filters including the tree-set row predicates, while the singular label
+*"Clear filter"* suggests only the text filter. Naming matters here because the banner is the only surface
+that shows the predicate filters.
+
+**(f) `mode_combo` keeps all THREE modes** — `Normal (plain string)` / `Extended (\n \t \0 \xNN)` /
+`Regular expression`. The owner named only normal and regexp; **dropping `Extended` would be a capability
+removal** (`apply_find_replace`/`matches` implement it, and the grid is the only place escape sequences in
+caption text can be matched), so it stays pending explicit confirmation (§29).
+
+**(g) Layout.** Today: `[find_field] [mode_combo] [match_case] [Filter] [Close]` over `[replace_field]
+[status_label] [error_label]`. Target: `Close` **removed**, `Clear filter` **added**, and `[scope
+dropdown] [Replace All]` beside the replace field per the owner's *"immediately before Replace All"*
+ordering. **`Match case` and a status label already exist — do not add second ones.** The inline
+`error_label` stays the **only** invalid-regex channel, never a modal; that rule is unchanged and
+load-bearing.
+
+**Two things explicitly OUT of scope, recorded so an implementer does not "improve" them:**
+- **`Unify` is untouched.** `_confirm_unify_scope` stays exactly as it is. Converting it to the same
+  dropdown for idiom consistency was proposed and **corrected by the owner:** *"unify is independent and
+  important filling the fields with the same value as in the other. Replace replaces parts of words."*
+  Whole-value propagation and substring editing are different operations, so a shared idiom is not owed.
+- **The active-filter banner STAYS.** Not because of text filters — the permanent bar shows those
+  plainly — but because it also describes **row-predicate** filters set by tree gestures (e.g. *"Field =
+  wbs_id"*), which a text field cannot express. Retiring it would **re-create BUG-020**.
 
 **Caption Mode** (`center_stage.py` + `main_window.py`): Tools ▸ "Manage Captions…". On enter, the Raw
 XML editor **stays visible but read-only** (a persistent status-bar label reads "Caption Mode (XML
@@ -1365,9 +1796,11 @@ Management tab, `scan_captions` the snapshot, `load_entries`. Apply computes
 `apply_caption_edits(snapshot, changed_edits)` into the Raw XML buffer **in memory only** (no disk, no
 `.bak`, no auto-reparse); the snapshot updates so line numbers stay valid. Close restores editing mode.
 `_enter_caption_mode`/`_close_caption_mode` gate individual `QAction`s (never just their parent menu, so
-the underlying keyboard shortcut is actually disabled too): today the Raw XML editor's Find…/Replace…
-actions (`_editor_find_action`/`_editor_replace_action`); target design (2026-08-01, not yet
-implemented, §8) extends the same pattern to the **Bookmarks menu and its four actions**
+the underlying keyboard shortcut is actually disabled too). **The Find…/Replace… pair it used to gate is
+gone** (FQ-016/FQ-017, 2026-08-07): with the Edit menu dissolved and the caption modal deleted, there is no
+`Ctrl+F`/`Ctrl+R` collision left to arbitrate and `set_find_actions`/`set_find_actions_enabled` are
+deleted with it. Target design (2026-08-01, not yet
+implemented, §8) applies the same individual-action gating pattern to the **Bookmarks menu and its four actions**
 (`self._bookmarks_menu` + Toggle/Next/Previous/Clear All), since Caption Mode's read-only editor makes
 line-anchored bookmark navigation ambiguous alongside caption-grid navigation — but **not** to gutter
 bookmark toggling itself, which stays a click-driven overlay independent of read-only state.
@@ -1409,21 +1842,35 @@ editor inside the Raw XML tab (`center_stage.raw_xml_tab` container). Constructe
 `FindReplaceBar(editor, on_find_all=None)`; the other two callbacks are **setter-injected after
 construction** (`set_on_stop_find_all(cb)`, `set_on_status(cb)` — a `set_on_find_all(cb)` also exists
 for rebinding), not constructor parameters. Find/Replace fields + Find Next /
-Find All(↔Stop) / Replace / Replace All. `show_find`/`show_replace` prefill from selection; Esc hides &
-returns focus. Replace-all rewrites all matches in one undo block (right-to-left). The editor gains
-`replace_current_selection(text)`.
+Find All(↔Stop) / Replace / Replace All. Replace-all rewrites all matches in one undo block
+(right-to-left). The editor gains `replace_current_selection(text)`.
 
-**Edit menu** (real actions): Find… (Ctrl+F), Find Next (F3), Find All (Ctrl+Shift+F), Replace…
-(Ctrl+R), Replace All (Ctrl+Alt+Return). Each handler routes through
-`main_window.py::_active_find_bar()` to the **active** center-stage editing tab's `FindReplaceBar` — Edit
-XSD tab → `stage.xsd_find_replace_bar`, **DDL Explorer tab → `stage.ddl_editor_panel.find_replace_bar`**
-(§18.1), **an active DDL object editor tab (resolved via `stage.active_ddl_object_panel()`) → that
-panel's own `find_replace_bar`** (§18.5 — Replace is **live** there, unlike the read-only Explorer),
-any other tab → reveal Raw XML and use `stage.find_replace_bar` (§7 per-tab routing) — and
-delegates to the same `FindReplaceBar` method the button uses. The Edit XSD, DDL Explorer and DDL object
-editor tabs each host their own `FindReplaceBar` instance; the Edit XSD one has full Find All parity (the
-DDL Explorer buffer is read-only, so its Replace path no-ops via
-`CodeEditor.replace_current_selection`, §8). (The old "Find & Replace…" Ctrl+H stub was removed.)
+**The bar is PERMANENTLY VISIBLE, in its expanded form** (FQ-016, settled 2026-08-07; ledger §28). Four
+hide/show sites are **deleted, not left inert**:
+
+| Was | Becomes |
+|---|---|
+| `self.hide()` in `__init__` | gone — the bar is visible from construction |
+| `show_find()` / `show_replace()` (the latter showing the replace row, the former hiding it) | collapse into **one focus operation**; the `_replace_row_widget.hide()/.show()` machinery becomes dead code, because the replace row is always shown |
+| `keyPressEvent`'s `Escape → self.hide()` | `Escape → self._editor.setFocus()` only — focus returns to the editor, the bar stays |
+| `_prefill_from_selection()`, called from **both** `show_find` and `show_replace` | **loses its home** — with no show, "select a word, press `Ctrl+F`" stops prefilling unless prefill moves onto the **focus** path. It must stay distinct from `set_find_text`, which the editor's right-click ▸ Find path uses and which prefills *unconditionally* |
+
+Consequence to decide, not to discover: **`active_find_bar()` reveals the Raw XML tab as a fallback side
+effect.** That was defensible when `Ctrl+F` *showed* a bar; as a pure **focus** gesture, focusing a bar by
+yanking the user to a different document is surprising (§29 — keep the reveal, or make focus a no-op on
+tabs with no bar, e.g. the Manual tab).
+
+**No Find/Replace menu entries exist any more.** The five Edit-menu actions — Find… (Ctrl+F), Find Next
+(F3), Find All (Ctrl+Shift+F), Replace… (Ctrl+R), Replace All (Ctrl+Alt+Return) — are **deleted with the
+Edit menu** (FQ-016, §7/§26; ledger §28). The bar's **buttons** are now the only menu-like surface for
+Find All and Replace All, and the surviving keys are specified in §27: `Ctrl+F`/`Ctrl+R` as **focus**
+gestures, **`F3` as a window-level shortcut with no menu entry** routed to `active_find_bar().find_next()`
+(the `Ctrl+L` Go To XSD shape), and `Ctrl+Shift+F` / `Ctrl+Alt+Return` **gone**. Each surviving gesture
+still routes through `FindValidateController.active_find_bar()` to the active tab's own bar (the full
+per-tab dispatch is in §7) and delegates to the same `FindReplaceBar` method the button uses. Every
+editing tab hosts its own `FindReplaceBar` instance; the Edit XSD one has full Find All parity, and the
+DDL Explorer buffer is read-only so its Replace path no-ops via `CodeEditor.replace_current_selection`
+(§8). (The old "Find & Replace…" Ctrl+H stub was removed long before.)
 
 **Find All → Audit panel, streaming:** `_populate_find_all_results(term)` starts a chunked,
 `QTimer`-driven run (batch **200** matches/tick, snapshot text once, cancel any in-flight run). Items
@@ -1431,6 +1878,11 @@ DDL Explorer buffer is read-only, so its Replace path no-ops via
 `_clear_find_results` removes only `[Find]` items. Status bar: `Finding "term"… found N` / `Found N
 item(s)` / `Find All stopped — found N item(s)` / `N replacement(s) for "term"`. The Find All button
 toggles to **Stop** while running. Single-threaded chunking only (no threads, no progress bar, no caps).
+**Since FQ-016 the bar's button is the ONLY way to start a Find All** — `Ctrl+Shift+F` is deleted, on the
+recorded reasoning that Find All writes `[Find]` rows into the Audit panel, is a deliberate and occasional
+act, and now has a permanently visible button, so a chord earns little. The run's own `target`
+discriminator (`"raw"`/`"xsd"`) is unchanged, and Find All stays **inert in both DDL tabs and in the PHP
+and draft tabs**, because `_populate_find_all_results` understands only those two targets.
 
 **Table references — moved to §17** (FQ-003, settled 2026-08-06; ledger §28). Table-reference analysis
 is no longer an independently toggleable left-dock surface of its own. The pure analyzer
@@ -3434,11 +3886,12 @@ instance, following the established per-tab document-routing precedent (Edit XSD
 
 Consequences for existing wiring — **all extensions of existing dispatchers, no new machinery**:
 
-- `main_window.py::_active_find_bar()` gains a branch for the active editable DDL tab (Ctrl+F / F3, and
-  Ctrl+R / Ctrl+Alt+Return, which are **live** here — unlike in the read-only DDL Explorer, where
-  `CodeEditor.replace_current_selection` returns early on `isReadOnly()`). **Ctrl+Shift+F (Find All) is
-  inert** in this tab — see the v1 scope carve-outs.
-- `_active_bookmark_editor()` gains the same branch — still with **no** tab-switching side effect (§8).
+- `FindValidateController.active_find_bar()` gains a branch for the active editable DDL tab (Ctrl+F / F3,
+  and Ctrl+R, whose **Replace is live** here — unlike in the read-only DDL Explorer, where
+  `CodeEditor.replace_current_selection` returns early on `isReadOnly()`). **Find All is inert** in this
+  tab (its button is present but its target is unsupported) — see the v1 scope carve-outs. *(Since FQ-016
+  the bar is permanently visible and Find All / Replace All are button-only, §15/§27.)*
+- `active_bookmark_editor()` gains the same branch — still with **no** tab-switching side effect (§8).
 - `_save_active_tab()` gains a branch (§7). The read-only DDL Explorer still gets none: it is
   DB-synthesized and has no save path, which is why Ctrl+S's routing is asymmetric to Ctrl+F's.
 - This tab is §18.4's **first consumer** (Format Selection, below).
@@ -3462,9 +3915,9 @@ comparing the closed index to those constants. Per-object tabs are created at **
 | Affordance | Source |
 |---|---|
 | Undo / redo | **`QPlainTextEdit`'s native undo stack — the editor's own, never the project history.** Pinned invariant, see below |
-| Find / Find Next / Replace / Replace All | its own `FindReplaceBar` instance + a new branch in `_active_find_bar` (§7/§15) |
+| Find / Find Next / Replace / Replace All | its own **permanently visible** `FindReplaceBar` instance (FQ-016) + a branch in `active_find_bar` (§7/§15) |
 | Find All | **inert in this tab** (the DDL Explorer precedent) — see the v1 scope carve-outs |
-| Bookmarks (Ctrl+F2 / F2 / Shift+F2) + gutter + folding | `ui/editor_gutter.py::GutterBookmarkFoldMixin` (§8) + a new branch in `_active_bookmark_editor` |
+| Bookmarks (Ctrl+F2 / F2 / Shift+F2) + gutter + folding | `ui/editor_gutter.py::GutterBookmarkFoldMixin` (§8) + a branch in `active_bookmark_editor` |
 | Auto-close & selection-wrap for brackets/quotes; bracket-select (Ctrl+Shift+B) | `CodeEditor.keyPressEvent` / `enclosing_bracket_span` (§8) — already generic, no change |
 | 4-character tab stop, SQL highlighting, top-aligned `navigate_to_line` | `CodeEditor`'s `language="sql"` mode (§8/§18.1) — already generic |
 | Standard context menu + the entries below | `createStandardContextMenu()` extended (the `xml_editor.py` idiom) |
@@ -3549,8 +4002,9 @@ Audit lines remain `[Validate]`, `[Find]` results and (later) `[Check]`.
 #### Format Selection — §18.4's formatter finally gets its consumer
 
 - **Format Selection**, bound to **`Ctrl+Alt+F`**, plus a **context-menu item** in this tab. Both are
-  **enabled only when there is a selection**. `Ctrl+Shift+F` remains **Find All**, untouched
-  (`main_window.py`) — §18.4 left the binding TBD and this is the choice.
+  **enabled only when there is a selection**. `Ctrl+Alt+F` was chosen because it did not collide with the
+  then-existing `Ctrl+Shift+F` Find All — §18.4 left the binding TBD and this is the choice. *(That
+  collision is moot since FQ-016 deleted `Ctrl+Shift+F`, §27; the binding stands unchanged.)*
 - Calls `sql.format_selection(selected_text)` (§18.4).
 - **On success** the selection is replaced as a **single undo step** (one `QTextCursor` edit block), so
   one Ctrl+Z reverts the whole reformat.
@@ -5212,9 +5666,9 @@ folder — see §21's forward-reference paragraph, which is the canonical statem
 > carve-out, and §22's lint seams (`lint_on_save`, `request_lint()`, `lint_reported`) — and `CenterStage`
 > hosts it in the dynamic key→widget map (`_php_file_tabs`, keyed by `php_tab_key`;
 > `open_php_file_tab`/`close_php_file_tab`/`update_php_file_tab`/`active_php_file_tab`, re-invoking
-> focuses the existing tab). **Remaining gap: the entry point** — `MainWindow` builds no
-> **File ▸ "Open PHP File…"** action (nor drag-drop) yet, so the tab type is unreachable in the running
-> app. Scope is deliberately narrow, in the owner's own words: *"php ide from my point of view is a rich
+> focuses the existing tab). **The entry point now exists** (verified 2026-08-07): `_build_file_menu` builds
+> **File ▸ "Open PHP File…"** between `Open…` and the §18.2 project group, connected through a lambda to
+> `_php_tabs.open_php_file_dialog()`. **Drag-drop is still absent.** Scope is deliberately narrow, in the owner's own words: *"php ide from my point of view is a rich
 > text editor like we already have, adding features one by one. the goal is to have something as
 > useful as notepad++."* This is **not** a new IDE architecture and **not** code intelligence/LSP —
 > it reuses the existing `ui/code_editor.py::CodeEditor` widget (already implemented; already does PHP
@@ -5341,15 +5795,30 @@ Only new module: `debuglog.py`. Log dir `%LOCALAPPDATA%\MDS\PGTP Editor\logs\` (
 
 ## 26. Consolidated menu bar
 
-Final reconciled state (after all overrides — the original top-level "Diff/Merge" menu was folded into
-Tools; "New Project" removed; line-wrap moved to editor context menu). The removed "New Project" was the
-2026-07-15 **generation stub** (ledger §28); the **New Project…** listed under File below is §18.2's
-later, distinct DDL-project action that merely reuses the same label:
+**Since FQ-016 (2026-08-07) the app has TWO menu bars** (§7 owns the container and the mechanics):
 
-- **File:** Open (Ctrl+O), Open Recent, ⎯, **the §18.2 project action group** (see below), ⎯,
-  Save (Ctrl+S), Save As (Ctrl+Shift+S), Revert, Close (Ctrl+W), ⎯, Exit. Real build order in
-  `MainWindow._build_file_menu`: `Open…` · separator · the five project actions · separator ·
-  Save / Save As / Revert / Close · separator · Exit.
+| Bar | What it holds | Composability |
+|---|---|---|
+| **The window menu bar** (`QMainWindow`'s own, spanning the full width above the docks) | window-global commands: File, View, Schema, Database, Tools, Generation, Help | fixed |
+| **The Editor menu bar** (a child `QMenuBar` in a container widget, **strictly above the central pane**, `CenterStage` below it) | **editing** commands: History, Select, Parsing, Bookmarks | **fixed** — the app decides its contents. It is *not* the user-curated favourites toolbar (§7) |
+
+Both bars are walked by the **one** `ToolbarController` menu walk, so every command on either is
+toolbar-pinnable and carries a menu-path id (§7). On **macOS** the window bar is absorbed into the system
+menu bar while the child bar renders inline, so the two will not look like siblings there.
+
+Final reconciled state of the **window menu bar** (after all overrides — the original top-level
+"Diff/Merge" menu was folded into Tools; "New Project" removed; line-wrap moved to editor context menu).
+The removed "New Project" was the 2026-07-15 **generation stub** (ledger §28); the **New Project…** listed
+under File below is §18.2's later, distinct DDL-project action that merely reuses the same label:
+
+- **File:** Open (Ctrl+O), ⎯, **the §18.2 project action group** (see below), ⎯,
+  Save (Ctrl+S), Save As (Ctrl+Shift+S), Revert, Close (Ctrl+W), ⎯, **Show Launcher…**, Exit. Real build
+  order in `MainWindow._build_file_menu`: `Open…` · separator · **`Open PHP File…`** (§21 — no structural
+  tie to a `.pgtp`, opens with or without a project) · separator · the five project actions · separator ·
+  Save / Save As / Revert / Close · separator · `Show Launcher…` · Exit.
+  **`Open Recent` is DELETED** (FQ-010, 2026-08-07 — ledger §28: a documented capability withdrawn,
+  together with the `recentFiles` store; §7). **`Show Launcher…`** re-opens FQ-010's launcher with
+  `force=True`, which is what keeps the persisted "Don't show this again" reversible.
   - **§18.2 project actions** (revised 2026-08-03 — renamed from "New/Open/Close DDL Project" and
     expanded; **corrected 2026-08-06**: these five live on the **File** menu, in their own
     separator-delimited group between `Open…` and `Save`, *not* on the Database menu — §24):
@@ -5362,11 +5831,11 @@ later, distinct DDL-project action that merely reuses the same label:
     full project JSON — identity, `.pgtp` link, both connection profiles including password, deploy
     manifest), and **Deploy .pgtp** (on-demand push of the local `.pgtp` working copy back to the
     sshfs-mounted source; also offered as a close-time convenience prompt, §18.3).
-- **Edit:** Undo (Ctrl+Z), Redo (Ctrl+Y), History… (no shortcut — opens the non-modal history-jump
-  navigator, §7), Cut/Copy/Paste/Delete, Find… (Ctrl+F), Find Next (F3), Find All
-  (Ctrl+Shift+F), Replace… (Ctrl+R), Replace All (Ctrl+Alt+Return), Select Enclosing Block (Ctrl+Shift+B),
-  Select Parent Block (Ctrl+Shift+A), ☐ Auto Parse XML (§9; unchecked by default, in-memory only),
-  Preferences.
+- **Edit: THE MENU NO LONGER EXISTS** (FQ-016, 2026-08-07 — ledger §28). It was dissolved, not emptied:
+  `Undo`/`Redo`/`History…` → the Editor bar's **History**; `Cut`/`Copy`/`Paste`/`Delete` and
+  `Preferences...` → **deleted stubs**; the five Find/Replace entries → the permanently visible
+  `FindReplaceBar` (§8/§15/§27); `Select Enclosing Block`/`Select Parent Block` → the Editor bar's
+  **Select**; `Auto Parse XML` → the Editor bar's **Parsing**.
 - **View** (real order and labels): ☑ Project Tree, ☑ Properties Panel,
   ☑ Audit/Problems Panel, ☑ Raw XML Panel (checked by default), — , Expand All, Collapse All, — ,
   ☐ Light Theme, — , Customize Toolbar… (opens the toolbar customization dialog, §7). The three **dock**
@@ -5374,14 +5843,8 @@ later, distinct DDL-project action that merely reuses the same label:
   by its title-bar ✕ unchecks the menu item (BUG-007, §7). **The former ☐ "Find table reference" checkable
   is gone** (FQ-003, 2026-08-06) — table references are a sub-branch of the Database ▸ Database/XML
   Coherence view (§17), not an independently toggleable panel.
-- **Bookmarks:** Toggle Bookmark (Ctrl+F2), Next Bookmark (F2), Previous Bookmark (Shift+F2), Clear All
-  Bookmarks. Between Tools and Generation. **All four actions follow the active editor tab** (§8): the
-  target is resolved at trigger time by `_active_bookmark_editor()` — Edit XSD tab → `stage.xsd_editor`,
-  DDL Explorer tab → `stage.ddl_editor_panel.editor`, an active DDL object editor tab
-  (`stage.active_ddl_object_panel()`, §18.5) → `panel.editor`, any other tab → `stage.xml_editor` — and
-  the menu never switches/reveals a tab. Target design (2026-08-01, not yet implemented, §8/§13): the whole menu
-  and its four actions are disabled together while Caption Mode is active (gutter bookmark toggling stays
-  usable).
+- **Bookmarks: moved off this bar** onto the Editor menu bar (FQ-016, 2026-08-07) — see the Editor-menu-bar
+  inventory below. It was previously a top-level window menu between Tools and Generation.
 - **Schema:** Edit XSD, Edit AutoXSD, Verify XSD, Export XSD, Import XSD — five items (§11). Verify /
   Export / Import act on the **active XSD** (curated or learned, per `_xsd_mode`), not curated-only.
   (Go To XSD is **not** a menu item: it is a window-level Ctrl+L `QAction` added via
@@ -5454,15 +5917,69 @@ later, distinct DDL-project action that merely reuses the same label:
   **copies the selection into the console and focuses it without executing** — is a context-menu item
   only, on that tab, with no menu-bar entry and no shortcut: it is a navigation gesture, not a second
   execution path.)
-- **Tools:** Manage Captions…, Caption Filter… (no shortcut on the menu item itself; while Caption Mode
-  is active, window-scoped **Ctrl+F** opens the same non-modal filter dialog and **Ctrl+R** its Replace
-  variant — §13/§27), Reparse Raw XML into Tree,
-  Validate Project, Compare/Merge Two Files…, Next/Previous Difference, Apply Changes to Target.
+- **Tools:** Manage Captions…, Reparse Raw XML into Tree, Compare/Merge Two Files…, Next/Previous
+  Difference, Apply Changes to Target, Lint Current File, ☐ Lint on Save, Locate PHP Linter… (§22 — these
+  three **do** exist in `_build_tools_menu` as of 2026-08-07; §22's "the Tools-menu wiring is the remaining
+  gap" status note is stale), ☐ Start MCP Server (§23 — checkable, unchecked at startup; unchecking is the
+  stop gesture).
+  **`Caption Filter…` is DELETED** with the caption modal (FQ-017, 2026-08-07 — ledger §28; §13).
+  **`Validate Project` MOVES to the Editor bar's `Parsing`** (FQ-016 — it is the owner's *"validate
+  xml"*; its `LEGACY_ID_ALIASES` entry must be updated in the same commit, §7). Whether `Lint Current
+  File` — and, if so, `Lint on Save` / `Locate PHP Linter…` with it — follows onto `Parsing` is an open
+  item (§29); leaving them here while `Lint Current File` moves would split lint across two bars.
 - **Generation:** Locate PHP Generator Executable…, Generate PHP…, Open Output Folder, panGen (Generate
   Own PHP), rePHPgen (Analyze Gap), Save reJSON…, Locate panGen Runtime….
-- **Help:** Manual (F1), Open Log Folder, About.
+- **Help:** Manual (F1), Open Log Folder, About. **`Manual` (F1) must never be filtered out of any launch
+  mode** (§7) — otherwise the app can hide the only documentation explaining why commands are missing.
 
-Toolbar default: Open, Save, Undo, Redo, Find, Validate, Generate (customizable).
+### The Editor menu bar (FQ-016, 2026-08-07)
+
+Four menus, strictly above the central pane, holding **editing** commands (the deliberate concept name —
+`History…` is project-global, so calling the bar "per-tab" would be false; §7):
+
+- **History:** History… (no shortcut — opens the non-modal history-jump navigator, §7), Undo (Ctrl+Z),
+  Redo (Ctrl+Y), **in that order** (owner: *"everyone uses Ctrl+Z/Ctrl+Y anyway"*). Ids become
+  `history.undo` / `history.redo`, both `LEGACY_ID_ALIASES`-pinned and therefore **updated in the same
+  commit** (§7). `Ctrl+Z`/`Ctrl+Y` keep §27's pinned carve-out routing them to the Edit XSD / DDL object
+  tab's own native undo stack.
+- **Select:** Select All (Ctrl+A — new entry, existing behaviour), Select Enclosing Block (Ctrl+Shift+B),
+  Select Parent Block (Ctrl+Shift+A). All three dispatch to the active editor at **trigger** time, which
+  fixes the long-standing build-time binding bug in the two block commands (§8/FQ-015).
+- **Parsing:** ☐ Auto Parse XML (§9; unchecked by default, in-memory only), **Validate Project** (moved
+  from Tools — the owner's *"validate xml"*), and — subject to §29's open item — `Lint Current File`.
+  Membership **inside** this menu is gated by the **active tab kind** with `setVisible`, never
+  create/destroy and never enabled-state (§7). **The plpgsql-check member does not exist yet:** §18.5
+  D3a's `Check DDL Object` / `Check without applying` are target design and are currently assigned to the
+  **Database** menu (above). `Parsing` therefore ships with `Auto Parse XML` + the validate/lint members,
+  and the check member lands with `db/ddl_check.py`. **Open owner call (§29):** whether those two Check
+  gestures move here (the recorded recommendation — they are per-tab and this is the per-tab bar — with
+  **no Database-menu twins**, which would override §26's placement above and need a ledger row) or stay on
+  Database.
+- **Bookmarks:** Toggle Bookmark (Ctrl+F2), Next Bookmark (F2), Previous Bookmark (Shift+F2), Clear All
+  Bookmarks, **List All Bookmarks** (no shortcut — FQ-014, writes clickable `[Bookmark]` rows into the
+  Audit dock for the **active** editor only, §7/§8). **Every action follows the active editor tab** (§8):
+  the target is resolved at trigger time by `FindValidateController.active_bookmark_editor()` — Edit XSD
+  tab → `stage.xsd_editor`, DDL Explorer tab → `stage.ddl_editor_panel.editor`, an active DDL object
+  editor tab → `panel.editor`, an active PHP file tab → `php_tab.editor`, an active draft fragment tab →
+  `draft.editor`, any other tab → `stage.xml_editor` — and the menu never switches/reveals a tab. Target
+  design (2026-08-01, not yet implemented, §8/§13): the whole menu and its actions are disabled together
+  while Caption Mode is active (gutter bookmark toggling stays usable).
+
+**Open (§29):** what the Editor menu bar shows on the **Caption Management** tab and the **Manual** tab —
+the recorded recommendation is that the whole bar is hidden on both, which the visibility refresh gives
+for free.
+
+> **Concurrent-work collision, recorded not resolved:** a separate queued proposal (FQ-012, a *Customize
+> Shortcuts…* dialog under **View**, beside *Customize Toolbar…*) would add a View-menu entry here and
+> would recast §27's table as rebindable defaults. It is **not folded into this spec** and overlaps this
+> section and §27 directly; whoever picks it up must reconcile it against the FQ-016 rulings below (in
+> particular, `F3` is a bare window-level shortcut with **no menu entry**, so it falls outside
+> `collect_menu_commands()`'s enumeration and into that proposal's reserved-rows carve-out, exactly like
+> `Ctrl+L`).
+
+Toolbar default: Open, Save, Undo, Redo, Find, Validate, Generate (customizable) — **but see §7's alias
+table: `Find` loses its menu home entirely and `Undo`/`Redo`/`Validate` change ids with the Editor-bar
+move, so three aliases must be updated and the `find` alias retired, or default buttons ship empty.**
 
 ---
 
@@ -5472,20 +5989,21 @@ Toolbar default: Open, Save, Undo, Redo, Find, Validate, Generate (customizable)
 |---|---|---|
 | Ctrl+O / Ctrl+S / Ctrl+Shift+S / Ctrl+W | Open / Save / Save As / Close | Window. **Save** routes to the active center-stage tab: Raw XML, Edit XSD, or (**implemented**, §18.5) the active DDL object editor tab, where Save persists text only and **never** executes DDL (§7); on that tab the **first** Ctrl+S opens **Save As… (`*.sql`)** and remembers the path, and cancelling that dialog from the close-confirmation prompt **aborts the close**. **Ctrl+Shift+S stays project-only** (`_save_project_as`) and deliberately does **not** re-route to the object tab (§18.5) |
 | Ctrl+Z / Ctrl+Y | Undo / Redo (single step) | Window — project snapshot history (`MainWindow._undo`). **Exception, pinned (implemented, §18.5 carve-out 1):** with the Edit XSD tab or a **DDL object editor tab** active, Ctrl+Z/Ctrl+Y drive **that editor's own native undo stack**. The object tab realizes it with an **event filter** on its editor that accepts the key and calls `editor.undo()`/`redo()` itself, because `CodeEditor` neither consumes nor re-emits the key and the window shortcut would otherwise revert the **Raw XML project buffer** |
-| Ctrl+F / F3 / Ctrl+Shift+F | Find / Find Next / Find All | The **active center-stage tab's own** `FindReplaceBar`, resolved by `_active_find_bar()` — Edit XSD → `stage.xsd_find_replace_bar`, DDL Explorer → `stage.ddl_editor_panel.find_replace_bar`, the DDL object editor tab → its own bar (§18.5, **implemented**), otherwise `stage.find_replace_bar` (revealing the Raw XML tab) (§7/§15). **Find All (Ctrl+Shift+F) is inert in both DDL tabs** — `_populate_find_all_results` understands only `target="raw"`/`"xsd"` (§18.1/§18.5) |
-| Ctrl+R / Ctrl+Alt+Return | Replace / Replace All | Same per-tab routing as Find, but **inert in the DDL Explorer** — that buffer is read-only (`CodeEditor.replace_current_selection` returns early on `isReadOnly()`) — and **live** in the DDL object editor tab (§18.5, **implemented**) (overridden while Caption Mode is active — next row) |
-| Ctrl+F / Ctrl+R (Caption Mode override) | Open the caption **Filter** dialog / **Replace** dialog (the shared non-modal `CaptionFindReplaceDialog`, shown via `show()` — §13) | Window-scoped `QShortcut`s enabled **only while Caption Mode is active** (flipped by `_enter_caption_mode`/`_close_caption_mode`, alongside the individually-disabled Edit-menu Find…/Replace… actions); outside Caption Mode both keys mean the Edit-menu Find/Replace rows above. The Tools ▸ Caption Filter… menu item itself carries **no** shortcut |
-| Ctrl+Shift+B / Ctrl+Shift+A | Select Enclosing / Parent Block | Raw XML editor (menu-owned) |
+| Ctrl+F / Ctrl+R | **FOCUS** the active tab's Find field / Replace field (FQ-016, 2026-08-07 — they no longer *show* a bar; the bar is permanently visible, §8/§15) | The **active center-stage tab's own** `FindReplaceBar`, resolved by `FindValidateController.active_find_bar()` — Edit XSD → `stage.xsd_find_replace_bar`, DDL Explorer → `stage.ddl_editor_panel.find_replace_bar`, the DDL object editor tab → its own bar, a PHP file tab → `php_tab.find_replace_bar`, a draft fragment tab → `draft.find_replace_bar`, otherwise `stage.find_replace_bar` (§7/§15). Replace is **inert in the DDL Explorer** — that buffer is read-only (`CodeEditor.replace_current_selection` returns early on `isReadOnly()`) — and **live** in the DDL object editor, PHP and draft tabs. **No menu entry advertises either key any more** (the Edit menu is dissolved), and neither key is mode-gated: the caption modal that used to steal both while Caption Mode was active is deleted (§13/FQ-017), so the long-standing "the menu advertises one behaviour while the key does another" conflict disappears from both ends. Whether the fallback branch's Raw-XML **reveal** survives a pure focus gesture is open (§29) |
+| **F3** | **Find Next** — routed to `active_find_bar().find_next()` | **Window-level shortcut with NO menu entry** (FQ-016, 2026-08-07). Owner ruling: *"why does F3 die? it should find next."* It survives the Edit menu's dissolution rebound onto the same window-level, menu-less shape as **Ctrl+L Go To XSD** (next block), using the exact dispatch the deleted Edit QAction used. **Window-level, NOT bar-local:** the whole point is that it works while the caret is in the **editor**, so it must not be a `keyPressEvent` on `FindReplaceBar`, which would only fire once the bar already has focus. Consequence, accepted: a shortcut with no menu entry is **invisible to `_walk_menu_actions`** and therefore **can never be pinned** to the toolbar — it joins the existing `Ctrl+L` / `Ctrl+Alt+F` / `Ctrl+Return` category, alongside Find itself (*"Find unpinnable is fine"*) |
+| *(deleted)* | ~~Find All (Ctrl+Shift+F)~~ · ~~Replace All (Ctrl+Alt+Return)~~ | **Both chords are GONE** (FQ-016, 2026-08-07; ledger §28) — the commands survive as **buttons on the now-permanent bar**. Find All writes `[Find]` rows into the Audit panel: a deliberate, occasional act with a visible button earns little from a chord. Replace All is a **bulk edit that now sits beside a scope dropdown** (FQ-017's *"in filtered results"* / *"in all project"*, §13) which a keystroke would bypass entirely — losing the keystroke is a gain under this project's own rule that a broad, hard-to-inspect effect must not be one chord away |
+| Ctrl+A / Ctrl+Shift+B / Ctrl+Shift+A | Select All / Select Enclosing Block / Select Parent Block | The Editor menu bar's **Select** menu (§8/FQ-015). All three resolve the target editor at **trigger** time; the two block commands were previously bound to the Raw XML editor at build time and acted on the wrong document from any other tab. **Ctrl+A is new as a menu entry only** — `QPlainTextEdit`'s built-in select-all was already live and nothing ever bound or stole the chord |
 | Ctrl+click / Alt+click | Jump to matching tag / parent tag | Raw XML editor |
-| Ctrl+F2 / F2 / Shift+F2 | Toggle / Next / Previous Bookmark | The **active editor tab** — Raw XML / Edit XSD / DDL Explorer, plus the DDL object editor tab (§18.5, **implemented**) — resolved at trigger time by `_active_bookmark_editor()`, never switching tabs (Bookmarks menu, §8; disabled in Caption Mode, §13 — target design 2026-08-01) |
+| Ctrl+F2 / F2 / Shift+F2 | Toggle / Next / Previous Bookmark | The **active editor tab** — Raw XML / Edit XSD / DDL Explorer / the DDL object editor tab / a PHP file tab / a draft fragment tab — resolved at trigger time by `FindValidateController.active_bookmark_editor()`, never switching tabs (Bookmarks menu, now on the **Editor menu bar**, §8/§26; disabled in Caption Mode, §13 — target design 2026-08-01). **`Clear All Bookmarks` and `List All Bookmarks` (FQ-014) deliberately carry no shortcut** |
 | double-click (line-number gutter zone) | Toggle bookmark on that line | Raw XML editor gutter (settled 2026-08-01, **implemented** — commit `828fe02`, §8 — additive alongside the existing single-click 12px bookmark strip; NOT gated by Caption Mode) |
-| Ctrl+L | Go To XSD (jump to the attribute's definition in curated.xsd; always forces curated mode) | Window-level QAction (also in the Raw XML editor context menu) |
+| Ctrl+L | Go To XSD (jump to the attribute's definition in curated.xsd; always forces curated mode) | Window-level QAction (also in the Raw XML editor context menu). **The shape `F3` copies** (above): a window-level command with **no menu entry**, therefore outside `_walk_menu_actions` and un-pinnable — the category also holding `Ctrl+Alt+F` Format Selection and `Ctrl+Return` Run |
 | Ctrl+Space | Completion popup (`_CompletionPopup`, frameless, non-modal) | Three shipped contexts: the **Raw XML editor**'s schema-driven attribute/value completion (§11), the **DDL object editor tab**'s schema-aware SQL completion (§18.6), and the **Sandbox SQL Console tab** (per the manual's Keyboard Shortcuts chapter, which lists all three; §18.5 D4) |
-| Ctrl+Alt+F | **Format Selection** (§18.4's `format_selection` on the current selection; single undo step on success, `[SQL]` Audit lines + transient underline on refusal) | The DDL object editor tab (**implemented**, §18.5) and — target design, §18.5 D4 — the **Sandbox SQL Console** tab; in both cases only with a non-empty selection, and also a context-menu item. The formatter itself is unchanged: its host set widens from one tab to two. `Ctrl+Shift+F` stays Find All. |
+| Ctrl+Alt+F | **Format Selection** (§18.4's `format_selection` on the current selection; single undo step on success, `[SQL]` Audit lines + transient underline on refusal) | The DDL object editor tab (**implemented**, §18.5) and — target design, §18.5 D4 — the **Sandbox SQL Console** tab; in both cases only with a non-empty selection, and also a context-menu item. The formatter itself is unchanged: its host set widens from one tab to two. *(The old note that "`Ctrl+Shift+F` stays Find All" no longer applies — that chord is deleted, see above.)* |
 | Ctrl+Return | **Run** — execute the selection, or the whole buffer when there is no selection, against the **sandbox** (§18.5 D4, target design 2026-08-06) | **Sandbox SQL Console tab only.** This is the one execution gesture that *does* carry a shortcut, and it does not reopen the *"an irreversible outward effect must not be one keystroke away"* rule — that rule is about **irreversibility**, and the sandbox is disposable and `reset()`-able by construction, which is the same asymmetry that authorizes ad-hoc execution at all (D4's safety boundary). Object-changing statements still pass the injected confirmation; there is **no target-database Run**, with or without a shortcut |
 | *(no shortcut, deliberately)* | **Check DDL Object** / **Check without applying** / **Apply to Sandbox** / **Apply to Target Database…** / **Generate Deployment SQL…** / **Deploy this edit…** | Database menu, the DDL object editor tab's context menu, and (for the three check/apply gestures) its button row (§18.5. **Status 2026-08-06:** the tab's own **Apply to Sandbox / Apply to Target… / Deploy this edit…** ship, with the button row appearing only when the corresponding seam is wired; the **Check** gestures wait on `db/ddl_check.py` (D3a), and none of the Database-menu twins exists yet). Apply is an **irreversible outward effect** and must not be one keystroke away; the target-database variant additionally requires a green sandbox validation, refuses a changed signature outright, and confirms naming the object **and** the database. **Deploy this edit…** (§18.5, settled 2026-08-05) is a picker in front of these same three destinations (Apply to Sandbox / Save / Apply to Target Database…) and reuses their existing wiring rather than adding a fourth gesture — likewise deliberately unshortcut. |
 | *(no shortcut, deliberately)* | **Add Trigger…** / **New Function/Procedure…** | DDL Explorer tree context menus (table node / "Functions & Procedures" root) and, for the routine one, **Database ▸ New Function/Procedure…** (§18.1, FQ-002 — **implemented** 2026-08-06: `db/ddl_skeleton.py`, both dialogs, both context entries and the menu action). Both are dialog-gated and write **nothing** to a database — they only open a §18.5 editor tab on generated skeleton text — so the reason for withholding a shortcut is menu-hygiene, not the irreversible-outward-effect rule above. |
 | *(no shortcut, deliberately)* | **Database/XML Coherence** (checkable) | Database menu (§17/§26, FQ-003, **implemented** 2026-08-06). It replaces three previously unshortcut entry points — Check: XML→Database, Check: Database→XML and View ▸ Find table reference — none of which carried a shortcut either, so nothing is lost; the merged view is read-only and reached by toggle, not by keystroke |
+| Escape | **Return focus to the document** — never hide anything | Any editor's `FindReplaceBar` returns focus to its editor; the Caption Management tab's `CaptionFindReplaceBar` returns focus to the grid (FQ-016/FQ-017, 2026-08-07). Both bars used to *hide* on Escape; both are now permanent |
 | Ctrl+G | Go to line in XML | Caption grid |
 | Ctrl+Shift+B | Bracket-select | Code editor dialog; DDL object editor tab (§18.5) |
 | Ctrl+S / Ctrl+W | Save / Cancel | Code editor dialog |
@@ -5493,8 +6011,15 @@ Toolbar default: Open, Save, Undo, Redo, Find, Validate, Generate (customizable)
 
 **§18.5 introduces exactly two new bindings** — `Ctrl+Alt+F` (which §18.4 had left TBD, shipped) and, as
 of D4, `Ctrl+Return` scoped to the Sandbox SQL Console tab. Everything else it
-needs joins the **existing** per-tab dispatchers rather than adding shortcuts: `_active_find_bar()`,
-`_active_bookmark_editor()` and `_save_active_tab()` each gain one branch.
+needs joins the **existing** per-tab dispatchers rather than adding shortcuts: `active_find_bar()`,
+`active_bookmark_editor()` and `_save_active_tab()` each gain one branch.
+
+**Every binding in this table is FIXED** — set inline as a literal string at each action's construction
+site, with no central registry and no user-facing rebinding. A separate queued proposal (FQ-012, a
+*Customize Shortcuts…* dialog) would overturn that; it is **not folded into this spec**, and it overlaps
+this table and §26's View menu directly. Note for whoever reconciles it: `F3`, `Ctrl+L`, `Ctrl+Alt+F` and
+`Ctrl+Return` are **not** menu actions, so they fall outside the menu-bar enumeration such a dialog would
+be built on.
 
 ---
 
@@ -5616,10 +6141,69 @@ is authoritative** (and is what appears in the body above).
 | 2026-08-06 | §7/§4 theme: the QSS layer was **dark-only** — `apply_theme` did `app.setStyleSheet("" if light else _dark_stylesheet())`, with a single `_dark_qss_cache: str \| None` global, and *"light **always** assigns the empty stylesheet … so a light↔dark round-trip never leaves stale dark QSS behind"* was a stated invariant (BUG-010 row, 2026-08-01). Light was therefore Fusion + `light_palette()` only — stock, unstyled chrome | **Both themes get the QDarkStyleSheet QSS** (FQ-005): `_dark_stylesheet()` → **`_qdarkstyle_stylesheet(light: bool)`** caching both variants in **`_qss_cache: dict[bool, str]`** and passing `palette=LightPalette if light else DarkPalette` **explicitly** (dark previously relied on qdarkstyle's implicit default); `apply_theme` calls `app.setStyleSheet(_qdarkstyle_stylesheet(light))` **unconditionally**. **Zero new dependencies** — `qdarkstyle>=3.2` was already pinned and ships `qdarkstyle.light.palette.LightPalette`. The empty-stylesheet clause is **retired**: the new invariant is that a toggle always *replaces* the entire app QSS, so staleness is impossible without an empty state. `light_palette()`/`dark_palette()` are **unchanged** — only the QSS *source* changed, so `XmlEditor.apply_theme_colors` (keyed off palette Base lightness) is unaffected. Rejected vehicles, recorded: `qtass-pyside6` (no license, `requires-python<3.14` vs. the installed 3.14.6, near-zero maintenance signal) and, as the moot fallback, `qt-material` (BSD-2-Clause) — no dependency was needed. Consequent **test-contract** change: a non-empty app QSS wraps the style in Qt's `QStyleSheetStyle` proxy (`objectName() == ""`), which already silently held for dark but was masked by the light-only `"fusion"` read-back assertions; tests now **spy on `QApplication.setStyle`** instead of reading `app.style().objectName()`. Not a functional regression — Fusion is still requested and still governs anything the QSS leaves alone |
 | 2026-08-06 | §18.8's asset pipeline as designed: images "saved locally, not yet wired", `.png` examples (`quality_ok.png`/`quality_ok_drk.png`), wiring left as an "implementation task", state names flagged candidate/not-owner-verbatim (`sandbox_connection_ok`, a Quality `error` state), and **connectors "carry state"** with a `connector_[status]` state set left to enumerate (§29) | **Pinned to the shipped `ui/project_status_model.py` layer.** Assets are **`.svg`-only** in `resources/status/` (`ASSET_EXTENSION = ".svg"`, BUG-029 — the `.png` slices were deleted); each per-family enum's *value* IS the filename stem, resolved via `asset_filename(stem, dark)` with `DARK_SUFFIX = "_drk"` and guarded by `all_asset_stems()`-parametrized tests. Shipped stems: `quality_connection_not_set_up`/`quality_offline`/`quality_connection_ok`; `app_standalone`/`app_project_not_setup`/`app_project_setup`; `sandbox_not_set_up`/`sandbox_connected`/`sandbox_offline`; `sandbox1_empty`/`sandbox1_filled`; `sandbox2_plpgsql_check_installed`/`sandbox2_plpgsql_check_not_installed`. **Connectors are position-keyed and STATELESS** — exactly three assets (`ConnectorKind`: `connector_quality-app`/`connector_app-sandbox`/`connector_sandbox-db`, the third visually splitting after the Sandbox node), no per-state variants; the §29 "connector state set" open question is closed. The 4-way tools-missing backing distinction survives as `SandboxDegradation` for the click-through window, still with no icon of its own |
 | 2026-08-06 | §7: *"Icons are optional. Only the legacy seven have vendored SVGs … every other command is icon-less by design"* — a closed icon universe (seven vendored Breeze SVGs via `ACTION_ICON_FILES`, `ICON_ID_BY_COMMAND` defaults) with no way for a user to assign an icon to any other toolbar command (BUG-027 row, 2026-08-05) | **Any toolbar button is user-decoratable from a vendored Breeze catalog** (FQ-004 — shipped in commit `a12b522`; this row is the mandatory-policy catch-up, folding an already-shipped design into the spec). `ui/icons.py` widens the vendored pack to a curated common-action subset and adds an enumerable, lazily-directory-scanned catalog (`icon_catalog`/`catalog_ids`/`catalog_filename`/`search_catalog`/`human_name_for`; catalog icon ids = SVG filename stems, a second id space beside the legacy action ids, both accepted by `load_svg_text`/`themed_icon`). The Customize Toolbar dialog gains per-row icon previews plus a **Choose Icon…** button / row double-click opening `ui/icon_picker_dialog.py::IconPickerDialog` (searchable icon grid over the catalog; always-first "Default" cell, sentinel `DEFAULT_CHOICE = None`, clears the assignment; test seams `set_filter`/`visible_icon_ids`/`select_icon`/`chosen_icon_id`, never `.exec()`). Assignments `{command_id: catalog_icon_id}` persist in the sibling QSettings key **`toolbarIconIds`** (`serialize_icon_assignments`/`parse_icon_assignments`), pruned on load by `toolbar_registry.resolve_icon_assignments` (legacy ids through `LEGACY_ID_ALIASES`; vanished commands/icons dropped) and resolved per button by `icon_id_for` — assignment wins, else legacy default, else icon-less. "Icons are optional" itself **stands**: an icon is still never a precondition, and with no assignment stored, behavior is exactly pre-FQ-004 |
+| 2026-08-07 | §7: *"**Startup file:** `main()` opens a `.pgtp` passed as `argv[1]` (Windows "Edit with PGTP Editor" verb) when it is an existing file; else logs a warning"* — the app's only startup behaviour, with **no launcher, welcome screen or start page anywhere in the spec** and §7's *"startup tree is genuinely empty — no placeholder project"* left as the whole of the first-run experience | **A launch modal presenting the four ways in, and the GUI stops opening a file passed on the command line** (FQ-010). `ui/launcher_dialog.py`'s `LauncherDialog` + `show_launcher(window, settings, …, force=False)` is shown from `main.py` **after `window.show()`** behind a `launcher=` seam — never from `MainWindow.__init__` (~49 test files construct one; a modal there would hang every one), and structurally unreachable from `--mcp`, which returns before any Qt import. Four groups held as `LAUNCHER_GROUPS` of **menu-path command ids**, resolved off `ToolbarController`'s walk and dispatched by triggering the menu's **own QAction** — no second implementation of anything: (1) Open a pgtp for editing, (2) New Project / Open Project, (3) Open other files, (4) Maintenance mode = the five §11 XSD actions + §20's four re_phpgen entries only, §19's vendor-generation trio deliberately OUT (membership is the owner's *"for now"*, §29). Persisted `launcherSuppressed` "Don't show this again", made reversible by **`File ▸ Show Launcher…`** (`force=True`); Escape/close lands in the empty app and **never quits**. **`args.file` survives but only `--mcp` consumes it** (§23's default project); the GUI's open branch and the `.desktop` `%f` are deleted, and the argument's help text is reworded. A non-modal "Start" tab in `CenterStage` was the honest alternative and was **rejected by the owner** (*"Let's do a modal"*) — recorded because it needed no `main.py` seam and no test-hang risk; the modal's decisive advantage is being unmissable, which is the owner's actual complaint |
+| 2026-08-07 | §7/§26: **`File ▸ Open Recent`** and the `recentFiles` QSettings store (`_RECENT_FILES_KEY`/`_RECENT_FILES_MAX = 10`, the `aboutToShow` rebuild, `recent_files`/`remember_recent_file`/`rebuild_recent_menu`, written only by `open_file` and `save_as`), plus §7's toolbar-enumeration rule *"Skipped: … the dynamic **Open Recent** submenu wholesale — its children are transient per-session file entries and must never be pinnable"* | **A documented capability WITHDRAWN, not replaced** (FQ-010, owner instruction). The submenu, the store, both writers and `tests/ui/test_open_recent.py` are deleted, and the enumeration's skip rule is deleted with them rather than left guarding a menu that no longer exists. Owner's framing: recent *files* belonged to the standalone-`.pgtp`-editor era the project has left. `recentFiles` was the **only** launch-time memory of prior work that existed (`recentProjects`/`lastProject` never existed; PHP files were never recorded), so the launcher above ships **recent-less and knowingly presents actions, not a resume list**. A `recentProjects` store — the memory a project-centric app should have, with `db/ddl_project.py::is_project_dir` already available as its validator — is a **separate, later decision** that nothing here depends on |
+| 2026-08-07 | §8: bookmarks are **"session-only, per-document"**, stated as settled design and closed with *"No persistence, no list panel, no names."* — `self._bookmarks` reset to an empty set on every `setPlainText` in every editor, so reopening a project, reverting, an XSD mode switch, a re-checkout or a restart lost them all | **Persistence exists — in project mode ONLY (FQ-013), and there IS now a list surface (FQ-014).** *"No names"* stands unchanged. **Persistence:** with a §18.2 project open, bookmarks survive document reload and app restart, stored in **`<project>/.ddlproject/bookmarks.json`** — a sibling of `settings.json` inside the directory `save_settings` already registers via the idempotent `_ensure_gitignored(project_dir, ".ddlproject/")`, deliberately **not** a new key in `ProjectSettings` (personal caret furniture must not dirty the shared config the deploy pipeline depends on). Keys are **project-relative with POSIX separators** so the store survives a move/clone/sshfs remount and is portable between the Windows and Linux checkouts. Stale lines: **restore in-range, drop out-of-range silently**, no content-anchoring in v1. Identity-less editors (the read-only DDL Explorer buffer, FQ-006 draft tabs, the `Edit code…` dialog) stay session-only. Writes are **coarse** (project/app close or a debounce), never inside the hot `toggle_bookmark` gesture. **With no project open, behaviour is exactly unchanged** — session-only, no store, no file: the projectless path is the status quo by explicit decision, and the gate is *"is a project open"* (a capability fact), **not** FQ-011's launcher mode. **The list surface:** `List All Bookmarks` writes clickable `[Bookmark]` rows into the existing Audit dock for the **active editor only** — a new reserved prefix (§7), Find All's two-role payload and row grammar, its own bottom-up clear sweep, a roles-less count row and a roles-less empty-case row, no shortcut, revealing the dock through the injected `_show_audit_dock`. A dedicated bookmarks panel was **not** built: the Audit dock already is the app's list-of-locations surface with a working click router |
+| 2026-08-07 | §8/§26/§27: `Select Enclosing Block` (Ctrl+Shift+B) and `Select Parent Block` (Ctrl+Shift+A) as **Edit-menu** actions described as *"Raw XML editor (menu-owned)"* — and, in the code, `triggered.connect(self.center_stage.xml_editor.select_enclosing_block)`, i.e. **bound to the widget at menu-build time** | **A three-item `Select` menu on the Editor menu bar, and the binding bug fixed with the move** (FQ-015). `Select All` (Ctrl+A) joins them as a **new menu entry for behaviour that already worked** — nothing ever bound or stole Ctrl+A, so the gap was pure discoverability. All three now resolve the target editor at **trigger** time via an `active_selection_editor()`-style dispatch mirroring `active_bookmark_editor()`, mapping to **each editor family's own method** (`XmlEditor.select_enclosing_block` selects XML tag spans; `CodeEditor.select_enclosing_brackets` selects bracket pairs — different semantics, so one name cannot be assumed). The build-time binding meant **Ctrl+Shift+B/A from a PHP tab, a DDL object tab or a draft tab acted on the Raw XML document**, and `CodeEditor` additionally handles Ctrl+Shift+B in its own `keyPressEvent` — two competing handlers for one chord, one tab-correct and one not. The spec's per-tab-dispatch rule already existed; these two actions were simply **never covered by it**. No shortcut changes |
+| 2026-08-07 | §7/§26/§27: **one** menu bar, with the **Edit** menu holding project-history Undo/Redo/History…, four dead stubs, the five Find/Replace actions, the two selection commands, `Auto Parse XML` and `Preferences`; and §15's `FindReplaceBar` *"hides itself on construction … `show_find` hides the replace row while `show_replace` shows it … `Esc` hides & returns focus"*, with `Ctrl+F`/`Ctrl+R` as two different **reveal** gestures onto one widget | **TWO menu bars, the Edit menu DISSOLVED, and the Find/Replace bar PERMANENTLY VISIBLE** (FQ-016). A second, **fixed** `QMenuBar` inside a container widget becomes the central widget with `CenterStage` below it — owner's distinction, verbatim: *"that's not a toolbar, that's a menubar. Toolbar is just a collection of favourite commands."* Its four menus: **History** (`History…`, `Undo`, `Redo`), **Select** (FQ-015), **Parsing** (`Auto Parse XML` + `Validate Project` moved off Tools, gated by **active tab kind** — never called a "mode" — with the plpgsql-check member landing with §18.5 D3a), **Bookmarks** (moved off the window bar). Edit is **removed, not emptied**: its stubs are deleted (five of the seven absent-not-disabled violators die here), its Find/Replace family becomes the permanent bar's buttons, and its remaining members move. The bar is shown **expanded** at all six construction sites; `self.hide()`, the `show_find`/`show_replace` split and `Escape → hide` are **deleted, not left inert** — `Ctrl+F`/`Ctrl+R` become **focus** gestures and `Escape` returns focus to the editor; `_prefill_from_selection` must move onto the focus path or "select a word, press Ctrl+F" stops prefilling. Shortcut fallout, per key: **`F3` survives** as a **window-level shortcut with no menu entry** routed to `active_find_bar().find_next()` on the `Ctrl+L` Go To XSD precedent (and is therefore un-pinnable, like Find itself — *"Find unpinnable is fine"*); **`Ctrl+Shift+F` and `Ctrl+Alt+Return` are deleted**, their commands surviving as buttons (Replace All now sits beside FQ-017's scope dropdown, which a keystroke would bypass). `set_find_actions`/`set_find_actions_enabled` die with the QActions they gated. Toolbar identity: the **one** `ToolbarController` walk is widened to a **sequence of menu-bar roots** (never a second walk), and `LEGACY_ID_ALIASES` is updated **in the same commit** for `undo→history.undo`, `redo→history.redo` and **`validate→parsing.validate-project`** (settled 2026-08-07 by the owner's delegated authority — the fourth pinned id, which triage found late), with the now-homeless `find` alias and its `edit-find` SVG retired deliberately; otherwise default toolbar buttons ship empty and iconless. Rejected: a `QToolBar` instead (owner, verbatim), keeping `Edit` as a thin shell, and merely defaulting the bar to visible while keeping it hideable |
+| 2026-08-07 | §13/§26/§27: caption find/replace exists **twice** — the non-modal `CaptionFindReplaceDialog` (`Tools ▸ Caption Filter…` plus two window-scoped, Caption-Mode-gated `Ctrl+F`/`Ctrl+R` `QShortcut`s, with Scope *In selection[default] / Global*) **and** the in-panel `CaptionFindReplaceBar`, which hid itself and closed on Escape | **The modal and its menu entry are DELETED; the bar is permanent and absorbs the missing capability** (FQ-017). Owner, verbatim: *"forget totally caption filter: delete totally the modal and the menu, keep the find and replace bar as is now, always visible, with the same logic as in editor window."* The module, its tests, its ~16 `main_window.py` references and the two `QShortcut`s go (which also retires §27's Caption-Mode override row and, with FQ-016, `set_find_actions*`); `MODE_LABELS` **moves into the panel**, its only remaining consumer. The bar keeps its **live** filtered replace and gains **`Clear filter`** (bound to the existing `clear_all_filters()`), a **scope dropdown** immediately before a new **`Replace All`** — *"in filtered results"* (default) / *"in all project"* — and loses **`Close`**. Two rulings this forces: *"in all project"* is **inert until `Replace All` is pressed** (letting the dropdown drive the live preview is rejected explicitly: one keystroke would rewrite every caption in the project, against the panel's own standing rule that project-wide must be button-pressed); and, since `on_close=commit_live_replace` can never fire on a permanent bar, **"active" is redefined as *the Find field is non-empty* and `Replace All` commits the baseline** (settled 2026-08-07 by the owner's delegated authority — otherwise `_live_replace_baseline` is never released and a hand edit of a previewed row is silently reverted by the next re-run; emptying the Find field still rolls everything back, so reversibility survives). **Selection-scoped replace is dropped on purpose** — the new scope is filter-scoped, and no `in_selection` parameter matching no on-screen control may survive. Explicitly untouched: **`Unify`** (owner's correction: whole-value propagation and substring editing are different operations, so `_confirm_unify_scope` stays as-is) and the **active-filter banner** (it also reports tree-set row predicates no text field can express; retiring it would re-create BUG-020). All **three** `mode_combo` modes stay — dropping `Extended` would be a capability removal |
 
 ---
 
 ## 29. Open questions
+
+**From the 2026-08-07 UX-review batch (FQ-010 – FQ-017).** These are genuinely undecided, not
+unrecorded — nothing below was invented in the body above:
+
+- **The launch mode's per-mode menu membership is UNDECIDED, and it is the bulk of that design** (FQ-011,
+  §7). Nobody has enumerated which commands each of the four modes shows; **only `Generate` in project
+  mode has been named.** The mechanism (persisted key, one visibility-binding refresh entry point,
+  intent-not-capability hiding as a deliberate departure) is settled; the table is not, and no table may be
+  invented. Three sub-questions ride with it: **(a)** what the required **escape hatch** is and where it
+  lives (a persisted mode plus a suppressible launcher is otherwise a trap; recorded recommendation: a
+  default *emphasis* with a "show all commands" affordance, never a lock); **(b)** whether Customize
+  Toolbar's **Available list filters by mode**, given that a hidden action is still enumerated by the walk;
+  **(c)** whether hiding **`Generate PHP...`** — one of the seven default toolbar buttons — in the app's
+  primary mode on a fresh install is acceptable, since the toolbar hosts the menu's own QAction and hiding
+  it empties the button. Also open: whether a mode affects anything **beyond** the menu bar.
+- **The launcher's "Maintenance mode" group membership is explicitly open** (FQ-010, §7) — the owner said
+  *"for now"* XSD + §20. `Help ▸ Open Log Folder`, `View ▸ Customize Toolbar…`, `Tools ▸ Locate PHP
+  Linter…` and `Tools ▸ Start MCP Server` were raised as candidates and neither included nor ruled out.
+  (Adding one is a one-line change in `LAUNCHER_GROUPS`.) Deliberately out of scope for that entry: the
+  wider UX review's naming rulings, so no new vocabulary was coined for the group entries.
+- **Does the Editor bar's `Parsing` menu host §18.5 D3a's `Check DDL Object` / `Check without applying`,
+  overriding §26's Database-menu placement** (with **no** Database-menu twins, which would need its own
+  ledger row), **or do they stay on Database?** Owner call; the recorded recommendation is the former — the
+  gestures are per-tab and `Parsing` is the per-tab bar. Related: **do `Lint on Save` and `Locate PHP
+  Linter…` follow `Lint Current File` onto `Parsing`,** or does lint stay split across two bars?
+- **What does the Editor menu bar show on the Caption Management tab and on the Manual tab?** (FQ-016;
+  recorded recommendation: hide the whole bar on both, which the visibility refresh gives for free.) And
+  **is `History…` acceptable on a bar otherwise made of per-tab commands?** (Recommendation: yes, and
+  describe the bar as holding *editing* commands — which the body now does.)
+- **Does `active_find_bar()`'s Raw-XML reveal survive `Ctrl+F` becoming a pure focus gesture?** (FQ-016,
+  §7/§15 — yanking the user to a different document to focus a bar is surprising; the alternative is a
+  no-op on tabs with no bar.) Same shape: does the Caption bar's `current_filter_pattern()` seeding, which
+  `show_bar` performed, survive anywhere, and does the grid's context-menu *"Find / Replace bar"* entry
+  become a focus action or disappear? (FQ-017)
+- **Bookmark persistence details to confirm** (FQ-013, §8): do the three identity-less editors (the
+  read-only DDL Explorer buffer, FQ-006 draft tabs, the `Edit code…` dialog) really stay session-only;
+  **write timing** (project/app close vs. a debounce vs. every toggle — never synchronous in the gutter
+  gesture); the stale-line policy (restore-in-range / drop-out-of-range, no content anchoring); and whether
+  the store is **pruned** when a keyed file no longer exists, the way `resolve_ids` prunes toolbar ids.
+- **`Select All` in the read-only editors must be verified in the running app, not assumed** (FQ-015, §8).
+  The DDL Explorer buffer and Raw XML in Caption Mode are `setReadOnly(True)`, which in Qt keeps the
+  selectable-text interaction flags, so select-all is *expected* to work — add a test rather than documenting
+  an assumption. Related: whether fixing the build-time binding should also retire
+  `CodeEditor.keyPressEvent`'s duplicate Ctrl+Shift+B handler (it exists because QShortcut activation is
+  unreliable under the offscreen test platform, so check the tests before touching it).
+- **Caption bar details to confirm** (FQ-017, §13): does **`Extended`** survive in `mode_combo` (three modes
+  exist, two were named; the body keeps all three because dropping one removes a real capability), and does
+  **`Clear filter`** clear only the text filter or **all** filters including the tree-set row predicates the
+  retained banner describes? The existing `clear_all_filters()` does the latter while the singular label
+  suggests the former.
+- **Not folded in, and colliding with §26/§27:** FQ-012's *Customize Shortcuts…* dialog would recast §27's
+  fixed-binding table as user-rebindable defaults and add a View-menu entry beside *Customize Toolbar…*. It
+  is a separate concurrent proposal, not settled here.
 
 - **Ability-code numeric mapping** (`*AbilityMode`): integer→label mapping still unknown; derive
   empirically. No longer blocking — powers editor hover tooltips.
