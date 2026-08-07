@@ -106,10 +106,10 @@ def test_editor_menu_bar_is_a_second_bar_above_the_central_pane(qtbot):
 
 
 def test_editor_menu_bar_contents(qtbot):
-    """History, [Select — FQ-015, not built yet], Parsing, Bookmarks."""
+    """History, Select (FQ-015), Parsing, Bookmarks."""
     window = MainWindow()
     qtbot.addWidget(window)
-    assert editor_menu_titles(window) == ["History", "Parsing", "Bookmarks"]
+    assert editor_menu_titles(window) == ["History", "Select", "Parsing", "Bookmarks"]
 
 
 def test_history_menu_contents_and_order(qtbot):
@@ -227,9 +227,10 @@ def test_select_enclosing_block_action_selects_block(qtbot):
     cursor.setPosition(text.index("x"))
     editor.setTextCursor(cursor)
 
-    # FQ-015 owns the `Select` menu these two commands move onto; until it
-    # lands the behaviour is reached on the editor directly.
-    editor.select_enclosing_block()
+    # FQ-015: reached through the `Select` menu's action, which resolves the
+    # active editor at trigger time. See tests/ui/test_select_menu.py for the
+    # per-tab dispatch and the wrong-document regression tests.
+    find_action(find_top_menu(window, "Select"), "Select Enclosing Block").trigger()
 
     expected = text[text.index("<Detail>"):text.index("</Detail>") + len("</Detail>")]
     selected = editor.textCursor().selectedText().replace(" ", "\n")
@@ -246,7 +247,7 @@ def test_select_parent_block_action_selects_parent(qtbot):
     cursor.setPosition(text.index("x"))
     editor.setTextCursor(cursor)
 
-    editor.select_parent_block()
+    find_action(find_top_menu(window, "Select"), "Select Parent Block").trigger()
 
     expected = text[text.index("<Detail>"):text.index("</Detail>") + len("</Detail>")]
     selected = editor.textCursor().selectedText().replace(" ", "\n")
@@ -584,7 +585,7 @@ def test_all_top_level_menus_present_in_order(qtbot):
     assert window_menu_titles(window) == [
         "File", "View", "Schema", "Database", "Tools", "Generation", "Help",
     ]
-    assert editor_menu_titles(window) == ["History", "Parsing", "Bookmarks"]
+    assert editor_menu_titles(window) == ["History", "Select", "Parsing", "Bookmarks"]
     # `all_top_level_menu_titles` spans both, window bar first.
     assert all_top_level_menu_titles(window) == (
         window_menu_titles(window) + editor_menu_titles(window)
@@ -622,7 +623,7 @@ def test_bookmarks_menu_contents(qtbot):
     menu = find_top_menu(window, "Bookmarks")
     assert action_labels(menu) == [
         "Toggle Bookmark", "Next Bookmark", "Previous Bookmark", "―",
-        "Clear All Bookmarks",
+        "Clear All Bookmarks", "List All Bookmarks",
     ]
 
 

@@ -295,17 +295,3 @@ def test_module_is_qt_free():
     assert "QtCore" not in source
     assert "QtWidgets" not in source
 
-
-def test_module_is_unwired():
-    """FQ-013's storage lane deliberately ships unwired (the `db/apply.py`
-    precedent): no `ui/` module imports it yet. **The UI lane that wires the
-    gutter to this store should delete this test as part of wiring it.**"""
-    import pathlib
-
-    ui_dir = pathlib.Path(__file__).resolve().parents[2] / "pgtp_editor" / "ui"
-    importers = [
-        path.name
-        for path in ui_dir.rglob("*.py")
-        if "bookmark_store" in path.read_text(encoding="utf-8")
-    ]
-    assert importers == []

@@ -27,7 +27,7 @@ def _window(qtbot, tmp_path):
     return window
 
 
-def test_the_lane_retains_its_menu_and_four_actions(qtbot, tmp_path):
+def test_the_lane_retains_its_menu_and_five_actions(qtbot, tmp_path):
     window = _window(qtbot, tmp_path)
     menu = find_top_menu(window, "Bookmarks")
 
@@ -37,6 +37,7 @@ def test_the_lane_retains_its_menu_and_four_actions(qtbot, tmp_path):
         "Next Bookmark",
         "Previous Bookmark",
         "Clear All Bookmarks",
+        "List All Bookmarks",
     ]
     # The separator is not one of them.
     assert "―" in action_labels(menu)

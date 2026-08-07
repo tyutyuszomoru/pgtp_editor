@@ -24,8 +24,8 @@ gutter. Two pieces:
   (bookmark strip, fold-glyph zone, line numbers).
 - ``GutterBookmarkFoldMixin`` — the generic, **block-number based** state and
   behavior: the bookmark set (``toggle_bookmark`` / ``bookmarked_lines`` /
-  ``next_bookmark`` / ``prev_bookmark`` / ``clear_bookmarks`` + cursor-line
-  wrappers) and the fold-state machinery (``_fold_state`` / ``_toggle_fold`` /
+  ``next_bookmark`` / ``prev_bookmark`` / ``clear_bookmarks`` /
+  ``restore_bookmarks`` + cursor-line wrappers) and the fold-state machinery (``_fold_state`` / ``_toggle_fold`` /
   ``_is_line_hidden_by_other_collapsed_fold``), plus gutter width/geometry
   plumbing and the theme-aware gutter colors.
 
@@ -43,8 +43,35 @@ the region starting on ``block``, or ``None``. ``XmlEditor`` overrides it with
 its XML-span provider (over ``_spans``/``TagSpan``); the DDL ``CodeEditor``
 overrides it with a ``DdlObjectSpan``-driven one (banner → ``end_line``). The
 default here folds nothing.
+
+Bookmark-change notifications (FQ-013 / FQ-014)
+-----------------------------------------------
+Two features outside this file need to know *when* an editor's bookmark set
+changed: FQ-013's project-local persistence (which must save the changed set and
+restore it after a document load) and FQ-014's ``[Bookmark]`` Audit rows (which
+must be swept when the set is wiped, so a listing never outlives what it
+describes). Neither may leak into this module: the mixin is a **Qt-widget-level
+shared base** and must stay ignorant of projects, project folders, stores and
+docks. So it *publishes* and never interprets — see
+:func:`add_bookmark_observer`. Observers get ``(editor, reason)`` where reason is
+one of :data:`BOOKMARKS_TOGGLED` / :data:`BOOKMARKS_CLEARED` /
+:data:`BOOKMARKS_RESET`, and decide for themselves what it means.
+
+A **module-level** registry rather than a per-editor signal, deliberately: every
+editor in the app carries this mixin, most of them inside tabs created long after
+the host was built (DDL object tabs, PHP file tabs, draft tabs, the
+``Edit code…`` dialog), so a per-editor subscription would need a wiring line at
+every construction site — six files, several of them owned by other lanes. One
+subscription covers every editor that will ever exist. Bound methods are held
+**weakly** (``weakref.WeakMethod``) so an observer does not keep its window
+alive, and an observer whose underlying C++ object has been destroyed is dropped
+rather than raised through — a notification fires from a single gutter click, and
+a click may not blow up.
 """
 from __future__ import annotations
+
+import weakref
+from collections.abc import Callable, Iterable
 
 from PySide6.QtCore import QRect, QSize, Qt
 from PySide6.QtGui import QColor, QPainter, QPalette, QPen, QTextBlock, QTextCursor
@@ -63,6 +90,71 @@ _BOOKMARK_STRIP_WIDTH = 12
 # The theme-aware gutter colors, shared by every editor that carries the mixin.
 _GUTTER_COLORS_DARK = ("#2b2b2b", "#858585")
 _GUTTER_COLORS_LIGHT = ("#f0f0f0", "#888888")
+
+#: One bookmark was added or removed (a gutter click, a double-click on the line
+#: number, or Ctrl+F2). The set the user *chose* changed, so FQ-013's persistence
+#: lane records it.
+BOOKMARKS_TOGGLED = "toggled"
+
+#: Every bookmark in the editor was dropped on purpose (Clear All Bookmarks).
+#: Also a chosen set (the empty one), so it is recorded the same way.
+BOOKMARKS_CLEARED = "cleared"
+
+#: A new document was loaded (``setPlainText``) and the set was wiped as part of
+#: the fold-state lifecycle. NOT a user choice, so it must never be written back
+#: over a stored set -- it is the moment to RESTORE one, and the moment FQ-014's
+#: Audit rows go stale.
+BOOKMARKS_RESET = "reset"
+
+#: Registered bookmark observers. Bound methods are stored as ``WeakMethod``, so
+#: an observer's owner (a window, a controller) is never kept alive by this list.
+_bookmark_observers: list = []
+
+
+def add_bookmark_observer(callback: Callable[[object, str], None]) -> None:
+    """Subscribe `callback` to every editor's bookmark changes; it is called as
+    ``callback(editor, reason)`` (see the module docstring).
+
+    Idempotent per callback: registering the same bound method twice registers
+    it once, so a host that re-runs its wiring does not double-notify."""
+    entry = weakref.WeakMethod(callback) if hasattr(callback, "__self__") else callback
+    for existing in _bookmark_observers:
+        if _resolve_observer(existing) == callback:
+            return
+    _bookmark_observers.append(entry)
+
+
+def remove_bookmark_observer(callback: Callable[[object, str], None]) -> None:
+    """Unsubscribe `callback`; a no-op if it is not registered."""
+    for existing in list(_bookmark_observers):
+        if _resolve_observer(existing) in (callback, None):
+            _bookmark_observers.remove(existing)
+
+
+def _resolve_observer(entry):
+    """The live callable behind a registry entry, or None once it has died."""
+    return entry() if isinstance(entry, weakref.WeakMethod) else entry
+
+
+def _notify_bookmark_observers(editor, reason: str) -> None:
+    """Publish `(editor, reason)` to every live observer.
+
+    A dead observer (its owner garbage-collected, or its C++ object destroyed --
+    the usual case being a window from an earlier session that was never closed)
+    is dropped instead of raised through: this runs inside a gutter click and a
+    click may not fail. Any other exception propagates, because that is a real
+    bug in an observer and hiding it would make persistence fail silently."""
+    for entry in list(_bookmark_observers):
+        callback = _resolve_observer(entry)
+        if callback is None:
+            if entry in _bookmark_observers:
+                _bookmark_observers.remove(entry)
+            continue
+        try:
+            callback(editor, reason)
+        except RuntimeError:
+            if entry in _bookmark_observers:
+                _bookmark_observers.remove(entry)
 
 
 class _EditorGutter(QWidget):
@@ -255,6 +347,10 @@ class GutterBookmarkFoldMixin:
         # Bookmarks share the fold-state lifecycle: a new document starts with
         # no bookmarks (session/file-scoped, see _init_gutter_bookmarks_folding).
         self._bookmarks = set()
+        # Published AFTER the wipe, with the new document already in place, so an
+        # observer that restores a stored set (FQ-013) sees the final blockCount
+        # and one that sweeps stale rows (FQ-014) sees an empty set.
+        _notify_bookmark_observers(self, BOOKMARKS_RESET)
 
     # --- Foldable-region provider (the ONE pluggable piece) ----------------
     def _foldable_region_starting_at(self, block):
@@ -309,6 +405,7 @@ class GutterBookmarkFoldMixin:
         else:
             self._bookmarks.add(block_number)
         self._gutter.update()
+        _notify_bookmark_observers(self, BOOKMARKS_TOGGLED)
 
     def bookmarked_lines(self) -> list[int]:
         """Bookmarked block numbers in ascending order."""
@@ -340,6 +437,29 @@ class GutterBookmarkFoldMixin:
         """Remove every bookmark and repaint the gutter."""
         self._bookmarks = set()
         self._gutter.update()
+        _notify_bookmark_observers(self, BOOKMARKS_CLEARED)
+
+    def restore_bookmarks(self, lines: Iterable[int]) -> None:
+        """Replace this editor's bookmark set with `lines` (0-based block
+        numbers), dropping any that fall outside the current document, and
+        repaint the gutter.
+
+        The counterpart to :data:`BOOKMARKS_RESET`: FQ-013's persistence lane
+        calls this with what it loaded for the document just placed in this
+        editor. Deliberately publishes **no** notification -- it is the *answer*
+        to one, and re-publishing would either loop or make a restore look like a
+        user edit worth writing back."""
+        block_count = self.blockCount()
+        self._bookmarks = {
+            line
+            for line in lines
+            if isinstance(line, int)
+            and not isinstance(line, bool)
+            and 0 <= line < block_count
+        }
+        gutter = getattr(self, "_gutter", None)
+        if gutter is not None:
+            gutter.update()
 
     def toggle_bookmark_at_cursor(self) -> None:
         """Toggle a bookmark on the line the text cursor currently sits on."""

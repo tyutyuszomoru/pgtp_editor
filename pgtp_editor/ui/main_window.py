@@ -55,6 +55,10 @@ from pgtp_editor.db.config import (
     save_connection,
     seed_params,
 )
+from pgtp_editor.db.bookmark_store import (
+    load_editor_bookmarks,
+    store_editor_bookmarks,
+)
 from pgtp_editor.db.ddl_buffer import build_ddl_text
 from pgtp_editor.db.migration_gen import connection_summary
 from pgtp_editor.db.ddl_project import (
@@ -88,6 +92,13 @@ from pgtp_editor.ui.diff_merge_controller import DiffMergeController
 from pgtp_editor.ui.find_controller import FindValidateController
 from pgtp_editor.ui.ddl_buffer_panel import BrowserPanel
 from pgtp_editor.ui.code_editor import CodeEditorDialog
+# FQ-013: the shared gutter mixin publishes bookmark changes; the host
+# subscribes and decides what they mean (the mixin knows nothing about projects).
+from pgtp_editor.ui.editor_gutter import (
+    BOOKMARKS_RESET,
+    add_bookmark_observer,
+    remove_bookmark_observer,
+)
 from pgtp_editor.ui.history import SnapshotHistory
 # §21/§22: the custom-PHP editing lane and the PHP lint lane. `LINT_AUDIT_TARGET`
 # is the `UserRole + 1` tag a `[Lint]` Audit row carries, read by
@@ -117,6 +128,14 @@ _log = logging.getLogger(__name__)
 #: Format Selection refusals (§18.4/§18.5). Not clickable, no line role
 #: (carve-out 6) -- the offending span is already underlined in the tab.
 _SQL_REFUSAL_PREFIX = "[SQL] "
+
+#: How long a bookmark change waits before it is written to
+#: `<project>/.ddlproject/bookmarks.json` (FQ-013). Deliberately coarse: a
+#: bookmark toggle is a hot single-click gutter gesture and must not do disk I/O,
+#: and a user re-tagging several lines in a row produces one write, not five. Any
+#: pending write is also flushed on a project transition and on app close, so the
+#: debounce can never be the reason a bookmark is lost.
+_BOOKMARK_WRITE_DEBOUNCE_MS = 400
 
 #: §18.5 D3a: the Audit `SEVERITY` token for a finding's severity string.
 #: **A vocabulary CASE translation only** -- `validation/tier2.py`'s
@@ -702,6 +721,10 @@ class MainWindow(QMainWindow):
             parent=self,
             project=lambda: self._doc_ui.project,
             project_path=lambda: self._doc_ui.project_path,
+            # FQ-014: `List All Bookmarks` writes nothing but Audit rows, so it
+            # reveals the dock -- injected exactly as `CoherenceController`
+            # receives it, never reached for through `self.audit_dock`.
+            show_audit_dock=self._show_audit_dock,
         )
 
         #: The §7 Compare/Merge lane (`ui/diff_merge_controller.py`): the three
@@ -806,6 +829,25 @@ class MainWindow(QMainWindow):
         self._xsd_ui.ensure_bootstrap()
         self._xsd_ui.load_curated()
 
+        # FQ-013: project-local bookmark persistence. Subscribed LAST so no
+        # notification fired while the window was being assembled reaches the
+        # store, and through the gutter's module-level registry rather than a
+        # per-editor signal -- most editors (DDL object tabs, PHP tabs, draft
+        # tabs) do not exist yet, and the mixin must stay ignorant of projects.
+        self._bookmark_writes: dict[tuple[str, str], tuple[int, ...]] = {}
+        self._bookmark_write_timer = QTimer(self)
+        self._bookmark_write_timer.setSingleShot(True)
+        self._bookmark_write_timer.setInterval(_BOOKMARK_WRITE_DEBOUNCE_MS)
+        self._bookmark_write_timer.timeout.connect(self._flush_bookmark_writes)
+        add_bookmark_observer(self._on_editor_bookmarks_changed)
+        # A project transition is a quiet moment: flush anything still pending
+        # (each pending entry carries its OWN folder, so a close cannot misroute
+        # it), then restore for documents that were already open when the project
+        # opened -- the `.pgtp`-first, project-second order.
+        self._ddl_project_ui.project_changed.connect(
+            self._on_bookmark_project_changed
+        )
+
     # -- the six permanent delegating properties -----------------------------
     # CLOSED LIST -- do not extend. Four pieces of document state and two of
     # §18.2 project state are read (and written) from ~40 places across the
@@ -886,6 +928,124 @@ class MainWindow(QMainWindow):
             return
         self._doc_ui.save_project()
 
+    # -- FQ-013: project-local bookmark persistence ---------------------------
+    # The gate is the CAPABILITY fact "a §18.2 project is open"
+    # (`DdlProjectController.folder`), never the launcher's mode: with no project
+    # there is no root to key paths against, and behaviour must stay exactly as
+    # it was -- session-only, wiped by `setPlainText`, nothing written anywhere.
+    # Every method below short-circuits on a `None` folder, so the projectless
+    # path costs one attribute read.
+    #
+    # WHEN it saves: on a debounce after the user changes a set (toggle / Clear
+    # All), plus a synchronous flush on a project transition and on app close.
+    # Never inside `toggle_bookmark` -- see `_BOOKMARK_WRITE_DEBOUNCE_MS`.
+    # WHEN it restores: at the one moment the set is wiped, i.e. when a document
+    # is loaded into an editor (the gutter's RESET notification). That is the same
+    # moment for a reopened project, a revert, an XSD-mode switch, a re-checkout
+    # and an app restart, so one hook covers all of them; plus a sweep when a
+    # project opens, for documents that were already open before it did.
+
+    def _on_editor_bookmarks_changed(self, editor, reason: str) -> None:
+        """`ui/editor_gutter.py`'s bookmark notification, host side.
+
+        A RESET (a new document in that editor) is a restore, never a write --
+        writing the just-emptied set back would erase what is stored. Any other
+        reason is a user-chosen set, so it is scheduled for writing."""
+        if reason == BOOKMARKS_RESET:
+            self._restore_editor_bookmarks(editor)
+            return
+        self._schedule_bookmark_write(editor)
+
+    def _bookmark_file_path(self, editor):
+        """The file `editor`'s bookmarks are keyed by, or None when it has no
+        stable project-relative identity and therefore stays session-only.
+
+        None on purpose for: the **read-only DDL Explorer buffer** and **FQ-006
+        draft tabs** (no persistent file at all), the **`Edit code…` dialog** (a
+        modal over an event body inside the XML, and not reachable from here),
+        and the **Edit XSD / Edit AutoXSD** editors -- their schema files live in
+        the app-level schema storage directory, not under any project, so
+        `relative_key` could not key them even if they were offered.
+        """
+        stage = self.center_stage
+        if editor is stage.xml_editor:
+            # The open document: in project mode that is the working-copy
+            # `.pgtp` inside the project. A document outside the project has no
+            # key, which `relative_key` answers on its own.
+            return self._doc_ui.project_path
+        for panel in stage.ddl_object_panels():
+            if panel.editor is editor:
+                return panel.save_path
+        for tab in stage.php_file_tabs().values():
+            if tab.editor is editor:
+                return tab.path
+        return None
+
+    def _bookmark_store_target(self, editor):
+        """`(project_folder, file_path)` for `editor`, or None when bookmarks
+        cannot be persisted for it (no project open, or no file identity)."""
+        folder = self._ddl_project_ui.folder
+        if folder is None:
+            return None
+        path = self._bookmark_file_path(editor)
+        if path is None:
+            return None
+        return folder, Path(path)
+
+    def _restore_editor_bookmarks(self, editor) -> None:
+        """Put the stored bookmarks for `editor`'s document back, dropping the
+        ones beyond its current length (v1 has no content anchoring).
+
+        The store is NOT rewritten here, so a document that is temporarily
+        shorter than it was still has its out-of-range lines on disk when it
+        grows back."""
+        target = self._bookmark_store_target(editor)
+        if target is None:
+            return
+        folder, path = target
+        lines = load_editor_bookmarks(folder, path, editor.blockCount())
+        if lines:
+            editor.restore_bookmarks(lines)
+
+    def _schedule_bookmark_write(self, editor) -> None:
+        """Record `editor`'s current set for the next flush and (re)start the
+        debounce.
+
+        The folder, the path and the lines are all resolved NOW, so a pending
+        write survives the editor's tab being closed and a project being closed
+        underneath it -- and so the flush itself touches no widgets."""
+        target = self._bookmark_store_target(editor)
+        if target is None:
+            return
+        folder, path = target
+        self._bookmark_writes[(str(folder), str(path))] = tuple(
+            editor.bookmarked_lines()
+        )
+        self._bookmark_write_timer.start()
+
+    def _flush_bookmark_writes(self) -> None:
+        """Write every pending bookmark set. Called by the debounce timer, on a
+        project transition and on app close; a no-op with nothing pending."""
+        pending, self._bookmark_writes = self._bookmark_writes, {}
+        self._bookmark_write_timer.stop()
+        for (folder, path), lines in pending.items():
+            store_editor_bookmarks(folder, path, lines)
+
+    def _on_bookmark_project_changed(self, folder, _settings) -> None:
+        """A §18.2 project was opened, created or closed: flush what is pending
+        (each entry carries its own folder, so a close cannot misroute it), then
+        restore for editors that already hold their document -- the case where
+        the `.pgtp` was opened first and the project second."""
+        self._flush_bookmark_writes()
+        if folder is None:
+            return
+        stage = self.center_stage
+        editors = [stage.xml_editor]
+        editors += [panel.editor for panel in stage.ddl_object_panels()]
+        editors += [tab.editor for tab in stage.php_file_tabs().values()]
+        for editor in editors:
+            self._restore_editor_bookmarks(editor)
+
     def _restore_window_state(self):
         geometry = self._settings.value("geometry")
         if geometry is not None:
@@ -945,6 +1105,11 @@ class MainWindow(QMainWindow):
         self._settings.setValue("geometry", self.saveGeometry())
         self._settings.setValue("windowState", self.saveState())
         self._settings.sync()
+        # FQ-013: the last chance to write bookmarks the debounce has not written
+        # yet, and the point this window stops observing gutter notifications --
+        # a closed window must not answer a later editor's bookmark change.
+        self._flush_bookmark_writes()
+        remove_bookmark_observer(self._on_editor_bookmarks_changed)
         # §23: end an MCP session with the window that opted into it. The thread
         # is a daemon so it would not hold the process open, but a client
         # deserves a clean EOF rather than a half-dead peer.
@@ -1338,8 +1503,8 @@ class MainWindow(QMainWindow):
         # menu -- FQ-016 DISSOLVED it (it was not emptied): Undo/Redo/History…
         # went to the Editor bar's History, Cut/Copy/Paste/Delete and
         # Preferences… were deleted stubs, the five Find/Replace entries became
-        # the permanently visible bar, the two selection commands are FQ-015's
-        # `Select` and `Auto Parse XML` went to Parsing.
+        # the permanently visible bar, the two selection commands went to
+        # FQ-015's `Select` and `Auto Parse XML` went to Parsing.
         self._build_file_menu()
         self._build_view_menu()
         # The Schema menu is owned outright by the §11 lane, so it builds it
@@ -1366,12 +1531,7 @@ class MainWindow(QMainWindow):
         to that editor's own native stack.
         """
         self._build_history_menu()
-        # INSERTION POINT — `Select` (FQ-015): Select All (Ctrl+A), Select
-        # Enclosing Block (Ctrl+Shift+B), Select Parent Block (Ctrl+Shift+A),
-        # each dispatching to the active editor at TRIGGER time (which is also
-        # that lane's bug fix). Deliberately NOT built here: it is a separate
-        # lane, and the two block commands' build-time binding must be fixed in
-        # the same change that moves them. `_build_select_menu()` goes here.
+        self._build_select_menu()
         self._build_parsing_menu()
         # The Bookmarks menu is owned outright by the find/validate lane, so it
         # builds it -- called from here so the menu lands on THIS bar (it was a
@@ -1403,6 +1563,113 @@ class MainWindow(QMainWindow):
         redo_action = menu.addAction("Redo")
         redo_action.triggered.connect(self._redo)
         self._redo_action = redo_action
+
+    def _build_select_menu(self):
+        """Select ▸ Select All · Select Enclosing Block · Select Parent Block
+        (FQ-015, §8/§26).
+
+        `Select All` is a NEW entry for behaviour that already worked: nothing in
+        the app binds Ctrl+A, so every editor's built-in select-all has always
+        functioned — including in the read-only buffers (the DDL Explorer and
+        Raw XML in Caption Mode), because `setReadOnly(True)` keeps Qt's
+        text-selectable interaction flag. The gap was discoverability, so the
+        menu entry is the whole feature. It is deliberately NOT gated in Caption
+        Mode (unlike Find/Replace, which that mode owns): selecting text mutates
+        nothing.
+
+        The other two MOVED here off the dissolved Edit menu — and are rebuilt,
+        not relocated: FQ-016 removed them with the menu, so between it and this
+        change Ctrl+Shift+A had no host at all and Ctrl+Shift+B survived only
+        through `CodeEditor.keyPressEvent`.
+
+        **All three resolve the editor at TRIGGER time** via
+        `FindValidateController.active_selection_editor` — the bug fix that
+        rides with the move. They used to be connected straight to
+        `center_stage.xml_editor`'s bound methods, so the chords pressed on a PHP
+        tab, a DDL object tab or an FQ-006 draft tab selected inside the **Raw
+        XML** document. Never re-bind a per-tab command to a widget at build
+        time; the Bookmarks menu's docstring states the same rule.
+
+        Shortcuts are unchanged (§27): no chord is rebound and none is new to the
+        app — Ctrl+A is the platform default the widgets already implemented.
+        Note what that means for Ctrl+A specifically: a *focused* text widget
+        keeps handling it itself (Qt lets a text control claim standard editing
+        chords via `ShortcutOverride` before the window action sees them), so
+        this action's own shortcut only fires when focus is elsewhere — e.g. in
+        the structure tree — where it then acts on the active editor. That is
+        also why the action cannot steal Ctrl+A from a `QLineEdit`.
+        """
+        menu = self.editor_menu_bar.addMenu("Select")
+        self._select_menu = menu
+        select_all_action = menu.addAction("Select All")
+        select_all_action.setShortcut("Ctrl+A")
+        select_all_action.triggered.connect(self._select_all_in_active_editor)
+        self._select_all_action = select_all_action
+        menu.addSeparator()
+        select_enclosing_action = menu.addAction("Select Enclosing Block")
+        select_enclosing_action.setShortcut("Ctrl+Shift+B")
+        select_enclosing_action.triggered.connect(self._select_enclosing_block)
+        self._select_enclosing_action = select_enclosing_action
+        select_parent_action = menu.addAction("Select Parent Block")
+        select_parent_action.setShortcut("Ctrl+Shift+A")
+        select_parent_action.triggered.connect(self._select_parent_block)
+        self._select_parent_action = select_parent_action
+
+    def _select_all_in_active_editor(self) -> None:
+        """`Select All` — the one member every editor family supports, since
+        `selectAll` comes from `QPlainTextEdit` itself."""
+        self._find_ui.active_selection_editor().selectAll()
+
+    def _select_enclosing_block(self) -> None:
+        """`Select Enclosing Block` — ONE command, two structural meanings, by
+        editor family (FQ-015).
+
+        * `XmlEditor` (Raw XML, Edit XSD, draft fragment tabs):
+          `select_enclosing_block` — the innermost XML element, '<' through '>'.
+        * `CodeEditor` (DDL Explorer, DDL object tabs, PHP tabs):
+          `select_enclosing_brackets` — the innermost balanced `()[]{}` span.
+          SQL and PHP have no XML tags to enclose, so the bracket pair is that
+          family's equivalent and has always been what Ctrl+Shift+B did there.
+
+        The dispatch must therefore go by capability, never by assuming one
+        method name: the two methods are genuinely different, not two
+        implementations of one interface.
+
+        **The duplicate Ctrl+Shift+B handler, resolved (FQ-015 trap).**
+        `CodeEditor.keyPressEvent` also handles the chord. This action WINS
+        wherever it exists: Qt's shortcut map consumes the key event before it
+        reaches the focused widget, so a `CodeEditor`-hosting tab does not
+        double-handle (verified, not assumed). The editor-side handler is kept
+        on purpose — it is the only host for the chord in a `CodeEditorDialog`,
+        which has no menu bar, and it remains the reliable path under the
+        offscreen test platform where QShortcut activation is not guaranteed.
+        Both paths now land on the SAME editor, and the operation is idempotent,
+        so even a double delivery would be harmless.
+        """
+        editor = self._find_ui.active_selection_editor()
+        select = getattr(editor, "select_enclosing_block", None) or getattr(
+            editor, "select_enclosing_brackets", None
+        )
+        if select is not None:
+            select()
+
+    def _select_parent_block(self) -> None:
+        """`Select Parent Block` — XML-only, and ABSENT rather than silently
+        wrong where there is no parent element (FQ-015).
+
+        Only `XmlEditor` has `select_parent_block` ("one nesting level up"): a
+        bracket pair has no analogous parent walk that means anything to a
+        reader of SQL or PHP. So on a `CodeEditor` tab the entry is HIDDEN by
+        `_refresh_editor_menu_affordances` — visibility, matching the app's
+        two-posture rule (present / absent, never greyed) — which also drops
+        Ctrl+Shift+A there, since Qt keeps a shortcut live only while its action
+        is both enabled and visible. The capability guard below is the second
+        belt: the action can be triggered programmatically.
+        """
+        editor = self._find_ui.active_selection_editor()
+        select = getattr(editor, "select_parent_block", None)
+        if select is not None:
+            select()
 
     def _build_parsing_menu(self):
         """Parsing ▸ Auto Parse XML · Validate Project (FQ-016).
@@ -1458,17 +1725,34 @@ class MainWindow(QMainWindow):
         **VISIBILITY, never enabled-state** — this app has deliberately kept two
         postures (present / absent) and greying out would introduce a third.
 
-        Today it does one thing: hide the WHOLE bar on the tabs where all four
-        menus are meaningless — **Caption Management** (a center-stage tab, not a
-        dock, where §13 already wanted Bookmarks disabled) and **Manual**. §29
-        records this as the recommendation and it is what the visibility refresh
-        gives for free. Note it hides the *bar widget*, not the actions, so a
-        pinned toolbar button never blinks out with it.
+        It does two things.
+
+        1. Hide the WHOLE bar on the tabs where all four menus are meaningless —
+           **Caption Management** (a center-stage tab, not a dock, where §13
+           already wanted Bookmarks disabled) and **Manual**. §29 records this as
+           the recommendation and it is what the visibility refresh gives for
+           free. Note it hides the *bar widget*, not the actions, so a pinned
+           toolbar button never blinks out with it.
+        2. Hide `Select ▸ Select Parent Block` on tabs whose editor has no
+           parent-block concept (FQ-015). This is the seam's first real
+           **capability** gate — the kind `_build_parsing_menu`'s docstring says
+           it exists for — rather than a taste-based per-tab hide: a `CodeEditor`
+           (DDL Explorer, DDL object tab, PHP tab) genuinely has no "one nesting
+           level up", so the honest posture is absent, not a menu entry that
+           no-ops. Asking the editor itself (`hasattr`) keeps this correct for
+           free when a new editor tab kind appears. Unlike case 1 this hides an
+           *action*, so a user who pinned this command to the toolbar sees that
+           button come and go with the tab — accepted, because the alternative is
+           a toolbar button that does nothing.
         """
         stage = self.center_stage
         index = stage.currentIndex()
         hidden_on = (stage.caption_management_tab_index, stage.manual_tab_index)
         self.editor_menu_bar.setVisible(index not in hidden_on)
+        editor = self._find_ui.active_selection_editor()
+        self._select_parent_action.setVisible(
+            hasattr(editor, "select_parent_block")
+        )
 
     def _build_file_menu(self):
         menu = self.menuBar().addMenu("File")

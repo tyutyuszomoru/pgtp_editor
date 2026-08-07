@@ -976,6 +976,26 @@ def test_readonly_backspace_and_paste_emit_signal(qtbot):
     assert editor.toPlainText() == "<Page/>"
 
 
+def test_readonly_ctrl_a_selects_all_instead_of_emitting_the_hint(qtbot):
+    """FQ-015: a Ctrl chord is a COMMAND, never typing. `QKeyEvent.text()` for
+    Ctrl+A is the bare letter on some platforms (and under `QTest.keyClick`), and
+    classifying that as an edit attempt made a read-only editor swallow Ctrl+A —
+    so `Select All` did nothing in Caption Mode while the "read-only" hint
+    flashed. Ctrl+V keeps its hint (see the paste test above): that IS an edit."""
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    editor.setPlainText("<Page/>")
+    editor.setReadOnly(True)
+    emitted = []
+    editor.read_only_edit_attempted.connect(lambda: emitted.append(True))
+
+    _send_key(editor, _Qt2.Key.Key_A, "a", _Qt2.KeyboardModifier.ControlModifier)
+
+    assert emitted == []
+    assert editor.textCursor().selectedText() == "<Page/>"
+    assert editor.toPlainText() == "<Page/>"
+
+
 def test_readonly_navigation_key_does_not_emit(qtbot):
     editor = XmlEditor()
     qtbot.addWidget(editor)

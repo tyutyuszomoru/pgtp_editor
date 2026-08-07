@@ -1122,7 +1122,17 @@ class XmlEditor(CompletionPopupHostMixin, GutterBookmarkFoldMixin, QPlainTextEdi
     def _is_text_modifying_key(event: QKeyEvent) -> bool:
         """True if `event` would mutate the document: a printable character,
         one of Backspace/Delete/Return/Enter, or a paste (Ctrl+V). Used only
-        in read-only mode to decide whether to emit read_only_edit_attempted."""
+        in read-only mode to decide whether to emit read_only_edit_attempted.
+
+        A Ctrl/⌘ chord is a COMMAND, never typing, so it is excluded before the
+        printable-text test (FQ-015). `event.text()` for Ctrl+A is the control
+        character "\\x01" on Windows/Linux, which is not printable — but it is the
+        bare letter on some platforms and under `QTest.keyClick`, and treating
+        that as an edit attempt made a read-only editor SWALLOW Ctrl+A (and every
+        other Ctrl+letter command) while flashing the "this editor is read-only"
+        hint. Paste is checked first and keeps its hint: Ctrl+V really is an edit
+        attempt.
+        """
         if event.matches(QKeySequence.StandardKey.Paste):
             return True
         if event.key() in (
@@ -1132,6 +1142,10 @@ class XmlEditor(CompletionPopupHostMixin, GutterBookmarkFoldMixin, QPlainTextEdi
             Qt.Key.Key_Enter,
         ):
             return True
+        if event.modifiers() & (
+            Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.MetaModifier
+        ):
+            return False
         return bool(event.text()) and event.text().isprintable()
 
     def keyPressEvent(self, event: QKeyEvent) -> None:

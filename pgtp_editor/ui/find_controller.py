@@ -26,7 +26,11 @@ Audit panel*, plus the two menus that are nothing but that:
   a §21 PHP tab);
 * the **Bookmarks menu** — a menu owned outright by one collaborator moves with
   it, so this lane builds it (:meth:`build_bookmarks_menu`) and gates it during
-  Caption Mode (:meth:`set_bookmarks_enabled`, §8/§13);
+  Caption Mode (:meth:`set_bookmarks_enabled`, §8/§13) — including
+  **List All Bookmarks** (:meth:`list_all_bookmarks`, FQ-014), which writes the
+  active editor's bookmarks into the Audit panel as ``[Bookmark]`` rows and, being
+  a snapshot, sweeps them again when a document load wipes the bookmark set it
+  described (:meth:`_on_editor_bookmarks_changed`);
 * the **whole streaming Find-All run**: the batch timer, the match iterator, the
   stop flag, the running count, the term and the target tab — see below;
 * the **Tier-2 project validation** run (:meth:`validate_project`) and the two
@@ -97,8 +101,10 @@ from pathlib import Path
 from PySide6.QtCore import QObject, Qt, QTimer
 from PySide6.QtWidgets import QListWidgetItem
 
+from pgtp_editor.lint.findings import LINT_AUDIT_TARGET
 from pgtp_editor.ui import search
 from pgtp_editor.ui.busy import busy_status
+from pgtp_editor.ui.editor_gutter import BOOKMARKS_RESET, add_bookmark_observer
 from pgtp_editor.ui.ui_shell import UiShell
 from pgtp_editor.validation import tier2
 
@@ -108,6 +114,21 @@ _FIND_RESULT_PREFIX = "[Find] "
 
 #: Audit prefix every Tier-2 validation row carries, for the same reason.
 _VALIDATION_PREFIX = "[Validate] "
+
+#: Audit prefix every `List All Bookmarks` row carries (FQ-014, §7's prefix
+#: table). A CONSTANT, never the literal typed at the call sites -- the
+#: `[Project]` prefix was typed inline in ten places and that is recorded as a
+#: mistake not to repeat. Deliberately NOT a reuse of `[Find]`: the two would
+#: clear each other, and `[Find]`'s `"raw"|"xsd"` target vocabulary cannot carry
+#: a DDL-object or PHP-tab payload under one prefix.
+_BOOKMARK_PREFIX = "[Bookmark] "
+
+#: Sentinel for "the active editor has NO route in `_on_audit_item_clicked`"
+#: (the read-only DDL Explorer buffer, an FQ-006 draft tab). Its rows are emitted
+#: roles-less and inert: the router's fallback branch navigates **Raw XML**, so a
+#: row carrying a line would jump to the wrong document -- the exact failure the
+#: `[Check]` branch's comment and §7's unmapped-line rule forbid.
+_NO_AUDIT_ROUTE = object()
 
 #: Matches appended per timer tick. Small enough that Stop feels immediate,
 #: large enough that a big document does not spend all its time in the event loop.
@@ -143,14 +164,29 @@ class FindValidateController(QObject):
         *,
         project: Callable[[], object | None],
         project_path: Callable[[], str | None],
+        show_audit_dock: Callable[[], None] | None = None,
     ):
         super().__init__(parent)
         self._shell = shell
         #: Document-state providers -- see the module docstring.
         self._project = project
         self._project_path = project_path
+        #: `MainWindow._show_audit_dock`, injected exactly as `CoherenceController`
+        #: receives it (the bottom dock is host furniture, and `UiShell` has no
+        #: field for it). `List All Bookmarks` is a silent no-op without it
+        #: whenever the dock is hidden, so it is called on every listing.
+        #: Optional so a headless test may build the lane without one.
+        self._show_audit_dock = show_audit_dock
 
-        #: The Bookmarks menu and its four actions, retained by
+        # FQ-014: the `[Bookmark]` rows are a SNAPSHOT, so they must not outlive
+        # the bookmarks they describe -- every `setPlainText` wipes an editor's
+        # bookmark set (§8's fold-state lifecycle). The gutter mixin publishes
+        # that event without knowing this panel exists (`ui/editor_gutter.py`);
+        # the lane that owns the rows subscribes. Held weakly there, so this
+        # controller's lifetime is unaffected.
+        add_bookmark_observer(self._on_editor_bookmarks_changed)
+
+        #: The Bookmarks menu and its five actions, retained by
         #: `build_bookmarks_menu` so `set_bookmarks_enabled` can gate the menu
         #: **and every child action** during Caption Mode (§8/§13). None / empty
         #: until the menu is built.
@@ -203,7 +239,7 @@ class FindValidateController(QObject):
 
     @property
     def bookmark_actions(self) -> tuple:
-        """The four Bookmarks ``QAction``s, in menu order (empty before
+        """The five Bookmarks ``QAction``s, in menu order (empty before
         :meth:`build_bookmarks_menu`). The separator is not included."""
         return self._bookmark_actions
 
@@ -218,7 +254,7 @@ class FindValidateController(QObject):
         Explorer editors, so the menu follows whichever is active instead of
         being bound to Raw XML forever.
 
-        The menu and its four actions are RETAINED (`_bookmarks_menu` /
+        The menu and its five actions are RETAINED (`_bookmarks_menu` /
         `_bookmark_actions`) so `set_bookmarks_enabled` can gate them together
         while Caption Mode is active (§8/§13) -- disabling only the `QMenu`
         grays out the menu-bar entry but leaves the actions' shortcuts live.
@@ -250,15 +286,21 @@ class FindValidateController(QObject):
             lambda: self.active_bookmark_editor().clear_bookmarks()
         )
 
+        # FQ-014. No shortcut, matching Clear All Bookmarks: this produces a
+        # report, and F2 / Shift+F2 already own stepping.
+        list_action = menu.addAction("List All Bookmarks")
+        list_action.triggered.connect(self.list_all_bookmarks)
+
         self._bookmark_actions = (
             toggle_action,
             next_action,
             prev_action,
             clear_action,
+            list_action,
         )
 
     def set_bookmarks_enabled(self, enabled: bool) -> None:
-        """Enable/disable the Bookmarks menu **and its four actions** (§8/§13).
+        """Enable/disable the Bookmarks menu **and its five actions** (§8/§13).
 
         Called by the host on entering/leaving Caption Mode, where the Raw XML
         editor is read-only. Both halves are needed: disabling the `QMenu` alone
@@ -338,6 +380,31 @@ class FindValidateController(QObject):
             # FQ-006: its XmlEditor carries the same gutter bookmark API (§8).
             return draft.editor
         return stage.xml_editor
+
+    def active_selection_editor(self):
+        """The editor the `Select` menu's three commands act on (FQ-015, §8).
+
+        Resolved at TRIGGER time, exactly like `active_bookmark_editor` -- and
+        by delegating to it, because the per-tab routing question ("which
+        editor is the user looking at?") has ONE answer and must not fork into
+        two dispatches that can drift apart.
+
+        It exists as a separate name rather than the host calling
+        `active_bookmark_editor` for a selection command because the two are
+        different *contracts*: bookmarks need the shared gutter API
+        (`ui/editor_gutter.py`), selection needs `selectAll` plus whatever
+        structural-selection method that editor family carries
+        (`XmlEditor.select_enclosing_block` / `select_parent_block` vs
+        `CodeEditor.select_enclosing_brackets` -- see the host's
+        `_build_select_menu`). Should a future non-gutter editor tab appear, it
+        belongs in one of these and not necessarily the other.
+
+        Note the two selection commands were, until FQ-015, hard-wired to the
+        Raw XML editor at menu-BUILD time, so Ctrl+Shift+B / Ctrl+Shift+A from a
+        PHP or DDL object tab edited the selection of a document the user was
+        not looking at. This method is that bug's fix.
+        """
+        return self.active_bookmark_editor()
 
     # -- the one surviving window-level gesture (acts on the active bar) ------
 
@@ -447,6 +514,121 @@ class FindValidateController(QObject):
         # Drop the (possibly large) generator so we don't hold its closure
         # over the snapshotted document text between runs.
         self._find_all_iter = None
+
+    # -- FQ-014: List All Bookmarks -------------------------------------------
+
+    def list_all_bookmarks(self) -> None:
+        """**Bookmarks ▸ List All Bookmarks** — write the ACTIVE editor's
+        bookmarks into the Audit panel as clickable `[Bookmark]` rows.
+
+        The active editor only, like every other bookmark command (all of which
+        resolve one document through `active_bookmark_editor`, and none of which
+        switches tabs). Rows follow Find All's grammar verbatim, carry Find All's
+        two-role payload (1-based line on `UserRole`, the click router's own
+        target discriminator on `UserRole+1`), and a roles-less count row closes
+        the listing exactly as `_finish_find_all` does. A **snapshot**: toggling a
+        bookmark afterwards does not re-sync the rows (a document load does sweep
+        them -- see `_on_editor_bookmarks_changed`).
+        """
+        editor = self.active_bookmark_editor()
+        target, label, extra = self._bookmark_audit_route(editor)
+        self.clear_bookmark_results()
+        audit = self._shell.audit
+        document = editor.document()
+        lines = editor.bookmarked_lines()
+
+        for block_number in lines:
+            # The gutter's block numbers are 0-based; every Audit consumer
+            # (`navigate_to_line`, `reveal_line`) is 1-based, as are `[Find]`'s
+            # rows and the gutter's own printed numbers.
+            line = block_number + 1
+            preview = document.findBlockByNumber(block_number).text().strip()
+            body = f"line {line}: {preview}" if preview else f"line {line}"
+            item = QListWidgetItem(f"{_BOOKMARK_PREFIX}{body}")
+            if target is not _NO_AUDIT_ROUTE:
+                item.setData(Qt.ItemDataRole.UserRole, line)
+                item.setData(Qt.ItemDataRole.UserRole + 1, target)
+                if extra is not None:
+                    item.setData(Qt.ItemDataRole.UserRole + 2, extra)
+            audit.addItem(item)
+
+        if not lines:
+            # Roles-less, so clicking it is a no-op -- and never silence: Find
+            # All emits its summary even at zero, so a command that produced
+            # literally nothing would read as broken.
+            audit.addItem(QListWidgetItem(f"{_BOOKMARK_PREFIX}no bookmarks in {label}"))
+            self._shell.status(f"No bookmarks in {label}.")
+        else:
+            audit.addItem(QListWidgetItem(f"{_BOOKMARK_PREFIX}{len(lines)} bookmark(s)"))
+            self._shell.status(f"{len(lines)} bookmark(s) in {label}")
+        if self._show_audit_dock is not None:
+            # Reveal the dock (the `CoherenceController` precedent): a command
+            # whose entire output is Audit rows is a silent no-op while hidden.
+            self._show_audit_dock()
+
+    def clear_bookmark_results(self) -> None:
+        """Remove only prior [Bookmark]-prefixed entries, leaving find /
+        validation / schema rows intact. Bottom-up, like the two sweeps below, so
+        removals don't shift not-yet-visited indices."""
+        audit = self._shell.audit
+        for row in range(audit.count() - 1, -1, -1):
+            item = audit.item(row)
+            if item.text().startswith(_BOOKMARK_PREFIX):
+                audit.takeItem(row)
+
+    def _bookmark_audit_route(self, editor):
+        """`(target, label, extra)` for `editor`: the `UserRole+1` discriminator
+        `MainWindow._on_audit_item_clicked` already understands for it, a human
+        name for the empty-case/status wording, and the `UserRole+2` value that
+        route needs (only the PHP one does), or None.
+
+        `_NO_AUDIT_ROUTE` for an editor the click router has no branch for. Its
+        fallback branch navigates **Raw XML**, so a row from the read-only DDL
+        Explorer buffer or a draft tab would carry the user to a different
+        document than the one it describes; §7's unmapped-`[Check]`-line rule
+        says such a row must not navigate at all.
+
+        Mirrors `active_bookmark_editor`'s dispatch, keyed on editor IDENTITY
+        rather than on the current tab, so the two cannot disagree about which
+        editor a route belongs to.
+        """
+        stage = self._shell.stage
+        if editor is stage.xsd_editor:
+            return "xsd", "Edit XSD", None
+        if editor is stage.ddl_editor_panel.editor:
+            # The read-only DDL Explorer buffer: no route (see above).
+            return _NO_AUDIT_ROUTE, "the DDL Explorer", None
+        for panel in stage.ddl_object_panels():
+            if panel.editor is editor:
+                # §18.5 D3a's tuple payload: `DdlObjectRef.key`.
+                return panel.ref.key, panel.ref.qualified, None
+        for key, tab in stage.php_file_tabs().items():
+            if tab.editor is editor:
+                # §22's payload is a PAIR: the `"php"` discriminator plus the
+                # tab's CenterStage key on UserRole+2, which is what
+                # `_php_tabs.navigate_to` is given. Reusing "the discriminator
+                # the router understands" therefore means both halves here --
+                # omitting the key would make every PHP row inert.
+                return LINT_AUDIT_TARGET, tab.tab_title(), key
+        for tab in stage.draft_fragment_tabs().values():
+            if tab.editor is editor:
+                # FQ-006 draft fragment: no route (see above).
+                return _NO_AUDIT_ROUTE, "the draft fragment", None
+        return "raw", "Raw XML", None
+
+    def _on_editor_bookmarks_changed(self, editor, reason: str) -> None:
+        """Subscribed to `ui/editor_gutter.py`'s bookmark notifications.
+
+        Only the RESET reason matters here: a `setPlainText` wiped that editor's
+        bookmark set, so any `[Bookmark]` listing now describes bookmarks that no
+        longer exist. Toggling is deliberately NOT swept -- the listing is a
+        snapshot, and re-syncing on every gutter click would make it a live view
+        (§8/FQ-014). The rows are cleared wholesale rather than per editor
+        because only one editor's listing can be present at a time: every
+        listing starts by clearing the previous one.
+        """
+        if reason == BOOKMARKS_RESET:
+            self.clear_bookmark_results()
 
     # -- Audit cleanups + Tier-2 validation ----------------------------------
 

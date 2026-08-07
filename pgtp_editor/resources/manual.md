@@ -15,6 +15,52 @@ you asked for, and the on-disk bytes are preserved except where you edit.
 
 ## Getting Started
 
+### The startup launcher
+
+When the editor starts it puts one modal window in front of you — titled **PGTP
+Editor**, asking **"What would you like to do?"** — because an empty Raw XML tab
+is no guidance at all when the app supports several quite different ways of
+working. The launcher names those ways in four groups:
+
+- **Open a pgtp for editing** — edit a `.pgtp` with the XML tooling and compare
+  it against its quality database. No project, no sandbox. Holds **File ▸
+  Open**.
+- **New Project / Open Project** — work on the quality database through a local
+  sandbox, or converge a deployable `.pgtp` by diff/merge. Holds **File ▸ New
+  Project…** and **File ▸ Open Project…**.
+- **Open other files** — edit the custom PHP files that sit beside a project.
+  Holds **File ▸ Open PHP File…**.
+- **Maintenance mode** — maintain the app itself: the XSD and the re_phpgen
+  loop. Holds **Schema ▸ Edit XSD**, **Edit AutoXSD**, **Verify XSD**, **Export
+  XSD** and **Import XSD**, plus **Generation ▸ Locate panGen Runtime…**,
+  **panGen (Generate Own PHP)**, **rePHPgen (Analyze Gap)** and **Save
+  reJSON…**. The ordinary PHP-generation entries (**Locate PHP Generator
+  Executable…**, **Generate PHP…**, **Open Output Folder**) are deliberately
+  *not* here — generating your application is ordinary development, not
+  maintaining the editor. See *Generating PHP*.
+
+**Every button on the launcher is the menu command it names**, which is why the
+buttons are labelled with menu paths such as `File › Open...`. Picking one closes
+the launcher and then runs exactly that command — there is no second, slightly
+different version of any gesture hiding in here. A button whose menu item cannot
+run right now is **greyed out** for the same reason: **Generation ▸ Save
+reJSON…**, for instance, has nothing to save before a gap analysis has run.
+
+- **"Don't show this again"** is a checkbox at the bottom, remembered across
+  restarts. It is recorded whichever way you leave the launcher — ticking it and
+  then picking a button persists just as ticking it and closing does.
+- **Close, Escape, or the window's close button lands you in the normal, empty
+  app.** The launcher is never a gate on running the editor and never quits it.
+- **File ▸ Show Launcher…** re-opens the launcher any time, *ignoring* "Don't
+  show this again" — so that tick is never a one-way door. The entry sits in the
+  File menu's last group, just above **Exit**, and has no keyboard shortcut.
+
+> **The editor does not open a file you pass on the command line, and there is
+> no shell "open with" integration.** Starting the app always brings you to the
+> launcher. A `.pgtp` path on the command line is meaningful **only** together
+> with `--mcp`, where it names the headless MCP server's default project (see
+> *The MCP Server*).
+
 ### Opening a project
 
 Use **File ▸ Open** and pick a `.pgtp` file. If no local DDL-versioning project
@@ -24,15 +70,6 @@ it, **Open Project…** attaches it to an existing project, and **Edit
 Standalone** opens it plainly with no project involved — today's ordinary
 behavior. If a project **is** already active, the chooser is skipped and the
 file just opens into that project.
-
-**File ▸ Open Recent** is a submenu of the projects you opened most recently —
-up to ten, most recent first, each labelled with its bare file name and showing
-its full path as a tooltip. It is rebuilt each time you open the submenu, so an
-entry whose file has been moved or deleted meanwhile simply isn't there any
-more rather than failing when you click it. With nothing recorded yet the
-submenu holds a single greyed-out *(no recent files)* line, so it never looks
-broken. Picking an entry goes through exactly the same open path as **File ▸
-Open**, chooser dialog and all.
 
 The window has three areas:
 
@@ -350,7 +387,7 @@ nothing more is promised.
 
 ### Opening a PHP file
 
-- **File ▸ Open PHP File…** — the entry sits right below **Open Recent**, above
+- **File ▸ Open PHP File…** — the entry sits right below **Open…**, above
   the project actions, because it *is* an open gesture. You can **select several
   files at once**; each one opens as its own tab. The dialog offers PHP file
   types first (`.php`, `.phtml`, `.phps`, `.inc`), then common text types, then
@@ -1244,7 +1281,7 @@ project needed. A project becomes relevant only once you want checked-out
 ### The File menu's project actions
 
 Five actions on the **File** menu manage projects, in their own group between the
-open actions (**Open…**, **Open Recent**, **Open PHP File…**) and **Save**:
+open actions (**Open…**, **Open PHP File…**) and **Save**:
 
 - **New Project…**
 - **Open Project…**
@@ -2043,9 +2080,7 @@ Generate PHP** — but it is not limited to them.
 - Commands already on the toolbar stay visible in the Available list but appear
   **greyed out**, so you can see the whole command set at once and still can't add
   the same command twice.
-- Two things are deliberately left out: menu **separators**, and the **File ▸ Open
-  Recent** submenu, whose entries change from session to session and so can't be
-  pinned.
+- Only menu **separators** are left out — every actual command is offered.
 - **Up** / **Down** reorder the On-Toolbar list; **OK** applies the arrangement and
   remembers it for future sessions, **Cancel** discards your changes.
 
@@ -2136,9 +2171,10 @@ Without Applying**), so a write to a database is never one keystroke away.
 **Ctrl+Return** in the Sandbox SQL console is the one exception, because that
 console can only ever reach the disposable sandbox (see *The Sandbox*).
 
-The other commands added recently are shortcut-free too: **Edit ▸ Auto Parse XML**,
-**Database ▸ Sandbox Setup…**, **Database ▸ Project Status…** and **Tools ▸ Start
-MCP Server** are all menu-only. If you use one often, put it on the toolbar (see
+The other commands added recently are shortcut-free too: **File ▸ Show
+Launcher…**, **Edit ▸ Auto Parse XML**, **Database ▸ Sandbox Setup…**,
+**Database ▸ Project Status…** and **Tools ▸ Start MCP Server** are all
+menu-only. If you use one often, put it on the toolbar (see
 *Appearance & Layout ▸ The toolbar*).
 
 In **Caption Mode** the **Bookmarks** menu and **Ctrl+F2** / **F2** / **Shift+F2**
