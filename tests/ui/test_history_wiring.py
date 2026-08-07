@@ -339,9 +339,10 @@ def test_revert_seeds_snapshot(qtbot, tmp_path):
 
 def test_undo_redo_actions_exist_with_shortcuts(qtbot, tmp_path):
     window = _window(qtbot, tmp_path)
-    edit_menu = find_top_menu(window, "Edit")
-    undo = find_action(edit_menu, "Undo")
-    redo = find_action(edit_menu, "Redo")
+    # On the Editor menu bar's History menu since FQ-016 (was Edit).
+    history_menu = find_top_menu(window, "History")
+    undo = find_action(history_menu, "Undo")
+    redo = find_action(history_menu, "Redo")
     assert undo is not None
     assert redo is not None
     # Ctrl+Z / Ctrl+Y single-step shortcuts bound somewhere on the window.
@@ -384,19 +385,19 @@ def test_close_project_clears_history(qtbot, tmp_path):
     assert window._history.can_undo() is False
 
 
-def test_edit_menu_undo_and_redo_step_distinctly(qtbot, tmp_path):
+def test_history_menu_undo_and_redo_step_distinctly(qtbot, tmp_path):
     window = _window(qtbot, tmp_path)
     path = _make_project(tmp_path)
     window.open_project_file(str(path))
     window.center_stage.xml_editor.setPlainText("edit one")
     window._capture_snapshot_now()
-    edit_menu = find_top_menu(window, "Edit")
+    history_menu = find_top_menu(window, "History")
 
-    # Edit > Undo steps back to the opened text (distinct from Redo).
-    find_action(edit_menu, "Undo").trigger()
+    # History ▸ Undo steps back to the opened text (distinct from Redo).
+    find_action(history_menu, "Undo").trigger()
     assert window.center_stage.xml_editor.toPlainText() != "edit one"
-    # Edit > Redo steps forward again.
-    find_action(edit_menu, "Redo").trigger()
+    # History ▸ Redo steps forward again.
+    find_action(history_menu, "Redo").trigger()
     assert window.center_stage.xml_editor.toPlainText() == "edit one"
-    # History... exists as the combined navigator (opens non-modally).
-    assert find_action(edit_menu, "History…") is not None
+    # History… exists as the combined navigator (opens non-modally).
+    assert find_action(history_menu, "History…") is not None

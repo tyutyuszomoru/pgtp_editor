@@ -42,7 +42,9 @@ def _no_modals(monkeypatch):
 
 def test_auto_parse_action_is_checkable_and_off_by_default(qtbot, tmp_path):
     window = _window(qtbot, tmp_path)
-    action = find_action(find_top_menu(window, "Edit"), "Auto Parse XML")
+    # Moved off the (now dissolved) Edit menu onto the Editor menu bar's
+    # Parsing menu (FQ-016).
+    action = find_action(find_top_menu(window, "Parsing"), "Auto Parse XML")
     assert action is not None
     assert action.isCheckable() is True
     assert action.isChecked() is False

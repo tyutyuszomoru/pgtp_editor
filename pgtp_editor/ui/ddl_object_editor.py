@@ -76,7 +76,7 @@ from pgtp_editor.sql.caret_context import DOTTED_PATH, ROW_VARIABLE, resolve_car
 from pgtp_editor.sql.formatter import format_selection as _format_selection_text
 from pgtp_editor.ui.code_editor import CodeEditor
 from pgtp_editor.ui.completion_popup import CompletionPopupHostMixin
-from pgtp_editor.ui.find_replace_bar import FindReplaceBar
+from pgtp_editor.ui.find_replace_bar import FindReplaceBar, install_focus_shortcuts
 
 if TYPE_CHECKING:  # pragma: no cover -- import-cycle/Qt-purity avoidance only
     from pgtp_editor.db.schema_index import SchemaIndex
@@ -664,6 +664,12 @@ class DdlObjectEditorPanel(CompletionPopupHostMixin, QWidget):
         layout.addWidget(self.editor)
         self._build_apply_row(layout)
         layout.addWidget(self.find_replace_bar)
+
+        # FQ-016: the bar is permanently visible; Ctrl+F / Ctrl+R focus it,
+        # scoped to this tab and its children.
+        self._focus_find_shortcut, self._focus_replace_shortcut = (
+            install_focus_shortcuts(self, self.find_replace_bar)
+        )
 
         # Dirty state rides on the document's own modified flag, whose
         # modificationChanged signal fires on transitions only.

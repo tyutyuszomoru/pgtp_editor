@@ -38,10 +38,21 @@ def test_properties_dock_on_right(qtbot):
     assert window.properties_dock.windowTitle() == "Properties"
 
 
-def test_center_stage_is_central_widget(qtbot):
+def test_center_stage_sits_below_the_editor_menu_bar_in_the_central_widget(qtbot):
+    """FQ-016 deliberately broke the old `centralWidget() is center_stage`
+    coupling: the central widget is now a container holding the Editor menu bar
+    ABOVE the stage (a QMainWindow's own menu/toolbar areas span the docks too,
+    so a bar strictly above the central pane cannot use them). What every other
+    caller depends on -- `window.center_stage` being the `CenterStage` -- is
+    unchanged."""
     window = MainWindow()
     qtbot.addWidget(window)
-    assert window.centralWidget() is window.center_stage
+    container = window.centralWidget()
+    assert container is not window.center_stage
+    assert window.center_stage.parent() is container
+    layout = container.layout()
+    assert layout.itemAt(0).widget() is window.editor_menu_bar
+    assert layout.itemAt(1).widget() is window.center_stage
 
 
 def test_not_implemented_shows_status_message(qtbot):
@@ -459,14 +470,14 @@ def test_clicking_summary_line_is_a_noop(qtbot):
     assert after == before
 
 
-def test_find_all_via_menu_populates_audit_panel(qtbot):
-    from tests.ui._menu_helpers import find_action, find_top_menu
-
+def test_find_all_via_the_bars_button_populates_audit_panel(qtbot):
+    """FQ-016: the bar's BUTTON is the only way to start a Find All -- the
+    Edit-menu entry and its Ctrl+Shift+F are both deleted."""
     window = MainWindow()
     qtbot.addWidget(window)
     window.center_stage.xml_editor.setPlainText("alpha page beta")
     window.center_stage.find_replace_bar._find_field.setText("page")
-    find_action(find_top_menu(window, "Edit"), "Find All").trigger()
+    window.center_stage.find_replace_bar._find_all_button.click()
     qtbot.waitUntil(lambda: not window.center_stage.find_replace_bar._find_all_running, timeout=5000)
 
     texts = [window.audit_panel.item(i).text() for i in range(window.audit_panel.count())]
@@ -474,9 +485,9 @@ def test_find_all_via_menu_populates_audit_panel(qtbot):
     assert '[Find] 1 match(es) for "page"' in texts
 
 
-def test_replace_all_via_menu_mutates_document(qtbot):
-    from tests.ui._menu_helpers import find_action, find_top_menu
-
+def test_replace_all_via_the_bars_button_mutates_document(qtbot):
+    """Ctrl+Alt+Return is deleted too (§27): Replace All is a bulk edit and
+    stays button-only."""
     window = MainWindow()
     qtbot.addWidget(window)
     window.center_stage.xml_editor.setPlainText("page page page")
@@ -484,7 +495,7 @@ def test_replace_all_via_menu_mutates_document(qtbot):
     bar._find_field.setText("page")
     bar._replace_field.setText("X")
 
-    find_action(find_top_menu(window, "Edit"), "Replace All").trigger()
+    bar._replace_all_button.click()
     assert window.center_stage.xml_editor.toPlainText() == "X X X"
 
 
@@ -806,21 +817,34 @@ def test_caption_filter_action_is_gone_from_the_tools_menu(qtbot):
     assert find_action(find_top_menu(window, "Tools"), "Manage Captions...") is not None
 
 
-def test_caption_mode_still_disables_the_editor_find_replace_actions(qtbot):
-    """Unchanged: Caption Mode is authoritative about Ctrl+F / Ctrl+R, so the
-    Edit-menu actions stay disabled while it is active. What changed is who wins
-    instead — the caption panel's own panel-scoped focus shortcuts, not a
-    window-scoped shortcut opening a modal."""
+def test_caption_mode_needs_no_find_replace_gating_any_more(qtbot):
+    """FQ-016 deleted the gate rather than re-pointing it. `set_find_actions` /
+    `set_find_actions_enabled` existed ONLY so Caption Mode could disable the
+    Edit-menu Find…/Replace… QActions and let its own shortcuts win. With the
+    Edit menu dissolved, both sides' Ctrl+F/Ctrl+R are focus shortcuts scoped to
+    the surface that owns them, so exactly one is ever live -- structurally, not
+    by gating."""
+    from PySide6.QtGui import QShortcut
+
     window = MainWindow()
     qtbot.addWidget(window)
-    assert window._find_ui.find_action.isEnabled()
-    assert window._find_ui.replace_action.isEnabled()
+    assert not hasattr(window._find_ui, "find_action")
+    assert not hasattr(window._find_ui, "set_find_actions")
+    assert not hasattr(window._find_ui, "set_find_actions_enabled")
+    # No window-parented Ctrl+F / Ctrl+R exists to be ambiguous with the caption
+    # panel's own panel-scoped pair.
+    window_combos = {
+        s.key().toString()
+        for s in window.findChildren(QShortcut)
+        if s.parent() is window
+    }
+    assert not {"Ctrl+F", "Ctrl+R"} & window_combos
+
     _enter_caption_mode_with(window, '<Root>\n  <Page caption="Home"/>\n</Root>')
-    assert not window._find_ui.find_action.isEnabled()
-    assert not window._find_ui.replace_action.isEnabled()
+    panel = window.center_stage.caption_management_panel
+    assert panel._focus_find_shortcut.key().toString() == "Ctrl+F"
+    assert panel._focus_replace_shortcut.key().toString() == "Ctrl+R"
     window._close_caption_mode()
-    assert window._find_ui.find_action.isEnabled()
-    assert window._find_ui.replace_action.isEnabled()
 
 
 def test_the_caption_bar_is_visible_as_soon_as_caption_mode_opens(qtbot):

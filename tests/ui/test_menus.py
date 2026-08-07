@@ -1,6 +1,13 @@
 # tests/ui/test_menus.py
 from pgtp_editor.ui.main_window import MainWindow
-from tests.ui._menu_helpers import action_labels, all_top_level_menu_titles, find_action, find_top_menu
+from tests.ui._menu_helpers import (
+    action_labels,
+    all_top_level_menu_titles,
+    editor_menu_titles,
+    find_action,
+    find_top_menu,
+    window_menu_titles,
+)
 
 
 def test_file_menu_contents(qtbot):
@@ -58,45 +65,154 @@ def test_exit_action_closes_window(qtbot):
     assert window.isVisible() is False
 
 
-def test_edit_menu_contents(qtbot):
+def test_the_edit_menu_no_longer_exists(qtbot):
+    """FQ-016 DISSOLVED it, rather than emptying it: History…/Undo/Redo moved to
+    the Editor bar's History, the five Find/Replace entries became the
+    permanently visible bar, `Auto Parse XML` moved to Parsing, the two selection
+    commands are FQ-015's `Select`, and Cut/Copy/Paste/Delete + Preferences…
+    were deleted stubs (five of the seven absent-not-disabled violators)."""
     window = MainWindow()
     qtbot.addWidget(window)
-    edit_menu = find_top_menu(window, "Edit")
-    assert action_labels(edit_menu) == [
-        "Undo", "Redo", "History…", "―",
-        "Cut", "Copy", "Paste", "Delete", "―",
-        "Find...", "Find Next", "Find All", "Replace...", "Replace All", "―",
-        "Select Enclosing Block", "Select Parent Block", "―",
-        # §9's checkable auto-parse toggle, between the selection group and
-        # Preferences (§26).
-        "Auto Parse XML", "―",
-        "Preferences...",
-    ]
+    assert "Edit" not in window_menu_titles(window)
+    assert "Edit" not in editor_menu_titles(window)
+    assert find_top_menu(window, "Edit") is None
+    for gone in (
+        "Cut", "Copy", "Paste", "Delete", "Preferences...",
+        "Find...", "Find All", "Replace...", "Replace All",
+    ):
+        assert not [
+            command_id
+            for command_id, label in window._toolbar_ui.all_menu_commands()
+            if label.endswith(gone)
+        ], gone
 
 
-def test_edit_menu_search_shortcuts(qtbot):
+def test_editor_menu_bar_is_a_second_bar_above_the_central_pane(qtbot):
+    """The container: a child `QMenuBar` + `CenterStage` inside a widget that IS
+    the central widget. A QMainWindow's own menu/toolbar areas span the docks
+    too, so a bar strictly above the central pane cannot use them."""
     window = MainWindow()
     qtbot.addWidget(window)
-    edit_menu = find_top_menu(window, "Edit")
-    expected = {
-        "Find...": "Ctrl+F",
-        "Find Next": "F3",
-        "Find All": "Ctrl+Shift+F",
-        "Replace...": "Ctrl+R",
-        "Replace All": "Ctrl+Alt+Return",
+    container = window.centralWidget()
+    assert container is not window.center_stage
+    assert window.center_stage.parent() is container
+    assert window.editor_menu_bar.parent() is container
+    # `window.center_stage` still points at the CenterStage -- the attribute
+    # every other test addresses.
+    assert window.center_stage is container.layout().itemAt(1).widget()
+    assert window.editor_menu_bar is container.layout().itemAt(0).widget()
+    # Never absorbed into the macOS system menu bar (see main_window).
+    assert window.editor_menu_bar.isNativeMenuBar() is False
+
+
+def test_editor_menu_bar_contents(qtbot):
+    """History, [Select — FQ-015, not built yet], Parsing, Bookmarks."""
+    window = MainWindow()
+    qtbot.addWidget(window)
+    assert editor_menu_titles(window) == ["History", "Parsing", "Bookmarks"]
+
+
+def test_history_menu_contents_and_order(qtbot):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    menu = find_top_menu(window, "History")
+    # History… FIRST: the owner's ordering, on the reasoning that "everyone uses
+    # Ctrl+Z/Ctrl+Y anyway", so the entry with no shortcut leads.
+    assert action_labels(menu) == ["History…", "Undo", "Redo"]
+    assert find_action(menu, "Undo") is window._undo_action
+    assert find_action(menu, "Redo") is window._redo_action
+    assert find_action(menu, "History…") is window._history_action
+
+
+def test_parsing_menu_contents(qtbot):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    menu = find_top_menu(window, "Parsing")
+    # `Validate Project` MOVED here off Tools (the owner's "validate xml").
+    # plpgsql check waits on §18.5 D3a; lint stays on Tools (§29 open item).
+    assert action_labels(menu) == ["Auto Parse XML", "―", "Validate Project"]
+    assert find_action(menu, "Auto Parse XML") is window._auto_parse_action
+
+
+def test_editor_menu_bar_is_hidden_on_the_caption_and_manual_tabs(qtbot):
+    """§29's recorded recommendation: all four menus are meaningless on the two
+    non-editor center-stage tabs, so the whole BAR goes (not the actions -- a
+    pinned toolbar button must not blink out with it)."""
+    window = MainWindow()
+    qtbot.addWidget(window)
+    stage = window.center_stage
+    assert window.editor_menu_bar.isHidden() is False
+
+    stage.setTabVisible(stage.caption_management_tab_index, True)
+    stage.setCurrentIndex(stage.caption_management_tab_index)
+    assert window.editor_menu_bar.isHidden() is True
+    # The actions themselves stay alive and pinnable.
+    assert window._auto_parse_action.isVisible() is True
+
+    stage.setTabVisible(stage.manual_tab_index, True)
+    stage.setCurrentIndex(stage.manual_tab_index)
+    assert window.editor_menu_bar.isHidden() is True
+
+    stage.setCurrentIndex(stage.raw_xml_tab_index)
+    assert window.editor_menu_bar.isHidden() is False
+
+
+def test_f3_is_a_window_level_action_with_no_menu_entry(qtbot):
+    """§27: F3 survives the Edit menu's dissolution rebound onto Ctrl+L Go To
+    XSD's shape -- a window action, no menu home, therefore un-pinnable."""
+    window = MainWindow()
+    qtbot.addWidget(window)
+    action = window._find_next_action
+    assert action.shortcut().toString() == "F3"
+    assert action in window.actions()
+    assert action.menu() is None
+    ids = [cid for cid, _label in window._toolbar_ui.all_menu_commands()]
+    assert not [cid for cid in ids if cid.endswith("find-next")]
+
+
+def test_f3_finds_next_with_the_caret_in_the_editor(qtbot):
+    """The reason F3 is window-level and not a `keyPressEvent` on the bar: it is
+    pressed while the caret is in the EDITOR. Driven as a real key press."""
+    from PySide6.QtCore import Qt as _Qt
+    from PySide6.QtGui import QTextCursor
+    from PySide6.QtWidgets import QApplication
+
+    window = MainWindow()
+    qtbot.addWidget(window)
+    editor = window.center_stage.xml_editor
+    editor.setPlainText("one page two page")
+    window.center_stage.find_replace_bar._find_field.setText("page")
+    window.show()
+    QApplication.processEvents()
+    window.activateWindow()
+    QApplication.processEvents()
+    editor.moveCursor(QTextCursor.MoveOperation.Start)
+    editor.setFocus()
+    QApplication.processEvents()
+    assert window.isActiveWindow() is True
+
+    qtbot.keyClick(editor, _Qt.Key.Key_F3)
+    QApplication.processEvents()
+    assert editor.textCursor().selectedText() == "page"
+    assert editor.textCursor().selectionStart() == 4
+
+    qtbot.keyClick(editor, _Qt.Key.Key_F3)
+    QApplication.processEvents()
+    assert editor.textCursor().selectionStart() == 13
+
+
+def test_find_all_and_replace_all_chords_are_gone(qtbot):
+    """Ctrl+Shift+F and Ctrl+Alt+Return are DELETED (§27): both commands survive
+    as buttons on the permanently visible bar."""
+    window = MainWindow()
+    qtbot.addWidget(window)
+    bound = {
+        a.shortcut().toString()
+        for a in window.findChildren(type(window._find_next_action))
+        if not a.shortcut().isEmpty()
     }
-    for label, combo in expected.items():
-        action = find_action(edit_menu, label)
-        assert action is not None
-        assert action.shortcut().toString() == combo
-
-
-def test_edit_menu_structural_selection_shortcuts(qtbot):
-    window = MainWindow()
-    qtbot.addWidget(window)
-    edit_menu = find_top_menu(window, "Edit")
-    assert find_action(edit_menu, "Select Enclosing Block").shortcut().toString() == "Ctrl+Shift+B"
-    assert find_action(edit_menu, "Select Parent Block").shortcut().toString() == "Ctrl+Shift+A"
+    assert "Ctrl+Shift+F" not in bound
+    assert "Ctrl+Alt+Return" not in bound
 
 
 def test_select_enclosing_block_action_selects_block(qtbot):
@@ -111,8 +227,9 @@ def test_select_enclosing_block_action_selects_block(qtbot):
     cursor.setPosition(text.index("x"))
     editor.setTextCursor(cursor)
 
-    edit_menu = find_top_menu(window, "Edit")
-    find_action(edit_menu, "Select Enclosing Block").trigger()
+    # FQ-015 owns the `Select` menu these two commands move onto; until it
+    # lands the behaviour is reached on the editor directly.
+    editor.select_enclosing_block()
 
     expected = text[text.index("<Detail>"):text.index("</Detail>") + len("</Detail>")]
     selected = editor.textCursor().selectedText().replace(" ", "\n")
@@ -129,35 +246,59 @@ def test_select_parent_block_action_selects_parent(qtbot):
     cursor.setPosition(text.index("x"))
     editor.setTextCursor(cursor)
 
-    edit_menu = find_top_menu(window, "Edit")
-    find_action(edit_menu, "Select Parent Block").trigger()
+    editor.select_parent_block()
 
     expected = text[text.index("<Detail>"):text.index("</Detail>") + len("</Detail>")]
     selected = editor.textCursor().selectedText().replace(" ", "\n")
     assert selected == expected
 
 
-def test_find_menu_action_shows_bar_and_raw_tab(qtbot):
+def test_every_editor_bar_is_permanently_visible_and_expanded(qtbot):
+    """FQ-016: all six construction sites ship a bar that is visible from
+    construction with BOTH rows shown. (The window itself is never shown in
+    these tests, so isVisibleTo reflects the widget's own show state.)"""
     window = MainWindow()
     qtbot.addWidget(window)
-    edit_menu = find_top_menu(window, "Edit")
-    find_action(edit_menu, "Find...").trigger()
-    # The window itself is never shown in this test, so isVisible() (which
-    # requires all ancestors on screen) is False; isVisibleTo(tab) reflects
-    # the bar's own show state, which show_find() sets.
-    bar = window.center_stage.find_replace_bar
-    assert bar.isVisibleTo(window.center_stage.raw_xml_tab) is True
-    assert window.center_stage.currentIndex() == window.center_stage.raw_xml_tab_index
+    stage = window.center_stage
+    for bar, host in (
+        (stage.find_replace_bar, stage.raw_xml_tab),
+        (stage.xsd_find_replace_bar, stage.xsd_tab),
+        (stage.ddl_editor_panel.find_replace_bar, stage.ddl_editor_panel),
+    ):
+        assert bar.isVisibleTo(host) is True
+        assert bar._replace_row_widget.isVisibleTo(bar) is True
 
 
-def test_replace_menu_action_shows_replace_row(qtbot):
+def test_ctrl_f_and_ctrl_r_focus_the_active_tabs_bar(qtbot):
+    """The keys are per-editor-tab focus shortcuts, not window-level ones --
+    a window-level Ctrl+F would be AMBIGUOUS against the caption panel's own
+    pair (FQ-017) and neither would fire."""
+    from PySide6.QtGui import QShortcut
+
     window = MainWindow()
     qtbot.addWidget(window)
-    edit_menu = find_top_menu(window, "Edit")
-    find_action(edit_menu, "Replace...").trigger()
-    bar = window.center_stage.find_replace_bar
-    assert bar.isVisibleTo(window.center_stage.raw_xml_tab) is True
-    assert bar._replace_row_widget.isVisibleTo(bar) is True
+    stage = window.center_stage
+    combos = {
+        s.key().toString()
+        for s in stage.raw_xml_tab.findChildren(QShortcut)
+        if s.parent() is stage.raw_xml_tab
+    }
+    assert combos == {"Ctrl+F", "Ctrl+R"}
+    # ...and no Ctrl+F/Ctrl+R QShortcut is parented to the window itself.
+    window_combos = {
+        s.key().toString()
+        for s in window.findChildren(QShortcut)
+        if s.parent() is window
+    }
+    assert "Ctrl+F" not in window_combos
+    assert "Ctrl+R" not in window_combos
+
+    bar = stage.find_replace_bar
+    bar._find_field.setText("")
+    bar.focus_find()
+    assert bar.focusWidget() is bar._find_field
+    bar.focus_replace()
+    assert bar.focusWidget() is bar._replace_field
 
 
 def test_view_menu_contents(qtbot):
@@ -347,10 +488,8 @@ def test_schema_menu_contents(qtbot):
 def test_schema_menu_sits_between_view_and_tools(qtbot):
     window = MainWindow()
     qtbot.addWidget(window)
-    titles = all_top_level_menu_titles(window)
-    assert titles == [
-        "File", "Edit", "View", "Schema", "Database", "Tools", "Bookmarks",
-        "Generation", "Help",
+    assert window_menu_titles(window) == [
+        "File", "View", "Schema", "Database", "Tools", "Generation", "Help",
     ]
 
 
@@ -370,9 +509,9 @@ def test_tools_menu_contents(qtbot):
         # FQ-017 deleted "Caption Filter…": the modal it opened duplicated the
         # Caption Management tab's own permanent Find/Replace bar.
         "Manage Captions...", "―",
-        "Validate Project", "―",
-        # §22 PHP lint, directly under Validate Project: the same kind of
-        # gesture one tier down (this file, not the project).
+        # "Validate Project" MOVED to the Editor bar's Parsing menu (FQ-016) --
+        # it is the owner's "validate xml". §22's three lint entries stay here
+        # (§29 open item: whether all three follow it).
         "Lint Current File", "Lint on Save", "Locate PHP Linter…", "―",
         "Reparse Raw XML into Tree", "―",
         "Compare / Merge Two Files...", "Next Difference", "Prev Difference",
@@ -401,7 +540,7 @@ def test_validate_project_action_populates_audit(qtbot):
     window._current_project = load_project_from_text(xml)
     window.center_stage.xml_editor.setPlainText(xml)
 
-    menu = find_top_menu(window, "Tools")
+    menu = find_top_menu(window, "Parsing")
     find_action(menu, "Validate Project").trigger()
 
     validation_items = [
@@ -440,11 +579,16 @@ def test_all_top_level_menus_present_in_order(qtbot):
     # all_top_level_menu_titles — see _menu_helpers._top_level_menus.
     window = MainWindow()
     qtbot.addWidget(window)
-    titles = all_top_level_menu_titles(window)
-    assert titles == [
-        "File", "Edit", "View", "Schema", "Database", "Tools", "Bookmarks",
-        "Generation", "Help",
+    # Two bars since FQ-016: `Edit` is gone from the window bar and `Bookmarks`
+    # moved off it onto the Editor bar.
+    assert window_menu_titles(window) == [
+        "File", "View", "Schema", "Database", "Tools", "Generation", "Help",
     ]
+    assert editor_menu_titles(window) == ["History", "Parsing", "Bookmarks"]
+    # `all_top_level_menu_titles` spans both, window bar first.
+    assert all_top_level_menu_titles(window) == (
+        window_menu_titles(window) + editor_menu_titles(window)
+    )
 
 
 def test_raw_xml_panel_action_is_accessible_as_attribute(qtbot):
@@ -462,12 +606,14 @@ def test_view_menu_has_no_wrap_raw_xml_lines_action(qtbot):
     assert "Wrap Lines" not in action_labels(view_menu)
 
 
-def test_bookmarks_menu_sits_between_tools_and_generation(qtbot):
+def test_bookmarks_menu_moved_onto_the_editor_menu_bar(qtbot):
+    """FQ-016: it was a top-level WINDOW menu between Tools and Generation; it is
+    a per-editor menu, so it belongs on the per-editor bar."""
     window = MainWindow()
     qtbot.addWidget(window)
-    titles = all_top_level_menu_titles(window)
-    assert titles.index("Bookmarks") == titles.index("Tools") + 1
-    assert titles.index("Bookmarks") == titles.index("Generation") - 1
+    assert "Bookmarks" not in window_menu_titles(window)
+    titles = editor_menu_titles(window)
+    assert titles.index("Bookmarks") == titles.index("Parsing") + 1
 
 
 def test_bookmarks_menu_contents(qtbot):

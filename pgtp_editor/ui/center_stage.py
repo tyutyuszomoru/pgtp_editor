@@ -20,7 +20,7 @@ from pgtp_editor.ui.caption_management_panel import CaptionManagementPanel
 from pgtp_editor.ui.ddl_editor_panel import EditorPanel
 from pgtp_editor.ui.ddl_object_editor import DdlObjectEditorPanel
 from pgtp_editor.ui.diff_merge_panel import DiffMergePanel
-from pgtp_editor.ui.find_replace_bar import FindReplaceBar
+from pgtp_editor.ui.find_replace_bar import FindReplaceBar, install_focus_shortcuts
 from pgtp_editor.ui.manual_panel import ManualPanel
 from pgtp_editor.ui.php_file_tab import PhpFileTab, php_tab_key
 from pgtp_editor.ui.sql_console_panel import CONSOLE_TAB_KEY, SqlConsolePanel
@@ -63,6 +63,11 @@ class DraftFragmentTab(QWidget):
         layout.setSpacing(0)
         layout.addWidget(self.editor)
         layout.addWidget(self.find_replace_bar)
+        # FQ-016: the bar is permanently visible; Ctrl+F / Ctrl+R focus it,
+        # scoped to this draft tab and its children.
+        self._focus_find_shortcut, self._focus_replace_shortcut = (
+            install_focus_shortcuts(self, self.find_replace_bar)
+        )
 
     def toPlainText(self):
         """The draft's current text (the user may have edited it)."""
@@ -158,6 +163,13 @@ class CenterStage(QTabWidget):
         raw_layout.setSpacing(0)
         raw_layout.addWidget(self.xml_editor)
         raw_layout.addWidget(self.find_replace_bar)
+        # FQ-016: Ctrl+F / Ctrl+R focus the permanently visible bar. Installed
+        # on the TAB CONTAINER (which owns both the editor and the bar), not on
+        # the window -- see `install_focus_shortcuts` for why window-level would
+        # collide with the caption panel's own pair.
+        self._raw_focus_shortcuts = install_focus_shortcuts(
+            self.raw_xml_tab, self.find_replace_bar
+        )
         self.raw_xml_tab_index = self.addTab(self.raw_xml_tab, "Raw XML")
 
         # Edit XSD tab (spec §11): a second, fully-featured editor for the
@@ -170,6 +182,9 @@ class CenterStage(QTabWidget):
         xsd_layout.setSpacing(0)
         xsd_layout.addWidget(self.xsd_editor)
         xsd_layout.addWidget(self.xsd_find_replace_bar)
+        self._xsd_focus_shortcuts = install_focus_shortcuts(
+            self.xsd_tab, self.xsd_find_replace_bar
+        )
         self.xsd_tab_index = self.addTab(self.xsd_tab, "Edit XSD")
 
         # DDL Explorer tab (spec §18.1): the one synthesized routine/trigger

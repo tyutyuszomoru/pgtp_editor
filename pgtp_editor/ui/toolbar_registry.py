@@ -36,39 +36,54 @@ free of Qt imports.
 import re
 from collections.abc import Iterable, Sequence
 
-# The seven commands the toolbar shipped with before BUG-027, as
-# (legacy-id, label). Retained for three reasons: they name the vendored icon
-# files (`icons.ACTION_ICON_FILES`), they define the default toolbar, and
+# The commands the toolbar shipped with before BUG-027, as (legacy-id, label).
+# Retained for three reasons: they name the vendored icon files
+# (`icons.ACTION_ICON_FILES`), they define the default toolbar, and
 # already-saved toolbars in QSettings still refer to them by legacy id.
+#
+# There were SEVEN. `find` is **retired** (FQ-016): with the Edit menu dissolved,
+# Find is a permanently visible bar, not a menu action, so it has no menu-path id
+# to alias onto and cannot be pinned at all -- owner ruling, verbatim: "Find
+# unpinnable is fine." Retiring it here (rather than leaving a dangling alias
+# pointing at the vanished `edit.find`) is what stops a default toolbar button
+# shipping empty and iconless on a fresh install; `edit-find.svg` stays in the
+# Breeze catalog, so a user can still assign that icon to any other command.
 LEGACY_COMMANDS: list[tuple[str, str]] = [
     ("open", "Open"),
     ("save", "Save"),
     ("undo", "Undo"),
     ("redo", "Redo"),
-    ("find", "Find"),
     ("validate", "Validate"),
     ("generate", "Generate"),
 ]
 
 # Legacy id -> menu-path id, so a toolbar saved before BUG-027 survives the
 # widening instead of silently emptying to the default on first launch.
+#
+# THREE of these moved with FQ-016's Editor menu bar and are updated here in the
+# same commit -- an alias left pointing at a dead menu path makes a DEFAULT
+# toolbar button appear empty and iconless (`DEFAULT_TOOLBAR_IDS` derives from
+# this table, and `ICON_ID_BY_COMMAND` is its inverse, so a stale entry breaks
+# both the button and its vendored SVG):
+#   undo/redo:  Edit ▸ Undo/Redo   -> the Editor bar's History ▸ Undo/Redo
+#   validate:   Tools ▸ Validate Project -> the Editor bar's Parsing ▸ Validate Project
 LEGACY_ID_ALIASES: dict[str, str] = {
     "open": "file.open",
     "save": "file.save",
-    "undo": "edit.undo",
-    "redo": "edit.redo",
-    "find": "edit.find",
-    "validate": "tools.validate-project",
+    "undo": "history.undo",
+    "redo": "history.redo",
+    "validate": "parsing.validate-project",
     "generate": "generation.generate-php",
 }
 
-# The default toolbar layout: the legacy seven, in legacy order.
+# The default toolbar layout: the legacy set, in legacy order (six since FQ-016
+# retired `find` -- see LEGACY_COMMANDS).
 DEFAULT_TOOLBAR_IDS: list[str] = [
     LEGACY_ID_ALIASES[cid] for cid, _label in LEGACY_COMMANDS
 ]
 
 # Menu-path id -> icon id (the `icons.ACTION_ICON_FILES` key). Only the legacy
-# seven have vendored SVGs; every other command is icon-less by design -- an
+# set has vendored SVG defaults; every other command is icon-less by design -- an
 # icon must never be a precondition for putting a command on the toolbar.
 ICON_ID_BY_COMMAND: dict[str, str] = {
     command_id: legacy_id for legacy_id, command_id in LEGACY_ID_ALIASES.items()

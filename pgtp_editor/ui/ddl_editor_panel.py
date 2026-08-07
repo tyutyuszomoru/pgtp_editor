@@ -31,7 +31,7 @@ from PySide6.QtWidgets import QVBoxLayout, QWidget
 
 from pgtp_editor.ui.code_editor import CodeEditor
 from pgtp_editor.ui.ddl_buffer_panel import resolve_edit_target
-from pgtp_editor.ui.find_replace_bar import FindReplaceBar
+from pgtp_editor.ui.find_replace_bar import FindReplaceBar, install_focus_shortcuts
 
 
 def _fold_regions_for_spans(spans) -> list[tuple[int, int, int]]:
@@ -84,6 +84,15 @@ class EditorPanel(QWidget):
         layout.setSpacing(0)
         layout.addWidget(self.editor)
         layout.addWidget(self.find_replace_bar)
+
+        # FQ-016: the bar is permanently visible, so Ctrl+F / Ctrl+R FOCUS it.
+        # Scoped to this panel and its children so the keys work with the caret
+        # in the (read-only) buffer. Replace is inert here by design --
+        # `CodeEditor.replace_current_selection` early-returns on a read-only
+        # editor -- but focusing the field is not, so both keys are installed.
+        self._focus_find_shortcut, self._focus_replace_shortcut = (
+            install_focus_shortcuts(self, self.find_replace_bar)
+        )
 
     def set_ddl_text(self, text: str, spans=None, schema=None) -> None:
         """Replace the synthesized buffer (a fresh `build_ddl_text` result).

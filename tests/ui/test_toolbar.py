@@ -21,12 +21,14 @@ from pgtp_editor.ui.toolbar_registry import DEFAULT_TOOLBAR_IDS
 from tests.ui._menu_helpers import find_action, find_top_menu
 
 
+# SIX since FQ-016: `Find...` is gone (the Edit menu dissolved and Find is a
+# permanently visible bar, knowingly unpinnable), and Undo/Redo/Validate Project
+# now live on the Editor menu bar — which is why the walk must cover both bars.
 DEFAULT_LABELS = [
     "Open...",
     "Save",
     "Undo",
     "Redo",
-    "Find...",
     "Validate Project",
     "Generate PHP...",
 ]
@@ -40,11 +42,27 @@ def _toolbar_labels(window):
     return [a.text() for a in window._toolbar_ui.toolbar.actions()]
 
 
-def test_default_toolbar_has_seven_actions_in_order(qtbot, tmp_path):
+def test_default_toolbar_has_every_default_action_in_order(qtbot, tmp_path):
     window = MainWindow(settings=_ini_settings(tmp_path))
     qtbot.addWidget(window)
     assert _toolbar_labels(window) == DEFAULT_LABELS
     assert window._toolbar_ui.toolbar.objectName() == "main_toolbar"
+
+
+def test_no_default_toolbar_button_ships_empty_or_iconless(qtbot, tmp_path):
+    """The FQ-016 alias hazard, pinned: `DEFAULT_TOOLBAR_IDS` derives from
+    `LEGACY_ID_ALIASES` and `ICON_ID_BY_COMMAND` is its inverse, so an alias left
+    pointing at a moved command's OLD menu path would silently ship a default
+    button with no action behind it and no icon on it."""
+    window = MainWindow(settings=_ini_settings(tmp_path))
+    qtbot.addWidget(window)
+    actions = window._toolbar_ui.toolbar.actions()
+    assert len(actions) == len(DEFAULT_TOOLBAR_IDS)
+    for command_id, action in zip(DEFAULT_TOOLBAR_IDS, actions):
+        assert command_id in window._toolbar_ui.menu_commands, command_id
+        assert action is window._toolbar_ui.menu_commands[command_id]
+        assert action.text()
+        assert not action.icon().isNull(), command_id
 
 
 def test_apply_toolbar_ids_reorders_and_subsets(qtbot, tmp_path):
@@ -58,8 +76,9 @@ def test_apply_toolbar_ids_reorders_and_subsets(qtbot, tmp_path):
 def test_apply_toolbar_ids_drops_unknowns(qtbot, tmp_path):
     window = MainWindow(settings=_ini_settings(tmp_path))
     qtbot.addWidget(window)
-    window._toolbar_ui.apply_ids(["tools.validate-project", "bogus", "edit.find"])
-    assert _toolbar_labels(window) == ["Validate Project", "Find..."]
+    # "edit.find" is a now-dead id (FQ-016) and is dropped exactly like "bogus".
+    window._toolbar_ui.apply_ids(["parsing.validate-project", "bogus", "edit.find"])
+    assert _toolbar_labels(window) == ["Validate Project"]
 
 
 def test_toolbar_action_is_the_menu_action_itself(qtbot, tmp_path):
@@ -68,8 +87,8 @@ def test_toolbar_action_is_the_menu_action_itself(qtbot, tmp_path):
     menu item's slot, enabled state and shortcut."""
     window = MainWindow(settings=_ini_settings(tmp_path))
     qtbot.addWidget(window)
-    window._toolbar_ui.apply_ids(["tools.validate-project"])
-    menu_action = find_action(find_top_menu(window, "Tools"), "Validate Project")
+    window._toolbar_ui.apply_ids(["parsing.validate-project"])
+    menu_action = find_action(find_top_menu(window, "Parsing"), "Validate Project")
     assert window._toolbar_ui.toolbar.actions() == [menu_action]
 
 
@@ -77,7 +96,7 @@ def test_toolbar_action_triggers_slot(qtbot, tmp_path):
     window = MainWindow(settings=_ini_settings(tmp_path))
     qtbot.addWidget(window)
     called = []
-    window._toolbar_ui.apply_ids(["tools.validate-project"])
+    window._toolbar_ui.apply_ids(["parsing.validate-project"])
     # The shared action carries the menu's connection; add our own spy to it
     # rather than patching the bound slot, which would not rewire it.
     window._toolbar_ui.toolbar.actions()[0].triggered.connect(lambda: called.append(True))
@@ -89,19 +108,19 @@ def test_apply_and_save_persists_and_round_trips(qtbot, tmp_path):
     settings = _ini_settings(tmp_path)
     window = MainWindow(settings=settings)
     qtbot.addWidget(window)
-    window._toolbar_ui.apply_and_save(["edit.find", "file.save"])
-    assert _toolbar_labels(window) == ["Find...", "Save"]
+    window._toolbar_ui.apply_and_save(["history.undo", "file.save"])
+    assert _toolbar_labels(window) == ["Undo", "Save"]
 
     # A new window reading the same store restores that toolbar.
     settings2 = _ini_settings(tmp_path)
     window2 = MainWindow(settings=settings2)
     qtbot.addWidget(window2)
-    assert _toolbar_labels(window2) == ["Find...", "Save"]
+    assert _toolbar_labels(window2) == ["Undo", "Save"]
 
 
 def test_stored_comma_string_is_restored(qtbot, tmp_path):
     settings = _ini_settings(tmp_path)
-    settings.setValue("toolbarIds", "edit.undo,edit.redo")
+    settings.setValue("toolbarIds", "history.undo,history.redo")
     settings.sync()
     window = MainWindow(settings=settings)
     qtbot.addWidget(window)
@@ -139,13 +158,53 @@ def test_available_commands_come_from_the_menus_not_a_fixed_seven(qtbot, tmp_pat
     pairs = window._toolbar_ui.all_menu_commands()
     ids = [command_id for command_id, _label in pairs]
 
-    assert len(pairs) > 7                       # the reported bug: only 7
+    assert len(pairs) > 7                       # the reported bug: only 7 commands
     # Commands that were previously impossible to put on the toolbar:
-    for command_id in ("file.save-as", "edit.replace", "edit.find-all"):
+    for command_id in ("file.save-as", "history.history", "bookmarks.next-bookmark"):
         assert command_id in ids
     # ...alongside the legacy seven, which must all still be offered.
     for command_id in DEFAULT_TOOLBAR_IDS:
         assert command_id in ids
+
+
+def test_the_walk_covers_BOTH_menu_bars(qtbot, tmp_path):
+    """FQ-016: `build` takes a SEQUENCE of menu-bar roots (one walk, widened).
+    Without the second root every Editor-bar command would be unpinnable and
+    invisible to Customize Toolbar and to FQ-004's icon assignments."""
+    window = MainWindow(settings=_ini_settings(tmp_path))
+    qtbot.addWidget(window)
+    pairs = window._toolbar_ui.all_menu_commands()
+    ids = [command_id for command_id, _label in pairs]
+    labels = dict(pairs)
+
+    # Window bar...
+    assert "file.open" in ids
+    # ...and the Editor bar's four-menu inventory (Select is FQ-015's lane).
+    for command_id in (
+        "history.history", "history.undo", "history.redo",
+        "parsing.auto-parse-xml", "parsing.validate-project",
+        "bookmarks.toggle-bookmark", "bookmarks.next-bookmark",
+        "bookmarks.previous-bookmark", "bookmarks.clear-all-bookmarks",
+    ):
+        assert command_id in ids, command_id
+    assert labels["history.undo"] == "History › Undo"
+    assert labels["parsing.validate-project"] == "Parsing › Validate Project"
+    # Window-bar roots come first, so a walk that dropped one is visible in order.
+    assert ids.index("file.open") < ids.index("history.history")
+
+
+def test_the_walk_accepts_a_single_menu_bar_too(qtbot, tmp_path):
+    """`build` keeps the one-bar form so a caller with a single bar needs no
+    ceremony -- the widening is a sequence of roots, not a new mechanism."""
+    from pgtp_editor.ui.toolbar_controller import ToolbarController
+
+    window = MainWindow(settings=_ini_settings(tmp_path))
+    qtbot.addWidget(window)
+    lane = ToolbarController(window._shell, parent=window)
+    lane.build(window.editor_menu_bar, window.addToolBar)
+    ids = [command_id for command_id, _label in lane.all_menu_commands()]
+    assert "history.undo" in ids
+    assert "file.open" not in ids
 
 
 def test_menu_command_labels_show_their_menu_path(qtbot, tmp_path):
@@ -209,8 +268,10 @@ def test_legacy_stored_ids_still_restore(qtbot, tmp_path):
     settings.sync()
     window = MainWindow(settings=settings)
     qtbot.addWidget(window)
-    assert window._toolbar_ui.command_ids == ["file.save", "edit.find", "edit.undo"]
-    assert _toolbar_labels(window) == ["Save", "Find...", "Undo"]
+    # The RETIRED `find` alias (FQ-016) resolves to nothing and is pruned, which
+    # is the deliberate outcome: Find has no menu home to alias onto any more.
+    assert window._toolbar_ui.command_ids == ["file.save", "history.undo"]
+    assert _toolbar_labels(window) == ["Save", "Undo"]
 
 
 def test_legacy_comma_string_still_restores(qtbot, tmp_path):
@@ -308,16 +369,16 @@ def test_repopulating_the_toolbar_does_not_destroy_the_menu_action(qtbot, tmp_pa
     used instead."""
     window = MainWindow(settings=_ini_settings(tmp_path))
     qtbot.addWidget(window)
-    validate = find_action(find_top_menu(window, "Tools"), "Validate Project")
+    validate = find_action(find_top_menu(window, "Parsing"), "Validate Project")
 
-    window._toolbar_ui.apply_ids(["tools.validate-project"])
+    window._toolbar_ui.apply_ids(["parsing.validate-project"])
     window._toolbar_ui.apply_ids(["file.save"])          # drops validate again
-    window._toolbar_ui.apply_ids(["tools.validate-project"])
+    window._toolbar_ui.apply_ids(["parsing.validate-project"])
 
-    # Still the same, still-alive object, still in the Tools menu.
+    # Still the same, still-alive object, still in the Parsing menu.
     assert window._toolbar_ui.toolbar.actions() == [validate]
     assert validate.text() == "Validate Project"
-    assert find_action(find_top_menu(window, "Tools"), "Validate Project") is validate
+    assert find_action(find_top_menu(window, "Parsing"), "Validate Project") is validate
     called = []
     validate.triggered.connect(lambda: called.append(True))
     validate.trigger()
@@ -376,19 +437,19 @@ def test_duplicate_menu_labels_get_a_numeric_suffix(qtbot, tmp_path):
     the suffix rule keeps every id resolving to exactly one action."""
     window = MainWindow(settings=_ini_settings(tmp_path))
     qtbot.addWidget(window)
-    tools = find_top_menu(window, "Tools")
-    original = find_action(tools, "Validate Project")
-    twin = tools.addAction("Validate Project")
+    parsing = find_top_menu(window, "Parsing")
+    original = find_action(parsing, "Validate Project")
+    twin = parsing.addAction("Validate Project")
 
     pairs = window._toolbar_ui.collect_menu_commands()
     ids = [command_id for command_id, _label in pairs]
-    assert "tools.validate-project" in ids
-    assert "tools.validate-project-2" in ids
+    assert "parsing.validate-project" in ids
+    assert "parsing.validate-project-2" in ids
     assert len(ids) == len(set(ids))
-    assert window._toolbar_ui.menu_commands["tools.validate-project"] is original
-    assert window._toolbar_ui.menu_commands["tools.validate-project-2"] is twin
+    assert window._toolbar_ui.menu_commands["parsing.validate-project"] is original
+    assert window._toolbar_ui.menu_commands["parsing.validate-project-2"] is twin
 
-    tools.removeAction(twin)
+    parsing.removeAction(twin)
 
 
 def test_customize_dialog_reenumerates_commands_added_after_startup(qtbot, tmp_path):
@@ -467,10 +528,10 @@ def test_saved_ids_are_menu_path_ids_in_settings(qtbot, tmp_path):
     settings = _ini_settings(tmp_path)
     window = MainWindow(settings=settings)
     qtbot.addWidget(window)
-    window._toolbar_ui.apply_and_save(["file.save-as", "edit.replace"])
+    window._toolbar_ui.apply_and_save(["file.save-as", "bookmarks.next-bookmark"])
     stored = settings.value("toolbarIds")
     stored = stored.split(",") if isinstance(stored, str) else list(stored)
-    assert stored == ["file.save-as", "edit.replace"]
+    assert stored == ["file.save-as", "bookmarks.next-bookmark"]
 
 
 # --- FQ-004: per-command icon assignments ----------------------------------

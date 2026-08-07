@@ -1307,7 +1307,9 @@ def test_no_shortcut_is_bound_to_any_apply_gesture(qtbot):
     panel.record_check_report(_green())
 
     sequences = {s.key().toString() for s in panel.findChildren(QShortcut)}
-    assert sequences == {"Ctrl+Alt+F"}  # Format Selection, and nothing else
+    # Format Selection, plus FQ-016's two Find/Replace-bar FOCUS shortcuts (which
+    # move no data anywhere). Nothing that applies, deploys or executes.
+    assert sequences == {"Ctrl+Alt+F", "Ctrl+F", "Ctrl+R"}
 
     for action in panel._build_context_menu().actions():
         if action.text() in ("Apply to Sandbox", "Apply to Target…", "Deploy this edit…"):

@@ -32,7 +32,9 @@ before the expensive lanes follow it.
 The menu bar *is* the command universe
 --------------------------------------
 BUG-027: rather than a static registry of seven commands, the offerable set is
-derived by walking the live menu bar, and a toolbar button is the menu's **own
+derived by walking the live menu bar**s** -- both of them since FQ-016 (the
+window bar and the Editor menu bar above the central pane, `build` taking a
+sequence of roots) -- and a toolbar button is the menu's **own
 ``QAction``** — so it shares the menu item's slot, enabled state, checked state
 and shortcut for free and can never drift from it. Two consequences are
 load-bearing and easy to undo by accident:
@@ -94,10 +96,13 @@ class ToolbarController(QObject):
         super().__init__(parent)
         self._shell = shell
         self._settings = shell.settings
-        #: The live menu bar, set by `build` -- the command universe is re-read
-        #: from it on every walk, so commands the app grows after startup are
-        #: picked up without a restart.
-        self._menu_bar = None
+        #: The live menu bar ROOTS, set by `build` -- a tuple, because the app
+        #: has TWO menu bars since FQ-016 (the window bar and the Editor menu
+        #: bar above the central pane) and both must be pinnable. ONE walk over
+        #: a sequence of roots, never a second walk. The command universe is
+        #: re-read from them on every walk, so commands the app grows after
+        #: startup are picked up without a restart.
+        self._menu_bars: tuple = ()
         self._toolbar = None
         self._toolbar_ids: list[str] = []
         self._toolbar_icon_ids: dict[str, str] = {}
@@ -113,14 +118,25 @@ class ToolbarController(QObject):
 
     # -- construction --------------------------------------------------------
 
-    def build(self, menu_bar, add_toolbar: Callable[[str], object]) -> None:
+    def build(self, menu_bars, add_toolbar: Callable[[str], object]) -> None:
         """Create the Main Toolbar and restore its command set from settings.
 
-        `menu_bar` is the finished ``QMenuBar`` (the command universe);
+        `menu_bars` is the finished command universe: a single ``QMenuBar`` or,
+        since FQ-016, a **sequence of them** walked in order (the window menu bar
+        then the Editor menu bar). Both forms are accepted so a caller with one
+        bar — every test that builds this lane standalone — needs no ceremony.
+        Widening the roots, rather than adding a second walk, is deliberate:
+        Customize Toolbar's Available list, the command ids, FQ-004's icon
+        assignments and any future shortcut-listing surface all flow from the one
+        walk, and a command missing from it is unpinnable and invisible to all of
+        them.
+
         `add_toolbar` is the host's ``addToolBar`` — the ``QMainWindow``
         gesture stays on the host, this lane only receives the result.
         """
-        self._menu_bar = menu_bar
+        self._menu_bars = (
+            (menu_bars,) if hasattr(menu_bars, "actions") else tuple(menu_bars)
+        )
         self._toolbar = add_toolbar("Main Toolbar")
         # objectName so the window's saveState()/restoreState() persists this
         # toolbar's position along with the docks.
@@ -194,8 +210,12 @@ class ToolbarController(QObject):
         ]
 
     def _walk_menu_actions(self, menu=None, path=(), seen=None):
-        """Depth-first walk of the menu bar yielding (id, label, QAction) for
+        """Depth-first walk of the menu bar(s) yielding (id, label, QAction) for
         every *leaf* command.
+
+        The root level is EVERY menu bar in `self._menu_bars`, in order (FQ-016:
+        the window bar then the Editor menu bar) -- one walk over a sequence of
+        roots, never a second walk.
 
         Skips separators and submenu placeholders (an action that opens a
         submenu is not itself a command). Duplicate ids (two
@@ -217,7 +237,11 @@ class ToolbarController(QObject):
         `_menu_keepalive` for the controller's lifetime."""
         if seen is None:
             seen = {}
-        actions = self._menu_bar.actions() if menu is None else menu.actions()
+        if menu is None:
+            # The ROOT level: every menu bar's top-level actions, in bar order.
+            actions = [a for bar in self._menu_bars for a in bar.actions()]
+        else:
+            actions = menu.actions()
         for action in actions:
             if action.isSeparator():
                 continue

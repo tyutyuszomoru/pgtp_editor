@@ -21,27 +21,33 @@ from pgtp_editor.ui.toolbar_registry import (
 
 
 def test_legacy_commands_content_and_order():
+    # SIX, not the original seven: `find` is retired (FQ-016) -- Find lost its
+    # menu home when the Edit menu dissolved, so no menu-path id can alias onto
+    # it and it is knowingly unpinnable.
     assert LEGACY_COMMANDS == [
         ("open", "Open"),
         ("save", "Save"),
         ("undo", "Undo"),
         ("redo", "Redo"),
-        ("find", "Find"),
         ("validate", "Validate"),
         ("generate", "Generate"),
     ]
+    assert "find" not in dict(LEGACY_COMMANDS)
 
 
 def test_default_toolbar_ids_are_menu_path_ids_in_legacy_order():
+    # `history.*` and `parsing.*` since FQ-016 moved Undo/Redo onto the Editor
+    # bar's History menu and Validate Project onto its Parsing menu. An alias
+    # left pointing at the old path would ship a default button empty.
     assert DEFAULT_TOOLBAR_IDS == [
         "file.open",
         "file.save",
-        "edit.undo",
-        "edit.redo",
-        "edit.find",
-        "tools.validate-project",
+        "history.undo",
+        "history.redo",
+        "parsing.validate-project",
         "generation.generate-php",
     ]
+    assert "edit.find" not in DEFAULT_TOOLBAR_IDS
 
 
 def test_every_legacy_id_has_an_alias():
@@ -87,13 +93,13 @@ def test_menu_path_label_is_human_readable():
 
 
 # -- id filtering ----------------------------------------------------------
-_KNOWN = ["file.open", "file.save", "edit.find"]
+_KNOWN = ["file.open", "file.save", "history.undo"]
 
 
 def test_valid_ids_preserves_order_drops_unknowns():
     assert valid_ids(
-        ["file.save", "file.open", "bogus", "edit.find"], _KNOWN
-    ) == ["file.save", "file.open", "edit.find"]
+        ["file.save", "file.open", "bogus", "history.undo"], _KNOWN
+    ) == ["file.save", "file.open", "history.undo"]
 
 
 def test_valid_ids_drops_duplicates_keeping_first():
@@ -112,7 +118,10 @@ def test_resolve_ids_maps_legacy_ids_so_saved_toolbars_survive():
     """The back-compat guarantee: a toolbar saved before BUG-027 stored
     `save`/`find`, which are unknown under the new scheme -- without aliasing
     every existing user's toolbar would silently empty on first launch."""
-    assert resolve_ids(["save", "find"], _KNOWN) == ["file.save", "edit.find"]
+    assert resolve_ids(["save", "undo"], _KNOWN) == ["file.save", "history.undo"]
+    # ...and the RETIRED `find` alias resolves to nothing rather than to a
+    # dangling id (FQ-016): a pre-FQ-016 saved toolbar simply loses that button.
+    assert resolve_ids(["find"], _KNOWN + ["edit.find"]) == []
 
 
 def test_resolve_ids_passes_through_new_ids_and_still_drops_unknowns():
@@ -133,7 +142,7 @@ from pgtp_editor.ui.toolbar_registry import (  # noqa: E402
     serialize_icon_assignments,
 )
 
-KNOWN_COMMANDS = ["file.open", "file.save", "file.save-as", "edit.undo"]
+KNOWN_COMMANDS = ["file.open", "file.save", "file.save-as", "history.undo"]
 KNOWN_ICONS = ["document-open", "document-save-as", "zoom-in"]
 
 
@@ -142,9 +151,9 @@ def test_settings_key_is_a_sibling_of_toolbar_ids():
 
 
 def test_serialize_round_trips_through_parse():
-    mapping = {"file.save-as": "document-save-as", "edit.undo": "zoom-in"}
+    mapping = {"file.save-as": "document-save-as", "history.undo": "zoom-in"}
     stored = serialize_icon_assignments(mapping)
-    assert stored == ["edit.undo=zoom-in", "file.save-as=document-save-as"]
+    assert stored == ["file.save-as=document-save-as", "history.undo=zoom-in"]
     assert parse_icon_assignments(stored) == mapping
 
 
@@ -193,7 +202,7 @@ def test_resolve_of_nothing_is_empty_back_compat():
 
 
 def test_icon_id_for_falls_back_to_the_legacy_default():
-    # Back-compat: with no assignments the legacy seven keep their icons and
+    # Back-compat: with no assignments the legacy set keeps its icons and
     # everything else stays icon-less, exactly as before FQ-004.
     for command_id, legacy in ICON_ID_BY_COMMAND.items():
         assert icon_id_for(command_id, {}) == legacy

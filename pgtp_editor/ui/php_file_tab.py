@@ -73,7 +73,7 @@ from PySide6.QtWidgets import QVBoxLayout, QWidget
 from pgtp_editor.lint.findings import LintOutcome, LintStatus, audit_lines
 from pgtp_editor.ui.async_task import run_async
 from pgtp_editor.ui.code_editor import CodeEditor
-from pgtp_editor.ui.find_replace_bar import FindReplaceBar
+from pgtp_editor.ui.find_replace_bar import FindReplaceBar, install_focus_shortcuts
 
 _log = logging.getLogger(__name__)
 
@@ -171,6 +171,12 @@ class PhpFileTab(QWidget):
         layout.setSpacing(0)
         layout.addWidget(self.editor)
         layout.addWidget(self.find_replace_bar)
+
+        # FQ-016: the bar is permanently visible; Ctrl+F / Ctrl+R focus it,
+        # scoped to this tab and its children.
+        self._focus_find_shortcut, self._focus_replace_shortcut = (
+            install_focus_shortcuts(self, self.find_replace_bar)
+        )
 
         # Dirty state rides on this document's own modified flag -- entirely
         # separate from the project document's (§21: "independent of the

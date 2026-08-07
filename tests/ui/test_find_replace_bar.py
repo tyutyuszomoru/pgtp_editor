@@ -1,6 +1,6 @@
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QKeyEvent, QTextCursor
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QVBoxLayout, QWidget
 
 from pgtp_editor.ui.find_replace_bar import FindReplaceBar
 from pgtp_editor.ui.xml_editor import XmlEditor
@@ -20,23 +20,68 @@ def _select(editor, start, end):
     editor.setTextCursor(cursor)
 
 
-def test_show_find_prefills_from_selection(qtbot):
+def test_bar_is_visible_from_construction_with_the_replace_row(qtbot):
+    """FQ-016: no `self.hide()`, no show_find/show_replace mode -- the bar is
+    permanently visible in its EXPANDED form (both rows)."""
+    editor = _editor(qtbot, "alpha")
+    host = QWidget()
+    qtbot.addWidget(host)
+    bar = FindReplaceBar(editor, parent=host)
+    # `isVisibleTo(host)`, not `isVisible()`: nothing in this test is on screen,
+    # so `isVisible()` is False for any widget. What FQ-016 changed is the bar's
+    # OWN show state (the deleted `self.hide()` in __init__), which is what
+    # `isVisibleTo` reports -- the same idiom the menu tests use.
+    assert bar.isVisibleTo(host) is True
+    assert bar._replace_row_widget.isVisibleTo(bar) is True
+    assert not hasattr(bar, "show_find")
+    assert not hasattr(bar, "show_replace")
+
+
+def test_focus_find_prefills_from_selection(qtbot):
     editor = _editor(qtbot, "alpha beta gamma")
     _select(editor, 6, 10)  # "beta"
     bar = FindReplaceBar(editor)
     qtbot.addWidget(bar)
-    bar.show_find()
+    bar.show()
+    bar.focus_find()
     assert bar._find_field.text() == "beta"
-    assert bar.isVisible() is True
+    assert bar.focusWidget() is bar._find_field
 
 
-def test_show_find_no_selection_leaves_field_unchanged(qtbot):
+def test_focus_find_no_selection_leaves_field_unchanged(qtbot):
     editor = _editor(qtbot, "alpha beta")
     bar = FindReplaceBar(editor)
     qtbot.addWidget(bar)
     bar._find_field.setText("prev")
-    bar.show_find()
+    bar.focus_find()
     assert bar._find_field.text() == "prev"
+
+
+def test_focus_find_never_clobbers_text_the_user_typed(qtbot):
+    """The whole reason prefill moved onto the focus path with an emptiness
+    guard (FQ-016, FQ-017's precedent): a focus gesture must not overwrite a
+    term the user typed just because a selection is still live in the editor."""
+    editor = _editor(qtbot, "alpha beta gamma")
+    _select(editor, 6, 10)  # "beta" selected in the editor
+    bar = FindReplaceBar(editor)
+    qtbot.addWidget(bar)
+    bar._find_field.setText("gamma")  # what the user typed
+    bar.focus_find()
+    assert bar._find_field.text() == "gamma"
+    # ...while `set_find_text` (the right-click Find path) is unconditional.
+    bar.set_find_text("beta")
+    assert bar._find_field.text() == "beta"
+
+
+def test_focus_replace_lands_in_the_replace_field_and_still_arms_find(qtbot):
+    editor = _editor(qtbot, "alpha beta gamma")
+    _select(editor, 6, 10)  # "beta"
+    bar = FindReplaceBar(editor)
+    qtbot.addWidget(bar)
+    bar.show()
+    bar.focus_replace()
+    assert bar.focusWidget() is bar._replace_field
+    assert bar._find_field.text() == "beta"
 
 
 def test_find_next_selects_the_match(qtbot):
@@ -84,15 +129,27 @@ def test_find_next_empty_term_is_noop(qtbot):
     assert editor.textCursor().hasSelection() is False
 
 
-def test_escape_hides_bar_and_refocuses_editor(qtbot):
-    editor = _editor(qtbot, "one page")
-    bar = FindReplaceBar(editor)
-    qtbot.addWidget(bar)
-    bar.show_find()
+def test_escape_returns_focus_to_the_editor_and_never_hides(qtbot):
+    """FQ-016 reversed this test's original assertion on purpose: Escape used to
+    hide the bar; now it only hands focus back."""
+    # Both widgets live in the one shown host, so `setFocus` actually takes
+    # effect. The editor is deliberately NOT registered with qtbot separately --
+    # reparenting a qtbot-owned widget breaks its teardown.
+    host = QWidget()
+    qtbot.addWidget(host)
+    editor = XmlEditor()
+    editor.setPlainText("one page")
+    bar = FindReplaceBar(editor, parent=host)
+    layout = QVBoxLayout(host)
+    layout.addWidget(editor)
+    layout.addWidget(bar)
+    host.show()
+    bar.focus_find()
     QApplication.processEvents()
     event = QKeyEvent(QKeyEvent.Type.KeyPress, Qt.Key.Key_Escape, Qt.KeyboardModifier.NoModifier)
     bar.keyPressEvent(event)
-    assert bar.isVisible() is False
+    assert bar.isVisibleTo(host) is True
+    assert editor.hasFocus() is True
 
 
 # -- Task 4: replace behaviors --------------------------------------------
@@ -227,3 +284,45 @@ def test_replace_all_reports_zero_when_no_matches(qtbot):
     bar.replace_all()
     assert editor.toPlainText() == "nothing here"
     assert messages == ['0 replacement(s) for "zzz"']
+
+
+# -- FQ-016: the Ctrl+F / Ctrl+R focus shortcuts ----------------------------
+
+def test_install_focus_shortcuts_fires_with_the_caret_in_the_editor(qtbot):
+    """The property the host choice exists for: the keys must work while focus is
+    in the EDITOR, which is why they are installed on the widget owning both the
+    editor and the bar, with `WidgetWithChildrenShortcut` context."""
+    from PySide6.QtCore import Qt as _Qt
+    from PySide6.QtWidgets import QVBoxLayout as _VBox
+
+    from pgtp_editor.ui.find_replace_bar import install_focus_shortcuts
+
+    host = QWidget()
+    qtbot.addWidget(host)
+    editor = XmlEditor()
+    editor.setPlainText("alpha beta")
+    bar = FindReplaceBar(editor, parent=host)
+    layout = _VBox(host)
+    layout.addWidget(editor)
+    layout.addWidget(bar)
+    find_shortcut, replace_shortcut = install_focus_shortcuts(host, bar)
+    assert find_shortcut.context() == _Qt.ShortcutContext.WidgetWithChildrenShortcut
+    assert replace_shortcut.context() == _Qt.ShortcutContext.WidgetWithChildrenShortcut
+
+    host.show()
+    QApplication.processEvents()
+    # A shortcut only dispatches while its window is ACTIVE (offscreen included).
+    host.activateWindow()
+    QApplication.processEvents()
+    editor.setFocus()
+    QApplication.processEvents()
+    assert host.isActiveWindow() is True
+
+    qtbot.keyClick(editor, _Qt.Key.Key_F, _Qt.KeyboardModifier.ControlModifier)
+    QApplication.processEvents()
+    assert bar.focusWidget() is bar._find_field
+
+    editor.setFocus()
+    qtbot.keyClick(editor, _Qt.Key.Key_R, _Qt.KeyboardModifier.ControlModifier)
+    QApplication.processEvents()
+    assert bar.focusWidget() is bar._replace_field

@@ -33,6 +33,7 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QMainWindow,
+    QMenuBar,
     QTabWidget,
     QVBoxLayout,
     QWidget,
@@ -315,7 +316,42 @@ class MainWindow(QMainWindow):
         self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self.audit_dock)
 
         self.center_stage = CenterStage()
-        self.setCentralWidget(self.center_stage)
+
+        # §7/§26 (FQ-016): a SECOND, FIXED menu bar directly above the central
+        # pane -- "that's not a toolbar, that's a menubar. Toolbar is just a
+        # collection of favourite commands." Fixed = the app decides its
+        # contents; it is not the user-curated toolbar.
+        #
+        # It has to be a CHILD QMenuBar inside a container widget that becomes
+        # the central widget, because a QMainWindow's own menu-bar/toolbar areas
+        # span the full window width INCLUDING above the docks -- and this bar
+        # must sit strictly above the central pane. `self.center_stage` still
+        # points at the `CenterStage` (which is what every caller and ~534 test
+        # references address); only `centralWidget()` changes, and exactly one
+        # test asserted that coupling.
+        #
+        # PLATFORM SPLIT, deliberate and structural rather than cosmetic: on
+        # macOS the *window* menu bar is absorbed into the system menu bar while
+        # a child QMenuBar renders inline, so the two bars do not look like
+        # siblings there. `setNativeMenuBar(False)` states the intent for this
+        # one explicitly -- it must never be a candidate for absorption, or the
+        # Editor commands would silently merge into the window bar.
+        self.editor_menu_bar = QMenuBar()
+        self.editor_menu_bar.setNativeMenuBar(False)
+        central_container = QWidget(self)
+        central_layout = QVBoxLayout(central_container)
+        central_layout.setContentsMargins(0, 0, 0, 0)
+        central_layout.setSpacing(0)
+        central_layout.addWidget(self.editor_menu_bar)
+        central_layout.addWidget(self.center_stage)
+        self.setCentralWidget(central_container)
+        # The Editor menu bar is meaningless on the non-editor tabs, so the whole
+        # bar is hidden there (§29's recorded recommendation) -- see
+        # `_refresh_editor_menu_affordances`, wired the same way
+        # `_refresh_sandbox_affordances` is: one entry point, visibility only.
+        self.center_stage.currentChanged.connect(
+            lambda _index: self._refresh_editor_menu_affordances()
+        )
 
         # Populate the (static) manual once, into both the center-stage Manual
         # tab and the left-dock Contents tree. Only the resource load is guarded
@@ -476,8 +512,9 @@ class MainWindow(QMainWindow):
         # §9 auto-parse. OFF by default and IN-MEMORY ONLY (no QSettings key --
         # it always starts unchecked, deliberately): a background reparse is a
         # convenience, not a mode to inherit silently from a previous session.
-        # The checkable Edit-menu action is created later by `_build_edit_menu`,
-        # so the attribute exists as None first -- `blockCountChanged` is
+        # The checkable Parsing-menu action is created later by
+        # `_build_parsing_menu` (it was on Edit before FQ-016), so the
+        # attribute exists as None first -- `blockCountChanged` is
         # connected here and could in principle fire before the menu exists.
         # 400 ms mirrors `_snapshot_timer` above, and the timer RESTARTS on each
         # firing so a burst of edits triggers one reparse after it settles.
@@ -653,12 +690,13 @@ class MainWindow(QMainWindow):
 
         #: The find / replace / bookmarks / validate lane
         #: (`ui/find_controller.py`): the per-tab find-bar and bookmark-editor
-        #: routing, the Bookmarks menu (owned outright, so it builds it), the
-        #: Edit-menu Find…/Replace… actions, the whole streaming Find-All run and
-        #: Tier-2 validation. Built before the menu bar because
-        #: `_build_menu_bar` calls `build_bookmarks_menu` and `_build_edit_menu`
-        #: hands it the two actions it owns. Validation reads the open document
-        #: through the same two providers `_gen_ui` uses.
+        #: routing, the Bookmarks menu (owned outright, so it builds it — onto
+        #: the Editor menu bar since FQ-016), the whole streaming Find-All run
+        #: and Tier-2 validation. Built before the menu bar because
+        #: `_build_menu_bar` calls `build_bookmarks_menu`, `_build_parsing_menu`
+        #: wires its `validate_project` and `_install_find_next_action` routes
+        #: F3 at it. Validation reads the open document through the same two
+        #: providers `_gen_ui` uses.
         self._find_ui = FindValidateController(
             self._shell,
             parent=self,
@@ -713,6 +751,9 @@ class MainWindow(QMainWindow):
         self._doc_ui.project_closed.connect(self._db_ui.teardown_for_project_close)
 
         self._build_menu_bar()
+        # F3 (Find Next) -- a window-level action with no menu entry, so it is
+        # installed rather than built into a menu (§27; see the method).
+        self._install_find_next_action()
 
         # §21 custom-PHP editing + §22 PHP lint. Two lanes, deliberately
         # separate objects, wired to each other only HERE: the lint lane hands
@@ -743,7 +784,13 @@ class MainWindow(QMainWindow):
         # Constructed LAST of the collaborators and built here because `build`
         # walks the FINISHED menu bar to derive the command universe (BUG-027).
         self._toolbar_ui = ToolbarController(self._shell, parent=self)
-        self._toolbar_ui.build(self.menuBar(), self.addToolBar)
+        # BOTH menu bars are the command universe since FQ-016 -- one walk over
+        # a sequence of roots. Without the second root every Editor-bar command
+        # would be unpinnable and invisible to Customize Toolbar and FQ-004's
+        # icon assignments.
+        self._toolbar_ui.build(
+            (self.menuBar(), self.editor_menu_bar), self.addToolBar
+        )
 
         # Restore persisted window geometry/dock state and theme (Sub-project D).
         # Done after docks/toolbars/menus exist so restoreState can match dock
@@ -1287,8 +1334,13 @@ class MainWindow(QMainWindow):
         return self._doc_ui.open_file(path)
 
     def _build_menu_bar(self):
+        # The WINDOW menu bar: window-global commands only. There is no `Edit`
+        # menu -- FQ-016 DISSOLVED it (it was not emptied): Undo/Redo/History…
+        # went to the Editor bar's History, Cut/Copy/Paste/Delete and
+        # Preferences… were deleted stubs, the five Find/Replace entries became
+        # the permanently visible bar, the two selection commands are FQ-015's
+        # `Select` and `Auto Parse XML` went to Parsing.
         self._build_file_menu()
-        self._build_edit_menu()
         self._build_view_menu()
         # The Schema menu is owned outright by the §11 lane, so it builds it
         # (and registers its own window-level Ctrl+L action through the host's
@@ -1297,13 +1349,126 @@ class MainWindow(QMainWindow):
         self._xsd_ui.build_menu(self.menuBar(), self.addAction)
         self._build_database_menu()
         self._build_tools_menu()
-        # The Bookmarks menu is owned outright by the find/validate lane, so it
-        # builds it -- called from here so the menu keeps its position in the bar.
-        self._find_ui.build_bookmarks_menu(self.menuBar())
         # The Generation menu is owned outright by the generation lane, so it
         # builds it -- called from here so the menu keeps its position in the bar.
         self._gen_ui.build_menu(self.menuBar())
         self._build_help_menu()
+        # ...then the second bar, above the central pane.
+        self._build_editor_menu_bar()
+
+    def _build_editor_menu_bar(self):
+        """The Editor menu bar's four menus, in order (§7/§26, FQ-016).
+
+        It holds **editing** commands — the deliberate concept name. Calling it
+        "per-tab" would be false: `History…` opens the *project snapshot*
+        navigator and Undo/Redo are project-snapshot actions except on the Edit
+        XSD and DDL object tabs, where §27's pinned carve-out routes Ctrl+Z/Ctrl+Y
+        to that editor's own native stack.
+        """
+        self._build_history_menu()
+        # INSERTION POINT — `Select` (FQ-015): Select All (Ctrl+A), Select
+        # Enclosing Block (Ctrl+Shift+B), Select Parent Block (Ctrl+Shift+A),
+        # each dispatching to the active editor at TRIGGER time (which is also
+        # that lane's bug fix). Deliberately NOT built here: it is a separate
+        # lane, and the two block commands' build-time binding must be fixed in
+        # the same change that moves them. `_build_select_menu()` goes here.
+        self._build_parsing_menu()
+        # The Bookmarks menu is owned outright by the find/validate lane, so it
+        # builds it -- called from here so the menu lands on THIS bar (it was a
+        # top-level window menu between Tools and Generation before FQ-016) and
+        # keeps its position on it.
+        self._find_ui.build_bookmarks_menu(self.editor_menu_bar)
+        self._refresh_editor_menu_affordances()
+
+    def _build_history_menu(self):
+        """History ▸ History… · Undo · Redo — in that order (FQ-016).
+
+        The owner's ordering, verbatim reasoning: *"everyone uses
+        Ctrl+Z/Ctrl+Y anyway"*, so the navigator that has no shortcut leads.
+        Undo/Redo are the same single-step actions the Ctrl+Z/Ctrl+Y shortcuts
+        drive (wired in `__init__`); `History…` opens the non-modal navigator
+        where moving back = undo and forward = redo.
+
+        Their command ids become `history.undo` / `history.redo`, both pinned in
+        `LEGACY_ID_ALIASES` — updated in the same commit, or two DEFAULT toolbar
+        buttons ship empty and iconless (`toolbar_registry`).
+        """
+        menu = self.editor_menu_bar.addMenu("History")
+        history_action = menu.addAction("History…")
+        history_action.triggered.connect(self._open_history_jump_list)
+        self._history_action = history_action
+        undo_action = menu.addAction("Undo")
+        undo_action.triggered.connect(self._undo)
+        self._undo_action = undo_action
+        redo_action = menu.addAction("Redo")
+        redo_action.triggered.connect(self._redo)
+        self._redo_action = redo_action
+
+    def _build_parsing_menu(self):
+        """Parsing ▸ Auto Parse XML · Validate Project (FQ-016).
+
+        `Validate Project` MOVED here off Tools — it is the owner's *"validate
+        xml"*. Its command id therefore changes from `tools.validate-project` to
+        `parsing.validate-project`, and its `LEGACY_ID_ALIASES` entry is updated
+        in the same commit because it is one of the DEFAULT toolbar buttons AND
+        the key of its vendored `dialog-ok-apply` SVG.
+
+        **What is NOT here, and why** — both recorded as open items (§29), so
+        neither was decided unilaterally:
+
+        * **plpgsql check** (`Check DDL Object` / `Check without applying`) does
+          not exist yet in any menu: §18.5 D3a is target design and §26 currently
+          assigns those two gestures to the **Database** menu. They land with
+          `db/ddl_check.py`; whether they land here instead is the owner's call.
+        * **`Lint Current File`** stays on Tools with `Lint on Save` and
+          `Locate PHP Linter…`. Moving only the first of the three would split
+          lint across two bars — the exact complaint this work exists to fix —
+          and whether all three move is the open question.
+
+        **Membership gating.** §7 asks for `setVisible` gating by *active tab
+        kind* (never "mode"), and `_refresh_editor_menu_affordances` is that
+        entry point. Neither member is gated today, and that is a considered
+        decision, not an omission: a toolbar button IS the menu's own QAction, so
+        hiding `Validate Project` per tab would make a DEFAULT toolbar button
+        appear and disappear as the user changes tabs. Both members are also
+        genuinely applicable whenever a document is open, independent of which
+        tab is in front. The seam exists for the check members, whose gate (*"a
+        DDL object editor tab is active"*) is a real capability predicate.
+        """
+        menu = self.editor_menu_bar.addMenu("Parsing")
+        self._parsing_menu = menu
+        # §9 Auto Parse XML: checkable, unchecked at every launch (the state is
+        # in-memory only -- see the timer setup in __init__). The action IS the
+        # toggle's storage; nothing else records it.
+        auto_parse_action = menu.addAction("Auto Parse XML")
+        auto_parse_action.setCheckable(True)
+        auto_parse_action.setChecked(False)
+        auto_parse_action.toggled.connect(self._on_auto_parse_toggled)
+        self._auto_parse_action = auto_parse_action
+        menu.addSeparator()
+        validate_action = menu.addAction("Validate Project")
+        validate_action.triggered.connect(self._find_ui.validate_project)
+        self._validate_project_action = validate_action
+
+    def _refresh_editor_menu_affordances(self) -> None:
+        """The single "make the Editor menu bar match the active tab" entry
+        point, called on every `center_stage.currentChanged` (§7, FQ-016).
+
+        Shaped exactly like `_refresh_sandbox_affordances`: everything here binds
+        **VISIBILITY, never enabled-state** — this app has deliberately kept two
+        postures (present / absent) and greying out would introduce a third.
+
+        Today it does one thing: hide the WHOLE bar on the tabs where all four
+        menus are meaningless — **Caption Management** (a center-stage tab, not a
+        dock, where §13 already wanted Bookmarks disabled) and **Manual**. §29
+        records this as the recommendation and it is what the visibility refresh
+        gives for free. Note it hides the *bar widget*, not the actions, so a
+        pinned toolbar button never blinks out with it.
+        """
+        stage = self.center_stage
+        index = stage.currentIndex()
+        hidden_on = (stage.caption_management_tab_index, stage.manual_tab_index)
+        self.editor_menu_bar.setVisible(index not in hidden_on)
 
     def _build_file_menu(self):
         menu = self.menuBar().addMenu("File")
@@ -1382,79 +1547,32 @@ class MainWindow(QMainWindow):
 
         return launcher_dialog.show_launcher(self, self._settings, force=True)
 
-    def _build_edit_menu(self):
-        menu = self.menuBar().addMenu("Edit")
-        # Undo and Redo are distinct single-step actions (Ctrl+Z / Ctrl+Y are
-        # wired as QShortcuts + editor key-routing in __init__; the menu items
-        # step directly). "History…" opens the non-modal navigator where moving
-        # back = undo and forward = redo.
-        undo_action = menu.addAction("Undo")
-        undo_action.triggered.connect(self._undo)
-        self._undo_action = undo_action
-        redo_action = menu.addAction("Redo")
-        redo_action.triggered.connect(self._redo)
-        self._redo_action = redo_action
-        history_action = menu.addAction("History…")
-        history_action.triggered.connect(self._open_history_jump_list)
-        self._history_action = history_action
-        menu.addSeparator()
-        self._add_stub_action(menu, "Cut")
-        self._add_stub_action(menu, "Copy")
-        self._add_stub_action(menu, "Paste")
-        self._add_stub_action(menu, "Delete")
-        menu.addSeparator()
+    def _install_find_next_action(self):
+        """**F3 = Find Next** — a window-level ``QAction`` with NO menu entry
+        (§27, FQ-016). Owner ruling: *"why does F3 die? it should find next."*
 
-        # The five find/replace entries belong to the find/validate lane; the
-        # Find… / Replace… pair is handed over to it below because Caption Mode
-        # gates their enabled state.
-        find_action = menu.addAction("Find...")
-        find_action.setShortcut("Ctrl+F")
-        find_action.triggered.connect(self._find_ui.show_find)
+        It survives the Edit menu's dissolution rebound onto the same shape as
+        **Ctrl+L Go To XSD** (`xsd_controller.build_menu`): a window action added
+        with `addAction`, routed through the exact dispatch the deleted Edit
+        QAction used (`FindValidateController.find_next` ->
+        `active_find_bar().find_next()`).
 
-        find_next_action = menu.addAction("Find Next")
-        find_next_action.setShortcut("F3")
-        find_next_action.triggered.connect(self._find_ui.find_next)
+        **Window-level, NOT bar-local.** The whole point of F3 is that it works
+        while the caret is in the EDITOR; a `keyPressEvent` on `FindReplaceBar`
+        would only fire once the bar already had focus. It is window-level rather
+        than per-tab (unlike Ctrl+F/Ctrl+R, see `install_focus_shortcuts`) because
+        nothing else in the app binds F3, so there is no ambiguity to avoid.
 
-        find_all_action = menu.addAction("Find All")
-        find_all_action.setShortcut("Ctrl+Shift+F")
-        find_all_action.triggered.connect(self._find_ui.find_all_in_active_bar)
-
-        replace_action = menu.addAction("Replace...")
-        replace_action.setShortcut("Ctrl+R")
-        replace_action.triggered.connect(self._find_ui.show_replace)
-
-        replace_all_action = menu.addAction("Replace All")
-        replace_all_action.setShortcut("Ctrl+Alt+Return")
-        replace_all_action.triggered.connect(self._find_ui.replace_all)
-
-        self._find_ui.set_find_actions(find_action, replace_action)
-
-        menu.addSeparator()
-
-        select_enclosing_action = menu.addAction("Select Enclosing Block")
-        select_enclosing_action.setShortcut("Ctrl+Shift+B")
-        select_enclosing_action.triggered.connect(
-            self.center_stage.xml_editor.select_enclosing_block
-        )
-
-        select_parent_action = menu.addAction("Select Parent Block")
-        select_parent_action.setShortcut("Ctrl+Shift+A")
-        select_parent_action.triggered.connect(
-            self.center_stage.xml_editor.select_parent_block
-        )
-
-        menu.addSeparator()
-        # §9 Edit ▸ Auto Parse XML: checkable, unchecked at every launch (the
-        # state is in-memory only -- see the timer setup in __init__). The
-        # action IS the toggle's storage; nothing else records it.
-        auto_parse_action = menu.addAction("Auto Parse XML")
-        auto_parse_action.setCheckable(True)
-        auto_parse_action.setChecked(False)
-        auto_parse_action.toggled.connect(self._on_auto_parse_toggled)
-        self._auto_parse_action = auto_parse_action
-
-        menu.addSeparator()
-        self._add_stub_action(menu, "Preferences...")
+        Accepted consequence: a shortcut with no menu entry is invisible to
+        `_walk_menu_actions` and therefore **can never be pinned** to the toolbar
+        — F3 joins the existing Ctrl+L / Ctrl+Alt+F / Ctrl+Return category,
+        alongside Find itself (*"Find unpinnable is fine"*).
+        """
+        action = QAction("Find Next", self)
+        action.setShortcut(QKeySequence("F3"))
+        action.triggered.connect(self._find_ui.find_next)
+        self.addAction(action)
+        self._find_next_action = action
 
     def _build_view_menu(self):
         menu = self.menuBar().addMenu("View")
@@ -1645,11 +1763,14 @@ class MainWindow(QMainWindow):
         self.center_stage.caption_management_panel.load_entries(entries, snapshot_text=snapshot)
         self.center_stage.enter_caption_mode()
         self._mode_label.setText("Caption Mode (XML read-only)")
-        # Caption Mode is authoritative: Ctrl+F / Ctrl+R follow the mode, not
-        # focus. Disable the editor Find…/Replace… actions (disabling a QAction
-        # disables its shortcut, so there is no ambiguous-shortcut conflict) and
-        # let the caption panel's own panel-scoped focus shortcuts win (FQ-017).
-        self._find_ui.set_find_actions_enabled(False)
+        # No Ctrl+F / Ctrl+R gating is needed any more (FQ-016): the Edit-menu
+        # Find…/Replace… QActions this used to disable are gone with the Edit
+        # menu, and their replacements are per-editor-tab focus shortcuts scoped
+        # to the tab that owns each bar (`install_focus_shortcuts`). The caption
+        # panel's own panel-scoped pair (FQ-017) is therefore the ONLY live match
+        # while the caption grid has focus, structurally rather than by gating —
+        # which is why `set_find_actions`/`set_find_actions_enabled` could be
+        # deleted outright instead of re-pointed.
         # §8/§13: the Raw XML editor is read-only in Caption Mode, so the
         # Bookmarks menu and its four shortcuts go with it. The lane that owns
         # the menu disables the menu AND every child action (a disabled QMenu
@@ -1697,11 +1818,9 @@ class MainWindow(QMainWindow):
         Pending (unapplied) edits are discarded by re-scanning on next enter."""
         self.center_stage.leave_caption_mode()
         self._mode_label.setText("Editing Mode")
-        # Reverse the mode gating: restore the editor Find…/Replace… actions
-        # (and their Ctrl+F / Ctrl+R shortcuts). The caption panel's own focus
-        # shortcuts go quiet on their own — they are scoped to that panel, which
-        # is no longer on screen.
-        self._find_ui.set_find_actions_enabled(True)
+        # Nothing to un-gate: see `_enter_caption_mode`. Both sides' Ctrl+F /
+        # Ctrl+R are focus shortcuts scoped to the surface that owns them, so each
+        # goes quiet on its own when that surface is not on screen.
         self._find_ui.set_bookmarks_enabled(True)
 
     def _caption_go_to_line(self, line: int) -> None:
@@ -3453,12 +3572,15 @@ class MainWindow(QMainWindow):
         # Find/Replace bar, which is the single surface for caption
         # find/filter/replace.
         menu.addSeparator()
-        validate_action = menu.addAction("Validate Project")
-        validate_action.triggered.connect(self._find_ui.validate_project)
-        menu.addSeparator()
-        # §22 PHP lint. Directly under Validate Project because it is the same
-        # kind of gesture one tier down (this file, not the project), and all
-        # three feed the one Audit panel -- `[Lint]`, never `[Validate]`'s or
+        # `Validate Project` MOVED to the Editor bar's Parsing menu (FQ-016) --
+        # it is the owner's "validate xml". Its command id changed with it, so
+        # `LEGACY_ID_ALIASES` was updated in the same commit (it is one of the
+        # default toolbar buttons).
+        #
+        # §22 PHP lint stays HERE, with `Lint on Save` and `Locate PHP Linter…`:
+        # whether all three follow Validate onto Parsing is an open item (§29),
+        # and moving only `Lint Current File` would split lint across two bars.
+        # All three feed the one Audit panel -- `[Lint]`, never `[Validate]`'s or
         # §18.5's `[Check]` prefix. Lambdas: `_lint_ui` is built after the menu.
         lint_action = menu.addAction("Lint Current File")
         lint_action.triggered.connect(lambda: self._lint_ui.lint_active_file())

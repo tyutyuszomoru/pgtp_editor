@@ -27,10 +27,6 @@ Audit panel*, plus the two menus that are nothing but that:
 * the **Bookmarks menu** — a menu owned outright by one collaborator moves with
   it, so this lane builds it (:meth:`build_bookmarks_menu`) and gates it during
   Caption Mode (:meth:`set_bookmarks_enabled`, §8/§13);
-* the **Edit-menu Find… / Replace… actions**, handed over by the host after the
-  Edit menu is built (:meth:`set_find_actions`), because the rest of that menu
-  (undo/redo/history/selection) belongs elsewhere. Caption Mode gates them
-  through :meth:`set_find_actions_enabled`;
 * the **whole streaming Find-All run**: the batch timer, the match iterator, the
   stop flag, the running count, the term and the target tab — see below;
 * the **Tier-2 project validation** run (:meth:`validate_project`) and the two
@@ -74,10 +70,10 @@ Two find-all entry points, deliberately named apart
 It is what a ``FindReplaceBar``'s Find-All button ultimately reaches (the host
 wires it as each bar's ``set_on_find_all``) and what
 ``CoherenceController`` is injected with to list a DB node's occurrences.
-:meth:`find_all_in_active_bar` is the *Edit ▸ Find All menu action* — it asks the
-active tab's bar to run its own find-all, which then comes back round through
-:meth:`find_all`. Same lineage as :meth:`show_find` / :meth:`find_next` /
-:meth:`replace_all`, which are all "act on the active bar".
+The second entry point, ``find_all_in_active_bar`` (*Edit ▸ Find All*), is
+**gone** with the Edit menu (FQ-016): Find All is started from the permanently
+visible bar's own button, which reaches :meth:`find_all` directly. The only
+"act on the active bar" method left here is :meth:`find_next`, F3's host.
 
 Needs
 -----
@@ -154,11 +150,6 @@ class FindValidateController(QObject):
         self._project = project
         self._project_path = project_path
 
-        #: The Edit-menu Find… / Replace… actions, handed over by
-        #: `set_find_actions` once the Edit menu is built. None until then.
-        self._find_action = None
-        self._replace_action = None
-
         #: The Bookmarks menu and its four actions, retained by
         #: `build_bookmarks_menu` so `set_bookmarks_enabled` can gate the menu
         #: **and every child action** during Caption Mode (§8/§13). None / empty
@@ -216,16 +207,6 @@ class FindValidateController(QObject):
         :meth:`build_bookmarks_menu`). The separator is not included."""
         return self._bookmark_actions
 
-    @property
-    def find_action(self):
-        """The Edit ▸ Find… ``QAction`` (None before :meth:`set_find_actions`)."""
-        return self._find_action
-
-    @property
-    def replace_action(self):
-        """The Edit ▸ Replace… ``QAction`` (None before :meth:`set_find_actions`)."""
-        return self._replace_action
-
     # -- construction --------------------------------------------------------
 
     def build_bookmarks_menu(self, menu_bar) -> None:
@@ -282,8 +263,9 @@ class FindValidateController(QObject):
         Called by the host on entering/leaving Caption Mode, where the Raw XML
         editor is read-only. Both halves are needed: disabling the `QMenu` alone
         grays out the menu-bar entry while Ctrl+F2 / F2 / Shift+F2 keep firing
-        (Qt only drops a shortcut when the *action* is disabled) -- the same
-        reason `set_find_actions_enabled` disables its two actions individually.
+        (Qt only drops a shortcut when the *action* is disabled) -- the Qt rule
+        the deleted `set_find_actions_enabled` demonstrated on the Edit-menu
+        Find…/Replace… pair (both gone with the Edit menu, FQ-016).
         Gutter bookmark toggling is deliberately NOT gated: bookmarks are a UI
         overlay independent of the editor's read-only state.
         """
@@ -291,29 +273,6 @@ class FindValidateController(QObject):
             self._bookmarks_menu.setEnabled(enabled)
         for action in self._bookmark_actions:
             action.setEnabled(enabled)
-
-    def set_find_actions(self, find_action, replace_action) -> None:
-        """Adopt the Edit-menu Find… / Replace… actions.
-
-        The host builds the Edit menu (most of it belongs to other lanes) and
-        hands these two over, mirroring how `CoherenceController` receives the
-        Database-menu toggle it owns.
-        """
-        self._find_action = find_action
-        self._replace_action = replace_action
-
-    def set_find_actions_enabled(self, enabled: bool) -> None:
-        """Enable/disable the Edit-menu Find… / Replace… actions.
-
-        Caption Mode is authoritative about Ctrl+F / Ctrl+R: while it is active
-        those keys drive the caption Filter / Replace dialogs, so these two
-        actions are disabled (disabling a QAction disables its shortcut, so
-        there is no ambiguous-shortcut conflict) and restored on the way out.
-        """
-        if self._find_action is not None:
-            self._find_action.setEnabled(enabled)
-        if self._replace_action is not None:
-            self._replace_action.setEnabled(enabled)
 
     # -- per-tab routing -----------------------------------------------------
 
@@ -380,33 +339,29 @@ class FindValidateController(QObject):
             return draft.editor
         return stage.xml_editor
 
-    # -- the Edit-menu gestures (act on the active bar) -----------------------
-
-    def show_find(self) -> None:
-        self.active_find_bar().show_find()
-
-    def show_replace(self) -> None:
-        self.active_find_bar().show_replace()
+    # -- the one surviving window-level gesture (acts on the active bar) ------
 
     def find_next(self) -> None:
+        """**F3** — the only Find gesture left with a window-level host (§27).
+
+        FQ-016 dissolved the Edit menu, and with it `show_find`/`show_replace`
+        (Ctrl+F/Ctrl+R are now per-tab *focus* shortcuts owned by each bar's host
+        widget), `find_all_in_active_bar` and `replace_all` (Find All / Replace
+        All are button-only now — Ctrl+Shift+F and Ctrl+Alt+Return are deleted).
+        F3 kept its window-level shape because it must fire with the caret in the
+        editor and nothing competes for the key: the host installs it as a
+        menu-less `QAction` on the `Ctrl+L` Go To XSD precedent, routed here.
+        """
         self.active_find_bar().find_next()
 
-    def find_all_in_active_bar(self) -> None:
-        """Edit ▸ Find All: ask the active tab's bar to run its find-all, which
-        comes back round through :meth:`find_all`. Named apart from that method
-        on purpose -- see the module docstring."""
-        self.active_find_bar().find_all()
-
-    def replace_all(self) -> None:
-        self.active_find_bar().replace_all()
-
     def on_find_selected_text(self, text: str) -> None:
-        """Editor right-click "Find": reveal the Raw XML tab, prefill the find
-        bar with the selection, and run Find Next -- the same path Edit ->
-        Find/Find Next drives."""
+        """Editor right-click "Find": reveal the Raw XML tab, set the find bar's
+        term from the selection, and run Find Next.
+
+        `set_find_text` (unconditional) rather than the bar's focus path: this is
+        an explicit "search for this", not a "put my cursor there"."""
         self._shell.reveal_raw_xml()
         bar = self._shell.stage.find_replace_bar
-        bar.show_find()
         bar.set_find_text(text)
         bar.find_next()
 
