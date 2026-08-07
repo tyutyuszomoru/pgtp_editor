@@ -1569,3 +1569,401 @@ strings under e.g. `"shortcutOverrides"`); the precise key-capture widget; and w
 also display their (fixed) bindings for reference.
 
 ---
+
+## FQ-016: A second, fixed **Editor menu bar** above the central pane — and the dissolution of the Edit menu
+**Status:** QUEUED
+**Requested:** 2026-08-07
+**Scope note (read first):** this is the largest item of the slow UX review (`docs/UX_REVIEW.md`). It was
+**deliberately split in two at triage**: this entry owns the Editor menu bar, the Edit-menu dissolution, the
+always-visible `FindReplaceBar`, and the toolbar/shortcut fallout. **FQ-017 owns the Caption Management
+half** (deleting the caption modal, the permanent caption bar and its new buttons) — see that entry's
+rationale for why the caption work is a genuinely separable unit and not a sub-bullet here.
+**Related, already-queued parts of the same design — reference, do not re-specify:** **FQ-015** (the
+`Select` menu and the build-time-vs-trigger-time selection-binding bug), **FQ-014** (`List All Bookmarks`),
+**FQ-013** (bookmark persistence). **FQ-017** is a hard dependency for one ruling below (it deletes the two
+caption-mode `Ctrl+F`/`Ctrl+R` `QShortcut`s that today collide with the Edit-menu bindings).
+
+**Idea (verbatim/summarized):** The owner settled, over several rounds, that per-tab editing commands
+belong on a **second, fixed menu bar directly above the central pane** — *"that's not a toolbar, that's a
+menubar. Toolbar is just a collection of favourite commands."* Fixed = the app decides its contents; it is
+not user-composable. Its menus: **History** (`History…`, `Undo`, `Redo`, in that order — *"everyone uses
+Ctrl+Z/Ctrl+Y anyway"*), **Select** (FQ-015), **Parsing** (`Auto Parse XML` plus mode-dependent checking —
+*"if I'm editing a DDL, Parsing should have menu for plpgsql check, or php lint, or validate xml"*),
+**Bookmarks** (the existing four plus FQ-014's `List All Bookmarks`). Correspondingly, commands are
+**evicted from the window's Edit menu**: the whole Find/Replace family (*"Find unpinnable is fine"*),
+`Cut`/`Copy`/`Paste`/`Delete` (*"I don't know anyone who uses menu for Ctrl+C/V/X so that can also go"*)
+and `Preferences...` (*"Preferences can go"*). And the Find/Replace bar becomes **permanently visible in
+its expanded form** in every editor — *"That section must be always visible… not the results, just the
+fields. no new feature."* — with `Ctrl+F`/`Ctrl+R` demoted to **focus** actions and **Escape returning
+focus to the editor** instead of hiding the bar. Accepted cost, in the owner's words: *"this takes up a bit
+of space, but more natural to use."*
+**These are rulings, not proposals.** Triage challenged only where a ruling collides with the code; every
+such collision is recorded below under its own heading and none of them contradicts the owner's intent —
+they are consequences that need one more decision each.
+
+**Problem:** Two distinct complaints, one structural cause.
+1. **The window menu bar mixes window-global and per-tab commands with no visible boundary.** `Edit` today
+   holds project-history `Undo`/`Redo`/`History…` (which act on the **project snapshot** stack), four
+   dead stubs, the per-tab Find/Replace family (routed by `FindValidateController.active_find_bar()`,
+   `find_controller.py:320-350`), two selection commands that are **wrongly** window-global (FQ-015), and a
+   §9 parsing toggle. Nothing on screen tells the user which of those follow the tab they are looking at.
+   `Bookmarks` is a correct per-tab menu (`find_controller.py:231-244`: *"Each action resolves the target
+   editor at TRIGGER time via `active_bookmark_editor`"*) sitting in the window bar next to window-global
+   menus. A user cannot tell the two classes apart because the container does not distinguish them.
+2. **Find/Replace is modal-feeling and its state is invisible.** `FindReplaceBar` hides itself on
+   construction (`find_replace_bar.py:81`), `show_find()` hides the replace row while `show_replace()`
+   shows it (`:100-112`), and `Escape` hides the whole bar (`:126-131`). So the user cannot see whether a
+   search term is still armed, `Ctrl+F` and `Ctrl+R` are two different reveal gestures onto one widget, and
+   the replace row's existence is a mode the user has to remember they are in.
+3. **Seven "Not yet implemented" stub actions** (`_add_stub_action`) violate the app's own
+   absent-not-disabled rule (`docs/UX_REVIEW.md` §D6); five of them are on `Edit`
+   (`Cut`/`Copy`/`Paste`/`Delete` at `main_window.py:1404-1407`, `Preferences...` at `:1460`). Deleting them
+   is deletion of dead UI, not un-wiring of working commands.
+
+**Proposed approach**
+
+**(a) The container.** A `QMenuBar` **inside a container widget** that becomes the central widget, with
+`CenterStage` below it. A `QMainWindow` toolbar/menubar *area* spans the full window width including above
+the docks, so a bar that must sit **strictly** above the central pane cannot use that area. Verified this
+is cheap: `setCentralWidget(self.center_stage)` is **one line** (`main_window.py:319`), and all **534** test
+references are to the `window.center_stage` **attribute**, which keeps pointing at the `CenterStage`.
+**Exactly one** test asserts the coupling — `tests/ui/test_main_window.py:43`,
+`assert window.centralWidget() is window.center_stage` — and it is the only test that must change.
+- **Platform split, stated so it is not discovered later:** macOS absorbs the *window* menu bar into the
+  system menu bar while a **child** `QMenuBar` renders inline. So on macOS the two bars will not look like
+  siblings. Not a styling detail — a structural difference the spec should name.
+
+**(b) Membership, and why `Parsing` is specifiable NOW.** The owner's *"if I'm editing a DDL"* is **not**
+FQ-011's persisted launch mode. It is the **active center-stage tab's kind**, which this app already
+resolves at trigger time in four places (`active_find_bar`, `active_bookmark_editor`,
+`stage.active_ddl_object_panel()`, `_save_active_tab`), and which §26 already uses as a gating predicate
+(`Check DDL Object` … *"disabled unless a DDL object editor tab is active, kept in sync on
+`center_stage.currentChanged`"*, spec line 5435). **This is capability gating, not intent gating** — the
+exact distinction FQ-011's recorded objection turns on — so it does **not** inherit FQ-011's dependency and
+must not be folded into FQ-011's per-mode membership work. Triage's recommendation, offered as the answer
+to the question the owner most wanted judged: **specify `Parsing` here, now, keyed to tab kind.**
+- **Never call this a "mode" in the spec or the code.** The word is already carrying four meanings:
+  FQ-010/FQ-011's launch mode, Caption Mode (§13), `_xsd_mode` (§11) and `DdlObjectRef.kind`. Use
+  **"active tab kind"**. If FQ-011 later lands, the two filters **compose** (intent hides menus, tab kind
+  hides entries within `Parsing`) and neither may be built as the other.
+- **Build every `Parsing` member once and gate by `setVisible`, never create/destroy per tab.**
+  `ToolbarController.collect_menu_commands()` is re-walked when Customize Toolbar opens
+  (`toolbar_controller.py:281,373`), so a menu whose actions are *destroyed* per tab kind would make the
+  Available list vary with the active tab and would leave `_menu_commands` holding dead QActions. Visibility
+  gating keeps ids stable and matches the one existing precedent verbatim:
+  `MainWindow._refresh_sandbox_affordances` (`main_window.py:3050-3075`) — *"Everything here binds
+  VISIBILITY, never enabled-state."* A sibling `_refresh_editor_menu_affordances()` on
+  `center_stage.currentChanged` is the shape to copy.
+- **What `Parsing` actually contains, verified command by command:**
+  - `Auto Parse XML` — exists, checkable, in-memory-only (`main_window.py:1450-1457`). Moves cleanly; it
+    carries no legacy toolbar id.
+  - `Validate Project` — exists on **Tools** (`main_window.py:3517`). **This is the owner's "validate
+    xml".** ⚠️ **A FOURTH legacy id the brief did not list:** `tools.validate-project` is pinned in
+    `LEGACY_ID_ALIASES` as `"validate"` (`toolbar_registry.py:61`), which makes it one of the **seven
+    default toolbar buttons** *and* the key of its vendored `dialog-ok-apply` SVG via the inverse
+    `ICON_ID_BY_COMMAND`. Moving it to `Parsing` changes its id to `parsing.validate-project`, so **a
+    default toolbar button ships empty and iconless** unless `LEGACY_ID_ALIASES` is updated in the same
+    commit — identical in kind to the `edit.undo`/`edit.redo` hazard the owner already accepted, but it was
+    not on the list.
+  - `Lint Current File` — exists on **Tools** (`main_window.py:3524`), with `Lint on Save` (`:3526`) and
+    `Locate PHP Linter…` (`:3531`) beside it. Not legacy-pinned, so no default button breaks, but any
+    **user-saved** toolbar containing `tools.lint-current-file` silently loses that button (§7's id
+    derivation). **Decide explicitly whether `Lint on Save` and `Locate PHP Linter…` follow it** — leaving
+    them on Tools splits lint across two bars, which is exactly the `docs/UX_REVIEW.md` §A3 complaint.
+  - **plpgsql check — DOES NOT EXIST YET, and this, not FQ-011, is `Parsing`'s real dependency.** §18.5
+    D3a's `Check DDL Object` / `Check without applying` are **target design**; §26 states plainly that
+    *"none of them exists in `_build_database_menu` today"* (spec line 5407) and §27 that *"the **Check**
+    gestures wait on `db/ddl_check.py` (D3a)"* (spec line 5486). The DDL object tab's only check path today
+    is the `CheckReport` that `Apply to Sandbox` returns (`ddl_object_editor.py:538`). So: **ship `Parsing`
+    with `Auto Parse XML` + the validate/lint members, and let the plpgsql-check member land with D3a.**
+    ⚠️ **Spec conflict `spec-maintainer` must reconcile deliberately:** §26 assigns the two Check gestures
+    to the **Database** menu. If they land on `Parsing` instead, §26's placement is overridden (ledger row
+    warranted). Triage's recommendation is that they belong on `Parsing` and the Database-menu twins should
+    be dropped rather than duplicated — the gestures are per-tab and the Editor bar is the per-tab bar — but
+    that is an owner call, not triage's.
+- **`History` mixes classes, and the owner may not have weighed it.** `History…` opens the **project
+  snapshot** history navigator (`_open_history_jump_list`, `main_window.py:1400-1402`); `Undo`/`Redo` are
+  the window's project-snapshot actions **except** on the Edit XSD and DDL object tabs, where §27's pinned
+  carve-out 1 routes `Ctrl+Z`/`Ctrl+Y` to that editor's **own native stack** via an event filter. So a
+  *project-global* command and a *conditionally per-tab* pair land on a bar the owner described as holding
+  per-tab commands. Either accept the mixture and describe the bar as **"editing commands"** rather than
+  "per-tab commands", or move `History…` back to a window menu. Recommend the former — renaming the concept
+  is cheaper than a fourth relocation — but state it, because §26 will otherwise read as if the Editor bar
+  is strictly per-tab.
+- **The `Caption Management` tab is a center-stage tab, not a dock** (`center_stage.py:148-150`), so this
+  bar sits above it too — where `History`, `Select`, `Parsing` and `Bookmarks` are all meaningless (§13's
+  target design already disables the Bookmarks menu in Caption Mode). **Decide what the Editor menu bar
+  shows on the Caption Management tab** — recommend the whole bar is hidden there, which the visibility
+  refresh in (b) gives for free.
+
+**(c) The Edit menu dissolves — with one consequence the brief did not cover.** After the moves and
+deletions, `Edit` (built at `main_window.py:1390-1460`) has **no members left**: `Undo`/`Redo`/`History…` →
+`History`; `Cut`/`Copy`/`Paste`/`Delete` + `Preferences...` → deleted stubs; the five Find/Replace entries
+→ the permanent bar; the two selection commands → FQ-015's `Select`; `Auto Parse XML` → `Parsing`. The menu
+is removed, not left empty.
+- ⚠️ **DELETING THE FIVE FIND/REPLACE QActions DELETES THREE SHORTCUTS.** `F3` (`:1418`), `Ctrl+Shift+F`
+  (`:1422`) and `Ctrl+Alt+Return` (`:1430`) are set **only** on those QActions; `Ctrl+F` (`:1414`) and
+  `Ctrl+R` (`:1426`) likewise. The permanent bar has **buttons, not shortcuts**. So the bar owning the
+  *commands* does not make it own the *keys* — all five bindings need an explicit new home (window
+  `QShortcut`s, or actions on the bar/Editor menu bar). **This also decides FQ-012's fate for them:**
+  FQ-012's Customize Shortcuts dialog enumerates **menu** QActions via `collect_menu_commands()`, so any of
+  the five that becomes a bare `QShortcut` drops out of FQ-012's rebindable list and into its
+  "reserved rows" carve-out. Cross-reference both ways.
+- `FindValidateController.set_find_actions(find_action, replace_action)` (`main_window.py:1433`,
+  `find_controller.py:302-316`) exists **solely** so Caption Mode can disable those two QActions and let its
+  own `QShortcut`s win. With the actions gone that seam is dead — and it is dead anyway once **FQ-017**
+  deletes the caption shortcuts. Remove both together; **FQ-017 should land first or in the same commit**,
+  otherwise there is a window in which nothing owns `Ctrl+F`.
+- **This resolves `docs/UX_REVIEW.md` dossier E1 for free.** Today `Ctrl+R` is both `Edit ▸ Replace...`
+  (whose menu row *advertises* `Ctrl+R`) and a caption-mode `QShortcut` (`main_window.py:390`); same for
+  `Ctrl+F` at `:379`. The menu advertises one behaviour while the key does another. Both halves disappear.
+
+**(d) The permanent, expanded `FindReplaceBar`.** **Nine** instances across six files (`ddl_editor_panel`,
+`php_file_tab`, `ddl_object_editor`, `center_stage` ×2, plus the class) all become permanent. Four hide/show
+sites change and should be **deleted, not left inert**:
+- `self.hide()` at `find_replace_bar.py:81` — goes.
+- `show_find()` / `show_replace()` (`:100-112`) collapse into one **focus** operation; the
+  `_replace_row_widget.hide()/.show()` machinery becomes dead code (the row is always shown).
+- `keyPressEvent`'s `Escape → self.hide()` (`:126-131`) becomes `Escape → self._editor.setFocus()` only.
+- ⚠️ **`_prefill_from_selection` loses its home.** It runs from **both** `show_find` and `show_replace`
+  (`:102`/`:109`); with no show, "select a word, press `Ctrl+F`" stops prefilling unless prefill is moved
+  onto the focus path. Note it must stay distinct from `set_find_text` (`:114-119`), which the editor's
+  right-click Find path uses and which prefills *unconditionally*.
+- ⚠️ **`active_find_bar()` reveals the Raw XML tab as a fallback side effect** (`find_controller.py:349`).
+  Revealing another tab was defensible when `Ctrl+F` *showed* a bar; as a pure **focus** gesture, focusing a
+  bar by yanking the user to a different document is surprising. Decide: keep the reveal, or make focus a
+  no-op on tabs with no bar (the Manual tab).
+
+**(e) The favourites toolbar must walk BOTH bars.** `ToolbarController.build(self.menuBar(),
+self.addToolBar)` (`main_window.py:766`) stores a single `self._menu_bar` and `_walk_menu_actions` roots at
+`self._menu_bar.actions()` (`toolbar_controller.py:215`). Everything downstream — Customize Toolbar's
+Available list, command ids, FQ-004 icon assignments, and FQ-012's shortcut list — flows from that one
+walk. **Extend `build`/the walk to cover both bars (a sequence of roots, not a second mechanism)**, or every
+command on the Editor menu bar becomes unpinnable and invisible to FQ-004/FQ-012. Ordering is already fine:
+the container is built at `main_window.py:318`, the walk at `:766`.
+- **Id changes, cumulative list** (ids derive from label **and** menu path; case-only and `...`↔`…` changes
+  are safe because `normalize_label` strips ellipsis and `slugify` lowercases): `edit.undo`→`history.undo`
+  and `edit.redo`→`history.redo` (**both `LEGACY_ID_ALIASES`-pinned — update in the same commit or two
+  default buttons ship empty and iconless**); `tools.validate-project`→`parsing.validate-project` (**also
+  pinned — see (b)**); `edit.find` loses its menu home entirely (**accepted by the owner: "Find unpinnable
+  is fine"** — which means the `"find"` legacy alias and its `edit-find` SVG also go stale and should be
+  handled deliberately, not left dangling); plus non-pinned moves (`edit.auto-parse-xml`,
+  `tools.lint-current-file`, `edit.history`, `edit.select-*`) that silently drop off **user-saved**
+  toolbars. `resolve_ids` already prunes unknown ids, so nothing crashes — buttons just vanish.
+
+**Alternatives considered**
+- **A toolbar instead of a second menu bar** — **rejected by the owner, verbatim and unambiguously**
+  (*"that's not a toolbar, that's a menubar. Toolbar is just a collection of favourite commands"*). Recorded
+  because a `QToolBar` would have needed no container widget and no change to `setCentralWidget`; the
+  owner's distinction is a deliberate conceptual one (fixed/app-decided vs. user-curated favourites) and the
+  existing customizable toolbar already occupies the other role. Do not re-decide this.
+- **Keep `Edit` as a thin shell** (e.g. `Undo`/`Redo` only) so no saved toolbar id changes and `edit.find`
+  survives — the smaller-blast-radius option, **rejected**: it defeats the point (the owner wants editing
+  commands off the window bar) and leaves the window bar with a menu whose only members duplicate the
+  Editor bar's `History`.
+- **Leave the Find/Replace bar hideable and merely default it to visible** — considered, and worth naming
+  because it would preserve `Escape`-to-hide, keep `edit.find` pinnable and cost nothing. **Rejected by the
+  owner's explicit double-clarification** that the section is *always* visible and `Escape` returns focus.
+  The honest argument on its side is screen space, which the owner already weighed and accepted.
+- **Fix the seven `_add_stub_action` stubs (absent-not-disabled) as a standalone change instead** — this is
+  `docs/UX_REVIEW.md` §D6 and FQ-011's recorded counter-proposal. **Not an alternative to this entry**, but
+  note five of the seven die here as a side effect, so §D6's remaining surface after this lands is only the
+  two tree stubs (`Compare Selected`, `Copy Selected to...`).
+- **One entry covering the caption work too** — rejected; see FQ-017's opening rationale.
+
+**Suggested placement:** **EXTEND §7 (App shell)** as the primary home for the *container* — §7 owns
+`setCentralWidget`/`CenterStage`, the toolbar's menu-walk command universe (spec lines ~601-683) and the
+id-derivation rules, all three of which change. **EXTEND §26 (Consolidated menu bar, lines 5342-5465)** for
+the inventory: it must now describe **two** menu bars, **delete the `Edit` bullet entirely** (lines
+5365-5369), move `Bookmarks` (5377-5384) and add `History`/`Select`/`Parsing`, and reconcile §26's
+Database-menu placement of the D3a Check gestures against `Parsing` (see (b)). **EXTEND §27 (shortcuts,
+lines 5469-5497)** for the five re-homed Find/Replace bindings, the `Escape` ruling, and the deletion of the
+`Ctrl+F`/`Ctrl+R` Caption-Mode override row (5477 — jointly with FQ-017). **EXTEND §8** for the always-visible
+bar as a shared editor behaviour, and §15 for the Find All routing note. **CREATE no new section** — every
+piece of this lands in an existing one. A **Supersession Ledger row is warranted** for the Edit menu's
+removal and for §27's `Ctrl+F`/`Ctrl+R`-as-show→focus change. Whoever folds this in must reuse
+`_refresh_sandbox_affordances`'s visibility-never-enabled-state shape, `active_find_bar`/
+`active_bookmark_editor`'s trigger-time dispatch, and the single `_walk_menu_actions` (widened, not
+duplicated).
+
+**Open questions**
+1. **Does `Parsing` host D3a's `Check DDL Object` / `Check without applying`, overriding §26's
+   Database-menu placement, or do those stay on Database and `Parsing` gets a third thing?** Triage
+   recommends the former with no Database-menu twins. Owner call.
+2. **Do `Lint on Save` and `Locate PHP Linter…` follow `Lint Current File` onto `Parsing`,** or does lint
+   stay split across two bars?
+3. **`tools.validate-project` is a pinned default toolbar button with a vendored SVG** — confirm the
+   `LEGACY_ID_ALIASES` update (same treatment the owner already accepted for undo/redo), and decide what
+   happens to the now-homeless `"find"` alias and its `edit-find` SVG.
+4. **Where do `F3` / `Ctrl+Shift+F` / `Ctrl+Alt+Return` / `Ctrl+F` / `Ctrl+R` live** once the Edit QActions
+   are deleted — and therefore whether they remain FQ-012-rebindable or move to its reserved rows.
+5. **What does the Editor menu bar show on the Caption Management tab** (recommend: nothing — hide the bar)
+   and on the Manual tab?
+6. **Is `History…` acceptable on a bar otherwise made of per-tab commands** (recommend: yes, and describe
+   the bar as "editing commands"), and does `active_find_bar`'s Raw-XML reveal survive `Ctrl+F` becoming a
+   focus gesture?
+
+---
+
+## FQ-017: Delete the Caption Filter modal; make the caption Find/Replace bar permanent, with a scope dropdown
+**Status:** QUEUED
+**Requested:** 2026-08-07
+**Why this is its own entry (not a bullet in FQ-016):** the owner settled it in the same session and framed
+it as *"the same logic as in editor window"*, but the coupling is a **principle, not a mechanism**. The
+caption bar is a **different class** (`CaptionFindReplaceBar`, `caption_management_panel.py:649`), over a
+**grid** not a text document, with a **live** replace `FindReplaceBar` does not have, its own tests, and its
+own semantic decisions (below) that have nothing to do with the Editor menu bar. Splitting keeps FQ-016
+implementable without dragging in the caption panel's live-preview lifecycle. **One hard interlock:** this
+entry deletes the two caption-mode `Ctrl+F`/`Ctrl+R` `QShortcut`s, which FQ-016's `Ctrl+F`-as-focus ruling
+needs gone. **Land this first, or in the same commit as FQ-016.**
+
+**Idea (verbatim/summarized):** *"forget totally caption filter: delete totally the modal and the menu, keep
+the find and replace bar as is now, always visible, with the same logic as in editor window."* Plus, because
+deleting the modal would strand capability, the bar gains **`Replace All`**, **`Clear filter`**, and a
+**scope dropdown immediately before `Replace All`** offering *"in filtered results"* / *"in all project"*,
+**defaulting to filtered results** — and loses **`Close`**, meaningless once the bar is permanent.
+**Two things the owner explicitly ruled OUT of scope, recorded so they are not "improved" by an
+implementer:**
+- **`Unify` is untouched.** Triage argued for converting `_confirm_unify_scope`
+  (`caption_management_panel.py:1284`) to the same dropdown for one-idiom consistency and **was corrected
+  by the owner, who is right:** *"unify is independent and important filling the fields with the same value
+  as in the other. Replace replaces parts of words."* Whole-value propagation and substring editing are
+  different operations, so a shared idiom is not owed. **`_confirm_unify_scope` stays exactly as it is.**
+- **The active-filter banner STAYS** (`caption_management_panel.py:1474`, `"Filtered: {label} — showing
+  {visible} of {total} rows"`). Not because of text filters — the permanent bar shows those plainly — but
+  because it also describes **row-predicate** filters set by tree gestures (e.g. *"Field = wbs_id"*, via
+  `filter_to_table` / `filter_to_table_details` / `filter_to_field`, `main_window.py:1670-1690`), which a
+  text field cannot express. Retiring it would **re-create BUG-020**.
+
+**Problem:** §13's caption find/replace exists **twice**, and the split is both a duplication and a live
+shortcut bug.
+- The **modal** `ui/caption_find_replace_dialog.py` is reached from `Tools ▸ Caption Filter…`
+  (`main_window.py:3514`, no shortcut on the item) **and** from two window-scoped `QShortcut`s enabled only
+  while Caption Mode is active (`main_window.py:379`/`:390`). Those two keys are `Ctrl+F` and `Ctrl+R` —
+  **the same chords the Edit menu advertises for `Find…`/`Replace...`** — and the only thing preventing an
+  ambiguous-shortcut clash is Caption Mode disabling the two Edit QActions
+  (`find_controller.py:305-316`). So today **the menu advertises one behaviour while the key does another**
+  (`docs/UX_REVIEW.md` dossier E1).
+- The **bar** already lives inside the Caption Management tab (`caption_management_panel.py:946`) and is
+  reached from a context-menu entry `"Find / Replace bar"` (`:1538`) or `show_find_replace_bar()` (`:1120`).
+  Two surfaces, one job, and the user must know which one a given gesture opens.
+
+**Proposed approach**
+
+**(a) Delete the modal outright.** Verified surface: the module `ui/caption_find_replace_dialog.py`; its
+test file `tests/ui/test_caption_find_replace_dialog.py`; **16 references in `main_window.py`**
+(`_make_caption_find_replace_dialog`, `_open_caption_filter_dialog`, `_open_caption_replace_dialog`,
+`_caption_shortcut_open_filter`, `_caption_shortcut_open_replace`, the two `QShortcut`s at `:379`/`:390`,
+the `Tools ▸ Caption Filter…` entry at `:3514`, and the `on_open_filter`/`on_open_replace` injections at
+`:371-374`); **9 references in `tests/ui/test_main_window.py`**; **6 in `tests/ui/test_mainwindow_surface.py`**.
+`set_regex_filter` (`caption_management_panel.py:378`) **STAYS** — it is the panel's own internal filter
+path, not the modal's. Deleting the two `QShortcut`s also lets
+`FindValidateController.set_find_actions`/`set_find_actions_enabled` (`find_controller.py:302-316`) and its
+`main_window.py:1433` call site go — coordinate with FQ-016, which deletes the two QActions they gate.
+
+**(b) The bar becomes permanent.** Drop `self.hide()` (`:738`); `show_bar()` (`:765-773`) collapses to a
+**focus** operation; the context-menu entry `"Find / Replace bar"` (`:1538`) becomes *focus the bar* (or is
+removed). `Escape` (`:791-795`) currently calls `close_bar()` — per the owner's editor ruling it must
+instead **return focus to the grid** without hiding. Note `show_bar` today seeds the Find field from
+`current_filter_pattern()`; with no show, that seeding needs a home or must be dropped deliberately.
+
+**(c) ⚠️ THE PREMISE OF THE `Replace All` RULING IS WRONG IN THE CODE — and the correction makes the
+owner's design better, not worse.** The brief states the bar has a `replace_field` with *"no button able to
+act on it"*. **It is fully wired, and live:** `replace_field.textChanged → run_live_replace`
+(`caption_management_panel.py:732`) → the injected `live_replace_preview` (`:1126-1174`), which on **every
+keystroke** rolls back the previous proposal from `_live_replace_baseline` and writes a fresh one into the
+grid's **New Value** column for the **currently-visible (filtered) rows**. The placeholder text is literally
+`"Replace with (live)"` (`:700`) and the class docstring says *"there is no Replace All button… 'Live' is
+the one thing that separates it from the modal"* (`:652-661`). So:
+- **A `Replace All` button is NOT restoring a stranded capability for the filtered scope** — that scope is
+  already covered, continuously. What is genuinely missing is the **project-wide** scope, which
+  `replace_all_find(..., in_selection=False)` (`:1093-1116`) already implements and which **only the modal
+  could reach**.
+- **The panel's own docstring already argues for exactly the owner's dropdown**: *"The modal keeps the
+  Global option — going project-wide stays an explicit, button-pressed gesture rather than something a
+  keystroke can do"* (`:1141-1143`). So the coherent reading, and triage's recommendation, is:
+  **`"in filtered results"` (the default) keeps today's live behaviour; `"in all project"` is inert until
+  `Replace All` is pressed** — the dropdown selects the scope, and the button is what authorizes a
+  project-wide write. This honours the ruling *and* preserves the existing deliberate rule.
+  **The alternative — letting the dropdown drive the live preview directly — must be rejected explicitly**,
+  because it would make a single keystroke rewrite every caption in the project.
+- **Record as an intentional semantic change, not a port:** the modal's signature was
+  `on_replace_all(find, replacement, mode, case, in_selection)` — **selection**-scoped. The new dropdown is
+  **filter**-scoped. Selection-scoped replace is being **dropped**, on purpose.
+
+**(d) ⚠️ DELETING `Close` DELETES THE ONLY COMMIT GESTURE — the sharpest collision in this entry.** The bar
+is constructed with `on_close=self.commit_live_replace` (`caption_management_panel.py:931`), and
+`commit_live_replace` (`:1176-1180`) *"stop[s] tracking the live preview: whatever it proposed becomes an
+ordinary, hand-editable New Value… it only forgets the rollback baseline."* `close_bar` (`:775-784`) is the
+handoff from *reversible preview* to *ordinary proposal*. With the bar permanent, `close_bar` never fires,
+so `_live_replace_baseline` is **never released** and every previewed row stays owned by the preview — which
+means a **hand edit of a previewed row's New Value is silently reverted by the next re-run**, and
+`_refresh_live_replace`'s guard `if not is_active() and not baseline: return` (`:1188`) plus `is_active()`
+itself (`:786-789`, *"True between show_bar and close_bar"*) both lose their meaning. This needs a ruling:
+- Redefine **"active"** as *the Find field is non-empty* rather than *between show and close* (the natural
+  reading once the bar is permanent).
+- Make **`Replace All` commit** the baseline (an explicit, deliberate write is exactly the right handoff
+  point), and note that **emptying the Find field already rolls everything back cleanly** (`:1153-1157`), so
+  the reversibility contract survives without `Close`.
+- Triage's recommendation is those two together; an owner decision is still needed because it changes when a
+  proposal stops being reversible.
+
+**(e) `Clear filter` has an existing implementation to bind to** — `clear_all_filters()`
+(`caption_management_panel.py:1480-1490`), which already calls `_refresh_live_replace()` afterwards. Do not
+write a new clear path. Confirm whether the button clears **only** the text filter or **all** filters
+including the tree-set row predicates the retained banner describes — the existing method does the latter,
+and the label `"Clear filter"` (singular) suggests the former. Naming matters here because the banner is the
+only surface that shows the predicate filters.
+
+**(f) ⚠️ `mode_combo` has THREE modes, and the owner named two.** `MODE_LABELS` gives `Normal (plain
+string)` / `Extended (\n \t \0 \xNN)` / `Regular expression` (`caption_management_panel.py:702-704`, mirrored
+in the deleted modal). The owner mentioned only normal and regexp. **Dropping `Extended` is a capability
+removal** — `apply_find_replace`/`matches` implement it and the grid is the only place escape sequences in
+caption text can be matched. Recommend keeping all three; **confirm before removing.**
+
+**(g) Layout after the change.** Today: `[find_field] [mode_combo] [match_case] [Filter] [Close]` over
+`[replace_field] [status_label] [error_label]` (`:714-729`). `Match case` and a status label already exist —
+do not add second ones. Target: `Close` removed, `Clear filter` added, and `[scope dropdown] [Replace All]`
+immediately before/after the replace field per the owner's *"immediately before Replace All"* ordering.
+Keep the inline `error_label` as the **only** invalid-regex channel (never a modal) — that rule
+(`:672-674`, `:802-805`) is unchanged and load-bearing.
+
+**Alternatives considered**
+- **Keep the modal for the project-wide scope only** (bar = filtered/live, modal = global) — the minimal
+  change, and it is what the code was designed around (`:1141-1143`). **Rejected by the owner, verbatim and
+  totally** (*"forget totally caption filter: delete totally the modal and the menu"*). Recorded because it
+  is the only alternative that needs no new lifecycle decision at all; the dropdown-plus-button design in
+  (c) is what replaces it, and it preserves the same safety property.
+- **Convert `_confirm_unify_scope` to the same dropdown for idiom consistency** — proposed at triage,
+  **corrected by the owner, and triage accepts the correction** (see the Idea section). Recorded verbatim so
+  nobody "harmonises" the two later.
+- **Retire the active-filter banner now that the bar is always visible** — **rejected: it would re-create
+  BUG-020**, because the banner also reports row-predicate filters no text field can express.
+- **Adding `Replace All` as a straight port of the modal's selection-scoped call** — rejected in favour of
+  filter-scoped (see (c)); a straight port would keep a `in_selection` parameter whose meaning no longer
+  matches any control on screen.
+
+**Suggested placement:** **EXTEND §13 (Captions)** as the primary home — it owns the caption grid, the New
+Value / Apply staging discipline (which is *why* the dropdown is sufficient protection without a modal: a
+caption edit is staged into New Value and only an explicit **Apply** touches the XML), the live bar and the
+modal being deleted. **EXTEND §26** to delete `Tools ▸ Caption Filter…` from the Tools inventory (spec line
+5457). **EXTEND §27** to delete the `Ctrl+F` / `Ctrl+R` **Caption Mode override** row (spec line 5477)
+jointly with FQ-016 — that row is the written form of dossier E1 and both halves of the conflict disappear
+together. **CREATE nothing.** A **Supersession Ledger row is warranted**: §13/§27 currently specify the
+modal and its two mode-gated shortcuts as settled design. Reuse `clear_all_filters()`,
+`replace_all_find(..., in_selection=False)`, `live_replace_preview`, `set_regex_filter` and the existing
+`error_label`/`status_label` channels rather than new mechanism.
+
+**Open questions**
+1. **Does `Extended` survive in `mode_combo`?** Three modes exist; two were named. Dropping it removes a
+   real capability — confirm. (f)
+2. **What commits the live preview now that `Close` is gone,** and what does `is_active()` mean on a
+   permanent bar? Triage recommends: `Replace All` commits; "active" = non-empty Find field. (d)
+3. **Does `"in all project"` drive the live preview, or only `Replace All`?** Triage strongly recommends
+   only `Replace All`, per the existing rule that project-wide must be button-pressed. (c)
+4. **Does `Clear filter` clear only the text filter, or all filters** including the tree-set row predicates
+   the retained banner describes? (e)
+5. Does the context-menu entry `"Find / Replace bar"` (`:1538`) become a focus action or disappear, and does
+   the `current_filter_pattern()` seeding that `show_bar` performed survive anywhere? (b)
+
+---
