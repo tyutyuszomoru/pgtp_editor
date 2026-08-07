@@ -1701,14 +1701,38 @@ deletions, `Edit` (built at `main_window.py:1390-1460`) has **no members left**:
 `History`; `Cut`/`Copy`/`Paste`/`Delete` + `Preferences...` → deleted stubs; the five Find/Replace entries
 → the permanent bar; the two selection commands → FQ-015's `Select`; `Auto Parse XML` → `Parsing`. The menu
 is removed, not left empty.
-- ⚠️ **DELETING THE FIVE FIND/REPLACE QActions DELETES THREE SHORTCUTS.** `F3` (`:1418`), `Ctrl+Shift+F`
-  (`:1422`) and `Ctrl+Alt+Return` (`:1430`) are set **only** on those QActions; `Ctrl+F` (`:1414`) and
-  `Ctrl+R` (`:1426`) likewise. The permanent bar has **buttons, not shortcuts**. So the bar owning the
-  *commands* does not make it own the *keys* — all five bindings need an explicit new home (window
-  `QShortcut`s, or actions on the bar/Editor menu bar). **This also decides FQ-012's fate for them:**
-  FQ-012's Customize Shortcuts dialog enumerates **menu** QActions via `collect_menu_commands()`, so any of
-  the five that becomes a bare `QShortcut` drops out of FQ-012's rebindable list and into its
-  "reserved rows" carve-out. Cross-reference both ways.
+- ⚠️ **DELETING THE FIVE FIND/REPLACE QActions TAKES THEIR SHORTCUTS WITH THEM.** `Ctrl+F` (`:1414`), `F3`
+  (`:1418`), `Ctrl+Shift+F` (`:1422`), `Ctrl+R` (`:1426`) and `Ctrl+Alt+Return` (`:1430`) are set **only**
+  on those QActions, and the permanent bar has **buttons, not shortcuts** — so the bar owning the *commands*
+  does not make it own the *keys*. **Owner ruling, per key (2026-08-07), recorded per key because the three
+  cases differ:**
+  - **`Ctrl+F` / `Ctrl+R` survive as the focus actions** described in this entry's Idea section.
+  - **`F3` SURVIVES, rebound — it must keep meaning Find Next.** *"why does F3 die? it should find next."*
+    It becomes a **window-level** `QShortcut`/action routed to `active_find_bar().find_next()` — the exact
+    dispatch the deleted Edit QAction already used (`find_controller.py:391-392`). **This is not a novel
+    construct:** the established precedent is **`Go To XSD`, a window-level `Ctrl+L` action with no menu
+    entry**, routed to the active surface (`xsd_controller.py:209-213`; §27 line 5482 records it as a
+    window-level QAction, *"also in the Raw XML editor context menu"*). F3 joins that existing category of
+    shortcut-without-menu-entry commands.
+    - **Window-level, NOT bar-local.** The whole point of F3 is that it works while the caret is in the
+      **editor**; a `keyPressEvent` on the bar would only fire once the bar already has focus, which defeats
+      the purpose. Do not implement it on `FindReplaceBar`.
+    - **Consequence for the toolbar walk, accepted:** a shortcut with no menu entry is **invisible to
+      `_walk_menu_actions`** and therefore to Customize Toolbar. Three commands are already in that
+      situation today (`Ctrl+L` Go To XSD, `Ctrl+Alt+F` Format Selection, `Ctrl+Return` Run — §27), so F3
+      joins a known category rather than creating a new problem; it does mean **F3 can never be pinned**,
+      alongside Find itself, which the owner has accepted (*"Find unpinnable is fine"*).
+  - **`Ctrl+Shift+F` (Find All) is DELETED.** Find All writes `[Find]` rows into the Audit panel — a
+    deliberate, occasional act with a visible button on the now-permanent bar; a chord earns little.
+  - **`Ctrl+Alt+Return` (Replace All) is DELETED, and losing the keystroke is arguably a GAIN.** Replace All
+    is a bulk edit, and it now sits immediately beside a **scope dropdown** (`"in filtered results"` /
+    `"in all project"` — FQ-017) that a keystroke would bypass entirely. The project's own stated principle
+    is that a broad, hard-to-inspect effect must not be one chord away (§27's irreversible-outward-effect
+    rule; §18.5's same reasoning for withholding shortcuts from the Apply gestures).
+  - **This also decides FQ-012's fate for them:** FQ-012's Customize Shortcuts dialog enumerates **menu**
+    QActions via `collect_menu_commands()`, so **`F3` — a bare window-level shortcut with no menu entry —
+    drops out of FQ-012's rebindable list and into its "reserved rows" carve-out**, exactly like `Ctrl+L`.
+    Cross-reference both ways.
 - `FindValidateController.set_find_actions(find_action, replace_action)` (`main_window.py:1433`,
   `find_controller.py:302-316`) exists **solely** so Caption Mode can disable those two QActions and let its
   own `QShortcut`s win. With the actions gone that seam is dead — and it is dead anyway once **FQ-017**
@@ -1777,8 +1801,15 @@ id-derivation rules, all three of which change. **EXTEND §26 (Consolidated menu
 the inventory: it must now describe **two** menu bars, **delete the `Edit` bullet entirely** (lines
 5365-5369), move `Bookmarks` (5377-5384) and add `History`/`Select`/`Parsing`, and reconcile §26's
 Database-menu placement of the D3a Check gestures against `Parsing` (see (b)). **EXTEND §27 (shortcuts,
-lines 5469-5497)** for the five re-homed Find/Replace bindings, the `Escape` ruling, and the deletion of the
-`Ctrl+F`/`Ctrl+R` Caption-Mode override row (5477 — jointly with FQ-017). **EXTEND §8** for the always-visible
+lines 5469-5497)** for: the `Ctrl+F`/`Ctrl+R` rows becoming **focus** gestures (5475-5476); **`F3` moving out
+of those rows into its own row as a window-level shortcut with no menu entry**, routed to
+`active_find_bar().find_next()` — it should be described **beside `Ctrl+L` Go To XSD (5482)**, whose shape it
+copies, and listed with `Ctrl+L`/`Ctrl+Alt+F`/`Ctrl+Return` as commands invisible to Customize Toolbar;
+the **removal of `Ctrl+Shift+F` and `Ctrl+Alt+Return`** from the table entirely (Find All and Replace All
+become button-only, each for its own recorded reason — see (c)); the `Escape` ruling; and the deletion of the
+`Ctrl+F`/`Ctrl+R` Caption-Mode override row (5477 — jointly with FQ-017). Note §27's existing 5475/5476 rows
+also carry the per-tab routing narrative for `Find`/`Replace`, which must be preserved and re-pointed at
+`F3`'s new host rather than deleted with the Edit menu. **EXTEND §8** for the always-visible
 bar as a shared editor behaviour, and §15 for the Find All routing note. **CREATE no new section** — every
 piece of this lands in an existing one. A **Supersession Ledger row is warranted** for the Edit menu's
 removal and for §27's `Ctrl+F`/`Ctrl+R`-as-show→focus change. Whoever folds this in must reuse
@@ -1795,8 +1826,11 @@ duplicated).
 3. **`tools.validate-project` is a pinned default toolbar button with a vendored SVG** — confirm the
    `LEGACY_ID_ALIASES` update (same treatment the owner already accepted for undo/redo), and decide what
    happens to the now-homeless `"find"` alias and its `edit-find` SVG.
-4. **Where do `F3` / `Ctrl+Shift+F` / `Ctrl+Alt+Return` / `Ctrl+F` / `Ctrl+R` live** once the Edit QActions
-   are deleted — and therefore whether they remain FQ-012-rebindable or move to its reserved rows.
+4. ~~Where do the five Find/Replace shortcuts live once the Edit QActions are deleted?~~ **RESOLVED by owner
+   ruling 2026-08-07 — see (c):** `Ctrl+F`/`Ctrl+R` become focus actions; **`F3` survives** as a
+   window-level shortcut with no menu entry, routed to `active_find_bar().find_next()` on the `Ctrl+L`
+   precedent (and therefore moves to FQ-012's reserved rows, and can never be pinned); `Ctrl+Shift+F` and
+   `Ctrl+Alt+Return` are deleted.
 5. **What does the Editor menu bar show on the Caption Management tab** (recommend: nothing — hide the bar)
    and on the Manual tab?
 6. **Is `History…` acceptable on a bar otherwise made of per-tab commands** (recommend: yes, and describe
