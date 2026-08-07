@@ -269,6 +269,55 @@ def test_the_identity_less_editors_stay_session_only(qtbot, tmp_path):
     assert explorer.bookmarked_lines() == []
 
 
+def test_the_xsd_editors_stay_session_only(qtbot, tmp_path):
+    """`_bookmark_file_path` names FOUR session-only families, and the test above
+    covers only two. The Edit XSD / Edit AutoXSD buffer is the third: its schema
+    file lives in the **app-level schema storage directory**, not under any
+    project, so `relative_key` could not key it even if it were offered. Asserted
+    with a project open, which is the only state in which it could go wrong."""
+    window = _window(qtbot, tmp_path)
+    folder, document = _project(tmp_path)
+    _open_project(window, folder, document)
+    # `setPlainText` marks the XSD tab dirty, so the teardown close would reach a
+    # real modal; silence it through the same seam the List-All-Bookmarks tests
+    # use (CLAUDE.md testing policy).
+    window._xsd_ui.confirm_close = lambda: "discard"
+    xsd_editor = window.center_stage.xsd_editor
+    xsd_editor.setPlainText("<xs:schema/>\n<xs:element/>\n")
+
+    assert window._bookmark_file_path(xsd_editor) is None
+    xsd_editor.toggle_bookmark(1)
+    window._flush_bookmark_writes()
+
+    assert not bookmarks_path(folder).exists()
+    # ...and it keeps the session-only status quo: a document load wipes it.
+    xsd_editor.setPlainText("<xs:schema/>\n<xs:element/>\n")
+    assert xsd_editor.bookmarked_lines() == []
+
+
+def test_an_editor_the_host_does_not_own_has_no_bookmark_key(qtbot, tmp_path):
+    """The fourth session-only family is the `Edit code…` dialog's editor -- a
+    modal over an event body inside the XML, which `_bookmark_file_path`'s
+    docstring calls "not reachable from here". Rather than enter that modal, this
+    asserts the general rule the dialog relies on: an editor that is not one of
+    the host's known surfaces keys to None and is therefore never written."""
+    window = _window(qtbot, tmp_path)
+    folder, document = _project(tmp_path)
+    _open_project(window, folder, document)
+    from pgtp_editor.ui.xml_editor import XmlEditor
+
+    stranger = XmlEditor()
+    qtbot.addWidget(stranger)
+    stranger.setPlainText("BEGIN\n  PERFORM 1;\nEND\n")
+
+    assert window._bookmark_file_path(stranger) is None
+    assert window._bookmark_store_target(stranger) is None
+    stranger.toggle_bookmark(1)
+    window._flush_bookmark_writes()
+
+    assert not bookmarks_path(folder).exists()
+
+
 def test_a_document_outside_the_project_has_no_key(qtbot, tmp_path):
     window = _window(qtbot, tmp_path)
     folder, _document = _project(tmp_path)

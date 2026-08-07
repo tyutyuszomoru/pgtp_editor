@@ -148,3 +148,69 @@ def test_file_menu_save_actions_are_wired(qtbot, tmp_path):
         find_action(file_menu, "Save").trigger()
 
     assert target.read_text(encoding="utf-8") == "data"
+
+
+# --- FQ-010: the `recentFiles` STORE is gone, not just its menu -------------
+#
+# `tests/ui/test_menus.py` and `tests/ui/test_toolbar.py` assert the *menu* and
+# the *pinnable command* are gone. Neither touches the QSettings store, and the
+# store had exactly two writers -- `open_file` and `save_as`. Without these, a
+# re-added `remember_recent_file()` call would silently start recording the
+# user's file history again and every existing test would still pass.
+
+
+def _ini_settings(tmp_path):
+    from PySide6.QtCore import QSettings
+
+    return QSettings(str(tmp_path / "s.ini"), QSettings.Format.IniFormat)
+
+
+def _recent_shaped_keys(settings):
+    settings.sync()
+    return [key for key in settings.allKeys() if "recent" in key.lower()]
+
+
+def test_save_as_records_nothing_recent_shaped_in_settings(qtbot, tmp_path):
+    settings = _ini_settings(tmp_path)
+    window = MainWindow(generator_config_dir=tmp_path, settings=settings)
+    qtbot.addWidget(window)
+    window.center_stage.xml_editor.setPlainText("<Project/>\n")
+    target = tmp_path / "as.pgtp"
+
+    with patch(
+        "pgtp_editor.ui.modals.QFileDialog.getSaveFileName",
+        return_value=(str(target), "PGTP files (*.pgtp)"),
+    ):
+        window._doc_ui.save_as()
+
+    assert window._current_project_path == str(target)  # the save really happened
+    assert _recent_shaped_keys(settings) == []
+
+
+def test_open_file_records_nothing_recent_shaped_in_settings(qtbot, tmp_path):
+    settings = _ini_settings(tmp_path)
+    window = MainWindow(generator_config_dir=tmp_path, settings=settings)
+    qtbot.addWidget(window)
+    source = tmp_path / "in.pgtp"
+    source.write_text(
+        '<?xml version="1.0" encoding="UTF-8"?>\n<Project fileName="demo"/>\n',
+        encoding="utf-8",
+    )
+
+    window._doc_ui.open_file(str(source))
+
+    assert window._current_project_path == str(source)  # the open really happened
+    assert _recent_shaped_keys(settings) == []
+
+
+def test_the_document_controller_has_no_recent_files_api_left(qtbot, tmp_path):
+    """Deleted, not left inert: FQ-010 removed the reader, the writer and the
+    menu rebuilder along with the key constant."""
+    from pgtp_editor.ui import pgtp_document_controller as mod
+
+    window = MainWindow(generator_config_dir=tmp_path, settings=_ini_settings(tmp_path))
+    qtbot.addWidget(window)
+    for gone in ("recent_files", "remember_recent_file", "rebuild_recent_menu"):
+        assert not hasattr(window._doc_ui, gone), gone
+    for gone in ("_RECENT_FILES_KEY", "_RECENT_FILES_MAX"):
+        assert not hasattr(mod, gone), gone
