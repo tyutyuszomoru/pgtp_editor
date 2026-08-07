@@ -55,9 +55,11 @@ reJSON…**, for instance, has nothing to save before a gap analysis has run.
   show this again" — so that tick is never a one-way door. The entry sits in the
   File menu's last group, just above **Exit**, and has no keyboard shortcut.
 
-> **The editor does not open a file you pass on the command line, and there is
-> no shell "open with" integration.** Starting the app always brings you to the
-> launcher. A `.pgtp` path on the command line is meaningful **only** together
+> **The editor does not open a file you pass on the command line, there is no
+> shell "open with" integration, and double-clicking a `.pgtp` does not start
+> it.** Starting the app always brings you to the launcher. There is also **no
+> File ▸ Open Recent** list: this is a project-centric tool, and the launcher —
+> not a list of files you happened to touch — is how you pick up work. A `.pgtp` path on the command line is meaningful **only** together
 > with `--mcp`, where it names the headless MCP server's default project (see
 > *The MCP Server*).
 
@@ -86,6 +88,9 @@ The window has three areas:
   from a database table adds a draft tab (see *Database/XML Coherence*), and a
   live sandbox session adds the **Sandbox SQL** console tab (see *The Sandbox*).
 - **Right — Properties:** a read-only inspector for whatever you select in the tree.
+
+A second, narrow **Editor menu bar** sits directly above the center area, holding
+the commands that act on the tab in front of you — see *The Two Menu Bars*.
 
 When you open a file, the status bar shows a live message such as
 `Opening dev_Ferrara.pgtp (312 KB)…` and the pointer becomes a wait cursor
@@ -127,6 +132,63 @@ convert line endings or re-encode content on save.
 
 ---
 
+## The Two Menu Bars
+
+PGTP Editor has **two menu bars**, one above the other, and the split is the
+answer to a simple question: *what does this command act on?*
+
+- The **window menu bar** at the very top — **File · View · Schema · Database ·
+  Tools · Generation · Help** — holds the commands that act on **the project or
+  the application**: opening and saving files, projects and connections, the
+  schema, generation, the panels and the theme.
+- The **Editor menu bar**, directly above the central working area, holds the
+  commands that act on **whichever tab you are looking at**. Its four menus are:
+
+| Menu | Entries |
+|---|---|
+| **History** | **History…**, **Undo**, **Redo** |
+| **Select** | **Select All** (Ctrl+A), **Select Enclosing Block** (Ctrl+Shift+B), **Select Parent Block** (Ctrl+Shift+A) |
+| **Parsing** | **Auto Parse XML**, **Validate Project** |
+| **Bookmarks** | **Toggle Bookmark**, **Next Bookmark**, **Previous Bookmark**, **Clear All Bookmarks**, **List All Bookmarks** |
+
+Every one of those commands resolves the editor **at the moment you use it**, so
+Select, Bookmarks and the rest always act on the tab in front of you — never on
+the Raw XML document behind it.
+
+> **There is no Edit menu any more.** It was dissolved rather than emptied:
+> Undo / Redo / History… moved to **History**, the two block-selection commands
+> to **Select**, **Auto Parse XML** to **Parsing**, and Find and Replace became
+> the permanently visible bar in every editor (see *Find, Replace & Find All*).
+> Cut / Copy / Paste / Delete and **Preferences…** were never implemented and
+> were removed rather than left as entries that answered "not yet implemented".
+> The ordinary clipboard keys — **Ctrl+C / Ctrl+X / Ctrl+V** — work in every
+> editor as they always did; they simply no longer pretend to need a menu.
+
+**Validate Project moved with it**, from Tools onto **Parsing** — it is XML
+validation, so it belongs with the parsing commands. The three PHP-lint entries
+stayed on **Tools** (see *Checking PHP Syntax*), because splitting lint across
+two bars would recreate exactly the confusion this split exists to remove.
+
+### When the Editor bar changes shape
+
+The bar follows the tab, using the app's usual rule: **a command that cannot
+work here is absent, not greyed out.**
+
+- **The whole Editor menu bar is hidden on the Caption Management tab and on the
+  Manual tab.** Neither is a text editor, so all four menus would be dead
+  weight. Switch to any editor tab and the bar is back.
+- **Select ▸ Select Parent Block disappears on PHP tabs, DDL object tabs and the
+  DDL Explorer**, and **Ctrl+Shift+A** goes quiet with it. "One nesting level up"
+  is an XML idea; SQL and PHP have no parent element to walk to, so the entry is
+  not offered rather than offered and inert.
+- **Select ▸ Select Enclosing Block means the right thing for the language you
+  are in**: in an XML editor (Raw XML, Edit XSD, a generated draft fragment) it
+  selects the enclosing XML element; in a code editor (PHP tabs, DDL object tabs,
+  the DDL Explorer) it selects the innermost balanced bracket pair. It is one
+  command with one shortcut, not two competing ones.
+
+---
+
 ## The Project Tree
 
 The tree mirrors your project: **Pages** contain **Columns**, **Details**, and
@@ -164,7 +226,8 @@ tree from the current editor text.
 
 ### Letting the tree follow your edits
 
-**Edit ▸ Auto Parse XML** is a checkable toggle that does that rebuild for you
+**Parsing ▸ Auto Parse XML** (on the Editor menu bar — see *The Two Menu
+Bars*) is a checkable toggle that does that rebuild for you
 while you type. It is **off every time you start the editor** and your choice is
 deliberately *not* remembered: a background reparse is a convenience you opt
 into for a stretch of work, not a mode you should inherit from last week
@@ -228,7 +291,8 @@ The **Raw XML** tab is a full text editor over the project file.
 The editor keeps a rolling history of up to ten XML snapshots.
 
 - **Ctrl+Z** undoes and **Ctrl+Y** redoes a step.
-- **Edit ▸ History…** opens a jump list of the recent snapshots so you can jump
+- **History ▸ History…** (on the Editor menu bar, alongside **Undo** and
+  **Redo**) opens a jump list of the recent snapshots so you can jump
   straight back to an earlier state. (Snapshots taken when a file is opened or
   reverted are baselines and are not offered as undo targets.)
 
@@ -261,8 +325,11 @@ it).
 
 ## Bookmarks
 
-Bookmarks let you mark lines and jump between them. They live for the current
-session and are not written to the file.
+Bookmarks let you mark lines and jump between them. They are never written into
+the file itself — a bookmark is a marker over the text, not content. **With a
+project open they are remembered between sessions** for the documents that live
+in that project (see *Bookmarks that stay put*, below); everywhere else they last
+for the session.
 
 - **Ctrl+F2** toggles a bookmark on the current line; a tag marker appears in the
   strip.
@@ -272,25 +339,30 @@ session and are not written to the file.
   chevrons. Both toggle that line's bookmark. (A single click in the line-number
   area still does nothing, so the two never fire together.)
 - **F2** / **Shift+F2** jump to the next / previous bookmark.
-- The **Bookmarks** menu holds the same actions plus **Clear All Bookmarks**.
+- The **Bookmarks** menu — on the **Editor menu bar** above the working area (see
+  *The Two Menu Bars*) — holds the same three actions plus **Clear All
+  Bookmarks** and **List All Bookmarks**.
 
 Both mouse gestures work in **every** editor that has a gutter — the Raw XML
 editor, **Edit XSD** / **Edit AutoXSD**, the read-only **DDL Explorer**, an open
 **DDL object editor tab**, an open **PHP file tab** (see *Editing PHP Files*),
 the **Sandbox SQL** console (see *The Sandbox*), and the **Edit code…** dialog.
 
-**In Caption Mode the Bookmarks menu and its three shortcuts are switched off**
-(the menu greys out and **Ctrl+F2** / **F2** / **Shift+F2** stop firing), because
-the Raw XML editor they would act on is read-only for as long as that mode
-lasts. **The gutter still works**: clicking the bookmark strip or double-clicking
+**In Caption Mode the whole Bookmarks menu is switched off** — all five entries,
+and with them **Ctrl+F2** / **F2** / **Shift+F2** — because the Raw XML editor
+they would act on is read-only for as long as that mode lasts. (While the Caption
+Management tab itself is in front, the entire Editor menu bar is hidden anyway;
+the menu stays disabled even if you step back to Raw XML without leaving the
+mode.) **The gutter still works**: clicking the bookmark strip or double-clicking
 a line number sets and clears bookmarks exactly as usual, since a bookmark is
 only a marker over the text and does not depend on being able to edit it. Leaving
 Caption Mode restores the menu and the shortcuts.
 
 The **Bookmarks** menu and its shortcuts follow the tab you are working in: with
 the **Edit XSD** (or **Edit AutoXSD**) tab active they act on the schema editor,
-with the **DDL Explorer** tab, an open **DDL object editor tab**, or an open
-**PHP file tab** active they act on that tab's own editor, and on any other tab —
+with the **DDL Explorer** tab, an open **DDL object editor tab**, an open **PHP
+file tab**, or a generated **draft tab** active they act on that tab's own
+editor, and on any other tab —
 including the **Sandbox SQL** console, whose buffer is a scratch pad rather than
 a document — they act on the **Raw XML** editor. Using them never switches tabs
 on you — a bookmark is always set or found in the editor you are already looking
@@ -298,34 +370,121 @@ at.
 
 The **Edit code…** dialog has the same bookmark strip, but as a separate dialog
 it is out of the Bookmarks menu's reach: there you set and clear bookmarks with the
-mouse, in the gutter. Each editor keeps its own set, and loading a
-new document into an editor clears its bookmarks.
+mouse, in the gutter. Each editor keeps its own set.
+
+### Bookmarks that stay put
+
+**When a local DDL-versioning project is open** (see *Local DDL-Versioning
+Projects*), bookmarks survive closing and reopening a document, reverting it, and
+restarting the app. That covers the three editors whose documents are real files
+inside the project:
+
+- the **Raw XML** editor (the project's `.pgtp` working copy),
+- every **DDL object tab** (its `ddl/*.sql` file),
+- every **PHP file tab** whose file lives inside the project folder.
+
+Nothing is asked of you: a bookmark you set is written out a moment later, and put
+back when that document loads again. If a document has since become shorter, the
+bookmarks past its new end are quietly left out instead of landing on the wrong
+line.
+
+**With no project open, bookmarks behave exactly as they always did** — they live
+for the session and are cleared whenever a document is loaded into an editor.
+Nothing is written anywhere.
+
+Four editors keep session-only bookmarks even inside a project, because they have
+no file in it to remember them against:
+
+- the **Edit XSD** and **Edit AutoXSD** editors — their schema files live with the
+  app's own settings, not in your project;
+- the read-only **DDL Explorer** buffer, which is a snapshot of the database
+  rather than a file;
+- **draft tabs** generated from a database table (see *Database/XML Coherence*),
+  which are saved nowhere by design;
+- the **Edit code…** dialog, which is a window onto a fragment of the XML.
+
+A PHP file you opened from somewhere outside the project folder is in the same
+position: there is no project-relative place to record it, so its bookmarks are
+session-only.
+
+### List All Bookmarks
+
+**Bookmarks ▸ List All Bookmarks** writes the **active editor's** bookmarks into
+the **Audit/Problems** dock as one row per bookmarked line, prefixed
+**`[Bookmark]`** and showing the line number with a preview of the text.
+**Click a row to jump to that line.** It reveals the dock if you had it hidden —
+a command whose whole output is dock rows would otherwise look like it did
+nothing — and it always leaves at least one row behind, saying *no bookmarks in …*
+when there are none, so silence never reads as "clean".
+
+It is the active editor only, like every other bookmark command, and it never
+switches tabs on you. Each listing **replaces the previous one**, so the panel
+shows one editor's bookmarks at a time and `[Find]`, `[Validate]` and `[Check]`
+rows are left alone.
+
+**It is a snapshot, not a live view.** Toggling a bookmark after you asked for the
+list does not update the list — ask again. (Loading a new document does clear the
+rows, since the bookmarks they described are gone.)
+
+Rows from the read-only **DDL Explorer** buffer and from **draft tabs** are listed
+but **do nothing when clicked**: those editors have no click-through route, and
+sending you to a plausible-looking line in a different document would be worse
+than not moving.
 
 ---
 
 ## Find, Replace & Find All
 
-The search bar under the Raw XML editor provides:
+**The Find/Replace bar is always there.** Every editor tab carries its own bar
+under the editor, permanently visible and always in its full form — the **Find**
+field with **Find Next** and **Find All**, and the **Replace with** field with
+**Replace** and **Replace All**. There is nothing to summon and nothing to
+dismiss, so the bar never disagrees with what a menu or a shortcut claims about
+it, and the editor's height never jumps as it appears and vanishes.
 
-- **Find** (Ctrl+F) / **Find Next** (F3) for incremental search.
-- **Find All** (Ctrl+Shift+F) — lists every match. Results stream in
-  **continuously** so a large file stays responsive; a **Stop** button cancels a
-  long search, and the status bar reports **"Found N items."**
-- **Replace** (Ctrl+R) and **Replace All** (Ctrl+Alt+Enter) — Replace All reports
-  how many replacements it made in the status bar.
+- **Find Next** (**F3**, or the button) steps to the next match, wrapping around
+  the end of the document. **F3 works from anywhere in the editor** — you do not
+  have to be in the bar.
+- **Find All** lists every match as clickable rows in the Audit/Problems panel.
+  Results stream in **continuously** so a large file stays responsive; while a run
+  is going the button reads **Stop**, and the status bar reports **"Found N
+  items."**
+- **Replace** replaces the current match and moves on; **Replace All** replaces
+  every match and reports how many in the status bar.
 
-The **Edit XSD** tab (see *Schema Tools*), the **DDL Explorer** tab, an open
-**DDL object editor tab** (see *DDL Explorer*), and an open **PHP file tab** (see
-*Editing PHP Files*) each have their own search bar; the shortcuts and the Edit
-menu act on whichever tab is active, searching that tab's own document. On a tab
-without its own search bar, Find reveals the **Raw XML** tab and searches there.
+### Reaching the bar from the keyboard
+
+- **Ctrl+F** puts the cursor in the **Find** field, and **Ctrl+R** in the
+  **Replace with** field. They only move focus — the bar is already open. Both
+  seed Find from your selection, but **only when the Find field is empty**, so a
+  stray selection can never overwrite a term you just typed.
+- **Escape returns focus to the editor.** It does not hide the bar; there is no
+  hidden state left to restore.
+- **Ctrl+F does nothing on a tab that has no bar** — the **Manual** and
+  **Diff / Merge** tabs. It used to drag you over to Raw XML and search *that*,
+  which was never what anyone meant by pressing Find on another tab.
+
+> **Find All and Replace All no longer have shortcuts.** `Ctrl+Shift+F` and
+> `Ctrl+Alt+Return` are gone — use the bar's buttons, which are now always in
+> front of you. Both commands are broad and worth a deliberate click: Find All
+> fills the Audit panel, and Replace All rewrites the whole document.
+
+### Which document you are searching
+
+Each bar searches **its own tab's document**, and the keys belong to the tab that
+owns the bar, so there is never any doubt about where a search landed. The tabs
+with their own bar are the **Raw XML** editor, **Edit XSD** / **Edit AutoXSD**
+(see *Schema Tools*), the **DDL Explorer**, every open **DDL object editor tab**
+(see *DDL Explorer*), every open **PHP file tab** (see *Editing PHP Files*), and
+every generated **draft tab** (see *Database/XML Coherence*). The **Caption
+Management** tab has its own, differently-shaped bar — see *Caption Management*.
 
 Because the DDL Explorer buffer is **read-only**, only the searching half applies
 there: Find, Find Next and Find All work as usual, while Replace and Replace All
-have nothing they can change. A DDL object editor tab and a PHP file tab are the
-opposite case: they're fully editable, so **Find, Find Next, Replace, and Replace
-All all work** there — only **Find All** stays inert and returns no results, the
-one gap carried over from the read-only DDL Explorer's search bar.
+have nothing they can change. A DDL object editor tab, a PHP file tab and a draft
+tab are the opposite case: they're fully editable, so **Find, Find Next, Replace,
+and Replace All all work** there — only **Find All** stays inert and returns no
+results, the one gap carried over from the read-only DDL Explorer's search bar.
 
 ---
 
@@ -356,7 +515,8 @@ The Code Editor is a modal window with:
   pair, and typing the matching closer "types through" it.
 - **Selection-wrap** — with text selected, typing a bracket or quote wraps the
   selection instead of replacing it.
-- **Ctrl+Shift+B** — select the enclosing bracket span.
+- **Ctrl+Shift+B** — select the enclosing bracket span. The dialog has no menu
+  bar of its own, so this is the key rather than a **Select** menu entry.
 - Standard **Ctrl+C / Ctrl+V / Ctrl+X**.
 - **Ctrl+S** saves and closes; **Ctrl+W** cancels.
 
@@ -433,10 +593,13 @@ The tab hosts the same editor the **Edit code…** dialog uses, in PHP mode:
 - **PHP syntax highlighting** and a **line-number gutter** with the usual
   bookmark strip (see *Bookmarks*).
 - **Auto-close** for `()`, `[]`, `{}`, `''`, `""`, **selection-wrap**, and
-  **Ctrl+Shift+B** to select the enclosing bracket span.
-- Its **own Find/Replace bar** — **Ctrl+F**, **F3**, **Ctrl+R** and
-  **Ctrl+Alt+Enter** search and replace in *this file*, not in the Raw XML. (Find
-  All is the one inert control here, as in a DDL object editor tab.)
+  **Select ▸ Select Enclosing Block** (**Ctrl+Shift+B**) to select the enclosing
+  bracket span. **Select Parent Block** is not offered here — see *The Two Menu
+  Bars*.
+- Its **own, permanently visible Find/Replace bar** — **Ctrl+F**, **Ctrl+R** and
+  **F3** act on *this file*, never on the Raw XML, and Replace All is the bar's
+  own button. (Find All is the one inert control here, as in a DDL object editor
+  tab.)
 - **Ctrl+Z / Ctrl+Y undo and redo only this tab's own edits.** They never reach
   the project's Raw XML history, exactly as in a DDL object editor tab.
 - **No fold chevrons yet.** The gutter has the folding machinery, but nothing
@@ -465,9 +628,12 @@ The tab hosts the same editor the **Edit code…** dialog uses, in PHP mode:
 ## Checking PHP Syntax
 
 The **Tools** menu can run PHP's own syntax check over the file in front of you —
-the same kind of gesture as **Validate Project** one tier down: this file rather
-than the whole project. The three entries sit directly under **Validate
-Project**.
+the same kind of gesture as **Parsing ▸ Validate Project** one tier down: this
+file rather than the whole project. All three entries — **Lint Current File**,
+**Lint on Save** and **Locate PHP Linter…** — sit together on **Tools**,
+directly under **Manage Captions…**. They deliberately stayed together when
+Validate Project moved to the Editor menu bar: splitting the three across two
+bars would be worse than either home.
 
 Everything here is **advisory**. A lint failure never blocks, delays, or undoes a
 save: by the time the check runs, your bytes are already on disk.
@@ -528,7 +694,8 @@ Caption Management is a dedicated mode for reviewing and editing the visible tex
 
 ### Entering and leaving
 
-Enter from the toolbar/menu or from a tree node's **See … in Caption Mode** action.
+Enter with **Tools ▸ Manage Captions…** or from a tree node's **See … in Caption
+Mode** action.
 While in the mode, the **Raw XML** tab stays visible but **read-only**, and a status
 indicator shows you're in Caption Mode. Leave the mode with the **Exit** control to
 re-enable editing.
@@ -564,9 +731,10 @@ across the project are highlighted so you can unify them.
 - **Preset filters from the Project Tree** — a **See … in Caption Mode** action (for a
   table, a detail's table, or a single column — see *The Project Tree*) narrows the
   grid to just that scope.
-- **Clear all filters** — available from the right-click menu, and from the
-  active-filter banner's own **Clear** button. Both clear every filter mechanism at
-  once: header filters, the Find/Filter pattern, and any preset filter.
+- **Clear all filters** — available from the right-click menu, from the
+  active-filter banner's own **Clear** button, and from the Find/Replace bar's
+  **Clear filter** button. All three clear every filter mechanism at once: header
+  filters, the find pattern, and any preset filter.
 
 ### The active-filter banner
 
@@ -591,41 +759,64 @@ the find and preset filters have no equivalent of. The banner's **Clear** button
 the other hand, clears *everything* (header filters included) and the banner then
 disappears.
 
-### Find / Filter / Replace
-
-A shared modal drives searching and bulk editing:
-
-- **Mode:** **Normal (plain string)**, **Extended** (escapes like `\n`, `\t`, `\xNN`),
-  or **Regular expression**.
-- **Match case** toggle.
-- **Scope:** **In selection** or **Global**.
-- **Find / Filter** narrows the grid; **Replace** applies to the matched set.
-
 ### The live Find/Replace bar
 
-Right-click the grid ▸ **Find / Replace bar** opens a modeless bar under the grid
-— the caption equivalent of the Raw XML editor's search bar, and the quickest way
-to see what a bulk replace would do before you commit to it. It has a **Find**
-field, a **Replace with (live)** field, the same **Search Mode** list and **Match
-case** toggle as the modal, and **Filter** and **Close** buttons.
+The caption grid has its own **permanently visible** Find/Replace bar under the
+grid — the one place caption searching, filtering and bulk replacing happens, and
+the quickest way to see what a bulk replace would do before you commit to it. It
+carries:
 
-**Replace here is live and has no Replace All button.** Every keystroke in either
-field, and every change of mode or case sensitivity, immediately recomputes the
-proposal and writes it into the **New Value** column of the rows currently in
-scope. Nothing in your XML is touched: New Value is still only a proposal, and it
-takes the usual explicit apply to turn it into text.
+- a **Find** field and a **Replace with (live)** field;
+- a **Search Mode** list — **Normal (plain string)**, **Extended** (escapes like
+  `\n`, `\t`, `\0`, `\xNN`) or **Regular expression** — and a **Match case**
+  toggle;
+- **Filter**, which narrows the grid to the matching rows, and **Clear filter**,
+  which drops the find filter, every column filter *and* any preset row filter at
+  once;
+- a **scope** list and **Replace All** (below).
+
+**Ctrl+F** and **Ctrl+R** focus the Find and Replace-with fields while you are in
+Caption Management, and **Escape** hands focus back to the grid. Right-click the
+grid ▸ **Focus Find / Replace bar** does the same as Ctrl+F. Nothing shows or
+hides the bar, because it is always there.
+
+> **The old Tools ▸ Caption Filter… dialog is gone.** It was a second, modal copy
+> of everything this bar does, and the two could disagree about what was filtering
+> the grid. The bar does all of it, including the project-wide replace the dialog
+> was needed for.
+
+**Replace is live.** Every keystroke in either field, and every change of mode or
+case sensitivity, immediately recomputes the proposal and writes it into the **New
+Value** column of the rows currently in scope. Nothing in your XML is touched: New
+Value is still only a proposal, and it takes the usual explicit apply to turn it
+into text.
 
 Because the preview is recomputed from scratch rather than piled up, it is fully
-reversible while the bar is open — **clearing the Find field puts every row's
-previous New Value back**, so a half-typed pattern leaves no debris. An invalid
-regular expression is reported on the bar's own inline error line, never as a
-dialog, and the preview is rolled back before you see the message.
+reversible — **clearing the Find field puts every row's previous New Value back**,
+so a half-typed pattern leaves no debris. An invalid regular expression is
+reported on the bar's own inline error line, never as a dialog, and the preview is
+rolled back before you see the message.
+
+**Replace All, and its scope.** The list beside the button chooses what Replace All
+covers:
+
+- **in filtered results** (the default) — the rows the grid is currently showing,
+  which is exactly what the live preview has been proposing all along.
+- **in all project** — every caption in the project, including rows the current
+  filters hide.
+
+**The scope list only affects Replace All.** Changing it never re-runs the live
+preview, so no keystroke can ever propose a rewrite of every caption in the
+project; going project-wide is always a button you pressed. Replace All also
+*commits* the preview: from then on those New Values are ordinary, hand-editable
+proposals rather than a reversible preview.
 
 **Filtering is deliberately not live**: it stays behind the **Filter** button. The
 live replace acts on the rows the grid currently shows, so letting the filter
 change under your fingers at the same time would make the scope of the proposal
-impossible to read. The bar opens seeded with whatever find pattern is already
-narrowing the grid.
+impossible to read. Focusing the bar seeds Find from whatever pattern is already
+narrowing the grid — but only when the field is empty, so it never overwrites what
+you typed.
 
 ### Power tools
 
@@ -689,8 +880,9 @@ name only.
 ### Editing the schema (the Edit XSD tab)
 
 **Schema ▸ Edit XSD** opens `curated.xsd` in a dedicated editor tab in the
-center area — a full editor with its own find/replace bar (Find, Find All,
-Replace, all the usual shortcuts). The tab keeps its own unsaved-changes marker
+center area — a full editor with its own permanently visible Find/Replace bar
+(Find, Find All, Replace, Replace All, and Ctrl+F / Ctrl+R / F3 acting on *this*
+document). The tab keeps its own unsaved-changes marker
 (`Edit XSD *`), and **Ctrl+S saves whichever tab is active** — the project from
 Raw XML, the schema from the XSD tab.
 
@@ -937,10 +1129,10 @@ customers*, *New Detail: order_items*, *New Lookup: currencies* — so several
 drafts open at once stay tellable apart, and its tooltip repeats that it is saved
 nowhere. **Every invocation opens a new tab**, so you can generate the same table
 twice and compare, rather than having a second attempt overwrite the first. The
-tab is a full XML editor with highlighting, so you can rework the fragment before
-copying it out — but note that **Ctrl+F still searches the Raw XML tab**, not the
-draft, since a draft is a fragment to skim and copy rather than a document to
-search. It has **no save path and no unsaved-changes concept at all**, which is why
+tab is a full XML editor with highlighting **and its own Find/Replace bar**, so
+you can search and rework the fragment before copying it out. (Find All is the one
+inert control there, as in a DDL object editor tab.) It has **no save path and no
+unsaved-changes concept at all**, which is why
 its **✕** closes it immediately with no prompt — there was never anywhere for the
 text to be saved to, so a warning would be about nothing.
 
@@ -1063,10 +1255,10 @@ navigation comforts as the Raw XML editor:
   double-click the line number) to mark a line, or use **Ctrl+F2** / **F2** /
   **Shift+F2** and the **Bookmarks** menu —
   while this tab is active they act on its editor (see *Bookmarks*).
-- **Find:** this tab has its own search bar, so **Ctrl+F**, **F3** and
-  **Ctrl+Shift+F** search the DDL buffer itself instead of bouncing you to Raw
-  XML. Replace (**Ctrl+R**, **Ctrl+Alt+Enter**) is inert here, since the buffer
-  is read-only.
+- **Find:** this tab has its own always-visible Find/Replace bar, so **Ctrl+F**,
+  **F3** and its **Find All** button search the DDL buffer itself instead of
+  bouncing you to Raw XML. The replace half (**Ctrl+R** and the **Replace** /
+  **Replace All** buttons) is inert here, since the buffer is read-only.
 
 Clicking an object in the DDL Objects tree scrolls it to the **top** of the DDL
 Explorer tab, so the whole definition is visible below its banner. (The Raw XML
@@ -1999,14 +2191,15 @@ and **Apply Changes to Target** writes the reconciled result.
 
 ## Validation
 
-**Tools ▸ Validate Project** checks your project for structural problems and
+**Parsing ▸ Validate Project** — on the Editor menu bar, beside **Auto Parse
+XML** (see *The Two Menu Bars*) — checks your project for structural problems and
 reports them as a list of issues with severities (errors and warnings) — for
 example duplicate top-level page file names, missing expected attributes, or
 unexpected children in container elements. Select an issue to jump to it; clearing
 validation removes the results.
 
 This checks the **project's structure**. For the syntax of a PHP file you have
-open in a tab, see *Checking PHP Syntax* — the same menu, one tier down.
+open in a tab, see *Checking PHP Syntax* — one tier down, on the **Tools** menu.
 
 ---
 
@@ -2034,7 +2227,7 @@ shows a wait cursor (hourglass) and a live status-bar message so you can tell it
 is working rather than frozen:
 
 - **Opening a file:** `Opening <name> (<size>)…`, e.g. `Opening dev_Ferrara.pgtp (312 KB)…`.
-- **Tools ▸ Validate Project:** `Validating <name>…`.
+- **Parsing ▸ Validate Project:** `Validating <name>…`.
 - **Tools ▸ Reparse Raw XML into Tree:** `Reparsing…`.
 - **Generation ▸ Generate PHP…:** `Generating PHP…`.
 
@@ -2061,22 +2254,31 @@ simply reads as busy instead of stalled.
   what icon each one carries (see *The toolbar*, below).
 - Your window size and position, dock layout, theme, and toolbar arrangement are
   remembered between sessions.
+- **Dialogs open at a size that shows their contents.** **Project Settings…**,
+  **Sandbox Setup…**, the **Project Status** window and **New
+  Function/Procedure…** all open large enough for their fields, tables and
+  OK/Cancel buttons to be visible without dragging a corner first. They remain
+  **freely resizable and shrinkable** — this is only the size they start at.
 
 ### The toolbar
 
 The **Main Toolbar** shows each command as an icon with its label beside it. Out of
-the box it carries seven commands — **File ▸ Open**, **File ▸ Save**, **Edit ▸ Undo**,
-**Edit ▸ Redo**, **Edit ▸ Find**, **Tools ▸ Validate Project**, and **Generation ▸
-Generate PHP** — but it is not limited to them.
+the box it carries six commands — **File ▸ Open**, **File ▸ Save**, **History ▸
+Undo**, **History ▸ Redo**, **Parsing ▸ Validate Project**, and **Generation ▸
+Generate PHP** — but it is not limited to them. (**Find** used to be the seventh.
+It is no longer a menu command at all — every editor has a permanent Find/Replace
+bar instead — so there is nothing left to pin. Its icon is still in the icon
+catalog if you want it on some other button.)
 
 **View ▸ Customize Toolbar…** opens a two-list dialog: **Available** on the left,
 **On Toolbar** on the right, with **Add →**, **← Remove**, **Up**, **Down**, and
 **Choose Icon…** between them, and **OK** / **Cancel** at the bottom.
 
-- The Available list offers **every command in the menu bar**, listed by its menu
-  path — `File › Save As`, `Schema › Verify XSD`, `Database › DDL Explorer`, and so
-  on — in the order the menus themselves present them. Anything you can invoke from
-  a menu you can put on the toolbar.
+- The Available list offers **every command on either menu bar**, listed by its
+  menu path — `File › Save As`, `Schema › Verify XSD`, `Database › DDL Explorer`,
+  `Bookmarks › List All Bookmarks`, and so on — in the order the menus themselves
+  present them. Anything you can invoke from a menu, on the window bar or the
+  Editor bar, you can put on the toolbar.
 - Commands already on the toolbar stay visible in the Available list but appear
   **greyed out**, so you can see the whole command set at once and still can't add
   the same command twice.
@@ -2084,8 +2286,8 @@ Generate PHP** — but it is not limited to them.
 - **Up** / **Down** reorder the On-Toolbar list; **OK** applies the arrangement and
   remembers it for future sessions, **Cancel** discards your changes.
 
-**Out of the box most commands have no icon** — only the original seven ship with
-one — and that is fine: a toolbar button shows its label beside its icon, so an
+**Out of the box most commands have no icon** — only those six ship with one — and
+that is fine: a toolbar button shows its label beside its icon, so an
 icon-less command simply reads as text. An icon is never a precondition for putting
 a command on the toolbar. But you can give any button one yourself — see
 *Choosing a button's icon*, below.
@@ -2111,7 +2313,7 @@ a cell to pick it and close the dialog, or select it and press **OK**.
 
 - The first cell is always **Default**, which **clears** the assignment: the button
   falls back to its built-in icon, or to no icon at all if it has none.
-- **Any** button can be given an icon — including the seven that already ship with
+- **Any** button can be given an icon — including the six that already ship with
   one, whose default you simply override.
 - The icon is shown **only on the toolbar**. The matching menu entry keeps its plain
   text appearance, so decorating a button never changes how the menus look.
@@ -2137,32 +2339,45 @@ exists is quietly discarded rather than breaking the toolbar.
 | **Ctrl+F2** | Active editor tab | Toggle bookmark (disabled in Caption Mode) |
 | **F2** / **Shift+F2** | Active editor tab | Next / previous bookmark (disabled in Caption Mode) |
 | **Ctrl+Z** / **Ctrl+Y** | Raw XML | Undo / redo (snapshot history) |
-| **Ctrl+Z** / **Ctrl+Y** | DDL object editor tab / PHP file tab | Undo / redo (that tab's own history only — never the project's) |
+| **Ctrl+Z** / **Ctrl+Y** | Edit XSD / DDL object editor tab / PHP file tab | Undo / redo (that tab's own history only — never the project's) |
 | **Ctrl+Space** | Raw XML | Attribute / value completion |
 | **Ctrl+Space** | DDL object editor tab | Schema-aware name completion (schema/table names, or `NEW.`/`OLD.` column names) |
 | **Ctrl+Space** | Sandbox SQL console | Schema / table name completion |
 | **Ctrl+L** | Raw XML | Go To XSD (attribute's definition in the Edit XSD tab) |
 | **Ctrl+click** | Raw XML (mouse) | Jump to matching open/close tag |
 | **Alt+click** | Raw XML (mouse) | Jump to parent tag start |
-| **Ctrl+Shift+B** | Raw XML / Code Editor / PHP file tab | Select enclosing block (caret to start) |
-| **Ctrl+Shift+A** | Raw XML | Select parent block |
-| **Ctrl+F** | Raw XML / Edit XSD / DDL Explorer / DDL object editor tab / PHP file tab | Find |
-| **F3** | Raw XML / Edit XSD / DDL Explorer / DDL object editor tab / PHP file tab | Find next |
-| **Ctrl+Shift+F** | Raw XML / Edit XSD / DDL Explorer / DDL object editor tab / PHP file tab | Find all (inert in the DDL Explorer, DDL object editor and PHP file tabs) |
-| **Ctrl+R** | Raw XML / Edit XSD / DDL object editor tab / PHP file tab | Replace (not in the read-only DDL Explorer) |
-| **Ctrl+Alt+Enter** | Raw XML / Edit XSD / DDL object editor tab / PHP file tab | Replace all (not in the read-only DDL Explorer) |
+| **Ctrl+A** | Active editor tab (**Select ▸ Select All**) | Select the whole document |
+| **Ctrl+Shift+B** | Active editor tab (**Select ▸ Select Enclosing Block**) | Select the enclosing XML element (XML editors) or the innermost bracket pair (code editors), caret to start |
+| **Ctrl+Shift+A** | Active **XML** editor tab (**Select ▸ Select Parent Block**) | Select one nesting level up. Absent — and the key inert — on PHP, DDL object and DDL Explorer tabs |
+| **Ctrl+Shift+B** | Code Editor dialog | Bracket-select (the dialog has no menu bar) |
+| **Ctrl+F** | The active tab's Find/Replace bar | Focus the **Find** field. Nothing happens on a tab with no bar (Manual, Diff / Merge) |
+| **Ctrl+R** | The active tab's Find/Replace bar | Focus the **Replace with** field (inert replace in the read-only DDL Explorer) |
+| **F3** | Any editor tab with a bar | Find next — works with the caret in the editor |
+| **Escape** | A Find/Replace bar | Return focus to the editor (the caption bar: to the grid). Never hides the bar |
 | **Ctrl+Alt+F** | DDL object editor tab / Sandbox SQL console | Format Selection (reindent the current selection) |
 | **Ctrl+Return** | Sandbox SQL console | Run the selection, or the whole buffer, against the sandbox |
-| **Ctrl+F** | Caption Mode | Open Find/Filter |
-| **Ctrl+R** | Caption Mode | Open Replace |
-| **Ctrl+G** | Caption Mode | Go to line in Raw XML |
+| **Ctrl+F** / **Ctrl+R** | Caption Management | Focus the caption bar's Find / Replace-with field |
+| **Ctrl+G** | Caption Management | Go to line in Raw XML |
 | **Ctrl+S** | Code Editor | Save code and close |
 | **Ctrl+W** | Code Editor | Cancel |
 | **Ctrl+C / Ctrl+V / Ctrl+X** | Editors | Copy / Paste / Cut |
 
-In Caption Mode, **Ctrl+F** and **Ctrl+R** are rebound to the caption
-Find/Filter/Replace tools for as long as the mode is active; they return to the Raw
-XML editor's Find/Replace when you leave the mode.
+**Two chords were deleted and are not coming back as chords:** **Ctrl+Shift+F**
+(Find All) and **Ctrl+Alt+Return** (Replace All). Both commands are buttons on the
+now-permanent Find/Replace bar, which is in front of you whenever they apply — and
+both are broad enough to deserve a deliberate click (see *Find, Replace & Find
+All*).
+
+**Ctrl+A is new as a menu entry, not as behaviour.** Select-all always worked in
+every editor; nothing in the app had ever claimed the key. The **Select** menu
+simply makes it findable — and while the caret is in a text field or an editor,
+that widget still handles the key itself, exactly as before.
+
+The **Caption Management** tab and every editor tab own their own **Ctrl+F** /
+**Ctrl+R**, scoped to the surface you are looking at. Nothing is rebound as you
+change tabs or modes: each pair is simply live only while its own surface has
+focus, which is why Find in the caption grid can never search the Raw XML by
+accident.
 
 **Nothing that reaches a database from a DDL object tab has a shortcut, on
 purpose** — not **Apply to Sandbox**, not **Deploy this edit…**, and not either
@@ -2172,14 +2387,21 @@ Without Applying**), so a write to a database is never one keystroke away.
 console can only ever reach the disposable sandbox (see *The Sandbox*).
 
 The other commands added recently are shortcut-free too: **File ▸ Show
-Launcher…**, **Edit ▸ Auto Parse XML**, **Database ▸ Sandbox Setup…**,
-**Database ▸ Project Status…** and **Tools ▸ Start MCP Server** are all
-menu-only. If you use one often, put it on the toolbar (see
-*Appearance & Layout ▸ The toolbar*).
+Launcher…**, **Parsing ▸ Auto Parse XML**, **Parsing ▸ Validate Project**,
+**History ▸ History…**, **Bookmarks ▸ Clear All Bookmarks**, **Bookmarks ▸ List
+All Bookmarks**, **Database ▸ Sandbox Setup…**, **Database ▸ Project Status…** and
+**Tools ▸ Start MCP Server** are all menu-only. If you use one often, put it on
+the toolbar (see *Appearance & Layout ▸ The toolbar*).
 
-In **Caption Mode** the **Bookmarks** menu and **Ctrl+F2** / **F2** / **Shift+F2**
-are disabled for as long as the mode lasts, because the Raw XML editor they act on
-is read-only there; the gutter still sets bookmarks (see *Bookmarks*).
+**F3, Ctrl+L, Ctrl+Alt+F and Ctrl+Return have no menu entry at all**, which is
+also why they are the four commands you cannot put on the toolbar — a toolbar
+button is a menu item, and these have none.
+
+In **Caption Mode** the whole **Bookmarks** menu — and **Ctrl+F2** / **F2** /
+**Shift+F2** with it — is disabled for as long as the mode lasts, because the Raw
+XML editor they act on is read-only there; the gutter still sets bookmarks (see
+*Bookmarks*). While the Caption Management tab itself is in front, the Editor menu
+bar is hidden entirely (see *The Two Menu Bars*).
 
 ---
 
