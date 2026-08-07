@@ -207,7 +207,11 @@ class ProjectSettingsDialog(QDialog):
         layout.addWidget(tabs)
         layout.addWidget(buttons)
 
-        self.resize(560, 480)
+        # Opening size only (BUG-036) -- the dialog stays freely resizable, so
+        # this is a `resize()` and deliberately not `setFixedSize`/`setMinimumSize`.
+        # 760 tall clears the tallest tab (Deploy manifest's table, Connections'
+        # two connection forms) with the OK/Cancel box still visible.
+        self.resize(560, 760)
 
         self.set_settings(settings)
 

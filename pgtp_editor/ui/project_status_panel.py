@@ -654,6 +654,12 @@ class ProjectStatusPanel(QWidget):
         layout.addWidget(self.hint_label)
 
         self.setMinimumSize(QSize(420, 320))
+        # Opening size only (BUG-036). Lives in the constructor rather than at
+        # the `main_window.py` open site so every future opener inherits it. The
+        # 420x320 minimum above stays strictly smaller, so the window is still
+        # freely shrinkable; the diagram itself is inside `self.scroll_area`, so
+        # a node row wider than 720 scrolls rather than being clipped.
+        self.resize(720, 440)
         self._rebuild()
 
     # -- public API ---------------------------------------------------------

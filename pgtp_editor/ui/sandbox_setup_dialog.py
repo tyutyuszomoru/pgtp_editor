@@ -289,6 +289,13 @@ class SandboxSetupDialog(QDialog):
         controller.session_changed.connect(self._on_session_changed)
         self.refresh_state()
 
+        # Opening size only (BUG-036), set after the layout is fully built so it
+        # wins over the layout's size hints. `resize()` -- not `setFixedSize` and
+        # not a `setMinimumSize` at these values -- because the dialog must stay
+        # freely resizable (and shrinkable) afterwards. This is the densest
+        # dialog in the app; 1000px is what its stacked groups need.
+        self.resize(660, 1000)
+
     # -- rendering ----------------------------------------------------------
 
     @staticmethod

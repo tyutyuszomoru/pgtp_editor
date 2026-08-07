@@ -9,7 +9,8 @@ ones the app ships rather than copies.
 """
 from dataclasses import replace
 
-from PySide6.QtCore import QObject, Signal
+from PySide6.QtCore import QObject, QSize, Signal
+from PySide6.QtWidgets import QAbstractScrollArea, QWidget
 
 from pgtp_editor.db.config import ConnectionParams
 from pgtp_editor.db.ddl_project import ProjectSettings
@@ -722,3 +723,51 @@ def test_a_nameless_project_suggests_the_fallback_stem(qtbot):
 
 def test_the_maintenance_database_default_is_the_controllers_one_constant():
     assert DEFAULT_MAINTENANCE_DATABASE is MAINTENANCE_DATABASE == "postgres"
+
+
+# --- BUG-036: opening size ---------------------------------------------------
+def test_opens_at_660x1000_and_stays_resizable(qtbot):
+    """BUG-036 #2. 1000px is deliberately taller than some screens, which is
+    exactly why it must be an opening size and not a constraint: the user has to
+    be able to shrink it. `setFixedSize`/`setMinimumSize(660, 1000)` would trap
+    the dialog off-screen on a short display."""
+    dialog, _ = _dialog(qtbot, FakeController(capabilities=_caps()))
+
+    assert dialog.size() == QSize(660, 1000)
+    assert dialog.maximumWidth() > 660
+    assert dialog.maximumHeight() > 1000
+    assert dialog.minimumWidth() < 660
+    assert dialog.minimumHeight() < 1000
+
+
+def test_every_group_fits_at_the_opening_size(qtbot):
+    """The acceptance criterion for the app's densest dialog: at 660x1000 no
+    label, field or button may be squeezed below the room it needs. Checked in
+    the richest state (probed, live session, provisioning rows) so the tallest
+    possible stack of groups is the one measured."""
+    session = FakeSession(
+        rows=[
+            AppliedObject(
+                kind="function",
+                schema_name="public",
+                object_name=f"fn_{index}",
+                table_name="",
+                applied_at="2026-08-06 10:00",
+                text_sha1="abc123",
+            )
+            for index in range(12)
+        ]
+    )
+    dialog, _ = _dialog(qtbot, FakeController(capabilities=_caps(), session=session))
+    dialog.show()
+    dialog.load_working_set()
+
+    for child in dialog.findChildren(QWidget):
+        if not child.isVisible() or isinstance(child, QAbstractScrollArea):
+            # A scroll area is *allowed* to be smaller than its contents -- that
+            # is what it is for. The working-set table holds an unbounded number
+            # of rows, so it scrolls by design.
+            continue
+        needed = child.minimumSizeHint()
+        assert child.width() >= needed.width() or needed.width() == 0, child
+        assert child.height() >= needed.height() or needed.height() == 0, child
