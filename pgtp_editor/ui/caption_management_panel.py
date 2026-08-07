@@ -61,13 +61,34 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from pgtp_editor.ui.caption_find_replace_dialog import MODE_LABELS
 from pgtp_editor.ui.caption_scan import (
     CaptionEntry,
     apply_caption_edits,
     apply_find_replace,
     matches,
     transform_caption,
+)
+
+#: Search-mode labels, in display order, paired with the ``caption_scan`` mode.
+#: All THREE modes are offered: ``extended`` is the only way escape sequences
+#: (``\n``, ``\t``, ``\0``, ``\xNN``) in caption text can be matched, and the
+#: grid is the only surface where those occur, so dropping it would be a
+#: capability removal (FQ-017 (f)). Lived in the deleted
+#: ``caption_find_replace_dialog`` module until FQ-017; the bar is now the only
+#: consumer, so it owns the labels.
+MODE_LABELS: tuple[tuple[str, str], ...] = (
+    ("Normal (plain string)", "normal"),
+    ("Extended (\\n \\t \\0 \\xNN)", "extended"),
+    ("Regular expression", "regular"),
+)
+
+#: Replace-All scope labels, in display order, paired with the internal scope
+#: key. ``filtered`` is the default and is what the LIVE preview always uses;
+#: ``project`` is inert until Replace All is pressed, so no keystroke can ever
+#: rewrite every caption in the project (FQ-017 (c)).
+SCOPE_LABELS: tuple[tuple[str, str], ...] = (
+    ("in filtered results", "filtered"),
+    ("in all project", "project"),
 )
 
 _COLUMNS = (
@@ -647,22 +668,44 @@ class _HeaderFilterPopup(QWidget):
 
 
 class CaptionFindReplaceBar(QWidget):
-    """The Caption grid's own modeless Find/Replace bar — a sibling of
-    ``find_replace_bar.FindReplaceBar``, but for a *grid* rather than a text
-    document, and with a **live** Replace.
+    """The Caption grid's own **permanently visible** Find/Replace bar — a
+    sibling of ``find_replace_bar.FindReplaceBar``, but for a *grid* rather than
+    a text document, and with a **live** Replace.
 
-    "Live" is the one thing that separates it from the Caption Find/Replace
-    modal (``caption_find_replace_dialog.CaptionFindReplaceDialog``): there is
-    no Replace All button. Every keystroke in the Find or Replace-with field,
-    and every change of Search Mode / Match case, immediately re-computes the
-    proposal for the in-scope rows and writes it into the grid's **New Value**
-    column via the injected ``on_live_replace(find, replacement, mode, case)``.
-    The XML is never touched — New Value is, as always, only a proposal that a
-    separate explicit Apply turns into text (§13).
+    "Live" is what separates it from an ordinary Replace All: every keystroke in
+    the Find or Replace-with field, and every change of Search Mode / Match
+    case, immediately re-computes the proposal for the in-scope rows and writes
+    it into the grid's **New Value** column via the injected
+    ``on_live_replace(find, replacement, mode, case)``. The XML is never touched
+    — New Value is, as always, only a proposal that a separate explicit Apply
+    turns into text (§13).
 
     Because the preview is recomputed rather than accumulated, it is fully
-    reversible while the bar is open: clearing the Find field puts every row's
-    previous New Value back. The panel owns that bookkeeping.
+    reversible: clearing the Find field puts every row's previous New Value
+    back. The panel owns that bookkeeping.
+
+    **Never hidden, never shown (FQ-017).** The bar replaced a modal Caption
+    Filter dialog and its two mode-gated ``Ctrl+F``/``Ctrl+R`` window
+    shortcuts, so there is nothing left to reveal: ``Ctrl+F`` / ``Ctrl+R``
+    **focus** the Find / Replace-with field (:meth:`focus_find` /
+    :meth:`focus_replace`) and ``Escape`` hands focus **back to the grid**
+    (``on_escape``) instead of hiding anything. There is consequently no Close
+    button.
+
+    **"Active" means the Find field is non-empty.** With no show/close
+    lifecycle, "the bar is driving a preview" can only mean "there is a pattern
+    in the Find field" — see :meth:`is_active`, which the panel's
+    ``_refresh_live_replace`` guard reads.
+
+    **Replace All is the commit gesture** the deleted Close button used to be:
+    it hands the live preview over to the panel as ordinary, hand-editable New
+    Values (the panel forgets the rollback baseline). The other release gesture
+    is emptying the Find field, which rolls the preview back cleanly.
+
+    **The scope dropdown selects Replace All's scope only.** ``"in filtered
+    results"`` (the default) is what the live preview already does
+    continuously; ``"in all project"`` is inert until the button is pressed, so
+    a keystroke can never rewrite every caption in the project.
 
     **Filter is deliberately NOT live.** It stays behind the Filter button, so
     the set of rows the live Replace acts on only ever changes on an explicit
@@ -677,22 +720,24 @@ class CaptionFindReplaceBar(QWidget):
         self,
         on_live_replace: Callable[[str, str, str, bool], int],
         on_filter: Callable[[str, str, bool], None],
-        on_close: Callable[[], None] | None = None,
+        on_replace_all: Callable[[str, str, str, bool, bool], int] | None = None,
+        on_clear_filter: Callable[[], None] | None = None,
+        on_escape: Callable[[], None] | None = None,
         parent=None,
     ):
         super().__init__(parent)
         self._on_live_replace = on_live_replace
         self._on_filter = on_filter
-        self._on_close = on_close or (lambda: None)
+        self._on_replace_all = on_replace_all or (lambda f, r, m, c, p: 0)
+        self._on_clear_filter = on_clear_filter or (lambda: None)
+        self._on_escape = on_escape or (lambda: None)
         # Guards the live re-run while the bar itself is programmatically
         # rewriting its own fields (set_find_text / reset), so a caller cannot
         # trigger a half-configured preview.
         self._suspended = False
-        # Whether the bar is currently driving a live preview. Tracked
-        # explicitly rather than read off ``isVisible()``, which is False for
-        # any widget whose window is not shown (every headless test, and a
-        # Caption tab sitting behind another tab).
-        self._active = False
+        # True once Replace All has handed the preview over as ordinary
+        # proposals, until the user next touches a field. See is_active().
+        self._committed = False
 
         self.find_field = QLineEdit()
         self.find_field.setPlaceholderText("Find")
@@ -704,7 +749,23 @@ class CaptionFindReplaceBar(QWidget):
             self.mode_combo.addItem(label, mode)
         self.match_case_checkbox = QCheckBox("Match case")
         self.filter_button = QPushButton("Filter")
-        self.close_button = QPushButton("Close")
+        # Bound to the panel's single existing clear path, ``clear_all_filters``
+        # — which clears the find filter, every header value filter AND the
+        # tree-set row predicate. The label is singular because that is the one
+        # the owner specified; the tooltip spells out the real reach, since the
+        # retained active-filter banner is the only surface that shows the row
+        # predicates this button also drops (FQ-017 (e)).
+        self.clear_filter_button = QPushButton("Clear filter")
+        self.clear_filter_button.setToolTip(
+            "Clear the find filter, every column filter and the active row filter"
+        )
+
+        # Scope for Replace All, immediately before the button. NOT wired to the
+        # live preview: see the class docstring.
+        self.scope_combo = QComboBox()
+        for label, scope in SCOPE_LABELS:
+            self.scope_combo.addItem(label, scope)
+        self.replace_all_button = QPushButton("Replace All")
 
         self.status_label = QLabel("")
         self.error_label = QLabel("")
@@ -716,10 +777,12 @@ class CaptionFindReplaceBar(QWidget):
         find_row.addWidget(self.mode_combo)
         find_row.addWidget(self.match_case_checkbox)
         find_row.addWidget(self.filter_button)
-        find_row.addWidget(self.close_button)
+        find_row.addWidget(self.clear_filter_button)
 
         replace_row = QHBoxLayout()
         replace_row.addWidget(self.replace_field)
+        replace_row.addWidget(self.scope_combo)
+        replace_row.addWidget(self.replace_all_button)
         replace_row.addWidget(self.status_label)
         replace_row.addWidget(self.error_label, 1)
 
@@ -733,9 +796,10 @@ class CaptionFindReplaceBar(QWidget):
         self.mode_combo.currentIndexChanged.connect(self.run_live_replace)
         self.match_case_checkbox.toggled.connect(self.run_live_replace)
         self.filter_button.clicked.connect(self.apply_filter)
-        self.close_button.clicked.connect(self.close_bar)
-
-        self.hide()
+        self.clear_filter_button.clicked.connect(self.clear_filter)
+        self.replace_all_button.clicked.connect(self.replace_all)
+        # Deliberately NOT connected to run_live_replace: the scope only takes
+        # effect when Replace All is pressed.
 
     # -- field getters ------------------------------------------------------
 
@@ -760,37 +824,65 @@ class CaptionFindReplaceBar(QWidget):
         finally:
             self._suspended = False
 
-    # -- show / hide --------------------------------------------------------
+    def selected_scope(self) -> str:
+        """``"filtered"`` or ``"project"`` — the scope Replace All will use."""
+        return self.scope_combo.currentData()
 
-    def show_bar(self, initial_find: str = "") -> None:
-        """Reveal the bar, optionally seeding Find-what, and focus the Find
-        field. Non-modal — nothing here ever calls ``.exec()``."""
-        if initial_find:
+    def set_scope(self, scope: str) -> None:
+        index = self.scope_combo.findData(scope)
+        if index < 0:
+            raise ValueError(f"Unknown replace scope: {scope!r}")
+        self.scope_combo.setCurrentIndex(index)
+
+    # -- focus (the bar is never hidden) ------------------------------------
+
+    def focus_find(self, initial_find: str = "") -> None:
+        """Put the cursor in the Find field. The bar is already visible, so this
+        is what ``Ctrl+F`` does now — there is nothing to show.
+
+        ``initial_find`` seeds Find-what from the grid's active filter pattern
+        (the old ``show_bar`` seeding, so Filter-then-Replace reuse still
+        works), but ONLY when the field is empty: clobbering text the user has
+        already typed would be a hostile thing for a focus gesture to do."""
+        if initial_find and not self.find_field.text():
             self.set_find_text(initial_find)
-        self._active = True
-        self.show()
         self.find_field.setFocus()
         self.find_field.selectAll()
 
-    def close_bar(self) -> None:
-        """Hide the bar and hand the live preview over to the panel as ordinary
-        proposals (``on_close``). The proposed New Values *stay* — they are the
-        same non-destructive proposals the modal's Replace All produces, and
-        discarding them on close would make the bar incapable of producing
-        anything. What is dropped is only the ability to roll them back by
-        editing the pattern."""
-        self._active = False
-        self.hide()
-        self._on_close()
+    def focus_replace(self) -> None:
+        """Put the cursor in the Replace-with field (``Ctrl+R``)."""
+        self.replace_field.setFocus()
+        self.replace_field.selectAll()
 
     def is_active(self) -> bool:
-        """True between ``show_bar`` and ``close_bar`` — i.e. while keystrokes
-        in this bar are driving a live preview."""
-        return self._active
+        """True while this bar is driving a live preview — i.e. **the Find field
+        is non-empty** and Replace All has not committed since it was last
+        typed in.
+
+        This replaced a "True between show_bar and close_bar" flag: with a
+        permanently visible bar there is no show and no close, and a pattern in
+        the Find field is exactly the condition under which a re-run has
+        something to propose. An empty Find field makes
+        ``live_replace_preview`` roll everything back and propose nothing, so
+        treating it as inactive is accurate, not merely convenient.
+
+        ⚠️ **The committed half is load-bearing, not decoration.** ``Close``
+        used to end the preview by clearing BOTH the rollback baseline and the
+        "active" flag, which together stopped ``_refresh_live_replace`` from
+        ever re-running. Forgetting only the baseline is not enough: with a
+        non-empty Find field still reading as active, the next re-run (a filter
+        change, ``run_live_replace``) would recompute the proposal from each
+        row's Value and **overwrite a hand-edited New Value — permanently,
+        because the baseline that used to restore it is gone.** That is exactly
+        the silent-reversion failure this design must not have, so a successful
+        ``replace_all`` marks the preview committed and any subsequent edit to
+        the bar's fields re-arms it (see :meth:`run_live_replace`)."""
+        return bool(self.find_field.text()) and not self._committed
 
     def keyPressEvent(self, event: QKeyEvent) -> None:
         if event.key() == Qt.Key.Key_Escape:
-            self.close_bar()
+            # Return focus to the grid; the bar stays visible (FQ-017).
+            self._on_escape()
             return
         super().keyPressEvent(event)
 
@@ -811,9 +903,16 @@ class CaptionFindReplaceBar(QWidget):
 
         ``*_args`` swallows whatever the emitting signal passes (the new text,
         the combo index, the checkbox state) — none of it is read, the fields
-        are."""
+        are.
+
+        A user-driven run **re-arms** a committed preview: touching a field says
+        the pattern is being worked on again, so the new proposal becomes
+        reversible once more (its baseline is whatever the committed values
+        were). ``set_find_text``'s suspended writes deliberately do not re-arm —
+        seeding Find-what on a focus gesture must not restart a preview."""
         if self._suspended:
             return
+        self._committed = False
         self._clear_error()
         try:
             count = self._on_live_replace(
@@ -841,6 +940,37 @@ class CaptionFindReplaceBar(QWidget):
         except ValueError as exc:
             self._show_error(str(exc))
 
+    def clear_filter(self) -> None:
+        """Drop the grid's filters via the panel's single ``clear_all_filters``
+        path. The Find field is left alone — it is the Replace pattern too, and
+        emptying it would silently roll the live preview back."""
+        self._clear_error()
+        self._on_clear_filter()
+
+    def replace_all(self) -> None:
+        """Write the replacement into the New Value of every row in the selected
+        scope, then **commit** the live preview (the panel forgets its rollback
+        baseline, so those New Values become ordinary hand-editable proposals).
+
+        This is the handoff the deleted Close button used to perform. It is the
+        only way ``"in all project"`` ever takes effect. Invalid regex is
+        reported inline and commits nothing."""
+        self._clear_error()
+        try:
+            count = self._on_replace_all(
+                self.find_field.text(),
+                self.replace_field.text(),
+                self.selected_mode(),
+                self.match_case(),
+                self.selected_scope() == "project",
+            )
+        except ValueError as exc:
+            self._show_error(str(exc))
+            return
+        # Only a SUCCESSFUL write ends the reversible phase.
+        self._committed = True
+        self.status_label.setText(f"{count} row(s) replaced")
+
 
 class CaptionManagementPanel(QWidget):
     def __init__(
@@ -854,11 +984,6 @@ class CaptionManagementPanel(QWidget):
         self._on_apply = on_apply or (lambda edited_text: None)
         self._on_close = on_close or (lambda: None)
         self.on_go_to_line = on_go_to_line or (lambda line: None)
-        # Callbacks opening the shared caption Find/Filter/Replace dialog in
-        # filter vs replace mode (issue #1). MainWindow wires these after
-        # construction; the panel's own Ctrl+F / Ctrl+R shortcuts invoke them.
-        self.on_open_filter = lambda: None
-        self.on_open_replace = lambda: None
         self._snapshot_text = ""
 
         self._model = _CaptionTableModel(self)
@@ -925,16 +1050,21 @@ class CaptionManagementPanel(QWidget):
         # Named `find_replace_bar` to match the sibling surfaces MainWindow's
         # _active_find_bar() already routes to (stage.find_replace_bar,
         # stage.xsd_find_replace_bar, ddl_editor_panel.find_replace_bar).
+        # PERMANENTLY VISIBLE (FQ-017): the Caption Filter modal it duplicated is
+        # gone, so there is no second surface and nothing to show or hide.
         self.find_replace_bar = CaptionFindReplaceBar(
             on_live_replace=self.live_replace_preview,
             on_filter=self.apply_find_filter,
-            on_close=self.commit_live_replace,
+            on_replace_all=self.replace_all_from_bar,
+            on_clear_filter=self.clear_all_filters,
+            on_escape=self.focus_grid,
             parent=self,
         )
         # Rows the live preview overwrote -> the New Value each had before it.
         # Restored (and re-derived) on every recompute, so the preview is a
         # replacement of itself rather than an accumulation. Emptied by
-        # commit_live_replace when the bar closes.
+        # commit_live_replace, which Replace All calls (the bar has no Close
+        # button to call it any more), and by emptying the Find field.
         self._live_replace_baseline: dict[int, str] = {}
         # Re-entrancy guard: writing New Values can move rows in and out of the
         # find filter, which must never recursively re-run the preview.
@@ -951,11 +1081,23 @@ class CaptionManagementPanel(QWidget):
         QShortcut(QKeySequence.StandardKey.Paste, self._table, self.paste_into_new_value)
         QShortcut(QKeySequence("Ctrl+G"), self._table, self.go_to_line_current)
 
-        # Ctrl+F / Ctrl+R for the caption Filter / Replace dialogs are owned by
-        # MainWindow as window-scoped, mode-gated shortcuts (issue #1) so they
-        # follow Caption Mode rather than focus. They call this panel's
-        # open_filter_dialog / open_replace_dialog methods below, which delegate
-        # to the injected on_open_filter / on_open_replace callbacks.
+        # Ctrl+F / Ctrl+R FOCUS the permanent bar's Find / Replace-with field
+        # (FQ-017). They used to be window-scoped, mode-gated MainWindow
+        # shortcuts opening the deleted Caption Filter modal; with the modal gone
+        # the bar owns them, scoped to this panel and its children so they are
+        # live wherever the caption grid or the bar has focus and inert
+        # everywhere else. (Caption Mode disables the Edit-menu Find…/Replace…
+        # actions, so there is no ambiguous-shortcut conflict.)
+        self._focus_find_shortcut = QShortcut(QKeySequence("Ctrl+F"), self)
+        self._focus_find_shortcut.setContext(
+            Qt.ShortcutContext.WidgetWithChildrenShortcut
+        )
+        self._focus_find_shortcut.activated.connect(self.focus_find_replace_bar)
+        self._focus_replace_shortcut = QShortcut(QKeySequence("Ctrl+R"), self)
+        self._focus_replace_shortcut.setContext(
+            Qt.ShortcutContext.WidgetWithChildrenShortcut
+        )
+        self._focus_replace_shortcut.activated.connect(self.focus_replace_field)
 
     # -- API ----------------------------------------------------------------
 
@@ -977,15 +1119,10 @@ class CaptionManagementPanel(QWidget):
     def close_panel(self) -> None:
         self._on_close()
 
-    def open_filter_dialog(self) -> None:
-        """Panel Ctrl+F: open the shared caption dialog in FILTER mode (issue
-        #1). Delegates to the MainWindow-injected callback."""
-        self.on_open_filter()
-
-    def open_replace_dialog(self) -> None:
-        """Panel Ctrl+R: open the shared caption dialog in REPLACE mode (issue
-        #1). Delegates to the MainWindow-injected callback."""
-        self.on_open_replace()
+    def focus_grid(self) -> None:
+        """Put focus back on the caption grid — what Escape in the permanent
+        Find/Replace bar does instead of hiding it (FQ-017)."""
+        self._table.setFocus()
 
     # -- selection helpers --------------------------------------------------
 
@@ -1099,9 +1236,14 @@ class CaptionManagementPanel(QWidget):
         in_selection: bool,
     ) -> int:
         """Apply find->replace to the Value of each row in scope, writing the
-        result into that row's New Value (non-destructive). Scope: In selection
-        = currently-visible/filtered rows; Global = all source rows. Returns the
-        number of rows changed. Raises ValueError on invalid regex."""
+        result into that row's New Value (non-destructive). Scope:
+        ``in_selection=True`` = currently-visible/filtered rows (the bar's
+        default ``"in filtered results"``); ``False`` = all source rows (``"in
+        all project"``). Returns the number of rows changed. Raises ValueError on
+        invalid regex.
+
+        Note the parameter name is historical (the deleted modal scoped by grid
+        *selection*); the only caller now scopes by *filter*."""
         if in_selection:
             rows = self._visible_source_rows()
         else:
@@ -1117,11 +1259,39 @@ class CaptionManagementPanel(QWidget):
 
     # -- live replace bar (§13) ---------------------------------------------
 
-    def show_find_replace_bar(self) -> None:
-        """Reveal the grid's live Find/Replace bar, seeded from the currently
-        active find pattern (so Ctrl+F-then-Ctrl+R style reuse works). The bar
-        is a plain child widget — never a modal, never ``.exec()``."""
-        self.find_replace_bar.show_bar(self.current_filter_pattern())
+    def focus_find_replace_bar(self) -> None:
+        """``Ctrl+F`` / the context-menu entry: focus the permanently visible
+        bar's Find field, seeding it from the currently active find pattern when
+        it is empty (so Filter-then-Replace reuse still works). The bar is a
+        plain child widget — never a modal, never ``.exec()``, and never
+        hidden."""
+        self.find_replace_bar.focus_find(self.current_filter_pattern())
+
+    def focus_replace_field(self) -> None:
+        """``Ctrl+R``: focus the permanently visible bar's Replace-with field."""
+        self.find_replace_bar.focus_replace()
+
+    def replace_all_from_bar(
+        self, find: str, replacement: str, mode: str, case: bool, in_all_project: bool
+    ) -> int:
+        """The bar's Replace All: write the replacement into the New Value of
+        every row in the chosen scope, then **commit** the live preview.
+
+        The commit is the point of this method. ``commit_live_replace`` used to
+        be reached only from the bar's Close button; with the bar permanent,
+        Replace All is the explicit, deliberate write that ends the reversible
+        phase — after it, the proposed New Values are ordinary hand-editable
+        ones and a later re-run (a filter change, another keystroke) will NOT
+        roll a hand edit back. The other release gesture is emptying the Find
+        field, which rolls the preview back cleanly.
+
+        Order matters: on an invalid regex ``replace_all_find`` raises before the
+        commit, so a broken pattern leaves the reversible preview intact."""
+        count = self.replace_all_find(
+            find, replacement, mode, case, in_selection=not in_all_project
+        )
+        self.commit_live_replace()
+        return count
 
     def live_replace_preview(
         self, find: str, replacement: str, mode: str, case: bool
@@ -1175,16 +1345,22 @@ class CaptionManagementPanel(QWidget):
 
     def commit_live_replace(self) -> None:
         """Stop tracking the live preview: whatever it proposed becomes an
-        ordinary, hand-editable New Value. Called when the bar closes — it does
-        not write anything, it only forgets the rollback baseline."""
+        ordinary, hand-editable New Value. It does not write anything, it only
+        forgets the rollback baseline.
+
+        Called by ``replace_all_from_bar`` (FQ-017). It used to be the bar's
+        ``on_close``; the permanent bar has no Close button, so Replace All is
+        the handoff from reversible preview to ordinary proposal."""
         self._live_replace_baseline = {}
 
     def _refresh_live_replace(self) -> None:
         """Re-run the live preview against the *new* filter scope. Called after
         every gesture that changes which rows are visible, so rows that just
         left the visible set get their previous New Value back and rows that
-        just entered it pick the proposal up. A no-op when the bar is hidden
-        and nothing is currently previewed."""
+        just entered it pick the proposal up. A no-op when the bar is inactive
+        (empty Find field) and nothing is currently previewed — which, after
+        Replace All committed the baseline, is exactly the state that stops a
+        filter change from reverting a hand-edited New Value."""
         if not self.find_replace_bar.is_active() and not self._live_replace_baseline:
             return
         self.find_replace_bar.run_live_replace()
@@ -1535,6 +1711,6 @@ class CaptionManagementPanel(QWidget):
             self.unify_current,
         )
         menu.addSeparator()
-        menu.addAction("Find / Replace bar", self.show_find_replace_bar)
+        menu.addAction("Focus Find / Replace bar", self.focus_find_replace_bar)
         menu.addAction("Clear all filters", self.clear_all_filters)
         menu.exec(self._table.viewport().mapToGlobal(pos))

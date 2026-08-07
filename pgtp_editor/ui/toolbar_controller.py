@@ -198,11 +198,16 @@ class ToolbarController(QObject):
         every *leaf* command.
 
         Skips separators and submenu placeholders (an action that opens a
-        submenu is not itself a command). The dynamic "Open Recent" submenu is
-        skipped wholesale -- its children are transient per-session file
-        entries and must never be pinned to the toolbar. Duplicate ids (two
+        submenu is not itself a command). Duplicate ids (two
         identically-labelled actions in one menu) get a numeric suffix so an
         id always resolves to exactly one action.
+
+        FQ-010 removed the one wholesale-skipped branch (§7's rule against
+        pinning the dynamic "Open Recent" submenu, whose children were transient
+        per-session file entries): the submenu is gone, so the rule is gone with
+        it rather than left guarding a menu that no longer exists. Should a
+        dynamic, per-session submenu ever return, the skip has to come back with
+        it -- there is no general "is this submenu dynamic?" test here.
 
         CAUTION: `QAction.menu()` hands the returned QMenu's ownership to
         Python, so letting that wrapper go out of scope DESTROYS the real menu
@@ -227,8 +232,6 @@ class ToolbarController(QObject):
                     if id(obj) not in self._menu_keepalive_seen:
                         self._menu_keepalive_seen.add(id(obj))
                         self._menu_keepalive.append(obj)
-                if "recent" in menu_path_label([label]).lower():
-                    continue
                 yield from self._walk_menu_actions(submenu, path + (label,), seen)
                 continue
             full_path = path + (label,)

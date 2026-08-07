@@ -162,9 +162,10 @@ def test_menu_command_ids_are_unique(qtbot, tmp_path):
     assert len(ids) == len(set(ids))
 
 
-def test_recent_files_submenu_is_not_offered(qtbot, tmp_path):
-    """Its children are transient per-session file entries -- pinning one to
-    the toolbar would leave a dead button behind."""
+def test_no_recent_files_command_exists_at_all(qtbot, tmp_path):
+    """FQ-010 deleted `File ▸ Open Recent` and the store behind it, and with it
+    §7's rule that its transient children must never be pinnable. Nothing
+    recent-shaped is offered because nothing recent-shaped exists."""
     window = MainWindow(settings=_ini_settings(tmp_path))
     qtbot.addWidget(window)
     ids = [command_id for command_id, _label in window._toolbar_ui.all_menu_commands()]
@@ -409,9 +410,10 @@ def test_customize_dialog_reenumerates_commands_added_after_startup(qtbot, tmp_p
 
 
 def test_submenu_commands_are_offered_with_their_full_path(qtbot, tmp_path):
-    """The walk is depth-first over real submenus (today only the excluded
-    Open Recent is one), so a nested command gets a dotted id and a `›`-joined
-    label — and the submenu placeholder itself is never a command."""
+    """The walk is depth-first over real submenus (since FQ-010 removed Open
+    Recent the live menu bar has none, so this builds one), so a nested command
+    gets a dotted id and a `›`-joined label — and the submenu placeholder itself
+    is never a command."""
     window = MainWindow(settings=_ini_settings(tmp_path))
     qtbot.addWidget(window)
     tools = find_top_menu(window, "Tools")

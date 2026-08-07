@@ -2,7 +2,7 @@
 Type=Application
 Name=PGTP Editor
 Comment=Companion editor for SQL Maestro PostgreSQL PHP Generator .pgtp files
-Exec=pgtp-editor %f
+Exec=pgtp-editor
 Icon=pgtp-editor
 Categories=Development;Database;
 Terminal=false

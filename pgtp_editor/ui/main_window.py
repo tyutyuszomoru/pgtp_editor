@@ -42,7 +42,6 @@ from pgtp_editor import debuglog
 from pgtp_editor.model.line_index import node_at_line
 from pgtp_editor.ui._stub_action import add_stub_action
 from pgtp_editor.ui.about import show_about_dialog
-from pgtp_editor.ui.caption_find_replace_dialog import CaptionFindReplaceDialog
 from pgtp_editor.ui.center_stage import CenterStage
 from pgtp_editor.ui import modals
 from pgtp_editor.ui.manual_panel import (
@@ -365,32 +364,13 @@ class MainWindow(QMainWindow):
         self.center_stage.caption_management_panel._on_apply = self._apply_caption_edits
         self.center_stage.caption_management_panel._on_close = self._close_caption_mode
         self.center_stage.caption_management_panel.on_go_to_line = self._caption_go_to_line
-        # Ctrl+F / Ctrl+R open the caption Filter / Replace dialogs (issue #1).
-        # Wire the panel's callbacks to open the caption dialogs; the panel's
-        # open_filter_dialog / open_replace_dialog methods delegate to these.
-        self.center_stage.caption_management_panel.on_open_filter = (
-            self._open_caption_filter_dialog
-        )
-        self.center_stage.caption_management_panel.on_open_replace = (
-            self._open_caption_replace_dialog
-        )
-        self._caption_find_replace_dialog = None
-
-        # Window-scoped, mode-gated Ctrl+F / Ctrl+R. While Caption Mode is
-        # active these fire anywhere in the window (regardless of which widget
-        # has focus — e.g. after Go-to-line moves focus to the read-only Raw XML
-        # editor) and route to the caption Filter / Replace dialogs. They are
-        # disabled outside Caption Mode; the Edit-menu Find…/Replace… actions
-        # drive normal Raw-XML find/replace instead. Toggled in
-        # _enter_caption_mode / _close_caption_mode.
-        self._caption_filter_shortcut = QShortcut(QKeySequence("Ctrl+F"), self)
-        self._caption_filter_shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
-        self._caption_filter_shortcut.activated.connect(self._caption_shortcut_open_filter)
-        self._caption_filter_shortcut.setEnabled(False)
-        self._caption_replace_shortcut = QShortcut(QKeySequence("Ctrl+R"), self)
-        self._caption_replace_shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
-        self._caption_replace_shortcut.activated.connect(self._caption_shortcut_open_replace)
-        self._caption_replace_shortcut.setEnabled(False)
+        # FQ-017: the two window-scoped, mode-gated Ctrl+F / Ctrl+R shortcuts
+        # that opened the Caption Filter / Replace modal are GONE along with the
+        # modal itself. The caption panel's own permanently visible
+        # Find/Replace bar owns those keys now, as panel-scoped focus shortcuts
+        # (caption_management_panel: _focus_find_shortcut /
+        # _focus_replace_shortcut), so no caption find/replace state lives on
+        # the host any more.
         self.center_stage.xml_editor.read_only_edit_attempted.connect(
             self._on_read_only_edit_attempted
         )
@@ -576,8 +556,8 @@ class MainWindow(QMainWindow):
         )
 
         #: The open `.pgtp` document lane (`ui/pgtp_document_controller.py`):
-        #: open / reparse / save / close / revert, the §7 Revert gate and §26's
-        #: Open Recent, plus the four pieces of document state
+        #: open / reparse / save / close / revert, the §7 Revert gate,
+        #: plus the four pieces of document state
         #: (`project`/`project_path`/`dirty`/`loading`) the six delegating
         #: properties below forward to.
         #:
@@ -1298,9 +1278,9 @@ class MainWindow(QMainWindow):
     def open_project_file(self, path):
         """Load and display the `.pgtp` project at `path` (§1).
 
-        Stays PUBLIC on the host — `main.py`'s `--file` argument, §21's
-        drag-and-drop, §26's Open Recent and the Compare/Merge lane's post-Apply
-        reload all call it, and a test replaces it on the finished window — while
+        Stays PUBLIC on the host — §21's drag-and-drop and the Compare/Merge
+        lane's post-Apply reload both call it, and a test replaces it on the
+        finished window — while
         the loading itself belongs to `_doc_ui`. The one method the six
         delegating properties below are not enough for.
         """
@@ -1330,13 +1310,11 @@ class MainWindow(QMainWindow):
         open_action = menu.addAction("Open...")
         open_action.setShortcut("Ctrl+O")
         open_action.triggered.connect(lambda: self._doc_ui.open_dialog())
-        # §26 File ▸ Open Recent. The submenu itself is built once and kept
-        # (`QMenu.addMenu` returns a wrapper Python then owns -- see
-        # `toolbar_controller.py`'s keepalive note), and its CHILDREN are rebuilt
-        # from the persisted MRU list every time it is about to be shown, so an
-        # entry whose file was deleted meanwhile disappears instead of
-        # misfiring. It is skipped wholesale by the toolbar's menu walk (§7).
-        self._doc_ui.set_recent_menu(menu.addMenu("Open Recent"))
+        # FQ-010: there is deliberately NO "Open Recent" submenu (and no
+        # `recentFiles` store behind it). Recent *files* belonged to the
+        # standalone-`.pgtp`-editor era the project has left; a project-centric
+        # app's launch-time memory is recent *projects*, which is a separate,
+        # later entry. Do not reintroduce an MRU here.
         # §21: the standalone custom-PHP editor's entry point. Sits beside
         # "Open..." because it IS an open gesture, and deliberately ABOVE the
         # project separator: a `.php` file has no structural tie to a `.pgtp`
@@ -1382,8 +1360,27 @@ class MainWindow(QMainWindow):
         close_action.triggered.connect(lambda: self._doc_ui.close())
         self._close_action = close_action
         menu.addSeparator()
+        # FQ-010: re-open the startup launcher on demand. Its "Don't show this
+        # again" flag is persisted, so without this entry that tick would be a
+        # one-way door only a settings edit could undo. Passes `force=True`,
+        # which is exactly what makes it reversible.
+        show_launcher_action = menu.addAction("Show Launcher…")
+        show_launcher_action.triggered.connect(lambda: self.show_launcher())
         exit_action = menu.addAction("Exit")
         exit_action.triggered.connect(self.close)
+
+    def show_launcher(self):
+        """Re-open the FQ-010 startup launcher (`File ▸ Show Launcher…`).
+
+        A USER-triggered modal, like every other dialog on the host — the
+        automatic startup show lives in `main.py` after `window.show()` and is
+        never reached from `__init__`, because 49 test files construct a
+        MainWindow and a modal there would hang all of them. Imported lazily so
+        constructing a window never pulls the launcher in.
+        """
+        from pgtp_editor.ui import launcher_dialog
+
+        return launcher_dialog.show_launcher(self, self._settings, force=True)
 
     def _build_edit_menu(self):
         menu = self.menuBar().addMenu("Edit")
@@ -1649,11 +1646,9 @@ class MainWindow(QMainWindow):
         self.center_stage.enter_caption_mode()
         self._mode_label.setText("Caption Mode (XML read-only)")
         # Caption Mode is authoritative: Ctrl+F / Ctrl+R follow the mode, not
-        # focus. Enable the window-scoped caption shortcuts and disable the
-        # editor Find…/Replace… actions (disabling a QAction disables its
-        # shortcut, so there is no ambiguous-shortcut conflict).
-        self._caption_filter_shortcut.setEnabled(True)
-        self._caption_replace_shortcut.setEnabled(True)
+        # focus. Disable the editor Find…/Replace… actions (disabling a QAction
+        # disables its shortcut, so there is no ambiguous-shortcut conflict) and
+        # let the caption panel's own panel-scoped focus shortcuts win (FQ-017).
         self._find_ui.set_find_actions_enabled(False)
         # §8/§13: the Raw XML editor is read-only in Caption Mode, so the
         # Bookmarks menu and its four shortcuts go with it. The lane that owns
@@ -1702,10 +1697,10 @@ class MainWindow(QMainWindow):
         Pending (unapplied) edits are discarded by re-scanning on next enter."""
         self.center_stage.leave_caption_mode()
         self._mode_label.setText("Editing Mode")
-        # Reverse the mode gating: disable the caption shortcuts and restore the
-        # editor Find…/Replace… actions (and their Ctrl+F / Ctrl+R shortcuts).
-        self._caption_filter_shortcut.setEnabled(False)
-        self._caption_replace_shortcut.setEnabled(False)
+        # Reverse the mode gating: restore the editor Find…/Replace… actions
+        # (and their Ctrl+F / Ctrl+R shortcuts). The caption panel's own focus
+        # shortcuts go quiet on their own — they are scoped to that panel, which
+        # is no longer on screen.
         self._find_ui.set_find_actions_enabled(True)
         self._find_ui.set_bookmarks_enabled(True)
 
@@ -1714,64 +1709,6 @@ class MainWindow(QMainWindow):
         stays visible but read-only in Caption Mode) and navigate to `line`."""
         self.center_stage.setCurrentIndex(self.center_stage.raw_xml_tab_index)
         self.center_stage.xml_editor.navigate_to_line(line)
-
-    def _make_caption_find_replace_dialog(self, replace_enabled: bool):
-        """Construct (but do NOT exec) the shared Find/Filter/Replace dialog
-        wired to the caption panel. In Replace mode, Find-what is pre-loaded
-        with the grid's currently-active filter pattern. Returns the dialog so
-        tests can drive it without ``.exec()``."""
-        panel = self.center_stage.caption_management_panel
-        initial_find = panel.current_filter_pattern() if replace_enabled else ""
-        dialog = CaptionFindReplaceDialog(
-            on_filter=self._caption_apply_filter,
-            on_replace_all=self._caption_replace_all,
-            replace_enabled=replace_enabled,
-            initial_find=initial_find,
-            parent=self,
-        )
-        # Keep a reference so the non-modal dialog is not garbage-collected.
-        self._caption_find_replace_dialog = dialog
-        return dialog
-
-    def _caption_shortcut_open_filter(self) -> None:
-        """Window-scoped Ctrl+F slot (active only in Caption Mode): route to the
-        caption panel's filter dialog regardless of which widget has focus."""
-        self.center_stage.caption_management_panel.open_filter_dialog()
-
-    def _caption_shortcut_open_replace(self) -> None:
-        """Window-scoped Ctrl+R slot (active only in Caption Mode): route to the
-        caption panel's replace dialog regardless of which widget has focus
-        (e.g. after Go-to-line moved focus to the read-only Raw XML editor).
-        Preserves the pre-load-active-filter behaviour via open_replace_dialog."""
-        self.center_stage.caption_management_panel.open_replace_dialog()
-
-    def _open_caption_filter_dialog(self) -> None:
-        """Tools -> Caption Filter…: open the shared dialog in filter-only mode
-        (non-blocking show)."""
-        dialog = self._make_caption_find_replace_dialog(replace_enabled=False)
-        dialog.show()
-
-    def _open_caption_replace_dialog(self) -> None:
-        """Caption-mode Ctrl+R: open the shared dialog in Replace mode,
-        pre-loading the grid's active filter pattern (non-blocking show)."""
-        dialog = self._make_caption_find_replace_dialog(replace_enabled=True)
-        dialog.show()
-
-    def _caption_apply_filter(self, pattern: str, mode: str, case: bool) -> None:
-        """Filter callback: apply the pattern as a whole-row grid filter. Lets
-        an invalid-regex ValueError propagate so the dialog shows it inline."""
-        self.center_stage.caption_management_panel.apply_find_filter(pattern, mode, case)
-
-    def _caption_replace_all(
-        self, find: str, replacement: str, mode: str, case: bool, in_selection: bool
-    ) -> None:
-        """Replace-All callback: transform each in-scope row's Value into its
-        New Value, then report the count. Lets ValueError propagate for the
-        dialog's inline error."""
-        count = self.center_stage.caption_management_panel.replace_all_find(
-            find, replacement, mode, case, in_selection
-        )
-        self.statusBar().showMessage(f"Replaced in {count} caption(s).", 5000)
 
     def _on_read_only_edit_attempted(self) -> None:
         """Flash a non-modal hint when the user tries to edit the read-only
@@ -3511,8 +3448,10 @@ class MainWindow(QMainWindow):
         menu = self.menuBar().addMenu("Tools")
         manage_captions_action = menu.addAction("Manage Captions...")
         manage_captions_action.triggered.connect(self._enter_caption_mode)
-        caption_filter_action = menu.addAction("Caption Filter…")
-        caption_filter_action.triggered.connect(self._open_caption_filter_dialog)
+        # FQ-017: "Caption Filter…" is gone. It opened a modal that duplicated
+        # the Caption Management tab's own — now permanently visible —
+        # Find/Replace bar, which is the single surface for caption
+        # find/filter/replace.
         menu.addSeparator()
         validate_action = menu.addAction("Validate Project")
         validate_action.triggered.connect(self._find_ui.validate_project)

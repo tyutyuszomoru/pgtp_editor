@@ -13,10 +13,13 @@ def test_file_menu_contents(qtbot):
         # "Open PHP File…" (§21) sits beside "Open..." because it IS an open
         # gesture, and above the project separator: a .php file has no
         # structural tie to a .pgtp and opens with or without a project.
-        "Open...", "Open Recent", "Open PHP File…", "―",
+        # FQ-010 removed "Open Recent" (and the recentFiles store behind it)
+        # and added "Show Launcher…", which re-opens the startup launcher so its
+        # persisted "Don't show this again" is never a one-way door.
+        "Open...", "Open PHP File…", "―",
         "New Project…", "Open Project…", "Close Project", "Project Settings…", "Deploy .pgtp", "―",
         "Save", "Save As...",
-        "Revert", "Close", "―", "Exit",
+        "Revert", "Close", "―", "Show Launcher…", "Exit",
     ]
 
 
@@ -36,18 +39,14 @@ def test_file_menu_shortcuts(qtbot):
         assert action.shortcut().toString() == combo
 
 
-def test_open_recent_shows_a_disabled_placeholder_when_the_mru_is_empty(qtbot):
-    """§26: the submenu is real and populated from the persisted MRU list. With
-    an empty store it carries one disabled placeholder rather than nothing at
-    all, which reads as a broken menu. (See test_open_recent.py for the store.)"""
+def test_file_menu_has_no_open_recent_submenu(qtbot):
+    """FQ-010: `Open Recent` and the `recentFiles` store are gone. The File menu
+    must carry NO submenu at all — every entry is a leaf command."""
     window = MainWindow()
     qtbot.addWidget(window)
     file_menu = find_top_menu(window, "File")
-    open_recent_action = find_action(file_menu, "Open Recent")
-    open_recent_menu = open_recent_action.menu()
-    assert open_recent_menu is not None
-    assert action_labels(open_recent_menu) == ["(no recent files)"]
-    assert open_recent_menu.actions()[0].isEnabled() is False
+    assert find_action(file_menu, "Open Recent") is None
+    assert [a.text() for a in file_menu.actions() if a.menu() is not None] == []
 
 
 def test_exit_action_closes_window(qtbot):
@@ -368,7 +367,9 @@ def test_tools_menu_contents(qtbot):
     qtbot.addWidget(window)
     menu = find_top_menu(window, "Tools")
     assert action_labels(menu) == [
-        "Manage Captions...", "Caption Filter…", "―",
+        # FQ-017 deleted "Caption Filter…": the modal it opened duplicated the
+        # Caption Management tab's own permanent Find/Replace bar.
+        "Manage Captions...", "―",
         "Validate Project", "―",
         # §22 PHP lint, directly under Validate Project: the same kind of
         # gesture one tier down (this file, not the project).

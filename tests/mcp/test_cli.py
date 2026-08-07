@@ -155,6 +155,23 @@ def test_run_mcp_server_directory_argument_errors(tmp_path, capsys):
 # --- main(): the flag routes to the headless path, GUI-free ----------------
 
 
+@pytest.fixture(autouse=True)
+def _reset_debuglog_global_state():
+    """`pgtp_editor/mcp/__main__.py::main` calls the REAL `debuglog.setup`, whose
+    `_active` flag is module-global and makes every later `setup()` a no-op. The
+    four `test_module_main_*` tests below therefore used to leak it out of this
+    file, and under `-n 10` (`--dist load`, which spreads tests across workers by
+    timing) whichever worker also drew `tests/test_debuglog.py` failed there
+    instead of here. Tear it down after every test in this module so the leak
+    cannot travel; `teardown()` is a safe no-op when nothing was installed."""
+    from pgtp_editor import debuglog
+
+    try:
+        yield
+    finally:
+        debuglog.teardown()
+
+
 @pytest.fixture
 def quiet_debuglog(monkeypatch):
     monkeypatch.setattr(main_mod.debuglog, "setup", lambda debug: None)
@@ -228,7 +245,9 @@ def test_main_without_the_flag_starts_no_server(monkeypatch, quiet_debuglog):
     monkeypatch.setattr(mw_mod, "MainWindow", _FakeWindow)
     monkeypatch.setattr(main_mod.sys, "argv", ["pgtp_editor"])
 
-    assert main_mod.main() == 0
+    # FQ-010: GUI startup now shows the launcher; stub it out so this test never
+    # reaches a real modal (and so the fake window needs no menu bar).
+    assert main_mod.main(launcher=lambda window, settings, **kwargs: None) == 0
 
 
 # --- python -m pgtp_editor.mcp reaches the same entry point ----------------

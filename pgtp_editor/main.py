@@ -108,10 +108,9 @@ def parse_args(argv):
         "file",
         nargs="?",
         default=None,
-        help="optional .pgtp project to open at startup (used by the "
-        "Windows 'Edit with PGTP Editor' right-click verb, which passes "
-        "the clicked file path); with --mcp it is the default project "
-        "for path-less tool calls",
+        help="only meaningful with --mcp: the .pgtp that becomes the headless "
+        "server's default project for path-less tool calls. The GUI IGNORES "
+        "it — it always starts at the launcher (FQ-010)",
     )
     return parser.parse_args(argv)
 
@@ -185,8 +184,14 @@ def run_mcp_server(path=None, *, serve=None, stderr=None):
     return 0
 
 
-def main():
-    args = parse_args(sys.argv[1:])
+def main(argv=None, *, launcher=None):
+    """Run the GUI (or, with --mcp, §23's headless server) and return an exit code.
+
+    `argv` defaults to the real command line; `launcher` is the FQ-010 startup
+    launcher seam (see below). Both exist so the suite can drive this function
+    without a real command line and without a real modal.
+    """
+    args = parse_args(sys.argv[1:] if argv is None else argv)
     session_path = debuglog.setup(debug=args.debug)
 
     # --mcp runs the server INSTEAD of the GUI, and returns here before any Qt
@@ -194,6 +199,11 @@ def main():
     # corrupt the protocol stream (see mcp/server.py's module docstring, which
     # names serve_stdio "THE headless --mcp entry point"). The in-app server is
     # a separate thing entirely -- start_server_thread from a GUI gesture.
+    #
+    # INVARIANT (FQ-010): this early return is what makes the startup launcher
+    # STRUCTURALLY unreachable headlessly -- ui/launcher_dialog.py is not even
+    # imported on this path. NEVER move the launcher (or any Qt import) above
+    # this return: a GUI contending for stdout corrupts every MCP session.
     if args.mcp:
         return run_mcp_server(args.file)
 
@@ -225,17 +235,23 @@ def main():
     window = MainWindow(debug_log_path=session_path)
     window.show()
 
-    # Open a file passed on the command line (e.g. the Windows "Edit with
-    # PGTP Editor" right-click verb passes the clicked .pgtp path). Guarded on
-    # existence: open_project_file surfaces parse errors gracefully but a
-    # missing path would raise from load_project, so skip it and warn instead.
-    if args.file is not None:
-        if os.path.isfile(args.file):
-            window.open_project_file(args.file)
-        else:
-            logging.getLogger(__name__).warning(
-                "startup file not found, ignoring: %s", args.file
-            )
+    # FQ-010: the startup launcher -- the ONE automatic show, here and never in
+    # `MainWindow.__init__` (49 test files construct a MainWindow; a modal there
+    # would hang every one of them). Behind the `launcher=` seam, like every
+    # other confirmation in this codebase, so the suite never enters a real
+    # modal loop. Deliberately AFTER `window.show()`: the persisted
+    # `windowState` is visibly restored first, then the launcher lands on top of
+    # it. Escape/close inside it lands in the empty app exactly as before and
+    # never quits, so nothing here reads its return value.
+    #
+    # `args.file` is deliberately NOT opened: the GUI no longer opens a `.pgtp`
+    # passed on the command line (FQ-010). The argument itself stays -- it is the
+    # headless `--mcp` server's default project, passed at the early return above.
+    if launcher is None:
+        from pgtp_editor.ui import launcher_dialog
+
+        launcher = launcher_dialog.show_launcher
+    launcher(window, settings)
 
     if session_path is not None:
         print(f"DEBUG logging -> {session_path}", file=sys.stderr)

@@ -13,8 +13,13 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 """The open `.pgtp` **document** lane: open, reparse, save, close, revert, and
-the two things that hang off "which file is open" — §7 Revert gating and §26
-Open Recent.
+the one thing that hangs off "which file is open" — §7 Revert gating.
+
+FQ-010 removed the other one: there is no recent-files MRU here any more (no
+`recentFiles` key, no `File ▸ Open Recent`). Recent *files* suited the
+standalone-`.pgtp`-editor era the project has left; recent *projects* is the
+memory a project-centric app should have, and is a separate, later entry. Do not
+reintroduce an MRU in this lane.
 
 What it owns
 ------------
@@ -138,13 +143,6 @@ class PgtpDocumentController(QObject):
     #: this; nothing about them is inlined into `close()`. See BUG-011.
     project_closed = Signal()
 
-    #: QSettings key holding the recent-projects list, and its cap (§26).
-    #: Persisted through the SAME injectable store the window uses for
-    #: geometry/theme, so a test pointed at a temp ini gets a private MRU list
-    #: for free.
-    _RECENT_FILES_KEY = "recentFiles"
-    _RECENT_FILES_MAX = 10
-
     def __init__(
         self,
         shell: UiShell,
@@ -193,8 +191,6 @@ class PgtpDocumentController(QObject):
         #: File ▸ Revert, handed over once the File menu is built (§7). None
         #: until then, which is also why `refresh_revert_action` is guarded.
         self._revert_action = None
-        #: File ▸ Open Recent, likewise handed over (§26).
-        self._recent_menu = None
 
         #: Replaceable seams -- ATTRIBUTES, not methods. See the module
         #: docstring: the suite assigns over them to keep two modals out of the
@@ -256,11 +252,6 @@ class PgtpDocumentController(QObject):
         """File ▸ Revert, or None before the File menu is built (§7)."""
         return self._revert_action
 
-    @property
-    def recent_menu(self):
-        """File ▸ Open Recent, or None before the File menu is built (§26)."""
-        return self._recent_menu
-
     # -- construction --------------------------------------------------------
 
     def set_revert_action(self, action) -> None:
@@ -271,14 +262,6 @@ class PgtpDocumentController(QObject):
         """
         self._revert_action = action
         self.refresh_revert_action()
-
-    def set_recent_menu(self, menu) -> None:
-        """Adopt File ▸ Open Recent: rebuild its children from the persisted MRU
-        list now and again every time it is about to be shown, so an entry whose
-        file was deleted meanwhile disappears instead of misfiring (§26)."""
-        self._recent_menu = menu
-        menu.aboutToShow.connect(self.rebuild_recent_menu)
-        self.rebuild_recent_menu()
 
     # -- seams ---------------------------------------------------------------
 
@@ -362,9 +345,8 @@ class PgtpDocumentController(QObject):
 
     def open_pgtp_path(self, path) -> None:
         """Open a `.pgtp` the way File ▸ Open… does, given a path that came
-        from somewhere other than that dialog (§21's drag-and-drop and §26's
-        Open Recent both drop one here). Split out so no caller can fork the
-        §18.2 decision."""
+        from somewhere other than that dialog (§21's drag-and-drop drops one
+        here). Split out so no caller can fork the §18.2 decision."""
         if not self._has_ddl_project():
             self.prompt_open_mode(str(path))
         else:
@@ -438,10 +420,8 @@ class PgtpDocumentController(QObject):
         if parse_error is not None:
             self._handle_parse_failure(path, parse_error)
             return
-        # §26 Open Recent + §7 Revert gating: both keyed off the file that just
-        # became the open project. Only on the SUCCESS path -- a file that would
-        # not parse is not something to offer re-opening from a menu.
-        self.remember_recent_file(path)
+        # §7 Revert gating: keyed off the file that just became the open
+        # project. Only on the SUCCESS path.
         self.refresh_revert_action()
         self._shell.status(f"Opened: {path}", 5000)
 
@@ -603,7 +583,6 @@ class PgtpDocumentController(QObject):
             return
         self._path = path
         self.set_dirty(False)
-        self.remember_recent_file(path)
         self.refresh_revert_action()
         self._shell.status(f"Saved as {Path(path).name}", 5000)
 
@@ -739,58 +718,3 @@ class PgtpDocumentController(QObject):
         self.set_dirty(True)
         self.refresh_revert_action()
         self._shell.status(f"Reverted to {Path(bak_path).name}", 5000)
-
-    # -- Open Recent (§26) ---------------------------------------------------
-
-    def recent_files(self) -> list:
-        """The persisted MRU list, most-recent first, pruned of entries whose
-        file no longer exists and capped. Reading prunes but does not write --
-        `remember_recent_file` is the only writer."""
-        stored = self._settings.value(self._RECENT_FILES_KEY, [])
-        if isinstance(stored, str):
-            # A single-element QStringList round-trips through the ini format
-            # as a bare string.
-            stored = [stored]
-        elif stored is None:
-            stored = []
-        paths = []
-        for entry in stored:
-            path = str(entry)
-            if path in paths or not Path(path).is_file():
-                continue
-            paths.append(path)
-        return paths[: self._RECENT_FILES_MAX]
-
-    def remember_recent_file(self, path) -> None:
-        """Push `path` to the head of the MRU list and persist it."""
-        path = str(path)
-        paths = [p for p in self.recent_files() if p != path]
-        paths.insert(0, path)
-        self._settings.setValue(
-            self._RECENT_FILES_KEY, paths[: self._RECENT_FILES_MAX]
-        )
-
-    def rebuild_recent_menu(self) -> None:
-        """Repopulate the Open Recent submenu from the pruned MRU list.
-
-        Every entry goes through the ONE project-open path (`open_file` via
-        `open_pgtp_path`, so §18.2's New/Open/Edit-Standalone chooser still
-        applies) -- never a second loader. An empty list shows a single disabled
-        placeholder rather than an empty menu that looks broken.
-        """
-        menu = self._recent_menu
-        if menu is None:
-            return
-        menu.clear()
-        paths = self.recent_files()
-        if not paths:
-            placeholder = menu.addAction("(no recent files)")
-            placeholder.setEnabled(False)
-            return
-        for path in paths:
-            action = menu.addAction(Path(path).name)
-            action.setToolTip(path)
-            # Default-argument binding, not a closure over the loop variable.
-            action.triggered.connect(
-                lambda _checked=False, target=path: self.open_pgtp_path(target)
-            )

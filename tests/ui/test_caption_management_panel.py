@@ -1,6 +1,6 @@
 import pytest
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QGuiApplication
+from PySide6.QtGui import QGuiApplication, QKeySequence
 
 from pgtp_editor.ui.caption_scan import CaptionEntry
 from pgtp_editor.ui.caption_management_panel import (
@@ -1421,38 +1421,36 @@ def test_exit_button_labelled_and_wired(qtbot):
     assert calls == [True]
 
 
-# -- Issue #1: Ctrl+F / Ctrl+R open the caption dialogs ---------------------
+# -- FQ-017: Ctrl+F / Ctrl+R FOCUS the permanent bar ------------------------
 
 
-def test_panel_does_not_own_filter_replace_shortcuts(qtbot):
-    # Issue #1: Ctrl+F / Ctrl+R are now owned by MainWindow as window-scoped,
-    # mode-gated shortcuts (they follow Caption Mode, not focus). The panel must
-    # NOT own its own Ctrl+F / Ctrl+R QShortcuts (that would create an ambiguous
-    # double-binding with the window shortcuts).
+def test_panel_owns_panel_scoped_focus_shortcuts_for_ctrl_f_and_ctrl_r(qtbot):
+    """FQ-017: the window-scoped, mode-gated MainWindow shortcuts that opened
+    the deleted Caption Filter modal are gone. The panel owns Ctrl+F / Ctrl+R
+    itself now, scoped to the panel and its children (so they are inert
+    whenever the caption grid is not the focused surface) and bound to FOCUS,
+    never to show anything."""
     panel = CaptionManagementPanel()
     qtbot.addWidget(panel)
-    assert not hasattr(panel, "_filter_shortcut")
-    assert not hasattr(panel, "_replace_shortcut")
+    assert panel._focus_find_shortcut.key() == QKeySequence("Ctrl+F")
+    assert panel._focus_replace_shortcut.key() == QKeySequence("Ctrl+R")
+    for shortcut in (panel._focus_find_shortcut, panel._focus_replace_shortcut):
+        assert shortcut.context() == Qt.ShortcutContext.WidgetWithChildrenShortcut
+        assert shortcut.isEnabled()
+        assert shortcut.parent() is panel
 
 
-def test_open_filter_dialog_delegates_to_callback(qtbot):
-    # The panel's open_filter_dialog method (called by the MainWindow window
-    # shortcut) delegates to the injected on_open_filter callback.
-    calls = []
+def test_ctrl_f_focuses_the_find_field_and_ctrl_r_the_replace_field(qtbot):
     panel = CaptionManagementPanel()
     qtbot.addWidget(panel)
-    panel.on_open_filter = lambda: calls.append("filter")
-    panel.open_filter_dialog()
-    assert calls == ["filter"]
-
-
-def test_open_replace_dialog_delegates_to_callback(qtbot):
-    calls = []
-    panel = CaptionManagementPanel()
-    qtbot.addWidget(panel)
-    panel.on_open_replace = lambda: calls.append("replace")
-    panel.open_replace_dialog()
-    assert calls == ["replace"]
+    panel.load_entries(_replace_entries())
+    bar = panel.find_replace_bar
+    panel.focus_find_replace_bar()
+    assert panel.focusWidget() is bar.find_field
+    panel.focus_replace_field()
+    assert panel.focusWidget() is bar.replace_field
+    # Neither gesture ever hid or showed the bar.
+    assert bar.isHidden() is False
 
 
 # -- Phase C.2: preset-filter entry (row predicate) -------------------------
@@ -1836,16 +1834,21 @@ def _new_value_column(panel):
     ]
 
 
-def test_bar_is_a_hidden_non_modal_child_widget(qtbot):
+def test_bar_is_a_permanent_non_modal_child_widget(qtbot):
+    """FQ-017: the bar is never hidden and has no show/close lifecycle, so the
+    Caption Filter modal it duplicated could be deleted outright."""
     panel = CaptionManagementPanel()
     qtbot.addWidget(panel)
     bar = panel.find_replace_bar
     assert isinstance(bar, CaptionFindReplaceBar)
     assert bar.parent() is panel
-    assert bar.isHidden()
+    assert bar.isHidden() is False
     assert bar.is_active() is False
     # Not a dialog: there is nothing to exec().
     assert not hasattr(bar, "exec")
+    # The show/hide lifecycle is gone, not merely unused.
+    for gone in ("show_bar", "close_bar", "close_button"):
+        assert not hasattr(bar, gone), gone
 
 
 def test_bar_offers_the_three_real_search_modes(qtbot):
@@ -1864,14 +1867,14 @@ def test_bar_offers_the_three_real_search_modes(qtbot):
 
 
 def test_live_replace_updates_proposals_as_the_pattern_is_typed(qtbot):
-    """The headline behavior: no Replace All button — each keystroke rewrites
-    the New Value column, and the previous keystroke's proposal is rolled back
-    rather than accumulated."""
+    """The headline behavior: the preview is LIVE — each keystroke rewrites the
+    New Value column, and the previous keystroke's proposal is rolled back
+    rather than accumulated. (Replace All exists too, but only to reach the
+    project-wide scope and to commit; it is not what drives this.)"""
     panel = CaptionManagementPanel()
     qtbot.addWidget(panel)
     panel.load_entries(_replace_entries())
     bar = panel.find_replace_bar
-    bar.show_bar()
     bar.replace_field.setText("Screen")
 
     bar.find_field.setText("P")
@@ -1898,7 +1901,6 @@ def test_live_replace_reports_the_proposed_row_count(qtbot):
     qtbot.addWidget(panel)
     panel.load_entries(_replace_entries())
     bar = panel.find_replace_bar
-    bar.show_bar()
     bar.replace_field.setText("Screen")
     bar.find_field.setText("Page")
     assert bar.status_label.text() == "2 row(s) proposed"
@@ -1913,7 +1915,6 @@ def test_live_replace_never_touches_the_read_only_value_column(qtbot):
     qtbot.addWidget(panel)
     panel.load_entries(_replace_entries())
     bar = panel.find_replace_bar
-    bar.show_bar()
     bar.replace_field.setText("Screen")
     bar.find_field.setText("Page")
     assert _visible_value_column(panel) == ["Home Page", "Orders Page", "Cart"]
@@ -1931,7 +1932,6 @@ def test_live_replace_normal_mode_is_case_insensitive_until_match_case(qtbot):
     qtbot.addWidget(panel)
     panel.load_entries(_replace_entries())
     bar = panel.find_replace_bar
-    bar.show_bar()
     bar.replace_field.setText("X")
     bar.find_field.setText("home")
     assert _new_value_column(panel) == ["X Page", "", ""]
@@ -1946,7 +1946,6 @@ def test_live_replace_extended_mode_decodes_escapes(qtbot):
     qtbot.addWidget(panel)
     panel.load_entries(_replace_entries())
     bar = panel.find_replace_bar
-    bar.show_bar()
     bar.replace_field.setText("_")
     bar.find_field.setText("\\x20")
     # Still Normal mode: the literal backslash-x-2-0 matches nothing.
@@ -1961,7 +1960,6 @@ def test_live_replace_regular_mode_supports_capture_groups(qtbot):
     qtbot.addWidget(panel)
     panel.load_entries(_replace_entries())
     bar = panel.find_replace_bar
-    bar.show_bar()
     bar.set_mode("regular")
     bar.replace_field.setText(r"\1!")
     bar.find_field.setText(r"^(\w+) Page$")
@@ -1973,7 +1971,6 @@ def test_invalid_regex_shows_an_inline_message_instead_of_raising(qtbot):
     qtbot.addWidget(panel)
     panel.load_entries(_replace_entries())
     bar = panel.find_replace_bar
-    bar.show_bar()
     bar.set_mode("regular")
     bar.replace_field.setText("X")
     bar.find_field.setText("Page")
@@ -2001,7 +1998,6 @@ def test_invalid_regex_is_reported_even_when_no_rows_are_in_scope(qtbot):
     panel.apply_find_filter("no-such-caption", "normal", False)
     assert panel._proxy.rowCount() == 0
     bar = panel.find_replace_bar
-    bar.show_bar()
     bar.set_mode("regular")
     bar.find_field.setText("Page(")
     assert "Invalid regular expression" in bar.error_label.text()
@@ -2014,7 +2010,6 @@ def test_bar_filter_button_pushes_the_find_filter_and_refreshes_the_banner(qtbot
     qtbot.addWidget(panel)
     panel.load_entries(_replace_entries())
     bar = panel.find_replace_bar
-    bar.show_bar()
     bar.find_field.setText("Page")
     # Typing alone must not have filtered anything.
     assert panel._proxy.rowCount() == 3
@@ -2029,7 +2024,6 @@ def test_bar_filter_button_reports_invalid_regex_inline(qtbot):
     qtbot.addWidget(panel)
     panel.load_entries(_replace_entries())
     bar = panel.find_replace_bar
-    bar.show_bar()
     bar.set_mode("regular")
     bar.set_find_text("Page(")
     bar.apply_filter()
@@ -2043,14 +2037,14 @@ def test_bar_filter_button_reports_invalid_regex_inline(qtbot):
 def test_live_replace_is_scoped_to_the_visible_rows_when_a_filter_is_active(qtbot):
     """DECISION (spec silent): the live preview only ever writes into rows the
     active filters leave visible — a live edit the user cannot see contradicts
-    §13's visible-state discipline. Global stays the modal's explicit option."""
+    §13's visible-state discipline. Project-wide stays behind the scope dropdown
+    plus an explicit Replace All press (FQ-017)."""
     panel = CaptionManagementPanel()
     qtbot.addWidget(panel)
     panel.load_entries(_replace_entries())
     panel.apply_find_filter("Home", "normal", False)
     assert _visible_value_column(panel) == ["Home Page"]
     bar = panel.find_replace_bar
-    bar.show_bar()
     bar.replace_field.setText("Screen")
     bar.find_field.setText("Page")
     # "Orders Page" also matches the pattern but is filtered out: untouched.
@@ -2065,7 +2059,6 @@ def test_live_replace_rescopes_when_the_filter_moves(qtbot):
     panel.load_entries(_replace_entries())
     panel.apply_find_filter("Home", "normal", False)
     bar = panel.find_replace_bar
-    bar.show_bar()
     bar.replace_field.setText("Screen")
     bar.find_field.setText("Page")
     assert _new_value_column(panel) == ["Home Screen", "", ""]
@@ -2090,7 +2083,6 @@ def test_live_replace_rescopes_for_a_preset_predicate_filter(qtbot):
     qtbot.addWidget(panel)
     panel.load_entries(_context_entries())
     bar = panel.find_replace_bar
-    bar.show_bar()
     bar.replace_field.setText("-")
     bar.find_field.setText("t")
     before = _new_value_column(panel)
@@ -2107,7 +2099,6 @@ def test_live_replace_rescopes_for_a_header_value_filter(qtbot):
     qtbot.addWidget(panel)
     panel.load_entries(_replace_entries())
     bar = panel.find_replace_bar
-    bar.show_bar()
     bar.replace_field.setText("Screen")
     bar.find_field.setText("Page")
     assert _new_value_column(panel) == ["Home Screen", "Orders Screen", ""]
@@ -2128,7 +2119,6 @@ def test_live_replace_preserves_a_hand_typed_new_value_it_overwrote(qtbot):
     panel.load_entries(_replace_entries())
     panel._model.set_new_value(0, "Hand written")
     bar = panel.find_replace_bar
-    bar.show_bar()
     bar.replace_field.setText("Screen")
     bar.find_field.setText("Page")
     assert _new_value_column(panel) == ["Home Screen", "Orders Screen", ""]
@@ -2136,18 +2126,22 @@ def test_live_replace_preserves_a_hand_typed_new_value_it_overwrote(qtbot):
     assert _new_value_column(panel) == ["Hand written", "", ""]
 
 
-def test_closing_the_bar_keeps_the_proposals_and_stops_tracking(qtbot):
+def test_replace_all_commits_the_preview_and_stops_tracking(qtbot):
+    """FQ-017: Replace All is the handoff the deleted Close button used to be.
+    Same contract as the old close_bar: the proposals survive as ordinary New
+    Values, and nothing rewrites them afterwards."""
     panel = CaptionManagementPanel()
     qtbot.addWidget(panel)
     panel.load_entries(_replace_entries())
     bar = panel.find_replace_bar
-    bar.show_bar()
     bar.replace_field.setText("Screen")
     bar.find_field.setText("Page")
-    bar.close_bar()
-    assert bar.isHidden()
+    assert panel._live_replace_baseline != {}
+    bar.replace_all_button.click()
+    assert bar.isHidden() is False
     assert bar.is_active() is False
     assert panel._live_replace_baseline == {}
+    assert bar.status_label.text() == "2 row(s) replaced"
     # The proposals survive as ordinary New Values.
     assert _new_value_column(panel) == ["Home Screen", "Orders Screen", ""]
     # And a later filter change no longer rewrites them.
@@ -2155,18 +2149,85 @@ def test_closing_the_bar_keeps_the_proposals_and_stops_tracking(qtbot):
     assert _new_value_column(panel) == ["Home Screen", "Orders Screen", ""]
 
 
-def test_show_find_replace_bar_seeds_from_the_active_pattern_without_previewing(qtbot):
+def test_a_hand_edit_after_replace_all_is_never_silently_reverted(qtbot):
+    """⚠️ THE failure mode FQ-017 (d) exists to prevent. With the bar permanent
+    there is no Close to release the rollback baseline, so a re-run could
+    resurrect the pre-preview value over a hand edit — or, once the baseline is
+    forgotten, overwrite the hand edit from the row's Value with no way back.
+    Replace All ends the reversible phase, so every later re-scope leaves the
+    hand edit alone."""
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    panel.load_entries(_replace_entries())
+    bar = panel.find_replace_bar
+    bar.replace_field.setText("Screen")
+    bar.find_field.setText("Page")
+    bar.replace_all_button.click()
+
+    panel._model.set_new_value(0, "Hand written after the fact")
+    # Every gesture that re-scopes the preview, with the Find field still full.
+    panel.apply_find_filter("Cart", "normal", False)
+    panel.clear_all_filters()
+    panel.filter_to_field("orders")
+    panel.clear_all_filters()
+    assert _new_value_column(panel) == [
+        "Hand written after the fact",
+        "Orders Screen",
+        "",
+    ]
+
+
+def test_touching_a_field_after_replace_all_re_arms_a_reversible_preview(qtbot):
+    """The commit is not a one-way door: editing the pattern starts a fresh
+    preview whose baseline is the committed (and any hand-edited) values, so
+    clearing Find still restores them."""
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    panel.load_entries(_replace_entries())
+    bar = panel.find_replace_bar
+    bar.replace_field.setText("Screen")
+    bar.find_field.setText("Page")
+    bar.replace_all_button.click()
+    panel._model.set_new_value(0, "Hand written after the fact")
+
+    bar.replace_field.setText("View")
+    assert bar.is_active() is True
+    assert panel._live_replace_baseline[0] == "Hand written after the fact"
+    assert _new_value_column(panel) == ["Home View", "Orders View", ""]
+    bar.find_field.setText("")
+    assert _new_value_column(panel) == [
+        "Hand written after the fact",
+        "Orders Screen",
+        "",
+    ]
+
+
+def test_focus_find_replace_bar_seeds_from_the_active_pattern_without_previewing(qtbot):
     """Seeding Find-what must not fire the live replace: with an empty
-    Replace-with that would instantly propose deleting the pattern."""
+    Replace-with that would instantly propose deleting the pattern. The seeding
+    that show_bar used to do lives on the focus path now (FQ-017 (b))."""
     panel = CaptionManagementPanel()
     qtbot.addWidget(panel)
     panel.load_entries(_replace_entries())
     panel.apply_find_filter("Page", "normal", False)
-    panel.show_find_replace_bar()
+    panel.focus_find_replace_bar()
     bar = panel.find_replace_bar
     assert bar.find_field.text() == "Page"
     assert bar.is_active() is True
     assert _new_value_column(panel) == ["", "", ""]
+
+
+def test_focus_never_clobbers_text_the_user_already_typed(qtbot):
+    """Seeding is conditional: a focus gesture must not overwrite a half-typed
+    pattern with the grid's active filter pattern."""
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    panel.load_entries(_replace_entries())
+    panel.apply_find_filter("Page", "normal", False)
+    bar = panel.find_replace_bar
+    bar.set_find_text("Cart")
+    panel.focus_find_replace_bar()
+    assert bar.find_field.text() == "Cart"
 
 
 def test_find_replace_bar_in_context_menu_wired(qtbot, monkeypatch):
@@ -2194,16 +2255,173 @@ def test_find_replace_bar_in_context_menu_wired(qtbot, monkeypatch):
 
     monkeypatch.setattr("pgtp_editor.ui.caption_management_panel.QMenu", _FakeMenu)
     panel._show_context_menu(panel._table.viewport().rect().center())
-    cb = dict(captured["actions"])["Find / Replace bar"]
-    assert cb == panel.show_find_replace_bar
+    cb = dict(captured["actions"])["Focus Find / Replace bar"]
+    assert cb == panel.focus_find_replace_bar
 
 
-def test_escape_closes_the_bar(qtbot):
+def test_escape_returns_focus_to_the_grid_without_hiding_the_bar(qtbot):
+    """FQ-017: Escape is a focus gesture, not a hide gesture — the bar is
+    permanent, so there is nothing to hide."""
     panel = CaptionManagementPanel()
     qtbot.addWidget(panel)
     panel.load_entries(_replace_entries())
     bar = panel.find_replace_bar
-    bar.show_bar()
+    bar.find_field.setFocus()
     qtbot.keyClick(bar, Qt.Key.Key_Escape)
-    assert bar.isHidden()
-    assert bar.is_active() is False
+    assert bar.isHidden() is False
+    assert panel.focusWidget() is panel._table
+
+
+# ---------------------------------------------------------------------------
+# FQ-017: the permanent bar's control layout, scope dropdown and Clear filter
+# ---------------------------------------------------------------------------
+
+
+def test_bar_control_layout_after_the_modal_was_deleted(qtbot):
+    """The exact inventory FQ-017 specifies: Close is gone; Replace All, Clear
+    filter and the scope dropdown are new; everything else is retained."""
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    bar = panel.find_replace_bar
+    for kept in (
+        "find_field",
+        "mode_combo",
+        "match_case_checkbox",
+        "filter_button",
+        "replace_field",
+        "status_label",
+        "error_label",
+    ):
+        assert hasattr(bar, kept), kept
+    assert bar.filter_button.text() == "Filter"
+    assert bar.clear_filter_button.text() == "Clear filter"
+    assert bar.replace_all_button.text() == "Replace All"
+    # The scope dropdown sits immediately before Replace All, in the row that
+    # also holds the Replace-with field.
+    row = bar.replace_all_button.parentWidget().layout().itemAt(1).layout()
+    widgets = [row.itemAt(i).widget() for i in range(row.count())]
+    assert widgets[:3] == [bar.replace_field, bar.scope_combo, bar.replace_all_button]
+
+
+def test_scope_dropdown_offers_two_scopes_and_defaults_to_filtered(qtbot):
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    combo = panel.find_replace_bar.scope_combo
+    labels = [combo.itemText(i) for i in range(combo.count())]
+    scopes = [combo.itemData(i) for i in range(combo.count())]
+    assert labels == ["in filtered results", "in all project"]
+    assert scopes == ["filtered", "project"]
+    assert panel.find_replace_bar.selected_scope() == "filtered"
+
+
+def test_replace_all_in_filtered_results_matches_the_live_preview(qtbot):
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    panel.load_entries(_replace_entries())
+    panel.apply_find_filter("Home", "normal", False)
+    bar = panel.find_replace_bar
+    bar.replace_field.setText("Screen")
+    bar.find_field.setText("Page")
+    previewed = _new_value_column(panel)
+    assert previewed == ["Home Screen", "", ""]
+    bar.replace_all_button.click()
+    # Nothing new to write: the filtered scope was already live.
+    assert _new_value_column(panel) == previewed
+    assert bar.status_label.text() == "1 row(s) replaced"
+
+
+def test_replace_all_in_all_project_reaches_rows_the_filter_hides(qtbot):
+    """The capability the deleted modal was the only route to. It is reachable
+    ONLY by pressing the button — see the next test."""
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    panel.load_entries(_replace_entries())
+    panel.apply_find_filter("Home", "normal", False)
+    bar = panel.find_replace_bar
+    bar.replace_field.setText("Screen")
+    bar.find_field.setText("Page")
+    bar.set_scope("project")
+    assert bar.selected_scope() == "project"
+    bar.replace_all_button.click()
+    assert _new_value_column(panel) == ["Home Screen", "Orders Screen", ""]
+    assert bar.status_label.text() == "2 row(s) replaced"
+    # Still non-destructive: only New Value moved.
+    assert [e.value for e in panel._model.entries()] == [
+        "Home Page",
+        "Orders Page",
+        "Cart",
+    ]
+
+
+def test_choosing_the_project_scope_does_not_drive_the_live_preview(qtbot):
+    """⚠️ Explicitly rejected alternative: if the dropdown fed the live preview,
+    a single keystroke would rewrite every caption in the project."""
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    panel.load_entries(_replace_entries())
+    panel.apply_find_filter("Home", "normal", False)
+    bar = panel.find_replace_bar
+    bar.set_scope("project")
+    bar.replace_field.setText("Screen")
+    bar.find_field.setText("Page")
+    # The preview is still filtered-scoped, unchanged by the dropdown.
+    assert _new_value_column(panel) == ["Home Screen", "", ""]
+    bar.set_scope("filtered")
+    bar.set_scope("project")
+    assert _new_value_column(panel) == ["Home Screen", "", ""]
+
+
+def test_replace_all_reports_invalid_regex_inline_and_commits_nothing(qtbot):
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    panel.load_entries(_replace_entries())
+    bar = panel.find_replace_bar
+    bar.set_mode("regular")
+    bar.find_field.setText("Page(")
+    bar.replace_all_button.click()
+    assert "Invalid regular expression" in bar.error_label.text()
+    assert bar.status_label.text() == ""
+    assert bar._committed is False
+
+
+def test_clear_filter_button_uses_the_single_clear_all_filters_path(qtbot):
+    """Bound to clear_all_filters — no new clear path — so it also drops the
+    tree-set row predicate the retained banner is the only surface for."""
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    panel.load_entries(_context_entries())
+    panel.filter_to_table("pr.equip")
+    panel.apply_find_filter("Equip", "normal", False)
+    assert panel._filter_banner.isVisibleTo(panel)
+    bar = panel.find_replace_bar
+    bar.clear_filter_button.click()
+    assert panel._proxy.find_pattern() == ""
+    assert not panel._proxy.row_predicate_label()
+    assert panel._filter_banner.isHidden()
+
+
+def test_clear_filter_leaves_the_find_field_and_its_preview_alone(qtbot):
+    """Emptying Find would silently roll the live preview back, so the button
+    clears the grid's filters, not the bar's pattern."""
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    panel.load_entries(_replace_entries())
+    bar = panel.find_replace_bar
+    bar.replace_field.setText("Screen")
+    bar.find_field.setText("Page")
+    bar.apply_filter()
+    bar.clear_filter_button.click()
+    assert bar.find_field.text() == "Page"
+    assert _new_value_column(panel) == ["Home Screen", "Orders Screen", ""]
+
+
+def test_the_active_filter_banner_survives_the_permanent_bar(qtbot):
+    """FQ-017: retiring the banner would re-create BUG-020 — a text field cannot
+    express a row-predicate filter set by a tree gesture."""
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    panel.load_entries(_context_entries())
+    panel.filter_to_field("wbs_id")
+    assert panel._filter_banner.isVisibleTo(panel)
+    assert "Field = wbs_id" in panel._filter_banner_label.text()
+    assert panel._filter_banner_clear_button.text() == "Clear"
