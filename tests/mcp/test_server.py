@@ -48,17 +48,32 @@ def _request(method, params=None, request_id=1):
 # ---------------------------------------------------------------------------
 
 def test_importing_the_package_starts_nothing():
-    """§23: opt-in, never silent. Import must not spawn a server thread."""
-    before = {t.name for t in threading.enumerate()}
-    for name in list(sys.modules):
-        if name.startswith("pgtp_editor.mcp"):
-            del sys.modules[name]
-    import pgtp_editor.mcp as package  # noqa: PLC0415 — the point of the test
+    """§23: opt-in, never silent. Import must not spawn a server thread.
 
-    after = {t.name for t in threading.enumerate()}
-    assert after == before
-    assert not any(name.startswith("pgtp-mcp") for name in after)
-    assert hasattr(package, "serve_stdio")
+    The `sys.modules` purge below is what makes the import a REAL first import,
+    and it is restored afterwards: leaving the re-imported modules in place gives
+    the process two distinct `LiveProjectProvider` classes, so a later
+    `isinstance` check against the one bound at ITS import time fails (seen
+    intermittently in `tests/ui/test_mcp_wiring.py` under `-n 10`, where
+    `--dist load` decides whether the two files share a worker).
+    """
+    before = {t.name for t in threading.enumerate()}
+    purged = {
+        name: module
+        for name, module in sys.modules.items()
+        if name.startswith("pgtp_editor.mcp")
+    }
+    for name in purged:
+        del sys.modules[name]
+    try:
+        import pgtp_editor.mcp as package  # noqa: PLC0415 — the point of the test
+
+        after = {t.name for t in threading.enumerate()}
+        assert after == before
+        assert not any(name.startswith("pgtp-mcp") for name in after)
+        assert hasattr(package, "serve_stdio")
+    finally:
+        sys.modules.update(purged)
 
 
 def test_headless_import_pulls_neither_qt_nor_psycopg():
