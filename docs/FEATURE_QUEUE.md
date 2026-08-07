@@ -1131,3 +1131,441 @@ tabs, the toolbar) — this entry assumes **menu bar only** and should be widene
 decision.
 
 ---
+
+## FQ-013: Bookmark persistence — project mode only, session-only otherwise
+**Status:** QUEUED
+**Requested:** 2026-08-07
+**Note on numbering/position:** this entry and the two below it (FQ-014, FQ-015) sit **above** FQ-012 in
+this file. A concurrent session appended its own FQ-012 ("Customize Shortcuts dialog") while these three
+were being written; they were renumbered 013–015 to keep ids unique rather than rewrite another session's
+entry. Ids are authoritative; file position here is not.
+**Idea (verbatim/summarized):** The owner's ruling — *"Persistence only when in project mode, otherwise
+dies with the session."* **Not the owner's original request.** This entry exists because triage of the
+`List All Bookmarks` idea (now FQ-014) objected that listing bookmarks is a modest win while they
+evaporate on every document load; the owner accepted that framing and split persistence out ahead of it.
+**FQ-013 is ordered FIRST; FQ-014 depends on it** — listing is what persistence makes worth having.
+
+**Problem:** Bookmarks today are **session-only AND document-scoped**, and the second half is the sharper
+loss. `GutterBookmarkFoldMixin._init_gutter_bookmarks_folding` holds `self._bookmarks: set[int]` of block
+numbers (`pgtp_editor/ui/editor_gutter.py:241`), and the fold-state lifecycle **resets it to an empty set
+on every `setPlainText`** (`editor_gutter.py:255-257`: *"Bookmarks share the fold-state lifecycle: a new
+document starts with no bookmarks"*). So a user loses every bookmark in an editor on: reopening a project,
+reverting, an XSD mode switch, re-checking-out a DDL object, or simply restarting the app. Every editor in
+the app is affected — the Raw XML editor, Edit XSD / Edit AutoXSD, the read-only DDL Explorer buffer, each
+DDL object tab, each PHP file tab, each FQ-006 draft tab, and the `Edit code…` dialog all mix in the same
+one gutter implementation. §8 of `CONSOLIDATED_SPEC.md` (line 873) states this as settled design: **"No
+persistence, no list panel, no names."**
+
+**Proposed approach:**
+- **Two-tier behaviour, gated on whether a project is open.** With a §18.2 project open, bookmarks survive
+  document reload **and** app restart. With no project open, behaviour is **exactly unchanged** — session
+  only, wiped by `setPlainText`, no store, no file written anywhere. The projectless path must not regress
+  or acquire a new store; it is the status quo by explicit decision.
+- **The store already exists — do not invent one.** `<project>/.ddlproject/` is the project's own private
+  directory (`ddl_project.py:57` `SETTINGS_DIRNAME = ".ddlproject"`), and
+  `db/ddl_project.py::_ensure_gitignored(project_dir, entry)` (line 241 — idempotent, exact-line or
+  directory-form match, never duplicates, never touches unrelated lines) is the established mechanism for
+  keeping project-local private state out of git; `save_settings` calls it with `".ddlproject/"` on every
+  write (line 157). Bookmarks are **personal, not shared**, so they belong inside that already-gitignored
+  directory, alongside `settings.json` — a sibling file (e.g. `.ddlproject/bookmarks.json`), **not** a new
+  key inside `ProjectSettings`. Keeping them out of `settings.json` matters: `ProjectSettings` is the
+  project's shared configuration (connections, deploy manifest, git settings) and is read/written by
+  several controllers; personal caret furniture does not belong in that schema, and mixing them means every
+  bookmark toggle dirties the same file the deploy pipeline depends on.
+- **Key by project-relative path.** Absolute paths do not survive a project being moved, cloned, or opened
+  from a different mount (the project is explicitly expected to live on an sshfs-mounted share per §18.3),
+  so the store must key each editor's bookmark set by a **path relative to the project folder** —
+  the same discipline `routine_ddl_paths` already follows (`ddl_project.py:264-269`: paths are *"computed
+  fresh from the whole set every time, never stored, so the numbering is always recomputable"*, POSIX-style
+  `/` separators). Use POSIX separators in the stored keys so a project is portable between the Windows and
+  Linux checkouts the project targets.
+- **Stale line numbers must be handled explicitly, not hoped away.** A stored bookmark is a bare block
+  number; if the file changed underneath (edited outside the app, pulled from git, redeployed), line N is
+  now a different line or does not exist. Recommended policy, to be confirmed: **restore leniently and
+  drop silently** — restore every stored line that is still within the document's block count, discard the
+  out-of-range ones on load (matching the mixin's existing posture, spec §8 line 872: *"Out-of-range block
+  numbers are ignored defensively"*), and do **not** attempt content-anchoring (storing the line's text and
+  re-finding it) in v1. Content-anchoring is a real feature with real ambiguity (duplicate lines, moved
+  blocks) and should be its own decision, not smuggled in here.
+- **Which editors persist?** Only editors with a stable, project-relative identity can. Concretely: DDL
+  object tabs and PHP file tabs have real files under the project; the Raw XML editor has the working-copy
+  `.pgtp` path (`ProjectSettings.pgtp.working_copy_path`, `ddl_project_controller.py:266-268`); Edit XSD /
+  Edit AutoXSD have their schema files. The **read-only DDL Explorer buffer** and **FQ-006 draft fragment
+  tabs** have no persistent file at all (a draft is explicitly a scratch buffer with no save path), and the
+  **`Edit code…` `CodeEditorDialog`** is a modal over an event body inside the XML, not a file. Those three
+  should stay session-only even in project mode — flagged as an open question below rather than assumed.
+- **Write timing.** Prefer writing on a **quiet, coarse trigger** (project close / app close, or a debounce)
+  over writing on every `toggle_bookmark` — the mixin's toggle is a hot, single-click gutter gesture
+  (`editor_gutter.py:202`, plus the double-click target at `:221`), and syncing a file write into it makes a
+  UI gesture do disk I/O.
+
+**Alternatives considered:**
+- **Persist unconditionally, project or not** (e.g. in the `QSettings("MDS","PGTP Editor")` scope that
+  already holds `lightTheme`/`windowState`/`toolbarIds`) — rejected by the owner's ruling. Worth recording
+  *why the ruling is defensible* so it is not re-litigated: without a project there is no defined root to
+  key paths against, so a global store would have to key absolute paths and would accumulate entries for
+  arbitrary files the app was pointed at once, forever, with no owner and no cleanup rule.
+- **A new key inside `ProjectSettings`/`settings.json`** — rejected above (shared config vs. personal state;
+  dirtying the deploy pipeline's file on a caret gesture).
+- **Content-anchored bookmarks** (store the line text, re-find on load) — deferred, not rejected: it is the
+  right answer to the stale-line problem eventually, but it introduces duplicate-match ambiguity that needs
+  its own decision. v1 restores by line number and drops out-of-range entries.
+
+**Suggested placement:** EXTEND **§8** (`CONSOLIDATED_SPEC.md` lines 848-873, which owns the bookmark
+state, its `setPlainText` reset and the Bookmarks menu) as the primary landing section, with a **secondary
+note in §18.2** for the new `.ddlproject/` sibling file and its `_ensure_gitignored` registration. No new
+section: this is a storage-lifecycle change to an already-fully-specified feature, reusing
+`_ensure_gitignored` and the `.ddlproject/` directory verbatim. **Required surgical amendment:** §8's
+closing sentence *"No persistence, no list panel, no names."* (line 873) becomes conditionally false in its
+first clause — persistence exists **in project mode only**; "no names" stays true, and "no list panel"
+stays true until FQ-014 lands. Amend the clause, do not delete the sentence, and add a Supersession Ledger
+row (the "session-only, per-document" wording is stated as settled design in §8, at line 848, at line 1715
+and in the §26 shortcut table at line 5480 — all four sites need to agree afterwards).
+
+**Dependency / ordering:** ordered **before FQ-014**. **One correction to the dispatch brief, recorded so
+it is not implemented wrong:** the brief called this "a dependent of FQ-010's mode concept." As designed
+above it is **not** — the gate is *"is a §18.2 project open"*, a capability fact available today
+(`MainWindow._ddl_project_folder` / `_ddl_project_settings`, `DdlProjectController._folder`/`._settings`),
+and it needs neither FQ-010's launcher nor FQ-011's persisted launcher mode to exist. If the owner meant
+the **launcher** mode ("the user picked Path 2 in the launch modal") rather than "a project is open", then
+this entry does depend on FQ-010/FQ-011 and the gate is user intent rather than capability — which would
+also put it on the wrong side of the app's own absent-on-capability-not-intent rule that FQ-011's recorded
+objection is about. **See open question (1).**
+
+**Open questions:**
+1. **Which reading of "project mode"** — *a §18.2 project is open* (this entry's assumption; no dependency
+   on FQ-010/FQ-011) or *the FQ-010 launcher mode is "project"*? These are different gates with different
+   dependencies. Confirm before implementing.
+2. **Do the three identity-less editors persist?** The DDL Explorer read-only buffer, FQ-006 draft fragment
+   tabs, and the `Edit code…` dialog have no project-relative file to key against; this entry assumes they
+   stay session-only.
+3. **Write timing** — on project/app close, on a debounce, or on every toggle.
+4. **Stale-line policy** — this entry recommends restore-in-range / drop-out-of-range with no content
+   anchoring; confirm.
+5. Whether the stored set should be **pruned** when a keyed file no longer exists in the project (the way
+   `resolve_ids` drops unknown toolbar ids, §7).
+
+---
+
+## FQ-014: `List All Bookmarks` — the active editor's bookmarks as clickable Audit rows
+**Status:** QUEUED
+**Requested:** 2026-08-07
+**Idea (verbatim/summarized):** *"And bookmarks as is now should go in a Bookmarks menu (invoke feature
+triage, because I'd like a **List all bookmarks**, that inserts the list of all bookmarks into
+audit/problems clickable)."* Raised while the owner was designing an **Editor menu bar** (a second, fixed
+menu bar above the central pane holding per-tab editing commands) onto which the existing Bookmarks menu
+moves largely as-is. **This entry is scoped to the new command and its Audit rows only** — the Editor menu
+bar itself, moving Bookmarks onto it, and the wider menu reorganisation (FQ-010/FQ-011) are all out of
+scope here. **Ordered AFTER FQ-013** (bookmark persistence): triage argued, and the owner accepted, that persistence is what makes
+listing worth having.
+
+**Problem:** Bookmarks today are only reachable **sequentially** — F2 / Shift+F2 step through them one at a
+time (`next_bookmark`/`prev_bookmark`, wrap-around) and the only overview is the gutter tags, which are
+visible for the currently scrolled viewport only. In a several-thousand-line Raw XML buffer the user cannot
+see how many bookmarks exist, what is at them, or jump to the fourth one directly. The Bookmarks menu
+(`FindValidateController.build_bookmarks_menu`, `pgtp_editor/ui/find_controller.py:231-277`) has exactly
+four entries — Toggle (Ctrl+F2), Next (F2), Previous (Shift+F2), Clear All (no shortcut, deliberately) —
+and no overview command. §8 records the absence as design: *"No persistence, no list panel, no names"*
+(`CONSOLIDATED_SPEC.md:873`).
+
+**Proposed approach.** All of the below was argued from the code and **accepted by the owner** on
+2026-08-07; treat it as settled, not as suggestion:
+- **Scope: the ACTIVE editor only.** Not every open editor. Reasons, in order of weight: (a) every other
+  bookmark command already resolves exactly one document via
+  `FindValidateController.active_bookmark_editor()` (`find_controller.py:352-381`), so a one-editor list is
+  the consistent sibling; (b) **`MainWindow._on_audit_item_clicked` (`main_window.py:1228-1256`) has no
+  click route today for the DDL Explorer read-only buffer tab, for an FQ-006 draft fragment tab, or (of
+  necessity) for the `Edit code…` modal** — it routes on the single `UserRole+1` value (`"xsd"` →
+  `_xsd_ui.reveal_line`; `LINT_AUDIT_TARGET` → `_php_tabs.navigate_to`; a **tuple** → `_navigate_to_ddl_object`;
+  **anything else → Raw XML**), so a cross-editor list would need three new routing targets and its fallback
+  would silently navigate the *wrong document*, the exact failure the `[Check]` branch's comment warns
+  against; (c) a modal dialog's bookmarks cannot be navigated to at all once it closes.
+- **Payload: Find All's two-role shape, unchanged.** Line on `Qt.ItemDataRole.UserRole`, the existing
+  target discriminator on `UserRole+1` (`find_controller.py:452-453`). **Note the dispatch brief was wrong
+  and this was verified:** `[Find]`'s `UserRole+1` is the **string `"raw"` or `"xsd"`**, not a
+  `DdlObjectRef.key`. Since scope is the active editor, this command reuses the *same* discriminator
+  vocabulary the click router already understands for whichever editor is active — no new routes, no
+  `UserRole+2`, no per-row editor label.
+- **A new `[Bookmark] ` prefix — as a MODULE CONSTANT.** Not a reuse of `[Find]`: the two would clear each
+  other (`clear_find_results`, `find_controller.py:498-506`), and `[Find]`'s `UserRole+1` vocabulary is
+  "raw|xsd" only, so bookmark rows from a DDL object or PHP tab would carry an incompatible payload under
+  one prefix — precisely the overloading §7's prefix reservation exists to prevent. §7's rule (`:481-485`)
+  forbids a fourth **SQL-ish** prefix; `[Bookmark]` is not SQL-ish, so it is not blocked. Per
+  `docs/UX_REVIEW.md` §C1 it must be a named constant beside `_FIND_RESULT_PREFIX` / `_VALIDATION_PREFIX`
+  — **do not repeat `[Project]`'s mistake of typing the literal inline in ten places**.
+- **Row grammar: Find All's, verbatim.** `f"{_BOOKMARK_PREFIX}line {line}: {preview}"`, mirroring
+  `find_controller.py:451`; a blank/whitespace-only line renders as just `line N`. `UX_REVIEW` §C2 is
+  already pushing the nine prefixes toward one grammar — do not add a tenth variant.
+- **Clears its own rows first,** exactly as `find_all` calls `clear_find_results()` before streaming
+  (`find_controller.py:425`), via a `startswith(_BOOKMARK_PREFIX)` bottom-up sweep in the same shape as
+  `clear_find_results`/`clear_validation_results` (`:498`, `:508`). Repeat invocations replace, never stack.
+- **Trailing count summary row, roles-less** — `[Bookmark] 7 bookmark(s)`, matching `_finish_find_all`'s
+  summary (`find_controller.py:462-465`, appended with *"no line data -> clicking is a no-op"*).
+  Consistency with Find All was judged to beat saving one row.
+- **Empty case: a roles-less row, not silence** — e.g. `[Bookmark] no bookmarks in <editor>`, plus a status
+  message. Find All always emits its summary even at zero, so a command that produced literally nothing
+  would be the odd one out and would read as a broken command.
+- **No shortcut,** matching `Clear All Bookmarks`. This command produces a report; F2/Shift+F2 already own
+  stepping.
+- **Reveals the Audit dock.** On the one precedent that speaks to it: `coherence_controller.py:387-390`
+  calls `self._find_all(token)` then `self._show_audit_dock()`, commented *"reveal the panel in case a prior
+  DB check left it hidden"*. `MainWindow._show_audit_dock` already exists as an injected callback
+  (`main_window.py:1084-1086`, injected into `CoherenceController` at `:725`) — inject it the same way
+  rather than reaching for `self.audit_dock` from a controller. Without this the command is a silent no-op
+  whenever the dock is hidden.
+- **Snapshot, not a live view.** Listing is strictly on demand; toggling a bookmark afterwards does not
+  re-sync the rows.
+- **Hook the existing bookmark reset to sweep stale `[Bookmark]` rows.** `editor_gutter.py:255-257` empties
+  `self._bookmarks` on every `setPlainText`; without a sweep the Audit rows outlive the bookmarks they
+  describe and point at line numbers that may no longer mean anything. **This stays necessary even after
+  FQ-013**, because projectless editors still wipe on reload and FQ-013's restore is in-range-only. Note the
+  gutter mixin is deliberately Qt-widget-level and knows nothing about the Audit panel — do not give it a
+  reference to one; expose this as a signal/callback the controller that owns the rows subscribes to, the
+  same injected-callback decoupling the rest of the app uses.
+
+**Alternatives considered:**
+- **All open editors rather than the active one** — rejected on the three grounds above (three missing click
+  routes, a wrong-document fallback, an unnavigable modal), and because per-row editor labels would force
+  the `[Lint]` three-role pattern where the two-role one suffices.
+- **Reuse the `[Find]` prefix** instead of adding a tenth — rejected: mutual clearing plus an incompatible
+  `UserRole+1` vocabulary under one prefix.
+- **A dedicated bookmarks list panel / left-dock tab** instead of Audit rows — not proposed by the owner and
+  not recommended (recorded so it is not re-proposed): the Audit dock already *is* the app's list-of-locations surface with a working click
+  router, three precedents (`[Find]`, `[Check]`, `[Lint]`) and a clear-scope convention. A new panel would
+  duplicate all of that for one command.
+- **Doing this WITHOUT persistence** (the original request) — superseded: triage objected that a list of
+  things that evaporate on document load is a modest win, the owner agreed, and persistence became FQ-013
+  and was ordered first.
+
+**Suggested placement:** EXTEND **§8** (`CONSOLIDATED_SPEC.md:848-873` — the Bookmarks menu and its four
+actions) for the command itself, **and §7's Audit-prefix table** (`:470-485`) for the new `[Bookmark]`
+prefix, which must be added to that table with owner/meaning/state like the three reserved ones. No new
+section. **Required surgical amendment:** §8's closing *"No persistence, no list panel, no names."* (line
+873) — this entry makes **"no list panel" false**; FQ-013 makes "no persistence" conditionally false;
+**"no names" stays true.** Amend the clause, do not delete the sentence. Also update the §26 consolidated
+menu listing (`:5377-5378`, which enumerates the Bookmarks menu's four actions) and the §26 shortcut table
+(`:5480`) so the menu's membership does not silently diverge. Reuse `find_all`'s row construction, the
+`clear_*_results` sweep shape, `active_bookmark_editor()` and the injected `_show_audit_dock` verbatim —
+build no new mechanism.
+
+**Open questions:** none blocking; every decision above was resolved with the owner. Left to the
+implementer: the exact wording of the empty-case and summary rows; whether the command lives on the
+Editor menu bar's Bookmarks menu (its intended home) or the current main-menu-bar Bookmarks menu if that
+menu bar has not landed yet — it must work in either host, since this entry is deliberately independent of
+that reorganisation; and how the stale-row sweep is plumbed (signal vs. injected callback) without giving
+the gutter mixin knowledge of the Audit panel.
+
+---
+
+## FQ-015: A `Select` menu on the Editor menu bar, with `Select All` (Ctrl+A) as a discoverable entry
+**Status:** QUEUED
+**Requested:** 2026-08-07
+**Idea (verbatim/summarized):** The owner wants a **Select menu** on the new Editor menu bar, prompted by:
+*"actually... select all is quite important Ctrl+A should do that."* Contents: `Select All` (Ctrl+A) plus
+the two existing block-selection commands moved off the Edit menu. Unrelated to the bookmark work
+(FQ-013/FQ-014) beyond sharing the same Editor-menu-bar review; queued as its own entry because it is
+small and independently implementable.
+
+**Problem — this is a discoverability gap, not a missing behaviour.** Verified: **nothing in the app binds
+or steals Ctrl+A.** The only `Ctrl+Shift+A` binding is `Select Parent Block` (`main_window.py:1443-1444`)
+and there is no clash, so `QPlainTextEdit`'s built-in select-all already works in every editor today. What
+is missing is the **menu entry** — a user scanning the menus finds `Select Enclosing Block` and `Select
+Parent Block` but no `Select All`, and the two that do exist are buried in the Edit menu below Find /
+Replace / Replace All with no grouping.
+
+**A REAL BUG THIS SURFACES — the most valuable finding in this entry.** Both existing selection actions are
+**hard-wired to the Raw XML editor at menu-build time**, unlike every other per-tab command:
+
+    select_enclosing_action.triggered.connect(self.center_stage.xml_editor.select_enclosing_block)
+    select_parent_action.triggered.connect(self.center_stage.xml_editor.select_parent_block)
+    # main_window.py:1437-1447 — bound to the widget, not resolved at trigger time
+
+Contrast `build_bookmarks_menu`, whose docstring makes the rule explicit: *"Each action resolves the target
+editor at TRIGGER time via `active_bookmark_editor`, not at build time"* (`find_controller.py:231-244`), and
+`active_find_bar` (`:320`), which dispatches the same way. So **Ctrl+Shift+B / Ctrl+Shift+A from a PHP tab,
+a DDL object tab or a draft tab act on the Raw XML document**, not on the tab the user is looking at.
+`CodeEditor` has its own `select_enclosing_brackets` (`code_editor.py:372-387`) and additionally handles
+Ctrl+Shift+B **in its own `keyPressEvent`** (`:389-399`, with the comment that this is *"in addition to the
+QShortcut"* so the behaviour is reachable when the key event goes straight to the editor) — meaning there
+are **two competing handlers for one chord**, one tab-correct and one not. Moving these actions onto a
+per-tab Editor menu bar makes the mismatch structural and it should be fixed as part of this work, by the
+established pattern: an `active_selection_editor()`-style trigger-time dispatch mirroring
+`active_bookmark_editor()`. Note `select_enclosing_block` (XML tag spans, `xml_editor.py:920`) and
+`select_enclosing_brackets` (bracket pairs, `code_editor.py:372`) are **different methods with different
+semantics** on the two editor families, so the dispatch must map to each editor's own method rather than
+assume one name.
+
+**Proposed approach:**
+- **`Select All`** — a new menu entry for behaviour that already works. Prefer wiring it to the active
+  editor's own `selectAll()` through the same trigger-time dispatch as the two block commands (rather than
+  relying solely on the widget's built-in binding) so that the menu entry and the chord act on the same
+  document, and so the action can be gated if a mode ever needs to.
+- **Move `Select Enclosing Block` (Ctrl+Shift+B) and `Select Parent Block` (Ctrl+Shift+A)** from the Edit
+  menu into the new Select menu, **and fix their build-time binding to trigger-time dispatch** as above.
+- **Do not change any shortcut.** All three chords keep exactly their current keys (Ctrl+A is new but
+  matches the platform default the widget already implements).
+
+**Alternatives considered:**
+- **Add `Select All` to the existing Edit menu and skip the Select menu** — the smaller change, and worth
+  putting to the owner if the Editor menu bar slips: it closes the actual discoverability gap on its own.
+  Rejected as the primary proposal because the owner is explicitly grouping per-tab editing commands onto
+  the Editor menu bar, and a three-item Select menu is exactly that grouping.
+- **Leave the two block commands on the Edit menu and put only `Select All` on the Select menu** — rejected
+  as the worst of both: two selection commands in two different menu bars.
+- **Fix the build-time-binding bug as a separate BUGFIX_QUEUE item** — deliberately not proposed here;
+  triage does not touch that queue. It is recorded in this entry because moving these actions is what makes
+  the mismatch structural, and whoever moves them will be editing exactly those lines.
+
+**Suggested placement:** EXTEND **§8** (which owns `XmlEditor`'s selection commands and the shared editor
+behaviours) plus the **§26 consolidated menu + shortcut tables** (`CONSOLIDATED_SPEC.md:5377-5378` area and
+the shortcut table at `:5480`), whose Edit-menu membership and the `Ctrl+Shift+B` / `Ctrl+Shift+A` rows
+(`manual.md:2112-2113` mirrors them) both change. **The spec's per-tab-dispatch rule already exists** —
+§8's "the menu follows the active editor tab" and the `_active_bookmark_editor` precedent — so the fix is
+an application of a stated rule, not a new one; whoever folds this in should note that the two selection
+actions were **never** covered by it. No new section. The Editor menu bar as a container is out of scope
+for this entry — if it has not landed, the Select menu's three actions can be built on the existing menu
+bar and moved later, since the trigger-time dispatch is what makes them host-independent.
+
+**Open questions:**
+1. **Ctrl+A in the read-only editors must be confirmed in the running app before it is spec'd as
+   universal.** The DDL Explorer buffer (`ddl_editor_panel.py:71`) and Raw XML in Caption Mode
+   (`center_stage.py:301`) are read-only via `setReadOnly(True)`, which in Qt keeps the selectable text
+   interaction flags — so select-all is *expected* to work — but this entry deliberately does not assert it.
+   Verify (and add a test) rather than documenting an assumption.
+2. **Does the Select menu get anything else?** Only these three are named. If more selection commands are
+   wanted (select line, expand/shrink selection), that is a separate decision.
+3. **Is `Select All` gated in Caption Mode?** The precedent is split: bookmarks are deliberately **not**
+   gated (a UI overlay), while Find/Replace **are** (Caption Mode owns Ctrl+F/Ctrl+R). Selecting text in a
+   read-only editor harms nothing, so the recommendation is **not gated** — confirm.
+4. Whether fixing the build-time binding should also **retire `CodeEditor.keyPressEvent`'s duplicate
+   Ctrl+Shift+B handler**, or keep it (it exists because QShortcut activation is unreliable under the
+   offscreen test platform, so removing it may break tests — check before touching).
+
+---
+
+## FQ-012: Customize Shortcuts dialog — list every menu command and rebind its keyboard shortcut
+**Status:** QUEUED
+**Requested:** 2026-08-07
+**Idea (verbatim/summarized):** "I would like to have a keyboard shortcut setting screen, where I can
+decide which action under which keyboard goes. List all menupoints and already defined shortcuts and let
+me rewire them." Converged through direct conversation with the requester (three clarifying questions
+asked and answered) plus a code-verification pass; this entry records the settled design, not an open
+elaboration.
+
+**Problem:** There is no way to rebind any keyboard shortcut. Shortcuts are defined **inline as literal
+strings at each action's construction site** — there is NO central registry and no customization UI.
+~16 menu-action shortcuts are set via `.setShortcut()` scattered through the `_build_*` methods, e.g.
+Open `Ctrl+O` (`pgtp_editor/ui/main_window.py:1331`), Save `Ctrl+S` (:1369), Save As `Ctrl+Shift+S`
+(:1372), Close `Ctrl+W` (:1381), Find… `Ctrl+F` (:1414), Find Next `F3` (:1418), Find All `Ctrl+Shift+F`
+(:1422), Replace… `Ctrl+R` (:1426), Replace All `Ctrl+Alt+Return` (:1430), Select Enclosing Block
+`Ctrl+Shift+B` (:1438), Select Parent Block `Ctrl+Shift+A` (:1444), Manual `F1` (:3627); plus Go To XSD
+`Ctrl+L` (`pgtp_editor/ui/xsd_controller.py:210`), Toggle Bookmark `Ctrl+F2` / Next Bookmark `F2` /
+Previous Bookmark `Shift+F2` (`pgtp_editor/ui/find_controller.py:249/255/261`). All literal strings, no
+`QKeySequence.StandardKey`. The user wants a screen listing all menu points with their current shortcuts,
+letting them rewire the bindings — a facility that does not exist in any form today.
+
+**Key finding (drives the reuse story):** the "list all menu points and their shortcuts" enumeration the
+request needs **already exists and must not be rebuilt.** `pgtp_editor/ui/toolbar_controller.py::
+collect_menu_commands()` (~line 178) + `_walk_menu_actions()` (~line 196) do a depth-first walk of the
+menu bar yielding `(command_id, label, QAction)` for every LEAF command, producing `_menu_command_pairs:
+list[tuple[str,str]]` (id, label) and `_menu_commands: dict[str, QAction]`. Stable ids come from
+`toolbar_registry.py::command_id_for()` (~line 76) via `slugify()` on the menu path (`["File","Save
+As..."]` → `"file.save-as"`); display labels from `menu_path_label()` (~line 78, → `"File › Save As"`).
+Each QAction's current binding is readable directly via `.shortcut()`/`.shortcuts()`. This is exactly the
+enumeration the request needs, built for the Customize Toolbar / BUG-027 work ("the toolbar's command
+universe IS the menu bar").
+
+**Four shortcuts are NOT menu actions — window-scoped `QShortcut` objects, and are handled specially
+(see settled decision 1):** Ctrl+Z project-history undo (`main_window.py:517`), Ctrl+Y redo (:519), and
+the DUAL-PURPOSE Ctrl+F caption-filter (:386) / Ctrl+R caption-replace (:390) which are mode-gated — they
+mean Find/Replace normally but are repurposed in Caption mode (§13). `find_controller.py:311` documents
+the current conflict-avoidance approach ("disabling a QAction disables its shortcut, so there is no
+ambiguous-shortcut conflict") — Caption mode temporarily disables the Edit-menu Find/Replace actions
+(`find_controller.py:313-316`) so the caption-filter QShortcuts win. There is **NO general
+duplicate-shortcut detection anywhere in the codebase** — decision 2 requires building it from scratch.
+
+**Proposed approach:**
+- **Architectural core (the real work — flag this prominently).** Shortcuts are currently set inline at
+  construction with no central source of truth, so rebinding requires INVERTING that model:
+  (a) capture each editable command's DEFAULT shortcut (read `.shortcut()` off the enumerated QActions
+  right after menus are built, before any override); (b) load a user-override map from QSettings; (c)
+  apply overrides in a CENTRAL pass AFTER all menus/controllers are built — calling `QAction.setShortcut()`
+  for each overridden command. The dialog is the easy half; this central default-capture + override-apply
+  pass is the load-bearing change and the main implementation risk. A pure, Qt-free resolve/serialize
+  helper (like `resolve_icon_assignments`) should hold the map logic so it is testable without widgets.
+- **Persistence — mirror the FQ-004 icon-assignments shape exactly.** The Customize Toolbar feature
+  persists `"toolbarIds"` (`toolbar_controller.py:87`, list/comma-string tolerant, `_restore_ids()`:245 /
+  `_save_ids()`:264), and FQ-004 persists a per-command-id map `"toolbarIconIds"` as `"command_id=icon_id"`
+  strings (`toolbar_registry.py:137`, `serialize_icon_assignments()`:142 / `parse_icon_assignments()`:152 /
+  `resolve_icon_assignments()`:173 — the latter pruning against known commands). A shortcut-override map
+  keyed by command_id (new key e.g. `"shortcutOverrides"`, `"command_id=Ctrl+G"` strings, pruned against
+  known command ids on load the way `resolve_icon_assignments` prunes) mirrors that serialize/parse/
+  resolve-and-prune structure exactly. Back-compat: a saved settings file with no overrides simply keeps
+  each command's captured default.
+- **The dialog** — "Customize Shortcuts…", under the **View** menu, sibling to the existing "Customize
+  Toolbar…". A table (one row per editable command) rendering the `menu_path_label()` "File › Save As"
+  labels from the existing `_menu_command_pairs`, each row showing the current binding + an editable
+  key-capture widget (a `QKeySequenceEdit`-style capture). Include per-row "reset to default" and a global
+  "restore all defaults" — trivial once the captured defaults from (a) exist. Reuse
+  `pgtp_editor/ui/customize_toolbar_dialog.py`'s (~line 48) label-rendering and headless test-seam
+  architecture (`set_ids()`, `result_ids()`, `selected_ids()`, `assign_icon()` — programmatic
+  setters/getters that avoid modal pickers) so tests never reach a modal (§30). Add a parallel accessor
+  for the id→shortcut override map so the assignment is unit-testable the same headless way.
+- **Reuse, do not rebuild:** `collect_menu_commands()` / `_menu_command_pairs` / `command_id_for()` /
+  `menu_path_label()` for enumeration and stable ids; the FQ-004 icon-assignments QSettings pattern for the
+  override map; `customize_toolbar_dialog.py`'s two-list/label/test-seam shape for the dialog.
+
+**Three settled decisions (all three open questions resolved directly with the requester):**
+1. **The 4 non-menu / context-gated shortcuts appear as read-only, greyed "reserved" rows.** Ctrl+Z/Y
+   history and the dual-purpose Ctrl+F/R caption-mode keys are shown in the list with a "reserved —
+   context-dependent" note so the user can SEE they exist and why they cannot be rebound, but the editor
+   does not attempt to rewire a dual-meaning key in v1. Only the ~16 enumerable single-purpose menu-action
+   shortcuts are editable. Confirmed: "Show as read-only 'reserved' rows."
+2. **Conflict policy: warn + reassign (steal), user's choice.** When the user assigns a key already bound
+   to another action, the editor flags it inline ("Ctrl+S is already bound to Save") with a visible
+   conflict indicator BEFORE commit; if the user proceeds, the other action's binding is cleared and the
+   key moves — never a silent double-binding (the ambiguous-Qt-behavior / silent-wrong class this project
+   refuses). This requires building duplicate-shortcut detection from scratch (none exists today).
+   Confirmed: "Warn + reassign (steal), your choice."
+3. **Placement: a standalone "Customize Shortcuts…" dialog under the View menu, sibling to the existing
+   "Customize Toolbar…"** — NOT the `Edit ▸ Preferences…` stub. That stub is currently dead, wired to
+   `_not_implemented` (`main_window.py:1460`), and stays dead for now; the requester explicitly chose
+   "Under View." This parallels the existing customization surface rather than starting a general
+   Preferences container. Note for whoever implements: keep this a second single-purpose customization
+   dialog under View, NOT a general settings container. Confirmed: "Under View."
+
+**Alternatives considered:**
+- **Making the 4 context-gated/window-scoped shortcuts (esp. the dual-purpose Ctrl+F/R) rebindable in
+  v1** — rejected by the requester as read-only-reserved instead, because a key that means two different
+  things by context (Find vs caption-filter) cannot be represented in a one-command-one-key table without
+  its own design; deferred rather than half-built.
+- **Hiding those 4 entirely** — rejected: showing them read-only tells the user they exist and why they
+  are locked, which is more honest than a silently-incomplete list.
+- **Blocking conflicting bindings outright, or allowing silent duplicates** — both rejected in favor of
+  warn+steal (block = too many clicks to reshuffle; allow-duplicate = ambiguous Qt behavior, the exact
+  silent-wrong class the project refuses).
+- **Implementing the `Edit ▸ Preferences…` stub as an app-global Preferences container hosting this** —
+  considered (the stub exists and is the "natural" home) but the requester chose a focused standalone
+  dialog under View instead, sibling to Customize Toolbar; the Preferences… stub stays dead for now.
+
+**Suggested placement:** EXTEND **§27 (Consolidated keyboard shortcuts, `CONSOLIDATED_SPEC.md` line
+~5469)** — which currently documents every shortcut as a FIXED binding (the master 16+ binding table) —
+to describe user-rebindable shortcuts, the override-map persistence, the central default-capture/apply
+pass, and the reserved-rows carve-out for the 4 non-menu/context-gated shortcuts. **AND EXTEND §26
+(Consolidated menu bar, line ~5342)** to add the new View-menu "Customize Shortcuts…" entry beside
+"Customize Toolbar…" (§26's View menu currently ends `☐ Light Theme, — , Customize Toolbar…`, spec line
+~5372). A **Supersession Ledger row is warranted** since §27 presently presents shortcuts as fixed
+bindings and this overturns that. Not a new top-level section — it extends the existing menu/shortcut
+sections. Verified greenfield: no customization/rebinding feature is mentioned, planned, or deferred
+anywhere in §26/§27, and (verified) no concurrent-session implementation or committed files exist for it.
+Reuse `collect_menu_commands()`/`command_id_for()`/`menu_path_label()`, the FQ-004
+`toolbarIconIds` serialize/parse/resolve-and-prune pattern, and `customize_toolbar_dialog.py`'s test-seam
+shape rather than building parallel mechanism.
+
+**Open questions:** none blocking — the three load-bearing decisions (reserved-row scope, conflict policy,
+placement) are resolved above. Implementation-level details left to whoever designs/builds it: the exact
+QSettings key name and serialized shape (recommend mirroring `toolbarIconIds` — `"command_id=Ctrl+G"`
+strings under e.g. `"shortcutOverrides"`); the precise key-capture widget; and whether the reserved rows
+also display their (fixed) bindings for reference.
+
+---
