@@ -854,7 +854,7 @@ validation gate that precedes a target apply).
 ---
 
 ## FQ-010: Launch modal presenting the four ways into the app (and the removal of Open Recent + double-click open)
-**Status:** QUEUED
+**Status:** PROCESSED (02e47e0) — `ui/launcher_dialog.py`, shown from `main.py` after `window.show()` behind an injectable seam, never from `MainWindow.__init__` (49 test files construct one). Suppression persists as `launcherSuppressed`; Escape lands in the empty app and never quits. Open Recent and the whole `recentFiles` store are gone, along with the toolbar's "recent" label heuristic. The GUI no longer opens an argv file, but `args.file` SURVIVES for `--mcp`'s default project. The `.desktop` file's `%f` removed; it never had a MimeType line, so no association dangles.
 **Requested:** 2026-08-07
 **Idea (verbatim/summarized):** "When I start the software I should have this options clear." · "Let's do a
 modal." Four groups on launch: (1) **Open a pgtp for editing**, (2) **New Project / Open Project**,
@@ -1133,7 +1133,7 @@ decision.
 ---
 
 ## FQ-013: Bookmark persistence — project mode only, session-only otherwise
-**Status:** QUEUED
+**Status:** PARTIALLY PROCESSED (adf9bfb) — the pure storage layer is built and deliberately UNWIRED: `db/bookmark_store.py`, `<project>/.ddlproject/bookmarks.json`, a SIBLING of settings.json rather than a `ProjectSettings` key (that struct feeds the deploy manifest, so a corrupt bookmark file can never cost the user their settings). Keys are project-relative POSIX paths with both sides resolved, so a moved or copied project resolves identically. Load NEVER rewrites, so lines beyond a temporarily shortened document return when it grows. An empty set removes its key rather than storing `[]`. Every malformed input degrades to "no bookmarks" instead of raising into a gutter click. 29 tests. **STILL TO DO:** the gutter hookup and the project-open gate, which need `main_window.py`.
 **Requested:** 2026-08-07
 **Note on numbering/position:** this entry and the two below it (FQ-014, FQ-015) sit **above** FQ-012 in
 this file. A concurrent session appended its own FQ-012 ("Customize Shortcuts dialog") while these three
@@ -1840,7 +1840,7 @@ duplicated).
 ---
 
 ## FQ-017: Delete the Caption Filter modal; make the caption Find/Replace bar permanent, with a scope dropdown
-**Status:** QUEUED
+**Status:** PROCESSED (02e47e0) — modal, menu entry and both mode-gated shortcuts deleted (34 raw references across 13 symbols, not the 16 estimated); `MODE_LABELS` moved to its surviving consumer. The bar is permanent: find/mode/case/Filter/Clear filter over replace/scope/Replace All/status/error, `Close` gone. **The delegated "active" ruling was WRONG as stated and was corrected with proof:** clearing only the baseline left the Find field reading active, so the next re-run overwrote a hand edit with the baseline already forgotten — permanently. Implemented as `is_active()` = non-empty Find AND not `_committed`, a successful Replace All sets the flag, and any user-driven live re-run clears it to re-arm a reversible preview. Extended mode, the active-filter banner and `_confirm_unify_scope` are untouched (zero diff lines).
 **Requested:** 2026-08-07
 **Why this is its own entry (not a bullet in FQ-016):** the owner settled it in the same session and framed
 it as *"the same logic as in editor window"*, but the coupling is a **principle, not a mechanism**. The

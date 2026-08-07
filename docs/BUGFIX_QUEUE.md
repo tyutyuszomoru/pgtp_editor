@@ -2939,7 +2939,7 @@ Gotchas: (i) A probe error must resolve to the *lower* state (not-provisioned/un
 ---
 
 ## BUG-036: Six windows/dialogs need specific default sizes (batch UI-sizing pass)
-**Status:** OPEN
+**Status:** PARTIALLY RESOLVED (b799f21) — four of six applied with `resize()`, every window's minimum kept strictly below its opening size so all stay freely resizable: Project Settings 560x760, Sandbox Setup 660x1000, Project Status 720x440, New Function/Procedure 560x200. The acceptance criterion was verified rather than assumed — each window built offscreen at target and checked for children escaping their parent, children below their own minimumSizeHint, and wrapping labels needing more height than they have. **#4 Caption Filter is MOOT** — that dialog was deleted by FQ-017 (02e47e0). **#6 Open / Save As is NOT IMPLEMENTABLE as specified and needs an owner decision:** they are native `QFileDialog` STATIC calls whose geometry the OS owns, so `resize()` has no effect; honouring a size would mean constructing instances with `DontUseNativeDialog`, losing recent-places and cloud locations across every file picker including §18.2's project chooser and BUG-022's directory picker. Deliberately NOT clamped to screen height (would make the opening size environment-dependent and untestable) and no QScrollArea added (nothing clips).
 **Reported:** 2026-08-06
 **Report (verbatim):** "Specific default window dimensions (width x height, pixels) for six windows/dialogs: 1. Project Settings window → 560x760; 2. Sandbox Setup → 660x1000; 3. Project Status → 720x440; 4. Caption filter → 360x290; 5. New function / procedure → 560x200; 6. Open, Save As dialogs → 720x440."
 
