@@ -18,13 +18,17 @@
 *"bookmarks survive a document reload and an app restart -- but only when a
 project is open"*.
 
-**Deliberately NOT wired yet.** Nothing in `pgtp_editor/ui/` calls this module
-at the time it was written; the gutter's `_bookmarks` set is still purely
-session-scoped. This follows `db/apply.py`'s precedent (built unwired, wired by
-a later change): the UI lane that hooks `GutterBookmarkFoldMixin` up to
-`load_editor_bookmarks`/`store_editor_bookmarks` and gates it on *"is a project
-open"* lands separately. Everything here is testable with plain temp
-directories, which is the point of building it first.
+**Wired.** `MainWindow` restores through `load_editor_bookmarks` when a
+document loads (the one moment `GutterBookmarkFoldMixin` wipes its set) and
+writes through `store_editor_bookmarks` on a 400 ms debounce after a
+user-chosen change, plus a synchronous flush on project transition and in
+`closeEvent`. The gate is `DdlProjectController.folder` -- the capability fact
+"a project is open" -- so projectless editing is bit-for-bit unchanged: no
+debounce is started and nothing is written. Only three editors have a
+project-relative identity and therefore persist: the Raw XML editor, DDL
+object tabs and PHP file tabs. The XSD editors cannot -- their files live in
+app-level schema storage, outside any project -- and the DDL Explorer buffer,
+draft fragment tabs and the `Edit code...` dialog have no file identity at all.
 
 **The gate is a capability, not an intent.** Persistence exists exactly when a
 §18.2 project folder is open (`DdlProjectController._folder`) -- never on the
@@ -210,8 +214,9 @@ def store_editor_bookmarks(
     project_dir: Path | str, file_path: Path | str, lines: Iterable[int]
 ) -> None:
     """Replace one editor's stored bookmarks, leaving every other key alone --
-    the read-modify-write the UI lane will call on a quiet trigger (project or
-    app close, or a debounce), never inside the hot `toggle_bookmark` gesture.
+    the read-modify-write the host calls on a quiet trigger (a 400 ms debounce,
+    or a synchronous flush on project transition and app close), never inside
+    the hot `toggle_bookmark` gesture, which must not do disk I/O.
 
     An empty `lines` removes the key. A path with no project-relative identity
     is a no-op, so a caller may call this unconditionally.
