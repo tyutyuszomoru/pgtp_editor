@@ -85,6 +85,17 @@ class DraftFragmentTab(QWidget):
         )
 
 
+#: The Raw XML tab's title when the editor is editable. Used at the `addTab`
+#: site AND by the restore path (BUG-037), so the two can never drift into
+#: showing different text for the same state.
+RAW_XML_TAB_TITLE = "Raw XML"
+
+#: BUG-037's suffix for Caption Mode. Phrased as the *reason* rather than a
+#: bare "read only" because Raw XML can be locked by more than one mode, and a
+#: user who cannot type needs to know which one to leave.
+RAW_XML_READ_ONLY_CAPTION_MODE = "read only in caption mode"
+
+
 class CenterStage(QTabWidget):
     # Emitted when the Manual tab is revealed (True) or hidden (False), so the
     # main window can keep the left-dock Contents tab in lockstep with it.
@@ -170,7 +181,7 @@ class CenterStage(QTabWidget):
         self._raw_focus_shortcuts = install_focus_shortcuts(
             self.raw_xml_tab, self.find_replace_bar
         )
-        self.raw_xml_tab_index = self.addTab(self.raw_xml_tab, "Raw XML")
+        self.raw_xml_tab_index = self.addTab(self.raw_xml_tab, RAW_XML_TAB_TITLE)
 
         # Edit XSD tab (spec §11): a second, fully-featured editor for the
         # hand-curated schema. Hidden until Schema ▸ Edit XSD reveals it.
@@ -309,18 +320,40 @@ class CenterStage(QTabWidget):
             self.setCurrentIndex(self.raw_xml_tab_index)
         self.ddl_explorer_visibility_changed.emit(False)
 
+    def _set_raw_xml_read_only(self, reason: str | None) -> None:
+        """Make Raw XML read-only *for a named reason*, or editable again.
+
+        BUG-037: the read-only flag and the tab title are two views of ONE
+        fact, and before this they were set in different places -- the flag
+        here, the title never. A user in Caption Mode saw an editor that
+        silently refused every keystroke with nothing on the tab to say why
+        (the `_mode_label` cue is at the far bottom of the window, not on the
+        tab they are looking at). Both now move together, through here, so
+        they cannot drift.
+
+        `reason` is the suffix shown in parentheses on the tab, or `None` for
+        "editable" -- passing the reason rather than a bare `True` is what
+        lets a second read-only mode name itself on the tab instead of
+        borrowing Caption Mode's wording.
+        """
+        self.xml_editor.setReadOnly(reason is not None)
+        self.setTabText(
+            self.raw_xml_tab_index,
+            RAW_XML_TAB_TITLE if reason is None else f"{RAW_XML_TAB_TITLE} ({reason})",
+        )
+
     def enter_caption_mode(self):
         """Keep Raw XML visible but read-only, and reveal + switch to Caption
         Management (Phase 1: Raw XML is no longer hidden during caption mode)."""
         self.setTabVisible(self.raw_xml_tab_index, True)
-        self.xml_editor.setReadOnly(True)
+        self._set_raw_xml_read_only(RAW_XML_READ_ONLY_CAPTION_MODE)
         self.setTabVisible(self.caption_management_tab_index, True)
         self.setCurrentIndex(self.caption_management_tab_index)
 
     def leave_caption_mode(self):
         """Re-enable editing on Raw XML, hide Caption Management, and switch
         back to Raw XML."""
-        self.xml_editor.setReadOnly(False)
+        self._set_raw_xml_read_only(None)
         self.setTabVisible(self.caption_management_tab_index, False)
         self.setTabVisible(self.raw_xml_tab_index, True)
         self.setCurrentIndex(self.raw_xml_tab_index)
