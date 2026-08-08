@@ -129,6 +129,10 @@ DEFAULT_TOOLBAR_IDS: list[str] = [
 #   Tools ▸ Compare / Merge Two Files… -> Deployment ▸ Compare/Merge pgtp
 #   File ▸ Deploy .pgtp                -> Deployment ▸ Deploy .pgtp
 #   File ▸ Revert                      -> File ▸ Discard Changes (re-specified)
+# BUG-039 opened it twice more: §18.5 D3a's two check gestures MOVED off the
+# Database menu onto the Editor bar's `Parsing` menu (Parsing only -- they are
+# not on both). Their labels did not change, but the id is the whole menu path,
+# so a toolbar saved before the move needs these rows to keep its buttons.
 RENAMED_ID_ALIASES: dict[str, str] = {
     "database.ddl-explorer": "database.ddl-explorer-quality",
     "bookmarks.toggle-bookmark": "navigation.toggle-bookmark",
@@ -139,6 +143,10 @@ RENAMED_ID_ALIASES: dict[str, str] = {
     "tools.compare-merge-two-files": "deployment.compare-merge-pgtp",
     "file.deploy-pgtp": "deployment.deploy-pgtp",
     "file.revert": "file.discard-changes",
+    "database.check-object-in-sandbox": "parsing.check-object-in-sandbox",
+    "database.check-object-without-applying": (
+        "parsing.check-object-without-applying"
+    ),
 }
 
 # Menu-path id -> icon id (the `icons.ACTION_ICON_FILES` key). Only the legacy

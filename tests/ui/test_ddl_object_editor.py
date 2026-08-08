@@ -1235,7 +1235,13 @@ def test_unavailable_destinations_name_the_sandbox_and_target_with_reasons(qtbot
     panel = _panel(qtbot)
     missing = dict(panel.unavailable_destinations())
     assert set(missing) == {DEST_SANDBOX, DEST_TARGET}
-    assert "Open Sandbox Session" in missing[DEST_SANDBOX]
+    # BUG-040 deleted `Database ▸ Open Sandbox Session`, so this sentence -- which
+    # `_refuse_sandbox_gesture` reuses verbatim -- must not name it any more. It
+    # states the two things that are actually true now: the automatic open may
+    # have failed, or there is no sandbox to open at all.
+    assert "Open Sandbox Session" not in missing[DEST_SANDBOX]
+    assert "no sandbox session is open" in missing[DEST_SANDBOX]
+    assert "Sandbox Setup…" in missing[DEST_SANDBOX]
     assert "Precondition 1" in missing[DEST_TARGET]
     # FQ-020 wired the quality lane, so the reason is now a CONNECTION fact and
     # names both places a target can come from -- the old "not wired in this

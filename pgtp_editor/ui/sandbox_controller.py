@@ -517,8 +517,21 @@ class SandboxController(QObject):
         is also what a later `reset()` re-runs. Drops any live session, since it
         belonged to the previous project.
 
-        **Opens nothing and provisions nothing** -- no destructive operation and
-        no connection attempt happens as a side effect of a project opening.
+        **THIS METHOD opens nothing and provisions nothing** -- it records
+        params and drops the old session, and no destructive operation happens
+        inside it. That is a statement about this method, not about project
+        opening: since BUG-040 the host DOES open the session right after
+        calling this (`MainWindow._bind_sandbox_controller_to_project`), and
+        `DdlProjectController.refresh_capability_status` had been connecting at
+        project-open time long before that. The line this docstring used to
+        carry -- *"no connection attempt happens as a side effect of a project
+        opening"* -- was policy stated in the wrong layer, and it had already
+        stopped being true.
+
+        The D2 single-ownership rule is unaffected and is what makes the split
+        clean: `open_session`/`open_sandbox` remains the ONE way a session is
+        acquired. Who calls it, and when, is the host's policy to set.
+
         `configured` defaults to "sandbox_params were supplied at all", which is
         `determine_project_tier`'s `sandbox_configured` input.
         """

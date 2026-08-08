@@ -221,6 +221,14 @@ def _controller(layer: Layer, *, confirm=True, mode=SandboxMode.SCHEMA_ONLY, **k
 # 1. session ownership
 # ---------------------------------------------------------------------------
 def test_no_session_initially_and_binding_a_project_opens_nothing():
+    """`set_project` is a MECHANISM: it records params and drops the previous
+    session, and opens nothing itself.
+
+    BUG-040 changed the POLICY, not this: the host
+    (`MainWindow._bind_sandbox_controller_to_project`) calls `open_session`
+    right after this, and that is where "a project opening connects" now lives.
+    Keeping the split pinned here is what makes `open_sandbox` still the single
+    ownership gate — one way in, with the host deciding when."""
     layer = Layer()
     controller, runner, _ = _controller(layer)
 
@@ -230,6 +238,7 @@ def test_no_session_initially_and_binding_a_project_opens_nothing():
     # Binding a project must not connect, provision, clone or reset.
     assert runner.calls == 0
     assert layer.probe_calls == [] and layer.provision_calls == []
+    assert layer.open_calls == []
 
 
 def test_open_succeeds_exposes_capabilities_and_the_session():

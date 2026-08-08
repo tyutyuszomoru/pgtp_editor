@@ -156,7 +156,7 @@ REASON_TIER0_COLLAPSED = (
 #: fall back to, which is the honest statement of the same design decision.
 REASON_TIER0_NO_SANDBOX = (
     "there is no offline syntax checker: tier 0 is PostgreSQL's own parser via "
-    "tier 2, and tier 2 did not run. Use Database \u25b8 Check Object Without "
+    "tier 2, and tier 2 did not run. Use Parsing \u25b8 Check Object Without "
     "Applying to really compile this buffer -- it commits nothing."
 )
 
@@ -224,7 +224,7 @@ REASON_UNKNOWN_CAPABILITY = (
 REASON_OBJECT_ABSENT = (
     "the object was not found in the sandbox -- it was never applied, or it "
     "failed to compile there, so there was nothing to lint. Use "
-    "Database \u25b8 Check Object Without Applying to compile and lint this "
+    "Parsing \u25b8 Check Object Without Applying to compile and lint this "
     "buffer without changing the sandbox, or Apply to Sandbox to put it "
     "there for good."
 )
@@ -456,6 +456,13 @@ class CheckRequest:
     AND the relation it fires on (`schema`/`table`), because
     `plpgsql_check_function_tb` errors with "missing trigger relation" if
     `relid` is omitted for a trigger function.
+
+    **And the trigger FUNCTION tab is the awkward case's mirror.** A
+    `CREATE FUNCTION ... RETURNS trigger` tab is `kind == "function"`, so none
+    of the trigger-shaped plumbing above applies to it — yet the server's
+    demand for `relid` keys off the *return type*, not off how the user got
+    there. It carries its relation in `relation_schema`/`relation_table`
+    instead (BUG-038); `regclass_text` is where the two shapes meet.
     """
 
     kind: str  # "function" | "procedure" | "trigger"
@@ -467,6 +474,15 @@ class CheckRequest:
     #: Triggers only -- the function the trigger calls (what tier 3 checks).
     function_schema: str | None = None
     function_name: str | None = None
+    #: The relation to bind as `relid` when the object being checked is itself
+    #: a trigger FUNCTION tab (`kind == "function"`, `RETURNS trigger`), which
+    #: `table` cannot carry: `table` is trigger-only by contract and is read by
+    #: `working_set_ref` (the `applied` PRIMARY KEY) and `trigger_drop_target`,
+    #: so widening it would change the bookkeeping key of every such object and
+    #: could emit a `DROP TRIGGER` for a function. A separate pair leaves both
+    #: of those properties untouched (BUG-038, triage option (b)).
+    relation_schema: str | None = None
+    relation_table: str | None = None
     #: The tab's text, used ONLY to map `prosrc` line numbers onto buffer
     #: lines. Empty means findings are reported with no line rather than a
     #: wrong one.
@@ -486,6 +502,8 @@ class CheckRequest:
         function_name: str | None = None,
         oldtable: str | None = None,
         newtable: str | None = None,
+        relation_schema: str | None = None,
+        relation_table: str | None = None,
     ) -> "CheckRequest":
         """Build a request from a duck-typed `DdlObjectRef`.
 
@@ -493,6 +511,14 @@ class CheckRequest:
         (`function_schema`/`function_name`); a ref alone does not carry it, and
         guessing "the function is named like the trigger" is exactly the kind
         of 80%-right assumption §18.5 warns about for trigger tabs.
+
+        Symmetrically, for a trigger FUNCTION ref the caller must supply the
+        relation (`relation_schema`/`relation_table`): a `kind == "function"`
+        ref carries no table, and the ref alone cannot even tell you the
+        routine returns `trigger`. The caller resolves it the same way the
+        editor's NEW./OLD. completion does — `SchemaIndex.trigger_for_function`
+        — and contributes nothing when the function is attached to no trigger
+        (BUG-038).
         """
         return cls(
             kind=str(getattr(ref, "kind", "function")),
@@ -505,6 +531,8 @@ class CheckRequest:
             buffer_text=buffer_text,
             oldtable=oldtable,
             newtable=newtable,
+            relation_schema=relation_schema,
+            relation_table=relation_table,
         )
 
     @property
@@ -578,11 +606,34 @@ class CheckRequest:
 
     @property
     def regclass_text(self) -> str | None:
-        """The `to_regclass` lookup string for a trigger's relation, or None
-        when this request needs no relation."""
-        if not self.is_trigger or not self.table:
+        """The `to_regclass` lookup string for the relation `relid` binds to,
+        or None when this request needs no relation.
+
+        Two shapes reach it, and BOTH are trigger functions as far as
+        `plpgsql_check_function_tb` is concerned — which is the whole point:
+        the server demands `relid` for *any* function whose return type is
+        `trigger`, not only for one reached through a `CREATE TRIGGER` tab.
+
+        - a `CREATE TRIGGER` tab: the trigger's own `schema`/`table`;
+        - a trigger FUNCTION tab (`kind == "function"`, `RETURNS trigger`):
+          `relation_schema`/`relation_table`, resolved by the caller from the
+          trigger that calls it. Without this branch the call went out with no
+          `relid` and the server answered *"missing trigger relation"*
+          (BUG-038).
+
+        Returning non-None also buys the graceful path for free: the resolve
+        SQL's `to_regclass(...) IS NOT NULL` guard turns "that table is not in
+        the sandbox" into `REASON_RELATION_ABSENT` — a clean `unavailable`
+        rather than an `errored`.
+        """
+        if self.is_trigger:
+            if not self.table:
+                return None
+            return f"{quote_ident(self.schema)}.{quote_ident(self.table)}"
+        if not self.relation_table:
             return None
-        return f"{quote_ident(self.schema)}.{quote_ident(self.table)}"
+        schema = self.relation_schema or self.schema
+        return f"{quote_ident(schema)}.{quote_ident(self.relation_table)}"
 
 
 # ---------------------------------------------------------------------------

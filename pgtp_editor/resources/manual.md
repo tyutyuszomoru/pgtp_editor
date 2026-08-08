@@ -162,7 +162,7 @@ answer to a simple question: *what does this command act on?*
 |---|---|
 | **History** | **History…**, **Undo**, **Redo** |
 | **Select** | **Select All** (Ctrl+A), **Select Enclosing Block** (Ctrl+Shift+B), **Select Parent Block** (Ctrl+Shift+A) |
-| **Parsing** | **Auto Parse XML**, **Validate Project** |
+| **Parsing** | two faces, by tab: **Auto Parse XML** and **Validate Project** on an ordinary tab; **Check Object in Sandbox** and **Check Object Without Applying** on a DDL object editor tab |
 | **Navigation** | **Toggle Bookmark**, **Next Bookmark**, **Previous Bookmark**, **Clear All Bookmarks**, **List All Bookmarks** |
 | **Deployment** | every save and every outward push, **by tab kind** — see *The Deployment Menu* |
 
@@ -199,6 +199,8 @@ work here is absent, not greyed out.**
 - **The Deployment menu's entries change with the tab**, and only one group is
   ever shown at a time. On a tab that has nowhere to save and nothing to push,
   the menu is simply empty — see *The Deployment Menu*.
+- **The Parsing menu has two faces and shows exactly one**, chosen by the tab in
+  front of you — see *Parsing, on a DDL object tab*, below.
 - **Select ▸ Select Parent Block disappears on PHP tabs, DDL object tabs and the
   DDL Explorer**, and **Ctrl+Shift+A** goes quiet with it. "One nesting level up"
   is an XML idea; SQL and PHP have no parent element to walk to, so the entry is
@@ -208,6 +210,34 @@ work here is absent, not greyed out.**
   selects the enclosing XML element; in a code editor (PHP tabs, DDL object tabs,
   the DDL Explorer) it selects the innermost balanced bracket pair. It is one
   command with one shortcut, not two competing ones.
+
+### Parsing, on a DDL object tab
+
+**Parsing** holds four commands and shows **two of them at a time**, because
+"parsing" means something different depending on what you are editing:
+
+| Active tab | Parsing shows |
+|---|---|
+| **DDL object editor tab** | **Check Object in Sandbox**, **Check Object Without Applying** |
+| **every other tab** | **Auto Parse XML**, **Validate Project** |
+
+A DDL object tab holds SQL, not XML, so the XML pair has nothing to act on
+there; and the two sandbox checks are *the linting of the DDL*, which is exactly
+what this menu is for. **The two check gestures live here and nowhere else** —
+they used to sit on the **Database** menu and were removed from it, so one
+gesture has one name and one home (see *The Sandbox ▸ The validation ladder, and
+the three ways to run it*).
+
+- **On a DDL object tab with no sandbox configured, Parsing is empty.** The XML
+  pair is hidden by the tab kind alone, and the two checks need a sandbox to
+  check against. That is the app's usual absent-not-greyed posture, not a
+  glitch: give the project a sandbox (**Database ▸ Sandbox Setup…**) and the two
+  entries appear.
+- **Validate Project is one of the toolbar's five default buttons, so that
+  button leaves the toolbar while a DDL object tab is in front.** A toolbar
+  button *is* the menu's own command (see *Appearance & Layout ▸ The toolbar*),
+  so when the command is hidden the button goes with it. This is accepted and
+  intended — switch back to any other tab and it returns.
 
 ---
 
@@ -1414,11 +1444,10 @@ tree navigates only its own buffer, and closing one leaves the other exactly as
 it was. The two object sets are genuinely allowed to differ — that difference is
 usually the very thing you opened the Sandbox explorer to see.
 
-**Opening it does not open a sandbox session, and does not need one.** Browsing
-is a read, and reads are not gated: **Database ▸ Open Sandbox Session** is about
-*writing* to the sandbox (see *The Sandbox*). So you can look at the sandbox
-without connecting a session, and closing a session never closes this explorer.
-If the sandbox cannot be reached — it was destroyed, or its server is down — the
+**Opening it does not need a sandbox session.** Browsing is a read, and reads
+are not gated — a session is about *writing* to the sandbox (see *The Sandbox*).
+So this explorer works even when the project's session could not be opened, and
+losing a session never closes it. If the sandbox cannot be reached — it was destroyed, or its server is down — the
 toggle springs back and the status bar says *DDL Explorer (Sandbox) failed*
 followed by the database's own reason, rather than leaving you with an empty
 tree that reads as an empty database.
@@ -1470,8 +1499,9 @@ into a dedicated, **editable**
 tab for one object at a time. Opening and editing such a tab touches no
 database — it is a text editor over the object's current definition. The gestures
 in it that *do* reach a database are the two **Run on …** entries on the
-**Deployment** menu, each present only while its destination can actually be
-reached (see *The Deployment Menu*). Neither entry point exists in the Sandbox
+**Deployment** menu, which are there for every DDL object tab and state their
+reason rather than running when their destination cannot be reached (see *The
+Deployment Menu*). Neither entry point exists in the Sandbox
 explorer (see *The Sandbox Explorer, and how it differs*).
 
 - In the **DDL Objects (Quality)** tree, right-click a routine or trigger row for
@@ -1580,8 +1610,9 @@ to find them. None of the three has a keyboard shortcut.
 
 - **Save in Project** writes a file and touches no database (above).
 - **Run on sandbox** commits the buffer to the project's sandbox and runs the
-  whole validation ladder over it. It needs an open sandbox session — see *The
-  Sandbox ▸ Applying an object to the sandbox*.
+  whole validation ladder over it. It needs a live sandbox session, which the
+  app opens for you when the project opens — see *The Sandbox ▸ Applying an
+  object to the sandbox*.
 - **Run on quality** executes the buffer against the **real** quality database.
   It works with a local project open **and** with no project at all — open a
   `.pgtp`, edit an object, push the fix — as long as a quality connection can be
@@ -1613,7 +1644,8 @@ not commit says so in as many words.
 under the same names: it asks where this edit should go and then runs that
 gesture — it writes nothing of its own. It lists only the destinations available
 right now, and **names the ones that are not, with what would bring them back**
-(no sandbox session open; no quality target resolvable).
+(the project's sandbox could not be reached or none is set up yet; no quality
+target resolvable).
 
 ### Creating a new trigger, function, or procedure
 
@@ -1835,12 +1867,18 @@ The run does five things:
    (`.ddlproject/settings.json`), so a later provisioning or reset run reopens
    the same database instead of making a second one; and
 5. **leaves the session open.** That is why **Apply to Sandbox**, both check
-   gestures (**Database ▸ Check Object Without Applying** and **Database ▸ Check
-   Object in Sandbox**) and **Database ▸ Sandbox SQL Console…** are usable
-   immediately after you create a project — no separate **Open Sandbox Session**
-   needed (see *The Sandbox*).
+   gestures (**Parsing ▸ Check Object in Sandbox** and **Parsing ▸ Check Object
+   Without Applying**) and **Database ▸ Sandbox SQL Console…** are usable
+   immediately after you create a project. Opening that project again later is
+   the same story: the session comes back up by itself (see *The Sandbox*).
 
 The status bar confirms with `Created and provisioned sandbox database: <name>`.
+
+**Creating a project never reports a connection error of its own.** The
+automatic session (see *The Sandbox ▸ The sandbox session opens itself*) waits
+until the sandbox database has actually been created and named — that name is
+the last thing provisioning produces — so nothing is dialled before there is
+something to dial.
 
 **If a generated name is already taken on the server, a different random name is
 tried.** An existing database is never reused, never written into, and never
@@ -2048,48 +2086,52 @@ resetting a sandbox*, below. The sandbox's connection details and the created
 database's name are visible and editable in **File ▸ Project Settings… ▸
 Connections**.
 
-### Opening and closing a sandbox session
+### The sandbox session opens itself
 
-- **Database ▸ Open Sandbox Session** connects to the project's sandbox.
-- **Database ▸ Close Sandbox Session** releases that connection.
+**Open a project that has a sandbox and the session is already there.** Applying
+an object, checking one, and the Sandbox SQL console just work; there is no
+"open a session first" step, and **there is no Open Sandbox Session or Close
+Sandbox Session entry on the Database menu any more** — both were deleted, not
+merely hidden. Creating a project with **New Project…**'s sandbox group filled in
+hands you an open session the same way (see *Local DDL-Versioning Projects ▸ The
+sandbox is created with the project*).
 
-Only one of the two is ever in the menu, and **Open Sandbox Session appears only
-when the open project actually has a sandbox host configured** — an entry you
-cannot use is left out rather than greyed out. The Sandbox SQL console and both
-Check entries appear and disappear the same way, which is why the Database menu
-looks different depending on whether a session is open. **Sandbox Setup… is the
-one exception and is always there** — it is the gesture that can bring a sandbox
-into existence, so it must be reachable when there isn't one.
+**There is no explicit close, either.** The session is released when you close
+the project, or when you open another one. Nothing else drops it, and nothing
+asks you to.
 
-**Database ▸ DDL Explorer (Sandbox)** is not part of that set: it only *reads*
-the sandbox, so it needs a configured sandbox but no session, and it comes and
-goes with the project rather than with the session (see *DDL Explorer ▸ The
-Sandbox Explorer, and how it differs*).
+**Opening the session is best effort, and it never delays or fails a project
+open.** It is not modal, it never puts a dialog in your way, and if it cannot
+connect you simply have no session — exactly the state the app already knew how
+to describe. The outcome lands in the Audit panel as a `[Sandbox]` line, and a
+refusal always says which refusal it was: the sandbox is unreachable, the user is
+not a superuser, `pg_dump`/`pg_restore` are missing from your `PATH` (only for a
+**With data** sandbox), no sandbox is configured — or the connected database is
+**not one PGTP Editor created**. That last guard is deliberate and absolute: a
+sandbox must both be named `pgtp_sandbox_…` *and* carry the ownership comment the
+app writes when it creates one, because a database name alone can be faked.
+Pointing the sandbox connection at a database you made by hand is refused rather
+than written to.
 
-**Opening a project connects nothing.** A session is a real connection to a real
-database, so it is always something you asked for; the app never opens one, and
-never creates or fills a sandbox, as a side effect of opening an *existing*
-project. Creating a **new** one is the single exception, and only because you
-asked for it there: filling in **New Project…**'s sandbox group creates the
-sandbox and hands you an open session straight away. **So when you come back to a
-project later, nothing is connected: Database ▸ Open Sandbox Session is how you
-pick the sandbox back up.**
+**With no session, the gestures that need one still say so.** They are not
+hidden: **Parsing ▸ Check Object in Sandbox**, **Check Object Without Applying**,
+**Database ▸ Sandbox SQL Console…** and the Project Status window's two sandbox
+buttons are all there whenever a sandbox is *configured*, and using one states
+the reason it cannot run — *"no sandbox session is open — the project's sandbox
+could not be reached, or none is set up yet (Database ▸ Sandbox Setup…)"* — over
+an **Open** button that retries the connection. **That button is the only manual
+way to open a session in the app.** The other two ways back are **Database ▸
+Sandbox Setup…**, when the configuration itself is what is wrong, and simply
+closing and reopening the project, which retries the automatic open.
 
-The outcome lands in the Audit panel as a `[Sandbox]` line, and a refusal always
-says which refusal it was: the sandbox is unreachable, the user is not a
-superuser, `pg_dump`/`pg_restore` are missing from your `PATH` (only for a **With
-data** sandbox), no sandbox is configured — or the connected database is **not one
-PGTP Editor created**. That last guard is deliberate and absolute: a sandbox must
-both be named `pgtp_sandbox_…` *and* carry the ownership comment the app writes
-when it creates one, because a database name alone can be faked. Pointing the
-sandbox connection at a database you made by hand is refused rather than written
-to.
+**Sandbox Setup… is always on the menu**, session or no session, sandbox or no
+sandbox — it is the gesture that can bring a sandbox into existence, so it must
+be reachable when there isn't one.
 
-Closing the session (or closing the project) takes every affordance that *writes*
-to the sandbox with it, including the Sandbox SQL console tab — a console that can
-only refuse is worse than no console. The read-only **DDL Explorer (Sandbox)**
-stays open across a session close, because it never needed the session; closing
-the **project** is what takes it away.
+**Database ▸ DDL Explorer (Sandbox)** stands apart from all of this: it only
+*reads* the sandbox, so it needs a configured sandbox but no session at all, and
+it comes and goes with the project (see *DDL Explorer ▸ The Sandbox Explorer, and
+how it differs*).
 
 ### Setting up, re-provisioning and resetting a sandbox
 
@@ -2132,8 +2174,9 @@ constraints, defaults, or data — so findings that lean on those are unreliable
   writes to a sandbox it created itself: if your project points at a database that
   isn't one, this is how you get one that is, and it is provisioned in the same
   step.
-- **Open sandbox session** — offered here too when none is open, so you don't have
-  to go back to the menu.
+- **Open sandbox session** — shown when none is open, so a session the automatic
+  open could not establish can be retried from here as well as from the refusal
+  dialog's own **Open** button.
 - **Re-run data clone** — only for a **With data** sandbox. For a schema-only one
   the dialog says so plainly rather than showing a button that would clone
   nothing.
@@ -2185,8 +2228,13 @@ thorough they are:
 | Gesture | Where | Runs | Changes the sandbox? |
 |---|---|---|---|
 | **Apply to Sandbox** (**Deployment ▸ Run on sandbox**) | the Deployment menu, plus the button and right-click entry in a DDL object editor tab | tiers 0, 1, 2 and — when `plpgsql_check` is installed — tier 3, all over your buffer | **yes** — commits |
-| **Database ▸ Check Object Without Applying** | menu | the identical run, on the identical buffer | **no** — rolled back |
-| **Database ▸ Check Object in Sandbox** | menu | tier 3 over what the sandbox already holds; tier 2 reports bookkeeping only | **no** — reads only |
+| **Parsing ▸ Check Object Without Applying** | the Editor menu bar, on a DDL object editor tab | the identical run, on the identical buffer | **no** — rolled back |
+| **Parsing ▸ Check Object in Sandbox** | the Editor menu bar, on a DDL object editor tab | tier 3 over what the sandbox already holds; tier 2 reports bookkeeping only | **no** — reads only |
+
+**Both checks live on the Editor menu bar's Parsing menu and nowhere else** — they
+are the linting of the DDL in front of you, and Parsing is the per-tab menu. They
+used to be on the **Database** menu and are gone from it (see *The Two Menu Bars ▸
+Parsing, on a DDL object tab*).
 
 So: **Apply gives you the full verdict** as part of applying; **Check Object
 Without Applying gives you the same verdict and changes nothing**; and **Check
@@ -2202,10 +2250,11 @@ None of the three has a keyboard shortcut. See *Keyboard Shortcuts*.
 
 ### Applying an object to the sandbox
 
-While a session is open, **Deployment ▸ Run on sandbox** is on the Editor menu bar
-for every open **DDL object editor tab** (see *The Deployment Menu*), and the same
-gesture is an **Apply to Sandbox** button under the editor and an entry in the
-tab's right-click menu. It commits the tab's current text to the sandbox database,
+**Deployment ▸ Run on sandbox** is on the Editor menu bar for every open **DDL
+object editor tab** (see *The Deployment Menu*), and while a session is live the
+same gesture is also an **Apply to Sandbox** button under the editor and an entry
+in the tab's right-click menu. Without a session the menu entry stays put and
+says why it cannot run instead of applying anything. It commits the tab's current text to the sandbox database,
 records it in the sandbox's working set, and runs the whole validation ladder over
 it — the DDL, the bookkeeping and the checks all in one transaction, so the sandbox
 can never hold a definition without the record of what it holds.
@@ -2247,7 +2296,7 @@ this chapter can reach anything but the sandbox.
 
 ### Checking an object without applying it
 
-**Database ▸ Check Object Without Applying** runs the ladder over the **active DDL
+**Parsing ▸ Check Object Without Applying** runs the ladder over the **active DDL
 object editor tab** exactly as **Apply to Sandbox** would — tier 2 really compiles
 your buffer, tier 1 really lints it, tier 3 really calls `plpgsql_check` — and then
 **rolls the whole thing back**. The sandbox is left untouched, nothing is added to
@@ -2258,12 +2307,12 @@ is deliberately built from the same machinery as the apply: a probe that diverge
 from the real thing would be validating something other than what you are about to
 run.
 
-Exactly one object per run — the tab you are looking at. If no DDL object tab is
-active, the status bar says so and nothing happens.
+Exactly one object per run — the tab you are looking at, which is also the only
+tab that shows the entry at all.
 
 ### Checking an object in the sandbox
 
-**Database ▸ Check Object in Sandbox** is the read-only one: it examines the
+**Parsing ▸ Check Object in Sandbox** is the read-only one: it examines the
 sandbox **as it already stands** and writes nothing at all, not even a transaction
 it later rolls back.
 
@@ -2286,15 +2335,29 @@ text in front of you. When you want the verdict on the text you are looking at,
 use **Check Object Without Applying** or **Apply to Sandbox** — both compile your
 buffer; this one does not.
 
-Both Check entries are present whenever a sandbox session is open, and they stay
-present even when the `plpgsql_check` extension is missing. That is on purpose: a
-tier that could not run is a **reported outcome**, not a reason to hide the
-gesture. The report always says what it could *not* check, so a check that could
-not run can never be mistaken for a clean one.
+Both Check entries are present whenever a **DDL object tab is in front and the
+project has a sandbox configured** — whether or not a session is open, and whether
+or not the `plpgsql_check` extension is installed. That is on purpose: a tier that
+could not run is a **reported outcome**, not a reason to hide the gesture, and a
+missing session is a reason the app can state rather than an absence you would
+have to guess at (see *The sandbox session opens itself*). The report always says
+what it could *not* check, so a check that could not run can never be mistaken for
+a clean one.
 
 For a trigger, the ladder needs to know which function the trigger calls; that is
 read from the `EXECUTE FUNCTION …` clause in your buffer. If it can't be read, the
 run says tier 3 was unavailable for that reason instead of guessing a function.
+
+**A trigger function can be checked too.** `plpgsql_check` refuses to analyse
+anything returning `trigger` without knowing which table it fires on, so for a
+`CREATE FUNCTION … RETURNS trigger` buffer the editor looks up the trigger that
+calls that function and hands the ladder that trigger's table — the same lookup
+the editor's `NEW.` / `OLD.` completion uses. (Checking one used to stop with the
+server's own *"missing trigger relation"* complaint.) Two honest limits remain:
+if that table is not in the sandbox, tier 3 reports unavailable and names the
+missing relation, and a trigger function **no trigger calls yet** has no relation
+to bind — none is invented, so tier 3 cannot run for it until a trigger attaches
+to it.
 
 ### Clicking a Check finding
 
@@ -2315,9 +2378,11 @@ you have since closed does nothing rather than reopening a document you dismisse
 
 **Database ▸ Sandbox SQL Console…** opens the **Sandbox SQL** tab in the center
 area: a SQL editor on top, a results grid below it. Like the other sandbox
-gestures the menu entry exists only while a session is open, and there is only
-ever **one** console — invoking the command again focuses the tab you already
-have.
+gestures the menu entry is there whenever the project has a sandbox configured;
+without a live session it opens no console and states why, over the **Open**
+button that retries the connection (see *The sandbox session opens itself*).
+There is only ever **one** console — invoking the command again focuses the tab
+you already have.
 
 **It is sandbox-only by construction.** This console cannot run anything against
 your production or quality database — not behind a confirmation, not behind a
@@ -2442,9 +2507,12 @@ you work:
   button is shown.
 
 Both of those two need a **live sandbox session**, because that is what they run
-through. Without one the button is simply not there — you get the explanation and
-no dead control. Open a session from **Database ▸ Open Sandbox Session** (or from
-**Sandbox Setup…**) and click the node again.
+through. With a sandbox configured the button is there whether or not a session
+is up: pressing it without one states the reason and offers an **Open** button
+that opens the session (see *The Sandbox ▸ The sandbox session opens itself*),
+after which you press the node's button again. With **no** sandbox configured at
+all there is nothing to run against, so the button is simply not there — you get
+the explanation and no dead control.
 
 **Cloning data is destructive and asks first**, with the same one confirmation
 **Sandbox Setup…** uses; declining changes nothing.
@@ -2457,9 +2525,8 @@ acted.
 > This window is a **report with a few one-step actions**, not the sandbox's
 > control panel. The fuller set — provisioning, re-provisioning, resetting, the
 > with-data/without-data choice and the working-set list — lives in **Database ▸
-> Sandbox Setup…** (see *The Sandbox*), and connecting to the sandbox is its own
-> gesture on the Database menu. Everything the diagram reports is measured against
-> the real thing, not assumed from what you configured.
+> Sandbox Setup…** (see *The Sandbox*). Everything the diagram reports is measured
+> against the real thing, not assumed from what you configured.
 
 ---
 
@@ -2603,7 +2670,17 @@ toolbar), its checked state for toggles such as **Database ▸ DDL Explorer
 **View ▸ Light Theme**, and its keyboard shortcut — the button and the menu entry
 can never drift apart. Toolbars you arranged in an earlier version of the editor
 are carried over unchanged — including a **DDL Explorer** button you pinned
-before the command was renamed to **DDL Explorer (Quality)**.
+before the command was renamed to **DDL Explorer (Quality)**, and a **Check
+Object in Sandbox** or **Check Object Without Applying** button pinned while
+those two still lived on the **Database** menu. A button for a command that no
+longer exists at all — **Open Sandbox Session** and **Close Sandbox Session**
+are the current examples — is quietly dropped instead of sitting there doing
+nothing.
+
+Because a button *is* its menu command, a button also **disappears while its
+command is hidden**. That now includes the default **Validate Project** button,
+which steps off the toolbar while a DDL object tab is in front (see *The Two Menu
+Bars ▸ Parsing, on a DDL object tab*).
 
 ### Choosing a button's icon
 
@@ -2703,8 +2780,8 @@ irreversible outward effect must not be one keystroke away*.
 
 **Nothing that reaches a database from a DDL object tab has a shortcut, on
 purpose** — not **Run on sandbox**, not **Run on quality**, not **Deploy this
-edit…**, and not either check gesture (**Database ▸ Check Object in Sandbox** and
-**Database ▸ Check Object Without Applying**), so a write to a database is never
+edit…**, and not either check gesture (**Parsing ▸ Check Object in Sandbox** and
+**Parsing ▸ Check Object Without Applying**), so a write to a database is never
 one keystroke away. **Ctrl+Return** in the Sandbox SQL console is the one
 exception, because that console can only ever reach the disposable sandbox (see
 *The Sandbox*).

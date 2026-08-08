@@ -27,7 +27,7 @@ from pgtp_editor.ui.main_window import MainWindow
 from pgtp_editor.ui.project_status_model import NodeFamily
 from pgtp_editor.ui.sandbox_setup_dialog import SandboxSetupDialog
 
-from tests.ui._sandbox_stubs import stub_sandbox_provisioning, sync_run
+from tests.ui._sandbox_stubs import fake_session as _session, stub_sandbox_provisioning, sync_run
 
 
 def _caps(**overrides):
@@ -43,7 +43,19 @@ def _caps(**overrides):
     return SandboxCapabilities(**fields)
 
 
-def _window(qtbot, tmp_path, *, sandbox_host="localhost", mode=SandboxMode.SCHEMA_ONLY):
+def _window(
+    qtbot,
+    tmp_path,
+    *,
+    sandbox_host="localhost",
+    mode=SandboxMode.SCHEMA_ONLY,
+    reachable=True,
+):
+    """A window with the project open. **Opening it opens the session**
+    (BUG-040), so `reachable=False` is how a test reaches the sessionless state
+    that used to be the default: with the manual `Open Sandbox Session` gesture
+    deleted, the only way to sit in a configured-but-sessionless project is an
+    auto-open that failed."""
     project_dir = tmp_path / "proj"
     settings = ProjectSettings(
         name="Acme",
@@ -60,6 +72,18 @@ def _window(qtbot, tmp_path, *, sandbox_host="localhost", mode=SandboxMode.SCHEM
     window._ddl_project_ui.probe_sandbox_capabilities = lambda params: _caps()
     window._inspect_sandbox_provisioning = lambda params: (None, None)
     stub_sandbox_provisioning(window)
+    if not reachable:
+        opened = window.sandbox_controller._opener
+
+        def _unreachable(*args, **kwargs):
+            raise RuntimeError("could not connect to the sandbox")
+
+        window.sandbox_controller._opener = _unreachable
+        window._ddl_project_ui.set_active_project(project_dir, settings)
+        # The provisioning path (which opens its own session) stays usable, so
+        # only the auto-open is what failed.
+        window.sandbox_controller._opener = opened
+        return window, project_dir
     window._ddl_project_ui.set_active_project(project_dir, settings)
     return window, project_dir
 
@@ -203,14 +227,31 @@ def test_adopting_the_settings_does_not_drop_the_session_just_provisioned(
     qtbot, tmp_path, monkeypatch
 ):
     """Adoption must NOT rebind the controller: `set_project` closes the session,
-    and the session it would close is the one the dialog just created."""
+    and the session it would close is the one the dialog just created.
+
+    BUG-040 raised the stakes: since `_bind_sandbox_controller_to_project` now
+    OPENS a session, rebinding here would not merely drop the provisioned
+    session, it would double-open. The bypass is what keeps the Setup path
+    ending with exactly one live session."""
     window, _dir = _window(qtbot, tmp_path)
     dialog = _open_setup(window, qtbot)
     _accept_confirmations(monkeypatch)
+    opens = []
+    provisioned = []
+    controller = window.sandbox_controller
+    controller._opener = lambda params, **kwargs: opens.append(params) or _session()
+    controller._provisioner = (
+        lambda snapshot, params, mode, **kwargs: provisioned.append(params)
+        or _session()
+    )
 
     dialog.provision()
 
     assert window.sandbox_controller.has_session
+    # The dialog provisioned exactly one session and the host opened none on
+    # top of it -- adoption never went through the auto-opening bind.
+    assert len(provisioned) == 1
+    assert opens == []
     dialog.close()
     assert window.sandbox_controller.has_session
 
@@ -219,19 +260,22 @@ def test_the_console_refusal_names_gestures_that_exist(
     qtbot, tmp_path, monkeypatch
 ):
     """The stale string said "Database ▸ Project Status…", which never opened a
-    session. Both names it uses now are real Database-menu entries.
+    session; BUG-040 then deleted `Open Sandbox Session`, which the replacement
+    named. The rule this test exists for outlives both: **the refusal may only
+    name menu entries that exist**, and today that is `Sandbox Setup…`.
 
     Since FQ-023 the refusal is a dialog that OFFERS to open the session;
     declining leaves the same reason in the status bar, which is what is read
     here (the offer itself is covered in `test_sandbox_check_console_wiring`)."""
-    window, _dir = _window(qtbot, tmp_path)
+    window, _dir = _window(qtbot, tmp_path, reachable=False)
     _refuse_confirmations(monkeypatch)
 
     assert window._open_sandbox_sql_console() is None
 
     message = window.statusBar().currentMessage()
-    assert "Open Sandbox Session" in message
     assert "Sandbox Setup…" in message
+    assert _setup_action(window) is not None  # ...and that entry really exists
+    assert "Open Sandbox Session" not in message
     assert "Project Status" not in message
 
 
@@ -261,7 +305,7 @@ def test_a_configured_sandbox_gives_both_node_actions_a_reporting_button(
 ):
     """FQ-023's other half: a sandbox with no session leaves both buttons THERE,
     and clicking one states the missing session instead of doing nothing."""
-    window, _dir = _window(qtbot, tmp_path)
+    window, _dir = _window(qtbot, tmp_path, reachable=False)
     window._open_project_status()
     panel = window._project_status_window
     assert not window.sandbox_controller.has_session
@@ -282,8 +326,10 @@ def test_a_configured_sandbox_gives_both_node_actions_a_reporting_button(
     panel._on_install_plpgsql_check()
 
     assert installed == []  # nothing ran, and nothing connected
-    assert "Open Sandbox Session" in asked[0]
-    assert "Open Sandbox Session" in window.statusBar().currentMessage()
+    assert "no sandbox session is open" in asked[0]
+    assert "no sandbox session is open" in window.statusBar().currentMessage()
+    # BUG-040: the refusal cannot advertise a menu entry that was deleted.
+    assert "Open Sandbox Session" not in asked[0]
 
 
 def test_a_live_session_wires_both_node_actions_to_the_controller(qtbot, tmp_path):
@@ -319,7 +365,7 @@ def test_a_dying_session_leaves_both_node_actions_reporting(
     window, _dir = _window(qtbot, tmp_path)
     window._open_project_status()
     panel = window._project_status_window
-    window._open_sandbox_session()
+    assert window.sandbox_controller.has_session  # BUG-040: it came up with the project
     cloned = []
     window.sandbox_controller._cloner = lambda target, sandbox: cloned.append(1)
     _refuse_confirmations(monkeypatch)
@@ -330,7 +376,7 @@ def test_a_dying_session_leaves_both_node_actions_reporting(
     assert panel._on_install_plpgsql_check is not None
     panel._on_run_data_clone()
     assert cloned == []
-    assert "Open Sandbox Session" in window.statusBar().currentMessage()
+    assert "no sandbox session is open" in window.statusBar().currentMessage()
 
 
 def test_the_clone_action_goes_through_the_controllers_confirmation(

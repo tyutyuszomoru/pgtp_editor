@@ -757,6 +757,81 @@ def test_no_live_menu_command_answers_to_a_deleted_save_id(qtbot, tmp_path):
         assert command_id in live
 
 
+# -- BUG-039/BUG-040: the check gestures MOVED, the session ones were DELETED --
+
+
+def test_a_toolbar_saved_before_bug039_follows_the_check_gestures_to_parsing(
+    qtbot, tmp_path
+):
+    """BUG-039's two `RENAMED_ID_ALIASES` rows as a real upgrade. The labels did
+    not change at all — the id is the whole menu path, so moving the two check
+    gestures off `Database` onto `Parsing` renamed both.
+
+    The buttons resolve even though the actions are HIDDEN in this window (no
+    DDL object tab is active), which is exactly why the four Parsing members are
+    built once and only `setVisible`-toggled: `_walk_menu_actions` never tests
+    `isVisible()`, so a hidden action stays enumerable and pinnable."""
+    path = str(tmp_path / "s.ini")
+    seed = QSettings(path, QSettings.Format.IniFormat)
+    seed.setValue(
+        "toolbarIds",
+        [
+            "database.check-object-in-sandbox",
+            "database.check-object-without-applying",
+        ],
+    )
+    seed.sync()
+
+    window = MainWindow(settings=QSettings(path, QSettings.Format.IniFormat))
+    qtbot.addWidget(window)
+
+    assert window._toolbar_ui.command_ids == [
+        "parsing.check-object-in-sandbox",
+        "parsing.check-object-without-applying",
+    ]
+    parsing = find_top_menu(window, "Parsing")
+    assert window._toolbar_ui.toolbar.actions()[:2] == [
+        find_action(parsing, "Check Object in Sandbox"),
+        find_action(parsing, "Check Object Without Applying"),
+    ]
+
+
+def test_a_pinned_session_lifecycle_button_is_dropped_not_left_dead(qtbot, tmp_path):
+    """BUG-040 DELETED `Open`/`Close Sandbox Session`, and a deletion is not a
+    move: there is deliberately no alias row, so a pinned button degrades the
+    FQ-020 `file.save` way — `resolve_ids` drops an id that no longer resolves.
+
+    This is also why the actions were deleted rather than hidden: a toolbar
+    button bypasses menu visibility entirely, so a hidden action would have left
+    a live, clickable button for a gesture the app no longer offers."""
+    path = str(tmp_path / "s.ini")
+    seed = QSettings(path, QSettings.Format.IniFormat)
+    seed.setValue(
+        "toolbarIds",
+        [
+            "database.open-sandbox-session",
+            "file.open",
+            "database.close-sandbox-session",
+        ],
+    )
+    seed.sync()
+
+    window = MainWindow(settings=QSettings(path, QSettings.Format.IniFormat))
+    qtbot.addWidget(window)
+
+    assert window._toolbar_ui.command_ids == ["file.open"]
+    live = {command_id for command_id, _label in window._toolbar_ui.all_menu_commands()}
+    for gone in (
+        "database.open-sandbox-session",
+        "database.close-sandbox-session",
+        "database.check-object-in-sandbox",
+        "database.check-object-without-applying",
+    ):
+        assert gone not in live
+    assert "parsing.check-object-in-sandbox" in live
+    assert "parsing.check-object-without-applying" in live
+
+
 def test_no_assignments_leaves_toolbar_behavior_unchanged(qtbot, tmp_path):
     """Back-compat: an existing saved toolbar keeps each button's default."""
     window = MainWindow(

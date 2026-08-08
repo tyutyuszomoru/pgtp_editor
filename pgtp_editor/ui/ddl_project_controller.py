@@ -411,8 +411,9 @@ class DdlProjectController(QObject):
         if self._close_project_action is not None:
             self._close_project_action.setEnabled(True)
         # §18.5 D2: the sandbox controller follows the project. Its
-        # `set_project` drops any session that belonged to the previous project
-        # and connects to nothing.
+        # `set_project` drops any session that belonged to the previous project;
+        # the HOST then opens a fresh one for this project (BUG-040), so a
+        # connection is very much a consequence of getting here.
         self._bind_sandbox()
         self.refresh_project_dependent_actions()
         self.project_changed.emit(folder, settings)

@@ -548,14 +548,18 @@ class MainWindow(QMainWindow):
         #: §18.5 D3's "Check without applying" probe, gated on exactly the same
         #: predicate as Check itself.
         self._sandbox_probe_check_action = None
+        #: `Parsing`'s XML face (BUG-039). Pre-initialised for the SAME reason as
+        #: the two above and one more: `_refresh_parsing_menu_affordances` now
+        #: touches all four, and `_refresh_sandbox_affordances` calls it -- which
+        #: `_build_database_menu` reaches BEFORE `_build_parsing_menu` has run.
+        self._auto_parse_action = None
+        self._validate_project_action = None
         #: §18.7's Database ▸ DDL Explorer (Sandbox) toggle -- created hidden and
         #: shown by `_refresh_ddl_explorer_affordances` while the open project has
         #: a sandbox configured. Same before-`_build_menu_bar` initialisation
         #: reason as the three above, and the same reason for the pair map below.
         self._sandbox_ddl_explorer_action = None
         self._ddl_explorer_actions = {}
-        self._open_sandbox_session_action = None
-        self._close_sandbox_session_action = None
         #: §18.5's "Deploy this edit…" picker as a menu entry (FQ-009). Always
         #: visible -- no session gate, because its Save destination needs none.
         self._deploy_this_edit_action = None
@@ -1728,27 +1732,48 @@ class MainWindow(QMainWindow):
         in the same commit because it is one of the DEFAULT toolbar buttons AND
         the key of its vendored `dialog-ok-apply` SVG.
 
-        **What is NOT here, and why** — both recorded as open items (§29), so
-        neither was decided unilaterally:
+        **The menu is now TAB-KIND GATED, and it has four members (BUG-039).**
+        The owner's ruling: *"Parsing in the editor pane when editing DDL should
+        contain all linting of the DDL, and should not have the points of XML
+        parsing verification."* So the menu has two faces, and exactly one is
+        ever shown:
 
-        * **plpgsql check** (`Check DDL Object` / `Check without applying`) does
-          not exist yet in any menu: §18.5 D3a is target design and §26 currently
-          assigns those two gestures to the **Database** menu. They land with
-          `db/ddl_check.py`; whether they land here instead is the owner's call.
-        * **`Lint Current File`** stays on Tools with `Lint on Save` and
-          `Locate PHP Linter…`. Moving only the first of the three would split
-          lint across two bars — the exact complaint this work exists to fix —
-          and whether all three move is the open question.
+        * on a **DDL object editor tab** — `Check Object in Sandbox` and
+          `Check Object Without Applying`, §18.5 D3a's two gestures, MOVED here
+          off the Database menu and **removed from it**. One gesture, one home:
+          keeping both doors would put two names in the user's head for one
+          ladder run.
+        * on **every other tab** — `Auto Parse XML` and `Validate Project`, the
+          XML pair, which is what "parsing" meant before a DDL tab could be in
+          front.
 
-        **Membership gating.** §7 asks for `setVisible` gating by *active tab
-        kind* (never "mode"), and `_refresh_editor_menu_affordances` is that
-        entry point. Neither member is gated today, and that is a considered
-        decision, not an omission: a toolbar button IS the menu's own QAction, so
-        hiding `Validate Project` per tab would make a DEFAULT toolbar button
-        appear and disappear as the user changes tabs. Both members are also
-        genuinely applicable whenever a document is open, independent of which
-        tab is in front. The seam exists for the check members, whose gate (*"a
-        DDL object editor tab is active"*) is a real capability predicate.
+        **The default-toolbar-button blink is the accepted cost.** This
+        docstring used to argue the opposite — that Parsing must stay ungated
+        *because* `Validate Project` is one of the default toolbar buttons and a
+        toolbar button IS the menu's own QAction, so hiding it makes a default
+        button vanish while a DDL tab is front. That is still exactly what
+        happens; the owner has accepted it, on the `Select ▸ Select Parent
+        Block` precedent, because the alternative is an XML-validation command
+        offered over a buffer of PL/pgSQL.
+
+        **Build once, `setVisible`-toggle** — all four here, never rebuilt per
+        tab, for the reason `_build_deployment_menu` spells out at length:
+        `ToolbarController._walk_menu_actions` never tests `isVisible()`, so a
+        hidden action stays enumerable and pinnable while a non-existent one
+        drops out of Customize Toolbar and takes saved `toolbarIds` with it.
+
+        **The gate is a composition, computed in
+        `_refresh_parsing_menu_affordances`:** the check members need *both* a
+        DDL object tab in front (the same `_active_deployment_group()` answer
+        `Deployment` uses — one answer to "which tab kind is this") *and* the
+        sandbox-configured predicate `_refresh_sandbox_affordances` already
+        owns. Per FQ-023 that predicate is CONFIGURED, never `has_session`: a
+        sessionless sandbox keeps the gestures present-and-reporting.
+
+        **What is still NOT here** — `Lint Current File` stays on Tools with
+        `Lint on Save` and `Locate PHP Linter…`. Moving only the first of the
+        three would split lint across two bars, and whether all three move is
+        still open (§29).
         """
         menu = self.editor_menu_bar.addMenu("Parsing")
         self._parsing_menu = menu
@@ -1764,6 +1789,37 @@ class MainWindow(QMainWindow):
         validate_action = menu.addAction("Validate Project")
         validate_action.triggered.connect(self._find_ui.validate_project)
         self._validate_project_action = validate_action
+
+        # --- the DDL face (BUG-039) -----------------------------------------
+        # A separator between the two faces, not inside one: only ever one face
+        # is visible, so it renders as a leading or trailing line and Qt draws
+        # neither. It exists for the honest reason that this menu holds two
+        # groups, and for the day a tab kind earns members from both.
+        menu.addSeparator()
+        # §18.5 D3a's Check gesture. VISIBILITY follows "is a sandbox
+        # configured" AND "a DDL object tab is active"; the refusal states a
+        # missing session (carve-out 2 as narrowed by FQ-023 -- absent only when
+        # there is no sandbox at all), and is deliberately NOT gated on
+        # `plpgsql_check_state`: an unavailable tier 3 is a REPORTED OUTCOME, so
+        # the gesture stays present and states what it could not check.
+        self._sandbox_check_action = menu.addAction("Check Object in Sandbox")
+        self._sandbox_check_action.setVisible(False)
+        self._sandbox_check_action.triggered.connect(
+            lambda: self._check_active_ddl_object()
+        )
+        # §18.5 D3's *"Check without applying"* -- the rolled-back probe
+        # (`db/ddl_check.py::probe_check`, `commit=False`), which is the ONE
+        # narrow place rollback survives. It sits directly next to Check because
+        # the two answer neighbouring questions ("what does the sandbox say about
+        # what is in it?" vs. "what would this buffer do if I applied it?"), and
+        # it shares Check's visibility gate for the same carve-out-2 reason.
+        self._sandbox_probe_check_action = menu.addAction(
+            "Check Object Without Applying"
+        )
+        self._sandbox_probe_check_action.setVisible(False)
+        self._sandbox_probe_check_action.triggered.connect(
+            lambda: self._probe_check_active_ddl_object()
+        )
 
     def _build_deployment_menu(self):
         """Deployment — the Editor bar's fifth menu, contents by ACTIVE TAB KIND
@@ -1897,7 +1953,7 @@ class MainWindow(QMainWindow):
         **VISIBILITY, never enabled-state** — this app has deliberately kept two
         postures (present / absent) and greying out would introduce a third.
 
-        It does three things.
+        It does four things.
 
         1. Hide the WHOLE bar on the tabs where all five menus are meaningless —
            **Caption Management** (a center-stage tab, not a dock, where §13
@@ -1920,6 +1976,13 @@ class MainWindow(QMainWindow):
            action-hiding trade-off as case 2, on the same precedent, and the
            reason `_build_deployment_menu` builds all nine actions once at
            startup instead of rebuilding the menu here.
+        4. Flip the `Parsing` menu between its XML face and its DDL face
+           (BUG-039), via `_refresh_parsing_menu_affordances` — which the
+           sandbox refresher also calls, because that face depends on a second
+           input this method knows nothing about. This is the case that finally
+           spends what case 2 and 3 only risked: `Validate Project` is a
+           DEFAULT toolbar button, so hiding it makes that button leave the
+           toolbar on DDL tabs. Owner-accepted.
         """
         stage = self.center_stage
         index = stage.currentIndex()
@@ -1933,6 +1996,7 @@ class MainWindow(QMainWindow):
         for name, actions in self._deployment_actions.items():
             for action in actions:
                 action.setVisible(name == group)
+        self._refresh_parsing_menu_affordances()
 
     def _build_file_menu(self):
         menu = self.menuBar().addMenu("File")
@@ -2392,47 +2456,34 @@ class MainWindow(QMainWindow):
         self._sandbox_console_action.triggered.connect(
             lambda: self._open_sandbox_sql_console()
         )
-        # §18.5 D2: acquiring/releasing the one `SandboxSession`. Deliberately
-        # a user act rather than a side effect of opening a project -- a
-        # session is a real connection to a real database, and
-        # `SandboxController.set_project` is explicit that a project opening
-        # "opens nothing and provisions nothing".
-        self._open_sandbox_session_action = menu.addAction("Open Sandbox Session")
-        self._open_sandbox_session_action.setVisible(False)
-        self._open_sandbox_session_action.triggered.connect(
-            lambda: self._open_sandbox_session()
-        )
-        self._close_sandbox_session_action = menu.addAction("Close Sandbox Session")
-        self._close_sandbox_session_action.setVisible(False)
-        self._close_sandbox_session_action.triggered.connect(
-            lambda: self.sandbox_controller.close_session()
-        )
-        # §18.5 D3a's Check gesture. VISIBILITY follows "is a sandbox
-        # configured" and the refusal states a missing session (carve-out 2 as
-        # narrowed by FQ-023 -- absent only when there is no sandbox at all),
-        # and is deliberately NOT gated on
-        # `plpgsql_check_state`: an unavailable tier 3 is a REPORTED OUTCOME,
-        # so the gesture stays present and states what it could not check.
-        self._sandbox_check_action = menu.addAction("Check Object in Sandbox")
-        self._sandbox_check_action.setVisible(False)
-        self._sandbox_check_action.triggered.connect(
-            lambda: self._check_active_ddl_object()
-        )
-        # §18.5 D3's *"Check without applying"* -- the rolled-back probe
-        # (`db/ddl_check.py::probe_check`, `commit=False`), which is the ONE
-        # narrow place rollback survives. It sits directly next to Check because
-        # the two answer neighbouring questions ("what does the sandbox say about
-        # what is in it?" vs. "what would this buffer do if I applied it?"), and
-        # it shares Check's visibility gate for the same carve-out-2 reason.
-        self._sandbox_probe_check_action = menu.addAction(
-            "Check Object Without Applying"
-        )
-        self._sandbox_probe_check_action.setVisible(False)
-        self._sandbox_probe_check_action.triggered.connect(
-            lambda: self._probe_check_active_ddl_object()
-        )
-        # §18.5's "Deploy this edit…" picker, as a menu entry beside the two
-        # check gestures (FQ-009's discoverability half). Unlike them it is
+        # `Open Sandbox Session` / `Close Sandbox Session` are GONE (BUG-040).
+        # The session now comes up with the project, so `Open` had no state left
+        # to be useful in and `Close` only offered the user a way to break their
+        # own Apply/Check.
+        #
+        # **Deleted, not hidden, and that distinction is load-bearing.** A
+        # hidden QAction is still enumerated by
+        # `ToolbarController._walk_menu_actions` (which never tests
+        # `isVisible()`), so it stays pinnable — and a toolbar button does not
+        # consult menu visibility at all. Hiding would therefore have left a
+        # live, clickable button for a gesture the app no longer offers. Saved
+        # `toolbarIds` for them degrade the FQ-020 `file.save` way: `resolve_ids`
+        # drops an id that no longer resolves. No `RENAMED_ID_ALIASES` row —
+        # this is a deletion, not a move.
+        #
+        # Closing still happens, on the one transition where it means something:
+        # `set_project`/`clear_project` drop the previous project's session.
+        # §18.5 D3a's two check gestures are NOT here. They MOVED to the Editor
+        # bar's `Parsing` menu (BUG-039) -- Parsing only, not both menus: they
+        # are the linting of the DDL, which is what that menu is, and one
+        # gesture with two homes is two names for one thing. See
+        # `_build_parsing_menu`, which now owns their construction; their
+        # visibility predicate is unchanged and still lives in
+        # `_refresh_sandbox_affordances`.
+        #
+        # §18.5's "Deploy this edit…" picker, which STAYS on Database (it is a
+        # deploy destination picker, not a lint) — FQ-009's discoverability
+        # half. Unlike the check gestures it is
         # ALWAYS visible and needs no sandbox: its Save destination works with
         # no database at all, and when a destination is missing the picker now
         # says which and why instead of leaving a silent gap. Deliberately NO
@@ -3791,6 +3842,45 @@ class MainWindow(QMainWindow):
             panel.set_run_in_console(self._run_selection_in_sandbox_console)
         self._wire_ddl_object_apply_seams(panel)
 
+    def _sandbox_check_present(self) -> bool:
+        """*"Could a check gesture mean anything at all here?"* — a sandbox is
+        CONFIGURED (FQ-023), never "a session is open".
+
+        Extracted so the tab-kind gate in `_refresh_parsing_menu_affordances`
+        composes with the sandbox gate instead of re-deriving it: two readings
+        of "is there a session?" is how the two halves come to disagree."""
+        controller = self.sandbox_controller
+        if controller is None:
+            return False
+        return controller.can_check or self._configured_sandbox_params() is not None
+
+    def _refresh_parsing_menu_affordances(self) -> None:
+        """Show the Parsing menu's DDL face or its XML face, never both
+        (BUG-039).
+
+        Called from BOTH refreshers, because both inputs can change on their
+        own: `_refresh_editor_menu_affordances` when the user switches tabs, and
+        `_refresh_sandbox_affordances` when a project binds or a session comes
+        and goes. Either one alone would leave the menu stale after the other's
+        event.
+
+        The XML pair is hidden by the tab kind ALONE — a DDL tab has no XML to
+        parse whether or not a sandbox exists. The check pair additionally needs
+        the sandbox, so on a DDL tab with no sandbox configured the menu is
+        legitimately empty; that is the honest posture, not a bug.
+        """
+        ddl_tab_active = self._active_deployment_group() == "ddl-object"
+        if self._auto_parse_action is not None:
+            self._auto_parse_action.setVisible(not ddl_tab_active)
+        if self._validate_project_action is not None:
+            self._validate_project_action.setVisible(not ddl_tab_active)
+        check_visible = ddl_tab_active and self._sandbox_check_present()
+        for action in (self._sandbox_check_action, self._sandbox_probe_check_action):
+            if action is not None:
+                # The probe is the same ladder against the same session, so it
+                # earns exactly the same gate.
+                action.setVisible(check_visible)
+
     # --- §18.5 D2/D3a: the SandboxController's session and its gestures ------
     def _refresh_sandbox_affordances(self) -> None:
         """The single "make every sandbox-dependent affordance match the
@@ -3812,22 +3902,12 @@ class MainWindow(QMainWindow):
         # so the two affordance sets cannot disagree about what "configured"
         # means -- while `can_check` stays the sole authority on whether a run
         # can actually happen.
-        check_present = (
-            controller.can_check or self._configured_sandbox_params() is not None
-        )
-        if self._sandbox_check_action is not None:
-            self._sandbox_check_action.setVisible(check_present)
-        if self._sandbox_probe_check_action is not None:
-            # The probe is the same ladder against the same session, so it earns
-            # exactly the same gate -- one predicate, never a second reading of
-            # "is there a session?".
-            self._sandbox_probe_check_action.setVisible(check_present)
-        if self._open_sandbox_session_action is not None:
-            self._open_sandbox_session_action.setVisible(
-                not has_session and bool(self._configured_sandbox_params())
-            )
-        if self._close_sandbox_session_action is not None:
-            self._close_sandbox_session_action.setVisible(has_session)
+        # The two check gestures live on `Parsing` now (BUG-039) and their
+        # visibility is this predicate composed with the active tab kind, so it
+        # is applied in one place both refreshers call. The predicate itself is
+        # unchanged and still belongs here -- this method owns "what does the
+        # sandbox afford".
+        self._refresh_parsing_menu_affordances()
         for panel in self.center_stage.ddl_object_panels():
             self._wire_ddl_object_apply_seams(panel)
         self._refresh_sandbox_console_affordances()
@@ -3843,7 +3923,7 @@ class MainWindow(QMainWindow):
         carve-out 2's FQ-023 narrowing): with no sandbox at all the panel still
         gets `None`, which it renders as no button, and with a sandbox but no
         session the button is there and the wrapper STATES why it cannot run,
-        offering `Open Sandbox Session` as an explicit click.
+        offering the refusal dialog's own `Open` button as an explicit click.
 
         The session is re-read inside the wrapper rather than captured here: the
         node windows are built on activation, and a session can come or go
@@ -3892,8 +3972,9 @@ class MainWindow(QMainWindow):
         Console and §18.8's two node buttons -- so they cannot drift into three
         vocabularies for one fact. The sentence itself is the destination
         picker's (`DESTINATION_UNAVAILABLE_REASONS[DEST_SANDBOX]`, FQ-009), which
-        already names `Database ▸ Open Sandbox Session` as the fix; it is
-        deliberately reused rather than re-typed here.
+        already names what went wrong and how to fix it (BUG-040 reworded it off
+        the deleted menu entry); it is deliberately reused rather than re-typed
+        here.
 
         **No connection is attempted without a click whose label says a session
         will be opened** (the owner's line: a session opening as a side effect of
@@ -3950,12 +4031,34 @@ class MainWindow(QMainWindow):
         return settings.sandbox
 
     def _bind_sandbox_controller_to_project(self) -> None:
-        """Point the controller at the currently-open project (or at nothing).
+        """Point the controller at the currently-open project (or at nothing),
+        and OPEN the session if that project has a sandbox (BUG-040).
 
-        `set_project` drops any session belonging to the previous project and
-        deliberately opens/provisions nothing, so this is safe on every project
-        transition -- no connection happens as a side effect of a project
-        opening."""
+        `set_project` still drops any session belonging to the previous project,
+        so the ordering is safe on every transition; what changed is what
+        happens after. FQ-023 had ruled the session an explicit user act
+        (*"Don't open lazily, it needs to be an explicit decision"*) — the owner
+        has reversed that for project mode, and this is the reversal's one site.
+        The argument the old stance never answered: `refresh_capability_status`
+        ALREADY connects to the sandbox at project-open time to probe
+        capabilities, so *"no connection as a side effect of a project
+        opening"* had not been true for some time. Only the stateful session was
+        withheld, and withholding it bought nothing but a ritual between the
+        user and every Apply/Check.
+
+        **Best-effort, never fatal, never modal.** `open_session` is async
+        through the controller's `_run_async` seam and reports every
+        distinguishable refusal (unreachable / not superuser / tools missing /
+        foreign database) to the Audit panel on its own; a sandbox that cannot
+        be reached simply leaves `has_session` False, which is exactly the state
+        the app was in before this change — Apply/Check still refuse with a
+        stated reason and the refusal's own `Open` button is the retry. So there
+        is deliberately no error handling here: there is no failure this method
+        could report better than the mechanism already does.
+
+        Projectless is untouched by construction: no project means no sandbox
+        params, so the guard is a no-op rather than a special case.
+        """
         settings = self._ddl_project_settings
         if settings is None:
             self.sandbox_controller.clear_project()
@@ -3967,6 +4070,26 @@ class MainWindow(QMainWindow):
                 configured=bool(settings.sandbox.host),
             )
         self._refresh_sandbox_affordances()
+        params = self._configured_sandbox_params()
+        # A host is not enough to DIAL with. `New Project` binds the controller
+        # before `_provision_sandbox` has chosen the database name (the name is
+        # its output, deliberately last), so a host-only check would dial
+        # `database=""` on every project creation: libpq falls back to its
+        # default database, `open_sandbox`'s ownership check then rejects it as
+        # "not a PGTP-created database", and the user gets that line in the
+        # Audit panel for a project that provisions correctly one step later.
+        # `_configured_sandbox_params` itself is left alone -- it is the shared
+        # "is a sandbox configured" reading (§18.7's Explorer gate asks it too),
+        # and this is a narrower question: is there something to connect TO yet.
+        if settings is not None and params is not None and params.database:
+            # Through `_open_sandbox_session`, not `controller.open_session`
+            # directly: that keeps the "nothing is configured" guard and the
+            # Audit-panel outcome routing shared with the refusal dialog's own
+            # `Open` button, so there is still exactly ONE way a session is
+            # acquired. `_adopt_sandbox_setup_settings` deliberately does not
+            # route through this method, so the Setup dialog's freshly
+            # provisioned session is never dropped and re-opened here.
+            self._open_sandbox_session()
         # §18.7's second Explorer follows the PROJECT (does this project have a
         # sandbox configured?), not the session — so it is refreshed here, at the
         # project-transition entry point, and deliberately not inside
@@ -3974,10 +4097,15 @@ class MainWindow(QMainWindow):
         self._refresh_ddl_explorer_affordances()
 
     def _open_sandbox_session(self) -> None:
-        """Database ▸ Open Sandbox Session -- probe, then open the one session
-        through the controller's single ownership gate. The outcome (including
-        every distinguishable refusal reason) lands in the Audit panel via
-        `_on_sandbox_operation_finished`; nothing is swallowed."""
+        """Probe, then open the one session through the controller's single
+        ownership gate. The outcome (including every distinguishable refusal
+        reason) lands in the Audit panel via `_on_sandbox_operation_finished`;
+        nothing is swallowed.
+
+        Two callers, no menu entry (BUG-040 deleted `Database ▸ Open Sandbox
+        Session`): the automatic open on project bind, and the `Open` button on
+        the refusal dialog a sessionless Apply/Check raises. Both are the same
+        acquisition path, which is the point of routing through here."""
         if self._configured_sandbox_params() is None:
             self.statusBar().showMessage(
                 "No sandbox configured for this project — set one up in "
@@ -4570,7 +4698,10 @@ class MainWindow(QMainWindow):
                 "no sandbox session is open -- nothing was applied"
             )
         request = CheckRequest.from_ref(
-            ref, text, **self._trigger_function_for(ref, text)
+            ref,
+            text,
+            **self._trigger_function_for(ref, text),
+            **self._trigger_relation_for(ref, text),
         )
         panel = self.center_stage.ddl_object_tab(getattr(ref, "key", None))
 
@@ -4666,7 +4797,10 @@ class MainWindow(QMainWindow):
         text = panel.text()
         ref = panel.ref
         request = CheckRequest.from_ref(
-            ref, text, **self._trigger_function_for(ref, text)
+            ref,
+            text,
+            **self._trigger_function_for(ref, text),
+            **self._trigger_relation_for(ref, text),
         )
 
         def on_done(result, panel=panel, text=text) -> None:
@@ -4711,6 +4845,63 @@ class MainWindow(QMainWindow):
         return {
             "function_schema": schema or ref.schema,
             "function_name": name,
+        }
+
+    #: A routine body's `RETURNS trigger` clause. `RETURNS` may be followed by
+    #: `SETOF`/schema qualification in general, but never for a trigger
+    #: function -- the type is spelled bare, optionally as the `trigger`
+    #: alias's full name `pg_catalog.trigger`.
+    _RETURNS_TRIGGER_RE = re.compile(
+        r"\bRETURNS\s+(?:pg_catalog\s*\.\s*)?trigger\b", re.I
+    )
+
+    def _trigger_relation_for(self, ref, text) -> dict:
+        """`CheckRequest.from_ref` kwargs naming the relation a trigger
+        FUNCTION is checked against (BUG-038).
+
+        The mirror of `_trigger_function_for`: that one answers "which function
+        does this trigger call", this one answers "which table does this
+        function fire on". Both are needed because `plpgsql_check_function_tb`
+        demands `relid` for any function RETURNING trigger, and a
+        `kind == "function"` tab is one of those — the tab it is reached
+        through has nothing to do with it.
+
+        **Two facts, from the two authorities that own them.** That the routine
+        returns `trigger` is read off the BUFFER, on the same principle as
+        `_trigger_function_for`'s `EXECUTE` clause: the statement in the tab is
+        what will run, so an edit that turns a plain function into a trigger
+        function counts immediately. Which relation it belongs to comes from
+        the SCHEMA INDEX, which is the only party that knows — via
+        `trigger_for_function`, the same reverse lookup the editor's NEW./OLD.
+        completion already uses, so "which trigger owns this function" has one
+        answer in the app.
+
+        Empty for anything that is not a trigger function, and empty — never a
+        guess — for a trigger function attached to no trigger yet (§18.6's
+        unattached case): `plpgsql_check` genuinely cannot check one, and
+        `db/ddl_check.py` says so with its own reason rather than being handed
+        a fabricated table.
+        """
+        if getattr(ref, "is_trigger", False):
+            return {}
+        if not self._RETURNS_TRIGGER_RE.search(text or ""):
+            return {}
+        index = self._ddl_schema_index
+        if index is None:
+            return {}
+        trigger = index.trigger_for_function(
+            getattr(ref, "schema", ""),
+            getattr(ref, "name", ""),
+            getattr(ref, "arg_types", ()) or (),
+        )
+        if trigger is None or not trigger.table:
+            return {}
+        # `TriggerInfo` carries no `tgoldtable`/`tgnewtable`, so there are no
+        # transition tables to thread through here the way the `CREATE TRIGGER`
+        # path threads its own; introspection would have to capture them first.
+        return {
+            "relation_schema": trigger.schema or getattr(ref, "schema", ""),
+            "relation_table": trigger.table,
         }
 
     def _build_tools_menu(self):

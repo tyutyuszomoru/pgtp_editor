@@ -451,7 +451,10 @@ def test_run_on_sandbox_with_no_session_states_the_reason(qtbot, tmp_path):
         window.audit_panel.item(i).text() for i in range(window.audit_panel.count())
     ]
     assert any("Run on sandbox is unavailable" in line for line in lines)
-    assert any("Open Sandbox Session" in line for line in lines)
+    # The reason is the destination picker's sentence, which since BUG-040 names
+    # `Sandbox Setup…` instead of the deleted `Open Sandbox Session` entry.
+    assert any("no sandbox session is open" in line for line in lines)
+    assert not any("Open Sandbox Session" in line for line in lines)
     # Under `[Check]`, the existing apply/ladder channel -- no new prefix.
     assert all(line.startswith("[Check] ") for line in lines)
 

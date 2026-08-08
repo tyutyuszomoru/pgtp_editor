@@ -180,13 +180,73 @@ def test_history_menu_contents_and_order(qtbot):
 
 
 def test_parsing_menu_contents(qtbot):
+    """BUG-039: FOUR members, all built once here and only `setVisible`-toggled.
+
+    `Validate Project` MOVED here off Tools (the owner's "validate xml"); the two
+    §18.5 D3a check gestures MOVED here off the Database menu, which no longer
+    carries them at all."""
     window = MainWindow()
     qtbot.addWidget(window)
     menu = find_top_menu(window, "Parsing")
-    # `Validate Project` MOVED here off Tools (the owner's "validate xml").
-    # plpgsql check waits on §18.5 D3a; lint stays on Tools (§29 open item).
-    assert action_labels(menu) == ["Auto Parse XML", "―", "Validate Project"]
+    assert action_labels(menu) == [
+        "Auto Parse XML",
+        "―",
+        "Validate Project",
+        "―",
+        "Check Object in Sandbox",
+        "Check Object Without Applying",
+    ]
     assert find_action(menu, "Auto Parse XML") is window._auto_parse_action
+    assert find_action(menu, "Validate Project") is window._validate_project_action
+    assert find_action(menu, "Check Object in Sandbox") is window._sandbox_check_action
+    assert (
+        find_action(menu, "Check Object Without Applying")
+        is window._sandbox_probe_check_action
+    )
+
+
+def _visible_parsing_labels(window):
+    menu = find_top_menu(window, "Parsing")
+    return [
+        action.text()
+        for action in menu.actions()
+        if not action.isSeparator() and action.isVisible()
+    ]
+
+
+def test_the_parsing_menu_shows_its_xml_face_on_a_non_ddl_tab(qtbot):
+    """BUG-039's default face: on the Raw XML tab (and every other non-DDL tab)
+    the XML pair is what "parsing" means, and the check pair is hidden."""
+    window = MainWindow()
+    qtbot.addWidget(window)
+
+    window.center_stage.setCurrentIndex(window.center_stage.raw_xml_tab_index)
+
+    assert _visible_parsing_labels(window) == ["Auto Parse XML", "Validate Project"]
+
+
+def test_a_ddl_object_tab_hides_the_xml_pair_even_with_no_sandbox(qtbot):
+    """The XML pair is hidden by the TAB KIND ALONE — a PL/pgSQL buffer has no
+    XML to parse whether or not a sandbox exists. With no sandbox configured the
+    check pair has nothing to run against either, so the menu is legitimately
+    EMPTY; that is the intended posture, not a defect.
+
+    This is also the accepted cost recorded in §7: `Validate Project` is one of
+    the five DEFAULT toolbar buttons, so hiding its action empties that button
+    while a DDL tab is in front."""
+    from pgtp_editor.ui.ddl_object_editor import DdlObjectRef
+
+    window = MainWindow()
+    qtbot.addWidget(window)
+    ref = DdlObjectRef(kind="function", schema="pr", name="recalc")
+    window._on_ddl_edit_requested(ref, "CREATE FUNCTION pr.recalc() ...")
+    window.center_stage.setCurrentWidget(window.center_stage.ddl_object_tab(ref.key))
+
+    assert _visible_parsing_labels(window) == []
+
+    # ...and switching back restores the XML face, so the flip is not one-way.
+    window.center_stage.setCurrentIndex(window.center_stage.raw_xml_tab_index)
+    assert _visible_parsing_labels(window) == ["Auto Parse XML", "Validate Project"]
 
 
 def test_editor_menu_bar_is_hidden_on_the_caption_and_manual_tabs(qtbot):

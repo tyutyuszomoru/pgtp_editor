@@ -117,9 +117,14 @@ DESTINATION_LABELS = {
 #: unavailable destination is not a selectable-but-dead entry; it is named in
 #: the picker's prose, with what would make it available, and cannot be chosen.
 DESTINATION_UNAVAILABLE_REASONS = {
+    # BUG-040 deleted `Database ▸ Open Sandbox Session`, which this sentence
+    # used to name — the session now opens with the project. So the remedy is
+    # the `Open` button on the refusal itself (this string is reused verbatim
+    # inside that dialog), and `Sandbox Setup…` for the case where the automatic
+    # open had nothing to connect to.
     DEST_SANDBOX: (
-        "no sandbox session is open — Database ▸ Open Sandbox Session "
-        "(or Sandbox Setup… first)"
+        "no sandbox session is open — the project's sandbox could not be "
+        "reached, or none is set up yet (Database ▸ Sandbox Setup…)"
     ),
     # FQ-020 wired this lane, so the old *"not wired in this build"* wording is
     # retired: with no project the host resolves a quality target and the gesture

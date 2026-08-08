@@ -17,7 +17,9 @@ anywhere in the Database menu.
 """
 from PySide6.QtCore import QSettings, Qt
 
+from pgtp_editor.db.ddl_check import CheckRequest
 from pgtp_editor.db.ddl_project import ProjectSettings, save_settings
+from pgtp_editor.db.introspect import TriggerInfo
 from pgtp_editor.ui.ddl_object_editor import CHECK_PREFIX, DdlObjectRef
 from pgtp_editor.ui.main_window import MainWindow
 from pgtp_editor.ui import modals
@@ -451,10 +453,38 @@ def _stub_ladder(controller, report=None, *, probe_report=None, raises=None):
     return apply_calls, probe_calls
 
 
-def _project_window(qtbot, tmp_path, monkeypatch, sandbox_host="localhost"):
+class _RecordingOpener:
+    """The controller's `_opener` seam as an object, so a test can both COUNT
+    the opens (BUG-040's auto-open must not fire twice) and flip the sandbox
+    between reachable and not without rebuilding the window."""
+
+    def __init__(self, session, reachable=True):
+        self.session = session
+        self.reachable = reachable
+        self.calls = 0
+
+    def __call__(self, *args, **kwargs):
+        self.calls += 1
+        if not self.reachable:
+            raise RuntimeError("could not connect to the sandbox")
+        return self.session
+
+
+def _project_window(
+    qtbot, tmp_path, monkeypatch, sandbox_host="localhost", reachable=True
+):
     """A window with an open project whose sandbox is configured, the
     controller's async made synchronous, and its opener/prober stubbed so no
-    real connection is ever attempted."""
+    real connection is ever attempted.
+
+    **Opening the project OPENS THE SESSION** (BUG-040), so with the default
+    `reachable=True` the returned controller already holds `session`. Pass
+    `reachable=False` for the sessionless states that used to be the default:
+    since the manual `Open Sandbox Session` gesture is gone, the only way to sit
+    in a configured-but-sessionless project is an auto-open that FAILED. The
+    opener is a `_RecordingOpener`, so a test can flip `.reachable` back on and
+    read `.calls`.
+    """
     from pgtp_editor.db.config import ConnectionParams
     from pgtp_editor.db.sandbox import SandboxCapabilities
 
@@ -471,9 +501,19 @@ def _project_window(qtbot, tmp_path, monkeypatch, sandbox_host="localhost"):
     controller = window.sandbox_controller
     controller._run_async = _sync_run
     session = _FakeSession()
-    controller._opener = lambda *a, **k: session
+    controller._opener = _RecordingOpener(session, reachable=reachable)
     window._ddl_project_ui.set_active_project(project_dir, settings)
     return window, controller, session
+
+
+def _open_ddl_tab(window, ref=_REF, source=_SOURCE):
+    """Open an object tab AND make it the active one -- since BUG-039 the two
+    check gestures are visible only while a DDL object editor tab is in front,
+    so a test that asserts on their visibility must say which tab it means."""
+    window._on_ddl_edit_requested(ref, source)
+    panel = window.center_stage.ddl_object_tab(ref.key)
+    window.center_stage.setCurrentWidget(panel)
+    return panel
 
 
 def _accept_confirmations(monkeypatch):
@@ -498,38 +538,111 @@ def test_the_window_owns_a_sandbox_controller(qtbot, tmp_path):
     assert window.sandbox_controller.session is None
 
 
-def test_opening_a_project_binds_the_controller_without_connecting(
+def test_opening_a_project_binds_the_controller_and_opens_the_session(
     qtbot, tmp_path, monkeypatch
 ):
-    window, controller, _session = _project_window(qtbot, tmp_path, monkeypatch)
-
-    assert controller.sandbox_params.host == "localhost"
-    assert controller.session is None  # no connection as a project side effect
-    assert window._open_sandbox_session_action.isVisible()
-    assert not window._close_sandbox_session_action.isVisible()
-    # FQ-023: the Check gesture is PRESENT (a sandbox is configured) and refuses
-    # with a stated reason -- see `test_a_configured_sandbox_without_a_session_*`.
-    assert window._sandbox_check_action.isVisible()
-
-
-def test_opening_a_session_reveals_the_console_and_the_check_gesture(
-    qtbot, tmp_path, monkeypatch
-):
+    """BUG-040 reversed FQ-023's *"don't open lazily"* ruling: binding a project
+    whose sandbox is configured OPENS the session, with no user click and no
+    menu entry -- Apply/Check just work."""
     window, controller, session = _project_window(qtbot, tmp_path, monkeypatch)
 
+    assert controller.sandbox_params.host == "localhost"
+    assert controller.session is session
+    assert controller.can_check
+    # Exactly ONE acquisition: the bind, not the bind plus something else.
+    assert controller._opener.calls == 1
+    # The lifecycle actions are DELETED, not hidden -- a hidden QAction stays
+    # pinnable and a toolbar button bypasses menu visibility entirely.
+    assert not hasattr(window, "_open_sandbox_session_action")
+    assert not hasattr(window, "_close_sandbox_session_action")
+
+
+def test_the_database_menu_offers_no_session_lifecycle_entries(qtbot, tmp_path):
+    """BUG-040: `Open Sandbox Session` / `Close Sandbox Session` are gone from
+    the menu entirely, in every state (projectless included -- a sandbox exists
+    only in project mode, so they were reachable in no state at all)."""
+    window = _window(qtbot, tmp_path)
+    labels = [
+        action.text() for action in find_top_menu(window, "Database").actions()
+    ]
+
+    assert "Open Sandbox Session" not in labels
+    assert "Close Sandbox Session" not in labels
+    assert not any("Sandbox Session" in label for label in labels)
+
+
+def test_no_session_is_opened_projectless(qtbot, tmp_path):
+    """Projectless is untouched by construction: no project means no sandbox
+    params, so the auto-open guard is a no-op rather than a special case."""
+    window = _window(qtbot, tmp_path)
+    controller = window.sandbox_controller
+    controller._run_async = _sync_run
+    opener = _RecordingOpener(_FakeSession())
+    controller._opener = opener
+
+    window._bind_sandbox_controller_to_project()
+
+    assert window._ddl_project_settings is None
+    assert window._configured_sandbox_params() is None
+    assert controller.session is None
+    assert opener.calls == 0
+
+
+def test_a_project_with_no_sandbox_attempts_no_connection(
+    qtbot, tmp_path, monkeypatch
+):
+    """The other half of the guard: a project is open, but it has no sandbox
+    host, so nothing is dialled."""
+    window, controller, _session = _project_window(
+        qtbot, tmp_path, monkeypatch, sandbox_host=""
+    )
+
+    assert controller.session is None
+    assert controller._opener.calls == 0
+
+
+def test_an_unreachable_sandbox_degrades_to_the_no_session_state(
+    qtbot, tmp_path, monkeypatch
+):
+    """Best-effort, never fatal, never modal: the project is open and usable,
+    `has_session` is simply False, and the reason lands in the Audit panel
+    through the existing `SandboxOperationResult` routing."""
+    window, controller, _session = _project_window(
+        qtbot, tmp_path, monkeypatch, reachable=False
+    )
+
+    assert controller._opener.calls == 1  # it was ATTEMPTED
+    assert controller.session is None
+    assert not controller.has_session
+    assert window._ddl_project_folder == tmp_path / "proj"
+    assert any("could not connect to the sandbox" in t for t in _audit_texts(window))
+
+
+def test_recovering_from_a_failed_auto_open_reveals_the_console_and_the_checks(
+    qtbot, tmp_path, monkeypatch
+):
+    """The one manual acquisition left (BUG-040): the `Open` button on the
+    refusal dialog, which is `_open_sandbox_session()` -- the same chokepoint the
+    auto-open uses."""
+    window, controller, session = _project_window(
+        qtbot, tmp_path, monkeypatch, reachable=False
+    )
+    _open_ddl_tab(window)
+    assert not controller.has_session
+
+    controller._opener.reachable = True
     window._open_sandbox_session()
 
     assert controller.session is session
     assert controller.can_check
     assert window._sandbox_check_action.isVisible()
     assert window._sandbox_console_action.isVisible()
-    assert window._close_sandbox_session_action.isVisible()
-    assert not window._open_sandbox_session_action.isVisible()
 
 
 def test_closing_the_project_leaves_no_stale_session(qtbot, tmp_path, monkeypatch):
+    """There is no explicit close gesture any more: the project transition IS
+    the closing mechanism (`set_project`/`clear_project`)."""
     window, controller, _session = _project_window(qtbot, tmp_path, monkeypatch)
-    window._open_sandbox_session()
     assert controller.has_session
 
     window._ddl_project_ui.close_project()
@@ -687,18 +800,89 @@ def test_check_without_applying_runs_the_rolled_back_probe(
 def test_the_probe_gesture_shares_checks_presence_gate(qtbot, tmp_path, monkeypatch):
     """One predicate for both Check gestures -- and since FQ-023 that predicate
     is "is a sandbox configured", so a configured-but-sessionless project shows
-    both rather than hiding both."""
-    window, _controller, _session = _project_window(qtbot, tmp_path, monkeypatch)
+    both rather than hiding both. Since BUG-039 it is composed with "a DDL
+    object tab is active", which is what `_open_ddl_tab` supplies."""
+    window, controller, _session = _project_window(
+        qtbot, tmp_path, monkeypatch, reachable=False
+    )
+    _open_ddl_tab(window)
+    assert not controller.has_session
 
     assert window._sandbox_probe_check_action.isVisible()
     assert window._sandbox_check_action.isVisible()
 
+    controller._opener.reachable = True
     window._open_sandbox_session()
     assert window._sandbox_probe_check_action.isVisible()
+    assert window._sandbox_check_action.isVisible()
+
+
+# --- BUG-039: the check gestures are `Parsing` members, gated by TAB KIND ----
+
+
+def test_the_check_gestures_are_hidden_off_a_ddl_object_tab(
+    qtbot, tmp_path, monkeypatch
+):
+    """A live session is not enough: the gestures act on the ACTIVE DDL object
+    tab, so on the Raw XML tab they are not offered at all."""
+    window, controller, _session = _project_window(qtbot, tmp_path, monkeypatch)
+    assert controller.has_session
+
+    window.center_stage.setCurrentIndex(window.center_stage.raw_xml_tab_index)
+
+    assert not window._sandbox_check_action.isVisible()
+    assert not window._sandbox_probe_check_action.isVisible()
+    # ...and the console entry, which is NOT tab-scoped, is untouched by that.
+    assert window._sandbox_console_action.isVisible()
+
+
+def test_activating_a_ddl_object_tab_reveals_both_check_gestures(
+    qtbot, tmp_path, monkeypatch
+):
+    """The tab-change half of the gate: `_refresh_editor_menu_affordances` and
+    `_refresh_sandbox_affordances` must BOTH reach the same helper, or the menu
+    stays stale after whichever event the other one owns."""
+    window, _controller, _session = _project_window(qtbot, tmp_path, monkeypatch)
+    window.center_stage.setCurrentIndex(window.center_stage.raw_xml_tab_index)
+
+    _open_ddl_tab(window)
+
+    assert window._sandbox_check_action.isVisible()
+    assert window._sandbox_probe_check_action.isVisible()
+    # The XML pair is hidden by the tab kind alone, which is the trade this menu
+    # accepted: `Validate Project` is a DEFAULT toolbar button.
+    assert not window._auto_parse_action.isVisible()
+    assert not window._validate_project_action.isVisible()
+
+
+def test_the_parsing_actions_are_the_check_handlers_themselves(
+    qtbot, tmp_path, monkeypatch
+):
+    """One gesture, one home, one handler: triggering the Parsing entries runs
+    the same ladder the Database entries used to -- there are no twins left to
+    drift apart."""
+    window, controller, session = _project_window(qtbot, tmp_path, monkeypatch)
+    _apply_calls, probe_calls = _stub_ladder(controller)
+    panel = _open_ddl_tab(window)
+    checked = []
+    controller._checker = lambda s, request, caps: checked.append(request) or None
+
+    parsing = find_top_menu(window, "Parsing")
+    find_action(parsing, "Check Object in Sandbox").trigger()
+    find_action(parsing, "Check Object Without Applying").trigger()
+
+    assert len(checked) == 1 and checked[0].name == "recalc"
+    assert len(probe_calls) == 1
+    assert probe_calls[0][0] is session
+    assert probe_calls[0][3] == panel.text()
 
 
 def test_apply_affordance_is_absent_without_a_session(qtbot, tmp_path, monkeypatch):
-    window, _controller, _session = _project_window(qtbot, tmp_path, monkeypatch)
+    """The button row still follows the SESSION, not the configuration -- a
+    button cannot state a reason. With the auto-open failed there is none."""
+    window, _controller, _session = _project_window(
+        qtbot, tmp_path, monkeypatch, reachable=False
+    )
     window._on_ddl_edit_requested(_REF, _SOURCE)
 
     panel = window.center_stage.ddl_object_tab(_REF.key)
@@ -795,7 +979,12 @@ def test_a_check_that_produced_no_report_is_never_shown_as_clean(
 
 
 def test_a_failed_sandbox_operation_surfaces_its_reason(qtbot, tmp_path, monkeypatch):
-    window, controller, _session = _project_window(qtbot, tmp_path, monkeypatch)
+    """Every distinguishable refusal reaches the Audit panel -- including the
+    one BUG-040's auto-open can now raise on a foreign database, which nobody
+    clicked for and which therefore must never be swallowed."""
+    window, controller, _session = _project_window(
+        qtbot, tmp_path, monkeypatch, reachable=False
+    )
 
     def refuse(*a, **k):
         raise RuntimeError("not a PGTP-created database")
@@ -824,6 +1013,163 @@ def test_the_trigger_functions_name_is_read_off_the_buffer_not_guessed(
     }
     # No EXECUTE clause -> nothing is guessed from the trigger's own name.
     assert window._trigger_function_for(ref, "CREATE TRIGGER t_audit ...") == {}
+
+
+# --- BUG-038: a trigger FUNCTION tab carries its relation too ---------------
+
+_TRIGGER_FN = (
+    "CREATE OR REPLACE FUNCTION pr.log_row()\n"
+    "RETURNS trigger LANGUAGE plpgsql AS $$\nBEGIN RETURN NEW; END;\n$$;\n"
+)
+
+
+class _IndexWithTrigger:
+    """The one `SchemaIndex` method this path uses. Records its arguments so
+    the reverse lookup is asserted to be asked about the FUNCTION, not the
+    table."""
+
+    def __init__(self, trigger):
+        self._trigger = trigger
+        self.asked = []
+
+    def trigger_for_function(self, schema, name, arg_types=()):
+        self.asked.append((schema, name, tuple(arg_types)))
+        return self._trigger
+
+
+def test_a_trigger_function_tab_binds_the_relation_its_trigger_fires_on(
+    qtbot, tmp_path
+):
+    """The reported failure: checking a trigger FUNCTION errored with
+    "missing trigger relation" because nothing told the request which table to
+    bind. The relation is known — the trigger that calls it is in the index."""
+    window = _window(qtbot, tmp_path)
+    ref = DdlObjectRef(kind="function", schema="pr", name="log_row")
+    index = _IndexWithTrigger(
+        TriggerInfo(
+            schema="pr",
+            table="orders",
+            name="t_audit",
+            timing="after",
+            function_name="log_row",
+        )
+    )
+    window._ddl_schema_index = index
+
+    assert window._trigger_relation_for(ref, _TRIGGER_FN) == {
+        "relation_schema": "pr",
+        "relation_table": "orders",
+    }
+    assert index.asked == [("pr", "log_row", ())]
+
+    # End to end: the built request emits `relid`, which is the whole bug.
+    request = CheckRequest.from_ref(
+        ref,
+        _TRIGGER_FN,
+        **window._trigger_function_for(ref, _TRIGGER_FN),
+        **window._trigger_relation_for(ref, _TRIGGER_FN),
+    )
+    assert request.regclass_text == '"pr"."orders"'
+
+
+def test_a_plain_function_asks_the_index_nothing(qtbot, tmp_path):
+    """`RETURNS trigger` is read off the buffer first, so a plain function does
+    not even reach the reverse lookup."""
+    window = _window(qtbot, tmp_path)
+    ref = DdlObjectRef(kind="function", schema="pr", name="total")
+    index = _IndexWithTrigger(None)
+    window._ddl_schema_index = index
+
+    body = "CREATE FUNCTION pr.total() RETURNS integer AS $$ SELECT 1 $$;"
+    assert window._trigger_relation_for(ref, body) == {}
+    assert index.asked == []
+
+
+def test_an_unattached_trigger_function_binds_nothing_rather_than_guessing(
+    qtbot, tmp_path
+):
+    """§18.6's unattached case. plpgsql_check genuinely cannot check one, and a
+    fabricated relation would be worse than the stated refusal."""
+    window = _window(qtbot, tmp_path)
+    ref = DdlObjectRef(kind="function", schema="pr", name="log_row")
+    window._ddl_schema_index = _IndexWithTrigger(None)
+    assert window._trigger_relation_for(ref, _TRIGGER_FN) == {}
+
+    # And with no index at all (no schema loaded yet), same answer.
+    window._ddl_schema_index = None
+    assert window._trigger_relation_for(ref, _TRIGGER_FN) == {}
+
+
+def _index_for(schema="pr", table="orders", function_name="log_row"):
+    return _IndexWithTrigger(
+        TriggerInfo(
+            schema=schema,
+            table=table,
+            name="t_audit",
+            timing="after",
+            function_name=function_name,
+        )
+    )
+
+
+def test_the_check_gesture_carries_the_relation_into_the_request(
+    qtbot, tmp_path, monkeypatch
+):
+    """End to end through the real gesture, not the helper: the request the
+    ladder receives must already name the relation, or the server answers
+    "missing trigger relation" exactly as reported."""
+    window, controller, _session = _project_window(qtbot, tmp_path, monkeypatch)
+    window._ddl_schema_index = _index_for()
+    ref = DdlObjectRef(kind="function", schema="pr", name="log_row")
+    _open_ddl_tab(window, ref=ref, source=_TRIGGER_FN)
+    requests = []
+    controller._checker = lambda s, request, caps: requests.append(request) or None
+
+    window._check_active_ddl_object()
+
+    assert requests[0].relation_schema == "pr"
+    assert requests[0].relation_table == "orders"
+    assert requests[0].regclass_text == '"pr"."orders"'
+
+
+def test_the_probe_gesture_carries_the_relation_too(qtbot, tmp_path, monkeypatch):
+    """The two call sites build the request separately, so the probe is pinned
+    on its own -- a fix applied to one of them is the easy half-fix here."""
+    window, controller, _session = _project_window(qtbot, tmp_path, monkeypatch)
+    window._ddl_schema_index = _index_for()
+    ref = DdlObjectRef(kind="function", schema="pr", name="log_row")
+    _open_ddl_tab(window, ref=ref, source=_TRIGGER_FN)
+    _apply_calls, probe_calls = _stub_ladder(controller)
+
+    window._probe_check_active_ddl_object()
+
+    assert probe_calls[0][1].relation_table == "orders"
+
+
+def test_the_apply_path_carries_the_relation_as_well(qtbot, tmp_path, monkeypatch):
+    """Apply runs the same ladder, and the reported failure arrived through it
+    (`[Check] tier3: errored` on an Apply), so it gets its own pin."""
+    window, controller, _session = _project_window(qtbot, tmp_path, monkeypatch)
+    window._ddl_schema_index = _index_for()
+    ref = DdlObjectRef(kind="function", schema="pr", name="log_row")
+    panel = _open_ddl_tab(window, ref=ref, source=_TRIGGER_FN)
+    apply_calls, _probe = _stub_ladder(controller)
+    _accept_confirmations(monkeypatch)
+
+    assert panel.apply_to_sandbox() is True
+
+    assert apply_calls[0][1].relation_table == "orders"
+    # ...and the working-set identity is still the FUNCTION's, not the table's.
+    assert apply_calls[0][1].working_set_ref == ("function", "pr", "log_row", "")
+
+
+def test_a_CREATE_TRIGGER_tab_keeps_using_the_trigger_path(qtbot, tmp_path):
+    """The two helpers are disjoint: a trigger ref contributes a function, never
+    a relation (its `table` already carries one)."""
+    window = _window(qtbot, tmp_path)
+    ref = DdlObjectRef(kind="trigger", schema="pr", name="t_audit", table="orders")
+    window._ddl_schema_index = _IndexWithTrigger(None)
+    assert window._trigger_relation_for(ref, "CREATE TRIGGER ... RETURNS trigger") == {}
 
 
 # --- FQ-009: the "Deploy this edit…" picker, host side ----------------------
@@ -956,8 +1302,10 @@ def test_with_no_sandbox_configured_all_three_gestures_are_absent(
     window, controller, _session = _project_window(
         qtbot, tmp_path, monkeypatch, sandbox_host=""
     )
+    _open_ddl_tab(window)  # the tab-kind half of the gate is satisfied...
 
     assert not controller.has_session
+    # ...so what is asserted here is the sandbox half alone.
     assert not window._sandbox_check_action.isVisible()
     assert not window._sandbox_probe_check_action.isVisible()
     assert not window._sandbox_console_action.isVisible()
@@ -968,42 +1316,53 @@ def test_a_configured_sandbox_without_a_session_shows_all_three(
 ):
     """The FQ-023 defect, inverted: the user can now SEE the three gestures the
     moment a sandbox exists, without first guessing that a session must be
-    opened."""
-    window, controller, _session = _project_window(qtbot, tmp_path, monkeypatch)
+    opened. Since BUG-040 the sessionless state is reached by an auto-open that
+    FAILED rather than by one nobody performed -- which is precisely the state
+    that most needs a gesture able to state a reason."""
+    window, controller, _session = _project_window(
+        qtbot, tmp_path, monkeypatch, reachable=False
+    )
+    _open_ddl_tab(window)
 
     assert not controller.has_session
     assert window._sandbox_check_action.isVisible()
     assert window._sandbox_probe_check_action.isVisible()
     assert window._sandbox_console_action.isVisible()
-    # And the way OUT is still advertised beside them.
-    assert window._open_sandbox_session_action.isVisible()
 
 
-def test_the_check_refusal_names_open_sandbox_session_and_runs_nothing(
+def test_the_check_refusal_states_the_missing_session_and_runs_nothing(
     qtbot, tmp_path, monkeypatch
 ):
-    """The refusal reuses the destination picker's sentence (FQ-009), which
-    already names `Database ▸ Open Sandbox Session` -- one vocabulary for one
-    fact, and no ladder run."""
-    window, controller, _session = _project_window(qtbot, tmp_path, monkeypatch)
+    """The refusal reuses the destination picker's sentence (FQ-009) -- one
+    vocabulary for one fact, and no ladder run. BUG-040 deleted the menu entry
+    that sentence used to name, so what it must NOT contain is now as
+    load-bearing as what it must: the offer is the dialog's own `Open` button."""
+    window, controller, _session = _project_window(
+        qtbot, tmp_path, monkeypatch, reachable=False
+    )
     apply_calls, probe_calls = _stub_ladder(controller)
-    window._on_ddl_edit_requested(_REF, _SOURCE)
-    window.center_stage.setCurrentWidget(window.center_stage.ddl_object_tab(_REF.key))
+    _open_ddl_tab(window)
     seen = []
     _answer_refusal(monkeypatch, modals.QMessageBox.StandardButton.Cancel, seen)
 
     window._check_active_ddl_object()
 
     assert "Check Object in Sandbox" in seen[0]
-    assert "Open Sandbox Session" in seen[0]
+    assert "no sandbox session is open" in seen[0]
+    assert "Open a sandbox session now?" in seen[0]
+    assert "Open Sandbox Session" not in seen[0]
     assert apply_calls == [] and probe_calls == []
     assert not controller.has_session
     # Declining leaves the reason readable after the dialog is gone.
-    assert "Open Sandbox Session" in window.statusBar().currentMessage()
+    message = window.statusBar().currentMessage()
+    assert "no sandbox session is open" in message
+    assert "Open Sandbox Session" not in message
 
 
 def test_the_probe_gesture_refuses_under_its_own_name(qtbot, tmp_path, monkeypatch):
-    window, _controller, _session = _project_window(qtbot, tmp_path, monkeypatch)
+    window, _controller, _session = _project_window(
+        qtbot, tmp_path, monkeypatch, reachable=False
+    )
     seen = []
     _answer_refusal(monkeypatch, modals.QMessageBox.StandardButton.Cancel, seen)
 
@@ -1018,7 +1377,9 @@ def test_the_missing_session_is_reported_before_the_missing_tab(
     """With no session AND no object tab, the answer is the one the gesture's new
     presence is advertising -- not "open a DDL object tab", which would send the
     user off to fix a different prerequisite."""
-    window, _controller, _session = _project_window(qtbot, tmp_path, monkeypatch)
+    window, _controller, _session = _project_window(
+        qtbot, tmp_path, monkeypatch, reachable=False
+    )
     seen = []
     _answer_refusal(monkeypatch, modals.QMessageBox.StandardButton.Cancel, seen)
 
@@ -1033,11 +1394,16 @@ def test_taking_the_offer_opens_the_session_and_retries_nothing(
 ):
     """The explicit-click half: a session opens because the user clicked Open,
     and the refused gesture is NOT replayed behind their back (`open_session` is
-    async and reports through Audit; the user re-invokes it)."""
-    window, controller, session = _project_window(qtbot, tmp_path, monkeypatch)
+    async and reports through Audit; the user re-invokes it).
+
+    Since BUG-040 this is the ONLY manual session-acquisition gesture left, so
+    it is also the whole recovery story after a failed auto-open."""
+    window, controller, session = _project_window(
+        qtbot, tmp_path, monkeypatch, reachable=False
+    )
     apply_calls, probe_calls = _stub_ladder(controller)
-    window._on_ddl_edit_requested(_REF, _SOURCE)
-    window.center_stage.setCurrentWidget(window.center_stage.ddl_object_tab(_REF.key))
+    _open_ddl_tab(window)
+    controller._opener.reachable = True
     _answer_refusal(monkeypatch, modals.QMessageBox.StandardButton.Open)
 
     window._check_active_ddl_object()
@@ -1051,8 +1417,11 @@ def test_taking_the_offer_opens_the_session_and_retries_nothing(
 def test_declining_the_offer_attempts_no_connection(qtbot, tmp_path, monkeypatch):
     """The owner's line, pinned: no connection is attempted without a click whose
     label says a session will be opened -- so a declined refusal must not even
-    PROBE."""
-    window, _controller, _session = _project_window(qtbot, tmp_path, monkeypatch)
+    PROBE. (The auto-open's own attempt is over by now: `probes` is armed after
+    the project bind, so only what the DECLINED gesture does is recorded.)"""
+    window, _controller, _session = _project_window(
+        qtbot, tmp_path, monkeypatch, reachable=False
+    )
     probes = []
     window._ddl_project_ui.probe_sandbox_capabilities = lambda params: probes.append(
         params
@@ -1068,7 +1437,9 @@ def test_declining_the_offer_attempts_no_connection(qtbot, tmp_path, monkeypatch
 def test_the_console_refusal_creates_no_console(qtbot, tmp_path, monkeypatch):
     """Present-and-reporting is about the MENU ENTRY: a console that would refuse
     every Run is still never created (§18.5 D4)."""
-    window, _controller, _session = _project_window(qtbot, tmp_path, monkeypatch)
+    window, _controller, _session = _project_window(
+        qtbot, tmp_path, monkeypatch, reachable=False
+    )
     seen = []
     _answer_refusal(monkeypatch, modals.QMessageBox.StandardButton.Cancel, seen)
 
@@ -1105,7 +1476,8 @@ def test_closing_the_project_takes_all_three_gestures_away(
     """The narrowing does not resurrect a control for a project that is gone: no
     project means no configured sandbox, which is the ABSENT case."""
     window, controller, _session = _project_window(qtbot, tmp_path, monkeypatch)
-    window._open_sandbox_session()
+    _open_ddl_tab(window)
+    assert window._sandbox_check_action.isVisible()
 
     window._ddl_project_ui.close_project()
 

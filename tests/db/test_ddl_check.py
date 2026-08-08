@@ -431,6 +431,93 @@ def test_trigger_whose_relation_is_missing_reports_unavailable():
     assert report.tier3.reason == ddl_check.REASON_RELATION_ABSENT
 
 
+# --- a trigger FUNCTION tab binds relid too (BUG-038) ----------------------
+
+def test_trigger_function_tab_binds_relid_from_its_relation():
+    """`kind == "function"` with a bound relation: the server demands `relid`
+    for anything RETURNING trigger, however the user reached it. Before
+    BUG-038 the call went out relid-less and errored with "missing trigger
+    relation"."""
+    request = CheckRequest(
+        kind="function",
+        schema="pr",
+        name="audit_fn",
+        relation_schema="pr",
+        relation_table="orders",
+        buffer_text=BUFFER,
+    )
+    query = _Query(_resolved(funcoid=99, relid=77), [])
+    report = run_plpgsql_check(_Session(), request, _caps(), query=query)
+
+    resolve_sql, check_sql = query.sql
+    # The FUNCTION is still the one checked -- unlike a trigger request, the
+    # ref's own schema/name are the target, not `function_schema`/`_name`.
+    assert 'to_regprocedure(\'"pr"."audit_fn"()\')' in resolve_sql
+    assert 'to_regclass(\'"pr"."orders"\')' in resolve_sql
+    assert "relid => 77" in check_sql
+    assert report.tier3.status == STATUS_PASSED
+    assert request.identity == "pr.audit_fn()"
+
+
+def test_trigger_function_with_the_relation_absent_is_unavailable_not_errored():
+    """The point of routing through `to_regclass`: a relation the sandbox does
+    not have degrades to a clean `unavailable`, the same way the `CREATE
+    TRIGGER` path already did — never a raw server error."""
+    request = CheckRequest(
+        kind="function",
+        schema="pr",
+        name="audit_fn",
+        relation_schema="pr",
+        relation_table="orders",
+    )
+    query = _Query(_resolved(funcoid=5, relid=None))
+    report = run_plpgsql_check(_Session(), request, _caps(), query=query)
+    assert report.tier3.status == STATUS_UNAVAILABLE
+    assert report.tier3.reason == ddl_check.REASON_RELATION_ABSENT
+
+
+def test_a_relation_bound_function_keeps_its_trigger_only_properties_clear():
+    """Option (b) was chosen over widening `table` precisely so these two stay
+    untouched: `working_set_ref` is the `applied` PRIMARY KEY, and a non-empty
+    `trigger_drop_target` would emit a `DROP TRIGGER` for a function."""
+    request = CheckRequest(
+        kind="function",
+        schema="pr",
+        name="audit_fn",
+        relation_schema="pr",
+        relation_table="orders",
+    )
+    assert request.table is None
+    assert request.working_set_ref == ("function", "pr", "audit_fn", "")
+    assert request.trigger_drop_target is None
+
+
+def test_a_plain_function_still_sends_no_relid():
+    """The regression guard for the widening: no relation bound, no `relid`."""
+    request = CheckRequest(kind="function", schema="pr", name="plain")
+    assert request.regclass_text is None
+    query = _Query(_resolved(), [])
+    run_plpgsql_check(_Session(), request, _caps(), query=query)
+    assert "relid =>" not in query.sql[1]
+    assert "NULL::oid" in query.sql[0]
+
+
+def test_the_guarded_ladder_shape_binds_relid_for_a_trigger_function_too():
+    """`apply_and_check`'s one-transaction shape resolves oids inline, so it
+    needs the same widening — a fix that only reached `recheck` would leave the
+    reported gesture (Apply) broken."""
+    request = CheckRequest(
+        kind="function",
+        schema="pr",
+        name="audit_fn",
+        relation_schema="pr",
+        relation_table="orders",
+    )
+    sql = ddl_check.build_guarded_check_sql(request)
+    assert 'to_regclass(\'"pr"."orders"\') IS NOT NULL' in sql
+    assert "relid => r.relid" in sql
+
+
 # --- call shape ------------------------------------------------------------
 
 def test_check_sql_uses_named_notation_and_gui_friendly_flags():
