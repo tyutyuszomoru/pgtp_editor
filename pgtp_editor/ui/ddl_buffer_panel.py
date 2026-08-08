@@ -90,7 +90,7 @@ def resolve_edit_target(
     schema: DatabaseSchema, span: DdlObjectSpan
 ) -> tuple[DdlObjectRef, str] | None:
     """The `DdlObjectRef` + live source text for `span`, resolved against
-    `schema` (spec §18.5, D1). Shared by both right-click ▸ Edit… entry
+    `schema` (spec §18.5, D1). Shared by both right-click ▸ Edit DDL entry
     points -- `BrowserPanel.tree` here and the read-only DDL `EditorPanel`'s
     buffer (`ddl_editor_panel.py`) -- so routine/trigger identity is derived
     in exactly one place. Returns None if `schema` no longer has the object
@@ -128,22 +128,23 @@ def resolve_edit_target(
 class BrowserPanel(QWidget):
     navigate_requested = Signal(int)  # 1-based line in the EditorPanel buffer
 
-    #: Right-click ▸ Edit… on an object row (spec §18.5, D1 entry point 1).
+    #: Right-click ▸ Edit DDL on an object row (spec §18.5, D1 entry point 1).
     #: Carries the object's `DdlObjectRef` and its current source text (the
     #: live `RoutineInfo.source` / `TriggerInfo.definition` this tree was
     #: built from) -- everything MainWindow needs to open or focus the
     #: editable tab, with no second lookup back into the schema.
+    #:
+    #: The ONLY editing signal since FQ-024: the withdrawn `checkout_requested`
+    #: asked the user to pick between two gestures whose real difference is
+    #: project state, so checkout became a branch of MainWindow's handler for
+    #: THIS signal rather than a second menu entry (§18.1/§18.2). The panel
+    #: still knows nothing about projects.
     edit_requested = Signal(object, str)
-
-    #: Right-click ▸ Check Out for Versioning on an object row (spec §18.2).
-    #: Same payload shape as `edit_requested` -- checkout is a second variant
-    #: of the Edit… gesture, not a second tab type or a second editor.
-    checkout_requested = Signal(object, str)
 
     #: Left-click on a Tables-branch table node (spec §18.1, 2026-08-05):
     #: carries the clicked table's `TableInfo` so `MainWindow` can populate
     #: the shared `PropertiesPanel` (`show_node(table_info, "ddl_table")`).
-    #: Click-only for Edit…/Check Out -- a whole table has no single
+    #: Click-only for Edit DDL -- a whole table has no single
     #: `DdlObjectSpan`/source text for those to act on. It DOES carry a
     #: context menu for *creation* (see `add_trigger_requested`), which needs
     #: no source span precisely because the object does not exist yet.
@@ -152,7 +153,7 @@ class BrowserPanel(QWidget):
     #: Right-click ▸ Add Trigger… on a Tables-branch table node (FQ-002).
     #: Carries the clicked table's `TableInfo`. This is the carve-out to
     #: §18.1's original "table nodes have no context menu" rule: that rule
-    #: exists because Edit…/Check Out need a source span, and a
+    #: exists because Edit DDL needs a source span, and a
     #: not-yet-created trigger has none to need.
     add_trigger_requested = Signal(object)
 
@@ -170,7 +171,7 @@ class BrowserPanel(QWidget):
         self.tree.customContextMenuRequested.connect(self._on_context_menu)
 
         # The schema this tree was last built from, so a later right-click ▸
-        # Edit… can resolve a routine/trigger's full source text and overload
+        # Edit DDL can resolve a routine/trigger's full source text and overload
         # status without the tree items carrying redundant copies of it.
         self._schema: DatabaseSchema | None = None
 
@@ -452,13 +453,11 @@ class BrowserPanel(QWidget):
                 return None
             ref, source = resolved
             menu = QMenu(self)
-            menu.addAction(
-                f"Edit {ref.qualified}…", lambda: self.edit_requested.emit(ref, source)
-            )
-            menu.addAction(
-                "Check Out for Versioning",
-                lambda: self.checkout_requested.emit(ref, source),
-            )
+            # ONE editing entry (FQ-024). The clicked row already names the
+            # object, so the entry does not repeat it -- unlike `EditorPanel`'s
+            # equivalent, where the click landed in a multi-object buffer and
+            # two overloads' entries must read differently.
+            menu.addAction("Edit DDL", lambda: self.edit_requested.emit(ref, source))
             return menu
 
         table_info = item.data(0, _TABLE_ROLE)

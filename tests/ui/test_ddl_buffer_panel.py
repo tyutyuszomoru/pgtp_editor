@@ -747,7 +747,7 @@ def test_context_menu_at_empty_position_does_nothing(qtbot):
 
 
 def test_edit_menu_action_triggers_edit_requested(qtbot, monkeypatch):
-    """The actual right-click ▸ Edit… menu path, end to end -- QMenu itself is
+    """The actual right-click ▸ Edit DDL menu path, end to end -- QMenu itself is
     faked (the established `_FakeMenu` convention, see
     test_caption_management_panel.py) so no real popup blocks the test."""
     schema = _schema()
@@ -772,9 +772,9 @@ def test_edit_menu_action_triggers_edit_requested(qtbot, monkeypatch):
 
         def exec(self, *a, **k):
             # The real menu only ever triggers the ONE action the user
-            # clicked; simulate clicking "Edit …" specifically.
+            # clicked; simulate clicking "Edit DDL" specifically.
             for label, cb in captured["actions"]:
-                if label.startswith("Edit "):
+                if label.startswith("Edit DDL"):
                     cb()
                     return
 
@@ -784,52 +784,29 @@ def test_edit_menu_action_triggers_edit_requested(qtbot, monkeypatch):
 
     panel._on_context_menu(QPoint(0, 0))  # position is irrelevant, itemAt is patched
 
+    # ONE editing entry since FQ-024: `Check Out for Versioning` is withdrawn,
+    # and the row already names the object so the entry does not repeat it.
     labels = [label for label, _cb in captured["actions"]]
-    assert labels == ["Edit pr.calc_total(integer, numeric)…", "Check Out for Versioning"]
+    assert labels == ["Edit DDL"]
     assert len(got) == 1
     ref, source = got[0]
     assert ref.name == "calc_total"
     assert source == "body1"
 
 
-def test_checkout_menu_action_triggers_checkout_requested(qtbot, monkeypatch):
-    """The right-click ▸ Check Out for Versioning path, end to end (§18.2)."""
+def test_the_object_row_menu_has_no_checkout_entry_or_signal(qtbot):
+    """FQ-024: the withdrawn gesture is gone from the menu AND the panel no
+    longer declares the signal it emitted, so no host can re-wire it."""
     schema = _schema()
     text, spans = build_ddl_text(schema)
     panel = BrowserPanel()
     qtbot.addWidget(panel)
     panel.set_schema(schema, spans)
-    got = []
-    panel.checkout_requested.connect(lambda ref, source: got.append((ref, source)))
 
-    from PySide6.QtCore import QPoint
-    from PySide6.QtWidgets import QTreeWidget
+    menu = panel._menu_for_item(_routine_item(panel))
 
-    captured = {"actions": []}
-
-    class _FakeMenu:
-        def __init__(self, *a, **k):
-            pass
-
-        def addAction(self, label, cb=None):
-            captured["actions"].append((label, cb))
-
-        def exec(self, *a, **k):
-            for label, cb in captured["actions"]:
-                if label == "Check Out for Versioning":
-                    cb()
-                    return
-
-    monkeypatch.setattr("pgtp_editor.ui.ddl_buffer_panel.QMenu", _FakeMenu)
-    item = _routine_item(panel)
-    monkeypatch.setattr(QTreeWidget, "itemAt", lambda self, pos: item)
-
-    panel._on_context_menu(QPoint(0, 0))
-
-    assert len(got) == 1
-    ref, source = got[0]
-    assert ref.name == "calc_total"
-    assert source == "body1"
+    assert [a.text() for a in menu.actions()] == ["Edit DDL"]
+    assert not hasattr(panel, "checkout_requested")
 
 
 # --- */! drift markers (spec §18.2) -----------------------------------------

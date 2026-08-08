@@ -2,8 +2,8 @@
 """MainWindow wiring for schema-aware Ctrl+Space completion's injection seam
 (spec §18.6): the DDL Explorer fetch builds a `db/schema_index.py::SchemaIndex`
 from the same (now widened) `DatabaseSchema` and hands it to every
-`DdlObjectEditorPanel` -- newly opened ones (both entry points: Edit… and
-Check Out for Versioning) and already-open ones (refreshed on every re-fetch,
+`DdlObjectEditorPanel` -- newly opened ones (both `Edit DDL` branches, live and
+checked-out) and already-open ones (refreshed on every re-fetch,
 mirroring how the tree and read-only buffer refresh)."""
 from lxml import etree
 from PySide6.QtCore import QSettings

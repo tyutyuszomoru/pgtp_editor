@@ -368,11 +368,16 @@ class CenterStage(QTabWidget):
         already open; otherwise create it, append it (always AFTER the fixed
         set), and focus that.
 
-        `key` is overridable so a **checked-out** object (§18.2) can be keyed
-        on its resolved absolute `ddl/*.sql` path instead of `ref.key` --
-        re-invoking Edit on a checked-out object must focus the existing tab
-        even though the same object project-less would key on identity
-        alone. Never opens a second tab for the same object (spec §18.5)."""
+        **Never opens a second tab for the same object (spec §18.5)** -- true by
+        construction since FQ-024, where it was merely claimed before: checkout
+        used to pass its resolved `ddl/*.sql` path as `key`, a second namespace
+        the projectless path never probed, so the same object could hold two
+        tabs. Both `Edit DDL` branches now key on `ref.key`.
+
+        `key` therefore has **no caller today and is kept deliberately** as
+        §18.7/FQ-022's seam: two Explorer instances (target and sandbox) need
+        their tabs addressed by connection role, and a caller-supplied key is
+        how that will be expressed."""
         tab_key = ref.key if key is None else key
         existing = self._ddl_object_tabs.get(tab_key)
         if existing is not None:
@@ -401,7 +406,8 @@ class CenterStage(QTabWidget):
         """Refresh a DDL object tab's title/tooltip from its panel's current
         dirty state -- call after any edit that may have crossed the
         clean/dirty boundary. `key` overrides `ref.key`, mirroring
-        `open_ddl_object_tab` (checked-out objects key on their path)."""
+        `open_ddl_object_tab` -- and, like it, currently uncalled and kept for
+        §18.7's role keying (FQ-024)."""
         tab_key = ref.key if key is None else key
         panel = self._ddl_object_tabs.get(tab_key)
         if panel is None:

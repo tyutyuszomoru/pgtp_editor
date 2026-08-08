@@ -53,15 +53,13 @@ def _fold_regions_for_spans(spans) -> list[tuple[int, int, int]]:
 
 
 class EditorPanel(QWidget):
-    #: Right-click inside an object's span ▸ Edit <schema>.<name>(<argtypes>)…
+    #: Right-click inside an object's span ▸ Edit DDL: <schema>.<name>(<argtypes>)
     #: (spec §18.5, D1 entry point 2). Same payload shape as
     #: `BrowserPanel.edit_requested` -- the object's `DdlObjectRef` and its
-    #: current source text.
+    #: current source text. The ONLY editing signal since FQ-024, mirroring
+    #: `BrowserPanel`: `checkout_requested` is withdrawn and checkout is a
+    #: branch of MainWindow's handler for this signal (§18.1/§18.2).
     edit_requested = Signal(object, str)
-
-    #: Right-click inside an object's span ▸ Check Out for Versioning
-    #: (spec §18.2). Same payload shape as `edit_requested`.
-    checkout_requested = Signal(object, str)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -71,7 +69,7 @@ class EditorPanel(QWidget):
         self.editor.setReadOnly(True)
         self.find_replace_bar = FindReplaceBar(self.editor)
 
-        # Retained so right-click ▸ Edit… (§18.5, D1 entry point 2) can find
+        # Retained so right-click ▸ Edit DDL (§18.5, D1 entry point 2) can find
         # which object the click landed inside; the schema that produced them
         # resolves the click to a `DdlObjectRef` + live source text (shared
         # helper with BrowserPanel's tree, `ddl_buffer_panel.resolve_edit_target`).
@@ -153,12 +151,12 @@ class EditorPanel(QWidget):
             if resolved is not None:
                 ref, source = resolved
                 menu.addSeparator()
+                # ONE editing entry (FQ-024), still carrying the full object
+                # identity: the click landed somewhere in a whole-schema buffer,
+                # so the entry has to say WHICH object it resolved to -- and two
+                # overloads of one name must read differently.
                 menu.addAction(
-                    f"Edit {ref.qualified}…",
+                    f"Edit DDL: {ref.qualified}",
                     lambda: self.edit_requested.emit(ref, source),
-                )
-                menu.addAction(
-                    "Check Out for Versioning",
-                    lambda: self.checkout_requested.emit(ref, source),
                 )
         return menu

@@ -415,14 +415,13 @@ def test_saving_a_checked_out_object_makes_the_file_level_star_appear(qtbot, tmp
     window._ddl_project_ui.set_active_project(project_dir, settings)
     _load_explorer(window, monkeypatch)
 
-    window._checkout_and_edit(_REF, "-- live recalc\n")
+    window._edit_ddl_checked_out(_REF, "-- live recalc\n")
     # A fresh checkout is NOT locally edited -- the reference recorded is the
     # live definition it was taken from.
     assert _recalc_row(window).text(0) == "pr.recalc() [F]"
     assert load_settings(project_dir).deployed["ddl/pr.recalc.sql"].content_hash != ""
 
-    key = str((project_dir / "ddl" / "pr.recalc.sql").resolve())
-    panel = window.center_stage.ddl_object_tab(key)
+    panel = window.center_stage.ddl_object_tab(_REF.key)
     panel.editor.insertPlainText("-- edited\n")
     window._save_ddl_object_editor(panel)
 
@@ -452,7 +451,7 @@ def test_checkout_registers_the_live_hash_and_never_overwrites_a_real_reference(
     window._ddl_project_ui.set_active_project(project_dir, settings)
     _load_explorer(window, monkeypatch)
 
-    window._checkout_and_edit(_REF, "-- live recalc\n")
+    window._edit_ddl_checked_out(_REF, "-- live recalc\n")
 
     assert load_settings(project_dir).deployed["ddl/pr.recalc.sql"].content_hash == (
         "the-real-deploy"

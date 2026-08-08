@@ -309,12 +309,10 @@ class MainWindow(QMainWindow):
         self.ddl_browser_panel.navigate_requested.connect(
             self._on_ddl_navigate_requested
         )
-        # Right-click ▸ Edit… opens/focuses the editable DDL object tab
-        # (spec §18.5, D1 entry point 1).
+        # Right-click ▸ Edit DDL opens/focuses the editable DDL object tab
+        # (spec §18.5, D1 entry point 1) -- ONE gesture whose behaviour the
+        # handler picks from project state (FQ-024), not a pair of entries.
         self.ddl_browser_panel.edit_requested.connect(self._on_ddl_edit_requested)
-        # Right-click ▸ Check Out for Versioning -- the project-aware second
-        # variant of the same gesture (spec §18.2).
-        self.ddl_browser_panel.checkout_requested.connect(self._on_ddl_checkout_requested)
         # Click on a Tables-branch table node populates the shared Properties
         # panel (spec §18.1, 2026-08-05) -- the same panel instance the
         # XML/XSD tree's own node-click already drives (_on_tree_selection_changed).
@@ -387,14 +385,11 @@ class MainWindow(QMainWindow):
         self.center_stage.ddl_object_close_requested.connect(
             self._on_ddl_object_close_requested
         )
-        # DDL Explorer's read-only buffer's own right-click ▸ Edit… (spec
+        # DDL Explorer's read-only buffer's own right-click ▸ Edit DDL (spec
         # §18.5, D1 entry point 2) -- same target handler as BrowserPanel's
         # tree entry point.
         self.center_stage.ddl_editor_panel.edit_requested.connect(
             self._on_ddl_edit_requested
-        )
-        self.center_stage.ddl_editor_panel.checkout_requested.connect(
-            self._on_ddl_checkout_requested
         )
         try:
             manual_text = load_manual_text()
@@ -2488,10 +2483,37 @@ class MainWindow(QMainWindow):
         self.properties_panel.show_node(table_info, "ddl_table")
 
     def _on_ddl_edit_requested(self, ref, source):
-        """Right-click ▸ Edit… on a BrowserPanel object row opens (or
-        focuses) the editable DDL object tab for it (spec §18.5, D1 entry
-        point 1). Re-invoking Edit on an already-open object focuses the
-        existing tab -- never a second tab for the same object."""
+        """Right-click ▸ Edit DDL, from either entry point (§18.5 D1) -- the
+        ONE editing gesture, whose behaviour comes from PROJECT STATE and never
+        from which words the user clicked (FQ-024, §18.1).
+
+        With a project open the object is checked out (§18.2) and the tab is
+        pointed at its `ddl/*.sql`; projectless the tab holds the live
+        introspected definition and saves through Save As…. Deliberately NO
+        `require_project` prompt on the projectless side: with one entry that
+        Create…/Open…/Cancel modal would fire on every edit, and projectless is
+        a first-class supported mode (§18.2).
+
+        Creation (FQ-002) does NOT come through here -- it calls
+        `_edit_ddl_live` directly, see `_open_created_ddl_object`.
+        """
+        if self._ddl_project_folder is not None and self._ddl_project_settings is not None:
+            self._edit_ddl_checked_out(ref, source)
+            return
+        self._edit_ddl_live(ref, source)
+
+    def _edit_ddl_live(self, ref, source):
+        """The projectless branch of `Edit DDL`, and the branch *creation*
+        always takes: the tab holds `source` as handed in (the live introspected
+        definition, or FQ-002's generated skeleton) and Save resolves through
+        Save As… on first save.
+
+        Writes no `ddl/*.sql` and touches no deploy manifest -- which is why
+        creation selects this branch explicitly rather than falling through the
+        project test (§18.1/FQ-024): seeding a checked-out file from a skeleton
+        and registering it as deployed would poison the drift baseline for an
+        object no database has ever held.
+        """
         existing = self.center_stage.ddl_object_tab(ref.key)
         if existing is not None:
             self.center_stage.setCurrentWidget(existing)
@@ -2930,18 +2952,26 @@ class MainWindow(QMainWindow):
     def _open_created_ddl_object(self, dialog) -> None:
         """Open a newly-created object's editor tab on its generated skeleton.
 
-        Deliberately routed through `_on_ddl_edit_requested`, the same path
-        Edit… uses: the tab, its save-path resolver, its completion index and
+        Deliberately routed through `_edit_ddl_live`, the projectless branch of
+        `Edit DDL`: the tab, its save-path resolver, its completion index and
         its dirty bookkeeping are identical whether the text came from
         introspection or from a skeleton. The only thing creation does
         differently is build the `DdlObjectRef` from dialog fields rather than
         `resolve_edit_target`, which correctly returns None for an object that
         does not exist yet.
+
+        It calls that branch DIRECTLY, not `_on_ddl_edit_requested`, so a
+        project being open cannot divert creation into the checkout branch
+        (FQ-024): checkout would seed `ddl/<obj>.sql` from the SKELETON and hash
+        it as the last-deployed reference, claiming a never-created object is
+        deployed. Creation's own manifest entry is `_register_created_object`'s
+        empty-`content_hash` sentinel -- "local exists, never deployed" -- and
+        the two must not be confused.
         """
         ref = self._ref_for_created_object(dialog)
         if ref is None:
             return
-        self._on_ddl_edit_requested(ref, dialog.skeleton())
+        self._edit_ddl_live(ref, dialog.skeleton())
         self._register_created_object(ref)
 
     def _ref_for_created_object(self, dialog):
@@ -2994,16 +3024,6 @@ class MainWindow(QMainWindow):
         self._ddl_project_settings.deployed[relpath] = DeployedObject(content_hash="")
         save_settings(self._ddl_project_folder, self._ddl_project_settings)
 
-    def _on_ddl_checkout_requested(self, ref, source) -> None:
-        """Right-click ▸ Check Out for Versioning (spec §18.2) -- the
-        project-aware second variant of the Edit… gesture. Requires an open
-        project (offers Create…/Open…/Cancel if none is), then performs the
-        checkout and opens the same editable tab pointed at the checked-out
-        file instead of the live definition."""
-        self._ddl_project_ui.require_project(
-            lambda: self._checkout_and_edit(ref, source)
-        )
-
     def _ddl_checkout_relpath(self, ref, schema) -> str:
         """The object's `ddl/*.sql` relative path, computed via
         `db/ddl_project.py`'s naming scheme (§18.2). Routines need the WHOLE
@@ -3021,13 +3041,24 @@ class MainWindow(QMainWindow):
             }
         return routine_ddl_paths(routines)[signature]
 
-    def _checkout_and_edit(self, ref, source) -> None:
+    def _edit_ddl_checked_out(self, ref, source) -> None:
+        """The project-open branch of `Edit DDL` (§18.2's checkout, FQ-024).
+
+        The checkout semantics live only here -- seed the `ddl/*.sql` from the
+        live definition when it is absent (that write IS the checkout), open it
+        from disk when it is present, report drift, register the last-deployed
+        reference -- and the tab's save destination becomes that file.
+
+        The tab is keyed on `ref.key`, exactly as the projectless branch keys it
+        (FQ-024). It used to key on `str(ddl_path)`, a second namespace neither
+        branch's existence check consulted, so Check-Out-then-Edit on one object
+        opened TWO identically-titled tabs writing to two different files.
+        """
         schema = getattr(self.ddl_browser_panel, "_schema", None)
         relpath = self._ddl_checkout_relpath(ref, schema)
         ddl_path = (self._ddl_project_folder / relpath).resolve()
-        key = str(ddl_path)
 
-        existing = self.center_stage.ddl_object_tab(key)
+        existing = self.center_stage.ddl_object_tab(ref.key)
         if existing is not None:
             self.center_stage.setCurrentWidget(existing)
             return
@@ -3052,10 +3083,10 @@ class MainWindow(QMainWindow):
             return ddl_path
 
         panel = self.center_stage.open_ddl_object_tab(
-            ref, text, resolve_save_path=resolver, key=key
+            ref, text, resolve_save_path=resolver
         )
         panel.set_schema_index(self._ddl_schema_index)
-        self._wire_ddl_object_dirty(panel, ref, key=key)
+        self._wire_ddl_object_dirty(panel, ref)
         panel.format_refused.connect(self._report_ddl_format_refusal)
         self._wire_ddl_object_panel_reporting(panel, ref)
 
@@ -3136,20 +3167,21 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(f"Saved {path}", 5000)
         return True
 
-    def _wire_ddl_object_dirty(self, panel, ref, key=None) -> None:
+    def _wire_ddl_object_dirty(self, panel, ref) -> None:
         """The one place an editable DDL tab's dirty state is published
         (BUG-033).
 
         Two consumers, one wire: the CenterStage tab title's `" *"` (§18.5)
         and -- new -- the DDL Objects tree row's `*` overlay (§18.1/§18.2),
         which previously had no channel to hear about an unsaved edit at all.
-        Called from BOTH tab-opening paths (`_on_ddl_edit_requested` and
-        `_checkout_and_edit`) so the two can never again wire different sets
-        of consumers; `key` is the checkout path's file-path tab key.
+        Called from BOTH `Edit DDL` branches (`_edit_ddl_live` and
+        `_edit_ddl_checked_out`) so the two can never again wire different sets
+        of consumers. No `key` parameter since FQ-024: both branches key the tab
+        on `ref.key`, so there is nothing left to override.
         """
 
-        def on_dirty(dirty, ref=ref, key=key):
-            self.center_stage.update_ddl_object_tab(ref, key=key)
+        def on_dirty(dirty, ref=ref):
+            self.center_stage.update_ddl_object_tab(ref)
             self.ddl_browser_panel.set_object_dirty(ref, dirty)
 
         panel.dirty_changed.connect(on_dirty)
@@ -3278,9 +3310,11 @@ class MainWindow(QMainWindow):
         """Focus the DDL object tab whose `ref.key` is `key` and place the
         caret on `line` (§18.5 D3a's click-to-navigate).
 
-        Resolved by **`panel.ref.key` identity** over the open panels, NOT by
-        tab key: a checked-out object's tab is keyed on its `ddl/*.sql` path
-        (§18.2), so a `ddl_object_tab(key)` lookup would miss exactly that case.
+        Resolved by **`panel.ref.key` identity** over the open panels. Since
+        FQ-024 that is the tab key too, so a `ddl_object_tab(key)` lookup would
+        now find the same panel -- the scan is kept because it additionally
+        type-filters to per-object panels (`ddl_object_panels`), which the
+        shared tab map does not.
 
         If no tab is open for the object, this does NOTHING -- falling through
         to Raw XML would navigate a different document, and reopening would
@@ -3366,8 +3400,8 @@ class MainWindow(QMainWindow):
     def _wire_ddl_object_panel_reporting(self, panel, ref) -> None:
         """Connect a freshly opened DDL object tab's §18.5 reporting channels,
         its D4 console bridge and its sandbox apply seams. Shared by both
-        tab-open sites (Edit… and Check Out for Versioning) so the two can
-        never drift apart."""
+        `Edit DDL` branches (`_edit_ddl_live` and `_edit_ddl_checked_out`) so
+        the two can never drift apart."""
         panel.check_reported.connect(self._report_check_lines)
         panel.check_findings.connect(
             lambda findings, ref=ref: self._report_check_findings(findings, ref)

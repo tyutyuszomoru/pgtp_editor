@@ -208,19 +208,20 @@ def test_clicking_a_finding_whose_tab_was_closed_does_nothing(qtbot, tmp_path):
     assert window.center_stage.ddl_object_tab(_REF.key) is None
 
 
-def test_navigation_resolves_a_checked_out_tab_keyed_on_its_path(qtbot, tmp_path):
-    """A checked-out object's tab is keyed on its `ddl/*.sql` path, NOT on
-    `ref.key` -- resolution must go by `panel.ref.key` identity."""
+def test_navigation_resolves_a_checked_out_tab(qtbot, tmp_path):
+    """A checked-out object's tab is keyed on `ref.key` like every other one
+    (FQ-024 -- it used to be keyed on its `ddl/*.sql` path), and the
+    `panel.ref.key` identity scan resolves it either way."""
     project_dir = tmp_path / "proj"
     save_settings(project_dir, ProjectSettings())
     window = _window(qtbot, tmp_path)
     window._ddl_project_ui.set_active_project(project_dir, ProjectSettings())
 
-    window._checkout_and_edit(_REF, _SOURCE)
+    window._edit_ddl_checked_out(_REF, _SOURCE)
 
-    # The tab is NOT under ref.key -- proving the identity lookup is required.
-    assert window.center_stage.ddl_object_tab(_REF.key) is None
-    panel = window.center_stage.ddl_object_panels()[0]
+    panel = window.center_stage.ddl_object_tab(_REF.key)
+    assert panel is not None
+    assert window.center_stage.ddl_object_panels() == [panel]
     window.center_stage.setCurrentIndex(window.center_stage.raw_xml_tab_index)
     window._report_check_findings([_Finding("error", "boom", lineno=3)], _REF)
 

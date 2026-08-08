@@ -137,6 +137,32 @@ def test_creating_an_object_registers_it_in_the_deploy_manifest(qtbot, tmp_path)
     assert entry.content_hash == ""
 
 
+def test_creating_an_object_with_a_project_open_does_not_check_it_out(qtbot, tmp_path):
+    """FQ-024's trap. Creation shares the `Edit DDL` tab path, and that path now
+    dispatches on project state -- so creation must select the non-checkout
+    branch EXPLICITLY. Falling through the project test would seed
+    `ddl/pr.recalc.sql` from the SKELETON and register the hash of that skeleton
+    as the last-deployed reference, claiming an object no database has ever held
+    is deployed."""
+    window = _window(qtbot, tmp_path)
+    folder = tmp_path / "proj"
+    folder.mkdir()
+    settings = ProjectSettings(name="p")
+    save_settings(folder, settings)
+    window._ddl_project_folder = folder
+    window._ddl_project_settings = settings
+    dialog = NewRoutineDialog(parent=window)
+    qtbot.addWidget(dialog)
+    dialog._name_edit.setText("pr.recalc")
+
+    window._open_created_ddl_object(dialog)
+
+    # No checked-out file at all, and the manifest carries FQ-002's
+    # never-deployed sentinel rather than checkout's live-source hash.
+    assert not (folder / "ddl").exists()
+    assert window._ddl_project_settings.deployed["ddl/pr.recalc.sql"].content_hash == ""
+
+
 def test_creating_an_object_without_a_project_writes_no_manifest(qtbot, tmp_path):
     """Projectless creation is a supported, unversioned flow -- not an error."""
     window = _window(qtbot, tmp_path)
