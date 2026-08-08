@@ -78,9 +78,10 @@ The window has three areas:
 - **Left — Project Tree:** the structure of your project (pages, details, columns,
   event handlers). More tabs share this dock: **Contents** (this manual's
   chapters), **Database/XML Coherence** (while that view is on — see
-  *Database/XML Coherence*), and **DDL Objects** (while the DDL Explorer is on —
-  see *DDL Explorer*).
-- **Center — Raw XML / Caption Management / Diff-Merge / Edit XSD / DDL Explorer /
+  *Database/XML Coherence*), and **DDL Objects (Quality)** / **DDL Objects
+  (Sandbox)** (while the matching DDL Explorer is on — see *DDL Explorer*).
+- **Center — Raw XML / Caption Management / Diff-Merge / Edit XSD / DDL Explorer
+  (Quality) / DDL Explorer (Sandbox) /
   Manual:** the working area. It opens on **Raw XML**; the other tabs appear when
   you invoke them. Editing an individual function, procedure, or trigger opens
   one more tab per object (see *DDL Explorer*), each PHP file you open adds one
@@ -344,7 +345,7 @@ for the session.
   Bookmarks** and **List All Bookmarks**.
 
 Both mouse gestures work in **every** editor that has a gutter — the Raw XML
-editor, **Edit XSD** / **Edit AutoXSD**, the read-only **DDL Explorer**, an open
+editor, **Edit XSD** / **Edit AutoXSD**, either read-only **DDL Explorer**, an open
 **DDL object editor tab**, an open **PHP file tab** (see *Editing PHP Files*),
 the **Sandbox SQL** console (see *The Sandbox*), and the **Edit code…** dialog.
 
@@ -360,7 +361,7 @@ Caption Mode restores the menu and the shortcuts.
 
 The **Bookmarks** menu and its shortcuts follow the tab you are working in: with
 the **Edit XSD** (or **Edit AutoXSD**) tab active they act on the schema editor,
-with the **DDL Explorer** tab, an open **DDL object editor tab**, an open **PHP
+with either **DDL Explorer** tab, an open **DDL object editor tab**, an open **PHP
 file tab**, or a generated **draft tab** active they act on that tab's own
 editor, and on any other tab —
 including the **Sandbox SQL** console, whose buffer is a scratch pad rather than
@@ -397,7 +398,7 @@ no file in it to remember them against:
 
 - the **Edit XSD** and **Edit AutoXSD** editors — their schema files live with the
   app's own settings, not in your project;
-- the read-only **DDL Explorer** buffer, which is a snapshot of the database
+- either read-only **DDL Explorer** buffer, which is a snapshot of a database
   rather than a file;
 - **draft tabs** generated from a database table (see *Database/XML Coherence*),
   which are saved nowhere by design;
@@ -426,10 +427,12 @@ rows are left alone.
 list does not update the list — ask again. (Loading a new document does clear the
 rows, since the bookmarks they described are gone.)
 
-Rows from the read-only **DDL Explorer** buffer and from **draft tabs** are listed
+Rows from a read-only **DDL Explorer** buffer and from **draft tabs** are listed
 but **do nothing when clicked**: those editors have no click-through route, and
 sending you to a plausible-looking line in a different document would be worse
-than not moving.
+than not moving. The *no bookmarks in …* line names which explorer it read —
+**the DDL Explorer (Quality)** or **the DDL Explorer (Sandbox)** — so with both
+open you can tell the two listings apart.
 
 ---
 
@@ -474,12 +477,12 @@ it, and the editor's height never jumps as it appears and vanishes.
 Each bar searches **its own tab's document**, and the keys belong to the tab that
 owns the bar, so there is never any doubt about where a search landed. The tabs
 with their own bar are the **Raw XML** editor, **Edit XSD** / **Edit AutoXSD**
-(see *Schema Tools*), the **DDL Explorer**, every open **DDL object editor tab**
+(see *Schema Tools*), both **DDL Explorer** tabs, every open **DDL object editor tab**
 (see *DDL Explorer*), every open **PHP file tab** (see *Editing PHP Files*), and
 every generated **draft tab** (see *Database/XML Coherence*). The **Caption
 Management** tab has its own, differently-shaped bar — see *Caption Management*.
 
-Because the DDL Explorer buffer is **read-only**, only the searching half applies
+Because a DDL Explorer buffer is **read-only**, only the searching half applies
 there: Find, Find Next and Find All work as usual, while Replace and Replace All
 have nothing they can change. A DDL object editor tab, a PHP file tab and a draft
 tab are the opposite case: they're fully editable, so **Find, Find Next, Replace,
@@ -975,7 +978,8 @@ is open, its connection lives in **Project Settings…** (the **Connections** ta
 see *Local DDL-Versioning Projects ▸ Project Settings*) instead, and the menu
 action is disabled while that project stays active; it re-enables the moment you
 close the project. If something that needs a connection (Database/XML Coherence,
-DDL Explorer) finds none configured while a project is open, it points you at Project
+**DDL Explorer (Quality)**) finds none configured while a project is open, it
+points you at Project
 Settings via a status-bar message rather than opening the now-meaningless
 standalone dialog.
 
@@ -1150,31 +1154,49 @@ Coherence** first.
 
 ## DDL Explorer
 
-**Database ▸ DDL Explorer** is a checkable toggle that shows your database's
-server-side code — every function, procedure, and trigger — inside the editor.
-It needs only a database connection: you can use it with **no `.pgtp` file open
-at all**. If no connection is configured yet: in projectless mode, **Connection
-Setup…** opens automatically — save a connection, then toggle the explorer
-again; with a local DDL-versioning project open, a status-bar message points you
-at **Project Settings…** instead (see *Database/XML Coherence ▸ Connecting* and *Local
-DDL-Versioning Projects*).
+The DDL Explorer shows a database's server-side code — every function,
+procedure, and trigger — inside the editor. There are **two** of them, one per
+database you work against, and each is a checkable toggle on the **Database**
+menu:
 
-Turning it on fetches all routines and triggers from the connected PostgreSQL
-database and reveals two tabs at once:
+- **Database ▸ DDL Explorer (Quality)** browses the quality database — the
+  target connection your project (or your standalone `.pgtp`) is checked
+  against. This is the explorer you author in.
+- **Database ▸ DDL Explorer (Sandbox)** browses the open project's own sandbox,
+  so you can see what is actually in the database you have been applying your
+  edits to. It is **browse-only**, and it appears only when a project with a
+  sandbox is open — see *The Sandbox Explorer, and how it differs*, below.
 
-- **Center — DDL Explorer:** every definition in a single **read-only**,
+The Quality explorer needs only a database connection: you can use it with **no
+`.pgtp` file open at all**. If no connection is configured yet: in projectless
+mode, **Connection Setup…** opens automatically — save a connection, then toggle
+the explorer again; with a local DDL-versioning project open, a status-bar
+message points you at **Project Settings…** instead (see *Database/XML Coherence ▸
+Connecting* and *Local DDL-Versioning Projects*).
+
+Turning either one on fetches all routines and triggers from that database and
+reveals **its own** two tabs at once — both labelled with the database they show,
+so two open explorers are never confusable:
+
+- **Center — DDL Explorer (Quality)** / **DDL Explorer (Sandbox)**: every
+  definition in a single **read-only**,
   SQL-highlighted buffer. Each object is preceded by a banner comment (e.g.
   `-- FUNCTION public.foo(integer) --`) so you can always tell where you are.
   The buffer is a live snapshot of the database and cannot be edited.
-- **Left dock — DDL Objects:** a tree of the same objects, grouped from two
+- **Left dock — DDL Objects (Quality)** / **DDL Objects (Sandbox)**: a tree of
+  the same objects, grouped from two
   angles. Under **Tables**, **every table in the connected schema is listed** —
   tables that own a trigger list those triggers nested underneath them; tables
   with no triggers appear as plain entries. Under **Functions & Procedures**,
   each function or procedure lists the triggers that call it. A trigger
   therefore appears in **both** places — either entry points at the same
-  definition. **Click** a routine or trigger to jump the DDL Explorer buffer
-  straight to it; **click** a table to see its columns in Properties (see
+  definition. **Click** a routine or trigger to jump **that explorer's own** DDL
+  buffer straight to it; **click** a table to see its columns in Properties (see
   *Clicking a table: column properties*, below).
+
+Everything in the next three sections describes both trees and both buffers.
+The sections after them — editing and creating objects — belong to the Quality
+explorer alone.
 
 ### Reading the DDL Objects tree
 
@@ -1210,8 +1232,8 @@ recognize the same trigger whether you found it under its table or under the
 function it calls.
 
 When a **local DDL-versioning project** is open (see *Local DDL-Versioning
-Projects*), object rows also carry combinable drift markers after their other
-indicators:
+Projects*), object rows in the **Quality** tree also carry combinable drift
+markers after their other indicators:
 
 - **`*`** — the checked-out local file has edits not yet included in a batch
   deploy.
@@ -1235,16 +1257,17 @@ default or comment shows as `—`). Subtle alternating shading pairs each
 column's two rows together so they read as one record.
 
 This is **display-only**: clicking a table populates Properties but, unlike
-clicking a routine or trigger, does **not** jump or scroll the DDL Explorer
-buffer, since a whole table has no single line in that buffer to jump to.
-Right-clicking a table node offers exactly one action, **Add Trigger…** (see
-*Creating a new trigger, function, or procedure*, below) — **Edit DDL** remains
-available only on routine and trigger rows, because it acts on an object's
-existing definition.
+clicking a routine or trigger, does **not** jump or scroll the DDL buffer,
+since a whole table has no single line in that buffer to jump to. In the
+**Quality** tree, right-clicking a table node offers exactly one action,
+**Add Trigger…** (see *Creating a new trigger, function, or procedure*, below) —
+**Edit DDL** remains available only on routine and trigger rows, because it acts
+on an object's existing definition. The **Sandbox** tree offers no context menu
+at all (see *The Sandbox Explorer, and how it differs*).
 
 ### Working in the DDL tab
 
-The DDL Explorer buffer is read-only, but it is a real editor view with the same
+A DDL Explorer buffer is read-only, but it is a real editor view with the same
 navigation comforts as the Raw XML editor:
 
 - **Line numbers** in the gutter.
@@ -1260,32 +1283,101 @@ navigation comforts as the Raw XML editor:
   bouncing you to Raw XML. The replace half (**Ctrl+R** and the **Replace** /
   **Replace All** buttons) is inert here, since the buffer is read-only.
 
-Clicking an object in the DDL Objects tree scrolls it to the **top** of the DDL
-Explorer tab, so the whole definition is visible below its banner. (The Raw XML
-editor centers its jump targets instead.) Tab indentation in this tab is shown
+Clicking an object in a DDL Objects tree scrolls it to the **top** of that
+tree's own DDL Explorer tab, so the whole definition is visible below its
+banner — a click in the Sandbox tree never moves the Quality buffer, and the
+other way round. (The Raw XML editor centers its jump targets instead.) Tab
+indentation in this tab is shown
 4 characters wide, which keeps `pg_get_functiondef`'s tab-indented bodies
 readable.
 
-Close the explorer with the **✕** on the DDL Explorer tab or by unchecking
-**Database ▸ DDL Explorer** — both hide the two tabs together, and the menu
-checkbox always reflects whether the explorer is currently visible. The status
-bar reports how many routines and triggers were loaded; if the fetch fails, it
-shows the error and the toggle unchecks itself.
+Close an explorer with the **✕** on its DDL Explorer tab or by unchecking its
+own **Database ▸ DDL Explorer (Quality)** / **(Sandbox)** entry — either gesture
+hides that explorer's two tabs together, and the menu checkbox always reflects
+whether that explorer is currently visible. The status
+bar reports how many routines and triggers were loaded, naming which explorer
+loaded them; if the fetch fails, it shows the error and that toggle unchecks
+itself.
+
+### The Sandbox Explorer, and how it differs
+
+The quality database is easy to look at; the sandbox you have been applying your
+edits to used to be invisible. **Database ▸ DDL Explorer (Sandbox)** closes that
+gap: it browses the open project's sandbox with the same tree, the same read-only
+buffer, and the same navigation as the Quality explorer, so you can read back
+what your applies actually left in there.
+
+**Both explorers can be open at the same time**, side by side in the tab bar,
+and they are wholly independent: each fetches over its own connection, each
+tree navigates only its own buffer, and closing one leaves the other exactly as
+it was. The two object sets are genuinely allowed to differ — that difference is
+usually the very thing you opened the Sandbox explorer to see.
+
+**Opening it does not open a sandbox session, and does not need one.** Browsing
+is a read, and reads are not gated: **Database ▸ Open Sandbox Session** is about
+*writing* to the sandbox (see *The Sandbox*). So you can look at the sandbox
+without connecting a session, and closing a session never closes this explorer.
+If the sandbox cannot be reached — it was destroyed, or its server is down — the
+toggle springs back and the status bar says *DDL Explorer (Sandbox) failed*
+followed by the database's own reason, rather than leaving you with an empty
+tree that reads as an empty database.
+
+**The entry is there only when it means something.** With no project open, or
+with a project that has no sandbox configured, **DDL Explorer (Sandbox)** is not
+on the Database menu at all — absent rather than greyed out, like every other
+gesture in the app you cannot use. It appears the moment such a project opens,
+and also when you give a project a sandbox later (through **Database ▸ Sandbox
+Setup…**, or by filling in the sandbox connection in **File ▸ Project
+Settings…**). Closing the project takes the entry away again **and hides its two
+tabs with it** — a tree still showing a closed project's sandbox would be
+describing something you are no longer working on.
+
+**The sandbox tree is browse-only.** It has no **Edit DDL**, and neither of the
+creation entries (**Add Trigger…**, **New Function/Procedure…**); right-clicking
+anywhere in it offers nothing, and the sandbox buffer's right-click menu has the
+reading commands but no **Edit DDL** either. That is the point of the surface
+rather than a gap in it: editing and creating are how you change what will
+eventually be deployed, and that pipeline runs through your project and the
+quality database. The sandbox is where you **check** that work — a definition
+you picked up from the sandbox would be a copy of your own experiment, not of
+what the quality database has, and treating it as the thing you are editing
+would quietly re-base your project's idea of what has been deployed. So you
+author in the Quality explorer and read the results here.
+
+Everything that only *reads* still works: clicking a routine or trigger
+navigates the sandbox buffer, clicking a table fills the **Properties** panel
+with its columns, and the buffer's own Find bar, bookmarks, and folding behave
+exactly as in the Quality one.
+
+**The sandbox tree shows no `*` / `!` drift markers**, and that is deliberate
+too. Those markers mean *"this differs from what was last deployed to
+quality"* — a statement about the quality lane. Printing them on sandbox rows
+would be showing you quality's drift against a sandbox object, which is a
+comparison nobody asked for. The Sandbox tree therefore stays unmarked, and the
+markers keep their one meaning in the one tree where it holds (see *Reading the
+DDL Objects tree*).
+
+For the same reason, browsing the sandbox never repoints anything the quality
+lane owns: the **Ctrl+Space** completion catalog in your open DDL object tabs
+keeps describing the quality database (see *Schema-aware completion in the DDL
+object editor*).
 
 ### Editing a single function, procedure, or trigger
 
-Both browsing surfaces double as an entry point into a dedicated, **editable**
+Both of the **Quality** explorer's browsing surfaces double as an entry point
+into a dedicated, **editable**
 tab for one object at a time. Opening and editing such a tab touches no
 database — it is a text editor over the object's current definition — and the one
 gesture in it that *does* reach a database, **Apply to Sandbox**, appears only
 while a sandbox session is open and only ever writes to the sandbox (see *The
-Sandbox*).
+Sandbox*). Neither entry point exists in the Sandbox explorer (see *The Sandbox
+Explorer, and how it differs*).
 
-- In the **DDL Objects** tree, right-click a routine or trigger row for
+- In the **DDL Objects (Quality)** tree, right-click a routine or trigger row for
   **Edit DDL**. The row you clicked already names the object, so the entry
   doesn't repeat it. Right-clicking an argument-name child row offers no Edit
   action — only object rows open a tab.
-- In the **DDL Explorer** tab's read-only buffer, right-click inside an
+- In the **DDL Explorer (Quality)** tab's read-only buffer, right-click inside an
   object's body for **Edit DDL: `<schema>.<name>(<argtypes>)`** — or **Edit
   DDL: `<schema>.<table>.<name>`** for a trigger. There your click landed
   somewhere in a wall of definitions, so the entry spells out which object it
@@ -1374,7 +1466,7 @@ is reported as a `[SQL]`-prefixed line in the Audit panel, and the exact
 offending text is underlined in red in the editor until your next edit or
 your next format attempt.
 
-Re-running **Database ▸ DDL Explorer** (a fresh fetch) never touches object
+Re-running **Database ▸ DDL Explorer (Quality)** (a fresh fetch) never touches object
 tabs you already have open — they are not reloaded, marked, or closed, even if
 the live definition changed underneath them; your in-progress edits are never
 silently discarded to resync with the database.
@@ -1458,8 +1550,10 @@ supported way to work.
 
 Inside an open DDL object editor tab (opened via **Edit DDL**, above, or by
 creating a new object), **Ctrl+Space** offers name completion drawn from the
-same object catalog the DDL Explorer already fetched when you connected — it
-never makes an extra database round-trip when you invoke it. This is the same
+same object catalog the **Quality** explorer already fetched when you connected —
+it never makes an extra database round-trip when you invoke it, and a browse of
+the sandbox never replaces it: what you complete against is the database an edit
+is headed for. This is the same
 completion idiom as the Raw XML editor's Ctrl+Space (see *The Raw XML Editor ▸
 Schema-aware editing*), applied here to live database names instead of the
 `.pgtp` XSD schema. Three contexts are recognized:
@@ -1478,7 +1572,7 @@ Schema-aware editing*), applied here to live database names instead of the
   you reopen the same function in a later session.
 
 This completion is available only in the **editable** DDL object editor tab —
-the read-only **DDL Explorer** viewer tab does not offer it.
+neither read-only **DDL Explorer** viewer tab offers it.
 
 ---
 
@@ -1490,11 +1584,14 @@ working on — checked-out routines and triggers as individual `.sql` files, an
 optional local sandbox connection, and (later) git integration. Everything the
 app manages here is a plain, readable file: nothing is a black box.
 
-Nothing here is required for ordinary editing. Browsing the DDL Explorer and
-**Edit DDL** (see *DDL Explorer*) work with just a database connection, no
+Nothing here is required for ordinary editing. Browsing the **DDL Explorer
+(Quality)** and **Edit DDL** (see *DDL Explorer*) work with just a database
+connection, no
 project needed — with none open, Edit DDL simply hands you an editable tab that
 saves wherever you tell it to. A project becomes relevant only once you want checked-out
-`ddl/` files, a versioned `.pgtp` working copy, drift markers, or a deploy.
+`ddl/` files, a versioned `.pgtp` working copy, drift markers, a deploy — or the
+second, sandbox-scoped explorer, which is a project's sandbox by definition and
+so is offered only while such a project is open.
 
 ### The File menu's project actions
 
@@ -1656,8 +1753,8 @@ copy against its source and reports the result as an Audit-panel line prefixed
 - **"Source .pgtp has changed since this project last saw it (…) — surfaced,
   not auto-resolved."**
 
-If the DDL Explorer's routines and triggers are already loaded, its tree's
-drift markers (see *DDL Explorer*) refresh at the same time.
+If the **Quality** explorer's routines and triggers are already loaded, its
+tree's drift markers (see *DDL Explorer*) refresh at the same time.
 
 Opening a project also **auto-opens its linked `.pgtp`** into the editor, so you
 don't need a separate **File ▸ Open** afterwards:
@@ -1753,10 +1850,12 @@ still works.
 
 ### Checking out DDL objects
 
-There is no separate check-out command: **while a project is open, the DDL
-Explorer's Edit DDL *is* the checkout** — see *DDL Explorer ▸ Editing a
+There is no separate check-out command: **while a project is open, the Quality
+explorer's Edit DDL *is* the checkout** — see *DDL Explorer ▸ Editing a
 single function, procedure, or trigger* for what it writes into `ddl/`, and for
-the drift markers (`*`/`!`) it puts on the DDL Objects tree.
+the drift markers (`*`/`!`) it puts on the **DDL Objects (Quality)** tree. The
+Sandbox explorer has no Edit DDL and checks nothing out, on purpose — see *DDL
+Explorer ▸ The Sandbox Explorer, and how it differs*.
 
 ### The .pgtp file as a checked-out artifact
 
@@ -1824,6 +1923,11 @@ looks different depending on whether a session is open. **Sandbox Setup… is th
 one exception and is always there** — it is the gesture that can bring a sandbox
 into existence, so it must be reachable when there isn't one.
 
+**Database ▸ DDL Explorer (Sandbox)** is not part of that set: it only *reads*
+the sandbox, so it needs a configured sandbox but no session, and it comes and
+goes with the project rather than with the session (see *DDL Explorer ▸ The
+Sandbox Explorer, and how it differs*).
+
 **Opening a project connects nothing.** A session is a real connection to a real
 database, so it is always something you asked for; the app never opens one, and
 never creates or fills a sandbox, as a side effect of opening an *existing*
@@ -1843,9 +1947,11 @@ when it creates one, because a database name alone can be faked. Pointing the
 sandbox connection at a database you made by hand is refused rather than written
 to.
 
-Closing the session (or closing the project) takes every sandbox-only affordance
-with it, including the Sandbox SQL console tab — a console that can only refuse
-is worse than no console.
+Closing the session (or closing the project) takes every affordance that *writes*
+to the sandbox with it, including the Sandbox SQL console tab — a console that can
+only refuse is worse than no console. The read-only **DDL Explorer (Sandbox)**
+stays open across a session close, because it never needed the session; closing
+the **project** is what takes it away.
 
 ### Setting up, re-provisioning and resetting a sandbox
 
@@ -2087,8 +2193,8 @@ knows about the sandbox session.
   returns no result set, or the database's error message — an error never shows up
   as a silently empty grid. `NULL` values in the grid are dimmed and italic, so
   they can't be confused with an empty string or the text `NULL`.
-- **Ctrl+Space** completes schema and table names (from the catalog the DDL
-  Explorer already fetched), and **Ctrl+Alt+F** reformats the selection, exactly
+- **Ctrl+Space** completes schema and table names (from the catalog the **Quality**
+  explorer already fetched), and **Ctrl+Alt+F** reformats the selection, exactly
   as in a DDL object editor tab.
 - The console holds no document, so there is nothing to save and no unsaved
   prompt when it closes. Losing the session clears the results but leaves your
@@ -2308,7 +2414,8 @@ catalog if you want it on some other button.)
 **Choose Icon…** between them, and **OK** / **Cancel** at the bottom.
 
 - The Available list offers **every command on either menu bar**, listed by its
-  menu path — `File › Save As`, `Schema › Verify XSD`, `Database › DDL Explorer`,
+  menu path — `File › Save As`, `Schema › Verify XSD`,
+  `Database › DDL Explorer (Quality)`,
   `Bookmarks › List All Bookmarks`, and so on — in the order the menus themselves
   present them. Anything you can invoke from a menu, on the window bar or the
   Editor bar, you can put on the toolbar.
@@ -2327,10 +2434,12 @@ a command on the toolbar. But you can give any button one yourself — see
 
 A toolbar button *is* the menu item, not a copy of it. It therefore shares that
 menu item's enabled state (a command disabled in the menu is disabled on the
-toolbar), its checked state for toggles such as **Database ▸ DDL Explorer** or
+toolbar), its checked state for toggles such as **Database ▸ DDL Explorer
+(Quality)** or
 **View ▸ Light Theme**, and its keyboard shortcut — the button and the menu entry
 can never drift apart. Toolbars you arranged in an earlier version of the editor
-are carried over unchanged.
+are carried over unchanged — including a **DDL Explorer** button you pinned
+before the command was renamed to **DDL Explorer (Quality)**.
 
 ### Choosing a button's icon
 
@@ -2422,7 +2531,8 @@ console can only ever reach the disposable sandbox (see *The Sandbox*).
 The other commands added recently are shortcut-free too: **File ▸ Show
 Launcher…**, **Parsing ▸ Auto Parse XML**, **Parsing ▸ Validate Project**,
 **History ▸ History…**, **Bookmarks ▸ Clear All Bookmarks**, **Bookmarks ▸ List
-All Bookmarks**, **Database ▸ Sandbox Setup…**, **Database ▸ Project Status…** and
+All Bookmarks**, **Database ▸ DDL Explorer (Quality)**, **Database ▸ DDL Explorer
+(Sandbox)**, **Database ▸ Sandbox Setup…**, **Database ▸ Project Status…** and
 **Tools ▸ Start MCP Server** are all menu-only. If you use one often, put it on
 the toolbar (see *Appearance & Layout ▸ The toolbar*).
 
