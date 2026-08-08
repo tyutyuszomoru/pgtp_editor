@@ -2364,7 +2364,22 @@ never opening a second tab goes from false-as-written to true-by-construction.
 ---
 
 ## FQ-020: A `Deployment` menu on the Editor menu bar — and the deletion of File ▸ Save / Save As
-**Status:** QUEUED
+**Status:** PROCESSED (04c3591, merging `7a683e6`) — the Editor bar's fifth menu, contents by ACTIVE TAB
+KIND, with `File ▸ Save`/`Save As…` and `Tools ▸ Compare / Merge Two Files…` deleted and re-homed.
+**Two rulings diverge from this entry, both deliberate:** (1) **`Ctrl+S` did NOT survive** — the entry
+asked that it stay bound to whatever the active tab offers, but the four-way router behind it had an
+`else` that fell through to writing the `.pgtp`, so Ctrl+S with the Sandbox SQL Console, a draft fragment
+tab, Diff/Merge, Caption Management, either DDL Explorer or the Manual active **silently wrote the
+`.pgtp`** — six tab kinds it was never meant to catch, three of them specified as never saving anywhere.
+The router is deleted rather than case-patched (a dormant router is what gets re-bound to a key later),
+and each of the four surviving save commands is a named menu entry wired to exactly one writer. **No
+member of the menu carries a shortcut at all** — §18.5's rule for the two `Run on …` entries, extended to
+the saves. (2) Every action is built **once** and only `setVisible`-toggled, never created per tab:
+`ToolbarController._walk_menu_actions` never tests `isVisible()`, so a hidden action stays enumerable and
+pinnable, while a non-existent one would make Customize Toolbar's list (and queued FQ-012's) depend on
+which tab is active and would silently drop saved `toolbarIds`. No separators (only one group is ever
+visible). Tab kinds with no save and no destination get **no group at all** — an explicit "none"
+classification, which is precisely the `else` the old router lacked. Tests: `tests/ui/test_deployment_menu.py`.
 **Requested:** 2026-08-08
 **Idea (verbatim/summarized):** "A `Deployment` menu on the Editor menu bar, contents per active tab,
 replacing the buried `Deploy this edit…` picker: Raw XML → `Compare/Merge pgtp`, `Save as new pgtp`,
@@ -3055,5 +3070,49 @@ or deleting a documented menu action.
 3. If **B**: where does `ForeignDatabaseError` surface, and does it carry the mandatory "Create a sandbox
    database for me" action in every implicit-open context? D2 requires the remedy travel with the refusal, so
    this must be answered before B is implementable, not after.
+
+---
+
+## FQ-025: ALTER-TABLE action set in the DDL Explorer — column/constraint/index/comment/table ops that generate DDL into an editable tab
+**Status:** QUEUED
+**Requested:** 2026-08-08
+**Idea (verbatim/summarized):** "new DDL actions. In ddl explorer currently on right click we have Add trigger. I would like to add to that menu: Add column, Delete column, Add foreign key, Delete foreign key, Add constraint, Delete constraint. Functioning: when 'Delete' something, it should open a modal asking for the table and the column in a dropdown, defaulting to the table and the column the click was coming from. Once clicked ok, it should open a new tab on explorer and display the alter table ddl. The user can run it or not to their discretion. The add column behaves the same, offering a modal with a table dropdown, defaulting to the table it was summoned from, and all the fields that an add column could have (name, datatype dropdown, nullable, comment). At confirming the window it should open a tab with the Alter table ddl. Add constrain should ask for constraint name, a column (defaulting to clicked), have a + sign to add more columns to it, and a dropdown for the constraint types. Add foreign key behaves the same, should offer to which column we are binding, and in another section a table choser, -> column list populated with columns of the chosen table." — expanded through a converged follow-up "offer more DDL options" round into the full action set below.
+
+**Problem:** The DDL Explorer can *create* brand-new objects (FQ-002: Add Trigger…, New Function/Procedure…) but offers no way to *alter* an existing table. Any column add/drop/rename, type change, NOT NULL / DEFAULT toggle, constraint or FK add/drop, index create/drop, comment, or whole-table create/drop currently requires the user to hand-write ALTER/CREATE/DROP SQL elsewhere — exactly the "your only option is to break the DB by hand" gap this app exists to close. There is also no context menu on **column** nodes at all, so the click context (the specific column the user right-clicked) can't seed a dialog today. The generated-DDL-into-an-editable-tab safeguard already proven by FQ-002 (generation is inert; running is a separate explicit gesture) is the right shape to extend, not reinvent.
+
+**Proposed approach:** Add a uniform ALTER/CREATE/DROP action set to the DDL Explorer, every action sharing ONE shape: right-click → dialog → generated DDL opens in an editable tab → the user runs it (Apply-to-Sandbox) or not. **The opened DDL tab IS the safeguard — no confirmation dialogs at generation time, not even for Drop table** (requester's principle: "the opened ddl tab is a sufficient safeguard when running it is explicit"; generating `DROP TABLE t` executes nothing). No typed-name confirmations, no scary modals anywhere.
+
+*Menu layout.* A new **"Alter Table ▸" submenu** on the table node groups the add/drop/modify actions; FQ-002's create-object actions (Add Trigger…, New Function/Procedure…) stay at the top level. **Create table** (table-independent, like New Function/Procedure) sits at top level / on the routines-or-tables branch root, NOT inside "Alter Table ▸". **Column nodes gain a context menu** (they have none today) so a right-clicked column pre-fills the dialog's column dropdown ("defaulting to … the column the click was coming from"); the same actions are reachable from the table node (column defaults to first/none). Every "which table/column" field is a dropdown defaulting to the click context but changeable. **All new menu items must honor the existing `browse_only=True` suppression** (sandbox Explorer, §18.7) exactly as the current create actions do.
+
+*Full action set (~18, confirmed).* **Column ops:** Add column (name, datatype dropdown, nullable, comment) · Drop column · Rename column · Change column type (with free-text `USING` clause — a type change without it fails on incompatible data) · Set/Drop NOT NULL · Set/Drop DEFAULT. **Constraints/FK:** Add constraint (constraint name, a column defaulting to the clicked one, a "+" to add more columns, a TYPE dropdown covering PRIMARY KEY / UNIQUE / CHECK / EXCLUDE) · Add foreign key (dedicated dialog: which local column(s) we're binding, plus a target-table chooser whose selection populates a target-column list) · **one unified "Drop constraint…"** (lists every constraint on the table with its TYPE shown — replaces BOTH the original "Delete foreign key" and "Delete constraint", since in Postgres a FK is a constraint and `ALTER TABLE … DROP CONSTRAINT name` is identical for all types) · Rename constraint. **Indexes:** Create index (unique toggle + method dropdown btree/gin/gist) · Drop index. **Comments:** Set table comment · Set column comment (`COMMENT ON …`). **Whole-table:** Create table (a multi-column builder — the largest single dialog) · Drop table.
+
+*Reuse the FQ-002 pattern exactly.* Dialogs mirror `ui/new_trigger_dialog.py::NewTriggerDialog` / `ui/new_routine_dialog.py::NewRoutineDialog`: non-modal `.show()` (NEVER `.exec()` — §30 no-un-patched-modal rule), pre-bound context shown read-only, all dropdown data INJECTED by the caller (the dialog never queries a DB), headless accessors read after the `accepted` signal, OK disabled until valid, inline red error label driven by attempting the skeleton render. `NewRoutineDialog.COMMON_RETURN_TYPES` (~lines 87-100) is the precedent for the Add-column datatype dropdown: an editable combo seeded with common types, validated by the allowlist. Skeleton generation is new pure functions — `alter_*_skeleton()` / `create_table_skeleton()` / `drop_*_skeleton()` — added as siblings in `db/ddl_skeleton.py` (~lines 87-209 today hold `trigger_skeleton`/`function_skeleton`/`procedure_skeleton`), following its conventions verbatim: pure (no Qt, no DB), identifiers via `quote_ident()` (allowlist, raises `UnsafeIdentifierError`), datatypes via `_SAFE_DATATYPE_RE` (~line 75), errors as `SkeletonError`, never a partial return.
+
+*Where the DDL lands + how "run it" works.* Reuse `ui/center_stage.py::open_ddl_object_tab(ref, text, …)` (~lines 560-585) — the SAME editable `DdlObjectEditorPanel` tab FQ-002's Add Trigger already opens, whose Apply-to-Sandbox is wired (`ui/main_window.py::_apply_ddl_object_to_sandbox` ~line 4008 → `SandboxController.run_apply`) = the requester's "run it or not." **CAVEAT for spec-maintainer:** that panel's Save-to-`ddl/<object>.sql` and object-Check semantics fit a NEW object (a trigger) but NOT an ALTER of an existing table (an ALTER is a mutation, not an object with its own source file). For ALTER-generated tabs the meaningful affordances are run-against-sandbox + copy-out, and Save-to-object should be suppressed/not-applicable — recommend spec-maintainer define an ALTER/scratch tab semantic (or a distinct tab kind) rather than silently reusing object-Save.
+
+*Introspection split (drives the slicing).* Verified against `db/introspect.py`: **available in-memory today** (`DatabaseSchema` / `TableInfo.columns` / `ColumnInfo`) — column name, formatted type, is_pk, is_fk, is_nullable, default, comment, `ColumnInfo.fk_target` ("schema.table.column"), `TableInfo.kind`, `DatabaseSchema.types` (domains/composites). **NOT captured today** — constraint NAMES (`con.conname` never selected), UNIQUE constraints (`_CONSTRAINTS_SQL` ~lines 210-226 filters `contype IN ('p','f')` only), CHECK constraints (~line 297 comment: "deliberately NOT captured"), index definitions (no index query exists). Consequence: the *add/create* side needs no new introspection (the user supplies the name; or Postgres auto-names). The *drop/rename-existing-named-object* side (unified Drop constraint, Rename constraint, Drop index) MUST list existing named objects → requires **introspection widening**: add `con.conname` + the `u`/`c`/`x` constraint types to `_CONSTRAINTS_SQL`, and add a new index-introspection query.
+
+*Ship in three slices (fold each into its own increment):*
+- **Slice 1 — Column operations, zero new introspection:** Add/Drop/Rename column, Change type (USING), Set/Drop NOT NULL, Set/Drop DEFAULT + the "Alter Table ▸" submenu scaffold + the new column-node context menu + the shared dialog/skeleton/tab plumbing. Highest value, fully self-contained and testable on existing introspection.
+- **Slice 2 — Constraints & foreign keys:** Add constraint (typed, multi-column +), Add FK (target-table→column picker), unified Drop constraint (typed list), Rename constraint — INCLUDES the `_CONSTRAINTS_SQL` widening (conname + u/c/x types).
+- **Slice 3 — Indexes, comments, whole-table:** Create/Drop index (Drop needs the new index-introspection query), Set table/column comment, Create table (multi-column builder), Drop table.
+
+*Verified reuse map (cite when implementing):* `ui/ddl_buffer_panel.py::BrowserPanel._menu_for_item` (~463-511) — current context menu (Edit DDL on object rows; Add Trigger… on table nodes via `add_trigger_requested(table_info)`; New Function/Procedure… on the routines-branch root via `new_routine_requested()`); column nodes have NO menu; all menus suppressed when `browse_only=True`. `db/ddl_skeleton.py` (~87-209) — add the new skeleton functions as siblings. `ui/new_trigger_dialog.py` / `ui/new_routine_dialog.py` — dialog precedent. `db/introspect.py` — column & FK-target data present; constraint-name/unique/check/index widening absent. `ui/center_stage.py::open_ddl_object_tab` (~560-585) — hosts the generated DDL text. `ui/main_window.py` — Apply-to-Sandbox wired (~4008-4010); Save + sandbox-Check wired; **Apply-to-Target is NOT wired (a pre-existing gap affecting ALL DDL objects — explicitly NOT this feature's job; noted so the implementer doesn't think they broke it).**
+
+**Alternatives considered:**
+- Separate "Delete foreign key" + "Delete constraint" menu items (the original request) — rejected: identical DDL; unified typed "Drop constraint…" chosen (confirmed).
+- Separate Add-PK / Add-UNIQUE / Add-CHECK menu items — rejected: those are the TYPE-dropdown values inside the one Add-constraint dialog; FK alone is split out because it needs the referenced-table→column section.
+- A typed-name confirmation before Drop table — rejected: the tab-is-the-safeguard principle (generation is inert; running is the explicit gate).
+- A flat context menu — rejected: "Alter Table ▸" submenu for scannability given ~18 actions.
+- A dedicated scratch/SQL-console tab for the ALTER DDL vs reusing the FQ-002 editable tab — reused the editable tab for consistency with Add Trigger and because Apply-to-Sandbox is already wired there, with the Save-semantics caveat flagged for spec-maintainer above.
+
+**Suggested placement:** EXTEND **§18.1** ("Routines & triggers browsing (DDL Explorer)" — the home of FQ-002's Explorer creation actions; this ALTER/modify set is the direct sibling). The section grows an "Alter Table ▸" submenu, a new column-node context menu, and the drop/rename actions, all honoring the §18.7 `browse_only` suppression. Also touches **§18.5** (the editable tab + Apply-to-Sandbox as the run path, and the ALTER-vs-object tab-semantics caveat above — likely a Supersession Ledger row for the tab-kind/Save-suppression narrowing) and requires an **introspection-model widening** (constraint names + unique/check + indexes) noted for §17/§18.1's schema model. NOT a new top-level section. (§18.1 confirmed live as of this triage.)
+
+**Open questions** (non-blocking; flag to spec-maintainer/implementer):
+1. The ALTER tab's Save semantics — triage recommends run-against-sandbox + copy-out, Save-to-object suppressed (spec-maintainer to formalize the tab kind).
+2. Whether Add constraint / Add FK let the name be left blank → Postgres auto-name (triage recommends yes) vs require a name.
+3. The Add-column datatype dropdown source — editable combo seeded with common types (like `COMMON_RETURN_TYPES`) for slice 1, optionally enriched from `DatabaseSchema.types` later.
+
+*Collision status at triage:* clear — no concurrent session building ALTER-TABLE actions; `ddl_buffer_panel.py` / `ddl_skeleton.py` untouched by in-flight work (recent commits are the FQ-010..017 / bug-queue UX-review batch). Re-verify at pickup time.
 
 ---
