@@ -162,8 +162,30 @@ class BrowserPanel(QWidget):
     #: not scoped to a specific parent object, so there is no context to pass.
     new_routine_requested = Signal()
 
-    def __init__(self, parent: QWidget | None = None) -> None:
+    def __init__(
+        self, parent: QWidget | None = None, *, browse_only: bool = False
+    ) -> None:
+        """`browse_only` makes this tree a pure viewer: no `Edit DDL`, no
+        `Add Trigger…`, no `New Function/Procedure…` (§18.7, FQ-022).
+
+        The SANDBOX Explorer instance passes it, for the reason recorded on
+        `EditorPanel.__init__`: `Edit DDL` from the sandbox tree would take
+        MainWindow's checkout branch in project mode and seed `ddl/*.sql` from
+        the sandbox's definition, poisoning §18.2's drift baseline. The two
+        *creation* entries are suppressed with it because they open FQ-002's
+        dialogs, whose product is a new object for the project/target lane --
+        offering them on a sandbox tree would state a scope the gesture does not
+        have.
+
+        Suppression happens at menu-BUILD time rather than by leaving the signals
+        unconnected: an entry that emits into nothing is a dead control, which is
+        exactly what carve-out 2's posture forbids.
+
+        Off by default, so the target instance keeps today's behaviour.
+        """
         super().__init__(parent)
+        #: Whether this instance offers the edit/create gestures (see above).
+        self._browse_only = browse_only
         self.tree = QTreeWidget()
         self.tree.setHeaderHidden(True)
         self.tree.itemClicked.connect(self._on_item_clicked)
@@ -443,7 +465,13 @@ class BrowserPanel(QWidget):
 
         Split out from `_on_context_menu` so tests can assert the offered
         entries without driving a modal `exec()`.
+
+        A `browse_only` instance (§18.7's sandbox tree) offers nothing anywhere:
+        all three menus below are edit/create gestures, so there is no partial
+        menu left to build.
         """
+        if self._browse_only:
+            return None
         span = item.data(0, _SPAN_ROLE)
         if span is not None:
             if self._schema is None:

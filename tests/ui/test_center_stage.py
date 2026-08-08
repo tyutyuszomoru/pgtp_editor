@@ -10,13 +10,15 @@ from pgtp_editor.ui.sql_console_panel import CONSOLE_TAB_KEY, SqlConsolePanel
 def test_tabs_in_order(qtbot):
     stage = CenterStage()
     qtbot.addWidget(stage)
-    assert stage.count() == 6
+    assert stage.count() == 7
     assert stage.tabText(0) == "Diff / Merge"
     assert stage.tabText(1) == "Caption Management"
     assert stage.tabText(2) == "Raw XML"
     assert stage.tabText(3) == "Edit XSD"
-    assert stage.tabText(4) == "DDL Explorer"
-    assert stage.tabText(5) == "Manual"
+    # Two Explorer tabs since §18.7 (FQ-022), both labelled by connection role.
+    assert stage.tabText(4) == "DDL Explorer (Quality)"
+    assert stage.tabText(5) == "DDL Explorer (Sandbox)"
+    assert stage.tabText(6) == "Manual"
 
 
 def test_default_tab_visibility_raw_xml_shown_others_hidden(qtbot):
@@ -95,13 +97,13 @@ def test_show_ddl_explorer_reveals_switches_and_emits_true(qtbot):
     stage = CenterStage()
     qtbot.addWidget(stage)
     got = []
-    stage.ddl_explorer_visibility_changed.connect(got.append)
+    stage.ddl_explorer_visibility_changed.connect(lambda role, visible: got.append((role, visible)))
 
     stage.show_ddl_explorer()
 
     assert stage.isTabVisible(stage.ddl_tab_index) is True
     assert stage.currentIndex() == stage.ddl_tab_index
-    assert got == [True]
+    assert got == [("target", True)]
 
 
 def test_hide_ddl_explorer_hides_returns_to_raw_xml_and_emits_false(qtbot):
@@ -109,13 +111,13 @@ def test_hide_ddl_explorer_hides_returns_to_raw_xml_and_emits_false(qtbot):
     qtbot.addWidget(stage)
     stage.show_ddl_explorer()
     got = []
-    stage.ddl_explorer_visibility_changed.connect(got.append)
+    stage.ddl_explorer_visibility_changed.connect(lambda role, visible: got.append((role, visible)))
 
     stage.hide_ddl_explorer()
 
     assert stage.isTabVisible(stage.ddl_tab_index) is False
     assert stage.currentIndex() == stage.raw_xml_tab_index
-    assert got == [False]
+    assert got == [("target", False)]
 
 
 def test_hide_ddl_explorer_when_not_current_does_not_steal_current_tab(qtbot):
@@ -139,13 +141,13 @@ def test_ddl_tab_close_button_hides_directly(qtbot):
     qtbot.addWidget(stage)
     stage.show_ddl_explorer()
     got = []
-    stage.ddl_explorer_visibility_changed.connect(got.append)
+    stage.ddl_explorer_visibility_changed.connect(lambda role, visible: got.append((role, visible)))
 
     stage.tabCloseRequested.emit(stage.ddl_tab_index)
 
     assert stage.isTabVisible(stage.ddl_tab_index) is False
     assert stage.currentIndex() == stage.raw_xml_tab_index
-    assert got == [False]
+    assert got == [("target", False)]
 
 
 def test_ddl_tab_has_close_button_structural_tabs_do_not(qtbot):

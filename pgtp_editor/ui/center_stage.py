@@ -95,6 +95,27 @@ RAW_XML_TAB_TITLE = "Raw XML"
 #: user who cannot type needs to know which one to leave.
 RAW_XML_READ_ONLY_CAPTION_MODE = "read only in caption mode"
 
+#: The two DDL Explorer connection roles (§18.7, FQ-022). Exactly one
+#: connection of each role can exist per project, which is why the role is a
+#: usable tab key on its own -- no per-instance identity is needed.
+#:
+#: `"target"` is today's single Explorer, unchanged; `"sandbox"` is the §18.5 D2
+#: sandbox, browsed over its own `ConnectionParams` and NO `SandboxSession`
+#: (§18.7: reads are not gated). The user-facing word for the target role is
+#: *Quality* (§18.8's node name, and the owner's vocabulary) -- the role id stays
+#: `"target"` because that is what every params selector already calls it.
+DDL_EXPLORER_TARGET = "target"
+DDL_EXPLORER_SANDBOX = "sandbox"
+DDL_EXPLORER_ROLES = (DDL_EXPLORER_TARGET, DDL_EXPLORER_SANDBOX)
+
+#: Tab titles per role. Both are labelled, on purpose: leaving the target one a
+#: bare "DDL Explorer" beside an explicitly sandbox-scoped sibling would make the
+#: unlabelled one ambiguous (§18.7).
+DDL_EXPLORER_TAB_TITLES = {
+    DDL_EXPLORER_TARGET: "DDL Explorer (Quality)",
+    DDL_EXPLORER_SANDBOX: "DDL Explorer (Sandbox)",
+}
+
 
 class CenterStage(QTabWidget):
     # Emitted when the Manual tab is revealed (True) or hidden (False), so the
@@ -106,12 +127,18 @@ class CenterStage(QTabWidget):
     # app-close), so this signals intent rather than hiding the tab directly.
     xsd_close_requested = Signal()
 
-    # Emitted when the DDL Explorer tab is revealed (True) or hidden (False),
+    # Emitted when a DDL Explorer tab is revealed (True) or hidden (False),
     # so the Database-menu toggle stays in lockstep (same pattern as
     # manual_visibility_changed; see BUG-007 for why one-way wiring is not
     # enough). The tab is read-only (spec §18.1), so its ✕ hides directly —
     # no dirty prompt, unlike Edit XSD.
-    ddl_explorer_visibility_changed = Signal(bool)
+    #
+    # §18.7 (FQ-022) made the Explorer PER-CONNECTION, so the payload carries
+    # the connection ROLE the tab speaks for ("target"/"sandbox") alongside the
+    # visibility. Deliberately ONE signal with a role rather than a second
+    # sandbox-only signal: MainWindow's lockstep handler is parameterized by
+    # role (§18.7), and two signals would be two handlers free to drift.
+    ddl_explorer_visibility_changed = Signal(str, bool)
 
     # Emitted when a DDL object editor tab's ✕ is clicked (spec §18.5).
     # Carries the tab's `DdlObjectRef.key`. Closing an editable, per-object
@@ -198,10 +225,42 @@ class CenterStage(QTabWidget):
         )
         self.xsd_tab_index = self.addTab(self.xsd_tab, "Edit XSD")
 
-        # DDL Explorer tab (spec §18.1): the one synthesized routine/trigger
-        # buffer, read-only. Hidden until Database ▸ DDL Explorer reveals it.
+        # DDL Explorer tabs (spec §18.1, made per-connection by §18.7): one
+        # synthesized routine/trigger buffer PER CONNECTION ROLE, read-only.
+        # Both hidden until their own Database-menu entry reveals them.
+        #
+        # `EditorPanel` is instantiated twice with unchanged internals (§18.7's
+        # reuse map) -- it takes a `DatabaseSchema` and a synthesized buffer as
+        # data and is not target-vs-sandbox-aware, so nothing here needed to
+        # learn about roles beyond the sandbox panel being BROWSE-ONLY (see
+        # `browse_only`: `Edit DDL` from the sandbox must not reach MainWindow's
+        # checkout branch, §18.7's sharpest correctness risk).
+        #
+        # These stay FIXED tabs, created here at construction time, rather than
+        # becoming dynamic ones: the role set is closed at exactly two, and
+        # `_ddl_object_tabs`' append-only/tail-only invariant (carve-out 9) is
+        # about tabs created *after* startup -- two more startup tabs leave every
+        # dynamic index arithmetic untouched. `ddl_tab_index` therefore survives
+        # as the target role's index, which is what `find_controller`'s per-tab
+        # routing and ~90 tests already address.
         self.ddl_editor_panel = EditorPanel()
-        self.ddl_tab_index = self.addTab(self.ddl_editor_panel, "DDL Explorer")
+        self.ddl_tab_index = self.addTab(
+            self.ddl_editor_panel, DDL_EXPLORER_TAB_TITLES[DDL_EXPLORER_TARGET]
+        )
+        self.sandbox_ddl_editor_panel = EditorPanel(browse_only=True)
+        self.sandbox_ddl_tab_index = self.addTab(
+            self.sandbox_ddl_editor_panel,
+            DDL_EXPLORER_TAB_TITLES[DDL_EXPLORER_SANDBOX],
+        )
+        #: role -> (panel, tab index), so every role-parameterized caller
+        #: resolves both from ONE place instead of branching on the role again.
+        self._ddl_explorer_tabs = {
+            DDL_EXPLORER_TARGET: (self.ddl_editor_panel, self.ddl_tab_index),
+            DDL_EXPLORER_SANDBOX: (
+                self.sandbox_ddl_editor_panel,
+                self.sandbox_ddl_tab_index,
+            ),
+        }
 
         self.manual_panel = ManualPanel()
         self.manual_tab_index = self.addTab(self.manual_panel, "Manual")
@@ -213,6 +272,7 @@ class CenterStage(QTabWidget):
         self.setTabVisible(self.raw_xml_tab_index, True)
         self.setTabVisible(self.xsd_tab_index, False)
         self.setTabVisible(self.ddl_tab_index, False)
+        self.setTabVisible(self.sandbox_ddl_tab_index, False)
         self.setTabVisible(self.manual_tab_index, False)
         self.setCurrentIndex(self.raw_xml_tab_index)
 
@@ -223,7 +283,12 @@ class CenterStage(QTabWidget):
         # sides.
         self.setTabsClosable(True)
         bar = self.tabBar()
-        _closable = (self.manual_tab_index, self.xsd_tab_index, self.ddl_tab_index)
+        _closable = (
+            self.manual_tab_index,
+            self.xsd_tab_index,
+            self.ddl_tab_index,
+            self.sandbox_ddl_tab_index,
+        )
         for index in range(self.count()):
             if index not in _closable:
                 bar.setTabButton(index, QTabBar.ButtonPosition.RightSide, None)
@@ -235,10 +300,12 @@ class CenterStage(QTabWidget):
             self.hide_manual()
         elif index == self.xsd_tab_index:
             self.xsd_close_requested.emit()
-        elif index == self.ddl_tab_index:
+        elif index in (self.ddl_tab_index, self.sandbox_ddl_tab_index):
             # Read-only tab: nothing to prompt for, hide directly (unlike
-            # Edit XSD, which routes through MainWindow's dirty check).
-            self.hide_ddl_explorer()
+            # Edit XSD, which routes through MainWindow's dirty check). Both
+            # roles' tabs close the same way (§18.7) -- the ✕ is one gesture
+            # parameterized by which tab it sits on, not two.
+            self.hide_ddl_explorer(self.ddl_explorer_role_at(index))
         else:
             # Falls through to a dynamic tab -- a DDL object editor (§18.5) or
             # a custom-PHP file (§21). These are never at a fixed index, so
@@ -307,18 +374,51 @@ class CenterStage(QTabWidget):
         if self.currentIndex() == self.xsd_tab_index:
             self.setCurrentIndex(self.raw_xml_tab_index)
 
-    def show_ddl_explorer(self):
-        self.setTabVisible(self.ddl_tab_index, True)
-        self.setCurrentIndex(self.ddl_tab_index)
-        self.ddl_explorer_visibility_changed.emit(True)
+    def ddl_explorer_panel(self, role=DDL_EXPLORER_TARGET):
+        """The `EditorPanel` for connection `role` (§18.7). Defaults to the
+        target role, which is what every pre-FQ-022 caller means."""
+        return self._ddl_explorer_tabs[role][0]
 
-    def hide_ddl_explorer(self):
-        """Hide the DDL Explorer tab and return to Raw XML (the ✕ close
-        action), mirroring `hide_manual`."""
-        self.setTabVisible(self.ddl_tab_index, False)
-        if self.currentIndex() == self.ddl_tab_index:
+    def ddl_explorer_tab_index(self, role=DDL_EXPLORER_TARGET):
+        """The center-stage index of `role`'s DDL Explorer tab (§18.7)."""
+        return self._ddl_explorer_tabs[role][1]
+
+    def ddl_explorer_role_at(self, index):
+        """The connection role of the DDL Explorer tab at `index`, or None when
+        `index` is not one of the two (§18.7).
+
+        The reverse lookup exists so per-tab routing (`find_controller`'s
+        find/bookmark dispatch, the ✕ handler) asks *"which Explorer is this?"*
+        once, instead of comparing against two indices in every branch."""
+        for role, (_panel, tab_index) in self._ddl_explorer_tabs.items():
+            if index == tab_index:
+                return role
+        return None
+
+    def ddl_explorer_panels(self):
+        """`{role: EditorPanel}` for both roles (§18.7) -- for callers that must
+        treat *any* Explorer buffer alike (e.g. "this editor has no audit
+        route")."""
+        return {role: panel for role, (panel, _index) in self._ddl_explorer_tabs.items()}
+
+    def show_ddl_explorer(self, role=DDL_EXPLORER_TARGET):
+        index = self.ddl_explorer_tab_index(role)
+        self.setTabVisible(index, True)
+        self.setCurrentIndex(index)
+        self.ddl_explorer_visibility_changed.emit(role, True)
+
+    def hide_ddl_explorer(self, role=DDL_EXPLORER_TARGET):
+        """Hide `role`'s DDL Explorer tab and return to Raw XML (the ✕ close
+        action), mirroring `hide_manual`.
+
+        Hiding one role's tab leaves the other's alone: the two instances are
+        independent (§18.7), so closing the sandbox tree must not take the
+        target one down with it."""
+        index = self.ddl_explorer_tab_index(role)
+        self.setTabVisible(index, False)
+        if self.currentIndex() == index:
             self.setCurrentIndex(self.raw_xml_tab_index)
-        self.ddl_explorer_visibility_changed.emit(False)
+        self.ddl_explorer_visibility_changed.emit(role, False)
 
     def _set_raw_xml_read_only(self, reason: str | None) -> None:
         """Make Raw XML read-only *for a named reason*, or editable again.

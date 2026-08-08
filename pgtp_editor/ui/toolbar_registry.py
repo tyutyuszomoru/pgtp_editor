@@ -26,9 +26,11 @@ id, which legacy ids map onto which new ones, and which commands carry an icon.
 Ids are derived from the menu path (``File > Save As...`` -> ``file.save-as``)
 rather than hand-assigned. That means a newly added menu action becomes
 toolbar-available with no bookkeeping here; the tradeoff is that *renaming* a
-menu label changes its id, which drops that one button from an already-saved
-toolbar. Menu labels change rarely and the degradation is self-healing (the
-user re-adds it), so the zero-maintenance property wins.
+menu label changes its id, which would drop that one button from an
+already-saved toolbar. Menu labels change rarely and the degradation is
+self-healing (the user re-adds it), so the zero-maintenance property wins --
+but a *deliberate* rename can carry a `RENAMED_ID_ALIASES` row (below) so the
+user's pinned button survives it instead.
 
 Data-only so it can be unit-tested without a QApplication. Keep this module
 free of Qt imports.
@@ -81,6 +83,26 @@ LEGACY_ID_ALIASES: dict[str, str] = {
 DEFAULT_TOOLBAR_IDS: list[str] = [
     LEGACY_ID_ALIASES[cid] for cid, _label in LEGACY_COMMANDS
 ]
+
+# Menu-path id -> menu-path id, for commands that were RENAMED or MOVED after
+# BUG-027 widened toolbar ids to menu paths. A saved toolbar (and a saved FQ-004
+# icon assignment) refers to the old path; without a row here the id no longer
+# resolves and `resolve_ids` silently drops the user's button.
+#
+# DELIBERATELY NOT `LEGACY_ID_ALIASES`, and this is a correctness constraint
+# rather than tidiness: `ICON_ID_BY_COMMAND` is that dict INVERTED, so a row
+# there would make `icon_id_for(<new id>)` return a *menu-path* id where an
+# *icon* id is expected -- `icons.load_svg_text` raises `KeyError` for it, which
+# `_set_action_icon`'s bare `except Exception` swallows, permanently defeating any
+# later default-icon binding for that command instead of crashing. This table is
+# consulted by `resolve_ids`/`resolve_icon_assignments` and inverted by nothing.
+#
+# FQ-022 (§18.7) opened it: `Database ▸ DDL Explorer` became
+# `DDL Explorer (Quality)` when it gained a sandbox-scoped sibling, because a
+# bare "DDL Explorer" next to it would be ambiguous -- and the label IS the id.
+RENAMED_ID_ALIASES: dict[str, str] = {
+    "database.ddl-explorer": "database.ddl-explorer-quality",
+}
 
 # Menu-path id -> icon id (the `icons.ACTION_ICON_FILES` key). Only the legacy
 # set has vendored SVG defaults; every other command is icon-less by design -- an
@@ -135,8 +157,14 @@ def valid_ids(ids: Iterable[str] | None, known: Iterable[str]) -> list[str]:
 
 def resolve_ids(ids: Iterable[str] | None, known: Iterable[str]) -> list[str]:
     """`valid_ids`, but mapping any legacy (pre-BUG-027) id onto its menu-path
-    id first, so a toolbar saved by an older build still restores."""
+    id first and then any renamed/moved menu path onto its current one, so a
+    toolbar saved by an older build still restores.
+
+    Two tables, applied in that order: a legacy id maps into the menu-path id
+    space, and `RENAMED_ID_ALIASES` then moves within it (see its comment for why
+    the two must not be one dict)."""
     mapped = [LEGACY_ID_ALIASES.get(cid, cid) for cid in (ids or [])]
+    mapped = [RENAMED_ID_ALIASES.get(cid, cid) for cid in mapped]
     return valid_ids(mapped, known)
 
 
@@ -193,15 +221,17 @@ def resolve_icon_assignments(
     """Filter a loaded assignment map to what still exists, the way
     `resolve_ids` filters saved toolbar ids.
 
-    Legacy (pre-BUG-027) command ids are mapped onto their menu-path id first;
-    an assignment whose command no longer exists, or whose icon is no longer
-    vendored, is dropped.
+    Legacy (pre-BUG-027) command ids are mapped onto their menu-path id first,
+    then any RENAMED_ID_ALIASES row is applied, so an assignment made against a
+    command's old menu path survives the rename; an assignment whose command no
+    longer exists, or whose icon is no longer vendored, is dropped.
     """
     known_command_set = set(known_commands)
     known_icon_set = set(known_icons)
     result: dict[str, str] = {}
     for command_id, icon_id in (assignments or {}).items():
         mapped = LEGACY_ID_ALIASES.get(command_id, command_id)
+        mapped = RENAMED_ID_ALIASES.get(mapped, mapped)
         if mapped in known_command_set and icon_id in known_icon_set:
             result[mapped] = icon_id
     return result

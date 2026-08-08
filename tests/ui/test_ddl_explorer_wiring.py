@@ -97,12 +97,14 @@ def test_database_menu_has_checkable_ddl_explorer_after_separator(qtbot, tmp_pat
     window = MainWindow(settings=_empty_settings(tmp_path))
     qtbot.addWidget(window)
     menu = find_top_menu(window, "Database")
-    action = find_action(menu, "DDL Explorer")
+    # Renamed by §18.7 (FQ-022) when it gained a sandbox-scoped sibling.
+    action = find_action(menu, "DDL Explorer (Quality)")
     assert action is not None
     assert action.isCheckable() is True
     assert action.isChecked() is False
     labels = action_labels(menu)
-    assert labels[labels.index("DDL Explorer") - 1] == "―"  # after a separator
+    # after a separator
+    assert labels[labels.index("DDL Explorer (Quality)") - 1] == "―"
 
 
 # ---------------------------------------------------------------------------
@@ -194,7 +196,7 @@ def test_fetch_error_unchecks_and_shows_status(qtbot, tmp_path):
 
     window._ddl_explorer_action.setChecked(True)  # must not crash
 
-    assert "DDL Explorer failed" in window.statusBar().currentMessage()
+    assert "DDL Explorer (Quality) failed" in window.statusBar().currentMessage()
     assert "no route to host" in window.statusBar().currentMessage()
     assert window._ddl_explorer_action.isChecked() is False
     assert not window.center_stage.isTabVisible(window.center_stage.ddl_tab_index)
@@ -214,7 +216,7 @@ def test_toggle_shows_busy_status_then_populates_on_result(qtbot, tmp_path):
     window._run_async = deferred
     window._ddl_explorer_action.setChecked(True)
 
-    assert "Loading routines & triggers" in window.statusBar().currentMessage()
+    assert "loading routines & triggers" in window.statusBar().currentMessage()
     assert not window.center_stage.isTabVisible(window.center_stage.ddl_tab_index)
     assert window.center_stage.ddl_editor_panel.editor.toPlainText() == ""
 

@@ -11,6 +11,7 @@ from pgtp_editor.ui.toolbar_registry import (
     ICON_ID_BY_COMMAND,
     LEGACY_COMMANDS,
     LEGACY_ID_ALIASES,
+    RENAMED_ID_ALIASES,
     command_id_for,
     menu_path_label,
     normalize_label,
@@ -124,6 +125,32 @@ def test_resolve_ids_maps_legacy_ids_so_saved_toolbars_survive():
     assert resolve_ids(["find"], _KNOWN + ["edit.find"]) == []
 
 
+def test_renamed_ids_are_never_inverted_into_the_icon_table():
+    """FQ-022's reason for a SECOND table: `ICON_ID_BY_COMMAND` inverts
+    `LEGACY_ID_ALIASES`, so a rename row there would hand `icon_id_for` a
+    menu-path id where an icon id belongs -- a `KeyError` that
+    `_set_action_icon`'s bare except swallows, permanently defeating any later
+    default-icon binding for that command."""
+    assert not set(RENAMED_ID_ALIASES) & set(LEGACY_ID_ALIASES)
+    for old_id, new_id in RENAMED_ID_ALIASES.items():
+        assert old_id not in ICON_ID_BY_COMMAND.values()
+        assert new_id not in ICON_ID_BY_COMMAND
+
+
+def test_resolve_ids_maps_a_renamed_menu_path_so_a_pinned_button_survives():
+    """§18.7 renamed `Database ▸ DDL Explorer` to `DDL Explorer (Quality)` when
+    it gained a sandbox-scoped sibling. The label IS the id, so without this row
+    a user who had pinned the old button would silently lose it."""
+    known = ["database.ddl-explorer-quality", "file.open"]
+    assert resolve_ids(["database.ddl-explorer"], known) == [
+        "database.ddl-explorer-quality"
+    ]
+    # And the two ids for the one command deduplicate, like the legacy pair does.
+    assert resolve_ids(
+        ["database.ddl-explorer", "database.ddl-explorer-quality"], known
+    ) == ["database.ddl-explorer-quality"]
+
+
 def test_resolve_ids_passes_through_new_ids_and_still_drops_unknowns():
     assert resolve_ids(["file.open", "nope"], _KNOWN) == ["file.open"]
 
@@ -194,6 +221,15 @@ def test_resolve_maps_legacy_command_ids_like_resolve_ids_does():
         {"open": "zoom-in"}, KNOWN_COMMANDS, KNOWN_ICONS
     )
     assert resolved == {"file.open": "zoom-in"}
+
+
+def test_resolve_icon_assignments_follows_a_rename_too():
+    resolved = resolve_icon_assignments(
+        {"database.ddl-explorer": "zoom-in"},
+        ["database.ddl-explorer-quality"],
+        KNOWN_ICONS,
+    )
+    assert resolved == {"database.ddl-explorer-quality": "zoom-in"}
 
 
 def test_resolve_of_nothing_is_empty_back_compat():

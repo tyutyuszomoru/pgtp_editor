@@ -104,6 +104,7 @@ from PySide6.QtWidgets import QListWidgetItem
 from pgtp_editor.lint.findings import LINT_AUDIT_TARGET
 from pgtp_editor.ui import search
 from pgtp_editor.ui.busy import busy_status
+from pgtp_editor.ui.center_stage import DDL_EXPLORER_SANDBOX
 from pgtp_editor.ui.editor_gutter import BOOKMARKS_RESET, add_bookmark_observer
 from pgtp_editor.ui.ui_shell import UiShell
 from pgtp_editor.validation import tier2
@@ -324,11 +325,14 @@ class FindValidateController(QObject):
         stage = self._shell.stage
         if stage.currentIndex() == stage.xsd_tab_index:
             return stage.xsd_find_replace_bar
-        if stage.currentIndex() == stage.ddl_tab_index:
+        explorer_role = stage.ddl_explorer_role_at(stage.currentIndex())
+        if explorer_role is not None:
             # The DDL Explorer buffer has its own bar (spec §18.1, per-tab
             # document routing) -- without this branch Ctrl+F on the DDL tab
-            # used to bounce the user back to Raw XML.
-            return stage.ddl_editor_panel.find_replace_bar
+            # used to bounce the user back to Raw XML. Asked by ROLE since
+            # §18.7 (FQ-022) gave each connection its own Explorer tab, so both
+            # search their own buffer rather than the target's.
+            return stage.ddl_explorer_panel(explorer_role).find_replace_bar
         panel = stage.active_ddl_object_panel()
         if panel is not None:
             # The editable object tab's own bar (spec §18.5) -- Replace is
@@ -365,8 +369,11 @@ class FindValidateController(QObject):
         stage = self._shell.stage
         if stage.currentIndex() == stage.xsd_tab_index:
             return stage.xsd_editor
-        if stage.currentIndex() == stage.ddl_tab_index:
-            return stage.ddl_editor_panel.editor
+        explorer_role = stage.ddl_explorer_role_at(stage.currentIndex())
+        if explorer_role is not None:
+            # Either Explorer tab (§18.7): bookmarks act on the buffer the user
+            # is looking at, not on the target role's by default.
+            return stage.ddl_explorer_panel(explorer_role).editor
         panel = stage.active_ddl_object_panel()
         if panel is not None:
             return panel.editor
@@ -595,9 +602,17 @@ class FindValidateController(QObject):
         stage = self._shell.stage
         if editor is stage.xsd_editor:
             return "xsd", "Edit XSD", None
-        if editor is stage.ddl_editor_panel.editor:
-            # The read-only DDL Explorer buffer: no route (see above).
-            return _NO_AUDIT_ROUTE, "the DDL Explorer", None
+        for role, panel in stage.ddl_explorer_panels().items():
+            if editor is panel.editor:
+                # A read-only DDL Explorer buffer: no route (see above). Named by
+                # role since §18.7 (FQ-022), so the empty-case wording says which
+                # of the two trees the rows came from.
+                label = (
+                    "the DDL Explorer (Sandbox)"
+                    if role == DDL_EXPLORER_SANDBOX
+                    else "the DDL Explorer (Quality)"
+                )
+                return _NO_AUDIT_ROUTE, label, None
         for panel in stage.ddl_object_panels():
             if panel.editor is editor:
                 # §18.5 D3a's tuple payload: `DdlObjectRef.key`.

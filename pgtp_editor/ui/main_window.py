@@ -43,7 +43,12 @@ from pgtp_editor import debuglog
 from pgtp_editor.model.line_index import node_at_line
 from pgtp_editor.ui._stub_action import add_stub_action
 from pgtp_editor.ui.about import show_about_dialog
-from pgtp_editor.ui.center_stage import CenterStage
+from pgtp_editor.ui.center_stage import (
+    DDL_EXPLORER_ROLES,
+    DDL_EXPLORER_SANDBOX,
+    DDL_EXPLORER_TARGET,
+    CenterStage,
+)
 from pgtp_editor.ui import modals
 from pgtp_editor.ui.manual_panel import (
     ManualContentsPanel,
@@ -300,10 +305,12 @@ class MainWindow(QMainWindow):
         self.coherence_panel.selection_changed.connect(self._on_table_ref_selection)
         # The DDL Explorer's object tree rides in its own hidden tab (spec
         # §18.1), revealed together with the center DDL Explorer tab by the
-        # Database > "DDL Explorer" toggle (mirrors the coherence tab).
+        # Database ▸ "DDL Explorer (Quality)" toggle (mirrors the coherence tab).
+        # This is the TARGET-role instance; §18.7's sandbox one is built right
+        # below it.
         self.ddl_browser_panel = BrowserPanel()
         self.ddl_browser_tab_index = self.left_tabs.addTab(
-            self.ddl_browser_panel, "DDL Objects"
+            self.ddl_browser_panel, "DDL Objects (Quality)"
         )
         self.left_tabs.setTabVisible(self.ddl_browser_tab_index, False)
         self.ddl_browser_panel.navigate_requested.connect(
@@ -323,6 +330,39 @@ class MainWindow(QMainWindow):
         self.ddl_browser_panel.new_routine_requested.connect(
             self._on_ddl_new_routine_requested
         )
+        # §18.7 (FQ-022): the SECOND Explorer instance -- the same `BrowserPanel`
+        # class with unchanged internals, fed by the project sandbox's own
+        # `ConnectionParams`. `browse_only` because `Edit DDL` from here would
+        # take the checkout branch and seed `ddl/*.sql` from the sandbox (see
+        # `BrowserPanel.__init__`), so it offers no edit/create gestures at all
+        # and there is deliberately no `edit_requested` connection to make.
+        #
+        # Both dock tabs are LABELLED by role: two identically-named "DDL
+        # Objects" trees would be untellable apart in the tab bar.
+        self.sandbox_ddl_browser_panel = BrowserPanel(browse_only=True)
+        self.sandbox_ddl_browser_tab_index = self.left_tabs.addTab(
+            self.sandbox_ddl_browser_panel, "DDL Objects (Sandbox)"
+        )
+        self.left_tabs.setTabVisible(self.sandbox_ddl_browser_tab_index, False)
+        self.sandbox_ddl_browser_panel.navigate_requested.connect(
+            lambda line: self._on_ddl_navigate_requested(line, DDL_EXPLORER_SANDBOX)
+        )
+        # The Properties feed is a pure read of the clicked node, so the sandbox
+        # tree drives the same shared panel -- nothing about it writes anywhere.
+        self.sandbox_ddl_browser_panel.table_selected.connect(
+            self._on_ddl_table_selected
+        )
+        #: role -> the `BrowserPanel` for that connection (§18.7). The one place
+        #: the role->tree mapping lives, so the fetch, the visibility lockstep
+        #: and the dock-tab reveal cannot disagree about which tree is which.
+        self._ddl_browser_panels = {
+            DDL_EXPLORER_TARGET: self.ddl_browser_panel,
+            DDL_EXPLORER_SANDBOX: self.sandbox_ddl_browser_panel,
+        }
+        self._ddl_browser_tab_indexes = {
+            DDL_EXPLORER_TARGET: self.ddl_browser_tab_index,
+            DDL_EXPLORER_SANDBOX: self.sandbox_ddl_browser_tab_index,
+        }
         self.tree_dock.setWidget(self.left_tabs)
         self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self.tree_dock)
 
@@ -498,6 +538,12 @@ class MainWindow(QMainWindow):
         #: §18.5 D3's "Check without applying" probe, gated on the same
         #: `can_check` as Check itself.
         self._sandbox_probe_check_action = None
+        #: §18.7's Database ▸ DDL Explorer (Sandbox) toggle -- created hidden and
+        #: shown by `_refresh_ddl_explorer_affordances` while the open project has
+        #: a sandbox configured. Same before-`_build_menu_bar` initialisation
+        #: reason as the three above, and the same reason for the pair map below.
+        self._sandbox_ddl_explorer_action = None
+        self._ddl_explorer_actions = {}
         self._open_sandbox_session_action = None
         self._close_sandbox_session_action = None
         #: §18.5's "Deploy this edit…" picker as a menu entry (FQ-009). Always
@@ -2140,10 +2186,41 @@ class MainWindow(QMainWindow):
         # DDL Explorer (spec §18.1): checkable toggle, kept in lockstep with
         # the center tab's real visibility via ddl_explorer_visibility_changed
         # (bidirectional per the BUG-007 lesson — the tab has its own ✕).
-        self._ddl_explorer_action = menu.addAction("DDL Explorer")
+        #
+        # TWO entries since §18.7/FQ-022, one per connection role. Both are
+        # named: leaving this one a bare "DDL Explorer" beside an explicitly
+        # sandbox-scoped sibling would make the unlabelled one ambiguous.
+        # "Quality" rather than "Target" matches §18.8's node name. The rename
+        # changes this command's id (`database.ddl-explorer` ->
+        # `database.ddl-explorer-quality`), which is why `toolbar_registry`
+        # carries a RENAMED_ID_ALIASES row for it -- a user who pinned the old
+        # button keeps it.
+        self._ddl_explorer_action = menu.addAction("DDL Explorer (Quality)")
         self._ddl_explorer_action.setCheckable(True)
         self._ddl_explorer_action.setChecked(False)
-        self._ddl_explorer_action.toggled.connect(self._on_ddl_explorer_toggled)
+        self._ddl_explorer_action.toggled.connect(
+            lambda checked: self._on_ddl_explorer_toggled(checked, DDL_EXPLORER_TARGET)
+        )
+        # §18.7's second instance. Created HIDDEN and shown by
+        # `_refresh_ddl_explorer_affordances` only while the open project has a
+        # sandbox configured (absent, not disabled -- carve-out 2's genuinely
+        # inapplicable case). Its gate is `bool(sandbox.host)`, NOT
+        # `SandboxController.has_session`: browsing is a pure READ and §18.5 D2
+        # gates only writes, so this must never be wired into
+        # `_refresh_sandbox_affordances`' session-keyed visibility set.
+        self._sandbox_ddl_explorer_action = menu.addAction("DDL Explorer (Sandbox)")
+        self._sandbox_ddl_explorer_action.setCheckable(True)
+        self._sandbox_ddl_explorer_action.setChecked(False)
+        self._sandbox_ddl_explorer_action.setVisible(False)
+        self._sandbox_ddl_explorer_action.toggled.connect(
+            lambda checked: self._on_ddl_explorer_toggled(checked, DDL_EXPLORER_SANDBOX)
+        )
+        #: role -> its checkable Database-menu entry (§18.7), so the lockstep
+        #: handler resolves the action from the role instead of branching.
+        self._ddl_explorer_actions = {
+            DDL_EXPLORER_TARGET: self._ddl_explorer_action,
+            DDL_EXPLORER_SANDBOX: self._sandbox_ddl_explorer_action,
+        }
         menu.addSeparator()
         # FQ-002: creating a routine is not scoped to a parent object, so it
         # earns a menu entry as well as the tree's context menu. Its trigger
@@ -2388,68 +2465,155 @@ class MainWindow(QMainWindow):
         `CoherenceController.fetch_schema`)."""
         return fetch_routines_and_triggers(params)
 
-    def _on_ddl_explorer_toggled(self, checked):
+    def _on_ddl_explorer_toggled(self, checked, role=DDL_EXPLORER_TARGET):
         if checked:
-            self._open_ddl_explorer()
+            self._open_ddl_explorer(role)
         else:
-            self.center_stage.hide_ddl_explorer()
+            self.center_stage.hide_ddl_explorer(role)
 
-    def _open_ddl_explorer(self):
-        """Fetch routines/triggers and reveal the DDL Explorer (center buffer
-        tab + left "DDL Objects" tree). Standalone-mode friendly (§18): no
-        `.pgtp` project is required — only a configured connection."""
+    def _ddl_explorer_label(self, role) -> str:
+        """What the user-facing messages call `role`'s Explorer -- the same words
+        as its menu entry and its tabs, so a status line can be traced back to
+        the gesture that produced it."""
+        return (
+            "DDL Explorer (Sandbox)"
+            if role == DDL_EXPLORER_SANDBOX
+            else "DDL Explorer (Quality)"
+        )
+
+    def _ddl_explorer_params(self, role):
+        """The `ConnectionParams` `role`'s Explorer fetches over, or None when
+        that role has no configured connection (§18.7).
+
+        `target` goes through `_target_params_for_fetch` -- BUG-034's ONE
+        selector, including its one-time password prompt -- and never through a
+        private `seed_params` call, so what Project Settings shows is what the
+        fetch uses.
+
+        `sandbox` goes through `_configured_sandbox_params`, i.e. the open
+        project's `ProjectSettings.sandbox` when it has a host. **PARAMS, not a
+        `SandboxSession`:** §18.5 D2 gates only *writes* behind `open_sandbox`
+        and says in the same breath that reads -- probing, listing, introspecting
+        -- are not gated, and `DdlProjectController.refresh_capability_status`
+        already probes the sandbox over a plain connection at project-open time
+        with no session at all. Opening this Explorer therefore must not open a
+        session, and closing a session must not close this Explorer.
+        """
+        if role == DDL_EXPLORER_SANDBOX:
+            return self._configured_sandbox_params()
         tree = (
             self._current_project.tree
             if self._current_project is not None
             else None
         )
-        # BUG-034: the ONE selector, not a private `seed_params` call -- with a
-        # project open its `ProjectSettings.target` is what connects, so what
-        # Project Settings shows is what the fetch uses.
-        params = self._target_params_for_fetch(tree)
-        if not params.host:
-            self._ddl_explorer_action.setChecked(False)
+        return self._target_params_for_fetch(tree)
+
+    def _open_ddl_explorer(self, role=DDL_EXPLORER_TARGET):
+        """Fetch routines/triggers over `role`'s connection and reveal that
+        role's DDL Explorer (center buffer tab + its own left tree tab).
+
+        ONE code path for both instances (§18.7: "parameterized by role rather
+        than duplicated"), so the sandbox tree cannot drift from the target one
+        in what it fetches, how it reports failure, or how its tab is revealed.
+
+        Standalone-mode friendly for the target role (§18): no `.pgtp` project is
+        required — only a configured connection. The sandbox role is inherently
+        project-scoped (a sandbox is a project's sandbox), which is why its menu
+        entry is absent without one rather than refusing here.
+        """
+        action = self._ddl_explorer_actions.get(role)
+        label = self._ddl_explorer_label(role)
+        params = self._ddl_explorer_params(role)
+        if params is None or not params.host:
+            if action is not None:
+                action.setChecked(False)
+            if role == DDL_EXPLORER_SANDBOX:
+                # Reachable only by a race (the entry is absent without a
+                # configured sandbox), so it states the fact rather than opening
+                # `_prompt_missing_connection`'s app-level Connection Setup
+                # modal, which configures the TARGET and would be the wrong door.
+                self.statusBar().showMessage(
+                    "No sandbox configured for this project — set one up in "
+                    "Project Settings.",
+                    5000,
+                )
+                return
             self._prompt_missing_connection()
             return
-        self.statusBar().showMessage("Loading routines & triggers…")
-        _log.info("db: ddl explorer load started %s", debuglog.redacted(params))
+        self.statusBar().showMessage(f"{label}: loading routines & triggers…")
+        _log.info(
+            "db: ddl explorer load started role=%s %s",
+            role,
+            debuglog.redacted(params),
+        )
 
         def on_result(schema):
             text, spans = build_ddl_text(schema)
-            self.center_stage.ddl_editor_panel.set_ddl_text(text, spans, schema=schema)
+            self.center_stage.ddl_explorer_panel(role).set_ddl_text(
+                text, spans, schema=schema
+            )
             # */! drift markers (§18.2): recomputed fresh on every fetch, never
             # cached -- None (no markers) when no project is open, matching the
             # existing project-less rendering exactly.
+            #
+            # TARGET ONLY. §18.7 requires markers to be computed per source
+            # connection and never borrowed from the other instance, and
+            # `compute_drift_markers` compares against `ProjectSettings.deployed`
+            # -- a *deployed-to-target* reference point. Handing it the sandbox's
+            # introspection would render the target's question about the wrong
+            # database, which is exactly the shared-computation mistake §18.7
+            # forbids. The sandbox tree therefore renders unmarked until its own
+            # per-connection state computation exists (§18.7's `SandboxSession
+            # .applied`/`text_sha1` bookkeeping), rather than showing borrowed
+            # markers that would be lies.
             drift_markers = (
-                compute_drift_markers(self._ddl_project_folder, self._ddl_project_settings, schema)
-                if self._ddl_project_folder is not None
+                compute_drift_markers(
+                    self._ddl_project_folder, self._ddl_project_settings, schema
+                )
+                if role == DDL_EXPLORER_TARGET
+                and self._ddl_project_folder is not None
                 else None
             )
-            self.ddl_browser_panel.set_schema(schema, spans, drift_markers=drift_markers)
-            self.center_stage.show_ddl_explorer()
-            # Schema-aware Ctrl+Space completion (§18.6): rebuild the lookup
-            # index from this same fetch (now widened to also carry
-            # `.tables`) and push it into every already-open DDL object tab,
-            # exactly like the tree and the read-only buffer are refreshed
-            # above -- built once per connect/refresh, never per keystroke.
-            self._ddl_schema_index = SchemaIndex(schema)
-            # Kept alongside the index because FQ-002's creation dialogs need
-            # the raw schema (the trigger-function candidate list), and the
-            # index exposes only its own query surface.
-            self._ddl_schema = schema
-            for panel in self.center_stage.ddl_object_panels():
-                panel.set_schema_index(self._ddl_schema_index)
+            self._ddl_browser_panels[role].set_schema(
+                schema, spans, drift_markers=drift_markers
+            )
+            self.center_stage.show_ddl_explorer(role)
+            if role == DDL_EXPLORER_TARGET:
+                # Schema-aware Ctrl+Space completion (§18.6): rebuild the lookup
+                # index from this same fetch (now widened to also carry
+                # `.tables`) and push it into every already-open DDL object tab,
+                # exactly like the tree and the read-only buffer are refreshed
+                # above -- built once per connect/refresh, never per keystroke.
+                #
+                # TARGET ONLY, for the same reason the markers are: an open
+                # object tab's completions (and FQ-002's trigger-function
+                # candidate list) describe the lane the edit will be applied to,
+                # and a sandbox browse must not silently repoint them at a
+                # different database's object set.
+                self._ddl_schema_index = SchemaIndex(schema)
+                # Kept alongside the index because FQ-002's creation dialogs need
+                # the raw schema (the trigger-function candidate list), and the
+                # index exposes only its own query surface.
+                self._ddl_schema = schema
+                for panel in self.center_stage.ddl_object_panels():
+                    panel.set_schema_index(self._ddl_schema_index)
             self.statusBar().showMessage(
-                f"DDL Explorer: {len(schema.routines)} routine(s), "
+                f"{label}: {len(schema.routines)} routine(s), "
                 f"{len(schema.triggers)} trigger(s).",
                 5000,
             )
-            _log.info("db: ddl explorer load finished")
+            _log.info("db: ddl explorer load finished role=%s", role)
 
         def on_error(exc):
-            _log.info("db: ddl explorer load failed %s", exc)
-            self.statusBar().showMessage(f"DDL Explorer failed: {exc}", 8000)
-            self._ddl_explorer_action.setChecked(False)
+            # The never-raises posture both fetch paths already have: an
+            # unreachable database (a sandbox that was destroyed, a host that is
+            # down) is REPORTED and the toggle springs back, so the menu entry
+            # never lands the user on an empty tree that looks like an empty
+            # database.
+            _log.info("db: ddl explorer load failed role=%s %s", role, exc)
+            self.statusBar().showMessage(f"{label} failed: {exc}", 8000)
+            if action is not None:
+                action.setChecked(False)
 
         self._run_async(
             lambda: self._fetch_ddl_schema(params),
@@ -2457,21 +2621,62 @@ class MainWindow(QMainWindow):
             on_error=on_error,
         )
 
-    def _on_ddl_explorer_visibility_changed(self, visible):
-        """Keep the left "DDL Objects" tree tab and the Database-menu toggle
-        in lockstep with the center tab (Contents-rides-with-Manual pattern;
-        bidirectional per BUG-007 — the tab has its own ✕)."""
-        self.left_tabs.setTabVisible(self.ddl_browser_tab_index, visible)
+    def _on_ddl_explorer_visibility_changed(self, role, visible):
+        """Keep `role`'s left tree tab and its Database-menu toggle in lockstep
+        with its center tab (Contents-rides-with-Manual pattern; bidirectional
+        per BUG-007 — the tab has its own ✕).
+
+        Role-parameterized rather than duplicated (§18.7): the two instances are
+        independent, so this runs once per role and never touches the other's
+        tab.
+        """
+        self.left_tabs.setTabVisible(self._ddl_browser_tab_indexes[role], visible)
         if visible:
             self.tree_dock.setVisible(True)
-            self.left_tabs.setCurrentWidget(self.ddl_browser_panel)
-        self._ddl_explorer_action.setChecked(visible)
+            self.left_tabs.setCurrentWidget(self._ddl_browser_panels[role])
+        action = self._ddl_explorer_actions.get(role)
+        if action is not None:
+            action.setChecked(visible)
 
-    def _on_ddl_navigate_requested(self, line):
-        """Leaf click in the DDL Objects tree → jump the DDL buffer tab to the
-        object's banner line (two tree leaves may share one span, §18.1)."""
-        self.center_stage.setCurrentIndex(self.center_stage.ddl_tab_index)
-        self.center_stage.ddl_editor_panel.navigate_to_line(line)
+    def _refresh_ddl_explorer_affordances(self) -> None:
+        """Make the sandbox Explorer's presence follow whether the open project
+        has a sandbox CONFIGURED (§18.7) -- called on every project transition.
+
+        VISIBILITY, never enabled-state: with no sandbox the entry is ABSENT
+        (carve-out 2's genuinely-inapplicable case, which §18.7 names as the one
+        place FQ-023's narrowing does not apply).
+
+        The gate is `bool(sandbox.host)` via `_configured_sandbox_params`, NOT
+        `SandboxController.has_session` -- see `_ddl_explorer_params`. It
+        deliberately lives here rather than in `_refresh_sandbox_affordances`,
+        which is the session-keyed refresh: putting it there is the instinctive
+        move and would re-introduce exactly the coupling §18.7 forbids.
+
+        If the sandbox went away while its tree was open (a project closed, or a
+        different project opened), the tab is hidden with the entry rather than
+        left showing a previous project's sandbox -- the same reason
+        `_refresh_sandbox_console_affordances` closes an orphaned console.
+        """
+        available = self._configured_sandbox_params() is not None
+        action = self._ddl_explorer_actions.get(DDL_EXPLORER_SANDBOX)
+        if action is not None:
+            action.setVisible(available)
+        if not available and self.center_stage.isTabVisible(
+            self.center_stage.ddl_explorer_tab_index(DDL_EXPLORER_SANDBOX)
+        ):
+            self.center_stage.hide_ddl_explorer(DDL_EXPLORER_SANDBOX)
+
+    def _on_ddl_navigate_requested(self, line, role=DDL_EXPLORER_TARGET):
+        """Leaf click in a DDL Objects tree → jump that role's DDL buffer tab to
+        the object's banner line (two tree leaves may share one span, §18.1).
+
+        Each tree navigates its OWN buffer: the sandbox tree's line numbers are
+        offsets into the sandbox's synthesized text, which the target buffer's
+        object set does not share (§18.7's divergence rule).
+        """
+        stage = self.center_stage
+        stage.setCurrentIndex(stage.ddl_explorer_tab_index(role))
+        stage.ddl_explorer_panel(role).navigate_to_line(line)
 
     def _on_ddl_table_selected(self, table_info) -> None:
         """Click on a Tables-branch table node (spec §18.1, 2026-08-05) --
@@ -3502,6 +3707,11 @@ class MainWindow(QMainWindow):
                 configured=bool(settings.sandbox.host),
             )
         self._refresh_sandbox_affordances()
+        # §18.7's second Explorer follows the PROJECT (does this project have a
+        # sandbox configured?), not the session — so it is refreshed here, at the
+        # project-transition entry point, and deliberately not inside
+        # `_refresh_sandbox_affordances`, which answers the session question.
+        self._refresh_ddl_explorer_affordances()
 
     def _open_sandbox_session(self) -> None:
         """Database ▸ Open Sandbox Session -- probe, then open the one session
@@ -3573,6 +3783,12 @@ class MainWindow(QMainWindow):
             return
         self._ddl_project_settings = settings
         self._refresh_project_status_window()
+        # §18.7's "or a sandbox added later via Sandbox Setup…" case: a project
+        # that had no sandbox now has one, and this is the one transition that
+        # does NOT go through `_bind_sandbox_controller_to_project` (see above),
+        # so the second Explorer's entry would otherwise stay absent until the
+        # next project transition.
+        self._refresh_ddl_explorer_affordances()
 
     def _refresh_project_status_window(self) -> None:
         """Re-render the §18.8 status window, if one is open, from the settings

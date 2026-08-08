@@ -61,8 +61,27 @@ class EditorPanel(QWidget):
     #: branch of MainWindow's handler for this signal (§18.1/§18.2).
     edit_requested = Signal(object, str)
 
-    def __init__(self, parent: QWidget | None = None) -> None:
+    def __init__(
+        self, parent: QWidget | None = None, *, browse_only: bool = False
+    ) -> None:
+        """`browse_only` suppresses the right-click ▸ `Edit DDL` entry (§18.7,
+        FQ-022).
+
+        The SANDBOX Explorer instance passes it. `Edit DDL` from the sandbox's
+        buffer would reach `MainWindow._on_ddl_edit_requested`, which in project
+        mode takes the CHECKOUT branch and would seed `ddl/*.sql` from the
+        *sandbox's* definition -- poisoning §18.2's drift baseline, whose
+        reference point is the deployed target definition. Rather than teach the
+        panel about checkouts, the sandbox instance simply does not offer the
+        gesture (§18.7's "browse-only for v1", pending an owner ruling on whether
+        it should instead always take the projectless/live-source branch).
+
+        Off by default, so the target instance -- and every existing caller --
+        keeps today's behaviour untouched.
+        """
         super().__init__(parent)
+        #: Whether this instance offers `Edit DDL` at all (see above).
+        self._browse_only = browse_only
         self.editor = CodeEditor(language="sql")
         # Read-only by design (§18.1): phase-2 inline write-back, if ever
         # built, is a separate, diff-gated feature — this tab never edits.
@@ -146,7 +165,9 @@ class EditorPanel(QWidget):
         line = cursor.blockNumber() + 1
         span = self._span_at_line(line)
         menu = self.editor.createStandardContextMenu()
-        if span is not None and self._schema is not None:
+        # A browse-only instance still gets the standard (copy/select-all) menu
+        # -- reading the buffer is the whole point of it -- just no Edit DDL.
+        if not self._browse_only and span is not None and self._schema is not None:
             resolved = resolve_edit_target(self._schema, span)
             if resolved is not None:
                 ref, source = resolved
