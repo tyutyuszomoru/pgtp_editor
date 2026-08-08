@@ -67,16 +67,24 @@ def test_save_logs_seam(qtbot, tmp_path, caplog):
     assert any("file: save" in r.message for r in caplog.records)
 
 
-def test_revert_logs_seam(qtbot, tmp_path, caplog):
+def test_discard_changes_logs_seam(qtbot, tmp_path, caplog):
+    """FQ-020: `file: revert` became `file: discard-changes` with the command it
+    names. A cancelled discard logs its own outcome, so both are asserted."""
     window = MainWindow()
     qtbot.addWidget(window)
     xml = '<?xml version="1.0" encoding="UTF-8"?><Project/>'
     project = tmp_path / "p.pgtp"
     project.write_text(xml, encoding="utf-8")
-    (tmp_path / "p.pgtp.bak").write_text(xml, encoding="utf-8")
-    # str, not Path: production hands open_project_file the QFileDialog string,
-    # and _revert_project builds the .bak path with str concatenation.
+    # str, not Path: production hands open_project_file the QFileDialog string.
     window.open_project_file(str(project))
+    window.center_stage.xml_editor.setPlainText(xml + "<!-- edited -->")
     with caplog.at_level(logging.INFO, logger="pgtp_editor.ui.pgtp_document_controller"):
-        window._doc_ui.revert()
-    assert any("file: revert" in r.message for r in caplog.records)
+        window._doc_ui.discard_changes(confirm=False)
+        window.center_stage.xml_editor.setPlainText(xml + "<!-- edited again -->")
+        window._doc_ui.discard_changes(confirm=True)
+    messages = [r.message for r in caplog.records]
+    assert any("file: discard-changes outcome=cancelled" in m for m in messages)
+    assert any(
+        m.startswith("file: discard-changes ") and "outcome" not in m
+        for m in messages
+    )

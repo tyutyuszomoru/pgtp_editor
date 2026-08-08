@@ -21,12 +21,14 @@ from pgtp_editor.ui.toolbar_registry import DEFAULT_TOOLBAR_IDS
 from tests.ui._menu_helpers import find_action, find_top_menu
 
 
-# SIX since FQ-016: `Find...` is gone (the Edit menu dissolved and Find is a
-# permanently visible bar, knowingly unpinnable), and Undo/Redo/Validate Project
-# now live on the Editor menu bar — which is why the walk must cover both bars.
+# FIVE, down from the original seven: `Find...` retired with FQ-016 (the Edit menu
+# dissolved and Find became a permanently visible bar, knowingly unpinnable) and
+# `Save` with FQ-020 (`File ▸ Save` is deleted and its four per-tab successors on
+# the `Deployment` menu are tab-gated, so none of them may be a DEFAULT button --
+# the app ships with no save button at all). Undo/Redo/Validate Project live on the
+# Editor menu bar, which is why the walk must cover both bars.
 DEFAULT_LABELS = [
     "Open...",
-    "Save",
     "Undo",
     "Redo",
     "Validate Project",
@@ -68,9 +70,9 @@ def test_no_default_toolbar_button_ships_empty_or_iconless(qtbot, tmp_path):
 def test_apply_toolbar_ids_reorders_and_subsets(qtbot, tmp_path):
     window = MainWindow(settings=_ini_settings(tmp_path))
     qtbot.addWidget(window)
-    window._toolbar_ui.apply_ids(["file.save", "file.open"])
-    assert _toolbar_labels(window) == ["Save", "Open..."]
-    assert window._toolbar_ui.command_ids == ["file.save", "file.open"]
+    window._toolbar_ui.apply_ids(["deployment.save-pgtp", "file.open"])
+    assert _toolbar_labels(window) == ["Save pgtp", "Open..."]
+    assert window._toolbar_ui.command_ids == ["deployment.save-pgtp", "file.open"]
 
 
 def test_apply_toolbar_ids_drops_unknowns(qtbot, tmp_path):
@@ -108,14 +110,14 @@ def test_apply_and_save_persists_and_round_trips(qtbot, tmp_path):
     settings = _ini_settings(tmp_path)
     window = MainWindow(settings=settings)
     qtbot.addWidget(window)
-    window._toolbar_ui.apply_and_save(["history.undo", "file.save"])
-    assert _toolbar_labels(window) == ["Undo", "Save"]
+    window._toolbar_ui.apply_and_save(["history.undo", "deployment.save-pgtp"])
+    assert _toolbar_labels(window) == ["Undo", "Save pgtp"]
 
     # A new window reading the same store restores that toolbar.
     settings2 = _ini_settings(tmp_path)
     window2 = MainWindow(settings=settings2)
     qtbot.addWidget(window2)
-    assert _toolbar_labels(window2) == ["Undo", "Save"]
+    assert _toolbar_labels(window2) == ["Undo", "Save pgtp"]
 
 
 def test_stored_comma_string_is_restored(qtbot, tmp_path):
@@ -129,11 +131,11 @@ def test_stored_comma_string_is_restored(qtbot, tmp_path):
 
 def test_unknown_stored_ids_are_dropped(qtbot, tmp_path):
     settings = _ini_settings(tmp_path)
-    settings.setValue("toolbarIds", ["file.save", "bogus", "file.open"])
+    settings.setValue("toolbarIds", ["deployment.save-pgtp", "bogus", "file.open"])
     settings.sync()
     window = MainWindow(settings=settings)
     qtbot.addWidget(window)
-    assert _toolbar_labels(window) == ["Save", "Open..."]
+    assert _toolbar_labels(window) == ["Save pgtp", "Open..."]
 
 
 def test_empty_stored_ids_fall_back_to_default(qtbot, tmp_path):
@@ -160,7 +162,7 @@ def test_available_commands_come_from_the_menus_not_a_fixed_seven(qtbot, tmp_pat
 
     assert len(pairs) > 7                       # the reported bug: only 7 commands
     # Commands that were previously impossible to put on the toolbar:
-    for command_id in ("file.save-as", "history.history", "bookmarks.next-bookmark"):
+    for command_id in ("deployment.save-as-new-pgtp", "history.history", "bookmarks.next-bookmark"):
         assert command_id in ids
     # ...alongside the legacy seven, which must all still be offered.
     for command_id in DEFAULT_TOOLBAR_IDS:
@@ -211,7 +213,7 @@ def test_menu_command_labels_show_their_menu_path(qtbot, tmp_path):
     window = MainWindow(settings=_ini_settings(tmp_path))
     qtbot.addWidget(window)
     labels = dict(window._toolbar_ui.all_menu_commands())
-    assert labels["file.save-as"] == "File › Save As"
+    assert labels["deployment.save-as-new-pgtp"] == "Deployment › Save as new pgtp"
 
 
 def test_menu_command_ids_are_unique(qtbot, tmp_path):
@@ -241,10 +243,10 @@ def test_separators_are_not_offered(qtbot, tmp_path):
 def test_a_previously_unavailable_command_can_go_on_the_toolbar(qtbot, tmp_path):
     window = MainWindow(settings=_ini_settings(tmp_path))
     qtbot.addWidget(window)
-    window._toolbar_ui.apply_and_save(["file.save-as"])
-    assert _toolbar_labels(window) == ["Save As..."]
+    window._toolbar_ui.apply_and_save(["deployment.save-as-new-pgtp"])
+    assert _toolbar_labels(window) == ["Save as new pgtp"]
     assert window._toolbar_ui.toolbar.actions()[0] is find_action(
-        find_top_menu(window, "File"), "Save As..."
+        find_top_menu(window, "Deployment"), "Save as new pgtp"
     )
 
 
@@ -264,14 +266,20 @@ def test_legacy_stored_ids_still_restore(qtbot, tmp_path):
     """Pre-BUG-027 installs stored bare ids. Without alias mapping every one of
     those users would launch to a toolbar silently reset to the default."""
     settings = _ini_settings(tmp_path)
-    settings.setValue("toolbarIds", ["save", "find", "undo"])
+    settings.setValue("toolbarIds", ["save", "find", "undo", "generate"])
     settings.sync()
     window = MainWindow(settings=settings)
     qtbot.addWidget(window)
-    # The RETIRED `find` alias (FQ-016) resolves to nothing and is pruned, which
-    # is the deliberate outcome: Find has no menu home to alias onto any more.
-    assert window._toolbar_ui.command_ids == ["file.save", "history.undo"]
-    assert _toolbar_labels(window) == ["Save", "Undo"]
+    # The RETIRED aliases resolve to nothing and are pruned, which is the
+    # deliberate outcome in both cases: `find` has no menu home to alias onto
+    # (FQ-016), and `save` no longer has one command to point at (FQ-020 -- the
+    # four successors are per-tab). The ids AROUND them survive, so this user
+    # loses two buttons rather than having the toolbar reset to the default.
+    assert window._toolbar_ui.command_ids == [
+        "history.undo",
+        "generation.generate-php",
+    ]
+    assert _toolbar_labels(window) == ["Undo", "Generate PHP..."]
 
 
 def test_legacy_comma_string_still_restores(qtbot, tmp_path):
@@ -346,10 +354,10 @@ def test_an_icon_less_command_is_still_addable(qtbot, tmp_path):
     legacy seven have vendored SVGs."""
     window = MainWindow(settings=_ini_settings(tmp_path))
     qtbot.addWidget(window)
-    window._toolbar_ui.apply_ids(["file.save-as"])
+    window._toolbar_ui.apply_ids(["deployment.save-as-new-pgtp"])
     action = window._toolbar_ui.toolbar.actions()[0]
     assert action.icon().isNull()
-    assert action.text() == "Save As..."
+    assert action.text() == "Save as new pgtp"
 
 
 def test_toggling_light_theme_keeps_icons_non_null(qtbot, tmp_path):
@@ -372,7 +380,7 @@ def test_repopulating_the_toolbar_does_not_destroy_the_menu_action(qtbot, tmp_pa
     validate = find_action(find_top_menu(window, "Parsing"), "Validate Project")
 
     window._toolbar_ui.apply_ids(["parsing.validate-project"])
-    window._toolbar_ui.apply_ids(["file.save"])          # drops validate again
+    window._toolbar_ui.apply_ids(["deployment.save-pgtp"])          # drops validate again
     window._toolbar_ui.apply_ids(["parsing.validate-project"])
 
     # Still the same, still-alive object, still in the Parsing menu.
@@ -388,12 +396,12 @@ def test_repopulating_the_toolbar_does_not_destroy_the_menu_action(qtbot, tmp_pa
 def test_removed_toolbar_action_survives_and_stays_in_its_menu(qtbot, tmp_path):
     window = MainWindow(settings=_ini_settings(tmp_path))
     qtbot.addWidget(window)
-    save_as = find_action(find_top_menu(window, "File"), "Save As...")
-    window._toolbar_ui.apply_ids(["file.save-as"])
-    window._toolbar_ui.apply_ids(["file.save"])
+    save_as = find_action(find_top_menu(window, "Deployment"), "Save as new pgtp")
+    window._toolbar_ui.apply_ids(["deployment.save-as-new-pgtp"])
+    window._toolbar_ui.apply_ids(["deployment.save-pgtp"])
     assert save_as not in window._toolbar_ui.toolbar.actions()
-    assert save_as.text() == "Save As..."          # C++ object still alive
-    assert find_action(find_top_menu(window, "File"), "Save As...") is save_as
+    assert save_as.text() == "Save as new pgtp"          # C++ object still alive
+    assert find_action(find_top_menu(window, "Deployment"), "Save as new pgtp") is save_as
 
 
 def test_menu_walk_keepalive_survives_garbage_collection(qtbot, tmp_path):
@@ -507,11 +515,16 @@ def test_refresh_toolbar_icons_tolerates_icon_less_commands(qtbot, tmp_path):
     must be a no-op for those, not a crash or a blanked icon."""
     window = MainWindow(settings=_ini_settings(tmp_path))
     qtbot.addWidget(window)
-    window._toolbar_ui.apply_ids(["file.save-as", "file.save"])
+    # Both `Deployment` entries are icon-less (FQ-020 retired the only save icon
+    # DEFAULT), so `file.open` supplies the one command that does have an icon.
+    window._toolbar_ui.apply_ids(
+        ["deployment.save-as-new-pgtp", "deployment.save-pgtp", "file.open"]
+    )
     window._toolbar_ui.refresh_icons()
-    save_as, save = window._toolbar_ui.toolbar.actions()
+    save_as, save, open_ = window._toolbar_ui.toolbar.actions()
     assert save_as.icon().isNull()
-    assert not save.icon().isNull()
+    assert save.icon().isNull()
+    assert not open_.icon().isNull()
 
 
 def test_icon_less_command_keeps_its_menu_icon_visibility(qtbot, tmp_path):
@@ -519,8 +532,8 @@ def test_icon_less_command_keeps_its_menu_icon_visibility(qtbot, tmp_path):
     an icon-less command is left completely untouched."""
     window = MainWindow(settings=_ini_settings(tmp_path))
     qtbot.addWidget(window)
-    save_as = find_action(find_top_menu(window, "File"), "Save As...")
-    window._toolbar_ui.apply_ids(["file.save-as"])
+    save_as = find_action(find_top_menu(window, "Deployment"), "Save as new pgtp")
+    window._toolbar_ui.apply_ids(["deployment.save-as-new-pgtp"])
     assert save_as.isIconVisibleInMenu() is True
 
 
@@ -528,10 +541,10 @@ def test_saved_ids_are_menu_path_ids_in_settings(qtbot, tmp_path):
     settings = _ini_settings(tmp_path)
     window = MainWindow(settings=settings)
     qtbot.addWidget(window)
-    window._toolbar_ui.apply_and_save(["file.save-as", "bookmarks.next-bookmark"])
+    window._toolbar_ui.apply_and_save(["deployment.save-as-new-pgtp", "bookmarks.next-bookmark"])
     stored = settings.value("toolbarIds")
     stored = stored.split(",") if isinstance(stored, str) else list(stored)
-    assert stored == ["file.save-as", "bookmarks.next-bookmark"]
+    assert stored == ["deployment.save-as-new-pgtp", "bookmarks.next-bookmark"]
 
 
 # --- FQ-004: per-command icon assignments ----------------------------------
@@ -544,8 +557,10 @@ def test_assigned_icon_overrides_the_legacy_default(qtbot, tmp_path):
     )
     qtbot.addWidget(window)
 
-    assert icon_id_for("file.save", {}) == "save"
-    assert icon_id_for("file.save", {"file.save": "document-print"}) == "document-print"
+    # FQ-020 retired `save` from the alias table, so this command has NO default
+    # icon -- an assigned one is the only icon it can have.
+    assert icon_id_for("deployment.save-pgtp", {}) is None
+    assert icon_id_for("deployment.save-pgtp", {"deployment.save-pgtp": "document-print"}) == "document-print"
 
 
 def test_icon_assignments_round_trip_through_settings(qtbot, tmp_path):
@@ -556,7 +571,7 @@ def test_icon_assignments_round_trip_through_settings(qtbot, tmp_path):
     window = MainWindow(settings=QSettings(path, QSettings.Format.IniFormat))
     qtbot.addWidget(window)
     window._toolbar_ui.apply_and_save(
-        window._toolbar_ui.command_ids, {"file.save": "document-print"}
+        window._toolbar_ui.command_ids, {"deployment.save-pgtp": "document-print"}
     )
     window._settings.sync()
 
@@ -564,7 +579,7 @@ def test_icon_assignments_round_trip_through_settings(qtbot, tmp_path):
     qtbot.addWidget(reopened)
 
     assert reopened._settings.value(ICON_ASSIGNMENTS_SETTINGS_KEY) is not None
-    assert reopened._toolbar_ui.icon_ids.get("file.save") == "document-print"
+    assert reopened._toolbar_ui.icon_ids.get("deployment.save-pgtp") == "document-print"
 
 
 def test_an_unknown_assignment_is_dropped_on_load(qtbot, tmp_path):

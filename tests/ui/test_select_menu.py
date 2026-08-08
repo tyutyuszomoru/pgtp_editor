@@ -108,7 +108,9 @@ def _draft_tab(window):
 def test_select_menu_sits_on_the_editor_bar_between_history_and_parsing(qtbot):
     window = _window(qtbot)
     titles = editor_menu_titles(window)
-    assert titles == ["History", "Select", "Parsing", "Bookmarks"]
+    # `Deployment` joined the bar as its fifth menu with FQ-020; `Select`'s
+    # position between History and Parsing is what this test is about.
+    assert titles == ["History", "Select", "Parsing", "Bookmarks", "Deployment"]
     # It is on the EDITOR bar, never the window bar.
     assert "Select" not in [
         menu.title() for menu in window.menuBar().findChildren(type(window._select_menu))

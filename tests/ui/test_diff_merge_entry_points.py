@@ -1,5 +1,7 @@
 """Tests for the three Diff/Merge comparison entry points wired into
-MainWindow and ProjectTreePanel: "Compare / Merge Two Files...",
+MainWindow and ProjectTreePanel: "Compare/Merge pgtp" (FQ-020 -- the relabelled,
+re-homed `Tools ▸ Compare / Merge Two Files...`, now on the Editor bar's
+`Deployment` menu and visible only while Raw XML is active),
 "Compare This Page With...", and "Compare This Detail With...".
 """
 from unittest.mock import patch
@@ -162,9 +164,10 @@ def test_next_and_prev_difference_menu_actions_navigate_the_panel(qtbot, tmp_pat
 
 # NOTE (Phase D): the tree Page/Detail context menus no longer offer
 # "Compare This Page/Detail With..." (those menus were redesigned to
-# jump/select/see-in-caption). The Compare feature still lives in the
-# Tools menu ("Compare / Merge Two Files...") and in the underlying
-# MainWindow handlers, which these tests now drive directly.
+# jump/select/see-in-caption). The Compare feature still lives in a menu --
+# `Deployment ▸ Compare/Merge pgtp` since FQ-020, off Tools -- and in the
+# underlying MainWindow handlers, which these tests drive directly. The menu
+# entry's own wiring is covered by `tests/ui/test_deployment_menu.py`.
 
 
 def test_compare_this_page_with_real_handler(qtbot, tmp_path):

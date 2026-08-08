@@ -141,8 +141,9 @@ class PhpFileTab(QWidget):
         self._path: Path | None = Path(path) if path is not None else None
         # The save seam, in full (`DdlObjectEditorPanel.resolve_save_path`'s
         # idiom): default is the path the file was opened from, so an ordinary
-        # Ctrl+S on an opened file writes straight back to it. A text-only tab
-        # resolves to None until the host injects a Save-As… resolver.
+        # `Deployment ▸ Save PHP File` on an opened file writes straight back to
+        # it. A text-only tab resolves to None until the host injects a
+        # Save-As… resolver.
         self._resolve_save_path: Callable[[], Path | None] = (
             resolve_save_path if resolve_save_path is not None else self._remembered_save_path
         )
@@ -184,12 +185,12 @@ class PhpFileTab(QWidget):
         self.editor.document().modificationChanged.connect(self.dirty_changed)
         self.set_text(text)
 
-        # Per-tab Ctrl+Z / Ctrl+Y / Ctrl+S, claimed before the window-level
-        # QShortcuts can see them (§18.5 carve-out 1's mechanism, same
-        # rationale): while this tab has focus, undo/redo must move THIS
-        # document's stack and Save must write THIS file -- never the project
-        # buffer. Installed on self.editor, not on CodeEditor itself, so the
-        # read-only §18.1 EditorPanel never inherits the behavior.
+        # Per-tab Ctrl+Z / Ctrl+Y, claimed before the window-level QShortcuts
+        # can see them (§18.5 carve-out 1's mechanism, same rationale): while
+        # this tab has focus, undo/redo must move THIS document's stack, never
+        # the project buffer's. Installed on self.editor, not on CodeEditor
+        # itself, so the read-only §18.1 EditorPanel never inherits the
+        # behavior. It no longer claims Ctrl+S -- see `eventFilter`.
         self.editor.installEventFilter(self)
 
     # --- Identity ---------------------------------------------------------
@@ -373,7 +374,17 @@ class PhpFileTab(QWidget):
             )
         self.lint_reported.emit(audit_lines(outcome))
 
-    # --- Per-tab Ctrl+Z / Ctrl+Y / Ctrl+S ---------------------------------
+    # --- Per-tab Ctrl+Z / Ctrl+Y ------------------------------------------
+    #
+    # FQ-020 removed this filter's `Ctrl+S` branch. It was a REAL per-tab save,
+    # independent of the deleted `File ▸ Save`, so it would have survived that
+    # deletion by accident and left the PHP tab as the single place in the app
+    # where Ctrl+S saves. Owner's ruling, verbatim: *"Dies at all, inconsistency
+    # is a bad driver"* — a reflex that is right on one tab and silently wrong on
+    # the next is worse than one that works nowhere. Saving a PHP file is
+    # `Deployment ▸ Save PHP File`. **Do not re-add a `Key_S` branch here.**
+    # The `Ctrl+Z`/`Ctrl+Y` branches STAY: they are §18.5 carve-out 1's
+    # native-undo routing, which has nothing to do with saving.
     def eventFilter(self, obj, event) -> bool:
         if obj is self.editor and event.type() in (
             QEvent.Type.ShortcutOverride,
@@ -386,8 +397,6 @@ class PhpFileTab(QWidget):
                 handler = self.editor.undo
             elif ctrl and key == Qt.Key.Key_Y:
                 handler = self.editor.redo
-            elif ctrl and key == Qt.Key.Key_S:
-                handler = self.save
             if handler is not None:
                 if event.type() == QEvent.Type.ShortcutOverride:
                     # Claim the sequence so Qt never ALSO fires the

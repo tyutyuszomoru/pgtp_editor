@@ -50,9 +50,19 @@ from collections.abc import Iterable, Sequence
 # pointing at the vanished `edit.find`) is what stops a default toolbar button
 # shipping empty and iconless on a fresh install; `edit-find.svg` stays in the
 # Breeze catalog, so a user can still assign that icon to any other command.
+#
+# `save` is retired the SAME way (FQ-020): `File ▸ Save` and `Ctrl+S` are gone
+# and saving is four per-tab entries on the Editor bar's `Deployment` menu, so
+# there is no tab-following save command left for this row to alias onto -- and
+# the four that exist are tab-gated, so pinning one by default would ship a
+# button that blinks out as the user changes tabs. The app therefore ships with
+# NO save button; `document-save.svg` stays in the Breeze catalog and remains
+# **user-assignable to any command** (FQ-004), exactly as `edit-find.svg` did.
+# A user who had pinned Save loses that one button: `resolve_ids` filters the
+# now-unresolvable `save`/`file.save` id out on load (see `resolve_ids`), which
+# is the correct degradation -- no dead button, no error.
 LEGACY_COMMANDS: list[tuple[str, str]] = [
     ("open", "Open"),
-    ("save", "Save"),
     ("undo", "Undo"),
     ("redo", "Redo"),
     ("validate", "Validate"),
@@ -69,17 +79,22 @@ LEGACY_COMMANDS: list[tuple[str, str]] = [
 # both the button and its vendored SVG):
 #   undo/redo:  Edit ▸ Undo/Redo   -> the Editor bar's History ▸ Undo/Redo
 #   validate:   Tools ▸ Validate Project -> the Editor bar's Parsing ▸ Validate Project
+#
+# `save` has NO row any more (FQ-020, same treatment as `find`): `File ▸ Save`
+# is deleted and its successors are per-tab, so there is nothing for it to point
+# at -- see LEGACY_COMMANDS.
 LEGACY_ID_ALIASES: dict[str, str] = {
     "open": "file.open",
-    "save": "file.save",
     "undo": "history.undo",
     "redo": "history.redo",
     "validate": "parsing.validate-project",
     "generate": "generation.generate-php",
 }
 
-# The default toolbar layout: the legacy set, in legacy order (six since FQ-016
-# retired `find` -- see LEGACY_COMMANDS).
+# The default toolbar layout: the legacy set, in legacy order (FIVE since FQ-020
+# retired `save`; six between FQ-016's retirement of `find` and that -- see
+# LEGACY_COMMANDS). It derives from the two tables above, so retiring a row
+# shortens it by itself.
 DEFAULT_TOOLBAR_IDS: list[str] = [
     LEGACY_ID_ALIASES[cid] for cid, _label in LEGACY_COMMANDS
 ]
@@ -100,8 +115,19 @@ DEFAULT_TOOLBAR_IDS: list[str] = [
 # FQ-022 (§18.7) opened it: `Database ▸ DDL Explorer` became
 # `DDL Explorer (Quality)` when it gained a sandbox-scoped sibling, because a
 # bare "DDL Explorer" next to it would be ambiguous -- and the label IS the id.
+#
+# FQ-020 opened it three more times -- every one a MOVE or RENAME of a command
+# that still exists, which is exactly what this table is for (a command that was
+# *deleted*, like `file.save`, gets no row: `resolve_ids` drops it, which is the
+# intended degradation):
+#   Tools ▸ Compare / Merge Two Files… -> Deployment ▸ Compare/Merge pgtp
+#   File ▸ Deploy .pgtp                -> Deployment ▸ Deploy .pgtp
+#   File ▸ Revert                      -> File ▸ Discard Changes (re-specified)
 RENAMED_ID_ALIASES: dict[str, str] = {
     "database.ddl-explorer": "database.ddl-explorer-quality",
+    "tools.compare-merge-two-files": "deployment.compare-merge-pgtp",
+    "file.deploy-pgtp": "deployment.deploy-pgtp",
+    "file.revert": "file.discard-changes",
 }
 
 # Menu-path id -> icon id (the `icons.ACTION_ICON_FILES` key). Only the legacy

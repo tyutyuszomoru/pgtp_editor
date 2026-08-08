@@ -19,6 +19,7 @@ from pgtp_editor.db.ddl_project import ProjectSettings, save_settings
 from pgtp_editor.ui.ddl_object_editor import CHECK_PREFIX, DdlObjectRef
 from pgtp_editor.ui.main_window import MainWindow
 from pgtp_editor.ui import modals
+from tests.ui._menu_helpers import find_action, find_top_menu
 
 
 def _empty_settings(tmp_path):
@@ -872,14 +873,20 @@ def test_the_pickers_save_destination_actually_writes_the_file(
     assert destination.read_text(encoding="utf-8") == _SOURCE
 
 
-def test_apply_to_target_stays_absent_and_the_picker_says_why(
+def test_run_on_quality_in_project_mode_stays_blocked_and_says_why(
     qtbot, tmp_path, monkeypatch
 ):
-    """FQ-009 wired the sandbox leg's discoverability, NOT the target leg: the
-    live-identity seam precondition 1 needs has no trustworthy source until
-    BUG-034/BUG-030 land. The gesture is absent (carve-out 2) -- but the picker
-    now states that, and points at the reviewable deployment-script path,
-    instead of leaving a silent gap."""
+    """FQ-020 wired the quality lane, but the PROJECT leg is still blocked on
+    BUG-034: a project's `ProjectSettings.target` is never seeded from the
+    `.pgtp`, so with a project open and no target profile there is nothing to
+    resolve. The shipped matrix is therefore temporarily *projectless-only* --
+    stated out loud because it inverts the expectation that a project can do
+    more, not less.
+
+    What must NOT happen is silence: the menu entry stays present and REPORTS
+    (carve-out 2 narrowed to present-and-reporting), and the picker names the
+    reason.
+    """
     window, _controller, _session = _project_window(qtbot, tmp_path, monkeypatch)
     window._open_sandbox_session()
     window._on_ddl_edit_requested(_REF, _SOURCE)
@@ -892,5 +899,17 @@ def test_apply_to_target_stays_absent_and_the_picker_says_why(
     assert "Apply to Target…" not in labels
 
     prompt = panel.deploy_prompt_text()
-    assert "Apply to Target" in prompt
-    assert "Compare Schemas" in prompt
+    assert "Run on quality" in prompt
+    assert "Connection Setup" in prompt
+
+    # The menu entry is still THERE -- and clicking it states the reason rather
+    # than no-opping.
+    window.center_stage.setCurrentWidget(panel)
+    action = find_action(find_top_menu(window, "Deployment"), "Run on quality")
+    assert action is not None and action.isVisible()
+    action.trigger()
+    lines = [
+        window.audit_panel.item(i).text() for i in range(window.audit_panel.count())
+    ]
+    assert any("Run on quality is unavailable" in line for line in lines)
+    assert any(line.startswith("[Check] ") for line in lines)

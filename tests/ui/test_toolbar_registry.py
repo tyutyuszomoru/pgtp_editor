@@ -22,33 +22,36 @@ from pgtp_editor.ui.toolbar_registry import (
 
 
 def test_legacy_commands_content_and_order():
-    # SIX, not the original seven: `find` is retired (FQ-016) -- Find lost its
-    # menu home when the Edit menu dissolved, so no menu-path id can alias onto
-    # it and it is knowingly unpinnable.
+    # FIVE, down from the original seven: `find` retired with FQ-016 (Find lost
+    # its menu home when the Edit menu dissolved) and `save` with FQ-020
+    # (`File ▸ Save` and `Ctrl+S` are deleted; the four surviving save entries are
+    # tab-gated `Deployment` members, so none may be a *default* button).
     assert LEGACY_COMMANDS == [
         ("open", "Open"),
-        ("save", "Save"),
         ("undo", "Undo"),
         ("redo", "Redo"),
         ("validate", "Validate"),
         ("generate", "Generate"),
     ]
     assert "find" not in dict(LEGACY_COMMANDS)
+    assert "save" not in dict(LEGACY_COMMANDS)
 
 
 def test_default_toolbar_ids_are_menu_path_ids_in_legacy_order():
     # `history.*` and `parsing.*` since FQ-016 moved Undo/Redo onto the Editor
     # bar's History menu and Validate Project onto its Parsing menu. An alias
     # left pointing at the old path would ship a default button empty.
+    #
+    # FIVE buttons since FQ-020, and the app ships with NO save button at all.
     assert DEFAULT_TOOLBAR_IDS == [
         "file.open",
-        "file.save",
         "history.undo",
         "history.redo",
         "parsing.validate-project",
         "generation.generate-php",
     ]
     assert "edit.find" not in DEFAULT_TOOLBAR_IDS
+    assert "file.save" not in DEFAULT_TOOLBAR_IDS
 
 
 def test_every_legacy_id_has_an_alias():
@@ -94,19 +97,33 @@ def test_menu_path_label_is_human_readable():
 
 
 # -- id filtering ----------------------------------------------------------
-_KNOWN = ["file.open", "file.save", "history.undo"]
+#: A stand-in "every live command" set. `file.save` is deliberately NOT in it
+#: any more (FQ-020 deleted that command), which is what makes the
+#: pinned-Save-degradation test below a real assertion rather than a tautology.
+_KNOWN = [
+    "file.open",
+    "deployment.save-pgtp",
+    "history.undo",
+    "history.redo",
+]
 
 
 def test_valid_ids_preserves_order_drops_unknowns():
     assert valid_ids(
-        ["file.save", "file.open", "bogus", "history.undo"], _KNOWN
-    ) == ["file.save", "file.open", "history.undo"]
+        ["deployment.save-pgtp", "file.open", "bogus", "history.undo"], _KNOWN
+    ) == ["deployment.save-pgtp", "file.open", "history.undo"]
 
 
 def test_valid_ids_drops_duplicates_keeping_first():
     assert valid_ids(
-        ["file.save", "file.save", "file.open", "file.open"], _KNOWN
-    ) == ["file.save", "file.open"]
+        [
+            "deployment.save-pgtp",
+            "deployment.save-pgtp",
+            "file.open",
+            "file.open",
+        ],
+        _KNOWN,
+    ) == ["deployment.save-pgtp", "file.open"]
 
 
 def test_valid_ids_empty_and_all_unknown():
@@ -117,12 +134,34 @@ def test_valid_ids_empty_and_all_unknown():
 
 def test_resolve_ids_maps_legacy_ids_so_saved_toolbars_survive():
     """The back-compat guarantee: a toolbar saved before BUG-027 stored
-    `save`/`find`, which are unknown under the new scheme -- without aliasing
+    `undo`/`redo`, which are unknown under the new scheme -- without aliasing
     every existing user's toolbar would silently empty on first launch."""
-    assert resolve_ids(["save", "undo"], _KNOWN) == ["file.save", "history.undo"]
+    assert resolve_ids(["undo", "redo"], _KNOWN) == ["history.undo", "history.redo"]
     # ...and the RETIRED `find` alias resolves to nothing rather than to a
     # dangling id (FQ-016): a pre-FQ-016 saved toolbar simply loses that button.
     assert resolve_ids(["find"], _KNOWN + ["edit.find"]) == []
+
+
+def test_a_pinned_save_button_is_silently_dropped_not_left_dead():
+    """FQ-020's stated degradation for a user who had pinned Save, verified
+    rather than assumed: with `File ▸ Save` deleted, both spellings of that id
+    resolve to NOTHING -- the button simply disappears on load. No dead button,
+    no empty-and-iconless button, no error. The neighbours around it survive, so
+    the drop is one button rather than a reset to the default toolbar."""
+    assert resolve_ids(["save"], _KNOWN) == []
+    # The post-BUG-027 menu-path spelling of the same command, which is what a
+    # more recently saved toolbar holds.
+    assert resolve_ids(["file.save"], _KNOWN) == []
+    # The neighbours around the dropped id survive, so the user loses one button
+    # rather than having their toolbar reset.
+    assert resolve_ids(["file.open", "save", "undo"], _KNOWN) == [
+        "file.open",
+        "history.undo",
+    ]
+    # `Save As…` went the same way, and deliberately gets no alias onto
+    # `Deployment ▸ Save as new pgtp` either -- FQ-020 pins the degradation as a
+    # silent drop, not a re-point.
+    assert resolve_ids(["file.save-as"], _KNOWN) == []
 
 
 def test_renamed_ids_are_never_inverted_into_the_icon_table():
@@ -156,7 +195,7 @@ def test_resolve_ids_passes_through_new_ids_and_still_drops_unknowns():
 
 
 def test_resolve_ids_deduplicates_a_legacy_and_new_id_for_the_same_command():
-    assert resolve_ids(["save", "file.save"], _KNOWN) == ["file.save"]
+    assert resolve_ids(["undo", "history.undo"], _KNOWN) == ["history.undo"]
 
 
 # -- FQ-004: per-command icon assignments (still pure/Qt-free) ---------------

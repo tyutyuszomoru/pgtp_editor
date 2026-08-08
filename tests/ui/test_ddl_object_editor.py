@@ -1236,7 +1236,12 @@ def test_unavailable_destinations_name_the_sandbox_and_target_with_reasons(qtbot
     missing = dict(panel.unavailable_destinations())
     assert set(missing) == {DEST_SANDBOX, DEST_TARGET}
     assert "Open Sandbox Session" in missing[DEST_SANDBOX]
-    assert "precondition 1" in missing[DEST_TARGET]
+    assert "Precondition 1" in missing[DEST_TARGET]
+    # FQ-020 wired the quality lane, so the reason is now a CONNECTION fact and
+    # names both places a target can come from -- the old "not wired in this
+    # build" wording would be a lie about a gesture that works projectless.
+    assert "Connection Setup" in missing[DEST_TARGET]
+    assert "not wired in this build" not in missing[DEST_TARGET]
     # Save is never listed -- it needs no seam.
     assert DEST_SAVE not in missing
 
@@ -1254,8 +1259,10 @@ def test_deploy_prompt_text_states_why_a_destination_is_missing(qtbot):
     text = panel.deploy_prompt_text()
     assert _PLAIN.qualified in text
     assert "Not available right now:" in text
-    assert "Apply to Sandbox" in text and "Apply to Target" in text
-    assert "Compare Schemas" in text
+    # FQ-020's labels: the picker and the `Deployment` menu must call the same
+    # gesture the same thing, so both read `DESTINATION_LABELS`.
+    assert "Run on sandbox" in text and "Run on quality" in text
+    assert "Connection Setup" in text
 
 
 def test_deploy_prompt_text_is_just_the_question_when_all_seams_are_wired(qtbot):

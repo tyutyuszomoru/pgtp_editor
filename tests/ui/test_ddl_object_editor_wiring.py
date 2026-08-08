@@ -1,6 +1,7 @@
 # tests/ui/test_ddl_object_editor_wiring.py
 """MainWindow wiring for the editable DDL object tab (spec §18.5): opening
-via BrowserPanel's Edit… context menu, Ctrl+S/Ctrl+F/bookmark dispatch to the
+via BrowserPanel's Edit… context menu, `Deployment ▸ Save in Project` (FQ-020 --
+was Ctrl+S) / Ctrl+F / bookmark dispatch to the
 active tab, the Save-As-on-first-save flow, the close-confirmation prompt
 (including "cancelling Save As from Close aborts the close"), the `[SQL]`
 Audit reporting for Format Selection refusals, the mandatory Ctrl+Z
@@ -74,9 +75,13 @@ def test_edit_requested_again_focuses_the_existing_tab(qtbot, tmp_path):
     assert window.center_stage.currentWidget() is first
 
 
-def test_ctrl_s_on_the_ddl_object_tab_routes_to_save_as_then_remembers_path(
+def test_save_in_project_on_the_ddl_object_tab_runs_save_as_then_remembers_path(
     qtbot, tmp_path, monkeypatch
 ):
+    """FQ-020: was `test_ctrl_s_on_the_ddl_object_tab_...`. §18.5's Save-As flow
+    is unchanged -- dialog on the first save, silent writes to the remembered path
+    after -- only its trigger moved from `Ctrl+S` to `Deployment ▸ Save in
+    Project`."""
     window = _window(qtbot, tmp_path)
     window._on_ddl_edit_requested(_REF, "CREATE FUNCTION pr.recalc() ...")
     panel = window.center_stage.ddl_object_tab(_REF.key)
@@ -87,7 +92,14 @@ def test_ctrl_s_on_the_ddl_object_tab_routes_to_save_as_then_remembers_path(
         staticmethod(lambda *a, **k: (str(dest), "")),
     )
 
-    window._save_active_tab()
+    # Driven through the real menu entry, so the wiring is asserted end to end
+    # rather than the handler being called directly.
+    from tests.ui._menu_helpers import find_action, find_top_menu
+
+    action = find_action(find_top_menu(window, "Deployment"), "Save in Project")
+    assert action is not None and action.isVisible()
+    assert action.shortcut().isEmpty()
+    action.trigger()
 
     assert dest.read_text(encoding="utf-8") == panel.text()
     assert panel.is_dirty() is False
@@ -99,11 +111,14 @@ def test_ctrl_s_on_the_ddl_object_tab_routes_to_save_as_then_remembers_path(
         staticmethod(lambda *a, **k: (_ for _ in ()).throw(AssertionError("dialog reopened"))),
     )
     panel.editor.insertPlainText("more\n")
-    window._save_active_tab()
+    window._save_active_ddl_object()
     assert dest.read_text(encoding="utf-8") == panel.text()
 
 
-def test_ctrl_s_save_as_cancelled_leaves_tab_dirty_and_writes_nothing(qtbot, tmp_path, monkeypatch):
+def test_save_in_project_save_as_cancelled_leaves_tab_dirty_and_writes_nothing(
+    qtbot, tmp_path, monkeypatch
+):
+    """The cancel semantics §18.5 calls a data-loss guard, unchanged by FQ-020."""
     window = _window(qtbot, tmp_path)
     window._on_ddl_edit_requested(_REF, "text")
     panel = window.center_stage.ddl_object_tab(_REF.key)
@@ -113,7 +128,7 @@ def test_ctrl_s_save_as_cancelled_leaves_tab_dirty_and_writes_nothing(qtbot, tmp
         staticmethod(lambda *a, **k: ("", "")),  # Cancel
     )
 
-    window._save_active_tab()
+    window._save_active_ddl_object()
 
     assert panel.is_dirty() is True
     assert panel.save_path is None

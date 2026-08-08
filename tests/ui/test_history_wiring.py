@@ -312,29 +312,26 @@ def test_parse_failure_seeds_single_snapshot(qtbot, tmp_path):
     assert window._history._texts()[0] == _text(window)
 
 
-# -- M2: revert seeds a snapshot --------------------------------------------
+# -- M2: Discard Changes seeds a snapshot (FQ-020: was Revert) ---------------
 
 
-def test_revert_seeds_snapshot(qtbot, tmp_path):
+def test_discard_changes_seeds_snapshot(qtbot, tmp_path):
     window = _window(qtbot, tmp_path)
     path = _make_project(tmp_path)
     window.open_project_file(str(path))
-    # Create a .bak by saving over the file (pre-save content becomes .bak).
-    window.center_stage.xml_editor.setPlainText(_MINIMAL_PGTP)
-    window._doc_ui.save_project()
-    assert (tmp_path / "demo.pgtp.bak").exists()
     window.center_stage.xml_editor.setPlainText("something else entirely")
     window._capture_snapshot_now()
     n_before = len(window._history._texts())
 
-    window._doc_ui.revert()
+    window._doc_ui.discard_changes(confirm=True)
 
-    # A revert pushes exactly one snapshot whose text is the shown (reverted)
-    # buffer, and it becomes the current head.
+    # A discard pushes exactly one snapshot whose text is the shown (reloaded)
+    # buffer, and it becomes the current head -- the same contract `revert` had,
+    # only the source is the file on disk rather than a `.bak`.
     assert len(window._history._texts()) == n_before + 1
     assert window._history.current_index == len(window._history._texts()) - 1
     assert window._history._texts()[-1] == _text(window)
-    assert "Reverted" in window._history.entries()[-1][1]
+    assert "Discarded changes" in window._history.entries()[-1][1]
 
 
 def test_undo_redo_actions_exist_with_shortcuts(qtbot, tmp_path):

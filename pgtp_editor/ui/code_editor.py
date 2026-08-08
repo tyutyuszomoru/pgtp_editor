@@ -511,6 +511,11 @@ class CodeEditorDialog(QDialog):
         layout.addWidget(self._editor)
         layout.addWidget(button_box)
 
+        # §7/FQ-020 CARVE-OUT: `Ctrl+S` is dead everywhere else in the app, and
+        # this pair must not be swept up with it. Here `save` is the modal's
+        # **OK** -- the same slot as `button_box.accepted` above -- so it emits
+        # `saved` and writes NOTHING to disk; `Ctrl+W` is its Cancel. Deleting
+        # either would be an unrelated regression in the `Edit code…` modal.
         save_shortcut = QShortcut(QKeySequence("Ctrl+S"), self, self.save)
         save_shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
         cancel_shortcut = QShortcut(QKeySequence("Ctrl+W"), self, self.cancel)
