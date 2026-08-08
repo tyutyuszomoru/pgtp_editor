@@ -74,6 +74,27 @@ def test_ctrl_s_and_ctrl_shift_s_are_bound_nowhere_in_the_app(qtbot):
     assert not hasattr(window, "_save_active_tab")
 
 
+def test_no_QShortcut_under_the_window_claims_ctrl_s_either(qtbot):
+    """The other half of the same invariant, and the sneaky way the key could
+    come back: a `QShortcut` is not a `QAction`, so the sweep above would not
+    see one (this app really does bind Ctrl+F/Ctrl+R/Ctrl+G that way). Every
+    shortcut object in the window's widget tree is checked, at any scope.
+
+    `CodeEditorDialog`'s two carved-out `QShortcut`s live on a modal that is not
+    constructed until `Edit code…` is used, and are covered by
+    `tests/ui/test_code_editor.py`.
+    """
+    from PySide6.QtGui import QShortcut
+
+    window = MainWindow()
+    qtbot.addWidget(window)
+    bound = {
+        shortcut.key().toString() for shortcut in window.findChildren(QShortcut)
+    }
+    assert "Ctrl+S" not in bound
+    assert "Ctrl+Shift+S" not in bound
+
+
 def test_file_menu_has_no_open_recent_submenu(qtbot):
     """FQ-010: `Open Recent` and the `recentFiles` store are gone. The File menu
     must carry NO submenu at all — every entry is a leaf command."""

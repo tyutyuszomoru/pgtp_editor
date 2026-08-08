@@ -214,6 +214,69 @@ def test_hidden_entries_stay_pinnable_with_stable_ids(qtbot, tmp_path):
     assert window._toolbar_ui.command_ids == ["deployment.save-php-file"]
 
 
+def test_closing_the_object_tab_hands_the_menu_back_to_the_raw_xml_group(
+    qtbot, tmp_path
+):
+    """The refresh must run on every `currentChanged`, not only when a tab is
+    opened: a stale `ddl-object` group left behind by a closed tab would offer
+    `Run on quality` with no object to send."""
+    window = _window(qtbot, tmp_path)
+    stage = window.center_stage
+    window._on_ddl_edit_requested(_REF, _SOURCE)
+    panel = stage.ddl_object_tab(_REF.key)
+    assert _visible(window) == DDL_OBJECT
+
+    stage.removeTab(stage.indexOf(panel))
+
+    assert _visible(window) == RAW_XML
+
+
+def test_the_group_follows_the_tab_in_both_directions(qtbot, tmp_path):
+    """Round trip, because a one-way test passes even if the refresh only ever
+    ADDS a group: each switch must hide the previous tab kind's entries too."""
+    window = _window(qtbot, tmp_path)
+    stage = window.center_stage
+    path = tmp_path / "x.php"
+    path.write_text("<?php", encoding="utf-8")
+    php_tab = window._php_tabs.open_path(path)
+    window._on_ddl_edit_requested(_REF, _SOURCE)
+    panel = stage.ddl_object_tab(_REF.key)
+
+    for widget, expected in (
+        (php_tab, PHP),
+        (panel, DDL_OBJECT),
+        (php_tab, PHP),
+    ):
+        stage.setCurrentWidget(widget)
+        assert _visible(window) == expected
+
+
+def test_a_shown_entry_is_never_merely_GREYED_OUT(qtbot, tmp_path):
+    """§7 keeps exactly two postures — present or absent. A greyed-out entry
+    would be a third, so whatever is on offer on a tab must be clickable there;
+    the reasons an unavailable destination cannot run are STATED on trigger
+    (FQ-023), never expressed as a dead entry.
+
+    (Qt disables an action as a side effect of `setVisible(False)`, so this is
+    asserted over the visible members only — the hidden ones' enabled state is
+    Qt's bookkeeping, not a posture.)
+    """
+    window = _window(qtbot, tmp_path)
+    stage = window.center_stage
+    window._on_ddl_edit_requested(_REF, _SOURCE)
+    panel = stage.ddl_object_tab(_REF.key)
+    stage.show_edit_xsd()
+    for target in (stage.raw_xml_tab_index, panel, stage.xsd_tab_index):
+        if isinstance(target, int):
+            stage.setCurrentIndex(target)
+        else:
+            stage.setCurrentWidget(target)
+        shown = [a for a in _menu(window).actions() if a.isVisible()]
+        assert shown
+        for action in shown:
+            assert action.isEnabled() is True, action.text()
+
+
 # -- wiring ------------------------------------------------------------------
 
 
@@ -237,6 +300,145 @@ def test_save_in_project_off_a_ddl_tab_reports_instead_of_no_opping(qtbot, tmp_p
     window = _window(qtbot, tmp_path)
     find_action(_menu(window), "Save in Project").trigger()
     assert "Save in Project runs on an open DDL object tab" in (
+        window.statusBar().currentMessage()
+    )
+
+
+def test_save_pgtp_is_wired_to_the_in_place_writer(qtbot, tmp_path):
+    """`Deployment ▸ Save pgtp` is the surviving in-place `.pgtp` save — the one
+    the deleted router reached through its `else`, now reachable only by name."""
+    window = _window(qtbot, tmp_path)
+    with patch.object(window._doc_ui, "save_project") as save_project:
+        find_action(_menu(window), "Save pgtp").trigger()
+    assert save_project.call_count == 1
+
+
+def test_save_as_new_pgtp_is_wired_to_save_as(qtbot, tmp_path):
+    """`Ctrl+Shift+S` is deleted; the capability survives under this name only."""
+    window = _window(qtbot, tmp_path)
+    with patch.object(window._doc_ui, "save_as") as save_as:
+        find_action(_menu(window), "Save as new pgtp").trigger()
+    assert save_as.call_count == 1
+
+
+def test_save_xsd_is_wired_to_the_xsd_controller(qtbot, tmp_path):
+    """A relabel of the router's first branch, not new code."""
+    window = _window(qtbot, tmp_path)
+    window.center_stage.show_edit_xsd()
+    with patch.object(window._xsd_ui, "save") as save:
+        find_action(_menu(window), "Save XSD").trigger()
+    assert save.call_count == 1
+
+
+def test_save_xsd_off_the_xsd_tab_refuses_instead_of_TRUNCATING_curated_xsd(
+    qtbot, tmp_path
+):
+    """`XsdController.save` writes `stage.xsd_editor.toPlainText()` to
+    `curated.xsd` unconditionally, so an off-tab trigger used to overwrite the
+    file with the empty buffer. The entry is hidden here and Qt will not trigger
+    a hidden QAction, so this is reached the way FQ-012 will reach it — by
+    calling the slot the shortcut would be bound to."""
+    window = _window(qtbot, tmp_path)
+    with patch.object(window._xsd_ui, "save") as save:
+        assert window._save_active_xsd() is False
+    assert save.call_count == 0
+    assert "Save XSD runs on the Edit XSD tab" in window.statusBar().currentMessage()
+
+
+def test_save_php_file_is_wired_to_the_php_tab_controller(qtbot, tmp_path):
+    """A relabel of the router's PHP branch. The tab's own `Ctrl+S` filter was
+    removed with it (see `tests/ui/test_php_file_tab.py`), so this menu entry is
+    now the ONLY way a PHP buffer reaches disk."""
+    window = _window(qtbot, tmp_path)
+    path = tmp_path / "x.php"
+    path.write_text("<?php", encoding="utf-8")
+    window._php_tabs.open_path(path)
+    with patch.object(window._php_tabs, "save_active_tab") as save:
+        find_action(_menu(window), "Save PHP File").trigger()
+    assert save.call_count == 1
+
+
+def test_no_entry_other_than_the_two_pgtp_saves_can_write_the_pgtp(qtbot, tmp_path):
+    """The mandatory FQ-020 test, stated as the invariant it defends: **no code
+    path saves the `.pgtp` except `Save pgtp` and `Save as new pgtp`** (plus
+    `Deploy .pgtp`'s outward push, patched here).
+
+    Every other entry is triggered — including the four that are hidden on this
+    tab, which is precisely how the deleted router's `else` used to be reached —
+    and `save_project` must stay untouched. A future entry wired to the wrong
+    writer fails here rather than silently writing the project file.
+    """
+    window = _window(qtbot, tmp_path)
+    others = [
+        "Compare/Merge pgtp",
+        "Deploy .pgtp",
+        "Save in Project",
+        "Run on sandbox",
+        "Run on quality",
+        "Save XSD",
+        "Save PHP File",
+    ]
+    with patch.object(window._doc_ui, "save_project") as save_project, patch.object(
+        window._doc_ui, "save_as"
+    ) as save_as, patch.object(window._diff_ui, "compare_two_files"), patch.object(
+        window._ddl_project_ui, "deploy_pgtp"
+    ), patch.object(
+        window._xsd_ui, "save"
+    ):
+        for label in others:
+            find_action(_menu(window), label).trigger()
+    assert save_project.call_count == 0
+    assert save_as.call_count == 0
+
+
+def test_a_php_tab_cannot_reach_the_pgtp_writers(qtbot, tmp_path):
+    """The wrong-target failure the router had, checked from the other side: on
+    a PHP tab the two `.pgtp` writers are not merely un-triggered, they are not
+    on offer at all."""
+    window = _window(qtbot, tmp_path)
+    path = tmp_path / "x.php"
+    path.write_text("<?php", encoding="utf-8")
+    window._php_tabs.open_path(path)
+    for label in ("Save pgtp", "Save as new pgtp", "Deploy .pgtp"):
+        assert find_action(_menu(window), label).isVisible() is False
+
+
+def test_save_php_file_off_a_php_tab_writes_nothing(qtbot, tmp_path):
+    """The classifier's "none" case reached at the WRITER: with no PHP tab
+    active the controller returns False instead of falling through to some other
+    buffer."""
+    window = _window(qtbot, tmp_path)
+    path = tmp_path / "x.php"
+    path.write_text("<?php", encoding="utf-8")
+    window._php_tabs.open_path(path)
+    window.center_stage.setCurrentIndex(window.center_stage.raw_xml_tab_index)
+
+    assert window._php_tabs.save_active_tab() is False
+    assert path.read_text(encoding="utf-8") == "<?php"
+
+
+def test_run_on_sandbox_off_a_ddl_tab_reports_instead_of_no_opping(qtbot, tmp_path):
+    window = _window(qtbot, tmp_path)
+    find_action(_menu(window), "Run on sandbox").trigger()
+    assert "Run on sandbox runs on an open DDL object tab" in (
+        window.statusBar().currentMessage()
+    )
+
+
+def test_run_on_quality_off_a_ddl_tab_reports_before_touching_a_database(
+    qtbot, tmp_path, monkeypatch
+):
+    """The missing tab is reported BEFORE any target is resolved — an outward
+    push must not prompt for a password, or connect, to discover it has nothing
+    to send."""
+    window = _window(qtbot, tmp_path)
+    monkeypatch.setattr(
+        modals.QInputDialog,
+        "getText",
+        staticmethod(lambda *a, **k: (_ for _ in ()).throw(AssertionError("prompted"))),
+    )
+    find_action(_menu(window), "Run on quality").trigger()
+    assert "Run on quality runs on an open DDL object tab" in (
         window.statusBar().currentMessage()
     )
 

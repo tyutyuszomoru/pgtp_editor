@@ -256,6 +256,7 @@ EXPECTED_HOST_SURFACE = {
     # router behind `Ctrl+S` / `File ▸ Save` whose `else` branch wrote the `.pgtp`
     # from six unrelated tabs. Its absence here is part of the §7 invariant.
     "_save_active_ddl_object",
+    "_save_active_xsd",
     "_save_ddl_object_editor",
     "_schedule_bookmark_write",
     "_schema_storage_dir",

@@ -685,6 +685,78 @@ def test_no_menu_command_still_answers_to_a_bookmarks_prefixed_id(qtbot, tmp_pat
         assert new_id in live, (old_id, new_id)
 
 
+# -- FQ-020: a toolbar saved before the Deployment menu ---------------------
+
+
+def test_a_toolbar_saved_before_fq020_follows_the_moved_commands(qtbot, tmp_path):
+    """FQ-020's three `RENAMED_ID_ALIASES` rows, exercised as a real upgrade:
+    `Compare / Merge Two Files...` moved off Tools onto `Deployment`,
+    `Deploy .pgtp` moved off File onto `Deployment`, and `File ▸ Revert` was
+    re-specified as `Discard Changes`. All three still EXIST, so a pinned button
+    must follow them — while `file.save`, which was DELETED, is dropped instead.
+    Both degradations in one saved store, because they are easy to confuse.
+    """
+    path = str(tmp_path / "s.ini")
+    seed = QSettings(path, QSettings.Format.IniFormat)
+    seed.setValue(
+        "toolbarIds",
+        [
+            "tools.compare-merge-two-files",
+            "file.deploy-pgtp",
+            "file.revert",
+            "file.save",
+        ],
+    )
+    seed.sync()
+
+    window = MainWindow(settings=QSettings(path, QSettings.Format.IniFormat))
+    qtbot.addWidget(window)
+
+    assert window._toolbar_ui.command_ids == [
+        "deployment.compare-merge-pgtp",
+        "deployment.deploy-pgtp",
+        "file.discard-changes",
+    ]
+    # ...and each button IS the live menu action, not an orphan with the right id.
+    deployment = find_top_menu(window, "Deployment")
+    assert window._toolbar_ui.toolbar.actions()[:2] == [
+        find_action(deployment, "Compare/Merge pgtp"),
+        find_action(deployment, "Deploy .pgtp"),
+    ]
+    assert window._toolbar_ui.toolbar.actions()[2] is find_action(
+        find_top_menu(window, "File"), "Discard Changes"
+    )
+
+
+def test_no_live_menu_command_answers_to_a_deleted_save_id(qtbot, tmp_path):
+    """The deletion is complete in the live menus, which is what makes the
+    silent drop above the CORRECT degradation rather than a lost alias: nothing
+    named `file.save`/`file.save-as` is enumerable any more, and neither old
+    Tools id survives."""
+    window = MainWindow(settings=_ini_settings(tmp_path))
+    qtbot.addWidget(window)
+    live = {command_id for command_id, _label in window._toolbar_ui.all_menu_commands()}
+
+    for gone in (
+        "file.save",
+        "file.save-as",
+        "tools.compare-merge-two-files",
+        "file.deploy-pgtp",
+        "file.revert",
+    ):
+        assert gone not in live
+    # The successors are all there -- including the tab-gated ones, which are
+    # hidden on the Raw XML tab this window is showing.
+    for command_id in (
+        "deployment.save-pgtp",
+        "deployment.save-as-new-pgtp",
+        "deployment.compare-merge-pgtp",
+        "deployment.deploy-pgtp",
+        "file.discard-changes",
+    ):
+        assert command_id in live
+
+
 def test_no_assignments_leaves_toolbar_behavior_unchanged(qtbot, tmp_path):
     """Back-compat: an existing saved toolbar keeps each button's default."""
     window = MainWindow(

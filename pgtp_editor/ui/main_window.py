@@ -1840,7 +1840,7 @@ class MainWindow(QMainWindow):
         # A relabel, not new code: the same `_xsd_ui.save()` the deleted router
         # reached through its first branch.
         save_xsd_action = menu.addAction("Save XSD")
-        save_xsd_action.triggered.connect(lambda: self._xsd_ui.save())
+        save_xsd_action.triggered.connect(self._save_active_xsd)
 
         # --- PHP file tab ---------------------------------------------------
         save_php_action = menu.addAction("Save PHP File")
@@ -4431,6 +4431,29 @@ class MainWindow(QMainWindow):
                 f"{gesture} runs on an open DDL object tab — open one first.", 5000
             )
         return panel
+
+    def _save_active_xsd(self) -> bool:
+        """`Deployment ▸ Save XSD`, gated on the Edit XSD tab actually being the
+        active one (§26's per-tab table).
+
+        Not defensive tidiness: `XsdController.save` writes
+        `stage.xsd_editor.toPlainText()` to `curated.xsd` unconditionally, so
+        triggering this off-tab TRUNCATES the file to the empty buffer. The
+        entry is hidden off-tab and Qt refuses to trigger a hidden QAction, so
+        the path is unreachable by click today — but queued FQ-012 enumerates
+        hidden actions by design, which is exactly how a shortcut lands on it.
+        Refuse and say why, like every sibling entry
+        (`_active_ddl_object_panel_for`, `save_active_tab`), rather than leaving
+        one more fall-through-that-writes where the deleted router's used to be.
+        """
+        stage = self.center_stage
+        if stage.currentIndex() != stage.xsd_tab_index:
+            self.statusBar().showMessage(
+                "Save XSD runs on the Edit XSD tab — open one first.", 5000
+            )
+            return False
+        self._xsd_ui.save()
+        return True
 
     def _save_active_ddl_object(self) -> bool:
         """`Deployment ▸ Save in Project` — §18.5's plain Save, wired straight to

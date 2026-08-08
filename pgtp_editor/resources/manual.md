@@ -99,37 +99,50 @@ When you open a file, the status bar shows a live message such as
 The same busy feedback appears during other slow operations — see *A note on
 busy feedback*.
 
-### Saving, closing, reverting
+### Saving, closing, discarding
 
-- **File ▸ Save** (Ctrl+S) saves the **active tab**: the project file when you're
-  in Raw XML (or any project view), the schema the XSD tab currently holds —
-  curated or auto — when that tab is active (see *Schema Tools*), the `.sql`
-  file behind an open DDL object editor tab when that tab is active (see *DDL
-  Explorer*), or the PHP file behind an open PHP tab (see *Editing PHP Files*).
-- **File ▸ Save As** (Ctrl+Shift+S) writes a copy of the **project** to a new
-  path — this is unaffected by which tab is active, including a DDL object
-  editor tab (which has its own, separate Save As… the first time you save it)
-  and a PHP tab (which has no Save As at all).
+**There is no File ▸ Save, no File ▸ Save As…, and no Ctrl+S.** Saving lives on
+the Editor menu bar's **Deployment** menu, as a named entry per tab kind — **Save
+pgtp** and **Save as new pgtp** while Raw XML is in front, **Save in Project** on
+a DDL object tab, **Save XSD**, **Save PHP File**. See *The Deployment Menu* for
+the whole table and for why not one of those entries carries a keyboard
+shortcut.
+
+- **Deployment ▸ Save pgtp** writes the project file in place; **Deployment ▸
+  Save as new pgtp** writes it to a path you pick. Both are on the **Raw XML**
+  tab, because that is the tab that holds the `.pgtp`.
 - **File ▸ Close** (Ctrl+W) closes the project; if you have unsaved changes it
   prompts you to **Save**, **Discard**, or **Cancel**.
-- **File ▸ Revert** discards your edits and reloads the last saved version from the
-  automatic `.bak` backup written on save. It is **greyed out whenever there is
-  no `.bak` to go back to** — before your first save of a freshly opened file,
-  and in the project case below where no backup is written at all — so the entry
-  is never offered when it has nothing to restore.
+- **File ▸ Discard Changes** throws away the edits you made since the last save
+  and **reloads the file from disk**. It asks first, naming the file, and it is
+  **greyed out whenever the buffer has no unsaved edits** — so it is never
+  offered when there is nothing to discard. (This replaced the old **Revert**,
+  which reloaded the `.bak` backup — "undo my last save" — and left the buffer
+  dirty. The two are different commands, which is why the word changed with the
+  behavior.)
+
+**Pressing Ctrl+S does nothing at all** — no write, no message, no hint. That is
+deliberate rather than an oversight: the key used to run a dispatcher that
+guessed which tab you meant, and on six kinds of tab it silently wrote the
+`.pgtp` instead. A reflex that is right on one tab and wrong on the next is worse
+than one that works nowhere, so the key is unbound and every save is a
+deliberate, named click. **Ctrl+Shift+S is gone the same way.** (The one
+exception in the whole app is the **Edit code…** dialog, where Ctrl+S is that
+modal's OK button and writes nothing to disk — see *The Code Editor*.)
 
 The editor writes UTF-8 and preserves your original line endings — it does not
-convert line endings or re-encode content on save.
+convert line endings or re-encode content on save. Saving a `.pgtp` that already
+exists copies the previous contents to `<name>.pgtp.bak` first.
 
 > **When a local DDL-versioning project is open** (see *Local DDL-Versioning
-> Projects*) and this `.pgtp` is that project's linked working copy, Save behaves
-> a little differently: it writes the working copy and **makes no `.bak`
-> backup**, because the working copy itself is the safety net. This applies
+> Projects*) and this `.pgtp` is that project's linked working copy, **Save
+> pgtp** behaves a little differently: it writes the working copy and **makes no
+> `.bak` backup**, because the working copy itself is the safety net. This applies
 > **only** in that situation — an ordinary `.pgtp` opened with no project active
 > (or a `.pgtp` that isn't the active project's linked working copy) keeps making
 > `.bak` backups exactly as described above. Pushing the working copy's changes
-> back to the original file is a separate action, **Deploy .pgtp** — see *Local
-> DDL-Versioning Projects*.
+> back to the original file is a separate action, **Deployment ▸ Deploy .pgtp**
+> — see *Local DDL-Versioning Projects*.
 
 ---
 
@@ -140,21 +153,26 @@ answer to a simple question: *what does this command act on?*
 
 - The **window menu bar** at the very top — **File · View · Schema · Database ·
   Tools · Generation · Help** — holds the commands that act on **the project or
-  the application**: opening and saving files, projects and connections, the
-  schema, generation, the panels and the theme.
+  the application**: opening files, projects and connections, the schema,
+  generation, the panels and the theme.
 - The **Editor menu bar**, directly above the central working area, holds the
-  commands that act on **whichever tab you are looking at**. Its four menus are:
+  commands that act on **whichever tab you are looking at**. Its five menus are:
 
 | Menu | Entries |
 |---|---|
 | **History** | **History…**, **Undo**, **Redo** |
 | **Select** | **Select All** (Ctrl+A), **Select Enclosing Block** (Ctrl+Shift+B), **Select Parent Block** (Ctrl+Shift+A) |
 | **Parsing** | **Auto Parse XML**, **Validate Project** |
-| **Bookmarks** | **Toggle Bookmark**, **Next Bookmark**, **Previous Bookmark**, **Clear All Bookmarks**, **List All Bookmarks** |
+| **Navigation** | **Toggle Bookmark**, **Next Bookmark**, **Previous Bookmark**, **Clear All Bookmarks**, **List All Bookmarks** |
+| **Deployment** | every save and every outward push, **by tab kind** — see *The Deployment Menu* |
 
 Every one of those commands resolves the editor **at the moment you use it**, so
-Select, Bookmarks and the rest always act on the tab in front of you — never on
+Select, Navigation and the rest always act on the tab in front of you — never on
 the Raw XML document behind it.
+
+> **The bookmark menu is called Navigation now.** Its five entries kept their own
+> names; the menu was renamed because it is where jumping around a document
+> belongs, not only where bookmarks do.
 
 > **There is no Edit menu any more.** It was dissolved rather than emptied:
 > Undo / Redo / History… moved to **History**, the two block-selection commands
@@ -176,8 +194,11 @@ The bar follows the tab, using the app's usual rule: **a command that cannot
 work here is absent, not greyed out.**
 
 - **The whole Editor menu bar is hidden on the Caption Management tab and on the
-  Manual tab.** Neither is a text editor, so all four menus would be dead
+  Manual tab.** Neither is a text editor, so all five menus would be dead
   weight. Switch to any editor tab and the bar is back.
+- **The Deployment menu's entries change with the tab**, and only one group is
+  ever shown at a time. On a tab that has nowhere to save and nothing to push,
+  the menu is simply empty — see *The Deployment Menu*.
 - **Select ▸ Select Parent Block disappears on PHP tabs, DDL object tabs and the
   DDL Explorer**, and **Ctrl+Shift+A** goes quiet with it. "One nesting level up"
   is an XML idea; SQL and PHP have no parent element to walk to, so the entry is
@@ -187,6 +208,73 @@ work here is absent, not greyed out.**
   selects the enclosing XML element; in a code editor (PHP tabs, DDL object tabs,
   the DDL Explorer) it selects the innermost balanced bracket pair. It is one
   command with one shortcut, not two competing ones.
+
+---
+
+## The Deployment Menu
+
+**Deployment** is the fifth menu on the Editor menu bar, after **History**,
+**Select**, **Parsing** and **Navigation**. It is where every **save** and every
+**outward push** now lives — the one place to answer *"where does this edit
+go?"* — and its contents follow the tab in front of you.
+
+| Active tab | Deployment shows |
+|---|---|
+| **Raw XML** | **Compare/Merge pgtp**, **Save pgtp**, **Save as new pgtp**, **Deploy .pgtp** |
+| **DDL object editor** | **Save in Project**, **Run on sandbox**, **Run on quality** |
+| **Edit XSD / Edit AutoXSD** | **Save XSD** |
+| **PHP file** | **Save PHP File** |
+| anything else | **nothing** |
+
+**Only one group is ever visible**, so the menu never offers you a save that
+belongs to a different tab. The last row is not an oversight: the **Diff /
+Merge** tab, **Caption Management**, either **DDL Explorer**, the **Manual**, a
+generated **draft fragment** tab and the **Sandbox SQL** console genuinely have
+no save destination and nothing to deploy, so they get no entries at all. (On
+Caption Management and the Manual the whole Editor menu bar is hidden anyway —
+see *The Two Menu Bars*.)
+
+**Not one entry on this menu has a keyboard shortcut**, and that includes the two
+**Run on …** entries. Two different reasons meet here:
+
+- **The saves are keyless** because the old **Ctrl+S** had to guess which tab you
+  meant, and guessed wrong on six of them — writing the `.pgtp` when you were
+  looking at the SQL console or a draft fragment. Four named entries wired to
+  exactly one writer each cannot make that mistake.
+- **Run on sandbox, Run on quality and Deploy .pgtp are keyless** on the app's
+  standing rule that *an irreversible outward effect must not be one keystroke
+  away*.
+
+If you use one of them constantly, pin it to the toolbar (**View ▸ Customize
+Toolbar…**). Be aware that such a button **comes and goes with the tab**, exactly
+as the menu entry does — that is the honest posture, not a bug.
+
+### What each entry does
+
+- **Compare/Merge pgtp** — compare this `.pgtp` against another one (see *Diff /
+  Merge*). It used to live on **Tools ▸ Compare / Merge Two Files…**; comparing
+  is a `.pgtp`-level gesture, so it moved to the tab that holds the `.pgtp`.
+- **Save pgtp** — write the project file in place. **Save as new pgtp** — write
+  it to a path you pick. Neither is affected by anything except which tab is
+  active, and both are on Raw XML only.
+- **Deploy .pgtp** — push the project's working copy back to its source file. It
+  moved here off the **File** menu, because it is meaningful only while the
+  `.pgtp` is what you are looking at (see *Local DDL-Versioning Projects*).
+- **Save in Project** — write the active DDL object tab's `.sql` file. Touches no
+  database, ever (see *DDL Explorer*).
+- **Run on sandbox** / **Run on quality** — execute the active DDL object tab's
+  buffer against the project's sandbox, or against the quality database. Both are
+  confirm-gated and both name the database *and its host* before anything runs
+  (see *The Sandbox* and *DDL Explorer*).
+- **Save XSD** — write whichever schema the XSD tab currently holds, curated or
+  auto (see *Schema Tools*).
+- **Save PHP File** — write the active PHP tab's file back where it came from
+  (see *Editing PHP Files*).
+
+Each entry acts on **the tab it belongs to and nothing else**. If one is somehow
+run while its tab is not in front — from a pinned toolbar button, say — it
+**refuses and says why on the status bar** (*"Save XSD runs on the Edit XSD tab —
+open one first."*) instead of writing somewhere plausible but wrong.
 
 ---
 
@@ -340,7 +428,7 @@ for the session.
   chevrons. Both toggle that line's bookmark. (A single click in the line-number
   area still does nothing, so the two never fire together.)
 - **F2** / **Shift+F2** jump to the next / previous bookmark.
-- The **Bookmarks** menu — on the **Editor menu bar** above the working area (see
+- The **Navigation** menu — on the **Editor menu bar** above the working area (see
   *The Two Menu Bars*) — holds the same three actions plus **Clear All
   Bookmarks** and **List All Bookmarks**.
 
@@ -349,17 +437,17 @@ editor, **Edit XSD** / **Edit AutoXSD**, either read-only **DDL Explorer**, an o
 **DDL object editor tab**, an open **PHP file tab** (see *Editing PHP Files*),
 the **Sandbox SQL** console (see *The Sandbox*), and the **Edit code…** dialog.
 
-**In Caption Mode the whole Bookmarks menu is switched off** — all five entries,
-and with them **Ctrl+F2** / **F2** / **Shift+F2** — because the Raw XML editor
+**In Caption Mode the Navigation menu's bookmark entries are switched off** — all
+five of them, and with them **Ctrl+F2** / **F2** / **Shift+F2** — because the Raw XML editor
 they would act on is read-only for as long as that mode lasts. (While the Caption
 Management tab itself is in front, the entire Editor menu bar is hidden anyway;
 the menu stays disabled even if you step back to Raw XML without leaving the
 mode.) **The gutter still works**: clicking the bookmark strip or double-clicking
 a line number sets and clears bookmarks exactly as usual, since a bookmark is
 only a marker over the text and does not depend on being able to edit it. Leaving
-Caption Mode restores the menu and the shortcuts.
+Caption Mode restores the entries and the shortcuts.
 
-The **Bookmarks** menu and its shortcuts follow the tab you are working in: with
+The **Navigation** menu and its shortcuts follow the tab you are working in: with
 the **Edit XSD** (or **Edit AutoXSD**) tab active they act on the schema editor,
 with either **DDL Explorer** tab, an open **DDL object editor tab**, an open **PHP
 file tab**, or a generated **draft tab** active they act on that tab's own
@@ -370,13 +458,14 @@ on you — a bookmark is always set or found in the editor you are already looki
 at.
 
 The **Edit code…** dialog has the same bookmark strip, but as a separate dialog
-it is out of the Bookmarks menu's reach: there you set and clear bookmarks with the
+it is out of the Navigation menu's reach: there you set and clear bookmarks with the
 mouse, in the gutter. Each editor keeps its own set.
 
 ### Bookmarks that stay put
 
 **When a local DDL-versioning project is open** (see *Local DDL-Versioning
-Projects*), bookmarks survive closing and reopening a document, reverting it, and
+Projects*), bookmarks survive closing and reopening a document, discarding its
+changes, and
 restarting the app. That covers the three editors whose documents are real files
 inside the project:
 
@@ -410,7 +499,7 @@ session-only.
 
 ### List All Bookmarks
 
-**Bookmarks ▸ List All Bookmarks** writes the **active editor's** bookmarks into
+**Navigation ▸ List All Bookmarks** writes the **active editor's** bookmarks into
 the **Audit/Problems** dock as one row per bookmarked line, prefixed
 **`[Bookmark]`** and showing the line number with a preview of the text.
 **Click a row to jump to that line.** It reveals the dock if you had it hidden —
@@ -521,7 +610,12 @@ The Code Editor is a modal window with:
 - **Ctrl+Shift+B** — select the enclosing bracket span. The dialog has no menu
   bar of its own, so this is the key rather than a **Select** menu entry.
 - Standard **Ctrl+C / Ctrl+V / Ctrl+X**.
-- **Ctrl+S** saves and closes; **Ctrl+W** cancels.
+- **Ctrl+S** accepts the dialog (the same thing its **OK** button does) and
+  **Ctrl+W** cancels. This dialog is the **one** place in the app where Ctrl+S
+  still means anything, and even here it writes nothing to disk by itself — it
+  hands your code back to the XML. The dialog has no menu bar and no other
+  keyboard path, which is why the pair survives (see *Getting Started ▸ Saving,
+  closing, discarding*).
 
 On save, the code is written back into the handler's XML body (properly escaped),
 preserving the rest of the file byte-for-byte.
@@ -579,7 +673,7 @@ file and why — never a silent no-op:
 
 - **a folder, or a file that can't be read** — nothing to open.
 - **a binary file** (anything with a NUL byte near its start) — opening a JPEG as
-  "PHP source" and letting your next Ctrl+S write the mangled result back is data
+  "PHP source" and letting your next save write the mangled result back is data
   loss, not convenience.
 - **a file that is not valid UTF-8** — refused for the same reason. Decoding it
   loosely would substitute replacement characters, and the tab's very first save
@@ -611,12 +705,17 @@ The tab hosts the same editor the **Edit code…** dialog uses, in PHP mode:
 
 ### Saving and closing
 
-- **Ctrl+S** (or **File ▸ Save**) with a PHP tab active writes **that file**,
+- **Deployment ▸ Save PHP File** — the only entry the Deployment menu shows while
+  a PHP tab is active (see *The Deployment Menu*) — writes **that file**,
   straight back to where it came from, in UTF-8 and keeping the line endings the
   buffer holds. The status bar reports `Saved <path>`; if the write fails, a
   **Save Failed** dialog shows the reason and the tab stays marked as changed.
-- **There is no Save As for a PHP tab.** **Ctrl+Shift+S** always means the
-  `.pgtp` project, whichever tab is active.
+- **Ctrl+S does nothing here either.** A PHP tab used to have a Ctrl+S of its
+  own, and it was removed with all the others: a save key that works on this tab
+  and silently writes the wrong file on the next one is worse than no save key at
+  all.
+- **There is no Save As for a PHP tab** — a PHP tab saves where it came from or
+  not at all.
 - **Closing a tab** with its **✕** prompts **Save**, **Discard**, or **Cancel**
   if it has unsaved edits. A save that fails — or that you cancel — **aborts the
   close**: the tab stays open with your text in it rather than being discarded.
@@ -886,8 +985,10 @@ name only.
 center area — a full editor with its own permanently visible Find/Replace bar
 (Find, Find All, Replace, Replace All, and Ctrl+F / Ctrl+R / F3 acting on *this*
 document). The tab keeps its own unsaved-changes marker
-(`Edit XSD *`), and **Ctrl+S saves whichever tab is active** — the project from
-Raw XML, the schema from the XSD tab.
+(`Edit XSD *`), and **Deployment ▸ Save XSD** writes it — the one entry the
+Deployment menu offers while this tab is active (see *The Deployment Menu*). It
+is only ever the schema: the project's own save entries belong to the Raw XML
+tab, so neither can be confused for the other.
 
 Click the tab's **✕** to close it and return to Raw XML. With no unsaved edits
 it closes right away; with unsaved edits it prompts you to **Save**,
@@ -1005,7 +1106,7 @@ replaces all three.
 The header line above the tree names the connection (`user@host:port/db`) and the
 total number of mismatches found. **File ▸ Close** closes the tab and discards its
 results, since they belong to the project they were checked against (cancelling the
-close, or **File ▸ Revert**, leaves them in place). After **Tools ▸ Reparse Raw XML
+close, or **File ▸ Discard Changes**, leaves them in place). After **Tools ▸ Reparse Raw XML
 into Tree** the open view refreshes against the last database snapshot — no new
 query is made — so you can see the effect of an edit right away.
 
@@ -1276,7 +1377,7 @@ navigation comforts as the Raw XML editor:
   skimming a long database's worth of definitions.
 - **Bookmarks:** click the bookmark strip at the left edge of the gutter (or
   double-click the line number) to mark a line, or use **Ctrl+F2** / **F2** /
-  **Shift+F2** and the **Bookmarks** menu —
+  **Shift+F2** and the **Navigation** menu —
   while this tab is active they act on its editor (see *Bookmarks*).
 - **Find:** this tab has its own always-visible Find/Replace bar, so **Ctrl+F**,
   **F3** and its **Find All** button search the DDL buffer itself instead of
@@ -1367,11 +1468,11 @@ object editor*).
 Both of the **Quality** explorer's browsing surfaces double as an entry point
 into a dedicated, **editable**
 tab for one object at a time. Opening and editing such a tab touches no
-database — it is a text editor over the object's current definition — and the one
-gesture in it that *does* reach a database, **Apply to Sandbox**, appears only
-while a sandbox session is open and only ever writes to the sandbox (see *The
-Sandbox*). Neither entry point exists in the Sandbox explorer (see *The Sandbox
-Explorer, and how it differs*).
+database — it is a text editor over the object's current definition. The gestures
+in it that *do* reach a database are the two **Run on …** entries on the
+**Deployment** menu, each present only while its destination can actually be
+reached (see *The Deployment Menu*). Neither entry point exists in the Sandbox
+explorer (see *The Sandbox Explorer, and how it differs*).
 
 - In the **DDL Objects (Quality)** tree, right-click a routine or trigger row for
   **Edit DDL**. The row you clicked already names the object, so the entry
@@ -1396,10 +1497,10 @@ project state.)
   `ddl/<schema>.<table>.<trigger>.sql` for a trigger — if that file isn't there
   yet, and opens your existing local copy if it is: **your local file is never
   overwritten from the database.** The object joins the project's deploy
-  manifest, so the drift markers (`*` / `!`) start tracking it, and Save writes
-  straight to that file with no dialog.
+  manifest, so the drift markers (`*` / `!`) start tracking it, and **Save in
+  Project** writes straight to that file with no dialog.
 - **With no project open**, the tab holds the live definition and the first
-  Ctrl+S asks you where to put it (see *Saving*, below). You are **not** nagged about the
+  **Save in Project** asks you where to put it (see *Saving*, below). You are **not** nagged about the
   missing project: editing one object with just a database connection is a
   supported way to work, so there is no "Project Required" prompt in the way of
   every edit.
@@ -1429,11 +1530,12 @@ shortcuts drive the project's snapshot history everywhere else. This is the
 one place in the app where Ctrl+Z means something different depending on
 which tab is focused.
 
-**Saving** (Ctrl+S, or File ▸ Save, while the tab is active) never touches a
-database — it only writes a `.sql` file to disk. **Where it writes depends on how
-the tab was opened.** A checked-out tab — one you opened with a project active —
-already knows its file: every Ctrl+S, from the first one, writes straight to that
-`ddl/*.sql` and no dialog appears. In every other case:
+**Saving** is **Deployment ▸ Save in Project**, while this tab is active (see
+*The Deployment Menu*). It never touches a database — it only writes a `.sql`
+file to disk — and there is **no keyboard shortcut** for it. **Where it writes
+depends on how the tab was opened.** A checked-out tab — one you opened with a
+project active — already knows its file: every save, from the first one, writes
+straight to that `ddl/*.sql` and no dialog appears. In every other case:
 
 - The **first save** opens a normal **Save As…** file picker, prefilled with a
   sensible filename (`schema.name.sql`, or `schema.table.trigger.sql` for a
@@ -1441,10 +1543,10 @@ already knows its file: every Ctrl+S, from the first one, writes straight to tha
   that project's folder (see *Local DDL-Versioning Projects ▸ File dialogs
   default to the active project's folder*). Cancelling the picker just
   cancels the save — nothing is written and the tab stays dirty.
-- The chosen path is **remembered**, so every later Ctrl+S writes silently to
-  it for the rest of the session.
-- **Ctrl+Shift+S** (File ▸ Save As) is **not** repointed to this tab — it
-  always means the `.pgtp` project, whichever tab is active.
+- The chosen path is **remembered**, so every later **Save in Project** writes
+  silently to it for the rest of the session.
+- **Save as new pgtp** is the `.pgtp`'s own Save As and lives on the Raw XML tab;
+  it can never be aimed at this one.
 
 **A brand-new object you created yourself always goes through Save As…**, even
 with a project open: it has no live definition to check out, so there is no
@@ -1471,15 +1573,47 @@ tabs you already have open — they are not reloaded, marked, or closed, even if
 the live definition changed underneath them; your in-progress edits are never
 silently discarded to resync with the database.
 
-**Deploy this edit…** (right-click) asks where this edit should go and then runs
-that gesture — it writes nothing of its own. It offers only the destinations that
-actually exist right now: **Save (for a future batch deploy)** always, and
-**Apply to Sandbox** while a sandbox session is open (see *The Sandbox*). There
-is no destination for the real database in this version.
+**Where an edit can go: the three destinations.** With this tab active, the
+**Deployment** menu names all three of them outright — **Save in Project**, **Run
+on sandbox**, **Run on quality** — so you no longer have to know a picker exists
+to find them. None of the three has a keyboard shortcut.
 
-Everything else about this tab — editing, Save, Format Selection — stays purely
-local: nothing here touches a database until you explicitly apply to the sandbox.
-See *The Sandbox* for what an open sandbox session adds to this tab.
+- **Save in Project** writes a file and touches no database (above).
+- **Run on sandbox** commits the buffer to the project's sandbox and runs the
+  whole validation ladder over it. It needs an open sandbox session — see *The
+  Sandbox ▸ Applying an object to the sandbox*.
+- **Run on quality** executes the buffer against the **real** quality database.
+  It works with a local project open **and** with no project at all — open a
+  `.pgtp`, edit an object, push the fix — as long as a quality connection can be
+  resolved. Working without a project, the connection derived from the `.pgtp`
+  carries no password (passwords are never read from the XML), so you are asked
+  for it once; the answer is kept **for this session only** and written nowhere.
+
+**Run on quality is guarded, in this order, and refuses out loud rather than
+silently:**
+
+1. **A changed signature is refused outright, with no override.** PostgreSQL
+   identifies a routine by schema, name and argument types, so `CREATE OR
+   REPLACE` with different arguments would create a *second* object and leave the
+   old one live — something no confirmation could catch. The refusal names both
+   signatures and points you at the reviewable deployment-script path.
+2. **The buffer must have a green sandbox validation.** Actual findings block.
+   What could not be *checked* — no sandbox result for this exact text, a missing
+   extension — can be overridden, but only through a dialog that **enumerates
+   what was not verified**; there is no generic "proceed anyway".
+3. **The confirmation names the object, the database and the host**, and says
+   plainly that the apply runs in a transaction but has **no revert snapshot**: a
+   successful-but-wrong apply cannot be undone from inside the app.
+
+An empty buffer is refused. Every outcome — applied, rolled back, refused,
+cancelled — lands as a `[Check]` line in the Audit panel, and an apply that did
+not commit says so in as many words.
+
+**Deploy this edit…** (right-click) is still there and does the same three things
+under the same names: it asks where this edit should go and then runs that
+gesture — it writes nothing of its own. It lists only the destinations available
+right now, and **names the ones that are not, with what would bring them back**
+(no sandbox session open; no quality target resolvable).
 
 ### Creating a new trigger, function, or procedure
 
@@ -1534,8 +1668,8 @@ inline message** instead of producing broken SQL.
 `LANGUAGE plpgsql` body stub for a routine, a complete `CREATE TRIGGER`
 statement for a trigger. Creating an object **runs nothing against the
 database**; it only gives you correct starting text. Saving works as it does in
-any projectless DDL object tab: **the first Ctrl+S asks you where to put the
-file**, even with a project open. A new object has no live definition to check
+any projectless DDL object tab: **the first Save in Project asks you where to put
+the file**, even with a project open. A new object has no live definition to check
 out, and seeding a checked-out file from a skeleton would tell your project that
 a definition had been deployed when no database has ever held it.
 
@@ -1595,14 +1729,18 @@ so is offered only while such a project is open.
 
 ### The File menu's project actions
 
-Five actions on the **File** menu manage projects, in their own group between the
-open actions (**Open…**, **Open PHP File…**) and **Save**:
+Four actions on the **File** menu manage projects, in their own group below the
+open actions (**Open…**, **Open PHP File…**):
 
 - **New Project…**
 - **Open Project…**
 - **Close Project** — disabled until a project is open.
 - **Project Settings…**
-- **Deploy .pgtp**
+
+The fifth used to be **Deploy .pgtp**. It now lives on **Deployment ▸ Deploy
+.pgtp**, where it appears only while the Raw XML tab is in front — pushing the
+`.pgtp` is meaningful only when the `.pgtp` is what you are looking at (see *The
+Deployment Menu*).
 
 **No project is ever created silently.** An action that can only mean something
 inside a project — **Project Settings…**, for instance — shows a **"Project
@@ -1626,8 +1764,8 @@ active, the title shows just the app name and the `.pgtp` filename as before.
 ### File dialogs default to the active project's folder
 
 While a project is active, every Open/Save-type file dialog in the app —
-**File ▸ Open**, **File ▸ Save As**, **Schema ▸ Export XSD**, **Schema ▸
-Import XSD**, the source/target file pickers in **Compare / Merge**, and the
+**File ▸ Open**, **Deployment ▸ Save as new pgtp**, **Schema ▸ Export XSD**,
+**Schema ▸ Import XSD**, the file pickers in **Compare/Merge pgtp**, and the
 first **Save As…** of a DDL object editor tab (see *DDL Explorer*) — starts
 in the project's own folder instead of wherever you last browsed. With no
 project active, these dialogs behave as before and default to the operating
@@ -1866,13 +2004,13 @@ active yet, **File ▸ Open**'s chooser — see *Getting Started ▸ Opening a
 project* — is how you make one active for this file: pick **New Project…** or
 **Open Project…** there instead of **Edit Standalone**.) From then on:
 
-- Ordinary **Save** (Ctrl+S) writes to this working copy and makes **no
+- Ordinary **Deployment ▸ Save pgtp** writes to this working copy and makes **no
   `.bak` backup** — the working copy itself is the safety net. See *Getting
-  Started ▸ Saving, closing, reverting* for how this compares to plain,
+  Started ▸ Saving, closing, discarding* for how this compares to plain,
   project-less `.pgtp` saves, which are unaffected.
 - Pushing your edits back to the original file (on the shared/quality server)
-  is the separate, explicit **Deploy .pgtp** action — reachable any time from
-  the File menu.
+  is the separate, explicit **Deployment ▸ Deploy .pgtp** action — on the Raw
+  XML tab, any time.
 - Closing the project (**Close Project**) also offers this as a yes/no
   prompt if the working copy has changes not yet pushed. Declining just
   closes the project without pushing; nothing is lost.
@@ -2046,7 +2184,7 @@ thorough they are:
 
 | Gesture | Where | Runs | Changes the sandbox? |
 |---|---|---|---|
-| **Apply to Sandbox** | button + right-click menu in a DDL object editor tab | tiers 0, 1, 2 and — when `plpgsql_check` is installed — tier 3, all over your buffer | **yes** — commits |
+| **Apply to Sandbox** (**Deployment ▸ Run on sandbox**) | the Deployment menu, plus the button and right-click entry in a DDL object editor tab | tiers 0, 1, 2 and — when `plpgsql_check` is installed — tier 3, all over your buffer | **yes** — commits |
 | **Database ▸ Check Object Without Applying** | menu | the identical run, on the identical buffer | **no** — rolled back |
 | **Database ▸ Check Object in Sandbox** | menu | tier 3 over what the sandbox already holds; tier 2 reports bookkeeping only | **no** — reads only |
 
@@ -2064,8 +2202,9 @@ None of the three has a keyboard shortcut. See *Keyboard Shortcuts*.
 
 ### Applying an object to the sandbox
 
-While a session is open, every open **DDL object editor tab** (see *DDL Explorer*)
-grows an **Apply to Sandbox** button under the editor, and the same entry in the
+While a session is open, **Deployment ▸ Run on sandbox** is on the Editor menu bar
+for every open **DDL object editor tab** (see *The Deployment Menu*), and the same
+gesture is an **Apply to Sandbox** button under the editor and an entry in the
 tab's right-click menu. It commits the tab's current text to the sandbox database,
 records it in the sandbox's working set, and runs the whole validation ladder over
 it — the DDL, the bookkeeping and the checks all in one transaction, so the sandbox
@@ -2073,8 +2212,9 @@ can never hold a definition without the record of what it holds.
 
 - It is **never a keyboard shortcut**. An irreversible outward effect should not
   be one keystroke away, so applying is always a deliberate click or menu pick.
-- It always asks first, and the confirmation **names both the object and the
-  database** it is about to write to — you never confirm a nameless destination.
+- It always asks first, and the confirmation **names the object and the database
+  — with its host** — it is about to write to; you never confirm a nameless
+  destination.
 - The sandbox is **stateful**: your edit stays there until you apply something
   else. Applying is not a test that cleans up after itself.
 - An empty buffer is refused outright rather than applied as an empty definition.
@@ -2098,8 +2238,12 @@ The apply runs off the UI thread, so a slow `plpgsql_check` pass can't freeze th
 window; the status line says the apply is under way and the full report lands when
 it finishes.
 
-**There is no "Apply to Target"** in this version — nothing here can write to your
-real database, and the button is absent rather than disabled.
+**Writing to the real database is a different gesture, on the same menu.**
+**Deployment ▸ Run on quality** executes a DDL object tab's buffer against the
+quality database, behind its own hard preconditions — including a green sandbox
+validation for exactly that text. It is described where it belongs, in *DDL
+Explorer ▸ Editing a single function, procedure, or trigger*. Nothing else in
+this chapter can reach anything but the sandbox.
 
 ### Checking an object without applying it
 
@@ -2321,10 +2465,21 @@ acted.
 
 ## Diff / Merge
 
-**Diff / Merge** (under **Tools ▸ Compare / Merge Two Files…**) compares two
-`.pgtp` files side by side so you can see what changed between versions and
-reconcile them. **Next Difference** / **Prev Difference** step through the changes,
-and **Apply Changes to Target** writes the reconciled result.
+**Deployment ▸ Compare/Merge pgtp** — on the Raw XML tab (see *The Deployment
+Menu*) — compares two `.pgtp` files side by side in the **Diff / Merge** tab, so
+you can see what changed between versions and reconcile them. **Tools ▸ Next
+Difference** / **Prev Difference** step through the changes. The **Exit
+Compare/Merge Mode** button at the bottom of the panel leaves the comparison and
+gives you the Raw XML editor back.
+
+The entry point used to be **Tools ▸ Compare / Merge Two Files…**; comparing is a
+`.pgtp`-level gesture, so it moved to the tab that holds the `.pgtp`.
+
+> **Writing the reconciled result back is not available in this version.**
+> **Apply Changes to Target** lost its old home on the Tools menu and its new one
+> — on the Compare/Merge surface itself — has not landed yet, so Compare/Merge is
+> currently a read-and-navigate view. Nothing is written to either file
+> meanwhile.
 
 ---
 
@@ -2348,9 +2503,11 @@ The **Generation** menu drives the PHP Generator command-line to compile your
 `.pgtp` into PHP:
 
 1. **Locate PHP Generator Executable…** once (the path is stored for future use).
-2. **Generate PHP…** — if the project has unsaved changes, you're prompted to
-   **Save** or **Save As** first, so the generator always runs against the file on
-   disk. The output-folder picker that follows is prefilled — with the open
+2. **Generate PHP…** — if the project has unsaved changes, a dialog offers
+   **Save**, **Save As** or **Cancel** first, so the generator always runs
+   against the file on disk. (Those are buttons in that prompt, not menu
+   entries — saving from a menu is **Deployment ▸ Save pgtp**.) The
+   output-folder picker that follows is prefilled — with the open
    **local DDL-versioning project's folder** if one is active (see *Local
    DDL-Versioning Projects*), otherwise with the project's declared
    `outputPath` if it has one, otherwise with the current project file's own
@@ -2402,23 +2559,30 @@ simply reads as busy instead of stalled.
 ### The toolbar
 
 The **Main Toolbar** shows each command as an icon with its label beside it. Out of
-the box it carries six commands — **File ▸ Open**, **File ▸ Save**, **History ▸
-Undo**, **History ▸ Redo**, **Parsing ▸ Validate Project**, and **Generation ▸
-Generate PHP** — but it is not limited to them. (**Find** used to be the seventh.
-It is no longer a menu command at all — every editor has a permanent Find/Replace
-bar instead — so there is nothing left to pin. Its icon is still in the icon
-catalog if you want it on some other button.)
+the box it carries five commands — **File ▸ Open**, **History ▸ Undo**, **History
+▸ Redo**, **Parsing ▸ Validate Project**, and **Generation ▸ Generate PHP** — but
+it is not limited to them.
+
+Two commands that used to ship on it are gone, each for the same reason: there is
+no menu command left to pin. **Find** is now a permanent bar in every editor
+rather than a menu entry, and **Save** is four named per-tab entries on the
+**Deployment** menu rather than one tab-following command — so **the app ships
+with no save button**. Both icons stay in the icon catalog and can be assigned to
+any button you like. If you want a save button, pin whichever **Deployment** entry
+you actually use, accepting that it comes and goes with the tab (see *The
+Deployment Menu*).
 
 **View ▸ Customize Toolbar…** opens a two-list dialog: **Available** on the left,
 **On Toolbar** on the right, with **Add →**, **← Remove**, **Up**, **Down**, and
 **Choose Icon…** between them, and **OK** / **Cancel** at the bottom.
 
 - The Available list offers **every command on either menu bar**, listed by its
-  menu path — `File › Save As`, `Schema › Verify XSD`,
+  menu path — `Deployment › Save pgtp`, `Schema › Verify XSD`,
   `Database › DDL Explorer (Quality)`,
-  `Bookmarks › List All Bookmarks`, and so on — in the order the menus themselves
+  `Navigation › List All Bookmarks`, and so on — in the order the menus themselves
   present them. Anything you can invoke from a menu, on the window bar or the
-  Editor bar, you can put on the toolbar.
+  Editor bar, you can put on the toolbar. The **Deployment** menu's entries are
+  all listed, whichever tab you happen to be on when you open the dialog.
 - Commands already on the toolbar stay visible in the Available list but appear
   **greyed out**, so you can see the whole command set at once and still can't add
   the same command twice.
@@ -2426,7 +2590,7 @@ catalog if you want it on some other button.)
 - **Up** / **Down** reorder the On-Toolbar list; **OK** applies the arrangement and
   remembers it for future sessions, **Cancel** discards your changes.
 
-**Out of the box most commands have no icon** — only those six ship with one — and
+**Out of the box most commands have no icon** — only those five ship with one — and
 that is fine: a toolbar button shows its label beside its icon, so an
 icon-less command simply reads as text. An icon is never a precondition for putting
 a command on the toolbar. But you can give any button one yourself — see
@@ -2455,7 +2619,7 @@ a cell to pick it and close the dialog, or select it and press **OK**.
 
 - The first cell is always **Default**, which **clears** the assignment: the button
   falls back to its built-in icon, or to no icon at all if it has none.
-- **Any** button can be given an icon — including the six that already ship with
+- **Any** button can be given an icon — including the five that already ship with
   one, whose default you simply override.
 - The icon is shown **only on the toolbar**. The matching menu entry keeps its plain
   text appearance, so decorating a button never changes how the menus look.
@@ -2474,8 +2638,7 @@ exists is quietly discarded rather than breaking the toolbar.
 | Shortcut | Where | Action |
 |----------|-------|--------|
 | **Ctrl+O** | Global | Open a `.pgtp` file |
-| **Ctrl+S** | Global | Save the active tab (the project, the open schema from the XSD tab, a DDL object editor tab's `.sql` file, or a PHP file tab's file) |
-| **Ctrl+Shift+S** | Global | Save As — always the `.pgtp` project, whichever tab is active |
+| **Ctrl+S** / **Ctrl+Shift+S** | Global | **Nothing — deliberately unbound.** Every save is a named entry on **Deployment** (see below) |
 | **Ctrl+W** | Global | Close project |
 | **F1** | Global | Open the Manual |
 | **Ctrl+F2** | Active editor tab | Toggle bookmark (disabled in Caption Mode) |
@@ -2500,9 +2663,19 @@ exists is quietly discarded rather than breaking the toolbar.
 | **Ctrl+Return** | Sandbox SQL console | Run the selection, or the whole buffer, against the sandbox |
 | **Ctrl+F** / **Ctrl+R** | Caption Management | Focus the caption bar's Find / Replace-with field |
 | **Ctrl+G** | Caption Management | Go to line in Raw XML |
-| **Ctrl+S** | Code Editor | Save code and close |
-| **Ctrl+W** | Code Editor | Cancel |
+| **Ctrl+S** | Code Editor dialog | OK — hand the code back and close. **The one surviving Ctrl+S in the app**, and it writes nothing to disk by itself |
+| **Ctrl+W** | Code Editor dialog | Cancel |
 | **Ctrl+C / Ctrl+V / Ctrl+X** | Editors | Copy / Paste / Cut |
+
+**Ctrl+S and Ctrl+Shift+S are unbound app-wide, and that is stated here rather
+than merely left out of the table.** Every save is a named entry on the Editor
+bar's **Deployment** menu — **Save pgtp** / **Save as new pgtp** on Raw XML,
+**Save in Project** on a DDL object tab, **Save XSD**, **Save PHP File** (see
+*The Deployment Menu*). Pressing the old keys produces **no write, no message and
+no hint**: the dispatcher behind them had to guess which tab you meant and got it
+wrong on six of them, and one reflex that is right here and silently wrong there
+is worse than none. The **Edit code…** dialog's Ctrl+S is the single carve-out,
+and it is that modal's OK button, not a write to disk.
 
 **Two chords were deleted and are not coming back as chords:** **Ctrl+Shift+F**
 (Find All) and **Ctrl+Alt+Return** (Replace All). Both commands are buttons on the
@@ -2521,27 +2694,36 @@ change tabs or modes: each pair is simply live only while its own surface has
 focus, which is why Find in the caption grid can never search the Raw XML by
 accident.
 
+**No entry on the Deployment menu carries a shortcut** — not one of the nine.
+**Compare/Merge pgtp**, **Save pgtp**, **Save as new pgtp**, **Deploy .pgtp**,
+**Save in Project**, **Run on sandbox**, **Run on quality**, **Save XSD** and
+**Save PHP File** are all menu-only, the saves because a keystroke save is
+exactly the wrong-target hazard described above, and the pushes because *an
+irreversible outward effect must not be one keystroke away*.
+
 **Nothing that reaches a database from a DDL object tab has a shortcut, on
-purpose** — not **Apply to Sandbox**, not **Deploy this edit…**, and not either
-check gesture (**Database ▸ Check Object in Sandbox** and **Database ▸ Check Object
-Without Applying**), so a write to a database is never one keystroke away.
-**Ctrl+Return** in the Sandbox SQL console is the one exception, because that
-console can only ever reach the disposable sandbox (see *The Sandbox*).
+purpose** — not **Run on sandbox**, not **Run on quality**, not **Deploy this
+edit…**, and not either check gesture (**Database ▸ Check Object in Sandbox** and
+**Database ▸ Check Object Without Applying**), so a write to a database is never
+one keystroke away. **Ctrl+Return** in the Sandbox SQL console is the one
+exception, because that console can only ever reach the disposable sandbox (see
+*The Sandbox*).
 
 The other commands added recently are shortcut-free too: **File ▸ Show
-Launcher…**, **Parsing ▸ Auto Parse XML**, **Parsing ▸ Validate Project**,
-**History ▸ History…**, **Bookmarks ▸ Clear All Bookmarks**, **Bookmarks ▸ List
-All Bookmarks**, **Database ▸ DDL Explorer (Quality)**, **Database ▸ DDL Explorer
-(Sandbox)**, **Database ▸ Sandbox Setup…**, **Database ▸ Project Status…** and
-**Tools ▸ Start MCP Server** are all menu-only. If you use one often, put it on
-the toolbar (see *Appearance & Layout ▸ The toolbar*).
+Launcher…**, **File ▸ Discard Changes**, **Parsing ▸ Auto Parse XML**, **Parsing ▸
+Validate Project**, **History ▸ History…**, **Navigation ▸ Clear All Bookmarks**,
+**Navigation ▸ List All Bookmarks**, **Database ▸ DDL Explorer (Quality)**,
+**Database ▸ DDL Explorer (Sandbox)**, **Database ▸ Sandbox Setup…**, **Database ▸
+Project Status…** and **Tools ▸ Start MCP Server** are all menu-only. If you use
+one often, put it on the toolbar (see *Appearance & Layout ▸ The toolbar*).
 
 **F3, Ctrl+L, Ctrl+Alt+F and Ctrl+Return have no menu entry at all**, which is
 also why they are the four commands you cannot put on the toolbar — a toolbar
 button is a menu item, and these have none.
 
-In **Caption Mode** the whole **Bookmarks** menu — and **Ctrl+F2** / **F2** /
-**Shift+F2** with it — is disabled for as long as the mode lasts, because the Raw
+In **Caption Mode** the **Navigation** menu's five bookmark entries — and
+**Ctrl+F2** / **F2** /
+**Shift+F2** with them — are disabled for as long as the mode lasts, because the Raw
 XML editor they act on is read-only there; the gutter still sets bookmarks (see
 *Bookmarks*). While the Caption Management tab itself is in front, the Editor menu
 bar is hidden entirely (see *The Two Menu Bars*).
