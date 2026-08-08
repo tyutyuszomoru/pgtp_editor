@@ -1238,9 +1238,9 @@ This is **display-only**: clicking a table populates Properties but, unlike
 clicking a routine or trigger, does **not** jump or scroll the DDL Explorer
 buffer, since a whole table has no single line in that buffer to jump to.
 Right-clicking a table node offers exactly one action, **Add Trigger…** (see
-*Creating a new trigger, function, or procedure*, below) — **Edit …** and
-**Check Out for Versioning** remain available only on routine and trigger rows,
-because those act on an object's existing definition.
+*Creating a new trigger, function, or procedure*, below) — **Edit DDL** remains
+available only on routine and trigger rows, because it acts on an object's
+existing definition.
 
 ### Working in the DDL tab
 
@@ -1277,32 +1277,50 @@ shows the error and the toggle unchecks itself.
 Both browsing surfaces double as an entry point into a dedicated, **editable**
 tab for one object at a time. Opening and editing such a tab touches no
 database — it is a text editor over the object's current definition — and the one
-gesture in it that *does* write anywhere, **Apply to Sandbox**, appears only while
-a sandbox session is open and only ever writes to the sandbox (see *The
+gesture in it that *does* reach a database, **Apply to Sandbox**, appears only
+while a sandbox session is open and only ever writes to the sandbox (see *The
 Sandbox*).
 
 - In the **DDL Objects** tree, right-click a routine or trigger row for
-  **Edit `<schema>.<name>(<argtypes>)`…** (or **Edit `<schema>.<table>.<name>`…**
-  for a trigger). Right-clicking an argument-name child row offers no Edit
+  **Edit DDL**. The row you clicked already names the object, so the entry
+  doesn't repeat it. Right-clicking an argument-name child row offers no Edit
   action — only object rows open a tab.
 - In the **DDL Explorer** tab's read-only buffer, right-click inside an
-  object's body for the same **Edit …** entry. Two overloaded routines get
-  distinct wording here since the full signature is in the label, so you can
-  tell them apart before opening either.
-- Re-invoking Edit on an object that's already open **focuses its existing
-  tab** rather than opening a second one.
+  object's body for **Edit DDL: `<schema>.<name>(<argtypes>)`** — or **Edit
+  DDL: `<schema>.<table>.<name>`** for a trigger. There your click landed
+  somewhere in a wall of definitions, so the entry spells out which object it
+  caught, and two overloads of one name read differently, so you can tell them
+  apart before opening either.
 
-Both right-click menus also offer **Check Out for Versioning** alongside
-**Edit …**. This is the project-aware variant of the same gesture: it requires
-a local DDL-versioning project to be open (see *Local DDL-Versioning
-Projects*) — if none is, a **"Project Required"** dialog offers
-**Create…** / **Open…** / **Cancel** before continuing. Checking out an object
-seeds a `ddl/<schema>.<name>.sql` file from the live definition the first
-time (or just opens it if it's already checked out — **the local file is
-never silently overwritten from the database**), then opens the same editable
-tab described below, backed by that file instead of a live, unsaved buffer.
-Re-invoking either Edit… or Check Out for Versioning on an object already
-checked out and open focuses its existing tab.
+**There is one editing gesture, and what you can do with the tab it opens comes
+from whether a project is open** — never from which words you clicked. (The
+second entry this menu used to carry, *Check Out for Versioning*, is gone: it
+asked you to choose between two gestures whose only real difference was your
+project state.)
+
+- **With a local DDL-versioning project open** (see *Local DDL-Versioning
+  Projects*), **Edit DDL checks the object out.** It writes the live definition
+  into the project's `ddl/<schema>.<name>.sql` — or
+  `ddl/<schema>.<table>.<trigger>.sql` for a trigger — if that file isn't there
+  yet, and opens your existing local copy if it is: **your local file is never
+  overwritten from the database.** The object joins the project's deploy
+  manifest, so the drift markers (`*` / `!`) start tracking it, and Save writes
+  straight to that file with no dialog.
+- **With no project open**, the tab holds the live definition and the first
+  Ctrl+S asks you where to put it (see *Saving*, below). You are **not** nagged about the
+  missing project: editing one object with just a database connection is a
+  supported way to work, so there is no "Project Required" prompt in the way of
+  every edit.
+
+**Re-invoking Edit DDL on an object that is already open focuses the existing
+tab** rather than opening a second one. There is exactly one tab per object,
+ever.
+
+> **One consequence is worth stating, because it otherwise looks like a bug.**
+> If you open an object with no project and *then* open a project, that tab keeps
+> its "ask me where to save" behavior, and **Edit DDL** on the same object just
+> focuses it — it is not promoted to a checked-out file. To get that object under
+> versioning, close its tab and open it again.
 
 The tab that opens is titled with the object's short name — `recalc`, or
 `fmt(integer)` when it's one of several overloads, or `orders.trg_audit` for a
@@ -1320,7 +1338,10 @@ one place in the app where Ctrl+Z means something different depending on
 which tab is focused.
 
 **Saving** (Ctrl+S, or File ▸ Save, while the tab is active) never touches a
-database — it only writes a `.sql` file to disk:
+database — it only writes a `.sql` file to disk. **Where it writes depends on how
+the tab was opened.** A checked-out tab — one you opened with a project active —
+already knows its file: every Ctrl+S, from the first one, writes straight to that
+`ddl/*.sql` and no dialog appears. In every other case:
 
 - The **first save** opens a normal **Save As…** file picker, prefilled with a
   sensible filename (`schema.name.sql`, or `schema.table.trigger.sql` for a
@@ -1333,9 +1354,10 @@ database — it only writes a `.sql` file to disk:
 - **Ctrl+Shift+S** (File ▸ Save As) is **not** repointed to this tab — it
   always means the `.pgtp` project, whichever tab is active.
 
-A tab opened via **Check Out for Versioning** (above) skips the Save As…
-picker entirely — its path is already the checked-out `ddl/*.sql` file, so
-every Ctrl+S from the first save onward writes straight to it.
+**A brand-new object you created yourself always goes through Save As…**, even
+with a project open: it has no live definition to check out, so there is no
+checked-out file for Save to aim at. See *Creating a new trigger, function, or
+procedure*, below.
 
 **Closing** the tab (its **✕**, or the app's usual close-tab gesture) prompts
 **Save**, **Discard**, or **Cancel** if it has unsaved changes, the same as
@@ -1376,8 +1398,8 @@ you then fill in and save like any other DDL object tab (see *Editing a single
 function, procedure, or trigger*, above).
 
 **Add Trigger…** — right-click a **table** node under **Tables** in the DDL
-Objects tree. (This is the one context menu a table node has; **Edit …** and
-**Check Out for Versioning** still belong to routine and trigger rows only.) The
+Objects tree. (This is the one context menu a table node has; **Edit DDL**
+still belongs to routine and trigger rows only.) The
 dialog shows the clicked table as a fixed line — you picked it by right-clicking
 it, so it isn't offered again as a field — plus:
 
@@ -1419,11 +1441,14 @@ inline message** instead of producing broken SQL.
 **OK opens a new editor tab holding the generated skeleton** — a
 `LANGUAGE plpgsql` body stub for a routine, a complete `CREATE TRIGGER`
 statement for a trigger. Creating an object **runs nothing against the
-database**; it only gives you correct starting text. Saving works exactly as it
-does for any other DDL object tab.
+database**; it only gives you correct starting text. Saving works as it does in
+any projectless DDL object tab: **the first Ctrl+S asks you where to put the
+file**, even with a project open. A new object has no live definition to check
+out, and seeding a checked-out file from a skeleton would tell your project that
+a definition had been deployed when no database has ever held it.
 
 With a **local DDL-versioning project** open (see *Local DDL-Versioning
-Projects*), a newly created object is **registered for versioning
+Projects*), a newly created object is nonetheless **registered for versioning
 automatically**: it shows up as a pending local change (the `*` drift marker) in
 the DDL Objects tree and is picked up by the normal deploy flow. Created with no
 project open, it is just an editor tab and a file — unversioned, which is a
@@ -1431,8 +1456,8 @@ supported way to work.
 
 ### Schema-aware completion in the DDL object editor
 
-Inside an open DDL object editor tab (opened via **Edit …** or **Check Out for
-Versioning**, above), **Ctrl+Space** offers name completion drawn from the
+Inside an open DDL object editor tab (opened via **Edit DDL**, above, or by
+creating a new object), **Ctrl+Space** offers name completion drawn from the
 same object catalog the DDL Explorer already fetched when you connected — it
 never makes an extra database round-trip when you invoke it. This is the same
 completion idiom as the Raw XML editor's Ctrl+Space (see *The Raw XML Editor ▸
@@ -1466,8 +1491,9 @@ optional local sandbox connection, and (later) git integration. Everything the
 app manages here is a plain, readable file: nothing is a black box.
 
 Nothing here is required for ordinary editing. Browsing the DDL Explorer and
-plain **Edit …** (see *DDL Explorer*) work with just a database connection, no
-project needed. A project becomes relevant only once you want checked-out
+**Edit DDL** (see *DDL Explorer*) work with just a database connection, no
+project needed — with none open, Edit DDL simply hands you an editable tab that
+saves wherever you tell it to. A project becomes relevant only once you want checked-out
 `ddl/` files, a versioned `.pgtp` working copy, drift markers, or a deploy.
 
 ### The File menu's project actions
@@ -1481,10 +1507,16 @@ open actions (**Open…**, **Open PHP File…**) and **Save**:
 - **Project Settings…**
 - **Deploy .pgtp**
 
-**No project is ever created silently.** Any action that needs one — Check
-Out for Versioning, for example — shows a **"Project Required"** dialog
-offering **Create…**, **Open…**, or **Cancel** if none is open yet; choosing
-Create or Open runs that flow first and then continues the original action.
+**No project is ever created silently.** An action that can only mean something
+inside a project — **Project Settings…**, for instance — shows a **"Project
+Required"** dialog offering **Create…**, **Open…**, or **Cancel** if none is
+open yet; choosing Create or Open runs that flow first and then continues the
+original action.
+
+**Editing a DDL object is deliberately not one of those actions.** The DDL
+Explorer's **Edit DDL** never raises that dialog: with no project it quietly gives
+you a plain editable tab, because working on a single routine with just a
+database connection is a supported mode, not a mistake to be corrected.
 
 ### The window title shows the active project
 
@@ -1721,9 +1753,10 @@ still works.
 
 ### Checking out DDL objects
 
-See *DDL Explorer ▸ Editing a single function, procedure, or trigger* for the
-**Check Out for Versioning** gesture itself and the drift markers (`*`/`!`)
-this adds to the DDL Objects tree.
+There is no separate check-out command: **while a project is open, the DDL
+Explorer's Edit DDL *is* the checkout** — see *DDL Explorer ▸ Editing a
+single function, procedure, or trigger* for what it writes into `ddl/`, and for
+the drift markers (`*`/`!`) it puts on the DDL Objects tree.
 
 ### The .pgtp file as a checked-out artifact
 
