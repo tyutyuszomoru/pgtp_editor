@@ -90,10 +90,23 @@ class DraftFragmentTab(QWidget):
 #: showing different text for the same state.
 RAW_XML_TAB_TITLE = "Raw XML"
 
-#: BUG-037's suffix for Caption Mode. Phrased as the *reason* rather than a
-#: bare "read only" because Raw XML can be locked by more than one mode, and a
-#: user who cannot type needs to know which one to leave.
-RAW_XML_READ_ONLY_CAPTION_MODE = "read only in caption mode"
+#: BUG-037's named read-only reasons for Raw XML -- one per mode that holds the
+#: editor read-only. Named rather than a bare "read only" because Raw XML can be
+#: locked by more than one mode at a time, and a user who cannot type needs to
+#: know which one to leave (FQ-021 made this literal: the reasons are a SET, and
+#: the tab lists every reason currently holding the lock).
+#:
+#: The constants are the bare mode names; `_set_raw_xml_read_only` owns the
+#: "read only in ..." phrasing, so the composed suffix reads as one sentence for
+#: one reason ("read only in caption mode") and for several
+#: ("read only in caption mode + compare/merge mode") instead of repeating the
+#: prefix per reason.
+RAW_XML_READ_ONLY_CAPTION_MODE = "caption mode"
+
+#: FQ-021: Compare/Merge is a mode, and it holds Raw XML read-only for its whole
+#: duration -- see `enter_diff_merge_mode` for why that is a data-loss guard and
+#: not just a hint.
+RAW_XML_READ_ONLY_DIFF_MERGE_MODE = "compare/merge mode"
 
 #: The two DDL Explorer connection roles (§18.7, FQ-022). Exactly one
 #: connection of each role can exist per project, which is why the role is a
@@ -185,8 +198,26 @@ class CenterStage(QTabWidget):
         # is already open, never add a second one.
         self._php_file_tabs: dict[str, PhpFileTab] = {}
         self._untitled_php_counter = 0
+        #: The named reasons currently holding the Raw XML editor read-only
+        #: (FQ-021). A SET, never a boolean: Caption Mode and Compare/Merge mode
+        #: both lock this one editor, and a shared flag let either mode's
+        #: `leave_*` unlock it under the other. Read-only while non-empty; only
+        #: `_set_raw_xml_read_only` may touch it, so the flag and the tab title
+        #: are derived from it in one place (BUG-037).
+        self._raw_xml_read_only_reasons: set[str] = set()
+
         self.diff_merge_panel = DiffMergePanel()
         self.diff_merge_tab_index = self.addTab(self.diff_merge_panel, "Diff / Merge")
+        # The mode's non-Apply exit (FQ-021, §12). Mirrors Caption Management's
+        # panel-owned `_on_close` rather than a tab ✕ -- a mode is not a tab,
+        # and `_closable`'s members are all plain tabs. Wired HERE instead of in
+        # MainWindow (which is where the caption one is wired) because leaving
+        # this mode restores no host-side state: the caption callback also has a
+        # `_mode_label` to flip and bookmark actions to un-gate, this one is
+        # purely CenterStage's own tabs + read-only flag. A host that later
+        # needs a say can still reassign `_on_close`, exactly like the caption
+        # panel's.
+        self.diff_merge_panel._on_close = self.leave_diff_merge_mode
 
         self.caption_management_panel = CaptionManagementPanel()
         self.caption_management_tab_index = self.addTab(
@@ -420,8 +451,15 @@ class CenterStage(QTabWidget):
             self.setCurrentIndex(self.raw_xml_tab_index)
         self.ddl_explorer_visibility_changed.emit(role, False)
 
-    def _set_raw_xml_read_only(self, reason: str | None) -> None:
-        """Make Raw XML read-only *for a named reason*, or editable again.
+    def raw_xml_read_only_reasons(self) -> set[str]:
+        """The named reasons currently holding Raw XML read-only (a copy, so a
+        caller cannot mutate the lock behind the seam's back)."""
+        return set(self._raw_xml_read_only_reasons)
+
+    def _set_raw_xml_read_only(self, reason: str | None, *, active: bool = True) -> None:
+        """Add (`active=True`) or discard (`active=False`) ONE named read-only
+        reason, then re-derive the flag *and* the tab title from the resulting
+        set. `reason=None` clears the set outright -- see the warning below.
 
         BUG-037: the read-only flag and the tab title are two views of ONE
         fact, and before this they were set in different places -- the flag
@@ -431,16 +469,37 @@ class CenterStage(QTabWidget):
         tab they are looking at). Both now move together, through here, so
         they cannot drift.
 
-        `reason` is the suffix shown in parentheses on the tab, or `None` for
-        "editable" -- passing the reason rather than a bare `True` is what
-        lets a second read-only mode name itself on the tab instead of
-        borrowing Caption Mode's wording.
+        FQ-021 generalized the single reason into a SET, because two modes now
+        hold this one editor read-only -- Caption Mode (§13) and Compare/Merge
+        mode (§12) -- and each mode's `leave_*` used to clear the flag
+        unconditionally. Entering one mode while the other was active and then
+        leaving *that one* re-enabled editing while the other mode was still
+        on, silently breaking the invariant that mode exists to enforce. So:
+        read-only while the set is non-empty, each `enter_*` adds its own
+        reason, each `leave_*` **discards only its own** (`active=False`).
+
+        ⚠️ `reason=None` is the whole-set reset -- "no mode holds this editor".
+        A mode's `leave_*` must NEVER use it: that is exactly the bug above.
+        It exists for a caller that legitimately knows no mode is active.
+
+        The suffix lists every active reason, joined and sorted, so the title
+        is deterministic (a set has no order, and a title that reshuffled
+        between runs would be its own small bug) and so a user locked out by
+        two modes learns they have two to leave, not one.
         """
-        self.xml_editor.setReadOnly(reason is not None)
-        self.setTabText(
-            self.raw_xml_tab_index,
-            RAW_XML_TAB_TITLE if reason is None else f"{RAW_XML_TAB_TITLE} ({reason})",
-        )
+        if reason is None:
+            self._raw_xml_read_only_reasons.clear()
+        elif active:
+            self._raw_xml_read_only_reasons.add(reason)
+        else:
+            self._raw_xml_read_only_reasons.discard(reason)
+
+        reasons = self._raw_xml_read_only_reasons
+        self.xml_editor.setReadOnly(bool(reasons))
+        title = RAW_XML_TAB_TITLE
+        if reasons:
+            title += f" (read only in {' + '.join(sorted(reasons))})"
+        self.setTabText(self.raw_xml_tab_index, title)
 
     def enter_caption_mode(self):
         """Keep Raw XML visible but read-only, and reveal + switch to Caption
@@ -452,9 +511,44 @@ class CenterStage(QTabWidget):
 
     def leave_caption_mode(self):
         """Re-enable editing on Raw XML, hide Caption Management, and switch
-        back to Raw XML."""
-        self._set_raw_xml_read_only(None)
+        back to Raw XML.
+
+        Discards only the caption reason: if Compare/Merge mode is also on, the
+        editor stays read-only and the tab keeps saying so (FQ-021)."""
+        self._set_raw_xml_read_only(RAW_XML_READ_ONLY_CAPTION_MODE, active=False)
         self.setTabVisible(self.caption_management_tab_index, False)
+        self.setTabVisible(self.raw_xml_tab_index, True)
+        self.setCurrentIndex(self.raw_xml_tab_index)
+
+    def enter_diff_merge_mode(self):
+        """Reveal + switch to Diff/Merge and hold Raw XML read-only for the
+        whole comparison (FQ-021, §12) -- the mirror of `enter_caption_mode`.
+
+        Read-only here is a data-loss guard, not a hint. The comparison's
+        source is the PARSED MODEL (`DiffMergeController.compare_two_files`
+        reads the injected `project()`), never the Raw XML buffer, so a hand
+        edit that was never reparsed cannot participate in the merge -- and
+        `apply_changes_to_target` then ends with a reload of the file it just
+        wrote (`open_project_file`), which replaces the open document and
+        discards that edit with no prompt. An editable buffer would be lying
+        twice over.
+
+        The lock therefore belongs to the MODE, not to the Diff/Merge tab
+        being current: the destroying reload fires from Apply regardless of
+        which tab shows, and the user may well tab back to Raw XML mid-
+        comparison."""
+        self._set_raw_xml_read_only(RAW_XML_READ_ONLY_DIFF_MERGE_MODE)
+        self.setTabVisible(self.diff_merge_tab_index, True)
+        self.setCurrentIndex(self.diff_merge_tab_index)
+
+    def leave_diff_merge_mode(self):
+        """Re-enable editing on Raw XML, hide Diff/Merge, and switch back to
+        Raw XML -- the mirror of `leave_caption_mode`.
+
+        Discards only the compare/merge reason (see that method): leaving a
+        comparison must not unlock an editor Caption Mode is still holding."""
+        self._set_raw_xml_read_only(RAW_XML_READ_ONLY_DIFF_MERGE_MODE, active=False)
+        self.setTabVisible(self.diff_merge_tab_index, False)
         self.setTabVisible(self.raw_xml_tab_index, True)
         self.setCurrentIndex(self.raw_xml_tab_index)
 

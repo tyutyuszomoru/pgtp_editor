@@ -23,10 +23,14 @@ from __future__ import annotations
 
 import difflib
 
+from collections.abc import Callable
+
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
+    QHBoxLayout,
     QLabel,
     QPlainTextEdit,
+    QPushButton,
     QSplitter,
     QStackedWidget,
     QTableWidget,
@@ -53,8 +57,16 @@ def leaf_label(diff) -> str:
 
 
 class DiffMergePanel(QWidget):
-    def __init__(self, parent=None):
+    def __init__(self, on_close: Callable[[], None] | None = None, parent=None):
         super().__init__(parent)
+        #: FQ-021: the panel-owned exit from Compare/Merge mode. Before it, the
+        #: mode was a one-way door -- the Diff/Merge tab is not in
+        #: `CenterStage._closable` so it has no ✕, and the three compare entry
+        #: points had no counterpart, leaving Apply (an irreversible write) as
+        #: the only way out of a read-only Raw XML. Same injected-callback shape
+        #: as `CaptionManagementPanel._on_close`, and wired the same way: the
+        #: owner assigns it, the panel only invokes it (see `close_panel`).
+        self._on_close = on_close or (lambda: None)
 
         self.tree = QTreeWidget()
         self.tree.setHeaderHidden(True)
@@ -66,8 +78,23 @@ class DiffMergePanel(QWidget):
         self.splitter.addWidget(self.tree)
         self.splitter.addWidget(self.detail_stack)
 
+        # Named for the MODE, not the tab ("Close" would read as "hide this
+        # tab" and understate that it also gives Raw XML back).
+        self._close_button = QPushButton("Exit Compare/Merge Mode")
+        self._close_button.clicked.connect(self.close_panel)
+        button_row = QHBoxLayout()
+        button_row.addStretch(1)
+        button_row.addWidget(self._close_button)
+
         layout = QVBoxLayout(self)
         layout.addWidget(self.splitter)
+        layout.addLayout(button_row)
+
+    def close_panel(self) -> None:
+        """Leave Compare/Merge mode (the Exit button's handler). Mirrors
+        `CaptionManagementPanel.close_panel`: the panel knows it is being
+        dismissed, the owner decides what that means."""
+        self._on_close()
 
     def _build_detail_views(self):
         self.detail_stack = QStackedWidget()
