@@ -58,7 +58,7 @@ def _texts(window):
 
 def _list(window):
     """Trigger the real menu action, not the method, so the wiring is covered."""
-    menu = find_top_menu(window, "Bookmarks")
+    menu = find_top_menu(window, "Navigation")
     find_action(menu, "List All Bookmarks").trigger()
 
 
@@ -307,7 +307,7 @@ def test_the_command_has_no_shortcut(qtbot, tmp_path):
     """Matching Clear All Bookmarks: this produces a report, and F2 / Shift+F2
     already own stepping."""
     window = _window(qtbot, tmp_path)
-    menu = find_top_menu(window, "Bookmarks")
+    menu = find_top_menu(window, "Navigation")
 
     action = find_action(menu, "List All Bookmarks")
 

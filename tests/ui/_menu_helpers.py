@@ -13,7 +13,7 @@ def _menu_bars(window):
     """Both of the app's menu bars (FQ-016), window bar first.
 
     `find_top_menu`/`all_top_level_menu_titles` search across both on purpose:
-    a menu MOVING between the two bars (as Bookmarks did) is not something every
+    a menu MOVING between the two bars (as the bookmark menu did) is not something every
     caller of these helpers should have to care about. Tests that specifically
     assert WHICH bar a menu is on use `window.menuBar()` /
     `window.editor_menu_bar` directly — see test_menus.py.

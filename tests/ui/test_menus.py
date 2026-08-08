@@ -106,10 +106,10 @@ def test_editor_menu_bar_is_a_second_bar_above_the_central_pane(qtbot):
 
 
 def test_editor_menu_bar_contents(qtbot):
-    """History, Select (FQ-015), Parsing, Bookmarks."""
+    """History, Select (FQ-015), Parsing, Navigation (`Bookmarks` before FQ-021)."""
     window = MainWindow()
     qtbot.addWidget(window)
-    assert editor_menu_titles(window) == ["History", "Select", "Parsing", "Bookmarks"]
+    assert editor_menu_titles(window) == ["History", "Select", "Parsing", "Navigation"]
 
 
 def test_history_menu_contents_and_order(qtbot):
@@ -580,12 +580,12 @@ def test_all_top_level_menus_present_in_order(qtbot):
     # all_top_level_menu_titles — see _menu_helpers._top_level_menus.
     window = MainWindow()
     qtbot.addWidget(window)
-    # Two bars since FQ-016: `Edit` is gone from the window bar and `Bookmarks`
-    # moved off it onto the Editor bar.
+    # Two bars since FQ-016: `Edit` is gone from the window bar and the bookmark
+    # menu moved off it onto the Editor bar (retitled `Navigation` by FQ-021).
     assert window_menu_titles(window) == [
         "File", "View", "Schema", "Database", "Tools", "Generation", "Help",
     ]
-    assert editor_menu_titles(window) == ["History", "Select", "Parsing", "Bookmarks"]
+    assert editor_menu_titles(window) == ["History", "Select", "Parsing", "Navigation"]
     # `all_top_level_menu_titles` spans both, window bar first.
     assert all_top_level_menu_titles(window) == (
         window_menu_titles(window) + editor_menu_titles(window)
@@ -607,30 +607,34 @@ def test_view_menu_has_no_wrap_raw_xml_lines_action(qtbot):
     assert "Wrap Lines" not in action_labels(view_menu)
 
 
-def test_bookmarks_menu_moved_onto_the_editor_menu_bar(qtbot):
+def test_navigation_menu_moved_onto_the_editor_menu_bar(qtbot):
     """FQ-016: it was a top-level WINDOW menu between Tools and Generation; it is
-    a per-editor menu, so it belongs on the per-editor bar."""
+    a per-editor menu, so it belongs on the per-editor bar. Under its FQ-016
+    title (`Bookmarks`) it must be gone from BOTH bars, not merely renamed on
+    the window bar."""
     window = MainWindow()
     qtbot.addWidget(window)
+    assert "Navigation" not in window_menu_titles(window)
     assert "Bookmarks" not in window_menu_titles(window)
     titles = editor_menu_titles(window)
-    assert titles.index("Bookmarks") == titles.index("Parsing") + 1
+    assert "Bookmarks" not in titles
+    assert titles.index("Navigation") == titles.index("Parsing") + 1
 
 
-def test_bookmarks_menu_contents(qtbot):
+def test_navigation_menu_contents(qtbot):
     window = MainWindow()
     qtbot.addWidget(window)
-    menu = find_top_menu(window, "Bookmarks")
+    menu = find_top_menu(window, "Navigation")
     assert action_labels(menu) == [
         "Toggle Bookmark", "Next Bookmark", "Previous Bookmark", "―",
         "Clear All Bookmarks", "List All Bookmarks",
     ]
 
 
-def test_bookmarks_menu_shortcuts(qtbot):
+def test_navigation_menu_shortcuts(qtbot):
     window = MainWindow()
     qtbot.addWidget(window)
-    menu = find_top_menu(window, "Bookmarks")
+    menu = find_top_menu(window, "Navigation")
     assert find_action(menu, "Toggle Bookmark").shortcut().toString() == "Ctrl+F2"
     assert find_action(menu, "Next Bookmark").shortcut().toString() == "F2"
     assert find_action(menu, "Previous Bookmark").shortcut().toString() == "Shift+F2"
@@ -644,7 +648,7 @@ def test_toggle_bookmark_action_marks_cursor_line(qtbot):
     cursor = editor.textCursor()
     cursor.setPosition(editor.document().findBlockByNumber(2).position())
     editor.setTextCursor(cursor)
-    menu = find_top_menu(window, "Bookmarks")
+    menu = find_top_menu(window, "Navigation")
     find_action(menu, "Toggle Bookmark").trigger()
     assert editor.bookmarked_lines() == [2]
 
@@ -659,7 +663,7 @@ def test_next_bookmark_action_moves_cursor_with_wrap(qtbot):
     cursor = editor.textCursor()
     cursor.setPosition(editor.document().findBlockByNumber(0).position())
     editor.setTextCursor(cursor)
-    menu = find_top_menu(window, "Bookmarks")
+    menu = find_top_menu(window, "Navigation")
     next_action = find_action(menu, "Next Bookmark")
     next_action.trigger()
     assert editor.textCursor().blockNumber() == 1
@@ -676,12 +680,12 @@ def test_clear_all_bookmarks_action(qtbot):
     editor.setPlainText("a\nb\nc")
     editor.toggle_bookmark(0)
     editor.toggle_bookmark(2)
-    menu = find_top_menu(window, "Bookmarks")
+    menu = find_top_menu(window, "Navigation")
     find_action(menu, "Clear All Bookmarks").trigger()
     assert editor.bookmarked_lines() == []
 
 
-# -- Bookmarks menu follows the active editor tab (§8) -----------------------
+# -- Navigation menu follows the active editor tab (§8) ----------------------
 
 
 def _activate_ddl_tab(window):
@@ -692,7 +696,7 @@ def _activate_ddl_tab(window):
 
 
 def test_bookmark_actions_target_the_active_ddl_editor(qtbot):
-    """The four Bookmarks actions resolve their editor at trigger time, so on
+    """The four bookmark actions resolve their editor at trigger time, so on
     the DDL Explorer tab they act on the DDL buffer -- not on Raw XML, which
     they used to be bound to permanently."""
     window = MainWindow()
@@ -705,7 +709,7 @@ def test_bookmark_actions_target_the_active_ddl_editor(qtbot):
     cursor.setPosition(ddl.document().findBlockByNumber(2).position())
     ddl.setTextCursor(cursor)
 
-    menu = find_top_menu(window, "Bookmarks")
+    menu = find_top_menu(window, "Navigation")
     find_action(menu, "Toggle Bookmark").trigger()
 
     assert ddl.bookmarked_lines() == [2]
@@ -722,7 +726,7 @@ def test_bookmark_navigation_and_clear_follow_the_active_tab(qtbot):
     cursor = ddl.textCursor()
     cursor.setPosition(ddl.document().findBlockByNumber(0).position())
     ddl.setTextCursor(cursor)
-    menu = find_top_menu(window, "Bookmarks")
+    menu = find_top_menu(window, "Navigation")
 
     find_action(menu, "Next Bookmark").trigger()
     assert ddl.textCursor().blockNumber() == 1
@@ -743,7 +747,7 @@ def test_bookmark_actions_target_the_active_xsd_editor(qtbot):
     cursor.setPosition(xsd.document().findBlockByNumber(1).position())
     xsd.setTextCursor(cursor)
 
-    find_action(find_top_menu(window, "Bookmarks"), "Toggle Bookmark").trigger()
+    find_action(find_top_menu(window, "Navigation"), "Toggle Bookmark").trigger()
 
     assert xsd.bookmarked_lines() == [1]
     assert window.center_stage.xml_editor.bookmarked_lines() == []
@@ -761,6 +765,6 @@ def test_bookmark_actions_do_not_switch_tabs(qtbot):
     ddl.setPlainText("a\nb")
     before = window.center_stage.currentIndex()
 
-    find_action(find_top_menu(window, "Bookmarks"), "Toggle Bookmark").trigger()
+    find_action(find_top_menu(window, "Navigation"), "Toggle Bookmark").trigger()
 
     assert window.center_stage.currentIndex() == before

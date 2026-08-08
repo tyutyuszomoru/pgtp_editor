@@ -151,6 +151,32 @@ def test_resolve_ids_maps_a_renamed_menu_path_so_a_pinned_button_survives():
     ) == ["database.ddl-explorer-quality"]
 
 
+#: FQ-021's five rename rows, as (saved id, current id). The menu title is the
+#: first path segment, so retitling `Bookmarks` to `Navigation` changed all five
+#: ids while every member's OWN label stayed put.
+_FQ021_ROWS = [
+    ("bookmarks.toggle-bookmark", "navigation.toggle-bookmark"),
+    ("bookmarks.next-bookmark", "navigation.next-bookmark"),
+    ("bookmarks.previous-bookmark", "navigation.previous-bookmark"),
+    ("bookmarks.clear-all-bookmarks", "navigation.clear-all-bookmarks"),
+    ("bookmarks.list-all-bookmarks", "navigation.list-all-bookmarks"),
+]
+
+
+def test_fq021_renamed_every_bookmark_member_not_just_the_menu():
+    """The rename's cost, pinned: five ids changed for one retitled menu. A row
+    missing here is one user's pinned button vanishing on upgrade, which is
+    exactly the silent degradation `RENAMED_ID_ALIASES` exists to prevent."""
+    for old_id, new_id in _FQ021_ROWS:
+        assert RENAMED_ID_ALIASES[old_id] == new_id
+
+
+def test_resolve_ids_carries_a_pinned_bookmark_button_through_the_rename():
+    known = [new_id for _old, new_id in _FQ021_ROWS] + ["file.open"]
+    saved = [old_id for old_id, _new in _FQ021_ROWS]
+    assert resolve_ids(saved, known) == [new for _old, new in _FQ021_ROWS]
+
+
 def test_resolve_ids_passes_through_new_ids_and_still_drops_unknowns():
     assert resolve_ids(["file.open", "nope"], _KNOWN) == ["file.open"]
 
@@ -175,6 +201,32 @@ KNOWN_ICONS = ["document-open", "document-save-as", "zoom-in"]
 
 def test_settings_key_is_a_sibling_of_toolbar_ids():
     assert ICON_ASSIGNMENTS_SETTINGS_KEY == "toolbarIconIds"
+
+
+def test_resolve_icon_assignments_carries_a_renamed_commands_icon_too():
+    """A toolbar id and its FQ-004 icon assignment live in SEPARATE QSettings
+    keys and are resolved by different functions. Surviving `resolve_ids` alone
+    would restore the user's button stripped of the icon they chose for it, so
+    both resolvers must consult `RENAMED_ID_ALIASES` -- FQ-021's five bookmark
+    rows exercise that on a whole menu's worth at once."""
+    known = [new_id for _old, new_id in _FQ021_ROWS]
+    assignments = {old_id: "zoom-in" for old_id, _new in _FQ021_ROWS}
+    assert resolve_icon_assignments(assignments, known, ["zoom-in"]) == {
+        new_id: "zoom-in" for _old, new_id in _FQ021_ROWS
+    }
+
+
+def test_the_renamed_bookmark_ids_stay_out_of_the_icon_table():
+    """The concrete form of `test_renamed_ids_are_never_inverted_into_the_icon_
+    table` for FQ-021: had these rows gone into `LEGACY_ID_ALIASES`, its
+    inversion would make `icon_id_for` answer with a MENU-PATH id where an icon
+    id belongs. These commands are icon-less, and None is the right answer."""
+    for _old_id, new_id in _FQ021_ROWS:
+        assert icon_id_for(new_id) is None
+    # ...but a user-assigned icon still wins, as for any other command.
+    assert icon_id_for(
+        "navigation.next-bookmark", {"navigation.next-bookmark": "zoom-in"}
+    ) == "zoom-in"
 
 
 def test_serialize_round_trips_through_parse():

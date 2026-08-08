@@ -24,8 +24,9 @@ Audit panel*, plus the two menus that are nothing but that:
   dispatches that make Ctrl+F, F3, Ctrl+F2 and friends follow whichever editor
   tab is active (Raw XML / Edit XSD / DDL Explorer / an editable DDL object /
   a §21 PHP tab);
-* the **Bookmarks menu** — a menu owned outright by one collaborator moves with
-  it, so this lane builds it (:meth:`build_bookmarks_menu`) and gates it during
+* the **Navigation menu** (titled `Bookmarks` before FQ-021) — a menu owned
+  outright by one collaborator moves with it, so this lane builds it
+  (:meth:`build_navigation_menu`) and gates it during
   Caption Mode (:meth:`set_bookmarks_enabled`, §8/§13) — including
   **List All Bookmarks** (:meth:`list_all_bookmarks`, FQ-014), which writes the
   active editor's bookmarks into the Audit panel as ``[Bookmark]`` rows and, being
@@ -155,7 +156,7 @@ class _StatusBarProxy:
 
 
 class FindValidateController(QObject):
-    """Owns find/replace routing, the Bookmarks menu, the streaming Find-All run
+    """Owns find/replace routing, the Navigation menu, the streaming Find-All run
     and Tier-2 project validation."""
 
     def __init__(
@@ -187,11 +188,11 @@ class FindValidateController(QObject):
         # controller's lifetime is unaffected.
         add_bookmark_observer(self._on_editor_bookmarks_changed)
 
-        #: The Bookmarks menu and its five actions, retained by
-        #: `build_bookmarks_menu` so `set_bookmarks_enabled` can gate the menu
+        #: The Navigation menu and its five bookmark actions, retained by
+        #: `build_navigation_menu` so `set_bookmarks_enabled` can gate the menu
         #: **and every child action** during Caption Mode (§8/§13). None / empty
         #: until the menu is built.
-        self._bookmarks_menu = None
+        self._navigation_menu = None
         self._bookmark_actions: tuple = ()
 
         #: The streaming Find-All run's whole state. PLAIN ATTRIBUTES, read back
@@ -234,20 +235,29 @@ class FindValidateController(QObject):
         return self._find_all_target
 
     @property
-    def bookmarks_menu(self):
-        """The Bookmarks ``QMenu`` (None before :meth:`build_bookmarks_menu`)."""
-        return self._bookmarks_menu
+    def navigation_menu(self):
+        """The Navigation ``QMenu`` (None before :meth:`build_navigation_menu`)."""
+        return self._navigation_menu
 
     @property
     def bookmark_actions(self) -> tuple:
-        """The five Bookmarks ``QAction``s, in menu order (empty before
-        :meth:`build_bookmarks_menu`). The separator is not included."""
+        """The five bookmark ``QAction``s, in menu order (empty before
+        :meth:`build_navigation_menu`). The separator is not included."""
         return self._bookmark_actions
 
     # -- construction --------------------------------------------------------
 
-    def build_bookmarks_menu(self, menu_bar) -> None:
-        """Add the Bookmarks menu to `menu_bar`.
+    def build_navigation_menu(self, menu_bar) -> None:
+        """Add the Navigation menu to `menu_bar`.
+
+        Titled `Bookmarks` until FQ-021 renamed it; the five members kept their
+        own labels. The rename is not free, because a command id is its whole
+        menu path and the first segment is the menu title -- every member went
+        from `bookmarks.*` to `navigation.*`, which would drop a pinned toolbar
+        button. `toolbar_registry.RENAMED_ID_ALIASES` carries a row per member so
+        it survives; that table and NOT `LEGACY_ID_ALIASES`, which
+        `ICON_ID_BY_COMMAND` inverts (see its comment for what a row there
+        silently breaks).
 
         Each action resolves the target editor at TRIGGER time via
         `active_bookmark_editor`, not at build time -- the shared gutter base
@@ -255,13 +265,13 @@ class FindValidateController(QObject):
         Explorer editors, so the menu follows whichever is active instead of
         being bound to Raw XML forever.
 
-        The menu and its five actions are RETAINED (`_bookmarks_menu` /
+        The menu and its five actions are RETAINED (`_navigation_menu` /
         `_bookmark_actions`) so `set_bookmarks_enabled` can gate them together
         while Caption Mode is active (§8/§13) -- disabling only the `QMenu`
         grays out the menu-bar entry but leaves the actions' shortcuts live.
         """
-        menu = menu_bar.addMenu("Bookmarks")
-        self._bookmarks_menu = menu
+        menu = menu_bar.addMenu("Navigation")
+        self._navigation_menu = menu
 
         toggle_action = menu.addAction("Toggle Bookmark")
         toggle_action.setShortcut("Ctrl+F2")
@@ -301,7 +311,16 @@ class FindValidateController(QObject):
         )
 
     def set_bookmarks_enabled(self, enabled: bool) -> None:
-        """Enable/disable the Bookmarks menu **and its five actions** (§8/§13).
+        """Enable/disable the Navigation menu **and its five bookmark actions**
+        (§8/§13).
+
+        Still named for BOOKMARKS, not for the menu, after FQ-021 retitled that
+        menu to `Navigation`: what Caption Mode gates is the bookmark action
+        group, and the whole-`QMenu` disable below is only equivalent to that
+        while every member of the menu is a bookmark action. A later pass that
+        moves non-bookmark navigation (the diff steppers) into this menu must
+        stop disabling the menu itself, or it will gray out commands Caption
+        Mode has no reason to touch.
 
         Called by the host on entering/leaving Caption Mode, where the Raw XML
         editor is read-only. Both halves are needed: disabling the `QMenu` alone
@@ -312,8 +331,8 @@ class FindValidateController(QObject):
         Gutter bookmark toggling is deliberately NOT gated: bookmarks are a UI
         overlay independent of the editor's read-only state.
         """
-        if self._bookmarks_menu is not None:
-            self._bookmarks_menu.setEnabled(enabled)
+        if self._navigation_menu is not None:
+            self._navigation_menu.setEnabled(enabled)
         for action in self._bookmark_actions:
             action.setEnabled(enabled)
 
@@ -355,7 +374,8 @@ class FindValidateController(QObject):
         return stage.find_replace_bar
 
     def active_bookmark_editor(self):
-        """The editor the Bookmarks menu/shortcuts act on: whichever editor
+        """The editor the Navigation menu's bookmark actions/shortcuts act on:
+        whichever editor
         tab is active (§8). Every editor carries the same bookmark API from
         the shared gutter base (`ui/editor_gutter.py`), so this dispatch is
         the only thing needed to make the menu follow focus -- it mirrors
@@ -380,7 +400,7 @@ class FindValidateController(QObject):
         php_tab = stage.active_php_file_tab()
         if php_tab is not None:
             # §21: its `CodeEditor` carries the same gutter bookmark API (§8),
-            # so the Bookmarks menu follows a PHP tab like any other editor.
+            # so the bookmark actions follow a PHP tab like any other editor.
             return php_tab.editor
         draft = stage.active_draft_fragment_tab()
         if draft is not None:
@@ -525,7 +545,7 @@ class FindValidateController(QObject):
     # -- FQ-014: List All Bookmarks -------------------------------------------
 
     def list_all_bookmarks(self) -> None:
-        """**Bookmarks ▸ List All Bookmarks** — write the ACTIVE editor's
+        """**Navigation ▸ List All Bookmarks** — write the ACTIVE editor's
         bookmarks into the Audit panel as clickable `[Bookmark]` rows.
 
         The active editor only, like every other bookmark command (all of which

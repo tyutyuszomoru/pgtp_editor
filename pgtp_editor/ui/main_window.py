@@ -757,10 +757,10 @@ class MainWindow(QMainWindow):
 
         #: The find / replace / bookmarks / validate lane
         #: (`ui/find_controller.py`): the per-tab find-bar and bookmark-editor
-        #: routing, the Bookmarks menu (owned outright, so it builds it — onto
+        #: routing, the Navigation menu (owned outright, so it builds it — onto
         #: the Editor menu bar since FQ-016), the whole streaming Find-All run
         #: and Tier-2 validation. Built before the menu bar because
-        #: `_build_menu_bar` calls `build_bookmarks_menu`, `_build_parsing_menu`
+        #: `_build_menu_bar` calls `build_navigation_menu`, `_build_parsing_menu`
         #: wires its `validate_project` and `_install_find_next_action` routes
         #: F3 at it. Validation reads the open document through the same two
         #: providers `_gen_ui` uses.
@@ -1581,11 +1581,11 @@ class MainWindow(QMainWindow):
         self._build_history_menu()
         self._build_select_menu()
         self._build_parsing_menu()
-        # The Bookmarks menu is owned outright by the find/validate lane, so it
+        # The Navigation menu is owned outright by the find/validate lane, so it
         # builds it -- called from here so the menu lands on THIS bar (it was a
         # top-level window menu between Tools and Generation before FQ-016) and
         # keeps its position on it.
-        self._find_ui.build_bookmarks_menu(self.editor_menu_bar)
+        self._find_ui.build_navigation_menu(self.editor_menu_bar)
         self._refresh_editor_menu_affordances()
 
     def _build_history_menu(self):
@@ -1636,7 +1636,7 @@ class MainWindow(QMainWindow):
         `center_stage.xml_editor`'s bound methods, so the chords pressed on a PHP
         tab, a DDL object tab or an FQ-006 draft tab selected inside the **Raw
         XML** document. Never re-bind a per-tab command to a widget at build
-        time; the Bookmarks menu's docstring states the same rule.
+        time; the Navigation menu's docstring states the same rule.
 
         Shortcuts are unchanged (§27): no chord is rebound and none is new to the
         app — Ctrl+A is the platform default the widgets already implemented.
@@ -1777,7 +1777,7 @@ class MainWindow(QMainWindow):
 
         1. Hide the WHOLE bar on the tabs where all four menus are meaningless —
            **Caption Management** (a center-stage tab, not a dock, where §13
-           already wanted Bookmarks disabled) and **Manual**. §29 records this as
+           already wanted bookmarks disabled) and **Manual**. §29 records this as
            the recommendation and it is what the visibility refresh gives for
            free. Note it hides the *bar widget*, not the actions, so a pinned
            toolbar button never blinks out with it.
@@ -2104,7 +2104,7 @@ class MainWindow(QMainWindow):
         # which is why `set_find_actions`/`set_find_actions_enabled` could be
         # deleted outright instead of re-pointed.
         # §8/§13: the Raw XML editor is read-only in Caption Mode, so the
-        # Bookmarks menu and its four shortcuts go with it. The lane that owns
+        # Navigation menu and its four shortcuts go with it. The lane that owns
         # the menu disables the menu AND every child action (a disabled QMenu
         # alone would leave Ctrl+F2 / F2 / Shift+F2 live). Gutter bookmark
         # toggling stays usable, deliberately.

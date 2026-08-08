@@ -160,7 +160,7 @@ def test_available_commands_come_from_the_menus_not_a_fixed_seven(qtbot, tmp_pat
 
     assert len(pairs) > 7                       # the reported bug: only 7 commands
     # Commands that were previously impossible to put on the toolbar:
-    for command_id in ("file.save-as", "history.history", "bookmarks.next-bookmark"):
+    for command_id in ("file.save-as", "history.history", "navigation.next-bookmark"):
         assert command_id in ids
     # ...alongside the legacy seven, which must all still be offered.
     for command_id in DEFAULT_TOOLBAR_IDS:
@@ -180,11 +180,12 @@ def test_the_walk_covers_BOTH_menu_bars(qtbot, tmp_path):
     # Window bar...
     assert "file.open" in ids
     # ...and the Editor bar's four-menu inventory (Select is FQ-015's lane).
+    # The bookmark members read `navigation.*` since FQ-021 retitled their menu.
     for command_id in (
         "history.history", "history.undo", "history.redo",
         "parsing.auto-parse-xml", "parsing.validate-project",
-        "bookmarks.toggle-bookmark", "bookmarks.next-bookmark",
-        "bookmarks.previous-bookmark", "bookmarks.clear-all-bookmarks",
+        "navigation.toggle-bookmark", "navigation.next-bookmark",
+        "navigation.previous-bookmark", "navigation.clear-all-bookmarks",
     ):
         assert command_id in ids, command_id
     assert labels["history.undo"] == "History › Undo"
@@ -528,10 +529,10 @@ def test_saved_ids_are_menu_path_ids_in_settings(qtbot, tmp_path):
     settings = _ini_settings(tmp_path)
     window = MainWindow(settings=settings)
     qtbot.addWidget(window)
-    window._toolbar_ui.apply_and_save(["file.save-as", "bookmarks.next-bookmark"])
+    window._toolbar_ui.apply_and_save(["file.save-as", "navigation.next-bookmark"])
     stored = settings.value("toolbarIds")
     stored = stored.split(",") if isinstance(stored, str) else list(stored)
-    assert stored == ["file.save-as", "bookmarks.next-bookmark"]
+    assert stored == ["file.save-as", "navigation.next-bookmark"]
 
 
 # --- FQ-004: per-command icon assignments ----------------------------------
@@ -587,6 +588,83 @@ def test_an_unknown_assignment_is_dropped_on_load(qtbot, tmp_path):
     qtbot.addWidget(window)
 
     assert "no.such.command" not in window._toolbar_ui.icon_ids
+
+
+# -- FQ-021: the Bookmarks -> Navigation rename, end to end -----------------
+def test_a_bookmark_button_pinned_before_the_rename_survives_the_upgrade(
+    qtbot, tmp_path
+):
+    """The whole point of FQ-021's `RENAMED_ID_ALIASES` rows, exercised the way a
+    real upgrade hits them: a settings store written by a pre-rename build,
+    opened by this one.
+
+    Both keys are seeded, because they are resolved by different functions
+    (`resolve_ids` for `toolbarIds`, `resolve_icon_assignments` for
+    `toolbarIconIds`). A table consulted by only one of them would restore the
+    button and silently drop the icon the user picked for it -- a half-fix that
+    looks fine in a toolbar-only test.
+    """
+    from pgtp_editor.ui.toolbar_registry import (
+        ICON_ASSIGNMENTS_SETTINGS_KEY,
+        serialize_icon_assignments,
+    )
+
+    path = str(tmp_path / "s.ini")
+    seed = QSettings(path, QSettings.Format.IniFormat)
+    # What a pre-FQ-021 build stored: the menu was titled `Bookmarks`.
+    seed.setValue("toolbarIds", ["file.save", "bookmarks.next-bookmark"])
+    seed.setValue(
+        ICON_ASSIGNMENTS_SETTINGS_KEY,
+        serialize_icon_assignments({"bookmarks.next-bookmark": "zoom-in"}),
+    )
+    seed.sync()
+
+    window = MainWindow(settings=QSettings(path, QSettings.Format.IniFormat))
+    qtbot.addWidget(window)
+
+    # The button is still there, under the id the menu now yields...
+    assert window._toolbar_ui.command_ids == ["file.save", "navigation.next-bookmark"]
+    assert _toolbar_labels(window) == ["Save", "Next Bookmark"]
+    # ...it is the real menu action, not an orphan...
+    menu = find_top_menu(window, "Navigation")
+    assert window._toolbar_ui.toolbar.actions()[1] is find_action(
+        menu, "Next Bookmark"
+    )
+    # ...and it kept the icon, re-keyed onto the new id rather than left behind
+    # under the old one.
+    assert window._toolbar_ui.icon_ids.get("navigation.next-bookmark") == "zoom-in"
+    assert "bookmarks.next-bookmark" not in window._toolbar_ui.icon_ids
+    assert not window._toolbar_ui.toolbar.actions()[1].icon().isNull()
+
+
+def test_the_navigation_menus_members_kept_their_own_labels(qtbot, tmp_path):
+    """FQ-021 renamed the MENU only. If a member label had drifted too, its id
+    would need a second rename row -- so this pins the boundary of the change."""
+    window = MainWindow(settings=_ini_settings(tmp_path))
+    qtbot.addWidget(window)
+    ids = dict(
+        (label, command_id)
+        for command_id, label in window._toolbar_ui.all_menu_commands()
+    )
+    assert ids["Navigation › Next Bookmark"] == "navigation.next-bookmark"
+    assert ids["Navigation › List All Bookmarks"] == "navigation.list-all-bookmarks"
+
+
+def test_no_menu_command_still_answers_to_a_bookmarks_prefixed_id(qtbot, tmp_path):
+    """The rename is complete in the live menu: every `bookmarks.*` id exists
+    only as a `RENAMED_ID_ALIASES` key now. A leftover would mean the menu title
+    was changed in one place and not another."""
+    from pgtp_editor.ui.toolbar_registry import RENAMED_ID_ALIASES
+
+    window = MainWindow(settings=_ini_settings(tmp_path))
+    qtbot.addWidget(window)
+    live = {command_id for command_id, _label in window._toolbar_ui.all_menu_commands()}
+
+    assert not {cid for cid in live if cid.startswith("bookmarks.")}
+    # ...and every rename row points at a command that really exists, so a typo
+    # in the table is a failure here rather than a button that silently vanishes.
+    for old_id, new_id in RENAMED_ID_ALIASES.items():
+        assert new_id in live, (old_id, new_id)
 
 
 def test_no_assignments_leaves_toolbar_behavior_unchanged(qtbot, tmp_path):

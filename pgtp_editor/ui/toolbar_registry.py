@@ -100,8 +100,19 @@ DEFAULT_TOOLBAR_IDS: list[str] = [
 # FQ-022 (§18.7) opened it: `Database ▸ DDL Explorer` became
 # `DDL Explorer (Quality)` when it gained a sandbox-scoped sibling, because a
 # bare "DDL Explorer" next to it would be ambiguous -- and the label IS the id.
+#
+# FQ-021 renamed the Editor bar's `Bookmarks` menu to `Navigation`, so all five
+# of its members changed id even though their OWN labels did not: the id is the
+# whole menu path, and the first segment is the menu title. Five rows, one per
+# member, because there is no prefix rewriting here by design -- `resolve_ids`
+# does exact lookups, which is what keeps this table auditable.
 RENAMED_ID_ALIASES: dict[str, str] = {
     "database.ddl-explorer": "database.ddl-explorer-quality",
+    "bookmarks.toggle-bookmark": "navigation.toggle-bookmark",
+    "bookmarks.next-bookmark": "navigation.next-bookmark",
+    "bookmarks.previous-bookmark": "navigation.previous-bookmark",
+    "bookmarks.clear-all-bookmarks": "navigation.clear-all-bookmarks",
+    "bookmarks.list-all-bookmarks": "navigation.list-all-bookmarks",
 }
 
 # Menu-path id -> icon id (the `icons.ACTION_ICON_FILES` key). Only the legacy
