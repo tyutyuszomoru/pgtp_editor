@@ -551,12 +551,15 @@ class SandboxController(QObject):
 
     @property
     def can_check(self) -> bool:
-        """Whether the §18.5 D3a **Check** gesture should exist at all.
+        """Whether the §18.5 D3a **Check** gesture can RUN.
 
-        The host binds the Check control's *visibility* to this (carve-out 2's
-        "no dead controls": with no live `SandboxSession` there is no button and
-        no enabled menu item, the same posture as the absent apply row) -- not
-        its enabled state. It is deliberately a separate name from
+        The host binds the Check *button*'s presence to this (carve-out 2's "no
+        dead controls": with no live `SandboxSession` there is no button, the
+        same posture as the absent apply row) and never its enabled state. Since
+        FQ-023 it is no longer the host's *menu* gate: a Check menu entry is
+        present whenever a sandbox is configured and refuses with a stated reason
+        when this is False, because a menu entry can say why and a button
+        cannot. It is deliberately a separate name from
         `has_session` even though it currently returns the same fact, so the
         host expresses the intent it means and this predicate can grow a second
         precondition without every caller being revisited.

@@ -8,7 +8,9 @@
   single destructive prompt (passing both asks twice).
 * **The Project Status window's two dead node actions** -- Sandbox1's "run data
   clone" and Sandbox2's "install plpgsql_check", now aimed at the controller's
-  zero-argument §18.8 adapters, and only while a live session exists.
+  zero-argument §18.8 adapters. Present whenever a sandbox is CONFIGURED and
+  stating the missing session when there is none (FQ-023's narrowing of
+  carve-out 2), absent only when the project has no sandbox at all.
 
 No modal is ever reached: `QMessageBox.question` is patched wherever a
 destructive operation can be confirmed, the setup dialog's persistence is an
@@ -213,10 +215,17 @@ def test_adopting_the_settings_does_not_drop_the_session_just_provisioned(
     assert window.sandbox_controller.has_session
 
 
-def test_the_console_refusal_names_gestures_that_exist(qtbot, tmp_path):
+def test_the_console_refusal_names_gestures_that_exist(
+    qtbot, tmp_path, monkeypatch
+):
     """The stale string said "Database ▸ Project Status…", which never opened a
-    session. Both names it uses now are real Database-menu entries."""
+    session. Both names it uses now are real Database-menu entries.
+
+    Since FQ-023 the refusal is a dialog that OFFERS to open the session;
+    declining leaves the same reason in the status bar, which is what is read
+    here (the offer itself is covered in `test_sandbox_check_console_wiring`)."""
     window, _dir = _window(qtbot, tmp_path)
+    _refuse_confirmations(monkeypatch)
 
     assert window._open_sandbox_sql_console() is None
 
@@ -235,14 +244,46 @@ def test_the_consoles_no_session_text_names_the_entry_that_now_exists():
 # --- The Project Status window's two node actions -------------------------
 
 
-def test_the_node_actions_are_absent_without_a_session(qtbot, tmp_path):
-    window, _dir = _window(qtbot, tmp_path)
+def test_the_node_actions_are_absent_with_no_sandbox_configured(qtbot, tmp_path):
+    """FQ-023: the ABSENT case is "no sandbox at all" -- genuinely inapplicable,
+    so the panel gets `None` and renders no button."""
+    window, _dir = _window(qtbot, tmp_path, sandbox_host="")
 
     window._open_project_status()
     panel = window._project_status_window
 
     assert panel._on_run_data_clone is None
     assert panel._on_install_plpgsql_check is None
+
+
+def test_a_configured_sandbox_gives_both_node_actions_a_reporting_button(
+    qtbot, tmp_path, monkeypatch
+):
+    """FQ-023's other half: a sandbox with no session leaves both buttons THERE,
+    and clicking one states the missing session instead of doing nothing."""
+    window, _dir = _window(qtbot, tmp_path)
+    window._open_project_status()
+    panel = window._project_status_window
+    assert not window.sandbox_controller.has_session
+    assert panel._on_run_data_clone is not None
+    assert panel._on_install_plpgsql_check is not None
+    installed = []
+    window.sandbox_controller._installer = lambda session: installed.append(session)
+    asked = []
+    monkeypatch.setattr(
+        modals.QMessageBox,
+        "question",
+        staticmethod(
+            lambda _p, _t, text, *a, **k: asked.append(text)
+            or modals.QMessageBox.StandardButton.Cancel
+        ),
+    )
+
+    panel._on_install_plpgsql_check()
+
+    assert installed == []  # nothing ran, and nothing connected
+    assert "Open Sandbox Session" in asked[0]
+    assert "Open Sandbox Session" in window.statusBar().currentMessage()
 
 
 def test_a_live_session_wires_both_node_actions_to_the_controller(qtbot, tmp_path):
@@ -250,25 +291,46 @@ def test_a_live_session_wires_both_node_actions_to_the_controller(qtbot, tmp_pat
     window._open_project_status()
     panel = window._project_status_window
     controller = window.sandbox_controller
+    # `installable` + superuser is the one state `install_gate` OFFERS on, so the
+    # click reaches `_installer` instead of stopping at the gate's own reason.
+    window._ddl_project_ui.probe_sandbox_capabilities = lambda params: _caps(
+        available_extensions=frozenset({"plpgsql_check"})
+    )
 
     window._open_sandbox_session()
 
     assert controller.has_session
-    assert panel._on_run_data_clone == controller.on_run_data_clone
-    assert panel._on_install_plpgsql_check == controller.on_install_plpgsql_check
+    # The callbacks are FQ-023 wrappers rather than the bound adapters
+    # themselves, so what is asserted is that they reach the controller's
+    # operation -- no modal, because with a session there is nothing to refuse.
+    installed = []
+    controller._installer = lambda session: installed.append(session)
+    panel._on_install_plpgsql_check()
+
+    assert installed == [controller.session]
 
 
-def test_a_dying_session_takes_both_node_actions_with_it(qtbot, tmp_path):
+def test_a_dying_session_leaves_both_node_actions_reporting(
+    qtbot, tmp_path, monkeypatch
+):
+    """The session, not the sandbox, went away -- so the buttons stay (FQ-023)
+    and the refusal is what changes. The session is re-read at CLICK time, which
+    is why no refresh is needed for the wrapper to notice."""
     window, _dir = _window(qtbot, tmp_path)
     window._open_project_status()
     panel = window._project_status_window
     window._open_sandbox_session()
-    assert panel._on_run_data_clone is not None
+    cloned = []
+    window.sandbox_controller._cloner = lambda target, sandbox: cloned.append(1)
+    _refuse_confirmations(monkeypatch)
 
     window.sandbox_controller.close_session()
 
-    assert panel._on_run_data_clone is None
-    assert panel._on_install_plpgsql_check is None
+    assert panel._on_run_data_clone is not None
+    assert panel._on_install_plpgsql_check is not None
+    panel._on_run_data_clone()
+    assert cloned == []
+    assert "Open Sandbox Session" in window.statusBar().currentMessage()
 
 
 def test_the_clone_action_goes_through_the_controllers_confirmation(

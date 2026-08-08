@@ -83,7 +83,12 @@ from pgtp_editor.ui.connection_setup_dialog import ConnectionSetupDialog
 from pgtp_editor.ui.new_project_dialog import NewProjectDialog
 from pgtp_editor.db.apply import ApplyOutcome
 from pgtp_editor.db.ddl_check import CheckRequest
-from pgtp_editor.ui.ddl_object_editor import CHECK_PREFIX, DdlObjectRef
+from pgtp_editor.ui.ddl_object_editor import (
+    CHECK_PREFIX,
+    DEST_SANDBOX,
+    DESTINATION_UNAVAILABLE_REASONS,
+    DdlObjectRef,
+)
 from pgtp_editor.ui.sandbox_controller import SandboxController, SandboxOperation
 from pgtp_editor.ui.sandbox_setup_dialog import SandboxSetupDialog
 from pgtp_editor.ui.new_routine_dialog import NewRoutineDialog
@@ -523,8 +528,10 @@ class MainWindow(QMainWindow):
         #: sandbox lane repoints -- aimed at the controller's `session`
         #: accessor, so "is there a session?" has exactly one answer.
         #: Everything console-related asks `_sandbox_console_available()`,
-        #: which asks this. None (or a None return) means the console is
-        #: ABSENT -- never present-but-refusing.
+        #: which asks this. None (or a None return) means no console TAB can
+        #: exist -- never one that is present-but-refusing. Since FQ-023 it no
+        #: longer decides the MENU ENTRY on its own: that follows whether a
+        #: sandbox is configured, and reports this answer when asked.
         self._sandbox_session_provider = lambda: self.sandbox_controller.session
         #: Database ▸ Sandbox SQL Console… -- created hidden, shown ONLY by
         #: `_refresh_sandbox_console_affordances`. Initialised here because
@@ -535,8 +542,8 @@ class MainWindow(QMainWindow):
         #: VISIBILITY-managed (carve-out 2: absent, never disabled). Same
         #: before-`_build_menu_bar` initialisation reason as above.
         self._sandbox_check_action = None
-        #: §18.5 D3's "Check without applying" probe, gated on the same
-        #: `can_check` as Check itself.
+        #: §18.5 D3's "Check without applying" probe, gated on exactly the same
+        #: predicate as Check itself.
         self._sandbox_probe_check_action = None
         #: §18.7's Database ▸ DDL Explorer (Sandbox) toggle -- created hidden and
         #: shown by `_refresh_ddl_explorer_affordances` while the open project has
@@ -2230,9 +2237,11 @@ class MainWindow(QMainWindow):
         new_routine_action.triggered.connect(lambda: self._on_ddl_new_routine_requested())
         menu.addSeparator()
         menu.addSeparator()
-        # §18.5 D4: ad-hoc SQL is SANDBOX-ONLY. Created HIDDEN and shown only
-        # by `_refresh_sandbox_console_affordances` when a live session exists
-        # (absent, not disabled -- carve-out 2). There is deliberately NO "run
+        # §18.5 D4: ad-hoc SQL is SANDBOX-ONLY. Created HIDDEN and shown by
+        # `_refresh_sandbox_console_affordances` once the open project has a
+        # sandbox CONFIGURED -- absent with no sandbox, present-and-reporting
+        # with one but no session (carve-out 2 as narrowed by FQ-023), never
+        # disabled. There is deliberately NO "run
         # against target" counterpart here, not even a disabled one: the
         # boundary is structural (`run_sandbox_query` takes a `SandboxSession`,
         # never a `ConnectionParams`) and adding one would need a spec change
@@ -2257,8 +2266,10 @@ class MainWindow(QMainWindow):
         self._close_sandbox_session_action.triggered.connect(
             lambda: self.sandbox_controller.close_session()
         )
-        # §18.5 D3a's Check gesture. VISIBILITY follows `can_check` (carve-out
-        # 2's "no dead controls"), and is deliberately NOT gated on
+        # §18.5 D3a's Check gesture. VISIBILITY follows "is a sandbox
+        # configured" and the refusal states a missing session (carve-out 2 as
+        # narrowed by FQ-023 -- absent only when there is no sandbox at all),
+        # and is deliberately NOT gated on
         # `plpgsql_check_state`: an unavailable tier 3 is a REPORTED OUTCOME,
         # so the gesture stays present and states what it could not check.
         self._sandbox_check_action = menu.addAction("Check Object in Sandbox")
@@ -3091,25 +3102,19 @@ class MainWindow(QMainWindow):
             self._refresh_sandbox_provisioning_status()
             return self._build_project_status_diagram()
 
-        # Sandbox1's "run data clone" and Sandbox2's "install plpgsql_check" go
-        # to the controller's zero-argument §18.8 adapters -- but only while a
-        # live `SandboxSession` exists, because that is what both operations run
-        # through. `_refresh_project_status_sandbox_actions` keeps this answer
-        # current for the rest of the window's life (it is cached and re-shown,
-        # not rebuilt), and the destructive one keeps the controller's own
-        # `confirm_destructive` prompt: no second dialog is opened here.
+        # Sandbox1's "run data clone" and Sandbox2's "install plpgsql_check" are
+        # wired by `_refresh_project_status_sandbox_actions` immediately below --
+        # constructed as `None` here on purpose, so that ONE method decides which
+        # state earns a button and what it does. Deciding it twice is how the
+        # freshly-built window and the re-shown one drift apart (this window is
+        # cached and re-shown, not rebuilt).
         settings = self._ddl_project_settings
-        alive = self.sandbox_controller.has_session
         panel = ProjectStatusPanel(
             diagram=self._build_project_status_diagram(),
             on_refresh=on_refresh,
             on_reconnect_quality=on_refresh,
-            on_run_data_clone=(
-                self.sandbox_controller.on_run_data_clone if alive else None
-            ),
-            on_install_plpgsql_check=(
-                self.sandbox_controller.on_install_plpgsql_check if alive else None
-            ),
+            on_run_data_clone=None,
+            on_install_plpgsql_check=None,
             on_show_help=self._show_manual,
             quality_summary=self._connection_summary_for(self._project_status_target()),
             sandbox_summary=self._connection_summary_for(
@@ -3121,6 +3126,7 @@ class MainWindow(QMainWindow):
         panel.setWindowTitle("Project Status")
         panel.destroyed.connect(lambda: setattr(self, "_project_status_window", None))
         self._project_status_window = panel
+        self._refresh_project_status_sandbox_actions()
         panel.show()
 
     # --- FQ-002: creating brand-new DDL objects ------------------------------
@@ -3534,9 +3540,11 @@ class MainWindow(QMainWindow):
     def _sandbox_console_available(self) -> bool:
         """Whether a live `SandboxSession` can be had right now.
 
-        The console is **absent, not disabled**, without one (§18.5 D4's safety
-        boundary / carve-out 2), so this is what its menu action's VISIBILITY
-        and every object tab's bridge seam are gated on."""
+        No console TAB and no bridge button exists without one (§18.5 D4's
+        safety boundary / carve-out 2), so this is what every object tab's
+        bridge seam, the open-console teardown and the command itself are gated
+        on. It is NOT the menu entry's visibility gate any more (FQ-023): the
+        entry follows whether a sandbox is configured and reports this."""
         provider = self._sandbox_session_provider
         if provider is None:
             return False
@@ -3549,17 +3557,14 @@ class MainWindow(QMainWindow):
         """Database ▸ Sandbox SQL Console… -- open, or focus, the single
         console tab. Returns the panel, or None (creating NOTHING) when there
         is no live session: a console that refuses every Run is worse than no
-        console at all."""
+        console at all.
+
+        Since FQ-023 the entry is present whenever a sandbox is configured, so
+        this refusal is a reachable, ordinary outcome rather than a
+        can't-happen guard -- it states the missing session and offers to open
+        one (`_refuse_sandbox_gesture`), and still creates no console."""
         if not self._sandbox_console_available():
-            self.statusBar().showMessage(
-                # Points at the two gestures that can actually produce a session
-                # (Project Status… only ever reported on one). Both really exist
-                # in the Database menu.
-                "No sandbox session — open one with Database ▸ Open Sandbox "
-                "Session, or provision the sandbox from Database ▸ Sandbox "
-                "Setup… first.",
-                5000,
-            )
+            self._refuse_sandbox_gesture("Sandbox SQL Console…")
             return None
         panel = self.center_stage.open_sandbox_sql_tab(
             session_provider=self._sandbox_session_provider
@@ -3592,10 +3597,20 @@ class MainWindow(QMainWindow):
 
         Shows/hides the menu action, wires/unwires every open object tab's
         bridge seam, and -- if the session died under an already-open console --
-        CLOSES it, rather than leaving a console that refuses every Run."""
+        CLOSES it, rather than leaving a console that refuses every Run.
+
+        **Two different predicates, deliberately** (FQ-023). The MENU ENTRY
+        follows *"is a sandbox configured"*: with one configured but no session
+        it is present and states why it cannot open a console. Everything that
+        would leave a surface refusing every Run still follows the SESSION --
+        the open console tab is closed when the session dies, and the object
+        tabs' bridge buttons are unwired -- because a button, unlike a menu
+        entry, cannot state a reason (§18.5 D4's rule survives verbatim)."""
         available = self._sandbox_console_available()
         if self._sandbox_console_action is not None:
-            self._sandbox_console_action.setVisible(available)
+            self._sandbox_console_action.setVisible(
+                available or self._configured_sandbox_params() is not None
+            )
         seam = self._run_selection_in_sandbox_console if available else None
         for panel in self.center_stage.ddl_object_panels():
             panel.set_run_in_console(seam)
@@ -3632,16 +3647,30 @@ class MainWindow(QMainWindow):
         change and whenever the project binding changes.
 
         Everything here binds VISIBILITY, never enabled-state (§18.5 carve-out
-        2: with no live session the control is ABSENT, not greyed out)."""
+        2, as NARROWED by FQ-023): the two Check gestures are ABSENT while no
+        sandbox is CONFIGURED -- genuinely inapplicable -- and PRESENT while one
+        is, whether or not a session is open. Present without a session they
+        REPORT (`_refuse_sandbox_gesture`), because absence cannot state a
+        reason and the reason here is one click away from being fixed. They are
+        never greyed out, which would state even less than the refusal."""
         controller = self.sandbox_controller
         has_session = controller.has_session
+        # The presence predicate for the two Checks: `can_check` covers the live
+        # session, `_configured_sandbox_params()` the FQ-023 present-and-
+        # reporting case. Same "a host is set" reading as §18.7's Explorer gate,
+        # so the two affordance sets cannot disagree about what "configured"
+        # means -- while `can_check` stays the sole authority on whether a run
+        # can actually happen.
+        check_present = (
+            controller.can_check or self._configured_sandbox_params() is not None
+        )
         if self._sandbox_check_action is not None:
-            self._sandbox_check_action.setVisible(controller.can_check)
+            self._sandbox_check_action.setVisible(check_present)
         if self._sandbox_probe_check_action is not None:
             # The probe is the same ladder against the same session, so it earns
             # exactly the same gate -- one predicate, never a second reading of
             # "is there a session?".
-            self._sandbox_probe_check_action.setVisible(controller.can_check)
+            self._sandbox_probe_check_action.setVisible(check_present)
         if self._open_sandbox_session_action is not None:
             self._open_sandbox_session_action.setVisible(
                 not has_session and bool(self._configured_sandbox_params())
@@ -3654,14 +3683,21 @@ class MainWindow(QMainWindow):
         self._refresh_project_status_sandbox_actions()
 
     def _refresh_project_status_sandbox_actions(self) -> None:
-        """Keep §18.8's two session-dependent node actions (Sandbox1's "run data
-        clone", Sandbox2's "install plpgsql_check") wired to the controller's
-        zero-argument adapters exactly while a session exists.
+        """Keep §18.8's two sandbox node actions (Sandbox1's "run data clone",
+        Sandbox2's "install plpgsql_check") wired to the controller's
+        zero-argument adapters.
 
-        Both operations go through the live `SandboxSession`, so without one they
-        are ABSENT rather than refusing (carve-out 2) -- and the panel already
-        renders a `None` callback as no button at all, which is why this hands it
-        `None` instead of a wrapper that would state a refusal after the click.
+        Both operations go through the live `SandboxSession`, but the presence
+        predicate is *"is a sandbox configured"*, not `has_session` (§18.8 under
+        carve-out 2's FQ-023 narrowing): with no sandbox at all the panel still
+        gets `None`, which it renders as no button, and with a sandbox but no
+        session the button is there and the wrapper STATES why it cannot run,
+        offering `Open Sandbox Session` as an explicit click.
+
+        The session is re-read inside the wrapper rather than captured here: the
+        node windows are built on activation, and a session can come or go
+        between this refresh and the click.
+
         The destructive one keeps the controller's own `confirm_destructive`
         gate: `on_run_data_clone` -> `run_data_clone` -> `_confirmed(CLONE_DATA)`
         -> `_confirm_destructive_sandbox_operation`, so the warning text is the
@@ -3671,13 +3707,86 @@ class MainWindow(QMainWindow):
         if window is None:
             return
         controller = self.sandbox_controller
-        alive = controller.has_session
+        if self._configured_sandbox_params() is None:
+            window.set_sandbox_actions(
+                on_run_data_clone=None, on_install_plpgsql_check=None
+            )
+            return
+
+        def gated(operation, gesture):
+            def run() -> None:
+                if not controller.has_session:
+                    self._refuse_sandbox_gesture(gesture)
+                    return
+                operation()
+
+            return run
+
         window.set_sandbox_actions(
-            on_run_data_clone=controller.on_run_data_clone if alive else None,
-            on_install_plpgsql_check=(
-                controller.on_install_plpgsql_check if alive else None
+            on_run_data_clone=gated(
+                controller.on_run_data_clone, "Run the data clone"
+            ),
+            on_install_plpgsql_check=gated(
+                controller.on_install_plpgsql_check, "Install plpgsql_check"
             ),
         )
+
+    def _refuse_sandbox_gesture(self, gesture: str) -> bool:
+        """State why `gesture` cannot run right now and, when the only thing
+        missing is a session, OFFER to open one as an explicit click. Returns
+        True when the user took that offer.
+
+        The one refusal every session-gated sandbox gesture shares (FQ-023,
+        carve-out 2's narrowing) -- the two Check gestures, the Sandbox SQL
+        Console and §18.8's two node buttons -- so they cannot drift into three
+        vocabularies for one fact. The sentence itself is the destination
+        picker's (`DESTINATION_UNAVAILABLE_REASONS[DEST_SANDBOX]`, FQ-009), which
+        already names `Database ▸ Open Sandbox Session` as the fix; it is
+        deliberately reused rather than re-typed here.
+
+        **No connection is attempted without a click whose label says a session
+        will be opened** (the owner's line: a session opening as a side effect of
+        another gesture is what is forbidden, not one opening because the user
+        asked). Hence the `Open` button, immediately under the sentence that says
+        what it opens -- and hence nothing is retried afterwards: `open_session`
+        is asynchronous and reports through the Audit panel, so the gesture is
+        the user's to re-invoke once the session is up rather than something that
+        fires later out of nowhere.
+        """
+        if self._configured_sandbox_params() is None:
+            # Not one click away: there is nothing to open a session ON. This is
+            # carve-out 2's ABSENT case, so the gesture is normally not even
+            # reachable -- but a toolbar button or a shortcut can still arrive
+            # here, and an unexplained no-op is what FQ-023 exists to kill.
+            self.statusBar().showMessage(
+                f"{gesture} needs a sandbox — none is configured for this "
+                "project; set one up in Project Settings.",
+                5000,
+            )
+            return False
+        reason = DESTINATION_UNAVAILABLE_REASONS[DEST_SANDBOX]
+        answer = modals.QMessageBox.question(
+            self,
+            "No Sandbox Session",
+            f"{gesture} needs a live sandbox session: {reason}.\n\n"
+            "Open a sandbox session now? Nothing connects until you choose "
+            "Open.",
+            modals.QMessageBox.StandardButton.Open
+            | modals.QMessageBox.StandardButton.Cancel,
+        )
+        if answer != modals.QMessageBox.StandardButton.Open:
+            # Declining still leaves the reason on screen: the user asked a
+            # question ("why can't I check?") and it must stay answered after the
+            # dialog is gone.
+            self.statusBar().showMessage(f"{gesture} — {reason}.", 5000)
+            return False
+        self._open_sandbox_session()
+        self.statusBar().showMessage(
+            f"Opening a sandbox session — the outcome is reported in the Audit "
+            f"panel; re-run {gesture} once it is open.",
+            5000,
+        )
+        return True
 
     def _configured_sandbox_params(self):
         """The open project's sandbox `ConnectionParams`, or None when there is
@@ -4040,7 +4149,19 @@ class MainWindow(QMainWindow):
         request goes out without it and `db/ddl_check.py` reports its own
         "which function does this trigger call?" outcome -- an unavailable tier
         is a reported fact, never a silent no-op.
+
+        The missing-session refusal comes FIRST, before the "no tab" one: since
+        FQ-023 both gestures are present whenever a sandbox is configured, so
+        the session is the precondition their new presence is advertising --
+        answering with "open a DDL object tab" would send a user who has one
+        prerequisite missing off to fix a different one.
         """
+        gesture = (
+            "Check Object Without Applying" if probe else "Check Object in Sandbox"
+        )
+        if not self.sandbox_controller.can_check:
+            self._refuse_sandbox_gesture(gesture)
+            return
         panel = self.center_stage.active_ddl_object_panel()
         if panel is None:
             self.statusBar().showMessage(

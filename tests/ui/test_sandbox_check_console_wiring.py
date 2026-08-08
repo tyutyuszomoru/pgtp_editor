@@ -9,9 +9,11 @@ a line carries both `UserRole` (the line) and `UserRole+1` (the object's
 accidental Raw-XML navigation), and the narrative `check_reported` channel
 carries no roles at all.
 
-D4: the console is ABSENT, not disabled, without a live session; the bridge
-copies text and executes nothing; and there is no "run against target"
-affordance anywhere in the Database menu.
+D4: no console TAB and no bridge button exists without a live session (the menu
+ENTRY is present-and-reporting once a sandbox is configured -- FQ-023's narrowing
+of carve-out 2, pinned in the last section of this module); the bridge copies
+text and executes nothing; and there is no "run against target" affordance
+anywhere in the Database menu.
 """
 from PySide6.QtCore import QSettings, Qt
 
@@ -504,7 +506,9 @@ def test_opening_a_project_binds_the_controller_without_connecting(
     assert controller.session is None  # no connection as a project side effect
     assert window._open_sandbox_session_action.isVisible()
     assert not window._close_sandbox_session_action.isVisible()
-    assert not window._sandbox_check_action.isVisible()
+    # FQ-023: the Check gesture is PRESENT (a sandbox is configured) and refuses
+    # with a stated reason -- see `test_a_configured_sandbox_without_a_session_*`.
+    assert window._sandbox_check_action.isVisible()
 
 
 def test_opening_a_session_reveals_the_console_and_the_check_gesture(
@@ -679,10 +683,14 @@ def test_check_without_applying_runs_the_rolled_back_probe(
     assert session.applied_calls == []
 
 
-def test_the_probe_gesture_is_absent_without_a_session(qtbot, tmp_path, monkeypatch):
+def test_the_probe_gesture_shares_checks_presence_gate(qtbot, tmp_path, monkeypatch):
+    """One predicate for both Check gestures -- and since FQ-023 that predicate
+    is "is a sandbox configured", so a configured-but-sessionless project shows
+    both rather than hiding both."""
     window, _controller, _session = _project_window(qtbot, tmp_path, monkeypatch)
 
-    assert not window._sandbox_probe_check_action.isVisible()
+    assert window._sandbox_probe_check_action.isVisible()
+    assert window._sandbox_check_action.isVisible()
 
     window._open_sandbox_session()
     assert window._sandbox_probe_check_action.isVisible()
@@ -894,3 +902,211 @@ def test_apply_to_target_stays_absent_and_the_picker_says_why(
     prompt = panel.deploy_prompt_text()
     assert "Apply to Target" in prompt
     assert "Compare Schemas" in prompt
+
+
+# --- FQ-023: present-and-reporting, not absent ----------------------------
+#
+# Carve-out 2 is NARROWED, not overturned: absent when no sandbox is CONFIGURED
+# (genuinely inapplicable), present-and-reporting when one is configured but no
+# session is open (one click from applicable, and an absence cannot state a
+# reason). The three gestures do NOT share one predicate -- the Checks read
+# `SandboxController.can_check`, the console reads `_sandbox_console_available()`
+# -- so each is pinned separately here.
+
+
+def _answer_refusal(monkeypatch, button, seen=None):
+    """Answer the missing-session offer. Patched on `modals.QMessageBox` (the
+    stable target), and every test below MUST call it: without it the refusal is
+    a real modal, which under offscreen hangs the run."""
+    monkeypatch.setattr(
+        modals.QMessageBox,
+        "question",
+        staticmethod(
+            lambda _p, _t, text, *a, **k: (
+                seen.append(text) if seen is not None else None
+            )
+            or button
+        ),
+    )
+
+
+def test_with_no_sandbox_configured_all_three_gestures_are_absent(
+    qtbot, tmp_path, monkeypatch
+):
+    """Carve-out 2's surviving ABSENT case: nothing to open a session on."""
+    window, controller, _session = _project_window(
+        qtbot, tmp_path, monkeypatch, sandbox_host=""
+    )
+
+    assert not controller.has_session
+    assert not window._sandbox_check_action.isVisible()
+    assert not window._sandbox_probe_check_action.isVisible()
+    assert not window._sandbox_console_action.isVisible()
+
+
+def test_a_configured_sandbox_without_a_session_shows_all_three(
+    qtbot, tmp_path, monkeypatch
+):
+    """The FQ-023 defect, inverted: the user can now SEE the three gestures the
+    moment a sandbox exists, without first guessing that a session must be
+    opened."""
+    window, controller, _session = _project_window(qtbot, tmp_path, monkeypatch)
+
+    assert not controller.has_session
+    assert window._sandbox_check_action.isVisible()
+    assert window._sandbox_probe_check_action.isVisible()
+    assert window._sandbox_console_action.isVisible()
+    # And the way OUT is still advertised beside them.
+    assert window._open_sandbox_session_action.isVisible()
+
+
+def test_the_check_refusal_names_open_sandbox_session_and_runs_nothing(
+    qtbot, tmp_path, monkeypatch
+):
+    """The refusal reuses the destination picker's sentence (FQ-009), which
+    already names `Database ▸ Open Sandbox Session` -- one vocabulary for one
+    fact, and no ladder run."""
+    window, controller, _session = _project_window(qtbot, tmp_path, monkeypatch)
+    apply_calls, probe_calls = _stub_ladder(controller)
+    window._on_ddl_edit_requested(_REF, _SOURCE)
+    window.center_stage.setCurrentWidget(window.center_stage.ddl_object_tab(_REF.key))
+    seen = []
+    _answer_refusal(monkeypatch, modals.QMessageBox.StandardButton.Cancel, seen)
+
+    window._check_active_ddl_object()
+
+    assert "Check Object in Sandbox" in seen[0]
+    assert "Open Sandbox Session" in seen[0]
+    assert apply_calls == [] and probe_calls == []
+    assert not controller.has_session
+    # Declining leaves the reason readable after the dialog is gone.
+    assert "Open Sandbox Session" in window.statusBar().currentMessage()
+
+
+def test_the_probe_gesture_refuses_under_its_own_name(qtbot, tmp_path, monkeypatch):
+    window, _controller, _session = _project_window(qtbot, tmp_path, monkeypatch)
+    seen = []
+    _answer_refusal(monkeypatch, modals.QMessageBox.StandardButton.Cancel, seen)
+
+    window._probe_check_active_ddl_object()
+
+    assert "Check Object Without Applying" in seen[0]
+
+
+def test_the_missing_session_is_reported_before_the_missing_tab(
+    qtbot, tmp_path, monkeypatch
+):
+    """With no session AND no object tab, the answer is the one the gesture's new
+    presence is advertising -- not "open a DDL object tab", which would send the
+    user off to fix a different prerequisite."""
+    window, _controller, _session = _project_window(qtbot, tmp_path, monkeypatch)
+    seen = []
+    _answer_refusal(monkeypatch, modals.QMessageBox.StandardButton.Cancel, seen)
+
+    window._check_active_ddl_object()
+
+    assert len(seen) == 1
+    assert "DDL object tab" not in window.statusBar().currentMessage()
+
+
+def test_taking_the_offer_opens_the_session_and_retries_nothing(
+    qtbot, tmp_path, monkeypatch
+):
+    """The explicit-click half: a session opens because the user clicked Open,
+    and the refused gesture is NOT replayed behind their back (`open_session` is
+    async and reports through Audit; the user re-invokes it)."""
+    window, controller, session = _project_window(qtbot, tmp_path, monkeypatch)
+    apply_calls, probe_calls = _stub_ladder(controller)
+    window._on_ddl_edit_requested(_REF, _SOURCE)
+    window.center_stage.setCurrentWidget(window.center_stage.ddl_object_tab(_REF.key))
+    _answer_refusal(monkeypatch, modals.QMessageBox.StandardButton.Open)
+
+    window._check_active_ddl_object()
+
+    assert controller.session is session
+    assert apply_calls == [] and probe_calls == []
+    # ... and the gestures now work, because the affordance refresh ran.
+    assert window._sandbox_check_action.isVisible()
+
+
+def test_declining_the_offer_attempts_no_connection(qtbot, tmp_path, monkeypatch):
+    """The owner's line, pinned: no connection is attempted without a click whose
+    label says a session will be opened -- so a declined refusal must not even
+    PROBE."""
+    window, _controller, _session = _project_window(qtbot, tmp_path, monkeypatch)
+    probes = []
+    window._ddl_project_ui.probe_sandbox_capabilities = lambda params: probes.append(
+        params
+    )
+    _answer_refusal(monkeypatch, modals.QMessageBox.StandardButton.Cancel)
+
+    window._check_active_ddl_object()
+    window._open_sandbox_sql_console()
+
+    assert probes == []
+
+
+def test_the_console_refusal_creates_no_console(qtbot, tmp_path, monkeypatch):
+    """Present-and-reporting is about the MENU ENTRY: a console that would refuse
+    every Run is still never created (§18.5 D4)."""
+    window, _controller, _session = _project_window(qtbot, tmp_path, monkeypatch)
+    seen = []
+    _answer_refusal(monkeypatch, modals.QMessageBox.StandardButton.Cancel, seen)
+
+    assert window._open_sandbox_sql_console() is None
+
+    assert window.center_stage.sandbox_sql_tab() is None
+    assert "Sandbox SQL Console" in seen[0]
+
+
+def test_a_dying_session_still_closes_the_console_but_keeps_the_entry(
+    qtbot, tmp_path, monkeypatch
+):
+    """The trap FQ-023 must not fall into: the ENTRY becomes present-and-
+    reporting, the open console TAB is still closed when the session dies (and
+    the object tabs' bridge buttons are still unwired -- a button cannot state a
+    reason)."""
+    window, controller, _session = _project_window(qtbot, tmp_path, monkeypatch)
+    window._open_sandbox_session()
+    window._on_ddl_edit_requested(_REF, _SOURCE)
+    panel = window.center_stage.ddl_object_tab(_REF.key)
+    window._open_sandbox_sql_console()
+    assert panel.has_run_in_console
+
+    controller.close_session()
+
+    assert window.center_stage.sandbox_sql_tab() is None
+    assert not panel.has_run_in_console
+    assert window._sandbox_console_action.isVisible()  # present, and reporting
+
+
+def test_closing_the_project_takes_all_three_gestures_away(
+    qtbot, tmp_path, monkeypatch
+):
+    """The narrowing does not resurrect a control for a project that is gone: no
+    project means no configured sandbox, which is the ABSENT case."""
+    window, controller, _session = _project_window(qtbot, tmp_path, monkeypatch)
+    window._open_sandbox_session()
+
+    window._ddl_project_ui.close_project()
+
+    assert not controller.has_session
+    assert not window._sandbox_check_action.isVisible()
+    assert not window._sandbox_probe_check_action.isVisible()
+    assert not window._sandbox_console_action.isVisible()
+
+
+def test_an_unconfigured_sandbox_refuses_without_a_modal(qtbot, tmp_path, monkeypatch):
+    """Reachable through a toolbar button or a shortcut even while the menu entry
+    is absent -- and an unexplained no-op is exactly what FQ-023 exists to kill.
+    There is nothing to offer here, so the reason goes to the status bar and NO
+    dialog is opened (the unpatched `question` below would hang if one were)."""
+    window, _controller, _session = _project_window(
+        qtbot, tmp_path, monkeypatch, sandbox_host=""
+    )
+
+    window._check_active_ddl_object()
+    assert "none is configured" in window.statusBar().currentMessage()
+
+    assert window._open_sandbox_sql_console() is None
+    assert "none is configured" in window.statusBar().currentMessage()

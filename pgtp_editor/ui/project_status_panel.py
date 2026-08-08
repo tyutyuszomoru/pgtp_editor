@@ -1130,8 +1130,14 @@ class ProjectStatusPanel(QWidget):
         this window's lifetime -- and this window is cached and re-shown rather
         than rebuilt, so the constructor's answer goes stale. Passing `None`
         removes the affordance entirely (the node windows are built on
-        activation, so the next click reflects the new wiring): a button whose
-        operation cannot run is absent, never present-but-refusing.
+        activation, so the next click reflects the new wiring).
+
+        The panel does not decide WHICH state deserves a button: the caller does,
+        and since FQ-023 `MainWindow` passes `None` only when no sandbox is
+        configured at all, and a callback that states the missing session when
+        one is configured but no session is open. So "no callback" still means
+        "no affordance", but "has a callback" no longer promises the operation
+        will run -- it promises the click gets an answer.
         """
         self._on_run_data_clone = on_run_data_clone
         self._on_install_plpgsql_check = on_install_plpgsql_check

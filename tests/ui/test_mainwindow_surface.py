@@ -214,6 +214,8 @@ EXPECTED_HOST_SURFACE = {
     "_refresh_sandbox_affordances",
     "_refresh_sandbox_console_affordances",
     "_refresh_sandbox_provisioning_status",
+    # FQ-023: the one refusal all five session-gated sandbox gestures share.
+    "_refuse_sandbox_gesture",
     "_register_checked_out_object",
     "_register_created_object",
     "_report_check_findings",
