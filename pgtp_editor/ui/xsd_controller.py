@@ -532,7 +532,9 @@ class XsdController(QObject):
             return
         if self._dirty:
             self._shell.status(
-                "The XSD tab has unsaved changes — save it first (Ctrl+S).", 5000
+                "The XSD tab has unsaved changes — save it first "
+                "(Deployment ▸ Save XSD).",
+                5000,
             )
             return
         default_dir = self._shell.default_dir

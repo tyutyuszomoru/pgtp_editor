@@ -91,17 +91,23 @@ if TYPE_CHECKING:  # pragma: no cover -- import-cycle/Qt-purity avoidance only
 #: re-prefix them.
 CHECK_PREFIX = "[Check] "
 
-#: The three per-edit destinations of "Deploy this edit…" (§18.5, §18.2). The
-#: command is a picker in FRONT of the three existing gestures, never a fourth
-#: thing that writes DDL or files on its own.
+#: The three per-edit destinations (§18.5, §18.2). Surfaced by name on the Editor
+#: bar's `Deployment` menu since FQ-020, and still reachable through the
+#: "Deploy this edit…" picker, which is a chooser in FRONT of the three existing
+#: gestures -- neither surface is a fourth thing that writes DDL or files on its
+#: own.
 DEST_SANDBOX = "sandbox"
 DEST_SAVE = "save"
 DEST_TARGET = "target"
 
+#: FQ-020 renamed all three to the words the `Deployment` menu uses. The labels
+#: appear in two surfaces (this picker's prose and the menu entries), so they must
+#: come from one place or the UI and the manual disagree about what the same
+#: gesture is called.
 DESTINATION_LABELS = {
-    DEST_SANDBOX: "Apply to Sandbox",
-    DEST_SAVE: "Save (for a future batch deploy)",
-    DEST_TARGET: "Apply to Target",
+    DEST_SANDBOX: "Run on sandbox",
+    DEST_SAVE: "Save in Project",
+    DEST_TARGET: "Run on quality",
 }
 
 #: Why a destination is NOT on offer, stated to the user in the picker rather
@@ -115,12 +121,18 @@ DESTINATION_UNAVAILABLE_REASONS = {
         "no sandbox session is open — Database ▸ Open Sandbox Session "
         "(or Sandbox Setup… first)"
     ),
+    # FQ-020 wired this lane, so the old *"not wired in this build"* wording is
+    # retired: with no project the host resolves a quality target and the gesture
+    # works, and the reason a destination is missing is now a CONNECTION fact.
+    # The project-mode leg is still blocked (BUG-034 never populates
+    # `ProjectSettings.target` from the `.pgtp`), which is why the remedy names
+    # both places a target can come from.
     DEST_TARGET: (
-        "the target ('quality') apply lane is not wired in this build — it "
-        "needs a live target connection to re-check the object's signature "
-        "against, which §18.5 precondition 1 cannot be enforced without. "
-        "Deploy to the target through the reviewable deployment-script path "
-        "(Database ▸ Compare Schemas…)"
+        "no quality target could be resolved with a password — configure it in "
+        "Database ▸ Connection Setup… (projectless) or Project Settings ▸ "
+        "Connections (with a project open). Precondition 1 re-checks the "
+        "object's signature against the live catalog, so it cannot be enforced "
+        "without a reachable connection"
     ),
 }
 
@@ -554,10 +566,13 @@ class DdlObjectEditorPanel(CompletionPopupHostMixin, QWidget):
             host is expected to land the report through `record_apply_result`
             when the worker finishes. A seam that returns a report keeps the
             fully synchronous behavior.
-        ``apply_to_target(ref, ddl_text) -> ApplyOutcome``
+        ``apply_to_target(ref, ddl_text) -> ApplyOutcome | None``
             The real-database write, run only after all four hard
             preconditions pass. Wired to `db/apply.py::apply_ddl` behind the
-            host's off-thread runner.
+            host's off-thread runner — which is why, exactly like
+            `apply_to_sandbox`, **`None` is allowed and means "the result will
+            arrive later"**: the panel then says the apply is *running* rather
+            than claiming it succeeded, and the host reports the real outcome.
         ``live_identity(ref) -> DdlObjectRef | None``
             Re-introspects the live catalog and returns the object's CURRENT
             identity, or None when the target does not have the object yet.
@@ -747,8 +762,9 @@ class DdlObjectEditorPanel(CompletionPopupHostMixin, QWidget):
         return self._resolve_save_path()
 
     def remember_save_path(self, path: Path) -> None:
-        """Remember the path a save resolved to, so every subsequent Ctrl+S
-        writes silently to it for the rest of the session (§18.5)."""
+        """Remember the path a save resolved to, so every subsequent
+        `Deployment ▸ Save in Project` writes silently to it for the rest of the
+        session (§18.5; the trigger moved with FQ-020, the mechanism did not)."""
         self._save_path = Path(path)
 
     @property
@@ -1090,6 +1106,18 @@ class DdlObjectEditorPanel(CompletionPopupHostMixin, QWidget):
             self._report([f"apply to target of {self._ref.qualified} cancelled; nothing was applied."])
             return False
         outcome = self._apply_to_target(self._ref, text)
+        if outcome is None:
+            # ASYNCHRONOUS seam, the same widening `apply_to_sandbox()` already
+            # carries and for the same reason: the real host runs the write off
+            # the GUI thread, so there is no outcome at call time. Announcing
+            # "applied" here would be a claim about a write whose result is still
+            # unknown -- the host reports the real outcome when the worker
+            # finishes. A seam that returns an outcome keeps the fully
+            # synchronous behaviour.
+            self._report(
+                [f"applying {self._ref.qualified} to database {database}…"]
+            )
+            return True
         self._report_result(
             [f"applied {self._ref.qualified} to database {database}."], outcome
         )

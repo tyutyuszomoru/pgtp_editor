@@ -133,21 +133,50 @@ def test_save_surfaces_os_error_and_leaves_buffer_untouched(qtbot, tmp_path):
     assert window.center_stage.xml_editor.toPlainText() == "keep me"
 
 
-def test_file_menu_save_actions_are_wired(qtbot, tmp_path):
+def test_deployment_menu_save_actions_are_wired(qtbot, tmp_path):
+    """FQ-020: this WAS `test_file_menu_save_actions_are_wired`, driving
+    `File ▸ Save`. Saving the `.pgtp` is now `Deployment ▸ Save pgtp` (in place)
+    and `Deployment ▸ Save as new pgtp` (Save As), both on the Raw XML tab. With
+    no path yet, `save_project` still falls through to Save As -- the mechanism
+    is unchanged, only the trigger moved."""
     from tests.ui._menu_helpers import find_action, find_top_menu
 
     window = _window(qtbot, tmp_path)
     window.center_stage.xml_editor.setPlainText("data")
     target = tmp_path / "menu.pgtp"
-    file_menu = find_top_menu(window, "File")
+    menu = find_top_menu(window, "Deployment")
+    save_pgtp = find_action(menu, "Save pgtp")
+    assert save_pgtp is not None and save_pgtp.isVisible()
 
     with patch(
         "pgtp_editor.ui.modals.QFileDialog.getSaveFileName",
         return_value=(str(target), "PGTP files (*.pgtp)"),
     ):
-        find_action(file_menu, "Save").trigger()
+        save_pgtp.trigger()
 
     assert target.read_text(encoding="utf-8") == "data"
+
+    # ...and `Save as new pgtp` writes to a freshly chosen path.
+    other = tmp_path / "other.pgtp"
+    window.center_stage.xml_editor.setPlainText("data 2")
+    with patch(
+        "pgtp_editor.ui.modals.QFileDialog.getSaveFileName",
+        return_value=(str(other), "PGTP files (*.pgtp)"),
+    ):
+        find_action(menu, "Save as new pgtp").trigger()
+
+    assert other.read_text(encoding="utf-8") == "data 2"
+
+
+def test_the_file_menu_no_longer_offers_save_at_all(qtbot, tmp_path):
+    """FQ-020: `File ▸ Save` / `Save As…` are deleted outright, not relabelled or
+    hidden -- two homes for one capability is the ambiguity being removed."""
+    from tests.ui._menu_helpers import find_action, find_top_menu
+
+    window = _window(qtbot, tmp_path)
+    file_menu = find_top_menu(window, "File")
+    assert find_action(file_menu, "Save") is None
+    assert find_action(file_menu, "Save As...") is None
 
 
 # --- FQ-010: the `recentFiles` STORE is gone, not just its menu -------------

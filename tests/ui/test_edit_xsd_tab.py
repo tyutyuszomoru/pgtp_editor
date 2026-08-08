@@ -97,12 +97,27 @@ def test_malformed_save_still_writes_and_keeps_last_good(window):
     assert window.center_stage.xml_editor.schema_model() is good_model
 
 
-def test_ctrl_s_routes_to_active_tab(window):
+def test_deployment_save_xsd_saves_the_xsd_not_the_project(window):
+    """FQ-020: this WAS `test_ctrl_s_routes_to_active_tab`, driving the deleted
+    `_save_active_tab` router. Saving the XSD is now one named menu entry wired
+    straight to `_xsd_ui.save()` -- so the assertion that it saves the XSD and
+    not the project is unchanged; only the trigger is."""
     _seed(window)
     window._xsd_ui.open()
     window.center_stage.xsd_editor.setPlainText(_MINIMAL + "<!-- x -->")
-    window._save_active_tab()
+    action = find_action(find_top_menu(window, "Deployment"), "Save XSD")
+    assert action is not None and action.isVisible()
+    action.trigger()
     assert window._xsd_ui.dirty is False  # saved the XSD, not the project
+    assert window._doc_ui.dirty is False
+
+
+def test_no_save_router_survives_anywhere(window):
+    """The §7 invariant, asserted rather than trusted: there is no
+    `_save_active_tab` and no other tab-dispatching save on the window. Its
+    `else` branch used to write the `.pgtp` from six unrelated tabs."""
+    assert not hasattr(window, "_save_active_tab")
+    assert MainWindow._LEGACY_DELEGATES == {}
 
 
 def test_find_bar_routing(window):
@@ -619,7 +634,11 @@ def test_export_with_dirty_tab_shows_save_first_and_no_dialog(window, monkeypatc
         staticmethod(lambda *a, **k: dialog_calls.append(a) or ("", "")),
     )
     window._xsd_ui.export()
+    # FQ-020: the refusal must name a REACHABLE gesture. It used to say
+    # "(Ctrl+S)", which is now an unbound key -- an unfollowable instruction.
     assert "save it first" in window.statusBar().currentMessage()
+    assert "Deployment ▸ Save XSD" in window.statusBar().currentMessage()
+    assert "Ctrl+S" not in window.statusBar().currentMessage()
     assert not dialog_calls
     window._xsd_ui.confirm_close = lambda: "discard"  # silence teardown close prompt
 

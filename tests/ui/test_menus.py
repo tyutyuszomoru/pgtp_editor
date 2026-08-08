@@ -23,10 +23,13 @@ def test_file_menu_contents(qtbot):
         # FQ-010 removed "Open Recent" (and the recentFiles store behind it)
         # and added "Show Launcher…", which re-opens the startup launcher so its
         # persisted "Don't show this again" is never a one-way door.
+        # FQ-020: `Save`/`Save As...` are DELETED (saving is per-tab on the
+        # Editor bar's `Deployment` menu), `Revert` became `Discard Changes`, and
+        # `Deploy .pgtp` MOVED to `Deployment` -- so §18.2's project group is
+        # four entries, not five.
         "Open...", "Open PHP File…", "―",
-        "New Project…", "Open Project…", "Close Project", "Project Settings…", "Deploy .pgtp", "―",
-        "Save", "Save As...",
-        "Revert", "Close", "―", "Show Launcher…", "Exit",
+        "New Project…", "Open Project…", "Close Project", "Project Settings…", "―",
+        "Discard Changes", "Close", "―", "Show Launcher…", "Exit",
     ]
 
 
@@ -36,14 +39,39 @@ def test_file_menu_shortcuts(qtbot):
     file_menu = find_top_menu(window, "File")
     expected = {
         "Open...": "Ctrl+O",
-        "Save": "Ctrl+S",
-        "Save As...": "Ctrl+Shift+S",
         "Close": "Ctrl+W",
     }
     for label, combo in expected.items():
         action = find_action(file_menu, label)
         assert action is not None
         assert action.shortcut().toString() == combo
+
+
+def test_ctrl_s_and_ctrl_shift_s_are_bound_nowhere_in_the_app(qtbot):
+    """§7/FQ-020's standing invariant: `Ctrl+S` is dead app-wide and `Ctrl+Shift+S`
+    is deleted. Asserted over EVERY action of both menu bars plus every
+    window-level QAction, so re-adding the key anywhere reachable from a menu (or
+    as a menu-less window action, the `F3` shape) fails here.
+
+    `CodeEditorDialog`'s carved-out Ctrl+S/Ctrl+W is deliberately out of scope:
+    it lives on a modal dialog, is that modal's OK button, and writes nothing to
+    disk (see `tests/ui/test_code_editor.py`).
+    """
+    window = MainWindow()
+    qtbot.addWidget(window)
+    dead = {"Ctrl+S", "Ctrl+Shift+S"}
+    seen = []
+    for bar in (window.menuBar(), window.editor_menu_bar):
+        for menu_action in bar.actions():
+            menu = menu_action.menu()
+            for action in (menu.actions() if menu is not None else []):
+                seen.extend(
+                    s.toString() for s in action.shortcuts()
+                )
+    seen.extend(s.toString() for action in window.actions() for s in action.shortcuts())
+    assert dead & set(seen) == set()
+    # ...and the router those keys drove is gone, not merely unbound.
+    assert not hasattr(window, "_save_active_tab")
 
 
 def test_file_menu_has_no_open_recent_submenu(qtbot):
@@ -106,10 +134,16 @@ def test_editor_menu_bar_is_a_second_bar_above_the_central_pane(qtbot):
 
 
 def test_editor_menu_bar_contents(qtbot):
-    """History, Select (FQ-015), Parsing, Navigation (`Bookmarks` before FQ-021)."""
+    """History, Select (FQ-015), Parsing, Bookmarks, Deployment (FQ-020)."""
     window = MainWindow()
     qtbot.addWidget(window)
-    assert editor_menu_titles(window) == ["History", "Select", "Parsing", "Navigation"]
+    assert editor_menu_titles(window) == [
+        "History",
+        "Select",
+        "Parsing",
+        "Navigation",
+        "Deployment",
+    ]
 
 
 def test_history_menu_contents_and_order(qtbot):
@@ -515,11 +549,17 @@ def test_tools_menu_contents(qtbot):
         # (§29 open item: whether all three follow it).
         "Lint Current File", "Lint on Save", "Locate PHP Linter…", "―",
         "Reparse Raw XML into Tree", "―",
-        "Compare / Merge Two Files...", "Next Difference", "Prev Difference",
-        "Apply Changes to Target", "―",
+        # FQ-020 took two more off this menu: `Compare / Merge Two Files...`
+        # became `Deployment ▸ Compare/Merge pgtp` on the Raw XML tab, and
+        # `Apply Changes to Target` is bound for queued FQ-021's mode-scoped
+        # Compare/Merge surface -- deliberately NOT `Deployment`, which would put
+        # two very differently shaped irreversible actions under one menu.
+        "Next Difference", "Prev Difference", "―",
         # §23's embedded MCP server: one checkable entry, off at startup.
         "Start MCP Server",
     ]
+    assert find_action(menu, "Compare / Merge Two Files...") is None
+    assert find_action(menu, "Apply Changes to Target") is None
 
 
 def test_validate_project_action_populates_audit(qtbot):
@@ -585,7 +625,13 @@ def test_all_top_level_menus_present_in_order(qtbot):
     assert window_menu_titles(window) == [
         "File", "View", "Schema", "Database", "Tools", "Generation", "Help",
     ]
-    assert editor_menu_titles(window) == ["History", "Select", "Parsing", "Navigation"]
+    assert editor_menu_titles(window) == [
+        "History",
+        "Select",
+        "Parsing",
+        "Navigation",
+        "Deployment",
+    ]
     # `all_top_level_menu_titles` spans both, window bar first.
     assert all_top_level_menu_titles(window) == (
         window_menu_titles(window) + editor_menu_titles(window)

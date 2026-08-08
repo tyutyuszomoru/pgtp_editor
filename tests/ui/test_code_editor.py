@@ -413,6 +413,13 @@ def test_dialog_cancel_emits_cancelled(qtbot):
 
 
 def test_dialog_ctrl_s_saves(qtbot):
+    """FQ-020's explicit carve-out: `Ctrl+S` dies everywhere EXCEPT here. This
+    one is the modal's OK button -- the same slot as `button_box.accepted`, which
+    emits `saved` and writes **nothing to disk** -- paired with `Ctrl+W` = cancel.
+    A "delete every Ctrl+S" sweep that took this would be an unrelated regression
+    in the `Edit code…` modal. It is implemented twice on purpose (a `QShortcut`
+    plus a `keyPressEvent` branch, because QShortcut activation is unreliable
+    under the offscreen test platform) and BOTH duplicates must survive."""
     dialog = CodeEditorDialog(language="js")
     qtbot.addWidget(dialog)
     dialog.show()

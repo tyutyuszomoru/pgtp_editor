@@ -139,7 +139,16 @@ def test_save_reports_oserror_instead_of_raising_or_marking_clean(qtbot, tmp_pat
     assert tab.is_dirty() is True
 
 
-def test_ctrl_s_in_the_editor_saves_this_tab(qtbot, tmp_path):
+def test_ctrl_s_in_the_editor_is_dead_and_writes_nothing(qtbot, tmp_path):
+    """FQ-020: this filter's `Key_S` branch is REMOVED. It was a real per-tab
+    save, independent of the deleted `File ▸ Save`, so it would have survived by
+    accident and left the PHP tab as the one place in the app where Ctrl+S saves
+    -- owner's ruling: *"Dies at all, inconsistency is a bad driver."*
+
+    The event must not be claimed (so nothing else is suppressed either) and
+    nothing may be written: no file, no dirty-flag change, no status message.
+    Saving a PHP file is `Deployment ▸ Save PHP File`.
+    """
     written = []
     tab = PhpFileTab(
         None,
@@ -149,12 +158,14 @@ def test_ctrl_s_in_the_editor_saves_this_tab(qtbot, tmp_path):
     )
     qtbot.addWidget(tab)
     tab.editor.insertPlainText("y")
-    event = QKeyEvent(
-        QEvent.Type.KeyPress, Qt.Key.Key_S, Qt.KeyboardModifier.ControlModifier
-    )
-    assert tab.eventFilter(tab.editor, event) is True
-    assert written == [tab.text()]
-    assert tab.is_dirty() is False
+    for event_type in (QEvent.Type.KeyPress, QEvent.Type.ShortcutOverride):
+        event = QKeyEvent(
+            event_type, Qt.Key.Key_S, Qt.KeyboardModifier.ControlModifier
+        )
+        assert tab.eventFilter(tab.editor, event) is False
+    assert written == []
+    assert tab.is_dirty() is True
+    assert not (tmp_path / "o.php").exists()
 
 
 def test_ctrl_z_is_claimed_so_the_window_level_shortcut_never_fires(qtbot):

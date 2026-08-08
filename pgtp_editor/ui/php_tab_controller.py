@@ -61,8 +61,9 @@ window, so the drop path classifies rather than trusts:
 * anything else that reads as text → a PHP tab.
 * a directory, an unreadable file, or a file containing a NUL byte in its first
   block → **refused with a status-bar message naming the file**, and nothing
-  opens. Silently opening a JPEG as "PHP source" and then letting Ctrl+S write
-  the mangled result back is data loss, not convenience.
+  opens. Silently opening a JPEG as "PHP source" and then letting the first
+  `Deployment ▸ Save PHP File` write the mangled result back is data loss, not
+  convenience.
 * a file that is not valid UTF-8 → also refused, for the same reason: decoding
   it with replacement characters would make the very first save corrupt the
   file. This is stricter than Notepad++ and is a deliberate data-safety
@@ -104,7 +105,7 @@ def read_php_text(path: Path) -> str:
 
     Raises `OSError` (unreadable / a directory) or `UnicodeDecodeError` (not
     UTF-8). Both are refusals the controller reports; neither is swallowed into
-    a lossy `errors="replace"` decode, because the tab's very next Ctrl+S would
+    a lossy `errors="replace"` decode, because the tab's very next save would
     write those replacement characters back over the user's file.
     """
     return path.read_text(encoding="utf-8")
@@ -253,8 +254,10 @@ class PhpTabController(QObject):
     # -- Save reporting -------------------------------------------------------
 
     def save_active_tab(self) -> bool:
-        """The PHP branch of the host's `_save_active_tab` router (Ctrl+S /
-        File ▸ Save). False when there is no PHP tab active, or the save was
+        """`Deployment ▸ Save PHP File` (FQ-020) -- the same code the deleted
+        `_save_active_tab` router reached through its PHP branch, now wired
+        straight to one named menu entry rather than reached by a tab-dispatching
+        keystroke (§7). False when there is no PHP tab active, or the save was
         cancelled/failed -- the same contract `_save_ddl_object_editor` has."""
         tab = self._shell.stage.active_php_file_tab()
         if tab is None:

@@ -1212,10 +1212,15 @@ def test_close_project_with_no_ddl_explorer_loaded_never_raises(qtbot, tmp_path)
     assert window._ddl_project_folder is None
 
 
-def test_database_menu_has_deploy_pgtp_action(qtbot, tmp_path):
+def test_deployment_menu_has_deploy_pgtp_action(qtbot, tmp_path):
+    """FQ-020 MOVED `Deploy .pgtp` off the File menu's §18.2 project group (five
+    -> four) onto the Editor bar's `Deployment` menu: it is meaningful only while
+    the Raw XML tab is active, which is exactly what the move expresses."""
     window = _window(qtbot, tmp_path)
-    menu = find_top_menu(window, "File")
-    assert find_action(menu, "Deploy .pgtp") is not None
+    assert find_action(find_top_menu(window, "File"), "Deploy .pgtp") is None
+    action = find_action(find_top_menu(window, "Deployment"), "Deploy .pgtp")
+    assert action is not None
+    assert action.isVisible()  # Raw XML is the tab a fresh window opens on
 
 
 # --- Window title shows the active project (owner request) -----------------

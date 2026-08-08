@@ -105,7 +105,10 @@ def _colored_pixels(image, want, tol=60):
     return n
 
 
-@pytest.mark.parametrize("command_id", ["open", "save"])
+# `save` was retired from ACTION_ICON_FILES with FQ-020 (see that dict's comment),
+# so the second id here is now the CATALOG id `document-save` -- proving the same
+# SVG is still assignable, which is exactly the guarantee the retirement kept.
+@pytest.mark.parametrize("command_id", ["open", "document-save"])
 def test_themed_icon_renders_requested_color(qapp, command_id):
     """QtSvg recoloring genuinely works: red request -> red pixels, blue
     request -> blue pixels, on the SAME icon id (so the color is not baked in)."""

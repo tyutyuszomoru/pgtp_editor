@@ -81,13 +81,16 @@ from pgtp_editor.db.sandbox import SandboxMode
 from pgtp_editor.ui.async_task import run_async
 from pgtp_editor.ui.connection_setup_dialog import ConnectionSetupDialog
 from pgtp_editor.ui.new_project_dialog import NewProjectDialog
-from pgtp_editor.db.apply import ApplyOutcome
+from pgtp_editor.db.apply import ApplyOutcome, apply_ddl
 from pgtp_editor.db.ddl_check import CheckRequest
 from pgtp_editor.ui.ddl_object_editor import (
     CHECK_PREFIX,
     DEST_SANDBOX,
+    DEST_TARGET,
+    DESTINATION_LABELS,
     DESTINATION_UNAVAILABLE_REASONS,
     DdlObjectRef,
+    parse_buffer_identity,
 )
 from pgtp_editor.ui.sandbox_controller import SandboxController, SandboxOperation
 from pgtp_editor.ui.sandbox_setup_dialog import SandboxSetupDialog
@@ -660,7 +663,8 @@ class MainWindow(QMainWindow):
         )
 
         #: The open `.pgtp` document lane (`ui/pgtp_document_controller.py`):
-        #: open / reparse / save / close / revert, the §7 Revert gate,
+        #: open / reparse / save / close / discard changes, the §7 Discard Changes
+        #: gate,
         #: plus the four pieces of document state
         #: (`project`/`project_path`/`dirty`/`loading`) the six delegating
         #: properties below forward to.
@@ -958,23 +962,18 @@ class MainWindow(QMainWindow):
     def _ddl_project_settings(self, value):
         self._ddl_project_ui.settings = value
 
-    def _save_active_tab(self) -> None:
-        """Ctrl+S / File ▸ Save routes to the active center-stage tab."""
-        stage = self.center_stage
-        if stage.currentIndex() == stage.xsd_tab_index:
-            self._xsd_ui.save()
-            return
-        panel = stage.active_ddl_object_panel()
-        if panel is not None:
-            self._save_ddl_object_editor(panel)
-            return
-        if stage.active_php_file_tab() is not None:
-            # §21: without this branch Ctrl+S on a focused PHP tab saved the
-            # PROJECT -- the tab's own event filter only claims the key while
-            # the caret is inside its editor, and File ▸ Save never was.
-            self._php_tabs.save_active_tab()
-            return
-        self._doc_ui.save_project()
+    # There is deliberately NO `_save_active_tab` here, and no other
+    # tab-dispatching save under any name (§7, FQ-020). The method that stood at
+    # this spot was a four-way router behind `Ctrl+S` / `File ▸ Save` whose
+    # `else` branch fell through to `_doc_ui.save_project()` -- which meant
+    # **Ctrl+S with the Sandbox SQL Console, a draft fragment tab, Diff/Merge,
+    # Caption Management, the DDL Explorer or the Manual active silently wrote
+    # the `.pgtp`**: six tab kinds it was never meant to catch, three of them
+    # specified as never saving anywhere. Deleting the router removes the whole
+    # bug class rather than adding a case to it; each of the four surviving save
+    # commands is a named `Deployment` menu entry wired directly to exactly one
+    # writer (`_build_deployment_menu`). A dormant router is what gets re-bound
+    # to a key later, which is why it is gone rather than kept caller-less.
 
     # -- FQ-013: project-local bookmark persistence ---------------------------
     # The gate is the CAPABILITY fact "a §18.2 project is open"
@@ -1570,7 +1569,7 @@ class MainWindow(QMainWindow):
         self._build_editor_menu_bar()
 
     def _build_editor_menu_bar(self):
-        """The Editor menu bar's four menus, in order (§7/§26, FQ-016).
+        """The Editor menu bar's five menus, in order (§7/§26, FQ-016/FQ-020).
 
         It holds **editing** commands — the deliberate concept name. Calling it
         "per-tab" would be false: `History…` opens the *project snapshot*
@@ -1586,6 +1585,7 @@ class MainWindow(QMainWindow):
         # top-level window menu between Tools and Generation before FQ-016) and
         # keeps its position on it.
         self._find_ui.build_navigation_menu(self.editor_menu_bar)
+        self._build_deployment_menu()
         self._refresh_editor_menu_affordances()
 
     def _build_history_menu(self):
@@ -1765,6 +1765,130 @@ class MainWindow(QMainWindow):
         validate_action.triggered.connect(self._find_ui.validate_project)
         self._validate_project_action = validate_action
 
+    def _build_deployment_menu(self):
+        """Deployment — the Editor bar's fifth menu, contents by ACTIVE TAB KIND
+        (§7/§26, FQ-020).
+
+        It is where every save and every outward push now lives, replacing
+        `File ▸ Save`/`Save As…` (deleted with `Ctrl+S`/`Ctrl+Shift+S` and the
+        router behind them) and the buried "Deploy this edit…" picker as the
+        *discoverable* surface for the three per-edit destinations.
+
+        **Every action is built ONCE, here, and only ever `setVisible`-toggled --
+        never created or destroyed per tab.** That is a correctness constraint,
+        not tidiness: `ToolbarController._walk_menu_actions` enumerates both menu
+        bars' leaf actions and never tests `isVisible()`, so a *hidden* action
+        stays enumerated, stays pinnable and keeps a stable id — while an action
+        that does not **exist** at enumeration time is invisible to
+        `collect_menu_commands()`. Rebuilding per tab would therefore make
+        Customize Toolbar's Available list (and queued FQ-012's shortcut list,
+        which enumerates the same way) depend on which tab happens to be active,
+        and would silently drop saved `toolbarIds` for the other tabs' commands.
+
+        **No member carries a keyboard shortcut.** For the two `Run on …` entries
+        that is §18.5's rule — *an irreversible outward effect must not be one
+        keystroke away* — and for the saves it is the FQ-020 ruling itself.
+
+        **No separators.** Only one group is ever visible at a time, so a
+        separator between groups would render as a stray line above or below the
+        single visible group rather than as grouping.
+
+        A user who pins one of these to the toolbar will see that button come and
+        go with the tab. Accepted, on the `Select ▸ Select Parent Block`
+        precedent (§7): none of these is a *default* toolbar button, which is
+        what made gating `Parsing ▸ Validate Project` unacceptable.
+        """
+        menu = self.editor_menu_bar.addMenu("Deployment")
+        self._deployment_menu = menu
+
+        # --- Raw XML -------------------------------------------------------
+        # `Compare/Merge pgtp` is Tools' old `Compare / Merge Two Files...`,
+        # relabelled and re-homed (§12): comparing is a `.pgtp`-level gesture, so
+        # it belongs on the tab that holds the `.pgtp`.
+        compare_action = menu.addAction("Compare/Merge pgtp")
+        compare_action.triggered.connect(lambda: self._diff_ui.compare_two_files())
+        # In-place save of the `.pgtp`. Load-bearing, not a convenience: §18.2
+        # makes the working copy a first-class checked-out artifact that
+        # `Deploy .pgtp` later pushes to the sshfs source, and projectless it is
+        # the only way to save at all.
+        save_pgtp_action = menu.addAction("Save pgtp")
+        save_pgtp_action.triggered.connect(lambda: self._doc_ui.save_project())
+        save_as_new_pgtp_action = menu.addAction("Save as new pgtp")
+        save_as_new_pgtp_action.triggered.connect(lambda: self._doc_ui.save_as())
+        # MOVED off the File menu's §18.2 project group (which drops five -> four).
+        deploy_pgtp_action = menu.addAction("Deploy .pgtp")
+        deploy_pgtp_action.triggered.connect(lambda: self._ddl_project_ui.deploy_pgtp())
+
+        # --- DDL object editor tab -----------------------------------------
+        # The three §18.5 destinations, by name. Each delegates straight to the
+        # gesture that already exists -- no new write path, no second
+        # confirmation mechanism, no second Applier.
+        save_in_project_action = menu.addAction("Save in Project")
+        save_in_project_action.triggered.connect(
+            lambda: self._save_active_ddl_object()
+        )
+        run_on_sandbox_action = menu.addAction("Run on sandbox")
+        run_on_sandbox_action.triggered.connect(
+            lambda: self._run_active_ddl_object_on_sandbox()
+        )
+        run_on_quality_action = menu.addAction("Run on quality")
+        run_on_quality_action.triggered.connect(
+            lambda: self._run_active_ddl_object_on_quality()
+        )
+
+        # --- Edit XSD / Edit AutoXSD ---------------------------------------
+        # A relabel, not new code: the same `_xsd_ui.save()` the deleted router
+        # reached through its first branch.
+        save_xsd_action = menu.addAction("Save XSD")
+        save_xsd_action.triggered.connect(lambda: self._xsd_ui.save())
+
+        # --- PHP file tab ---------------------------------------------------
+        save_php_action = menu.addAction("Save PHP File")
+        save_php_action.triggered.connect(lambda: self._php_tabs.save_active_tab())
+
+        #: The per-tab-kind visibility sets `_refresh_editor_menu_affordances`
+        #: flips. Grouped rather than held as nine attributes so the refresh
+        #: cannot forget one, and so "what does this tab kind offer?" is one
+        #: readable table instead of a chain of `setVisible` calls.
+        self._deployment_actions = {
+            "raw-xml": (
+                compare_action,
+                save_pgtp_action,
+                save_as_new_pgtp_action,
+                deploy_pgtp_action,
+            ),
+            "ddl-object": (
+                save_in_project_action,
+                run_on_sandbox_action,
+                run_on_quality_action,
+            ),
+            "xsd": (save_xsd_action,),
+            "php": (save_php_action,),
+        }
+
+    def _active_deployment_group(self) -> str | None:
+        """Which `Deployment` group the active tab earns, or None for the tab
+        kinds that have no save and no deploy destination at all (§26's *"anything
+        else"* row: Diff/Merge, Caption Management, either DDL Explorer, Manual, a
+        draft fragment tab and §18.5 D4's Sandbox SQL Console).
+
+        Resolved by asking the stage the same questions the deleted save router
+        asked — but as a **classification** with an explicit "none", which is
+        exactly the difference: the router had an `else` that fell through to
+        writing the `.pgtp`.
+        """
+        stage = self.center_stage
+        index = stage.currentIndex()
+        if index == stage.xsd_tab_index:
+            return "xsd"
+        if stage.active_ddl_object_panel() is not None:
+            return "ddl-object"
+        if stage.active_php_file_tab() is not None:
+            return "php"
+        if index == stage.raw_xml_tab_index:
+            return "raw-xml"
+        return None
+
     def _refresh_editor_menu_affordances(self) -> None:
         """The single "make the Editor menu bar match the active tab" entry
         point, called on every `center_stage.currentChanged` (§7, FQ-016).
@@ -1773,9 +1897,9 @@ class MainWindow(QMainWindow):
         **VISIBILITY, never enabled-state** — this app has deliberately kept two
         postures (present / absent) and greying out would introduce a third.
 
-        It does two things.
+        It does three things.
 
-        1. Hide the WHOLE bar on the tabs where all four menus are meaningless —
+        1. Hide the WHOLE bar on the tabs where all five menus are meaningless —
            **Caption Management** (a center-stage tab, not a dock, where §13
            already wanted bookmarks disabled) and **Manual**. §29 records this as
            the recommendation and it is what the visibility refresh gives for
@@ -1792,6 +1916,10 @@ class MainWindow(QMainWindow):
            *action*, so a user who pinned this command to the toolbar sees that
            button come and go with the tab — accepted, because the alternative is
            a toolbar button that does nothing.
+        3. Flip the `Deployment` menu's per-tab members (FQ-020) — the same
+           action-hiding trade-off as case 2, on the same precedent, and the
+           reason `_build_deployment_menu` builds all nine actions once at
+           startup instead of rebuilding the menu here.
         """
         stage = self.center_stage
         index = stage.currentIndex()
@@ -1801,6 +1929,10 @@ class MainWindow(QMainWindow):
         self._select_parent_action.setVisible(
             hasattr(editor, "select_parent_block")
         )
+        group = self._active_deployment_group()
+        for name, actions in self._deployment_actions.items():
+            for action in actions:
+                action.setVisible(name == group)
 
     def _build_file_menu(self):
         menu = self.menuBar().addMenu("File")
@@ -1837,21 +1969,30 @@ class MainWindow(QMainWindow):
         project_settings_action.triggered.connect(
             lambda: self._ddl_project_ui.open_settings()
         )
-        deploy_pgtp_action = menu.addAction("Deploy .pgtp")
-        deploy_pgtp_action.triggered.connect(lambda: self._ddl_project_ui.deploy_pgtp())
+        # §18.2's project group is FOUR entries, not five: `Deploy .pgtp` MOVED to
+        # the Editor bar's `Deployment` menu (FQ-020), where it is meaningful only
+        # while Raw XML is active. Its pinnable id changed with it, so
+        # `toolbar_registry.RENAMED_ID_ALIASES` carries a row.
         menu.addSeparator()
-        save_action = menu.addAction("Save")
-        save_action.setShortcut("Ctrl+S")
-        save_action.triggered.connect(self._save_active_tab)
-        save_as_action = menu.addAction("Save As...")
-        save_as_action.setShortcut("Ctrl+Shift+S")
-        save_as_action.triggered.connect(lambda: self._doc_ui.save_as())
-        revert_action = menu.addAction("Revert")
-        revert_action.triggered.connect(lambda: self._doc_ui.revert())
-        # §7: "enabled only when `<current>.bak` exists". Handed over to the
-        # document lane, which gates it here and at every point the answer can
-        # change: open, save, save-as, revert, close.
-        self._doc_ui.set_revert_action(revert_action)
+        # There is deliberately NO `Save` and NO `Save As…` here, and no `Ctrl+S`
+        # or `Ctrl+Shift+S` anywhere in the app (§7/§27, FQ-020). Saving is four
+        # named per-tab entries on the Editor bar's `Deployment` menu; the router
+        # that used to sit behind these two is deleted, see the comment where
+        # `_save_active_tab` was. Ctrl+S is genuinely dead -- no write, no
+        # message, no status line: a signpost was offered to the owner and
+        # explicitly declined, so do not add one back as a helpful hint.
+        discard_changes_action = menu.addAction("Discard Changes")
+        discard_changes_action.triggered.connect(
+            lambda: self._doc_ui.discard_changes()
+        )
+        # FQ-020: this WAS `Revert`, which reloaded `<current>.bak` ("undo my last
+        # save") and left the buffer dirty. It now reloads from DISK and is gated
+        # on the **dirty flag**, not on a `.bak` existing -- a different command,
+        # so it carries a different label rather than silently redefining the old
+        # word. Handed over to the document lane, which gates it here and at every
+        # point the answer can change (which, with the dirty flag as the gate, is
+        # every `set_dirty`).
+        self._doc_ui.set_discard_changes_action(discard_changes_action)
         close_action = menu.addAction("Close")
         close_action.setShortcut("Ctrl+W")
         close_action.triggered.connect(lambda: self._doc_ui.close())
@@ -2774,6 +2915,16 @@ class MainWindow(QMainWindow):
     #: previous sandbox's facts describing the current one. Class-level default
     #: so no instance ever reads it before the first inspection.
     _ddl_sandbox_content_facts = None
+
+    #: FQ-020: passwords typed for a PROJECTLESS quality target, keyed by
+    #: `(user, host, port, database)` and held for this session only. Never
+    #: written anywhere: there is no `.ddlproject/settings.json` to persist into
+    #: projectless, and writing one into the app-level QSettings store is exactly
+    #: the "silently substituting some other stored credential" confusion BUG-034
+    #: was about. Class-level default of **None**, never a shared `{}`: a mutable
+    #: class attribute would accumulate one window's secrets and hand them to the
+    #: next one constructed. The per-instance dict is created on first write.
+    _session_target_passwords = None
 
     def active_target_params(self, tree=None):
         """**The** target connection, for every consumer (BUG-034).
@@ -3963,71 +4114,392 @@ class MainWindow(QMainWindow):
 
     # --- §18.5 D3: Apply to Sandbox ------------------------------------------
     def _wire_ddl_object_apply_seams(self, panel) -> None:
-        """Wire (or unwire) one object tab's apply lane to the live session.
+        """Wire (or unwire) one object tab's apply lane — BOTH destinations
+        (§18.5, FQ-020).
 
-        Only Apply to Sandbox is wired: Apply to Target needs the live-identity
-        seam its precondition 1 cannot be enforced without, and an
-        unenforceable precondition must remove the gesture rather than weaken
-        it (the panel enforces exactly that via `has_target_apply`).
+        **`Run on quality` (Apply to Target) is now wired, and works PROJECTLESS
+        — an owner ruling and a deliberate posture change** (2026-08-08). The
+        fast-bugfix mode it exists for is explicit: open a `.pgtp` with no
+        project, edit an object, push it straight to quality.
 
-        **FQ-009 deliberately did NOT wire Apply to Target ("run on quality"),
-        and this is where that decision lives.** Three separate reasons, none of
-        them "the user might be careless":
+        FQ-009 recorded three reasons for *not* wiring this leg. Two of them have
+        since expired and the third is what the owner is deliberately changing —
+        recorded here rather than left describing a reversed decision:
 
-        1. *The identity seam has no source yet.* `live_identity` needs the
-           project's target `ConnectionParams`, and the only place that holds
-           them is `SandboxController.target_params` — fed from
-           `ProjectSettings.target`, which **BUG-034** says is never populated
-           from the `.pgtp` file. Wiring against it today would either offer a
-           gesture that cannot resolve a database, or hard-code a second,
-           parallel target-resolution path in exactly the file BUG-034 is
-           rewriting. When BUG-034 lands, `sandbox_controller.target_params` is
-           the one provider to read; nothing else here needs to change.
-        2. *Reachability is not yet a fact.* **BUG-030**'s quality-node status
-           is "configured", not probed, so "there is a target" is currently an
-           unverified claim.
-        3. *The asymmetry that makes this different from the sandbox.* Apply to
-           Sandbox is undoable (Reset Sandbox) and the sandbox is disposable;
-           Apply to Target has **no revert snapshot**. §18.5 precondition 2's
-           override is by design reachable with *nothing* verified (an
-           un-checked buffer reports as "the ladder has not been run over this
-           buffer", which is overridable — see
-           `DdlObjectEditorPanel._precondition_validation`), so wiring this leg
-           puts an irreversible production write two clicks and one override
-           behind a context menu. That may well be the right end state, but it
-           is a posture change worth landing on purpose, with the target
-           resolution it depends on already trustworthy — not as a side effect
-           of a discoverability fix.
+        1. *"The identity seam has no source."* **Stale for projectless:**
+           `active_target_params(tree)` resolves a projectless target from the
+           app-level saved connection merged with the open `.pgtp`'s
+           `<ConnectionOptions>`. It stays true for the *project* branch
+           (`ProjectSettings.target`, still blocked on **BUG-034**), which is why
+           the shipped matrix is temporarily **projectless-only** — the project
+           can do *less* than no project here, which inverts the intuitive
+           expectation and is stated out loud for that reason.
+        2. *"Reachability is not a fact."* **Stale:** BUG-030 added
+           `DdlProjectController.refresh_target_connection_status()`, a real
+           off-thread `SELECT 1`, with or without a project.
+        3. *"No revert snapshot, and precondition 2's override is reachable with
+           nothing verified."* **Stands** — and is precisely the posture being
+           changed. It is why the confirmation names the database **and the
+           host**, and why the projectless password path is a prompt rather than
+           a silent auth failure after that confirmation.
 
-        `set_apply_seams` replaces the whole set and rebuilds the button row, so
-        it is only called when the answer actually changes."""
-        wanted = self.sandbox_controller.has_session
-        if wanted == panel.has_sandbox_apply:
+        The target params come from **`_target_params_for_apply()`**, i.e.
+        BUG-034's one selector, never from `sandbox_controller.target_params`
+        (`ProjectSettings.target`, the thing BUG-034 is about).
+
+        The two destinations are gated independently — a sandbox session and a
+        resolvable quality target are unrelated facts — and `set_apply_seams`
+        replaces the whole set and rebuilds the button row, so it is called only
+        when one of the two answers actually changes. It runs at two moments: when
+        a tab opens (`_wire_ddl_object_panel_reporting`) and on every
+        sandbox-affordance refresh (which includes each project transition). A
+        target that becomes resolvable while an object tab is *already* open
+        therefore lands on the next of those, not instantly."""
+        want_sandbox = self.sandbox_controller.has_session
+        want_target = self._target_apply_available()
+        if (want_sandbox, want_target) == (
+            panel.has_sandbox_apply,
+            panel.has_target_apply,
+        ):
             return
-        if wanted:
-            panel.set_apply_seams(
+        seams = {}
+        if want_sandbox:
+            seams.update(
                 apply_to_sandbox=self._apply_ddl_object_to_sandbox,
                 sandbox_database_label=self._sandbox_database_label,
-                confirm=self._confirm_sandbox_apply,
             )
-        else:
-            # Empty set: the seam that went away takes its affordance with it.
-            panel.set_apply_seams()
+        if want_target:
+            seams.update(
+                apply_to_target=self._apply_ddl_object_to_target,
+                live_identity=self._live_target_identity,
+                target_database_label=self._target_database_label,
+            )
+        # The confirmation gate belongs to whichever destination is on offer;
+        # with neither, the empty set takes both affordances with it (carve-out
+        # 2: an unwired seam is an ABSENT affordance, never a disabled one).
+        if seams:
+            seams["confirm"] = self._confirm_apply
+        panel.set_apply_seams(**seams)
+
+    # --- The `Run on quality` target lane (§18.5, FQ-020) --------------------
+
+    @staticmethod
+    def _database_host_label(params) -> str:
+        """`"prod on db01:5432"` — the format `DdlObjectEditorPanel.__init__`'s
+        seam docstring has always documented, and which neither label actually
+        produced before FQ-020 (both returned the bare database name).
+
+        Naming the host is not decoration: projectless the target is *derived*
+        (`seed_params` merges the app-level saved connection with the open
+        `.pgtp`'s `<ConnectionOptions>`), so the user may well not know which
+        server that resolved to — and writing DDL to the wrong server is the
+        failure mode. Never renders the password.
+        """
+        if params is None:
+            return ""
+        database = (getattr(params, "database", "") or "").strip()
+        host = (getattr(params, "host", "") or "").strip()
+        port = getattr(params, "port", None)
+        if not database:
+            return ""
+        if not host:
+            # An unnamed host is still an honest label -- refusing the whole
+            # label would refuse the apply (`_database_label` treats "" as "no
+            # database identified"), which is the wrong failure for a local
+            # socket connection.
+            return database
+        return f"{database} on {host}:{port}" if port else f"{database} on {host}"
+
+    def _target_params_for_apply(self):
+        """The quality target a `Run on quality` will actually hit, or None when
+        none can be resolved (§18.5, FQ-020).
+
+        Goes through BUG-034's one selector, `_target_params_for_fetch`, so what
+        Project Settings shows is what the apply uses — plus the **projectless
+        password path**, which that selector deliberately does not have:
+        `_target_params_for_fetch` short-circuits with `if
+        self._ddl_project_settings is None … return params` (BUG-034's one-time
+        prompt is project-only) and `connection_from_tree` forces `password=""`
+        (§17: the password is never read from the XML). So in the owner's exact
+        scenario the resolved target carries host/database/user and **no
+        password**, and the apply would fail on authentication *after* a
+        confirmation that named a production host — the worst of the available
+        outcomes.
+
+        The projectless answer is a **session-only** prompt: kept in memory for
+        this run, keyed by the connection it was typed for, and deliberately
+        **not** written into app-level QSettings. There is nowhere project-like
+        to persist it (no `.ddlproject/settings.json`), and writing it into the
+        app-level store is exactly the "silently substituting some other stored
+        credential" confusion BUG-034 was about.
+
+        Returns None when there is no host, or when the prompt was cancelled and
+        no password is available — a **stated refusal before the confirmation**,
+        never a doomed connection attempt behind one.
+        """
+        tree = (
+            self._current_project.tree if self._current_project is not None else None
+        )
+        params = self._target_params_for_fetch(tree)
+        if params is None or not params.host:
+            return None
+        if params.password or self._ddl_project_settings is not None:
+            # Project mode already had its one-time prompt (and persists the
+            # answer); a password we already hold needs nothing.
+            return params
+        key = (params.user, params.host, params.port, params.database)
+        remembered = (self._session_target_passwords or {}).get(key)
+        if remembered:
+            return replace(params, password=remembered)
+        password = self._prompt_target_password(params)
+        if not password:
+            return None
+        if self._session_target_passwords is None:
+            self._session_target_passwords = {}
+        self._session_target_passwords[key] = password
+        return replace(params, password=password)
+
+    def _target_apply_available(self) -> bool:
+        """Whether `Run on quality`'s seams can be wired — *without* prompting
+        for anything.
+
+        Deliberately NOT `_target_params_for_apply() is not None`: this runs on
+        every session-state change and every object-tab open, and raising a
+        password modal from a visibility refresh would be a modal nobody asked
+        for. The password question is answered at the moment the user actually
+        triggers the gesture; this only asks whether there is a target at all.
+        """
+        tree = (
+            self._current_project.tree if self._current_project is not None else None
+        )
+        return bool(self._target_is_configured(self.active_target_params(tree)))
+
+    def _target_database_label(self) -> str:
+        """What a `Run on quality` confirmation NAMES: the resolved database and
+        host (§18.5 precondition 4). Empty when no target resolves, which the
+        panel turns into a refusal rather than a nameless confirmation."""
+        return self._database_host_label(self._target_params_for_apply())
+
+    def _live_target_identity(self, ref):
+        """The panel's `live_identity(ref)` seam — precondition 1's source of
+        truth (§18.5).
+
+        Re-introspects the **quality** catalog and returns the object's CURRENT
+        identity, or None meaning *"introspection succeeded and the object is not
+        there"*. Any failure **raises**, which the panel renders as a stated
+        refusal: a lookup error reported as `None` would silently clear
+        precondition 1 against an unreachable database, and a changed signature
+        is the one failure mode no confirmation can catch (`CREATE OR REPLACE` on
+        changed argument types creates a *second* function and leaves the old one
+        live).
+
+        Synchronous on purpose, unlike the sandbox apply: the panel calls this
+        inside its precondition chain, *before* the confirmation, so there is
+        nothing to hand a callback to. It reuses the DDL Explorer's one fetch
+        (`_fetch_ddl_schema`) rather than adding a second introspection path.
+        """
+        params = self._target_params_for_apply()
+        if params is None:
+            raise RuntimeError(
+                "no quality target with a password is available "
+                f"({self._connection_summary_for(self.active_target_params())}); "
+                "nothing was applied"
+            )
+        schema = self._fetch_ddl_schema(params)
+        return self._identity_in_schema(ref, schema)
+
+    @staticmethod
+    def _identity_in_schema(ref, schema):
+        """`ref`'s identity as the live catalog spells it, or None when the
+        catalog does not hold it.
+
+        Pure and static so precondition 1's comparison can be tested without a
+        database. A routine's live identity comes from `RoutineInfo.signature`'s
+        own `(schema, name, argtypes)` — never re-rendered here (BUG-018: one
+        spelling of a signature, or the four drift apart) — and is parsed back
+        into a `DdlObjectRef` through the same `parse_buffer_identity` the buffer
+        side uses, so both sides of the comparison are produced by one function.
+        A trigger is identified by `(schema, table, name)`, which the catalog
+        carries directly.
+        """
+        if ref.kind == "trigger":
+            for trigger in (getattr(schema, "triggers", None) or {}).values():
+                if (
+                    trigger.schema == ref.schema
+                    and trigger.table == ref.table
+                    and trigger.name == ref.name
+                ):
+                    return DdlObjectRef(
+                        kind="trigger",
+                        schema=trigger.schema,
+                        name=trigger.name,
+                        table=trigger.table,
+                    )
+            return None
+        for routine in (getattr(schema, "routines", None) or {}).values():
+            if routine.schema == ref.schema and routine.name == ref.name:
+                return parse_buffer_identity(
+                    f"CREATE OR REPLACE FUNCTION {routine.signature}", ref
+                )
+        return None
+
+    def _apply_ddl_object_to_target(self, ref, text):
+        """The panel's `apply_to_target(ref, text)` write seam — the real
+        database write, reached only after all four hard preconditions passed
+        (§18.5).
+
+        Goes through `db/apply.py::apply_ddl`, the one write seam, off the GUI
+        thread via the same `run_async` every other blocking call uses; the
+        outcome lands in the Audit panel under the existing **`[Check]`** prefix
+        (no new prefix is minted — D4 already declined to), naming the object,
+        the database and the host, so a projectless session still leaves a
+        record in the one place the user already looks.
+
+        Returns None — *"the result will arrive later"*, the same asynchronous
+        contract `_apply_ddl_object_to_sandbox` uses. The panel's own headline is
+        suppressed by that None, so the lines below are the whole report.
+        """
+        params = self._target_params_for_apply()
+        if params is None:
+            # Unreachable through the panel (the label seam refuses first), but a
+            # stated outcome beats a crash -- and a synchronous return here is
+            # honest, because nothing was started.
+            return ApplyOutcome.failed(
+                "no quality target is available -- nothing was applied"
+            )
+        label = self._database_host_label(params)
+        # The panel already said "applying … to database <label>…" (its `None`
+        # branch), so this reports only the OUTCOME -- one narrative, not two.
+        panel = self.center_stage.ddl_object_tab(getattr(ref, "key", None))
+
+        def do_apply():
+            return apply_ddl(params, [text])
+
+        def on_result(outcome, panel=panel, label=label) -> None:
+            # `committed`, never `ok` alone: "it ran but was rolled back" and "it
+            # ran and is now live" are the two things a user most needs told
+            # apart, and `apply_ddl` states which happened as a fact.
+            if getattr(outcome, "committed", False):
+                self._report_check_lines(
+                    [
+                        CHECK_PREFIX
+                        + f"applied {ref.qualified} to quality database {label}."
+                    ]
+                )
+            else:
+                message = getattr(outcome, "message", "") or "the transaction did not commit"
+                self._report_check_lines(
+                    [
+                        CHECK_PREFIX
+                        + f"{ref.qualified} was NOT applied to quality database "
+                        f"{label}: {message}"
+                    ]
+                )
+            # Let the panel render the per-statement/tier detail it already knows
+            # how to render, without a second headline.
+            if panel is not None:
+                panel.report_check_result(outcome)
+            self._show_audit_dock()
+
+        def on_error(exc: BaseException) -> None:
+            # `apply_ddl` never raises for a database problem, so this only
+            # guards a broken seam -- surfaced, never silently swallowed.
+            self._report_check_lines(
+                [
+                    CHECK_PREFIX
+                    + f"apply of {ref.qualified} to quality failed unexpectedly: "
+                    f"{type(exc).__name__}: {exc}"
+                ]
+            )
+
+        run_async(self, do_apply, on_result, on_error)
+        return None
+
+    # --- The `Deployment` menu's three DDL-object entries -------------------
+
+    def _active_ddl_object_panel_for(self, gesture: str):
+        """The active object tab, or None with the reason STATED (§18.5's
+        carve-out 2, narrowed to present-and-reporting).
+
+        The `Deployment` entries are visible whenever a DDL object tab is active,
+        so this only fires when one is triggered from the toolbar or
+        programmatically — but a silent no-op there is exactly the dead path
+        FQ-009 was about."""
+        panel = self.center_stage.active_ddl_object_panel()
+        if panel is None:
+            self.statusBar().showMessage(
+                f"{gesture} runs on an open DDL object tab — open one first.", 5000
+            )
+        return panel
+
+    def _save_active_ddl_object(self) -> bool:
+        """`Deployment ▸ Save in Project` — §18.5's plain Save, wired straight to
+        `_save_ddl_object_editor` (Save As… on the first save, silent writes to
+        the remembered path thereafter). Touches no database, ever."""
+        panel = self._active_ddl_object_panel_for("Save in Project")
+        if panel is None:
+            return False
+        return self._save_ddl_object_editor(panel)
+
+    def _run_active_ddl_object_on_sandbox(self) -> bool:
+        """`Deployment ▸ Run on sandbox` — §18.5 D3's `apply_and_check`, behind
+        its own confirmation naming the object and the sandbox database."""
+        panel = self._active_ddl_object_panel_for(DESTINATION_LABELS[DEST_SANDBOX])
+        if panel is None:
+            return False
+        if not panel.has_sandbox_apply:
+            return self._report_destination_unavailable(DEST_SANDBOX)
+        return panel.apply_to_sandbox()
+
+    def _run_active_ddl_object_on_quality(self) -> bool:
+        """`Deployment ▸ Run on quality` — §18.5's Apply to Target, behind all
+        four hard preconditions (signature-change refusal, the green-sandbox gate
+        with its named override, the no-revert-snapshot caveat and a confirmation
+        naming the object, the database AND the host).
+
+        Works **projectless**, which is the owner's fast-bugfix mode; the
+        project-mode leg is still blocked on BUG-034's unpopulated
+        `ProjectSettings.target`, and says so rather than doing nothing."""
+        panel = self._active_ddl_object_panel_for(DESTINATION_LABELS[DEST_TARGET])
+        if panel is None:
+            return False
+        if not panel.has_target_apply:
+            return self._report_destination_unavailable(DEST_TARGET)
+        return panel.apply_to_target()
+
+    def _report_destination_unavailable(self, destination) -> bool:
+        """State why a destination cannot be reached, in the Audit panel and on
+        the status bar (§18.5 carve-out 2, narrowed to present-and-reporting).
+
+        The reason text is the panel's own `DESTINATION_UNAVAILABLE_REASONS`, so
+        the menu entry and the "Deploy this edit…" picker cannot explain the same
+        absence two different ways. Always returns False: nothing ran."""
+        reason = DESTINATION_UNAVAILABLE_REASONS[destination]
+        label = DESTINATION_LABELS[destination]
+        self._report_check_lines([CHECK_PREFIX + f"{label} is unavailable: {reason}."])
+        self.statusBar().showMessage(f"{label} is unavailable: {reason}.", 8000)
+        return False
 
     def _sandbox_database_label(self) -> str:
-        """The sandbox database name an apply confirmation must NAME. Read off
-        the live session's own params, never off the project file: the
+        """The sandbox database an apply confirmation must NAME — *and its host*
+        (FQ-020; before that this returned the bare database name, contradicting
+        the seam's own documented `"prod on db01:5432"` format).
+
+        Read off the live session's own params, never off the project file: the
         confirmation must name the database the write will actually hit."""
         session = self.sandbox_controller.session
         if session is not None:
-            return session.params.database or ""
-        params = self._configured_sandbox_params()
-        return params.database if params is not None else ""
+            return self._database_host_label(session.params)
+        return self._database_host_label(self._configured_sandbox_params())
 
-    def _confirm_sandbox_apply(self, title: str, text: str) -> bool:
-        """The panel's confirmation gate for the apply gestures. The text is
-        the PANEL's (it names the object and the database); this only shows it,
-        so no confirmation wording is duplicated here."""
+    def _confirm_apply(self, title: str, text: str) -> bool:
+        """The panel's confirmation gate for BOTH apply gestures — sandbox and
+        quality (renamed from `_confirm_sandbox_apply` by FQ-020, which wired the
+        second one; one gate, never a second confirmation mechanism, §18.5).
+
+        The text is the PANEL's (it names the object and the database, and since
+        FQ-020 the host too); this only shows it, so no confirmation wording is
+        duplicated here."""
         return (
             modals.QMessageBox.question(
                 self,
@@ -4250,14 +4722,22 @@ class MainWindow(QMainWindow):
         reparse_action = menu.addAction("Reparse Raw XML into Tree")
         reparse_action.triggered.connect(self._doc_ui.reparse)
         menu.addSeparator()
-        compare_action = menu.addAction("Compare / Merge Two Files...")
-        compare_action.triggered.connect(self._diff_ui.compare_two_files)
+        # FQ-020 took two entries off this menu:
+        #
+        # * `Compare / Merge Two Files...` -> `Deployment ▸ Compare/Merge pgtp` on
+        #   the Raw XML tab (§12). Relabelled and re-homed, same slot behind it,
+        #   with a `RENAMED_ID_ALIASES` row so a pinned button survives.
+        # * `Apply Changes to Target` -> queued FQ-021's mode-scoped Compare/Merge
+        #   surface, NOT `Deployment`: it is meaningful only while a comparison is
+        #   loaded, and it REPLACES the app's open document (`_reload` ->
+        #   `open_project_file`), so hosting it beside `Run on quality` would put
+        #   two very differently shaped irreversible actions under one menu. Until
+        #   FQ-021 lands it has no menu home; `_diff_ui.apply_changes_to_target`
+        #   is unchanged and still the one implementation.
         next_action = menu.addAction("Next Difference")
         next_action.triggered.connect(self.center_stage.diff_merge_panel.select_next_difference)
         prev_action = menu.addAction("Prev Difference")
         prev_action.triggered.connect(self.center_stage.diff_merge_panel.select_previous_difference)
-        apply_action = menu.addAction("Apply Changes to Target")
-        apply_action.triggered.connect(self._diff_ui.apply_changes_to_target)
         menu.addSeparator()
         # §23 Tools ▸ Start MCP Server. CHECKABLE and unchecked at startup:
         # §23's "off by default … must not be silent or default-on" needs the

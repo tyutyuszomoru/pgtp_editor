@@ -192,99 +192,141 @@ def test_close_menu_action_wired(qtbot, tmp_path):
     assert window._current_project is None
 
 
-# -- Revert -----------------------------------------------------------------
+# -- Discard Changes (FQ-020: was Revert) ------------------------------------
+#
+# These six tests were `revert()`'s. FQ-020 replaced that command outright: it
+# reloaded `<path>.bak` ("undo my last save") and left the buffer DIRTY, where
+# `Discard Changes` reloads from DISK and leaves it CLEAN, gated on the dirty flag
+# rather than on a `.bak` existing. So they are re-pointed at the new contract
+# rather than deleted -- each one still asserts the same *kind* of thing (the
+# happy path, the two nothing-to-do paths, the menu gate, the close reset and the
+# runtime second guard).
 
 
-def test_revert_restores_bak_and_marks_dirty(qtbot, tmp_path):
+def test_discard_changes_reloads_from_disk_and_marks_clean(qtbot, tmp_path):
     window = _window(qtbot, tmp_path)
     path = _make_project(tmp_path)
     window.open_project_file(str(path))
-    # Create a .bak by saving over the file (pre-save content becomes .bak).
+    on_disk = path.read_text(encoding="utf-8")
     window.center_stage.xml_editor.setPlainText(_MINIMAL_PGTP)
-    window._doc_ui.save_project()  # writes .bak = _MINIMAL_PGTP (pre-save on-disk)
-    bak = tmp_path / "demo.pgtp.bak"
-    assert bak.exists()
-    # Now edit further and revert.
-    window.center_stage.xml_editor.setPlainText("something else entirely")
+    assert window._dirty is True
 
-    window._doc_ui.revert()
+    window._doc_ui.discard_changes(confirm=True)
 
-    assert window.center_stage.xml_editor.toPlainText() == bak.read_text(encoding="utf-8")
+    assert window.center_stage.xml_editor.toPlainText() == on_disk
     assert window._current_project_path == str(path)
     assert window._current_project is not None
+    # The opposite of `revert()`, which left the buffer dirty because it had
+    # loaded a DIFFERENT file: the buffer now IS what is on disk.
+    assert window._dirty is False
+    assert "Discarded changes in demo.pgtp" in window.statusBar().currentMessage()
+
+
+def test_discard_changes_writes_no_bak_of_its_own(qtbot, tmp_path):
+    """FQ-020: the `.bak` is out of this command entirely -- neither read (the
+    old `revert`) nor written."""
+    window = _window(qtbot, tmp_path)
+    path = _make_project(tmp_path)
+    window.open_project_file(str(path))
+    window.center_stage.xml_editor.setPlainText(_MINIMAL_PGTP)
+
+    window._doc_ui.discard_changes(confirm=True)
+
+    assert not (tmp_path / "demo.pgtp.bak").exists()
+    assert not hasattr(window._doc_ui, "backup_path")
+    assert not hasattr(window._doc_ui, "revert")
+
+
+def test_discard_changes_cancelled_keeps_the_edits(qtbot, tmp_path):
+    window = _window(qtbot, tmp_path)
+    path = _make_project(tmp_path)
+    window.open_project_file(str(path))
+    window.center_stage.xml_editor.setPlainText("something else entirely")
+
+    window._doc_ui.discard_changes(confirm=False)
+
+    assert window.center_stage.xml_editor.toPlainText() == "something else entirely"
     assert window._dirty is True
 
 
-def test_revert_no_bak_shows_message(qtbot, tmp_path):
+def test_discard_changes_with_a_clean_buffer_shows_message(qtbot, tmp_path):
     window = _window(qtbot, tmp_path)
     path = _make_project(tmp_path)
     window.open_project_file(str(path))
-    assert not (tmp_path / "demo.pgtp.bak").exists()
     editor_before = window.center_stage.xml_editor.toPlainText()
 
-    window._doc_ui.revert()
+    window._doc_ui.discard_changes()
 
-    assert window.statusBar().currentMessage() == "Nothing to revert to."
+    assert window.statusBar().currentMessage() == "No unsaved changes to discard."
     assert window.center_stage.xml_editor.toPlainText() == editor_before
 
 
-def test_revert_no_project_path_shows_message(qtbot, tmp_path):
+def test_discard_changes_no_project_path_shows_message(qtbot, tmp_path):
     window = _window(qtbot, tmp_path)
     assert window._current_project_path is None
 
-    window._doc_ui.revert()
+    window._doc_ui.discard_changes()
 
-    assert window.statusBar().currentMessage() == "Nothing to revert to."
+    assert window.statusBar().currentMessage() == "No file is open — nothing to discard."
 
 
-def test_revert_menu_action_is_gated_on_the_bak_and_wired(qtbot, tmp_path):
-    """§7: "enabled only when `<current>.bak` exists". Previously the action was
-    always enabled and only reported "Nothing to revert to." after the click."""
+def test_discard_changes_menu_action_is_gated_on_the_dirty_flag_and_wired(
+    qtbot, tmp_path, monkeypatch
+):
+    """§7/FQ-020: the gate is the DIRTY FLAG, not a `.bak` -- which is what lets
+    it ride on `set_dirty` (every keystroke) instead of `stat`-ing a possibly
+    sshfs-mounted path on each one."""
     window = _window(qtbot, tmp_path)
     file_menu = find_top_menu(window, "File")
-    revert = find_action(file_menu, "Revert")
-    # No project at all -> nothing to revert to, so the item is not offered.
-    assert revert.isEnabled() is False
+    discard = find_action(file_menu, "Discard Changes")
+    assert find_action(file_menu, "Revert") is None
+    # No file at all -> nothing to discard.
+    assert discard.isEnabled() is False
 
     path = _make_project(tmp_path)
     window.open_project_file(str(path))
-    # A project, but no .bak yet.
-    assert revert.isEnabled() is False
+    # A file, but a clean buffer -- and note there is no `.bak` anywhere, which
+    # the old gate would have required.
+    assert discard.isEnabled() is False
+    assert not (tmp_path / "demo.pgtp.bak").exists()
 
     window.center_stage.xml_editor.setPlainText(_MINIMAL_PGTP)
-    window._doc_ui.save_project()  # writes demo.pgtp.bak
-    assert revert.isEnabled() is True
+    assert discard.isEnabled() is True
 
-    revert.trigger()
-    assert window.statusBar().currentMessage().startswith("Reverted to ")
+    monkeypatch.setattr(window._doc_ui, "confirm_discard_changes", lambda: True)
+    discard.trigger()
+    assert window.statusBar().currentMessage().startswith("Discarded changes in ")
+    # ...and having discarded, there is nothing left to discard.
+    assert discard.isEnabled() is False
 
 
-def test_closing_the_project_disables_revert_again(qtbot, tmp_path):
+def test_closing_the_project_disables_discard_changes_again(qtbot, tmp_path):
     window = _window(qtbot, tmp_path)
     path = _make_project(tmp_path)
     window.open_project_file(str(path))
-    window._doc_ui.save_project()
-    assert window._doc_ui.revert_action.isEnabled() is True
+    window.center_stage.xml_editor.setPlainText(_MINIMAL_PGTP)
+    assert window._doc_ui.discard_changes_action.isEnabled() is True
 
     window._doc_ui.close(confirm="discard")
 
-    assert window._doc_ui.revert_action.isEnabled() is False
+    assert window._doc_ui.discard_changes_action.isEnabled() is False
 
 
-def test_revert_still_defends_at_runtime_when_the_bak_vanishes(qtbot, tmp_path):
-    """The enable gate is not the only guard: the toolbar mirrors the action and
-    the `.bak` can disappear between the last refresh and the click."""
+def test_discard_changes_still_defends_at_runtime_when_the_buffer_is_clean(
+    qtbot, tmp_path
+):
+    """The enable gate is not the only guard: the toolbar mirrors the action, so a
+    pinned button can be clicked between refreshes."""
     window = _window(qtbot, tmp_path)
     path = _make_project(tmp_path)
     window.open_project_file(str(path))
+    window.center_stage.xml_editor.setPlainText(_MINIMAL_PGTP)
     window._doc_ui.save_project()
-    assert window._doc_ui.revert_action.isEnabled() is True
+    assert window._doc_ui.discard_changes_action.isEnabled() is False
 
-    (tmp_path / "demo.pgtp.bak").unlink()
-    window._doc_ui.revert()
+    window._doc_ui.discard_changes(confirm=True)
 
-    assert window.statusBar().currentMessage() == "Nothing to revert to."
-    assert window._doc_ui.revert_action.isEnabled() is False
+    assert window.statusBar().currentMessage() == "No unsaved changes to discard."
 
 
 # -- failed open must not mark dirty (C1 regression) ------------------------

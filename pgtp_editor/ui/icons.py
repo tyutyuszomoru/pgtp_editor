@@ -52,9 +52,13 @@ from importlib.resources import files
 # resolve to it any more and a dangling default would be dead weight. The file
 # itself stays in `resources/icons/breeze/` and therefore in the picker's
 # catalog under the icon id `edit-find`, assignable to any command.
+#
+# `"save": "document-save.svg"` was retired the same way (FQ-020), for the same
+# reason: `File ▸ Save` is deleted and the four per-tab `Deployment` save entries
+# are new ids with no legacy alias, so nothing resolves to this default any more.
+# `document-save.svg` likewise stays in the catalog, under `document-save`.
 ACTION_ICON_FILES: dict[str, str] = {
     "open": "document-open.svg",
-    "save": "document-save.svg",
     "undo": "edit-undo.svg",
     "redo": "edit-redo.svg",
     "validate": "dialog-ok-apply.svg",
