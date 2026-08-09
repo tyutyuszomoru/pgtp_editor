@@ -3035,7 +3035,6 @@ cannot be rebound, and why*, at the end of this chapter.
 
 | Shortcut | Where | Action |
 |----------|-------|--------|
-| **Ctrl+O** | Global | Open a `.pgtp` file |
 | **Ctrl+S** / **Ctrl+Shift+S** | Global | **Nothing — deliberately unbound.** Every save is a named entry on **Deployment** (see below) |
 | **Ctrl+W** | Global | Close project |
 | **F1** | Global | Open the Manual |

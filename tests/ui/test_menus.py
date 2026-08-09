@@ -41,7 +41,7 @@ def test_file_menu_shortcuts(qtbot):
     qtbot.addWidget(window)
     file_menu = find_top_menu(window, "File")
     expected = {
-        "Open...": "Ctrl+O",
+        "Open...": "",  # Ctrl+O deliberately unbound, 2026-08-09
         "Close": "Ctrl+W",
     }
     for label, combo in expected.items():

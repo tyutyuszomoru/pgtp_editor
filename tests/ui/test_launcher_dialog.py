@@ -443,7 +443,7 @@ def test_maintenance_trims_the_file_menu_to_new_session_and_exit(qtbot, tmp_path
 
 
 def test_a_filtered_out_commands_shortcut_stops_firing(qtbot, tmp_path):
-    """Does `Ctrl+O` still open a `.pgtp` in Maintenance mode?
+    """Does a hidden File command's key still fire in Maintenance mode?
 
     `manual-maintainer` refused to answer this from inference, correctly — Qt's
     behaviour for a hidden QAction's shortcut is stated nowhere in the spec and
@@ -453,27 +453,31 @@ def test_a_filtered_out_commands_shortcut_stops_firing(qtbot, tmp_path):
     The answer follows from a Qt fact FQ-027 already had to work around:
     `QAction.isEnabled()` returns False for a hidden action in PySide6. Qt only
     dispatches a shortcut to an ENABLED action, so hiding the command takes its
-    key with it — which is the behaviour the mode wants. A `Ctrl+O` that still
-    opened a project while `File ▸ Open...` was hidden would be a mode that
-    filters what you can SEE but not what you can DO.
+    key with it — which is the behaviour the mode wants. A key that still fired
+    while its menu entry was hidden would be a mode that filters what you can
+    SEE but not what you can DO.
+
+    Specimen is `File ▸ Close` (`Ctrl+W`), not `File ▸ Open`: `Ctrl+O` was
+    unbound on 2026-08-09, and a command with no key cannot demonstrate a key
+    being suppressed.
     """
     window = MainWindow(settings=_ini_settings(tmp_path))
     qtbot.addWidget(window)
-    open_action = find_action(window._file_menu, "Open...")
-    assert open_action is not None
-    assert open_action.isEnabled() is True
-    assert not open_action.shortcut().isEmpty()  # it really does own Ctrl+O
+    close_action = find_action(window._file_menu, "Close")
+    assert close_action is not None
+    assert close_action.isEnabled() is True
+    assert not close_action.shortcut().isEmpty()  # it really does own Ctrl+W
 
     window.set_workflow_mode(MODE_MAINTENANCE)
 
-    assert open_action.isVisible() is False
-    assert open_action.isEnabled() is False  # ...so Qt will not fire Ctrl+O
+    assert close_action.isVisible() is False
+    assert close_action.isEnabled() is False  # ...so Qt will not fire Ctrl+W
     # The binding itself is untouched -- the command is hidden, not rebound, so
     # leaving the mode restores the key without re-assigning anything.
-    assert not open_action.shortcut().isEmpty()
+    assert not close_action.shortcut().isEmpty()
 
     window.set_workflow_mode(None)
-    assert open_action.isEnabled() is True
+    assert close_action.isEnabled() is True
 
 
 def test_the_two_never_hidden_surfaces_are_reachable_in_maintenance(qtbot, tmp_path):

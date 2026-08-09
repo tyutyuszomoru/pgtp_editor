@@ -2224,7 +2224,15 @@ class MainWindow(QMainWindow):
         #: menu that survives Maintenance mode partially rather than whole.
         self._file_menu = menu
         open_action = menu.addAction("Open...")
-        open_action.setShortcut("Ctrl+O")
+        # NO `Ctrl+O` (owner decision, 2026-08-09). In an app that opens
+        # `.pgtp` files, PHP files, projects, XSDs and database objects, one
+        # `Ctrl+O` has to pick a winner among five kinds of "open", and any
+        # winner is a guess about what the user meant. Opening is also a
+        # once-per-session act that the launcher now puts one click away, so the
+        # key was buying almost nothing and costing an ambiguity.
+        #
+        # It is UNBOUND, not reassigned: `Ctrl+O` is now free, and FQ-012 lets
+        # anyone who disagrees put it back on whichever open they actually mean.
         open_action.triggered.connect(lambda: self._doc_ui.open_dialog())
         # FQ-010: there is deliberately NO "Open Recent" submenu (and no
         # `recentFiles` store behind it). Recent *files* belonged to the
