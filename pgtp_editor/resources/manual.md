@@ -183,7 +183,7 @@ shortcut.
 - **Deployment ▸ Save pgtp** writes the project file in place; **Deployment ▸
   Save as new pgtp** writes it to a path you pick. Both are on the **Raw XML**
   tab, because that is the tab that holds the `.pgtp`.
-- **File ▸ Close** (Ctrl+W) closes the project; if you have unsaved changes it
+- **File ▸ Close** closes the project; if you have unsaved changes it
   prompts you to **Save**, **Discard**, or **Cancel**.
 - **File ▸ Discard Changes** throws away the edits you made since the last save
   and **reloads the file from disk**. It asks first, naming the file, and it is
@@ -3194,7 +3194,6 @@ cannot be rebound, and why*, at the end of this chapter.
 | Shortcut | Where | Action |
 |----------|-------|--------|
 | **Ctrl+S** / **Ctrl+Shift+S** | Global | **Nothing — deliberately unbound.** Every save is a named entry on **Deployment** (see below) |
-| **Ctrl+W** | Global | Close project |
 | **F1** | Global | Open the Manual |
 | **Ctrl+F2** | Active editor tab | Toggle bookmark (disabled in Caption Mode) |
 | **F2** / **Shift+F2** | Active editor tab | Next / previous bookmark (disabled in Caption Mode) |
@@ -3311,7 +3310,7 @@ The dialog is one table with three columns:
   Bookmarks`).
 - **Shortcut** — the key it answers to right now. Blank means the command has no
   key, which is the normal state for most of them.
-- **Note** — `default: Ctrl+W` (or `default: (none)`) on any row you have moved
+- **Note** — `default: Ctrl+F2` (or `default: (none)`) on any row you have moved
   off what it shipped with, so you can always see what a reset would give you
   back. Reserved rows use it to say why they are locked.
 
@@ -3333,8 +3332,9 @@ beside your toolbar arrangement. **Cancel changes nothing**, neither in the
 running window nor on disk.
 
 **Assigning a key another command already holds takes it from that command.**
-Before you commit, a line under the table names the current holder (*"Ctrl+W is
-already bound to File › Close. Assigning it here will clear that binding."*), and
+Before you commit, a line under the table names the current holder (*"Ctrl+F2 is
+already bound to Navigation › Toggle Bookmark. Assigning it here will clear that
+binding."*), and
 after you commit it says whose binding was cleared. The loser is left **unbound**
 — its row stays, it simply has no key.
 

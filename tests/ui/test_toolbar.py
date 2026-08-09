@@ -906,37 +906,41 @@ def test_shortcut_defaults_are_captured_before_any_override_is_applied(
 ):
     """The destructive-first-override bug, asserted directly.
 
-    A `QAction` holds ONE shortcut, so applying `Ctrl+Alt+W` to `File ▸ Close`
-    overwrites the `Ctrl+W` it was built with. If the host captured defaults
-    after (or on every re-walk) it would record the override AS the default and
-    "Reset to Default" would be a permanent no-op. The capture therefore happens
-    once, before the first `setShortcut`.
+    A `QAction` holds ONE shortcut, so applying `Ctrl+Alt+B` to
+    `Navigation ▸ Toggle Bookmark` overwrites the `Ctrl+F2` it was built with.
+    If the host captured defaults after (or on every re-walk) it would record
+    the override AS the default and "Reset to Default" would be a permanent
+    no-op. The capture therefore happens once, before the first `setShortcut`.
 
-    Uses `File ▸ Close`, not `File ▸ Open`: `Ctrl+O` was unbound on 2026-08-09,
-    and a specimen with no default cannot demonstrate a default being
-    destroyed."""
+    The specimen has moved twice as the File menu shed keys -- `File ▸ Open`
+    lost `Ctrl+O` and then `File ▸ Close` lost `Ctrl+W`, both on 2026-08-09 --
+    and a command with no default cannot demonstrate a default being destroyed.
+    `Navigation ▸ Toggle Bookmark` is a plain rebindable menu command with a
+    real default and no second host."""
     settings = _ini_settings(tmp_path)
-    settings.setValue("shortcutOverrides", ["file.close=Ctrl+Alt+W"])
+    settings.setValue("shortcutOverrides", ["navigation.toggle-bookmark=Ctrl+Alt+B"])
     settings.sync()
     window = MainWindow(settings=settings)
     qtbot.addWidget(window)
 
-    assert window._shortcut_defaults["file.close"] == "Ctrl+W"
-    assert _shortcut_of(window, "file.close") == "Ctrl+Alt+W"
+    assert window._shortcut_defaults["navigation.toggle-bookmark"] == "Ctrl+F2"
+    assert _shortcut_of(window, "navigation.toggle-bookmark") == "Ctrl+Alt+B"
     # And a re-walk (every dialog open) must NOT re-read the live -- now
     # overridden -- key back over the captured default.
     again = {c.command_id: c.default_sequence for c in window._shortcut_commands()}
-    assert again["file.close"] == "Ctrl+W"
+    assert again["navigation.toggle-bookmark"] == "Ctrl+F2"
 
 
 def test_applying_an_override_changes_the_action_shortcut(qtbot, tmp_path):
     window = MainWindow(settings=_ini_settings(tmp_path))
     qtbot.addWidget(window)
-    assert _shortcut_of(window, "file.close") == "Ctrl+W"
+    assert _shortcut_of(window, "navigation.toggle-bookmark") == "Ctrl+F2"
 
-    window.apply_and_save_shortcut_overrides({"file.close": "Ctrl+Alt+W"})
+    window.apply_and_save_shortcut_overrides(
+        {"navigation.toggle-bookmark": "Ctrl+Alt+B"}
+    )
 
-    assert _shortcut_of(window, "file.close") == "Ctrl+Alt+W"
+    assert _shortcut_of(window, "navigation.toggle-bookmark") == "Ctrl+Alt+B"
 
 
 def test_a_persisted_override_survives_a_window_rebuild(qtbot, tmp_path):
@@ -946,34 +950,36 @@ def test_a_persisted_override_survives_a_window_rebuild(qtbot, tmp_path):
     path = str(tmp_path / "s.ini")
     first = MainWindow(settings=QSettings(path, QSettings.Format.IniFormat))
     qtbot.addWidget(first)
-    first.apply_and_save_shortcut_overrides({"file.close": "Ctrl+Alt+W"})
+    first.apply_and_save_shortcut_overrides(
+        {"navigation.toggle-bookmark": "Ctrl+Alt+B"}
+    )
 
     second = MainWindow(settings=QSettings(path, QSettings.Format.IniFormat))
     qtbot.addWidget(second)
 
-    assert second._shortcut_overrides == {"file.close": "Ctrl+Alt+W"}
-    assert _shortcut_of(second, "file.close") == "Ctrl+Alt+W"
+    assert second._shortcut_overrides == {"navigation.toggle-bookmark": "Ctrl+Alt+B"}
+    assert _shortcut_of(second, "navigation.toggle-bookmark") == "Ctrl+Alt+B"
     # The default it displaced is still known, so it can be handed back.
-    assert second._shortcut_defaults["file.close"] == "Ctrl+W"
+    assert second._shortcut_defaults["navigation.toggle-bookmark"] == "Ctrl+F2"
 
 
 def test_a_stolen_binding_leaves_the_loser_unbound_with_no_ambiguity(
     qtbot, tmp_path
 ):
     """Qt answers a key press matched by two enabled shortcuts by firing
-    NEITHER. Taking `Ctrl+W` for `File ▸ Open` must therefore leave `File ▸
-    Close` with no key at all -- and no pair of live QActions may share a chord
-    at any point in the apply pass.
+    NEITHER. Taking `Ctrl+F2` for `File ▸ Close` must therefore leave
+    `Navigation ▸ Toggle Bookmark` with no key at all -- and no pair of live
+    QActions may share a chord at any point in the apply pass.
 
-    The steal runs the other way round since `Ctrl+O` was unbound (2026-08-09):
-    the loser has to be a command that HAD a key."""
+    The LOSER has to be a command that had a key, which is why it is no longer
+    a File entry: that menu shed both of its shortcuts on 2026-08-09."""
     window = MainWindow(settings=_ini_settings(tmp_path))
     qtbot.addWidget(window)
 
-    window.apply_and_save_shortcut_overrides({"file.open": "Ctrl+W"})
+    window.apply_and_save_shortcut_overrides({"file.close": "Ctrl+F2"})
 
-    assert _shortcut_of(window, "file.open") == "Ctrl+W"
-    assert _shortcut_of(window, "file.close") == ""
+    assert _shortcut_of(window, "file.close") == "Ctrl+F2"
+    assert _shortcut_of(window, "navigation.toggle-bookmark") == ""
     live = {}
     for command_id, action in window._toolbar_ui.menu_commands.items():
         sequence = action.shortcut().toString()
@@ -1017,4 +1023,4 @@ def test_cancelling_the_customize_shortcuts_dialog_persists_nothing(
 
     assert window._shortcut_overrides == {}
     assert settings.value("shortcutOverrides") is None
-    assert _shortcut_of(window, "file.close") == "Ctrl+W"
+    assert _shortcut_of(window, "navigation.toggle-bookmark") == "Ctrl+F2"

@@ -42,7 +42,7 @@ def test_file_menu_shortcuts(qtbot):
     file_menu = find_top_menu(window, "File")
     expected = {
         "Open...": "",  # Ctrl+O deliberately unbound, 2026-08-09
-        "Close": "Ctrl+W",
+        "Close": "",  # Ctrl+W deliberately unbound, 2026-08-09
     }
     for label, combo in expected.items():
         action = find_action(file_menu, label)

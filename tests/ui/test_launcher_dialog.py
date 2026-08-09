@@ -442,42 +442,66 @@ def test_maintenance_trims_the_file_menu_to_new_session_and_exit(qtbot, tmp_path
     ] == []
 
 
-def test_a_filtered_out_commands_shortcut_stops_firing(qtbot, tmp_path):
-    """Does a hidden File command's key still fire in Maintenance mode?
+def test_maintenance_mode_suppresses_a_hidden_FILE_entrys_shortcut(qtbot, tmp_path):
+    """A user-assigned key on a File entry the mode trims away stops firing.
 
     `manual-maintainer` refused to answer this from inference, correctly — Qt's
     behaviour for a hidden QAction's shortcut is stated nowhere in the spec and
-    nothing covered it, so the manual said nothing rather than guess. Pinned
-    here so the manual can state it as fact.
+    nothing covered it. It follows from a fact FQ-027 already had to work
+    around: `QAction.isEnabled()` returns False for a hidden action in PySide6,
+    and Qt dispatches a shortcut only to an ENABLED action.
 
-    The answer follows from a Qt fact FQ-027 already had to work around:
-    `QAction.isEnabled()` returns False for a hidden action in PySide6. Qt only
-    dispatches a shortcut to an ENABLED action, so hiding the command takes its
-    key with it — which is the behaviour the mode wants. A key that still fired
-    while its menu entry was hidden would be a mode that filters what you can
-    SEE but not what you can DO.
-
-    Specimen is `File ▸ Close` (`Ctrl+W`), not `File ▸ Open`: `Ctrl+O` was
-    unbound on 2026-08-09, and a command with no key cannot demonstrate a key
-    being suppressed.
+    The specimen is a USER-ASSIGNED key (FQ-012), which is now the only kind
+    there is: the File menu shed `Ctrl+O` and `Ctrl+W` on 2026-08-09, so nothing
+    the mode hides ships with a default. That makes this the more honest test —
+    it exercises the real interaction between the two features.
     """
     window = MainWindow(settings=_ini_settings(tmp_path))
     qtbot.addWidget(window)
-    close_action = find_action(window._file_menu, "Close")
-    assert close_action is not None
-    assert close_action.isEnabled() is True
-    assert not close_action.shortcut().isEmpty()  # it really does own Ctrl+W
+    window.apply_and_save_shortcut_overrides({"file.close": "Ctrl+Alt+K"})
+    action = window._toolbar_ui.menu_commands["file.close"]
+    assert action.isEnabled() is True
 
     window.set_workflow_mode(MODE_MAINTENANCE)
 
-    assert close_action.isVisible() is False
-    assert close_action.isEnabled() is False  # ...so Qt will not fire Ctrl+W
+    assert action.isVisible() is False
+    assert action.isEnabled() is False  # ...so Qt will not fire Ctrl+Alt+K
     # The binding itself is untouched -- the command is hidden, not rebound, so
     # leaving the mode restores the key without re-assigning anything.
-    assert not close_action.shortcut().isEmpty()
+    assert action.shortcut().toString() == "Ctrl+Alt+K"
 
     window.set_workflow_mode(None)
-    assert close_action.isEnabled() is True
+    assert action.isEnabled() is True
+
+
+def test_a_hidden_WHOLE_MENUS_shortcuts_still_fire_KNOWN_GAP(qtbot, tmp_path):
+    """The mode hides `View`/`Database`/`Tools`/`Generation` by hiding the
+    top-level QMenu, not its members — so their child actions stay visible and
+    ENABLED, and Qt still dispatches their shortcuts.
+
+    **This pins a known gap, not a desired behaviour.** The two halves of the
+    filter disagree: `File` is trimmed member-by-member, so a hidden File
+    command genuinely loses its key (the test above), while a command inside a
+    hidden menu keeps one. A user who assigns a key to `View ▸ Customize
+    Toolbar…` can still fire it in Maintenance mode, which is the "filters what
+    you can SEE but not what you can DO" case the mode is supposed to avoid.
+
+    It is NOT fixed here because the obvious fix collides with an owner ruling:
+    hiding the child actions would also strip any pinned TOOLBAR button for
+    them, and FQ-027's Q2 answer was explicitly "menu bar only, leave the
+    toolbar alone". Recorded for the owner rather than guessed at.
+    """
+    window = MainWindow(settings=_ini_settings(tmp_path))
+    qtbot.addWidget(window)
+    window.apply_and_save_shortcut_overrides({"view.customize-toolbar": "Ctrl+Alt+T"})
+    action = window._toolbar_ui.menu_commands["view.customize-toolbar"]
+
+    window.set_workflow_mode(MODE_MAINTENANCE)
+
+    view_menu = find_top_menu(window, "View")
+    assert view_menu.menuAction().isVisible() is False  # the MENU is gone...
+    assert action.isVisible() is True  # ...but its members are not
+    assert action.isEnabled() is True  # ...so Ctrl+Alt+T still fires
 
 
 def test_the_two_never_hidden_surfaces_are_reachable_in_maintenance(qtbot, tmp_path):

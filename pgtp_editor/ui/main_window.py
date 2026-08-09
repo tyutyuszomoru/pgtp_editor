@@ -2309,7 +2309,16 @@ class MainWindow(QMainWindow):
         # every `set_dirty`).
         self._doc_ui.set_discard_changes_action(discard_changes_action)
         close_action = menu.addAction("Close")
-        close_action.setShortcut("Ctrl+W")
+        # NO `Ctrl+W` (owner decision, 2026-08-09), for the same reason `Ctrl+O`
+        # lost its binding: this app closes projects, `.pgtp` documents, PHP
+        # tabs, DDL object tabs, the XSD tab and console tabs, so one `Ctrl+W`
+        # has to pick which "close" it means -- and the one it meant was the
+        # rarest, closing the whole project.
+        #
+        # This does NOT touch `CodeEditorDialog`'s own `Ctrl+W`, which is a
+        # dialog-local Cancel bound as a `QShortcut` beside that dialog's
+        # `Ctrl+S`; it is not a menu command, it never competed with this one,
+        # and §27 documents it separately.
         close_action.triggered.connect(lambda: self._doc_ui.close())
         self._close_action = close_action
         menu.addSeparator()
