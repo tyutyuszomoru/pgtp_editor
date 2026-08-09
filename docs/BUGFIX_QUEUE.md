@@ -3230,3 +3230,144 @@ only**, and that as of `4e36162` project mode has **no provisioning/reset surfac
 intended is an open owner question, not something spec-maintainer should resolve by assumption.
 
 ---
+
+## BUG-041: §18.6 completion (including `NEW.`/`OLD.`) is dead inside a `$$ … $$` routine body — the one place a plpgsql author types
+**Status:** OPEN
+**Reported:** 2026-08-10
+**Report (verbatim):** "§18.6's schema-aware completion — including the shipped `NEW.`/`OLD.` row-variable completion — cannot fire inside a `$$ … $$` routine body, which is precisely where a plpgsql author types. So a feature documented as working in the DDL object editor is, in its main use case, dead. Mechanism, as reported by the agent that found it while building FQ-030's scope analyzer: `sql/caret_context.py::_caret_inside_opaque_token` returns `None` for a caret inside ANY opaque token, and a dollar-quoted body is one such token. The DDL object editor feeds `resolve_caret_context` the whole buffer, and `db/ddl_buffer.py` builds that buffer from `pg_get_functiondef` output — so the entire routine body is a single `DOLLAR_STRING`. The current behaviour is deliberate and tested (`tests/sql/test_caret_context.py::test_caret_inside_dollar_quoted_body_is_unresolvable`). Work out and record what the honest options are rather than asserting one. Note the analyzer's own half already handles this: `analyze_from_scope` descends into a dollar-quoted body when the caret is inside it."
+
+**Root cause:** `pgtp_editor/sql/caret_context.py:94-95` in `resolve_caret_context`, via
+`_caret_inside_opaque_token` (same file, :168-172), which returns True for **any** token with
+`Token.is_opaque` — and `sql/tokenizer.py:112-131` puts `DOLLAR_STRING` in that set alongside strings,
+quoted identifiers and comments. A `$$ … $$` routine body is therefore one single opaque token, and every
+caret strictly inside it resolves to `None` before any of the three §18.6 contexts is even considered.
+
+Reproduced, not inferred — `QT_QPA_PLATFORM=offscreen venv/bin/python` with a
+`CREATE FUNCTION pr.f() RETURNS trigger AS $$ … NEW.<caret> … $$` buffer prints `None` from
+`resolve_caret_context`, and `analyze_from_scope` on the same offset returns `FromScope(refs=())` for the
+same structural reason at the *statement* level (its own body descent only fires for FROM-clause analysis).
+
+Why the whole buffer is one body in practice: `pgtp_editor/db/ddl_buffer.py::build_ddl_text` (:98) fills the
+buffer from `RoutineInfo.source`, which is `pg_get_functiondef` output
+(`pgtp_editor/db/introspect.py:414`) — header + `AS $function$ … $function$`. The DDL object tab feeds that
+text in unmodified: `pgtp_editor/ui/ddl_object_editor.py:1483` (`_show_completions`) and `:1583`
+(`_complete_identifier`) both call `resolve_caret_context(self.editor.toPlainText(), …)`. So for a routine
+tab, *nearly the entire editable buffer* is inside the opaque token — only the `CREATE FUNCTION …` header
+line and the trailing `LANGUAGE plpgsql;` are outside it. §18.6's rows 2 and 3 (`NEW.`/`OLD.` "inside a
+routine's body") are structurally unreachable from the UI; only row 1 (dotted path) can fire, and only on
+the header line.
+
+**Scope of the damage (established, not assumed).** `resolve_caret_context` has exactly two consumers:
+- `ui/ddl_object_editor.py` — `_show_completions` (:1474-1489) dispatches `ROW_VARIABLE` and `DOTTED_PATH`;
+  both are inert inside a body. `_complete_identifier` (:1575-1594) also calls it, only to measure
+  `len(context.prefix)`; with `None` it falls back to `prefix_len = 0`, so *if* a popup ever did open inside
+  a body the accepted item would be inserted **without** replacing the typed prefix — a latent second defect
+  that the fix removes rather than introduces.
+- `ui/sql_console_panel.py` — `show_completions` (:806-840) and `_complete_identifier` (:847-867).
+  **Verified: the console is not affected the same way.** Its buffer is whatever ad-hoc SQL the user types,
+  not a `pg_get_functiondef` wrapper, so the common case has no `$$` at all. It is affected by the *same
+  rule* only when a user pastes a routine definition into the console — the same fix cures both at once,
+  because both go through the one resolver.
+- Not affected: `sql/formatter.py` and `db/ddl_check.py` do not use `resolve_caret_context`; opacity there is
+  a separate, correct rule (the formatter must not reindent body content, §18.4 / spec ~line 5245).
+
+**Adjacent fact worth knowing before implementing:** `ALIAS_REF` is produced by `caret_context.py:140-148`
+but **no UI dispatches it yet** — `_show_completions` branches only on `ROW_VARIABLE`/`DOTTED_PATH`
+(:1486-1489), and the console rejects anything that is not `DOTTED_PATH` (:819). So FQ-030 slice 1's alias
+completion is currently invisible *everywhere*, not only in bodies. Fixing BUG-041 is necessary but not
+sufficient for alias completion in a body; the missing `ALIAS_REF` branch is FQ-030's own remaining work and
+should not be silently folded in here beyond noting it.
+
+**Proposed fix — the options, honestly.** All four were checked against the code; the recommendation is A(+D),
+but the trade-offs are recorded so the implementer can overrule with eyes open.
+
+**Option A (recommended) — descend into the body inside `resolve_caret_context`, mirroring
+`from_clause._analyze`.** Before the `_caret_inside_opaque_token` check at `caret_context.py:94`, detect a
+caret inside a `DOLLAR_STRING` and re-enter `resolve_caret_context` on the *body's own text* with the offset
+rebased (`pos - body_start`), bounded by a recursion depth like `from_clause._MAX_BODY_DEPTH` (:143). This is
+exactly the precedent the report points at: `sql/from_clause.py:247-252` + `_dollar_body_at` (:284-303),
+which already handles the tag length, the unterminated body (a user mid-typing), and a caret sitting inside
+the closing tag itself. **Verified to work**: driving `_dollar_body_at` + `resolve_caret_context` by hand on
+a body containing `NEW.` and `SELECT jc.  FROM hr.jobcard jc` yields
+`CaretContext(kind='row_variable', row_variable='NEW')` and
+`CaretContext(kind='alias_ref', table_ref=TableRef(schema='hr', table='jobcard', …))` respectively — so the
+one change lights up both today's `NEW.`/`OLD.` row and FQ-030's alias resolution (once the UI dispatches
+`ALIAS_REF`). Because the body text is re-tokenized, strings/comments/quoted identifiers **inside** the body
+stay opaque, which is the property that must not be lost. Cost: strings/positions returned are body-relative
+— today harmless (only `prefix`, a length, escapes the function), but any future field carrying an offset
+must be rebased at the recursion boundary. Flag that in the docstring.
+
+**Option D (recommended together with A) — put the descent helper in one place.** `_dollar_body_at` is
+private to `from_clause.py` and its natural home is `sql/tokenizer.py` (it is pure token/tag arithmetic and
+the tokenizer already owns tag length and `unterminated`). Promote it to a public
+`tokenizer.dollar_body_at(tokens, pos) -> tuple[str, int] | None` and have both `from_clause._analyze` and
+`caret_context.resolve_caret_context` call it. Do **not** copy the function into `caret_context.py`: the repo
+already carries a *third*, independent body locator — `db/ddl_check.py::body_line_offset` (:661-673, regex,
+line-based, for `plpgsql_check` line mapping) — and a fourth copy is how the tag-length/unterminated edge
+cases drift apart. (Leaving `ddl_check`'s line-based one alone is fine; it answers a different question.)
+
+**Option B (rejected, recorded so it is not re-proposed) — just drop `DOLLAR_STRING` from the opacity test.**
+Cheapest diff, and actively wrong: without the offset descent the token stream is still the *outer* one, in
+which the whole body is a single non-WORD token. The backward walk at `caret_context.py:116-124` then finds
+no `.`/WORD pair, so every caret anywhere in a body returns `DOTTED_PATH(parts=(), prefix="")` — an
+undifferentiated "offer all schema names", with `NEW.`/`OLD.` still undetected and the typed prefix lost.
+It converts a silent no-op into a wrong popup.
+
+**Option C — have the editor pass only the body.** `ddl_object_editor` computes the body span and calls
+`resolve_caret_context(body_text, pos - body_start)`. Keeps `sql/` untouched, but: it must be repeated at all
+four call sites (two in `ddl_object_editor.py`, two in `sql_console_panel.py`), it re-derives body-span
+knowledge that `from_clause` already owns (a fifth copy, see D), it forces every caller to map offsets back
+for any insertion-position feature (FQ-030 slice 1's expand-SELECT, slice 2's tab-stops), and it makes the
+console's behaviour diverge from the tab's. Choose it only if there is a reason the pure layer must not
+change — there is not.
+
+**Files to touch under A+D:** `pgtp_editor/sql/tokenizer.py` (promote `dollar_body_at`),
+`pgtp_editor/sql/from_clause.py` (call it instead of the private copy; keep `_MAX_BODY_DEPTH` semantics),
+`pgtp_editor/sql/caret_context.py` (the descent + docstring: the module docstring at :17-40 currently says
+nothing about bodies, and the `resolve_caret_context` docstring at :83-91 explicitly lists "inside a
+string/comment/quoted identifier" as unresolvable — update that sentence, it is about to become the precise
+statement of the new rule). **No UI change is required for the reported symptom** — `_show_completions`
+already handles `ROW_VARIABLE` the moment a context comes back non-`None`.
+
+**Gotchas:** (1) the recursion must run *before* the opaque check, not instead of it — strings and comments
+inside the body must still return `None`; (2) bound the depth (nested `$a$ … $b$ … $b$ … $a$`) exactly as
+`from_clause` does; (3) an unterminated body is the normal state while typing — `_dollar_body_at`'s
+`tok.unterminated` branch already covers it, do not reimplement; (4) do not change opacity for
+`sql/formatter.py`'s consumers: the fix belongs to caret resolution only.
+
+**Test impact:** Existing coverage to extend, not duplicate:
+- `tests/sql/test_caret_context.py` — **this is the reconciliation point.**
+  `test_caret_inside_dollar_quoted_body_is_unresolvable` (:98-101) asserts today's behaviour *on purpose*.
+  It must be **repurposed, not deleted**: replace it with (a) a case asserting the body **is** resolved
+  (`$$ … NEW.<caret> … $$` → `ROW_VARIABLE`), and (b) a case preserving the rule it was really protecting —
+  a caret inside a **string literal or comment nested inside** a `$$` body is still `None`. Keep the
+  neighbouring `test_caret_inside_string_literal_is_unresolvable` / `…_line_comment_…` (:92-107) untouched.
+  Add: a full `pg_get_functiondef`-shaped buffer (`CREATE FUNCTION … AS $function$ … $function$ LANGUAGE
+  plpgsql;`) resolving `NEW.` and a dotted path inside the body; a tagged body (`$function$`, not just `$$`);
+  an unterminated body; a nested-body depth bound; and a caret inside the closing tag.
+- `tests/sql/test_from_clause.py` — already covers the body descent (`analyze_from_scope` inside `$$`); if
+  `_dollar_body_at` moves to the tokenizer, these must stay green unchanged, which is the regression signal
+  that the move was behaviour-preserving.
+- `tests/sql/test_tokenizer.py` — home for the promoted `dollar_body_at` unit cases (tag length, unterminated,
+  caret in the tag).
+- `tests/ui/test_ddl_object_editor_completion.py` — the UI-level proof the report is about: a tab whose buffer
+  is a full trigger-function definition, caret after `NEW.` **inside the body**, Ctrl+Space offers the
+  triggering table's columns. Check whether the existing cases quietly use body-less buffers; if so, that is
+  why the suite was green while the feature was dead, and at least one case should be converted.
+- `tests/ui/test_sql_console_completion*.py` / `tests/ui/test_sandbox_check_console_wiring.py` — verify the
+  console path is unchanged for ordinary ad-hoc SQL (no regression), and optionally add the pasted-routine case.
+
+**Spec impact:** **The shipped code diverges from the spec; the spec is on the bug's side.** `CONSOLIDATED_SPEC`
+§18.6 (~line 7214 ff.) is marked *"implemented and shipped"* and its context table specifies rows 2 and 3 as
+`NEW.`/`OLD.` *"inside a routine's body"* — i.e. the spec already promises what does not work. Nothing in the
+spec records the opacity-inside-completion decision; the only place that decision exists is the test named
+above. So this is a fix-toward-spec, not a design change, and it needs **no** Supersession Ledger row for the
+behaviour itself. After the fix lands, flag `spec-maintainer` to record two small clarifications: (1) §18.6 /
+§5's `caret_context.py` line (~:480-484) should state that caret resolution **descends into** a dollar-quoted
+body while the tokenizer keeps it opaque for every other consumer — the two halves of one rule, the same
+sentence `from_clause.py`'s docstring already carries (:56-59); and (2) if `dollar_body_at` is promoted, §5's
+`sql/` tree should name it on `tokenizer.py`. Also worth a line in §18.6's status block: the FQ-030 slice-1
+`ALIAS_REF` kind exists in the pure layer with **no UI consumer yet** (see "Adjacent fact" above) — a status
+accuracy point, not a design one. Do not edit the spec here.
+
+---

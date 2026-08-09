@@ -22,29 +22,40 @@ of identifier reference sits under the caret --
 
 - a bare or dotted identifier path (``tab``, ``sch.``, ``sch.tab.``) -- the
   schema-qualified-table-reference context;
-- a ``NEW.`` / ``OLD.`` reference -- the trigger-row-variable context.
+- a ``NEW.`` / ``OLD.`` reference -- the trigger-row-variable context;
+- an ``alias.`` reference whose alias is bound by the caret's own FROM clause
+  (``FROM hr.jobcard jc`` ... ``jc.``) -- the alias context.
 
 This module knows nothing about a live schema, a `DatabaseSchema`, or
 `db/schema_index.py` -- it only parses text. The caller (`ddl_object_editor.py`
 via its injected `SchemaIndex`) turns the resolved context into actual
 suggestions.
+
+`ALIAS_REF` is a **refinement of** `DOTTED_PATH`, not a rival to it: the same
+`parts`/`prefix` are still filled in, and only the extra `table_ref` is new.
+That is deliberate -- a one-segment path is ambiguous between a schema name and
+an alias, and nothing here can rule out that a schema and an in-scope alias
+share a spelling. A caller that finds `table_ref` unhelpful can fall back to
+the `DOTTED_PATH` reading of the very same context with no re-resolution.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
 
+from .from_clause import TableRef, analyze_from_scope
 from .tokenizer import WORD, tokenize
 
 #: Kinds of resolved caret context.
 DOTTED_PATH = "dotted_path"  # bare identifier or dotted schema[.table] prefix
 ROW_VARIABLE = "row_variable"  # NEW.<prefix> / OLD.<prefix>
+ALIAS_REF = "alias_ref"  # <alias>.<prefix>, alias bound by a FROM clause
 
 
 @dataclass(frozen=True)
 class CaretContext:
     """What is "under the caret" for completion purposes.
 
-    ``kind`` is `DOTTED_PATH` or `ROW_VARIABLE`.
+    ``kind`` is `DOTTED_PATH`, `ROW_VARIABLE` or `ALIAS_REF`.
 
     For `DOTTED_PATH`: ``parts`` holds the dotted segments typed so far
     *before* the partial word at the caret (``()`` for a bare identifier,
@@ -54,12 +65,19 @@ class CaretContext:
 
     For `ROW_VARIABLE`: ``row_variable`` is ``"NEW"`` or ``"OLD"`` and
     ``prefix`` is the partial column name typed after the dot.
+
+    For `ALIAS_REF`: ``table_ref`` is the `sql/from_clause.py::TableRef` the
+    single segment resolves to (use ``table_ref.qualified`` as the
+    `SchemaIndex.known_columns()` key), ``prefix`` is the partial column name
+    typed after the dot, and ``parts`` still holds that one segment so the
+    `DOTTED_PATH` reading stays available as a fallback.
     """
 
     kind: str
     prefix: str = ""
     parts: tuple[str, ...] = ()
     row_variable: str | None = None
+    table_ref: TableRef | None = None
 
 
 def resolve_caret_context(text: str, pos: int) -> CaretContext | None:
@@ -115,6 +133,19 @@ def resolve_caret_context(text: str, pos: int) -> CaretContext | None:
                 prefix=partial,
                 row_variable=segments[0].upper(),
             )
+        # A lone segment naming a table the caret's own FROM clause binds is an
+        # alias reference, not a schema. Only a ref an actual table backs is
+        # promoted: a derived-table alias (`FROM (SELECT ...) y`) has no columns
+        # to offer, so leaving it a `DOTTED_PATH` keeps today's behavior.
+        if len(segments) == 1:
+            ref = analyze_from_scope(text, pos).resolve(segments[0])
+            if ref is not None and not ref.is_derived:
+                return CaretContext(
+                    kind=ALIAS_REF,
+                    prefix=partial,
+                    parts=tuple(segments),
+                    table_ref=ref,
+                )
         return CaretContext(kind=DOTTED_PATH, prefix=partial, parts=tuple(segments))
 
     # No dotted prefix: still a resolvable bare-identifier context (schema or

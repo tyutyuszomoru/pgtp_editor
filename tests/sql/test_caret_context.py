@@ -2,6 +2,7 @@
 """Tests for pgtp_editor.sql.caret_context -- the Qt-free caret-context
 resolver behind schema-aware Ctrl+Space completion (spec §18.6)."""
 from pgtp_editor.sql.caret_context import (
+    ALIAS_REF,
     DOTTED_PATH,
     ROW_VARIABLE,
     resolve_caret_context,
@@ -123,3 +124,76 @@ def test_three_part_path_does_not_treat_middle_as_row_variable():
     assert ctx.kind == DOTTED_PATH
     assert ctx.parts == ("new", "equipment")
     assert ctx.prefix == "co"
+
+
+# --- ALIAS_REF: a lone segment bound by the caret's own FROM clause ---------
+# (FQ-030 slice 1; `ALIAS_REF` is a refinement of `DOTTED_PATH`, so `parts`
+# stays filled and the old reading remains available as a fallback.)
+
+
+def test_alias_reference_is_promoted_to_alias_ref():
+    text = "select * from hr.jobcard jc where jc."
+    ctx = resolve_caret_context(text, len(text))
+    assert ctx.kind == ALIAS_REF
+    assert ctx.table_ref.qualified == "hr.jobcard"
+    assert ctx.parts == ("jc",)  # DOTTED_PATH fallback still available
+    assert ctx.prefix == ""
+
+
+def test_alias_reference_keeps_the_partial_column_prefix():
+    text = "select * from hr.jobcard jc where jc.jo"
+    ctx = resolve_caret_context(text, len(text))
+    assert ctx.kind == ALIAS_REF
+    assert ctx.prefix == "jo"
+    assert ctx.table_ref.table == "jobcard"
+
+
+def test_unaliased_table_name_is_also_an_alias_reference():
+    text = "select * from hr.jobcard where jobcard."
+    ctx = resolve_caret_context(text, len(text))
+    assert ctx.kind == ALIAS_REF
+    assert ctx.table_ref.qualified == "hr.jobcard"
+
+
+def test_schema_segment_stays_a_dotted_path():
+    """`hr.` is a schema, not an alias -- the FROM clause binds `jc`, not `hr`."""
+    text = "select * from hr.jobcard jc where hr."
+    ctx = resolve_caret_context(text, len(text))
+    assert ctx.kind == DOTTED_PATH
+    assert ctx.parts == ("hr",)
+
+
+def test_alias_of_another_statement_is_not_promoted():
+    text = "select * from hr.jobcard jc;\nselect * from hr.dept d where jc."
+    ctx = resolve_caret_context(text, len(text))
+    assert ctx.kind == DOTTED_PATH
+
+
+def test_derived_table_alias_is_not_promoted():
+    """A subquery alias has no catalog table behind it, so it stays a
+    `DOTTED_PATH` and the caller's existing schema lookup applies unchanged."""
+    text = "select * from (select 1 as n) sub where sub."
+    ctx = resolve_caret_context(text, len(text))
+    assert ctx.kind == DOTTED_PATH
+
+
+def test_row_variable_still_wins_over_a_table_named_new():
+    text = "select * from hr.new new where new."
+    ctx = resolve_caret_context(text, len(text))
+    assert ctx.kind == ROW_VARIABLE
+    assert ctx.row_variable == "NEW"
+
+
+def test_two_segment_path_is_never_an_alias_reference():
+    text = "select * from hr.jobcard jc where hr.jobcard."
+    ctx = resolve_caret_context(text, len(text))
+    assert ctx.kind == DOTTED_PATH
+    assert ctx.parts == ("hr", "jobcard")
+
+
+def test_plain_dotted_paths_are_unaffected_when_no_from_clause_binds_them():
+    text = "select * from pr."
+    ctx = resolve_caret_context(text, len(text))
+    assert ctx.kind == DOTTED_PATH
+    assert ctx.parts == ("pr",)
+    assert ctx.table_ref is None
