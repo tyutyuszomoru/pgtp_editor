@@ -3309,6 +3309,18 @@ with the two new sections empty.
 
 ## FQ-026: Eight names, four operations — one vocabulary per apply/check gesture, a yes/no answer for the sandbox comparison, and the death of the button row
 **Status:** QUEUED
+
+**OWNER CLARIFICATION (2026-08-10) — read this before treating anything here as a conflict.** This entry is a
+**DEDUPLICATION**, plus a clarification of one action. It is not a redesign and nothing feeds into it:
+
+- **The ACTIONS remain. The ENTRY POINTS go away.** Every underlying operation keeps working exactly as it
+  does today; what this entry removes is the duplicate ways of reaching them.
+- **"The death of the button row" means the buttons at the BOTTOM OF THE EDITOR PANE** — the row in
+  `ui/ddl_object_editor.py` that merely *calls* the actions. Deleting it removes callers, not capability;
+  the same operations stay reachable by their named menu entries.
+- Consequently this does **not** collide with FQ-025's eighteen operations, and a session planning work
+  should not sequence around an imagined conflict with them: FQ-025 generates DDL into a tab, and this
+  entry tidies how that tab's own gestures are named and reached.
 **Requested:** 2026-08-09
 **Idea (verbatim/summarized):** The owner had to have the difference between eight labels explained to
 them — `Apply to Sandbox`, `Run on sandbox`, `Deploy this edit… → sandbox`, `Check Object in Sandbox`,
