@@ -2494,12 +2494,15 @@ class MainWindow(QMainWindow):
             lambda: self._deploy_active_ddl_object_edit()
         )
         menu.addSeparator()
-        # §18.5 D2/D2a's provisioning surface. Deliberately NOT gated on a
-        # session or even on an open project: this is the ONE entry point that
-        # can CREATE a sandbox, so hiding it whenever there is no sandbox would
-        # make it unreachable exactly when it is needed. The dialog itself
-        # applies carve-out 2 internally -- every control whose operation cannot
-        # run is absent, with the reason stated in its place.
+        # §18.5 D2/D2a's provisioning surface, PROJECTLESS-ONLY since BUG-040 --
+        # see `_refresh_sandbox_affordances`, which owns the visibility. It is
+        # still never gated on a SESSION or on a sandbox existing: this is the
+        # one entry point that can CREATE a sandbox, so hiding it whenever there
+        # is no sandbox would make it unreachable exactly when it is needed.
+        # What changed is only that in project mode Project Settings is that
+        # entry point instead. The dialog itself applies carve-out 2 internally
+        # -- every control whose operation cannot run is absent, with the reason
+        # stated in its place.
         self._sandbox_setup_action = menu.addAction("Sandbox Setup…")
         self._sandbox_setup_action.triggered.connect(
             lambda: self._open_sandbox_setup()
@@ -3894,8 +3897,16 @@ class MainWindow(QMainWindow):
         REPORT (`_refuse_sandbox_gesture`), because absence cannot state a
         reason and the reason here is one click away from being fixed. They are
         never greyed out, which would state even less than the refusal."""
-        controller = self.sandbox_controller
-        has_session = controller.has_session
+        # `Sandbox Setup…` is PROJECTLESS-ONLY (BUG-040's third leg). In project
+        # mode the session connects itself and every piece of sandbox
+        # configuration -- provisioning, re-provisioning, the sandbox mode --
+        # lives in Project Settings, so the menu entry would be a second door
+        # onto a surface the project already owns. Projectless it is the only
+        # way to get a sandbox at all, which is why it is hidden rather than
+        # deleted: unlike Open/Close Session it still has a mode where it means
+        # something.
+        if self._sandbox_setup_action is not None:
+            self._sandbox_setup_action.setVisible(self._ddl_project_folder is None)
         # The presence predicate for the two Checks: `can_check` covers the live
         # session, `_configured_sandbox_params()` the FQ-023 present-and-
         # reporting case. Same "a host is set" reading as §18.7's Explorer gate,

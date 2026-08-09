@@ -135,16 +135,26 @@ def _setup_action(window):
 
 
 def test_the_database_menu_carries_a_sandbox_setup_entry(qtbot, tmp_path):
+    """The entry EXISTS in every mode and is never session-gated -- this is the
+    one gesture that can create a sandbox, so it must be reachable exactly when
+    there is no sandbox yet.
+
+    Its VISIBILITY is now projectless-only (BUG-040's third leg), which is why
+    this asserts only that it EXISTS and leaves the two modes to
+    `tests/ui/test_sandbox_check_console_wiring.py`. A project is open in this
+    fixture, so it is hidden -- hidden, never deleted, because projectless it is
+    the only way to get a sandbox at all.
+
+    No `isEnabled()` assertion: Qt's `QAction.isEnabled()` folds in visibility,
+    so a hidden action reports disabled and the check would say nothing about
+    the enabled-state posture it looks like it is guarding."""
     window, _dir = _window(qtbot, tmp_path)
 
     action = _setup_action(window)
 
     assert action is not None
     assert action is window._sandbox_setup_action
-    # NOT session-gated: this is the one gesture that can create a sandbox, so
-    # it must be reachable exactly when there is no sandbox yet.
-    assert action.isVisible()
-    assert action.isEnabled()
+    assert not action.isVisible()
 
 
 def test_the_entry_opens_the_dialog_non_modally_bound_to_the_project(qtbot, tmp_path):
