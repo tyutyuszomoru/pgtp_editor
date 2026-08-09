@@ -3107,7 +3107,11 @@ The Editor-bar's per-tab-kind gating entry point is `MainWindow._refresh_editor_
 ---
 
 ## BUG-040: In a project the sandbox session should be connected automatically on open (and apply/check "just work"); the explicit Open/Close/Setup Sandbox actions belong only to the projectless case
-**Status:** RESOLVED (4828e3d; spec §18.5 carve-out 2 rewritten + a §28 ledger row) — the entry was right
+**Status:** RESOLVED (4828e3d for the auto-open + the `Open`/`Close Sandbox Session` deletion; **4e36162** for the
+third leg, `Sandbox Setup…` projectless-only; spec §18.5 carve-out 2 rewritten + a §28 ledger row) — all three
+legs have now shipped. **But see "Open consequence: project mode has lost provisioning" at the end of the
+Proposed fix — the third leg shipped on a premise this entry stated as owner-confirmed and that turned out to
+be false; the owner has been told and has not yet ruled.** The entry was right
 that this reverses a recorded owner decision, and the owner reversed it explicitly, taking the
 **aggressive** reading of the sub-question the entry refused to guess: the manual lifecycle actions are
 GONE in project mode, not kept as recovery. Spec moved first, as the entry demanded. What shipped:
@@ -3145,17 +3149,73 @@ The behavior the report calls a bug is the shipped resolution of **FQ-023** (see
 **Proposed fix (design change — must go through spec-maintainer before implementation; see Spec impact).** The change is small in code but reverses an owner decision, so the spec must move first. Assuming the auto-connect direction is approved, the concrete shape:
 - **Auto-open on project bind.** In `ui/main_window.py::_bind_sandbox_controller_to_project` (line 3963-3968), after `set_project(...)` and when `_configured_sandbox_params() is not None`, call `self.sandbox_controller.open_session()` (the existing async ownership gate — do NOT bypass `open_sandbox`). Reuse `_open_sandbox_session()` (main_window.py:3976-3988) rather than calling the controller directly, so the "no sandbox configured" guard and the Audit-panel outcome routing (`_on_sandbox_operation_finished`) are shared. Note `open_session` is async via `_run_async`; `session_changed` → `_on_sandbox_session_changed` → `_refresh_sandbox_affordances` already repaints affordances when it lands, so no extra wiring is needed.
 - **Failure posture.** `open_session` already reports every distinguishable refusal (unreachable / not superuser / tools missing / foreign DB) through `SandboxOperationResult` to the Audit panel and simply leaves `has_session` False. So a sandbox that cannot connect at project-open time degrades to exactly today's no-session state (Apply/Check still refuse with a stated reason) — no new error handling required; the auto-open is best-effort.
-- **Hide the manual lifecycle actions in project mode.** In `_refresh_sandbox_affordances` (main_window.py:3825-3830), gate `_open_sandbox_session_action` / `_close_sandbox_session_action` visibility additionally on projectless-vs-project. Since a sandbox only exists in project mode, "meaning only in standalone mode" translates in practice to: keep `Open Sandbox Session` as the recovery path only when auto-open failed (i.e. `configured and not has_session`) — which is already the current predicate — OR, if the owner wants them fully gone in project mode, hide both whenever `self._ddl_project_folder is not None`. The safer reading (keeps a manual recovery after an explicit close or a failed auto-open) is to leave the predicates as-is; the aggressive reading (report's literal ask) hides them in project mode entirely. Flag this as the one sub-decision the owner must make — do not guess.
+- **Hide the manual lifecycle actions entirely in project mode (owner decision, 2026-08-08).** The connection is fully implicit once a project opens: in project mode there is **no manual sandbox lifecycle surface at all**. Concretely, gate all three explicit lifecycle actions on projectless-vs-project so they are absent whenever a project is open:
+  - `_open_sandbox_session_action` / `_close_sandbox_session_action` in `_refresh_sandbox_affordances` (main_window.py:3825-3830): both hidden whenever `self._ddl_project_folder is not None` (project mode), regardless of `has_session`. No "Open as recovery after a failed auto-open" path — the owner explicitly rejected keeping them as a recovery affordance. (Recovery, if a sandbox is unreachable at open, is handled the same way as any other capability problem — via Project Settings / re-probe — not via a manual Open button.)
+  - `_sandbox_setup_action` (`Sandbox Setup…`, main_window.py:2452-2455) is created always-visible today (deliberately, so it can *create* a sandbox). Per the owner decision it too is hidden in project mode. **No capability is lost by this (owner-confirmed, 2026-08-08):** in project mode all sandbox configuration — provisioning, re-provisioning, and sandbox-mode change — already lives in **Project Settings** (`ui/project_settings_dialog.py`, the tabbed Connections/Sandbox surface), which stays available. Like `Open`/`Close Sandbox Session`, the `Sandbox Setup…` menu action is only meaningful in projectless (standalone) mode — where it exists for standalone-mode checks/lints, since there is no project whose settings could hold the sandbox config. So hiding all three in project mode leaves the mode complete: implicit connection on open, and config through Project Settings.
+  - **SHIPPED as `4e36162` (third leg).** `MainWindow._refresh_sandbox_affordances` now carries
+    `self._sandbox_setup_action.setVisible(self._ddl_project_folder is None)`, and the build site's comment in
+    `_build_database_menu` was rewritten to point at the refresher as the owner of that visibility. The action is
+    **HIDDEN, not deleted** — a deliberate divergence from `Open`/`Close Sandbox Session`, which this entry deleted
+    outright. The reason for the asymmetry: those two had no mode left in which they meant anything, whereas
+    `Sandbox Setup…` projectless is the ONLY way to get a sandbox at all. It also stays ungated on a live session
+    and on a sandbox already existing, because it is the one gesture that can CREATE one. A dead `has_session` local
+    left over in `_refresh_sandbox_affordances` by the deletion of the two lifecycle actions was removed with it.
+    Full suite green: 4870 passed, 45 skipped.
+  - The **projectless case keeps its current actions untouched** — though note projectless mode has no configured sandbox, so `_configured_sandbox_params()` is None and these actions are already hidden there today by their existing predicates; the net effect is that the Open/Close/Setup lifecycle surface effectively disappears from normal use, which is the intended outcome.
 - **Do NOT invent a new connect path.** `open_session` / `open_sandbox` is the single ownership chokepoint (D2); the fix wires an existing call to fire on project bind, it adds no new session-acquisition mechanism.
 - **Gotcha:** `_adopt_sandbox_setup_settings` (main_window.py:4025-4051) deliberately does NOT go through `_bind_sandbox_controller_to_project` (to avoid dropping the session the Setup dialog just provisioned). If auto-open moves into `_bind_...`, verify the Setup-dialog path still ends with a live session (it provisions its own) and does not double-open.
 - **Gotcha:** projectless mode must be untouched — `_configured_sandbox_params()` returns None there, so the auto-open guard is a no-op projectless by construction; confirm no auto-open fires when `_ddl_project_folder is None`.
+
+**OPEN CONSEQUENCE (unruled): hiding `Sandbox Setup…` left project mode with no way to provision, re-provision or
+reset a sandbox.** The bullet above justifies the hiding with a claim marked *owner-confirmed*: that in project mode
+*"all sandbox configuration — provisioning, re-provisioning, and sandbox-mode change — already lives in Project
+Settings … so hiding all three in project mode leaves the mode complete."* **That claim is false for provisioning.**
+Verified 2026-08-09 by reading both dialogs end to end:
+- `ui/project_settings_dialog.py` (440 lines) carries the sandbox **connection fields**, a **Test**-connection row
+  (`_add_test_row` / `test_sandbox`, feeding `_apply_sandbox_probe_result`), and the recorded **sandbox MODE**
+  radios (`_sandbox_mode_without_data_radio` / `_with_data_radio`, lines 134-150) — whose own inline note says
+  *"Changing this does not re-clone the sandbox — it takes effect the next time the sandbox is reset/recreated."*
+  Its only other buttons are `Add Row` / `Remove Selected Row` for the deployed-objects table. There is **no
+  Provision, no Reset, and no "create a sandbox database for me"** anywhere in the file.
+- Those three live **only** in `ui/sandbox_setup_dialog.py`: `Provision sandbox` (`_provision_button`, line 458 →
+  `provision()` line 593 → `_provision(create_database=…)` line 604), `Reset sandbox` (`_reset_button`, line 414 →
+  `reset_sandbox()` line 652), and `Create a sandbox database for me` (`_create_button`, line 469).
+- Net effect: **a project-mode user now has no path to provision, re-provision or reset an existing project's
+  sandbox.** Project Settings can change the recorded mode but, by its own note, that only takes effect at a
+  reset/recreate the user can no longer trigger. New projects are unaffected — provisioning still runs on the create
+  path via `MainWindow._provision_new_project_sandbox` (main_window.py:2567), wired into `NewProjectDialog` at
+  main_window.py:723.
+
+This is recorded as a **consequence, not a defect to revert**: the owner directed the hiding after being warned the
+premise was unverified, and has since been told the premise is false; no ruling yet. A follow-up, if the owner wants
+one, should give project mode its own provisioning home rather than un-hide `Sandbox Setup…` — the most likely shape
+is moving/reusing the three actions (`provision`, `reset_sandbox`, create-database) into the Project Settings Sandbox
+tab next to the mode radios, since that is where the mode note already promises the reset happens. Do not attempt
+that without an explicit owner decision, and route the decision through `spec-maintainer` (see Spec impact).
 
 **Test impact:** Existing coverage to extend, not duplicate:
 - `tests/ui/test_sandbox_check_console_wiring.py` and `tests/ui/test_mainwindow_surface.py` — the `_refresh_sandbox_affordances` / Open-Close-Session menu-visibility and `_refuse_sandbox_gesture` wiring; these encode today's manual-session posture and will need updating to the auto-open expectations.
 - `tests/ui/test_sandbox_controller.py` — `set_project`/`open_session`/`close_session` behavior; add/adjust a case asserting a project bind with a configured sandbox triggers `open_session` (with the async runner stubbed synchronously as the suite already does).
 - `tests/ui/test_ddl_object_editor.py` — currently asserts the "Open Sandbox Session" refusal text; revisit if the manual actions change.
-- New cases needed: (1) opening a project with a configured, reachable sandbox ends with `has_session` True and no user click; (2) opening a project whose sandbox is unreachable/non-superuser leaves `has_session` False and surfaces the stated reason (no crash, Apply/Check still refuse); (3) projectless mode opens no session; (4) whichever Open/Close visibility rule the owner picks. Reuse the sandbox stubs in `tests/ui/_sandbox_stubs.py`.
+- New cases needed: (1) opening a project with a configured, reachable sandbox ends with `has_session` True and no user click; (2) opening a project whose sandbox is unreachable/non-superuser leaves `has_session` False and surfaces the stated reason (no crash, Apply/Check still refuse); (3) projectless mode opens no session; (4) with a project open, the `Open Sandbox Session` / `Close Sandbox Session` / `Sandbox Setup…` actions are all hidden (owner decision — no manual lifecycle surface in project mode), including the case where the auto-open failed and `has_session` is False. Reuse the sandbox stubs in `tests/ui/_sandbox_stubs.py`.
 
-**Spec impact:** **Directly reverses a recorded owner decision — must go to spec-maintainer BEFORE any implementation, not after.** CONSOLIDATED_SPEC §18.5 (FQ-023 carve-out, spec lines 4590-4624) records the explicit ruling: *"Lazy session opening is REJECTED by the owner: 'Don't open lazily, it needs to be an explicit decision.'"* and *"`Database ▸ Open Sandbox Session` stays an explicit menu item."* Auto-connecting on project open is exactly the lazy/implicit open that decision rejected — so this is a genuine design change, requiring a Supersession Ledger row (§28) overriding the FQ-023 manual-session stance for project mode. Note the report's own strongest argument is already in the spec (lines 4618-4624): the *"opens nothing"* principle is a *"leftover rather than a stance"* since `refresh_capability_status` already connects at project-open time — spec-maintainer should reconcile `set_project`'s docstring, the D2 ownership narrative, and the §18.5 auto-vs-manual-session decision in one pass, and decide the Open/Close-menu sub-question (hidden entirely in project mode vs. kept as recovery). Do not edit the spec here; flag for spec-maintainer.
+**Test impact — what the third leg (`4e36162`) actually landed:** three new cases in
+`tests/ui/test_sandbox_check_console_wiring.py` — `Sandbox Setup…` offered projectless; hidden once a project opens;
+and **back again when the project closes**. The third one is not redundant: the visibility is driven from
+`_refresh_sandbox_affordances`, so a project transition has to reach that refresher in *both* directions, and only a
+close-side case pins that down. `tests/ui/test_sandbox_setup_wiring.py::test_the_database_menu_carries_a_sandbox_setup_entry`
+was updated to assert existence-and-hidden rather than visible. **Gotcha for the next implementer touching these:**
+that test's `isEnabled()` assertion had to be dropped, because Qt folds visibility into `QAction.isEnabled()` — a
+hidden action reports `isEnabled() == False`, so the assertion would have read like it guarded an enabled-state
+posture while in fact guarding nothing. Assert `isVisible()` explicitly; never use `isEnabled()` to characterize an
+action whose visibility is also under test.
+
+**Spec impact:** **Directly reverses a recorded owner decision — must go to spec-maintainer BEFORE any implementation, not after.** CONSOLIDATED_SPEC §18.5 (FQ-023 carve-out, spec lines 4590-4624) records the explicit ruling: *"Lazy session opening is REJECTED by the owner: 'Don't open lazily, it needs to be an explicit decision.'"* and *"`Database ▸ Open Sandbox Session` stays an explicit menu item."* Auto-connecting on project open is exactly the lazy/implicit open that decision rejected — so this is a genuine design change, requiring a Supersession Ledger row (§28) overriding the FQ-023 manual-session stance for project mode. Note the report's own strongest argument is already in the spec (lines 4618-4624): the *"opens nothing"* principle is a *"leftover rather than a stance"* since `refresh_capability_status` already connects at project-open time — spec-maintainer should reconcile `set_project`'s docstring, the D2 ownership narrative, and the §18.5 auto-vs-manual-session decision in one pass. **The Open/Close-menu sub-question is now settled by owner decision (2026-08-08): in project mode the explicit `Open Sandbox Session` / `Close Sandbox Session` / `Sandbox Setup…` actions are hidden entirely — no manual sandbox lifecycle surface in project mode; the connection is fully implicit on project open. The projectless case is unchanged.** This further supersedes FQ-023's *"`Database ▸ Open Sandbox Session` stays an explicit menu item"* clause, so the Supersession Ledger row must cover both the auto-open and the removal of the manual lifecycle actions. **No re-provisioning home needs to move (owner-confirmed, 2026-08-08):** project sandbox configuration — provisioning, re-provisioning, and sandbox-mode change — already lives in Project Settings, so hiding `Sandbox Setup…` in project mode loses no capability; spec-maintainer should record that the three lifecycle menu actions are projectless-only and that Project Settings is the sole sandbox-config surface in project mode. Do not edit the spec here; flag for spec-maintainer. **CORRECTION (2026-08-09, verified — supersedes the
+"No re-provisioning home needs to move" sentence immediately above):** that sentence is wrong. Project Settings is
+NOT a provisioning surface — see "Open consequence" in the Proposed fix for the file-and-line evidence. Whatever
+`spec-maintainer` folds in must not repeat the claim that Project Settings covers provisioning/re-provisioning; the
+accurate statement is that Project Settings covers sandbox **connection params, connection test, and recorded mode
+only**, and that as of `4e36162` project mode has **no provisioning/reset surface at all**. Whether that gap is
+intended is an open owner question, not something spec-maintainer should resolve by assumption.
 
 ---
