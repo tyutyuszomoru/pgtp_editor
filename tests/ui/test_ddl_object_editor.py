@@ -1241,7 +1241,12 @@ def test_unavailable_destinations_name_the_sandbox_and_target_with_reasons(qtbot
     # have failed, or there is no sandbox to open at all.
     assert "Open Sandbox Session" not in missing[DEST_SANDBOX]
     assert "no sandbox session is open" in missing[DEST_SANDBOX]
-    assert "Sandbox Setup…" in missing[DEST_SANDBOX]
+    # And it names Project Settings, NOT `Sandbox Setup…`: a sandbox exists only
+    # in project mode, so this refusal fires only there, and BUG-040's third leg
+    # made that menu entry projectless-only. Naming a hidden entry is the same
+    # dead end as naming the deleted one above.
+    assert "Project Settings" in missing[DEST_SANDBOX]
+    assert "Sandbox Setup" not in missing[DEST_SANDBOX]
     assert "Precondition 1" in missing[DEST_TARGET]
     # FQ-020 wired the quality lane, so the reason is now a CONNECTION fact and
     # names both places a target can come from -- the old "not wired in this

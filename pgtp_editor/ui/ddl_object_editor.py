@@ -120,11 +120,25 @@ DESTINATION_UNAVAILABLE_REASONS = {
     # BUG-040 deleted `Database ▸ Open Sandbox Session`, which this sentence
     # used to name — the session now opens with the project. So the remedy is
     # the `Open` button on the refusal itself (this string is reused verbatim
-    # inside that dialog), and `Sandbox Setup…` for the case where the automatic
-    # open had nothing to connect to.
+    # inside that dialog) plus the place the connection can be corrected.
+    #
+    # That place is **Project Settings, not `Sandbox Setup…`**, and the reason
+    # is a consequence of BUG-040's own third leg: a sandbox exists only in
+    # project mode, so this refusal fires only there — and `Sandbox Setup…` is
+    # now HIDDEN in project mode. Naming it would send the user to a menu entry
+    # they cannot see. Project Settings is where the sandbox connection lives in
+    # project mode and is always reachable.
+    #
+    # KNOWN GAP, recorded on BUG-040 and awaiting an owner ruling: Project
+    # Settings can edit the connection but cannot PROVISION — Provision / Reset
+    # / "create a database for me" live only in `ui/sandbox_setup_dialog.py`. So
+    # "none is set up yet" currently has no in-project remedy at all, which is
+    # why this sentence points at the connection rather than promising a fix for
+    # the not-provisioned case.
     DEST_SANDBOX: (
         "no sandbox session is open — the project's sandbox could not be "
-        "reached, or none is set up yet (Database ▸ Sandbox Setup…)"
+        "reached, or none is set up yet (check its connection in Project "
+        "Settings)"
     ),
     # FQ-020 wired this lane, so the old *"not wired in this build"* wording is
     # retired: with no project the host resolves a quality target and the gesture

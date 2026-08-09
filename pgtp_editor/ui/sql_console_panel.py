@@ -165,8 +165,15 @@ MIN_ROW_LIMIT = 1
 
 #: Why Run is refused with no live sandbox. Names the way back, the way every
 #: other §18.5 degradation does -- never a bare "unavailable".
+#:
+#: It must name a place the user can actually REACH from here, which is why it
+#: no longer says `Database ▸ Sandbox Setup…`: a sandbox exists only in project
+#: mode, so this console only exists there, and BUG-040 made that menu entry
+#: projectless-only. The session itself is no longer something to "open" at all
+#: -- it comes up with the project -- so the honest way back is the connection.
 NO_SESSION_TEXT = (
-    "No live sandbox session — open one via Database ▸ Sandbox Setup…. "
+    "No live sandbox session — the project's sandbox could not be reached; "
+    "check its connection in Project Settings. "
     "Ad-hoc SQL runs against the sandbox and nowhere else."
 )
 

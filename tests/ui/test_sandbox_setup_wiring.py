@@ -269,10 +269,16 @@ def test_adopting_the_settings_does_not_drop_the_session_just_provisioned(
 def test_the_console_refusal_names_gestures_that_exist(
     qtbot, tmp_path, monkeypatch
 ):
-    """The stale string said "Database ▸ Project Status…", which never opened a
-    session; BUG-040 then deleted `Open Sandbox Session`, which the replacement
-    named. The rule this test exists for outlives both: **the refusal may only
-    name menu entries that exist**, and today that is `Sandbox Setup…`.
+    """The rule this test exists for has now outlived three wordings. It said
+    "Database ▸ Project Status…", which never opened a session; then
+    `Open Sandbox Session`, which BUG-040 deleted; then `Sandbox Setup…`, which
+    BUG-040's third leg made projectless-only.
+
+    The rule, sharpened by that third round: **the refusal may only name a way
+    back that is REACHABLE FROM WHERE THE REFUSAL FIRES.** "Exists in the menu
+    somewhere" is not enough — a sandbox exists only in project mode, so this
+    refusal fires only there, and `Sandbox Setup…` is hidden there. Naming a
+    hidden entry is the same dead end as naming a deleted one.
 
     Since FQ-023 the refusal is a dialog that OFFERS to open the session;
     declining leaves the same reason in the status bar, which is what is read
@@ -283,16 +289,20 @@ def test_the_console_refusal_names_gestures_that_exist(
     assert window._open_sandbox_sql_console() is None
 
     message = window.statusBar().currentMessage()
-    assert "Sandbox Setup…" in message
-    assert _setup_action(window) is not None  # ...and that entry really exists
+    assert "Project Settings" in message
+    # ...and the entry it does NOT name is the one that is hidden right here.
+    assert _setup_action(window).isVisible() is False
+    assert "Sandbox Setup" not in message
     assert "Open Sandbox Session" not in message
     assert "Project Status" not in message
 
 
-def test_the_consoles_no_session_text_names_the_entry_that_now_exists():
+def test_the_consoles_no_session_text_names_a_reachable_way_back():
+    """Same rule, same reason: the console only exists in project mode."""
     from pgtp_editor.ui.sql_console_panel import NO_SESSION_TEXT
 
-    assert "Sandbox Setup…" in NO_SESSION_TEXT
+    assert "Project Settings" in NO_SESSION_TEXT
+    assert "Sandbox Setup" not in NO_SESSION_TEXT
 
 
 # --- The Project Status window's two node actions -------------------------
