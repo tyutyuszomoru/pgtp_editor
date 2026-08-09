@@ -370,11 +370,14 @@ as the menu entry does — that is the honest posture, not a bug.
   moved here off the **File** menu, because it is meaningful only while the
   `.pgtp` is what you are looking at (see *Local DDL-Versioning Projects*).
 - **Save in Project** — write the active DDL object tab's `.sql` file. Touches no
-  database, ever (see *DDL Explorer*).
+  database, ever (see *DDL Explorer*). On a tab holding a generated `ALTER TABLE`
+  statement it always asks where, because that tab has no project file of its own
+  — see *DDL Explorer ▸ The tab an Alter Table operation opens*.
 - **Run on sandbox** / **Run on quality** — execute the active DDL object tab's
   buffer against the project's sandbox, or against the quality database. Both are
   confirm-gated and both name the database *and its host* before anything runs
-  (see *The Sandbox* and *DDL Explorer*).
+  (see *The Sandbox* and *DDL Explorer*). **Run on quality refuses an ALTER
+  buffer** and states its reason; **Run on sandbox** is that tab's run path.
 - **Save XSD** — write whichever schema the XSD tab currently holds, curated or
   auto (see *Schema Tools*).
 - **Save PHP File** — write the active PHP tab's file back where it came from
@@ -1400,16 +1403,19 @@ so two open explorers are never confusable:
   the same objects, grouped from two
   angles. Under **Tables**, **every table in the connected schema is listed** —
   tables that own a trigger list those triggers nested underneath them; tables
-  with no triggers appear as plain entries. Under **Functions & Procedures**,
+  with no triggers appear as plain entries. Every table also carries a
+  **`Columns  (N)`** group listing its own columns. Under **Functions &
+  Procedures**,
   each function or procedure lists the triggers that call it. A trigger
   therefore appears in **both** places — either entry points at the same
   definition. **Click** a routine or trigger to jump **that explorer's own** DDL
-  buffer straight to it; **click** a table to see its columns in Properties (see
-  *Clicking a table: column properties*, below).
+  buffer straight to it; **click** a table — or one of its columns — to see that
+  table's columns in Properties (see *Clicking a table: column properties*,
+  below).
 
 Everything in the next three sections describes both trees and both buffers.
-The sections after them — editing and creating objects — belong to the Quality
-explorer alone.
+The sections after them — editing objects, creating them, and altering a table —
+belong to the Quality explorer alone.
 
 ### Reading the DDL Objects tree
 
@@ -1419,6 +1425,15 @@ triggers nested underneath it exactly as before; a table with no triggers
 shows the bare `schema.table` label (no count, since it would only ever be
 `0`) and has no children. Widening the branch to every table means it no
 longer omits tables that happen to have no trigger of their own.
+
+Under each table, after its triggers, sits a **`Columns  (N)`** group holding one
+row per column, written as `name (type)` — for example `note (text)`. They are
+listed in the table's own declared column order, the same order the Properties
+panel uses, so the two surfaces show one table the same way round. The group node
+itself is only a container: it clicks nowhere and has no right-click menu. The
+column rows exist so that a right-click can carry *which column* into the **Alter
+Table ▸** dialogs (see *Altering a table's columns*, below); a table the explorer
+has no column information for simply gets no group.
 
 Routines under **Functions & Procedures** are listed by their fully-qualified
 `schema.name`, followed by a marker telling you what kind of routine it is:
@@ -1469,14 +1484,20 @@ followed by a detail line with its default value and comment (an unset
 default or comment shows as `—`). Subtle alternating shading pairs each
 column's two rows together so they read as one record.
 
+**Clicking one of the table's own column rows shows the same thing** — the owning
+table's full column list — so you can inspect a column without collapsing the
+group you are working in.
+
 This is **display-only**: clicking a table populates Properties but, unlike
 clicking a routine or trigger, does **not** jump or scroll the DDL buffer,
 since a whole table has no single line in that buffer to jump to. In the
-**Quality** tree, right-clicking a table node offers exactly one action,
-**Add Trigger…** (see *Creating a new trigger, function, or procedure*, below) —
-**Edit DDL** remains available only on routine and trigger rows, because it acts
-on an object's existing definition. The **Sandbox** tree offers no context menu
-at all (see *The Sandbox Explorer, and how it differs*).
+**Quality** tree, right-clicking a table node offers two things: **Add Trigger…**
+(see *Creating a new trigger, function, or procedure*, below) and the
+**Alter Table ▸** submenu (see *Altering a table's columns*, below). A column row
+offers the **Alter Table ▸** submenu alone. **Edit DDL** remains available only on
+routine and trigger rows, because it acts on an object's existing definition. The
+**Sandbox** tree offers no context menu at all (see *The Sandbox Explorer, and how
+it differs*).
 
 ### Working in the DDL tab
 
@@ -1544,10 +1565,13 @@ Connections**. Closing the project takes the entry away again **and hides its tw
 tabs with it** — a tree still showing a closed project's sandbox would be
 describing something you are no longer working on.
 
-**The sandbox tree is browse-only.** It has no **Edit DDL**, and neither of the
-creation entries (**Add Trigger…**, **New Function/Procedure…**); right-clicking
+**The sandbox tree is browse-only.** It has no **Edit DDL**, neither of the
+creation entries (**Add Trigger…**, **New Function/Procedure…**), and no
+**Alter Table ▸** submenu; right-clicking
 anywhere in it offers nothing, and the sandbox buffer's right-click menu has the
-reading commands but no **Edit DDL** either. That is the point of the surface
+reading commands but no **Edit DDL** either. The column operations are left out
+for the strongest form of that reason: they are schema *mutations*, and this
+explorer exists to look at a sandbox, never to reshape one from the tree. That is the point of the surface
 rather than a gap in it: editing and creating are how you change what will
 eventually be deployed, and that pipeline runs through your project and the
 quality database. The sandbox is where you **check** that work — a definition
@@ -1738,8 +1762,10 @@ you then fill in and save like any other DDL object tab (see *Editing a single
 function, procedure, or trigger*, above).
 
 **Add Trigger…** — right-click a **table** node under **Tables** in the DDL
-Objects tree. (This is the one context menu a table node has; **Edit DDL**
-still belongs to routine and trigger rows only.) The
+Objects tree. (It sits at the top level of that node's menu, above the
+**Alter Table ▸** submenu, because creating a new object is a different act from
+changing this one; **Edit DDL** still belongs to routine and trigger rows only.)
+The
 dialog shows the clicked table as a fixed line — you picked it by right-clicking
 it, so it isn't offered again as a field — plus:
 
@@ -1793,6 +1819,117 @@ automatically**: it shows up as a pending local change (the `*` drift marker) in
 the DDL Objects tree and is picked up by the normal deploy flow. Created with no
 project open, it is just an editor tab and a file — unversioned, which is a
 supported way to work.
+
+### Altering a table's columns
+
+The DDL Explorer can also **change an existing table**. In the **DDL Objects
+(Quality)** tree, right-click a table node — or one of its column rows under
+**`Columns  (N)`** — and open the **Alter Table ▸** submenu. It holds eight column
+operations:
+
+| Entry | What it generates |
+|---|---|
+| **Add Column…** | `ALTER TABLE … ADD COLUMN …` |
+| **Drop Column…** | `ALTER TABLE … DROP COLUMN …` |
+| **Rename Column…** | `ALTER TABLE … RENAME COLUMN … TO …` |
+| **Change Column Type…** | `ALTER TABLE … ALTER COLUMN … TYPE …` |
+| **Set NOT NULL…** | `ALTER TABLE … ALTER COLUMN … SET NOT NULL` |
+| **Drop NOT NULL…** | `ALTER TABLE … ALTER COLUMN … DROP NOT NULL` |
+| **Set DEFAULT…** | `ALTER TABLE … ALTER COLUMN … SET DEFAULT …` |
+| **Drop DEFAULT…** | `ALTER TABLE … ALTER COLUMN … DROP DEFAULT` |
+
+> **Generating executes nothing.** Every entry here opens a dialog, and confirming
+> that dialog does exactly one thing: it puts the generated `ALTER TABLE` text into
+> an ordinary, editable tab. No connection is opened, nothing is sent to any
+> database, and nothing about your table changes. **Running the statement is a
+> separate, explicit gesture** you make afterwards, from the **Deployment** menu.
+> That separation is the whole safety model: you always read the DDL — and can
+> edit it — before anything can execute it.
+
+**Where the click lands is the dialog's starting point, not a cage.** Right-click
+a **column** row and that column is pre-selected; right-click the **table** node
+and you get the same eight operations with no column pre-selected (the dropdown
+simply starts at the table's first column). Either way the dialog states where it
+came from on a read-only **From:** line, and both the **Table:** and **Column:**
+dropdowns stay changeable — so a dialog you opened from the wrong row is a
+correction, not a cancel-and-retry. The dropdowns are filled from the schema the
+explorer already fetched; the dialogs never talk to the database themselves.
+
+**Views and materialized views have no Alter Table ▸ submenu**, on the table node
+or on a column. Every entry emits `ALTER TABLE`, which the server would refuse on a
+view, so the operation is not offered rather than offered and broken. For the same
+kind of reason the whole submenu is **absent in the Sandbox explorer**, which is
+browse-only (see *The Sandbox Explorer, and how it differs*).
+
+**The dialogs validate as you type.** **OK** stays disabled until the statement
+actually renders, and the reason is shown inline in red — an empty column name, an
+empty `USING` clause, an unbalanced parenthesis — rather than as an error box after
+the fact. Identifiers are quoted safely, and one that cannot be quoted is refused
+inline instead of producing broken SQL.
+
+Two entries are worth a word of their own:
+
+- **Add Column…** collects a **Name**, a **Datatype** (an editable list of common
+  types — anything else, `numeric(10,2)`, `integer[]`, `pr.my_domain`, can simply
+  be typed), a **Nullable** checkbox, and an optional **Comment**. **A comment
+  produces two statements in the tab** — the `ALTER TABLE … ADD COLUMN …;` first,
+  then a `COMMENT ON COLUMN …;` — because `ALTER TABLE` has no comment clause.
+  That is correct output, not a duplicate: both statements belong to the one
+  change and are run together. Leave the field blank and only the first statement
+  is generated. Note also that unticking **Nullable** on a table that already has
+  rows only succeeds if the column gets a default or the table is empty — that is
+  PostgreSQL's rule, and you will hear about it when you run the statement, not
+  when you generate it.
+- **Change Column Type…** offers an optional **USING:** field, and this is the one
+  place the generated DDL genuinely needs your help. PostgreSQL will only change a
+  column's type on its own when a suitable cast exists; on real data a change like
+  `text` → `integer` **fails outright without a `USING` clause**. Supply the
+  conversion expression there — for example `trim(code)::integer` — and it is
+  emitted as `… TYPE integer USING trim(code)::integer`. Leave it empty and no
+  `USING` clause is generated at all.
+
+**Drop Column…** deliberately generates **no `CASCADE`**: dropping a column that a
+view or a constraint depends on will fail loudly, which is the safer default. If
+you really want the cascade, type the word into the tab yourself.
+
+> **Only column operations exist today.** Constraints, foreign keys, indexes,
+> table comments, and creating or dropping whole tables are not built yet; this
+> submenu offers the eight entries above and nothing more.
+
+### The tab an Alter Table operation opens
+
+The tab you get is the same editable SQL editor a DDL object tab uses — gutter,
+bookmarks, folding, its own Find/Replace bar, **Ctrl+Z / Ctrl+Y** scoped to this
+tab alone. It is titled with the statement it holds, e.g. **`ALTER orders`**, plus
+the usual `" *"` marker once you edit it; its tooltip — and everything else that
+names it, confirmations and `[Check]` lines alike — reads
+**`ALTER TABLE pr.orders`**, because that is what it is, rather than dressing a
+table up as an object it is not.
+
+**Each generation gets its own tab.** Two ALTERs on the same table are two
+different statements, so the second one never quietly replaces the first.
+
+**It behaves differently from an object tab, deliberately, and you will notice:**
+
+- **Deployment ▸ Save in Project opens a Save As… prompt**, every time until you
+  name a file, prefilled as `alter_<schema>_<table>.sql` (`alter_pr_orders.sql`).
+  An ALTER tab is never *checked out* and never joins the project's deploy
+  manifest — no `*` / `!` drift marker will ever speak for it. **The why in one
+  line:** an ALTER is a *mutation of* a table, not an object with its own source
+  file, so there is no `ddl/<object>.sql` it could be the contents of; writing one
+  would put a change where the project expects a definition.
+- **Deployment ▸ Run on quality refuses an ALTER buffer, and says why.** That
+  gesture's first precondition reads the object's signature out of the buffer and
+  compares it with the live catalog, and an `ALTER TABLE` declares no such
+  signature — so the refusal lands as a `[Check]` line saying the signature could
+  not be determined and pointing at the reviewable deployment-script path. **The
+  intended run path for an ALTER is Deployment ▸ Run on sandbox**: try the change
+  where trying things is free.
+- **`plpgsql_check` — tier 3 of the validation ladder — does not run here**, by
+  design. An ALTER creates no function for it to analyse, so there is nothing for
+  that tier to say. Tiers 0, 1 and 2 do run. A check report on an ALTER tab with
+  tier 3 absent is the expected shape, not a failure (see *The Sandbox ▸ The
+  validation ladder, and the three ways to run it*).
 
 ### Schema-aware completion in the DDL object editor
 
@@ -2372,6 +2509,11 @@ hides a rung nobody managed to check:
   one with a project open. (Some of these lines still name **Sandbox Setup…**,
   which also has an install button; with a project open that entry is hidden, so
   use Project Status.)
+
+**On a tab holding a generated `ALTER TABLE` statement, tier 3 is absent
+altogether** — not unavailable, not failed: an ALTER creates no function for
+`plpgsql_check` to analyse, so that rung was never going to run. The other three
+tiers work as usual (see *DDL Explorer ▸ The tab an Alter Table operation opens*).
 
 Three gestures run this ladder, and they differ in **what they touch**, not in how
 thorough they are:
