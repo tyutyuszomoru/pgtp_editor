@@ -317,13 +317,19 @@ def test_the_three_non_installed_states_give_three_distinct_reasons():
 
 
 def test_installable_names_the_one_click_install_and_where_it_lives():
-    # §18.5 D3a: the `installable` case must name the install and both places
-    # it is reachable from -- verbatim.
+    """§18.5 D3a: the `installable` case must name the install and where it is
+    reachable from -- verbatim.
+
+    It names ONE place now, not two. `Database ▸ Sandbox Setup…` became
+    projectless-only (BUG-040), and a sandbox exists only in project mode, so
+    naming it here would be the dead end this reason exists to prevent. The
+    Project Status node is genuinely wired in project mode."""
     reason = capability_outcome(_caps("installable", is_superuser=True)).reason
     assert (
-        "Install it from Database ▸ Sandbox Setup…, or the Project Status "
-        "window's plpgsql_check node." in reason
+        "Install it from the Project Status window's plpgsql_check node."
+        in reason
     )
+    assert "Sandbox Setup" not in reason
     assert "NOT been linted" in reason
 
 

@@ -57,6 +57,8 @@ from .introspect import (
     ColumnInfo,
     DatabaseSchema,
     RoutineInfo,
+    ConstraintInfo,
+    IndexInfo,
     TableInfo,
     TriggerInfo,
     TypeInfo,
@@ -70,7 +72,15 @@ SNAPSHOT_FORMAT = "pgtp-editor.schema-snapshot"
 #: other value instead of guessing, which is what lets a future version add or
 #: rename fields without old code misreading a newer file as a schema that
 #: happens to be missing things.
-SNAPSHOT_VERSION = 1
+#:
+#: **2 (FQ-025):** `DatabaseSchema` gained `constraints` and `indexes`, so the
+#: payload gained two sections. A v1 file is REFUSED rather than loaded with
+#: those sections empty — this module's whole posture is refuse-never-degrade,
+#: and "loaded, but every constraint is missing" is precisely the shape that
+#: makes `diff_schemas` hand the user a script of DROPs. Costless in practice:
+#: `Save Schema Snapshot…` has never been built, so no snapshot can exist that
+#: was written by the app.
+SNAPSHOT_VERSION = 2
 
 # The exact field set each record carries, in the dataclasses' own order. Used
 # twice: to build the payload, and to reject a record whose keys do not match
@@ -102,7 +112,26 @@ ROUTINE_FIELDS = (
 TRIGGER_FIELDS = ("schema", "table", "name", "timing", "events", "function_name",
                   "definition")
 TYPE_FIELDS = ("schema", "name", "kind", "base_type", "not_null", "attributes")
-SCHEMA_SECTIONS = ("tables", "routines", "triggers", "types")
+CONSTRAINT_FIELDS = (
+    "schema",
+    "table",
+    "name",
+    "kind",
+    "columns",
+    "definition",
+)
+INDEX_FIELDS = (
+    "schema",
+    "table",
+    "name",
+    "columns",
+    "is_unique",
+    "is_primary",
+    "method",
+    "definition",
+    "constraint_name",
+)
+SCHEMA_SECTIONS = ("tables", "routines", "triggers", "types", "constraints", "indexes")
 _PAYLOAD_KEYS = ("format", "version", "schema")
 
 
@@ -151,6 +180,13 @@ def dump_schema(schema: DatabaseSchema) -> str:
                 key: _encode_trigger(value) for key, value in schema.triggers.items()
             },
             "types": {key: _encode_type(value) for key, value in schema.types.items()},
+            "constraints": {
+                key: _encode_constraint(value)
+                for key, value in schema.constraints.items()
+            },
+            "indexes": {
+                key: _encode_index(value) for key, value in schema.indexes.items()
+            },
         },
     }
     # sort_keys reaches every nested mapping, which is what makes the output
@@ -217,6 +253,31 @@ def _encode_trigger(trigger: TriggerInfo) -> dict[str, Any]:
     }
 
 
+def _encode_constraint(constraint: ConstraintInfo) -> dict[str, Any]:
+    return {
+        "schema": constraint.schema,
+        "table": constraint.table,
+        "name": constraint.name,
+        "kind": constraint.kind,
+        "columns": list(constraint.columns),
+        "definition": constraint.definition,
+    }
+
+
+def _encode_index(index: IndexInfo) -> dict[str, Any]:
+    return {
+        "schema": index.schema,
+        "table": index.table,
+        "name": index.name,
+        "columns": list(index.columns),
+        "is_unique": index.is_unique,
+        "is_primary": index.is_primary,
+        "method": index.method,
+        "definition": index.definition,
+        "constraint_name": index.constraint_name,
+    }
+
+
 def _encode_type(type_info: TypeInfo) -> dict[str, Any]:
     return {
         "schema": type_info.schema,
@@ -276,6 +337,10 @@ def load_schema(text: str) -> DatabaseSchema:
         routines=_decode_section(body["routines"], "routines", _decode_routine),
         triggers=_decode_section(body["triggers"], "triggers", _decode_trigger),
         types=_decode_section(body["types"], "types", _decode_type),
+        constraints=_decode_section(
+            body["constraints"], "constraints", _decode_constraint
+        ),
+        indexes=_decode_section(body["indexes"], "indexes", _decode_index),
     )
 
 
@@ -365,6 +430,35 @@ def _decode_trigger(value: Any, where: str) -> TriggerInfo:
         events=_text_list(record["events"], f"{where}.events"),
         function_name=_text(record["function_name"], f"{where}.function_name"),
         definition=_text(record["definition"], f"{where}.definition"),
+    )
+
+
+def _decode_constraint(value: Any, where: str) -> ConstraintInfo:
+    record = _record(value, CONSTRAINT_FIELDS, where)
+    return ConstraintInfo(
+        schema=_text(record["schema"], f"{where}.schema"),
+        table=_text(record["table"], f"{where}.table"),
+        name=_text(record["name"], f"{where}.name"),
+        kind=_text(record["kind"], f"{where}.kind"),
+        columns=_text_list(record["columns"], f"{where}.columns"),
+        definition=_text(record["definition"], f"{where}.definition"),
+    )
+
+
+def _decode_index(value: Any, where: str) -> IndexInfo:
+    record = _record(value, INDEX_FIELDS, where)
+    return IndexInfo(
+        schema=_text(record["schema"], f"{where}.schema"),
+        table=_text(record["table"], f"{where}.table"),
+        name=_text(record["name"], f"{where}.name"),
+        columns=_text_list(record["columns"], f"{where}.columns"),
+        is_unique=_flag(record["is_unique"], f"{where}.is_unique"),
+        is_primary=_flag(record["is_primary"], f"{where}.is_primary"),
+        method=_text(record["method"], f"{where}.method"),
+        definition=_text(record["definition"], f"{where}.definition"),
+        constraint_name=_opt_text(
+            record["constraint_name"], f"{where}.constraint_name"
+        ),
     )
 
 

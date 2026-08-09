@@ -200,9 +200,13 @@ REASON_NOT_INSTALLED_BASE = (
 #: §18.5 D3a requires the `installable` case to *name the one-click install and
 #: where it lives*, verbatim -- an "it is not installed" message the user cannot
 #: act on is the same dead end as no message.
+#: BUG-040 made `Database ▸ Sandbox Setup…` projectless-only, and a sandbox
+#: exists only in project mode — so naming it here would be the dead end this
+#: constant exists to prevent. The Project Status node is the reachable one, and
+#: it is genuinely wired in project mode
+#: (`MainWindow._refresh_project_status_sandbox_actions`).
 REASON_INSTALL_LOCATIONS = (
-    "Install it from Database ▸ Sandbox Setup…, or the Project Status "
-    "window's plpgsql_check node."
+    "Install it from the Project Status window's plpgsql_check node."
 )
 
 #: The full `installable` reason when the install really is one click away.
