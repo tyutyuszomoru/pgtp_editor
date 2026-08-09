@@ -323,7 +323,8 @@ _NO_NAME_CANDIDATES_REASON = (
 _NO_TARGET_BASELINE_NOTE = (
     "The sandbox was created EMPTY: the project has no target connection yet, "
     "so there was no database to build a baseline from. Set the target in "
-    "Project Settings, then re-provision from Sandbox Setup."
+    "Project Settings — note that re-provisioning is not reachable with a "
+    "project open (BUG-040)."
 )
 
 #: A "with data" sandbox with no target to clone from cannot be cloned *yet*.
@@ -332,7 +333,8 @@ _NO_TARGET_BASELINE_NOTE = (
 _WITH_DATA_NEEDS_TARGET_NOTE = (
     "'With data' was requested but the project has no target connection to "
     "clone from, so no data was cloned. Set the target in Project Settings, "
-    "then re-run the data clone from Sandbox Setup."
+    "then run the data clone from the Project Status window's sandbox "
+    "data node."
 )
 
 #: A green probe is still not an apply. Stated rather than reported as success,
