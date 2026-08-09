@@ -98,6 +98,14 @@ EXPECTED_HOST_SURFACE = {
     "_connection_summary_for",
     "_current_project",
     "_current_project_path",
+    # FQ-025 slice 1: the Alter Table ▸ column operations. Host-owned for the
+    # same reason FQ-002's creation handlers are -- they build a dialog, inject
+    # data read off `_ddl_schema`, and open a tab through `_edit_ddl_live`.
+    "_ALTER_COLUMN_DIALOGS",
+    "_alter_column_dialog",
+    "_alter_column_names_for",
+    "_alter_column_table_names",
+    "_alter_ddl_serial",
     "_database_host_label",
     "_db_ui",
     "_ddl_checkout_relpath",
@@ -157,6 +165,7 @@ EXPECTED_HOST_SURFACE = {
     "_on_auto_parse_toggled",
     "_on_bookmark_project_changed",
     "_on_ddl_add_trigger_requested",
+    "_on_ddl_alter_column_requested",
     "_on_ddl_edit_requested",
     "_on_ddl_explorer_toggled",
     "_on_ddl_explorer_visibility_changed",
@@ -190,6 +199,7 @@ EXPECTED_HOST_SURFACE = {
     "_on_tree_selection_changed",
     "_open_connection_setup",
     "_open_created_ddl_object",
+    "_open_generated_alter_ddl",
     "_open_ddl_explorer",
     "_open_history_jump_list",
     "_open_log_folder",

@@ -1,6 +1,11 @@
 from pgtp_editor.db.ddl_buffer import build_ddl_text
 from pgtp_editor.db.introspect import ColumnInfo, DatabaseSchema, RoutineInfo, TableInfo, TriggerInfo
-from pgtp_editor.ui.ddl_buffer_panel import BrowserPanel, resolve_edit_target
+from pgtp_editor.ui.ddl_buffer_panel import (
+    ALTER_TABLE_ACTIONS,
+    ALTER_TABLE_MENU_TITLE,
+    BrowserPanel,
+    resolve_edit_target,
+)
 from pgtp_editor.ui.ddl_object_editor import DdlObjectRef
 
 # DatabaseSchema is used directly (not just via _schema()) in several tests
@@ -1000,7 +1005,10 @@ def test_table_with_no_triggers_gets_a_plain_leaf_node(qtbot):
     assert tables_root.childCount() == 1
     table_item = tables_root.child(0)
     assert table_item.text(0) == "pr.widget"  # no "(N)" suffix
-    assert table_item.childCount() == 0
+    # Its ONLY child is FQ-025's columns group -- no trigger leaves.
+    assert [table_item.child(i).text(0) for i in range(table_item.childCount())] == [
+        "Columns  (1)"
+    ]
 
 
 def test_table_with_triggers_keeps_existing_presentation_when_also_in_tables(qtbot):
@@ -1026,8 +1034,12 @@ def test_table_with_triggers_keeps_existing_presentation_when_also_in_tables(qtb
     assert tables_root.childCount() == 1
     table_item = tables_root.child(0)
     assert table_item.text(0) == "pr.equipment  (1)"
-    assert table_item.childCount() == 1
-    assert table_item.child(0).text(0) == "pr.equipment.trg_audit [A][I]"
+    # Triggers first, then FQ-025's columns group: the branch is about triggers,
+    # and the columns must not push them out of view.
+    assert [table_item.child(i).text(0) for i in range(table_item.childCount())] == [
+        "pr.equipment.trg_audit [A][I]",
+        "Columns  (1)",
+    ]
 
 
 def test_tables_branch_unions_schema_tables_and_trigger_only_tables(qtbot):
@@ -1177,9 +1189,10 @@ def test_context_menu_on_a_table_node_offers_no_edit(qtbot):
 
 
 def test_context_menu_on_a_table_node_offers_add_trigger(qtbot):
-    """FQ-002's carve-out: the table node's menu holds exactly one entry, and
-    it emits the clicked table's TableInfo so the caller can scope the new
-    trigger to it without a second lookup."""
+    """FQ-002's carve-out: the table node's menu leads with the create entry,
+    and it emits the clicked table's TableInfo so the caller can scope the new
+    trigger to it without a second lookup. FQ-025's mutation submenu sits
+    BELOW it -- creating an object and altering one are different acts."""
     panel = _table_panel(qtbot)
     table_item = panel.tree.topLevelItem(0).child(0)
     requested = []
@@ -1187,7 +1200,10 @@ def test_context_menu_on_a_table_node_offers_add_trigger(qtbot):
 
     menu = panel._menu_for_item(table_item)
 
-    assert [action.text() for action in menu.actions()] == ["Add Trigger…"]
+    assert [action.text() for action in menu.actions()] == [
+        "Add Trigger…",
+        ALTER_TABLE_MENU_TITLE,
+    ]
     menu.actions()[0].trigger()
     assert len(requested) == 1
     assert requested[0].name == "pr.widget"
@@ -1366,3 +1382,180 @@ def test_dirty_overlay_never_marks_argument_or_group_rows(qtbot):
     assert calc_total.child(0).text(0) == "item_id (integer)"
     assert panel.tree.topLevelItem(1).text(0) == "Functions & Procedures"
     assert panel.tree.topLevelItem(0).text(0) == "Tables"
+
+
+# --- FQ-025 slice 1: column rows and the "Alter Table ▸" submenu -------------
+
+
+def _alter_panel(qtbot, *, browse_only=False, kind="table"):
+    """A one-table tree whose table carries two columns -- the click contexts
+    the FQ-025 dialogs default to."""
+    schema = DatabaseSchema(
+        tables={
+            "pr.widget": TableInfo(
+                name="pr.widget",
+                kind=kind,
+                columns=[
+                    ColumnInfo(
+                        name="id", data_type="integer", is_pk=True, is_fk=False,
+                        is_nullable=False, default=None,
+                    ),
+                    ColumnInfo(
+                        name="note", data_type="text", is_pk=False, is_fk=False,
+                        is_nullable=True, default=None,
+                    ),
+                ],
+            )
+        }
+    )
+    _, spans = build_ddl_text(schema)
+    panel = BrowserPanel(browse_only=browse_only)
+    qtbot.addWidget(panel)
+    panel.set_schema(schema, spans)
+    return panel
+
+
+def _columns_group(panel):
+    table_item = panel.tree.topLevelItem(0).child(0)
+    for i in range(table_item.childCount()):
+        child = table_item.child(i)
+        if child.text(0).startswith("Columns"):
+            return child
+    raise AssertionError("no Columns group under the table node")
+
+
+def _submenu(menu, title=None):
+    """The one submenu on `menu` (the `Alter Table ▸` one), as a QMenu."""
+    wanted = ALTER_TABLE_MENU_TITLE if title is None else title
+    for action in menu.actions():
+        if action.text() == wanted:
+            return action.menu()
+    return None
+
+
+def test_a_table_node_gains_a_columns_group_with_one_leaf_per_column(qtbot):
+    """Column rows did not exist in this tree at all before FQ-025 -- which is
+    why a right-click could never carry "which column" into a dialog."""
+    panel = _alter_panel(qtbot)
+
+    group = _columns_group(panel)
+
+    assert group.text(0) == "Columns  (2)"
+    # Declared order, not alphabetical -- the same order the Properties panel
+    # renders the same table in.
+    assert [group.child(i).text(0) for i in range(group.childCount())] == [
+        "id (integer)",
+        "note (text)",
+    ]
+
+
+def test_a_table_with_no_table_info_gets_no_columns_group(qtbot):
+    """A trigger-only table node has no TableInfo, so there are no columns to
+    show -- and an empty `Columns (0)` folder would state nothing."""
+    panel = BrowserPanel()
+    qtbot.addWidget(panel)
+    schema = _schema()  # triggers only, no `tables`
+    _, spans = build_ddl_text(schema)
+    panel.set_schema(schema, spans)
+
+    table_item = panel.tree.topLevelItem(0).child(0)
+    labels = [table_item.child(i).text(0) for i in range(table_item.childCount())]
+    assert not any(label.startswith("Columns") for label in labels)
+
+
+def test_the_table_node_submenu_offers_the_eight_column_operations(qtbot):
+    panel = _alter_panel(qtbot)
+    table_item = panel.tree.topLevelItem(0).child(0)
+
+    submenu = _submenu(panel._menu_for_item(table_item))
+
+    assert [action.text() for action in submenu.actions()] == [
+        label for _op, label in ALTER_TABLE_ACTIONS
+    ]
+    assert [label for _op, label in ALTER_TABLE_ACTIONS] == [
+        "Add Column…",
+        "Drop Column…",
+        "Rename Column…",
+        "Change Column Type…",
+        "Set NOT NULL…",
+        "Drop NOT NULL…",
+        "Set DEFAULT…",
+        "Drop DEFAULT…",
+    ]
+
+
+def test_the_table_node_submenu_emits_no_column_context(qtbot):
+    """The same operations are reachable from the table, with no column
+    pre-selected -- the dialog then opens on that table's first column."""
+    panel = _alter_panel(qtbot)
+    table_item = panel.tree.topLevelItem(0).child(0)
+    requested = []
+    panel.alter_column_requested.connect(
+        lambda op, table, column: requested.append((op, table.name, column))
+    )
+
+    _submenu(panel._menu_for_item(table_item)).actions()[1].trigger()  # Drop Column…
+
+    assert requested == [("drop_column", "pr.widget", "")]
+
+
+def test_a_column_leaf_menu_pre_fills_the_clicked_column(qtbot):
+    """The entry's core interaction rule: right-clicking a column defaults the
+    dialog to the table AND the column the click came from."""
+    panel = _alter_panel(qtbot)
+    note_leaf = _columns_group(panel).child(1)
+    requested = []
+    panel.alter_column_requested.connect(
+        lambda op, table, column: requested.append((op, table.name, column))
+    )
+
+    menu = panel._menu_for_item(note_leaf)
+
+    assert [action.text() for action in menu.actions()] == [ALTER_TABLE_MENU_TITLE]
+    submenu = _submenu(menu)
+    assert [action.text() for action in submenu.actions()] == [
+        label for _op, label in ALTER_TABLE_ACTIONS
+    ]
+    submenu.actions()[0].trigger()  # Add Column…
+    assert requested == [("add_column", "pr.widget", "note")]
+
+
+def test_a_column_leaf_click_shows_its_table_in_the_properties_panel(qtbot):
+    panel = _alter_panel(qtbot)
+    selected = []
+    panel.table_selected.connect(selected.append)
+
+    panel._on_item_clicked(_columns_group(panel).child(0), 0)
+
+    assert [info.name for info in selected] == ["pr.widget"]
+
+
+def test_the_columns_group_node_itself_offers_no_menu(qtbot):
+    """A container, not a target: it names no column, so it can seed nothing."""
+    panel = _alter_panel(qtbot)
+
+    assert panel._menu_for_item(_columns_group(panel)) is None
+
+
+def test_a_view_offers_no_alter_table_submenu_anywhere(qtbot):
+    """Every entry emits `ALTER TABLE`, which a view cannot take -- so the
+    submenu is absent on the view's node and on its column leaves alike."""
+    panel = _alter_panel(qtbot, kind="view")
+    table_item = panel.tree.topLevelItem(0).child(0)
+
+    assert _submenu(panel._menu_for_item(table_item)) is None
+    assert [a.text() for a in panel._menu_for_item(table_item).actions()] == [
+        "Add Trigger…"
+    ]
+    assert panel._menu_for_item(_columns_group(panel).child(0)) is None
+
+
+def test_browse_only_suppresses_every_alter_table_entry(qtbot):
+    """§18.7's sandbox Explorer must not offer schema mutations -- suppressed at
+    menu-BUILD time, so there is no dead control to click."""
+    panel = _alter_panel(qtbot, browse_only=True)
+
+    table_item = panel.tree.topLevelItem(0).child(0)
+    assert panel._menu_for_item(table_item) is None
+    assert panel._menu_for_item(_columns_group(panel)) is None
+    assert panel._menu_for_item(_columns_group(panel).child(0)) is None

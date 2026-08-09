@@ -44,6 +44,12 @@ from PySide6.QtWidgets import (
 from pgtp_editor.db.ddl_buffer import DdlObjectSpan
 from pgtp_editor.db.ddl_project import DriftMarkers, routine_ddl_paths, trigger_ddl_path
 from pgtp_editor.db.introspect import DatabaseSchema
+from pgtp_editor.ui.alter_column_dialogs import (
+    OP_DROP_COLUMN,
+    OP_DROP_DEFAULT,
+    OP_DROP_NOT_NULL,
+    OP_SET_NOT_NULL,
+)
 from pgtp_editor.ui.ddl_object_editor import DdlObjectRef
 
 _SPAN_ROLE = Qt.ItemDataRole.UserRole
@@ -66,6 +72,39 @@ _OBJKEY_ROLE = Qt.ItemDataRole.UserRole + 3
 #: the overlay can be applied and removed repeatedly without re-parsing the
 #: visible text or ever stacking two `*`s on one row.
 _LABEL_ROLE = Qt.ItemDataRole.UserRole + 4
+#: A column leaf's `(TableInfo, column name)` (FQ-025 slice 1). Its own role,
+#: not `_TABLE_ROLE`, precisely because a column row must NOT behave like a
+#: table row: it carries the click context an "Alter Table ▸" dialog defaults
+#: its column dropdown to, which a table row has nothing to say about.
+_COLUMN_ROLE = Qt.ItemDataRole.UserRole + 5
+
+#: FQ-025 slice 1's eight column operations, in menu order, as
+#: `(operation id, menu label)`.
+#:
+#: The four ids `alter_column_dialogs.ColumnActionDialog` already owns are
+#: IMPORTED rather than respelled here -- a second spelling of `"drop_column"`
+#: is exactly how a menu item comes to open the wrong dialog. The other four
+#: are declared here because each has a dialog class of its own and so needed
+#: no id over there; the host maps all eight in one place
+#: (`MainWindow._alter_column_dialog`).
+OP_ADD_COLUMN = "add_column"
+OP_RENAME_COLUMN = "rename_column"
+OP_CHANGE_COLUMN_TYPE = "change_column_type"
+OP_SET_DEFAULT = "set_default"
+
+ALTER_TABLE_ACTIONS: tuple[tuple[str, str], ...] = (
+    (OP_ADD_COLUMN, "Add Column…"),
+    (OP_DROP_COLUMN, "Drop Column…"),
+    (OP_RENAME_COLUMN, "Rename Column…"),
+    (OP_CHANGE_COLUMN_TYPE, "Change Column Type…"),
+    (OP_SET_NOT_NULL, "Set NOT NULL…"),
+    (OP_DROP_NOT_NULL, "Drop NOT NULL…"),
+    (OP_SET_DEFAULT, "Set DEFAULT…"),
+    (OP_DROP_DEFAULT, "Drop DEFAULT…"),
+)
+
+#: The submenu these eight sit in, on both the table node and a column leaf.
+ALTER_TABLE_MENU_TITLE = "Alter Table"
 
 #: The one unsaved/changed glyph in this app (§11/§18.2/§18.5): the editable
 #: tab's title marker and the §18.2 `locally_edited` drift marker are both
@@ -162,11 +201,27 @@ class BrowserPanel(QWidget):
     #: not scoped to a specific parent object, so there is no context to pass.
     new_routine_requested = Signal()
 
+    #: Right-click ▸ Alter Table ▸ <one of `ALTER_TABLE_ACTIONS`> on a table
+    #: node or on one of its column leaves (FQ-025 slice 1). Carries
+    #: `(operation id, TableInfo, column name)`, where the column name is `""`
+    #: for a click that came from the table node itself -- the dialog then opens
+    #: with its column dropdown on that table's first column instead of a
+    #: pre-selected one.
+    #:
+    #: Deliberately the SAME shape as `add_trigger_requested`: the panel states
+    #: what was clicked and knows nothing about dialogs, and the host builds,
+    #: populates and hosts the dialog (§18.1's creation-gesture wiring). The
+    #: operation id rides along rather than becoming eight signals, because all
+    #: eight carry identical context and differ only in which dialog the host
+    #: opens.
+    alter_column_requested = Signal(str, object, str)
+
     def __init__(
         self, parent: QWidget | None = None, *, browse_only: bool = False
     ) -> None:
         """`browse_only` makes this tree a pure viewer: no `Edit DDL`, no
-        `Add Trigger…`, no `New Function/Procedure…` (§18.7, FQ-022).
+        `Add Trigger…`, no `New Function/Procedure…`, and no `Alter Table ▸`
+        (§18.7, FQ-022/FQ-025).
 
         The SANDBOX Explorer instance passes it, for the reason recorded on
         `EditorPanel.__init__`: `Edit DDL` from the sandbox tree would take
@@ -175,7 +230,9 @@ class BrowserPanel(QWidget):
         *creation* entries are suppressed with it because they open FQ-002's
         dialogs, whose product is a new object for the project/target lane --
         offering them on a sandbox tree would state a scope the gesture does not
-        have.
+        have. FQ-025's column operations are suppressed for the stronger form of
+        the same reason: they are schema MUTATIONS, and §18.7's sandbox Explorer
+        exists to look at a sandbox, never to reshape it from the tree.
 
         Suppression happens at menu-BUILD time rather than by leaving the signals
         unconnected: an entry that emits into nothing is a dead control, which is
@@ -344,6 +401,40 @@ class BrowserPanel(QWidget):
             for trigger in triggers:
                 span = span_by_trigger.get((trigger.schema, trigger.table, trigger.name))
                 self._add_trigger_leaf(table_item, trigger, span, markers)
+            self._add_columns_group(table_item, table_info)
+
+    @staticmethod
+    def _add_columns_group(table_item: QTreeWidgetItem, table_info) -> None:
+        """The table's columns, under one collapsible `Columns (N)` node
+        (FQ-025 slice 1).
+
+        Column rows exist so a right-click can carry *which column* into the
+        `Alter Table ▸` dialogs -- the entry's core interaction rule ("defaulting
+        to the table and the column the click was coming from"). Before this
+        there was no column row in the tree at all, so that context could only
+        ever have come from the table.
+
+        **Grouped rather than listed flat**, and added AFTER the trigger leaves:
+        a table's triggers are the thing this branch has always been about, and
+        thirty columns spilled directly under the table node would bury them.
+        The group node itself carries no role, so it clicks nowhere and offers no
+        menu -- it is a container, not a target.
+
+        Nothing is added for a table with no `TableInfo` (a trigger-only node) or
+        no columns: an empty `Columns (0)` folder states nothing.
+        """
+        columns = list(getattr(table_info, "columns", ()) or ())
+        if not columns:
+            return
+        group = QTreeWidgetItem([f"Columns  ({len(columns)})"])
+        table_item.addChild(group)
+        for column in columns:
+            # `TableInfo.columns`' own declared order, not alphabetical -- the
+            # same choice `properties_panel._rows_for_ddl_table` makes, so the
+            # two surfaces show one table the same way round.
+            leaf = QTreeWidgetItem([f"{column.name} ({column.data_type})"])
+            leaf.setData(0, _COLUMN_ROLE, (table_info, column.name))
+            group.addChild(leaf)
 
     def _build_routines_branch(
         self, schema: DatabaseSchema, span_by_routine, span_by_trigger, markers
@@ -440,6 +531,14 @@ class BrowserPanel(QWidget):
         table_info = item.data(0, _TABLE_ROLE)
         if table_info is not None:
             self.table_selected.emit(table_info)
+            return
+        column_context = item.data(0, _COLUMN_ROLE)
+        if column_context is not None:
+            # A column row shows its OWNING TABLE in the Properties panel
+            # (§18.1), which is where that column's type/default/comment already
+            # render -- the same node the user would have clicked one level up,
+            # reached without collapsing the group they are working in.
+            self.table_selected.emit(column_context[0])
 
     def _on_context_menu(self, pos) -> None:
         """Three distinct menus, keyed on what the clicked item IS.
@@ -491,10 +590,30 @@ class BrowserPanel(QWidget):
         table_info = item.data(0, _TABLE_ROLE)
         if table_info is not None:
             menu = QMenu(self)
+            # FQ-002's *creation* entry stays at the TOP LEVEL: it creates a new
+            # object, which is a different act from altering this one, and
+            # burying it in the mutation submenu would say otherwise.
             menu.addAction(
                 "Add Trigger…",
                 lambda: self.add_trigger_requested.emit(table_info),
             )
+            self._add_alter_table_submenu(menu, table_info, column="")
+            return menu
+
+        column_context = item.data(0, _COLUMN_ROLE)
+        if column_context is not None:
+            column_table, column_name = column_context
+            menu = QMenu(self)
+            # The SAME submenu, carrying the clicked column. A column row offers
+            # nothing else, but it keeps the submenu rather than flattening the
+            # eight entries: one shape for one action set, and the title is what
+            # tells the user these produce `ALTER TABLE` rather than acting on
+            # the column in place.
+            if self._add_alter_table_submenu(menu, column_table, column=column_name) is None:
+                # A view's column: the submenu declined, and it was this menu's
+                # only content -- an empty menu under the cursor is worse than
+                # none (the same reason the fall-through below returns None).
+                return None
             return menu
 
         if item.data(0, _BRANCH_ROLE) == "routines":
@@ -505,7 +624,38 @@ class BrowserPanel(QWidget):
             )
             return menu
 
-        # Argument-name child leaves and the Tables branch root carry neither a
-        # span nor a creation context -- no menu at all, rather than an empty
-        # one popping up under the cursor.
+        # Argument-name child leaves, the `Columns` group node and the Tables
+        # branch root carry neither a span nor a creation context -- no menu at
+        # all, rather than an empty one popping up under the cursor.
         return None
+
+    def _add_alter_table_submenu(self, menu: QMenu, table_info, *, column: str):
+        """FQ-025 slice 1's `Alter Table ▸` submenu, on `menu`.
+
+        One builder for both entry points, so the table node and a column leaf
+        can never come to offer different operation sets -- they differ in
+        exactly one thing, the pre-selected column, which is the parameter.
+
+        Returns the submenu (or `None` when none was added) so callers and tests
+        can read its membership without re-deriving it.
+
+        **Views and materialized views get no submenu.** Every operation here
+        emits `ALTER TABLE`, and offering a table mutation on a view would
+        generate DDL the server refuses -- the tab-is-the-safeguard principle
+        covers *running* generated DDL, not generating DDL that cannot be right.
+        """
+        if getattr(table_info, "kind", "table") != "table":
+            return None
+        # Built explicitly and then added, never `menu.addMenu("title")`: that
+        # overload hands the new QMenu's ownership to Python, so the submenu is
+        # garbage-collected out from under the menu that is showing it.
+        submenu = QMenu(ALTER_TABLE_MENU_TITLE, menu)
+        menu.addMenu(submenu)
+        for operation, label in ALTER_TABLE_ACTIONS:
+            submenu.addAction(
+                label,
+                lambda operation=operation: self.alter_column_requested.emit(
+                    operation, table_info, column
+                ),
+            )
+        return submenu

@@ -5,10 +5,23 @@ procedure from the DDL Explorer) and for §18.8's Project Status entry point.
 No live DB and no modal calls: both creation dialogs are shown non-modally,
 and the tab-opening path is driven through the same seam Edit… uses.
 """
+import pytest
 from PySide6.QtCore import QSettings, Qt
+from PySide6.QtWidgets import QDialog
 
+from pgtp_editor.db.ddl_check import CheckRequest, build_ladder
 from pgtp_editor.db.ddl_project import ProjectSettings, save_settings
-from pgtp_editor.db.introspect import DatabaseSchema, RoutineInfo, TableInfo
+from pgtp_editor.db.sandbox import SandboxCapabilities
+from pgtp_editor.db.ddl_skeleton import add_column_skeleton, drop_column_skeleton
+from pgtp_editor.db.introspect import ColumnInfo, DatabaseSchema, RoutineInfo, TableInfo
+from pgtp_editor.ui.alter_column_dialogs import (
+    AddColumnDialog,
+    ChangeColumnTypeDialog,
+    ColumnActionDialog,
+    RenameColumnDialog,
+    SetColumnDefaultDialog,
+)
+from pgtp_editor.ui.ddl_buffer_panel import ALTER_TABLE_ACTIONS
 from pgtp_editor.ui.main_window import MainWindow
 from pgtp_editor.ui.new_routine_dialog import NewRoutineDialog
 from pgtp_editor.ui.new_trigger_dialog import NewTriggerDialog
@@ -273,3 +286,239 @@ def test_reopening_after_a_close_reprobes_and_rerenders(qtbot, tmp_path):
     assert probes == [True]
     assert len(pushed) == 1
     assert pushed[0] is not None
+
+
+# --- FQ-025 slice 1: the Alter Table ▸ column operations --------------------
+#
+# Same division of labour as FQ-002 above: the tree emits what was clicked, the
+# window builds the dialog with the schema data injected, and the accepted
+# dialog's rendered skeleton opens as an editable tab. Nothing here executes.
+
+
+def _alter_schema():
+    return DatabaseSchema(
+        tables={
+            "pr.orders": TableInfo(
+                name="pr.orders",
+                kind="table",
+                columns=[
+                    ColumnInfo(
+                        name="id", data_type="integer", is_pk=True, is_fk=False,
+                        is_nullable=False, default=None,
+                    ),
+                    ColumnInfo(
+                        name="note", data_type="text", is_pk=False, is_fk=False,
+                        is_nullable=True, default=None,
+                    ),
+                ],
+            ),
+            "pr.v_orders": TableInfo(name="pr.v_orders", kind="view", columns=[]),
+        }
+    )
+
+
+def _alter_window(qtbot, tmp_path):
+    window = _window(qtbot, tmp_path)
+    window._ddl_schema = _alter_schema()
+    return window
+
+
+def _orders(window):
+    return window._ddl_schema.tables["pr.orders"]
+
+
+def _alter_tabs(window):
+    """Every open ALTER tab, newest last."""
+    return [
+        panel
+        for panel in window.center_stage.ddl_object_panels()
+        if panel.ref.kind == "alter"
+    ]
+
+
+def test_each_operation_opens_the_dialog_that_collects_its_fields(qtbot, tmp_path):
+    """One mapping decides which id opens which dialog -- four operations share
+    `ColumnActionDialog` because they collect nothing but table+column."""
+    window = _alter_window(qtbot, tmp_path)
+
+    built = {
+        operation: type(window._alter_column_dialog(operation, _orders(window), "note"))
+        for operation, _label in ALTER_TABLE_ACTIONS
+    }
+
+    assert built == {
+        "add_column": AddColumnDialog,
+        "rename_column": RenameColumnDialog,
+        "change_column_type": ChangeColumnTypeDialog,
+        "set_default": SetColumnDefaultDialog,
+        "drop_column": ColumnActionDialog,
+        "set_not_null": ColumnActionDialog,
+        "drop_not_null": ColumnActionDialog,
+        "drop_default": ColumnActionDialog,
+    }
+
+
+def test_the_dialogs_data_is_injected_from_the_already_fetched_schema(qtbot, tmp_path):
+    """The dialog never reaches a database: its dropdowns are filled from the
+    `DatabaseSchema` the Explorer already holds. Views are excluded -- every
+    operation emits ALTER TABLE, which a view cannot take."""
+    window = _alter_window(qtbot, tmp_path)
+
+    dialog = window._alter_column_dialog("drop_column", _orders(window), "note")
+    qtbot.addWidget(dialog)
+
+    assert dialog.available_tables() == ["pr.orders"]
+    assert dialog.available_columns() == ["id", "note"]
+
+
+def test_a_column_click_pre_selects_that_column_and_a_table_click_does_not(qtbot, tmp_path):
+    window = _alter_window(qtbot, tmp_path)
+
+    from_column = window._alter_column_dialog("drop_column", _orders(window), "note")
+    from_table = window._alter_column_dialog("drop_column", _orders(window), "")
+    qtbot.addWidget(from_column)
+    qtbot.addWidget(from_table)
+
+    assert (from_column.table(), from_column.column()) == ("pr.orders", "note")
+    assert from_column.context_column() == "note"
+    # From the table node the same operation is offered with no column
+    # pre-selected -- the dropdown simply starts at the first column.
+    assert (from_table.table(), from_table.column()) == ("pr.orders", "id")
+    assert from_table.context_column() == ""
+
+
+def test_the_dialog_is_shown_non_modally_and_never_exec_d(qtbot, tmp_path, monkeypatch):
+    """§30's rule: a test must never reach an un-patched modal call, which holds
+    because the gesture uses `show()`, exactly as FQ-002's dialogs do."""
+    monkeypatch.setattr(
+        QDialog, "exec", lambda self: pytest.fail("the dialog was exec()'d")
+    )
+    window = _alter_window(qtbot, tmp_path)
+
+    window._on_ddl_alter_column_requested("drop_column", _orders(window), "note")
+
+    assert _alter_tabs(window) == []  # nothing is generated until it is accepted
+
+
+def test_accepting_opens_a_tab_holding_the_emitters_own_output(qtbot, tmp_path):
+    window = _alter_window(qtbot, tmp_path)
+    window._on_ddl_alter_column_requested("drop_column", _orders(window), "note")
+    dialog = window.findChild(ColumnActionDialog)
+
+    dialog.accept()
+
+    tabs = _alter_tabs(window)
+    assert len(tabs) == 1
+    # Byte-identical to the pure emitter: no SQL is assembled in the UI layer.
+    assert tabs[0].editor.toPlainText() == drop_column_skeleton(
+        table="pr.orders", column="note"
+    )
+
+
+def test_a_cancelled_dialog_opens_nothing(qtbot, tmp_path):
+    window = _alter_window(qtbot, tmp_path)
+    window._on_ddl_alter_column_requested("drop_column", _orders(window), "note")
+    dialog = window.findChild(ColumnActionDialog)
+
+    dialog.reject()
+
+    assert _alter_tabs(window) == []
+
+
+def test_add_column_with_a_comment_reaches_the_tab_as_two_statements(qtbot, tmp_path):
+    """`add_column_skeleton` emits `ALTER TABLE …;` AND `COMMENT ON COLUMN …;`.
+    The tab must carry both, verbatim -- the whole buffer is handed to
+    `db/apply.py::apply_ddl` as ONE element of a statement Sequence, so
+    multi-statement text survives to the server intact."""
+    window = _alter_window(qtbot, tmp_path)
+    window._on_ddl_alter_column_requested("add_column", _orders(window), "")
+    dialog = window.findChild(AddColumnDialog)
+    dialog._name_edit.setText("memo")
+    dialog._comment_edit.setText("free text")
+
+    dialog.accept()
+
+    text = _alter_tabs(window)[0].editor.toPlainText()
+    assert text == add_column_skeleton(
+        table="pr.orders", column="memo", datatype=dialog.datatype(),
+        nullable=True, comment="free text",
+    )
+    assert "ALTER TABLE" in text and "COMMENT ON COLUMN" in text
+    assert text.count(";") == 2
+
+
+def test_the_alter_tab_identifies_itself_as_an_alter_not_an_object(qtbot, tmp_path):
+    """An ALTER is a mutation, not an object: it gets a ref of its own so no
+    confirmation ever spells a table as a zero-argument routine."""
+    window = _alter_window(qtbot, tmp_path)
+    window._on_ddl_alter_column_requested("drop_column", _orders(window), "note")
+    window.findChild(ColumnActionDialog).accept()
+
+    ref = _alter_tabs(window)[0].ref
+
+    assert ref.kind == "alter"
+    assert ref.qualified == "ALTER TABLE pr.orders"
+    assert ref.short_title == "ALTER orders"
+    # Empty by design: `CheckRequest.checked_name` derives from it, and an ALTER
+    # creates no function for tier 3's plpgsql_check to analyse.
+    assert ref.name == ""
+
+
+def test_two_generations_get_two_tabs_never_one_silently_reused(qtbot, tmp_path):
+    """`open_ddl_object_tab` focuses an existing tab for a repeated key and
+    DISCARDS the new text -- two ALTERs are two statements, so they must not
+    share a key."""
+    window = _alter_window(qtbot, tmp_path)
+    for column in ("id", "note"):
+        window._on_ddl_alter_column_requested("drop_column", _orders(window), column)
+        # The newest dialog: the first one is still alive (non-modal, and its
+        # parent is the window), so `findChild` would keep handing it back.
+        window.findChildren(ColumnActionDialog)[-1].accept()
+
+    texts = [panel.editor.toPlainText() for panel in _alter_tabs(window)]
+
+    assert len(texts) == 2
+    assert texts[0] != texts[1]
+
+
+def test_an_alter_tab_never_writes_a_ddl_object_file_or_a_manifest_entry(qtbot, tmp_path):
+    """Save-to-object is suppressed structurally: with a project OPEN, an ALTER
+    still takes the projectless tab path, so nothing seeds `ddl/<object>.sql`
+    and nothing claims a deploy baseline for a mutation."""
+    window = _alter_window(qtbot, tmp_path)
+    folder = tmp_path / "proj"
+    (folder / "ddl").mkdir(parents=True)
+    save_settings(folder, ProjectSettings())
+    window._ddl_project_folder = folder
+    window._ddl_project_settings = ProjectSettings()
+
+    window._on_ddl_alter_column_requested("drop_column", _orders(window), "note")
+    window.findChild(ColumnActionDialog).accept()
+
+    assert list((folder / "ddl").iterdir()) == []
+    assert window._ddl_project_settings.deployed == {}
+    assert _alter_tabs(window)[0].save_path is None
+
+
+def test_the_ladder_hands_multi_statement_alter_text_over_as_one_element(qtbot, tmp_path):
+    """The apply path's end: `db/apply.py::apply_ddl` takes a **Sequence of
+    statements** and raises `TypeError` on a bare string, so what matters is
+    that the ladder puts the whole buffer in as ONE element rather than
+    splitting or stringifying it. Two statements in that element are executed
+    together, in the ladder's single transaction."""
+    window = _alter_window(qtbot, tmp_path)
+    window._on_ddl_alter_column_requested("add_column", _orders(window), "")
+    dialog = window.findChildren(AddColumnDialog)[-1]
+    dialog._name_edit.setText("memo")
+    dialog._comment_edit.setText("free text")
+    dialog.accept()
+    panel = _alter_tabs(window)[0]
+    text = panel.editor.toPlainText()
+
+    request = CheckRequest.from_ref(panel.ref, text)
+    plan = build_ladder(request, SandboxCapabilities(), text, record_applied=True)
+
+    assert plan.statements[plan.ddl_index] == text
+    # Tier 3 is not merely skipped by accident: an ALTER creates no function for
+    # `plpgsql_check` to analyse, and the empty ref name says so.
+    assert plan.check_index is None

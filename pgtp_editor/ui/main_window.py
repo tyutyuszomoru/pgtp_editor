@@ -15,7 +15,7 @@
 
 import logging
 import re
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QSettings, QTimer
@@ -92,6 +92,14 @@ from pgtp_editor.ui.ddl_object_editor import (
     DdlObjectRef,
     parse_buffer_identity,
 )
+from pgtp_editor.ui.alter_column_dialogs import (
+    COLUMN_ACTIONS,
+    AddColumnDialog,
+    ChangeColumnTypeDialog,
+    ColumnActionDialog,
+    RenameColumnDialog,
+    SetColumnDefaultDialog,
+)
 from pgtp_editor.ui.sandbox_controller import SandboxController, SandboxOperation
 from pgtp_editor.ui.sandbox_setup_dialog import SandboxSetupDialog
 from pgtp_editor.ui.new_routine_dialog import NewRoutineDialog
@@ -103,7 +111,13 @@ from pgtp_editor.ui.coherence_panel import CoherencePanel
 from pgtp_editor.ui.ddl_project_controller import DdlProjectController
 from pgtp_editor.ui.diff_merge_controller import DiffMergeController
 from pgtp_editor.ui.find_controller import FindValidateController
-from pgtp_editor.ui.ddl_buffer_panel import BrowserPanel
+from pgtp_editor.ui.ddl_buffer_panel import (
+    OP_ADD_COLUMN,
+    OP_CHANGE_COLUMN_TYPE,
+    OP_RENAME_COLUMN,
+    OP_SET_DEFAULT,
+    BrowserPanel,
+)
 from pgtp_editor.ui.code_editor import CodeEditorDialog
 # FQ-013: the shared gutter mixin publishes bookmark changes; the host
 # subscribes and decides what they mean (the mixin knows nothing about projects).
@@ -195,6 +209,87 @@ _MAINTENANCE_MENU_TITLES = ("File", "Schema", "Help")
 #: instead by the filter's scope: the Editor bar is untouched, so
 #: `Deployment ▸ Save XSD` stays right where it always is.
 _MAINTENANCE_FILE_ITEMS = ("New Session",)
+
+
+@dataclass(frozen=True)
+class AlterDdlRef:
+    """The identity of an ALTER-generated DDL tab (FQ-025 slice 1).
+
+    **An ALTER is not an object, so it is not a `DdlObjectRef`.** That type
+    names a thing that exists (or is about to) in the catalog: a function, a
+    procedure, a trigger. `ALTER TABLE pr.orders DROP COLUMN note` names no such
+    thing — it is a *mutation of* an object that already exists and has its own
+    identity elsewhere. `DdlObjectRef` cannot express that without lying:
+    `short_title`/`qualified` would render `pr.orders()`, spelling a table as a
+    zero-argument routine in every confirmation dialog the panel puts up.
+
+    So this is a separate, duck-typed ref carrying exactly the attributes
+    `DdlObjectEditorPanel`, `CenterStage` and `db/ddl_check.py::CheckRequest`
+    read off a ref, and three deliberate decisions:
+
+    - **`name` is empty, on purpose.** `CheckRequest.checked_name` is derived
+      from it, and `build_ladder` adds tier 3's `plpgsql_check` statements only
+      when a name is there. An ALTER creates no function for `plpgsql_check` to
+      analyse, so the honest state is "tier 3 was never going to run" — which is
+      exactly what an empty name says. Tiers 0-2 (parse, lint, compile-by-apply)
+      still run, and they are the tiers an ALTER actually has.
+    - **`serial` makes every generation its own tab.** `open_ddl_object_tab`
+      focuses an existing tab for a repeated key and DISCARDS the new text; two
+      ALTERs on one table are two different statements, so keying them the same
+      would silently swallow the second one.
+    - **Save-to-object is suppressed structurally, not by a disabled control.**
+      An ALTER has no `ddl/<object>.sql` — there is no object whose source file
+      this could be, and writing one would put a mutation where §18.2 expects a
+      definition and hash it as a deploy baseline. The tab is therefore opened
+      through `_edit_ddl_live` ALWAYS (never `_edit_ddl_checked_out`) and is
+      never registered in the deploy manifest, so the only save that can reach
+      it is Save As… to a path the user names. See
+      `MainWindow._open_generated_alter_ddl`.
+    """
+
+    schema: str
+    table: str
+    #: The `ALTER_TABLE_ACTIONS` id that generated this tab, for the label only.
+    operation: str = ""
+    #: Per-generation discriminator (see the class docstring).
+    serial: int = 0
+
+    #: Read by `CheckRequest.from_ref` and `DdlObjectEditorPanel`. `"alter"` is
+    #: a kind no `DdlObjectRef` ever carries, which is what lets every consumer
+    #: tell an ALTER tab from an object tab with one comparison.
+    kind: str = "alter"
+    name: str = ""
+    arg_types: tuple[str, ...] = ()
+
+    @property
+    def is_trigger(self) -> bool:
+        return False
+
+    @property
+    def key(self) -> tuple:
+        return ("alter", self.schema, self.table, self.operation, self.serial)
+
+    @property
+    def qualified_table(self) -> str:
+        return f"{self.schema}.{self.table}" if self.schema else self.table
+
+    @property
+    def short_title(self) -> str:
+        return f"ALTER {self.table}"
+
+    @property
+    def qualified(self) -> str:
+        """What every confirmation and Audit line names this buffer. Reads as
+        the statement it is, not as an object it is not."""
+        return f"ALTER TABLE {self.qualified_table}"
+
+    @property
+    def default_file_name(self) -> str:
+        """The Save As… prefill. Deliberately NOT §18.2's `schema.object.sql`
+        scheme: this file is a script the user chose to keep, never a checked-out
+        object, and it must not look like one in a `ddl/` folder."""
+        stem = f"alter_{self.qualified_table}".replace(".", "_")
+        return f"{stem}.sql"
 
 
 class MainWindow(QMainWindow):
@@ -376,6 +471,13 @@ class MainWindow(QMainWindow):
         )
         self.ddl_browser_panel.new_routine_requested.connect(
             self._on_ddl_new_routine_requested
+        )
+        # Right-click ▸ Alter Table ▸ … on a table node or a column leaf
+        # (FQ-025 slice 1): the panel says what was clicked, this window builds
+        # the dialog, injects the schema data and hosts the generated DDL --
+        # the same division of labour as `add_trigger_requested` above.
+        self.ddl_browser_panel.alter_column_requested.connect(
+            self._on_ddl_alter_column_requested
         )
         # §18.7 (FQ-022): the SECOND Explorer instance -- the same `BrowserPanel`
         # class with unchanged internals, fed by the project sandbox's own
@@ -3491,6 +3593,135 @@ class MainWindow(QMainWindow):
         dialog = NewRoutineDialog(parent=self)
         dialog.accepted.connect(lambda: self._open_created_ddl_object(dialog))
         dialog.show()
+
+    # --- FQ-025 slice 1: altering an existing table's columns ----------------
+
+    #: Per-window counter behind `AlterDdlRef.serial` -- see that class. Class
+    #: level so no instance can read it before the first generation.
+    _alter_ddl_serial = 0
+
+    #: operation id -> the dialog class, or `(ColumnActionDialog, op)` for the
+    #: four operations that share one form. ONE table: the panel decides which
+    #: id it emits, this decides which dialog that id opens, and nothing in
+    #: between re-decides either.
+    _ALTER_COLUMN_DIALOGS = {
+        OP_ADD_COLUMN: AddColumnDialog,
+        OP_RENAME_COLUMN: RenameColumnDialog,
+        OP_CHANGE_COLUMN_TYPE: ChangeColumnTypeDialog,
+        OP_SET_DEFAULT: SetColumnDefaultDialog,
+    }
+
+    def _alter_column_table_names(self) -> list[str]:
+        """Every table the "which table" dropdown offers (FQ-025).
+
+        Read off the schema the Explorer was already built from -- never a
+        second round trip, and never a query from the dialog, which opens no
+        connection at all. Views and matviews are excluded: `ALTER TABLE` on one
+        is DDL the server refuses, so offering it would generate a statement
+        that cannot be right (the same rule the tree's submenu applies).
+        """
+        if self._ddl_schema is None:
+            return []
+        return sorted(
+            name
+            for name, info in self._ddl_schema.tables.items()
+            if getattr(info, "kind", "table") == "table"
+        )
+
+    def _alter_column_names_for(self, table: str) -> list[str]:
+        """The columns of `table`, in `TableInfo.columns`' declared order.
+
+        A callable rather than a pre-built mapping, so re-picking a table in the
+        dialog reads the CURRENT schema instead of a snapshot taken when the
+        menu was clicked."""
+        if self._ddl_schema is None:
+            return []
+        info = self._ddl_schema.tables.get(table)
+        if info is None:
+            return []
+        return [column.name for column in info.columns]
+
+    def _alter_column_dialog(self, operation, table_info, column):
+        """Build the dialog `operation` calls for, with its table/column data
+        INJECTED (FQ-025) -- the dialogs never reach a database, so everything
+        they offer arrives here from the already-fetched `DatabaseSchema`.
+
+        Returns None for an id no dialog claims, which is a wiring bug rather
+        than a user-facing state: it opens nothing and says nothing.
+        """
+        table = getattr(table_info, "name", "") or ""
+        kwargs = dict(
+            table=table,
+            column=column,
+            tables=self._alter_column_table_names(),
+            columns=self._alter_column_names_for,
+            parent=self,
+        )
+        dialog_class = self._ALTER_COLUMN_DIALOGS.get(operation)
+        if dialog_class is not None:
+            return dialog_class(**kwargs)
+        if operation in COLUMN_ACTIONS:
+            return ColumnActionDialog(operation=operation, **kwargs)
+        return None
+
+    def _on_ddl_alter_column_requested(self, operation, table_info, column) -> None:
+        """Right-click ▸ Alter Table ▸ … on a table node or a column leaf
+        (FQ-025 slice 1).
+
+        Shown NON-MODALLY and read back on `accepted`, exactly as FQ-002's
+        creation dialogs are (§30's no-un-patched-modal rule): the window stays
+        usable while the user composes the statement, and a cancelled dialog
+        opens nothing at all.
+        """
+        dialog = self._alter_column_dialog(operation, table_info, column)
+        if dialog is None:
+            return
+        dialog.accepted.connect(
+            lambda dialog=dialog, operation=operation: self._open_generated_alter_ddl(
+                dialog, operation
+            )
+        )
+        dialog.show()
+
+    def _open_generated_alter_ddl(self, dialog, operation) -> None:
+        """Open the generated ALTER statement(s) in an editable tab.
+
+        **Generation executes nothing** -- the tab IS the safeguard (FQ-025):
+        the DDL is text in an editor until the user takes the separate, confirmed
+        `Deployment ▸ Run on sandbox` gesture, which is the same run path FQ-002's
+        Add Trigger tab already has.
+
+        Routed through `_edit_ddl_live` (never `_on_ddl_edit_requested`) for a
+        sharper version of the reason creation routes there: a project being open
+        must not divert this into the checkout branch, which would write the
+        mutation into `ddl/<object>.sql` and hash it as that object's
+        last-deployed reference. An ALTER has no object file to be. It is also
+        deliberately NOT registered in the deploy manifest -- there is no object
+        to register -- so the DDL Explorer's `*`/`!` markers never speak for it.
+
+        The rendered text is taken from `dialog.skeleton()`, i.e. from
+        `db/ddl_skeleton.py`'s emitters; no SQL is assembled here. For Add Column
+        with a comment that text is TWO statements
+        (`ALTER TABLE …;` then `COMMENT ON COLUMN …;`) and is carried whole: the
+        tab holds it verbatim, and both apply paths hand the buffer to
+        `db/apply.py::apply_ddl` as ONE element of a statement Sequence, so
+        multi-statement text survives to the server intact.
+        """
+        text = dialog.skeleton()
+        if not text.strip():
+            # Unreachable through the OK button (it is disabled until the
+            # emitter renders), but an empty tab claiming to be generated DDL
+            # would be worse than the silence.
+            return
+        schema_name, table_name = self._split_qualified(dialog.table())
+        MainWindow._alter_ddl_serial += 1
+        ref = AlterDdlRef(
+            schema=schema_name,
+            table=table_name,
+            operation=operation,
+            serial=MainWindow._alter_ddl_serial,
+        )
+        self._edit_ddl_live(ref, text)
 
     def _open_created_ddl_object(self, dialog) -> None:
         """Open a newly-created object's editor tab on its generated skeleton.
