@@ -5,27 +5,39 @@ procedure from the DDL Explorer) and for §18.8's Project Status entry point.
 No live DB and no modal calls: both creation dialogs are shown non-modally,
 and the tab-opening path is driven through the same seam Edit… uses.
 """
+from dataclasses import replace
+
 import pytest
 from PySide6.QtCore import QSettings, Qt
-from PySide6.QtWidgets import QDialog, QDialogButtonBox
+from PySide6.QtWidgets import QDialog, QDialogButtonBox, QMessageBox
 
+from pgtp_editor.db.config import ConnectionParams
 from pgtp_editor.db.ddl_check import CheckRequest, build_ladder
 from pgtp_editor.db.ddl_project import ProjectSettings, save_settings
 from pgtp_editor.db.sandbox import SandboxCapabilities
 from pgtp_editor.db.ddl_skeleton import (
+    ColumnSpec,
     add_column_skeleton,
     add_constraint_skeleton,
     add_foreign_key_skeleton,
+    create_index_skeleton,
+    create_table_skeleton,
     drop_column_skeleton,
     drop_constraint_skeleton,
+    drop_index_skeleton,
+    drop_table_skeleton,
     rename_constraint_skeleton,
+    set_column_comment_skeleton,
+    set_table_comment_skeleton,
 )
 from pgtp_editor.db.introspect import (
     ColumnInfo,
     ConstraintInfo,
     DatabaseSchema,
+    IndexInfo,
     RoutineInfo,
     TableInfo,
+    fetch_schema,
 )
 from pgtp_editor.ui.alter_column_dialogs import (
     AddColumnDialog,
@@ -43,6 +55,15 @@ from pgtp_editor.ui.constraint_dialogs import (
 from pgtp_editor.ui.ddl_buffer_panel import (
     ALTER_TABLE_COLUMN_ACTIONS,
     ALTER_TABLE_CONSTRAINT_ACTIONS,
+)
+from pgtp_editor.ui.table_dialogs import (
+    OP_COLUMN_COMMENT,
+    OP_TABLE_COMMENT,
+    CreateIndexDialog,
+    CreateTableDialog,
+    DropIndexDialog,
+    DropTableDialog,
+    SetCommentDialog,
 )
 from pgtp_editor.ui.main_window import MainWindow
 from pgtp_editor.ui.new_routine_dialog import NewRoutineDialog
@@ -827,6 +848,369 @@ def test_each_constraint_generation_gets_its_own_tab(qtbot, tmp_path):
         dialog._constraint_combo.setCurrentIndex(
             dialog.available_constraints().index(name)
         )
+        dialog.accept()
+
+    texts = [panel.editor.toPlainText() for panel in _alter_tabs(window)]
+
+    assert len(texts) == 2
+    assert texts[0] != texts[1]
+
+
+# --- FQ-025 slice 3: indexes, comments, whole-table --------------------------
+# The same host, the same one signal (except `Create Table…`, which has no table
+# to carry), the same injected-data rule -- and one new injected source, the
+# table's existing indexes, whose provenance is the slice's one trap.
+
+
+def _index_schema():
+    """`_constraint_schema` plus indexes: one droppable, one owned by the
+    primary key constraint, and one on ANOTHER table."""
+    schema = _constraint_schema()
+    return replace(
+        schema,
+        tables={
+            **schema.tables,
+            "pr.orders": replace(
+                schema.tables["pr.orders"],
+                columns=[
+                    *schema.tables["pr.orders"].columns,
+                    ColumnInfo(
+                        name="code", data_type="text", is_pk=False, is_fk=False,
+                        is_nullable=True, default=None,
+                        comment="the customer-facing order code",
+                    ),
+                ],
+            ),
+        },
+        indexes={
+            "pr.idx_orders_code": IndexInfo(
+                schema="pr", table="orders", name="idx_orders_code",
+                columns=["code"], is_unique=True, method="btree",
+            ),
+            # PostgreSQL refuses `DROP INDEX` on this one -- the constraint
+            # owns it -- so the picker must hide it AND say so.
+            "pr.orders_pkey": IndexInfo(
+                schema="pr", table="orders", name="orders_pkey",
+                columns=["id"], is_unique=True, is_primary=True,
+                method="btree", constraint_name="orders_pkey",
+            ),
+            "pr.customer_pkey": IndexInfo(
+                schema="pr", table="customer", name="customer_pkey",
+                columns=["cust_id"], is_unique=True, is_primary=True,
+                method="btree", constraint_name="customer_pkey",
+            ),
+        },
+    )
+
+
+def _index_window(qtbot, tmp_path):
+    window = _window(qtbot, tmp_path)
+    window._ddl_schema = _index_schema()
+    return window
+
+
+def _index_orders(window):
+    return window._ddl_schema.tables["pr.orders"]
+
+
+def test_the_slice_three_operations_open_their_own_dialogs(qtbot, tmp_path):
+    """Still ONE mapping for every id the tree emits. The two comment ids are
+    the second pair to share a dialog whose mode is fixed by the menu item --
+    exactly what `ColumnActionDialog` already does for its four."""
+    window = _index_window(qtbot, tmp_path)
+
+    built = {
+        operation: type(
+            window._alter_column_dialog(operation, _index_orders(window), "code")
+        )
+        for operation in ("create_index", "drop_index", "drop_table")
+    }
+
+    assert built == {
+        "create_index": CreateIndexDialog,
+        "drop_index": DropIndexDialog,
+        "drop_table": DropTableDialog,
+    }
+
+
+@pytest.mark.parametrize("target", [OP_TABLE_COMMENT, OP_COLUMN_COMMENT])
+def test_a_comment_entry_opens_the_one_dialog_in_the_mode_its_menu_item_named(
+    qtbot, tmp_path, target
+):
+    """One class, two modes, and the mode is not a field inside it: a dialog
+    opened from "Set column comment" that could quietly comment the table
+    instead would only invite disagreeing with the menu."""
+    window = _index_window(qtbot, tmp_path)
+
+    dialog = window._alter_column_dialog(target, _index_orders(window), "code")
+    qtbot.addWidget(dialog)
+
+    assert isinstance(dialog, SetCommentDialog)
+    assert dialog.target() == target
+    # A column is named in column mode only -- a table comment has none, so the
+    # inherited dropdown is left out of the form and reports nothing.
+    assert dialog.column() == ("code" if target == OP_COLUMN_COMMENT else "")
+
+
+def test_the_drop_index_picker_is_sourced_from_the_explorers_own_schema(qtbot, tmp_path):
+    """The slice's trap. `DatabaseSchema.indexes` is populated by
+    `fetch_routines_and_triggers` -- the DDL Explorer's own fetch, which is what
+    `_fetch_ddl_schema` calls and what `_ddl_schema` holds. Sourcing the picker
+    from a `fetch_schema`-derived schema instead would silently show nothing
+    about a table full of indexes."""
+    window = _index_window(qtbot, tmp_path)
+
+    dialog = window._alter_column_dialog("drop_index", _index_orders(window), "")
+    qtbot.addWidget(dialog)
+
+    assert dialog.available_indexes() == ["idx_orders_code"]
+
+    # The other schema in this app, built from the same three queries plus no
+    # index query at all: same tables, same constraints, no indexes.
+    from_fetch_schema = fetch_schema(
+        ConnectionParams(host="h", port="5432", database="d", user="u"),
+        runner=lambda *_a, **_k: [[], [], []],
+    )
+    assert from_fetch_schema.indexes == {}
+    # And the picker would be empty if it were fed one -- so this is a
+    # provenance requirement, not a preference.
+    window._ddl_schema = replace(window._ddl_schema, indexes={})
+    starved = window._alter_column_dialog("drop_index", _index_orders(window), "")
+    qtbot.addWidget(starved)
+    assert starved.available_indexes() == []
+
+
+def test_constraint_backed_indexes_are_hidden_and_the_reason_is_shown(qtbot, tmp_path):
+    """Listing them would offer a statement PostgreSQL refuses; omitting them
+    silently would make a "where did my unique index go?" mystery, since the
+    user can see it in the Explorer. So they are filtered AND named, pointing at
+    the entry that CAN remove them."""
+    window = _index_window(qtbot, tmp_path)
+
+    dialog = window._alter_column_dialog("drop_index", _index_orders(window), "")
+    qtbot.addWidget(dialog)
+
+    assert dialog.available_indexes() == ["idx_orders_code"]
+    assert dialog.hidden_indexes() == ["orders_pkey"]
+    note = dialog.note()
+    assert "orders_pkey" in note
+    # The destination is slice 2's unified entry, by the name the menu uses.
+    assert "Drop constraint…" in note
+    # A note, never a block: it explains an omission, it does not object to the
+    # user's choice.
+    assert dialog._buttons.button(QDialogButtonBox.StandardButton.Ok).isEnabled()
+
+
+def test_the_index_list_follows_the_table_dropdown(qtbot, tmp_path):
+    """Injected as a CALLABLE, exactly as the constraint list is: re-picking a
+    table reads the current schema rather than a snapshot taken when the menu
+    was clicked."""
+    window = _index_window(qtbot, tmp_path)
+    dialog = window._alter_column_dialog("drop_index", _index_orders(window), "")
+    qtbot.addWidget(dialog)
+
+    dialog._table_combo.setCurrentText("pr.customer")
+
+    # `pr.customer`'s only index is its primary key's, which is not droppable.
+    assert dialog.available_indexes() == []
+    assert dialog.hidden_indexes() == ["customer_pkey"]
+
+
+def test_the_column_comment_dialog_opens_on_the_existing_comment(qtbot, tmp_path):
+    """A comment is a value rendered as a SQL string literal, not free SQL, so
+    unlike a DEFAULT or a USING clause it may be seeded -- which is the
+    difference between editing a description and retyping it from memory."""
+    window = _index_window(qtbot, tmp_path)
+
+    dialog = window._alter_column_dialog(OP_COLUMN_COMMENT, _index_orders(window), "code")
+    qtbot.addWidget(dialog)
+
+    assert dialog.column() == "code"
+    assert dialog.comment() == "the customer-facing order code"
+    assert not dialog.removes_the_comment()
+
+
+def test_a_table_comment_opens_blank_because_none_is_introspected(qtbot, tmp_path):
+    """`introspect.TableInfo` carries no `comment` -- `pg_description` is read
+    for columns only -- so there is nothing honest to seed, and a blank box
+    means `COMMENT … IS NULL`."""
+    window = _index_window(qtbot, tmp_path)
+
+    dialog = window._alter_column_dialog(OP_TABLE_COMMENT, _index_orders(window), "code")
+    qtbot.addWidget(dialog)
+
+    assert dialog.comment() == ""
+    assert dialog.removes_the_comment()
+
+
+def test_create_table_is_its_own_gesture_with_the_clicked_schema_seeded(qtbot, tmp_path):
+    """`Create Table…` has no table to alter, so it takes its own signal and its
+    own handler: the schema is its whole context, and `table()` means "the table
+    being created"."""
+    window = _index_window(qtbot, tmp_path)
+
+    window._on_ddl_create_table_requested("pr")
+    dialog = window.findChild(CreateTableDialog)
+
+    assert dialog.table() == "pr."  # seeded, and waiting for the name
+    assert _alter_tabs(window) == []  # nothing until it is accepted
+
+
+@pytest.mark.parametrize(
+    "gesture",
+    [
+        lambda window: window._on_ddl_create_table_requested("pr"),
+        lambda window: window._on_ddl_alter_column_requested(
+            "drop_table", _index_orders(window), ""
+        ),
+        lambda window: window._on_ddl_alter_column_requested(
+            "drop_index", _index_orders(window), ""
+        ),
+    ],
+)
+def test_every_slice_three_dialog_is_shown_non_modally(qtbot, tmp_path, monkeypatch, gesture):
+    """§30's rule, and FQ-025's: the window stays usable while the statement is
+    composed, and a cancelled dialog opens nothing at all."""
+    monkeypatch.setattr(
+        QDialog, "exec", lambda self: pytest.fail("the dialog was exec()'d")
+    )
+    window = _index_window(qtbot, tmp_path)
+
+    gesture(window)
+
+    assert _alter_tabs(window) == []
+
+
+def test_accepting_create_index_opens_a_tab_with_the_emitters_own_text(qtbot, tmp_path):
+    window = _index_window(qtbot, tmp_path)
+    window._on_ddl_alter_column_requested("create_index", _index_orders(window), "code")
+    dialog = window.findChild(CreateIndexDialog)
+    dialog._name_edit.setText("idx_orders_code2")
+    dialog.column_picker().set_selection(["code"])
+    dialog._unique_check.setChecked(True)
+
+    dialog.accept()
+
+    tabs = _alter_tabs(window)
+    assert len(tabs) == 1
+    assert tabs[0].editor.toPlainText() == create_index_skeleton(
+        name="idx_orders_code2", table="pr.orders", columns=["code"],
+        unique=True, method="btree",
+    )
+
+
+def test_accepting_drop_index_drops_the_indexs_own_qualified_identity(qtbot, tmp_path):
+    """`DROP INDEX … ON table` does not exist: an index is identified by
+    `schema.name`, which is what reaches the emitter -- never the display label
+    and never the table's name."""
+    window = _index_window(qtbot, tmp_path)
+    window._on_ddl_alter_column_requested("drop_index", _index_orders(window), "")
+    dialog = window.findChild(DropIndexDialog)
+
+    dialog.accept()
+
+    tabs = _alter_tabs(window)
+    assert len(tabs) == 1
+    assert tabs[0].editor.toPlainText() == drop_index_skeleton(
+        index="pr.idx_orders_code"
+    )
+
+
+@pytest.mark.parametrize(
+    "target, expected",
+    [
+        (OP_TABLE_COMMENT, lambda: set_table_comment_skeleton(
+            table="pr.orders", comment="ordering, one row per order"
+        )),
+        (OP_COLUMN_COMMENT, lambda: set_column_comment_skeleton(
+            table="pr.orders", column="code", comment="ordering, one row per order"
+        )),
+    ],
+)
+def test_accepting_a_comment_opens_a_tab_with_the_emitters_own_text(
+    qtbot, tmp_path, target, expected
+):
+    window = _index_window(qtbot, tmp_path)
+    window._on_ddl_alter_column_requested(target, _index_orders(window), "code")
+    dialog = window.findChild(SetCommentDialog)
+    dialog._comment_edit.setText("ordering, one row per order")
+
+    dialog.accept()
+
+    tabs = _alter_tabs(window)
+    assert len(tabs) == 1
+    assert tabs[0].editor.toPlainText() == expected()
+
+
+def test_accepting_create_table_opens_a_tab_with_the_emitters_own_text(qtbot, tmp_path):
+    window = _index_window(qtbot, tmp_path)
+    window._on_ddl_create_table_requested("pr")
+    dialog = window.findChild(CreateTableDialog)
+    dialog._name_edit.setText("pr.invoice")
+    dialog.column_rows().set_row(0, name="id", datatype="integer", nullable=False,
+                                 primary_key=True)
+    dialog.column_rows().set_row(1, name="total", datatype="numeric")
+
+    dialog.accept()
+
+    tabs = _alter_tabs(window)
+    assert len(tabs) == 1
+    assert tabs[0].editor.toPlainText() == create_table_skeleton(
+        table="pr.invoice",
+        columns=[
+            ColumnSpec(name="id", datatype="integer", nullable=False),
+            ColumnSpec(name="total", datatype="numeric"),
+        ],
+        primary_key=["id"],
+    )
+
+
+def test_accepting_drop_table_generates_it_with_no_confirmation_at_all(
+    qtbot, tmp_path, monkeypatch
+):
+    """FQ-025's ruling, honoured deliberately: no typed-name gate, no "are you
+    sure?", no message box on any path. Generating `DROP TABLE t` executes
+    nothing -- the editable tab is the safeguard, and running it is a separate
+    explicit gesture, so friction here would sit where nothing happens and be
+    absent where something does."""
+    for name in ("question", "warning", "critical", "information"):
+        monkeypatch.setattr(
+            QMessageBox,
+            name,
+            staticmethod(
+                lambda *a, _name=name, **k: pytest.fail(
+                    f"Drop table put up a QMessageBox.{_name}"
+                )
+            ),
+        )
+    window = _index_window(qtbot, tmp_path)
+
+    window._on_ddl_alter_column_requested("drop_table", _index_orders(window), "")
+    window.findChild(DropTableDialog).accept()
+
+    tabs = _alter_tabs(window)
+    assert len(tabs) == 1
+    assert tabs[0].editor.toPlainText() == drop_table_skeleton(table="pr.orders")
+
+
+def test_a_cancelled_slice_three_dialog_opens_nothing(qtbot, tmp_path):
+    window = _index_window(qtbot, tmp_path)
+    window._on_ddl_create_table_requested("pr")
+
+    window.findChild(CreateTableDialog).reject()
+
+    assert _alter_tabs(window) == []
+
+
+def test_each_slice_three_generation_gets_its_own_tab(qtbot, tmp_path):
+    """The serial counter, unchanged: two comments on one table are two
+    different statements, and `open_ddl_object_tab` would focus the first tab
+    and DISCARD the second's text if they shared a key."""
+    window = _index_window(qtbot, tmp_path)
+    for text in ("first", "second"):
+        window._on_ddl_alter_column_requested(OP_TABLE_COMMENT, _index_orders(window), "")
+        dialog = window.findChildren(SetCommentDialog)[-1]
+        dialog._comment_edit.setText(text)
         dialog.accept()
 
     texts = [panel.editor.toPlainText() for panel in _alter_tabs(window)]

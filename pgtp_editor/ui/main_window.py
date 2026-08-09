@@ -106,6 +106,15 @@ from pgtp_editor.ui.constraint_dialogs import (
     DropConstraintDialog,
     RenameConstraintDialog,
 )
+from pgtp_editor.ui.table_dialogs import (
+    COMMENT_TARGETS,
+    OP_COLUMN_COMMENT,
+    CreateIndexDialog,
+    CreateTableDialog,
+    DropIndexDialog,
+    DropTableDialog,
+    SetCommentDialog,
+)
 from pgtp_editor.ui.sandbox_controller import SandboxController, SandboxOperation
 from pgtp_editor.ui.sandbox_setup_dialog import SandboxSetupDialog
 from pgtp_editor.ui.new_routine_dialog import NewRoutineDialog
@@ -122,7 +131,11 @@ from pgtp_editor.ui.ddl_buffer_panel import (
     OP_ADD_CONSTRAINT,
     OP_ADD_FOREIGN_KEY,
     OP_CHANGE_COLUMN_TYPE,
+    OP_CREATE_INDEX,
+    OP_CREATE_TABLE,
     OP_DROP_CONSTRAINT,
+    OP_DROP_INDEX,
+    OP_DROP_TABLE,
     OP_RENAME_COLUMN,
     OP_RENAME_CONSTRAINT,
     OP_SET_DEFAULT,
@@ -519,6 +532,13 @@ class MainWindow(QMainWindow):
         # the same division of labour as `add_trigger_requested` above.
         self.ddl_browser_panel.alter_column_requested.connect(
             self._on_ddl_alter_column_requested
+        )
+        # Right-click ▸ Create Table… on the Tables branch root or a table node
+        # (FQ-025 slice 3). Its own connection because it is its own signal: the
+        # table being created has no `TableInfo` and no clicked column, only the
+        # schema to default into.
+        self.ddl_browser_panel.create_table_requested.connect(
+            self._on_ddl_create_table_requested
         )
         # §18.7 (FQ-022): the SECOND Explorer instance -- the same `BrowserPanel`
         # class with unchanged internals, fed by the project sandbox's own
@@ -3783,11 +3803,13 @@ class MainWindow(QMainWindow):
     #: level so no instance can read it before the first generation.
     _alter_ddl_serial = 0
 
-    #: operation id -> the dialog class. ONE table for all twelve operations:
-    #: the panel decides which id it emits, this decides which dialog that id
-    #: opens, and nothing in between re-decides either. The four ids missing
-    #: from it (`drop_column`, `set_not_null`, `drop_not_null`, `drop_default`)
-    #: are the ones that share `ColumnActionDialog` -- see `_alter_column_dialog`.
+    #: operation id -> the dialog class. ONE table for every operation the tree
+    #: emits: the panel decides which id it emits, this decides which dialog
+    #: that id opens, and nothing in between re-decides either. The ids missing
+    #: from it are the ones whose dialog is shared and selected by a `target=`
+    #: /`operation=` argument -- `drop_column`, `set_not_null`, `drop_not_null`
+    #: and `drop_default` share `ColumnActionDialog`, and the two comment ids
+    #: share `SetCommentDialog`. See `_alter_column_dialog`.
     _ALTER_COLUMN_DIALOGS = {
         OP_ADD_COLUMN: AddColumnDialog,
         OP_RENAME_COLUMN: RenameColumnDialog,
@@ -3802,6 +3824,12 @@ class MainWindow(QMainWindow):
         OP_ADD_FOREIGN_KEY: AddForeignKeyDialog,
         OP_DROP_CONSTRAINT: DropConstraintDialog,
         OP_RENAME_CONSTRAINT: RenameConstraintDialog,
+        # Slice 3. `CreateIndexDialog` needs no extra injection either -- its
+        # multi-column picker reads the same `columns` callable. `DropTableDialog`
+        # needs only the table dropdown it inherits.
+        OP_CREATE_INDEX: CreateIndexDialog,
+        OP_DROP_INDEX: DropIndexDialog,
+        OP_DROP_TABLE: DropTableDialog,
     }
 
     #: The two dialogs that additionally need the table's EXISTING constraints
@@ -3810,6 +3838,12 @@ class MainWindow(QMainWindow):
     #: they do, because handing a `constraints=` kwarg to a dialog that has no
     #: picker for it would be a TypeError waiting for the next refactor.
     _ALTER_CONSTRAINT_LIST_DIALOGS = (DropConstraintDialog, RenameConstraintDialog)
+
+    #: The one dialog that additionally needs the table's EXISTING indexes
+    #: (FQ-025 slice 3), injected exactly as the constraint list is and for the
+    #: same reasons -- a callable so re-picking a table reloads, and only the
+    #: dialog that has a picker for it gets the kwarg.
+    _ALTER_INDEX_LIST_DIALOGS = (DropIndexDialog,)
 
     def _alter_column_table_names(self) -> list[str]:
         """Every table the "which table" dropdown offers (FQ-025).
@@ -3856,6 +3890,55 @@ class MainWindow(QMainWindow):
             return []
         return self._ddl_schema.constraints_for(table)
 
+    def _alter_indexes_for(self, table: str):
+        """The indexes on `table` (FQ-025 slice 3), as `db.introspect.IndexInfo`s
+        -- consumed by `DropIndexDialog` purely by duck-typing
+        `.name`/`.qualified_name`/`.columns`/`.is_unique`/`.method`/
+        `.constraint_name`, so nothing over there imports the schema model.
+
+        **`self._ddl_schema` is the only schema in this window that HAS indexes.**
+        `DatabaseSchema.indexes` is filled by `fetch_routines_and_triggers`
+        alone -- the DDL Explorer's own fetch, which is exactly what
+        `_fetch_ddl_schema` calls. `fetch_schema` (DB Check) and
+        `snapshot_for_baseline` (the sandbox baseline) never run the index
+        query, so a schema from either of those would hand this picker `{}` and
+        the dialog would truthfully report "no droppable indexes" about a table
+        full of them. Sourcing it from anywhere else is therefore not a style
+        choice.
+
+        Constraint-backed rows are handed over UNFILTERED: `DropIndexDialog`
+        hides them *and says which ones it hid*, which it cannot do if they
+        never arrive (see `db.introspect.IndexInfo`).
+
+        A callable for the same reason `_alter_constraints_for` is one -- the
+        list must follow the dialog's table dropdown.
+        """
+        if self._ddl_schema is None:
+            return []
+        return self._ddl_schema.indexes_for(table)
+
+    def _alter_column_comment_for(self, table: str, column: str) -> str:
+        """The column's existing comment, so `Set Column Comment…` opens on
+        "edit this description" rather than "retype it from memory"
+        (`table_dialogs.SetCommentDialog` explains why a comment may be seeded
+        where a `DEFAULT` or a `USING` clause may not).
+
+        There is deliberately no table-comment equivalent: `introspect.TableInfo`
+        carries no `comment` field -- `pg_description` is read for columns only --
+        so `Set Table Comment…` opens blank, and a blank box means
+        `COMMENT … IS NULL`. Seeding it would require widening introspection,
+        which slice 3 does not.
+        """
+        if self._ddl_schema is None or not column:
+            return ""
+        info = self._ddl_schema.tables.get(table)
+        if info is None:
+            return ""
+        for existing in info.columns:
+            if existing.name == column:
+                return existing.comment or ""
+        return ""
+
     def _alter_column_dialog(self, operation, table_info, column):
         """Build the dialog `operation` calls for, with its table/column data
         INJECTED (FQ-025) -- the dialogs never reach a database, so everything
@@ -3876,9 +3959,21 @@ class MainWindow(QMainWindow):
         if dialog_class is not None:
             if dialog_class in self._ALTER_CONSTRAINT_LIST_DIALOGS:
                 kwargs["constraints"] = self._alter_constraints_for
+            if dialog_class in self._ALTER_INDEX_LIST_DIALOGS:
+                kwargs["indexes"] = self._alter_indexes_for
             return dialog_class(**kwargs)
         if operation in COLUMN_ACTIONS:
             return ColumnActionDialog(operation=operation, **kwargs)
+        if operation in COMMENT_TARGETS:
+            # One dialog, two modes, the mode fixed by the menu item the user
+            # picked -- the same call `ColumnActionDialog` makes for its four.
+            return SetCommentDialog(
+                target=operation,
+                comment=self._alter_column_comment_for(table, column)
+                if operation == OP_COLUMN_COMMENT
+                else "",
+                **kwargs,
+            )
         return None
 
     def _on_ddl_alter_column_requested(self, operation, table_info, column) -> None:
@@ -3897,6 +3992,31 @@ class MainWindow(QMainWindow):
         dialog.accepted.connect(
             lambda dialog=dialog, operation=operation: self._open_generated_alter_ddl(
                 dialog, operation
+            )
+        )
+        dialog.show()
+
+    def _on_ddl_create_table_requested(self, schema: str = "") -> None:
+        """Right-click ▸ Create Table… on the Tables branch root or a table node
+        (FQ-025 slice 3).
+
+        Its own handler because `CreateTableDialog` is the one dialog in this
+        feature with no table to alter: it takes a `schema` to default into and
+        reinterprets `table()` as *the table being created*, so there is no
+        `TableInfo` and no clicked column to pass. Everything downstream is
+        shared -- the same non-modal `show()`, the same `accepted` →
+        `_open_generated_alter_ddl` → editable tab, and hence the same
+        "generation executes nothing" safeguard.
+
+        The table dropdown it inherits is hidden, but the list is still handed
+        over: nothing about a hidden widget makes stale data safer to give it.
+        """
+        dialog = CreateTableDialog(
+            schema=schema, tables=self._alter_column_table_names(), parent=self
+        )
+        dialog.accepted.connect(
+            lambda dialog=dialog: self._open_generated_alter_ddl(
+                dialog, OP_CREATE_TABLE
             )
         )
         dialog.show()

@@ -3,9 +3,15 @@ from pgtp_editor.db.introspect import ColumnInfo, DatabaseSchema, RoutineInfo, T
 from pgtp_editor.ui.ddl_buffer_panel import (
     ALTER_TABLE_ACTIONS,
     ALTER_TABLE_COLUMN_ACTIONS,
+    ALTER_TABLE_COLUMN_COMMENT_ACTIONS,
     ALTER_TABLE_CONSTRAINT_ACTIONS,
+    ALTER_TABLE_DROP_TABLE_ACTIONS,
+    ALTER_TABLE_INDEX_ACTIONS,
     ALTER_TABLE_MENU_TITLE,
+    ALTER_TABLE_TABLE_COMMENT_ACTIONS,
+    CREATE_TABLE_LABEL,
     BrowserPanel,
+    alter_table_action_groups,
     resolve_edit_target,
 )
 from pgtp_editor.ui.ddl_object_editor import DdlObjectRef
@@ -1191,10 +1197,12 @@ def test_context_menu_on_a_table_node_offers_no_edit(qtbot):
 
 
 def test_context_menu_on_a_table_node_offers_add_trigger(qtbot):
-    """FQ-002's carve-out: the table node's menu leads with the create entry,
-    and it emits the clicked table's TableInfo so the caller can scope the new
-    trigger to it without a second lookup. FQ-025's mutation submenu sits
-    BELOW it -- creating an object and altering one are different acts."""
+    """FQ-002's carve-out: the table node's menu leads with the create entries,
+    and Add Trigger… emits the clicked table's TableInfo so the caller can scope
+    the new trigger to it without a second lookup. FQ-025's mutation submenu
+    sits BELOW both -- creating an object and altering one are different acts,
+    which is also why slice 3's `Create Table…` joined them up here rather than
+    inside `Alter Table ▸`."""
     panel = _table_panel(qtbot)
     table_item = panel.tree.topLevelItem(0).child(0)
     requested = []
@@ -1204,6 +1212,7 @@ def test_context_menu_on_a_table_node_offers_add_trigger(qtbot):
 
     assert [action.text() for action in menu.actions()] == [
         "Add Trigger…",
+        CREATE_TABLE_LABEL,
         ALTER_TABLE_MENU_TITLE,
     ]
     menu.actions()[0].trigger()
@@ -1226,12 +1235,21 @@ def test_context_menu_on_the_routines_branch_offers_new_routine(qtbot):
     assert fired == [True]
 
 
-def test_context_menu_on_the_tables_branch_root_offers_nothing(qtbot):
-    """Creation is scoped: a trigger needs a specific table, so the Tables
-    root itself has nothing to offer -- and must not pop an empty menu."""
+def test_context_menu_on_the_tables_branch_root_offers_create_table(qtbot):
+    """The mirror of the routines root above, and the whole reason the Tables
+    root -- which offered nothing until FQ-025 slice 3, a trigger being scoped
+    to a specific table -- has a menu at all: each branch root offers "create a
+    new one of the kind this branch lists". The root names no schema, so none
+    is emitted."""
     panel = _table_panel(qtbot)
+    requested = []
+    panel.create_table_requested.connect(requested.append)
 
-    assert panel._menu_for_item(panel.tree.topLevelItem(0)) is None
+    menu = panel._menu_for_item(panel.tree.topLevelItem(0))
+
+    assert [action.text() for action in menu.actions()] == [CREATE_TABLE_LABEL]
+    menu.actions()[0].trigger()
+    assert requested == [""]
 
 
 # --- BUG-033: the unsaved-in-editor `*` overlay ------------------------------
@@ -1470,8 +1488,10 @@ def _submenu_labels(submenu):
     return [a.text() for a in submenu.actions() if not a.isSeparator()]
 
 
-def test_the_table_node_submenu_offers_the_twelve_alter_operations(qtbot):
-    """Slice 1's eight column operations, then slice 2's four constraint ones."""
+def test_the_table_node_submenu_offers_the_full_operation_set_in_order(qtbot):
+    """FQ-025 end to end, in menu order: slice 1's eight column operations,
+    slice 2's four constraint ones, then slice 3's two index ones, the TABLE
+    comment (this click came from the table node) and Drop Table…"""
     panel = _alter_panel(qtbot)
     table_item = panel.tree.topLevelItem(0).child(0)
 
@@ -1491,29 +1511,64 @@ def test_the_table_node_submenu_offers_the_twelve_alter_operations(qtbot):
         "Add Foreign Key…",
         "Drop Constraint…",
         "Rename Constraint…",
+        "Create Index…",
+        "Drop Index…",
+        "Set Table Comment…",
+        "Drop Table…",
     ]
     # No `Drop Foreign Key…`: a FK *is* a constraint and `DROP CONSTRAINT` is
     # the identical statement, so one entry covers every type (and stays the
     # place a constraint-backed index has to be dropped from).
     assert "Drop Foreign Key…" not in _submenu_labels(submenu)
+    # `Create Table…` is NOT here: it creates an object rather than altering
+    # this one, so it lives at the menu's top level with FQ-002's two.
+    assert CREATE_TABLE_LABEL not in _submenu_labels(submenu)
 
 
-def test_a_separator_divides_the_column_operations_from_the_constraint_ones(qtbot):
-    """Twelve undifferentiated entries would read as one list; the two groups
-    answer different questions about the table."""
+def test_the_column_leaf_submenu_swaps_the_table_comment_for_the_column_one(qtbot):
+    """The ONE place the two entry points differ. A comment entry names its
+    subject, and the subject is whatever was right-clicked -- everything else
+    (constraints, indexes, Drop Table…) is scoped to the table either way, so
+    one builder still produces both menus."""
+    panel = _alter_panel(qtbot)
+    note_leaf = _columns_group(panel).child(1)
+
+    labels = _submenu_labels(_submenu(panel._menu_for_item(note_leaf)))
+
+    assert "Set Column Comment…" in labels
+    assert "Set Table Comment…" not in labels
+    assert labels == [
+        label
+        for group in alter_table_action_groups("note")
+        for _op, label in group
+    ]
+    # Only the comment entry moved: the table node's other fifteen are all here.
+    assert [label for label in labels if label != "Set Column Comment…"] == [
+        label for _op, label in ALTER_TABLE_ACTIONS if label != "Set Table Comment…"
+    ]
+
+
+def test_a_separator_divides_every_group_of_the_submenu(qtbot):
+    """Sixteen undifferentiated entries would read as one list; the five groups
+    answer different questions about the table -- what its columns are, its
+    constraints, its indexes, what it says about itself, and whether it exists
+    at all."""
     panel = _alter_panel(qtbot)
     table_item = panel.tree.topLevelItem(0).child(0)
 
     actions = _submenu(panel._menu_for_item(table_item)).actions()
 
+    groups = alter_table_action_groups()
     separators = [i for i, action in enumerate(actions) if action.isSeparator()]
-    assert separators == [len(ALTER_TABLE_COLUMN_ACTIONS)]
-    assert [a.text() for a in actions[: separators[0]]] == [
-        label for _op, label in ALTER_TABLE_COLUMN_ACTIONS
-    ]
-    assert [a.text() for a in actions[separators[0] + 1 :]] == [
-        label for _op, label in ALTER_TABLE_CONSTRAINT_ACTIONS
-    ]
+    # One separator BETWEEN each pair of groups -- never a leading or trailing
+    # one, which would draw a line under nothing.
+    assert len(separators) == len(groups) - 1
+    sliced, cursor = [], 0
+    for position in separators + [len(actions)]:
+        sliced.append([a.text() for a in actions[cursor:position]])
+        cursor = position + 1
+    assert sliced == [[label for _op, label in group] for group in groups]
+    assert sliced[-1] == ["Drop Table…"]
 
 
 def test_each_constraint_entry_emits_its_own_operation_id(qtbot):
@@ -1566,7 +1621,9 @@ def test_a_column_leaf_menu_pre_fills_the_clicked_column(qtbot):
 
     assert [action.text() for action in menu.actions()] == [ALTER_TABLE_MENU_TITLE]
     submenu = _submenu(menu)
-    assert _submenu_labels(submenu) == [label for _op, label in ALTER_TABLE_ACTIONS]
+    assert _submenu_labels(submenu) == [
+        label for group in alter_table_action_groups("note") for _op, label in group
+    ]
     submenu.actions()[0].trigger()  # Add Column…
     assert requested == [("add_column", "pr.widget", "note")]
 
@@ -1589,22 +1646,27 @@ def test_the_columns_group_node_itself_offers_no_menu(qtbot):
 
 
 def test_a_view_offers_no_alter_table_submenu_anywhere(qtbot):
-    """Every entry emits `ALTER TABLE`, which a view cannot take -- so the
-    submenu is absent on the view's node and on its column leaves alike."""
+    """The entries emit `ALTER TABLE`/`DROP TABLE` against the clicked object,
+    which a view cannot take -- so the submenu is absent on the view's node and
+    on its column leaves alike. The two CREATION entries stay: what they create
+    is a trigger and a table regardless of what was clicked, which is exactly
+    why neither lives inside the table-only submenu."""
     panel = _alter_panel(qtbot, kind="view")
     table_item = panel.tree.topLevelItem(0).child(0)
 
     assert _submenu(panel._menu_for_item(table_item)) is None
     assert [a.text() for a in panel._menu_for_item(table_item).actions()] == [
-        "Add Trigger…"
+        "Add Trigger…",
+        CREATE_TABLE_LABEL,
     ]
     assert panel._menu_for_item(_columns_group(panel).child(0)) is None
 
 
 def test_browse_only_suppresses_every_alter_table_entry(qtbot):
     """§18.7's sandbox Explorer must not offer schema mutations -- suppressed at
-    menu-BUILD time, so there is no dead control to click. All TWELVE go: adding
-    a constraint or dropping a foreign key is the same kind of act as dropping a
+    menu-BUILD time, so there is no dead control to click. All SIXTEEN go, plus
+    `Create Table…` at both of its top-level homes: adding a constraint,
+    dropping an index or creating a table is the same kind of act as dropping a
     column, and the sandbox tree exists to look at a sandbox, not reshape it."""
     panel = _alter_panel(qtbot, browse_only=True)
 
@@ -1612,6 +1674,80 @@ def test_browse_only_suppresses_every_alter_table_entry(qtbot):
     assert panel._menu_for_item(table_item) is None
     assert panel._menu_for_item(_columns_group(panel)) is None
     assert panel._menu_for_item(_columns_group(panel).child(0)) is None
+    # The Tables branch root gained a menu in slice 3; it must be suppressed too.
+    assert panel._menu_for_item(panel.tree.topLevelItem(0)) is None
+
+
+def test_a_table_node_seeds_create_table_with_its_own_schema(qtbot):
+    """The only place in this tree that names a schema, which is what makes the
+    table-node placement worth having on top of the branch-root one: a table
+    created from a right-click lands where the click was."""
+    panel = _alter_panel(qtbot)
+    table_item = panel.tree.topLevelItem(0).child(0)
+    requested = []
+    panel.create_table_requested.connect(requested.append)
+
+    menu = panel._menu_for_item(table_item)
+    [a for a in menu.actions() if a.text() == CREATE_TABLE_LABEL][0].trigger()
+
+    assert requested == ["pr"]
+
+
+def test_a_column_leaf_offers_no_create_table_entry(qtbot):
+    """A column leaf's menu is the submenu and nothing else: the creation
+    gestures belong to the objects that can own the new object, and a column
+    owns nothing."""
+    panel = _alter_panel(qtbot)
+
+    menu = panel._menu_for_item(_columns_group(panel).child(1))
+
+    assert [a.text() for a in menu.actions()] == [ALTER_TABLE_MENU_TITLE]
+
+
+def test_each_slice_three_entry_emits_its_own_operation_id(qtbot):
+    """Indexes, the comment and Drop Table ride slice 1's signal, carrying the
+    same click context -- only `Create Table…`, which has no table to carry,
+    needed one of its own."""
+    panel = _alter_panel(qtbot)
+    table_item = panel.tree.topLevelItem(0).child(0)
+    requested = []
+    panel.alter_column_requested.connect(
+        lambda op, table, column: requested.append((op, table.name, column))
+    )
+
+    slice_three = (
+        *ALTER_TABLE_INDEX_ACTIONS,
+        *ALTER_TABLE_TABLE_COMMENT_ACTIONS,
+        *ALTER_TABLE_DROP_TABLE_ACTIONS,
+    )
+    submenu = _submenu(panel._menu_for_item(table_item))
+    for action in submenu.actions():
+        if action.text() in [label for _op, label in slice_three]:
+            action.trigger()
+
+    assert requested == [
+        (operation, "pr.widget", "") for operation, _label in slice_three
+    ]
+
+
+def test_the_column_comment_entry_carries_the_clicked_column(qtbot):
+    """It is offered from the column leaf precisely so it can: the dialog opens
+    on that column rather than on the dropdown's first one."""
+    panel = _alter_panel(qtbot)
+    note_leaf = _columns_group(panel).child(1)
+    requested = []
+    panel.alter_column_requested.connect(
+        lambda op, table, column: requested.append((op, table.name, column))
+    )
+
+    submenu = _submenu(panel._menu_for_item(note_leaf))
+    [
+        a
+        for a in submenu.actions()
+        if a.text() == ALTER_TABLE_COLUMN_COMMENT_ACTIONS[0][1]
+    ][0].trigger()
+
+    assert requested == [("column_comment", "pr.widget", "note")]
 
 
 def test_a_view_offers_no_constraint_operations_either(qtbot):

@@ -99,17 +99,23 @@ EXPECTED_HOST_SURFACE = {
     "_current_project",
     "_current_project_path",
     # FQ-025: the Alter Table ▸ operations (slice 1's columns, slice 2's
-    # constraints). Host-owned for the same reason FQ-002's creation handlers
-    # are -- they build a dialog, inject data read off `_ddl_schema`, and open a
-    # tab through `_edit_ddl_live`. Slice 2 added exactly two names, both of
-    # them injection: which dialogs take a constraint list, and where that list
-    # comes from.
+    # constraints, slice 3's indexes/comments/whole-table). Host-owned for the
+    # same reason FQ-002's creation handlers are -- they build a dialog, inject
+    # data read off `_ddl_schema`, and open a tab through `_edit_ddl_live`.
+    # Slice 2 added exactly two names, both of them injection: which dialogs
+    # take a constraint list, and where that list comes from. Slice 3 added the
+    # same pair for indexes, the column-comment seed, and ONE new handler --
+    # `Create Table…`, the only entry in the feature that is not scoped to a
+    # clicked table and therefore not on `alter_column_requested`.
     "_ALTER_COLUMN_DIALOGS",
     "_ALTER_CONSTRAINT_LIST_DIALOGS",
+    "_ALTER_INDEX_LIST_DIALOGS",
+    "_alter_column_comment_for",
     "_alter_column_dialog",
     "_alter_column_names_for",
     "_alter_column_table_names",
     "_alter_constraints_for",
+    "_alter_indexes_for",
     "_alter_ddl_serial",
     "_database_host_label",
     "_db_ui",
@@ -171,6 +177,7 @@ EXPECTED_HOST_SURFACE = {
     "_on_bookmark_project_changed",
     "_on_ddl_add_trigger_requested",
     "_on_ddl_alter_column_requested",
+    "_on_ddl_create_table_requested",
     "_on_ddl_edit_requested",
     "_on_ddl_explorer_toggled",
     "_on_ddl_explorer_visibility_changed",
