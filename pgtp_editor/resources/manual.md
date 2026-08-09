@@ -20,40 +20,37 @@ you asked for, and the on-disk bytes are preserved except where you edit.
 When the editor starts it puts one modal window in front of you — titled **PGTP
 Editor**, asking **"What would you like to do?"** — because an empty Raw XML tab
 is no guidance at all when the app supports several quite different ways of
-working. The launcher names those ways in four groups:
+working. The launcher shows the app's **three major modes side by side, in one
+row**:
 
-- **Open a pgtp for editing** — edit a `.pgtp` with the XML tooling and compare
-  it against its quality database. No project, no sandbox. Holds **File ▸
-  Open**.
-- **New Project / Open Project** — work on the quality database through a local
-  sandbox, or converge a deployable `.pgtp` by diff/merge. Holds **File ▸ New
-  Project…** and **File ▸ Open Project…**.
-- **Open other files** — edit the custom PHP files that sit beside a project.
-  Holds **File ▸ Open PHP File…**.
-- **Maintenance mode** — maintain the app itself: the XSD and the re_phpgen
-  loop. Holds **Schema ▸ Edit XSD**, **Edit AutoXSD**, **Verify XSD**, **Export
-  XSD** and **Import XSD**, plus **Generation ▸ Locate panGen Runtime…**,
-  **panGen (Generate Own PHP)**, **rePHPgen (Analyze Gap)** and **Save
-  reJSON…**. The ordinary PHP-generation entries (**Locate PHP Generator
-  Executable…**, **Generate PHP…**, **Open Output Folder**) are deliberately
-  *not* here — generating your application is ordinary development, not
-  maintaining the editor. See *Generating PHP*.
+| Column | What it is for | Buttons |
+|---|---|---|
+| **Standalone** | Edit a `.pgtp` with the XML tooling, or a custom PHP file beside it. No project, no sandbox. | **File ▸ Open**, **File ▸ Open PHP File…** |
+| **Project** | Work on the quality database through a local sandbox, or converge a deployable `.pgtp` by diff/merge. | **File ▸ New Project…**, **File ▸ Open Project…** |
+| **Maintenance** | One-off administrative work on the app's own schema. Trims the window menu bar for this session — see *Maintenance mode*, below. | **Schema ▸ Edit XSD**, **Schema ▸ Import XSD** |
 
 **Every button on the launcher is the menu command it names**, which is why the
 buttons are labelled with menu paths such as `File › Open...`. Picking one closes
 the launcher and then runs exactly that command — there is no second, slightly
 different version of any gesture hiding in here. A button whose menu item cannot
-run right now is **greyed out** for the same reason: **Generation ▸ Save
-reJSON…**, for instance, has nothing to save before a gap analysis has run.
+run right now is **greyed out** for the same reason, rather than looking
+clickable and doing nothing.
 
-- **"Don't show this again"** is a checkbox at the bottom, remembered across
-  restarts. It is recorded whichever way you leave the launcher — ticking it and
-  then picking a button persists just as ticking it and closing does.
+The three columns are deliberately short. **Maintenance is Edit XSD and Import
+XSD only**: the rest of the **Schema** menu (**Edit AutoXSD**, **Verify XSD**,
+**Export XSD** — see *Schema Tools*) and the whole **Generation** menu are
+ordinary work you reach from the menus once you are in the app. Generating your
+application is development, not maintaining the editor, so no generation entry
+is offered here — see *Generating PHP*.
+
+- **The launcher always appears.** There is no "don't show this again" any more:
+  it was removed together with the setting behind it, because the launcher is
+  now where you pick the session's mode, and a mode you can silently skip is a
+  trap rather than a convenience.
 - **Close, Escape, or the window's close button lands you in the normal, empty
-  app.** The launcher is never a gate on running the editor and never quits it.
-- **File ▸ Show Launcher…** re-opens the launcher any time, *ignoring* "Don't
-  show this again" — so that tick is never a one-way door. The entry sits in the
-  File menu's last group, just above **Exit**, and has no keyboard shortcut.
+  app** with the full menu bar and no mode chosen. The launcher is never a gate
+  on running the editor and never quits it.
+- **File ▸ New Session** brings it back at any time — see *Starting over*, below.
 
 > **The editor does not open a file you pass on the command line, there is no
 > shell "open with" integration, and double-clicking a `.pgtp` does not start
@@ -62,6 +59,81 @@ reJSON…**, for instance, has nothing to save before a gap analysis has run.
 > not a list of files you happened to touch — is how you pick up work. A `.pgtp` path on the command line is meaningful **only** together
 > with `--mcp`, where it names the headless MCP server's default project (see
 > *The MCP Server*).
+
+### Starting over — File ▸ New Session
+
+**File ▸ New Session** re-initiates the app into its starting state. It is more
+than "show that dialog again": in order, it
+
+1. asks about **unsaved schema edits** (the **Edit XSD** tab),
+2. closes every open **DDL object tab** and **PHP file tab**, prompting for each
+   one that has unsaved edits,
+3. closes the **document** — prompting to **Save**, **Discard** or **Cancel** if
+   the `.pgtp` is dirty — and then the **project**,
+4. clears the session's workflow mode, restoring the full menu bar,
+5. and shows the launcher again.
+
+**Any cancel, at any step, abandons the whole gesture** and leaves your session
+exactly as it was — nothing is closed, no mode is cleared and the launcher does
+not appear. So you can always start the gesture to see what it would ask, and
+back out.
+
+The entry sits in the File menu's last group, just above **Exit**, and has no
+keyboard shortcut. (It is the command that used to be called **Show Launcher…**;
+if you pinned that to your toolbar, the button still works and now runs **New
+Session**.)
+
+### Maintenance mode
+
+Picking the launcher's **Maintenance** column does one extra thing beyond running
+the button you pressed: it puts the session into **Maintenance mode**, which
+**trims the window menu bar** so a one-off administrative task on the app's own
+schema is not surrounded by the whole application.
+
+| Window menu | In Maintenance mode |
+|---|---|
+| **File** | trimmed to **New Session** alone |
+| **Schema** | whole — it is the mode's entire point |
+| **Help** | whole, so the manual (**F1**) is never out of reach |
+| **View**, **Database**, **Tools**, **Generation** | hidden |
+
+- **It lasts for the session and nothing else.** Maintenance mode is never
+  written to disk and never survives a restart — you cannot inherit a trimmed
+  menu bar from last week without noticing.
+- **File ▸ New Session is the way out**, which is exactly why it is the one File
+  entry the mode keeps: a mode able to hide its own exit would be a trap. Coming
+  back through the launcher's **Standalone** or **Project** column leaves the
+  menu bar whole again.
+- **The Editor menu bar is deliberately untouched.** That is what keeps
+  **Deployment ▸ Save XSD** right where it always is, so schema edits are
+  saveable without leaving the mode (see *The Deployment Menu*). **Save XSD is
+  how you save in Maintenance mode** — there is no File-menu save anywhere in
+  the app.
+- **A toolbar button keeps working**, even when it is pinned to a command this
+  mode hides. The filter is the menu bar only, by design; pinning something to
+  the toolbar means you wanted it within reach.
+- **File ▸ Exit is trimmed away with the rest**, so quit the way you would quit
+  any window — its close button — or leave the mode with **New Session** first.
+
+### Hidden because it can't run, versus hidden because you said so
+
+Everywhere else in this app, a missing menu entry means **the command could not
+work here**: there is no sandbox to check against, no session open, or the tab in
+front of you has no such concept. That is why the app hides things rather than
+greying them out — a control you cannot use is noise, and the fix is to acquire
+what is missing (open a project, configure a sandbox, switch tabs).
+
+**Maintenance mode is the one exception**, and it is worth knowing about if you
+ever look at a trimmed menu bar and wonder whether something is broken. The
+commands it hides *work perfectly well* — you could open a project or generate
+PHP right now if you could reach them. They are out of the way because **you said
+you were doing something else** when you picked the Maintenance column, not
+because the app is unable to run them. Nothing is wrong, nothing needs fixing,
+and the answer is never a setting: it is **File ▸ New Session**.
+
+A quick way to tell the two apart: ask *"if this were visible and I clicked it
+right now, would it do the thing?"* If the honest answer is no, it is hidden
+because it cannot run. If the answer is yes, you are in Maintenance mode.
 
 ### Opening a project
 
@@ -169,6 +241,12 @@ answer to a simple question: *what does this command act on?*
 Every one of those commands resolves the editor **at the moment you use it**, so
 Select, Navigation and the rest always act on the tab in front of you — never on
 the Raw XML document behind it.
+
+> **In Maintenance mode the window menu bar is trimmed** — **View**,
+> **Database**, **Tools** and **Generation** are hidden and **File** shows only
+> **New Session** — while **this** bar is left completely alone, which is what
+> keeps **Deployment ▸ Save XSD** available there. See *Getting Started ▸
+> Maintenance mode*.
 
 > **The bookmark menu is called Navigation now.** Its five entries kept their own
 > names; the menu was renamed because it is where jumping around a document
@@ -2761,6 +2839,13 @@ Bars ▸ Parsing, on a DDL object tab*), and a pinned **Sandbox Setup…** butto
 which leaves the toolbar the moment a project is opened (see *The Sandbox ▸ What
 you can change about a sandbox, and what you currently cannot*).
 
+**Maintenance mode is the one thing that does *not* reach the toolbar.** A button
+pinned to a command that mode hides from the menu bar — **Generate PHP**, say —
+**stays on the toolbar and keeps working** (see *Getting Started ▸ Maintenance
+mode*). That is deliberate: the mode is about getting the whole application out
+of your way, and something you pinned yourself is something you meant to keep
+within reach.
+
 ### Choosing a button's icon
 
 Each row in the **On Toolbar** list shows the icon that button will actually
@@ -2865,8 +2950,8 @@ one keystroke away. **Ctrl+Return** in the Sandbox SQL console is the one
 exception, because that console can only ever reach the disposable sandbox (see
 *The Sandbox*).
 
-The other commands added recently are shortcut-free too: **File ▸ Show
-Launcher…**, **File ▸ Discard Changes**, **Parsing ▸ Auto Parse XML**, **Parsing ▸
+The other commands added recently are shortcut-free too: **File ▸ New
+Session**, **File ▸ Discard Changes**, **Parsing ▸ Auto Parse XML**, **Parsing ▸
 Validate Project**, **History ▸ History…**, **Navigation ▸ Clear All Bookmarks**,
 **Navigation ▸ List All Bookmarks**, **Database ▸ DDL Explorer (Quality)**,
 **Database ▸ DDL Explorer (Sandbox)**, **Database ▸ Sandbox Setup…** (shown only
