@@ -201,14 +201,21 @@ _MAINTENANCE_MENU_TITLES = ("File", "Schema", "Help")
 #: The File-menu members that survive Maintenance mode, by normalized label.
 #:
 #: `New Session` is the escape hatch and is what makes the mode non-trapping.
-#: It is the WHOLE set: FQ-027 also named `Save` and `Save All`, but FQ-020 had
+#: `Exit` is here because §7's membership table says it stays, and because a
+#: mode that hides the way OUT of the application is the same trap `New Session`
+#: exists to prevent -- one level up. The window's close button always worked,
+#: but "the menu has no Exit" reads as a broken app, not as a focused one.
+#: Found by `manual-maintainer` writing the chapter and discovering it had to
+#: tell the reader to quit with the title bar.
+#:
+#: Those two are the WHOLE set: FQ-027 also named `Save` and `Save All`, but FQ-020 had
 #: already deleted `File ▸ Save`/`Save As…` (with `Ctrl+S`) and moved every save
 #: to the Editor bar's per-tab `Deployment` menu, and `Save All` has never
 #: existed anywhere in this app. Neither is invented here. The intent behind
 #: them -- "let XSD edits be saved without leaving the mode" -- is satisfied
 #: instead by the filter's scope: the Editor bar is untouched, so
 #: `Deployment ▸ Save XSD` stays right where it always is.
-_MAINTENANCE_FILE_ITEMS = ("New Session",)
+_MAINTENANCE_FILE_ITEMS = ("New Session", "Exit")
 
 
 @dataclass(frozen=True)

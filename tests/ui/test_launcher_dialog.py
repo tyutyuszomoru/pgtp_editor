@@ -422,19 +422,58 @@ def test_the_editor_menu_bar_is_out_of_the_filters_scope(qtbot, tmp_path):
     assert save_xsd is not None and save_xsd.isVisible() is True
 
 
-def test_maintenance_trims_the_file_menu_to_new_session_alone(qtbot, tmp_path):
+def test_maintenance_trims_the_file_menu_to_new_session_and_exit(qtbot, tmp_path):
     """FQ-027 said New Session + Save + Save All, but FQ-020 deleted
     `File ▸ Save`/`Save As…` and `Save All` has never existed anywhere in the
-    app — neither is invented here."""
+    app — neither is invented here.
+
+    `Exit` survives, per §7's membership table: a mode that hides the way out of
+    the APPLICATION is the same trap `New Session` exists to prevent, one level
+    up. The window's close button always worked, but a File menu with no Exit
+    reads as a broken app rather than a focused one."""
     window = MainWindow(settings=_ini_settings(tmp_path))
     qtbot.addWidget(window)
     window.set_workflow_mode(MODE_MAINTENANCE)
-    assert _visible_labels(window._file_menu) == ["New Session"]
-    assert _MAINTENANCE_FILE_ITEMS == ("New Session",)
+    assert _visible_labels(window._file_menu) == ["New Session", "Exit"]
+    assert _MAINTENANCE_FILE_ITEMS == ("New Session", "Exit")
     # Separators go with the entries they used to divide.
     assert [
         a for a in window._file_menu.actions() if a.isSeparator() and a.isVisible()
     ] == []
+
+
+def test_a_filtered_out_commands_shortcut_stops_firing(qtbot, tmp_path):
+    """Does `Ctrl+O` still open a `.pgtp` in Maintenance mode?
+
+    `manual-maintainer` refused to answer this from inference, correctly — Qt's
+    behaviour for a hidden QAction's shortcut is stated nowhere in the spec and
+    nothing covered it, so the manual said nothing rather than guess. Pinned
+    here so the manual can state it as fact.
+
+    The answer follows from a Qt fact FQ-027 already had to work around:
+    `QAction.isEnabled()` returns False for a hidden action in PySide6. Qt only
+    dispatches a shortcut to an ENABLED action, so hiding the command takes its
+    key with it — which is the behaviour the mode wants. A `Ctrl+O` that still
+    opened a project while `File ▸ Open...` was hidden would be a mode that
+    filters what you can SEE but not what you can DO.
+    """
+    window = MainWindow(settings=_ini_settings(tmp_path))
+    qtbot.addWidget(window)
+    open_action = find_action(window._file_menu, "Open...")
+    assert open_action is not None
+    assert open_action.isEnabled() is True
+    assert not open_action.shortcut().isEmpty()  # it really does own Ctrl+O
+
+    window.set_workflow_mode(MODE_MAINTENANCE)
+
+    assert open_action.isVisible() is False
+    assert open_action.isEnabled() is False  # ...so Qt will not fire Ctrl+O
+    # The binding itself is untouched -- the command is hidden, not rebound, so
+    # leaving the mode restores the key without re-assigning anything.
+    assert not open_action.shortcut().isEmpty()
+
+    window.set_workflow_mode(None)
+    assert open_action.isEnabled() is True
 
 
 def test_the_two_never_hidden_surfaces_are_reachable_in_maintenance(qtbot, tmp_path):
