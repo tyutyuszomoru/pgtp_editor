@@ -122,6 +122,10 @@ from pgtp_editor.ui.lint_controller import LintController
 from pgtp_editor.ui.pgtp_document_controller import PgtpDocumentController
 from pgtp_editor.ui.php_tab_controller import PhpTabController
 from pgtp_editor.ui.toolbar_controller import ToolbarController
+# The menu filter matches on the label the USER reads, so it goes through the
+# same normalizer the command ids do -- otherwise a mnemonic `&` or a trailing
+# ellipsis added to a menu label would silently drop it out of Maintenance mode.
+from pgtp_editor.ui.toolbar_registry import normalize_label
 from pgtp_editor.ui.ui_shell import UiShell
 from pgtp_editor.ui.xsd_controller import XsdController
 from pgtp_editor.ui.event_body import (
@@ -164,6 +168,34 @@ _CHECK_SEVERITY_TOKENS = {"error": "ERROR", "warning": "WARNING", "notice": "INF
 #: prefix belongs to the validation ladder, whose lines the panel owns.
 _SANDBOX_PREFIX = "[Sandbox] "
 
+#: FQ-027 -- the ONLY membership table Maintenance mode's menu filter reads.
+#:
+#: The WINDOW menu bar's top-level menus that survive. `Schema` is the mode's
+#: whole point (Edit XSD / Import XSD) and is whole and ungated; `Help` is here
+#: because `Help ▸ Manual` (F1) must never be filtered out of any mode -- hiding
+#: the one document that explains why commands are missing is the failure this
+#: rule exists to prevent; `File` survives TRIMMED, to
+#: `_MAINTENANCE_FILE_ITEMS`. So the hidden set is `View`, `Database`, `Tools`
+#: and `Generation`.
+#:
+#: FQ-027's own list of the bar (`File · Edit · View · Schema · Database ·
+#: Tools · Bookmarks · Generation · Help`) is STALE and was not implemented:
+#: FQ-016 dissolved `Edit`, and FQ-021 renamed `Bookmarks` to `Navigation` and
+#: moved it to the EDITOR bar -- which this filter does not touch at all.
+_MAINTENANCE_MENU_TITLES = ("File", "Schema", "Help")
+
+#: The File-menu members that survive Maintenance mode, by normalized label.
+#:
+#: `New Session` is the escape hatch and is what makes the mode non-trapping.
+#: It is the WHOLE set: FQ-027 also named `Save` and `Save All`, but FQ-020 had
+#: already deleted `File ▸ Save`/`Save As…` (with `Ctrl+S`) and moved every save
+#: to the Editor bar's per-tab `Deployment` menu, and `Save All` has never
+#: existed anywhere in this app. Neither is invented here. The intent behind
+#: them -- "let XSD edits be saved without leaving the mode" -- is satisfied
+#: instead by the filter's scope: the Editor bar is untouched, so
+#: `Deployment ▸ Save XSD` stays right where it always is.
+_MAINTENANCE_FILE_ITEMS = ("New Session",)
+
 
 class MainWindow(QMainWindow):
     #: The ONE sanctioned bridge while a lane is mid-extraction: legacy host
@@ -203,6 +235,13 @@ class MainWindow(QMainWindow):
         super().__init__()
         self._debug_log_path = debug_log_path
         self._debug_label = None
+        #: FQ-027's session workflow mode -- None until a launcher column is
+        #: picked, and NEVER read from settings. Set here, before either menu
+        #: bar is built, because `_refresh_editor_menu_affordances` consults it
+        #: during that build.
+        self._workflow_mode = None
+        #: The File menu, filled in by `_build_file_menu`.
+        self._file_menu = None
         # Injectable so tests point at a temp QSettings ini instead of the real
         # user registry (Sub-project D).
         # IniFormat (not the platform-native registry) so the location is a
@@ -2017,6 +2056,9 @@ class MainWindow(QMainWindow):
         stage = self.center_stage
         index = stage.currentIndex()
         hidden_on = (stage.caption_management_tab_index, stage.manual_tab_index)
+        # FQ-027's Maintenance filter deliberately does NOT compose in here:
+        # its scope is the window menu bar, and this bar keeps `Deployment ▸
+        # Save XSD` reachable inside the mode.
         self.editor_menu_bar.setVisible(index not in hidden_on)
         editor = self._find_ui.active_selection_editor()
         self._select_parent_action.setVisible(
@@ -2030,6 +2072,10 @@ class MainWindow(QMainWindow):
 
     def _build_file_menu(self):
         menu = self.menuBar().addMenu("File")
+        #: Held so `_refresh_workflow_mode_affordances` can trim this ONE menu
+        #: down to `_MAINTENANCE_FILE_ITEMS` and put it back -- File is the only
+        #: menu that survives Maintenance mode partially rather than whole.
+        self._file_menu = menu
         open_action = menu.addAction("Open...")
         open_action.setShortcut("Ctrl+O")
         open_action.triggered.connect(lambda: self._doc_ui.open_dialog())
@@ -2092,27 +2138,78 @@ class MainWindow(QMainWindow):
         close_action.triggered.connect(lambda: self._doc_ui.close())
         self._close_action = close_action
         menu.addSeparator()
-        # FQ-010: re-open the startup launcher on demand. Its "Don't show this
-        # again" flag is persisted, so without this entry that tick would be a
-        # one-way door only a settings edit could undo. Passes `force=True`,
-        # which is exactly what makes it reversible.
-        show_launcher_action = menu.addAction("Show Launcher…")
-        show_launcher_action.triggered.connect(lambda: self.show_launcher())
+        # FQ-027: this WAS FQ-010's `Show Launcher…`, which only re-opened the
+        # modal over the live session. It is RENAMED (one action, not two) and
+        # given the full re-initiation the owner asked for: resolve unsaved
+        # work, close everything, clear the session workflow mode, re-enter the
+        # launcher. The rename changes its command id, so
+        # `toolbar_registry.RENAMED_ID_ALIASES` carries a row.
+        #
+        # It is ALSO the escape hatch from Maintenance mode's menu filter, which
+        # is why `_MAINTENANCE_FILE_ITEMS` keeps it visible there: a mode that
+        # could hide the only way out of itself would be a trap.
+        new_session_action = menu.addAction("New Session")
+        new_session_action.triggered.connect(lambda: self.new_session())
         exit_action = menu.addAction("Exit")
         exit_action.triggered.connect(self.close)
 
     def show_launcher(self):
-        """Re-open the FQ-010 startup launcher (`File ▸ Show Launcher…`).
+        """Open the startup launcher (FQ-010, reshaped by FQ-027).
 
         A USER-triggered modal, like every other dialog on the host — the
         automatic startup show lives in `main.py` after `window.show()` and is
         never reached from `__init__`, because 49 test files construct a
         MainWindow and a modal there would hang all of them. Imported lazily so
         constructing a window never pulls the launcher in.
+
+        No `force=` any more: FQ-027 deleted the suppression flag, so there is
+        nothing left to bypass — the launcher always shows.
         """
         from pgtp_editor.ui import launcher_dialog
 
-        return launcher_dialog.show_launcher(self, self._settings, force=True)
+        return launcher_dialog.show_launcher(self, self._settings)
+
+    def new_session(self) -> bool:
+        """`File ▸ New Session` — re-initiate the app into its starting state
+        (FQ-027). Returns True when the session was actually restarted.
+
+        Four steps, in the order that makes a cancel cheap: resolve unsaved
+        work (**every** cancel aborts the whole gesture and leaves the session
+        exactly as it was), close every dynamic tab, close the document and the
+        §18.2 project, then clear the workflow mode — which restores the full
+        menu bar BEFORE the launcher goes up, so Maintenance mode can never be
+        re-entered on top of itself — and show the launcher.
+
+        Each prompt is the one that already exists for that surface (§11's
+        `confirm_close_for_exit`, the stage's own tab-close route, the document
+        lane's `close`): this gesture adds no second unsaved-changes dialog.
+        """
+        # §11's Edit XSD prompt. First, because it is the cheapest to cancel.
+        if not self._xsd_ui.confirm_close_for_exit():
+            return False
+        # Dynamic tabs, through the stage's OWN close route (`tabCloseRequested`
+        # -> `_on_tab_close_requested` -> the per-kind prompt), so the DDL-object
+        # and PHP unsaved-changes flows are reused rather than re-derived. A tab
+        # still present afterwards means the user cancelled.
+        stage = self.center_stage
+        for widget in [*stage.ddl_object_panels(), *stage.php_file_tabs().values()]:
+            index = stage.indexOf(widget)
+            if index == -1:
+                continue
+            stage.tabCloseRequested.emit(index)
+            if stage.indexOf(widget) != -1:
+                return False
+        # The `.pgtp`: `close()` runs the save/discard/cancel prompt itself, and
+        # a still-dirty buffer afterwards is how a cancel reports back.
+        self._doc_ui.close()
+        if self._doc_ui.dirty:
+            return False
+        # The §18.2 project. Never a forcing point (`close_project` only
+        # *offers* a pending deploy), so it cannot abort the gesture.
+        self._ddl_project_ui.close_project()
+        self.set_workflow_mode(None)
+        self.show_launcher()
+        return True
 
     def _install_find_next_action(self):
         """**F3 = Find Next** — a window-level ``QAction`` with NO menu entry
@@ -3913,6 +4010,92 @@ class MainWindow(QMainWindow):
                 # The probe is the same ladder against the same session, so it
                 # earns exactly the same gate.
                 action.setVisible(check_visible)
+
+    # --- FQ-027: the session workflow mode and its menu filter --------------
+    @property
+    def workflow_mode(self):
+        """The session's major workflow mode (`launcher_dialog.MODE_*`), or
+        None when no launcher column has been picked this session.
+
+        **In-memory and session-only.** There is deliberately no QSettings key:
+        FQ-027 supersedes FQ-011's persisted design so a filtered menu bar can
+        never be inherited across a restart. A freshly constructed window is
+        always unfiltered.
+        """
+        return self._workflow_mode
+
+    def in_maintenance_mode(self) -> bool:
+        """Whether the menu filter is on. Lazily imports the launcher module so
+        constructing a window still never pulls it in (FQ-010's constraint), and
+        so the mode strings have exactly ONE definition."""
+        from pgtp_editor.ui.launcher_dialog import MODE_MAINTENANCE
+
+        return self._workflow_mode == MODE_MAINTENANCE
+
+    def set_workflow_mode(self, mode) -> None:
+        """Enter (or leave, with None) a workflow mode and re-apply the filter.
+
+        Called by `launcher_dialog.show_launcher` when a column is picked, and
+        with None by `new_session`. Nothing else sets it — there is no separate
+        in-app mode toggle, by design: picking the Maintenance column IS how the
+        mode is entered, and `File ▸ New Session` is how it is left.
+        """
+        self._workflow_mode = mode
+        self._refresh_workflow_mode_affordances()
+
+    def _refresh_workflow_mode_affordances(self) -> None:
+        """The single "make both menu bars match the workflow mode" entry point
+        (FQ-027), called on every mode change and nowhere else.
+
+        Shaped exactly like `_refresh_sandbox_affordances`, and for the same
+        reason: **VISIBILITY, never enabled-state.** This app has deliberately
+        kept two postures (present / absent) and greying out would introduce a
+        third. And, like `_build_deployment_menu`'s per-tab sets, every action
+        here is built ONCE and only ever `setVisible`-toggled — never created or
+        destroyed per mode. That is a correctness constraint:
+        `ToolbarController._walk_menu_actions` never tests `isVisible()`, so a
+        hidden action stays enumerated, stays pinnable and keeps a stable id,
+        while an action that does not EXIST at enumeration time drops out of
+        Customize Toolbar and takes saved `toolbarIds` with it.
+
+        **This is INTENT-based hiding, and it is the app's first.** Every other
+        visibility gate here is CAPABILITY-based — `_refresh_sandbox_affordances`
+        hides what genuinely cannot run, `_refresh_editor_menu_affordances` hides
+        what the active tab kind has no concept of. Maintenance mode hides
+        commands that still work perfectly, because the user said they are doing
+        something else. FQ-011 recorded that as a deliberate, distinct rule
+        rather than an extension of the first, and FQ-027 did not retire the
+        objection. Keep the two readable as two.
+
+        **WINDOW menu bar ONLY.** Two surfaces are deliberately out of scope:
+
+        * The **Editor menu bar** (History · Select · Parsing · Navigation ·
+          Deployment) is untouched. That is what keeps `Deployment ▸ Save XSD`
+          available inside the mode, so an XSD edit can be saved without leaving
+          it — the intent behind FQ-027's non-existent `Save`/`Save All` File
+          entries, satisfied by scope rather than by re-opening FQ-020's
+          deliberate deletion of `File ▸ Save`.
+        * The **toolbar** (FQ-027 Q2). A pinned button whose menu action is
+          hidden keeps working; that is the accepted trade for keeping the
+          filter's blast radius small, and it falls straight out of the
+          enumeration fact above.
+        """
+        maintenance = self.in_maintenance_mode()
+        # Top-level menus are hidden through their `menuAction()` -- the QMenu
+        # itself is not a child widget of the bar's layout.
+        for action in self.menuBar().actions():
+            action.setVisible(
+                not maintenance
+                or normalize_label(action.text()) in _MAINTENANCE_MENU_TITLES
+            )
+        # File survives partially -- the only menu that does.
+        for action in self._file_menu.actions():
+            # A separator normalizes to "", so it is never in the set: the
+            # trimmed menu is its members with no stray dividing lines.
+            action.setVisible(
+                not maintenance
+                or normalize_label(action.text()) in _MAINTENANCE_FILE_ITEMS
+            )
 
     # --- §18.5 D2/D3a: the SandboxController's session and its gestures ------
     def _refresh_sandbox_affordances(self) -> None:

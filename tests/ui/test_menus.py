@@ -21,15 +21,18 @@ def test_file_menu_contents(qtbot):
         # gesture, and above the project separator: a .php file has no
         # structural tie to a .pgtp and opens with or without a project.
         # FQ-010 removed "Open Recent" (and the recentFiles store behind it)
-        # and added "Show Launcher…", which re-opens the startup launcher so its
-        # persisted "Don't show this again" is never a one-way door.
+        # and added "Show Launcher…", which FQ-027 then RENAMED to
+        # "New Session": one action, not two, now re-initiating the app into the
+        # launcher (save/close/relaunch) and doubling as the escape hatch from
+        # Maintenance mode's menu filter. The rename is an id change, so
+        # `toolbar_registry.RENAMED_ID_ALIASES` carries a row.
         # FQ-020: `Save`/`Save As...` are DELETED (saving is per-tab on the
         # Editor bar's `Deployment` menu), `Revert` became `Discard Changes`, and
         # `Deploy .pgtp` MOVED to `Deployment` -- so §18.2's project group is
         # four entries, not five.
         "Open...", "Open PHP File…", "―",
         "New Project…", "Open Project…", "Close Project", "Project Settings…", "―",
-        "Discard Changes", "Close", "―", "Show Launcher…", "Exit",
+        "Discard Changes", "Close", "―", "New Session", "Exit",
     ]
 
 

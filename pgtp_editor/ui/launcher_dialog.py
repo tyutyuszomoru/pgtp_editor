@@ -13,15 +13,29 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""The startup launcher (FQ-010): the four ways into the app, on one modal.
+"""The startup launcher (FQ-010, reshaped by FQ-027): the app's THREE major
+modes, in one row, on one modal.
 
 Why it exists
 -------------
 Opening the app used to present no guidance at all — an empty Raw XML tab and an
 empty Project Tree, with five workflows hidden behind five different menus. The
-launcher names the four groups those workflows collapse into and dispatches each
+launcher names the groups those workflows collapse into and dispatches each
 one to the **existing** menu ``QAction``, so there is never a second
 implementation of an open/new/generate gesture.
+
+FQ-027: three columns, not four groups
+--------------------------------------
+The four FQ-010 groups became **Standalone | Project | Maintenance** — the
+app's own vocabulary for its three major modes — laid out as one 1×3 row.
+FQ-010's *Open a pgtp for editing* and *Open other files* merged into
+**Standalone**; the §20 re_phpgen/panGen entries left the launcher entirely.
+
+Picking a column ALSO records that column's mode on the window
+(:func:`show_launcher` calls ``window.set_workflow_mode(...)``), which is what
+makes **Maintenance** trim the menu bar. The mode is **session-only** — there is
+no QSettings key for it and it cannot survive a restart, which is precisely why
+it is safe: a menu-less app can never be inherited from a previous run.
 
 Two hard constraints, both structural
 -------------------------------------
@@ -50,22 +64,21 @@ Behaviour
 * **Escape / window-close lands in the app exactly as before, and NEVER quits.**
   Quitting on cancel would turn the launcher into a gate on running the app at
   all. :func:`show_launcher` simply returns ``None``.
-* **Suppressible**: a "Don't show this again" checkbox persisted as the
-  :data:`LAUNCHER_SUPPRESSED_SETTINGS_KEY` bool, alongside ``lightTheme`` /
-  ``windowState`` / ``toolbarIds`` / ``toolbarIconIds`` in the same
-  ``QSettings``. It is read on **every** exit path (chosen entry or cancel), and
-  ``File ▸ Show Launcher…`` re-opens the launcher unconditionally so the flag is
-  never a one-way door.
+* **NOT suppressible (FQ-027).** FQ-010's "Don't show this again" checkbox, its
+  ``launcherSuppressed`` QSettings key and the ``force=`` bypass that existed
+  only to override it are **deleted**. The launcher is the single starting gate
+  where a mode is picked, so it must always appear: with the mode session-only
+  and ``File ▸ New Session`` re-entering the launcher on demand, a persisted
+  "skip the launcher forever" toggle was both redundant and a trap.
 * The chosen action is triggered **after** the modal is down, so an action that
   itself opens a ``QFileDialog`` is not stacked on top of the launcher.
 
 Test seam
 ---------
 Mirrors ``CustomizeToolbarDialog``/``IconPickerDialog``: tests drive
-:meth:`LauncherDialog.entry_ids`, :meth:`LauncherDialog.choose`,
-:meth:`LauncherDialog.cancel` and :meth:`LauncherDialog.set_suppressed`
-directly, and pass ``exec_dialog=`` to :func:`show_launcher`. **No test ever
-calls ``.exec()``.**
+:meth:`LauncherDialog.entry_ids`, :meth:`LauncherDialog.choose` and
+:meth:`LauncherDialog.cancel` directly, and pass ``exec_dialog=`` to
+:func:`show_launcher`. **No test ever calls ``.exec()``.**
 """
 from __future__ import annotations
 
@@ -73,7 +86,6 @@ from collections.abc import Callable, Sequence
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QCheckBox,
     QDialog,
     QDialogButtonBox,
     QGridLayout,
@@ -83,78 +95,73 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
-#: QSettings key for the persisted "Don't show this again" choice. A plain bool
-#: in the SAME store as `lightTheme`/`windowState`/`toolbarIds`, read with
-#: `type=bool` because the ini backend hands booleans back as the strings
-#: "true"/"false" (see `lint_controller.py`'s note on the same trap).
-LAUNCHER_SUPPRESSED_SETTINGS_KEY = "launcherSuppressed"
-
-#: The four groups, as (title, ordered command ids). The ids are the toolbar
-#: registry's menu-path ids (`toolbar_registry.command_id_for`), so this table
-#: never holds a label, a slot or a duplicate of any menu wiring.
+#: The three major workflow modes (FQ-027). Plain strings, not an enum, because
+#: they cross a lazy import boundary (`MainWindow` imports this module only
+#: inside the two methods that need it) and are compared, never arithmetic.
 #:
-#: Group 4's membership is deliberately **open** (FQ-010, the owner's "for now"):
-#: the §11 XSD actions plus §20's re_phpgen/panGen entries only. §19's vendor
-#: PHP-generation entries (`generation.locate-php-generator-executable`,
-#: `generation.generate-php`, `generation.open-output-folder`) are OUT — they are
-#: used in ordinary development, not in maintaining the app. `Help ▸ Open Log
-#: Folder`, `View ▸ Customize Toolbar…`, `Tools ▸ Locate PHP Linter…` and
-#: `Tools ▸ Start MCP Server` were raised as candidates and neither included nor
-#: ruled out; adding one is a one-line change here.
+#: **These are SESSION values.** There is deliberately no QSettings key here:
+#: FQ-027 supersedes FQ-011's persisted-mode design precisely so a filtered menu
+#: bar can never be inherited from a previous run.
+MODE_STANDALONE = "standalone"
+MODE_PROJECT = "project"
+MODE_MAINTENANCE = "maintenance"
+
+#: The three columns, as (title, ordered command ids), left to right. The ids are
+#: the toolbar registry's menu-path ids (`toolbar_registry.command_id_for`), so
+#: this table never holds a label, a slot or a duplicate of any menu wiring.
+#:
+#: FQ-027 reshaped FQ-010's four groups into these three:
+#: * **Standalone** merges FQ-010's *Open a pgtp for editing* and *Open other
+#:   files* — both are "open something without a project".
+#: * **Project** is FQ-010's project group, unchanged.
+#: * **Maintenance** is **Edit XSD + Import XSD** only. The owner's verbatim
+#:   "Open XSD" does NOT map to a live command — the read-only
+#:   `SchemaViewerWindow` / `Schema ▸ Open XSD` was deleted 2026-07-24 in favour
+#:   of the editable Edit XSD tab — and the §20 re_phpgen/panGen entries that
+#:   FQ-010 put in this group LEFT the launcher: they are a generation loop, not
+#:   an administrative task on the app's own schema.
 LAUNCHER_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
     (
-        "Open a pgtp for editing",
-        ("file.open",),
+        "Standalone",
+        ("file.open", "file.open-php-file"),
     ),
     (
-        "New Project / Open Project",
+        "Project",
         ("file.new-project", "file.open-project"),
     ),
     (
-        "Open other files",
-        ("file.open-php-file",),
-    ),
-    (
-        "Maintenance mode",
-        (
-            "schema.edit-xsd",
-            "schema.edit-autoxsd",
-            "schema.verify-xsd",
-            "schema.export-xsd",
-            "schema.import-xsd",
-            "generation.locate-pangen-runtime",
-            "generation.pangen-generate-own-php",
-            "generation.rephpgen-analyze-gap",
-            "generation.save-rejson",
-        ),
+        "Maintenance",
+        ("schema.edit-xsd", "schema.import-xsd"),
     ),
 )
 
-#: Short "what is this workflow" lines under each group title. Deliberately
+#: Column title -> the workflow mode picking it enters. Kept beside
+#: `LAUNCHER_GROUPS` rather than folded into it as a third tuple element so the
+#: `(title, ids)` shape stays what `groups=` callers (and every test that passes
+#: an ad-hoc group) construct — exactly how `_GROUP_HINTS` is keyed.
+GROUP_MODES: dict[str, str] = {
+    "Standalone": MODE_STANDALONE,
+    "Project": MODE_PROJECT,
+    "Maintenance": MODE_MAINTENANCE,
+}
+
+#: Short "what is this mode" lines under each column title. Deliberately
 #: descriptive of behaviour that already exists — the UX review's naming rulings
 #: are a later step, so no new vocabulary is coined here.
 _GROUP_HINTS: dict[str, str] = {
-    "Open a pgtp for editing": (
-        "Edit a .pgtp with the XML tooling and compare it against its quality "
-        "database. No project, no sandbox."
+    "Standalone": (
+        "Edit a .pgtp with the XML tooling, or a custom PHP file beside it. "
+        "No project, no sandbox."
     ),
-    "New Project / Open Project": (
+    "Project": (
         "Work on the quality database through a local sandbox, or converge a "
         "deployable .pgtp by diff/merge."
     ),
-    "Open other files": "Edit the custom PHP files that sit beside a project.",
-    "Maintenance mode": "Maintain the app itself: the XSD and the re_phpgen loop.",
+    "Maintenance": (
+        "One-off administrative work on the app's own schema. Trims the menu "
+        "bar to Schema, Help and a short File menu for this session."
+    ),
 }
-
-
-def launcher_suppressed(settings) -> bool:
-    """Whether the user ticked "Don't show this again"."""
-    return bool(settings.value(LAUNCHER_SUPPRESSED_SETTINGS_KEY, False, type=bool))
-
-
-def set_launcher_suppressed(settings, suppressed: bool) -> None:
-    """Persist the "Don't show this again" choice."""
-    settings.setValue(LAUNCHER_SUPPRESSED_SETTINGS_KEY, bool(suppressed))
 
 
 def resolve_menu_entries(window) -> dict:
@@ -174,15 +181,15 @@ def resolve_menu_entries(window) -> dict:
 
 
 class LauncherDialog(QDialog):
-    """The four-group launcher. Holds no behaviour beyond "which entry was
-    picked" — the picked entry's own ``QAction`` does the work."""
+    """The three-column launcher. Holds no behaviour beyond "which entry was
+    picked, in which column" — the picked entry's own ``QAction`` does the
+    work, and the column decides the session's workflow mode."""
 
     def __init__(
         self,
         entries: dict,
         *,
         groups: Sequence[tuple[str, Sequence[str]]] = LAUNCHER_GROUPS,
-        suppressed: bool = False,
         parent=None,
     ):
         super().__init__(parent)
@@ -192,6 +199,8 @@ class LauncherDialog(QDialog):
         self._chosen_command_id: str | None = None
         #: command_id -> the QPushButton standing for it (test seam).
         self._buttons: dict[str, QPushButton] = {}
+        #: command_id -> its column's title, so a pick can name its mode.
+        self._group_of: dict[str, str] = {}
 
         layout = QVBoxLayout(self)
         intro = QLabel("What would you like to do?", self)
@@ -200,6 +209,9 @@ class LauncherDialog(QDialog):
 
         grid = QGridLayout()
         layout.addLayout(grid)
+        # ONE ROW (FQ-027): `(0, index)`, not FQ-010's `(index // 2, index % 2)`
+        # 2x2 wrap. The three columns ARE the app's three major modes, and a
+        # mode taxonomy read as a grid stops looking like a taxonomy.
         for index, (title, command_ids) in enumerate(groups):
             box = self._build_group(title, command_ids)
             if box is None:
@@ -208,11 +220,7 @@ class LauncherDialog(QDialog):
                 # empty frame. Never a crash -- the launcher must not be able to
                 # stop the app from starting.
                 continue
-            grid.addWidget(box, index // 2, index % 2)
-
-        self.suppress_checkbox = QCheckBox("Don't show this again", self)
-        self.suppress_checkbox.setChecked(bool(suppressed))
-        layout.addWidget(self.suppress_checkbox)
+            grid.addWidget(box, 0, index)
 
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close, self)
         # Cancel/Escape/close lands in the app exactly as before -- it NEVER
@@ -251,6 +259,7 @@ class LauncherDialog(QDialog):
             )
             box_layout.addWidget(button)
             self._buttons[command_id] = button
+            self._group_of[command_id] = title
         box_layout.addStretch(1)
         if not found:
             box.deleteLater()
@@ -273,12 +282,15 @@ class LauncherDialog(QDialog):
         return self._chosen_command_id
 
     @property
-    def suppress_requested(self) -> bool:
-        """Whether "Don't show this again" is ticked."""
-        return self.suppress_checkbox.isChecked()
+    def chosen_group_title(self) -> str | None:
+        """The title of the column the pick came from, or None."""
+        return self._group_of.get(self._chosen_command_id or "")
 
-    def set_suppressed(self, suppressed: bool) -> None:
-        self.suppress_checkbox.setChecked(bool(suppressed))
+    @property
+    def chosen_workflow_mode(self) -> str | None:
+        """The workflow mode the picked column enters (FQ-027), or None — for
+        no pick, and for an ad-hoc `groups=` column that names no mode."""
+        return GROUP_MODES.get(self.chosen_group_title or "")
 
     def choose(self, command_id: str) -> None:
         """Record a pick and accept. Does NOT trigger the action — that happens
@@ -306,35 +318,31 @@ class LauncherDialog(QDialog):
 
 def show_launcher(
     window,
-    settings,
+    settings=None,
     *,
     groups: Sequence[tuple[str, Sequence[str]]] = LAUNCHER_GROUPS,
     resolve_entries: Callable[[object], dict] | None = None,
     exec_dialog: Callable[[QDialog], int] | None = None,
-    force: bool = False,
 ) -> str | None:
     """Show the launcher over `window` and run the picked entry's action.
 
-    Returns the picked ``command_id``, or ``None`` when the launcher was
-    suppressed or closed without a pick. **Never quits the app** on any path.
+    Returns the picked ``command_id``, or ``None`` when the launcher was closed
+    without a pick. **Never quits the app** on any path, and — since FQ-027
+    deleted the suppression flag — it is never skipped either.
 
-    `force=True` bypasses the persisted "Don't show this again" — that is what
-    ``File ▸ Show Launcher…`` passes, so the flag is never irreversible.
+    `settings` no longer has anything to read or write here (the only key this
+    module ever owned was ``launcherSuppressed``); it is kept as a positional
+    parameter because it is part of `main.py`'s ``launcher=`` seam contract,
+    which every stub in the suite is written against.
+
     `resolve_entries` and `exec_dialog` are the injectable seams: tests drive
     the dialog's methods and never enter a real modal loop.
     """
-    if not force and launcher_suppressed(settings):
-        return None
-
     resolve = resolve_entries if resolve_entries is not None else resolve_menu_entries
     entries = resolve(window)
     dialog = LauncherDialog(entries, groups=groups, parent=window)
     runner = exec_dialog if exec_dialog is not None else (lambda dlg: dlg.exec())
     runner(dialog)
-
-    # Read on EVERY exit path: ticking the box and then picking an entry must
-    # persist just as ticking it and closing does.
-    set_launcher_suppressed(settings, dialog.suppress_requested)
 
     command_id = dialog.chosen_command_id
     if command_id is None:
@@ -342,6 +350,13 @@ def show_launcher(
     entry = entries.get(command_id)
     if entry is None:
         return None
+    # The picked COLUMN is what enters the session workflow mode (FQ-027) --
+    # set BEFORE the action runs, so e.g. `Edit XSD` opens into an already
+    # trimmed menu bar rather than flashing the full one. Guarded by `hasattr`
+    # because the window is a test double on most call sites here.
+    mode = dialog.chosen_workflow_mode
+    if mode is not None and hasattr(window, "set_workflow_mode"):
+        window.set_workflow_mode(mode)
     _label, action = entry
     action.trigger()
     return command_id

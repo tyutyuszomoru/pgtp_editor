@@ -127,6 +127,7 @@ EXPECTED_HOST_SURFACE = {
     "_edit_ddl_live",
     "_enter_caption_mode",
     "_fetch_ddl_schema",
+    "_file_menu",
     "_find_next_action",
     "_find_ui",
     "_flush_bookmark_writes",
@@ -220,6 +221,7 @@ EXPECTED_HOST_SURFACE = {
     "_refresh_project_status_window",
     "_refresh_ddl_explorer_affordances",
     "_refresh_sandbox_affordances",
+    "_refresh_workflow_mode_affordances",
     "_refresh_sandbox_console_affordances",
     "_refresh_sandbox_provisioning_status",
     # FQ-023: the one refusal all five session-gated sandbox gestures share.
@@ -299,6 +301,7 @@ EXPECTED_HOST_SURFACE = {
     "_wire_ddl_object_apply_seams",
     "_wire_ddl_object_dirty",
     "_wire_ddl_object_panel_reporting",
+    "_workflow_mode",
     "_xsd_ui",
     "active_target_params",
     "audit_dock",
@@ -318,6 +321,8 @@ EXPECTED_HOST_SURFACE = {
     "enter_caption_mode_for_table_details",
     "left_tabs",
     "manual_contents",
+    "in_maintenance_mode",
+    "new_session",
     "open_project_file",
     "project_tab_index",
     "project_tree",
@@ -326,7 +331,9 @@ EXPECTED_HOST_SURFACE = {
     "sandbox_controller",
     "sandbox_ddl_browser_panel",
     "sandbox_ddl_browser_tab_index",
+    "set_workflow_mode",
     "show_launcher",
+    "workflow_mode",
     "tree_dock",
 }
 

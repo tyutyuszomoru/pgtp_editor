@@ -142,6 +142,11 @@ DEFAULT_TOOLBAR_IDS: list[str] = [
 # Database menu onto the Editor bar's `Parsing` menu (Parsing only -- they are
 # not on both). Their labels did not change, but the id is the whole menu path,
 # so a toolbar saved before the move needs these rows to keep its buttons.
+# FQ-027 opened it once more: `File ▸ Show Launcher…` was RENAMED to
+# `File ▸ New Session` (one action, not two -- it kept its place in the File
+# menu and gained the save-all/close/relaunch teardown). The label is the id's
+# last segment, so the rename is an id change like any other, and a toolbar
+# saved before it still names `file.show-launcher`.
 RENAMED_ID_ALIASES: dict[str, str] = {
     "database.ddl-explorer": "database.ddl-explorer-quality",
     "bookmarks.toggle-bookmark": "navigation.toggle-bookmark",
@@ -155,6 +160,7 @@ RENAMED_ID_ALIASES: dict[str, str] = {
     "tools.compare-merge-two-files": "deployment.compare-merge-pgtp",
     "file.deploy-pgtp": "deployment.deploy-pgtp",
     "file.revert": "file.discard-changes",
+    "file.show-launcher": "file.new-session",
     "database.check-object-in-sandbox": "parsing.check-object-in-sandbox",
     "database.check-object-without-applying": (
         "parsing.check-object-without-applying"
