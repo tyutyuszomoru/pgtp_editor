@@ -26,8 +26,10 @@ Audit panel*, plus the two menus that are nothing but that:
   a §21 PHP tab);
 * the **Navigation menu** (titled `Bookmarks` before FQ-021) — a menu owned
   outright by one collaborator moves with it, so this lane builds it
-  (:meth:`build_navigation_menu`) and gates it during
-  Caption Mode (:meth:`set_bookmarks_enabled`, §8/§13) — including
+  (:meth:`build_navigation_menu`), gates its **bookmark group** during
+  Caption Mode (:meth:`set_bookmarks_enabled`, §8/§13) and shows/hides its three
+  Compare/Merge-**mode** members (:meth:`set_diff_mode_members_visible`,
+  FQ-021) — including
   **List All Bookmarks** (:meth:`list_all_bookmarks`, FQ-014), which writes the
   active editor's bookmarks into the Audit panel as ``[Bookmark]`` rows and, being
   a snapshot, sweeps them again when a document load wipes the bookmark set it
@@ -189,11 +191,20 @@ class FindValidateController(QObject):
         add_bookmark_observer(self._on_editor_bookmarks_changed)
 
         #: The Navigation menu and its five bookmark actions, retained by
-        #: `build_navigation_menu` so `set_bookmarks_enabled` can gate the menu
-        #: **and every child action** during Caption Mode (§8/§13). None / empty
-        #: until the menu is built.
+        #: `build_navigation_menu` so `set_bookmarks_enabled` can gate **the five
+        #: actions individually** during Caption Mode (§8/§13) -- the menu itself
+        #: is no longer disabled, see that method. None / empty until the menu is
+        #: built.
         self._navigation_menu = None
         self._bookmark_actions: tuple = ()
+
+        #: FQ-021's three MODE-ONLY members of the same menu (`Next Difference`,
+        #: `Previous Difference`, `Apply Changes to Target`), hidden outside
+        #: Compare/Merge mode by `set_diff_mode_members_visible`. Retained
+        #: separately from `_bookmark_actions` because the two groups are gated
+        #: by different things and must never move together: Caption Mode gates
+        #: the bookmark group only.
+        self._diff_actions: tuple = ()
 
         #: The streaming Find-All run's whole state. PLAIN ATTRIBUTES, read back
         #: through the identity-preserving properties below -- see the module
@@ -245,9 +256,24 @@ class FindValidateController(QObject):
         :meth:`build_navigation_menu`). The separator is not included."""
         return self._bookmark_actions
 
+    @property
+    def diff_actions(self) -> tuple:
+        """FQ-021's three Compare/Merge-mode ``QAction``s, in menu order
+        (``Next Difference``, ``Previous Difference``,
+        ``Apply Changes to Target``); empty before
+        :meth:`build_navigation_menu`."""
+        return self._diff_actions
+
     # -- construction --------------------------------------------------------
 
-    def build_navigation_menu(self, menu_bar) -> None:
+    def build_navigation_menu(
+        self,
+        menu_bar,
+        *,
+        on_next_difference: Callable[[], None] | None = None,
+        on_previous_difference: Callable[[], None] | None = None,
+        on_apply_changes_to_target: Callable[[], None] | None = None,
+    ) -> None:
         """Add the Navigation menu to `menu_bar`.
 
         Titled `Bookmarks` until FQ-021 renamed it; the five members kept their
@@ -269,6 +295,23 @@ class FindValidateController(QObject):
         `_bookmark_actions`) so `set_bookmarks_enabled` can gate them together
         while Caption Mode is active (§8/§13) -- disabling only the `QMenu`
         grays out the menu-bar entry but leaves the actions' shortcuts live.
+
+        FQ-021's third leg added THREE MORE members below a separator —
+        `Next Difference` and `Previous Difference` **moved off Tools**, plus
+        `Apply Changes to Target`, which FQ-020 removed from Tools leaving it
+        with no menu home at all (`DiffMergeController.apply_changes_to_target`
+        stayed reachable only from tests). They are Compare/Merge-**mode**
+        members, `setVisible(False)` outside it (`set_diff_mode_members_visible`),
+        while the five bookmark members stay always visible because they are
+        per-*editor*, not per-mode — so the menu itself is never hidden.
+
+        The three take their callbacks as arguments rather than reaching for
+        `self._shell.stage.diff_merge_panel` / the host's `_diff_ui`: this lane
+        owns the menu, not the Compare/Merge lane, and the host is the one place
+        that already knows both. Built ONCE here and only ever shown/hidden —
+        `ToolbarController._walk_menu_actions` never tests `isVisible()`, so a
+        hidden action keeps its stable id and stays in Customize Toolbar's
+        Available list; recreating them per mode would break that.
         """
         menu = menu_bar.addMenu("Navigation")
         self._navigation_menu = menu
@@ -310,29 +353,72 @@ class FindValidateController(QObject):
             list_action,
         )
 
-    def set_bookmarks_enabled(self, enabled: bool) -> None:
-        """Enable/disable the Navigation menu **and its five bookmark actions**
-        (§8/§13).
+        # FQ-021: the Compare/Merge-mode group. Separated from the bookmark
+        # group above so the two never read as one list of five-plus-three.
+        menu.addSeparator()
+        next_diff_action = menu.addAction("Next Difference")
+        prev_diff_action = menu.addAction("Previous Difference")
+        # Relabelled from Tools' `Prev Difference` (settled 2026-08-08) to match
+        # `Previous Bookmark` two entries up. The label IS the id, so the move
+        # and the relabel are one id change:
+        # `tools.prev-difference` -> `navigation.previous-difference`, carried by
+        # `toolbar_registry.RENAMED_ID_ALIASES`.
+        apply_action = menu.addAction("Apply Changes to Target")
+        for action, callback in (
+            (next_diff_action, on_next_difference),
+            (prev_diff_action, on_previous_difference),
+            (apply_action, on_apply_changes_to_target),
+        ):
+            if callback is not None:
+                action.triggered.connect(lambda _checked=False, cb=callback: cb())
+        self._diff_actions = (next_diff_action, prev_diff_action, apply_action)
+        # Hidden until a comparison is loaded -- the app does not start in the
+        # mode, and the host re-asserts this from `diff_merge_mode_changed`.
+        self.set_diff_mode_members_visible(False)
 
-        Still named for BOOKMARKS, not for the menu, after FQ-021 retitled that
-        menu to `Navigation`: what Caption Mode gates is the bookmark action
-        group, and the whole-`QMenu` disable below is only equivalent to that
-        while every member of the menu is a bookmark action. A later pass that
-        moves non-bookmark navigation (the diff steppers) into this menu must
-        stop disabling the menu itself, or it will gray out commands Caption
-        Mode has no reason to touch.
+    def set_diff_mode_members_visible(self, visible: bool) -> None:
+        """Show/hide the three Compare/Merge-mode members (FQ-021, §26).
+
+        Driven by `CenterStage.diff_merge_mode_changed`, i.e. by the MODE, never
+        by which tab is current: the mode outlives a tab switch (the user may
+        read Raw XML mid-comparison), and `leave_diff_merge_mode`'s final
+        `setCurrentIndex(raw_xml)` emits no `currentChanged` at all when Raw XML
+        was already current.
+
+        VISIBILITY, not enabled-state, matching every other per-context gate on
+        these bars (§7's two postures: present / absent). FQ-016 declined to hide
+        `Parsing`'s members because `Validate Project` is one of the six DEFAULT
+        toolbar buttons; none of these three is a default, so the governing
+        precedent is FQ-015's `Select ▸ Select Parent Block` — hide the action,
+        and accept that a *user-pinned* button comes and goes with the mode.
+        """
+        for action in self._diff_actions:
+            action.setVisible(visible)
+
+    def set_bookmarks_enabled(self, enabled: bool) -> None:
+        """Enable/disable **the five bookmark actions** — the bookmark action
+        group, and nothing else on the menu (§8/§13).
+
+        Named for BOOKMARKS, not for the menu, and FQ-021's third leg is why
+        that distinction became load-bearing. This used to also call
+        `QMenu.setEnabled`, which was equivalent to gating the group only while
+        every member of the menu WAS a bookmark action. It no longer is: the
+        same menu now hosts `Next Difference`, `Previous Difference` and
+        `Apply Changes to Target`, which Caption Mode has no reason to touch —
+        a comparison loaded while captions are being edited is still navigable.
+        So the menu itself is left enabled and the five actions are gated
+        individually.
 
         Called by the host on entering/leaving Caption Mode, where the Raw XML
-        editor is read-only. Both halves are needed: disabling the `QMenu` alone
-        grays out the menu-bar entry while Ctrl+F2 / F2 / Shift+F2 keep firing
-        (Qt only drops a shortcut when the *action* is disabled) -- the Qt rule
-        the deleted `set_find_actions_enabled` demonstrated on the Edit-menu
-        Find…/Replace… pair (both gone with the Edit menu, FQ-016).
+        editor is read-only. The per-ACTION disable is the half that actually
+        matters and always did: disabling the `QMenu` alone grays out the
+        menu-bar entry while Ctrl+F2 / F2 / Shift+F2 keep firing (Qt only drops
+        a shortcut when the *action* is disabled) -- the Qt rule the deleted
+        `set_find_actions_enabled` demonstrated on the Edit-menu Find…/Replace…
+        pair (both gone with the Edit menu, FQ-016).
         Gutter bookmark toggling is deliberately NOT gated: bookmarks are a UI
         overlay independent of the editor's read-only state.
         """
-        if self._navigation_menu is not None:
-            self._navigation_menu.setEnabled(enabled)
         for action in self._bookmark_actions:
             action.setEnabled(enabled)
 

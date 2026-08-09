@@ -216,6 +216,50 @@ def test_resolve_ids_carries_a_pinned_bookmark_button_through_the_rename():
     assert resolve_ids(saved, known) == [new for _old, new in _FQ021_ROWS]
 
 
+#: FQ-021's THIRD leg: three commands MOVED off `Tools` onto the same renamed
+#: menu, as (saved id, current id). Two of them changed only their first
+#: segment; `Prev Difference` was relabelled `Previous Difference` (matching
+#: `Previous Bookmark`), so its LAST segment changed too. The third,
+#: `Apply Changes to Target`, still gets a row despite FQ-020 having already
+#: taken it off `Tools`: a toolbar saved before FQ-020 still names it, and this
+#: is a MOVE -- the command exists again -- not a deletion.
+_FQ021_MOVED_ROWS = [
+    ("tools.next-difference", "navigation.next-difference"),
+    ("tools.prev-difference", "navigation.previous-difference"),
+    ("tools.apply-changes-to-target", "navigation.apply-changes-to-target"),
+]
+
+
+def test_fq021_moved_the_three_compare_merge_commands_off_tools():
+    for old_id, new_id in _FQ021_MOVED_ROWS:
+        assert RENAMED_ID_ALIASES[old_id] == new_id
+
+
+def test_the_relabelled_stepper_changed_its_last_segment_too():
+    """`Prev Difference` -> `Previous Difference`. The label IS the id's last
+    segment, so the relabel is an id change in its own right -- an alias row
+    that only rewrote the menu prefix would resolve to a command that does not
+    exist and the pinned button would be dropped anyway."""
+    assert RENAMED_ID_ALIASES["tools.prev-difference"].endswith(".previous-difference")
+    assert "navigation.prev-difference" not in RENAMED_ID_ALIASES.values()
+
+
+def test_resolve_ids_carries_a_pinned_difference_button_through_the_move():
+    known = [new_id for _old, new_id in _FQ021_MOVED_ROWS] + ["file.open"]
+    saved = [old_id for old_id, _new in _FQ021_MOVED_ROWS]
+    assert resolve_ids(saved, known) == [new for _old, new in _FQ021_MOVED_ROWS]
+
+
+def test_the_moved_compare_merge_ids_stay_out_of_the_icon_table():
+    """Same correctness constraint as the bookmark rows: `ICON_ID_BY_COMMAND` is
+    `LEGACY_ID_ALIASES` INVERTED, so a row in the wrong table would make
+    `icon_id_for("navigation.next-difference")` answer with a *menu-path* id
+    where an *icon* id belongs."""
+    for old_id, new_id in _FQ021_MOVED_ROWS:
+        assert old_id not in LEGACY_ID_ALIASES
+        assert icon_id_for(new_id) is None
+
+
 def test_resolve_ids_passes_through_new_ids_and_still_drops_unknowns():
     assert resolve_ids(["file.open", "nope"], _KNOWN) == ["file.open"]
 

@@ -417,6 +417,18 @@ class MainWindow(QMainWindow):
         self.center_stage.currentChanged.connect(
             lambda _index: self._refresh_editor_menu_affordances()
         )
+        # FQ-021: `Navigation`'s three Compare/Merge members follow the MODE, so
+        # they hang off this signal and NOT off `currentChanged` above. The mode
+        # outlives a tab switch (`enter_diff_merge_mode`), and
+        # `leave_diff_merge_mode`'s closing `setCurrentIndex(raw_xml)` emits no
+        # `currentChanged` at all when Raw XML is already current -- reachable
+        # whenever the user tabs back mid-comparison and then closes the mode
+        # from the panel's Close button, which would strand the three members
+        # visible with no comparison behind them. Lambda: `_find_ui` is built
+        # after this point.
+        self.center_stage.diff_merge_mode_changed.connect(
+            lambda active: self._find_ui.set_diff_mode_members_visible(active)
+        )
 
         # Populate the (static) manual once, into both the center-stage Manual
         # tab and the left-dock Contents tree. Only the resource load is guarded
@@ -1588,7 +1600,25 @@ class MainWindow(QMainWindow):
         # builds it -- called from here so the menu lands on THIS bar (it was a
         # top-level window menu between Tools and Generation before FQ-016) and
         # keeps its position on it.
-        self._find_ui.build_navigation_menu(self.editor_menu_bar)
+        # FQ-021: the menu's three Compare/Merge-mode members are wired from
+        # HERE because this is the only place that knows both halves -- the
+        # panel's steppers (moved off Tools) and the Compare/Merge lane's Apply
+        # (which FQ-020 removed from Tools, leaving it with no menu home at all
+        # until now). Lambdas: `_diff_ui` is constructed after the menu bar, and
+        # the panel's steppers are resolved at trigger time for the same reason
+        # every other per-tab command on these bars is.
+        self._find_ui.build_navigation_menu(
+            self.editor_menu_bar,
+            on_next_difference=(
+                lambda: self.center_stage.diff_merge_panel.select_next_difference()
+            ),
+            on_previous_difference=(
+                lambda: self.center_stage.diff_merge_panel.select_previous_difference()
+            ),
+            on_apply_changes_to_target=(
+                lambda: self._diff_ui.apply_changes_to_target()
+            ),
+        )
         self._build_deployment_menu()
         self._refresh_editor_menu_affordances()
 
@@ -4947,23 +4977,25 @@ class MainWindow(QMainWindow):
         reparse_action = menu.addAction("Reparse Raw XML into Tree")
         reparse_action.triggered.connect(self._doc_ui.reparse)
         menu.addSeparator()
-        # FQ-020 took two entries off this menu:
+        # This menu no longer carries ANY Compare/Merge command -- all four left
+        # across FQ-020 and FQ-021, and nothing was re-authored on the way out:
         #
         # * `Compare / Merge Two Files...` -> `Deployment ▸ Compare/Merge pgtp` on
-        #   the Raw XML tab (§12). Relabelled and re-homed, same slot behind it,
-        #   with a `RENAMED_ID_ALIASES` row so a pinned button survives.
-        # * `Apply Changes to Target` -> queued FQ-021's mode-scoped Compare/Merge
-        #   surface, NOT `Deployment`: it is meaningful only while a comparison is
-        #   loaded, and it REPLACES the app's open document (`_reload` ->
-        #   `open_project_file`), so hosting it beside `Run on quality` would put
-        #   two very differently shaped irreversible actions under one menu. Until
-        #   FQ-021 lands it has no menu home; `_diff_ui.apply_changes_to_target`
-        #   is unchanged and still the one implementation.
-        next_action = menu.addAction("Next Difference")
-        next_action.triggered.connect(self.center_stage.diff_merge_panel.select_next_difference)
-        prev_action = menu.addAction("Prev Difference")
-        prev_action.triggered.connect(self.center_stage.diff_merge_panel.select_previous_difference)
-        menu.addSeparator()
+        #   the Raw XML tab (§12, FQ-020). Relabelled and re-homed, same slot
+        #   behind it, with a `RENAMED_ID_ALIASES` row so a pinned button survives.
+        # * `Next Difference` / `Prev Difference` -> `Navigation ▸ Next Difference`
+        #   / `Previous Difference` (FQ-021), mode-only members hidden outside
+        #   Compare/Merge mode. `Prev` became `Previous` to match
+        #   `Previous Bookmark`; both ids changed, both have alias rows.
+        # * `Apply Changes to Target` -> `Navigation` too (FQ-021), and
+        #   deliberately NOT `Deployment`: it is meaningful only while a
+        #   comparison is loaded, and it REPLACES the app's open document
+        #   (`_reload` -> `open_project_file`), so hosting it beside
+        #   `Run on quality` would put two very differently shaped irreversible
+        #   actions under one menu. FQ-020 removed it here expecting FQ-021 to
+        #   rehome it; between the two it had no menu home at all, which left
+        #   `_diff_ui.apply_changes_to_target` implemented, tested and
+        #   unreachable from the UI. Do not re-add it here.
         # §23 Tools ▸ Start MCP Server. CHECKABLE and unchecked at startup:
         # §23's "off by default … must not be silent or default-on" needs the
         # running/not-running state to be visible, and unchecking is the stop

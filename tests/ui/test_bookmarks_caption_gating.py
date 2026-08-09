@@ -1,13 +1,20 @@
-"""§8/§13 — the Navigation menu is disabled during Caption Mode.
+"""§8/§13 — the bookmark ACTION GROUP is disabled during Caption Mode.
 
 Caption Mode makes the Raw XML editor read-only, but the bookmark actions and their
 four shortcuts stayed live. The gate is a lane seam
 (`FindValidateController.set_bookmarks_enabled`), not a reach-in: the lane owns
 the menu, so it owns disabling it.
 
-Both halves are asserted deliberately. Disabling only the `QMenu` grays out the
-menu-bar entry but leaves Ctrl+F2 / F2 / Shift+F2 firing -- Qt drops a shortcut
-only when the ACTION is disabled -- which is exactly the bug this closes.
+The per-ACTION disable is the half that matters and always did: disabling only
+the `QMenu` grays out the menu-bar entry but leaves Ctrl+F2 / F2 / Shift+F2
+firing -- Qt drops a shortcut only when the ACTION is disabled -- which is
+exactly the bug this closes.
+
+FQ-021's third leg then made the whole-`QMenu` disable actively WRONG and it was
+removed: `Navigation` now also hosts `Next Difference`, `Previous Difference` and
+`Apply Changes to Target`, which Caption Mode has no reason to touch. So the menu
+itself stays enabled and only the five bookmark actions are gated -- asserted
+below in both directions.
 """
 from pgtp_editor.ui.main_window import MainWindow
 from tests.ui._menu_helpers import action_labels, find_top_menu
@@ -50,12 +57,13 @@ def test_bookmarks_are_enabled_outside_caption_mode(qtbot, tmp_path):
         assert action.isEnabled() is True
 
 
-def test_entering_caption_mode_disables_the_menu_and_every_action(qtbot, tmp_path):
+def test_entering_caption_mode_disables_every_bookmark_action(qtbot, tmp_path):
     window = _window(qtbot, tmp_path)
 
     assert window._enter_caption_mode() is True
 
-    assert find_top_menu(window, "Navigation").isEnabled() is False
+    # FQ-021: the MENU is not disabled -- it hosts non-bookmark commands now.
+    assert find_top_menu(window, "Navigation").isEnabled() is True
     for action in window._find_ui.bookmark_actions:
         assert action.isEnabled() is False, action.text()
 

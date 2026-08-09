@@ -133,7 +133,10 @@ DUAL_CAPTION_CHANGED_PGTP = """\
 """
 
 
-def test_next_and_prev_difference_menu_actions_navigate_the_panel(qtbot, tmp_path):
+def test_next_and_previous_difference_menu_actions_navigate_the_panel(qtbot, tmp_path):
+    """FQ-021 MOVED both off `Tools` onto the Editor bar's `Navigation` menu,
+    relabelling `Prev Difference` -> `Previous Difference` to match
+    `Previous Bookmark`. Same panel steppers behind them."""
     window = MainWindow()
     qtbot.addWidget(window)
     source_path = _write(tmp_path, "source.pgtp", DUAL_CAPTION_CHANGED_PGTP)
@@ -145,9 +148,12 @@ def test_next_and_prev_difference_menu_actions_navigate_the_panel(qtbot, tmp_pat
     ):
         window._diff_ui.compare_two_files()
 
-    menu = find_top_menu(window, "Tools")
+    menu = find_top_menu(window, "Navigation")
     next_action = find_action(menu, "Next Difference")
-    prev_action = find_action(menu, "Prev Difference")
+    prev_action = find_action(menu, "Previous Difference")
+    # Visible, because the comparison above put the window in the mode.
+    assert next_action.isVisible() is True
+    assert prev_action.isVisible() is True
 
     panel = window.center_stage.diff_merge_panel
     leaves = panel._flattened_leaves()

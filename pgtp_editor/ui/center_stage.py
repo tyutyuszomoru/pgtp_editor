@@ -165,6 +165,22 @@ class CenterStage(QTabWidget):
     # through MainWindow's unsaved-changes prompt first.
     php_file_close_requested = Signal(str)
 
+    # Emitted when Compare/Merge mode is entered (True) or left (False), so the
+    # Navigation menu's three mode-only members (`Next Difference`,
+    # `Previous Difference`, `Apply Changes to Target`) can follow the MODE
+    # rather than the tab (FQ-021, §26).
+    #
+    # This exists instead of leaning on `currentChanged` because the mode is
+    # NOT the tab: `enter_diff_merge_mode` holds Raw XML read-only for the whole
+    # comparison and the user may tab back to Raw XML with the mode still on
+    # (see that method). Concretely, `leave_diff_merge_mode` ends with
+    # `setCurrentIndex(raw_xml_tab_index)`, which emits NOTHING when Raw XML is
+    # already current -- a reachable state, since the user can tab back mid-
+    # comparison and then leave via the panel's Close button. A visibility
+    # refresh hung off `currentChanged` alone would leave the three mode-only
+    # members on screen after the mode ended.
+    diff_merge_mode_changed = Signal(bool)
+
     def __init__(self, parent=None):
         super().__init__(parent)
         # Dynamic per-object tabs (spec §18.5): always appended AFTER the
@@ -456,6 +472,17 @@ class CenterStage(QTabWidget):
         caller cannot mutate the lock behind the seam's back)."""
         return set(self._raw_xml_read_only_reasons)
 
+    @property
+    def diff_merge_mode_active(self) -> bool:
+        """True while Compare/Merge mode is on (FQ-021, §12).
+
+        Derived from the read-only reasons set rather than kept as a second
+        boolean: that set is already the mode's single source of truth (it is
+        what `enter_diff_merge_mode` / `leave_diff_merge_mode` write), and a
+        parallel flag would be free to drift from it. Deliberately NOT
+        "the Diff/Merge tab is current" -- the mode outlives a tab switch."""
+        return RAW_XML_READ_ONLY_DIFF_MERGE_MODE in self._raw_xml_read_only_reasons
+
     def _set_raw_xml_read_only(self, reason: str | None, *, active: bool = True) -> None:
         """Add (`active=True`) or discard (`active=False`) ONE named read-only
         reason, then re-derive the flag *and* the tab title from the resulting
@@ -540,6 +567,11 @@ class CenterStage(QTabWidget):
         self._set_raw_xml_read_only(RAW_XML_READ_ONLY_DIFF_MERGE_MODE)
         self.setTabVisible(self.diff_merge_tab_index, True)
         self.setCurrentIndex(self.diff_merge_tab_index)
+        # After the state is settled, so a listener that reads
+        # `diff_merge_mode_active` sees the mode already on. Emitted on every
+        # enter, including a re-enter from a second comparison: the listeners
+        # are idempotent visibility refreshes.
+        self.diff_merge_mode_changed.emit(True)
 
     def leave_diff_merge_mode(self):
         """Re-enable editing on Raw XML, hide Diff/Merge, and switch back to
@@ -551,6 +583,9 @@ class CenterStage(QTabWidget):
         self.setTabVisible(self.diff_merge_tab_index, False)
         self.setTabVisible(self.raw_xml_tab_index, True)
         self.setCurrentIndex(self.raw_xml_tab_index)
+        # The line above emits NOTHING when Raw XML was already current, which
+        # is why this signal exists -- see `diff_merge_mode_changed`.
+        self.diff_merge_mode_changed.emit(False)
 
     # --- Dynamic DDL object editor tabs (spec §18.5) -----------------------
     def ddl_object_tab(self, key):

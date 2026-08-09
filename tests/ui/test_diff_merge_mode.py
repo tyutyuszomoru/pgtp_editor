@@ -310,3 +310,190 @@ def test_a_refused_apply_keeps_the_mode_so_the_user_can_uncheck_and_retry(qtbot,
     mock_info.assert_called_once()
     assert window.center_stage.xml_editor.isReadOnly() is True
     assert window.center_stage.isTabVisible(window.center_stage.diff_merge_tab_index) is True
+
+
+# --- FQ-021's third leg: `Navigation`'s three mode-only members (§26) --------
+#
+# The regression this closes: FQ-020 removed `Apply Changes to Target` from
+# `Tools` expecting this leg to rehome it. It never shipped, so between the two
+# `DiffMergeController.apply_changes_to_target` was implemented and tested but
+# reachable from NO gesture in the app.
+
+_DIFF_MEMBERS = ("Next Difference", "Previous Difference", "Apply Changes to Target")
+_BOOKMARK_MEMBERS = (
+    "Toggle Bookmark",
+    "Next Bookmark",
+    "Previous Bookmark",
+    "Clear All Bookmarks",
+    "List All Bookmarks",
+)
+
+
+def _nav(window):
+    from tests.ui._menu_helpers import find_top_menu
+
+    return find_top_menu(window, "Navigation")
+
+
+def _visible(window, labels):
+    from tests.ui._menu_helpers import find_action
+
+    menu = _nav(window)
+    return {label: find_action(menu, label).isVisible() for label in labels}
+
+
+def test_the_three_mode_members_are_hidden_outside_the_mode(qtbot):
+    window = MainWindow()
+    qtbot.addWidget(window)
+
+    assert _visible(window, _DIFF_MEMBERS) == dict.fromkeys(_DIFF_MEMBERS, False)
+    # ...and the menu is still there, because the bookmark group is per-EDITOR,
+    # not per-mode. A hidden menu would take four always-valid commands with it.
+    assert _nav(window).menuAction().isVisible() is True
+    assert _visible(window, _BOOKMARK_MEMBERS) == dict.fromkeys(_BOOKMARK_MEMBERS, True)
+
+
+def test_entering_the_mode_reveals_the_three_and_leaves_the_bookmarks_alone(qtbot, tmp_path):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    _compare(
+        window,
+        _write(tmp_path, "source.pgtp", CHANGED_PGTP),
+        _write(tmp_path, "target.pgtp", VALID_PGTP),
+    )
+
+    assert _visible(window, _DIFF_MEMBERS) == dict.fromkeys(_DIFF_MEMBERS, True)
+    assert _visible(window, _BOOKMARK_MEMBERS) == dict.fromkeys(_BOOKMARK_MEMBERS, True)
+
+    window.center_stage.leave_diff_merge_mode()
+
+    assert _visible(window, _DIFF_MEMBERS) == dict.fromkeys(_DIFF_MEMBERS, False)
+    assert _visible(window, _BOOKMARK_MEMBERS) == dict.fromkeys(_BOOKMARK_MEMBERS, True)
+
+
+def test_the_members_hide_when_the_mode_closes_while_raw_xml_is_current(qtbot, tmp_path):
+    """The `currentChanged` trap, spelled out.
+
+    The user may tab back to Raw XML mid-comparison (the mode outlives the tab
+    switch, above) and then leave from the panel's Close button.
+    `leave_diff_merge_mode` ends with `setCurrentIndex(raw_xml_tab_index)`,
+    which emits NO `currentChanged` when Raw XML is already current -- so a
+    refresh driven by that signal would strand all three members visible with
+    no comparison behind them. Visibility hangs off `diff_merge_mode_changed`
+    instead, and this is the test that proves it.
+    """
+    window = MainWindow()
+    qtbot.addWidget(window)
+    stage = window.center_stage
+    _compare(
+        window,
+        _write(tmp_path, "source.pgtp", CHANGED_PGTP),
+        _write(tmp_path, "target.pgtp", VALID_PGTP),
+    )
+    stage.setCurrentIndex(stage.raw_xml_tab_index)
+    assert _visible(window, _DIFF_MEMBERS) == dict.fromkeys(_DIFF_MEMBERS, True)
+
+    changes = []
+    stage.currentChanged.connect(changes.append)
+    stage.diff_merge_panel._close_button.click()
+
+    assert changes == []  # the gap itself: Qt emitted nothing
+    assert stage.diff_merge_mode_active is False
+    assert _visible(window, _DIFF_MEMBERS) == dict.fromkeys(_DIFF_MEMBERS, False)
+
+
+def test_the_mode_flag_reads_the_reasons_set_not_the_current_tab(qtbot):
+    stage = CenterStage()
+    qtbot.addWidget(stage)
+    assert stage.diff_merge_mode_active is False
+
+    stage.enter_diff_merge_mode()
+    assert stage.diff_merge_mode_active is True
+    stage.setCurrentIndex(stage.raw_xml_tab_index)
+    assert stage.diff_merge_mode_active is True
+
+    stage.leave_diff_merge_mode()
+    assert stage.diff_merge_mode_active is False
+
+
+def test_the_mode_signal_fires_both_ways(qtbot):
+    stage = CenterStage()
+    qtbot.addWidget(stage)
+    seen = []
+    stage.diff_merge_mode_changed.connect(seen.append)
+
+    stage.enter_diff_merge_mode()
+    stage.leave_diff_merge_mode()
+
+    assert seen == [True, False]
+
+
+def test_the_three_actions_survive_a_mode_toggle_as_the_same_objects(qtbot, tmp_path):
+    """Built once, only shown/hidden. `ToolbarController._walk_menu_actions`
+    never tests `isVisible()`, so a hidden action keeps a stable command id and
+    stays in Customize Toolbar's Available list -- recreating them per mode
+    would silently break both."""
+    from tests.ui._menu_helpers import find_action
+
+    window = MainWindow()
+    qtbot.addWidget(window)
+    before = [find_action(_nav(window), label) for label in _DIFF_MEMBERS]
+
+    _compare(
+        window,
+        _write(tmp_path, "source.pgtp", CHANGED_PGTP),
+        _write(tmp_path, "target.pgtp", VALID_PGTP),
+    )
+    window.center_stage.leave_diff_merge_mode()
+
+    after = [find_action(_nav(window), label) for label in _DIFF_MEMBERS]
+    assert after == before
+    assert window._find_ui.diff_actions == tuple(before)
+
+
+def test_apply_changes_to_target_menu_action_reaches_the_controller(qtbot, tmp_path):
+    """The regression proper: this gesture did not exist anywhere in the app."""
+    from tests.ui._menu_helpers import find_action
+
+    window = MainWindow()
+    qtbot.addWidget(window)
+    _compare(
+        window,
+        _write(tmp_path, "source.pgtp", CHANGED_PGTP),
+        _write(tmp_path, "target.pgtp", VALID_PGTP),
+    )
+    calls = []
+    window._diff_ui.apply_changes_to_target = lambda: calls.append(True)
+
+    find_action(_nav(window), "Apply Changes to Target").trigger()
+
+    assert calls == [True]
+
+
+def test_caption_mode_gates_the_bookmarks_without_touching_the_diff_members(qtbot, tmp_path):
+    """`set_bookmarks_enabled` used to disable the whole `QMenu`, which was only
+    equivalent to gating the bookmark group while every member WAS a bookmark
+    action. It no longer is -- a comparison loaded during caption work stays
+    navigable."""
+    from tests.ui._menu_helpers import find_action
+
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window.center_stage.xml_editor.setPlainText(VALID_PGTP)
+    _compare(
+        window,
+        _write(tmp_path, "source.pgtp", CHANGED_PGTP),
+        _write(tmp_path, "target.pgtp", VALID_PGTP),
+    )
+
+    assert window._enter_caption_mode() is True
+
+    menu = _nav(window)
+    assert menu.isEnabled() is True
+    for label in _BOOKMARK_MEMBERS:
+        assert find_action(menu, label).isEnabled() is False, label
+    for label in _DIFF_MEMBERS:
+        action = find_action(menu, label)
+        assert action.isEnabled() is True, label
+        # Both modes are on at once, so these stay visible too.
+        assert action.isVisible() is True, label

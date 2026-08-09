@@ -630,17 +630,20 @@ def test_tools_menu_contents(qtbot):
         # (§29 open item: whether all three follow it).
         "Lint Current File", "Lint on Save", "Locate PHP Linter…", "―",
         "Reparse Raw XML into Tree", "―",
-        # FQ-020 took two more off this menu: `Compare / Merge Two Files...`
-        # became `Deployment ▸ Compare/Merge pgtp` on the Raw XML tab, and
-        # `Apply Changes to Target` is bound for queued FQ-021's mode-scoped
-        # Compare/Merge surface -- deliberately NOT `Deployment`, which would put
-        # two very differently shaped irreversible actions under one menu.
-        "Next Difference", "Prev Difference", "―",
+        # NO Compare/Merge command survives here. FQ-020 took
+        # `Compare / Merge Two Files...` (-> `Deployment ▸ Compare/Merge pgtp`)
+        # and `Apply Changes to Target`; FQ-021's third leg took the two
+        # Difference steppers and rehomed Apply, all three onto `Navigation` as
+        # mode-only members -- deliberately NOT `Deployment`, which would put two
+        # very differently shaped irreversible actions under one menu.
         # §23's embedded MCP server: one checkable entry, off at startup.
         "Start MCP Server",
     ]
     assert find_action(menu, "Compare / Merge Two Files...") is None
     assert find_action(menu, "Apply Changes to Target") is None
+    assert find_action(menu, "Next Difference") is None
+    assert find_action(menu, "Prev Difference") is None
+    assert find_action(menu, "Previous Difference") is None
 
 
 def test_validate_project_action_populates_audit(qtbot):
@@ -749,12 +752,21 @@ def test_navigation_menu_moved_onto_the_editor_menu_bar(qtbot):
 
 
 def test_navigation_menu_contents(qtbot):
+    """All eight members, in order. `action_labels` reads `menu.actions()`, so
+    the three Compare/Merge members appear here even though they are HIDDEN
+    outside the mode -- which is the point: they are built once and only shown /
+    hidden (FQ-021), so their command ids stay stable for the toolbar.
+    Their per-mode visibility is asserted in test_diff_merge_mode.py."""
     window = MainWindow()
     qtbot.addWidget(window)
     menu = find_top_menu(window, "Navigation")
     assert action_labels(menu) == [
         "Toggle Bookmark", "Next Bookmark", "Previous Bookmark", "―",
-        "Clear All Bookmarks", "List All Bookmarks",
+        "Clear All Bookmarks", "List All Bookmarks", "―",
+        # FQ-021: `Next`/`Previous Difference` MOVED off Tools (`Prev` became
+        # `Previous`, matching `Previous Bookmark`), and `Apply Changes to
+        # Target` finally has a menu home again.
+        "Next Difference", "Previous Difference", "Apply Changes to Target",
     ]
 
 

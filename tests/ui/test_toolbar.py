@@ -685,6 +685,51 @@ def test_no_menu_command_still_answers_to_a_bookmarks_prefixed_id(qtbot, tmp_pat
         assert new_id in live, (old_id, new_id)
 
 
+def test_the_moved_difference_commands_are_enumerable_while_hidden(qtbot, tmp_path):
+    """FQ-021's third leg. The three Compare/Merge members are hidden outside
+    the mode, and `_walk_menu_actions` never tests `isVisible()` -- so they keep
+    stable ids and stay in Customize Toolbar's Available list even with no
+    comparison loaded. That property is what makes hiding them safe."""
+    window = MainWindow(settings=_ini_settings(tmp_path))
+    qtbot.addWidget(window)
+    assert window.center_stage.diff_merge_mode_active is False
+
+    ids = dict(
+        (label, command_id)
+        for command_id, label in window._toolbar_ui.all_menu_commands()
+    )
+
+    assert ids["Navigation › Next Difference"] == "navigation.next-difference"
+    assert ids["Navigation › Previous Difference"] == "navigation.previous-difference"
+    assert ids["Navigation › Apply Changes to Target"] == (
+        "navigation.apply-changes-to-target"
+    )
+    # ...and Tools no longer offers any of them.
+    assert not [cid for cid in ids.values() if cid.startswith("tools.") and "difference" in cid]
+
+
+def test_a_difference_button_pinned_on_tools_survives_the_move(qtbot, tmp_path):
+    """A toolbar written by a pre-FQ-021 build, where both steppers lived on
+    `Tools` and one was labelled `Prev Difference`."""
+    path = str(tmp_path / "s.ini")
+    seed = QSettings(path, QSettings.Format.IniFormat)
+    seed.setValue("toolbarIds", ["tools.next-difference", "tools.prev-difference"])
+    seed.sync()
+
+    window = MainWindow(settings=QSettings(path, QSettings.Format.IniFormat))
+    qtbot.addWidget(window)
+
+    assert window._toolbar_ui.command_ids == [
+        "navigation.next-difference",
+        "navigation.previous-difference",
+    ]
+    menu = find_top_menu(window, "Navigation")
+    assert window._toolbar_ui.toolbar.actions()[0] is find_action(menu, "Next Difference")
+    assert window._toolbar_ui.toolbar.actions()[1] is find_action(
+        menu, "Previous Difference"
+    )
+
+
 # -- FQ-020: a toolbar saved before the Deployment menu ---------------------
 
 

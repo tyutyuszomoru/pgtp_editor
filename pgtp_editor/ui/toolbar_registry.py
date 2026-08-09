@@ -122,6 +122,15 @@ DEFAULT_TOOLBAR_IDS: list[str] = [
 # member, because there is no prefix rewriting here by design -- `resolve_ids`
 # does exact lookups, which is what keeps this table auditable.
 #
+# FQ-021's third leg then MOVED three commands off `Tools` onto that same
+# renamed menu, so each changed BOTH its first segment and (for one of them) its
+# last: `Prev Difference` was relabelled `Previous Difference` to match
+# `Previous Bookmark` two entries above it, and the label is the id's last
+# segment. `Apply Changes to Target` gets a row even though FQ-020 had already
+# removed it from `Tools` -- a toolbar saved before FQ-020 still names
+# `tools.apply-changes-to-target`, and it is a MOVE (the command exists again,
+# on `Navigation`), not a deletion.
+#
 # FQ-020 opened it three more times -- every one a MOVE or RENAME of a command
 # that still exists, which is exactly what this table is for (a command that was
 # *deleted*, like `file.save`, gets no row: `resolve_ids` drops it, which is the
@@ -140,6 +149,9 @@ RENAMED_ID_ALIASES: dict[str, str] = {
     "bookmarks.previous-bookmark": "navigation.previous-bookmark",
     "bookmarks.clear-all-bookmarks": "navigation.clear-all-bookmarks",
     "bookmarks.list-all-bookmarks": "navigation.list-all-bookmarks",
+    "tools.next-difference": "navigation.next-difference",
+    "tools.prev-difference": "navigation.previous-difference",
+    "tools.apply-changes-to-target": "navigation.apply-changes-to-target",
     "tools.compare-merge-two-files": "deployment.compare-merge-pgtp",
     "file.deploy-pgtp": "deployment.deploy-pgtp",
     "file.revert": "file.discard-changes",
