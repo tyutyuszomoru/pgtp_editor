@@ -412,32 +412,57 @@ def test_dialog_cancel_emits_cancelled(qtbot):
         dialog.cancel()
 
 
-def test_dialog_ctrl_s_saves(qtbot):
-    """FQ-020's explicit carve-out: `Ctrl+S` dies everywhere EXCEPT here. This
-    one is the modal's OK button -- the same slot as `button_box.accepted`, which
-    emits `saved` and writes **nothing to disk** -- paired with `Ctrl+W` = cancel.
-    A "delete every Ctrl+S" sweep that took this would be an unrelated regression
-    in the `Edit code…` modal. It is implemented twice on purpose (a `QShortcut`
-    plus a `keyPressEvent` branch, because QShortcut activation is unreliable
-    under the offscreen test platform) and BOTH duplicates must survive."""
+def test_the_dialog_has_no_ctrl_s_or_ctrl_w(qtbot):
+    """The inverse of what this file asserted until 2026-08-09.
+
+    `Ctrl+S` had been dead app-wide since FQ-020 moved saving onto the
+    `Deployment` menu, and this modal was its ONE surviving carve-out (its
+    `Ctrl+S` was the OK button, emitting `saved` and writing nothing to disk,
+    paired with `Ctrl+W` = Cancel). The owner unbound `Ctrl+O` and then
+    `Ctrl+W` from the File menu and chose to take these two as well, for total
+    consistency: neither chord now does anything anywhere in the app.
+
+    Asserted at BOTH former hosts, because it was implemented twice on purpose
+    -- a `QShortcut` and a `keyPressEvent` branch, since QShortcut activation is
+    unreliable under the offscreen platform -- and a sweep that removed only one
+    would leave the key working in the real app while the test suite passed.
+    """
+    from PySide6.QtGui import QShortcut
+
     dialog = CodeEditorDialog(language="js")
     qtbot.addWidget(dialog)
     dialog.show()
     qtbot.waitExposed(dialog)
+
+    bound = {s.key().toString() for s in dialog.findChildren(QShortcut)}
+    assert "Ctrl+S" not in bound
+    assert "Ctrl+W" not in bound
+
     dialog.set_code("abc")
     dialog._editor.setFocus()
-    with qtbot.waitSignal(dialog.saved, timeout=1000) as blocker:
-        qtbot.keyClick(dialog, Qt.Key.Key_S, Qt.KeyboardModifier.ControlModifier)
-    assert blocker.args == ["abc"]
+    fired = []
+    dialog.saved.connect(lambda text: fired.append(("saved", text)))
+    dialog.cancelled.connect(lambda: fired.append(("cancelled", None)))
+    qtbot.keyClick(dialog, Qt.Key.Key_S, Qt.KeyboardModifier.ControlModifier)
+    qtbot.keyClick(dialog, Qt.Key.Key_W, Qt.KeyboardModifier.ControlModifier)
+    assert fired == []
 
 
-def test_dialog_ctrl_w_cancels(qtbot):
+def test_the_dialogs_ok_and_cancel_are_still_reachable(qtbot):
+    """The point of the check above is that the KEYS are gone, not the
+    gestures. Nothing became unreachable: the button box still works, and so do
+    Qt's own `Return`/`Escape` defaults for it."""
     dialog = CodeEditorDialog(language="js")
     qtbot.addWidget(dialog)
-    dialog.show()
-    qtbot.waitExposed(dialog)
-    with qtbot.waitSignal(dialog.cancelled, timeout=1000):
-        qtbot.keyClick(dialog, Qt.Key.Key_W, Qt.KeyboardModifier.ControlModifier)
+    dialog.set_code("abc")
+    with qtbot.waitSignal(dialog.saved, timeout=1000) as blocker:
+        dialog.save()
+    assert blocker.args == ["abc"]
+
+    other = CodeEditorDialog(language="js")
+    qtbot.addWidget(other)
+    with qtbot.waitSignal(other.cancelled, timeout=1000):
+        other.cancel()
 
 
 def test_dialog_opens_at_80_percent_of_parent_window(qtbot):

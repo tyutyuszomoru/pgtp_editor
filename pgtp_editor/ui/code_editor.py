@@ -18,7 +18,7 @@ JS/PHP code, opened as a modal-capable dialog from the XML editor / tree.
 
 Composed of a QPlainTextEdit subclass (``CodeEditor``) with per-language
 syntax highlighting and bracket/quote conveniences, and a hosting dialog
-(``CodeEditorDialog``) with OK/Cancel and Ctrl+S / Ctrl+W shortcuts.
+(``CodeEditorDialog``) with OK/Cancel buttons and no keyboard shortcuts.
 
 The auto-close behavior mirrors XmlEditor's approach: the editor tracks the
 closer characters it itself inserted (as QTextCursors so their positions
@@ -511,15 +511,17 @@ class CodeEditorDialog(QDialog):
         layout.addWidget(self._editor)
         layout.addWidget(button_box)
 
-        # §7/FQ-020 CARVE-OUT: `Ctrl+S` is dead everywhere else in the app, and
-        # this pair must not be swept up with it. Here `save` is the modal's
-        # **OK** -- the same slot as `button_box.accepted` above -- so it emits
-        # `saved` and writes NOTHING to disk; `Ctrl+W` is its Cancel. Deleting
-        # either would be an unrelated regression in the `Edit code…` modal.
-        save_shortcut = QShortcut(QKeySequence("Ctrl+S"), self, self.save)
-        save_shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
-        cancel_shortcut = QShortcut(QKeySequence("Ctrl+W"), self, self.cancel)
-        cancel_shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
+        # NO `Ctrl+S` / `Ctrl+W` (owner decision, 2026-08-09). This dialog was
+        # the last carve-out for either chord: `Ctrl+S` had been dead app-wide
+        # since FQ-020 moved saving onto `Deployment`, and `Ctrl+W` lost its
+        # `File ▸ Close` binding the same day. The owner chose total
+        # consistency -- neither chord does anything anywhere in the app --
+        # over the local convention that OK/Cancel in a text-editing modal are
+        # naturally those two keys.
+        #
+        # OK and Cancel remain reachable by the button box, by `Return`/`Escape`
+        # (Qt's own defaults for a QDialogButtonBox), and by the window's close
+        # button, so nothing became unreachable.
 
         # Open at 80% of the host (XML editor) window so there's room to work.
         self.setMinimumSize(480, 320)
@@ -532,20 +534,6 @@ class CodeEditorDialog(QDialog):
                         int(ref_size.width() * 0.8),
                         int(ref_size.height() * 0.8),
                     )
-
-    def keyPressEvent(self, event: QKeyEvent) -> None:
-        # Ctrl+S / Ctrl+W handled here in addition to the WindowShortcut
-        # QShortcuts above, so save/cancel are reliably reachable when a key
-        # event is delivered to the dialog directly (e.g. under the offscreen
-        # platform in tests, where QShortcut activation is not guaranteed).
-        if event.modifiers() == Qt.KeyboardModifier.ControlModifier:
-            if event.key() == Qt.Key.Key_S:
-                self.save()
-                return
-            if event.key() == Qt.Key.Key_W:
-                self.cancel()
-                return
-        super().keyPressEvent(event)
 
     def set_code(self, text: str) -> None:
         self._editor.setPlainText(text)
