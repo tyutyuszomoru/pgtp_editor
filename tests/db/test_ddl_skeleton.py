@@ -13,24 +13,32 @@ from pgtp_editor.db.ddl_skeleton import (
     EXCLUDE_METHODS,
     EXPRESSION_CONSTRAINT_TYPES,
     FK_ACTIONS,
+    INDEX_METHODS,
     TRIGGER_EVENTS,
     TRIGGER_LEVELS,
     TRIGGER_TIMINGS,
+    ColumnSpec,
     SkeletonError,
     add_column_skeleton,
     add_constraint_skeleton,
     add_foreign_key_skeleton,
     alter_column_type_skeleton,
+    create_index_skeleton,
+    create_table_skeleton,
     drop_column_default_skeleton,
     drop_column_not_null_skeleton,
     drop_column_skeleton,
     drop_constraint_skeleton,
+    drop_index_skeleton,
+    drop_table_skeleton,
     function_skeleton,
     procedure_skeleton,
     rename_column_skeleton,
     rename_constraint_skeleton,
+    set_column_comment_skeleton,
     set_column_default_skeleton,
     set_column_not_null_skeleton,
+    set_table_comment_skeleton,
     trigger_skeleton,
 )
 from pgtp_editor.db.sandbox import UnsafeIdentifierError
@@ -1062,6 +1070,465 @@ def test_every_constraint_op_is_deterministic(op):
 def test_every_add_op_refuses_a_hostile_column(op, hostile):
     with pytest.raises(UnsafeIdentifierError):
         _constraint_op(op, columns=[hostile])
+
+
+# --- FQ-025 slice 3: indexes, comments, whole-table ------------------------
+#: Every slice-3 entry point, with the kwarg that carries a **qualified name**
+#: named explicitly. The same registry idea as `_COLUMN_OPS`/`_CONSTRAINT_OPS`,
+#: with one twist the slice forces: `drop_index_skeleton` takes no table at all
+#: (an index's identity is its own `schema.name`), so the registry records
+#: *which* argument is the qualified one instead of assuming it is `table`.
+#: A seventh operation therefore still cannot skip the shared quoting,
+#: rejection and determinism checks.
+_TABLE_OPS = {
+    "create_index_skeleton": (
+        create_index_skeleton,
+        "table",
+        {"name": "idx_orders_code", "table": "public.orders", "columns": ["code"]},
+    ),
+    "drop_index_skeleton": (
+        drop_index_skeleton,
+        "index",
+        {"index": "public.orders"},
+    ),
+    "set_table_comment_skeleton": (
+        set_table_comment_skeleton,
+        "table",
+        {"table": "public.orders", "comment": "the orders"},
+    ),
+    "set_column_comment_skeleton": (
+        set_column_comment_skeleton,
+        "table",
+        {"table": "public.orders", "column": "notes", "comment": "free text"},
+    ),
+    "create_table_skeleton": (
+        create_table_skeleton,
+        "table",
+        {"table": "public.orders", "columns": [ColumnSpec("id", "bigint")]},
+    ),
+    "drop_table_skeleton": (drop_table_skeleton, "table", {"table": "public.orders"}),
+}
+
+
+def _table_op(op, qualified=None, **overrides):
+    func, key, extra = _TABLE_OPS[op]
+    kwargs = dict(extra)
+    if qualified is not None:
+        kwargs[key] = qualified
+    kwargs.update(overrides)
+    return func(**kwargs)
+
+
+# --- create index ----------------------------------------------------------
+def test_create_index_golden_text():
+    assert create_index_skeleton(
+        name="idx_orders_code", table="public.orders", columns=["code"]
+    ) == (
+        'CREATE INDEX "idx_orders_code" ON "public"."orders" '
+        'USING btree ("code");\n'
+    )
+
+
+def test_create_index_unique_golden_text():
+    assert create_index_skeleton(
+        name="idx_orders_code", table="orders", columns=["code"], unique=True
+    ) == ('CREATE UNIQUE INDEX "idx_orders_code" ON "orders" '
+          'USING btree ("code");\n')
+
+
+def test_create_index_is_not_an_alter_table():
+    # `CREATE INDEX` is its own statement -- it does not go through the
+    # `_alter_column` shape every slice-1 operation shares.
+    assert not create_index_skeleton(
+        name="i", table="t", columns=["c"]
+    ).startswith("ALTER TABLE")
+
+
+def test_create_index_always_states_its_method_even_for_the_default():
+    # Generated text should say which method it means rather than relying on
+    # the reader knowing Postgres's default.
+    assert "USING btree" in create_index_skeleton(name="i", table="t", columns=["c"])
+
+
+@pytest.mark.parametrize("method", INDEX_METHODS)
+def test_every_declared_index_method_is_accepted(method):
+    assert f"USING {method} (" in create_index_skeleton(
+        name="i", table="t", columns=["c"], method=method
+    )
+
+
+def test_create_index_rejects_an_unknown_method():
+    with pytest.raises(SkeletonError, match="index method must be one of"):
+        create_index_skeleton(name="i", table="t", columns=["c"], method="magic")
+
+
+def test_index_methods_are_a_superset_of_the_exclude_methods():
+    # An EXCLUDE constraint can only use methods supporting its operators; a
+    # plain index has no such restriction, so the wider list is the right one
+    # here and the narrower one must stay contained in it.
+    assert set(EXCLUDE_METHODS) <= set(INDEX_METHODS)
+
+
+def test_create_index_multi_column_preserves_caller_order():
+    forwards = create_index_skeleton(name="i", table="t", columns=["a", "b"])
+    backwards = create_index_skeleton(name="i", table="t", columns=["b", "a"])
+    assert '("a", "b")' in forwards
+    assert '("b", "a")' in backwards
+
+
+def test_create_index_rejects_an_empty_column_list():
+    with pytest.raises(SkeletonError, match="needs at least one column"):
+        create_index_skeleton(name="i", table="t", columns=[])
+
+
+def test_create_index_rejects_a_duplicate_column():
+    with pytest.raises(SkeletonError, match="same column twice"):
+        create_index_skeleton(name="i", table="t", columns=["a", "a"])
+
+
+def test_create_index_name_may_not_be_schema_qualified():
+    # `CREATE INDEX` creates the index in its table's schema; a dotted index
+    # name is a syntax error, so it is refused rather than emitted.
+    with pytest.raises(UnsafeIdentifierError):
+        create_index_skeleton(name="public.idx", table="public.orders", columns=["c"])
+
+
+def test_create_index_refuses_an_expression_as_a_column():
+    # `("lower(email)")` would be an index on a column that does not exist.
+    with pytest.raises(UnsafeIdentifierError):
+        create_index_skeleton(name="i", table="t", columns=["lower(email)"])
+
+
+def test_create_index_never_emits_concurrently():
+    # CONCURRENTLY cannot run inside a transaction block, which is how the
+    # Apply paths execute generated statements.
+    assert "CONCURRENTLY" not in create_index_skeleton(
+        name="i", table="t", columns=["c"], unique=True
+    )
+
+
+# --- drop index ------------------------------------------------------------
+def test_drop_index_golden_text():
+    assert drop_index_skeleton(index="public.idx_orders_code") == (
+        'DROP INDEX "public"."idx_orders_code";\n'
+    )
+
+
+def test_drop_index_takes_the_index_identity_not_the_table():
+    # An index name is unique within its SCHEMA, so `schema.name` is its
+    # identity -- there is no `DROP INDEX ... ON table` in Postgres, and the
+    # emitter is not even given a table.
+    with pytest.raises(TypeError):
+        drop_index_skeleton(table="public.orders", name="idx")
+
+
+def test_drop_index_accepts_an_unqualified_name():
+    assert drop_index_skeleton(index="idx_orders_code") == (
+        'DROP INDEX "idx_orders_code";\n'
+    )
+
+
+def test_drop_index_never_emits_cascade_or_if_exists():
+    text = drop_index_skeleton(index="public.i")
+    assert "CASCADE" not in text
+    assert "IF EXISTS" not in text
+
+
+def test_drop_index_rejects_an_empty_name():
+    with pytest.raises(SkeletonError, match="index must not be empty"):
+        drop_index_skeleton(index="   ")
+
+
+# --- comments --------------------------------------------------------------
+def test_set_table_comment_golden_text():
+    assert set_table_comment_skeleton(
+        table="public.orders", comment="Customer orders"
+    ) == ('COMMENT ON TABLE "public"."orders" IS \'Customer orders\';\n')
+
+
+def test_set_column_comment_golden_text():
+    assert set_column_comment_skeleton(
+        table="public.orders", column="notes", comment="Free-form notes"
+    ) == (
+        'COMMENT ON COLUMN "public"."orders"."notes" IS \'Free-form notes\';\n'
+    )
+
+
+@pytest.mark.parametrize("blank", [None, "", "   "])
+def test_a_blank_comment_removes_the_comment_rather_than_emitting_nothing(blank):
+    # `IS NULL` is Postgres's only spelling for "no comment"; `IS ''` would
+    # leave an invisible empty-string comment behind.
+    assert set_table_comment_skeleton(table="t", comment=blank) == (
+        'COMMENT ON TABLE "t" IS NULL;\n'
+    )
+    assert set_column_comment_skeleton(table="t", column="c", comment=blank) == (
+        'COMMENT ON COLUMN "t"."c" IS NULL;\n'
+    )
+
+
+def test_comment_single_quotes_are_doubled_not_refused():
+    # A comment is a VALUE, not an identifier -- an apostrophe is ordinary
+    # English prose, so it is escaped rather than rejected.
+    assert set_table_comment_skeleton(table="t", comment="the user's table") == (
+        "COMMENT ON TABLE \"t\" IS 'the user''s table';\n"
+    )
+
+
+def test_comment_cannot_close_the_statement():
+    text = set_column_comment_skeleton(
+        table="t", column="c", comment="'; DROP TABLE users; --"
+    )
+    assert text == (
+        "COMMENT ON COLUMN \"t\".\"c\" IS '''; DROP TABLE users; --';\n"
+    )
+    # One statement -- the payload stayed inside the literal.
+    assert text.count(";\n") == 1
+
+
+def test_comment_may_contain_sql_comment_introducers_and_parens():
+    # Unlike a USING clause, a comment is not an expression: `--` and an
+    # unbalanced paren are ordinary characters inside a string literal.
+    assert "IS 'see -- note (draft';\n" in set_table_comment_skeleton(
+        table="t", comment="see -- note (draft"
+    )
+
+
+def test_comment_rejects_a_nul_character():
+    with pytest.raises(SkeletonError, match="NUL character"):
+        set_table_comment_skeleton(table="t", comment="bad\x00comment")
+
+
+def test_add_column_and_set_column_comment_share_one_renderer():
+    # Slice 1 built the column-comment renderer for Add column; slice 3
+    # promoted it rather than writing a second one, so the two must agree
+    # character for character.
+    from_add = add_column_skeleton(
+        table="public.orders", column="notes", datatype="text", comment="hello"
+    )
+    standalone = set_column_comment_skeleton(
+        table="public.orders", column="notes", comment="hello"
+    )
+    assert from_add.endswith(standalone)
+
+
+def test_add_column_blank_comment_still_emits_no_statement_at_all():
+    # The one place blank does NOT mean `IS NULL`: an Add-column statement
+    # without a comment simply carries no comment clause.
+    text = add_column_skeleton(table="t", column="c", datatype="text", comment="")
+    assert "COMMENT ON" not in text
+
+
+# --- create table ----------------------------------------------------------
+def test_create_table_golden_text():
+    assert create_table_skeleton(
+        table="public.orders",
+        columns=[
+            ColumnSpec("id", "bigint", nullable=False),
+            ColumnSpec("code", "text"),
+            ColumnSpec("created_at", "timestamptz", default="now()"),
+        ],
+        primary_key=["id"],
+    ) == (
+        'CREATE TABLE "public"."orders" (\n'
+        '    "id" bigint NOT NULL,\n'
+        '    "code" text,\n'
+        '    "created_at" timestamptz DEFAULT now(),\n'
+        '    PRIMARY KEY ("id")\n'
+        ");\n"
+    )
+
+
+def test_create_table_without_a_primary_key_emits_none():
+    text = create_table_skeleton(table="t", columns=[ColumnSpec("a", "text")])
+    assert text == 'CREATE TABLE "t" (\n    "a" text\n);\n'
+    assert "PRIMARY KEY" not in text
+
+
+def test_create_table_primary_key_is_emitted_unnamed():
+    # Unlike slice 2's ADD CONSTRAINT, whose auto-names are unpredictable to a
+    # human, a table's PK auto-name (`orders_pkey`) is the convention already.
+    text = create_table_skeleton(
+        table="orders", columns=[ColumnSpec("id", "bigint")], primary_key=["id"]
+    )
+    assert "CONSTRAINT" not in text
+    assert 'PRIMARY KEY ("id")' in text
+
+
+def test_create_table_multi_column_primary_key_preserves_order():
+    text = create_table_skeleton(
+        table="t",
+        columns=[ColumnSpec("tenant", "text"), ColumnSpec("id", "bigint")],
+        primary_key=["tenant", "id"],
+    )
+    assert 'PRIMARY KEY ("tenant", "id")' in text
+
+
+def test_create_table_column_order_is_the_caller_order():
+    text = create_table_skeleton(
+        table="t", columns=[ColumnSpec("b", "text"), ColumnSpec("a", "text")]
+    )
+    assert text.index('"b"') < text.index('"a"')
+
+
+def test_create_table_rejects_no_columns():
+    with pytest.raises(SkeletonError, match="at least one column"):
+        create_table_skeleton(table="t", columns=[])
+
+
+def test_create_table_rejects_a_duplicate_column():
+    with pytest.raises(SkeletonError, match="same column twice"):
+        create_table_skeleton(
+            table="t", columns=[ColumnSpec("a", "text"), ColumnSpec("a", "integer")]
+        )
+
+
+def test_create_table_rejects_a_primary_key_naming_an_undefined_column():
+    with pytest.raises(SkeletonError, match="does not define"):
+        create_table_skeleton(
+            table="t", columns=[ColumnSpec("a", "text")], primary_key=["b"]
+        )
+
+
+def test_create_table_rejects_an_empty_column_name():
+    with pytest.raises(SkeletonError, match="column name must not be empty"):
+        create_table_skeleton(table="t", columns=[ColumnSpec("  ", "text")])
+
+
+def test_create_table_rejects_a_missing_datatype():
+    with pytest.raises(SkeletonError, match="needs a datatype"):
+        create_table_skeleton(table="t", columns=[ColumnSpec("a", "")])
+
+
+def test_create_table_rejects_an_unsafe_datatype():
+    with pytest.raises(SkeletonError, match="unsafe or malformed datatype"):
+        create_table_skeleton(
+            table="t", columns=[ColumnSpec("a", "text; DROP TABLE users")]
+        )
+
+
+def test_create_table_refuses_a_hostile_column_name():
+    with pytest.raises(UnsafeIdentifierError):
+        create_table_skeleton(table="t", columns=[ColumnSpec('a"b', "text")])
+
+
+def test_create_table_default_is_validated_like_every_other_expression():
+    with pytest.raises(SkeletonError, match="unbalanced parentheses"):
+        create_table_skeleton(
+            table="t", columns=[ColumnSpec("a", "text", default="coalesce(x, 0")]
+        )
+
+
+def test_create_table_default_names_the_offending_column():
+    with pytest.raises(SkeletonError, match='"a"'):
+        create_table_skeleton(
+            table="t", columns=[ColumnSpec("a", "text", default="0 -- x")]
+        )
+
+
+def test_create_table_blank_default_is_refused_not_silently_dropped():
+    # `None` is "no DEFAULT"; an empty string is a syntax error, and the
+    # dialog layer is the one that maps blank to None.
+    with pytest.raises(SkeletonError, match="must not be empty"):
+        create_table_skeleton(table="t", columns=[ColumnSpec("a", "text", default="")])
+
+
+def test_create_table_expresses_nothing_it_cannot_express_correctly():
+    # The refusal list from `create_table_skeleton`'s docstring: no FK, no
+    # UNIQUE/CHECK, no identity, no partitioning, no IF NOT EXISTS. Those are
+    # the other dialogs' job, applied once the table exists.
+    text = create_table_skeleton(
+        table="t",
+        columns=[ColumnSpec("id", "bigint", nullable=False)],
+        primary_key=["id"],
+    )
+    for absent in (
+        "REFERENCES",
+        "UNIQUE",
+        "CHECK",
+        "GENERATED",
+        "PARTITION",
+        "INHERITS",
+        "IF NOT EXISTS",
+        "UNLOGGED",
+    ):
+        assert absent not in text
+
+
+def test_create_table_column_spec_defaults_are_nullable_and_defaultless():
+    spec = ColumnSpec("a", "text")
+    assert spec.nullable is True
+    assert spec.default is None
+
+
+# --- drop table ------------------------------------------------------------
+def test_drop_table_golden_text():
+    assert drop_table_skeleton(table="public.orders") == (
+        'DROP TABLE "public"."orders";\n'
+    )
+
+
+def test_drop_table_never_emits_cascade_or_if_exists():
+    # No CASCADE for `drop_column_skeleton`'s reason; the tab-is-the-safeguard
+    # ruling is about confirmations, not about widening the statement.
+    text = drop_table_skeleton(table="t")
+    assert "CASCADE" not in text
+    assert "IF EXISTS" not in text
+
+
+# --- rules that hold across every slice-3 operation ------------------------
+@pytest.mark.parametrize("op", sorted(_TABLE_OPS))
+def test_every_table_op_quotes_its_qualified_name(op):
+    text = _table_op(op)
+    assert '"public"."orders"' in text
+    assert text.endswith(";\n")
+
+
+@pytest.mark.parametrize("op", sorted(_TABLE_OPS))
+def test_every_table_op_accepts_an_unqualified_name(op):
+    assert '"orders"' in _table_op(op, qualified="orders")
+
+
+@pytest.mark.parametrize("op", sorted(_TABLE_OPS))
+def test_every_table_op_rejects_an_empty_qualified_name(op):
+    with pytest.raises(SkeletonError, match="must not be empty"):
+        _table_op(op, qualified="   ")
+
+
+@pytest.mark.parametrize("op", sorted(_TABLE_OPS))
+def test_every_table_op_rejects_an_empty_name_part(op):
+    with pytest.raises(SkeletonError, match="empty name part"):
+        _table_op(op, qualified="public.")
+
+
+@pytest.mark.parametrize("op", sorted(_TABLE_OPS))
+@pytest.mark.parametrize("hostile", ['t"; DROP TABLE users; --', "public.a b", "x'y"])
+def test_every_table_op_refuses_a_hostile_qualified_name(op, hostile):
+    with pytest.raises(UnsafeIdentifierError):
+        _table_op(op, qualified=hostile)
+
+
+@pytest.mark.parametrize("op", sorted(_TABLE_OPS))
+def test_every_table_op_preserves_mixed_case_by_quoting(op):
+    assert '"MySchema"."MyTable"' in _table_op(op, qualified="MySchema.MyTable")
+
+
+@pytest.mark.parametrize("op", sorted(_TABLE_OPS))
+def test_every_table_op_quotes_a_reserved_word_name(op):
+    assert '"order"' in _table_op(op, qualified="order")
+
+
+@pytest.mark.parametrize("op", sorted(_TABLE_OPS))
+def test_every_table_op_is_deterministic(op):
+    assert _table_op(op) == _table_op(op)
+
+
+@pytest.mark.parametrize("op", sorted(_TABLE_OPS))
+def test_every_table_op_is_keyword_only(op):
+    # Positional arguments would make `drop_index_skeleton(t)` look like every
+    # other emitter while meaning something different.
+    func, _key, extra = _TABLE_OPS[op]
+    with pytest.raises(TypeError):
+        func(*extra.values())
 
 
 def test_skeletons_are_deterministic():

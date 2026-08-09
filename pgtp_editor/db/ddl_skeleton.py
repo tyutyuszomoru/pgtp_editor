@@ -62,11 +62,37 @@ FQ-025 slice 2 adds the constraint operations (`add_constraint_skeleton`,
 - **A `CHECK` body is free SQL, like `USING`.** It goes through the very same
   `_expression` guard and inherits the same rule: the dialog layer may fill it
   from the user's own typing and from nothing else.
+
+FQ-025 slice 3 adds the index, comment and whole-table operations
+(`create_index_skeleton`, `drop_index_skeleton`, `set_table_comment_skeleton`,
+`set_column_comment_skeleton`, `create_table_skeleton`,
+`drop_table_skeleton`). Three module-level facts they exist to encode:
+
+- **An index is not an `ALTER TABLE`.** `CREATE INDEX` and `DROP INDEX` are
+  their own statements, so they do not go through `_alter_column`, and
+  `DROP INDEX` does not take a table at all — an index name is unique within
+  its *schema*, so `schema.index_name` (not `schema.table.index_name`) is its
+  identity, exactly as `introspect.IndexInfo.qualified_name` spells it.
+  Conversely a `CREATE INDEX`'s own name is **bare**, never schema-qualified:
+  the index is created in its table's schema and a dotted name there is a
+  syntax error, which is why it goes through `_identifier` and not
+  `_qualified`.
+- **A comment is a VALUE, not an identifier.** `COMMENT ON … IS 'x'` takes a
+  SQL string literal, so an apostrophe in ordinary English prose is *escaped*
+  (doubled) rather than refused — the opposite of every identifier here. All
+  four call sites share the one `_comment_on` renderer.
+- **Removing a comment is `IS NULL`, and that is what blank means.** For the
+  two dedicated comment operations an empty comment box is the *only* way to
+  say "take the comment off", so it emits `IS NULL` rather than nothing.
+  (`add_column_skeleton` predates them and keeps its own rule — there, blank
+  means "this Add-column statement carries no comment clause at all", so no
+  second statement is emitted.)
 """
 from __future__ import annotations
 
 import re
 from collections.abc import Sequence
+from dataclasses import dataclass
 
 # `_sql_string_literal` is imported rather than re-implemented so the app has
 # exactly ONE place that knows how a SQL string literal is quoted -- the same
@@ -570,6 +596,236 @@ def rename_constraint_skeleton(*, table: str, name: str, new_name: str) -> str:
     )
 
 
+# ---------------------------------------------------------------------------
+# FQ-025 slice 3 -- indexes, comments and whole-table operations
+#
+# The first group here that is NOT an `ALTER TABLE`: `CREATE INDEX`,
+# `DROP INDEX`, `COMMENT ON`, `CREATE TABLE` and `DROP TABLE` are five distinct
+# statements, so none of them uses `_alter_column` and one of them
+# (`drop_index_skeleton`) does not take a table at all.
+# ---------------------------------------------------------------------------
+
+#: Index access methods offered for a plain `CREATE INDEX`. A superset of
+#: `EXCLUDE_METHODS`, which lists only the methods an EXCLUDE constraint can be
+#: built with -- `gin` and `brin` support neither `=` nor the overlap operators
+#: an exclusion constraint needs, but are perfectly ordinary index methods.
+#: `btree` leads because it is Postgres's default and the right answer for
+#: almost every index.
+INDEX_METHODS = ("btree", "hash", "gist", "spgist", "gin", "brin")
+
+
+@dataclass(frozen=True)
+class ColumnSpec:
+    """One column of a `CREATE TABLE` — the only compound argument in this
+    module.
+
+    A `dataclass` rather than a tuple or a dict because `create_table_skeleton`
+    is the one emitter whose input is a *list of records*: a positional 4-tuple
+    at a call site would say `("qty", "integer", False, None)` and leave the
+    reader to count, and a dict would let a typo'd key mean "defaulted".
+
+    `default` is free SQL (`0`, `now()`, `'pending'::text`) and is validated
+    exactly like `set_column_default_skeleton`'s expression — read
+    `alter_column_type_skeleton` for what that does and does not guarantee,
+    including the rule binding the dialog layer: user-typed input only.
+    """
+
+    name: str
+    datatype: str
+    nullable: bool = True
+    default: str | None = None
+
+
+def create_index_skeleton(
+    *,
+    name: str,
+    table: str,
+    columns: Sequence[str],
+    unique: bool = False,
+    method: str = INDEX_METHODS[0],
+) -> str:
+    """`CREATE [UNIQUE] INDEX name ON table USING method (cols…)`.
+
+    Three deliberate shapes:
+
+    - **The index name is bare, the table's is qualified.** `CREATE INDEX` puts
+      the index in its table's schema and rejects a dotted index name outright,
+      so `name` goes through `_identifier` (which refuses a dot) while `table`
+      goes through `_qualified`. Getting this backwards produces a statement
+      that reads plausibly and fails on run.
+    - **`USING <method>` is always emitted**, even for the `btree` default, so
+      the generated text says which method it means rather than leaving the
+      reader to know Postgres's default — the same reason
+      `add_foreign_key_skeleton` always spells out its referenced columns.
+    - **The column list is columns, not expressions.** Every entry is quoted as
+      an identifier, so `lower(email)` is *refused*, not emitted: an expression
+      index is written `((lower(email)))` with its own parenthesisation rules,
+      and silently treating an expression as a column name would produce
+      `("lower(email)")` — an index on a column that does not exist.
+
+    `CONCURRENTLY` is not offered. It cannot run inside a transaction block,
+    which is how the Apply paths execute generated statements, so a checkbox
+    for it would produce text that fails there and works only if the user ran
+    it elsewhere. A user who wants it types the word into the tab.
+    """
+    quoted_name = _identifier(name, "index name")
+    quoted_table = _qualified(table, "table")
+    if method not in INDEX_METHODS:
+        raise SkeletonError(
+            f"index method must be one of {', '.join(INDEX_METHODS)} — got {method!r}"
+        )
+    column_list = _column_list(columns, "an index")
+    unique_keyword = "UNIQUE " if unique else ""
+    return (
+        f"CREATE {unique_keyword}INDEX {quoted_name} ON {quoted_table} "
+        f"USING {method} ({column_list});\n"
+    )
+
+
+def drop_index_skeleton(*, index: str) -> str:
+    """`DROP INDEX schema.index_name` — the ONE emitter here that takes no
+    table.
+
+    An index name is unique within its **schema**, not within its table, and
+    `DROP INDEX` is spelled with that identity (`public.idx_orders_code`);
+    there is no `DROP INDEX … ON table` in Postgres. So the argument is the
+    index's own qualified name — `introspect.IndexInfo.qualified_name` —
+    and passing `schema.table.index` here would emit a three-part name that
+    Postgres reads as `database.schema.object` and rejects.
+
+    No `CASCADE` and no `IF EXISTS`, matching `drop_column_skeleton` and
+    `drop_constraint_skeleton`.
+
+    **This emitter cannot tell a droppable index from a constraint-backed
+    one** — it is handed a name, and the statement is identical either way.
+    Postgres refuses `DROP INDEX` on the implicit index behind a PRIMARY KEY /
+    UNIQUE / EXCLUDE constraint, so keeping those out of the picker (and
+    *saying* that it did — see `introspect.IndexInfo`) is the dialog layer's
+    job, not this function's.
+    """
+    quoted_index = _qualified(index, "index")
+    return f"DROP INDEX {quoted_index};\n"
+
+
+def set_table_comment_skeleton(*, table: str, comment: str | None) -> str:
+    """`COMMENT ON TABLE … IS 'x'`, or `IS NULL` for a blank comment.
+
+    Blank means **remove the comment**, because `IS NULL` is the only way
+    Postgres offers to remove one and an empty box is the only way a user can
+    ask. `IS ''` would leave an empty-string comment behind, which is a
+    different (and invisible) state.
+    """
+    return _comment_on(f"TABLE {_qualified(table, 'table')}", comment)
+
+
+def set_column_comment_skeleton(
+    *, table: str, column: str, comment: str | None
+) -> str:
+    """`COMMENT ON COLUMN … IS 'x'`, or `IS NULL` for a blank comment.
+
+    The same renderer `add_column_skeleton` has used since slice 1 — promoted
+    rather than re-implemented, so there is exactly one place in the app that
+    knows how a comment statement is spelled.
+    """
+    return _comment_on_column(
+        _qualified(table, "table"), _identifier(column, "column name"), comment
+    )
+
+
+def create_table_skeleton(
+    *,
+    table: str,
+    columns: Sequence[ColumnSpec],
+    primary_key: Sequence[str] = (),
+) -> str:
+    """`CREATE TABLE … (…)` from a list of `ColumnSpec`s and an optional
+    primary key.
+
+    **What it deliberately does not express.** A `CREATE TABLE` can carry
+    almost the whole DDL language; this builder covers columns (name, type,
+    `NOT NULL`, `DEFAULT`) and a primary key, and *nothing else*:
+
+    - no `FOREIGN KEY`, `UNIQUE`, `CHECK` or `EXCLUDE` constraints,
+    - no indexes (an index is not part of `CREATE TABLE` at all),
+    - no `GENERATED`/identity columns, collations, storage or compression,
+    - no partitioning, inheritance, tablespace, `UNLOGGED` or `IF NOT EXISTS`.
+
+    That is a refusal, not an oversight, and it is cheap precisely because of
+    the shape of this feature: the other slice-2/3 dialogs add exactly those
+    constraints and indexes to an existing table, and the generated text lands
+    in an editor before anything runs. A checkbox-per-feature builder would
+    instead have to guess at interactions (a `CHECK` referencing a column the
+    user later renamed in the same dialog) and would emit subtly wrong DDL —
+    the one outcome this module exists to prevent.
+
+    **The primary key is emitted unnamed** (`PRIMARY KEY ("id")`), unlike
+    slice 2's `add_constraint_skeleton`, which requires a name. The reason
+    slice 2 requires one is that Postgres's auto-names for CHECK/UNIQUE
+    constraints are unpredictable to a human (`orders_qty_check1`); a table's
+    primary key is the one case where the auto-name is both deterministic and
+    the convention everybody already uses (`orders_pkey`). Naming it here
+    would produce noisier DDL that says the same thing.
+
+    Every named `primary_key` column must be one of the defined columns —
+    an unknown one is refused rather than emitted, since Postgres would reject
+    it anyway and the dialog can fix it while the user is still looking.
+    """
+    quoted_table = _qualified(table, "table")
+
+    specs = list(columns)
+    if not specs:
+        raise SkeletonError("a table needs at least one column")
+
+    lines: list[str] = []
+    seen: set[str] = set()
+    for spec in specs:
+        quoted_column = _identifier(spec.name, "column name")
+        if quoted_column in seen:
+            raise SkeletonError(f"the table defines the same column twice: {quoted_column}")
+        seen.add(quoted_column)
+
+        line = f"{quoted_column} {_column_datatype(spec.datatype)}"
+        if not spec.nullable:
+            line += " NOT NULL"
+        if spec.default is not None:
+            line += (
+                f" DEFAULT "
+                f"{_expression(spec.default, f'default expression for {quoted_column}')}"
+            )
+        lines.append(line)
+
+    key = list(primary_key)
+    if key:
+        quoted_key = _column_list(key, "a primary key")
+        for column in key:
+            if _identifier(column, "primary key column") not in seen:
+                raise SkeletonError(
+                    f"the primary key names a column the table does not define: "
+                    f"{column!r}"
+                )
+        lines.append(f"PRIMARY KEY ({quoted_key})")
+
+    body = f",\n{_INDENT}".join(lines)
+    return f"CREATE TABLE {quoted_table} (\n{_INDENT}{body}\n);\n"
+
+
+def drop_table_skeleton(*, table: str) -> str:
+    """`DROP TABLE …`.
+
+    **No confirmation, no typed-name dance, and no `CASCADE`.** The safeguard
+    for this feature is architectural: generating `DROP TABLE t` executes
+    nothing, the text lands in an editable tab, and running it is a separate
+    explicit gesture (FQ-025's stated ruling). Adding a scary modal here would
+    put the friction where nothing happens and leave it absent where something
+    does.
+
+    Omitting `CASCADE` is the same call `drop_column_skeleton` makes: a table
+    another view or foreign key depends on must fail loudly rather than take
+    its dependants with it silently.
+    """
+    return f"DROP TABLE {_qualified(table, 'table')};\n"
+
+
 def _column_list(columns: Sequence[str], what: str) -> str:
     """`"a", "b"` — every name quoted, order preserved, duplicates refused.
 
@@ -613,13 +869,36 @@ def _alter_column(table: str, column: str, action: str) -> str:
     return f"ALTER TABLE {quoted_table} ALTER COLUMN {quoted_column} {action};\n"
 
 
-def _comment_on_column(quoted_table: str, quoted_column: str, comment: str) -> str:
+def _comment_on_column(
+    quoted_table: str, quoted_column: str, comment: str | None
+) -> str:
+    """`COMMENT ON COLUMN t.c IS …` — the column flavour of `_comment_on`.
+
+    Kept as a named helper (rather than inlined at its two call sites) because
+    a column's comment target is the one that is *built* from two quoted parts
+    joined by a dot, and that join is the part worth having in one place.
+    """
+    return _comment_on(f"COLUMN {quoted_table}.{quoted_column}", comment)
+
+
+def _comment_on(target: str, comment: str | None) -> str:
+    """The single `COMMENT ON <target> IS …` renderer for the whole app.
+
+    `target` is never caller text: every call site passes a literal keyword
+    plus already-quoted identifiers. `comment` is the opposite — a *value*, so
+    it is emitted as a SQL string literal (embedded `'` doubled) rather than
+    allowlisted, which is what lets an ordinary apostrophe through.
+
+    `None`/blank renders `IS NULL`, Postgres's spelling for "remove the
+    comment". `add_column_skeleton` never reaches that branch: it returns
+    before calling this when its optional comment is blank, because there
+    "blank" means the Add-column statement simply carries no comment.
+    """
+    if comment is None or not comment.strip():
+        return f"COMMENT ON {target} IS NULL;\n"
     if "\x00" in comment:
         raise SkeletonError(f"comment contains a NUL character: {comment!r}")
-    return (
-        f"COMMENT ON COLUMN {quoted_table}.{quoted_column} "
-        f"IS {_sql_string_literal(comment)};\n"
-    )
+    return f"COMMENT ON {target} IS {_sql_string_literal(comment)};\n"
 
 
 def _column_datatype(datatype: str) -> str:
