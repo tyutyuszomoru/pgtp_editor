@@ -2186,7 +2186,32 @@ on re-activation" (recommended above) is included in v1.
 ---
 
 ## FQ-019: Activity Log — a timestamped, per-project journal of every file and database action (dock panel + JSONL store)
-**Status:** PARTIALLY PROCESSED (`bc02d9c`) — the **pure Qt-free core ships**: `db/activity_log.py`, the
+**Status:** PROCESSED (`bc02d9c` core, `1aefc53` panel + the timestamp ruling, `65a0f1b` dock, lifecycle
+and call sites) — the Activity Log ships whole: a dock beside Audit/Problems, per-project persistence, and
+eleven gestures recording in **both** their success and failure legs.
+
+**The owner reversed this entry's timestamp design (2026-08-09):** it specified a DYNAMIC format switching
+on the log's calendar span, which made the format a property of the SET — one entry arriving after
+midnight reshaped every row already on screen, so a panel could never cache a rendered row. A single fixed
+`YYYY-MM-DD HH:MM` replaced it, and `TIME_FORMAT_SAME_DAY` was DELETED rather than left unused, since a
+second format string is what would invite the behaviour back.
+
+**Two host entry points, so no call site gates on mode:** `record_activity` for DB rows (the caller knows
+the connection ROLE as a fact) and `record_file_activity`, whose one helper is the single place
+`Project files` vs `Quality files` is decided. Previews are derived, not stored — a persisted second copy
+of the text can only drift from it.
+
+**A check is failed only on real BLOCKERS, never on `committed`** — a probe rolls back and a recheck
+applies nothing, so judging either on commit would mark every clean check as a failure. An apply IS failed
+when it did not commit.
+
+**Three deliberate gaps, stated rather than papered over:** refusals where nothing started (no session, no
+target, unavailable destination) get no line, because no action occurred; `Save XSD` fits none of the four
+sources, schema files living outside any project — the same reason FQ-013 leaves XSD editors unpersisted;
+and **`FILE_VERB_LINTED` has NO producer**, since §22's PHP on-save lint is advisory, fires after the save
+it cannot affect, and would double every PHP save row. One settled verb with no call site.
+
+Superseded detail from the partial flip: the **pure Qt-free core ships**: `db/activity_log.py`, the
 entry dataclass, JSONL round-trip retaining FULL ddl and error text, and the dynamic timestamp formatter.
 46 tests. Two design points settled while building it: previews are **derived, not stored**, because a
 persisted second copy of the text can only drift from it; and the timestamp format is a property of the
