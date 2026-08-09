@@ -2152,7 +2152,18 @@ on re-activation" (recommended above) is included in v1.
 ---
 
 ## FQ-019: Activity Log — a timestamped, per-project journal of every file and database action (dock panel + JSONL store)
-**Status:** QUEUED
+**Status:** PARTIALLY PROCESSED (`bc02d9c`) — the **pure Qt-free core ships**: `db/activity_log.py`, the
+entry dataclass, JSONL round-trip retaining FULL ddl and error text, and the dynamic timestamp formatter.
+46 tests. Two design points settled while building it: previews are **derived, not stored**, because a
+persisted second copy of the text can only drift from it; and the timestamp format is a property of the
+**SET**, not of an entry, so a single post-midnight record reshapes every row already on screen and the
+panel must re-render all of them rather than cache per-row strings. The four source labels double as the
+persistence indicator, so callers never gate on mode themselves.
+
+**Still owed: the whole UI half** — the dock panel beside the Audit panel, its click-router opening a
+syntax-highlighted viewer for the full DDL/error, the debounce timer and flush-on-transition, and the
+`record(...)` calls at each action completion point. The core is deliberately callable unconditionally
+from every emit point; the mode decision lives in `project_dir` alone.
 **Requested:** 2026-08-08
 **Idea (verbatim/summarized):** "logging. I would like to have a log file and also a log panel that
 records every file and database action. Format: [timestamp — HH:MM while the log's min and max fall in
@@ -3114,7 +3125,34 @@ or deleting a documented menu action.
 ---
 
 ## FQ-025: ALTER-TABLE action set in the DDL Explorer — column/constraint/index/comment/table ops that generate DDL into an editable tab
-**Status:** QUEUED
+**Status:** SLICE 1 PROCESSED (`bc02d9c` emitters + introspection, `8a88da4` dialogs, `532da30` wiring) —
+the eight **column operations** ship end to end: an `Alter Table ▸` submenu on table nodes and on the new
+column nodes, a dialog per operation, and the generated DDL in an editable tab that executes nothing until
+the user runs it. Slice 2 (constraints/FKs) and slice 3 (indexes/comments/whole-table) are NOT shipped;
+slice 2's **introspection** landed early (`ConstraintInfo`/`IndexInfo`) since it cost no extra queries.
+
+**This entry's premise about the tree was WRONG, and it changed the work:** it said column nodes existed
+and merely lacked a context menu. They did not exist at all — table nodes carried only trigger children,
+and columns lived solely in the Properties panel. The tree therefore gained a `Columns (N)` group per
+table. Its claim that Apply-to-Target is *"NOT wired (a pre-existing gap)"* is also stale — that was wired
+projectless on 2026-08-08.
+
+**The design question the entry raised and left open is answered: `AlterDdlRef`.** An ALTER is not an
+object, and `DdlObjectRef` cannot express one without lying — its `qualified` would render `pr.orders()`,
+spelling a table as a zero-argument routine in every confirmation the panel raises. So a separate
+duck-typed ref, `kind="alter"`, with `name=""` **deliberately**: `build_ladder` adds tier 3's
+`plpgsql_check` only when a name is present, and an ALTER creates no function to analyse, so *"tier 3 was
+never going to run"* is the honest state rather than a failure. Tiers 0-2 still run. A serial counter gives
+each generation its own tab — without it `open_ddl_object_tab` focuses the first and **silently discards**
+the second statement. Save-to-object is suppressed **structurally** (always `_edit_ddl_live`, never
+registered in the deploy manifest), so no `ddl/<object>.sql` is seeded and no drift marker speaks for it.
+
+**Three consequences recorded rather than papered over:** `Deployment ▸ Save in Project` on an ALTER tab
+opens Save As… (its label reads slightly off); Apply-to-**Target** refuses these buffers, since
+`parse_buffer_identity` finds no `CREATE` and precondition 1 blocks it — Apply-to-Sandbox is the intended
+run path; and the sandbox `applied` bookkeeping row is **per-table** for ALTERs, so successive ALTERs on
+one table overwrite each other's row. `SNAPSHOT_VERSION` also went 1→2, refusing v1 rather than loading it
+with the two new sections empty.
 **Requested:** 2026-08-08
 **Idea (verbatim/summarized):** "new DDL actions. In ddl explorer currently on right click we have Add trigger. I would like to add to that menu: Add column, Delete column, Add foreign key, Delete foreign key, Add constraint, Delete constraint. Functioning: when 'Delete' something, it should open a modal asking for the table and the column in a dropdown, defaulting to the table and the column the click was coming from. Once clicked ok, it should open a new tab on explorer and display the alter table ddl. The user can run it or not to their discretion. The add column behaves the same, offering a modal with a table dropdown, defaulting to the table it was summoned from, and all the fields that an add column could have (name, datatype dropdown, nullable, comment). At confirming the window it should open a tab with the Alter table ddl. Add constrain should ask for constraint name, a column (defaulting to clicked), have a + sign to add more columns to it, and a dropdown for the constraint types. Add foreign key behaves the same, should offer to which column we are binding, and in another section a table choser, -> column list populated with columns of the chosen table." — expanded through a converged follow-up "offer more DDL options" round into the full action set below.
 
@@ -3336,7 +3374,29 @@ numbers cited above were read.
 ---
 
 ## FQ-027: Three-column launcher (Standalone | Project | Maintenance), a Maintenance-mode menu filter, and a File ▸ New Session escape hatch
-**Status:** QUEUED — **and it SUPERSEDES FQ-011 wherever the two disagree (owner ruling, 2026-08-09).**
+**Status:** PROCESSED (`da80b1a` + `23c5cb6`; spec §7/§11/§26 + two §28 ledger rows; manual `cca257a`) — **and it
+SUPERSEDES FQ-011 wherever the two disagree (owner ruling, 2026-08-09).**
+
+Shipped: the 1×3 launcher, Maintenance mode as the app's **first intent-based menu filter**, `File ▸ New
+Session` with real teardown, and the deletion of `launcherSuppressed`. The mode is **session-only** — one
+in-memory attribute, no QSettings key read or written, so a fresh window is always unfiltered and there is
+no state to get stuck in.
+
+**Two of this entry's own statements were FALSE against the code and were NOT built**, caught by
+`spec-maintainer` folding the same entry and relayed to the implementer mid-flight: (1) the File menu
+cannot be *"trimmed to exactly New Session + Save + Save All"* — FQ-020 had already deleted `File ▸
+Save`/`Save As…` and **`Save All` has never existed anywhere in this app**. The intent behind it is met
+instead by the filter's SCOPE: it walks the **window** bar only, so the Editor bar is untouched and
+`Deployment ▸ Save XSD` stays exactly where it is. (2) The entry's menu-bar list names the dissolved `Edit`
+menu and puts `Bookmarks` on the window bar; the hidden set actually implemented is **View · Database ·
+Tools · Generation**.
+
+**One defect found after the fact, by `manual-maintainer` writing the chapter:** the File trim trapped the
+user in the application — `Exit` was hidden too, against §7's own membership table, leaving the title bar
+as the only way to quit. Fixed in `23c5cb6`, which also pins the question that pass refused to answer from
+inference: a hidden command's shortcut **stops firing** (`QAction.isEnabled()` is False for a hidden action
+in PySide6, and Qt dispatches only to enabled actions), so `Ctrl+O` cannot open a project while `File ▸
+Open...` is filtered out — the mode filters what you can DO, not merely what you can SEE.
 FQ-027 is what the owner asked for *after* using the shipped launcher; FQ-011 is what was imagined before
 it existed, and none of FQ-011 was ever implemented. See FQ-011's status block for the three concrete
 disagreements (persistence, launcher shape, the `Generate`/default-toolbar-button case) and — more
