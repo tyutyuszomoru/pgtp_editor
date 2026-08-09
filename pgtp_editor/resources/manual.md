@@ -158,11 +158,12 @@ Standalone** opens it plainly with no project involved — today's ordinary
 behavior. If a project **is** already active, the chooser is skipped and the
 file just opens into that project.
 
-The window has three areas:
+The window has four areas:
 
 - **Left — Project Tree:** the structure of your project (pages, details, columns,
   event handlers). More tabs share this dock: **Contents** (this manual's
-  chapters), **Database/XML Coherence** (while that view is on — see
+  chapters), **Findings** (navigable results — see *Where Results Appear*),
+  **Database/XML Coherence** (while that view is on — see
   *Database/XML Coherence*), and **DDL Objects (Quality)** / **DDL Objects
   (Sandbox)** (while the matching DDL Explorer is on — see *DDL Explorer*).
 - **Center — Raw XML / Caption Management / Diff-Merge / Edit XSD / DDL Explorer
@@ -174,15 +175,18 @@ The window has three areas:
   from a database table adds a draft tab (see *Database/XML Coherence*), and a
   live sandbox session adds the **Sandbox SQL** console tab (see *The Sandbox*).
 - **Right — Properties:** a read-only inspector for whatever you select in the tree.
+- **Bottom — Activity Log / Results:** one dock with two tabs, holding the
+  session's journal and what the checks reported — see *Where Results Appear*.
 
 A second, narrow **Editor menu bar** sits directly above the center area, holding
 the commands that act on the tab in front of you — see *The Two Menu Bars*.
 
-When you open a file, the status bar shows a live message such as
-`Opening dev_Ferrara.pgtp (312 KB)…` and the pointer becomes a wait cursor
-(hourglass) until the project is loaded; it then settles on `Opened: <path>`.
-The same busy feedback appears during other slow operations — see *A note on
-busy feedback*.
+When you open a file, the status bar's busy slot reads
+`Opening dev_Ferrara.pgtp (312 KB) 2s`, counting up, and the pointer becomes a
+wait cursor (hourglass) until the project is loaded; the slot then goes back to
+`Idle` and the **Activity Log** records the open. The same busy feedback appears
+during other slow operations — see *A note on busy feedback* and *The Status
+Bar*.
 
 ### Saving, closing, discarding
 
@@ -399,11 +403,202 @@ as the menu entry does — that is the honest posture, not a bug.
 
 Each entry acts on **the tab it belongs to and nothing else**. If one is somehow
 run while its tab is not in front — from a pinned toolbar button, say — it
-**refuses and says why on the status bar** (*"Save XSD runs on the Edit XSD tab —
+**refuses and says why in the Activity Log** (*"Save XSD runs on the Edit XSD tab —
 open one first."*, *"Save in Project runs on an open DDL object tab — open one
 first."*) instead of writing somewhere plausible but wrong. **Save XSD** is the
 one where this matters most: off its tab it would have written an *empty*
 `curated.xsd` over your schema, so it now refuses instead.
+
+---
+
+## Where Results Appear
+
+Everything the editor produces for you to read lands on one of **three
+surfaces**, and which one it is depends on what kind of answer it is:
+
+| Surface | Where | What lands there | Lifetime |
+|---|---|---|---|
+| **Findings** | a tab in the **left dock**, beside Project Tree and Contents | navigable hits — **Find All** results and **List All Bookmarks** listings | replaced by the next such run |
+| **Results** | one tab of the **bottom dock** | what a check reported — **Validate Project**, PHP **lint**, the sandbox **Check** ladder, **Verify XSD**, sandbox provisioning outcomes | accumulates, run after run |
+| **Activity Log** | the other tab of the **bottom dock** | the session's journal — files opened and saved, database actions, schema learning, project notes, and every transient notice | append-only |
+
+> **This replaces the single Audit / Problems dock.** There used to be one list
+> holding all of the above, with a reserved text prefix per producer so nine
+> kinds of row could share it. *"Click here to go somewhere"*, *"here is what
+> the last check found"* and *"here is what this session did"* are three
+> different questions, and one list answered none of them well — so the prefixes
+> stayed (they still tell you who is speaking) but each one now names a
+> **destination** rather than a queue position.
+
+### The Findings tab — where you click to go somewhere
+
+**Findings** holds the rows whose whole purpose is to take you to a line:
+`[Find]` rows from **Find All**, and `[Bookmark]` rows from **Navigation ▸ List
+All Bookmarks**. **Click a row to jump to it** — the right tab is focused and the
+caret is placed on that line.
+
+It sits in the **left dock** rather than at the bottom on purpose: the centre
+pane is the editor each hit jumps into, and a results panel there would cover the
+very thing you are navigating.
+
+- **It is hidden until it has something to say**, exactly like the **Contents**,
+  **Database/XML Coherence** and **DDL Objects** tabs beside it, and it **opens
+  and focuses itself** the moment the first navigable row lands. A result you
+  asked for should not need a second gesture to be seen.
+- **The last operation wins, across kinds.** Run **Find All** and then **List All
+  Bookmarks** and the bookmarks replace the finds — both answer *"where do I want
+  to go next?"*, and only one such question is live at a time. Re-running the
+  same operation likewise replaces its own previous rows.
+- Rows that could not be tied to a line (a read-only DDL Explorer buffer, a draft
+  tab, a finding with no line number) are **listed but inert when clicked**,
+  rather than sending you to a plausible-looking wrong place.
+
+### The Results tab — what the checks found, kept
+
+**Results** is the bottom dock's other tab, and it **accumulates**. Each run
+opens with a separator — a blank line, a **dated header** (`2026-08-10 14:32:07`)
+and a dashed rule — and everything before it stays. Validation history is worth
+keeping: you can compare what this run said against what the last one said
+without having to remember it.
+
+Its rows are clickable in exactly the same way as the Findings tab's, so a
+`[Validate]`, `[Lint]` or `[Check]` line with a line number still jumps you
+there.
+
+A run that reports into Results **switches the bottom dock to this tab** so you
+see it — but it will not re-open a dock you closed. **View ▸ Results** brings it
+back whenever you want it.
+
+### The Activity Log tab — what this session did
+
+The **Activity Log** is a journal, not a findings list: one timestamped row per
+action, oldest first, reading *timestamp — source, action, a short preview of
+what it acted on, and how it ended* —
+`2026-08-10 14:32 - Sandbox DB Apply to Sandbox CREATE OR REPLACE FU… success`.
+
+- The **source** is one of **Quality DB**, **Sandbox DB**, **Project files** or
+  **Quality files**, so every row says which part of the app is speaking.
+- **A failed action is shown in red**, and a row recorded with **no project open
+  is italic** — that one lives for the session only and is written nowhere.
+- **Click a row to open its full text** in a read-only, syntax-highlighted
+  viewer: the error when the action failed (that is why you clicked), the DDL
+  otherwise. When a row has both, **right-click** it and pick — **View full
+  DDL…** or **View full error…**. A row carrying neither is inert.
+- With a project open the journal is kept in the project, as
+  `<project folder>/.ddlproject/activity.jsonl` — plain text, beside the
+  project's settings, inside the already-gitignored folder. With no project open
+  nothing is written to disk.
+- Until anything is recorded the tab reads **"No activity recorded yet."**
+
+**Every transient notice the app used to flash on the status bar now lands
+here** — *opened this file*, *saved that one*, *no `tableName="orders"` in the
+buffer*, *DDL Explorer (Sandbox) failed: …*. See *The Status Bar*, below, for why.
+
+### Reaching them from the View menu
+
+- **View ▸ Activity Log / Results Panel** is the checkbox for the whole **bottom
+  dock**, alongside **Project Tree** and **Properties Panel**. Closing the dock
+  with the **✕** on its title bar unchecks the entry, and re-checking it brings
+  the dock back.
+- **View ▸ Activity Log** and **View ▸ Results** each **open the bottom dock if
+  it is hidden and focus that tab**. They are not checkboxes: a tab is either the
+  one in view or it is not, and there is no third state to check.
+- The **Findings** tab has no View entry of its own. It reveals itself when it
+  has rows, and it lives in the **Project Tree** dock, which does have one.
+
+**A dock layout you saved in an earlier version still applies.** The bottom dock
+kept its own identity through the split, so its remembered size, position and
+visibility carry straight onto the two-tab panel. In the worst case it falls back
+to the default layout — nothing is lost, and every surface stays reachable from
+the **View** menu.
+
+---
+
+## The Status Bar
+
+**The status bar is not a message board.** It carries a small set of permanent
+slots, each of which always states a defined fact, and nothing scrolls across it:
+
+**mode indicator · busy slot · Quality ● · Sandbox ● · DEBUG**
+
+That is a deliberate reversal. The bar used to be where every transient notice
+appeared for a few seconds and then vanished — which meant that at any given
+moment it either said something you had already read or nothing at all, and a
+message you looked away from was simply gone. **Those notices now go to the
+Activity Log** (see *Where Results Appear*), where they are timestamped, kept,
+and attributable to a source. If you expected the bar to tell you something and
+it did not, the Activity Log tab is where to look.
+
+### The mode indicator
+
+A **colour-coded chip** shows which mode the session is in. It appears **twice,
+saying the same thing**: prominently at the right-hand end of the **Main
+Toolbar**, and again in the status bar. Both are written from one answer, so they
+can never disagree.
+
+- **The colour is the major mode** — the one you picked in the launcher:
+  **Standalone**, **Project** or **Maintenance** (see *Getting Started ▸ The
+  startup launcher*). Before you pick one, the chip reads **No Mode** in a
+  neutral colour rather than going blank.
+- **A minor mode is appended as text**, after a middle dot — `Project · Caption`.
+  The minor modes are the editor sub-states: **Caption** (Caption Management),
+  **Compare/Merge**, and **Edit XSD**. Plain editing is the *absence* of a minor
+  mode, not a fourth one, so most of the time the chip shows the major mode
+  alone. Only one minor mode is ever named; Caption wins over Compare/Merge,
+  which wins over Edit XSD.
+- **The major mode owns the colour** and the minor mode never gets one of its
+  own. Three majors times four sub-states would be a twelve-colour vocabulary,
+  which is exactly what a glance-recognizable chip cannot be.
+- **The colours follow the Light/Dark theme** (see *Appearance & Layout*), so the
+  chip stays legible in both.
+- **It is passive.** There is no click, no context menu, and no way to change
+  mode from it. Mode is set by the launcher and by **File ▸ New Session**, and
+  the chip only reports it — which is what its tooltip says too.
+
+### The busy slot
+
+The slot beside the mode chip answers one question: *is something running right
+now?* It reads **`Idle`** when nothing is, and otherwise names the operation with
+a **live elapsed-seconds counter** beside it — `Opening dev_Ferrara.pgtp
+(312 KB) 4s`, `Validating dev_Ferrara.pgtp 7s`. See *A note on busy feedback*.
+
+If one long operation starts another, the slot keeps showing the **outer** one
+and only returns to `Idle` when the last of them has finished, so it can never
+claim to be idle while something is still going.
+
+### The two connectivity dots
+
+While a **local DDL-versioning project is open**, two labelled dots report
+whether its databases can be reached: **`Quality ●`** and **`Sandbox ●`**.
+
+| Dot | Meaning |
+|---|---|
+| **green ●** | reachable |
+| **red ●** | offline — configured, but it did not answer |
+| **white ●** | no connection configured |
+| **hollow grey ○** | **not checked yet** |
+
+**The hollow dot is a real state, not a blank.** A project you have just opened,
+or a probe still in flight, has not produced an answer yet — and showing that
+plainly is better than leaving a gap you would read as "fine" or, worse, keeping
+yesterday's green. Each dot's tooltip spells its state out in words.
+
+- **They are polled every 30 seconds, and only while the editor's window is
+  active.** Switch to another application and the polling stops; come back and it
+  polls **immediately**, so you never read a dot that is up to half a minute
+  stale. The check runs off the UI thread, so an unreachable server can't freeze
+  the window twice a minute.
+- **Green means reachable, not fully capable.** The poll is a single lightweight
+  round trip. Whether the sandbox is *usable* — superuser, `pg_dump`/`pg_restore`
+  present, `plpgsql_check` installed — is the **Project Status** window's
+  question, so a dot can be green while that window still reports a degradation.
+- **With no project open there are no dots at all** — absent, not greyed out,
+  like every other thing in this app you cannot currently use.
+
+### The DEBUG chip
+
+A red **DEBUG** chip appears at the end of the bar when the editor was started
+with debug logging on, and only then — see *Troubleshooting: debug mode*.
 
 ---
 
@@ -459,8 +654,8 @@ not trigger a run; use **Tools ▸ Reparse Raw XML into Tree** when you want a
 rebuild right now.
 
 Half-typed XML is expected to be malformed, so **a buffer that isn't well-formed
-yet never interrupts you**: you get a transient status-bar note
-(*Auto-parse: XML not well-formed yet — tree not updated*) instead of a dialog,
+yet never interrupts you**: the note *Auto-parse: XML not well-formed yet — tree
+not updated* goes quietly to the **Activity Log** instead of putting up a dialog,
 your caret is not moved, and the tree keeps its last good state until the
 document parses again. Turning the toggle off also cancels a rebuild that was
 already pending, so no stray parse lands after you opted out.
@@ -629,17 +824,19 @@ session-only.
 ### List All Bookmarks
 
 **Navigation ▸ List All Bookmarks** writes the **active editor's** bookmarks into
-the **Audit/Problems** dock as one row per bookmarked line, prefixed
-**`[Bookmark]`** and showing the line number with a preview of the text.
-**Click a row to jump to that line.** It reveals the dock if you had it hidden —
-a command whose whole output is dock rows would otherwise look like it did
-nothing — and it always leaves at least one row behind, saying *no bookmarks in …*
-when there are none, so silence never reads as "clean".
+the **Findings** tab in the left dock (see *Where Results Appear*) as one row per
+bookmarked line, prefixed **`[Bookmark]`** and showing the line number with a
+preview of the text. **Click a row to jump to that line.** The tab opens and
+focuses itself — a command whose whole output is rows in a hidden tab would
+otherwise look like it did nothing — and it always leaves at least one row
+behind, saying *no bookmarks in …* when there are none, so silence never reads as
+"clean".
 
 It is the active editor only, like every other bookmark command, and it never
-switches tabs on you. Each listing **replaces the previous one**, so the panel
-shows one editor's bookmarks at a time and `[Find]`, `[Validate]` and `[Check]`
-rows are left alone.
+switches tabs on you. Each listing **replaces whatever was in the Findings tab**
+— a previous bookmark listing, or a **Find All** result — because the tab answers
+one *"where do I want to go next?"* question at a time. The bottom dock's
+**Results** and **Activity Log** tabs are untouched by it.
 
 **It is a snapshot, not a live view.** Toggling a bookmark after you asked for the
 list does not update the list — ask again. (Loading a new document does clear the
@@ -666,12 +863,13 @@ it, and the editor's height never jumps as it appears and vanishes.
 - **Find Next** (**F3**, or the button) steps to the next match, wrapping around
   the end of the document. **F3 works from anywhere in the editor** — you do not
   have to be in the bar.
-- **Find All** lists every match as clickable rows in the Audit/Problems panel.
-  Results stream in **continuously** so a large file stays responsive; while a run
-  is going the button reads **Stop**, and the status bar reports **"Found N
-  items."**
+- **Find All** lists every match as clickable rows in the **Findings** tab in the
+  left dock (see *Where Results Appear*), which opens and focuses itself as the
+  first row lands. Results stream in **continuously** so a large file stays
+  responsive; while a run is going the button reads **Stop**, and the count
+  (**"Found N items."**) is recorded in the **Activity Log**.
 - **Replace** replaces the current match and moves on; **Replace All** replaces
-  every match and reports how many in the status bar.
+  every match and records how many in the Activity Log.
 
 ### Reaching the bar from the keyboard
 
@@ -688,7 +886,7 @@ it, and the editor's height never jumps as it appears and vanishes.
 > **Find All and Replace All no longer have shortcuts.** `Ctrl+Shift+F` and
 > `Ctrl+Alt+Return` are gone — use the bar's buttons, which are now always in
 > front of you. Both commands are broad and worth a deliberate click: Find All
-> fills the Audit panel, and Replace All rewrites the whole document.
+> fills the Findings tab, and Replace All rewrites the whole document.
 
 ### Which document you are searching
 
@@ -788,7 +986,7 @@ nothing more is promised.
   editor accepts a dropped file as *pasted text*, which is the text widget's own
   behavior and not something the editor overrides.
 
-The status bar confirms each open with `Opened <path>`. The tab is labelled with
+The **Activity Log** records each open as `Opened <path>`. The tab is labelled with
 the bare file name plus the familiar `" *"` marker once you edit it, and its
 tooltip shows the full path — which is what tells two folders' `index.php` apart.
 
@@ -802,8 +1000,8 @@ path, chooser dialog and all (see *Getting Started ▸ Opening a project*).
 ### Why a file is sometimes refused
 
 Dropping a file is a gesture you can make by accident, so a drop is classified
-rather than trusted. When something can't be opened, the status bar says which
-file and why — never a silent no-op:
+rather than trusted. When something can't be opened, the **Activity Log** says
+which file and why — never a silent no-op:
 
 - **a folder, or a file that can't be read** — nothing to open.
 - **a binary file** (anything with a NUL byte near its start) — opening a JPEG as
@@ -842,7 +1040,7 @@ The tab hosts the same editor the **Edit code…** dialog uses, in PHP mode:
 - **Deployment ▸ Save PHP File** — the only entry the Deployment menu shows while
   a PHP tab is active (see *The Deployment Menu*) — writes **that file**,
   straight back to where it came from, in UTF-8 and keeping the line endings the
-  buffer holds. The status bar reports `Saved <path>`; if the write fails, a
+  buffer holds. The **Activity Log** records `Saved <path>`; if the write fails, a
   **Save Failed** dialog shows the reason and the tab stays marked as changed.
 - **Ctrl+S does nothing here either.** A PHP tab used to have a Ctrl+S of its
   own, and it was removed with all the others: a save key that works on this tab
@@ -900,10 +1098,12 @@ and reported as such.
 
 ### Reading the results
 
-Results land in the existing **Audit/Problems** panel, each row prefixed
-**`[Lint]`** so you can tell them apart from `[Validate]`, `[Check]` and
-`[Schema]` lines. **Click a finding to jump to it** — the right PHP tab is
-focused and the caret is placed on that line.
+Results land in the bottom dock's **Results** tab (see *Where Results Appear*),
+each row prefixed **`[Lint]`** so you can tell them apart from the `[Validate]`
+and `[Check]` lines accumulated beside them. **Click a finding to jump to it** —
+the right PHP tab is focused and the caret is placed on that line. Each lint run
+opens its own dated block, so a previous run's answer is still there to compare
+against.
 
 **Every attempt produces at least one visible row**, and that is the point: a
 silent panel would read as "the file is clean". So you always get a line, whether
@@ -932,8 +1132,10 @@ Caption Management is a dedicated mode for reviewing and editing the visible tex
 
 Enter with **Tools ▸ Manage Captions…** or from a tree node's **See … in Caption
 Mode** action.
-While in the mode, the **Raw XML** tab stays visible but **read-only**, and a status
-indicator shows you're in Caption Mode. Leave the mode with the **Exit** control to
+While in the mode, the **Raw XML** tab stays visible but **read-only**, and the
+mode indicator — in the toolbar and the status bar alike — appends **· Caption**
+to the session's mode, so you can always see why editing is refused (see *The
+Status Bar ▸ The mode indicator*). Leave the mode with the **Exit** control to
 re-enable editing.
 
 ### The grid
@@ -1079,8 +1281,10 @@ through the **Schema** menu, which has exactly five entries: **Edit XSD**,
 
 Alongside it, the editor still **auto-learns** from every project you open:
 **File ▸ Open** scans the file and writes what it finds to a separate reference
-file, `learned.xsd`, announcing discoveries with `[Schema]` lines in the Audit
-panel (`NEW ELEMENT`, `NEW ATTRIBUTE`, `NEW ATTR VALUE`, …). Learned data **never
+file, `learned.xsd`, announcing discoveries with `[Schema]` lines in the
+**Activity Log** (`NEW ELEMENT`, `NEW ATTRIBUTE`, `NEW ATTR VALUE`, …) — they are
+a record of what the app learned while opening your file, not a check you asked
+for, so they belong in the journal. Learned data **never
 appears in completion** — when something new looks worth keeping, open it with
 **Schema ▸ Edit AutoXSD** (see *Comparing against the auto-learned schema*),
 find it, and add it to `curated.xsd` by hand.
@@ -1132,7 +1336,7 @@ Edit XSD and Edit AutoXSD (below) or closing the app with unsaved schema edits.
 Saving the curated schema re-parses it and refreshes completion, hovers, and
 Properties labels **immediately**. If the XML is malformed, your text is still
 written to disk (nothing you typed is lost), the last good schema stays in
-effect, and a `[Schema]` line in the Audit panel reports the parse error.
+effect, and a `[Schema]` line in the **Activity Log** reports the parse error.
 
 ### Comparing against the auto-learned schema (Edit AutoXSD)
 
@@ -1163,15 +1367,18 @@ This always opens the **curated** schema (the **Edit XSD** tab, switching away
 from Edit AutoXSD if that was open) with that attribute's
 `<xs:attribute name="…">` definition
 selected; if the attribute isn't defined there yet, it falls back to the
-enclosing element's type definition, and otherwise tells you in the status bar.
+enclosing element's type definition, and otherwise tells you in the Activity Log.
 
 ### Verifying
 
 **Schema ▸ Verify XSD** checks the schema against the dialect rules — duplicate
 enumeration values, `label` in the wrong place, `sums` on the wrong element,
 unknown base types, unresolvable type references, and the like. Each finding is a
-clickable `[Schema] VERIFY` line in the Audit panel that opens the XSD tab
-at the offending line. It checks **whichever schema the tab currently holds** —
+clickable `[Schema] VERIFY` line in the bottom dock's **Results** tab that opens
+the XSD tab at the offending line, and each run gets its own dated block there
+(see *Where Results Appear*). Verify findings are the one kind of `[Schema]` line
+that lands in Results rather than the Activity Log, because they are a check you
+asked for. It checks **whichever schema the tab currently holds** —
 curated or auto. Verification also runs automatically (report-only) every time
 you save the tab. When the tab has unsaved edits, Verify checks the tab's live
 text; otherwise it checks the active schema's saved file.
@@ -1191,7 +1398,8 @@ is in **Edit AutoXSD**.
   is replaced. When you imported the curated schema, it is re-parsed and
   completion refreshes immediately; importing the auto schema does not touch
   completion. If the tab had unsaved edits, they are replaced by the imported
-  text and the Audit panel says so.
+  text and the Activity Log says so; the import's own verification findings land
+  in the **Results** tab like any other Verify run.
 
 ---
 
@@ -1215,8 +1423,8 @@ action is disabled while that project stays active; it re-enables the moment you
 close the project. If something that needs a connection (Database/XML Coherence,
 **DDL Explorer (Quality)**) finds none configured while a project is open, it
 points you at Project
-Settings via a status-bar message rather than opening the now-meaningless
-standalone dialog.
+Settings with a note in the **Activity Log** rather than opening the
+now-meaningless standalone dialog.
 
 > On Windows, use **`127.0.0.1`** rather than `localhost` — `localhost` can resolve
 > to IPv6 first and stall the connection. The check runs off the UI thread with a
@@ -1326,9 +1534,10 @@ database agree" from "no mismatches match this filter".
 
 - **Double-click** a Page, Detail, lookup, or reference row to jump to its line in
   the Raw XML editor. Double-clicking a relation or column row instead lists every
-  occurrence of its `tableName=`/`fieldName=` token in the Find-all results panel
-  and seeds the Find bar, so **F3** steps through them. When there is genuinely
-  nothing to find, the status bar says which token it looked for and what that
+  occurrence of its `tableName=`/`fieldName=` token in the **Findings** tab (see
+  *Where Results Appear*) and seeds the Find bar, so **F3** steps through them.
+  When there is genuinely nothing to find, the **Activity Log** says which token
+  it looked for and what that
   means, for example *No `tableName="orders"` in the buffer — the XML does not
   reference orders.* So a real "the XML never mentions this table" (which is what
   an **unreferenced** relation looks like) never reads as a malfunction.
@@ -1376,13 +1585,13 @@ its **✕** closes it immediately with no prompt — there was never anywhere fo
 text to be saved to, so a warning would be about nothing.
 
 If your project already contains that `fileName`, or already references that
-table, you get a **status-bar note** saying so — *"rename it in the draft before
+table, you get an **Activity Log note** saying so — *"rename it in the draft before
 pasting"* — and the draft opens regardless. Since nothing is inserted
 automatically any more, a name collision is only a problem at the moment you
 paste, which the app cannot see; so this is a heads-up and never a block.
 
 These actions work from the schema captured by the last coherence run; if that
-schema is no longer available, the status bar asks you to run **Database/XML
+schema is no longer available, the Activity Log asks you to run **Database/XML
 Coherence** first.
 
 ---
@@ -1405,8 +1614,8 @@ menu:
 The Quality explorer needs only a database connection: you can use it with **no
 `.pgtp` file open at all**. If no connection is configured yet: in projectless
 mode, **Connection Setup…** opens automatically — save a connection, then toggle
-the explorer again; with a local DDL-versioning project open, a status-bar
-message points you at **Project Settings…** instead (see *Database/XML Coherence ▸
+the explorer again; with a local DDL-versioning project open, an **Activity Log**
+note points you at **Project Settings…** instead (see *Database/XML Coherence ▸
 Connecting* and *Local DDL-Versioning Projects*).
 
 Turning either one on fetches all routines and triggers from that database and
@@ -1547,9 +1756,9 @@ readable.
 Close an explorer with the **✕** on its DDL Explorer tab or by unchecking its
 own **Database ▸ DDL Explorer (Quality)** / **(Sandbox)** entry — either gesture
 hides that explorer's two tabs together, and the menu checkbox always reflects
-whether that explorer is currently visible. The status
-bar reports how many routines and triggers were loaded, naming which explorer
-loaded them; if the fetch fails, it shows the error and that toggle unchecks
+whether that explorer is currently visible. The **Activity Log**
+records how many routines and triggers were loaded, naming which explorer
+loaded them; if the fetch fails, it records the error and that toggle unchecks
 itself.
 
 ### The Sandbox Explorer, and how it differs
@@ -1570,7 +1779,7 @@ usually the very thing you opened the Sandbox explorer to see.
 are not gated — a session is about *writing* to the sandbox (see *The Sandbox*).
 So this explorer works even when the project's session could not be opened, and
 losing a session never closes it. If the sandbox cannot be reached — it was destroyed, or its server is down — the
-toggle springs back and the status bar says *DDL Explorer (Sandbox) failed*
+toggle springs back and the **Activity Log** says *DDL Explorer (Sandbox) failed*
 followed by the database's own reason, rather than leaving you with an empty
 tree that reads as an empty database.
 
@@ -1719,7 +1928,7 @@ reindents the current text selection in place — the first real user of the
 app's SQL formatter. Both are enabled only when you have a selection. If the
 selection can't be safely reformatted (for example, an unbalanced
 `BEGIN`/`END` split by the selection boundary), nothing changes: the problem
-is reported as a `[SQL]`-prefixed line in the Audit panel, and the exact
+is reported as a `[SQL]`-prefixed line in the **Activity Log**, and the exact
 offending text is underlined in red in the editor until your next edit or
 your next format attempt.
 
@@ -1762,8 +1971,10 @@ silently:**
    successful-but-wrong apply cannot be undone from inside the app.
 
 An empty buffer is refused. Every outcome — applied, rolled back, refused,
-cancelled — lands as a `[Check]` line in the Audit panel, and an apply that did
-not commit says so in as many words.
+cancelled — lands as a `[Check]` line in the **Results** tab (see *Where Results
+Appear*), and an apply that did not commit says so in as many words. The
+**Activity Log** keeps its own row for the attempt, with the full DDL and the
+full error one click away.
 
 **Deploy this edit…** (right-click) is still there and does the same three things
 under the same names: it asks where this edit should go and then runs that
@@ -2270,7 +2481,8 @@ The run does five things:
    immediately after you create a project. Opening that project again later is
    the same story: the session comes back up by itself (see *The Sandbox*).
 
-The status bar confirms with `Created and provisioned sandbox database: <name>`.
+The **Activity Log** confirms with `Created and provisioned sandbox database:
+<name>`.
 
 **Creating a project never reports a connection error of its own.** The
 automatic session (see *The Sandbox ▸ The sandbox session opens itself*) waits
@@ -2286,14 +2498,14 @@ stops with a message saying so, and nothing on the server is touched.
 **A sandbox failure never costs you the project.** If creating, provisioning, or
 `CREATE EXTENSION` fails, the project is still created — it just has no working
 sandbox (a tier-2 *quality project*, see *Project Status*). The exact reason
-appears in the Audit panel on a line prefixed **`[Sandbox]`**, and the project
+appears in the **Results** tab on a line prefixed **`[Sandbox]`**, and the project
 records **no** sandbox database, so nothing later claims a sandbox that isn't
 there. Its sandbox *server* details are kept, so you can fix the cause and try
 again.
 
 **If the project has no target connection yet** — likely, since you have just
 created it — there is nothing to build a baseline from, so the sandbox is created
-**empty** and the Audit panel says exactly that, pointing you at **Project
+**empty** and the **Results** tab says exactly that, pointing you at **Project
 Settings** to set the target and at re-provisioning afterwards. Choosing **With
 data** without a target likewise clones nothing and says so; your recorded choice
 is left alone, so it still applies once a target exists.
@@ -2308,9 +2520,9 @@ sandbox, not a malfunction: the table genuinely isn't there yet.
 > ▸ Project Settings… ▸ Connections**, then press **Provision sandbox** in that
 > same tab's **Sandbox provisioning** group — the sandbox is rebuilt from the
 > target you just supplied. See *The Sandbox ▸ Provisioning, resetting and
-> creating a sandbox database*. (One Audit line still tells you re-provisioning
-> is unreachable with a project open. That sentence is out of date; the group
-> described here is where it now lives.)
+> creating a sandbox database*. (One `[Sandbox]` line still tells you
+> re-provisioning is unreachable with a project open. That sentence is out of
+> date; the group described here is where it now lives.)
 
 ### Opening a project
 
@@ -2321,8 +2533,8 @@ any other folder is rejected with a **"Not a Project Folder"** message instead o
 silently creating an empty project.
 
 On a successful open, the app compares a checksum of the linked `.pgtp`'s working
-copy against its source and reports the result as an Audit-panel line prefixed
-`[Project]`:
+copy against its source and reports the result in the **Activity Log**, on a line
+prefixed `[Project]`:
 
 - **"Source .pgtp checksum recorded (…)."** — first time this comparison ran.
 - **"Source .pgtp unchanged since last opened (…)."**
@@ -2343,8 +2555,8 @@ don't need a separate **File ▸ Open** afterwards:
 - If none is found, nothing opens — no error, just an empty editor until you open
   a file yourself.
 - If the folder contains **multiple** `.pgtp` files and none is linked yet, the
-  app doesn't guess: it reports the finding as an Audit-panel line prefixed
-  `[Project]` listing the candidates, and you open the one you want via
+  app doesn't guess: it reports the finding in the **Activity Log** on a line
+  prefixed `[Project]` listing the candidates, and you open the one you want via
   **File ▸ Open**.
 
 ### Project Settings
@@ -2386,7 +2598,7 @@ or a password rotation, say — instead of saving blind and finding out later.
 Both buttons test the values **currently typed in the fields**, not the
 last-saved settings, so you can check a change before committing to it with
 **OK**. Testing never saves anything by itself, and the result is shown only
-on that inline status line: no dialog, no Audit-panel entry. The test runs in
+on that inline status line: no dialog, no Results or Activity Log entry. The test runs in
 the background, so an unreachable host can't freeze the dialog; the button is
 disabled until the result comes back.
 
@@ -2457,13 +2669,13 @@ project* — is how you make one active for this file: pick **New Project…** o
 ### Closing a project
 
 **Close Project** always succeeds — closing never forces anything. Along the
-way it reminds you, via Audit-panel lines, of anything left informational and
-unresolved:
+way it reminds you, via `[Project]` lines in the **Activity Log**, of anything
+left informational and unresolved:
 
 - If the `.pgtp` working copy has unpushed changes, it offers to **Deploy
   .pgtp** (see above) — a yes/no prompt, not a requirement.
 - If there are DDL objects with local edits not yet included in a batch
-  deploy, it adds an Audit-panel line noting how many — it does not open any
+  deploy, it adds an Activity Log line noting how many — it does not open any
   deploy flow automatically.
 
 ---
@@ -2507,7 +2719,7 @@ asks you to.
 **Opening the session is best effort, and it never delays or fails a project
 open.** It is not modal, it never puts a dialog in your way, and if it cannot
 connect you simply have no session — exactly the state the app already knew how
-to describe. The outcome lands in the Audit panel as a `[Sandbox]` line, and a
+to describe. The outcome lands in the **Results** tab as a `[Sandbox]` line, and a
 refusal always says which refusal it was: the sandbox is unreachable, the user is
 not a superuser, `pg_dump`/`pg_restore` are missing from your `PATH` (only for a
 **With data** sandbox), no sandbox is configured — or the connected database is
@@ -2615,9 +2827,11 @@ nodes (see *Project Status ▸ Clicking a node*).
 
 ### The validation ladder, and the three ways to run it
 
-Validating a routine in the sandbox climbs a four-rung ladder, and the Audit panel
-gets **one `[Check]` line per rung, always** — never one summary line that quietly
-hides a rung nobody managed to check:
+Validating a routine in the sandbox climbs a four-rung ladder, and the **Results**
+tab (see *Where Results Appear*) gets **one `[Check]` line per rung, always** —
+never one summary line that quietly hides a rung nobody managed to check. Because
+Results accumulates, the previous run's ladder is still above this one, under its
+own dated header:
 
 - **tier 0 — syntax.** PostgreSQL's own parser is the syntax checker, reached by
   actually executing the definition, so this tier reports what tier 2 found rather
@@ -2688,15 +2902,17 @@ can never hold a definition without the record of what it holds.
   else. Applying is not a test that cleans up after itself.
 - An empty buffer is refused outright rather than applied as an empty definition.
 - The outcome — the headline, all four tier lines, any caveats, and every
-  individual finding — is reported as `[Check]` lines in the Audit panel. A
-  cancelled apply says so and applies nothing.
+  individual finding — is reported as `[Check]` lines in the **Results** tab. A
+  cancelled apply says so and applies nothing. The apply itself also gets one
+  **Activity Log** row, from the **Sandbox DB** source, carrying the full DDL and
+  any full error text a click away.
 
 **Apply gives you the ladder's verdict; you do not have to check afterwards.** The
 report you get names what compiled, what the lint said, what `plpgsql_check` found,
 and what could not be checked at all.
 
 **An apply that did not commit says so, in as many words.** If PostgreSQL rejects
-any part of it, the whole transaction is rolled back and the Audit line reads
+any part of it, the whole transaction is rolled back and the `[Check]` line reads
 *"… was NOT applied to sandbox database …; the transaction did not commit."* — and
 the buffer is **not** marked as applied. This matters: the sandbox does not hold
 that text, and anything claiming otherwise afterwards would be a lie about what is
@@ -2704,8 +2920,8 @@ in your sandbox. The tier that produced the rejection is named alongside it, so 
 know which rung failed.
 
 The apply runs off the UI thread, so a slow `plpgsql_check` pass can't freeze the
-window; the status line says the apply is under way and the full report lands when
-it finishes.
+window; the status bar's busy slot counts the seconds while the apply is under
+way (see *The Status Bar*) and the full report lands when it finishes.
 
 **Writing to the real database is a different gesture, on the same menu.**
 **Deployment ▸ Run on quality** executes a DDL object tab's buffer against the
@@ -2781,8 +2997,8 @@ to it.
 
 ### Clicking a Check finding
 
-Whichever of the three gestures produced them, findings arrive in the Audit panel
-as their own lines, separately from the narrative tier lines, each tagged
+Whichever of the three gestures produced them, findings arrive in the **Results**
+tab as their own lines, in the same run block as the narrative tier lines, each tagged
 **ERROR**, **WARNING**, or **INFO** and naming the line it was found on — for
 example *[Check] ERROR line 12: …*.
 
@@ -2961,7 +3177,9 @@ Menu*) — compares two `.pgtp` files side by side in the **Diff / Merge** tab, 
 you can see what changed between versions and reconcile them. **Tools ▸ Next
 Difference** / **Prev Difference** step through the changes. The **Exit
 Compare/Merge Mode** button at the bottom of the panel leaves the comparison and
-gives you the Raw XML editor back.
+gives you the Raw XML editor back. While the comparison is on, the mode indicator
+reads **· Compare/Merge** (see *The Status Bar ▸ The mode indicator*), which is
+what tells you the mode outlives stepping away to another tab.
 
 The entry point used to be **Tools ▸ Compare / Merge Two Files…**; comparing is a
 `.pgtp`-level gesture, so it moved to the tab that holds the `.pgtp`.
@@ -2978,10 +3196,12 @@ The entry point used to be **Tools ▸ Compare / Merge Two Files…**; comparing
 
 **Parsing ▸ Validate Project** — on the Editor menu bar, beside **Auto Parse
 XML** (see *The Two Menu Bars*) — checks your project for structural problems and
-reports them as a list of issues with severities (errors and warnings) — for
+reports them as `[Validate]` rows with severities (errors and warnings) in the
+bottom dock's **Results** tab (see *Where Results Appear*) — for
 example duplicate top-level page file names, missing expected attributes, or
-unexpected children in container elements. Select an issue to jump to it; clearing
-validation removes the results.
+unexpected children in container elements. **Click an issue to jump to it.** Each
+run opens its own dated block and the previous run's issues stay above it, so you
+can see what your last edit actually fixed.
 
 This checks the **project's structure**. For the syntax of a PHP file you have
 open in a tab, see *Checking PHP Syntax* — one tier down, on the **Tools** menu.
@@ -3010,13 +3230,19 @@ The **Generation** menu drives the PHP Generator command-line to compile your
 ## A note on busy feedback
 
 Some operations take a moment on a large project. While one runs, PGTP Editor
-shows a wait cursor (hourglass) and a live status-bar message so you can tell it
-is working rather than frozen:
+shows a wait cursor (hourglass) and names the operation in the status bar's
+**busy slot**, with a counter ticking up beside it, so you can tell it is working
+rather than frozen:
 
-- **Opening a file:** `Opening <name> (<size>)…`, e.g. `Opening dev_Ferrara.pgtp (312 KB)…`.
-- **Parsing ▸ Validate Project:** `Validating <name>…`.
-- **Tools ▸ Reparse Raw XML into Tree:** `Reparsing…`.
-- **Generation ▸ Generate PHP…:** `Generating PHP…`.
+- **Opening a file:** `Opening <name> (<size>) 2s`, e.g. `Opening dev_Ferrara.pgtp (312 KB) 2s`.
+- **Parsing ▸ Validate Project:** `Validating <name> 1s`.
+- **Tools ▸ Reparse Raw XML into Tree:** `Reparsing 1s`.
+- **Generation ▸ Generate PHP…:** `Generating PHP 5s`.
+
+When nothing is running the slot reads **`Idle`** — it is a permanent element and
+always states something (see *The Status Bar*). The same announcement is also
+recorded in the **Activity Log**, because *"is something running right now?"* and
+*"what ran?"* are different questions.
 
 This is purely a visual cue. The window is still unresponsive to input for the
 duration of the operation — there is no progress bar and nothing to cancel — it
@@ -3032,10 +3258,12 @@ simply reads as busy instead of stalled.
   not follow your operating system's light/dark setting. Toolbar icons re-tint to
   stay legible in either theme, and your choice is remembered across restarts.
 - The **View** menu toggles each panel: **Project Tree**, **Properties Panel**,
-  **Audit/Problems Panel**, and **Raw XML Panel**. Each checkbox always reflects
-  whether its panel is currently visible — closing a panel with the ✕ on its own
-  title bar unchecks the menu entry too, and re-checking it brings the panel
-  back.
+  **Activity Log / Results Panel** (the bottom dock), and **Raw XML Panel**. Each
+  checkbox always reflects whether its panel is currently visible — closing a
+  panel with the ✕ on its own title bar unchecks the menu entry too, and
+  re-checking it brings the panel back. Below them, **View ▸ Activity Log** and
+  **View ▸ Results** are not toggles: each opens the bottom dock if needed and
+  focuses that tab (see *Where Results Appear*).
 - **View ▸ Expand All** / **Collapse All** open or fold the whole Project Tree.
 - **View ▸ Customize Toolbar…** chooses which commands appear on the toolbar and
   what icon each one carries (see *The toolbar*, below).
@@ -3248,7 +3476,8 @@ exception, because that console can only ever reach the disposable sandbox (see
 The other commands added recently are shortcut-free too: **File ▸ New
 Session**, **File ▸ Discard Changes**, **Parsing ▸ Auto Parse XML**, **Parsing ▸
 Validate Project**, **History ▸ History…**, **Navigation ▸ Clear All Bookmarks**,
-**Navigation ▸ List All Bookmarks**, **Database ▸ DDL Explorer (Quality)**,
+**Navigation ▸ List All Bookmarks**, **View ▸ Activity Log**, **View ▸
+Results**, **Database ▸ DDL Explorer (Quality)**,
 **Database ▸ DDL Explorer (Sandbox)**, **Database ▸ Project Status…** and
 **Tools ▸ Start MCP Server** are all menu-only. If you use one often, put it on
 the toolbar (see *Appearance & Layout ▸ The toolbar*).
@@ -3390,8 +3619,8 @@ startup** and your choice is not remembered between sessions — turning it on i
 per-session decision you make deliberately, and no stored preference can start a
 server behind your back. Unchecking it stops the server again; the checkbox always
 tells you whether one is running, and if a start fails the reason appears in the
-status bar and the checkbox snaps back rather than claiming a server that isn't
-there.
+**Activity Log** and the checkbox snaps back rather than claiming a server that
+isn't there.
 
 The point of running it in-app is that **it answers from the project you have
 open**. A tool call that does not name a file is answered from the editor's live
@@ -3439,8 +3668,9 @@ change your project file or your database.
 
 Launch the editor with `python -m pgtp_editor.main --debug` (or set the
 environment variable `PGTP_EDITOR_DEBUG=1`) to record a full diagnostic log
-of the session. A red **DEBUG** badge appears in the status bar and the log
-file path is shown at startup. Even without debug mode, errors are always
+of the session. A red **DEBUG** chip appears in the status bar (see *The Status
+Bar*) and the log file's path is recorded in the **Activity Log** at
+startup. Even without debug mode, errors are always
 recorded to a small `errors.log`. **Help ▸ Open Log Folder** opens the folder
 containing both logs — attach the newest `debug_*.log` when reporting a
 problem.
