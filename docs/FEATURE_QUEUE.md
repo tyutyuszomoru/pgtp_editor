@@ -739,7 +739,21 @@ existing "(P# D# L#)" badge already establishes the P/D/L abbreviation conventio
 ---
 
 ## FQ-009: Offer "run on sandbox / run on quality" when deploying a DDL object edit
-**Status:** QUEUED — discoverability half PROCESSED (4bc73b6); the quality leg is APPROVED and pending implementation.
+**Status:** PROCESSED (discoverability half `4bc73b6`; the quality leg shipped inside FQ-020's
+`Deployment` menu, `04c3591`) — **both halves are now live.** The owner's 2026-08-06 ruling below
+(accept precondition 2 as specified, do not narrow it) was carried out: `Run on quality` is a named
+`Deployment` entry wired through `_wire_ddl_object_apply_seams` to `panel.apply_to_target()`, behind all
+four §18.5 preconditions, and the `report_unverified` confirmation enumerates exactly which tiers went
+unverified. The `Deploy this edit…` picker that FQ-009 shipped as its discoverability half was itself
+superseded by those named entries (spec §18.5, 2026-08-08) and is queued for deletion by FQ-026.
+
+**One stale claim in the code, flagged not fixed:** `_wire_ddl_object_apply_seams`' docstring still says
+the shipped matrix is *"temporarily projectless-only"* because the project branch is *"blocked on BUG-034's
+unpopulated `ProjectSettings.target`"*. BUG-034 is RESOLVED (`4bc73b6`) and `_target_apply_available()`
+now reads `active_target_params(tree)`, which returns the populated `ProjectSettings.target` in project
+mode — so the gate should be open there too. That was read from the code, **not proven by a test**;
+the file was locked by another agent at flip time. Whoever picks this up next should pin project-mode
+availability with a test before trusting it.
 
 **OWNER DECISION 2026-08-06: accept precondition 2 as specified and wire the leg.** The concern was put to the owner explicitly — with Apply-to-Target live, `_precondition_validation` treats "the ladder never ran over this buffer" as overridable and only hard-blocks tiers that ran AND found issues, so a user with no sandbox reaches an irreversible production write in two clicks and one Yes, and Apply-to-Target has no revert snapshot. The owner's decision is that the enumerated `report_unverified` confirmation (which names exactly which tiers went unverified and why) is sufficient protection, and that the blast radius is theirs to accept. Recorded here so the reasoning is not re-litigated: precondition 2 is NOT to be narrowed, and no spec change is needed.
 
@@ -1486,7 +1500,27 @@ bar and moved later, since the trigger-time dispatch is what makes them host-ind
 ---
 
 ## FQ-012: Customize Shortcuts dialog — list every menu command and rebind its keyboard shortcut
-**Status:** QUEUED
+**Status:** PROCESSED (`5f53583` registry + dialog, `c4a838d` host wiring; spec §27/§26/§7 + a §28 ledger
+row; manual re-framed) — `View ▸ Customize Shortcuts…`, persisted as `shortcutOverrides`, applied without
+a restart and surviving one.
+
+**The conflict rule is STEAL for editable commands and REFUSE for anything the dialog does not own**, and
+it could not be "warn and allow": a Qt fact already recorded in this codebase (the `Ctrl+F` note in
+`find_replace_bar.install_focus_shortcuts`) is that two enabled shortcuts on one chord are **ambiguous and
+Qt fires NEITHER** — a duplicate does not degrade to first-wins, it deletes both commands from the
+keyboard. So assign clears the loser in the same operation, `resolve_bindings` re-derives the same steal at
+load so a hand-edited settings file cannot install an ambiguous pair, and a chord held by a NON-menu
+occupant is refused rather than stolen (the dialog owns menu QActions only and cannot clear a
+window-scoped `QShortcut`; stealing what you cannot clear produces exactly the ambiguity).
+
+**Two implementation decisions that are load-bearing rather than tidy.** Default capture is
+**capture-once**: after an override is installed the QAction no longer knows its built-in key, so
+re-reading on a re-walk would enshrine the override AS the default and make *Reset to Default* a permanent
+no-op. And applying is **two passes** — clear every action, then set — because one pass can leave a stolen
+chord on two enabled actions mid-loop, reintroducing the ambiguity at the last moment.
+
+Reserved bindings are §27 transcribed and are wider than the entry asked for, notably `Ctrl+C`/`X`/`V`: a
+window-level shortcut would outrank the editors' built-ins and break copy everywhere.
 **Requested:** 2026-08-07
 **Idea (verbatim/summarized):** "I would like to have a keyboard shortcut setting screen, where I can
 decide which action under which keyboard goes. List all menupoints and already defined shortcuts and let
@@ -2747,7 +2781,24 @@ per-tab named entries are the whole surface, and `file.save` retires rather than
 ---
 
 ## FQ-021: Compare/Merge becomes a mode; `Bookmarks` is renamed `Navigation` and gains the Difference commands
-**Status:** QUEUED
+**Status:** PROCESSED (`75e2cdb` mode + read-only reasons, `1d53abd` Bookmarks→Navigation, `1ccfe9d` the
+three mode-only members) — all three legs.
+
+**The third leg closed a live REGRESSION, not just a queue entry.** FQ-020 removed `Apply Changes to
+Target` from Tools expecting this entry to rehome it, leaving the comment *"Until FQ-021 lands it has no
+menu home"* — and it never landed. So for a period a user could enter Compare/Merge mode, step every
+difference and check them, and have **no gesture anywhere in the app** that wrote them to the target file.
+The implementation was intact and tested the whole time; it was simply unreachable. Found by
+`spec-harmonizer`, not by a test.
+
+**The gate is the MODE, not the tab**, which `enter_diff_merge_mode`'s own docstring had already argued for
+the read-only lock: the user may tab back to Raw XML mid-comparison. `leave_diff_merge_mode` sets the
+current index to Raw XML, which emits nothing when Raw XML is *already* current — a reachable state via
+the panel's Close button — so wiring visibility to `currentChanged` alone would have left three commands
+visible after the mode ended. A test asserts zero `currentChanged` emissions while the members still hide.
+
+`set_bookmarks_enabled` stopped disabling the whole `QMenu`, as its own docstring had predicted this pass
+would have to.
 **Requested:** 2026-08-08
 **Idea (verbatim/summarized):** "Compare/Merge becomes a mode, mirroring Caption Mode: an
 `enter_diff_merge_mode()`/`leave_diff_merge_mode()` pair that sets the Raw XML editor read-only, because a
@@ -3015,7 +3066,16 @@ for the `DDL Explorer` menu-entry rename (id change) and for the fixed→dynamic
 ---
 
 ## FQ-023: Make the three session-gated sandbox gestures present-and-reporting (and decide whether the sandbox session opens lazily)
-**Status:** QUEUED — **DECIDED 2026-08-08: Option A. Option B (lazy-open) is REJECTED by the owner**, whose
+**Status:** PROCESSED (`1df4ecf`) — the gestures state their reason instead of vanishing.
+
+**⚠️ This entry's own ruling was REVERSED the next day.** It records Option B (lazy-open) as *"REJECTED by
+the owner"*; **BUG-040 (2026-08-09) reversed exactly that** — the sandbox session now auto-connects on
+project bind, and `Database ▸ Open`/`Close Sandbox Session` were deleted outright. The
+present-and-reporting behaviour this entry shipped is what makes that survivable: a failed auto-open still
+leaves a visible gesture that states the reason and offers an inline `Open`. Read BUG-040 before treating
+anything below about session lifecycle as current. Original text follows unchanged.
+
+**Superseded detail:** DECIDED 2026-08-08: Option A. Option B (lazy-open) was REJECTED by the owner, whose
 words were *"Don't open lazily, it needs to be an explicit decision."* So: the three gestures become
 present-and-reporting, and `Database ▸ Open Sandbox Session` **stays an explicit user act**. Implement Option
 A only; Option B's analysis below is kept as the record of what was weighed, not as a live alternative.
@@ -3125,7 +3185,34 @@ or deleting a documented menu action.
 ---
 
 ## FQ-025: ALTER-TABLE action set in the DDL Explorer — column/constraint/index/comment/table ops that generate DDL into an editable tab
-**Status:** SLICE 1 PROCESSED (`bc02d9c` emitters + introspection, `8a88da4` dialogs, `532da30` wiring) —
+**Status:** PROCESSED — all three slices (`bc02d9c` + `8a88da4` + `532da30` slice 1; `c19a09f` + `b8a005d`
+slice 2; `ef46625` + `69c95b5` slice 3). Eighteen operations reachable from the DDL Explorer.
+
+**The submenu groups what is SCOPED TO THE CLICKED TABLE, not what emits `ALTER TABLE`** — which is the
+question the user is answering — so Create Index, Drop Index and Drop Table sit there despite none being an
+ALTER, with Drop Table in its own final group away from a mis-click on Drop Index. `Create Table…` is the
+exception, at top level on the Tables branch root (mirroring FQ-002's `New Function/Procedure…` on the
+routines root) **and** on table and view nodes, because a node is the only thing in this tree that names a
+schema — which is exactly what the dialog consumes.
+
+**Three of this entry's factual claims were wrong** and are corrected here so they are not re-read as
+design: column nodes did not exist at all (the tree had to grow a `Columns (N)` group); *"Apply-to-Target
+is not wired"* was stale; and both *"slice 2 includes the `_CONSTRAINTS_SQL` widening"* and *"Drop index
+needs the new index-introspection query"* were false — all introspection shipped with slice 1's batch.
+
+**Open question 2 was settled AGAINST this entry's own recommendation:** constraint names are REQUIRED,
+because an auto-name like `orders_qty_check1` is what makes the Drop and Rename pickers a guessing game
+later. The one exception is `CREATE TABLE`'s primary key, emitted unnamed — the single case where
+Postgres's auto-name is deterministic and conventional. Both are in the §28 ledger.
+
+**Known limits, recorded rather than hidden:** `Deployment ▸ Save in Project` on a generated tab opens
+Save As… and its label reads slightly off (FQ-026's scope); Apply-to-**Target** refuses these buffers,
+since `parse_buffer_identity` finds no `CREATE` — Apply-to-Sandbox is the intended path; the sandbox
+`applied` row is per-table for ALTERs, so successive ALTERs overwrite each other's bookkeeping, and a
+`DROP INDEX` buffer has no table in its identity at all; and every tab is still titled `ALTER <table>`
+regardless of contents, which the owner has ruled should be fixed.
+
+Superseded detail from the slice-1 flip: SLICE 1 PROCESSED —
 the eight **column operations** ship end to end: an `Alter Table ▸` submenu on table nodes and on the new
 column nodes, a dialog per operation, and the generated DDL in an editable tab that executes nothing until
 the user runs it. Slice 2 (constraints/FKs) and slice 3 (indexes/comments/whole-table) are NOT shipped;
