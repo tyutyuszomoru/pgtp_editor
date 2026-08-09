@@ -231,8 +231,9 @@ the three ways to run it*).
 - **On a DDL object tab with no sandbox configured, Parsing is empty.** The XML
   pair is hidden by the tab kind alone, and the two checks need a sandbox to
   check against. That is the app's usual absent-not-greyed posture, not a
-  glitch: give the project a sandbox (**Database ▸ Sandbox Setup…**) and the two
-  entries appear.
+  glitch: fill in the project's sandbox connection (**File ▸ Project Settings… ▸
+  Connections**) and the two entries appear. Whether they can then *run* is a
+  second question, and the answer is on the refusal itself — see *The Sandbox*.
 - **Validate Project is one of the toolbar's five default buttons, so that
   button leaves the toolbar while a DDL object tab is in front.** A toolbar
   button *is* the menu's own command (see *Appearance & Layout ▸ The toolbar*),
@@ -304,7 +305,10 @@ as the menu entry does — that is the honest posture, not a bug.
 Each entry acts on **the tab it belongs to and nothing else**. If one is somehow
 run while its tab is not in front — from a pinned toolbar button, say — it
 **refuses and says why on the status bar** (*"Save XSD runs on the Edit XSD tab —
-open one first."*) instead of writing somewhere plausible but wrong.
+open one first."*, *"Save in Project runs on an open DDL object tab — open one
+first."*) instead of writing somewhere plausible but wrong. **Save XSD** is the
+one where this matters most: off its tab it would have written an *empty*
+`curated.xsd` over your schema, so it now refuses instead.
 
 ---
 
@@ -1456,9 +1460,9 @@ tree that reads as an empty database.
 with a project that has no sandbox configured, **DDL Explorer (Sandbox)** is not
 on the Database menu at all — absent rather than greyed out, like every other
 gesture in the app you cannot use. It appears the moment such a project opens,
-and also when you give a project a sandbox later (through **Database ▸ Sandbox
-Setup…**, or by filling in the sandbox connection in **File ▸ Project
-Settings…**). Closing the project takes the entry away again **and hides its two
+and also when you give a project a sandbox later by filling in the sandbox
+connection in **File ▸ Project Settings… ▸
+Connections**. Closing the project takes the entry away again **and hides its two
 tabs with it** — a tree still showing a closed project's sandbox would be
 describing something you are no longer working on.
 
@@ -1902,15 +1906,18 @@ is left alone, so it still applies once a target exists.
 
 Such a sandbox is perfectly usable — you can apply and check a self-contained
 routine in it straight away — but it has **no baseline schema**, so an object that
-references your target database's tables will fail to compile there until you give
-the project a target connection in **Project Settings…** and re-provision from
-**Database ▸ Sandbox Setup…**. That is a real answer from the sandbox, not a
-malfunction: the table genuinely isn't there yet.
+references your target database's tables will fail to compile there until it is
+re-provisioned against a target connection. That is a real answer from the
+sandbox, not a malfunction: the table genuinely isn't there yet.
 
-> Those Audit lines mention re-provisioning from **Sandbox Setup**, and that is
-> exactly where to go: **Database ▸ Sandbox Setup…** is always on the menu. Set
-> the target connection in **Project Settings…**, then re-provision from there —
-> see *The Sandbox ▸ Setting up, re-provisioning and resetting a sandbox*.
+> **Those Audit lines tell you to re-provision from Sandbox Setup, and in this
+> version you cannot.** **Database ▸ Sandbox Setup…** is hidden while a project
+> is open, and re-provisioning lives nowhere else, so a project whose sandbox
+> came up empty stays that way for now. Set the target connection in **File ▸
+> Project Settings… ▸ Connections** so the rest of the app has one, and read
+> *The Sandbox ▸ What you can change about a sandbox, and what you currently
+> cannot* for the full picture and the one workaround (a fresh **New
+> Project…**).
 
 ### Opening a project
 
@@ -1966,10 +1973,16 @@ fields are grouped into four tabs:
   its own **Test** button (see *Testing the project's connections*, below). The
   Sandbox connection group also carries the sandbox provisioning mode —
   **Without data (schema only)** or **With data**. Changing that mode here does
-  not re-clone anything; it takes effect the next time the sandbox is
-  reset or recreated. The same choice is offered — and acted on straight away —
-  in **Database ▸ Sandbox Setup…** (see *The Sandbox*); both write the one
-  recorded setting, so they can never disagree.
+  not re-clone anything; the inline note says it takes effect the next time the
+  sandbox is reset or recreated.
+
+  > **Read that note with one caveat: while a project is open you cannot
+  > currently trigger a reset or a recreate at all** — those live only in
+  > **Database ▸ Sandbox Setup…**, which is hidden in project mode. What a
+  > changed mode does reach is the **Project Status** window's *Sandbox data*
+  > node, whose **Run data clone now** / **Redo data clone** button clones the
+  > quality database's rows into the existing sandbox. See *The Sandbox ▸ What
+  > you can change about a sandbox, and what you currently cannot*.
 - **Git** — the same Server / User / Checkout branch fields as New Project.
 - **Deploy manifest** — a table, one row per DDL object, of its `ddl/` path,
   its last-deployed content hash, and its deployed-commit-id (if any), with
@@ -2075,16 +2088,19 @@ validate it, poke at it with ad-hoc SQL, and only then decide what to do with it
 Nothing in this chapter can reach your real database.
 
 The sandbox is a **local DDL-versioning project** concept, so everything below
-requires a project to be open. The usual way one comes into being is **File ▸ New
-Project…**: fill in that dialog's *Local sandbox* group and the app creates the
-database itself, auto-named, provisions it, installs `plpgsql_check`, and leaves
-the session open (see *Local DDL-Versioning Projects ▸ The sandbox is created with
-the project*). **Database ▸ Sandbox Setup…** is the other way in, and the only way
-back: it can create a sandbox for a project that has none, re-provision one whose
-first attempt failed, re-clone, and reset — see *Setting up, re-provisioning and
-resetting a sandbox*, below. The sandbox's connection details and the created
-database's name are visible and editable in **File ▸ Project Settings… ▸
-Connections**.
+requires a project to be open. **A sandbox comes into being in exactly one
+place: File ▸ New Project….** Fill in that dialog's *Local sandbox* group and the
+app creates the database itself, auto-named, provisions it, installs
+`plpgsql_check`, and leaves the session open (see *Local DDL-Versioning Projects ▸
+The sandbox is created with the project*). The sandbox's connection details, the
+created database's name, and the with-data/without-data mode are visible and
+editable afterwards in **File ▸ Project Settings… ▸ Connections**.
+
+**There is currently no second way in, and no way back.** The dialog that could
+provision, re-provision or reset a sandbox — **Database ▸ Sandbox Setup…** — is
+hidden while a project is open, and a sandbox only exists inside a project. Read
+*What you can change about a sandbox, and what you currently cannot*, below,
+before you plan around it.
 
 ### The sandbox session opens itself
 
@@ -2118,33 +2134,80 @@ hidden: **Parsing ▸ Check Object in Sandbox**, **Check Object Without Applying
 **Database ▸ Sandbox SQL Console…** and the Project Status window's two sandbox
 buttons are all there whenever a sandbox is *configured*, and using one states
 the reason it cannot run — *"no sandbox session is open — the project's sandbox
-could not be reached, or none is set up yet (Database ▸ Sandbox Setup…)"* — over
-an **Open** button that retries the connection. **That button is the only manual
-way to open a session in the app.** The other two ways back are **Database ▸
-Sandbox Setup…**, when the configuration itself is what is wrong, and simply
-closing and reopening the project, which retries the automatic open.
+could not be reached, or none is set up yet (check its connection in Project
+Settings)"* — over an **Open** button that retries the connection. **That button
+is the only manual way to open a session in the app.** The other two ways back
+are correcting the sandbox connection in **File ▸ Project Settings… ▸
+Connections**, when the configuration itself is what is wrong, and simply closing
+and reopening the project, which retries the automatic open.
 
-**Sandbox Setup… is always on the menu**, session or no session, sandbox or no
-sandbox — it is the gesture that can bring a sandbox into existence, so it must
-be reachable when there isn't one.
+**The refusal points at Project Settings rather than at Sandbox Setup…, and that
+is deliberate**: this refusal can only ever fire with a project open, and
+**Sandbox Setup…** is hidden there, so naming it would send you to a menu entry
+you cannot see. It also means the *"none is set up yet"* half of the sentence has
+no in-app remedy in this version — see the next section.
 
 **Database ▸ DDL Explorer (Sandbox)** stands apart from all of this: it only
 *reads* the sandbox, so it needs a configured sandbox but no session at all, and
 it comes and goes with the project (see *DDL Explorer ▸ The Sandbox Explorer, and
 how it differs*).
 
-### Setting up, re-provisioning and resetting a sandbox
+### What you can change about a sandbox, and what you currently cannot
+
+Sandbox configuration is split across two surfaces in this version, and the split
+leaves a real hole. This section states plainly what each mode gives you, so you
+can plan around it rather than hunt for a control that isn't there.
+
+**With a project open** — the mode you are in whenever a sandbox exists at all —
+you can:
+
+- **see and edit the sandbox connection**, including the database name the app
+  created and the with-data / without-data mode, in **File ▸ Project Settings… ▸
+  Connections**, with that group's own **Test** button (see *Local DDL-Versioning
+  Projects ▸ Testing the project's connections*);
+- **retry the session** from the **Open** button on any sandbox refusal, or by
+  closing and reopening the project;
+- **run or redo the data clone**, and **install `plpgsql_check`**, from the
+  **Project Status** window's *Sandbox data* and *plpgsql_check* nodes (see
+  *Project Status ▸ Clicking a node*);
+- **browse what the sandbox actually holds** with **Database ▸ DDL Explorer
+  (Sandbox)**, and query it with **Database ▸ Sandbox SQL Console…**.
+
+**What you cannot do with a project open, in this version:**
+
+- **provision or re-provision** the sandbox from the target,
+- **reset** it,
+- **create an app-owned sandbox database** for a project that has none or that
+  points at a database PGTP Editor did not create,
+- **read the working set** — the sandbox's own list of what has been applied to
+  it.
+
+All four live only in the **Sandbox Setup…** dialog, and **Database ▸ Sandbox
+Setup…** is **hidden whenever a project is open**. It is shown only when no
+project is open — and with no project there is no sandbox to act on, so the
+dialog opens with its actions absent and reasons in their place. The practical
+consequence is worth stating outright: **a project whose sandbox failed to
+provision, or came up empty, cannot be fixed in place.** The one workaround today
+is to create a **File ▸ New Project…** with the *Local sandbox* group filled in
+(and, this time, a target connection available), since provisioning runs
+automatically on that path.
+
+> This is a known gap, not a design you should read a rationale into. The entry
+> was hidden on the premise that **Project Settings** covers sandbox
+> configuration; it covers the *connection* and the recorded *mode*, but not
+> provisioning. Until it is resolved, treat the mode note in Project Settings —
+> *"takes effect the next time the sandbox is reset/recreated"* — as describing
+> something you cannot currently trigger from a project.
+
+### The Sandbox Setup dialog
 
 **Database ▸ Sandbox Setup…** is the sandbox's own control panel: creating a
 sandbox database, (re-)provisioning it from the target, re-running a data clone,
 resetting it, installing `plpgsql_check`, and seeing what has been applied to it.
-
-**It is the one entry in this chapter that is always on the menu** — not hidden
-when there is no session, and not hidden when there is no sandbox at all. Every
-other sandbox gesture disappears when you cannot use it, but this is the gesture
-that can *create* a sandbox, so hiding it whenever a sandbox is missing would put
-it out of reach exactly when you need it. The dialog is non-modal, so a long
-provisioning run doesn't lock the window, and you can keep working while it goes.
+Everything below describes that dialog — **read it together with the section
+above, which says when you can actually reach it.** The dialog is non-modal, so a
+long provisioning run doesn't lock the window, and you can keep working while it
+goes.
 
 Inside, the same "no dead controls" rule applies one level down: **a button whose
 operation cannot run now is not shown, and a sentence explaining why stands where
@@ -2198,6 +2261,14 @@ object, table, and when it was applied — which is the sandbox's own record of 
 it currently holds. It needs a live session to be read; without one, the dialog
 says that rather than showing an empty table you might read as "nothing applied".
 
+> **As things stand you will see none of those buttons.** Opened the only way it
+> can be opened today — with no project — the dialog has no project to record a
+> mode in and no sandbox connection to act on, so **Sandbox actions** shows the
+> reasons instead of the controls (*"No sandbox connection is configured for this
+> project…"*, *"No project is open…"*) and **Working set** has no session to
+> read. The description above is what the dialog does when it is given a project;
+> see *What you can change about a sandbox, and what you currently cannot*.
+
 ### The validation ladder, and the three ways to run it
 
 Validating a routine in the sandbox climbs a four-rung ladder, and the Audit panel
@@ -2218,9 +2289,11 @@ hides a rung nobody managed to check:
 - **tier 3 — semantic analysis** by the `plpgsql_check` extension. Without that
   extension in the sandbox this tier reports unavailable **with the reason** — the
   extension is absent, available but not created, or its state could not be
-  determined, and those are three different answers. Install it from
-  **Database ▸ Sandbox Setup…** or from the **plpgsql_check** node in the Project
-  Status window.
+  determined, and those are three different answers. Install it from the
+  **plpgsql_check** node in the **Project Status** window — that is the reachable
+  one with a project open. (Some of these lines still name **Sandbox Setup…**,
+  which also has an install button; with a project open that entry is hidden, so
+  use Project Status.)
 
 Three gestures run this ladder, and they differ in **what they touch**, not in how
 thorough they are:
@@ -2515,7 +2588,9 @@ all there is nothing to run against, so the button is simply not there — you g
 the explanation and no dead control.
 
 **Cloning data is destructive and asks first**, with the same one confirmation
-**Sandbox Setup…** uses; declining changes nothing.
+the sandbox's own provisioning gestures use; declining changes nothing. A clone
+is only ever attempted for a **With data** sandbox — for a schema-only one the
+run refuses and says so, because that choice is recorded, not toggled per run.
 
 An action is never a single click on the node itself: you always land in the
 node's window first and press the button there. Running one closes that window
@@ -2523,10 +2598,12 @@ and re-probes, so the diagram can't keep claiming the state from before you
 acted.
 
 > This window is a **report with a few one-step actions**, not the sandbox's
-> control panel. The fuller set — provisioning, re-provisioning, resetting, the
-> with-data/without-data choice and the working-set list — lives in **Database ▸
-> Sandbox Setup…** (see *The Sandbox*). Everything the diagram reports is measured
-> against the real thing, not assumed from what you configured.
+> control panel. The fuller set — provisioning, re-provisioning, resetting and the
+> working-set list — lives in **Database ▸ Sandbox Setup…**, which is hidden while
+> a project is open, so with a project open **these two buttons are in practice
+> the only sandbox actions you have** (see *The Sandbox ▸ What you can change
+> about a sandbox, and what you currently cannot*). Everything the diagram reports
+> is measured against the real thing, not assumed from what you configured.
 
 ---
 
@@ -2680,7 +2757,9 @@ nothing.
 Because a button *is* its menu command, a button also **disappears while its
 command is hidden**. That now includes the default **Validate Project** button,
 which steps off the toolbar while a DDL object tab is in front (see *The Two Menu
-Bars ▸ Parsing, on a DDL object tab*).
+Bars ▸ Parsing, on a DDL object tab*), and a pinned **Sandbox Setup…** button,
+which leaves the toolbar the moment a project is opened (see *The Sandbox ▸ What
+you can change about a sandbox, and what you currently cannot*).
 
 ### Choosing a button's icon
 
@@ -2790,9 +2869,10 @@ The other commands added recently are shortcut-free too: **File ▸ Show
 Launcher…**, **File ▸ Discard Changes**, **Parsing ▸ Auto Parse XML**, **Parsing ▸
 Validate Project**, **History ▸ History…**, **Navigation ▸ Clear All Bookmarks**,
 **Navigation ▸ List All Bookmarks**, **Database ▸ DDL Explorer (Quality)**,
-**Database ▸ DDL Explorer (Sandbox)**, **Database ▸ Sandbox Setup…**, **Database ▸
-Project Status…** and **Tools ▸ Start MCP Server** are all menu-only. If you use
-one often, put it on the toolbar (see *Appearance & Layout ▸ The toolbar*).
+**Database ▸ DDL Explorer (Sandbox)**, **Database ▸ Sandbox Setup…** (shown only
+when no project is open — see *The Sandbox*), **Database ▸ Project Status…** and
+**Tools ▸ Start MCP Server** are all menu-only. If you use one often, put it on
+the toolbar (see *Appearance & Layout ▸ The toolbar*).
 
 **F3, Ctrl+L, Ctrl+Alt+F and Ctrl+Return have no menu entry at all**, which is
 also why they are the four commands you cannot put on the toolbar — a toolbar
