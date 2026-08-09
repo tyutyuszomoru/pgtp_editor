@@ -1015,7 +1015,47 @@ re-settle).
 ---
 
 ## FQ-011: Persisted launch mode that filters the menu bar to the chosen workflow
-**Status:** QUEUED
+**Status:** SUPERSEDED BY FQ-027 (owner ruling, 2026-08-09) — **wherever the two entries disagree, FQ-027
+wins.** The owner's reason is the ordering: FQ-010's launcher shipped, they used it, and FQ-027 is what
+they asked for *after* testing it — so it reflects the design as revised by contact with the real thing,
+while this entry reflects the design as imagined before.
+
+**Nothing here was ever implemented.** Verified 2026-08-09 against the code: no `launchMode` /
+`launch_mode` / `_current_mode` key exists anywhere in `pgtp_editor/`, and no menu filtering is
+intent-based (the only visibility gating that ships is capability-based `_refresh_sandbox_affordances` or
+tab-kind-based `_refresh_editor_menu_affordances` / `_refresh_parsing_menu_affordances`). What shipped was
+**FQ-010** — `ui/launcher_dialog.py` and `LAUNCHER_GROUPS`, four groups of command ids where picking one
+simply *triggers that QAction* and records nothing. The spec claimed otherwise (§7 said a launcher choice
+*"sets the persisted launch mode"*) until `spec-harmonizer` caught it and corrected §7 to "planned only"
+in `eaa0cb5`. So FQ-027 does not layer onto an existing mechanism; it builds the first one.
+
+**The three concrete disagreements, all resolved in FQ-027's favour:**
+1. **Persistence.** This entry: persisted across restarts. FQ-027: **session-only**. FQ-027 wins — and it
+   is the safer of the two, because the trap this entry's escape hatch was written to cover (pick a mode
+   once, lose commands on every future launch, with the launcher possibly suppressed) largely evaporates
+   when the mode dies with the session. A session-only mode also needs no QSettings key at all.
+2. **Launcher shape.** This entry assumes FQ-010's four groups. FQ-027: **three columns**
+   (Standalone | Project | Maintenance), and it deletes the `launcherSuppressed` "don't show again"
+   mechanism FQ-010 shipped.
+3. **The hard case.** This entry's motivating example was hiding `Generate` in project mode — which empties
+   a **default toolbar button** on a fresh install (its own open question 4, never answered). FQ-027
+   sidesteps it: *"Project and standalone are OK for now"*, and only Maintenance gets a membership rule.
+
+**What SURVIVES from this entry and must be carried into FQ-027's implementation** — FQ-027 itself cites
+all of it and this is the reason not to delete the entry:
+- The **mechanism**: one `_refresh_*_affordances`-style entry point, **visibility only, never
+  enabled-state**, so the app keeps exactly two postures rather than gaining a third.
+- **THE OBJECTION recorded below, which applies to FQ-027 unchanged and is NOT retired by this
+  supersession.** Maintenance mode hides menus that genuinely still work, so it remains the first time this
+  codebase hides on **user intent** rather than **real capability**. Whoever folds FQ-027 into the spec
+  must state those as two deliberate, distinct rules — not let the second quietly overwrite the first.
+- The rule that **`Help ▸ Manual` (F1) and the surface that clears the mode must never be filtered out**;
+  FQ-027 satisfies it with `File ▸ New Session` plus a trimmed File menu and Help.
+- The **`_walk_menu_actions` enumeration fact** (a hidden action is still enumerated, so Customize Toolbar
+  keeps offering it and a pinned button keeps working) — which FQ-027 relies on deliberately in its
+  menu-bar-only scope, and which is worth re-reading beside BUG-040's opposite conclusion.
+
+Original entry preserved below unchanged.
 **Requested:** 2026-08-07
 **Idea (verbatim/summarized):** "Also I don't want to see menus I can't use (eg. if I work on Path2, I
 don't need generate)." The owner's answer to FQ-010's Q1 was that a launcher group choice is **a persisted
@@ -3292,5 +3332,805 @@ What DOES want re-verification at pickup is line drift, not conflicts: `4828e3d`
 the two check gestures onto `Parsing`, deleted `Open`/`Close Sandbox Session`, and reworded
 `DESTINATION_UNAVAILABLE_REASONS[DEST_SANDBOX]` — all in the same files and all landed after the line
 numbers cited above were read.
+
+---
+
+## FQ-027: Three-column launcher (Standalone | Project | Maintenance), a Maintenance-mode menu filter, and a File ▸ New Session escape hatch
+**Status:** QUEUED — **and it SUPERSEDES FQ-011 wherever the two disagree (owner ruling, 2026-08-09).**
+FQ-027 is what the owner asked for *after* using the shipped launcher; FQ-011 is what was imagined before
+it existed, and none of FQ-011 was ever implemented. See FQ-011's status block for the three concrete
+disagreements (persistence, launcher shape, the `Generate`/default-toolbar-button case) and — more
+importantly — for the four things that SURVIVE from it and must be carried into this implementation,
+including the recorded objection that this is the app's first intent-based rather than capability-based
+hiding. That objection is not retired by the supersession.
+**Requested:** 2026-08-09
+**Idea (verbatim/summarized):** "We have defined that we have three major modes: Standalone, Project and
+Maintenance. So the initial window that comes up should only offer these three boxes. In Standalone:
+Open pgtp / Open files. In Project mode: Open project / New project. In Maintenance mode: Edit XSD /
+Open XSD. Project and standalone are OK for now, but in Maintenance mode I need different menus. Hide
+everything else, and show only Schema menu."
+
+**Problem:** The shipped launcher (spec §7, from FQ-010; `pgtp_editor/ui/launcher_dialog.py` +
+`LAUNCHER_GROUPS`) presents **four** groups in an unconstrained layout: (1) *Open a `.pgtp` for editing*,
+(2) *New Project / Open Project*, (3) *Open other files* (PHP), (4) *Maintenance mode* (XSD + §20
+re_phpgen). The owner now wants the launcher to read as the app's **three major modes** in one visual
+row, and — critically — wants Maintenance mode to actually *change the menu bar*, which is the
+long-deferred half of the launcher story. FQ-011 designed the per-mode menu-filter **mechanism** (persisted
+key, single `_refresh_*_affordances`-style visibility-only entry point, intent-not-capability hiding) but
+left the **per-mode membership UNDECIDED** — §7 and §29 both record that "only `Generate` in project mode
+has been named" and "no table may be invented." This entry supplies the first concrete membership answer
+(Maintenance = Schema + Help only) and, because the filter needs an always-reachable way out, introduces a
+new **File ▸ New Session** action as the escape hatch.
+
+**Maintenance mode, in one line (owner, Q6):** *a mode for one-off **administrative/setup tasks** on the
+app's own schema (Edit XSD / Import XSD), distinct from normal project/standalone editing.* That is why it
+shows only Schema (+ Help) — everything else is out of the way for a focused admin task.
+
+**Proposed approach:**
+- **A 1×3 launcher: Standalone | Project | Maintenance**, three boxes in a single row. Restructures §7's
+  `LAUNCHER_GROUPS` from four groups to three:
+  - **Standalone** = *Open pgtp* (`File ▸ Open…`) + *Open files* (`File ▸ Open PHP File…`) — merges the
+    shipped groups 1 and 3.
+  - **Project** = *New project* / *Open project* (`File ▸ New Project…` / `Open Project…`) — unchanged
+    group 2 (the idea says "Open project / New project"; entry order is a presentation detail for pickup).
+  - **Maintenance** = **Edit XSD** + **Import XSD** — both existing Schema-menu QActions (§11). The §20
+    re_phpgen entries currently in group 4 are **removed from the launcher**. NOTE: the idea's verbatim
+    "Open XSD" does **not** map to a live command — the read-only `SchemaViewerWindow` / `Schema ▸ Open XSD`
+    was deleted 2026-07-24 (spec ledger) in favor of the editable **Edit XSD** tab; per the owner's Q1
+    answer the Maintenance box is **Edit XSD + Import XSD**, not the deleted viewer and not Edit AutoXSD.
+  - Keep the existing entry-dispatch contract intact: groups hold **command ids only**
+    (`toolbar_registry.command_id_for`), the picked entry's own QAction does the work via `action.trigger()`
+    after the modal closes, and a group whose ids are all missing renders nothing (§7). This is a layout +
+    membership change, not a rewrite of the dispatch mechanism.
+- **Maintenance-mode menu filter (SESSION ONLY — does NOT persist across restarts).** When the user enters
+  Maintenance mode, hide the menu bar down to **Schema + Help** (Help/F1/Manual must stay reachable, and
+  Schema is the mode's whole point). Hidden: **Edit · View · Database · Tools · Bookmarks · Generation**
+  (menubar build order per §26: File · Edit · View · Schema · Database · Tools · Bookmarks · Generation ·
+  Help). This is the first concrete answer to FQ-011's UNDECIDED per-mode membership and MUST reuse
+  FQ-011's settled mechanism verbatim: **visibility-only, never enabled-state** (no third grey-out
+  posture), driven through a **single** refresh entry point, not ad-hoc `setVisible` in `_build_*_menu`.
+  Recorded as intent-based hiding — a deliberate departure from the app's capability-based rule, exactly as
+  FQ-011 frames it. **Scope is the menu bar ONLY — the toolbar is left alone** (owner, Q2): toolbar buttons
+  backed by a now-hidden menu action may go empty/inert, which is accepted; the toolbar itself stays. This
+  matches FQ-011's default scoping (menu-bar only unless explicitly widened).
+- **Picking the Maintenance box in the launcher enters Maintenance mode for the session.** The mode is not
+  a separate in-app toggle; choosing the Maintenance column is what applies the menu filter (FQ-011 already
+  names the picked group as "the natural input" to the mode). Standalone/Project boxes leave the full menu
+  bar in place. New Session (above) is what returns from Maintenance to the launcher, where the mode can be
+  re-chosen or not.
+- **File stays visible in Maintenance, trimmed to exactly New Session + Save + Save All — nothing else**
+  (owner, Q1). This satisfies FQ-011's hard requirement that "whatever surface reveals/clears the mode must
+  never be filtered out of any mode" (the escape hatch stays one click away) and lets XSD edits be saved
+  without leaving the mode. So the visible File-menu items in Maintenance are precisely those three; every
+  other File item (Open…, Open PHP File…, New/Open Project…, etc.) is hidden along with the other menus.
+- **File ▸ New Session — the RENAMED former `File ▸ Show Launcher…`, given fuller behavior (owner, Q3).**
+  There is exactly **ONE** action, not two: rename the existing Show Launcher action to **New Session** and
+  make it re-initiate the app into the starting/launcher state: (a) prompt to **Save All** if there are
+  unsaved changes, (b) **close everything** (documents/project/tabs), (c) **re-enter the launcher/starting
+  state**, restoring the full menu bar first. It is the escape hatch from Maintenance mode's menu filter AND
+  a general "start over" gesture. Because it clears the session-only Maintenance mode, it satisfies FQ-011's
+  must-never-be-hidden requirement — so New Session (and thus the trimmed File menu above) must itself never
+  be filtered out. `Show Launcher…` does **not** survive as a separate item; it *becomes* New Session.
+- **Remove the launcher's "Don't show this again" suppress mechanism entirely** — the launcher always
+  appears; there is no longer any way to skip it. Concretely, delete the whole suppression surface in
+  `launcher_dialog.py`: the `QCheckBox("Don't show this again")` (`suppress_checkbox`, line 213) and its
+  `suppress_requested` / `set_suppressed` accessors (lines 276-280); `LAUNCHER_SUPPRESSED_SETTINGS_KEY`
+  (`"launcherSuppressed"`, line 90) with `launcher_suppressed()` / `set_launcher_suppressed()`
+  (lines 150-157); the `force=` bypass path and the suppression read/write in `show_launcher`
+  (`force` param line 314, the `if not force and launcher_suppressed(...)` early return line 326, and the
+  `set_launcher_suppressed(...)` persist on exit line 337). Plus callers/manual: `main_window.py`
+  (~line 2065, the "re-open the startup launcher on demand" wiring — `File ▸ Show Launcher…` with
+  `force=True`) and `manual.md` (~lines 49-55). Rationale to record: with Maintenance being session-only
+  and the new `File ▸ New Session` always re-entering the launcher, a persisted "skip the launcher forever"
+  toggle is now **both redundant and a trap** — the launcher is the single starting gate for picking a
+  mode, so it must always appear. Removing `force=` is consistent with Q3's ruling that Show Launcher…
+  becomes New Session: there is no suppression left to bypass, so the `force=` parameter that only existed
+  to override suppression goes away with it, and the single New Session action unconditionally shows the
+  launcher after its save-all/close teardown.
+
+**Alternatives considered:**
+- **Keep `File ▸ Show Launcher…` as-is (light re-show) and add New Session as a second, separate action** —
+  rejected by the owner's Q3 answer: exactly one action is wanted. `Show Launcher…` alone only opens the
+  modal over the live session without tearing it down, which is not the full re-initiation the owner asked
+  for. Resolution: **rename** Show Launcher to New Session and give it the save-all → close → relaunch
+  behavior — one action, not two.
+- **Filter the toolbar to match the Maintenance menu set** — rejected by the owner's Q2 answer: **menu-bar
+  only, leave the toolbar alone**, per FQ-011's default scope. Toolbar buttons whose backing menu action is
+  hidden may render empty/inert; that is explicitly **accepted**, and the toolbar itself stays visible and
+  unchanged. Keeps the filter's blast radius to one surface (the menu bar), matching FQ-011's stated
+  scoping.
+- **Persist Maintenance mode across restarts** (FQ-011's default would-be design) — rejected by the owner's
+  Q3 answer: session-only. This is *simpler and safer* than FQ-011's persisted-mode design — a session-only
+  filter cannot strand a user in a menu-less app after restart, so it sidesteps the "persisted mode + a
+  suppressible launcher is a trap" hazard §29(a) worries about, while still needing the New Session hatch
+  within the session.
+- **Hide Help too / hide the entire menu bar** — rejected on FQ-011's rule that Help/F1/Manual must never
+  be filtered out (hiding the only documentation explaining why commands vanished). Help stays.
+- **Drop the launcher to a mode-picker that stores a mode** — not proposed here; §7 is explicit that the
+  groups are "a presentation of menu commands, not a mode picker," and the shipped dispatch triggers one
+  QAction per launch. Maintenance mode entry could instead be triggered by the *act of picking the
+  Maintenance box*, but the exact coupling (does picking a Maintenance entry set the session mode, or is
+  the mode a separate toggle?) is left as an Open Question rather than invented.
+
+**Suggested placement:** **EXTEND §7 (App shell / launcher)** in `CONSOLIDATED_SPEC.md` — this answers
+FQ-011's explicitly-UNDECIDED per-mode menu membership for Maintenance mode (§7 launch-mode block
+lines ~1181-1224 and §29 open question (a)/(b)/(c)) and revises §7's `LAUNCHER_GROUPS` from four groups to
+a 1×3 three-mode row. It is a follow-on to **FQ-010** (the shipped launcher) and **FQ-011** (the planned
+per-mode filter mechanism), NOT a duplicate: FQ-011 deliberately stopped at the mechanism and forbade
+inventing a membership table, so a separate entry carrying the owner's now-given answer plus the new
+`File ▸ New Session` action is the correct shape. Must reuse: §7's command-id/`action.trigger()` dispatch
+contract; FQ-011's visibility-only, single-refresh-entry-point mechanism; the §11 Schema QActions
+(Edit XSD, Import XSD) unchanged; and §26's menubar build order. Touches, at pickup: `launcher_dialog.py`
+(`LAUNCHER_GROUPS` + a 1×3 layout; **removal** of the suppression checkbox/key/`force=` path per above),
+a new menu-filter refresh entry point on `MainWindow`, and a new `File ▸ New Session` action wired to
+save-all/close/relaunch. **SUPERSESSION-LEDGER-WORTHY when folded in:** this **removes** FQ-010's
+"Suppressible, escapable and REVERSIBLE" launcher contract in §7 (the `launcherSuppressed` QSettings key,
+the "Don't show this again" checkbox persisted on every exit path, and the `File ▸ Show Launcher…`
+`force=True` bypass). The launcher becomes an unconditional starting gate; `spec-maintainer` should add a
+ledger row for the withdrawn suppression capability, not silently drop it from the §7 body.
+
+**Open questions:** None — all four recorded questions were answered by the owner and folded into the body
+above: (Q1) File in Maintenance = New Session + Save + Save All only; (Q2) menu-bar filter only, toolbar
+left alone with empty/inert buttons accepted; (Q3) exactly one action — Show Launcher… is renamed to New
+Session and gains save-all/close/relaunch, so `force=`/suppression go away; (Q4/purpose) Maintenance =
+one-off administrative/setup tasks on the app's own schema. Picking the Maintenance box enters the
+session-only mode; New Session is the escape hatch. Nothing remains undecided for this feature.
+
+---
+
+## FQ-028: App-shell chrome redesign — Audit/Problems split + static status bar + a prominent color-coded mode indicator (left-dock findings tab, static status bar, colored toolbar+status-bar mode panel, bottom dock → Activity Log + Results tabs)
+**Status:** QUEUED
+**Requested:** 2026-08-09
+**MERGED 2026-08-09:** this entry now also contains the mode-indicator design formerly tracked as **FQ-029**
+(prominent, color-coded, right-anchored top-toolbar panel + upgraded status-bar label). The two overlapped
+entirely on the status-bar mode label and the single source of truth for "current mode," so they were merged
+into one coherent design at the owner's request. FQ-029 is retained below as a tombstone pointing here.
+**Idea (verbatim/summarized):** "I dislike how the single 'Audit / Problems' bottom dock is used. A
+this-session inventory found it does THREE unrelated jobs at once — (a) navigable click-to-jump findings,
+(b) operation narration/log spew, (c) one-off errors — with self-contradictory lifecycles (some prefixes
+clear-on-rerun, some accumulate forever, one clears per-tab) and heavy overlap with the status bar (many
+events write to both). Split those jobs onto surfaces with coherent, single lifecycles: navigable findings
+into a left-dock tab; the status bar into static-only indicators; the bottom dock into an Activity Log tab
+and a saved-results tab." (Fully converged three-point redesign, all decisions asked-and-answered with the
+requester plus a code-verification pass.) PLUS (merged FQ-029): "The major modes and minor modes should be
+very visible in the toolbar area, to the right of the toolbar I need a panel that states the major and minor
+mode (when there's). It should be in a contrasting background and different background color for each mode
+for easy recognition."
+
+**Problem:** The one `Audit / Problems` bottom dock (`QListWidget`, §7 lines ~539-554) is overloaded across
+three unrelated jobs with mutually contradictory lifecycles, and it double-writes with the status bar. §7
+today reserves nine prefixes against one another in one panel — `[Schema]` / `[Validate]` / `[Find]` /
+`[PHP]` / `[Lint]` / `[Bookmark]` / `[Check]` / `[SQL]` / `[Project]` — but some clear-on-rerun (Find),
+some accumulate forever (Lint/Validate), one clears per-tab, and the panel simultaneously carries navigable
+hits, operation narration, learning chatter, generation stdout, and one-off refusals. Meanwhile ~40
+transient `showMessage` calls (via the `_shell_status` trampoline, `ui/main_window.py:1290`, and
+`ui/busy.py::busy_status`, line 50) scroll through the status bar, several duplicating what also lands in
+the Audit panel. The result is that the results a user wants to STEP THROUGH scroll away, saved validation
+history gets wiped by an unrelated op, and the status bar is a noise channel rather than an at-a-glance
+state readout. This redesign gives each job a surface with ONE coherent lifecycle.
+
+**Proposed approach (three coordinated parts):**
+
+- **PART 1 — Navigable findings get their own LEFT-DOCK tab (not the center pane).** A new tab in the
+  **left dock** beside the project tree / the FQ-003 coherence view / table references (precedent: the
+  existing `left_tabs` — Table References / DB Check / FQ-003 coherence view). Left dock is chosen so the
+  results list stays visible while each clicked hit opens in the CENTER editor — best for stepping through
+  many. After Part 3's refinement this tab holds **only Find-All (`[Find]`) and List Bookmarks
+  (`[Bookmark]`)** — the pure search/navigation results. **Lifecycle = clear-all-on-new-content,
+  last-operation-wins across types:** any new navigable op wipes the whole tab and shows only its results
+  (run Find-All then List-Bookmarks → the bookmarks replace the finds). **Click routing is UNCHANGED:**
+  reuse today's `ui/main_window.py::_on_audit_item_clicked` dispatcher (line 1471) and the `Qt.UserRole+N`
+  role convention (branch on raw / xsd / `DdlObjectRef.key` tuple / PHP-tab marker → jump to target in the
+  center editor/tab). Folded-in defaults the requester did not object to: the tab **auto-opens/focuses**
+  when a navigable op runs; it is a **single persistent tab** (created once, reused); the op's summary/count
+  line (e.g. "5 matches for X", "N bookmarks") stays as a **header row** in the tab.
+
+- **PART 2 — Status bar becomes STATIC-ONLY, AND a prominent color-coded mode indicator spans BOTH the top
+  toolbar and the status bar** (persistent indicators, no scrolling transient messages). *(This part absorbs
+  the merged FQ-029: the mode readout is no longer a plain status-bar label but a prominent, per-mode-colored
+  indicator rendered on TWO surfaces from ONE source of truth.)*
+  1. **Major mode = the SESSION workflow mode** (Standalone / Project / Maintenance), as established by
+     **FQ-027** (the three-column launcher), always shown. **RECONCILED 2026-08-09 with FQ-027 (latest-wins):
+     the mode is SESSION-ONLY and does NOT persist across restarts** — FQ-027's owner decision explicitly
+     SUPERSEDES FQ-011's persisted-mode design. Picking a launcher column enters that mode for the session;
+     `File ▸ New Session` (FQ-027) resets it and re-shows the launcher. So this indicator does NOT require a
+     persisted-mode store — it simply DISPLAYS the current session mode that FQ-027 already establishes
+     (FQ-011 remains the underlying visibility-only menu-filter MECHANISM that FQ-027 reuses). The label is
+     the chosen WORKFLOW mode — **distinct from the auto-detected `AppState`**
+     (`ui/project_status_model.py:110-118`: STANDALONE / PROJECT_NOT_SETUP / PROJECT_SETUP); actual
+     project-open-ness + tier is conveyed by the DB dots (item 4 below), so a mode-vs-actual-state mismatch
+     is possible (e.g. Project mode chosen but the open dialog cancelled) and is FQ-027's to reconcile.
+     **HARD dependency, merged from FQ-029:** FQ-027 as written exposes NO readable current-major-mode object
+     (it only applies a menu filter on launcher pick). This indicator NEEDS a readable current-major-mode
+     value, so EITHER FQ-027 must expose a single in-memory session-mode accessor (e.g.
+     `MainWindow.current_workflow_mode()`, set on launcher pick / New Session), OR this feature introduces
+     that single source of truth itself. It is an in-memory SESSION value, never a QSettings key, and BOTH
+     the toolbar panel and the status-bar label must read the SAME value (never a second, drifting notion).
+  2. **Minor mode = an active editor SUB-STATE — Editing / Caption / Compare-Merge (Diff) / Edit XSD**, shown
+     only "when there's one" (owner). Merged from FQ-029, this is now FOUR sub-states (FQ-028 originally
+     covered only the first three), mapped 1:1 onto the app's real named states, coining nothing (obey
+     §7:1060-1062's "mode has four meanings / use precise names" rule):
+     - **Caption Mode** (§13 — `_mode_label` "Caption Mode (XML read-only)", flipped `:2302`/`:2357`).
+     - **Compare/Merge / Diff** (§12 / FQ-021, shipped — owned by `ui/diff_merge_controller.py`). It does NOT
+       touch `_mode_label` today → this adds the small new wiring to show "Diff" when it is active.
+     - **Edit XSD** (§11 — `_xsd_mode`, `ui/xsd_controller.py`). *(New vs. original FQ-028, added from FQ-029.)*
+     When none is active, no minor mode is shown — just the major mode. Keep and repurpose the existing
+     permanent `_mode_label` for the status-bar side; keep `_debug_label` (`ui/main_window.py:205/490`).
+  3. **The mode indicator renders on TWO surfaces from ONE source of truth (merged from FQ-029; owner wants
+     BOTH):**
+     - **(a) A NEW right-anchored, color-backed panel pinned into the top `QToolBar`.** The toolbar is the
+       movable "Main Toolbar" (`ui/toolbar_controller.py:140`, `objectName("main_toolbar")`, added via
+       `addToolBar` from `ui/main_window.py:871`, owned by `ToolbarController`, position persisted in
+       `windowState`). Because a `QToolBar` is movable/floatable, "to the right of the toolbar" is only stable
+       if the panel is part of the toolbar and RIGHT-ANCHORED: add an **expanding spacer widget** (`QWidget`
+       with `sizePolicy` Expanding) via `toolbar.addWidget(...)` then the mode-panel widget, so it stays flush
+       right regardless of how many command buttons precede it. It reads e.g. "Project" or "Project · Caption"
+       (major, then minor when present) on a contrasting per-mode background. Built by `ToolbarController.build`
+       (or by MainWindow right after `build`, where `addToolBar` lives) so it survives the same
+       `saveState`/`restoreState` as the toolbar.
+     - **(b) The status-bar mirror IS the upgraded `_mode_label`** (`ui/main_window.py:486-487`) — do NOT add a
+       second label. Extend it to carry the MAJOR mode and the same per-mode background color, driven from the
+       same source of truth as the toolbar panel. (This is the original FQ-028 Part 2.1/2.2 label, now the
+       secondary mirror of the prominent top panel.)
+     - **One update path:** a single helper — e.g. `MainWindow._refresh_mode_indicator()`, modeled on the
+       existing single-entry `_refresh_*_affordances` convention — called at every major/minor transition
+       (launcher pick / New Session; Caption enter/leave `:2302`/`:2357`; Compare/Merge enter/leave
+       `diff_merge_controller.py`; Edit-XSD enter/leave `xsd_controller.py`). Both surfaces are rewritten by
+       this one call — no ad-hoc `setText`/`setStyleSheet` scattered across transition sites.
+     - **Passive indicator ONLY (owner):** no click behavior, no context menu, no mode switching from either
+       surface. Mode changes stay with the launcher pick and `File ▸ New Session` (FQ-027).
+     - **Theme-aware per-mode color palette (owner):** colors must adjust for light vs dark — NOT a fixed
+       hardcoded set like the DEBUG chip (`_debug_label`, `:491-494`, static red, does not re-theme). Respect
+       the `lightTheme` setting and re-render when `ui/theme.py::apply_theme(app, light)` flips. Recommended:
+       a pure helper mirroring `theme.py`'s `light_palette()`/`dark_palette()` split — e.g.
+       `mode_colors(light: bool) -> dict[str, tuple[bg, fg]]` — consulted by `_refresh_mode_indicator` and
+       re-consulted from `apply_theme`. **Starting-proposal palette for the three MAJOR modes** (bg / fg;
+       final values are the implementer's to tune):
+       | Major mode | Light (bg / fg) | Dark (bg / fg) |
+       |---|---|---|
+       | **Standalone** | `#E3F2FD` / `#0D3B66` (calm blue) | `#1E3A5F` / `#CFE3FF` |
+       | **Project** | `#E6F4EA` / `#1B5E20` (green — the "real work" mode) | `#1E3A28` / `#B6E3C0` |
+       | **Maintenance** | `#FDECEA` / `#8B1E1E` (amber-red — deliberate "admin mode" alert cast) | `#3A2320` / `#F2B8AE` |
+       **Minor mode is conveyed by TEXT, not a second color** (recommended): background stays the MAJOR mode's
+       color; the minor mode is appended as text ("Project · Caption"), so users read workflow at a glance and
+       need not learn a 3×4 color grid. (Two-tone alternative in Alternatives; owner's to overrule.) Verify
+       AA-ish contrast against the live QDarkStyle chrome, not just the bare palette.
+  4. **DB indicator dots, PROJECT MODE ONLY:** a Quality dot + a Sandbox dot, each white/red/green
+     (white = not-set-up, red = offline, green = connected). This **REFINES FQ-018** (queued/unbuilt,
+     status-bar Quality/Sandbox dots, 30s poll): FQ-018 showed the Quality dot even in standalone; the
+     requester OVERRIDES → **both dots appear only when a project is open.** This entry SUBSUMES/REFINES
+     FQ-018's status-bar-dots portion — reuse FQ-018's 30s-poll + §18.8 connectivity-state design
+     (`QualityState` / `SandboxState` / `AppState`), just gate BOTH dots on project-open
+     (`DdlProjectController.is_open` — folder is not None). NOTE: "project mode" for the dots means a project
+     is ACTUALLY OPEN (`is_open`/`AppState`), NOT the "Project" workflow-mode label from item 1 — the dots
+     follow real project-open state, so they can show under any workflow label and be absent even while the
+     label reads Project.
+  - **All ~40 transient `showMessage` call sites → the Activity Log tab** (Part 3 / FQ-019). They flow
+    through the `_shell_status` trampoline (`ui/main_window.py:1290`) and `ui/busy.py::busy_status`
+    (line 50) today. FLAG (non-blocking, requester accepted): errors/refusals ("Check — no sandbox session",
+    "Target failed") become Activity-Log entries under this rule; v1 routes them to the log, and if
+    immediacy proves insufficient a later toast could be added (see Open Questions).
+  - **Busy / in-progress → a dedicated static-bar busy slot WITH A LIVE ELAPSED-SECONDS COUNTER** (e.g.
+    "Validating… 3s", ticking), shown only while an op runs and cleared on completion. It replaces the
+    current sticky `busy_status` messages ("Validating…", "Target: loading routines & triggers…") with a
+    fixed status-bar element, consistent with "static bar."
+
+- **PART 3 — Bottom dock (was "Audit / Problems") becomes TWO tabs.** Retire the "Audit / Problems" title;
+  the bottom dock now hosts:
+  - **Activity Log tab — IS the FQ-019 Activity Log feature** (queued/unbuilt): FQ-019's per-project file/DB
+    action log PLUS all the Part-2 transient status-bar messages routed here. Per-project persist
+    (`.ddlproject/`, JSONL), session-only when standalone. This entry PLACES FQ-019's panel here as one of
+    the two tabs and feeds it the transients; **cross-reference FQ-019, do not duplicate its internal
+    design.**
+  - **Results tab — where validation results are SAVED (ACCUMULATED, not cleared).** Holds: sandbox
+    **Check** (`[Check]`), PHP **Lint** (`[Lint]`), **Validate Project** (`[Validate]`), **Verify XSD**
+    (`[Schema]` VERIFY rows) — the requester confirmed Validate + Verify count as checks. Rows stay
+    **NAVIGABLE** (click → jump to line, same routing as today via `_on_audit_item_clicked`). **Persists
+    same as the Activity Log** (per-project JSONL, session-only standalone). **Run separator (EXACT,
+    requester-specified):** between each run — a blank line, then a header line = `YYYY-MM-DD ` (folded rec:
+    also append `HH:MM:SS` so same-day runs differ — see Open Questions) followed by a 40-character dashed
+    rule (`----------------------------------------`), then that run's result lines.
+  - **This REFINES PART 1:** Check, Lint, Validate, Verify MOVE OUT of Part 1's left-dock findings tab into
+    this Results tab; Part 1's tab is thereby reduced to Find-All + List-Bookmarks only.
+
+**Complete disposition of all 9 current Audit prefixes (nothing orphaned):**
+| Prefix | Destination | Lifecycle / note |
+| --- | --- | --- |
+| `[Find]` | Left-dock findings tab | ephemeral, clear-on-new |
+| `[Bookmark]` | Left-dock findings tab | ephemeral, clear-on-new |
+| `[Validate]` | Results tab | accumulated |
+| `[Lint]` | Results tab | accumulated |
+| `[Check]` findings | Results tab | accumulated; `[Check]` NARRATIVE lines ("Creating db…") ride in the same run's Results block (folded rec; alt = Activity Log, minor impl detail) |
+| `[Schema]` Verify findings | Results tab | accumulated |
+| `[Schema]` LEARNING chatter | Activity Log | "Learned N facts", "NEW ELEMENT" |
+| `[PHP]` generation stdout | Activity Log | narration |
+| `[SQL]` format-selection refusals | Activity Log | one-off refusals |
+| `[Project]` DDL-project status/errors | Activity Log | status/narration |
+
+Net split: **Left-dock = Find + Bookmarks; Results = Check + Lint + Validate + Verify; Activity Log =
+generation output + schema-learning + format refusals + project status + all Part-2 transients + FQ-019's
+action log.**
+
+**Alternatives considered:**
+- **Keep one Audit dock and just fix the lifecycle contradictions in place** — rejected: the panel's three
+  jobs need three DIFFERENT lifecycles (ephemeral navigable / accumulated-saved / append-only narration) and
+  two different LOCATIONS (side-by-side-with-editor for stepping vs. bottom for logs). One widget cannot carry
+  all three coherently; that overload is precisely the reported problem.
+- **Put the navigable findings in the CENTER pane** (a results tab beside editors) — rejected: a center tab
+  hides the editor it should be jumping into, defeating step-through. Left dock keeps list + target both
+  visible. (Cross-check: FQ-014's rejected "dedicated bookmarks left-dock tab" was rejected only because the
+  Audit dock already existed as the app's list surface; that objection dissolves here since the Audit dock is
+  being restructured anyway.)
+- **Leave transient messages in the status bar** — rejected by the requester's core complaint: transient spew
+  is the noise the static-bar redesign exists to remove. Transients go to the Activity Log; only persistent
+  indicators + the live busy counter remain in the bar.
+- **Clear the Results tab per-run like `[Find]`** — rejected: validation history is exactly what the requester
+  wants SAVED across runs; hence the accumulate-with-run-separator model.
+- **Route `[Check]` narrative to the Activity Log instead of the Results block** — kept as a minor Open
+  Question; folded recommendation is in-Results-block so a run reads as one coherent unit.
+- *(merged from FQ-029)* **Just relocate/upgrade the status-bar `_mode_label` and skip the top-toolbar
+  panel** — rejected by the owner (BOTH surfaces wanted) and by the core complaint that the status bar is at
+  the far bottom (`center_stage.py:468`) and is being deliberately quieted to static-only here; a prominent
+  TOP indicator is the point. The status-bar label is kept, as the secondary mirror.
+- *(merged from FQ-029)* **Encode the minor mode as a second background color / a two-tone split panel** —
+  set aside for v1: 3 majors × 4 minor states is a 12-combination color vocabulary users would have to
+  learn, defeating "easy recognition." Recommended: major = color, minor = text suffix. Owner's to overrule.
+- *(merged from FQ-029)* **Make the mode panel clickable to switch modes / re-open the launcher** — rejected
+  by the owner: passive indicator only. Mode changes stay with the launcher pick and `File ▸ New Session`.
+- *(merged from FQ-029)* **Hardcode the per-mode colors (like the DEBUG chip's static red)** — rejected by
+  the owner: the palette must be theme-aware and re-render on `apply_theme`, or the panel is low-contrast or
+  garish in one of the two themes.
+
+**Suggested placement:** **EXTEND §7 (App shell — "App shell", `CONSOLIDATED_SPEC.md` line ~492; confirm the
+live number at write time).** §7 owns the Audit/Problems panel, the status bar, AND the nine-prefix
+reservation rule (§7 lines ~539-554). This is a MAJOR amend: the prefix-reservation rule is
+**dissolved/replaced** by the three-surface split (prefixes no longer coexist in one panel; they are routed
+by destination), and the single Audit/Problems dock is **renamed into two bottom-dock tabs** (Activity Log +
+Results) plus a new left-dock findings tab. **ALSO touches §18.8 (The Project Status window,
+`CONSOLIDATED_SPEC.md` line ~6333 — a subsection of §18 DDL versioning; confirm live number)** — the
+`QualityState`/`SandboxState`/`AppState` connectivity-state model behind the DB dots lives there and is the
+natural home to describe the busy counter's state source. §7 ALSO owns the toolbar and the "mode has four
+meanings / use precise names" rule (§7:1060-1062) that the merged mode-indicator obeys; the new
+right-anchored colored mode panel is toolbar chrome added on the movable Main Toolbar via the spacer-widget
+technique, and the theme-aware `mode_colors(light)` helper sits alongside `theme.py`'s pure palette builders.
+**Cross-references FQ-011 / FQ-018 / FQ-019 / FQ-027** (see Dependencies below). **Expect MULTIPLE
+Supersession Ledger rows:** (1) §7's nine-prefix single-panel reservation rule is overturned; (2) §7's single
+Audit/Problems dock model is overturned (renamed into tabs + a left-dock tab); (3) FQ-018's
+Quality-dot-in-standalone is overridden to project-mode-only for both dots; (4) *(merged from FQ-029)* §7's
+monochrome status-bar `_mode_label` (Editing/Caption only) is upgraded into a colored major+minor indicator
+mirrored by a new prominent top-toolbar panel. `spec-maintainer` should add ledger rows for each
+withdrawn/overridden contract, not silently rewrite.
+Must reuse (VERIFIED CITATIONS): click dispatcher + role convention `ui/main_window.py::_on_audit_item_clicked`
+(line 1471) + `Qt.UserRole+N`; finding producers to redirect — `find_controller.py` (Find/Validate/Bookmark),
+`lint_controller.py` (Lint), the Check findings channel `ui/main_window.py::_report_check_findings`
+(line 3691, wired at ~3832), `xsd_controller.py` Verify rows; status bar today — permanent `_mode_label`
+(`ui/main_window.py:486` init / `:2302` caption-on / `:2357` caption-off) + `_debug_label`
+(`:205`/`:490`, the static-chip styling to AVOID copying verbatim); ~40 `showMessage` via the `_shell_status`
+trampoline (`:1290`) + `ui/busy.py::busy_status` (line 50); mode states — `AppState` enum
+(`ui/project_status_model.py:110-118`), standalone-vs-project gate `DdlProjectController.is_open`, Diff mode
+owned by `ui/diff_merge_controller.py` (FQ-021), Edit-XSD mode `_xsd_mode` in `ui/xsd_controller.py` (§11),
+Caption in `ui/center_stage.py`+`ui/main_window.py` (§13); the movable Main Toolbar + `addToolBar` seam
+(`ui/toolbar_controller.py:140`, `ui/main_window.py:871`) for the right-anchored panel; the pure-palette
+split in `ui/theme.py` (`light_palette`/`dark_palette`/`apply_theme`) that `mode_colors(light)` mirrors;
+left-dock tab precedent — the existing `left_tabs` (Table References / DB Check / FQ-003 coherence view).
+
+**Dependencies / relationships to already-queued work (sequence with these three):**
+- **Depends on FQ-027** (three-column launcher + SESSION-ONLY Standalone/Project/Maintenance mode + the
+  Maintenance menu filter + `File ▸ New Session`). RECONCILED 2026-08-09: FQ-027 is the concrete realization
+  of the modes this indicator displays and it SUPERSEDES FQ-011's persisted-mode design with a session-only
+  one, so Part 2.1's major mode reflects FQ-027's session mode (no persisted-mode store needed). **FQ-011**
+  remains the underlying visibility-only, single-refresh-entry-point menu-filter MECHANISM that FQ-027 reuses;
+  this entry only DISPLAYS the mode, it does not implement the filter. **HARD dependency (merged from
+  FQ-029):** FQ-027 exposes no readable current-major-mode object today — see Part 2.1: FQ-027 must expose a
+  single in-memory session-mode accessor, or this feature introduces that single source of truth itself.
+- **Refines FQ-018** (status-bar DB dots) — Part 2.4 subsumes its status-bar portion, overriding it to
+  project-mode-only for BOTH dots; fold FQ-018's 30s-poll + §18.8 design into this static bar. Owner also
+  asked (via merged FQ-029) that the mode indicator and the DB dots share the status bar coherently — do not
+  grow two rival indicator regions.
+- **Places/consumes FQ-019** (Activity Log) — Part 3's Activity Log tab IS FQ-019; this entry positions it as
+  one of the two bottom-dock tabs and routes Part-2 transients into it. Land FQ-019's Activity Log as the tab.
+- **Absorbs FQ-029 (merged 2026-08-09)** — the prominent color-coded mode indicator across the top toolbar +
+  status bar is now Part 2 (items 2 & 3) of THIS entry, not a separate feature. There is ONE source of truth
+  and ONE update path (`_refresh_mode_indicator`) for the major/minor mode value shared by both surfaces; the
+  earlier FQ-028↔FQ-029 "must coordinate" note is now internal. FQ-029 remains below as a tombstone.
+
+**Open questions (non-blocking; flag to spec-maintainer/implementer):**
+1. `[Check]` narrative lines → in-Results-block (recommended) vs Activity Log.
+2. Results run-separator timestamp granularity — add `HH:MM:SS` (recommended, so same-day runs differ) vs
+   date-only `YYYY-MM-DD` as literally specified by the requester.
+3. Whether errors/refusals need a later transient toast if Activity-Log-only proves too quiet (v1: log only).
+4. (RESOLVED 2026-08-09 — reconciled with FQ-027) The main-mode label reflects the SESSION-ONLY mode set by
+   the launcher pick and reset by `File ▸ New Session`; it does NOT persist across restarts. Part 2.1 and the
+   Dependencies section were updated to drop the FQ-011 persisted-mode assumption in favor of FQ-027's
+   session-only stance (latest-wins). FQ-011 stays only as the menu-filter mechanism FQ-027 reuses.
+5. *(merged from FQ-029)* Where FQ-027's single current-major-mode source of truth lives — added to FQ-027's
+   implementation, or introduced by this feature — must be settled at pickup so both the toolbar panel and
+   the status-bar label read the same value.
+6. *(merged from FQ-029)* Minor mode as a text suffix (recommended) vs a two-tone / second-color treatment —
+   owner's call if the text suffix proves insufficiently prominent.
+7. *(merged from FQ-029)* Exact per-mode colors in the Part 2 table are a STARTING proposal; final values
+   (and AA-contrast verification against the live QDarkStyle chrome, not the bare palette) are the
+   implementer's to tune with the owner.
+8. *(merged from FQ-029)* Whether the toolbar panel shows anything when NO major mode is set yet (e.g. before
+   the launcher pick) or is simply blank/absent until a mode exists — left to pickup.
+
+---
+
+## FQ-029: [MERGED INTO FQ-028] Prominent, color-coded mode indicator — a right-aligned top-toolbar panel plus the upgraded status-bar label, one source of truth, theme-aware per-mode colors
+**Status:** MERGED INTO FQ-028 (2026-08-09)
+**Requested:** 2026-08-09
+**Merge note:** This feature was merged into **FQ-028** at the owner's request on 2026-08-09, because the two
+overlapped entirely on the status-bar mode label and the single source of truth for the current mode. The
+full mode-indicator design — the right-anchored color-backed top-toolbar panel, the upgraded `_mode_label`
+mirror, the four minor modes (Editing / Caption / Compare-Merge / Edit XSD), the theme-aware
+`mode_colors(light)` palette, the single `_refresh_mode_indicator` update path, and the passive-only rule —
+now lives in **FQ-028 Part 2 (items 1–3)** with its dependencies and open questions folded in there. The
+original text is preserved below for the record; DESIGN AND IMPLEMENT IT FROM FQ-028, not from here.
+
+<details><summary>Original FQ-029 text (superseded by FQ-028 — historical record)</summary>
+
+**Status:** QUEUED
+**Requested:** 2026-08-09
+**Idea (verbatim/summarized):** "The major modes and minor modes should be very visible in the toolbar
+area, to the right of the toolbar I need a panel that states the major and minor mode (when there's). It
+should be in a contrasting background and different background color for each mode for easy recognition."
+
+**Problem:** The app's operating mode is barely visible. Today the ONLY mode readout is `self._mode_label`
+(`ui/main_window.py:486-487`), a plain `QLabel` added via `statusBar().addPermanentWidget(...)` at the far
+BOTTOM of the window — a location the code itself flags as too easy to miss (`ui/center_stage.py:468`: the
+`_mode_label` cue "is at the far bottom of the window, not on the tab they are looking at"). It shows only
+"Editing Mode" / "Caption Mode (XML read-only)" (flipped at `:2302` / `:2357`), does NOT reflect
+Compare/Merge (FQ-021, shipped) or Edit XSD (`_xsd_mode`, §11), has no notion of the three MAJOR workflow
+modes FQ-027 introduces (Standalone / Project / Maintenance), and is monochrome — nothing distinguishes one
+mode from another at a glance. The owner wants the mode to be UNMISSABLE: a prominent, color-coded panel
+pinned to the RIGHT END of the top toolbar (where the eye rests while working), naming the major mode
+always and the minor mode when one is active, with a distinct background color per mode for instant
+recognition — while still keeping a mode readout in the status bar.
+
+**Terminology (MANDATORY — reuse §7's rule, do not invent a fifth meaning of "mode"):** §7
+(`CONSOLIDATED_SPEC.md:1060-1062`) records that "mode" already carries FOUR meanings and forbids conflating
+them. This entry maps the owner's words onto the EXISTING named states, coining nothing:
+- **Major mode = the SESSION workflow mode** — **Standalone / Project / Maintenance**, exactly the three
+  FQ-027 establishes via the launcher pick (session-only, reset by `File ▸ New Session`). Always shown.
+- **Minor mode = an active editor SUB-STATE**, shown only "when there's one" (owner). The three real,
+  already-named sub-states, mapped 1:1:
+  - **Caption Mode** (§13 — `_mode_label` "Caption Mode (XML read-only)", flipped at `:2302`/`:2357`).
+  - **Compare/Merge** (§12 / FQ-021, shipped — owned by `ui/diff_merge_controller.py`; note it does NOT
+    touch `_mode_label` today, so this is new wiring, exactly as FQ-028 Part 2.2 also observed).
+  - **Edit XSD** (§11 — `_xsd_mode`; `ui/xsd_controller.py`).
+  When none of the three is active, no minor mode is displayed — just the major mode. These are the app's
+  distinct notions of "mode"; the panel READS them, it does not add a new state machine.
+
+**Proposed approach:**
+- **BOTH surfaces, driven from ONE source of truth (owner, Q2).** There is exactly one place that answers
+  "what is the current (major, minor) mode," and both the new toolbar panel and the status-bar label render
+  from it, kept in sync so they can never disagree:
+  - **A new right-aligned, color-backed panel pinned into the top `QToolBar`.** The toolbar is the movable
+    "Main Toolbar" (`ui/toolbar_controller.py:140`, `objectName("main_toolbar")`, added via `addToolBar`
+    from `ui/main_window.py:871`, owned by `ToolbarController`, its position persisted in `windowState`).
+    Because a `QToolBar` is user-movable/floatable, "to the right of the toolbar" is only stable if the
+    panel is part of the toolbar and RIGHT-ANCHORED: add an **expanding spacer widget** (a `QWidget` with
+    `sizePolicy` Expanding) via `toolbar.addWidget(...)` followed by the mode-panel widget, so the panel
+    stays flush right regardless of how many command buttons precede it. The panel is a `QLabel`-like
+    widget with a **contrasting, per-mode background** (see palette below), reading e.g. "Project" or
+    "Project · Caption" (major, then minor when present). It is added by `ToolbarController.build` (or by
+    MainWindow immediately after `build`, since that is where `addToolBar` already lives) so it survives the
+    same `saveState`/`restoreState` the toolbar itself does.
+  - **The status-bar indicator IS the upgraded `_mode_label` (owner, Q2) — reconcile, do not add a second
+    label.** Keep the single existing permanent `_mode_label`; extend it to also carry the MAJOR mode and
+    the same per-mode background color, driven from the same source of truth as the toolbar panel. This
+    dovetails with FQ-028 Part 2.2, which already plans to keep-and-repurpose `_mode_label` for the minor
+    mode and add Diff wiring — this entry is the color + major-mode + Edit-XSD superset of that.
+  - **One update path.** Introduce (or reuse, if FQ-027 exposes one) a single small helper — e.g.
+    `MainWindow._refresh_mode_indicator()` — modeled on the existing single-entry `_refresh_*_affordances`
+    convention, called wherever a major- or minor-mode transition happens: the launcher pick / New Session
+    (major, FQ-027), Caption enter/leave (`:2302`/`:2357`), Compare/Merge enter/leave
+    (`diff_merge_controller.py`), and Edit-XSD enter/leave (`xsd_controller.py` / `_xsd_mode`). Both surfaces
+    are rewritten by this one call. No ad-hoc `setText`/`setStyleSheet` scattered across the transition
+    sites.
+- **Passive indicator ONLY (owner, Q4).** No click behavior, no context menu, no mode switching from the
+  panel. It displays; it does not act. (This deliberately does NOT re-open the launcher / trigger
+  `File ▸ New Session` — that stays a File-menu action per FQ-027.)
+- **Theme-aware per-mode color palette (owner, Q3) — colors adjust for light vs dark.** The colors must NOT
+  be a fixed hardcoded set like the DEBUG chip (`_debug_label`, `ui/main_window.py:491-494`, a static red
+  `setStyleSheet` that does NOT re-theme). They must respect the `lightTheme` setting and re-render when
+  `ui/theme.py::apply_theme(app, light)` flips, so contrast holds in both themes. Recommended shape: a small
+  pure helper (mirroring `theme.py`'s pure `light_palette()`/`dark_palette()` split) — e.g.
+  `mode_colors(light: bool) -> dict[str, tuple[bg, fg]]` — consulted by `_refresh_mode_indicator` and
+  re-consulted from `apply_theme`. **Starting-proposal palette for the three MAJOR modes** (background /
+  foreground; final values are the implementer's to tune, but these give a concrete, contrast-checked
+  starting point):
+  | Major mode | Light theme (bg / fg) | Dark theme (bg / fg) |
+  |---|---|---|
+  | **Standalone** | `#E3F2FD` / `#0D3B66` (calm blue) | `#1E3A5F` / `#CFE3FF` |
+  | **Project** | `#E6F4EA` / `#1B5E20` (green — the "real work" mode) | `#1E3A28` / `#B6E3C0` |
+  | **Maintenance** | `#FDECEA` / `#8B1E1E` (amber-red — a deliberately "you are in an admin mode" alert cast, matching FQ-027's focused-admin framing) | `#3A2320` / `#F2B8AE` |
+  - **Minor mode is conveyed by TEXT, not a second color** (recommended): the panel background stays the
+    MAJOR mode's color and the minor mode is appended as text ("Project · Caption"), so the eye still reads
+    workflow at a glance and does not have to learn 3×4 color combinations. (Alternative in Alternatives.)
+  - Contrast: both variants target WCAG-AA-ish legibility on the panel; the implementer must verify against
+    the actual QDarkStyle chrome `apply_theme` applies, not just the bare palette.
+- **Hard dependency on FQ-027 for the MAJOR mode's live state (see Dependencies).** FQ-027 as written is
+  session-only and does NOT currently specify a persisted OR in-memory "current major mode" object that
+  anything can read — picking the launcher column simply applies the menu filter. This indicator NEEDS a
+  readable current-major-mode value. So EITHER FQ-027 must be extended to expose a single in-memory
+  session-mode accessor (e.g. `MainWindow.current_workflow_mode()` set on launcher pick / New Session), OR
+  this feature introduces that single source of truth itself. Flag explicitly: the source of truth is an
+  in-memory SESSION value, not a QSettings key (FQ-027 is session-only, superseding FQ-011's persisted-mode
+  design), and it must be the SAME value FQ-028 Part 2.1's status-bar label reads — never a second,
+  independently-drifting notion of "current mode."
+
+**Alternatives considered:**
+- **Just relocate/upgrade the existing `_mode_label` and skip the toolbar panel** — rejected by the owner's
+  Q2 answer (BOTH surfaces wanted) and by the core complaint: the status bar is at the far bottom
+  (`center_stage.py:468`) and, under FQ-028, is being deliberately quieted to static-only — a prominent
+  TOP indicator is the point. The status-bar label is kept, but as the secondary mirror.
+- **Encode the minor mode as a second background color / a split two-tone panel** — weighed against the
+  text-suffix recommendation and set aside for v1: 3 majors × 4 minor states (Editing/Caption/Diff/XSD) is
+  a 12-combination color vocabulary users would have to learn, defeating "easy recognition." Recommended:
+  major = color, minor = text. Recorded as the owner's to overrule if a two-tone treatment is preferred.
+- **Make the panel clickable to switch modes / re-open the launcher** — rejected by the owner's Q4 answer:
+  passive indicator only. Mode changes stay with the launcher pick and `File ▸ New Session` (FQ-027).
+- **Hardcode the per-mode colors (like the DEBUG chip's static red)** — rejected by the owner's Q3 answer:
+  the palette must be theme-aware and re-render on `apply_theme`, or the panel will be low-contrast or
+  garish in one of the two themes.
+- **Fold this entirely into FQ-028 Part 2 and add nothing** — rejected: FQ-028 Part 2 is status-bar-only,
+  covers only Editing/Caption/Diff as minor modes (NOT Edit XSD), and has NO color and NO top-toolbar
+  surface. This is a genuine superset — the prominent colored top panel, the fourth minor mode, and the
+  per-mode palette — so it EXTENDS FQ-028 rather than duplicating it. The two MUST share one source of
+  truth for the major/minor mode value (see Dependencies), which is exactly why it is one entry, not a rival
+  design.
+
+**Suggested placement:** **EXTEND §7 (App shell — "App shell", `CONSOLIDATED_SPEC.md` line ~492; confirm the
+live number at write time).** §7 owns the app shell, the toolbar, and the status bar, and §7:1060-1062 owns
+the "mode has four meanings / use precise names" rule this entry must obey. This adds: (1) a right-anchored
+color-backed mode panel on the Main Toolbar (spacer-widget technique on the movable toolbar
+`ToolbarController` builds), (2) the upgrade of `_mode_label` to carry major mode + color, (3) a single
+`_refresh_mode_indicator` entry point feeding both, and (4) a theme-aware `mode_colors(light)` helper
+alongside `theme.py`'s pure palette builders. NOT a new top-level section — it is shell chrome. Must reuse
+(VERIFIED CITATIONS): `self._mode_label` + `addPermanentWidget` precedent (`ui/main_window.py:486-487`,
+flipped `:2302`/`:2357`), the static-chip styling precedent to AVOID copying verbatim (`_debug_label`,
+`:491-494`), the movable Main Toolbar + `addToolBar` seam (`ui/toolbar_controller.py:140`,
+`ui/main_window.py:871`), the pure-palette split in `ui/theme.py` (`light_palette`/`dark_palette`/
+`apply_theme`), and the three minor-mode owners (`_xsd_mode` in `ui/xsd_controller.py` §11,
+Caption in `ui/center_stage.py`+`ui/main_window.py` §13, Compare/Merge in `ui/diff_merge_controller.py`
+§12/FQ-021). **Supersession-ledger-worthy when folded in:** it upgrades §7's monochrome status-bar
+`_mode_label` (Editing/Caption only) into a colored major+minor indicator — `spec-maintainer` should record
+the change in scope rather than silently rewriting the label's description, and coordinate the wording with
+FQ-028 Part 2 if FQ-028 is folded first (they touch the same label).
+
+**Dependencies / relationships to already-queued work:**
+- **HARD dependency on FQ-027** — FQ-027 defines the three MAJOR modes this panel names. FLAG: FQ-027 as
+  written provides NO readable current-major-mode object (it only applies a menu filter on launcher pick).
+  This feature therefore requires FQ-027 to EITHER expose a single in-memory session-mode accessor OR have
+  this feature introduce that single source of truth itself. It is an in-memory SESSION value (FQ-027 is
+  session-only, superseding FQ-011's persisted-mode design), never a QSettings key.
+- **Tightly coordinated with FQ-028 (Part 2 — static-only status bar)** — FQ-028 already plans to keep and
+  repurpose `_mode_label` for the minor mode (Editing/Caption/Diff) and add the major-mode label and DB
+  dots. This entry is the SUPERSET on the status-bar side (adds color + Edit XSD as a fourth minor mode) AND
+  adds the new top-toolbar panel FQ-028 does not have. They MUST share ONE source of truth for the
+  major/minor mode value and ONE update path (`_refresh_mode_indicator`) — do not build two. If FQ-028 lands
+  first, this extends its `_mode_label` work; if this lands first, FQ-028 Part 2.2 reads this feature's
+  source of truth. Sequence them together.
+- **Relates to FQ-018** (status-bar Quality/Sandbox dots, refined by FQ-028 Part 2.3) — this feature adds NO
+  connectivity notion; it only wants the status bar not to grow two rival indicator regions. Coordinate so
+  the mode label/color and the DB dots share the status bar coherently (owner noted this explicitly).
+- **Terminology-bound to §7:1060-1062** — must use "major mode = session workflow mode" and "minor mode =
+  editor sub-state (Caption/Compare-Merge/Edit XSD)"; must NOT introduce a fifth meaning of "mode."
+
+**Open questions (non-blocking; flag to spec-maintainer/implementer):**
+1. Where FQ-027's single current-major-mode source of truth lives — added to FQ-027's implementation, or
+   introduced by this feature — must be settled at pickup so FQ-028 and this feature read the same value.
+2. Minor mode as text suffix (recommended) vs a two-tone / second-color treatment — owner's call if the
+   text suffix proves insufficiently prominent.
+3. Exact per-mode colors above are a STARTING proposal; final values (and AA-contrast verification against
+   the live QDarkStyle chrome, not the bare palette) are the implementer's to tune with the owner.
+4. Whether the toolbar panel should also show something when NO major mode is set yet (e.g. before the
+   launcher pick) or simply be blank/absent until a mode exists — left to pickup.
+
+</details>
+
+---
+
+## FQ-030: Deepen §18.6 completion into a plpgsql editing assistant — schema/alias/column completion, expand-SELECT, a snippet engine, and plpgsql-semantic completion (4 slices)
+**Status:** QUEUED
+**Requested:** 2026-08-09
+**Idea (verbatim/summarized):** Converged product-brainstorm (owner picked all four slices, "love the
+ideas!", plpgsql semantics explicitly in scope): turn the shipped single-hop §18.6 completion into a real
+plpgsql editing assistant. (1) `hr.jobcard.` completes COLUMNS, and every item shows type/nullable/
+comment/FK-target; (2) `FROM hr.jobcard jc` … `jc.` resolves the alias to that table's columns; (3) a
+keyboard action expands a bare `SELECT FROM hr.jobcard` into `SELECT j.id, j.job, j.card FROM hr.jobcard j
+WHERE ` with the caret after WHERE; (4) a keyword→snippet engine with tab-stops (`case` → full CASE
+expression, plus a default plpgsql set) and a plain keyword↔body table editor in Maintenance mode; plus
+plpgsql-semantic completion — trigger vars, local DECLARE vars/params, `%ROWTYPE`/`%TYPE` fields, JOIN-on-FK
+with an auto-written ON clause, and signature help for the shop's own functions.
+
+**Problem:** §18.6 completion today is single-hop and stops short of its own recorded extension point.
+`hr.` offers tables and `NEW.`/`OLD.` offer a trigger table's columns, but `hr.jobcard.` shows NOTHING even
+though every piece needed is already present: the caret resolver already parses the 3-segment dotted path
+(`sql/caret_context.py:49-52,118`) and `SchemaIndex.known_columns()` already exists (`db/schema_index.py:76-82`
+— VERIFIED: it returns bare name strings and keys on `"schema.table"`). The ONLY reason the column hop is
+dead is that `_show_dotted_path_completions` reads solely `context.parts[0]` and has no `len(parts)==2`
+branch (`ui/ddl_object_editor.py:1493-1514` — VERIFIED at :1507; the SQL-console twin is `ui/sql_console_panel.py:805`).
+Beyond that near-free hop, nothing resolves table ALIASES (`jc.` is inert), there is no way to expand a bare
+SELECT into a column-listed skeleton, there is no snippet/template mechanism at all, and none of the
+plpgsql-specific affordances that would make this tool beat a generic SQL editor (local scope,
+`%ROWTYPE`, JOIN-on-FK, signature help) exist — despite the underlying data (`ColumnInfo{data_type,
+is_nullable,comment,fk_target}` `db/introspect.py:47-60`; `RoutineInfo{args,arg_types,return_type,signature}`
+`:76-108`; composite types `:216-257`) already being fetched and sitting unused in the index. §18.6 itself
+NAMED the seam for all of this — the "CodeEditor-level pluggable completion provider" extension point
+(`CONSOLIDATED_SPEC.md:6361-6367`) — but never built it.
+
+**Proposed approach:** ONE epic that EXTENDS §18.6 along its own named seam, in four dependency-ordered slices.
+Slices 0/1/3 all rest on ONE new scope-resolver (Slice 1), so it is built once and the surfaces fall out thin.
+
+- **Slice 0 — near-free win (data already present):**
+  - **Schema→table→COLUMN cascade.** Add a `len(context.parts)==2 → index.known_columns("sch.tab")` branch to
+    `_show_dotted_path_completions` (`ui/ddl_object_editor.py:1493-1514`) AND to the console twin
+    (`ui/sql_console_panel.py:805`). `hr.` → tables (today), `hr.jobcard.` → columns (new). No new parsing, no
+    new introspection — the resolver already yields `parts=["hr","jobcard"]`.
+  - **Enrich every completion item** with type / nullable / comment / FK-target. `known_columns` returns bare
+    names today (`db/schema_index.py:76-82`); widen it (or add a sibling returning `ColumnInfo`) so the shared
+    popup's `(key, display)` pairs can render e.g. `job_id  int4 · NOT NULL · → hr.dept(id)`. All four fields
+    are already on `ColumnInfo` (`db/introspect.py:47-60`) — surface, do not re-fetch.
+
+- **Slice 1 — the Qt-free FROM/alias scope analyzer (the real parsing work):**
+  - **Alias→table resolution.** `FROM hr.jobcard jc` … `jc.` → hr.jobcard's columns. Add a NEW statement-scope /
+    FROM-clause analyzer BESIDE `sql/caret_context.py` (e.g. `sql/from_clause.py`), Qt-free, reusing
+    `sql/tokenizer.py`'s opaque-region handling (strings / comments / dollar-quotes). Add a new `CaretContext`
+    kind (e.g. `ALIAS_REF`) that the `_show_*_completions` dispatch consumes alongside `ROW_VARIABLE` /
+    `DOTTED_PATH` (dispatch at `ui/ddl_object_editor.py:1488-1491`). Net-new but bounded — nothing resolves
+    aliases today.
+  - **Expand `SELECT FROM schema.table`.** A dedicated keyboard action on the DDL-object-editor / SQL-console
+    `CodeEditor` that rewrites a bare `SELECT FROM hr.jobcard` into `SELECT j.id, j.job, j.card FROM hr.jobcard j
+    WHERE ` with the caret one space after `WHERE`. Reuses `SchemaIndex.known_columns` + the Slice-1 analyzer +
+    the existing single-undo-block insertion idiom (`ui/ddl_object_editor.py:1577-1596`). **Alias-derivation rule
+    (nail this):** alias = first letter of the table name (jobcard→`j`), every column prefixed with it;
+    collisions get a disambiguating suffix (`j`/`j2`, or `j`/`jc`). Expand the TYPED table — do NOT change its
+    schema (the owner's example `SELECT FROM pr.jobcard → FROM hr.jobcard j` was a harmless typo; intent is to
+    preserve the typed `hr.`).
+
+- **Slice 2 — the template/snippet engine (net-new mechanism, rides §18.6's CodeEditor provider seam):**
+  - **Snippets = keyword↔snippet pairs** (owner clarified: NOT a drag-and-drop builder — just keyword→body
+    pairs). A prefix + dedicated key expands to a construct: `case` → full `CASE WHEN … THEN … ELSE … END`.
+    Ship a default plpgsql set: `FOR rec IN SELECT … LOOP … END LOOP`, `IF/ELSIF/END IF`,
+    `BEGIN … EXCEPTION WHEN … END`, `RAISE NOTICE`, a cursor declaration, and the trigger-function skeleton.
+  - **Tab-stops / placeholders on `CodeEditor`** (net-new; nothing to reuse) so after ANY expansion — snippet OR
+    the Slice-1 expand-SELECT — Tab jumps between the editable spots. This is what makes both pleasant.
+  - **A minimal keyword↔pairs editor in Maintenance mode.** A plain table (trigger word ↔ body ↔ tab-stops)
+    under `Schema ▸ Edit Snippets…`, NOT a builder GUI. HOME/SEQUENCING: FQ-027's session-only Maintenance mode
+    (Schema+Help menu filter) is the natural home, but FQ-027 is QUEUED / not-yet-spec — so this editor TARGETS
+    the Maintenance surface and SEQUENCES AFTER FQ-027; until FQ-027 lands it needs an interim home or waits.
+    Snippet store persists (per-user config — flag per-user vs per-project as an impl choice, see Open questions).
+  - **Unifying insight to record:** expand-SELECT (Slice 1) and snippets (Slice 2) are ONE mechanism —
+    template expansion with tab-stops. Expand-SELECT is a schema-DYNAMIC template, `case` is a STATIC one. Build
+    ONE engine, two flavors — do not build two insertion mechanisms.
+
+- **Slice 3 — plpgsql-semantic completion (the differentiator; all ride the Slice-1 analyzer + enriched index):**
+  - **Trigger variable completion.** Inside a `RETURNS trigger` function, offer `NEW`/`OLD`/`TG_OP`/
+    `TG_TABLE_NAME`/etc., and `NEW.` → the triggering table's columns. Extends today's attached/unattached
+    `NEW.`/`OLD.` handling (`ui/ddl_object_editor.py:1516-1575`).
+  - **Local scope completion.** The function's own `DECLARE` variables + parameters inside its body — needs the
+    Slice-1 analyzer to read the DECLARE block.
+  - **`%ROWTYPE` / `%TYPE` field completion.** `rec hr.jobcard%ROWTYPE` → `rec.` → jobcard's columns (same
+    resolver path as aliases; composites via `DatabaseSchema.types`, `db/introspect.py:216-257`).
+  - **JOIN-on-FK.** After `FROM hr.jobcard j JOIN ` offer FK-related tables and auto-write the ON clause
+    (`ON j.dept_id = d.id`), using `ColumnInfo.fk_target` (already fetched, `db/introspect.py:47-60`).
+  - **Signature help.** Completing a call to one of the shop's own functions shows its parameter list;
+    `RoutineInfo{args:[(name,type)], arg_types, return_type, signature}` (`db/introspect.py:76-108`) is present.
+
+- **SHARED CONTRACTS TO REUSE (mandatory anti-fork guardrails from the placement gate):**
+  - Extend `db/schema_index.py::SchemaIndex` (already carries columns / FK / routine-args / types) — do NOT
+    build a second index.
+  - The alias / FROM / DECLARE analyzer lives Qt-free in `sql/` beside `caret_context.py`, reusing
+    `sql/tokenizer.py` — NEVER parse SQL in `ui/`.
+  - Render through the ONE shared popup `ui/completion_popup.py::_CompletionPopup` /
+    `CompletionPopupHostMixin` (`(key, display)` pairs) — do NOT invent a second popup.
+  - Single fetch path `db/introspect.py::fetch_routines_and_triggers` pushed via the injection idiom
+    (`set_schema_index`, panel-never-talks-to-DB, §18.5 D1) — do NOT add a lazy per-keystroke DB query
+    (§18.6 invariant, `CONSOLIDATED_SPEC.md:6391`).
+  - Insertion via the existing single-undo-block idiom (`ui/ddl_object_editor.py:1577-1596`).
+- **CONSUMERS / WIRING:** deepen every SQL consumer of §18.6 via the shared machinery — the DDL object editor
+  (`ui/ddl_object_editor.py:505,1476`), the Sandbox SQL Console (`ui/sql_console_panel.py:374,805`), and the raw
+  XML editor (XML path). DO NOT wire the read-only DDL Explorer viewer (`ui/ddl_editor_panel.py`) — §18.6
+  excludes it deliberately (`CONSOLIDATED_SPEC.md:6357-6358`).
+
+**Alternatives considered:**
+- **Build points 1/2/3 as three independent features** — REJECTED: they all rest on ONE scope-resolver, so the
+  resolver is built once (Slice 1) and the surfaces fall out as thin consumers. Three parallel features would
+  each grow its own resolver — the exact fork the gate forbids.
+- **A rich drag-and-drop snippet BUILDER GUI** — REJECTED by the owner: a keyword↔body pairs table only, no
+  builder.
+- **Replacing §18.6's existing completion with a new path** — REJECTED: this is an EXTEND along §18.6's own
+  named `CodeEditor`-level pluggable-provider seam (`CONSOLIDATED_SPEC.md:6361-6367`); the shipped single-hop
+  behavior (schema→table, `NEW.`/`OLD.`) stays and is deepened, nothing is replaced or forked.
+- **A second SchemaIndex / a second completion popup / parsing SQL in `ui/`** — REJECTED as the four classic
+  duplication traps (see below); all reuse is mandated.
+
+**Suggested placement:** **EXTEND §18.6 (`CONSOLIDATED_SPEC.md:6259`)**, realizing its recorded
+`CodeEditor`-level pluggable-provider extension point (`:6361-6367`). Slices 0/1/3 are §18.6 deepenings; Slice
+2's template engine rides the SAME seam. It is NOT a new top-level section. `spec-maintainer` should fold all
+four slices into §18.6 (noting the completion machinery grows from single-hop to a scope-resolver-backed
+assistant), preserve the §18.6 invariants (no lazy per-keystroke DB query `:6391`; read-only viewer excluded
+`:6357-6358`), and CROSS-REFERENCE FQ-027 (`docs/FEATURE_QUEUE.md:3298`) for the Slice-2 snippet-editor's
+Maintenance-mode home — sequenced AFTER FQ-027, referenced NOT as a hard spec dependency (FQ-027 is still
+QUEUED). Must reuse the verified contracts above and their citations.
+
+**Duplication traps (record and honor):** (1) no second `SchemaIndex` — extend the existing one; (2) no SQL
+parsing in `ui/` — the analyzer is Qt-free in `sql/` reusing `sql/tokenizer.py`; (3) no second completion popup
+— render through `ui/completion_popup.py`; (4) do NOT conflate Slice-2 editing snippets with FQ-002's
+object-CREATION skeletons (different surface, different purpose); (5) do NOT wire the read-only DDL Explorer
+viewer (`ui/ddl_editor_panel.py`, §18.6-excluded); (6) do NOT write FQ-027 as a spec dependency — it is QUEUED;
+reference it for the Maintenance home and sequence after it.
+
+**Open questions (non-blocking; flag to spec-maintainer/implementer):**
+1. Snippet store scope — per-user vs per-project vs shipped-defaults-plus-user-overrides (owner leans toward a
+   shipped default set with user overrides; settle at pickup).
+2. The dedicated keys for expand-SELECT and snippet-expand — must NOT collide with Ctrl+Space completion or any
+   existing shortcut; coordinate with FQ-012 (Customize Shortcuts) if it lands.
+3. Casing convention for generated SQL (auto-uppercase keywords / lowercase identifiers) — nice-to-have, defer.
+
+---
+
+## FQ-031: Dual gutter line numbering for function/procedure bodies — show a body-relative (AS-anchored) number beside the absolute one, matching plpgsql error line numbers
+**Status:** QUEUED
+**Requested:** 2026-08-09
+**Idea (verbatim/summarized):** "all function and procedure line numbering must start from the line with AS
+because error messages from plpgsql start numbering from AS down."
+
+**Problem:** This is a PURELY ADDITIVE DISPLAY gap, NOT a correctness defect — the app already maps plpgsql
+findings correctly and AS-anchored. `db/ddl_check.py::body_line_offset(buffer_text)` (VERIFIED at :661) locates
+the 1-based line `L` of the opening dollar-quote tag (`$$`/`$function$`/`$body$`), and `map_lineno` (VERIFIED at
+:676) maps a `prosrc`-relative number to an absolute buffer line via `L + lineno - 1`. Per §18.5 D3 (its own
+docstring, `db/ddl_check.py:679-680`: "`prosrc` line 1 **is** line `L`"), clicking a Check/Lint finding ALREADY
+jumps to the right line — there is NO defect and NO change to finding navigation. The gap the owner is closing
+is only the VISIBLE gutter: `ui/editor_gutter.py` shows ABSOLUTE buffer numbers (`number_text = str(block_number
++ 1)`, VERIFIED at :192), so line 1 is `CREATE OR REPLACE FUNCTION…`. A raw plpgsql error read by eye ("line 5")
+does not line up with the gutter, because the gutter is not anchored at AS.
+
+**Proposed approach (owner converged on "Dual numbers — absolute + body-relative"):**
+- For function / procedure / trigger-function bodies in the DDL object editor, the gutter shows **TWO numbers
+  per line: the ABSOLUTE buffer line (primary, unchanged) AND a BODY-RELATIVE number anchored so the
+  `AS`/dollar-quote-opener line = body-relative line 1** — matching plpgsql's `prosrc` numbering (§18.5 D3,
+  where prosrc line 1 IS line `L`).
+- **Absolute stays primary and unchanged** — Find-All results, bookmarks, and the Check/Lint findings' absolute
+  `line` all rely on absolute buffer lines, so DUAL (not replace) is required precisely so navigation is not
+  disturbed. This is why the owner chose dual over renumber-only.
+- **Lines ABOVE the AS opener (CREATE / RETURNS / LANGUAGE header) get NO body-relative number** — blank in the
+  body-relative column; counting starts at line `L` and runs down.
+- **Reuse `db/ddl_check.py::body_line_offset()` (:661) to locate the anchor `L`** — do NOT reimplement
+  dollar-quote detection; it already handles `$$`/`$tag$` and line-comment stripping and is the §18.5 D3 source
+  of truth.
+- **Graceful absence:** if `body_line_offset` returns None (no locatable dollar-quote opener — e.g. a
+  `LANGUAGE sql` function, or a non-routine buffer), show the ABSOLUTE number only, no body-relative column —
+  mirroring §18.5 D3's "None is a real answer, never guess" discipline (`db/ddl_check.py:665-667`). Never render
+  a guessed body-relative number.
+- **Scope:** the DDL object editor's `CodeEditor` gutter when the edited object is a function / procedure /
+  trigger-function (`ui/ddl_object_editor.py`, host of `CodeEditor` in `ui/code_editor.py`). Non-routine buffers
+  and the raw XML editor are unaffected.
+- **Rendering:** widen the gutter to render two numbers (e.g. `absolute│body-rel`, or two right-aligned
+  columns). Note the gutter-width implication in `ui/editor_gutter.py` — the line-number zone width today is
+  `self.width() - number_x` (:188) and `number_x` starts after the bookmark strip + fold glyph (:187); adding a
+  second column requires widening the gutter and splitting that zone.
+
+**Alternatives considered:**
+- **Renumber the gutter body-relative ONLY (hide absolute)** — REJECTED by the owner (chose dual); it would also
+  desync the gutter from the absolute lines that Find-All, bookmarks, and findings' absolute `line` rely on.
+- **"Internal mapping is enough, change nothing"** — REJECTED: `map_lineno`/`body_line_offset` already make
+  finding-navigation correct, but the owner specifically wants the VISIBLE numbers to match plpgsql's error
+  numbering by eye, which the absolute-only gutter does not do.
+
+**Suggested placement:** EXTEND **§18.5 D3** (the AS/dollar-quote line-anchor logic already lives there as
+`body_line_offset`/`map_lineno`; this surfaces that SAME anchor in the gutter) with a **§8 (editor gutter)**
+touch for the dual-column rendering. Confirm the live section numbers at spec-fold time. Reuse
+`db/ddl_check.py::body_line_offset` — do NOT fork a second anchor computation. This is NOT a new top-level
+section. No new introspection, no DB, no new parsing — `body_line_offset` already exists.
+
+**Open questions (non-blocking):**
+1. Whether the Sandbox SQL Console (§18.5 D4) should also show the body-relative column when its buffer happens
+   to contain a `CREATE … AS $$` routine — recommend NO for v1 (the console is ad-hoc SQL, not a routine
+   editor); keep it to the DDL object editor.
+2. Exact two-number gutter layout — separator glyph, alignment, and whether the body-relative number is dimmed
+   relative to the primary absolute number.
 
 ---
