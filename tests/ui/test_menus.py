@@ -436,6 +436,27 @@ def test_view_menu_contents(qtbot):
         "Light Theme",
         "―",
         "Customize Toolbar…",
+        # FQ-012: beside its sibling -- the same command universe, customized
+        # on its other axis.
+        "Customize Shortcuts…",
+    ]
+
+
+def test_customize_shortcuts_entry_opens_a_non_modal_dialog(qtbot):
+    """FQ-012's entry point. Triggering it must not reach a modal (§30): the
+    dialog is `show()`n and the window keeps running."""
+    window = MainWindow()
+    qtbot.addWidget(window)
+    view_menu = find_top_menu(window, "View")
+    action = find_action(view_menu, "Customize Shortcuts…")
+    assert action is not None
+    action.trigger()
+    dialog = window._customize_shortcuts_dialog
+    assert dialog is not None
+    assert dialog.isModal() is False
+    # The dialog is offered the SAME command universe Customize Toolbar walks.
+    assert dialog.command_ids() == [
+        command_id for command_id, _label in window._toolbar_ui.all_menu_commands()
     ]
 
 

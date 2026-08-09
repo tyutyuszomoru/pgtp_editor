@@ -285,6 +285,18 @@ EXPECTED_HOST_SURFACE = {
     "_shell",
     "_shell_run_async",
     "_shell_status",
+    # FQ-012: the host owns the shortcut wiring because the pure rules
+    # (`shortcut_registry`) hold no Qt and the dialog holds no `QAction` --
+    # somebody has to capture the defaults off the live menu bar and run the
+    # `setShortcut()` pass. Added on purpose, reviewed as host growth.
+    "_shortcut_commands",
+    "_shortcut_defaults",
+    "_shortcut_overrides",
+    "_apply_shortcut_bindings",
+    "_restore_shortcut_overrides",
+    "apply_and_save_shortcut_overrides",
+    "open_customize_shortcuts_dialog",
+    "_customize_shortcuts_dialog",
     "_show_audit_dock",
     "_show_left_dock",
     "_show_manual",

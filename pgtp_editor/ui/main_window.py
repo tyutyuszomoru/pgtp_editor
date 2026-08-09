@@ -140,6 +140,19 @@ from pgtp_editor.ui.toolbar_controller import ToolbarController
 # same normalizer the command ids do -- otherwise a mnemonic `&` or a trailing
 # ellipsis added to a menu label would silently drop it out of Maintenance mode.
 from pgtp_editor.ui.toolbar_registry import normalize_label
+# FQ-012: the user-rebindable keyboard shortcuts. The rules are pure functions
+# in `shortcut_registry`; the host's whole job is to capture the defaults off
+# the finished menu bar and run the `QAction.setShortcut()` pass.
+from pgtp_editor.ui.customize_shortcuts_dialog import CustomizeShortcutsDialog
+from pgtp_editor.ui.shortcut_registry import (
+    SHORTCUT_OVERRIDES_SETTINGS_KEY,
+    CommandBinding,
+    normalize_sequence,
+    parse_shortcut_overrides,
+    resolve_bindings,
+    resolve_shortcut_overrides,
+    serialize_shortcut_overrides,
+)
 from pgtp_editor.ui.ui_shell import UiShell
 from pgtp_editor.ui.xsd_controller import XsdController
 from pgtp_editor.ui.event_body import (
@@ -373,6 +386,17 @@ class MainWindow(QMainWindow):
         # runner outright -- nothing else on the host touches it.
         # Connection Setup dialog, held so it is not GC'd while shown non-modally.
         self._connection_dialog = None
+        # FQ-012: command_id -> the shortcut the menu action was BUILT with,
+        # captured once (see `_shortcut_commands`) and never overwritten. It is
+        # the only record of a default: the moment an override is applied the
+        # QAction no longer knows what it used to answer to, so capturing late
+        # would make "Reset to Default" restore the override.
+        self._shortcut_defaults: dict[str, str] = {}
+        #: command_id -> the user's chosen sequence (`""` == deliberately
+        #: cleared). Absent means "use the captured default".
+        self._shortcut_overrides: dict[str, str] = {}
+        # Held so the non-modal Customize Shortcuts dialog is not GC'd while shown.
+        self._customize_shortcuts_dialog = None
         # Schema-aware Ctrl+Space completion (§18.6): the Qt-free lookup index
         # built once per DDL Explorer connect/refresh from the (now widened,
         # §18.6) fetch's `DatabaseSchema`, and handed to every open/newly
@@ -1030,6 +1054,10 @@ class MainWindow(QMainWindow):
         self._toolbar_ui.build(
             (self.menuBar(), self.editor_menu_bar), self.addToolBar
         )
+        # FQ-012: capture every menu action's built-in shortcut BEFORE the first
+        # override touches it, then install the saved overrides on top. The
+        # order is load-bearing -- see `_shortcut_commands`.
+        self._restore_shortcut_overrides()
 
         # Restore persisted window geometry/dock state and theme (Sub-project D).
         # Done after docks/toolbars/menus exist so restoreState can match dock
@@ -2402,6 +2430,136 @@ class MainWindow(QMainWindow):
         customize_toolbar_action.triggered.connect(
             lambda: self._toolbar_ui.open_customize_dialog()
         )
+        # FQ-012, beside its sibling: the same command universe, customized on
+        # its other axis. Being a menu action it enumerates into the walk and is
+        # itself pinnable and rebindable, which is intended -- a brand-new
+        # command needs no `RENAMED_ID_ALIASES` row, that table is for moves.
+        customize_shortcuts_action = menu.addAction("Customize Shortcuts…")
+        customize_shortcuts_action.triggered.connect(
+            lambda: self.open_customize_shortcuts_dialog()
+        )
+
+    # -- FQ-012: user-rebindable keyboard shortcuts --------------------------
+    #
+    # Three responsibilities, and they are all the host's because the pure rules
+    # (`shortcut_registry`) hold no Qt and the dialog holds no `QAction`:
+    #
+    #   1. capture each menu action's BUILT-IN shortcut, once, before anything
+    #      overwrites it (`_shortcut_commands`),
+    #   2. run the `setShortcut()` pass for the resolved map
+    #      (`_apply_shortcut_bindings`),
+    #   3. persist the override map beside `toolbarIds`/`toolbarIconIds`.
+    #
+    # The command universe is `ToolbarController.collect_menu_commands()` --
+    # the SAME walk Customize Toolbar uses, never a second one. That walk never
+    # tests `isVisible()`, which is exactly what keeps a command hidden by
+    # Maintenance mode (FQ-027) or by a per-tab filter listed and stably
+    # identified here; a visibility-dependent list would make the contents of
+    # Customize Shortcuts depend on which tab happens to be active.
+
+    def _shortcut_commands(self) -> list[CommandBinding]:
+        """Re-enumerate the menu commands as `CommandBinding` rows, capturing
+        any not-yet-seen command's **current** shortcut as its default.
+
+        Capture-once is the whole correctness argument. A `QAction` carries one
+        shortcut, so the first `setShortcut()` of an override destroys the
+        built-in it replaced; if this method re-read the default on every walk,
+        the second walk would record the override AS the default and "Reset to
+        Default" would be a no-op forever. Ids already in `_shortcut_defaults`
+        are therefore never re-captured -- and ids the app grows later (a menu
+        built after startup) still get an honest default, because they are
+        captured the first time they appear, which is before any override of
+        theirs can have been applied.
+        """
+        pairs = self._toolbar_ui.collect_menu_commands()
+        actions = self._toolbar_ui.menu_commands
+        commands: list[CommandBinding] = []
+        for command_id, label in pairs:
+            action = actions.get(command_id)
+            if command_id not in self._shortcut_defaults and action is not None:
+                self._shortcut_defaults[command_id] = normalize_sequence(
+                    action.shortcut().toString()
+                )
+            commands.append(
+                CommandBinding(
+                    command_id=command_id,
+                    label=label,
+                    default_sequence=self._shortcut_defaults.get(command_id, ""),
+                )
+            )
+        return commands
+
+    def _apply_shortcut_bindings(self) -> None:
+        """Install `resolve_bindings(commands, overrides)` onto the real menu
+        `QAction`s.
+
+        **Cleared first, assigned second, in two passes.** Qt answers a key
+        press matched by two enabled shortcuts by firing *neither*, so a
+        one-pass loop that assigned a stolen key to its new owner before
+        reaching the loser would leave the pair ambiguous for the length of the
+        loop -- and permanently, if the loser sorted first and the loop's own
+        order happened to skip it. The registry guarantees the resolved map
+        holds no duplicate; the two passes guarantee the QActions never do
+        either.
+
+        Reserved sequences are not touched here at all: `Ctrl+Z`/`Ctrl+Y` are
+        window-scoped `QShortcut`s, `Ctrl+F`/`Ctrl+R` are per-tab, `Ctrl+C/X/V`
+        are Qt built-ins inside the widgets -- none of them is a menu action, so
+        none of them is in this map. `RESERVED_BINDINGS` is the authority.
+        """
+        commands = self._shortcut_commands()
+        actions = self._toolbar_ui.menu_commands
+        bindings = resolve_bindings(commands, self._shortcut_overrides)
+        for command_id in bindings:
+            action = actions.get(command_id)
+            if action is not None:
+                action.setShortcut(QKeySequence())
+        for command_id, sequence in bindings.items():
+            action = actions.get(command_id)
+            if action is not None and sequence:
+                action.setShortcut(QKeySequence(sequence))
+
+    def _restore_shortcut_overrides(self) -> None:
+        """Startup: capture the defaults, then load and install the saved
+        overrides (pruned against the commands that still exist)."""
+        commands = self._shortcut_commands()
+        stored = parse_shortcut_overrides(
+            self._settings.value(SHORTCUT_OVERRIDES_SETTINGS_KEY)
+        )
+        self._shortcut_overrides = resolve_shortcut_overrides(
+            stored, [command.command_id for command in commands]
+        )
+        self._apply_shortcut_bindings()
+
+    def apply_and_save_shortcut_overrides(self, overrides) -> None:
+        """Install an override map and persist it (the dialog's OK path, and
+        the suite's seam for driving a rebind without the dialog).
+
+        Applied immediately as well as stored, so the new key works in the
+        running window rather than after a restart.
+        """
+        self._shortcut_overrides = dict(overrides or {})
+        self._settings.setValue(
+            SHORTCUT_OVERRIDES_SETTINGS_KEY,
+            serialize_shortcut_overrides(self._shortcut_overrides),
+        )
+        self._apply_shortcut_bindings()
+
+    def open_customize_shortcuts_dialog(self) -> None:
+        """Open the (non-modal) Customize Shortcuts dialog; on OK, apply and
+        persist the chosen overrides. Cancel writes nothing -- the dialog copies
+        the map it is handed, so a rejected dialog leaves the window's bindings
+        and the settings file untouched."""
+        dialog = CustomizeShortcutsDialog(
+            self._shortcut_commands(), self._shortcut_overrides, self
+        )
+        dialog.accepted.connect(
+            lambda: self.apply_and_save_shortcut_overrides(
+                dialog.result_overrides()
+            )
+        )
+        self._customize_shortcuts_dialog = dialog
+        dialog.show()
 
     def _add_stub_action(self, menu, label):
         return add_stub_action(menu, label, self._not_implemented)

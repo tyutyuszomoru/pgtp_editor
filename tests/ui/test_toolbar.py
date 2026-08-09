@@ -885,3 +885,129 @@ def test_no_assignments_leaves_toolbar_behavior_unchanged(qtbot, tmp_path):
     qtbot.addWidget(window)
 
     assert window._toolbar_ui.icon_ids == {}
+
+
+# -- FQ-012: the shortcut wiring ---------------------------------------------
+#
+# Same lane, other axis: Customize Shortcuts is fed by the SAME menu walk this
+# file exercises (`collect_menu_commands`), persists into the SAME QSettings
+# scope as `toolbarIds`/`toolbarIconIds`, and the host runs the
+# `QAction.setShortcut()` pass. These tests are about the HOST half -- the pure
+# rules live in tests/ui/test_shortcut_registry.py and the widget in
+# tests/ui/test_customize_shortcuts_dialog.py.
+
+
+def _shortcut_of(window, command_id):
+    return window._toolbar_ui.menu_commands[command_id].shortcut().toString()
+
+
+def test_shortcut_defaults_are_captured_before_any_override_is_applied(
+    qtbot, tmp_path
+):
+    """The destructive-first-override bug, asserted directly.
+
+    A `QAction` holds ONE shortcut, so applying `Ctrl+Alt+O` to `File ▸ Open`
+    overwrites the `Ctrl+O` it was built with. If the host captured defaults
+    after (or on every re-walk) it would record the override AS the default and
+    "Reset to Default" would be a permanent no-op. The capture therefore happens
+    once, before the first `setShortcut`."""
+    settings = _ini_settings(tmp_path)
+    settings.setValue("shortcutOverrides", ["file.open=Ctrl+Alt+O"])
+    settings.sync()
+    window = MainWindow(settings=settings)
+    qtbot.addWidget(window)
+
+    assert window._shortcut_defaults["file.open"] == "Ctrl+O"
+    assert _shortcut_of(window, "file.open") == "Ctrl+Alt+O"
+    # And a re-walk (every dialog open) must NOT re-read the live -- now
+    # overridden -- key back over the captured default.
+    again = {c.command_id: c.default_sequence for c in window._shortcut_commands()}
+    assert again["file.open"] == "Ctrl+O"
+
+
+def test_applying_an_override_changes_the_action_shortcut(qtbot, tmp_path):
+    window = MainWindow(settings=_ini_settings(tmp_path))
+    qtbot.addWidget(window)
+    assert _shortcut_of(window, "file.close") == "Ctrl+W"
+
+    window.apply_and_save_shortcut_overrides({"file.close": "Ctrl+Alt+W"})
+
+    assert _shortcut_of(window, "file.close") == "Ctrl+Alt+W"
+
+
+def test_a_persisted_override_survives_a_window_rebuild(qtbot, tmp_path):
+    """Persisted beside `toolbarIds` in the same scope, and re-resolved on the
+    next launch -- the key works after a restart, not only in the window that
+    set it."""
+    path = str(tmp_path / "s.ini")
+    first = MainWindow(settings=QSettings(path, QSettings.Format.IniFormat))
+    qtbot.addWidget(first)
+    first.apply_and_save_shortcut_overrides({"file.close": "Ctrl+Alt+W"})
+
+    second = MainWindow(settings=QSettings(path, QSettings.Format.IniFormat))
+    qtbot.addWidget(second)
+
+    assert second._shortcut_overrides == {"file.close": "Ctrl+Alt+W"}
+    assert _shortcut_of(second, "file.close") == "Ctrl+Alt+W"
+    # The default it displaced is still known, so it can be handed back.
+    assert second._shortcut_defaults["file.close"] == "Ctrl+W"
+
+
+def test_a_stolen_binding_leaves_the_loser_unbound_with_no_ambiguity(
+    qtbot, tmp_path
+):
+    """Qt answers a key press matched by two enabled shortcuts by firing
+    NEITHER. Taking `Ctrl+O` for `File ▸ Close` must therefore leave `File ▸
+    Open` with no key at all -- and no pair of live QActions may share a chord
+    at any point in the apply pass."""
+    window = MainWindow(settings=_ini_settings(tmp_path))
+    qtbot.addWidget(window)
+
+    window.apply_and_save_shortcut_overrides({"file.close": "Ctrl+O"})
+
+    assert _shortcut_of(window, "file.close") == "Ctrl+O"
+    assert _shortcut_of(window, "file.open") == ""
+    live = {}
+    for command_id, action in window._toolbar_ui.menu_commands.items():
+        sequence = action.shortcut().toString()
+        if sequence:
+            live.setdefault(sequence, []).append(command_id)
+    assert [seq for seq, ids in live.items() if len(ids) > 1] == []
+
+
+def test_hidden_commands_still_enumerate_into_the_shortcut_list(qtbot, tmp_path):
+    """`_walk_menu_actions` never tests `isVisible()`, and that is what keeps
+    the shortcut list stable: a command hidden by the active tab's filter (or by
+    Maintenance mode) must still have a row, or the list's contents would depend
+    on which tab happens to be focused."""
+    window = MainWindow(settings=_ini_settings(tmp_path))
+    qtbot.addWidget(window)
+    hidden = [
+        command_id
+        for command_id, action in window._toolbar_ui.menu_commands.items()
+        if not action.isVisible()
+    ]
+    assert hidden, "expected at least one tab-gated menu command to be hidden"
+
+    window.open_customize_shortcuts_dialog()
+    dialog = window._customize_shortcuts_dialog
+    qtbot.addWidget(dialog)
+    assert set(hidden) <= set(dialog.command_ids())
+
+
+def test_cancelling_the_customize_shortcuts_dialog_persists_nothing(
+    qtbot, tmp_path
+):
+    settings = _ini_settings(tmp_path)
+    window = MainWindow(settings=settings)
+    qtbot.addWidget(window)
+    window.open_customize_shortcuts_dialog()
+    dialog = window._customize_shortcuts_dialog
+    qtbot.addWidget(dialog)
+
+    dialog.set_binding("file.close", "Ctrl+Alt+W")
+    dialog.reject()
+
+    assert window._shortcut_overrides == {}
+    assert settings.value("shortcutOverrides") is None
+    assert _shortcut_of(window, "file.close") == "Ctrl+W"
