@@ -1,6 +1,26 @@
 # PGTP Editor — Consolidated Specification
 
-> **Status:** living document · **Last synthesized:** 2026-08-09 — **FQ-027 folded in: the launcher
+> **Status:** living document · **Last synthesized:** 2026-08-09 — **two shipped features folded in (two
+> ledger rows, §28): FQ-012 *Customize Shortcuts…* and FQ-025 slice 1's `Alter Table ▸` column
+> operations.** §27's closing claim that ***"every binding in this table is FIXED"* is OVERTURNED** — every
+> menu-bar QAction's shortcut is now a user-rebindable **default**, through `ui/shortcut_registry.py`
+> (pure, Qt-free), `ui/customize_shortcuts_dialog.py` and three host jobs on `MainWindow`, persisted under
+> the new QSettings key **`shortcutOverrides`** beside `toolbarIds`/`toolbarIconIds` (§7). **The rule worth
+> the spec's attention: STEAL for editable commands, REFUSE for anything the dialog does not own** — it
+> cannot be "warn and allow", because two enabled shortcuts on one chord are **ambiguous and Qt fires
+> NEITHER** (the fact already recorded at `find_replace_bar.install_focus_shortcuts`), so a duplicate does
+> not degrade to "first wins", it deletes **both** commands from the keyboard. §27 now enumerates the short,
+> reasoned list of what stays unrebindable. **FQ-025 slice 1** adds eight ALTER-column operations on a new
+> `Alter Table ▸` submenu reachable from table nodes **and from the tree's new column leaves** (which did
+> **not** exist before — the queue entry said otherwise and was wrong), each opening a non-modal dialog
+> whose generated DDL lands in an editable tab that has executed nothing. Its four design facts: **an ALTER
+> is not an object**, so `ui/main_window.py::AlterDdlRef` (`kind="alter"`, `name=""` so tier 3 honestly
+> never runs, a serial so two ALTERs are two tabs) rather than a `DdlObjectRef` that would spell a table
+> `pr.orders()`; **save-to-object is suppressed STRUCTURALLY** (always `_edit_ddl_live`, never registered in
+> the deploy manifest) with `Save in Project` degrading to Save As… and Apply-to-**Target** refusing the
+> buffer; the **`applied` row is one per table** for ALTERs, so successive ones overwrite each other (known
+> limit); and **`SNAPSHOT_VERSION` 1 → 2 REFUSES a v1 file** rather than loading it with the new
+> `constraints`/`indexes` empty. Slices 2 and 3 are **not** shipped. (Previously the same day:) **FQ-027 folded in: the launcher
 > becomes THREE COLUMNS (Standalone | Project | Maintenance), Maintenance becomes a SESSION-ONLY
 > menu filter, and `File ▸ Show Launcher…` becomes `File ▸ New Session` (two ledger rows, §28).**
 > **FQ-027 SUPERSEDES FQ-011** (owner ruling) wherever they disagree — persistence (session-only, **no
@@ -147,7 +167,7 @@
 16. [Validation](#16-validation)
 17. [Database](#17-database) — includes [the Database/XML Coherence view](#the-databasexml-coherence-view) — *implemented (FQ-003, 2026-08-06): `db/coherence.py`, `ui/coherence_panel.py`, the Database-menu toggle*
 18. [DDL versioning (standalone Postgres mode)](#18-ddl-versioning-standalone-postgres-mode) — *partly implemented — see each subsection*
-    - [18.1 Routines & triggers browsing (DDL Explorer)](#181-routines--triggers-browsing-ddl-explorer) — *implemented, including object **creation** (FQ-002, 2026-08-06); the object-row context menu collapses to **one `Edit DDL`** (FQ-024, 2026-08-08); XML cross-refs' pure layer (`db/routine_refs.py`) shipped — its UI consumer is the remaining gap*
+    - [18.1 Routines & triggers browsing (DDL Explorer)](#181-routines--triggers-browsing-ddl-explorer) — *implemented, including object **creation** (FQ-002, 2026-08-06); the object-row context menu collapses to **one `Edit DDL`** (FQ-024, 2026-08-08); **table ALTERing via the new `Alter Table ▸` submenu and the tree's new column leaves (FQ-025 slice 1, 2026-08-09 — slices 2/3 unbuilt)**; XML cross-refs' pure layer (`db/routine_refs.py`) shipped — its UI consumer is the remaining gap*
     - [18.2 Projects, checkout & state markers](#182-projects-checkout--state-markers) — *implemented (git integration is an explicit TBD placeholder); **checkout is no longer a separate gesture** and the tab key is **`ref.key` always** (FQ-024, 2026-08-08)*
     - [18.3 Deploy workflow & schema diff/migration](#183-deploy-workflow--schema-diffmigration) — *all the pieces ship (diff/migration engine, `db/schema_snapshot.py`, `db/deploy_bundle.py`, `ui/schema_compare_panel.py`); **none are reachable** — no menu entries, no flow driving them*
     - [18.4 SQL/plpgsql selection formatter](#184-sqlplpgsql-selection-formatter) — *implemented, core + consumer: `Ctrl+Alt+F` / context-menu Format Selection in the DDL object editor, `[SQL]` Audit refusals wired*
@@ -166,7 +186,7 @@
 24. [In-app manual](#24-in-app-manual)
 25. [Debug mode](#25-debug-mode)
 26. [Consolidated menu bar](#26-consolidated-menu-bar) — ***two** menu bars since FQ-016 (2026-08-07): the window bar, and [the Editor menu bar](#the-editor-menu-bar-fq-016-2026-08-07) (**History · Select · Parsing · Navigation · Deployment** — five since 2026-08-08). `Edit` no longer exists; **File loses `Save`/`Save As…`** and Tools loses **all four** Compare/Merge entries. **2026-08-09: `Parsing` gains the two Check gestures and Database loses them, along with `Open`/`Close Sandbox Session`**. **FQ-027 (2026-08-09):** `File ▸ Show Launcher…` → **`New Session`**, and the window bar gains a **[Maintenance-mode membership table](#window-bar-membership-in-maintenance-mode-fq-027-2026-08-09)** — the app's one **intent**-based filter, distinct from every capability-based *absent, not disabled* rule in this section*
-27. [Consolidated keyboard shortcuts](#27-consolidated-keyboard-shortcuts) — *all bindings are **fixed**; FQ-012's rebinding dialog is a separate, un-folded proposal. **`Ctrl+S`/`Ctrl+Shift+S` are deliberately unbound app-wide** (stated, not omitted), the one carve-out being `CodeEditorDialog`'s OK/Cancel pair*
+27. [Consolidated keyboard shortcuts](#27-consolidated-keyboard-shortcuts) — *the table lists **DEFAULTS**, not fixed bindings: every **menu-bar** QAction is user-rebindable through `View ▸ Customize Shortcuts…` (FQ-012, 2026-08-09), on a **steal-or-refuse** conflict rule because Qt fires **neither** of two shortcuts on one chord; the short list of genuinely unrebindable keys is enumerated there. **`Ctrl+S`/`Ctrl+Shift+S` are deliberately unbound app-wide** (stated, not omitted), the one carve-out being `CodeEditorDialog`'s OK/Cancel pair*
 28. [Supersession ledger](#28-supersession-ledger)
 29. [Open questions](#29-open-questions)
 30. [Testing policy](#30-testing-policy)
@@ -369,6 +389,7 @@ pgtp_editor/
 │   ├── ddl_project.py # pure DDL-project paths: object → ddl/*.sql filename (_n overload suffix,
 │   │                  # sanitization), ProjectSettings/settings.json shape, DriftMarkers (§18.2)
 │   ├── ddl_skeleton.py  # pure CREATE-skeleton generation for brand-new objects (FQ-002, §18.1)
+│   │                  # + FQ-025 slice 1's eight ALTER TABLE column emitters, same posture (§18.1)
 │   ├── bookmark_store.py # pure project-local bookmark persistence (FQ-013, §8): <project>/
 │   │                  # .ddlproject/bookmarks.json, relative_key / load_editor_bookmarks /
 │   │                  # store_editor_bookmarks / prune_missing_files (the last has NO caller yet);
@@ -431,6 +452,8 @@ Key `ui/` modules: `main_window.py`, `center_stage.py`, `project_tree.py`, `xml_
 `event_body.py`, `properties_panel.py`, `find_replace_bar.py` (permanently visible since FQ-016, §8/§15),
 `search.py`, `history.py`, `theme.py`, `toolbar_registry.py`, `toolbar_controller.py` (owns the menu-bar
 walk and the toolbar's persistence, §7 — **not** `main_window.py`), `customize_toolbar_dialog.py`,
+`shortcut_registry.py` (FQ-012's **pure, Qt-free** rebinding rules — `toolbar_registry.py`'s twin, §27) /
+`customize_shortcuts_dialog.py` (its widget),
 `icon_picker_dialog.py` (FQ-004's searchable Breeze icon picker, §7),
 `launcher_dialog.py` (the startup launch modal — `LAUNCHER_GROUPS` (**three columns since FQ-027,
 2026-08-09**), `show_launcher(window, settings, …)`; the `launcherSuppressed` key and the `force=`
@@ -441,6 +464,8 @@ bypass are **deleted** with FQ-027's suppression removal — ledger §28; §7),
 `ddl_buffer_panel.py`, `ddl_object_editor.py` (§18.5's editable single-object tab),
 `completion_popup.py` (the `_CompletionPopup` shared by `xml_editor.py` and `ddl_object_editor.py`,
 §11/§18.6), `new_trigger_dialog.py` / `new_routine_dialog.py` (FQ-002 creation),
+`alter_column_dialogs.py` (FQ-025 slice 1's five `Alter Table ▸` dialog classes, split by what each
+collects — §18.1),
 `schema_compare_panel.py` (§18.3's diff viewer — **built, not yet reachable**),
 `project_status_model.py` / `project_status_panel.py` (§18.8),
 `sandbox_controller.py` (§18.5's sandbox-lifecycle host — **ships**: owns the one `SandboxSession`,
@@ -967,9 +992,10 @@ default), `LEGACY_ID_ALIASES`, **`RENAMED_ID_ALIASES`** (below), `DEFAULT_TOOLBA
   > add_toolbar)` stored a single `self._menu_bar` and rooted the walk at `self._menu_bar.actions()`;
   > with the **Editor menu bar** (below) it takes a **sequence of roots**, walked in order — one
   > mechanism, widened, never a second walk. Everything downstream flows from that single walk:
-  > Customize Toolbar's Available list, command ids, FQ-004 icon assignments, and any future
-  > shortcut-listing surface. Without the widening every command on the Editor menu bar would be
-  > unpinnable and invisible to those features. Ordering is already fine — the container is built
+  > Customize Toolbar's Available list, command ids, FQ-004 icon assignments, and — since FQ-012
+  > (2026-08-09) — **Customize Shortcuts' rebindable-command list and captured defaults** (§27), which is
+  > no longer a *"future"* surface. Without the widening every command on the Editor menu bar would be
+  > unpinnable, unrebindable and invisible to those features. Ordering is already fine — the container is built
   > before `build()` is called.
   > **Trap, load-bearing:** `QAction.menu()` hands the returned `QMenu`'s ownership to Python, so letting
   > that wrapper go out of scope **destroys the real menu and every action in it** (this crashed startup
@@ -1097,9 +1123,10 @@ default), `LEGACY_ID_ALIASES`, **`RENAMED_ID_ALIASES`** (below), `DEFAULT_TOOLBA
   stays pinnable and keeps a stable id — while an action that does not **exist** at enumeration time is
   invisible to `collect_menu_commands()`. Rebuilding a menu per tab would make Customize Toolbar's
   Available list show only the *currently active tab's* commands and would silently drop saved
-  `toolbarIds` for whichever tab was not active at restore time. **This also protects queued FQ-012**
-  (Customize Shortcuts), which enumerates the same way and would otherwise offer a shortcut list that
-  changes with the active tab.
+  `toolbarIds` for whichever tab was not active at restore time. **This also protects FQ-012**
+  (Customize Shortcuts, shipped 2026-08-09), which enumerates the same way and would otherwise offer a
+  shortcut list that changes with the active tab — and would capture a *default* for a command only on the
+  tabs where it happened to exist.
 - **Hiding an ACTION blinks a user-pinned toolbar button in and out — accepted, in exactly four places.**
   A toolbar button *is* the menu's own QAction, so hiding the action empties the button. The governing
   precedent is `Select ▸ Select Parent Block` (FQ-015, the first accepted instance). The accepted
@@ -1118,7 +1145,11 @@ default), `LEGACY_ID_ALIASES`, **`RENAMED_ID_ALIASES`** (below), `DEFAULT_TOOLBA
 **Customize Toolbar** dialog (two lists + Add/Remove/Up/Down + **Choose Icon…**, FQ-004) writes an
 ordered id list, persisted in
 QSettings key `toolbarIds`, plus the icon-assignment map (`toolbarIconIds`, applied and saved together
-on OK via `_apply_and_save_toolbar_ids(ids, icon_assignments)`). The **Available list shows all menu
+on OK via `_apply_and_save_toolbar_ids(ids, icon_assignments)`). **A third sibling key,
+`shortcutOverrides`, joins them** (FQ-012, 2026-08-09 — the *Customize Shortcuts…* dialog's
+`{command_id: sequence}` map, same `"command_id=value"` list shape, same prune-on-load discipline, §27):
+the same command universe, customized on its two axes — icon and key — through two sibling dialogs under
+**View**. The **Available list shows all menu
 commands in menu order, always**, each
 labelled by its menu path (`File › Save As`) so the long list stays scannable; commands already on the
 toolbar are shown **disabled** (not removed). Each **On-Toolbar row shows the icon that button will
@@ -3011,7 +3042,9 @@ golden "freshly-added table" oracle; defaults are corpus-derived and **not yet f
 > §18.1's XML cross-referencing has its **pure layer shipped** (`db/routine_refs.py`, commit `956e8fb`,
 > tested); **the remaining §18.1 piece is its UI consumer** — nothing in `ui/` calls the module yet.
 > §18.1's FQ-002 object-*creation* entry points (Add Trigger…, New Function/Procedure…) **have
-> since shipped** — see that subsection.
+> since shipped**, as has FQ-025 **slice 1**'s table-*mutation* set (the `Alter Table ▸` submenu's eight
+> column operations, on table nodes and on the tree's new column leaves; slices 2 and 3 are unbuilt) — see
+> those subsections.
 >
 > **§18.3's modules all exist; nothing calls them.** `db/schema_diff.py` and `db/migration_gen.py` are
 > implemented and tested (`tests/db/test_schema_diff.py`) for the `routine`/`trigger` cases only;
@@ -3554,8 +3587,10 @@ Tables branch's original scope, not a new feature:**
   selection handler already calls `show_node` for its four kinds. A DDL table node offers **no *editing*
   context menu** — right-click ▸ **`Edit DDL`** (FQ-024's single entry, above) remains routine- and
   trigger-leaf-only, since a whole table has no single `DdlObjectSpan`/source text to hand that entry
-  point. **Amended 2026-08-06 (FQ-002, §28): the table node does carry a context menu, holding exactly one
-  *creation* entry — "Add Trigger…" — see "Creating brand-new objects from the Explorer" below.** The
+  point. **Amended 2026-08-06 (FQ-002, §28) and again 2026-08-09 (FQ-025 slice 1): the table node carries a
+  context menu holding the *creation* entry "Add Trigger…" and the `Alter Table ▸` submenu's eight column
+  operations — see "Creating brand-new objects from the Explorer" and "Altering an existing table from the
+  Explorer" below; the table's columns are now their own tree rows and carry that submenu too.** The
   span-based limitation above is specific to *editing an object that already exists*; an object that does
   not exist yet has no source text to need a span for, so creation is not blocked by it. (The narrowing
   originally written here was a statement about the edit/checkout entry points, never a decision that a
@@ -3605,8 +3640,13 @@ Tables branch's original scope, not a new feature:**
 > table-node **Add Trigger…** context entry and the routines-branch **New Function/Procedure…** entry
 > (`ui/ddl_buffer_panel.py`'s `new_trigger_requested`/`new_routine_requested` signals), the Database-menu
 > **New Function/Procedure…** action, and manifest registration
-> (`MainWindow._register_created_object`). Creation routes through `MainWindow._on_ddl_edit_requested`,
-> the same path an Edit… uses, so there is exactly one tab-opening code path.
+> (`MainWindow._register_created_object`). **Corrected 2026-08-09 against the shipped code:** creation calls
+> **`MainWindow._edit_ddl_live` DIRECTLY** from `_open_created_ddl_object`, *not* `_on_ddl_edit_requested`
+> — since FQ-024 that method dispatches on project state, and an open project would divert creation into
+> the checkout branch, seeding `ddl/<obj>.sql` from the **skeleton** and hashing it as the object's
+> last-deployed reference. The tab-opening code path is still one (`open_ddl_object_tab`); what creation
+> bypasses is the checkout *decision*. FQ-025's ALTER tabs route through the same call for a sharper version
+> of the same reason.
 
 Until now the Explorer could only browse and edit objects that **already exist** in the connected
 database (§18.1 browsing, §18.2 checkout, §18.5 editing). Originating a brand-new trigger, function or
@@ -3762,6 +3802,163 @@ fields no matter which kind was picked. `DdlObjectRef.kind` already treats the t
 identities, and the split dialogs match that model. (One dialog *does* serve **two** kinds — function and
 procedure — because they differ by exactly one field, which the Kind selector hides; that is the boundary
 of the rejection, not a contradiction of it.)
+
+#### Altering an existing table from the Explorer — the `Alter Table ▸` submenu (FQ-025 slice 1, 2026-08-09)
+
+> **Status: slice 1 implemented and shipped 2026-08-09** (commits `bc02d9c` pure emitters + introspection
+> widening, `8a88da4` dialogs, `532da30` tree/host wiring). **Slices 2 and 3 are NOT shipped** — constraints
+> and foreign keys (slice 2) and indexes / comments / whole-table create-drop (slice 3) exist only as the
+> `docs/FEATURE_QUEUE.md` FQ-025 entry, and nothing in this section describes them as behaviour. The
+> introspection they need *is* already captured (`ConstraintInfo`/`IndexInfo`, below) — that widening
+> shipped with slice 1 so the snapshot format version moved once, not twice.
+
+The sibling of the creation gestures above: FQ-002 lets the Explorer *originate* an object, this lets it
+*mutate a table that already exists*. Both end in exactly the same place — an **editable DDL tab holding
+generated text that has been executed against nothing**. Generation is inert; running it is a separate,
+confirmed gesture, and **the tab IS the safeguard**, which is why no operation here (including a
+column drop) puts up a scare-confirmation of its own.
+
+**Where the actions live.**
+
+| Surface | Menu | Pre-bound context |
+|---|---|---|
+| A **table node** in the Tables branch | `Alter Table ▸` submenu, **beside** FQ-002's `Add Trigger…` at the same level | table = the clicked node; column = *(none)* |
+| A **column leaf** (new, see below) | the **same** `Alter Table ▸` submenu, and nothing else | table = the column's table; column = the clicked column |
+
+- **One builder serves both** (`BrowserPanel._add_alter_table_submenu(menu, table_info, *, column)`), so the
+  two entry points can never come to offer different operation sets — they differ in exactly one thing, the
+  pre-selected column, which is the parameter. It returns the submenu (or `None`) so tests read its
+  membership instead of re-deriving it.
+- **Views and materialized views get NO submenu** (`getattr(table_info, "kind", "table") != "table"` →
+  `None`). Every operation emits `ALTER TABLE`, which the server refuses on a view: the
+  tab-is-the-safeguard principle covers *running* generated DDL, never *generating DDL that cannot be
+  right*. On a view's column leaf the submenu was the menu's only content, so the context menu is
+  suppressed entirely rather than popping up empty.
+- The submenu is built as an explicit `QMenu(title, parent)` and then `addMenu`'d — **never**
+  `menu.addMenu("title")`, whose overload hands the new menu's ownership to Python and lets it be
+  garbage-collected out from under the menu that is showing it.
+- **`browse_only=True` suppresses all of it** exactly as it suppresses the FQ-002 creation entries: the
+  sandbox Explorer (§18.7) offers no context menu at all.
+
+**Column nodes are NEW — the tree had none.** (FQ-025's queue entry claimed column nodes existed and merely
+lacked a context menu; that was **false**, and the tree had to grow them.) Each table node now carries one
+collapsible **`Columns  (N)`** group, added **after** the trigger leaves, each child labelled
+`name (data_type)` in `TableInfo.columns`' **declared** order — the same order
+`properties_panel._rows_for_ddl_table` uses, so the two surfaces show one table the same way round.
+
+- The group node itself carries **no role**: it clicks nowhere and offers no menu — a container, not a
+  target. A table with no `TableInfo` (a trigger-only node) or no columns gets **no group at all**; an
+  empty `Columns  (0)` folder states nothing.
+- A column leaf carries its own item-data role, **`_COLUMN_ROLE = UserRole + 5`**, holding
+  `(TableInfo, column_name)` — deliberately **not** `_TABLE_ROLE`, because a column row must not behave
+  like a table row (no `table_selected`, no Properties-panel population); its whole job is to carry the
+  click context an `Alter Table ▸` dialog defaults its column dropdown to.
+- Grouped rather than listed flat because a table's **triggers** are what this branch has always been
+  about, and thirty columns spilled under the table node would bury them.
+
+**The eight operations (`ddl_buffer_panel.ALTER_TABLE_ACTIONS`, in menu order).** Ids are declared once:
+the four `alter_column_dialogs.ColumnActionDialog` already owns are **imported**, never respelled — a second
+spelling of `"drop_column"` is exactly how a menu item comes to open the wrong dialog.
+
+| Operation id | Menu label | Emitter (`db/ddl_skeleton.py`) | Dialog |
+|---|---|---|---|
+| `add_column` | `Add Column…` | `add_column_skeleton` | `AddColumnDialog` |
+| `drop_column` | `Drop Column…` | `drop_column_skeleton` | `ColumnActionDialog` |
+| `rename_column` | `Rename Column…` | `rename_column_skeleton` | `RenameColumnDialog` |
+| `change_column_type` | `Change Column Type…` | `alter_column_type_skeleton` (free-text `USING`) | `ChangeColumnTypeDialog` |
+| `set_not_null` | `Set NOT NULL…` | `set_column_not_null_skeleton` | `ColumnActionDialog` |
+| `drop_not_null` | `Drop NOT NULL…` | `drop_column_not_null_skeleton` | `ColumnActionDialog` |
+| `set_default` | `Set DEFAULT…` | `set_column_default_skeleton` | `SetColumnDefaultDialog` |
+| `drop_default` | `Drop DEFAULT…` | `drop_column_default_skeleton` | `ColumnActionDialog` |
+
+`MainWindow._ALTER_COLUMN_DIALOGS` is the **one** id→dialog table (with `COLUMN_ACTIONS` as the
+`ColumnActionDialog` fallback): the panel decides which id it emits, the host decides which dialog that id
+opens, and nothing in between re-decides either. An unclaimed id opens nothing and says nothing — a wiring
+bug, not a user-facing state.
+
+**Five dialog classes, split by what each COLLECTS — not one per menu item** (`ui/alter_column_dialogs.py`,
+all on `_AlterColumnDialogBase`). Four operations that need nothing but a table and a column share
+`ColumnActionDialog`; the other four each add exactly one field group (new column definition · new name ·
+new type + `USING` · default expression). Every one follows the FQ-002 dialog contract verbatim:
+**non-modal `.show()`, never `.exec()`** (§30); every dropdown's data **injected by the caller** so the
+dialog opens no connection; headless accessors read after `accepted`; OK disabled until the emitter renders;
+an inline red error label driven by *attempting* the render.
+
+- **The dropdown data comes from the already-fetched `DatabaseSchema`**, never a second round trip:
+  `MainWindow._alter_column_table_names()` offers only `kind == "table"` relations (same rule as the
+  submenu), and `_alter_column_names_for(table)` is passed as a **callable**, not a pre-built mapping, so
+  re-picking a table inside the dialog reads the *current* schema rather than a snapshot taken when the
+  menu was clicked.
+- Both dropdowns default to the click context and remain **changeable** — the requester's rule.
+
+**Emitters — eight pure siblings in `db/ddl_skeleton.py`**, beside `trigger_skeleton`/`function_skeleton`/
+`procedure_skeleton` and under the identical posture: pure, Qt-free, deterministic, **allowlist-or-raise**.
+Identifiers go through `quote_ident` (dot-separated parts quoted separately); datatypes through
+`_SAFE_DATATYPE_RE`; free-text expressions (`DEFAULT`, `USING`) through `_expression`, which refuses what
+would close the statement; every refusal is a `SkeletonError` and **never a partial return**.
+**`Add Column` with a comment renders TWO statements** — `ALTER TABLE …;` then `COMMENT ON COLUMN …;` —
+carried whole into the tab, because both apply paths hand the buffer to `db/apply.py::apply_ddl` as **one**
+element of a statement sequence, so multi-statement text survives to the server intact.
+
+**Introspection widened for slice 2, and the snapshot format bumped with it** (`db/introspect.py`):
+
+- **`ConstraintInfo`** — the **named** constraints of a table from `pg_constraint` (`conname` was never
+  selected before), keyed `schema.table.constraint` in `DatabaseSchema.constraints`, with
+  `DatabaseSchema.constraints_for(name)`. `kind` is lowercase prose (`"primary key"`, `"foreign key"`,
+  `"unique"`, `"check"`, `"exclude"`) following `TableInfo.kind`'s convention; `columns` are in `conkey`
+  order and may legitimately be **empty** (a table-level `CHECK (true)` has a NULL `conkey` and is still
+  droppable), with `definition` (`pg_get_constraintdef`) as what a picker shows for it.
+- **`IndexInfo`** — from `pg_index`, keyed `schema.index_name` in `DatabaseSchema.indexes`, columns from
+  `pg_get_indexdef(indexrelid, n, true)` per key attribute (so an expression index yields its expression
+  text). **Constraint-backed indexes are captured and MARKED, never filtered out**: PostgreSQL refuses
+  `DROP INDEX` on the implicit index behind a PK/UNIQUE/EXCLUDE constraint, so `is_constraint_backed` +
+  `constraint_name` carry that fact and **a future `Drop index` picker must list only
+  `is_constraint_backed == False` rows**, routing the rest to `Drop constraint…`. Dropping the rows instead
+  would create a "why is my unique index missing?" mystery.
+- Only `fetch_routines_and_triggers` runs the index query, so `indexes` is `{}` after
+  `fetch_schema`/`snapshot_for_baseline` — neither DB Check nor the sandbox baseline needs indexes.
+- **`db/schema_snapshot.py::SNAPSHOT_VERSION` goes 1 → 2**, and a **v1 file is REFUSED**
+  (`UnsupportedSnapshotVersion`), not loaded with the two new sections empty. That is not conservatism: this
+  module's whole posture is **refuse, never degrade**, and a half-loaded schema is precisely what makes
+  `diff_schemas` emit DROPs for objects that were merely absent from the file. The bump is **costless**
+  because §18.3's `Save Schema Snapshot…` entry was never built, so no v1 file can exist in the wild.
+
+**Where the generated DDL lands — `AlterDdlRef`, and why it is not a `DdlObjectRef`.**
+`MainWindow._open_generated_alter_ddl` renders `dialog.skeleton()` (no SQL is assembled in the host) and
+opens it through the **existing** §18.5 editable tab. But the ref it opens with is a separate, duck-typed
+frozen dataclass, `ui/main_window.py::AlterDdlRef` (module level, beside `MainWindow`) — **an ALTER is not
+an object**. `DdlObjectRef` names a thing
+that exists (or is about to) in the catalog; `ALTER TABLE pr.orders DROP COLUMN note` names a *mutation of*
+something whose identity lives elsewhere, and `DdlObjectRef` cannot express that without lying: its
+`qualified`/`short_title` would render **`pr.orders()`**, spelling a table as a zero-argument routine in
+every confirmation dialog and Audit line the panel raises. `AlterDdlRef` carries exactly the attributes
+`DdlObjectEditorPanel`, `CenterStage` and `db/ddl_check.py::CheckRequest` read off a ref, plus four
+deliberate decisions:
+
+| Attribute | Value | Why |
+|---|---|---|
+| `kind` | **`"alter"`** | A kind no `DdlObjectRef` ever carries, so every consumer tells an ALTER tab from an object tab with one comparison |
+| `name` | **`""` — deliberately empty** | `CheckRequest.checked_name` derives from it, and `build_ladder` adds tier 3's `plpgsql_check` statements **only when a name is present**. An ALTER creates no function to analyse, so *"tier 3 was never going to run"* is the honest state rather than a failure to report. **Tiers 0–2 (parse · lint · compile-by-apply) still run**, and they are the tiers an ALTER actually has |
+| `serial` | per-window counter (`MainWindow._alter_ddl_serial`), in `key` | `open_ddl_object_tab` focuses the existing tab for a repeated key and **discards the new text**. Two ALTERs on one table are two different statements, so a shared key would silently swallow the second one |
+| `qualified` / `short_title` / `default_file_name` | `ALTER TABLE pr.orders` · `ALTER orders` · `alter_pr_orders.sql` | Reads as the statement it is. The Save As… prefill is deliberately **not** §18.2's `schema.object.sql` scheme: this file is a script the user chose to keep, and it must not look like a checked-out object sitting in a `ddl/` folder |
+
+**Save-to-object is suppressed STRUCTURALLY, not by a disabled control.** The tab is opened through
+`_edit_ddl_live` **always** — never `_edit_ddl_checked_out`, even with a project open — and is **never
+registered in the deploy manifest**. So no `ddl/<object>.sql` is seeded, no baseline is hashed, and no
+`*`/`!` drift marker ever speaks for it. Three consequences, recorded honestly rather than papered over:
+
+1. **`Deployment ▸ Save in Project` on an ALTER tab opens Save As…** (the never-saved-tab path, §18.5), and
+   its *label* consequently reads slightly off for what it does — writing a script to a path the user names.
+   Accepted; the alternative is a second per-tab-kind label rule.
+2. **Apply-to-Target refuses these buffers**, and correctly: `parse_buffer_identity` finds no `CREATE`, so
+   §18.5's precondition 1 blocks the apply. **Apply-to-Sandbox is the intended run path and works.**
+   (FQ-025's queue entry called Apply-to-Target *"not wired, a pre-existing gap"* — that was **stale**: it
+   was wired, projectless, on 2026-08-08.)
+3. **The sandbox `applied` bookkeeping row is PER TABLE for an ALTER.** `CheckRequest.working_set_ref`
+   composes `(kind, schema, name, table)`, and with `name == ""` an ALTER's key is
+   `("alter", schema, "", table)` — so successive ALTERs on one table **overwrite each other's row**. This
+   is inherent to recording a mutation in an object-keyed table, is a **known limit, not a defect to fix
+   by widening the key**, and `db/ddl_check.py` was deliberately **not changed** for it.
 
 ### 18.2 Projects, checkout & state markers
 
@@ -4286,7 +4483,7 @@ checked-out `ddl/*.sql` file:
 > |---|---|
 > | `db/schema_diff.py` (`SchemaDifference`/`SchemaDiffResult`/`diff_schemas`/`routine_identity`/`trigger_identity`) | **Ships**, tested (`tests/db/test_schema_diff.py`). `routine`/`trigger` kinds only — `table`/`column` diffing is deliberately out of scope (`SchemaDiffResult.unsupported` names what wasn't compared). |
 > | `db/migration_gen.py::generate_migration` | **Ships.** Raises `UnsupportedDifference` rather than silently dropping a table/column change. |
-> | `db/schema_snapshot.py` | **Ships** (`dump_schema`/`load_schema` + `write_snapshot`/`read_snapshot`, versioned JSON, `SnapshotFormatError`/`UnsupportedSnapshotVersion`), tested (`tests/db/test_schema_snapshot.py`) — commit `dffb59b`. |
+> | `db/schema_snapshot.py` | **Ships** (`dump_schema`/`load_schema` + `write_snapshot`/`read_snapshot`, versioned JSON, `SnapshotFormatError`/`UnsupportedSnapshotVersion`), tested (`tests/db/test_schema_snapshot.py`) — commit `dffb59b`. **`SNAPSHOT_VERSION` is 2 since FQ-025 (2026-08-09)**: `DatabaseSchema` grew `constraints`/`indexes`, `SCHEMA_SECTIONS` grew with it, and a **v1 payload is REFUSED, not degraded** — a half-loaded schema is exactly what makes `diff_schemas` emit DROPs. Costless: `Save Schema Snapshot…` was never built, so no v1 file exists. |
 > | `db/deploy_bundle.py` — steps 1–3's decision layer (candidates, the `*!` ambiguity gate, adjustable order) | **Ships**, pure, tested (`tests/db/test_deploy_bundle.py`) — commit `dffb59b`. Step 4(a)'s git commit is present only as the documented no-op seam `git_commit_placeholder`. |
 > | `ui/schema_compare_panel.py::SchemaComparePanel` — the diff-viewer UI | **Ships**, tested (`tests/ui/test_schema_compare_panel.py`) — commit `dffb59b`. Injected schema-source and `save_migration` callables; no Apply/Execute affordance by design. |
 > | **The `Database ▸ "Compare Schemas…"` and `"Save Schema Snapshot…"` menu entries** | **Absent.** `MainWindow._build_database_menu` has no such actions. |
@@ -4810,6 +5007,25 @@ buffer text. Consequences for this subsection, all of them *nothing to change*:
 - The tab still **never writes to a database**. A created object reaches the database only through the
   ordinary Apply (§18.5) or Deploy (§18.3) gestures, on the user's explicit command.
 
+**A FOURTH entry point opens this same tab for something that is not an object at all (FQ-025 slice 1,
+2026-08-09, §28).** The `Alter Table ▸` submenu (§18.1) hands `CenterStage.open_ddl_object_tab` a generated
+`ALTER TABLE …` statement under an **`AlterDdlRef`** (`kind == "alter"`) rather than a `DdlObjectRef`. The
+panel does **not** branch on it — the ref is duck-typed and carries every attribute the panel reads — but
+three of this subsection's "nothing to change" consequences **do** change for that ref, and the narrowing is
+structural rather than a disabled control:
+
+- **No object-file save.** The tab is opened via `_edit_ddl_live` unconditionally and is never registered in
+  the deploy manifest, so `Deployment ▸ Save in Project` degrades to **Save As…** on the first (and every)
+  use and no drift marker exists for it. There is no object whose `ddl/<object>.sql` this could be, and
+  writing one would put a mutation where §18.2 expects a definition and hash it as a deploy baseline.
+- **Apply-to-Target refuses it** at precondition 1: `parse_buffer_identity` finds no `CREATE` in the buffer,
+  so the identity check fails and the apply is blocked. **Apply-to-Sandbox is the intended run path.**
+- **The check ladder runs tiers 0–2 only** — `AlterDdlRef.name` is `""`, so `build_ladder` emits no tier-3
+  `plpgsql_check` statements, which is the truthful state for a statement that defines no routine. Its
+  `applied` bookkeeping row is keyed `("alter", schema, "", table)`, i.e. **one row per table**, so
+  successive ALTERs on a table overwrite each other's row — a recorded limit of storing a mutation in an
+  object-keyed table, not a defect to fix by widening the key.
+
 **Tab shape (`ui/ddl_object_editor.py::DdlObjectEditorPanel`).** A **new tab type**, distinct from the
 read-only `EditorPanel`, **one tab per object**. It hosts the **existing**
 `ui/code_editor.py::CodeEditor` in `language="sql"` mode made **editable** (`setReadOnly(False)`) — the
@@ -5147,7 +5363,7 @@ Audit lines remain `[Validate]`, `[Find]` results and (later) `[Check]`.
 
 | Gesture | What it does | Trigger |
 |---|---|---|
-| **Save** | Persists the edited text through the tab's **injected save callback** — **a real `.sql` file on disk chosen via Save As… in v1** (below), the checked-out `ddl/*.sql` file under §18.2. **Touches no database, ever.** | **`Deployment ▸ Save in Project`** (FQ-020, 2026-08-08) — a named menu click, wired straight to `_save_ddl_object_editor(panel)`. **No keystroke:** `Ctrl+S`, `File ▸ Save` and the `_save_active_tab` router are all deleted (§7/§27; ledger §28) |
+| **Save** | Persists the edited text through the tab's **injected save callback** — **a real `.sql` file on disk chosen via Save As… in v1** (below), the checked-out `ddl/*.sql` file under §18.2. **Touches no database, ever.** | **`Deployment ▸ Save in Project`** (FQ-020, 2026-08-08) — a named menu click, wired straight to `_save_ddl_object_editor(panel)`. **No keystroke:** `Ctrl+S`, `File ▸ Save` and the `_save_active_tab` router are all deleted (§7/§27; ledger §28). **On an FQ-025 `AlterDdlRef` tab there is no project file to write** — the tab is never in the manifest — so this entry is **always** Save As… (fourth entry point, above) |
 | **Apply** | **Executes** the buffer's DDL against a database — the **sandbox** (where it is *meant* to persist, D2) or the **target** (behind the hard gates below) — through the write seam below. **Persists nothing to disk** and clears no dirty state. | Explicit menu / context-menu / panel action only. **Deliberately no keyboard shortcut** — an irreversible outward effect must not be one keystroke away. |
 
 **v1 Save ships `Save As… .sql` — a real file, not an in-session buffer (settled 2026-08-02).** An
@@ -7252,7 +7468,10 @@ under File below is §18.2's later, distinct DDL-project action that merely reus
   Editor bar's **Parsing**.
 - **View** (real order and labels): ☑ Project Tree, ☑ Properties Panel,
   ☑ Audit/Problems Panel, ☑ Raw XML Panel (checked by default), — , Expand All, Collapse All, — ,
-  ☐ Light Theme, — , Customize Toolbar… (opens the toolbar customization dialog, §7). The three **dock**
+  ☐ Light Theme, — , Customize Toolbar… (opens the toolbar customization dialog, §7),
+  **Customize Shortcuts…** (FQ-012, 2026-08-09 — the rebinding dialog, §27; deliberately a **second
+  single-purpose customization dialog** here rather than the start of a general Preferences container, and
+  **not** the dead `Edit ▸ Preferences…` stub, which the Edit menu's dissolution deleted). The three **dock**
   checkboxes (Project Tree / Properties Panel / Audit/Problems Panel) are bidirectional — closing a dock
   by its title-bar ✕ unchecks the menu item (BUG-007, §7). **The former ☐ "Find table reference" checkable
   is gone** (FQ-003, 2026-08-06) — table references are a sub-branch of the Database ▸ Database/XML
@@ -7523,7 +7742,8 @@ pair by active tab kind.
 - **Deployment — NEW (FQ-020, settled 2026-08-08; ledger §28). Contents are per ACTIVE TAB KIND**, all ~8
   actions **built once at startup** and only ever `setVisible`-toggled through
   `_refresh_editor_menu_affordances` (§7's build-once rule — an action that does not *exist* at enumeration
-  time is invisible to `collect_menu_commands()`, which would break Customize Toolbar and queued FQ-012):
+  time is invisible to `collect_menu_commands()`, which would break Customize Toolbar and Customize
+  Shortcuts alike):
 
   | Active tab | `Deployment` shows |
   |---|---|
@@ -7563,13 +7783,11 @@ four `Parsing` members** (BUG-039), which *is* a default button and was accepted
 **`Navigation`'s three mode-only members are NOT among them**: that FQ-021 leg did not ship, and every
 `Navigation` member is unconditionally visible.
 
-> **Concurrent-work collision, recorded not resolved:** a separate queued proposal (FQ-012, a *Customize
-> Shortcuts…* dialog under **View**, beside *Customize Toolbar…*) would add a View-menu entry here and
-> would recast §27's table as rebindable defaults. It is **not folded into this spec** and overlaps this
-> section and §27 directly; whoever picks it up must reconcile it against the FQ-016 rulings below (in
-> particular, `F3` is a bare window-level shortcut with **no menu entry**, so it falls outside
-> `collect_menu_commands()`'s enumeration and into that proposal's reserved-rows carve-out, exactly like
-> `Ctrl+L`).
+> **FQ-012 is FOLDED IN and SHIPPED** (2026-08-09, ledger §28): *Customize Shortcuts…* is a real View-menu
+> entry (above) and §27's table now reads as **rebindable defaults**, not fixed bindings. The FQ-016 ruling
+> it had to be reconciled against held exactly as predicted: `F3` — like `Ctrl+L`, `Ctrl+Alt+F`,
+> `Ctrl+Return`, `Ctrl+Space` and `Ctrl+G` — is a bare window-level shortcut with **no menu entry**, so it
+> falls outside `collect_menu_commands()`'s enumeration and into the dialog's reserved-rows carve-out.
 
 Toolbar default since FQ-020: **five** buttons — Open, Undo, Redo, Validate, Generate (customizable).
 **`Find` (FQ-016) and `Save` (FQ-020) are both gone from the default set**, the same way each time: no menu
@@ -7611,11 +7829,11 @@ has no other document to mean (ledger §28). **Window-level, NOT bar-local:** th
 | *(no shortcut, deliberately)* | **Every `Deployment` entry** — `Compare/Merge pgtp` · `Save pgtp` · `Save as new pgtp` · `Deploy .pgtp` · `Save in Project` · `Run on sandbox` · `Run on quality` · `Save XSD` · `Save PHP File` | Editor menu bar ▸ **Deployment**, per active tab kind (FQ-020, 2026-08-08, §26). Deliberately keyless on two different grounds: the four **saves** because a keystroke save is exactly the wrong-target hazard the deleted router created (see the `Ctrl+S` row), and `Run on sandbox` / `Run on quality` / `Deploy .pgtp` because *"an irreversible outward effect must not be one keystroke away"* (§18.5) |
 | *(no shortcut, deliberately)* | **Next Difference** / **`Prev Difference`** | **Window menu bar ▸ `Tools`, UNGATED** — invokable with no comparison loaded (status-corrected 2026-08-09, ledger §28; §12/§26). FQ-021's designed move onto the Editor bar's **`Navigation`** menu as mode-only members, with `Prev` relabelled **`Previous Difference`**, is **queued, not implemented** — the shipped label is `Prev Difference` and the shipped ids are still `tools.*` |
 | *(no shortcut — and NO GESTURE AT ALL)* | **Apply Changes to Target** | **Unreachable: no menu entry anywhere in the app** (status-corrected 2026-08-09, ledger §28). FQ-020 removed its `Tools` entry expecting FQ-021 to rehome it onto the mode-scoped surface; that leg is still `QUEUED`. `DiffMergeController.apply_changes_to_target` ships intact — a **write that replaces the app's open document**, gated by §12's ambiguity gate — but nothing invokes it, so **merge results cannot be applied to the target file**. Where it should land is an owner call, §29 |
-| *(no shortcut, deliberately)* | **Add Trigger…** / **New Function/Procedure…** | DDL Explorer tree context menus (table node / "Functions & Procedures" root) and, for the routine one, **Database ▸ New Function/Procedure…** (§18.1, FQ-002 — **implemented** 2026-08-06: `db/ddl_skeleton.py`, both dialogs, both context entries and the menu action). Both are dialog-gated and write **nothing** to a database — they only open a §18.5 editor tab on generated skeleton text — so the reason for withholding a shortcut is menu-hygiene, not the irreversible-outward-effect rule above. |
+| *(no shortcut, deliberately)* | **Add Trigger…** / **New Function/Procedure…** / the eight **`Alter Table ▸`** column operations | DDL Explorer tree context menus (table node / "Functions & Procedures" root / a **column leaf**) and, for the routine one, **Database ▸ New Function/Procedure…** (§18.1 — FQ-002 **implemented** 2026-08-06; FQ-025 slice 1 **implemented** 2026-08-09). All of them are dialog-gated and write **nothing** to a database — they only open a §18.5 editor tab on generated text — so the reason for withholding a shortcut is menu-hygiene, not the irreversible-outward-effect rule above. **None of the `Alter Table ▸` entries is a menu-bar action**, so like `F3`/`Ctrl+L` they fall outside `collect_menu_commands()` and are neither pinnable nor rebindable (below). |
 | *(no shortcut, deliberately)* | **Database/XML Coherence** (checkable) | Database menu (§17/§26, FQ-003, **implemented** 2026-08-06). It replaces three previously unshortcut entry points — Check: XML→Database, Check: Database→XML and View ▸ Find table reference — none of which carried a shortcut either, so nothing is lost; the merged view is read-only and reached by toggle, not by keystroke |
 | Escape | **Return focus to the document** — never hide anything | Any editor's `FindReplaceBar` returns focus to its editor; the Caption Management tab's `CaptionFindReplaceBar` returns focus to the grid (FQ-016/FQ-017, 2026-08-07). Both bars used to *hide* on Escape; both are now permanent |
 | Ctrl+G | Go to line in XML | Caption grid |
-| Ctrl+Shift+B | Bracket-select, handled by **`CodeEditor.keyPressEvent` itself** | Code editor dialog (its **only** host — that dialog has no menu bar); also present on every `CodeEditor` tab, where it is **shadowed** by the Select menu's QAction: Qt's shortcut map consumes the chord before the focused widget, so exactly **one** call occurs (measured, FQ-015). Kept deliberately: it is the menu-less dialog's only path and the reliable one under the offscreen test platform, both paths now land on the same editor, and `select_enclosing_brackets` is idempotent |
+| Ctrl+Shift+B | Bracket-select, handled by **`CodeEditor.keyPressEvent` itself** | Code editor dialog (its **only** host — that dialog has no menu bar); also present on every `CodeEditor` tab, where it is **shadowed** by the Select menu's QAction: Qt's shortcut map consumes the chord before the focused widget, so exactly **one** call occurs (measured, FQ-015). Kept deliberately: it is the menu-less dialog's only path and the reliable one under the offscreen test platform, both paths now land on the same editor, and `select_enclosing_brackets` is idempotent. **FQ-012 interaction, recorded as an open question (§29):** the chord is hosted **twice** and only the QAction half is rebindable, so rebinding `Select ▸ Select Enclosing Block` away from `Ctrl+Shift+B` leaves the hardcoded handler answering the old key and the new key **does not work inside `CodeEditorDialog`** |
 | **Ctrl+S / Ctrl+W** | **OK (accept) / Cancel — NOT a save to disk** | **`CodeEditorDialog` only — the ONE surviving `Ctrl+S` in the app, explicitly carved out of FQ-020's deletion** (2026-08-08). `self.save` is the modal's **accept** slot, the same one `button_box.accepted` fires, and it **writes nothing to disk**; `Ctrl+W` is its cancel. Killing it would be an unrelated regression in the `Edit code…` modal (§8), which has no menu bar and no other keyboard path. **It is bound TWICE and both duplicates must survive:** a `WindowShortcut`-scoped `QShortcut` (`code_editor.py:514-516`) **and** a `keyPressEvent` branch (`:531-543`), the latter because `QShortcut` activation is unreliable under the offscreen test platform. A reader of the amended `Ctrl+S` row above would otherwise assume this pair was deleted too — hence this row, which §27 never carried before |
 | F1 | Manual | Window |
 
@@ -7625,12 +7843,87 @@ needs joins the **existing** per-tab dispatchers rather than adding shortcuts: `
 `active_bookmark_editor()` each gain one branch. *(The third dispatcher it used to extend,
 `_save_active_tab()`, is **deleted** — FQ-020, §7.)*
 
-**Every binding in this table is FIXED** — set inline as a literal string at each action's construction
-site, with no central registry and no user-facing rebinding. A separate queued proposal (FQ-012, a
-*Customize Shortcuts…* dialog) would overturn that; it is **not folded into this spec**, and it overlaps
-this table and §26's View menu directly. Note for whoever reconciles it: `F3`, `Ctrl+L`, `Ctrl+Alt+F` and
-`Ctrl+Return` are **not** menu actions, so they fall outside the menu-bar enumeration such a dialog would
-be built on.
+### User-rebindable shortcuts — *Customize Shortcuts…* (FQ-012, 2026-08-09, ledger §28)
+
+**The bindings above are DEFAULTS, not fixed bindings.** Every shortcut carried by a **menu-bar QAction** may
+be rebound, cleared, reset or restored-to-default by the user through **`View ▸ Customize Shortcuts…`**,
+sibling to *Customize Toolbar…* (§26). What is *unrebindable* is enumerated below and is a short, reasoned
+list — not the whole table. (Superseded: *"Every binding in this table is FIXED — set inline as a literal
+string at each action's construction site, with no central registry and no user-facing rebinding."*)
+
+**Three layers, and the split is the design.**
+
+| Layer | Module | Holds |
+|---|---|---|
+| Rules | **`ui/shortcut_registry.py`** — pure, **Qt-free**, the twin of `toolbar_registry.py` | `normalize_sequence` · the reserved tables · `detect_conflicts`/`commands_holding`/`refusal_for`/`assign_shortcut` · `default_bindings`/`resolve_bindings`/`overrides_for` · `serialize_/parse_/resolve_shortcut_overrides` |
+| Widget | **`ui/customize_shortcuts_dialog.py::CustomizeShortcutsDialog`** | One `QTableWidget` (`Command` · `Shortcut` · `Note`) + a `QKeySequenceEdit` capture row with `Assign` / `Clear` / `Reset to Default` / `Restore All Defaults`, an inline message label, OK/Cancel. Holds **no `QAction`**, touches **no `QMenuBar`**, writes **no QSettings** |
+| Host | `MainWindow` — three jobs, all Qt | capture defaults (`_shortcut_commands`) · install the resolved map (`_apply_shortcut_bindings`) · persist it (`apply_and_save_shortcut_overrides`) |
+
+- **The command universe is `ToolbarController.collect_menu_commands()`** — the *same* menu-bar walk
+  Customize Toolbar uses, with `command_id_for()` ids and `menu_path_label()` labels
+  (`File › Discard Changes`). Never a second enumeration. That walk never tests `isVisible()`, which is what
+  keeps a command hidden by Maintenance mode (§7) or by a per-tab filter listed and stably identified — a
+  visibility-dependent list would make the dialog's contents depend on which tab happens to be active.
+- **Defaults are captured ONCE, before any override is applied.** A `QAction` carries one shortcut, so the
+  first `setShortcut()` of an override destroys the built-in it replaced; re-reading the default on a later
+  walk would record the *override* as the default and make "Reset to Default" a permanent no-op.
+  `_shortcut_defaults` is therefore write-once per command id, and a command whose menu is built later is
+  captured the first time it appears — still before any override of its own.
+- **Startup order is load-bearing:** `_restore_shortcut_overrides()` runs after the menus exist and before
+  `_restore_window_state()`; it captures the defaults, parses the stored map, prunes it and installs the
+  result.
+- **The `setShortcut()` pass is TWO passes — clear every command first, assign second.** A one-pass loop
+  that gave a stolen key to its new owner before reaching the loser would leave the pair ambiguous for the
+  length of the loop, and permanently if the loop order skipped the loser. The registry guarantees the
+  resolved map holds no duplicate; the two passes guarantee the QActions never do either.
+- **Persistence:** QSettings key **`shortcutOverrides`**
+  (`shortcut_registry.SHORTCUT_OVERRIDES_SETTINGS_KEY`), a sorted flat list of `"command_id=Ctrl+G"` strings
+  beside `toolbarIds`/`toolbarIconIds` in the same `QSettings("MDS", "PGTP Editor")` scope (§7), mirroring
+  FQ-004's serialize/parse/resolve-and-prune shape. Only commands whose binding **differs from their
+  captured default** are stored (`overrides_for`), so a later build that changes a default is followed by
+  every un-customized command. On load, an override is dropped when its command no longer exists, when the
+  command may not be rebound, or when the sequence is reserved; legacy ids map through `LEGACY_ID_ALIASES`
+  then `RENAMED_ID_ALIASES`, so an override survives a command's rename. **One deliberate divergence from
+  `toolbarIconIds`: an EMPTY value is preserved** — `"file.close="` means *"the user cleared this binding"*,
+  which is a different state from an absent key meaning *"no override, keep the default"*. (Whether the two
+  stores *should* diverge is §29.)
+
+**Why a duplicate binding is a hard error and not a matter of taste.** Qt resolves two enabled shortcuts
+matching one key press by firing **neither** of them (only `activatedAmbiguously`). This codebase already
+wrote that down at the one place it bit us — `find_replace_bar.install_focus_shortcuts` (the `Ctrl+F` note,
+above): *"Qt does not prefer a narrower context over a wider one: two enabled shortcuts matching the same
+key press are ambiguous, and neither fires."* A double binding therefore does **not** degrade to
+"first wins" — it silently deletes **both** commands from the keyboard, which is exactly the
+never-a-silent-wrong-result class this project refuses. Hence the two-rule conflict policy:
+
+- **STEAL, for a chord held by another editable command.** `conflict_message()` names the current holder
+  inline **before** anything is committed; if the user proceeds, `assign_shortcut` clears the loser **in the
+  same operation** and returns the ids it stole, so the map can never *hold* a duplicate, not even
+  transiently. The loser is left **unbound** (`""`), never deleted — the row stays, it simply has no key.
+- **REFUSE, for a chord held by anything the dialog does not own.** `refusal_for()` is not overridable,
+  because the dialog owns menu QActions **only**: it cannot clear a window-scoped `QShortcut`, a per-tab
+  focus shortcut or a widget's own `keyPressEvent`. Stealing what you cannot clear produces precisely the
+  ambiguity above.
+- `resolve_bindings` **re-derives the same steal at load time**, applying overrides in sorted command-id
+  order (an override always beats a default it collides with), so a hand-edited or half-pruned settings file
+  cannot install an ambiguous pair either.
+
+**What stays unrebindable, and why** (`RESERVED_SEQUENCES` / `RESERVED_COMMAND_IDS`, transcribed from this
+section — the dialog shows them as **greyed, read-only rows** so the user can see the key exists and why it
+is locked, which is more honest than a silently incomplete list):
+
+| Reserved | Reason |
+|---|---|
+| `Ctrl+S` · `Ctrl+Shift+S` | Deliberately unbound app-wide since FQ-020 (row above) — and therefore not available as a target either, or the reflex would come back by the side door |
+| `Ctrl+Z` · `Ctrl+Y` | Window-scoped `QShortcut`s for the project history — not menu actions, so the dialog cannot clear them |
+| `Ctrl+F` · `Ctrl+R` | Per-tab focus shortcuts at **six** `FindReplaceBar` sites plus the caption panel's own pair |
+| `Escape` | Returns focus to the document, per bar |
+| `F3` · `Ctrl+L` · `Ctrl+Alt+F` · `Ctrl+Return` · `Ctrl+Space` · `Ctrl+G` | Window-level or context commands with **no menu entry**, so the menu walk cannot enumerate them and there is no row to move them from |
+| `Ctrl+C` · `Ctrl+X` · `Ctrl+V` | Qt built-ins **inside** the editor widgets (§26, FQ-016). A window-level shortcut on one of them would outrank the widget and break copy/cut/paste everywhere |
+| `F1`, **and the `help.manual` command itself** | The universal convention, and §7 pins `Help ▸ Manual` as the one entry no launch mode may hide. It is the only entry in **both** tables: nothing else may take `F1`, and Manual may not leave it — so its row is present but read-only |
+
+`Customize Shortcuts…` is itself an ordinary menu action, so it enumerates into the walk and is both
+pinnable and rebindable. Being **new**, it needs no `RENAMED_ID_ALIASES` row — that table is for moves.
 
 ---
 
@@ -7782,6 +8075,8 @@ is authoritative** (and is what appears in the body above).
 | 2026-08-09 | §7/§29 (FQ-011, 2026-08-07): the launch mode as a **PERSISTED** key in `QSettings("MDS","PGTP Editor")` beside `lightTheme`/`windowState`/`toolbarIds`, set by the launcher's **four** FQ-010 groups, with the per-mode membership left UNDECIDED, `Generate`-in-project-mode as the motivating example, and an escape hatch whose shape was open | **FQ-027 SUPERSEDES FQ-011 wherever they disagree (owner ruling), and it builds the mechanism FQ-011 only planned.** The ordering is the reason: FQ-010's launcher shipped, the owner used it, and FQ-027 is the design as revised by contact with the real thing. **Nothing of FQ-011 was ever implemented** — no `launchMode`/`launch_mode`/`_current_mode` key exists in `pgtp_editor/`, and the only shipped visibility gating is capability-based (`_refresh_sandbox_affordances`) or tab-kind-based (`_refresh_editor_menu_affordances`/`_refresh_parsing_menu_affordances`); §7's earlier claim that a launcher choice *"sets the persisted launch mode"* was wrong and had already been corrected to "planned only" (`eaa0cb5`), and now states the positive truth. **Three concrete disagreements, all resolved FQ-027's way:** (1) **Persistence** → **SESSION-ONLY**, and therefore **no QSettings key at all** — a mode that dies with the session cannot strand a user in a menu-less app after restart, which is most of what FQ-011's escape-hatch anxiety was about. (2) **Launcher shape** → **three columns (Standalone \| Project \| Maintenance)** in a 1×3 row, merging FQ-010's groups 1+3 into Standalone and narrowing group 4 to `Edit XSD` + `Import XSD`; the `launcherSuppressed` mechanism is deleted (row below). (3) **The `Generate`-in-project-mode case** → **not adopted**: only **Maintenance** gets a membership rule (File trimmed to `New Session` · Schema whole · Help whole; View/Database/Tools/Generation hidden), Project and Standalone are explicitly left alone, so no *default* toolbar button is emptied on a fresh install and FQ-011's own unanswered open question 4 is sidestepped rather than answered. **What SURVIVES from FQ-011 and is carried into §7 verbatim:** the mechanism (**visibility only, never enabled-state**, through **one** `_refresh_*_affordances`-style entry point — the app keeps exactly two postures); the rule that **`Help ▸ Manual` (F1) and the surface that clears the mode may never be filtered out of any mode**; the `_walk_menu_actions` enumeration fact (a hidden action stays enumerated, stays offered by Customize Toolbar and **keeps a pinned toolbar button working** — which FQ-027 relies on deliberately in its menu-bar-only scope, and which reads as the *opposite* of BUG-040's deletion ruling only until you note the cases differ: a BUG-040 button pointed at a **removed gesture**, an FQ-027 button points at a **command that still works**); and, above all, **THE OBJECTION, which is NOT retired by this supersession** — this remains the first time the codebase hides a command because the user *said they were doing something else* rather than because the command *cannot run*. §7 therefore states **two deliberately distinct rules** (A: capability · B: intent), each with its own trigger, justification, escape and *may-it-state-a-reason* answer, so a future reader can tell which governs a given menu item; §18.5 carve-out 2 and §26's *absent, not disabled* statements stay stated in **capability** terms and are explicitly untouched by rule B |
 | 2026-08-09 | §7's *"Suppressible, escapable and REVERSIBLE"* launcher contract (FQ-010, 2026-08-07): the persisted **"Don't show this again"** checkbox writing the QSettings bool **`launcherSuppressed`** on **every** exit path, and **`File ▸ Show Launcher…`** re-opening the modal with **`force=True`** to keep the tick reversible | **The suppression mechanism is DELETED and the launcher becomes an UNCONDITIONAL starting gate** (FQ-027 — a documented capability withdrawn, recorded rather than silently dropped). Removed: the `QCheckBox` and its `suppress_requested`/`set_suppressed` accessors, `LAUNCHER_SUPPRESSED_SETTINGS_KEY` with `launcher_suppressed()`/`set_launcher_suppressed()`, and `show_launcher`'s `force=` parameter with its early-return and persist-on-exit paths — plus the `manual.md` passage describing them. Rationale: the launcher is now the one gate at which a **mode** is chosen, so a persisted "skip it forever" toggle is both redundant and a trap; `force=` existed **only** to bypass suppression and goes with it. In the same ruling **`File ▸ Show Launcher…` is RENAMED `File ▸ New Session`** — exactly **one** action, not two — and gains save-all (Cancel aborts the gesture) → close everything → restore the full menu bar → show the launcher unconditionally, making it both a general *"start over"* gesture and the mandatory escape hatch from Maintenance mode. The rename changes the command id, so it carries a **`RENAMED_ID_ALIASES`** row `file.show-launcher → file.new-session` and **never** a `LEGACY_ID_ALIASES` one (`ICON_ID_BY_COMMAND` is that dict inverted — FQ-021's landmine). Deliberately **no keyboard shortcut**: an action that closes every open document must not be one keystroke away. Rejected: keeping `Show Launcher…` as a light re-show and adding `New Session` beside it (owner: exactly one action) |
 | 2026-08-09 | §7/§8/§12/§13/§26/§27 (FQ-021, 2026-08-08): FQ-021 recorded as **fully shipped** — the header banner, the TOC's §12 blurb and every body site stating that `Navigation` gained **three mode-only members** (`Next Difference` / `Previous Difference` / `Apply Changes to Target`) moved off `Tools`, that `Prev Difference` was **relabelled** `Previous Difference`, that `RENAMED_ID_ALIASES` carries three `tools.* → navigation.*` rows, that hiding those members is §7's **third** accepted action-hide instance, and that Caption Mode's disable is already **narrowed** off the whole `Navigation` `QMenu` | **FQ-021 PARTLY SHIPPED — two legs of three (owner rule: the shipped feature is the truth).** Verified against HEAD `9b9aef7`. **In:** FQ-021a (`75e2cdb`) — Compare/Merge as a **MODE** (`CenterStage.enter_diff_merge_mode` / `leave_diff_merge_mode`, the panel-owned exit `diff_merge_panel._on_close`, called from `diff_merge_controller.py`) and the Raw XML **read-only REASONS SET** (`_raw_xml_read_only_reasons: set[str]`, the `raw_xml_read_only_reasons` property, `_set_raw_xml_read_only(reason, active=True)` composing the `" (read only in … + …)"` tab-title suffix, each `leave_*` discarding **only its own** reason, `reason=None` reserved as a whole-set reset no mode's `leave_*` may use); and FQ-021b (`1d53abd`) — the **`Bookmarks` → `Navigation` rename** with five `RENAMED_ID_ALIASES` rows (`bookmarks.* → navigation.*`), correctly **not** in `LEGACY_ID_ALIASES`. **NOT in — the third leg, still `Status: QUEUED` in `docs/FEATURE_QUEUE.md`:** `FindValidateController.build_navigation_menu` builds **exactly five members, all bookmark commands**, and the menu's only gate is Caption Mode via `set_bookmarks_enabled` (which still disables the `QMenu` **and** the five actions — equivalent only while no Difference member has joined); **`Next Difference` and `Prev Difference` are still on the window bar's `Tools` menu, ungated**, under the shipped label **`Prev Difference`** (the string *"Previous Difference"* appears **nowhere** in the package), pinned by `tests/ui/test_menus.py::test_tools_menu_contents` and looked up on `Tools` by `tests/ui/test_diff_merge_entry_points.py`; the three `tools.*` alias rows **do not exist**; and **`Apply Changes to Target` has NO menu entry anywhere** — FQ-020 deleted its `Tools` home expecting this leg to rehome it (`main_window.py:4955-4961`, verbatim: *"Until FQ-021 lands it has no menu home"*), so a shipped, tested implementation is **unreachable** and **the app offers no way to apply merge results to the target file**. That regression is **recorded as an open question (§29), not resolved** — `Navigation`, back to `Tools`, or a `DiffMergePanel`-local button is an owner call. The unshipped design is retained in §12/§7/§26 explicitly labelled *designed in the FQ-021 queue entry, not implemented*, never as behaviour. The 2026-08-08 FQ-021 row above is **amended in place**, not deleted |
+| 2026-08-09 | §27's closing statement: ***"Every binding in this table is FIXED"*** — set inline as a literal string at each action's construction site, *"with no central registry and no user-facing rebinding"* — plus §26's note that FQ-012 was *"not folded into this spec"* and §29's item recording it as an unsettled concurrent proposal | **Shortcuts are user-rebindable DEFAULTS — FQ-012 ships** (`5f53583` for the two new modules; the `View ▸ Customize Shortcuts…` entry and the host's capture/apply/persist pass verified in `ui/main_window.py`). Three layers, and the split is the design: **`ui/shortcut_registry.py`** (pure, **Qt-free**, the twin of `toolbar_registry.py`) holds normalization, the reserved tables and the conflict rule; **`ui/customize_shortcuts_dialog.py`** is a widget that holds no `QAction`, touches no `QMenuBar` and writes no QSettings; `MainWindow` does the three Qt jobs — capture-once defaults (`_shortcut_commands`), the `setShortcut()` pass (`_apply_shortcut_bindings`), persistence (`apply_and_save_shortcut_overrides`). Enumeration is **`ToolbarController.collect_menu_commands()`**, the same walk Customize Toolbar uses, never a second one. **The conflict rule is STEAL-or-REFUSE, and it could not have been "warn and allow"** — Qt answers two enabled shortcuts on one chord by firing **NEITHER** (the fact this codebase already recorded at `find_replace_bar.install_focus_shortcuts`), so a duplicate does not degrade to "first wins", it **deletes both commands from the keyboard**: `assign_shortcut` therefore clears the loser **in the same operation** (the map never holds a duplicate, not even transiently), `resolve_bindings` **re-derives the same steal at load** so a hand-edited settings file cannot install an ambiguous pair, the host's install runs **two passes** (clear all, then assign), and a chord held by a **non-menu** occupant is **refused, not stolen**, because the dialog owns menu QActions only and cannot clear a window-scoped `QShortcut`, a per-tab focus shortcut or a widget `keyPressEvent` — stealing what you cannot clear *produces* the ambiguity. **What remains genuinely unrebindable is a short, reasoned list, not the table:** `Ctrl+S`/`Ctrl+Shift+S` (deliberately unbound since FQ-020), `Ctrl+Z`/`Ctrl+Y` (window-scoped `QShortcut`s), `Ctrl+F`/`Ctrl+R` (per-tab focus shortcuts at six sites plus the caption pair), `Escape`, the menu-less window-level commands `F3`/`Ctrl+L`/`Ctrl+Alt+F`/`Ctrl+Return`/`Ctrl+Space`/`Ctrl+G`, `Ctrl+C`/`Ctrl+X`/`Ctrl+V` (Qt built-ins **inside** the editors — a window-level shortcut would outrank the widget and break copy everywhere), and `F1` **together with the `help.manual` command itself** (§7 pins it as the one entry no launch mode may hide). Persistence is the new QSettings key **`shortcutOverrides`** beside `toolbarIds`/`toolbarIconIds` (§7), same `"command_id=value"` shape, pruned on load, legacy/renamed ids mapped — with **one deliberate divergence from `toolbarIconIds`: an empty value is PRESERVED** (`"file.close="` = "the user cleared this"), which is itself recorded as an open question (§29). Rejected on the way: hiding the locked keys (a silently incomplete list), blocking every conflict outright, and hosting this in the dead `Edit ▸ Preferences…` stub (owner: *"Under View"*, a second single-purpose dialog, not a settings container) |
+| 2026-08-09 | §18.5's FQ-002 statement that the third (creation) entry point changes **nothing** in that subsection — *"Tab identity, title/tooltip rules, dirty tracking, the close prompt, Save / Save As…, Format Selection and §18.6 completion all behave exactly as for an edited object — the panel never knew whether the DB holds the object, **and must not start branching on it**"* — and §18.1's amendment that a table node's context menu holds *"exactly one creation entry — Add Trigger…"*, with column rows not existing in the tree at all | **A FOURTH kind of tab exists: the ALTER tab, whose save-to-object is suppressed STRUCTURALLY — FQ-025 slice 1 ships** (`bc02d9c`, `8a88da4`, `532da30`). Eight column operations (Add / Drop / Rename / Change type with `USING` / Set-Drop NOT NULL / Set-Drop DEFAULT) hang off a new **`Alter Table ▸` submenu** on table nodes **and** on the tree's **new column leaves** (`Columns  (N)` group per table — FQ-025's queue entry claimed column nodes already existed and merely lacked a menu; that was **false**). Eight pure emitters join `db/ddl_skeleton.py` under its existing allowlist-or-raise posture; five dialog classes in `ui/alter_column_dialogs.py` split by **what each collects**, not one per menu item. **The panel still does not branch — the REF does:** `ui/main_window.py::AlterDdlRef` (`kind="alter"`) is a separate duck-typed ref because `DdlObjectRef` cannot name a mutation without lying (its `qualified` would render **`pr.orders()`**, spelling a table as a zero-argument routine in every confirmation). Three deliberate values: **`name=""`** — `build_ladder` adds tier 3's `plpgsql_check` only when a name is present, and an ALTER creates no function to analyse, so *"tier 3 was never going to run"* is the honest state (tiers 0–2 still run); a **serial** per generation, because `open_ddl_object_tab` focuses an existing tab for a repeated key and **discards the new text**, and two ALTERs on one table are two statements; and a Save As… prefill (`alter_pr_orders.sql`) deliberately **not** §18.2's `schema.object.sql` scheme. **The narrowing:** the tab opens through **`_edit_ddl_live` always** (never `_edit_ddl_checked_out`) and is **never registered in the deploy manifest**, so no `ddl/<object>.sql` is seeded, no baseline hashed, no drift marker speaks for it — which is why FQ-002's "nothing changes" no longer covers every ref. Consequences recorded rather than hidden: **`Deployment ▸ Save in Project` opens Save As…** (its label reads slightly off), **Apply-to-Target refuses these buffers** because `parse_buffer_identity` finds no `CREATE` and precondition 1 blocks it (FQ-025's *"Apply-to-Target is not wired, a pre-existing gap"* was **stale** — it was wired projectless on 2026-08-08), **Apply-to-Sandbox is the intended run path and works**, and the `applied` bookkeeping row is **one per table** (`("alter", schema, "", table)`) so successive ALTERs overwrite each other — an accepted limit of recording a mutation in an object-keyed table; `db/ddl_check.py` was **not** changed. In the same pass `db/introspect.py` gains `ConstraintInfo`/`IndexInfo` (slice 2's data, fetched now so the format version moves once) and **`db/schema_snapshot.py::SNAPSHOT_VERSION` goes 1 → 2, REFUSING a v1 payload rather than loading it with the new sections empty** — refuse-never-degrade, because a half-loaded schema is exactly what makes `diff_schemas` emit DROPs; costless, since `Save Schema Snapshot…` was never built. **Slices 2 and 3 are NOT shipped** and are not written as behaviour anywhere |
 
 ---
 
@@ -7861,9 +8156,32 @@ unrecorded — nothing below was invented in the body above:
   **`Clear filter`** clear only the text filter or **all** filters including the tree-set row predicates the
   retained banner describes? The existing `clear_all_filters()` does the latter while the singular label
   suggests the former.
-- **Not folded in, and colliding with §26/§27:** FQ-012's *Customize Shortcuts…* dialog would recast §27's
-  fixed-binding table as user-rebindable defaults and add a View-menu entry beside *Customize Toolbar…*. It
-  is a separate concurrent proposal, not settled here.
+- **FQ-012 (folded in and shipped 2026-08-09) leaves exactly two questions open, both raised by its
+  implementer:**
+  - **Does an empty override value mean "the user cleared this", or should it mean nothing?**
+    `shortcut_registry` **preserves** an empty value (`"file.close="` = deliberately unbound) while FQ-004's
+    `toolbarIconIds` **drops** empties, so two sibling stores with the same serialized shape now differ on
+    what an empty value means. Preserving it is required here (a cleared binding must not resurrect its
+    default on the next launch) and meaningless there (an empty icon *is* the default), so the divergence
+    is defensible — but it is currently **implicit**, and two stores that read the same and behave
+    differently is how a future maintainer breaks one by fixing the other. Whether to state it as an
+    invariant on both sides, or to make the icon map preserve empties too, is an owner call.
+  - **`Ctrl+Shift+B` is hosted twice and only one host is rebindable.** §27 pins
+    `CodeEditor.keyPressEvent` as the chord's **only** host inside the menu-less `CodeEditorDialog`, so
+    rebinding `Select ▸ Select Enclosing Block` moves the QAction and leaves the handler answering the old
+    key: inside that dialog the **new** key does nothing and the **old** key still works. Options (not
+    ruled on): teach the dialog its host's resolved binding, exempt the command as reserved, or accept the
+    split and say so in the manual.
+- **FQ-025 slice 1 (shipped 2026-08-09) leaves three, all recorded in §18.1/§18.5 as accepted limits rather
+  than defects:** (a) **`Deployment ▸ Save in Project` on an ALTER tab opens Save As…** and its label
+  therefore reads slightly off for what it does — whether it should be relabelled or hidden per tab kind is
+  an owner call, and hiding it would be the app's first per-tab-kind *label* rule rather than a visibility
+  rule; (b) **the `applied` bookkeeping row is one per table** for ALTERs (`("alter", schema, "", table)`),
+  so successive ALTERs on a table overwrite each other — widening the key would change every object's
+  bookkeeping identity, which is why `db/ddl_check.py` was left alone; (c) **slices 2 and 3 are unbuilt**
+  while their introspection already ships (`ConstraintInfo`/`IndexInfo`), so `DatabaseSchema.constraints`
+  and `.indexes` are currently populated and read by nothing — a deliberate, stated over-fetch (one
+  snapshot-version bump instead of two), not dead code to prune.
 
 - **Ability-code numeric mapping** (`*AbilityMode`): integer→label mapping still unknown; derive
   empirically. No longer blocking — powers editor hover tooltips.
