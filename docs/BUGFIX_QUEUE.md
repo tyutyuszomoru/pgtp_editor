@@ -3110,11 +3110,16 @@ The Editor-bar's per-tab-kind gating entry point is `MainWindow._refresh_editor_
 
 ## BUG-040: In a project the sandbox session should be connected automatically on open (and apply/check "just work"); the explicit Open/Close/Setup Sandbox actions belong only to the projectless case
 **Status:** RESOLVED (4828e3d for the auto-open + the `Open`/`Close Sandbox Session` deletion; **4e36162** for the
-third leg, `Sandbox Setup…` projectless-only; spec §18.5 carve-out 2 rewritten + a §28 ledger row) — all three
-legs have now shipped. **But see "Open consequence: project mode has lost provisioning" at the end of the
-Proposed fix — the third leg shipped on a premise this entry stated as owner-confirmed and that turned out to
-be false. The owner has now RULED (2026-08-09): move the provisioning actions into Project Settings and delete
-`Database ▸ Sandbox Setup…` — being implemented separately, not yet landed, no commit to cite.** The entry was right
+third leg, `Sandbox Setup…` projectless-only; **e79626c** for the follow-through that closed the gap `4e36162`
+opened — the provisioning gestures moved into Project Settings ▸ Connections and `Database ▸ Sandbox Setup…`
+deleted; spec §18.5 carve-out 2 rewritten + a §28 ledger row; spec harmonization swept in `0e0a943`).
+**FULLY CLOSED — the "CONSEQUENCE: project mode has lost provisioning" recorded below is no longer open;
+it was closed by `e79626c`.** Read the entry in this order, because it carries a premise, a correction, and a
+resolution and they contradict each other by design: (1) the third leg shipped on a premise this entry stated
+as owner-confirmed — *"in project mode all sandbox configuration already lives in Project Settings"* — which
+was **FALSE** when written; (2) the CORRECTION under Spec impact establishes it was false; (3) the owner then
+ruled to make the premise TRUE rather than revert the hiding, and `e79626c` did exactly that. So the premise is
+false for any statement dated before `e79626c` and true for anything after it. The entry was right
 that this reverses a recorded owner decision, and the owner reversed it explicitly, taking the
 **aggressive** reading of the sub-question the entry refused to guess: the manual lifecycle actions are
 GONE in project mode, not kept as recovery. Spec moved first, as the entry demanded. What shipped:
@@ -3169,9 +3174,10 @@ The behavior the report calls a bug is the shipped resolution of **FQ-023** (see
 - **Gotcha:** `_adopt_sandbox_setup_settings` (main_window.py:4025-4051) deliberately does NOT go through `_bind_sandbox_controller_to_project` (to avoid dropping the session the Setup dialog just provisioned). If auto-open moves into `_bind_...`, verify the Setup-dialog path still ends with a live session (it provisions its own) and does not double-open.
 - **Gotcha:** projectless mode must be untouched — `_configured_sandbox_params()` returns None there, so the auto-open guard is a no-op projectless by construction; confirm no auto-open fires when `_ddl_project_folder is None`.
 
-**CONSEQUENCE — NOW RULED (owner, 2026-08-09; implementation in flight, see the ruling note at the end of this
-section): hiding `Sandbox Setup…` left project mode with no way to provision, re-provision or
-reset a sandbox.** The bullet above justifies the hiding with a claim marked *owner-confirmed*: that in project mode
+**CONSEQUENCE — RULED AND NOW CLOSED by `e79626c` (see the ruling note at the end of this section): between
+`4e36162` and `e79626c`, hiding `Sandbox Setup…` left project mode with no way to provision, re-provision or
+reset a sandbox.** Everything in this section describes the state of the tree in that window only; it is history,
+not a description of the code today. The bullet above justifies the hiding with a claim marked *owner-confirmed*: that in project mode
 *"all sandbox configuration — provisioning, re-provisioning, and sandbox-mode change — already lives in Project
 Settings … so hiding all three in project mode leaves the mode complete."* **That claim is false for provisioning.**
 Verified 2026-08-09 by reading both dialogs end to end:
@@ -3193,16 +3199,28 @@ Verified 2026-08-09 by reading both dialogs end to end:
 This is recorded as a **consequence, not a defect to revert**: the owner directed the hiding after being warned the
 premise was unverified, and was then told the premise is false.
 
-**OWNER RULING ON THE CONSEQUENCE (2026-08-09).** The owner ruled in the direction this entry suggested — give project
-mode its own provisioning home rather than un-hide `Sandbox Setup…`: the provisioning actions are to be **moved into
-Project Settings**, and `Database ▸ Sandbox Setup…` **deleted** (not merely hidden, as `4e36162` left it). This makes
-the premise true after the fact instead of reverting `4e36162`. **Status of that work at the time of writing: being
-implemented by a sibling agent; NOT yet landed, no commit to cite.** Nothing in this paragraph should be read as a
-description of the code as it stands — as of `4e36162` the gap documented above is still real (Project Settings has no
-Provision/Reset/create-database; `Sandbox Setup…` is hidden in project mode). A later reader must confirm against the
-tree, and once it commits, this entry's Status and the false-premise CORRECTION under Spec impact should both be
-updated to point at the landing commit. Route the design record through `spec-maintainer` after it lands (see
-Spec impact).
+**OWNER RULING ON THE CONSEQUENCE (2026-08-09) — LANDED as `e79626c`.** The owner ruled in the direction this entry
+suggested — give project mode its own provisioning home rather than un-hide `Sandbox Setup…`: the provisioning actions
+move **into Project Settings**, and `Database ▸ Sandbox Setup…` is **deleted** (not merely hidden, as `4e36162` left
+it). This makes the premise true after the fact instead of reverting `4e36162`. **What `e79626c` actually shipped:**
+- The three provisioning gestures — `Provision sandbox`, `Reset sandbox`, `Create a sandbox database for me` — now
+  live in **Project Settings ▸ Connections**, in a `Sandbox provisioning` group placed under the sandbox-mode radios.
+- `Database ▸ Sandbox Setup…` is **DELETED, not hidden** — deliberately, on this entry's own argument: a hidden QAction
+  stays enumerable by `ToolbarController._walk_menu_actions` and a toolbar button bypasses menu visibility entirely,
+  so hiding would have left a live clickable button for a gesture the menu no longer offers. This retires the
+  hidden-vs-deleted asymmetry `4e36162` introduced.
+- `pgtp_editor/ui/sandbox_setup_dialog.py` and its test file were **deleted outright**. Its state group and
+  working-set table were duplicating §18.8's Project Status window, so nothing was worth preserving.
+- **Carve-out 2 travelled with the gestures:** the provisioning group is rebuilt wholesale, so an inapplicable action
+  is **absent with a stated reason**, never greyed out. Each destructive gesture still confirms exactly once, using
+  the controller's own warning text (not a new prompt).
+- **A quietly false promise was fixed with it:** the mode radios' note said a change *"takes effect the next time the
+  sandbox is reset/recreated"*, but `SandboxSession.reset()` re-runs the mode the sandbox was **created** with — so
+  Reset could never honour a just-changed radio. The note now says **Provision**.
+- Full suite green at the time: **5653 passed, 45 skipped**.
+
+The design record for this was routed through the spec, and the stale "Project Settings does not provision" claims
+were swept out of the spec in `0e0a943` (~25 sites across §7, §18.2, §18.5, §18.7, §18.8, §26 and the header).
 
 **Test impact:** Existing coverage to extend, not duplicate:
 - `tests/ui/test_sandbox_check_console_wiring.py` and `tests/ui/test_mainwindow_surface.py` — the `_refresh_sandbox_affordances` / Open-Close-Session menu-visibility and `_refuse_sandbox_gesture` wiring; these encode today's manual-session posture and will need updating to the auto-open expectations.
@@ -3221,13 +3239,37 @@ hidden action reports `isEnabled() == False`, so the assertion would have read l
 posture while in fact guarding nothing. Assert `isVisible()` explicitly; never use `isEnabled()` to characterize an
 action whose visibility is also under test.
 
+**Test impact — what `e79626c` (the provisioning move) landed:** `tests/ui/test_sandbox_setup_wiring.py`'s
+`Sandbox Setup…` menu-existence assertions and the whole `sandbox_setup_dialog` test file were **deleted** along
+with the dialog; the provisioning coverage moved onto the Project Settings dialog's tests (the `Sandbox
+provisioning` group's presence/absence-with-a-reason rebuild, and the single confirmation on each destructive
+gesture). The three `4e36162` visibility cases in `tests/ui/test_sandbox_check_console_wiring.py` described above
+went with the deleted action. Anyone re-reading those paragraphs should not expect to find those tests in the tree.
+
 **Spec impact:** **Directly reverses a recorded owner decision — must go to spec-maintainer BEFORE any implementation, not after.** CONSOLIDATED_SPEC §18.5 (FQ-023 carve-out, spec lines 4590-4624) records the explicit ruling: *"Lazy session opening is REJECTED by the owner: 'Don't open lazily, it needs to be an explicit decision.'"* and *"`Database ▸ Open Sandbox Session` stays an explicit menu item."* Auto-connecting on project open is exactly the lazy/implicit open that decision rejected — so this is a genuine design change, requiring a Supersession Ledger row (§28) overriding the FQ-023 manual-session stance for project mode. Note the report's own strongest argument is already in the spec (lines 4618-4624): the *"opens nothing"* principle is a *"leftover rather than a stance"* since `refresh_capability_status` already connects at project-open time — spec-maintainer should reconcile `set_project`'s docstring, the D2 ownership narrative, and the §18.5 auto-vs-manual-session decision in one pass. **The Open/Close-menu sub-question is now settled by owner decision (2026-08-08): in project mode the explicit `Open Sandbox Session` / `Close Sandbox Session` / `Sandbox Setup…` actions are hidden entirely — no manual sandbox lifecycle surface in project mode; the connection is fully implicit on project open. The projectless case is unchanged.** This further supersedes FQ-023's *"`Database ▸ Open Sandbox Session` stays an explicit menu item"* clause, so the Supersession Ledger row must cover both the auto-open and the removal of the manual lifecycle actions. **No re-provisioning home needs to move (owner-confirmed, 2026-08-08):** project sandbox configuration — provisioning, re-provisioning, and sandbox-mode change — already lives in Project Settings, so hiding `Sandbox Setup…` in project mode loses no capability; spec-maintainer should record that the three lifecycle menu actions are projectless-only and that Project Settings is the sole sandbox-config surface in project mode. Do not edit the spec here; flag for spec-maintainer. **CORRECTION (2026-08-09, verified — supersedes the
-"No re-provisioning home needs to move" sentence immediately above):** that sentence is wrong. Project Settings is
-NOT a provisioning surface — see "Open consequence" in the Proposed fix for the file-and-line evidence. Whatever
-`spec-maintainer` folds in must not repeat the claim that Project Settings covers provisioning/re-provisioning; the
-accurate statement is that Project Settings covers sandbox **connection params, connection test, and recorded mode
-only**, and that as of `4e36162` project mode has **no provisioning/reset surface at all**. Whether that gap is
-intended is an open owner question, not something spec-maintainer should resolve by assumption.
+"No re-provisioning home needs to move" sentence immediately above):** that sentence was wrong **when written**.
+Project Settings was NOT a provisioning surface — see "Consequence" in the Proposed fix for the file-and-line
+evidence. Worse than the entry first framed it: the three capabilities were unreachable in **every** mode, not just
+project mode. `Sandbox Setup…` was hidden in project mode by `4e36162`, and projectless the dialog rendered only
+refusal notes and built no controls at all — so `Provision sandbox` / `Reset sandbox` / `Create a sandbox database
+for me` had no live home anywhere in the app between `4e36162` and `e79626c`.
+
+**RESOLUTION OF THAT CORRECTION (2026-08-09, `e79626c`) — READ THIS BEFORE ACTING ON THE PARAGRAPH ABOVE.** The owner
+did not revert the hiding; he made the premise **true**. As of `e79626c`, **Project Settings ▸ Connections DOES cover
+provisioning** — it carries the `Sandbox provisioning` group with `Provision sandbox`, `Reset sandbox` and `Create a
+sandbox database for me` — and `Database ▸ Sandbox Setup…` no longer exists. Therefore:
+
+- **Instruction to any future `spec-maintainer` (this replaces the earlier, now-inverted instruction that said not to
+  repeat the claim):** the accurate present-tense statement to fold in and to harmonize toward is that **Project
+  Settings ▸ Connections is the sole sandbox surface in project mode and covers connection params, connection test,
+  recorded sandbox mode, AND provisioning/reset/create-database**, with `Database ▸ Sandbox Setup…` deleted and the
+  three lifecycle menu actions gone. **Do NOT re-introduce the "Project Settings cannot provision" wording** — that
+  ghost was already swept out of ~25 spec sites in `0e0a943`, and reinstating it would undo that pass.
+- **Dating rule for a reader who finds a conflicting old sentence:** the premise *"Project Settings covers
+  provisioning"* is **FALSE for anything describing the tree before `e79626c`** and **TRUE for anything after it**.
+  A spec sentence, comment or queue line asserting the gap is stale history from the `4e36162`→`e79626c` window;
+  correct it forward rather than treating it as a live contradiction.
+- The gap is no longer an open owner question — it was ruled on and closed.
 
 ---
 
