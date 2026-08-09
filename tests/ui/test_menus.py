@@ -429,7 +429,9 @@ def test_view_menu_contents(qtbot):
         # the References sub-section / Pages branch of the Database ▸
         # Database/XML Coherence view, with no standalone entry point.
         "Project Tree", "Properties Panel",
-        "Audit/Problems Panel", "Raw XML Panel",
+        # FQ-019: the Activity Log is its own dock beside Audit / Problems, so
+        # it gets its own View toggle right after it -- not a tab inside it.
+        "Audit/Problems Panel", "Activity Log Panel", "Raw XML Panel",
         "―",
         "Expand All", "Collapse All",
         "―",

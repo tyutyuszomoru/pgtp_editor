@@ -125,6 +125,11 @@ from pathlib import Path
 
 from PySide6.QtCore import QObject, Signal
 
+from pgtp_editor.db.activity_log import (
+    FILE_VERB_OPENED,
+    FILE_VERB_REVERTED,
+    FILE_VERB_SAVED,
+)
 from pgtp_editor.model.encoding import read_pgtp_text
 from pgtp_editor.model.parser import (
     PgtpParseError,
@@ -172,6 +177,7 @@ class PgtpDocumentController(QObject):
         has_ddl_project: Callable[[], bool],
         new_ddl_project: Callable[..., None],
         open_ddl_project: Callable[..., None],
+        record_activity: "Callable[..., object] | None" = None,
     ):
         super().__init__(parent)
         self._shell = shell
@@ -189,6 +195,13 @@ class PgtpDocumentController(QObject):
         self._has_ddl_project = has_ddl_project
         self._new_ddl_project = new_ddl_project
         self._open_ddl_project = open_ddl_project
+        #: FQ-019: `MainWindow.record_file_activity(file_verb, error=None)`, the
+        #: Activity Log's file emit point. Optional and defaulted to a no-op so
+        #: the ~40 tests that build this controller directly need no new
+        #: argument; the lane emits a VERB only and never decides whether the
+        #: action was standalone or project-scoped -- that is the host's one
+        #: `_file_activity_source` call, and persistence is the core's decision.
+        self._record_activity = record_activity or (lambda *a, **k: None)
 
         #: The last successfully parsed model, and the file a Save writes to.
         self._project = None
@@ -436,8 +449,13 @@ class PgtpDocumentController(QObject):
 
         # Cursor restored here (busy_status __exit__), BEFORE any dialog.
         if parse_error is not None:
+            # FQ-019: a `.pgtp` that failed to parse was still an OPEN the user
+            # attempted, and the parse error is exactly the text the journal's
+            # click-through viewer exists to show in full.
+            self._record_activity(FILE_VERB_OPENED, error=f"{path}: {parse_error}")
             self._handle_parse_failure(path, parse_error)
             return
+        self._record_activity(FILE_VERB_OPENED)
         # §7 Discard Changes gating: `set_dirty(False)` above already refreshed
         # it, but only on the SUCCESS path -- a failed parse must not advertise
         # the freshly-assigned path as discardable.
@@ -577,7 +595,9 @@ class PgtpDocumentController(QObject):
             modals.QMessageBox.critical(
                 self._shell.window, "Save Failed", f"Could not save:\n\n{exc}"
             )
+            self._record_activity(FILE_VERB_SAVED, error=f"{self._path}: {exc}")
             return
+        self._record_activity(FILE_VERB_SAVED)
         # `set_dirty(False)` re-gates Discard Changes on its own now (FQ-020:
         # the gate is the dirty flag, and a just-saved buffer has nothing to
         # discard) -- no separate refresh call is needed here any more.
@@ -599,7 +619,9 @@ class PgtpDocumentController(QObject):
             modals.QMessageBox.critical(
                 self._shell.window, "Save Failed", f"Could not save:\n\n{exc}"
             )
+            self._record_activity(FILE_VERB_SAVED, error=f"{path}: {exc}")
             return
+        self._record_activity(FILE_VERB_SAVED)
         self._path = path
         self.set_dirty(False)
         self._shell.status(f"Saved as {Path(path).name}", 5000)
@@ -742,6 +764,10 @@ class PgtpDocumentController(QObject):
             # The file on disk is what failed to parse, so the buffer is left
             # exactly as it was -- discarding into an unparseable state would
             # lose the user's edits AND give them nothing back.
+            # FQ-019: `Reverted` is the journal's name for this gesture (the
+            # `.bak`-reading `revert()` FQ-020 replaced is gone; Discard Changes
+            # is the surviving "put the file back" command).
+            self._record_activity(FILE_VERB_REVERTED, error=f"{path}: {exc}")
             self._handle_parse_failure(path, exc)
             return
 
@@ -765,4 +791,5 @@ class PgtpDocumentController(QObject):
         # The buffer now IS the file on disk -- the opposite of `revert()`, which
         # left it dirty because it had loaded a different file (`.bak`).
         self.set_dirty(False)
+        self._record_activity(FILE_VERB_REVERTED)
         self._shell.status(f"Discarded changes in {Path(path).name}", 5000)

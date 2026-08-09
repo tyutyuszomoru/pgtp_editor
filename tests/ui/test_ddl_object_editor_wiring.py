@@ -471,3 +471,213 @@ def test_checkout_registers_the_live_hash_and_never_overwrites_a_real_reference(
     assert load_settings(project_dir).deployed["ddl/pr.recalc.sql"].content_hash == (
         "the-real-deploy"
     )
+
+
+# --- FQ-019: the DDL gestures are journalled --------------------------------
+# The Activity Log's four most audit-worthy rows come from here: the two Apply
+# actions, the two check gestures, and the tab's own Save. Each is driven
+# through the real gesture, so what is asserted is the WIRING, not `record`.
+
+
+class _FakeCheckReport:
+    """Just enough of `db/ddl_check.py::CheckReport` for the journal's reading
+    of it: `committed`, plus the tier/finding shape `report_blockers` walks."""
+
+    def __init__(self, committed=True, findings=()):
+        self.committed = committed
+        self.findings = tuple(findings)
+        self.caveats = ()
+        self.tier0 = self.tier1 = self.tier2 = self.tier3 = None
+
+
+class _FakeApplyResult:
+    def __init__(self, report):
+        self.report = report
+
+
+def _open_tab(window, text="CREATE FUNCTION pr.recalc() RETURNS void AS $$ $$;"):
+    window._on_ddl_edit_requested(_REF, text)
+    return window.center_stage.ddl_object_tab(_REF.key)
+
+
+def test_saving_a_ddl_object_tab_journals_a_saved_entry(qtbot, tmp_path, monkeypatch):
+    window = _window(qtbot, tmp_path)
+    panel = _open_tab(window)
+    dest = tmp_path / "pr.recalc.sql"
+    monkeypatch.setattr(
+        modals.QFileDialog, "getSaveFileName",
+        staticmethod(lambda *a, **k: (str(dest), "")),
+    )
+
+    assert window._save_ddl_object_editor(panel) is True
+
+    entry = window.activity_log.entries[-1]
+    assert entry.file_verb == "Saved"
+    assert entry.status == "success"
+
+
+def test_a_failed_ddl_object_save_journals_the_failure_with_the_os_error(
+    qtbot, tmp_path, monkeypatch
+):
+    window = _window(qtbot, tmp_path)
+    panel = _open_tab(window)
+    unwritable = tmp_path / "missing_dir" / "pr.recalc.sql"
+    monkeypatch.setattr(
+        modals.QFileDialog, "getSaveFileName",
+        staticmethod(lambda *a, **k: (str(unwritable), "")),
+    )
+    monkeypatch.setattr(
+        modals.QMessageBox, "critical", staticmethod(lambda *a, **k: None)
+    )
+
+    assert window._save_ddl_object_editor(panel) is False
+
+    entry = window.activity_log.entries[-1]
+    assert entry.file_verb == "Saved"
+    assert entry.failed
+    assert "pr.recalc.sql" in entry.error_full
+
+
+def test_an_apply_to_sandbox_journals_the_ddl_against_the_sandbox_source(
+    qtbot, tmp_path, monkeypatch
+):
+    window = _window(qtbot, tmp_path)
+    panel = _open_tab(window)
+    text = panel.text()
+    captured = {}
+
+    class _Session:
+        pass
+
+    monkeypatch.setattr(
+        type(window.sandbox_controller), "session", property(lambda self: _Session())
+    )
+    monkeypatch.setattr(
+        window.sandbox_controller,
+        "run_apply",
+        lambda request, on_done, **kwargs: captured.setdefault("on_done", on_done),
+    )
+
+    window._apply_ddl_object_to_sandbox(_REF, text)
+    captured["on_done"](_FakeApplyResult(_FakeCheckReport(committed=True)))
+
+    entry = window.activity_log.entries[-1]
+    assert entry.source == "Sandbox DB"
+    assert entry.verb == "Apply to Sandbox"
+    assert entry.ddl_full == text
+    assert entry.status == "success"
+
+
+def test_an_apply_to_sandbox_that_did_not_commit_is_journalled_as_failed(
+    qtbot, tmp_path, monkeypatch
+):
+    """An apply is judged on `committed`: "it ran but was rolled back" is not a
+    success, and the journal must not render it as one."""
+    window = _window(qtbot, tmp_path)
+    panel = _open_tab(window)
+    captured = {}
+
+    class _Session:
+        pass
+
+    monkeypatch.setattr(
+        type(window.sandbox_controller), "session", property(lambda self: _Session())
+    )
+    monkeypatch.setattr(
+        window.sandbox_controller,
+        "run_apply",
+        lambda request, on_done, **kwargs: captured.setdefault("on_done", on_done),
+    )
+
+    window._apply_ddl_object_to_sandbox(_REF, panel.text())
+    captured["on_done"](_FakeApplyResult(_FakeCheckReport(committed=False)))
+
+    entry = window.activity_log.entries[-1]
+    assert entry.failed
+    assert entry.error_full
+
+
+def test_a_check_gesture_journals_the_linted_verb_and_is_not_judged_on_commit(
+    qtbot, tmp_path, monkeypatch
+):
+    """A probe rolls back and a recheck applies nothing, so neither ever
+    reports `committed` -- and neither may therefore be journalled as failed
+    just for that."""
+    window = _window(qtbot, tmp_path)
+    panel = _open_tab(window)
+    window.center_stage.setCurrentWidget(panel)
+    captured = {}
+
+    monkeypatch.setattr(
+        type(window.sandbox_controller), "can_check", property(lambda self: True)
+    )
+    monkeypatch.setattr(
+        window.sandbox_controller,
+        "run_check",
+        lambda request, on_done, **kwargs: captured.setdefault("on_done", on_done),
+    )
+
+    window._check_active_ddl_object()
+    captured["on_done"](_FakeApplyResult(_FakeCheckReport(committed=False)))
+
+    entry = window.activity_log.entries[-1]
+    assert entry.source == "Sandbox DB"
+    assert entry.verb == "linted"
+    assert entry.status == "success"
+    assert entry.ddl_full == panel.text()
+
+
+def test_an_apply_to_target_journals_the_irreversible_write(qtbot, tmp_path, monkeypatch):
+    """The single most audit-worthy action, journalled against `Quality DB`
+    with the FULL DDL retained."""
+    window = _window(qtbot, tmp_path)
+    text = "CREATE FUNCTION pr.recalc() RETURNS void AS $$ $$;"
+    captured = {}
+    monkeypatch.setattr(
+        window, "_target_params_for_apply", lambda: _TARGET
+    )
+    monkeypatch.setattr(
+        "pgtp_editor.ui.main_window.run_async",
+        lambda parent, work, on_result, on_error: captured.update(
+            on_result=on_result, on_error=on_error
+        ),
+    )
+
+    window._apply_ddl_object_to_target(_REF, text)
+
+    class _Outcome:
+        committed = True
+        message = ""
+
+    captured["on_result"](_Outcome())
+
+    entry = window.activity_log.entries[-1]
+    assert entry.source == "Quality DB"
+    assert entry.verb == "Apply to Target"
+    assert entry.ddl_full == text
+    assert entry.status == "success"
+
+
+def test_an_apply_to_target_that_did_not_commit_is_journalled_as_failed(
+    qtbot, tmp_path, monkeypatch
+):
+    window = _window(qtbot, tmp_path)
+    captured = {}
+    monkeypatch.setattr(window, "_target_params_for_apply", lambda: _TARGET)
+    monkeypatch.setattr(
+        "pgtp_editor.ui.main_window.run_async",
+        lambda parent, work, on_result, on_error: captured.update(
+            on_result=on_result, on_error=on_error
+        ),
+    )
+    window._apply_ddl_object_to_target(_REF, "CREATE FUNCTION pr.recalc();")
+
+    class _Outcome:
+        committed = False
+        message = "permission denied for schema pr"
+
+    captured["on_result"](_Outcome())
+
+    entry = window.activity_log.entries[-1]
+    assert entry.failed
+    assert entry.error_full == "permission denied for schema pr"

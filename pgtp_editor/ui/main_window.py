@@ -60,6 +60,18 @@ from pgtp_editor.db.config import (
     save_connection,
     seed_params,
 )
+from pgtp_editor.db.activity_log import (
+    FILE_VERB_SAVED,
+    SOURCE_PROJECT_FILES,
+    SOURCE_QUALITY_DB,
+    SOURCE_QUALITY_FILES,
+    SOURCE_SANDBOX_DB,
+    VERB_APPLY_SANDBOX,
+    VERB_APPLY_TARGET,
+    VERB_LINTED,
+    VERB_RAN,
+    ActivityLog,
+)
 from pgtp_editor.db.bookmark_store import (
     load_editor_bookmarks,
     store_editor_bookmarks,
@@ -91,6 +103,8 @@ from pgtp_editor.ui.ddl_object_editor import (
     DESTINATION_UNAVAILABLE_REASONS,
     DdlObjectRef,
     parse_buffer_identity,
+    report_blockers,
+    report_unverified,
 )
 from pgtp_editor.ui.alter_column_dialogs import (
     COLUMN_ACTIONS,
@@ -140,6 +154,7 @@ from pgtp_editor.ui.ddl_buffer_panel import (
     OP_SET_DEFAULT,
     BrowserPanel,
 )
+from pgtp_editor.ui.activity_panel import ActivityPanel
 from pgtp_editor.ui.code_editor import CodeEditorDialog
 # FQ-013: the shared gutter mixin publishes bookmark changes; the host
 # subscribes and decides what they mean (the mixin knows nothing about projects).
@@ -202,6 +217,14 @@ _SQL_REFUSAL_PREFIX = "[SQL] "
 #: pending write is also flushed on a project transition and on app close, so the
 #: debounce can never be the reason a bookmark is lost.
 _BOOKMARK_WRITE_DEBOUNCE_MS = 400
+
+#: FQ-019: the same debounce, for the same reason, on the Activity Log's JSONL
+#: store. A `record(...)` call sits at the end of an action the user is watching
+#: (an apply, a save, a merge) and must never pay for a file write there; the
+#: timer coalesces a burst of actions into one append. Any pending entry is also
+#: flushed synchronously on a project transition and in `closeEvent`, so the
+#: debounce can never be the reason a journal line is lost.
+_ACTIVITY_WRITE_DEBOUNCE_MS = 400
 
 #: §18.5 D3a: the Audit `SEVERITY` token for a finding's severity string.
 #: **A vocabulary CASE translation only** -- `validation/tier2.py`'s
@@ -581,6 +604,29 @@ class MainWindow(QMainWindow):
         self.audit_dock.setWidget(self.audit_panel)
         self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self.audit_dock)
 
+        # FQ-019: the Activity Log -- a SEPARATE bottom dock BESIDE Audit /
+        # Problems, never a tab inside it and never a fifth Audit prefix. Audit
+        # is a findings surface governed by §7's closed prefix reservation; this
+        # is a timestamped operations journal with provenance and success/error
+        # status. `splitDockWidget` puts them side by side rather than stacked,
+        # so both are readable at once; the `objectName` is what makes the split
+        # (and the user's later resize) survive `saveState`/`restoreState`
+        # through `windowState`, exactly like the other three docks.
+        self.activity_panel = ActivityPanel()
+        self.activity_dock = QDockWidget("Activity Log", self)
+        self.activity_dock.setObjectName("activity_dock")
+        self.activity_dock.setWidget(self.activity_panel)
+        self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self.activity_dock)
+        self.splitDockWidget(
+            self.audit_dock, self.activity_dock, Qt.Orientation.Horizontal
+        )
+
+        #: The one journal (`db/activity_log.py`). Built HERE, before the lanes,
+        #: because several of them take `record_file_activity` as an injected
+        #: callable. It starts standalone (`project_dir is None`); the §18.2
+        #: project transition below moves it onto -- and off -- a project store.
+        self.activity_log = ActivityLog()
+
         self.center_stage = CenterStage()
 
         # §7/§26 (FQ-016): a SECOND, FIXED menu bar directly above the central
@@ -918,6 +964,9 @@ class MainWindow(QMainWindow):
             open_ddl_project=lambda on_ready=None: self._ddl_project_ui.open_project(
                 on_ready=on_ready
             ),
+            # FQ-019: the lane emits a file VERB and nothing else -- the
+            # Project-files-vs-Quality-files decision is made once, on the host.
+            record_activity=self.record_file_activity,
         )
 
         #: The §18.2 local-project lane (`ui/ddl_project_controller.py`): New /
@@ -1016,6 +1065,8 @@ class MainWindow(QMainWindow):
             # a later wave) that replaces `open_project_file` on the finished
             # window is honoured.
             reload=lambda path: self.open_project_file(path),
+            # FQ-019: the `Merged` verb, emitted at the post-write point.
+            record_activity=self.record_file_activity,
         )
 
         #: The §17/FQ-003 coherence lane (`ui/coherence_controller.py`): the
@@ -1127,6 +1178,22 @@ class MainWindow(QMainWindow):
         self._ddl_project_ui.project_changed.connect(
             self._on_bookmark_project_changed
         )
+
+        # FQ-019: the Activity Log's debounce and its project lifecycle. The
+        # same cadence as the bookmark store above -- a debounced append after a
+        # `record(...)`, plus a synchronous flush on a project transition and in
+        # `closeEvent` -- because it is the same problem: a store whose writes
+        # must never land inside the gesture that produced the entry.
+        self._activity_write_timer = QTimer(self)
+        self._activity_write_timer.setSingleShot(True)
+        self._activity_write_timer.setInterval(_ACTIVITY_WRITE_DEBOUNCE_MS)
+        self._activity_write_timer.timeout.connect(self._flush_activity_writes)
+        self._ddl_project_ui.project_changed.connect(
+            self._on_activity_project_changed
+        )
+        # PHP tabs are created later and own their own save reporting, so the
+        # journal subscribes per tab as each one opens.
+        self._php_tabs.tab_opened.connect(self._wire_php_tab_activity)
 
     # -- the six permanent delegating properties -----------------------------
     # CLOSED LIST -- do not extend. Four pieces of document state and two of
@@ -1321,6 +1388,94 @@ class MainWindow(QMainWindow):
         for editor in editors:
             self._restore_editor_bookmarks(editor)
 
+    # -- FQ-019: the Activity Log ---------------------------------------------
+    # `db/activity_log.py` is the whole of the logic; this is the host half --
+    # the one `ActivityLog`, the debounce, the project transitions, and the
+    # `record(...)` calls at each action's completion point.
+    #
+    # **No call site gates on mode.** A DB row's source is the CONNECTION ROLE
+    # it hit (quality vs sandbox), which the caller knows as a fact; a file
+    # row's source is the mode, which exactly one place decides
+    # (`_file_activity_source`). Whether an entry then reaches disk is the
+    # core's decision, from `ActivityLog.project_dir` alone.
+    #
+    # **Not fed by `debuglog`.** Every entry below is an explicit call at the
+    # point an action finished, never a parse of the developer logging stream.
+
+    def _file_activity_source(self) -> str:
+        """`Project files` or `Quality files` for a file action -- the ONE place
+        that distinction is made.
+
+        The §18.2 project folder is the capability fact, the same gate FQ-013's
+        bookmark store uses: a file touched with a project open belongs to that
+        project's journal; one touched without a project is standalone editing,
+        which the core then refuses to persist anywhere."""
+        return (
+            SOURCE_PROJECT_FILES
+            if self._ddl_project_ui.folder is not None
+            else SOURCE_QUALITY_FILES
+        )
+
+    def record_activity(self, source, verb=None, **kwargs):
+        """Journal one completed action and show it. The single host-side entry
+        point; every emit point goes through here so the panel append and the
+        debounce are wired in exactly one place.
+
+        `kwargs` are the core's: `ddl=`, `file_verb=`, `status=`, `error=`.
+        Passing `error=` forces `status="error"` in the core, so a caller
+        cannot report a failure that renders as a success."""
+        entry = self.activity_log.record(source, verb, **kwargs)
+        self.activity_panel.append(entry)
+        if self.activity_log.has_pending_writes:
+            self._activity_write_timer.start()
+        return entry
+
+    def record_file_activity(self, file_verb, *, error=None):
+        """A file action (Saved / Opened / Reverted / Merged / Linted), with the
+        mode resolved here rather than by the caller.
+
+        This is what the document and Compare/Merge lanes are handed, so they
+        emit a verb and nothing else."""
+        return self.record_activity(
+            self._file_activity_source(), file_verb=file_verb, error=error
+        )
+
+    def _flush_activity_writes(self) -> None:
+        """Write everything recorded since the last flush. Called by the
+        debounce timer, on a project transition and on app close; a no-op with
+        nothing pending, and a no-op with no project (standalone entries stay in
+        the session's buffer and are never destined for a file)."""
+        self._activity_write_timer.stop()
+        self.activity_log.flush()
+
+    def _on_activity_project_changed(self, folder, _settings) -> None:
+        """A §18.2 project was opened, created or closed.
+
+        The transfer is the CORE's (`open_project`/`close_project` flush what
+        the previous mode owed and then replace the buffer), never hand-rolled
+        here: a standalone entry belongs to a session that had no project and
+        must not migrate into the project's file. The panel is then re-populated
+        from whatever the core now holds -- that project's persisted history on
+        an open, nothing at all on a close."""
+        self._activity_write_timer.stop()
+        if folder is None:
+            self.activity_log.close_project()
+        else:
+            self.activity_log.open_project(folder)
+        self.activity_panel.set_entries(self.activity_log.entries)
+
+    def _wire_php_tab_activity(self, tab, _key) -> None:
+        """Journal a PHP tab's saves (§21). Subscribed per tab, off
+        `PhpTabController.tab_opened`, because the tab is the only thing that
+        knows whether its own save succeeded -- and it already publishes both
+        outcomes."""
+        tab.saved.connect(lambda _path: self.record_file_activity(FILE_VERB_SAVED))
+        tab.save_failed.connect(
+            lambda message: self.record_file_activity(
+                FILE_VERB_SAVED, error=str(message)
+            )
+        )
+
     def _restore_window_state(self):
         geometry = self._settings.value("geometry")
         if geometry is not None:
@@ -1385,6 +1540,10 @@ class MainWindow(QMainWindow):
         # a closed window must not answer a later editor's bookmark change.
         self._flush_bookmark_writes()
         remove_bookmark_observer(self._on_editor_bookmarks_changed)
+        # FQ-019: the same last chance for the Activity Log. Synchronous, and
+        # before `super().closeEvent`, so the journal of this session is on disk
+        # whatever the debounce had left pending.
+        self._flush_activity_writes()
         # §23: end an MCP session with the window that opted into it. The thread
         # is a daemon so it would not hold the process open, but a client
         # deserves a clean EOF rather than a half-dead peer.
@@ -2458,6 +2617,15 @@ class MainWindow(QMainWindow):
         audit_action.toggled.connect(self.audit_dock.setVisible)
         self.audit_dock.visibilityChanged.connect(audit_action.setChecked)
         self._audit_action = audit_action
+
+        # FQ-019: the fourth dock, wired exactly like its three siblings (both
+        # ways, so the title-bar ✕ keeps the checkbox honest).
+        activity_action = menu.addAction("Activity Log Panel")
+        activity_action.setCheckable(True)
+        activity_action.setChecked(True)
+        activity_action.toggled.connect(self.activity_dock.setVisible)
+        self.activity_dock.visibilityChanged.connect(activity_action.setChecked)
+        self._activity_action = activity_action
 
         self._raw_xml_panel_action = menu.addAction("Raw XML Panel")
         self._raw_xml_panel_action.setCheckable(True)
@@ -4271,7 +4439,12 @@ class MainWindow(QMainWindow):
             path.write_text(panel.text(), encoding="utf-8", newline="")
         except OSError as exc:
             modals.QMessageBox.critical(self, "Save Failed", f"Could not save:\n\n{exc}")
+            # FQ-019: a failure is journalled AS a failure, with the full error
+            # kept for the click-through viewer. A save that only shows a modal
+            # and leaves no trace is the gap the journal exists to close.
+            self.record_file_activity(FILE_VERB_SAVED, error=f"{path}: {exc}")
             return False
+        self.record_file_activity(FILE_VERB_SAVED)
         panel.remember_save_path(path)
         panel.mark_clean()
         self.center_stage.update_ddl_object_tab(panel.ref)
@@ -4482,10 +4655,40 @@ class MainWindow(QMainWindow):
         # hands back the SAME panel and must not stack a second connection.
         if not getattr(panel, "_pgtp_refusal_wired", False):
             panel.format_refused.connect(self._report_ddl_format_refusal)
+            # FQ-019: the `ran` verb. Guarded by the same single-instance flag,
+            # so re-invoking the menu entry cannot stack a second subscription
+            # and journal every Run twice.
+            panel.run_finished.connect(self._record_sandbox_run)
             panel._pgtp_refusal_wired = True
         panel.set_session_available(True)
         panel.focus_editor()
         return panel
+
+    def _record_sandbox_run(self, report) -> None:
+        """Journal one Sandbox SQL Console Run (FQ-019, the `ran` verb).
+
+        The DDL payload is the SQL the Run actually executed, joined back in
+        statement order -- a Run that stopped at statement 2 of 5 journals the
+        two that ran, which is what is now in the sandbox. The failing
+        statement's database error is kept verbatim for the viewer."""
+        runs = tuple(getattr(report, "runs", None) or ())
+        sql = "\n".join(
+            (getattr(run.result, "sql", "") or "").strip() for run in runs
+        ).strip()
+        failure = getattr(report, "failure", None)
+        error = None
+        if failure is not None:
+            # `QueryResult.error` is a structured `QueryError` that renders as
+            # the database's own sentence -- `str()` is how every other surface
+            # reads it, so the journal keeps the same words.
+            error = str(getattr(failure.result, "error", "") or "").strip() or (
+                "the statement failed"
+            )
+        if not sql and error is None:
+            # Nothing executed and nothing failed (an empty Run) -- there is no
+            # action to journal.
+            return
+        self.record_activity(SOURCE_SANDBOX_DB, VERB_RAN, ddl=sql, error=error)
 
     def _run_selection_in_sandbox_console(self, sql: str) -> None:
         """The object tab's "Run in Sandbox Console" bridge (§18.5 D4).
@@ -5284,6 +5487,12 @@ class MainWindow(QMainWindow):
                         + f"applied {ref.qualified} to quality database {label}."
                     ]
                 )
+                # FQ-019: the irreversible production write -- the single most
+                # audit-worthy action, and the reason the journal keeps the full
+                # DDL rather than only its 20-character preview.
+                self.record_activity(
+                    SOURCE_QUALITY_DB, VERB_APPLY_TARGET, ddl=text
+                )
             else:
                 message = getattr(outcome, "message", "") or "the transaction did not commit"
                 self._report_check_lines(
@@ -5292,6 +5501,9 @@ class MainWindow(QMainWindow):
                         + f"{ref.qualified} was NOT applied to quality database "
                         f"{label}: {message}"
                     ]
+                )
+                self.record_activity(
+                    SOURCE_QUALITY_DB, VERB_APPLY_TARGET, ddl=text, error=message
                 )
             # Let the panel render the per-statement/tier detail it already knows
             # how to render, without a second headline.
@@ -5308,6 +5520,12 @@ class MainWindow(QMainWindow):
                     + f"apply of {ref.qualified} to quality failed unexpectedly: "
                     f"{type(exc).__name__}: {exc}"
                 ]
+            )
+            self.record_activity(
+                SOURCE_QUALITY_DB,
+                VERB_APPLY_TARGET,
+                ddl=text,
+                error=f"{type(exc).__name__}: {exc}",
             )
 
         run_async(self, do_apply, on_result, on_error)
@@ -5477,14 +5695,45 @@ class MainWindow(QMainWindow):
 
         def on_done(result, panel=panel, text=text) -> None:
             report = getattr(result, "report", None)
-            if report is None or panel is None:
+            if report is None:
                 # The refusal's own reason is reported by
                 # `_on_sandbox_operation_finished`; an absent report is never
                 # shown as a successful apply.
                 return
+            # FQ-019: journalled off the REPORT, not off the panel -- an apply
+            # whose tab was closed while it ran still happened, and still
+            # belongs in the journal.
+            self.record_activity(
+                SOURCE_SANDBOX_DB,
+                VERB_APPLY_SANDBOX,
+                ddl=text,
+                error=self._activity_error_for_report(report, applied=True),
+            )
+            if panel is None:
+                return
             panel.record_apply_result(report, text)
 
         self.sandbox_controller.run_apply(request, on_done, ddl_text=text)
+        return None
+
+    def _activity_error_for_report(self, report, *, applied: bool) -> str | None:
+        """The full error text an Activity Log entry keeps for a ladder run, or
+        None when the run is a success (FQ-019).
+
+        Reuses `report_blockers`/`report_unverified` -- the panel's own
+        enumeration of "what failed" and "what could not be checked" -- rather
+        than inventing a second way to describe the same report. An APPLY is a
+        failure when it did not commit (what the user asked for did not happen);
+        a CHECK has nothing to commit, so it is a failure only when the ladder
+        actually reported blockers."""
+        blockers = report_blockers(report)
+        if applied and not getattr(report, "committed", False):
+            reasons = blockers or report_unverified(report) or [
+                "the transaction did not commit"
+            ]
+            return "\n".join(reasons)
+        if blockers:
+            return "\n".join(blockers)
         return None
 
     # --- §18.5 D3/D3a: the two check gestures --------------------------------
@@ -5580,6 +5829,15 @@ class MainWindow(QMainWindow):
                 # `_on_sandbox_operation_finished`; nothing is derived from it
                 # here, and an absent report is never shown as a clean check.
                 return
+            # FQ-019: both check gestures are `linted` against the sandbox --
+            # the probe rolls back and the recheck applies nothing, so neither
+            # ever reports "committed" and neither is judged on it.
+            self.record_activity(
+                SOURCE_SANDBOX_DB,
+                VERB_LINTED,
+                ddl=text,
+                error=self._activity_error_for_report(report, applied=False),
+            )
             # Record for precondition 2 AND show it: the panel keeps those two
             # acts separate, so both are asked for explicitly.
             panel.record_check_report(report, text)

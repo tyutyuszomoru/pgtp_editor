@@ -243,3 +243,55 @@ def test_apply_partial_failure_writes_nothing_and_names_the_unresolvable_differe
     assert "page_that_no_longer_exists" in args[2]
     assert not os.path.exists(target_path + ".bak")
     assert open(target_path, "rb").read() == original_target_bytes
+
+
+# --- FQ-019: the merge is journalled ----------------------------------------
+# `apply_changes_to_target` had no completion signal at all -- modal feedback
+# only -- so the Activity Log's `Merged` entry is emitted from the lane itself,
+# at the post-write point. These two pin BOTH legs: the write that happened, and
+# the batch that was refused with nothing written.
+
+
+def test_a_successful_apply_journals_a_merged_activity_entry(qtbot, tmp_path):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    source_path = _write(tmp_path, "source.pgtp", CHANGED_PGTP)
+    target_path = _write(tmp_path, "target.pgtp", VALID_PGTP)
+    _compare(window, source_path, target_path)
+    _check_all_leaves(window.center_stage.diff_merge_panel)
+
+    with patch("pgtp_editor.ui.modals.QMessageBox.information"):
+        window._diff_ui.apply_changes_to_target()
+
+    merged = [e for e in window.activity_log.entries if e.file_verb == "Merged"]
+    assert len(merged) == 1
+    assert merged[0].status == "success"
+    # No project is open, so the merge is standalone editing and the core will
+    # refuse to persist it anywhere.
+    assert merged[0].source == "Quality files"
+    assert merged[0].session_only
+
+
+def test_a_refused_apply_journals_the_merge_as_a_failure_with_the_details(
+    qtbot, tmp_path
+):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    source_path = _write(tmp_path, "source.pgtp", CHANGED_PGTP)
+    target_path = _write(tmp_path, "target.pgtp", VALID_PGTP)
+    _compare(window, source_path, target_path)
+    panel = window.center_stage.diff_merge_panel
+    _check_all_leaves(panel)
+    leaves = panel._flattened_leaves()
+    leaves[0].data(0, Qt.ItemDataRole.UserRole).path = ["page_that_no_longer_exists"]
+
+    with patch("pgtp_editor.ui.modals.QMessageBox.critical"):
+        window._diff_ui.apply_changes_to_target()
+
+    merged = [e for e in window.activity_log.entries if e.file_verb == "Merged"]
+    assert len(merged) == 1
+    assert merged[0].failed
+    # The FULL per-difference detail is retained for the click-through viewer,
+    # not just the 20-character preview the row shows.
+    assert "page_that_no_longer_exists" in merged[0].error_full
+    assert len(merged[0].error_preview) < len(merged[0].error_full)
