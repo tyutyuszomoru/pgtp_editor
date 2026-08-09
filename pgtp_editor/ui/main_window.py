@@ -18,7 +18,7 @@ import re
 from dataclasses import dataclass, replace
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QSettings, QTimer
+from PySide6.QtCore import Qt, QEvent, QSettings, QTimer
 from PySide6.QtGui import (
     QAction,
     QKeySequence,
@@ -34,6 +34,7 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QMainWindow,
     QMenuBar,
+    QSizePolicy,
     QTabWidget,
     QVBoxLayout,
     QWidget,
@@ -203,6 +204,27 @@ from pgtp_editor.ui import caption_scan
 from pgtp_editor.ui.project_tree import ProjectTreePanel
 from pgtp_editor.ui.properties_panel import PropertiesPanel
 from pgtp_editor.ui.theme import apply_theme
+from pgtp_editor.ui.audit_router import AuditRouter
+from pgtp_editor.ui.connectivity import (
+    QUALITY_LABEL,
+    SANDBOX_LABEL,
+    UNKNOWN as CONNECTIVITY_UNKNOWN,
+    ConnectivityIndicator,
+    sandbox_state_for,
+)
+from pgtp_editor.ui.findings_panel import (
+    FINDINGS_TAB_TITLE,
+    RESULTS_TAB_TITLE,
+    FindingsPanel,
+)
+from pgtp_editor.ui.mode_indicator import (
+    MINOR_CAPTION,
+    MINOR_DIFF,
+    MINOR_XSD,
+    ModeIndicator,
+)
+from pgtp_editor.ui.project_status_model import quality_state
+from pgtp_editor.ui.status_bar import StaticStatusBar
 
 _log = logging.getLogger(__name__)
 
@@ -225,6 +247,15 @@ _BOOKMARK_WRITE_DEBOUNCE_MS = 400
 #: flushed synchronously on a project transition and in `closeEvent`, so the
 #: debounce can never be the reason a journal line is lost.
 _ACTIVITY_WRITE_DEBOUNCE_MS = 400
+
+#: FQ-018/FQ-028: how often the two connectivity dots are refreshed while the
+#: window is ACTIVE. The app's first repeating-interval timer -- every other
+#: QTimer here is a one-shot debounce -- and the reason it is gated on window
+#: activation: a backgrounded editor must not keep two database connections
+#: warm forever. The probe itself runs off the GUI thread through the same
+#: `run_async` seam every connection test uses; a blocking connect every 30 s
+#: on the GUI thread would stutter the app twice a minute.
+_CONNECTIVITY_POLL_MS = 30_000
 
 #: §18.5 D3a: the Audit `SEVERITY` token for a finding's severity string.
 #: **A vocabulary CASE translation only** -- `validation/tier2.py`'s
@@ -395,6 +426,12 @@ class MainWindow(QMainWindow):
         super().__init__()
         self._debug_log_path = debug_log_path
         self._debug_label = None
+        # FQ-028: the STATIC status bar, installed FIRST -- before anything in
+        # this constructor can reach for `statusBar()` (the manual load below
+        # does, on failure). Every `showMessage` in the app, including the ~40
+        # transient ones and `ui/busy.py`'s, lands in its notice sink from here
+        # on, so the bar itself carries permanent indicators only.
+        self.setStatusBar(StaticStatusBar(self, notice_sink=self._record_notice))
         #: FQ-027's session workflow mode -- None until a launcher column is
         #: picked, and NEVER read from settings. Set here, before either menu
         #: bar is built, because `_refresh_editor_menu_affordances` consults it
@@ -595,30 +632,49 @@ class MainWindow(QMainWindow):
             DDL_EXPLORER_TARGET: self.ddl_browser_tab_index,
             DDL_EXPLORER_SANDBOX: self.sandbox_ddl_browser_tab_index,
         }
+        # FQ-028 Part 1: the navigable findings tab, in the LEFT dock beside
+        # the project tree -- NOT the centre pane, which would hide the very
+        # editor each hit jumps into. Hidden until a navigable op runs, exactly
+        # like the Contents / Coherence / DDL Objects tabs above it.
+        self.findings_panel = FindingsPanel(accumulate=False)
+        self.findings_tab_index = self.left_tabs.addTab(
+            self.findings_panel, FINDINGS_TAB_TITLE
+        )
+        self.left_tabs.setTabVisible(self.findings_tab_index, False)
         self.tree_dock.setWidget(self.left_tabs)
         self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self.tree_dock)
 
-        self.audit_panel = QListWidget()
-        self.audit_dock = QDockWidget("Audit / Problems", self)
+        # FQ-028 Part 3: ONE bottom dock with TWO tabs. It keeps the
+        # `audit_dock` objectName on purpose -- `windowState` is restored by
+        # objectName, so a user's saved bottom-dock geometry and visibility
+        # carry straight over onto the restructured panel instead of being
+        # silently discarded. The title is retired: the dock is no longer
+        # "Audit / Problems", it is the two surfaces that replaced it.
+        self.activity_panel = ActivityPanel()
+        self.results_panel = FindingsPanel(accumulate=True)
+        self.bottom_tabs = QTabWidget()
+        self.activity_tab_index = self.bottom_tabs.addTab(
+            self.activity_panel, "Activity Log"
+        )
+        self.results_tab_index = self.bottom_tabs.addTab(
+            self.results_panel, RESULTS_TAB_TITLE
+        )
+        self.audit_dock = QDockWidget("Activity Log / Results", self)
         self.audit_dock.setObjectName("audit_dock")
-        self.audit_dock.setWidget(self.audit_panel)
+        self.audit_dock.setWidget(self.bottom_tabs)
         self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self.audit_dock)
 
-        # FQ-019: the Activity Log -- a SEPARATE bottom dock BESIDE Audit /
-        # Problems, never a tab inside it and never a fifth Audit prefix. Audit
-        # is a findings surface governed by §7's closed prefix reservation; this
-        # is a timestamped operations journal with provenance and success/error
-        # status. `splitDockWidget` puts them side by side rather than stacked,
-        # so both are readable at once; the `objectName` is what makes the split
-        # (and the user's later resize) survive `saveState`/`restoreState`
-        # through `windowState`, exactly like the other three docks.
-        self.activity_panel = ActivityPanel()
-        self.activity_dock = QDockWidget("Activity Log", self)
-        self.activity_dock.setObjectName("activity_dock")
-        self.activity_dock.setWidget(self.activity_panel)
-        self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self.activity_dock)
-        self.splitDockWidget(
-            self.audit_dock, self.activity_dock, Qt.Orientation.Horizontal
+        #: FQ-028: `audit_panel` is no longer a widget -- it is the ROUTER that
+        #: decides which of the three surfaces a produced row belongs on. It
+        #: keeps the `QListWidget` shape the producers were written against
+        #: (`addItem`/`count`/`item`/`takeItem`), so not one of them had to
+        #: learn where its rows now go. See `ui/audit_router.py`.
+        self.audit_panel = AuditRouter(
+            self.findings_panel,
+            self.results_panel,
+            self._record_audit_notice,
+            on_findings=self._reveal_findings_tab,
+            on_results=self._reveal_results_tab,
         )
 
         #: The one journal (`db/activity_log.py`). Built HERE, before the lanes,
@@ -664,6 +720,13 @@ class MainWindow(QMainWindow):
         self.center_stage.currentChanged.connect(
             lambda _index: self._refresh_editor_menu_affordances()
         )
+        # FQ-028: the MINOR mode is "which editor sub-state's tab is revealed",
+        # and every enter/leave of Caption and Edit XSD ends in a
+        # `setCurrentIndex`, so one subscription covers both -- no per-site
+        # `setText` anywhere.
+        self.center_stage.currentChanged.connect(
+            lambda _index: self._refresh_mode_indicator()
+        )
         # FQ-021: `Navigation`'s three Compare/Merge members follow the MODE, so
         # they hang off this signal and NOT off `currentChanged` above. The mode
         # outlives a tab switch (`enter_diff_merge_mode`), and
@@ -675,6 +738,12 @@ class MainWindow(QMainWindow):
         # after this point.
         self.center_stage.diff_merge_mode_changed.connect(
             lambda active: self._find_ui.set_diff_mode_members_visible(active)
+        )
+        # FQ-028: Compare/Merge is the one minor mode that outlives its tab
+        # being current, so the indicator follows the MODE signal too -- the
+        # same reason the three Navigation members above do.
+        self.center_stage.diff_merge_mode_changed.connect(
+            lambda _active: self._refresh_mode_indicator()
         )
 
         # Populate the (static) manual once, into both the center-stage Manual
@@ -717,7 +786,11 @@ class MainWindow(QMainWindow):
             lambda: self._find_ui.stop_find_all()
         )
         self.center_stage.find_replace_bar.set_on_status(self.statusBar().showMessage)
-        self.audit_panel.itemClicked.connect(self._on_audit_item_clicked)
+        # FQ-028: BOTH findings surfaces route a click through the ONE
+        # unchanged dispatcher -- the `Qt.UserRole+N` convention did not move,
+        # only the widget the rows live on did.
+        self.findings_panel.itemClicked.connect(self._on_audit_item_clicked)
+        self.results_panel.itemClicked.connect(self._on_audit_item_clicked)
         self.center_stage.caption_management_panel._on_apply = self._apply_caption_edits
         self.center_stage.caption_management_panel._on_close = self._close_caption_mode
         self.center_stage.caption_management_panel.on_go_to_line = self._caption_go_to_line
@@ -741,9 +814,26 @@ class MainWindow(QMainWindow):
         # shown). MainWindow owns its lifecycle + the write-back.
         self._code_editor_dialog: CodeEditorDialog | None = None
 
-        # Permanent status-bar mode indicator (Editing vs Caption Mode).
-        self._mode_label = QLabel("Editing Mode")
+        # FQ-028 Part 2: the status-bar MIRROR of the mode indicator. It is the
+        # same `_mode_label` §7 always had, upgraded in place -- deliberately
+        # NOT a second label beside it -- and it now carries the MAJOR workflow
+        # mode with its per-mode colour, plus the minor editor mode when there
+        # is one. The prominent copy is the toolbar panel built alongside the
+        # toolbar; both are written by `_refresh_mode_indicator` and by nothing
+        # else.
+        self._mode_label = ModeIndicator(light=False)
         self.statusBar().addPermanentWidget(self._mode_label)
+
+        # FQ-018 (as refined by FQ-028 Part 2.4): the two connectivity dots.
+        # Present only while a project is actually OPEN -- visibility, never a
+        # greyed-out third posture -- and starting at "not checked yet" rather
+        # than at a claim the poll has not earned.
+        self._quality_dot = ConnectivityIndicator(QUALITY_LABEL)
+        self._sandbox_dot = ConnectivityIndicator(SANDBOX_LABEL)
+        self.statusBar().addPermanentWidget(self._quality_dot)
+        self.statusBar().addPermanentWidget(self._sandbox_dot)
+        self._quality_dot.setVisible(False)
+        self._sandbox_dot.setVisible(False)
 
         if self._debug_log_path is not None:
             self._debug_label = QLabel("DEBUG")
@@ -994,6 +1084,17 @@ class MainWindow(QMainWindow):
             # written to.
             sandbox_controller=self.sandbox_controller,
         )
+        # FQ-019's journal switches store FIRST, before any other subscriber
+        # can narrate the transition. Qt delivers to subscribers in connection
+        # order, and `open_project`/`close_project` REPLACE the display buffer:
+        # a lane that journalled during the transition while this still pointed
+        # at the previous store would have its line wiped off screen a moment
+        # later. FQ-028 made that reachable by routing `[Project]`/`[Sandbox]`
+        # narration -- which is emitted exactly at these transitions -- into the
+        # journal, so the ordering became load-bearing.
+        self._ddl_project_ui.project_changed.connect(
+            self._on_activity_project_changed
+        )
         # The window title carries both the project folder and the document's
         # name + dirty marker, so both lanes' transitions refresh it.
         self._ddl_project_ui.project_changed.connect(
@@ -1141,6 +1242,7 @@ class MainWindow(QMainWindow):
         self._toolbar_ui.build(
             (self.menuBar(), self.editor_menu_bar), self.addToolBar
         )
+        self._install_toolbar_mode_panel()
         # FQ-012: capture every menu action's built-in shortcut BEFORE the first
         # override touches it, then install the saved overrides on top. The
         # order is load-bearing -- see `_shortcut_commands`.
@@ -1152,6 +1254,15 @@ class MainWindow(QMainWindow):
         # store has no keys, so the default resize(1400, 900) stands.
         self._restore_window_state()
         self._restore_theme()
+
+        # FQ-028/FQ-018: the two chrome refreshes that need the finished window
+        # -- the mode indicator (both surfaces, one call) and the connectivity
+        # dots, plus the 30 s poll that keeps the latter honest.
+        self._connectivity_timer = QTimer(self)
+        self._connectivity_timer.setInterval(_CONNECTIVITY_POLL_MS)
+        self._connectivity_timer.timeout.connect(self._poll_connectivity)
+        self._refresh_mode_indicator()
+        self._refresh_connectivity_affordances()
 
         # Curated-XSD feed (spec §11): bootstrap once if curated.xsd is
         # absent but the learning engine has state, then load whatever
@@ -1188,8 +1299,12 @@ class MainWindow(QMainWindow):
         self._activity_write_timer.setSingleShot(True)
         self._activity_write_timer.setInterval(_ACTIVITY_WRITE_DEBOUNCE_MS)
         self._activity_write_timer.timeout.connect(self._flush_activity_writes)
+        # FQ-018/FQ-028: the dots are present exactly while a project is open,
+        # so the project transition is what turns them (and the poll) on and
+        # off. Lambda because the signal carries the folder and settings the
+        # refresh has no use for.
         self._ddl_project_ui.project_changed.connect(
-            self._on_activity_project_changed
+            lambda *_args: self._refresh_connectivity_affordances()
         )
         # PHP tabs are created later and own their own save reporting, so the
         # journal subscribes per tab as each one opens.
@@ -1556,6 +1671,9 @@ class MainWindow(QMainWindow):
         self._settings.setValue("lightTheme", checked)
         # The palette flipped -- re-tint the toolbar icons so they stay legible.
         self._toolbar_ui.refresh_icons()
+        # ...and re-consult `mode_colors(light)`, so the mode chip is never the
+        # DEBUG chip's hardcoded red that reads wrong in one of the two themes.
+        self._refresh_mode_indicator()
 
     def _not_implemented(self, label):
         self.statusBar().showMessage(f"Not yet implemented: {label}", 5000)
@@ -1708,8 +1826,81 @@ class MainWindow(QMainWindow):
         self.tree_dock.setVisible(True)
 
     def _show_audit_dock(self) -> None:
-        """Un-hide the bottom Audit dock, so results just listed are visible."""
+        """Un-hide the bottom dock, so results just listed are visible.
+
+        Kept under its original name because it is INJECTED into two lanes
+        (`FindValidateController`, `CoherenceController`) as "make what I just
+        listed reachable"; what it un-hides is now the two-tab dock."""
         self.audit_dock.setVisible(True)
+
+    # -- FQ-028: the three surfaces the Audit panel became -------------------
+
+    def _reveal_findings_tab(self) -> None:
+        """Auto-open and focus the left-dock Findings tab. Called by the router
+        the moment a navigable row lands: a result the user asked for should
+        not need a second gesture to be seen."""
+        self._show_left_dock()
+        self.left_tabs.setTabVisible(self.findings_tab_index, True)
+        self.left_tabs.setCurrentWidget(self.findings_panel)
+
+    def _reveal_activity_tab(self) -> None:
+        """View ▸ Activity Log: un-hide the bottom dock and focus its journal
+        tab."""
+        self._show_audit_dock()
+        self.bottom_tabs.setCurrentWidget(self.activity_panel)
+
+    def _reveal_results_dock_tab(self) -> None:
+        """View ▸ Results: un-hide the bottom dock and focus its Results tab.
+        The user asked for it, so unlike `_reveal_results_tab` this one is
+        allowed to pop the dock."""
+        self._show_audit_dock()
+        self._reveal_results_tab()
+
+    def _reveal_results_tab(self) -> None:
+        """Focus the bottom dock's Results tab. Deliberately does NOT un-hide
+        the dock: `_show_audit_dock` is the gesture that does that, and a
+        background narration line must not pop a dock the user closed."""
+        self.bottom_tabs.setCurrentWidget(self.results_panel)
+
+    def _record_audit_notice(self, text, prefix=None) -> None:
+        """The router's Activity-Log sink: `[PHP]`, `[SQL]`, `[Project]`,
+        `[Sandbox]` and `[Schema]` learning chatter.
+
+        The prefix is KEPT in the journalled line. What FQ-028 dissolved is §7's
+        reservation RULE -- nine prefixes competing for one panel -- not the
+        prefixes themselves, and in a journal a prefix is provenance: it names
+        which part of the app is speaking. Only the SOURCE is decided here, and
+        only one row needs deciding: `[Sandbox]` describes the sandbox
+        connection, not a file."""
+        body = str(text)
+        source = (
+            SOURCE_SANDBOX_DB
+            if prefix == "[Sandbox]"
+            else self._file_activity_source()
+        )
+        self._record_notice(body, source=source)
+
+    def _record_notice(self, text, source=None) -> None:
+        """Journal one transient notice -- the sink `StaticStatusBar` hands
+        every `showMessage` to.
+
+        Silently drops anything emitted before the journal exists: the manual
+        loader reports a packaging failure through the status bar while this
+        constructor is still assembling, and a half-built window must not
+        crash over where to file it."""
+        body = str(text).strip()
+        if not body or getattr(self, "activity_log", None) is None:
+            return
+        if source is None:
+            # `_file_activity_source` asks the §18.2 lane, which may not exist
+            # yet -- the debug chip announces its log path from inside this
+            # constructor, before the lanes are built. No lane means no project.
+            source = (
+                self._file_activity_source()
+                if "_ddl_project_ui" in self.__dict__
+                else SOURCE_QUALITY_FILES
+            )
+        self.record_activity(source, verb=body)
 
     def _coherence_tab_visible(self) -> bool:
         """Whether the Database/XML Coherence tab is currently visible -- what
@@ -2611,21 +2802,27 @@ class MainWindow(QMainWindow):
         self.properties_dock.visibilityChanged.connect(properties_action.setChecked)
         self._properties_action = properties_action
 
-        audit_action = menu.addAction("Audit/Problems Panel")
+        # FQ-028: ONE bottom dock, two tabs. The toggle keeps the shape its
+        # three sibling dock toggles have (both ways, so the title-bar ✕ keeps
+        # the checkbox honest) and is renamed to what the dock now holds.
+        audit_action = menu.addAction("Activity Log / Results Panel")
         audit_action.setCheckable(True)
         audit_action.setChecked(True)
         audit_action.toggled.connect(self.audit_dock.setVisible)
         self.audit_dock.visibilityChanged.connect(audit_action.setChecked)
         self._audit_action = audit_action
 
-        # FQ-019: the fourth dock, wired exactly like its three siblings (both
-        # ways, so the title-bar ✕ keeps the checkbox honest).
-        activity_action = menu.addAction("Activity Log Panel")
-        activity_action.setCheckable(True)
-        activity_action.setChecked(True)
-        activity_action.toggled.connect(self.activity_dock.setVisible)
-        self.activity_dock.visibilityChanged.connect(activity_action.setChecked)
+        # FQ-019's Activity Log is no longer its own dock, so its entry FOCUSES
+        # its tab (un-hiding the dock first) rather than toggling a dock that
+        # no longer exists. Not checkable: a tab is either the one in view or it
+        # is not -- there is no third posture to check.
+        activity_action = menu.addAction("Activity Log")
+        activity_action.triggered.connect(self._reveal_activity_tab)
         self._activity_action = activity_action
+
+        results_action = menu.addAction("Results")
+        results_action.triggered.connect(self._reveal_results_dock_tab)
+        self._results_action = results_action
 
         self._raw_xml_panel_action = menu.addAction("Raw XML Panel")
         self._raw_xml_panel_action.setCheckable(True)
@@ -2914,7 +3111,7 @@ class MainWindow(QMainWindow):
         entries = caption_scan.scan_captions(snapshot)
         self.center_stage.caption_management_panel.load_entries(entries, snapshot_text=snapshot)
         self.center_stage.enter_caption_mode()
-        self._mode_label.setText("Caption Mode (XML read-only)")
+        self._refresh_mode_indicator()
         # No Ctrl+F / Ctrl+R gating is needed any more (FQ-016): the Edit-menu
         # Find…/Replace… QActions this used to disable are gone with the Edit
         # menu, and their replacements are per-editor-tab focus shortcuts scoped
@@ -2969,7 +3166,7 @@ class MainWindow(QMainWindow):
         """Panel Close callback: leave caption mode and restore Raw XML.
         Pending (unapplied) edits are discarded by re-scanning on next enter."""
         self.center_stage.leave_caption_mode()
-        self._mode_label.setText("Editing Mode")
+        self._refresh_mode_indicator()
         # Nothing to un-gate: see `_enter_caption_mode`. Both sides' Ctrl+F /
         # Ctrl+R are focus shortcuts scoped to the surface that owns them, so each
         # goes quiet on its own when that surface is not on screen.
@@ -4790,6 +4987,162 @@ class MainWindow(QMainWindow):
                 # earns exactly the same gate.
                 action.setVisible(check_visible)
 
+    # --- FQ-028: the mode indicator (one source of truth, two surfaces) -----
+
+    def _install_toolbar_mode_panel(self) -> None:
+        """Pin the prominent mode panel flush RIGHT in the Main Toolbar.
+
+        A `QToolBar` is movable and floatable, so "to the right of the toolbar"
+        is only a stable position if the panel is IN the toolbar: an expanding
+        spacer widget is added first, so the panel stays flush right however
+        many command buttons precede it and wherever the user docks the bar.
+        Added straight after `ToolbarController.build`, where `addToolBar`
+        lives, so it rides the same `saveState`/`restoreState` the toolbar does.
+        """
+        if self._toolbar_ui.toolbar is None:  # pragma: no cover - always built
+            return
+        self.toolbar_mode_indicator = ModeIndicator(light=False)
+        self._toolbar_ui.set_trailing_widget(self.toolbar_mode_indicator)
+
+    def current_mode(self) -> tuple[str | None, str | None]:
+        """**The one answer to "what mode am I in?"** — `(major, minor)`.
+
+        Both indicator surfaces read this and nothing else, which is the whole
+        point: a toolbar panel and a status-bar label that each worked it out
+        for themselves would eventually disagree.
+
+        The major mode is FQ-027's SESSION workflow mode, read straight off
+        `workflow_mode` — never re-derived from `AppState`, which is the
+        auto-detected project tier and a different fact, and never persisted.
+        The minor mode is the active editor SUB-STATE, or None when the editor
+        is simply being edited ("Editing" is the absence of a minor mode, not a
+        fourth one). At most one is reported; Caption wins over Compare/Merge
+        wins over Edit XSD, because that is the order in which one of them can
+        be entered on top of another.
+        """
+        return self._workflow_mode, self._active_minor_mode()
+
+    def _active_minor_mode(self) -> str | None:
+        """The active editor sub-state's name, or None.
+
+        Each is asked of the surface that OWNS it, never of a flag mirrored
+        here: Caption and Edit XSD are "their tab is revealed" (that IS how
+        `enter_caption_mode` / `show_edit_xsd` express the mode), and
+        Compare/Merge has its own predicate because FQ-021 made it a mode that
+        outlives its tab being current.
+        """
+        stage = self.center_stage
+        if stage.isTabVisible(stage.caption_management_tab_index):
+            return MINOR_CAPTION
+        if stage.diff_merge_mode_active:
+            return MINOR_DIFF
+        if stage.isTabVisible(stage.xsd_tab_index):
+            return MINOR_XSD
+        return None
+
+    def _refresh_mode_indicator(self) -> None:
+        """The SINGLE update path: rewrite both surfaces from `current_mode()`.
+
+        Called at every major/minor transition — launcher pick and New Session,
+        Caption enter/leave, Compare/Merge enter/leave, Edit-XSD enter/leave —
+        and on a theme flip. No transition site does its own `setText` or
+        `setStyleSheet`; that is what keeps the two renderings identical.
+        """
+        major, minor = self.current_mode()
+        light = self._light_theme_action.isChecked() if self._light_theme_action else False
+        for indicator in (
+            getattr(self, "_mode_label", None),
+            getattr(self, "toolbar_mode_indicator", None),
+        ):
+            if indicator is None:
+                continue
+            indicator.set_light_theme(light)
+            indicator.set_mode(major, minor)
+
+    # --- FQ-018 (refined by FQ-028 Part 2.4): the connectivity dots ---------
+
+    def _refresh_connectivity_affordances(self) -> None:
+        """Show or hide both dots, and run/stop the poll.
+
+        Visibility, never enabled-state: the dots are PRESENT while a project
+        is actually open and ABSENT otherwise. "Actually open" is
+        `DdlProjectController.is_open`, not the Project workflow LABEL — the
+        two can legitimately disagree (a Project column picked and the open
+        dialog then cancelled), and the dots report the real connections.
+        """
+        open_project = self._ddl_project_ui.is_open
+        self._quality_dot.setVisible(open_project)
+        self._sandbox_dot.setVisible(open_project)
+        if not open_project:
+            self._connectivity_timer.stop()
+            self._quality_dot.set_state(CONNECTIVITY_UNKNOWN)
+            self._sandbox_dot.set_state(CONNECTIVITY_UNKNOWN)
+            return
+        if self.isActiveWindow():
+            self._connectivity_timer.start()
+            self._poll_connectivity()
+
+    def changeEvent(self, event) -> None:
+        """Window activation gating (FQ-018): the poll runs only while this
+        window is active, and polls ONCE immediately on regaining activation so
+        a returning user never reads a dot that is up to 30 s stale."""
+        super().changeEvent(event)
+        if event.type() == QEvent.Type.ActivationChange:
+            if getattr(self, "_connectivity_timer", None) is None:
+                return
+            if self.isActiveWindow():
+                self._refresh_connectivity_affordances()
+            else:
+                self._connectivity_timer.stop()
+
+    def _poll_connectivity(self) -> None:
+        """One 30 s round of the lightweight reachability check.
+
+        **Never on the GUI thread** — it goes through the same `_run_async`
+        seam every connection test and the sandbox lane use, so a hung DB
+        cannot freeze the editor twice a minute. **Never the full `probe()`**:
+        this answers "is it up?", not "is it fully capable?", which stays with
+        the Project Status window's explicit probe.
+
+        Refuses to run at all without a project open, which is the same gate
+        that decides whether the dots are on screen.
+        """
+        if not self._ddl_project_ui.is_open or not self.isActiveWindow():
+            return
+        target = self._project_status_target()
+        settings = self._ddl_project_settings
+        sandbox = getattr(settings, "sandbox", None) if settings else None
+        sandbox_configured = bool(sandbox is not None and getattr(sandbox, "host", ""))
+
+        def do_poll():
+            target_error = None
+            if target is not None:
+                ok, message = db_test_connection(target)
+                target_error = None if ok else message
+            sandbox_error = None
+            if sandbox_configured:
+                ok, message = db_test_connection(sandbox)
+                sandbox_error = None if ok else message
+            return target_error, sandbox_error
+
+        def on_result(errors) -> None:
+            target_error, sandbox_error = errors
+            self._quality_dot.set_state(
+                quality_state(target is not None, target_error)
+            )
+            self._sandbox_dot.set_state(
+                sandbox_state_for(sandbox_configured, sandbox_error)
+            )
+
+        def on_error(exc: BaseException) -> None:
+            # `db_test_connection` never raises, so this only guards a broken
+            # injected seam. The dots fall back to "not checked" rather than to
+            # a claim -- an unknown connection is not an offline one.
+            self._quality_dot.set_state(CONNECTIVITY_UNKNOWN)
+            self._sandbox_dot.set_state(CONNECTIVITY_UNKNOWN)
+
+        self._run_async(do_poll, on_result=on_result, on_error=on_error)
+
     # --- FQ-027: the session workflow mode and its menu filter --------------
     @property
     def workflow_mode(self):
@@ -4821,6 +5174,10 @@ class MainWindow(QMainWindow):
         """
         self._workflow_mode = mode
         self._refresh_workflow_mode_affordances()
+        # FQ-028: the indicator is a passive READER of this one value. It never
+        # re-derives the mode and never persists it, so a mode change has
+        # exactly one write and two renderings.
+        self._refresh_mode_indicator()
 
     def _refresh_workflow_mode_affordances(self) -> None:
         """The single "make both menu bars match the workflow mode" entry point

@@ -101,62 +101,62 @@ def _entry(stamp, source=SOURCE_PROJECT_FILES, **kwargs):
 # --- The dock ---------------------------------------------------------------
 
 
-def test_the_activity_log_is_its_own_dock_beside_the_audit_panel(qtbot, tmp_path):
-    """A separate dock, NOT a tab inside Audit / Problems: two different
-    concerns (findings vs. an operations journal) that must be readable at
-    once."""
+def test_the_activity_log_is_a_tab_of_the_one_bottom_dock(qtbot, tmp_path):
+    """FQ-028 REPOSITIONED it: the journal that shipped an hour earlier as its
+    own dock beside Audit / Problems is now the FIRST TAB of the single bottom
+    dock, whose second tab is Results. There is no `activity_dock` any more --
+    a third bottom surface is exactly what the split was meant to avoid."""
     window = _window(qtbot, tmp_path)
 
     assert isinstance(window.activity_panel, ActivityPanel)
-    assert window.activity_dock.widget() is window.activity_panel
-    assert window.activity_dock is not window.audit_dock
-    assert window.activity_dock.parentWidget() is window
-    # Beside, in the same bottom area -- and not tabbed onto the Audit dock.
+    assert not hasattr(window, "activity_dock")
+    assert window.audit_dock.widget() is window.bottom_tabs
+    assert window.bottom_tabs.widget(window.activity_tab_index) is window.activity_panel
+    assert window.bottom_tabs.tabText(window.activity_tab_index) == "Activity Log"
+
     from PySide6.QtCore import Qt
 
     assert (
-        window.dockWidgetArea(window.activity_dock)
+        window.dockWidgetArea(window.audit_dock)
         == Qt.DockWidgetArea.BottomDockWidgetArea
     )
-    assert window.audit_dock not in window.tabifiedDockWidgets(window.activity_dock)
 
 
-def test_the_dock_carries_an_object_name_so_windowstate_can_restore_it(
+def test_the_bottom_dock_keeps_the_audit_object_name_so_saved_layouts_survive(
     qtbot, tmp_path
 ):
-    """`saveState`/`restoreState` address docks by `objectName`; without one the
-    user's placement of this dock would be dropped on every restart -- which is
-    exactly what the three sibling docks already have."""
+    """`saveState`/`restoreState` address docks by `objectName`. The bottom dock
+    KEPT `audit_dock` through the restructuring on purpose: a user's saved
+    bottom-dock geometry and visibility carry straight over onto the two-tab
+    panel instead of being discarded."""
     window = _window(qtbot, tmp_path)
 
-    assert window.activity_dock.objectName() == "activity_dock"
-    # `saveState` writes dock names as UTF-16BE, so the name is checked in that
-    # encoding rather than as ASCII bytes.
-    assert "activity_dock".encode("utf-16-be") in bytes(window.saveState())
+    assert window.audit_dock.objectName() == "audit_dock"
+    assert "audit_dock".encode("utf-16-be") in bytes(window.saveState())
 
     # And it really round-trips: a hidden dock comes back hidden.
-    window.activity_dock.setVisible(False)
+    window.audit_dock.setVisible(False)
     state = window.saveState()
-    window.activity_dock.setVisible(True)
+    window.audit_dock.setVisible(True)
     window.restoreState(state)
-    assert not window.activity_dock.isVisibleTo(window)
+    assert not window.audit_dock.isVisibleTo(window)
 
 
-def test_the_view_menu_toggles_the_dock_both_ways(qtbot, tmp_path):
+def test_the_view_menu_focuses_the_activity_tab(qtbot, tmp_path):
+    """The entry is no longer a dock toggle -- a tab is either the one in view
+    or it is not, so there is nothing to check -- it un-hides the dock and
+    brings the journal forward."""
     window = _window(qtbot, tmp_path)
     menu = find_top_menu(window, "View")
-    assert "Activity Log Panel" in action_labels(menu)
+    assert "Activity Log" in action_labels(menu)
 
-    action = window._activity_action
-    assert action.isCheckable() and action.isChecked()
+    window.bottom_tabs.setCurrentWidget(window.results_panel)
+    window.audit_dock.setVisible(False)
 
-    action.setChecked(False)
-    assert not window.activity_dock.isVisibleTo(window)
+    window._activity_action.trigger()
 
-    # And the other direction: hiding the dock (its title-bar ✕) unchecks it.
-    action.setChecked(True)
-    window.activity_dock.setVisible(False)
-    assert not action.isChecked()
+    assert window.audit_dock.isVisibleTo(window)
+    assert window.bottom_tabs.currentWidget() is window.activity_panel
 
 
 # --- The lifecycle ----------------------------------------------------------
@@ -209,7 +209,11 @@ def test_a_second_project_never_shows_the_first_ones_history(qtbot, tmp_path):
     _open_project(window, first)
     _open_project(window, second)
 
-    assert [e.file_verb for e in window.activity_log.entries] == [FILE_VERB_OPENED]
+    # FQ-028 routes transient status-bar notices here too, so the FILE entries
+    # are what this asserts -- a notice has no `file_verb`.
+    assert [
+        e.file_verb for e in window.activity_log.entries if e.file_verb
+    ] == [FILE_VERB_OPENED]
 
 
 # --- Standalone entries are session-only ------------------------------------
@@ -356,9 +360,16 @@ def test_opening_a_pgtp_journals_an_opened_entry(qtbot, tmp_path):
 
     window.open_project_file(str(document))
 
-    assert [e.file_verb for e in window.activity_log.entries] == [FILE_VERB_OPENED]
-    assert window.activity_log.entries[0].source == SOURCE_QUALITY_FILES
-    assert window.activity_panel.row_texts()[0].endswith("Opened success")
+    assert [
+        e.file_verb for e in window.activity_log.entries if e.file_verb
+    ] == [FILE_VERB_OPENED]
+    assert any(
+        e.source == SOURCE_QUALITY_FILES and e.file_verb == FILE_VERB_OPENED
+        for e in window.activity_log.entries
+    )
+    assert any(
+        row.endswith("Opened success") for row in window.activity_panel.row_texts()
+    )
 
 
 def test_an_unparseable_pgtp_journals_the_open_as_a_failure(qtbot, tmp_path, monkeypatch):
@@ -397,7 +408,7 @@ def test_saving_a_pgtp_journals_a_saved_entry_in_the_projects_store(
     window._flush_activity_writes()
 
     stored = load_activity(folder)
-    assert [e.file_verb for e in stored] == [FILE_VERB_SAVED]
+    assert [e.file_verb for e in stored if e.file_verb] == [FILE_VERB_SAVED]
     assert stored[0].source == SOURCE_PROJECT_FILES
     # The `Opened` that preceded the project was standalone and did NOT follow
     # the user into the project's file.

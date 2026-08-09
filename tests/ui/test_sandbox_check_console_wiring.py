@@ -52,8 +52,15 @@ class _Finding:
 
 
 def _audit_texts(window):
+    """The findings rows -- `[Check]` -- as the Results tab holds them."""
     panel = window.audit_panel
     return [panel.item(i).text() for i in range(panel.count())]
+
+
+def _activity_texts(window):
+    """The journalled rows -- `[SQL]` refusals, which FQ-028 routes to the
+    Activity Log rather than to a findings surface."""
+    return window.activity_panel.row_texts()
 
 
 def _audit_items(window):
@@ -384,7 +391,9 @@ def test_console_format_refusals_reach_the_sql_audit_channel(qtbot, tmp_path):
 
     console.format_refused.emit([_Issue()])
 
-    assert _audit_texts(window) == ["[SQL] line 4: unbalanced dollar quote"]
+    assert any(
+        "[SQL] line 4: unbalanced dollar quote" in t for t in _activity_texts(window)
+    )
 
 
 # --- Stage 2: the SandboxController that makes any of this reachable -------

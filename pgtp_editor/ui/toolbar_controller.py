@@ -68,7 +68,7 @@ from collections.abc import Callable
 
 from PySide6.QtCore import QObject, Qt
 from PySide6.QtGui import QPalette
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QSizePolicy, QWidget
 
 from pgtp_editor.ui.customize_toolbar_dialog import CustomizeToolbarDialog
 from pgtp_editor.ui.icons import catalog_ids as icon_catalog_ids, themed_icon
@@ -337,6 +337,40 @@ class ToolbarController(QObject):
             self._set_action_icon(action, command_id, color)
             self._toolbar.addAction(action)
         self._toolbar_ids = ids
+        self._reattach_trailing()
+
+    # -- FQ-028: the right-anchored mode panel -------------------------------
+    # The toolbar is movable and floatable, so "to the right of the toolbar" is
+    # only stable if the panel lives IN it, behind an EXPANDING spacer. The
+    # panel is not a command, so it is held apart from `_toolbar_ids`: it must
+    # survive every `apply_ids` rebuild (Customize Toolbar's OK is one) and it
+    # must never appear in the command universe, be pinnable, or be counted as
+    # a toolbar button.
+
+    def set_trailing_widget(self, widget) -> None:
+        """Pin `widget` flush right in the toolbar, after an expanding spacer,
+        and keep it there across rebuilds."""
+        self._trailing_widget = widget
+        self._reattach_trailing()
+
+    def _reattach_trailing(self) -> None:
+        widget = getattr(self, "_trailing_widget", None)
+        if widget is None or self._toolbar is None:
+            return
+        spacer = QWidget()
+        spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        self._trailing_actions = [
+            self._toolbar.addWidget(spacer),
+            self._toolbar.addWidget(widget),
+        ]
+
+    @property
+    def command_actions(self) -> list:
+        """The toolbar's COMMAND actions -- everything except the trailing
+        mode panel and its spacer. What "which buttons are on the toolbar?"
+        means."""
+        trailing = set(getattr(self, "_trailing_actions", ()))
+        return [a for a in self._toolbar.actions() if a not in trailing]
 
     def apply_and_save(self, ids, icon_assignments=None) -> None:
         """Apply an id list to the toolbar and persist it (test seam / the

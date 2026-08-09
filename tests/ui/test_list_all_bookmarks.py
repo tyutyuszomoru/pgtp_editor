@@ -252,9 +252,17 @@ def test_repeat_listings_replace_and_leave_other_prefixes_alone(qtbot, tmp_path)
 
     _list(window)
 
+    # FQ-028: the left-dock Findings tab is LAST-OPERATION-WINS across types --
+    # `[Find]` and `[Bookmark]` answer the same "where do I go next?" question
+    # and only one such answer is live at a time, so listing bookmarks replaces
+    # the finds. `[Validate]` is untouched: it lives on the Results tab.
     assert _texts(window) == [
-        "[Find] line 9: kept",
         "[Validate] WARNING: kept",
+        "[Bookmark] line 1: one",
+        "[Bookmark] line 3: three",
+        "[Bookmark] 2 bookmark(s)",
+    ]
+    assert window.findings_panel.row_texts() == [
         "[Bookmark] line 1: one",
         "[Bookmark] line 3: three",
         "[Bookmark] 2 bookmark(s)",
@@ -287,7 +295,12 @@ def test_a_document_load_sweeps_the_stale_rows_projectless(qtbot, tmp_path):
     editor.setPlainText("one\ntwo\nthree")  # the reload
 
     assert editor.bookmarked_lines() == []
-    assert _texts(window) == ["[Find] line 9: kept"]
+    # The `[Find]` seed is gone for the same last-operation-wins reason as
+    # above -- the listing replaced it -- and the stale listing is then swept,
+    # leaving the Findings tab empty rather than showing bookmarks that no
+    # longer exist.
+    assert _texts(window) == []
+    assert window.findings_panel.row_texts() == []
 
 
 def test_toggling_a_bookmark_does_not_resync_the_rows(qtbot, tmp_path):

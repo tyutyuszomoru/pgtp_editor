@@ -352,9 +352,9 @@ def test_open_ddl_project_with_multiple_unlinked_pgtp_reports_via_audit_and_gues
     window._ddl_project_ui.open_project()
 
     assert window._current_project is None  # never guessed which one
-    texts = [window.audit_panel.item(i).text() for i in range(window.audit_panel.count())]
+    texts = window.activity_panel.row_texts()
     assert any(
-        t.startswith("[Project]") and "multiple" in t.lower() for t in texts
+        ("[Project]" in t) and "multiple" in t.lower() for t in texts
     )
 
 
@@ -421,8 +421,8 @@ def test_open_reports_unchanged_source_pgtp(qtbot, tmp_path, monkeypatch):
 
     window._ddl_project_ui.open_project()
 
-    texts = [window.audit_panel.item(i).text() for i in range(window.audit_panel.count())]
-    assert any("unchanged" in t.lower() for t in texts if t.startswith("[Project]"))
+    texts = window.activity_panel.row_texts()
+    assert any("unchanged" in t.lower() for t in texts if ("[Project]" in t))
 
 
 def test_open_reports_drifted_source_pgtp(qtbot, tmp_path, monkeypatch):
@@ -449,9 +449,9 @@ def test_open_reports_drifted_source_pgtp(qtbot, tmp_path, monkeypatch):
 
     window._ddl_project_ui.open_project()
 
-    texts = [window.audit_panel.item(i).text() for i in range(window.audit_panel.count())]
+    texts = window.activity_panel.row_texts()
     assert any(
-        t.startswith("[Project]") and "changed" in t.lower() for t in texts
+        ("[Project]" in t) and "changed" in t.lower() for t in texts
     )
 
 
@@ -490,7 +490,7 @@ def test_open_reports_unreadable_source_pgtp_gracefully(qtbot, tmp_path, monkeyp
 
     window._ddl_project_ui.open_project()  # must not raise
 
-    texts = [window.audit_panel.item(i).text() for i in range(window.audit_panel.count())]
+    texts = window.activity_panel.row_texts()
     assert any("could not read" in t.lower() for t in texts)
 
 
@@ -780,8 +780,8 @@ def test_checkout_reports_drift_from_the_last_deployed_reference(qtbot, tmp_path
 
     window._edit_ddl_checked_out(ref, "CREATE FUNCTION pr.recalc() ... -- drifted")
 
-    texts = [window.audit_panel.item(i).text() for i in range(window.audit_panel.count())]
-    assert any(t.startswith("[Project]") and "drifted" in t.lower() for t in texts)
+    texts = window.activity_panel.row_texts()
+    assert any(("[Project]" in t) and "drifted" in t.lower() for t in texts)
 
 
 def test_checkout_reports_no_drift_when_hash_matches_the_deployed_reference(qtbot, tmp_path):
@@ -1196,10 +1196,15 @@ def test_close_project_reminds_about_pending_ddl_deploys(qtbot, tmp_path):
 
     window._ddl_project_ui.close_project()
 
-    texts = [window.audit_panel.item(i).text() for i in range(window.audit_panel.count())]
-    assert any(
-        t.startswith("[Project]") and "pending a batch deploy" in t for t in texts
-    )
+    # FQ-028 routes `[Project]` narration into the Activity Log, and this
+    # particular line is emitted DURING the close -- after which FQ-019's
+    # project transition replaces the on-screen buffer with the (empty)
+    # standalone one. So the reminder is asserted where it durably landed: the
+    # closing project's own journal file, which the transition flushed.
+    from pgtp_editor.db.activity_log import activity_path
+
+    journal = activity_path(project_dir).read_text(encoding="utf-8")
+    assert "[Project]" in journal and "pending a batch deploy" in journal
 
 
 def test_close_project_with_no_ddl_explorer_loaded_never_raises(qtbot, tmp_path):

@@ -349,7 +349,36 @@ EXPECTED_HOST_SURFACE = {
     "_workflow_mode",
     "_xsd_ui",
     "active_target_params",
-    "activity_dock",
+    "_active_minor_mode",
+    "_connectivity_timer",
+    "_install_toolbar_mode_panel",
+    "_poll_connectivity",
+    "_quality_dot",
+    "_record_audit_notice",
+    "_record_notice",
+    "_refresh_connectivity_affordances",
+    "_refresh_mode_indicator",
+    "_results_action",
+    "_reveal_activity_tab",
+    "_reveal_findings_tab",
+    "_reveal_results_dock_tab",
+    "_reveal_results_tab",
+    "_sandbox_dot",
+    "activity_tab_index",
+    "bottom_tabs",
+    "changeEvent",
+    "current_mode",
+    "findings_panel",
+    "findings_tab_index",
+    "results_panel",
+    "results_tab_index",
+    "toolbar_mode_indicator",
+    # FQ-028: `activity_dock` is GONE -- the Activity Log became a TAB of the
+    # one bottom dock (which kept the `audit_dock` objectName so saved layouts
+    # survive), and the chrome redesign grew the host these names: the three
+    # surface reveals + the router's journal sink (Parts 1/3), the ONE mode
+    # source of truth and its single update path (Part 2), and the two
+    # connectivity dots with their window-active-gated poll (FQ-018).
     "activity_log",
     "activity_panel",
     "audit_dock",

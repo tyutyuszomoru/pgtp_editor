@@ -52,8 +52,21 @@ def busy_status(status_bar, message: str):
     duration of the wrapped block. Restores the cursor on exit, even on error.
 
     The caller is responsible for the terminal (done) message after the block.
+
+    **FQ-028: the message drives the status bar's BUSY SLOT when the bar has
+    one** (`ui/status_bar.py::StaticStatusBar.begin_busy`) — a permanent
+    element with a live elapsed-seconds counter, cleared here on the way out,
+    which is what "static bar" replaces the sticky message with. A plain
+    `QStatusBar` (what a unit test hands in) has no such slot, so the original
+    sticky `showMessage` stays as the fallback and that contract is unchanged.
     """
-    status_bar.showMessage(message)
+    begin = getattr(status_bar, "begin_busy", None)
+    end = getattr(status_bar, "end_busy", None)
+    if begin is not None and end is not None:
+        begin(message)
+    else:
+        end = None
+        status_bar.showMessage(message)
     QApplication.setOverrideCursor(QCursor(Qt.CursorShape.WaitCursor))
     try:
         QApplication.processEvents(
@@ -62,3 +75,5 @@ def busy_status(status_bar, message: str):
         yield
     finally:
         QApplication.restoreOverrideCursor()
+        if end is not None:
+            end()

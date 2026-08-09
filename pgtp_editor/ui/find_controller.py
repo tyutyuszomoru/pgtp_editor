@@ -764,9 +764,15 @@ class FindValidateController(QObject):
                 audit.takeItem(row)
 
     def clear_validation_results(self) -> None:
-        """Remove only prior [Validate]-prefixed audit entries, leaving find /
-        schema-learning entries intact. Iterates from the bottom so removals
-        don't shift not-yet-visited indices."""
+        """Open a NEW validation run.
+
+        It still expresses itself as "remove my prior `[Validate]` rows", which
+        is what it literally did while every prefix shared one panel. Since
+        FQ-028 `[Validate]` rows live on the accumulating Results tab, where
+        validation history is deliberately KEPT across runs, and the router
+        reads this sweep as the run boundary it always meant: the rows stay and
+        the next one opens under its own dated separator. Iterates from the
+        bottom so removals don't shift not-yet-visited indices."""
         audit = self._shell.audit
         for row in range(audit.count() - 1, -1, -1):
             item = audit.item(row)

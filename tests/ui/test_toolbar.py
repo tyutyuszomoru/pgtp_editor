@@ -41,7 +41,7 @@ def _ini_settings(tmp_path, name="s.ini"):
 
 
 def _toolbar_labels(window):
-    return [a.text() for a in window._toolbar_ui.toolbar.actions()]
+    return [a.text() for a in window._toolbar_ui.command_actions]
 
 
 def test_default_toolbar_has_every_default_action_in_order(qtbot, tmp_path):
@@ -58,7 +58,7 @@ def test_no_default_toolbar_button_ships_empty_or_iconless(qtbot, tmp_path):
     button with no action behind it and no icon on it."""
     window = MainWindow(settings=_ini_settings(tmp_path))
     qtbot.addWidget(window)
-    actions = window._toolbar_ui.toolbar.actions()
+    actions = window._toolbar_ui.command_actions
     assert len(actions) == len(DEFAULT_TOOLBAR_IDS)
     for command_id, action in zip(DEFAULT_TOOLBAR_IDS, actions):
         assert command_id in window._toolbar_ui.menu_commands, command_id
@@ -91,7 +91,7 @@ def test_toolbar_action_is_the_menu_action_itself(qtbot, tmp_path):
     qtbot.addWidget(window)
     window._toolbar_ui.apply_ids(["parsing.validate-project"])
     menu_action = find_action(find_top_menu(window, "Parsing"), "Validate Project")
-    assert window._toolbar_ui.toolbar.actions() == [menu_action]
+    assert window._toolbar_ui.command_actions == [menu_action]
 
 
 def test_toolbar_action_triggers_slot(qtbot, tmp_path):
@@ -101,8 +101,8 @@ def test_toolbar_action_triggers_slot(qtbot, tmp_path):
     window._toolbar_ui.apply_ids(["parsing.validate-project"])
     # The shared action carries the menu's connection; add our own spy to it
     # rather than patching the bound slot, which would not rewire it.
-    window._toolbar_ui.toolbar.actions()[0].triggered.connect(lambda: called.append(True))
-    window._toolbar_ui.toolbar.actions()[0].trigger()
+    window._toolbar_ui.command_actions[0].triggered.connect(lambda: called.append(True))
+    window._toolbar_ui.command_actions[0].trigger()
     assert called == [True]
 
 
@@ -246,7 +246,7 @@ def test_a_previously_unavailable_command_can_go_on_the_toolbar(qtbot, tmp_path)
     qtbot.addWidget(window)
     window._toolbar_ui.apply_and_save(["deployment.save-as-new-pgtp"])
     assert _toolbar_labels(window) == ["Save as new pgtp"]
-    assert window._toolbar_ui.toolbar.actions()[0] is find_action(
+    assert window._toolbar_ui.command_actions[0] is find_action(
         find_top_menu(window, "Deployment"), "Save as new pgtp"
     )
 
@@ -257,7 +257,7 @@ def test_checkable_menu_toggle_stays_checkable_on_the_toolbar(qtbot, tmp_path):
     window = MainWindow(settings=_ini_settings(tmp_path))
     qtbot.addWidget(window)
     window._toolbar_ui.apply_ids(["view.light-theme"])
-    action = window._toolbar_ui.toolbar.actions()[0]
+    action = window._toolbar_ui.command_actions[0]
     assert action.isCheckable()
     assert action is find_action(find_top_menu(window, "View"), "Light Theme")
 
@@ -330,14 +330,14 @@ def test_toolbar_shows_text_beside_icon(qtbot, tmp_path):
         window._toolbar_ui.toolbar.toolButtonStyle()
         == Qt.ToolButtonStyle.ToolButtonTextBesideIcon
     )
-    labels = [a.text() for a in window._toolbar_ui.toolbar.actions()]
+    labels = [a.text() for a in window._toolbar_ui.command_actions]
     assert all(labels)  # no empty labels
 
 
 def test_every_default_toolbar_action_has_a_non_null_icon(qtbot, tmp_path):
     window = MainWindow(settings=_ini_settings(tmp_path))
     qtbot.addWidget(window)
-    actions = window._toolbar_ui.toolbar.actions()
+    actions = window._toolbar_ui.command_actions
     assert actions
     assert all(not a.icon().isNull() for a in actions)
 
@@ -347,7 +347,7 @@ def test_icons_are_hidden_in_menus(qtbot, tmp_path):
     suppressed in the menu or adding a button would restyle the menu too."""
     window = MainWindow(settings=_ini_settings(tmp_path))
     qtbot.addWidget(window)
-    assert all(not a.isIconVisibleInMenu() for a in window._toolbar_ui.toolbar.actions())
+    assert all(not a.isIconVisibleInMenu() for a in window._toolbar_ui.command_actions)
 
 
 def test_an_icon_less_command_is_still_addable(qtbot, tmp_path):
@@ -356,7 +356,7 @@ def test_an_icon_less_command_is_still_addable(qtbot, tmp_path):
     window = MainWindow(settings=_ini_settings(tmp_path))
     qtbot.addWidget(window)
     window._toolbar_ui.apply_ids(["deployment.save-as-new-pgtp"])
-    action = window._toolbar_ui.toolbar.actions()[0]
+    action = window._toolbar_ui.command_actions[0]
     assert action.icon().isNull()
     assert action.text() == "Save as new pgtp"
 
@@ -365,7 +365,7 @@ def test_toggling_light_theme_keeps_icons_non_null(qtbot, tmp_path):
     window = MainWindow(settings=_ini_settings(tmp_path))
     qtbot.addWidget(window)
     window._on_light_theme_toggled(True)
-    actions = window._toolbar_ui.toolbar.actions()
+    actions = window._toolbar_ui.command_actions
     assert actions
     assert all(not a.icon().isNull() for a in actions)
 
@@ -385,7 +385,7 @@ def test_repopulating_the_toolbar_does_not_destroy_the_menu_action(qtbot, tmp_pa
     window._toolbar_ui.apply_ids(["parsing.validate-project"])
 
     # Still the same, still-alive object, still in the Parsing menu.
-    assert window._toolbar_ui.toolbar.actions() == [validate]
+    assert window._toolbar_ui.command_actions == [validate]
     assert validate.text() == "Validate Project"
     assert find_action(find_top_menu(window, "Parsing"), "Validate Project") is validate
     called = []
@@ -400,7 +400,7 @@ def test_removed_toolbar_action_survives_and_stays_in_its_menu(qtbot, tmp_path):
     save_as = find_action(find_top_menu(window, "Deployment"), "Save as new pgtp")
     window._toolbar_ui.apply_ids(["deployment.save-as-new-pgtp"])
     window._toolbar_ui.apply_ids(["deployment.save-pgtp"])
-    assert save_as not in window._toolbar_ui.toolbar.actions()
+    assert save_as not in window._toolbar_ui.command_actions
     assert save_as.text() == "Save as new pgtp"          # C++ object still alive
     assert find_action(find_top_menu(window, "Deployment"), "Save as new pgtp") is save_as
 
@@ -497,7 +497,7 @@ def test_submenu_commands_are_offered_with_their_full_path(qtbot, tmp_path):
     assert "tools.extra-stuff" not in labels
 
     window._toolbar_ui.apply_ids(["tools.extra-stuff.deep-command"])
-    assert window._toolbar_ui.toolbar.actions() == [nested_action]
+    assert window._toolbar_ui.command_actions == [nested_action]
 
 
 def test_no_offered_id_contains_uppercase_or_whitespace(qtbot, tmp_path):
@@ -522,7 +522,7 @@ def test_refresh_toolbar_icons_tolerates_icon_less_commands(qtbot, tmp_path):
         ["deployment.save-as-new-pgtp", "deployment.save-pgtp", "file.open"]
     )
     window._toolbar_ui.refresh_icons()
-    save_as, save, open_ = window._toolbar_ui.toolbar.actions()
+    save_as, save, open_ = window._toolbar_ui.command_actions
     assert save_as.icon().isNull()
     assert save.icon().isNull()
     assert not open_.icon().isNull()
@@ -645,14 +645,14 @@ def test_a_bookmark_button_pinned_before_the_rename_survives_the_upgrade(
     assert _toolbar_labels(window) == ["Open...", "Next Bookmark"]
     # ...it is the real menu action, not an orphan...
     menu = find_top_menu(window, "Navigation")
-    assert window._toolbar_ui.toolbar.actions()[1] is find_action(
+    assert window._toolbar_ui.command_actions[1] is find_action(
         menu, "Next Bookmark"
     )
     # ...and it kept the icon, re-keyed onto the new id rather than left behind
     # under the old one.
     assert window._toolbar_ui.icon_ids.get("navigation.next-bookmark") == "zoom-in"
     assert "bookmarks.next-bookmark" not in window._toolbar_ui.icon_ids
-    assert not window._toolbar_ui.toolbar.actions()[1].icon().isNull()
+    assert not window._toolbar_ui.command_actions[1].icon().isNull()
 
 
 def test_the_navigation_menus_members_kept_their_own_labels(qtbot, tmp_path):
@@ -724,8 +724,8 @@ def test_a_difference_button_pinned_on_tools_survives_the_move(qtbot, tmp_path):
         "navigation.previous-difference",
     ]
     menu = find_top_menu(window, "Navigation")
-    assert window._toolbar_ui.toolbar.actions()[0] is find_action(menu, "Next Difference")
-    assert window._toolbar_ui.toolbar.actions()[1] is find_action(
+    assert window._toolbar_ui.command_actions[0] is find_action(menu, "Next Difference")
+    assert window._toolbar_ui.command_actions[1] is find_action(
         menu, "Previous Difference"
     )
 
@@ -764,11 +764,11 @@ def test_a_toolbar_saved_before_fq020_follows_the_moved_commands(qtbot, tmp_path
     ]
     # ...and each button IS the live menu action, not an orphan with the right id.
     deployment = find_top_menu(window, "Deployment")
-    assert window._toolbar_ui.toolbar.actions()[:2] == [
+    assert window._toolbar_ui.command_actions[:2] == [
         find_action(deployment, "Compare/Merge pgtp"),
         find_action(deployment, "Deploy .pgtp"),
     ]
-    assert window._toolbar_ui.toolbar.actions()[2] is find_action(
+    assert window._toolbar_ui.command_actions[2] is find_action(
         find_top_menu(window, "File"), "Discard Changes"
     )
 
@@ -835,7 +835,7 @@ def test_a_toolbar_saved_before_bug039_follows_the_check_gestures_to_parsing(
         "parsing.check-object-without-applying",
     ]
     parsing = find_top_menu(window, "Parsing")
-    assert window._toolbar_ui.toolbar.actions()[:2] == [
+    assert window._toolbar_ui.command_actions[:2] == [
         find_action(parsing, "Check Object in Sandbox"),
         find_action(parsing, "Check Object Without Applying"),
     ]

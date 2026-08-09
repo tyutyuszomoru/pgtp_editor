@@ -28,7 +28,10 @@ def test_audit_dock_on_bottom(qtbot):
     window = MainWindow()
     qtbot.addWidget(window)
     assert window.dockWidgetArea(window.audit_dock) == Qt.DockWidgetArea.BottomDockWidgetArea
-    assert window.audit_dock.windowTitle() == "Audit / Problems"
+    # FQ-028 retired the "Audit / Problems" title: the dock now HOLDS the two
+    # surfaces that replaced it, and keeps the objectName so saved layouts do.
+    assert window.audit_dock.windowTitle() == "Activity Log / Results"
+    assert window.audit_dock.objectName() == "audit_dock"
 
 
 def test_properties_dock_on_right(qtbot):
@@ -403,7 +406,10 @@ def test_find_all_populates_audit_panel_with_line_items_and_summary(qtbot):
 def test_find_all_clears_only_prior_find_entries(qtbot):
     window = MainWindow()
     qtbot.addWidget(window)
-    window.audit_panel.addItem("[Schema] seeded entry")
+    # FQ-028: `[Schema]` learning chatter is journalled, not listed, so the
+    # "survives a Find rerun" seed is a Results row -- which is the surface a
+    # Find rerun must not touch.
+    window.audit_panel.addItem("[Check] seeded entry")
     window.center_stage.xml_editor.setPlainText("page here")
 
     window._find_ui.find_all("page")
@@ -413,9 +419,9 @@ def test_find_all_clears_only_prior_find_entries(qtbot):
     texts = [window.audit_panel.item(i).text() for i in range(window.audit_panel.count())]
     # The seeded [Schema] entry survives exactly once; only ONE generation of
     # [Find] entries is present (result line + summary).
-    assert texts.count("[Schema] seeded entry") == 1
+    assert texts.count("[Check] seeded entry") == 1
     assert texts == [
-        "[Schema] seeded entry",
+        "[Check] seeded entry",
         "[Find] line 1: page here",
         '[Find] 1 match(es) for "page"',
     ]
@@ -445,7 +451,7 @@ def test_clicking_non_find_entry_is_a_noop(qtbot):
     window.center_stage.xml_editor.moveCursor(QTextCursor.MoveOperation.Start)
     before = window.center_stage.xml_editor.textCursor().blockNumber()
 
-    window.audit_panel.addItem("[Schema] not clickable to navigate")
+    window.audit_panel.addItem("[Check] not clickable to navigate")
     schema_item = window.audit_panel.item(window.audit_panel.count() - 1)
     window._on_audit_item_clicked(schema_item)  # no line data -> no-op
 
@@ -726,10 +732,14 @@ def test_manage_captions_apply_then_reedit_uses_updated_snapshot(qtbot):
 
 # --- Phase 1: mode indicator + read-only hint -----------------------------
 
-def test_mode_label_initial_text_is_editing_mode(qtbot):
+def test_mode_label_states_the_major_mode_before_any_launcher_pick(qtbot):
+    """FQ-028: the label is never blank. With no launcher column picked there is
+    still a defined fact to state, and "Editing" was never a mode -- it is the
+    absence of a minor one."""
     window = MainWindow()
     qtbot.addWidget(window)
-    assert window._mode_label.text() == "Editing Mode"
+    assert window._mode_label.text() == "No Mode"
+    assert window.toolbar_mode_indicator.text() == "No Mode"
 
 
 def test_mode_label_flips_on_enter_and_close_caption_mode(qtbot):
@@ -740,11 +750,17 @@ def test_mode_label_flips_on_enter_and_close_caption_mode(qtbot):
     window.center_stage.xml_editor.setPlainText(
         '<Root>\n  <Page caption="Home"/>\n</Root>'
     )
+    window.set_workflow_mode("project")
     find_action(find_top_menu(window, "Tools"), "Manage Captions...").trigger()
-    assert window._mode_label.text() == "Caption Mode (XML read-only)"
+    # Major mode keeps the colour; the minor mode is appended as text, on BOTH
+    # surfaces, from the one `current_mode()` answer.
+    assert window._mode_label.text() == "Project · Caption"
+    assert window.toolbar_mode_indicator.text() == "Project · Caption"
+    assert window.current_mode() == ("project", "Caption")
 
     window.center_stage.caption_management_panel.close_panel()
-    assert window._mode_label.text() == "Editing Mode"
+    assert window._mode_label.text() == "Project"
+    assert window.toolbar_mode_indicator.text() == "Project"
 
 
 def test_caption_go_to_line_switches_to_raw_xml_and_navigates(qtbot):
@@ -950,24 +966,34 @@ def test_validate_duplicate_filename_populates_audit_and_status(qtbot):
     assert window.statusBar().currentMessage() == "Validation: 2 error(s), 0 warning(s)"
 
 
-def test_clear_validation_results_removes_only_validation_items(qtbot):
+def test_a_second_validation_run_ACCUMULATES_under_its_own_run_separator(qtbot):
+    """FQ-028 reversed this one deliberately.
+
+    `clear_validation_results` used to delete the previous run's rows. Results
+    now ACCUMULATE -- saved validation history is exactly what the owner asked
+    for -- so the sweep is read as a RUN BOUNDARY: the old rows stay and the new
+    run opens under its own dated separator.
+    """
     from PySide6.QtWidgets import QListWidgetItem
 
     window = MainWindow()
     qtbot.addWidget(window)
-    # Seed a schema entry that must survive.
-    window.audit_panel.addItem(QListWidgetItem("[Schema] x"))
+    window.audit_panel.addItem(QListWidgetItem("[Check] x"))
     _load_into_window(window, _DUP_FILENAME_XML)
     window._find_ui.validate_project()
-    assert _validation_items(window)  # validation items present
+    first = len(_validation_items(window))
+    assert first
 
-    window._find_ui.clear_validation_results()
+    window._find_ui.validate_project()
 
-    assert _validation_items(window) == []
+    assert len(_validation_items(window)) == first * 2
     remaining = [
         window.audit_panel.item(row).text() for row in range(window.audit_panel.count())
     ]
-    assert "[Schema] x" in remaining
+    assert "[Check] x" in remaining
+    # ...and the two runs are separated on screen by the dated rule.
+    rows = window.results_panel.row_texts()
+    assert rows.count("-" * 40) == 3  # the seed's run, then the two validations
 
 
 def test_clicking_validation_item_navigates_to_line(qtbot):

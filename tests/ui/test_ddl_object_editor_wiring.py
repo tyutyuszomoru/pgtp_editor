@@ -231,12 +231,15 @@ def test_format_refusal_is_reported_to_audit_under_sql_prefix_not_clickable(qtbo
 
     panel.format_selection()
 
-    texts = [window.audit_panel.item(i).text() for i in range(window.audit_panel.count())]
-    matches = [t for t in texts if t.startswith("[SQL] ")]
+    # FQ-028: `[SQL]` format refusals are one-off narration, not navigable
+    # findings, so they are journalled in the Activity Log.
+    texts = window.activity_panel.row_texts()
+    matches = [t for t in texts if "[SQL] " in t]
     assert len(matches) == 1
     assert "Unmatched BEGIN" in matches[0]
-    item = window.audit_panel.item(window.audit_panel.count() - 1)
-    assert item.data(Qt.ItemDataRole.UserRole) is None  # not clickable, no line role
+    # ...and it reaches NO findings surface at all, so there is nothing to
+    # click: the offending span is already underlined in the tab itself.
+    assert window.audit_panel.count() == 0
 
 
 def test_ctrl_z_with_ddl_object_tab_focused_touches_only_its_own_buffer(qtbot, tmp_path):
@@ -511,7 +514,9 @@ def test_saving_a_ddl_object_tab_journals_a_saved_entry(qtbot, tmp_path, monkeyp
 
     assert window._save_ddl_object_editor(panel) is True
 
-    entry = window.activity_log.entries[-1]
+    # The LAST FILE entry -- FQ-028 also journals transient notices, which carry
+    # no `file_verb`.
+    entry = [e for e in window.activity_log.entries if e.file_verb][-1]
     assert entry.file_verb == "Saved"
     assert entry.status == "success"
 

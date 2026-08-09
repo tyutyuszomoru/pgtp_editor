@@ -324,5 +324,6 @@ def test_import_learned_backs_up_and_no_completion_feed(window, monkeypatch, tmp
     # learned import must not re-feed completion
     assert window.center_stage.xml_editor.schema_model() is curated_model
     assert "lrn2" not in curated_model.paths["Root"]["attributes"]
-    audit = [window.audit_panel.item(i).text() for i in range(window.audit_panel.count())]
+    # FQ-028: `[Schema]` import narration is journalled, not listed.
+    audit = window.activity_panel.row_texts()
     assert any("Imported Edit AutoXSD" in t for t in audit)

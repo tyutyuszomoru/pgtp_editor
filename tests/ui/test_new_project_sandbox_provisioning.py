@@ -65,6 +65,20 @@ def _refuse_uncreated_databases(window):
     return asked
 
 
+def _reported_lines(window):
+    """Every line the app said, wherever FQ-028 routed it.
+
+    Provisioning speaks on two channels: `[Sandbox]` operation outcomes (the
+    Results tab, because they are emitted across a project transition that
+    replaces the journal's buffer) and journalled narration (the Activity Log).
+    These tests are about WHAT was said, not about which surface says it.
+    """
+    panel = window.audit_panel
+    return [panel.item(i).text() for i in range(panel.count())] + (
+        window.activity_panel.row_texts()
+    )
+
+
 def _window(qtbot, tmp_path):
     window = MainWindow(
         settings=QSettings(str(tmp_path / "s.ini"), QSettings.Format.IniFormat)
@@ -266,9 +280,7 @@ def test_a_failed_creation_still_creates_the_project_and_records_no_sandbox_db(
     assert load_settings(tmp_path / "proj").sandbox.database == ""
     assert window.sandbox_controller.has_session is False
     # the reason is surfaced, not swallowed
-    lines = [
-        window.audit_panel.item(i).text() for i in range(window.audit_panel.count())
-    ]
+    lines = _reported_lines(window)
     assert any("permission denied to create database" in line for line in lines)
 
 
@@ -340,9 +352,7 @@ def test_the_target_profile_is_what_the_baseline_is_built_from(qtbot, tmp_path):
     # sandbox is provisioned empty with that said out loud.
     assert snapshots == []
 
-    lines = [
-        window.audit_panel.item(i).text() for i in range(window.audit_panel.count())
-    ]
+    lines = _reported_lines(window)
     assert any("created EMPTY" in line for line in lines)
 
 
@@ -437,9 +447,7 @@ def test_every_candidate_taken_records_no_sandbox_and_says_why(qtbot, tmp_path):
     assert window._ddl_project_settings.sandbox.database == ""
     assert load_settings(tmp_path / "proj").sandbox.database == ""
     assert window.sandbox_controller.has_session is False
-    lines = [
-        window.audit_panel.item(i).text() for i in range(window.audit_panel.count())
-    ]
+    lines = _reported_lines(window)
     assert any("already exists" in line for line in lines)
     assert any("no existing database was touched" in line for line in lines)
 
@@ -461,9 +469,7 @@ def test_a_refused_plpgsql_check_install_still_records_the_created_database(
 
     assert len(created) == 1
     assert load_settings(tmp_path / "proj").sandbox.database == created[0]
-    lines = [
-        window.audit_panel.item(i).text() for i in range(window.audit_panel.count())
-    ]
+    lines = _reported_lines(window)
     assert any("must be superuser to create extension" in line for line in lines)
 
 

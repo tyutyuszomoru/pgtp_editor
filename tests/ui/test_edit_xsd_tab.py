@@ -477,8 +477,8 @@ def test_import_with_dirty_tab_includes_notice(window, monkeypatch, tmp_path):
     assert stage.xsd_editor.toPlainText() == incoming.read_text(encoding="utf-8")
     assert window._xsd_ui.dirty is False
 
-    # Audit log should mention the tab was replaced
-    audit_items = [window.audit_panel.item(i).text() for i in range(window.audit_panel.count())]
+    # FQ-028: `[Schema]` import/learning narration is journalled, not listed.
+    audit_items = window.activity_panel.row_texts()
     import_items = [t for t in audit_items if "Imported Edit XSD" in t]
     assert import_items
     assert "(unsaved XSD tab edits were replaced)" in import_items[0]
@@ -774,7 +774,8 @@ def test_load_curated_schema_binary_file_returns_false_and_keeps_last_good(windo
 
     assert result is False
     assert window.center_stage.xml_editor.schema_model() is good_model
-    texts = [window.audit_panel.item(i).text() for i in range(window.audit_panel.count())]
+    # FQ-028: a `[Schema]` load failure is narration, journalled not listed.
+    texts = window.activity_panel.row_texts()
     assert any("Curated XSD has XML errors" in t and "keeping last good schema" in t for t in texts)
 
 

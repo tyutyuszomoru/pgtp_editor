@@ -126,8 +126,16 @@ def _refuse_confirmations(monkeypatch):
 
 
 def _audit_texts(window):
+    """Every produced row, wherever FQ-028 routed it.
+
+    The sandbox lane's `[Sandbox]` / `[Project]` lines are operation narration
+    and now land in the Activity Log rather than on a findings surface, so this
+    helper reads BOTH surfaces -- the tests below are about what the app SAID,
+    not about which panel says it."""
     panel = window.audit_panel
-    return [panel.item(i).text() for i in range(panel.count())]
+    return [panel.item(i).text() for i in range(panel.count())] + (
+        window.activity_panel.row_texts()
+    )
 
 
 # --- The Database menu no longer offers Sandbox Setup… --------------------
