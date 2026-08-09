@@ -31,6 +31,15 @@ This module knows nothing about a live schema, a `DatabaseSchema`, or
 via its injected `SchemaIndex`) turns the resolved context into actual
 suggestions.
 
+A caret inside a `$$ ... $$` routine body resolves against **the body**: the
+tokenizer keeps a dollar-quoted body opaque for every other consumer, and this
+module descends into it whenever the caret is inside -- the two halves of one
+rule, the same one `sql/from_clause.py` states for FROM scopes. Without that,
+`NEW.`/`OLD.` completion would be dead exactly where plpgsql is written, since
+the DDL object editor's buffer is a whole `pg_get_functiondef` result whose
+body is one token. Strings, comments and quoted identifiers *nested inside* the
+body stay opaque and stay unresolvable.
+
 `ALIAS_REF` is a **refinement of** `DOTTED_PATH`, not a rival to it: the same
 `parts`/`prefix` are still filled in, and only the extra `table_ref` is new.
 That is deliberate -- a one-segment path is ambiguous between a schema name and
@@ -43,7 +52,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from .from_clause import TableRef, analyze_from_scope
-from .tokenizer import WORD, tokenize
+from .tokenizer import WORD, dollar_body_at, tokenize
+
+#: How many nested dollar-quoted bodies the caret may be descended into --
+#: mirrors `from_clause._MAX_BODY_DEPTH`. A bound rather than trust: malformed
+#: nesting must not recurse forever on a resolver that runs per keystroke.
+_MAX_BODY_DEPTH = 5
 
 #: Kinds of resolved caret context.
 DOTTED_PATH = "dotted_path"  # bare identifier or dotted schema[.table] prefix
@@ -83,13 +97,44 @@ class CaretContext:
 def resolve_caret_context(text: str, pos: int) -> CaretContext | None:
     """Resolve what completion context applies at character offset `pos` in
     `text`, or `None` if the caret is not in a resolvable position (inside a
-    string/comment/quoted identifier, or with nothing identifier-shaped
-    behind it).
+    string literal, comment or quoted identifier, or with nothing
+    identifier-shaped behind it).
+
+    A **dollar-quoted body is the one opaque region this descends into**: to
+    the tokenizer a `$$ ... $$` routine body is a single opaque token -- which
+    is right for every other consumer (a `FROM` in there is not the enclosing
+    statement's FROM clause, and `sql/formatter.py` must never reindent body
+    text) -- but when the caret is *inside* that body, the body is the text the
+    caret lives in. So the body is re-resolved as text of its own, exactly as
+    `sql/from_clause.py::_analyze` re-analyzes it, via the shared
+    `sql/tokenizer.py::dollar_body_at` locator and under the same depth bound.
+    Because the body is re-tokenized, a string, comment or quoted identifier
+    **nested inside** the body is still opaque and still yields `None`.
 
     `pos` is a 0-based character offset, the same convention `sql/tokenizer.py`
     and `sql/formatter.py` use throughout.
+
+    Nothing in the returned `CaretContext` is an offset today (`prefix` is text
+    the caller measures against its own caret, `parts`/`row_variable`/
+    `table_ref` are text), so the body descent needs no rebasing to stay
+    correct in the *original* buffer's coordinates. **Any future field that
+    carries a position must be rebased by `+ body_start` at the recursion
+    boundary below** -- inside the recursion, positions are body-relative.
     """
+    return _resolve(text, pos, depth=0)
+
+
+def _resolve(text: str, pos: int, *, depth: int) -> CaretContext | None:
     tokens = tokenize(text)
+
+    # Descend into a dollar-quoted body *before* the opacity test -- but only
+    # into that one kind. Everything else opaque still ends resolution here.
+    body = dollar_body_at(tokens, pos)
+    if body is not None:
+        if depth >= _MAX_BODY_DEPTH:
+            return None
+        body_text, body_start = body
+        return _resolve(body_text, pos - body_start, depth=depth + 1)
 
     if _caret_inside_opaque_token(tokens, pos):
         return None

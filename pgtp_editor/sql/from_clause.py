@@ -78,7 +78,6 @@ from dataclasses import dataclass
 from .statements import split_statements
 from .tokenizer import (
     BLOCK_COMMENT,
-    DOLLAR_STRING,
     LINE_COMMENT,
     NEWLINE,
     PUNCT,
@@ -86,6 +85,7 @@ from .tokenizer import (
     WHITESPACE,
     WORD,
     Token,
+    dollar_body_at,
     tokenize,
 )
 
@@ -244,7 +244,7 @@ def _analyze(text: str, pos: int, *, depth: int) -> FromScope:
 
     tokens = tokenize(statement.text)
 
-    body = _dollar_body_at(tokens, local)
+    body = dollar_body_at(tokens, local)
     if body is not None:
         if depth >= _MAX_BODY_DEPTH:
             return FromScope()
@@ -279,28 +279,6 @@ def _statement_at(text: str, pos: int):
         else:
             break
     return chosen
-
-
-def _dollar_body_at(tokens: list[Token], pos: int) -> tuple[str, int] | None:
-    """`(body_text, body_start_offset)` when `pos` sits inside a dollar-quoted
-    body, else None.
-
-    A routine body is one opaque token to the tokenizer, which is exactly what
-    keeps a `FROM` inside `$$ ... $$` out of the *enclosing* statement's scope.
-    But when the caret is inside that body, the body is the scope that matters
-    -- so it is re-analyzed as text of its own. Both halves of the rule fall
-    out of the same token.
-    """
-    for tok in tokens:
-        if tok.kind != DOLLAR_STRING or not (tok.start < pos < tok.end):
-            continue
-        marker = len(tok.tag or "") + 2
-        body_start = tok.start + marker
-        body_end = tok.end if tok.unterminated else tok.end - marker
-        if body_start <= pos <= body_end:
-            return tok.text[marker : body_end - tok.start], body_start
-        return "", body_start  # caret inside the closing tag itself
-    return None
 
 
 def _caret_paren_path(code: list[Token], pos: int) -> tuple[int, ...]:

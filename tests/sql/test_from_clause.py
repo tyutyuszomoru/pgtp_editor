@@ -342,6 +342,13 @@ def test_unterminated_dollar_quote_does_not_raise():
     assert analyze_from_scope(text, len(text)) is not None
 
 
+def test_caret_at_the_end_of_an_unterminated_body_is_inside_that_body():
+    """A half-typed routine is the normal state; the caret at the end of the
+    buffer is in the body, so the body's own FROM clause is in scope."""
+    text = "create function f() as $$\nbegin\n  select * from hr.secret s where s."
+    assert analyze_from_scope(text, len(text)).resolve("s").qualified == "hr.secret"
+
+
 def test_unbalanced_parentheses_do_not_raise():
     text = "select * from (select * from hr.jobcard jc where jc."
     assert analyze_from_scope(text, len(text)) is not None
