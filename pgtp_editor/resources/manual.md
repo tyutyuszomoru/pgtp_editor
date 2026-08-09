@@ -723,7 +723,10 @@ The Code Editor is a modal window with:
 - **Selection-wrap** — with text selected, typing a bracket or quote wraps the
   selection instead of replacing it.
 - **Ctrl+Shift+B** — select the enclosing bracket span. The dialog has no menu
-  bar of its own, so this is the key rather than a **Select** menu entry.
+  bar of its own, so this is the key rather than a **Select** menu entry — and
+  for the same reason it is the one place the key **cannot** be changed by
+  rebinding **Select ▸ Select Enclosing Block** (see *Keyboard Shortcuts ▸
+  Changing a shortcut*).
 - Standard **Ctrl+C / Ctrl+V / Ctrl+X**.
 - **Ctrl+S** accepts the dialog (the same thing its **OK** button does) and
   **Ctrl+W** cancels. This dialog is the **one** place in the app where Ctrl+S
@@ -2912,8 +2915,12 @@ simply reads as busy instead of stalled.
 - **View ▸ Expand All** / **Collapse All** open or fold the whole Project Tree.
 - **View ▸ Customize Toolbar…** chooses which commands appear on the toolbar and
   what icon each one carries (see *The toolbar*, below).
-- Your window size and position, dock layout, theme, and toolbar arrangement are
-  remembered between sessions.
+- **View ▸ Customize Shortcuts…**, directly below it, changes the **key** any
+  menu command answers to (see *Keyboard Shortcuts ▸ Changing a shortcut*). The
+  two are siblings over the same set of commands: one picks the button, the other
+  picks the key.
+- Your window size and position, dock layout, theme, toolbar arrangement, and
+  keyboard-shortcut changes are remembered between sessions.
 - **Dialogs open at a size that shows their contents.** **Project Settings…**,
   **Sandbox Setup…**, the **Project Status** window and **New
   Function/Procedure…** all open large enough for their fields, tables and
@@ -2964,7 +2971,8 @@ A toolbar button *is* the menu item, not a copy of it. It therefore shares that
 menu item's enabled state (a command disabled in the menu is disabled on the
 toolbar), its checked state for toggles such as **Database ▸ DDL Explorer
 (Quality)** or
-**View ▸ Light Theme**, and its keyboard shortcut — the button and the menu entry
+**View ▸ Light Theme**, and its keyboard shortcut — including one you assigned
+yourself in **View ▸ Customize Shortcuts…**, since the button and the menu entry
 can never drift apart. Toolbars you arranged in an earlier version of the editor
 are carried over unchanged — including a **DDL Explorer** button you pinned
 before the command was renamed to **DDL Explorer (Quality)**, and a **Check
@@ -3018,6 +3026,13 @@ exists is quietly discarded rather than breaking the toolbar.
 
 ## Keyboard Shortcuts
 
+**The keys below are the defaults, not fixed bindings.** Every shortcut that
+belongs to a **menu command** can be rebound, cleared or put back — see
+*Changing a shortcut*, below — so once you have customized something, this table
+tells you what that command *shipped* with rather than what it answers to today.
+A short, reasoned list of keys cannot be changed at all; they are named in *What
+cannot be rebound, and why*, at the end of this chapter.
+
 | Shortcut | Where | Action |
 |----------|-------|--------|
 | **Ctrl+O** | Global | Open a `.pgtp` file |
@@ -3058,7 +3073,9 @@ bar's **Deployment** menu — **Save pgtp** / **Save as new pgtp** on Raw XML,
 no hint**: the dispatcher behind them had to guess which tab you meant and got it
 wrong on six of them, and one reflex that is right here and silently wrong there
 is worse than none. The **Edit code…** dialog's Ctrl+S is the single carve-out,
-and it is that modal's OK button, not a write to disk.
+and it is that modal's OK button, not a write to disk. Neither key can be handed
+to a different command either — see *What cannot be rebound, and why*, so the
+reflex cannot come back through the side door.
 
 **Two chords were deleted and are not coming back as chords:** **Ctrl+Shift+F**
 (Find All) and **Ctrl+Alt+Return** (Replace All). Both commands are buttons on the
@@ -3101,9 +3118,10 @@ when no project is open — see *The Sandbox*), **Database ▸ Project Status…
 **Tools ▸ Start MCP Server** are all menu-only. If you use one often, put it on
 the toolbar (see *Appearance & Layout ▸ The toolbar*).
 
-**F3, Ctrl+L, Ctrl+Alt+F and Ctrl+Return have no menu entry at all**, which is
-also why they are the four commands you cannot put on the toolbar — a toolbar
-button is a menu item, and these have none.
+**Six keys have no menu entry at all** — **F3**, **Ctrl+L**, **Ctrl+Alt+F**,
+**Ctrl+Return**, **Ctrl+Space** and **Ctrl+G**. That is why you can neither put
+them on the toolbar nor rebind them: a toolbar button *is* a menu item and the
+rebinding dialog lists menu commands, and these have no menu entry to be either.
 
 In **Caption Mode** the **Navigation** menu's five bookmark entries — and
 **Ctrl+F2** / **F2** /
@@ -3111,6 +3129,102 @@ In **Caption Mode** the **Navigation** menu's five bookmark entries — and
 XML editor they act on is read-only there; the gutter still sets bookmarks (see
 *Bookmarks*). While the Caption Management tab itself is in front, the Editor menu
 bar is hidden entirely (see *The Two Menu Bars*).
+
+### Changing a shortcut — View ▸ Customize Shortcuts…
+
+**View ▸ Customize Shortcuts…** lists every menu command in the app with the key
+it currently answers to, and lets you change it. It sits directly under **View ▸
+Customize Toolbar…** and is its sibling: the same set of commands, customized on
+its other axis — one dialog picks a command's icon and place on the toolbar, this
+one picks its key.
+
+The dialog is one table with three columns:
+
+- **Command** — the command's menu path, exactly as the toolbar dialog spells it
+  (`File › Discard Changes`, `Deployment › Save pgtp`, `Navigation › List All
+  Bookmarks`).
+- **Shortcut** — the key it answers to right now. Blank means the command has no
+  key, which is the normal state for most of them.
+- **Note** — `default: Ctrl+W` (or `default: (none)`) on any row you have moved
+  off what it shipped with, so you can always see what a reset would give you
+  back. Reserved rows use it to say why they are locked.
+
+Under the table sit a **New shortcut** capture field and four buttons:
+
+- **Assign** — select a command's row, press the chord you want in the capture
+  field, then press Assign.
+- **Clear** — leave the selected command with no key at all. That is a real
+  state, not a broken one; the command stays on its menu.
+- **Reset to Default** — put the selected command back on the key it shipped
+  with. This genuinely works even after several rebindings, because the app
+  captures each command's original key once, at startup, before any of your
+  changes are applied, and never overwrites that record.
+- **Restore All Defaults** — the same thing for the whole list at once.
+
+**OK applies your changes immediately** — the new keys work in the window you are
+already in, with nothing to restart — and remembers them for future sessions,
+beside your toolbar arrangement. **Cancel changes nothing**, neither in the
+running window nor on disk.
+
+**Assigning a key another command already holds takes it from that command.**
+Before you commit, a line under the table names the current holder (*"Ctrl+W is
+already bound to File › Close. Assigning it here will clear that binding."*), and
+after you commit it says whose binding was cleared. The loser is left **unbound**
+— its row stays, it simply has no key.
+
+That may look aggressive, and it is deliberate: **two commands sharing one chord
+is ambiguous, and Qt then fires neither of them**. A double binding does not mean
+"the first one wins"; it means *both* commands silently vanish from the keyboard.
+Stealing is what prevents that, so a key always has exactly one owner.
+
+**A key held by something that is not a menu command is refused, not stolen.**
+The dialog can only change menu commands, so it has no way to release a key that
+a window-level shortcut, a per-tab Find field or an editor widget's own key
+handling answers to — and stealing what it cannot release would produce exactly
+the ambiguity above. The refusal appears on the same line as the warnings, naming
+the reason, and nothing is changed.
+
+**The list is the whole command universe, not what happens to be visible.** A
+command hidden by **Maintenance mode**, or by the per-tab filtering that shapes
+the Editor menu bar and the **Deployment** menu, still has a row here — so you can
+rebind **Save PHP File** with no PHP tab open, and the list never changes shape
+depending on which tab you happened to be looking at.
+
+Your overrides are stored with the app's other settings and pruned sensibly on
+load: an override for a command that no longer exists is quietly dropped, one made
+against a command that has since been renamed follows the rename, and a command
+you never customized always follows whatever default a later version of the editor
+gives it.
+
+> **One caveat: Ctrl+Shift+B is handled in two places.** Rebinding **Select ▸
+> Select Enclosing Block** moves the *menu command* onto your new key, but
+> **Ctrl+Shift+B keeps selecting the enclosing bracket span inside every code
+> editor** — PHP tabs, DDL object tabs, either DDL Explorer, the Sandbox SQL
+> console and the **Edit code…** dialog — because those editors handle that chord
+> themselves rather than through the menu. In the **Edit code…** dialog that
+> handler is the only thing keeping the gesture alive at all, since the dialog has
+> no menu bar and therefore no command to rebind. The XML editors (Raw XML, Edit
+> XSD, draft fragments) have no such second handler, so there the key really does
+> move.
+
+### What cannot be rebound, and why
+
+The dialog shows the pinned keys as **greyed, read-only rows** rather than leaving
+them out, so you can see that the key exists and why it is locked instead of
+hunting for a row that was never there. None of these is arbitrary:
+
+| Reserved | Why |
+|---|---|
+| **Ctrl+S** / **Ctrl+Shift+S** | Deliberately unbound app-wide since saving moved to the **Deployment** menu (see *Getting Started ▸ Saving, closing, discarding*). Letting another command take them would bring the old reflex back by the side door. |
+| **Ctrl+Z** / **Ctrl+Y** | Undo and Redo for the project's snapshot history are window-scoped shortcuts, not menu commands, so there is no row to move them from. |
+| **Ctrl+F** / **Ctrl+R** | They focus the **current tab's** Find and Replace fields, and each tab's bar owns its own pair. A window-level menu shortcut on either key would be ambiguous against them, and neither would fire. |
+| **Escape** | Returns focus from a Find/Replace bar to the document. |
+| **F3**, **Ctrl+L**, **Ctrl+Alt+F**, **Ctrl+Return**, **Ctrl+Space**, **Ctrl+G** | Window-level or context-menu commands with no menu entry at all — the same reason they cannot be put on the toolbar. |
+| **Ctrl+C** / **Ctrl+X** / **Ctrl+V** | Copy, cut and paste are the editors' **own** built-ins. A window-level shortcut on one of them would outrank the editor and break copy, cut or paste everywhere in the app. |
+| **F1**, and **Help ▸ Manual** itself | The universal convention, and **Help ▸ Manual** is the one entry no mode may put out of reach — including Maintenance mode (see *Getting Started ▸ Maintenance mode*). It is the only case locked from both ends: nothing else may take **F1**, and Manual may not leave it, so its row is present but read-only. |
+
+**Customize Shortcuts… is itself an ordinary menu command**, so it appears in its
+own list, can be given a key, and can be pinned to the toolbar like anything else.
 
 ---
 

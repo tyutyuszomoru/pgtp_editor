@@ -170,9 +170,24 @@ PREVIEW_CHARS = 20
 #: Appended when a preview was truncated (a single character, not "...").
 PREVIEW_ELLIPSIS = "…"
 
-#: The two shapes of the dynamic timestamp; see `timestamp_format`.
-TIME_FORMAT_SAME_DAY = "%H:%M"
-TIME_FORMAT_MULTI_DAY = "%Y-%m-%d %H:%M"
+#: The ONE timestamp shape, on every row, always (owner decision 2026-08-09).
+#:
+#: FQ-019 originally specified a DYNAMIC format -- `HH:MM` while the log's
+#: oldest and newest entry fell on one calendar day, `YYYY-MM-DD HH:MM` the
+#: moment they did not -- which made the format a property of the SET rather
+#: than of an entry. That is an awkward contract to hold: one entry arriving
+#: after midnight silently reshapes every row already on screen, so a panel
+#: could never cache a rendered row and had to re-render the whole list on
+#: every append. The owner dropped it for one unambiguous format.
+#:
+#: `TIME_FORMAT_SAME_DAY` is deliberately GONE rather than kept unused -- a
+#: second format string in this module is what would invite the dynamic
+#: behaviour back.
+TIME_FORMAT = "%Y-%m-%d %H:%M"
+
+#: The pre-decision name, aliased so nothing that already reached for it breaks.
+#: New code should use `TIME_FORMAT`.
+TIME_FORMAT_MULTI_DAY = TIME_FORMAT
 
 
 def preview(text: str | None) -> str:
@@ -294,40 +309,37 @@ class ActivityEntry:
         )
 
 
-# --- the dynamic timestamp format -------------------------------------------
-def timestamp_format(entries: Iterable[ActivityEntry]) -> str:
-    """The one format string every row of *this* render must use.
+# --- the timestamp format ----------------------------------------------------
+def timestamp_format(entries: Iterable[ActivityEntry] = ()) -> str:
+    """`TIME_FORMAT`, whatever is passed.
 
-    `HH:MM` while the log's oldest and newest entry fall on the same calendar
-    day, `YYYY-MM-DD HH:MM` the moment they do not -- so a log that gains an
-    entry after midnight re-renders every existing row in the long shape. An
-    empty or single-entry log is trivially same-day.
-
-    It is deliberately a function of the collection: asking an entry to format
-    itself would let two rows of one panel disagree.
+    It still accepts `entries` so call sites written against the dynamic design
+    keep working, but the argument is ignored and there is no set-wide state
+    left: a row's text depends only on that row, so a panel may render on append
+    and cache freely.
     """
-    days = {entry.timestamp.date() for entry in entries}
-    if len(days) <= 1:
-        return TIME_FORMAT_SAME_DAY
-    return TIME_FORMAT_MULTI_DAY
+    del entries  # the format no longer depends on the collection
+    return TIME_FORMAT
 
 
-def format_timestamp(stamp: datetime, fmt: str) -> str:
-    """One timestamp in the format `timestamp_format` chose for the set."""
+def format_timestamp(stamp: datetime, fmt: str = TIME_FORMAT) -> str:
+    """One timestamp cell."""
     return stamp.strftime(fmt)
 
 
 def format_timestamps(entries: Sequence[ActivityEntry]) -> list[str]:
-    """Every entry's timestamp cell, all in the set's single format."""
-    fmt = timestamp_format(entries)
-    return [format_timestamp(entry.timestamp, fmt) for entry in entries]
+    """Every entry's timestamp cell."""
+    return [format_timestamp(entry.timestamp) for entry in entries]
 
 
-def render_row(entry: ActivityEntry, fmt: str) -> str:
+def render_row(entry: ActivityEntry, fmt: str = TIME_FORMAT) -> str:
     """The settled rendered form, `[timestamp] - [source] [verb] [payload]
     [status]`, as plain text -- what a QListWidget row shows and what a copy of
-    the panel yields. `fmt` comes from `timestamp_format` over the whole
-    displayed set, never from this one entry.
+    the panel yields.
+
+    `fmt` used to have to come from `timestamp_format` over the whole displayed
+    set; since the format is fixed it defaults, and a row can be rendered on its
+    own without knowing what else is on screen.
 
     The payload is the DDL preview for a DB row and the file verb for a file
     row; on error the error preview is appended after the status.
@@ -562,8 +574,8 @@ class ActivityLog:
 
     # -- rendering helpers ---------------------------------------------------
     def timestamp_format(self) -> str:
-        """The format string for the current set -- recompute after every
-        `record`, since a new entry can extend the span past midnight."""
+        """`TIME_FORMAT`. Kept as a method so a caller need not import the
+        constant; there is nothing per-set left to compute."""
         return timestamp_format(self._entries)
 
     def rendered_rows(self) -> list[str]:

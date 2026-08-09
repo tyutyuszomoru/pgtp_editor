@@ -22,8 +22,7 @@ from pgtp_editor.db.activity_log import (
     SOURCES,
     STATUS_ERROR,
     STATUS_SUCCESS,
-    TIME_FORMAT_MULTI_DAY,
-    TIME_FORMAT_SAME_DAY,
+    TIME_FORMAT,
     VERB_APPLY_TARGET,
     VERB_RAN,
     ActivityEntry,
@@ -34,6 +33,7 @@ from pgtp_editor.db.activity_log import (
     load_activity,
     parse_jsonl,
     preview,
+    render_row,
     render_rows,
     save_activity,
     serialize_entries,
@@ -193,66 +193,61 @@ def test_an_empty_log_serializes_and_reloads_cleanly(tmp_path):
     assert load_activity(root) == []
 
 
-# --- the dynamic timestamp format (a property of the SET) --------------------
-def test_one_day_of_entries_renders_as_hh_mm():
+# --- the timestamp format (ONE shape, always) --------------------------------
+# FQ-019 originally specified a dynamic format that depended on the whole set's
+# calendar span. The owner dropped it (2026-08-09) for one unambiguous shape, so
+# what is pinned here is the ABSENCE of set-dependence: the tests below exist to
+# fail if anyone reintroduces it.
+def test_every_row_uses_the_one_dated_format():
     entries = [_entry(timestamp=AT), _entry(timestamp=AT + timedelta(hours=5))]
-    assert timestamp_format(entries) == TIME_FORMAT_SAME_DAY
-    assert [row.split()[0] for row in render_rows(entries)] == ["14:03", "19:03"]
+    assert timestamp_format(entries) == TIME_FORMAT
+    assert [row.split(" - ")[0] for row in render_rows(entries)] == [
+        "2026-08-08 14:03",
+        "2026-08-08 19:03",
+    ]
 
 
-def test_the_same_instant_twice_is_same_day():
-    entries = [_entry(timestamp=AT), _entry(timestamp=AT)]
-    assert timestamp_format(entries) == TIME_FORMAT_SAME_DAY
-
-
-def test_an_empty_or_single_entry_log_is_trivially_same_day():
-    assert timestamp_format([]) == TIME_FORMAT_SAME_DAY
-    assert timestamp_format([_entry()]) == TIME_FORMAT_SAME_DAY
-
-
-def test_exactly_spanning_midnight_flips_to_the_dated_format():
-    before = datetime(2026, 8, 8, 23, 59)
-    after = datetime(2026, 8, 9, 0, 0)
-    # One minute apart, but two calendar days: the long shape.
-    assert after - before == timedelta(minutes=1)
-    assert timestamp_format([_entry(timestamp=before), _entry(timestamp=after)]) == (
-        TIME_FORMAT_MULTI_DAY
+def test_the_format_does_not_depend_on_the_set():
+    """The whole point of the simplification: an empty log, a single entry, one
+    day's worth and a set spanning weeks all render the same way, so a panel can
+    render a row on append and cache it."""
+    spanning = [
+        _entry(timestamp=datetime(2026, 8, 8, 23, 59)),
+        _entry(timestamp=datetime(2026, 8, 9, 0, 0)),
+        _entry(timestamp=datetime(2026, 9, 1, 8, 15)),
+    ]
+    assert (
+        timestamp_format([])
+        == timestamp_format([_entry()])
+        == timestamp_format(spanning)
+        == TIME_FORMAT
     )
 
 
-def test_a_span_under_24h_inside_one_day_stays_short():
-    same_day = [
-        _entry(timestamp=datetime(2026, 8, 8, 0, 0)),
-        _entry(timestamp=datetime(2026, 8, 8, 23, 59)),
-    ]
-    assert timestamp_format(same_day) == TIME_FORMAT_SAME_DAY
+def test_a_row_renders_identically_alone_and_in_a_set():
+    """The property that lets the panel append without re-rendering: a row's
+    text is a function of that row only."""
+    lone = _entry(timestamp=datetime(2026, 8, 8, 9, 0))
+    later = _entry(timestamp=datetime(2026, 9, 1, 8, 15))
+    assert render_rows([lone])[0] == render_rows([lone, later])[0]
+    assert render_row(lone) == render_rows([lone, later])[0]
 
 
-def test_every_row_of_one_render_agrees_on_the_format():
-    entries = [
-        _entry(timestamp=datetime(2026, 8, 8, 9, 0)),
-        _entry(timestamp=datetime(2026, 8, 8, 17, 30)),
-        _entry(timestamp=datetime(2026, 8, 10, 8, 15)),
-    ]
-    stamps = [row.split(" - ")[0] for row in render_rows(entries)]
-    # The oldest rows are re-rendered in the long shape, not left as HH:MM.
-    assert stamps == ["2026-08-08 09:00", "2026-08-08 17:30", "2026-08-10 08:15"]
-
-
-def test_a_new_entry_can_flip_the_whole_log_to_the_long_format():
+def test_a_new_entry_never_reshapes_the_existing_rows():
     log = ActivityLog()
     log.record(SOURCE_QUALITY_FILES, file_verb=FILE_VERB_OPENED,
                timestamp=datetime(2026, 8, 8, 23, 59))
-    assert log.timestamp_format() == TIME_FORMAT_SAME_DAY
+    first = log.rendered_rows()[0]
     log.record(SOURCE_QUALITY_FILES, file_verb=FILE_VERB_SAVED,
                timestamp=datetime(2026, 8, 9, 0, 1))
-    assert log.timestamp_format() == TIME_FORMAT_MULTI_DAY
+    assert log.rendered_rows()[0] == first
+    assert log.timestamp_format() == TIME_FORMAT
 
 
 # --- the rendered row --------------------------------------------------------
 def test_a_db_row_renders_timestamp_source_verb_preview_status():
     row = render_rows([_entry()])[0]
-    assert row == "14:03 - Sandbox DB ran CREATE OR REPLACE FU… success"
+    assert row == "2026-08-08 14:03 - Sandbox DB ran CREATE OR REPLACE FU… success"
 
 
 def test_a_failed_row_appends_the_error_preview():
@@ -265,7 +260,7 @@ def test_a_file_row_uses_its_verb_as_the_payload():
         [_entry(source=SOURCE_PROJECT_FILES, verb=None, ddl_full=None,
                 file_verb=FILE_VERB_MERGED)]
     )[0]
-    assert row == "14:03 - Project files Merged success"
+    assert row == "2026-08-08 14:03 - Project files Merged success"
 
 
 # --- malformed / absent / partial input degrades to no history ---------------
