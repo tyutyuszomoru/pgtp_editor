@@ -50,10 +50,23 @@ They obey every rule above and add two fields that are *inherently* free SQL
 text — a `USING` expression for a type change and a `DEFAULT` expression — for
 which the allowlist posture is impossible by construction. See
 `_expression` for exactly what is and is not guaranteed about those.
+
+FQ-025 slice 2 adds the constraint operations (`add_constraint_skeleton`,
+`add_foreign_key_skeleton`, `drop_constraint_skeleton`,
+`rename_constraint_skeleton`). Two module-level facts they exist to encode:
+
+- **A foreign key *is* a constraint.** `ALTER TABLE … DROP CONSTRAINT name` is
+  byte-identical for a FK, a CHECK and a primary key, so there is exactly ONE
+  drop emitter and no `drop_foreign_key_skeleton` — a second function would be
+  the same statement under a name that implies otherwise.
+- **A `CHECK` body is free SQL, like `USING`.** It goes through the very same
+  `_expression` guard and inherits the same rule: the dialog layer may fill it
+  from the user's own typing and from nothing else.
 """
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
 
 # `_sql_string_literal` is imported rather than re-implemented so the app has
 # exactly ONE place that knows how a SQL string literal is quoted -- the same
@@ -355,6 +368,237 @@ def set_column_default_skeleton(*, table: str, column: str, expression: str) -> 
 def drop_column_default_skeleton(*, table: str, column: str) -> str:
     """`ALTER TABLE … ALTER COLUMN … DROP DEFAULT`."""
     return _alter_column(table, column, "DROP DEFAULT")
+
+
+# ---------------------------------------------------------------------------
+# FQ-025 slice 2 -- constraints and foreign keys on an EXISTING table
+#
+# Four emitters, not five: `drop_constraint_skeleton` covers foreign keys too
+# (see the module docstring). Like slice 1 they take `table` explicitly, return
+# one statement as a `str`, and never return anything partial.
+#
+# The constraint NAME is required by every one of them, including the two
+# `ADD`s, even though Postgres would happily auto-name an unnamed constraint.
+# An auto-generated name (`orders_qty_check1`) is exactly what makes the drop
+# and rename dialogs a guessing game later; requiring the name here means every
+# constraint this app creates can be found again by the person who created it.
+# ---------------------------------------------------------------------------
+
+#: The types the ONE `Add constraint` dialog offers. `FOREIGN KEY` is
+#: deliberately absent: it needs a referenced table and column list, which is a
+#: different form, so it gets `add_foreign_key_skeleton` instead.
+CONSTRAINT_TYPES = ("PRIMARY KEY", "UNIQUE", "CHECK", "EXCLUDE")
+
+#: Types whose definition is a **column list** (`PRIMARY KEY ("a", "b")`).
+COLUMN_CONSTRAINT_TYPES = ("PRIMARY KEY", "UNIQUE")
+
+#: Types whose definition is a free **expression**, not a column list. `CHECK
+#: (qty > 0)` is obvious; `EXCLUDE` is here because its element list carries a
+#: per-element operator (`room WITH =, during WITH &&`) that a column picker
+#: cannot express — pretending otherwise would emit `EXCLUDE` constraints that
+#: are syntactically valid and semantically wrong.
+EXPRESSION_CONSTRAINT_TYPES = ("CHECK", "EXCLUDE")
+
+#: Index methods an `EXCLUDE` constraint may be built with. `gist` first
+#: because it is the only one that supports the overlap operators exclusion
+#: constraints exist for; `btree` and `hash` only ever support `=`.
+EXCLUDE_METHODS = ("gist", "btree", "spgist", "hash")
+
+#: Referential actions for a foreign key's `ON DELETE` / `ON UPDATE`. `None`
+#: means "emit no clause", which is Postgres's `NO ACTION` — the two are
+#: equivalent at run time but only the first leaves the generated text quiet
+#: about a choice the user did not make.
+FK_ACTIONS = ("NO ACTION", "RESTRICT", "CASCADE", "SET NULL", "SET DEFAULT")
+
+
+def add_constraint_skeleton(
+    *,
+    table: str,
+    name: str,
+    constraint_type: str,
+    columns: Sequence[str] = (),
+    expression: str | None = None,
+    method: str = EXCLUDE_METHODS[0],
+) -> str:
+    """`ALTER TABLE … ADD CONSTRAINT … <PRIMARY KEY|UNIQUE|CHECK|EXCLUDE> …`.
+
+    Which of the two remaining arguments is required is decided by
+    `constraint_type`, and supplying the wrong one is refused rather than
+    ignored:
+
+    - `PRIMARY KEY` / `UNIQUE` take `columns` (one or more, in the caller's
+      order — key order is semantic, so unlike `trigger_skeleton`'s events they
+      are *not* re-sorted) and no `expression`;
+    - `CHECK` / `EXCLUDE` take an `expression` and no `columns`. `EXCLUDE` also
+      takes `method`, emitted as `USING <method>`.
+
+    A silently ignored argument here would mean a dialog bug ships as a
+    constraint that constrains the wrong thing.
+
+    `expression` is arbitrary SQL and is validated by `_expression` exactly as
+    `alter_column_type_skeleton`'s `USING` is — read that docstring for what is
+    and is not guaranteed, including the rule that binds the dialog layer: this
+    field may carry the user's own typed input and nothing else.
+    """
+    quoted_table = _qualified(table, "table")
+    quoted_name = _identifier(name, "constraint name")
+
+    if constraint_type not in CONSTRAINT_TYPES:
+        raise SkeletonError(
+            f"constraint type must be one of {', '.join(CONSTRAINT_TYPES)} — "
+            f"got {constraint_type!r}"
+        )
+
+    if constraint_type in COLUMN_CONSTRAINT_TYPES:
+        if expression is not None:
+            raise SkeletonError(
+                f"{constraint_type} is defined by a column list, not an expression"
+            )
+        column_list = _column_list(columns, f"a {constraint_type} constraint")
+        definition = f"{constraint_type} ({column_list})"
+    else:
+        if columns:
+            raise SkeletonError(
+                f"{constraint_type} is defined by an expression, not a column list"
+            )
+        if expression is None:
+            raise SkeletonError(f"a {constraint_type} constraint needs an expression")
+        body = _expression(expression, f"{constraint_type} expression")
+        if constraint_type == "CHECK":
+            definition = f"CHECK ({body})"
+        else:
+            if method not in EXCLUDE_METHODS:
+                raise SkeletonError(
+                    f"index method must be one of {', '.join(EXCLUDE_METHODS)} — "
+                    f"got {method!r}"
+                )
+            definition = f"EXCLUDE USING {method} ({body})"
+
+    return (
+        f"ALTER TABLE {quoted_table} ADD CONSTRAINT {quoted_name} {definition};\n"
+    )
+
+
+def add_foreign_key_skeleton(
+    *,
+    table: str,
+    name: str,
+    columns: Sequence[str],
+    ref_table: str,
+    ref_columns: Sequence[str],
+    on_delete: str | None = None,
+    on_update: str | None = None,
+) -> str:
+    """`ALTER TABLE … ADD CONSTRAINT … FOREIGN KEY (…) REFERENCES … (…)`.
+
+    The referenced column list is **required**, though Postgres permits its
+    omission (in which case it silently means "the referenced table's primary
+    key"). A generated statement that reads as if it names its target while
+    depending on an invisible primary key is precisely the kind of text that
+    looks authoritative and then binds to the wrong column after someone
+    changes the PK; the dialog knows the target columns because it lists them,
+    so it can say them.
+
+    Both lists preserve caller order and must be the same length — a FK whose
+    lists disagree is a Postgres error, and pairing is positional, so this is
+    the one arity check the emitter can make on the caller's behalf.
+
+    `on_delete` / `on_update` are `FK_ACTIONS` members or `None` for "no
+    clause". They are keywords, never free text.
+    """
+    quoted_table = _qualified(table, "table")
+    quoted_name = _identifier(name, "constraint name")
+    quoted_ref_table = _qualified(ref_table, "referenced table")
+
+    local = _column_list(columns, "a foreign key")
+    referenced = _column_list(ref_columns, "a foreign key's referenced table")
+    if len(list(columns)) != len(list(ref_columns)):
+        raise SkeletonError(
+            "a foreign key must reference exactly as many columns as it binds — "
+            f"{len(list(columns))} local vs {len(list(ref_columns))} referenced"
+        )
+
+    clauses = ""
+    if on_delete is not None:
+        clauses += f" ON DELETE {_referential_action(on_delete, 'ON DELETE')}"
+    if on_update is not None:
+        clauses += f" ON UPDATE {_referential_action(on_update, 'ON UPDATE')}"
+
+    return (
+        f"ALTER TABLE {quoted_table} ADD CONSTRAINT {quoted_name} "
+        f"FOREIGN KEY ({local}) "
+        f"REFERENCES {quoted_ref_table} ({referenced}){clauses};\n"
+    )
+
+
+def drop_constraint_skeleton(*, table: str, name: str) -> str:
+    """`ALTER TABLE … DROP CONSTRAINT …` — the ONE drop, for every type.
+
+    There is no `drop_foreign_key_skeleton`, and adding one would be a bug: in
+    Postgres a foreign key is a row in `pg_constraint` like any other, and this
+    statement is character-for-character the same for a FK, a CHECK, a UNIQUE,
+    an EXCLUDE and a primary key. The type only matters to the *picker*, which
+    shows it so the user can tell what they are about to drop.
+
+    No `CASCADE` and no `IF EXISTS`, for the same reason `drop_column_skeleton`
+    omits them: dropping a primary key that other tables' foreign keys depend
+    on must fail loudly, and a user who wants the cascade types the word into
+    the tab they are about to run.
+    """
+    quoted_table = _qualified(table, "table")
+    quoted_name = _identifier(name, "constraint name")
+    return f"ALTER TABLE {quoted_table} DROP CONSTRAINT {quoted_name};\n"
+
+
+def rename_constraint_skeleton(*, table: str, name: str, new_name: str) -> str:
+    """`ALTER TABLE … RENAME CONSTRAINT … TO …`.
+
+    Renaming to the current name is refused rather than emitted, matching
+    `rename_column_skeleton`: Postgres errors on it, and a statement that fails
+    on run is worse than one that was never generated.
+    """
+    quoted_table = _qualified(table, "table")
+    quoted_name = _identifier(name, "constraint name")
+    quoted_new = _identifier(new_name, "new constraint name")
+    if quoted_name == quoted_new:
+        raise SkeletonError(
+            f"new constraint name is the same as the current one: {name!r}"
+        )
+    return (
+        f"ALTER TABLE {quoted_table} "
+        f"RENAME CONSTRAINT {quoted_name} TO {quoted_new};\n"
+    )
+
+
+def _column_list(columns: Sequence[str], what: str) -> str:
+    """`"a", "b"` — every name quoted, order preserved, duplicates refused.
+
+    Order is preserved because a key's column order is semantic (it decides the
+    backing index's usefulness and the FK's positional pairing), which is the
+    opposite of `trigger_skeleton`'s canonicalised event set.
+
+    A repeated column is refused rather than de-duplicated: `PRIMARY KEY (a, a)`
+    is a Postgres error, and quietly collapsing it to `(a)` would emit a key the
+    user did not ask for.
+    """
+    names = list(columns)
+    if not names:
+        raise SkeletonError(f"{what} needs at least one column")
+    quoted = [_identifier(column, "column name") for column in names]
+    seen: set[str] = set()
+    for column in quoted:
+        if column in seen:
+            raise SkeletonError(f"{what} names the same column twice: {column}")
+        seen.add(column)
+    return ", ".join(quoted)
+
+
+def _referential_action(action: str, what: str) -> str:
+    if action not in FK_ACTIONS:
+        raise SkeletonError(
+            f"{what} must be one of {', '.join(FK_ACTIONS)} — got {action!r}"
+        )
+    return action
 
 
 def _alter_column(table: str, column: str, action: str) -> str:

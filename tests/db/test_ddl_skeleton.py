@@ -8,18 +8,27 @@ output a user runs against a real database.
 import pytest
 
 from pgtp_editor.db.ddl_skeleton import (
+    COLUMN_CONSTRAINT_TYPES,
+    CONSTRAINT_TYPES,
+    EXCLUDE_METHODS,
+    EXPRESSION_CONSTRAINT_TYPES,
+    FK_ACTIONS,
     TRIGGER_EVENTS,
     TRIGGER_LEVELS,
     TRIGGER_TIMINGS,
     SkeletonError,
     add_column_skeleton,
+    add_constraint_skeleton,
+    add_foreign_key_skeleton,
     alter_column_type_skeleton,
     drop_column_default_skeleton,
     drop_column_not_null_skeleton,
     drop_column_skeleton,
+    drop_constraint_skeleton,
     function_skeleton,
     procedure_skeleton,
     rename_column_skeleton,
+    rename_constraint_skeleton,
     set_column_default_skeleton,
     set_column_not_null_skeleton,
     trigger_skeleton,
@@ -592,6 +601,467 @@ def test_every_column_op_quotes_a_reserved_word_name(op):
 @pytest.mark.parametrize("op", sorted(_COLUMN_OPS))
 def test_every_column_op_is_deterministic(op):
     assert _column_op(op) == _column_op(op)
+
+
+# --- FQ-025 slice 2: constraints & foreign keys ----------------------------
+#: Every constraint-op entry point with a minimal valid kwargs set — the same
+#: registry idea as `_COLUMN_OPS`, so the cross-cutting rules (table quoting,
+#: empty/hostile table, empty/hostile constraint name, determinism) are
+#: parametrized over ALL of them and a fifth operation cannot skip them.
+_CONSTRAINT_OPS = {
+    "add_constraint_skeleton": (
+        add_constraint_skeleton,
+        {"constraint_type": "UNIQUE", "columns": ["code"]},
+    ),
+    "add_foreign_key_skeleton": (
+        add_foreign_key_skeleton,
+        {
+            "columns": ["customer_id"],
+            "ref_table": "public.customer",
+            "ref_columns": ["id"],
+        },
+    ),
+    "drop_constraint_skeleton": (drop_constraint_skeleton, {}),
+    "rename_constraint_skeleton": (
+        rename_constraint_skeleton,
+        {"new_name": "renamed_ck"},
+    ),
+}
+
+
+def _constraint_op(op, **overrides):
+    # The positional is `op`, not `name`: `name` is a real kwarg of every
+    # constraint emitter (the constraint's own name), which the tests override.
+    func, extra = _CONSTRAINT_OPS[op]
+    kwargs = {"table": "public.orders", "name": "orders_ck"}
+    kwargs.update(extra)
+    kwargs.update(overrides)
+    return func(**kwargs)
+
+
+# --- add constraint --------------------------------------------------------
+def test_add_primary_key_golden_text():
+    assert add_constraint_skeleton(
+        table="public.orders",
+        name="orders_pkey",
+        constraint_type="PRIMARY KEY",
+        columns=["id"],
+    ) == ('ALTER TABLE "public"."orders" ADD CONSTRAINT "orders_pkey" '
+          'PRIMARY KEY ("id");\n')
+
+
+def test_add_unique_golden_text():
+    assert add_constraint_skeleton(
+        table="orders", name="orders_code_key", constraint_type="UNIQUE",
+        columns=["code"],
+    ) == ('ALTER TABLE "orders" ADD CONSTRAINT "orders_code_key" '
+          'UNIQUE ("code");\n')
+
+
+def test_add_check_golden_text():
+    assert add_constraint_skeleton(
+        table="public.orders",
+        name="orders_qty_positive",
+        constraint_type="CHECK",
+        expression="qty > 0",
+    ) == ('ALTER TABLE "public"."orders" ADD CONSTRAINT "orders_qty_positive" '
+          "CHECK (qty > 0);\n")
+
+
+def test_add_exclude_golden_text():
+    assert add_constraint_skeleton(
+        table="booking",
+        name="no_overlap",
+        constraint_type="EXCLUDE",
+        expression="room WITH =, during WITH &&",
+    ) == ('ALTER TABLE "booking" ADD CONSTRAINT "no_overlap" '
+          "EXCLUDE USING gist (room WITH =, during WITH &&);\n")
+
+
+def test_add_exclude_honours_the_index_method():
+    assert "EXCLUDE USING btree (a WITH =)" in add_constraint_skeleton(
+        table="t", name="c", constraint_type="EXCLUDE",
+        expression="a WITH =", method="btree",
+    )
+
+
+def test_add_multi_column_key_preserves_caller_order():
+    # A key's column ORDER is semantic (unlike trigger events, which are
+    # canonicalised), so it must survive exactly as passed.
+    forwards = add_constraint_skeleton(
+        table="t", name="c", constraint_type="PRIMARY KEY",
+        columns=["tenant", "id"],
+    )
+    backwards = add_constraint_skeleton(
+        table="t", name="c", constraint_type="PRIMARY KEY",
+        columns=["id", "tenant"],
+    )
+    assert 'PRIMARY KEY ("tenant", "id")' in forwards
+    assert 'PRIMARY KEY ("id", "tenant")' in backwards
+    assert forwards != backwards
+
+
+@pytest.mark.parametrize("constraint_type", COLUMN_CONSTRAINT_TYPES)
+def test_column_shaped_types_reject_an_empty_column_list(constraint_type):
+    with pytest.raises(SkeletonError, match="needs at least one column"):
+        add_constraint_skeleton(
+            table="t", name="c", constraint_type=constraint_type, columns=[]
+        )
+
+
+@pytest.mark.parametrize("constraint_type", COLUMN_CONSTRAINT_TYPES)
+def test_column_shaped_types_reject_an_expression(constraint_type):
+    # Silently ignoring it would ship a key that constrains the wrong thing.
+    with pytest.raises(SkeletonError, match="column list, not an expression"):
+        add_constraint_skeleton(
+            table="t", name="c", constraint_type=constraint_type,
+            columns=["a"], expression="a > 0",
+        )
+
+
+@pytest.mark.parametrize("constraint_type", EXPRESSION_CONSTRAINT_TYPES)
+def test_expression_shaped_types_reject_a_column_list(constraint_type):
+    with pytest.raises(SkeletonError, match="expression, not a column list"):
+        add_constraint_skeleton(
+            table="t", name="c", constraint_type=constraint_type,
+            columns=["a"], expression="a > 0",
+        )
+
+
+@pytest.mark.parametrize("constraint_type", EXPRESSION_CONSTRAINT_TYPES)
+def test_expression_shaped_types_require_an_expression(constraint_type):
+    with pytest.raises(SkeletonError, match="needs an expression"):
+        add_constraint_skeleton(
+            table="t", name="c", constraint_type=constraint_type
+        )
+
+
+def test_add_constraint_rejects_a_duplicate_column():
+    # `PRIMARY KEY (a, a)` is a Postgres error; collapsing it silently would
+    # emit a key the user did not ask for.
+    with pytest.raises(SkeletonError, match="same column twice"):
+        add_constraint_skeleton(
+            table="t", name="c", constraint_type="PRIMARY KEY", columns=["a", "a"]
+        )
+
+
+def test_add_constraint_rejects_an_unknown_type():
+    with pytest.raises(SkeletonError, match="constraint type must be one of"):
+        add_constraint_skeleton(
+            table="t", name="c", constraint_type="FOREIGN KEY", columns=["a"]
+        )
+
+
+def test_foreign_key_is_not_an_add_constraint_type():
+    # It needs a referenced table and column list, so it is its own emitter.
+    assert "FOREIGN KEY" not in CONSTRAINT_TYPES
+
+
+def test_add_exclude_rejects_an_unknown_method():
+    with pytest.raises(SkeletonError, match="index method must be one of"):
+        add_constraint_skeleton(
+            table="t", name="c", constraint_type="EXCLUDE",
+            expression="a WITH =", method="magic",
+        )
+
+
+@pytest.mark.parametrize("method", EXCLUDE_METHODS)
+def test_every_declared_exclude_method_is_accepted(method):
+    assert f"EXCLUDE USING {method} (" in add_constraint_skeleton(
+        table="t", name="c", constraint_type="EXCLUDE",
+        expression="a WITH =", method=method,
+    )
+
+
+@pytest.mark.parametrize(
+    ("hostile", "match"),
+    [
+        ("qty > 0'", "unterminated string literal"),
+        ("(qty > 0", "unbalanced parentheses"),
+        ("qty > 0)", "unbalanced parentheses"),
+        ("qty > 0 -- ", "must not contain a SQL comment"),
+        ("qty > 0 /* x", "must not contain a SQL comment"),
+        ("   ", "must not be empty"),
+    ],
+)
+def test_check_expression_that_could_break_the_statement_is_refused(hostile, match):
+    # The CHECK body reuses slice 1's `_expression` guard verbatim, so it
+    # inherits exactly the same guarantees -- and no more.
+    with pytest.raises(SkeletonError, match=match):
+        add_constraint_skeleton(
+            table="t", name="c", constraint_type="CHECK", expression=hostile
+        )
+
+
+def test_check_expression_may_contain_a_string_literal():
+    assert "CHECK (status <> 'void');\n" in add_constraint_skeleton(
+        table="t", name="c", constraint_type="CHECK", expression="status <> 'void'"
+    )
+
+
+def test_check_expression_injection_attempt_is_refused():
+    with pytest.raises(SkeletonError):
+        add_constraint_skeleton(
+            table="t", name="c", constraint_type="CHECK",
+            expression="1); DROP TABLE t; --",
+        )
+
+
+# --- add foreign key -------------------------------------------------------
+def test_add_foreign_key_golden_text():
+    assert add_foreign_key_skeleton(
+        table="public.orders",
+        name="orders_customer_fk",
+        columns=["customer_id"],
+        ref_table="public.customer",
+        ref_columns=["id"],
+    ) == (
+        'ALTER TABLE "public"."orders" ADD CONSTRAINT "orders_customer_fk" '
+        'FOREIGN KEY ("customer_id") REFERENCES "public"."customer" ("id");\n'
+    )
+
+
+def test_add_foreign_key_multi_column_golden_text():
+    assert add_foreign_key_skeleton(
+        table="orders",
+        name="fk",
+        columns=["tenant", "customer_id"],
+        ref_table="customer",
+        ref_columns=["tenant", "id"],
+    ) == (
+        'ALTER TABLE "orders" ADD CONSTRAINT "fk" '
+        'FOREIGN KEY ("tenant", "customer_id") '
+        'REFERENCES "customer" ("tenant", "id");\n'
+    )
+
+
+def test_add_foreign_key_referenced_table_may_be_unqualified():
+    assert 'REFERENCES "customer" ("id")' in add_foreign_key_skeleton(
+        table="orders", name="fk", columns=["c"], ref_table="customer",
+        ref_columns=["id"],
+    )
+
+
+def test_add_foreign_key_referenced_columns_are_always_rendered():
+    # Postgres would let the list be omitted (meaning "the referenced table's
+    # primary key"); a generated statement must say what it binds to.
+    text = add_foreign_key_skeleton(
+        table="orders", name="fk", columns=["c"], ref_table="customer",
+        ref_columns=["id"],
+    )
+    assert text.count("(") == 2
+
+
+def test_add_foreign_key_with_referential_actions_golden_text():
+    assert add_foreign_key_skeleton(
+        table="orders",
+        name="fk",
+        columns=["c"],
+        ref_table="customer",
+        ref_columns=["id"],
+        on_delete="CASCADE",
+        on_update="RESTRICT",
+    ) == (
+        'ALTER TABLE "orders" ADD CONSTRAINT "fk" FOREIGN KEY ("c") '
+        'REFERENCES "customer" ("id") ON DELETE CASCADE ON UPDATE RESTRICT;\n'
+    )
+
+
+def test_add_foreign_key_omits_the_action_clauses_by_default():
+    text = add_foreign_key_skeleton(
+        table="orders", name="fk", columns=["c"], ref_table="customer",
+        ref_columns=["id"],
+    )
+    assert "ON DELETE" not in text
+    assert "ON UPDATE" not in text
+
+
+@pytest.mark.parametrize("action", FK_ACTIONS)
+def test_every_declared_referential_action_is_accepted(action):
+    assert f"ON DELETE {action};\n" in add_foreign_key_skeleton(
+        table="t", name="fk", columns=["c"], ref_table="r", ref_columns=["id"],
+        on_delete=action,
+    )
+
+
+def test_add_foreign_key_rejects_an_unknown_referential_action():
+    with pytest.raises(SkeletonError, match="ON DELETE must be one of"):
+        add_foreign_key_skeleton(
+            table="t", name="fk", columns=["c"], ref_table="r",
+            ref_columns=["id"], on_delete="EXPLODE",
+        )
+
+
+def test_add_foreign_key_rejects_mismatched_column_counts():
+    with pytest.raises(SkeletonError, match="exactly as many columns"):
+        add_foreign_key_skeleton(
+            table="t", name="fk", columns=["a", "b"], ref_table="r",
+            ref_columns=["id"],
+        )
+
+
+def test_add_foreign_key_rejects_an_empty_local_column_list():
+    with pytest.raises(SkeletonError, match="needs at least one column"):
+        add_foreign_key_skeleton(
+            table="t", name="fk", columns=[], ref_table="r", ref_columns=["id"]
+        )
+
+
+def test_add_foreign_key_rejects_an_empty_referenced_column_list():
+    with pytest.raises(SkeletonError, match="needs at least one column"):
+        add_foreign_key_skeleton(
+            table="t", name="fk", columns=["a"], ref_table="r", ref_columns=[]
+        )
+
+
+def test_add_foreign_key_rejects_an_empty_referenced_table():
+    with pytest.raises(SkeletonError, match="referenced table must not be empty"):
+        add_foreign_key_skeleton(
+            table="t", name="fk", columns=["a"], ref_table="  ", ref_columns=["id"]
+        )
+
+
+@pytest.mark.parametrize("hostile", ['r"; DROP TABLE users; --', "public.a b"])
+def test_add_foreign_key_refuses_a_hostile_referenced_table(hostile):
+    with pytest.raises(UnsafeIdentifierError):
+        add_foreign_key_skeleton(
+            table="t", name="fk", columns=["a"], ref_table=hostile,
+            ref_columns=["id"],
+        )
+
+
+@pytest.mark.parametrize("hostile", ['id"', "id; DROP TABLE users", "has space"])
+def test_add_foreign_key_refuses_a_hostile_referenced_column(hostile):
+    with pytest.raises(UnsafeIdentifierError):
+        add_foreign_key_skeleton(
+            table="t", name="fk", columns=["a"], ref_table="r",
+            ref_columns=[hostile],
+        )
+
+
+# --- drop / rename constraint ----------------------------------------------
+def test_drop_constraint_golden_text():
+    assert drop_constraint_skeleton(table="public.orders", name="orders_pkey") == (
+        'ALTER TABLE "public"."orders" DROP CONSTRAINT "orders_pkey";\n'
+    )
+
+
+def test_drop_constraint_is_type_agnostic():
+    # The unified drop's entire justification: in Postgres a FK IS a
+    # constraint, so the statement cannot depend on the type -- the emitter is
+    # not even told what the type is.
+    for name in ("orders_pkey", "orders_customer_fk", "qty_positive", "no_overlap"):
+        assert drop_constraint_skeleton(table="t", name=name) == (
+            f'ALTER TABLE "t" DROP CONSTRAINT "{name}";\n'
+        )
+
+
+def test_there_is_no_separate_drop_foreign_key_emitter():
+    # A second emitter would be the same statement under a name implying
+    # otherwise. Guarding the absence keeps a later slice from adding one.
+    import pgtp_editor.db.ddl_skeleton as skeleton
+
+    assert not hasattr(skeleton, "drop_foreign_key_skeleton")
+
+
+def test_drop_constraint_never_emits_cascade_or_if_exists():
+    text = drop_constraint_skeleton(table="t", name="c")
+    assert "CASCADE" not in text
+    assert "IF EXISTS" not in text
+
+
+def test_rename_constraint_golden_text():
+    assert rename_constraint_skeleton(
+        table="public.orders", name="orders_ck", new_name="orders_qty_ck"
+    ) == (
+        'ALTER TABLE "public"."orders" RENAME CONSTRAINT "orders_ck" '
+        'TO "orders_qty_ck";\n'
+    )
+
+
+def test_rename_constraint_to_the_same_name_is_refused():
+    with pytest.raises(SkeletonError, match="same as the current one"):
+        rename_constraint_skeleton(table="t", name="ck", new_name="ck")
+
+
+def test_rename_constraint_rejects_an_empty_new_name():
+    with pytest.raises(SkeletonError, match="must not be empty"):
+        rename_constraint_skeleton(table="t", name="ck", new_name="  ")
+
+
+def test_rename_constraint_refuses_a_hostile_new_name():
+    with pytest.raises(UnsafeIdentifierError):
+        rename_constraint_skeleton(table="t", name="ck", new_name='bad"name')
+
+
+# --- rules that hold across every constraint operation ---------------------
+@pytest.mark.parametrize("op", sorted(_CONSTRAINT_OPS))
+def test_every_constraint_op_quotes_the_table_and_name(op):
+    text = _constraint_op(op)
+    assert text.startswith('ALTER TABLE "public"."orders" ')
+    assert '"orders_ck"' in text
+    assert text.endswith(";\n")
+
+
+@pytest.mark.parametrize("op", sorted(_CONSTRAINT_OPS))
+def test_every_constraint_op_accepts_an_unqualified_table(op):
+    assert _constraint_op(op, table="orders").startswith('ALTER TABLE "orders" ')
+
+
+@pytest.mark.parametrize("op", sorted(_CONSTRAINT_OPS))
+def test_every_constraint_op_rejects_an_empty_table(op):
+    with pytest.raises(SkeletonError, match="table must not be empty"):
+        _constraint_op(op, table="   ")
+
+
+@pytest.mark.parametrize("op", sorted(_CONSTRAINT_OPS))
+def test_every_constraint_op_rejects_an_empty_table_name_part(op):
+    with pytest.raises(SkeletonError, match="empty name part"):
+        _constraint_op(op, table="public.")
+
+
+@pytest.mark.parametrize("op", sorted(_CONSTRAINT_OPS))
+def test_every_constraint_op_rejects_an_empty_constraint_name(op):
+    with pytest.raises(SkeletonError, match="constraint name must not be empty"):
+        _constraint_op(op, name="  ")
+
+
+@pytest.mark.parametrize("op", sorted(_CONSTRAINT_OPS))
+@pytest.mark.parametrize("hostile", ['weird"name', "has space", "drop;table", "x'y"])
+def test_every_constraint_op_refuses_a_hostile_constraint_name(op, hostile):
+    with pytest.raises(UnsafeIdentifierError):
+        _constraint_op(op, name=hostile)
+
+
+@pytest.mark.parametrize("op", sorted(_CONSTRAINT_OPS))
+@pytest.mark.parametrize("hostile", ['t"; DROP TABLE users; --', "public.a b"])
+def test_every_constraint_op_refuses_a_hostile_table(op, hostile):
+    with pytest.raises(UnsafeIdentifierError):
+        _constraint_op(op, table=hostile)
+
+
+@pytest.mark.parametrize("op", sorted(_CONSTRAINT_OPS))
+def test_every_constraint_op_preserves_mixed_case_by_quoting(op):
+    text = _constraint_op(op, table="MySchema.MyTable", name="MyConstraint")
+    assert '"MySchema"."MyTable"' in text
+    assert '"MyConstraint"' in text
+
+
+@pytest.mark.parametrize("op", sorted(_CONSTRAINT_OPS))
+def test_every_constraint_op_quotes_a_reserved_word_table(op):
+    assert 'ALTER TABLE "order" ' in _constraint_op(op, table="order")
+
+
+@pytest.mark.parametrize("op", sorted(_CONSTRAINT_OPS))
+def test_every_constraint_op_is_deterministic(op):
+    assert _constraint_op(op) == _constraint_op(op)
+
+
+@pytest.mark.parametrize("op", ["add_constraint_skeleton", "add_foreign_key_skeleton"])
+@pytest.mark.parametrize("hostile", ['weird"name', "has space", "drop;table"])
+def test_every_add_op_refuses_a_hostile_column(op, hostile):
+    with pytest.raises(UnsafeIdentifierError):
+        _constraint_op(op, columns=[hostile])
 
 
 def test_skeletons_are_deterministic():
