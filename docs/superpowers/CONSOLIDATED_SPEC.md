@@ -1,6 +1,30 @@
 # PGTP Editor — Consolidated Specification
 
-> **Status:** living document · **Last synthesized:** 2026-08-09 — **two shipped features folded in (two
+> **Status:** living document · **Last synthesized:** 2026-08-09 — **FQ-025 slices 2 and 3 folded in, plus
+> the `Ctrl+O` unbinding (three ledger rows, §28).** The `Alter Table ▸` submenu now carries **twelve**
+> operations: slice 1's eight column ones, a separator, then slice 2's `Add Constraint…` / `Add Foreign
+> Key…` / `Drop Constraint…` / `Rename Constraint…` (`c19a09f`), all twelve on **one** signal because the
+> constraint ops need exactly the same context, and `ALTER_TABLE_ACTIONS` **derived** from two group tables
+> whose only purpose is the separator. Slice 2's rulings worth the spec's attention: **there is deliberately
+> NO `Drop Foreign Key`** (a FK *is* a constraint; one unified emitter, with a guard test asserting
+> `drop_foreign_key_skeleton` does not exist — which also makes `Drop Constraint…` the one destination a
+> Drop-index picker routes constraint-backed rows to); **constraint names are REQUIRED on both ADDs**,
+> settling FQ-025's open question 2 **against its own recommendation**, because an auto-name like
+> `orders_qty_check1` is what makes the Drop/Rename pickers a guessing game later; **`EXCLUDE` is
+> expression-shaped, not column-shaped**, and supplying the wrong shape is **refused, not ignored**; and
+> **Drop constraint warns without blocking**, matching slice 1's `DROP COLUMN`. **Slice 3** (`b8a005d`,
+> `ef46625`) has its six emitters and five `ui/table_dialogs.py` dialogs shipped **with no menu entry yet** —
+> the spec states their contract and asserts no menu placement. It breaks the feature's own framing on
+> purpose: **`DROP INDEX` is not table-scoped** (identity is `schema.name`; the emitter takes `index=`) and
+> **`CREATE INDEX` is not an `ALTER TABLE`**; `CONCURRENTLY` is never emitted (it cannot run in a
+> transaction block, which is how Apply executes); **`CREATE TABLE` refuses everything but columns and an
+> optional PK**, that PK emitted **unnamed** as a deliberate exception to slice 2's names-are-required rule;
+> **comments are one dialog in two modes with two documented exceptions to slice 1's rules** (blank means
+> `IS NULL`, and the existing comment MAY be injected — a comment is a *value*, not free SQL); and **`DROP
+> TABLE` has no confirmation**, the generated tab being the safeguard. Also folded in: **`Ctrl+O` is
+> UNBOUND** (`f621d4c`, owner decision) — `File ▸ Open...` is unchanged, but one `Ctrl+O` in an app that
+> opens five kinds of thing must guess at intent, and the launcher now puts opening one click away; the
+> chord is left **free** for FQ-012 rebinding, and **`Ctrl+W` is untouched**. (Previously the same day:) **two shipped features folded in (two
 > ledger rows, §28): FQ-012 *Customize Shortcuts…* and FQ-025 slice 1's `Alter Table ▸` column
 > operations.** §27's closing claim that ***"every binding in this table is FIXED"* is OVERTURNED** — every
 > menu-bar QAction's shortcut is now a user-rebindable **default**, through `ui/shortcut_registry.py`
@@ -20,7 +44,8 @@
 > the deploy manifest) with `Save in Project` degrading to Save As… and Apply-to-**Target** refusing the
 > buffer; the **`applied` row is one per table** for ALTERs, so successive ones overwrite each other (known
 > limit); and **`SNAPSHOT_VERSION` 1 → 2 REFUSES a v1 file** rather than loading it with the new
-> `constraints`/`indexes` empty. Slices 2 and 3 are **not** shipped. (Previously the same day:) **FQ-027 folded in: the launcher
+> `constraints`/`indexes` empty. *(That pass's closing claim that slices 2 and 3 were not shipped is
+> superseded above.)* (Previously the same day:) **FQ-027 folded in: the launcher
 > becomes THREE COLUMNS (Standalone | Project | Maintenance), Maintenance becomes a SESSION-ONLY
 > menu filter, and `File ▸ Show Launcher…` becomes `File ▸ New Session` (two ledger rows, §28).**
 > **FQ-027 SUPERSEDES FQ-011** (owner ruling) wherever they disagree — persistence (session-only, **no
@@ -167,7 +192,7 @@
 16. [Validation](#16-validation)
 17. [Database](#17-database) — includes [the Database/XML Coherence view](#the-databasexml-coherence-view) — *implemented (FQ-003, 2026-08-06): `db/coherence.py`, `ui/coherence_panel.py`, the Database-menu toggle*
 18. [DDL versioning (standalone Postgres mode)](#18-ddl-versioning-standalone-postgres-mode) — *partly implemented — see each subsection*
-    - [18.1 Routines & triggers browsing (DDL Explorer)](#181-routines--triggers-browsing-ddl-explorer) — *implemented, including object **creation** (FQ-002, 2026-08-06); the object-row context menu collapses to **one `Edit DDL`** (FQ-024, 2026-08-08); **table ALTERing via the new `Alter Table ▸` submenu and the tree's new column leaves (FQ-025 slice 1, 2026-08-09 — slices 2/3 unbuilt)**; XML cross-refs' pure layer (`db/routine_refs.py`) shipped — its UI consumer is the remaining gap*
+    - [18.1 Routines & triggers browsing (DDL Explorer)](#181-routines--triggers-browsing-ddl-explorer) — *implemented, including object **creation** (FQ-002, 2026-08-06); the object-row context menu collapses to **one `Edit DDL`** (FQ-024, 2026-08-08); **table ALTERing via the new `Alter Table ▸` submenu and the tree's new column leaves (FQ-025, 2026-08-09 — **twelve** wired operations after slices 1 and 2; slice 3's emitters + dialogs ship with no menu entry yet)**; XML cross-refs' pure layer (`db/routine_refs.py`) shipped — its UI consumer is the remaining gap*
     - [18.2 Projects, checkout & state markers](#182-projects-checkout--state-markers) — *implemented (git integration is an explicit TBD placeholder); **checkout is no longer a separate gesture** and the tab key is **`ref.key` always** (FQ-024, 2026-08-08)*
     - [18.3 Deploy workflow & schema diff/migration](#183-deploy-workflow--schema-diffmigration) — *all the pieces ship (diff/migration engine, `db/schema_snapshot.py`, `db/deploy_bundle.py`, `ui/schema_compare_panel.py`); **none are reachable** — no menu entries, no flow driving them*
     - [18.4 SQL/plpgsql selection formatter](#184-sqlplpgsql-selection-formatter) — *implemented, core + consumer: `Ctrl+Alt+F` / context-menu Format Selection in the DDL object editor, `[SQL]` Audit refusals wired*
@@ -186,7 +211,7 @@
 24. [In-app manual](#24-in-app-manual)
 25. [Debug mode](#25-debug-mode)
 26. [Consolidated menu bar](#26-consolidated-menu-bar) — ***two** menu bars since FQ-016 (2026-08-07): the window bar, and [the Editor menu bar](#the-editor-menu-bar-fq-016-2026-08-07) (**History · Select · Parsing · Navigation · Deployment** — five since 2026-08-08). `Edit` no longer exists; **File loses `Save`/`Save As…`** and Tools loses **all four** Compare/Merge entries. **2026-08-09: `Parsing` gains the two Check gestures and Database loses them, along with `Open`/`Close Sandbox Session`**. **FQ-027 (2026-08-09):** `File ▸ Show Launcher…` → **`New Session`**, and the window bar gains a **[Maintenance-mode membership table](#window-bar-membership-in-maintenance-mode-fq-027-2026-08-09)** — the app's one **intent**-based filter, distinct from every capability-based *absent, not disabled* rule in this section*
-27. [Consolidated keyboard shortcuts](#27-consolidated-keyboard-shortcuts) — *the table lists **DEFAULTS**, not fixed bindings: every **menu-bar** QAction is user-rebindable through `View ▸ Customize Shortcuts…` (FQ-012, 2026-08-09), on a **steal-or-refuse** conflict rule because Qt fires **neither** of two shortcuts on one chord; the short list of genuinely unrebindable keys is enumerated there. **`Ctrl+S`/`Ctrl+Shift+S` are deliberately unbound app-wide** (stated, not omitted), the one carve-out being `CodeEditorDialog`'s OK/Cancel pair*
+27. [Consolidated keyboard shortcuts](#27-consolidated-keyboard-shortcuts) — *the table lists **DEFAULTS**, not fixed bindings: every **menu-bar** QAction is user-rebindable through `View ▸ Customize Shortcuts…` (FQ-012, 2026-08-09), on a **steal-or-refuse** conflict rule because Qt fires **neither** of two shortcuts on one chord; the short list of genuinely unrebindable keys is enumerated there. **`Ctrl+S`/`Ctrl+Shift+S` are deliberately unbound app-wide** (stated, not omitted), the one carve-out being `CodeEditorDialog`'s OK/Cancel pair; **`Ctrl+O` joins them as deliberately unbound 2026-08-09** — but *free* rather than reserved, so a user may rebind it — while **`Ctrl+W` keeps `File ▸ Close`***
 28. [Supersession ledger](#28-supersession-ledger)
 29. [Open questions](#29-open-questions)
 30. [Testing policy](#30-testing-policy)
@@ -389,7 +414,10 @@ pgtp_editor/
 │   ├── ddl_project.py # pure DDL-project paths: object → ddl/*.sql filename (_n overload suffix,
 │   │                  # sanitization), ProjectSettings/settings.json shape, DriftMarkers (§18.2)
 │   ├── ddl_skeleton.py  # pure CREATE-skeleton generation for brand-new objects (FQ-002, §18.1)
-│   │                  # + FQ-025 slice 1's eight ALTER TABLE column emitters, same posture (§18.1)
+│   │                  # + FQ-025's 18 table emitters, same posture (§18.1): slice 1's eight ALTER TABLE
+│   │                  # column ones, slice 2's four constraint ones (ONE drop for every type — a FK IS a
+│   │                  # constraint), and slice 3's six that are NOT ALTER TABLE at all (CREATE/DROP INDEX,
+│   │                  # COMMENT ON TABLE/COLUMN, CREATE/DROP TABLE) — plus the ColumnSpec dataclass
 │   ├── bookmark_store.py # pure project-local bookmark persistence (FQ-013, §8): <project>/
 │   │                  # .ddlproject/bookmarks.json, relative_key / load_editor_bookmarks /
 │   │                  # store_editor_bookmarks / prune_missing_files (the last has NO caller yet);
@@ -464,8 +492,12 @@ bypass are **deleted** with FQ-027's suppression removal — ledger §28; §7),
 `ddl_buffer_panel.py`, `ddl_object_editor.py` (§18.5's editable single-object tab),
 `completion_popup.py` (the `_CompletionPopup` shared by `xml_editor.py` and `ddl_object_editor.py`,
 §11/§18.6), `new_trigger_dialog.py` / `new_routine_dialog.py` (FQ-002 creation),
-`alter_column_dialogs.py` (FQ-025 slice 1's five `Alter Table ▸` dialog classes, split by what each
-collects — §18.1),
+`alter_column_dialogs.py` (FQ-025 slice 1's five `Alter Table ▸` column dialog classes, split by what each
+collects — §18.1) / `constraint_dialogs.py` (slice 2's four, on two bases — *"what shall this new
+constraint contain?"* vs. *"which existing named constraint?"* — plus the shared `_ColumnListPicker`
+widget, used three times) / `table_dialogs.py` (slice 3's **five** dialogs for its six operations:
+`CreateIndexDialog`, `DropIndexDialog`, `SetCommentDialog` (table **and** column mode), `CreateTableDialog`,
+`DropTableDialog` — **shipped and tested, but not yet opened by any menu entry**, §18.1),
 `schema_compare_panel.py` (§18.3's diff viewer — **built, not yet reachable**),
 `project_status_model.py` / `project_status_panel.py` (§18.8),
 `sandbox_controller.py` (§18.5's sandbox-lifecycle host — **ships**: owns the one `SandboxSession`,
@@ -3042,9 +3074,11 @@ golden "freshly-added table" oracle; defaults are corpus-derived and **not yet f
 > §18.1's XML cross-referencing has its **pure layer shipped** (`db/routine_refs.py`, commit `956e8fb`,
 > tested); **the remaining §18.1 piece is its UI consumer** — nothing in `ui/` calls the module yet.
 > §18.1's FQ-002 object-*creation* entry points (Add Trigger…, New Function/Procedure…) **have
-> since shipped**, as has FQ-025 **slice 1**'s table-*mutation* set (the `Alter Table ▸` submenu's eight
-> column operations, on table nodes and on the tree's new column leaves; slices 2 and 3 are unbuilt) — see
-> those subsections.
+> since shipped**, as has FQ-025's table-*mutation* set: the `Alter Table ▸` submenu's **twelve** wired
+> operations — slice 1's eight column ones and slice 2's four constraint ones — on table nodes and on the
+> tree's new column leaves. **Slice 3** (indexes, comments, whole-table create/drop) has its **six emitters
+> and five dialogs shipped but no menu entry yet**; its wiring is landing separately — see those
+> subsections.
 >
 > **§18.3's modules all exist; nothing calls them.** `db/schema_diff.py` and `db/migration_gen.py` are
 > implemented and tested (`tests/db/test_schema_diff.py`) for the `routine`/`trigger` cases only;
@@ -3587,9 +3621,10 @@ Tables branch's original scope, not a new feature:**
   selection handler already calls `show_node` for its four kinds. A DDL table node offers **no *editing*
   context menu** — right-click ▸ **`Edit DDL`** (FQ-024's single entry, above) remains routine- and
   trigger-leaf-only, since a whole table has no single `DdlObjectSpan`/source text to hand that entry
-  point. **Amended 2026-08-06 (FQ-002, §28) and again 2026-08-09 (FQ-025 slice 1): the table node carries a
-  context menu holding the *creation* entry "Add Trigger…" and the `Alter Table ▸` submenu's eight column
-  operations — see "Creating brand-new objects from the Explorer" and "Altering an existing table from the
+  point. **Amended 2026-08-06 (FQ-002, §28) and again 2026-08-09 (FQ-025 slices 1 and 2): the table node
+  carries a
+  context menu holding the *creation* entry "Add Trigger…" and the `Alter Table ▸` submenu's **twelve**
+  operations (eight column, four constraint) — see "Creating brand-new objects from the Explorer" and "Altering an existing table from the
   Explorer" below; the table's columns are now their own tree rows and carry that submenu too.** The
   span-based limitation above is specific to *editing an object that already exists*; an object that does
   not exist yet has no source text to need a span for, so creation is not blocked by it. (The narrowing
@@ -3805,12 +3840,19 @@ of the rejection, not a contradiction of it.)
 
 #### Altering an existing table from the Explorer — the `Alter Table ▸` submenu (FQ-025 slice 1, 2026-08-09)
 
-> **Status: slice 1 implemented and shipped 2026-08-09** (commits `bc02d9c` pure emitters + introspection
-> widening, `8a88da4` dialogs, `532da30` tree/host wiring). **Slices 2 and 3 are NOT shipped** — constraints
-> and foreign keys (slice 2) and indexes / comments / whole-table create-drop (slice 3) exist only as the
-> `docs/FEATURE_QUEUE.md` FQ-025 entry, and nothing in this section describes them as behaviour. The
-> introspection they need *is* already captured (`ConstraintInfo`/`IndexInfo`, below) — that widening
-> shipped with slice 1 so the snapshot format version moved once, not twice.
+> **Status: slices 1 and 2 are shipped AND WIRED; slice 3's emitters and dialogs are shipped, its menu
+> wiring is landing separately** (2026-08-09 — slice 1: `bc02d9c` pure emitters + introspection widening,
+> `8a88da4` dialogs, `532da30` tree/host wiring; slice 2: `c19a09f`; slice 3: `b8a005d` emitters,
+> `ef46625` dialogs). The `Alter Table ▸` submenu therefore carries **twelve** operations today — eight
+> column ones and four constraint ones. **Slice 3's six emitters (`db/ddl_skeleton.py`) and five dialogs
+> (`ui/table_dialogs.py`) exist and are tested, but no menu entry opens them yet**: this section states
+> their *contract* and deliberately asserts **no menu placement** for them until that wiring lands.
+>
+> **Two FQ-025 queue-entry claims are FALSE and are recorded here so they are not transcribed later:**
+> slice 2 did **not** include the `_CONSTRAINTS_SQL` introspection widening (that shipped earlier, with
+> slice 1's batch, so the snapshot format version moved once rather than twice), and `Drop index` did
+> **not** need a new index-introspection query (`IndexInfo` landed with the same slice-1 batch). Neither
+> slice 2 nor slice 3 required any introspection work at all.
 
 The sibling of the creation gestures above: FQ-002 lets the Explorer *originate* an object, this lets it
 *mutate a table that already exists*. Both end in exactly the same place — an **editable DDL tab holding
@@ -3830,7 +3872,9 @@ column drop) puts up a scare-confirmation of its own.
   pre-selected column, which is the parameter. It returns the submenu (or `None`) so tests read its
   membership instead of re-deriving it.
 - **Views and materialized views get NO submenu** (`getattr(table_info, "kind", "table") != "table"` →
-  `None`). Every operation emits `ALTER TABLE`, which the server refuses on a view: the
+  `None`). Every one of the twelve wired operations emits `ALTER TABLE`, which the server refuses on a
+  view — a rule that must be **re-examined, not inherited**, when slice 3's wiring lands, since `CREATE
+  TABLE` is not scoped to the clicked node at all and `DROP INDEX` is scoped to a *schema*: the
   tab-is-the-safeguard principle covers *running* generated DDL, never *generating DDL that cannot be
   right*. On a view's column leaf the submenu was the menu's only content, so the context menu is
   suppressed entirely rather than popping up empty.
@@ -3856,27 +3900,49 @@ collapsible **`Columns  (N)`** group, added **after** the trigger leaves, each c
 - Grouped rather than listed flat because a table's **triggers** are what this branch has always been
   about, and thirty columns spilled under the table node would bury them.
 
-**The eight operations (`ddl_buffer_panel.ALTER_TABLE_ACTIONS`, in menu order).** Ids are declared once:
+**The twelve operations (`ddl_buffer_panel.ALTER_TABLE_ACTIONS`, in menu order).** Ids are declared once:
 the four `alter_column_dialogs.ColumnActionDialog` already owns are **imported**, never respelled — a second
 spelling of `"drop_column"` is exactly how a menu item comes to open the wrong dialog.
 
-| Operation id | Menu label | Emitter (`db/ddl_skeleton.py`) | Dialog |
-|---|---|---|---|
-| `add_column` | `Add Column…` | `add_column_skeleton` | `AddColumnDialog` |
-| `drop_column` | `Drop Column…` | `drop_column_skeleton` | `ColumnActionDialog` |
-| `rename_column` | `Rename Column…` | `rename_column_skeleton` | `RenameColumnDialog` |
-| `change_column_type` | `Change Column Type…` | `alter_column_type_skeleton` (free-text `USING`) | `ChangeColumnTypeDialog` |
-| `set_not_null` | `Set NOT NULL…` | `set_column_not_null_skeleton` | `ColumnActionDialog` |
-| `drop_not_null` | `Drop NOT NULL…` | `drop_column_not_null_skeleton` | `ColumnActionDialog` |
-| `set_default` | `Set DEFAULT…` | `set_column_default_skeleton` | `SetColumnDefaultDialog` |
-| `drop_default` | `Drop DEFAULT…` | `drop_column_default_skeleton` | `ColumnActionDialog` |
+**`ALTER_TABLE_ACTIONS` is DERIVED, not authored.** It is the flattening of
+`ALTER_TABLE_ACTION_GROUPS = (ALTER_TABLE_COLUMN_ACTIONS, ALTER_TABLE_CONSTRAINT_ACTIONS)`, and the grouping
+exists for exactly **one** reason: so `_add_alter_table_submenu` can drop a `addSeparator()` between the
+groups. *"What this table's columns are"* and *"what this table's constraints are"* are two different
+questions, and twelve undifferentiated entries read as one long list. Nothing else — ids, labels, order —
+comes from anywhere but these tables, which is why slice 2 was four lines of data rather than a second menu
+builder: extending the groups reached **both** entry points at once, with no second copy that could have
+been missed.
+
+| Group | Operation id | Menu label | Emitter (`db/ddl_skeleton.py`) | Dialog |
+|---|---|---|---|---|
+| columns | `add_column` | `Add Column…` | `add_column_skeleton` | `AddColumnDialog` |
+| columns | `drop_column` | `Drop Column…` | `drop_column_skeleton` | `ColumnActionDialog` |
+| columns | `rename_column` | `Rename Column…` | `rename_column_skeleton` | `RenameColumnDialog` |
+| columns | `change_column_type` | `Change Column Type…` | `alter_column_type_skeleton` (free-text `USING`) | `ChangeColumnTypeDialog` |
+| columns | `set_not_null` | `Set NOT NULL…` | `set_column_not_null_skeleton` | `ColumnActionDialog` |
+| columns | `drop_not_null` | `Drop NOT NULL…` | `drop_column_not_null_skeleton` | `ColumnActionDialog` |
+| columns | `set_default` | `Set DEFAULT…` | `set_column_default_skeleton` | `SetColumnDefaultDialog` |
+| columns | `drop_default` | `Drop DEFAULT…` | `drop_column_default_skeleton` | `ColumnActionDialog` |
+| *(separator)* | | | | |
+| constraints | `add_constraint` | `Add Constraint…` | `add_constraint_skeleton` | `AddConstraintDialog` |
+| constraints | `add_foreign_key` | `Add Foreign Key…` | `add_foreign_key_skeleton` | `AddForeignKeyDialog` |
+| constraints | `drop_constraint` | `Drop Constraint…` | `drop_constraint_skeleton` | `DropConstraintDialog` |
+| constraints | `rename_constraint` | `Rename Constraint…` | `rename_constraint_skeleton` | `RenameConstraintDialog` |
+
+**One signal carries all twelve.** `alter_column_requested(operation_id, TableInfo, column_name)` is not
+widened and gets no sibling for the constraint half: the four constraint operations need **exactly** the
+same context — which table, and which column the click came from (the two `ADD`s pre-select it in their
+column picker; the other two show it in the read-only *"From:"* line) — so a second signal would have been
+the same three arguments under another name. `column_name` is `""` for a click that came from the table node
+itself.
 
 `MainWindow._ALTER_COLUMN_DIALOGS` is the **one** id→dialog table (with `COLUMN_ACTIONS` as the
 `ColumnActionDialog` fallback): the panel decides which id it emits, the host decides which dialog that id
 opens, and nothing in between re-decides either. An unclaimed id opens nothing and says nothing — a wiring
 bug, not a user-facing state.
 
-**Five dialog classes, split by what each COLLECTS — not one per menu item** (`ui/alter_column_dialogs.py`,
+**Five COLUMN dialog classes, split by what each COLLECTS — not one per menu item**
+(`ui/alter_column_dialogs.py`,
 all on `_AlterColumnDialogBase`). Four operations that need nothing but a table and a column share
 `ColumnActionDialog`; the other four each add exactly one field group (new column definition · new name ·
 new type + `USING` · default expression). Every one follows the FQ-002 dialog contract verbatim:
@@ -3891,7 +3957,9 @@ an inline red error label driven by *attempting* the render.
   menu was clicked.
 - Both dropdowns default to the click context and remain **changeable** — the requester's rule.
 
-**Emitters — eight pure siblings in `db/ddl_skeleton.py`**, beside `trigger_skeleton`/`function_skeleton`/
+**Emitters — eighteen pure siblings in `db/ddl_skeleton.py` across the three slices** (slice 1's eight
+column ones described here; slice 2's four and slice 3's six below), beside
+`trigger_skeleton`/`function_skeleton`/
 `procedure_skeleton` and under the identical posture: pure, Qt-free, deterministic, **allowlist-or-raise**.
 Identifiers go through `quote_ident` (dot-separated parts quoted separately); datatypes through
 `_SAFE_DATATYPE_RE`; free-text expressions (`DEFAULT`, `USING`) through `_expression`, which refuses what
@@ -3900,7 +3968,199 @@ would close the statement; every refusal is a `SkeletonError` and **never a part
 carried whole into the tab, because both apply paths hand the buffer to `db/apply.py::apply_ddl` as **one**
 element of a statement sequence, so multi-statement text survives to the server intact.
 
-**Introspection widened for slice 2, and the snapshot format bumped with it** (`db/introspect.py`):
+##### Slice 2 — constraints and foreign keys (shipped and wired, `c19a09f`)
+
+**There is deliberately NO `Drop Foreign Key`, and a guard test enforces it.** In PostgreSQL a foreign key
+is a row in `pg_constraint` like any other, and `ALTER TABLE … DROP CONSTRAINT name` is
+character-for-character identical for a FK, a CHECK, a UNIQUE, an EXCLUDE and a primary key. So there are
+**four** emitters, not five: one unified `drop_constraint_skeleton` serves every type, and
+`tests/db/test_ddl_skeleton.py` asserts `not hasattr(skeleton, "drop_foreign_key_skeleton")` so a
+well-meaning later pass cannot add the same statement under a name implying otherwise. The type matters only
+to the *picker*, which shows it in the row label so the user can tell what they are about to drop. That one
+entry is also the single destination slice 3's **`DropIndexDialog`** routes its constraint-backed rows to
+(`IndexInfo.is_constraint_backed`, below) — a second drop entry would have split that destination in two.
+
+**Constraint names are REQUIRED on both `ADD`s — this settles FQ-025's own open question 2 AGAINST its
+recommendation.** The queue entry suggested allowing a blank name so Postgres would auto-name the
+constraint; the shipped rule is that `add_constraint_skeleton` and `add_foreign_key_skeleton` both refuse an
+empty name, and `_AddConstraintDialogBase` mirrors that refusal. The reason is downstream, not local: an
+auto-generated name like `orders_qty_check1` is exactly what turns the **Drop** and **Rename** pickers into
+a guessing game later. Requiring the name at creation means every constraint this app creates can be found
+again by the person who created it. (Ledger §28.)
+
+**`EXCLUDE` is expression-shaped, not column-shaped.** `db/ddl_skeleton.py` declares the split as data —
+`COLUMN_CONSTRAINT_TYPES = ("PRIMARY KEY", "UNIQUE")` vs.
+`EXPRESSION_CONSTRAINT_TYPES = ("CHECK", "EXCLUDE")` — and `EXCLUDE` sits with `CHECK` because its element
+list carries a **per-element operator** (`room WITH =, during WITH &&`) that no column picker can express;
+pretending otherwise would emit `EXCLUDE` constraints that are syntactically valid and semantically wrong.
+Consequently:
+
+- `PRIMARY KEY` / `UNIQUE` take a **column list** (`_ColumnListPicker`, order preserved — key order is
+  semantic, so unlike `trigger_skeleton`'s events it is never re-sorted).
+- `CHECK` / `EXCLUDE` take a **free expression**, guarded by the same `_expression` check slice 1's `USING`
+  uses (it refuses text that would close the statement), and therefore inherit slice 1's **provenance rule**
+  structurally: the field is built by `_user_typed_line_edit`, which offers no way to seed, complete or
+  inject a value, and no constructor accepts an initial expression. `EXCLUDE` additionally takes a method
+  from `EXCLUDE_METHODS = ("gist", "btree", "spgist", "hash")` (`gist` first — it is the only one supporting
+  the overlap operators exclusion constraints exist for), emitted as `USING <method>`.
+- **Supplying the wrong shape is REFUSED, not ignored.** Passing an `expression` to a `PRIMARY KEY`, or
+  `columns` to a `CHECK`, raises `SkeletonError`. A silently dropped argument here would mean a dialog bug
+  ships as a constraint that constrains the wrong thing. `AddConstraintDialog` keeps the two shapes from ever
+  disagreeing by **hiding** the inapplicable row rather than disabling it: an inapplicable-but-visible column
+  picker beside a `CHECK` reads as *"this CHECK constrains that column"*, which is not a thing.
+
+`add_foreign_key_skeleton` is split out of the type dropdown (`FOREIGN KEY` is deliberately absent from
+`CONSTRAINT_TYPES`) because it needs a referenced table and column list — a different form. Its referenced
+column list is **required** though Postgres permits omitting it (omission silently means "the referenced
+table's primary key", which is text that reads as if it names its target while depending on an invisible PK);
+both lists preserve order and must be the same length, the one arity check the emitter can make for the
+caller. `on_delete`/`on_update` are `FK_ACTIONS` keywords or `None` for *"emit no clause"* — equivalent to
+`NO ACTION` at run time, but only the first leaves the generated text quiet about a choice the user did not
+make.
+
+**Drop constraint WARNS, it does not block.** `DropConstraintDialog.note()` returns a plain, non-red note —
+for a **primary key** (*"dropping it also drops the index behind it, and Postgres will refuse if another
+table's foreign key still references it"*) or for any constraint that **owns an index** — and OK stays
+enabled. It is refreshed *after* the base validation precisely so it can never gate OK. This is slice 1's
+`DROP COLUMN` posture unchanged: refusing would mean guessing at dependencies this layer cannot see, and
+would block the legitimate **drop-then-re-add-differently** flow the whole feature exists to make possible.
+Postgres itself gives the authoritative answer at run time, and the tab is the safeguard.
+
+**The four dialogs** live in `ui/constraint_dialogs.py` and split by the question they ask, which is why
+there are two bases rather than one:
+
+| Dialog | Base | Collects |
+|---|---|---|
+| `AddConstraintDialog` | `_AddConstraintDialogBase` | name · TYPE dropdown · column picker **or** expression (+ method for `EXCLUDE`) |
+| `AddForeignKeyDialog` | `_AddConstraintDialogBase` | name · local columns · referenced table (repopulates a referenced-column picker) · `ON DELETE`/`ON UPDATE` |
+| `DropConstraintDialog` | `_ExistingConstraintDialogBase` | which existing constraint (labels carry the TYPE; the combo **data** carries the bare name) |
+| `RenameConstraintDialog` | `_ExistingConstraintDialogBase` | the same picker + a new name |
+
+- `_ColumnListPicker` is a plain `QWidget`, not a dialog mixin, because it is used **three** times, not once
+  per dialog: `AddConstraintDialog`'s columns, and **both** of `AddForeignKeyDialog`'s lists. Being a widget
+  is what lets one dialog hold two independent instances.
+- Everything else is inherited verbatim from slice 1 — table dropdown, read-only *"From:"* line, red inline
+  error label, OK-disabled-until-the-emitter-renders, non-modal `show()`, all list data **injected** by the
+  caller (nothing here imports `db/introspect` or opens a connection).
+- The two *existing-constraint* dialogs take **one extra injected source**,
+  `MainWindow._alter_constraints_for` (a **callable**, so the list follows the dialog's table dropdown and
+  re-reads the current schema), and only they do — `_ALTER_CONSTRAINT_LIST_DIALOGS` names them explicitly,
+  because handing a `constraints=` kwarg to a dialog with no picker for it is a `TypeError` waiting for the
+  next refactor. `AddForeignKeyDialog` needs **no** extra injection: its *"References table"* dropdown reads
+  the same table list and its referenced-column picker the same `columns` callable.
+
+**Known rough edge, deliberate: the menu offers all twelve unconditionally.** `BrowserPanel` does not know a
+table's constraint list — it is handed `TableInfo`, not `DatabaseSchema` — so `Drop Constraint…` and
+`Rename Constraint…` are offered on a table that has no constraints. They open, list nothing, and state
+their refusal in the dialog's error label (*"This table has no named constraints…"*), rather than being
+greyed out in the menu. That is the trade the panel's **dialog-ignorance** buys: the alternative is pushing
+schema knowledge into the tree panel so a menu item can pre-empt a dialog that already says the same thing
+better.
+
+##### Slice 3 — indexes, comments and whole-table operations (emitters + dialogs shipped; wiring pending)
+
+Six emitters in `db/ddl_skeleton.py` and five dialogs in `ui/table_dialogs.py`. **This is the first group in
+the feature that is not `ALTER TABLE` at all** — `CREATE INDEX`, `DROP INDEX`, `COMMENT ON`, `CREATE TABLE`
+and `DROP TABLE` are five distinct statements, so none of them goes through `_alter_column`.
+
+| Emitter | Dialog | Shape |
+|---|---|---|
+| `create_index_skeleton` | `CreateIndexDialog` | bare index name · qualified table · column list · `UNIQUE` · method from `INDEX_METHODS` |
+| `drop_index_skeleton` | `DropIndexDialog` | **`index=` only — no `table=`** |
+| `set_table_comment_skeleton` | `SetCommentDialog` (`OP_TABLE_COMMENT`) | table · comment |
+| `set_column_comment_skeleton` | `SetCommentDialog` (`OP_COLUMN_COMMENT`) | table · column · comment |
+| `create_table_skeleton` | `CreateTableDialog` | new table name · `ColumnSpec` rows · optional primary key |
+| `drop_table_skeleton` | `DropTableDialog` | table |
+
+**`DROP INDEX` is not table-scoped, and `CREATE INDEX` is not an `ALTER TABLE`.** Both facts contradict
+FQ-025's *"everything here is an Alter Table op"* framing and are recorded as the corrections they are. An
+index's identity is **`schema.name`** — unique within its schema, not within its table — and there is no
+`DROP INDEX … ON table` in Postgres, so `drop_index_skeleton` takes `index=` (fed from
+`IndexInfo.qualified_name`); passing `schema.table.index` would emit a three-part name Postgres reads as
+`database.schema.object` and rejects. Conversely a **`CREATE INDEX`'s own name is bare**, never
+schema-qualified: the index is created in its table's schema and a dotted name there is a syntax error, so
+the name goes through `_identifier` while the table goes through `_qualified`. Its column list is
+**columns, not expressions** — every entry is quoted as an identifier, so `lower(email)` is *refused* rather
+than emitted as `("lower(email)")`, an index on a column that does not exist. `USING <method>` is always
+emitted, even for the `btree` default, so the text says what it means.
+
+**`CREATE INDEX` never emits `CONCURRENTLY`, and no checkbox offers it.** It cannot run inside a transaction
+block, which is how the Apply paths execute generated statements — a checkbox for it would produce text that
+fails exactly where this app runs it and works only somewhere else. A user who wants it types the word into
+the tab.
+
+**`DropIndexDialog` lists only droppable indexes and SAYS that it filtered.** Constraint-backed rows
+(`is_constraint_backed`) are excluded, because Postgres refuses `DROP INDEX` on the implicit index behind a
+PK/UNIQUE/EXCLUDE constraint — and they are then **named** in a plain note pointing at `Drop Constraint…`,
+since the user can see those indexes in the Explorer and a silent omission would create a *"where did my
+unique index go?"* mystery. The emitter itself cannot tell the two apart (it is handed a name and the
+statement is identical), so this is stated as the dialog layer's job.
+
+**`CREATE TABLE` refuses everything except columns and an optional primary key.** `create_table_skeleton`
+covers column name, datatype, `NOT NULL` and `DEFAULT`, plus a primary key, and *nothing else*: **no**
+`FOREIGN KEY`/`UNIQUE`/`CHECK`/`EXCLUDE` constraints, **no** indexes, **no** `GENERATED`/identity columns,
+collations, storage or compression, and **no** partitioning, inheritance, tablespace, `UNLOGGED` or
+`IF NOT EXISTS`. That is a refusal, not an oversight, and it is cheap precisely because of this feature's
+shape: those omissions are exactly what the *other* slice-2/3 dialogs add to a table that already exists, and
+the generated text lands in an editor before anything runs. A checkbox-per-feature builder would have to
+guess at interactions (a `CHECK` referencing a column renamed later in the same dialog) and would emit subtly
+wrong DDL — the one outcome this module exists to prevent. Its one compound argument is the frozen
+`ColumnSpec` dataclass (a positional 4-tuple would make the reader count; a dict would let a typo'd key mean
+"defaulted"); duplicate column names and a primary key naming an undefined column are both refused.
+
+- **The primary key is emitted UNNAMED (`PRIMARY KEY ("id")`) — a deliberate, recorded exception to slice
+  2's names-are-required rule.** Slice 2 requires names because Postgres's auto-names for CHECK/UNIQUE
+  constraints are unpredictable to a human (`orders_qty_check1`); a table's primary key is the one case where
+  the auto-name is both **deterministic and the convention everybody already uses** (`orders_pkey`). Naming
+  it here would produce noisier DDL saying the same thing.
+- `CreateTableDialog` is the one dialog here with no table to alter, and it **reinterprets** the base's
+  `table()` to mean *"the table being created"*, hiding the two inherited rows that presuppose an existing
+  one (the read-only *"From:"* line and the table dropdown). A passed `schema` seeds the name field with
+  `schema.` so a table created from a right-click lands where the click was. `_NewColumnRows` is a separate
+  widget from `_ColumnListPicker` on purpose: one *chooses* among existing columns, the other *defines*
+  columns that do not exist yet.
+
+**Comments: ONE dialog, TWO modes, and two documented exceptions to slice 1's rules.** `SetCommentDialog`
+serves both the table and the column operation; the mode is fixed by the menu item that opened it
+(`OP_TABLE_COMMENT` / `OP_COLUMN_COMMENT`), never offered as a field — a dialog opened from *"Set column
+comment"* that could quietly comment the table instead would only invite disagreeing with the menu. The
+column dropdown is simply absent in table mode. The two exceptions:
+
+1. **A blank comment means `IS NULL`, not "emit nothing".** `IS NULL` is Postgres's only spelling for
+   *"remove the comment"* and an empty box is the only way a user can ask for it, so blank removes rather
+   than no-ops (`IS ''` would leave a different, invisible state behind). This deliberately **differs from
+   `add_column_skeleton`**, which predates these two and keeps its own rule: there, a blank comment means
+   *"this Add-column statement carries no comment clause at all"* and no second statement is emitted. Both
+   rules are correct in their own context and the divergence is intentional.
+2. **The existing comment MAY be injected for editing**, unlike a `USING` clause or a `DEFAULT`. Slice 1
+   bound those to user typing alone because they are free SQL no allowlist can cover; a **comment is a
+   value**, rendered as a SQL string literal with its quotes doubled (an apostrophe in ordinary English prose
+   is *escaped*, not refused — the opposite of every identifier here), so the user-typed-only provenance rule
+   genuinely does not apply. Seeding the field is the difference between editing a description and retyping
+   it from memory.
+
+**`DROP TABLE` has no confirmation** — no typed-name gate, no *"are you sure?"*, no red warning — honouring
+FQ-025's ruling that the **generated tab is the safeguard**: generating `DROP TABLE t` executes nothing, and
+running it is a separate explicit gesture. Putting friction at generation time would place it where nothing
+happens and leave it absent where something does. `DropTableDialog` therefore contains a single plain note
+and **zero input fields**; a test asserts `dialog.findChildren(QLineEdit) == []`, so the absence is pinned
+rather than merely intended. No `CASCADE` either — a table a view or another table's FK depends on must fail
+loudly rather than take its dependants with it.
+
+**Slice 1's `_comment_on_column` was PROMOTED, not duplicated.** `set_column_comment_skeleton` calls the very
+renderer `add_column_skeleton` has used since slice 1 (with `_comment_on` as the shared base for all four
+call sites), so the app has exactly one place that knows how a `COMMENT ON …` statement is spelled — the same
+rule that gives it exactly one `quote_ident` and one `_sql_string_literal`.
+
+**A trap worth recording for future work: `DatabaseSchema.indexes` is `{}` unless the schema came from
+`fetch_routines_and_triggers`.** Only that fetch runs the index query; a `DatabaseSchema` produced by
+`fetch_schema` (or `snapshot_for_baseline`) has an **empty** `indexes` map, so any surface that populates a
+`DropIndexDialog` from the wrong fetch will silently show *"this table has no droppable indexes"* rather than
+an error. Neither DB Check nor the sandbox baseline needs indexes, so the narrow fetch is deliberate — the
+consumer is the side that must not assume.
+
+**Introspection widened WITH SLICE 1, and the snapshot format bumped with it** (`db/introspect.py` — this
+shipped in slice 1's batch so the format version moved once, not twice; slice 2 added no introspection):
 
 - **`ConstraintInfo`** — the **named** constraints of a table from `pg_constraint` (`conname` was never
   selected before), keyed `schema.table.constraint` in `DatabaseSchema.constraints`, with
@@ -3912,9 +4172,9 @@ element of a statement sequence, so multi-statement text survives to the server 
   `pg_get_indexdef(indexrelid, n, true)` per key attribute (so an expression index yields its expression
   text). **Constraint-backed indexes are captured and MARKED, never filtered out**: PostgreSQL refuses
   `DROP INDEX` on the implicit index behind a PK/UNIQUE/EXCLUDE constraint, so `is_constraint_backed` +
-  `constraint_name` carry that fact and **a future `Drop index` picker must list only
-  `is_constraint_backed == False` rows**, routing the rest to `Drop constraint…`. Dropping the rows instead
-  would create a "why is my unique index missing?" mystery.
+  `constraint_name` carry that fact and **slice 3's `DropIndexDialog` lists only
+  `is_constraint_backed == False` rows**, routing the rest to `Drop Constraint…` — and *naming* the ones it
+  hid, since dropping them silently would create a "why is my unique index missing?" mystery.
 - Only `fetch_routines_and_triggers` runs the index query, so `indexes` is `{}` after
   `fetch_schema`/`snapshot_for_baseline` — neither DB Check nor the sandbox baseline needs indexes.
 - **`db/schema_snapshot.py::SNAPSHOT_VERSION` goes 1 → 2**, and a **v1 file is REFUSED**
@@ -5007,9 +5267,13 @@ buffer text. Consequences for this subsection, all of them *nothing to change*:
 - The tab still **never writes to a database**. A created object reaches the database only through the
   ordinary Apply (§18.5) or Deploy (§18.3) gestures, on the user's explicit command.
 
-**A FOURTH entry point opens this same tab for something that is not an object at all (FQ-025 slice 1,
-2026-08-09, §28).** The `Alter Table ▸` submenu (§18.1) hands `CenterStage.open_ddl_object_tab` a generated
-`ALTER TABLE …` statement under an **`AlterDdlRef`** (`kind == "alter"`) rather than a `DdlObjectRef`. The
+**A FOURTH entry point opens this same tab for something that is not an object at all (FQ-025,
+2026-08-09, §28).** The `Alter Table ▸` submenu (§18.1) hands `CenterStage.open_ddl_object_tab` generated
+statement text under an **`AlterDdlRef`** (`kind == "alter"`) rather than a `DdlObjectRef` — for **all
+twelve** wired operations, columns and constraints alike, and for slice 3's six once they are wired, whose
+text is not even an `ALTER TABLE` (`CREATE INDEX`, `DROP INDEX`, `COMMENT ON`, `CREATE TABLE`,
+`DROP TABLE`). The ref's reasoning is unchanged by that: it exists because the buffer names a **statement**,
+not a catalog object, which is equally true of a `CREATE INDEX`. The
 panel does **not** branch on it — the ref is duck-typed and carries every attribute the panel reads — but
 three of this subsection's "nothing to change" consequences **do** change for that ref, and the narrowing is
 structural rather than a disabled control:
@@ -7424,7 +7688,8 @@ Final reconciled state of the **window menu bar** (after all overrides — the o
 The removed "New Project" was the 2026-07-15 **generation stub** (ledger §28); the **New Project…** listed
 under File below is §18.2's later, distinct DDL-project action that merely reuses the same label:
 
-- **File:** Open (Ctrl+O), ⎯, **the §18.2 project action group** (see below), ⎯,
+- **File:** Open (**no shortcut** — `Ctrl+O` is unbound, 2026-08-09; §27), ⎯,
+  **the §18.2 project action group** (see below), ⎯,
   **Discard Changes**, Close (Ctrl+W), ⎯, **New Session**, Exit. Real build
   order in `MainWindow._build_file_menu`: `Open…` · separator · **`Open PHP File…`** (§21 — no structural
   tie to a `.pgtp`, opens with or without a project) · separator · the **four** project actions · separator ·
@@ -7804,7 +8069,8 @@ whichever `Deployment` entry they use (§7). `Undo`/`Redo`/`Validate` now resolv
 
 | Shortcut | Action | Context |
 |---|---|---|
-| Ctrl+O / Ctrl+W | Open / Close | Window. Unchanged. *(This row was **split** by FQ-020, 2026-08-08 — `Ctrl+S` and `Ctrl+Shift+S` were removed from it; see the next row.)* |
+| **Ctrl+O** | **NOTHING — deliberately unbound** (owner decision, `f621d4c`, 2026-08-09; ledger §28) | **`File ▸ Open...` exists and is unchanged; it simply carries no shortcut.** The reasoning generalises beyond this one chord: in an app that opens **`.pgtp` files, PHP files, DDL projects, XSDs and database objects**, a single `Ctrl+O` has to pick a winner among five kinds of *"open"*, and **any winner is a guess at intent**. Opening is also a once-per-session act that FQ-027's launcher now puts **one click away at startup**, so the key bought almost nothing and cost an ambiguity. **It is UNBOUND, not reassigned** — the chord is free, and FQ-012's `View ▸ Customize Shortcuts…` lets anyone who disagrees bind it to whichever open they actually mean (which is also why no default was chosen *for* them). The rule this states once: **a shortcut is not owed to a command merely because the command is common.** |
+| Ctrl+W | **Close** | Window — `File ▸ Close`, **unchanged and still bound** (it was only ever paired with `Ctrl+O` in this table's layout, and FQ-020 split `Ctrl+S`/`Ctrl+Shift+S` out of the same row on 2026-08-08). **Worth knowing before anyone proposes unbinding it too:** `Ctrl+W` is currently the test suite's **specimen for three shipped properties** — FQ-012's default-capture test, FQ-012's shortcut-**steal** test and FQ-027's hidden-command-loses-its-key test all use `File ▸ Close` precisely because it owns a real default binding on a menu-bar QAction. That is a test-suite fact rather than a design one, but removing the binding would take three unrelated regression tests with it, so a replacement specimen is a prerequisite, not an afterthought |
 | **Ctrl+S / Ctrl+Shift+S** | **NOTHING — deliberately unbound app-wide** | **Stated, not merely omitted** (FQ-020, 2026-08-08; ledger §28). Every save is a named click on the Editor bar's **`Deployment`** menu — `Save pgtp` / `Save as new pgtp` (Raw XML), `Save in Project` (a DDL object tab), `Save XSD`, `Save PHP File` (§26). `File ▸ Save`, `File ▸ Save As…` and the `_save_active_tab` router are **deleted**, and so is `PhpFileTab`'s own `Key_S` event-filter branch — owner: *"Dies at all, inconsistency is a bad driver"* — so the reflex has **one** answer everywhere instead of being right on one tab and silently wrong on the next. Pressing the key does **nothing at all: no write, no message, no status-bar hint** — a signpost was offered and **explicitly declined**, and implementers must not add one back. An absent row would read as an oversight, which is why this row exists; the manual's Keyboard Shortcuts chapter must say the same. **The one carve-out is the next row.** The former object-tab flow is unchanged apart from its trigger: the **first** `Deployment ▸ Save in Project` on a never-saved tab opens **Save As… (`*.sql`)** and remembers the path, and **cancelling that dialog from the close-confirmation prompt aborts the close** (§18.5). Save persists text only and **never** executes DDL |
 | Ctrl+Z / Ctrl+Y | Undo / Redo (single step) | Window — project snapshot history (`MainWindow._undo`). **Exception, pinned (implemented, §18.5 carve-out 1):** with the Edit XSD tab or a **DDL object editor tab** active, Ctrl+Z/Ctrl+Y drive **that editor's own native undo stack**. The object tab realizes it with an **event filter** on its editor that accepts the key and calls `editor.undo()`/`redo()` itself, because `CodeEditor` neither consumes nor re-emits the key and the window shortcut would otherwise revert the **Raw XML project buffer** |
 | Ctrl+F / Ctrl+R | **FOCUS** the owning tab's Find field / Replace field (FQ-016, 2026-08-07 — they no longer *show* a bar; the bar is permanently visible, §8/§15) | **Per tab, NOT window-level:** each of the six `FindReplaceBar` hosts installs its own pair of `WidgetWithChildrenShortcut` `QShortcut`s via `find_replace_bar.install_focus_shortcuts(host, bar)` — Raw XML tab, Edit XSD tab, DDL Explorer (`ddl_editor_panel`), the DDL object editor tab, a PHP file tab, a draft fragment tab — and `CaptionManagementPanel` owns an equivalent panel-scoped pair of its own (§13/FQ-017). **A window-level `Ctrl+F` is forbidden**: it would be *ambiguous* against those panel-scoped ones and Qt would fire **neither** (§7). Consequences: exactly one match is live for any focus location; **`Ctrl+F` is a NO-OP on tabs with no bar** (Manual, Diff/Merge) instead of yanking the user to Raw XML — which **closes** §29's reveal question in the recommended direction — and `FindValidateController.active_find_bar()`'s reveal fallback now serves **`F3` only**. Replace is **inert in the DDL Explorer** — that buffer is read-only (`CodeEditor.replace_current_selection` returns early on `isReadOnly()`) — and **live** in the DDL object editor, PHP and draft tabs. **No menu entry advertises either key any more** (the Edit menu is dissolved) and neither key is mode-gated, so the long-standing "the menu advertises one behaviour while the key does another" conflict disappears from both ends, and `set_find_actions`/`set_find_actions_enabled` are deleted (§7) |
@@ -7829,7 +8095,7 @@ has no other document to mean (ledger §28). **Window-level, NOT bar-local:** th
 | *(no shortcut, deliberately)* | **Every `Deployment` entry** — `Compare/Merge pgtp` · `Save pgtp` · `Save as new pgtp` · `Deploy .pgtp` · `Save in Project` · `Run on sandbox` · `Run on quality` · `Save XSD` · `Save PHP File` | Editor menu bar ▸ **Deployment**, per active tab kind (FQ-020, 2026-08-08, §26). Deliberately keyless on two different grounds: the four **saves** because a keystroke save is exactly the wrong-target hazard the deleted router created (see the `Ctrl+S` row), and `Run on sandbox` / `Run on quality` / `Deploy .pgtp` because *"an irreversible outward effect must not be one keystroke away"* (§18.5) |
 | *(no shortcut, deliberately)* | **Next Difference** / **`Prev Difference`** | **Window menu bar ▸ `Tools`, UNGATED** — invokable with no comparison loaded (status-corrected 2026-08-09, ledger §28; §12/§26). FQ-021's designed move onto the Editor bar's **`Navigation`** menu as mode-only members, with `Prev` relabelled **`Previous Difference`**, is **queued, not implemented** — the shipped label is `Prev Difference` and the shipped ids are still `tools.*` |
 | *(no shortcut — and NO GESTURE AT ALL)* | **Apply Changes to Target** | **Unreachable: no menu entry anywhere in the app** (status-corrected 2026-08-09, ledger §28). FQ-020 removed its `Tools` entry expecting FQ-021 to rehome it onto the mode-scoped surface; that leg is still `QUEUED`. `DiffMergeController.apply_changes_to_target` ships intact — a **write that replaces the app's open document**, gated by §12's ambiguity gate — but nothing invokes it, so **merge results cannot be applied to the target file**. Where it should land is an owner call, §29 |
-| *(no shortcut, deliberately)* | **Add Trigger…** / **New Function/Procedure…** / the eight **`Alter Table ▸`** column operations | DDL Explorer tree context menus (table node / "Functions & Procedures" root / a **column leaf**) and, for the routine one, **Database ▸ New Function/Procedure…** (§18.1 — FQ-002 **implemented** 2026-08-06; FQ-025 slice 1 **implemented** 2026-08-09). All of them are dialog-gated and write **nothing** to a database — they only open a §18.5 editor tab on generated text — so the reason for withholding a shortcut is menu-hygiene, not the irreversible-outward-effect rule above. **None of the `Alter Table ▸` entries is a menu-bar action**, so like `F3`/`Ctrl+L` they fall outside `collect_menu_commands()` and are neither pinnable nor rebindable (below). |
+| *(no shortcut, deliberately)* | **Add Trigger…** / **New Function/Procedure…** / the **twelve `Alter Table ▸`** operations (eight column + four constraint) | DDL Explorer tree context menus (table node / "Functions & Procedures" root / a **column leaf**) and, for the routine one, **Database ▸ New Function/Procedure…** (§18.1 — FQ-002 **implemented** 2026-08-06; FQ-025 slices 1 and 2 **implemented** 2026-08-09; slice 3's six further operations are **not yet on any menu**, so they have no row here). All of them are dialog-gated and write **nothing** to a database — they only open a §18.5 editor tab on generated text — so the reason for withholding a shortcut is menu-hygiene, not the irreversible-outward-effect rule above. **None of the `Alter Table ▸` entries is a menu-bar action**, so like `F3`/`Ctrl+L` they fall outside `collect_menu_commands()` and are neither pinnable nor rebindable (below). |
 | *(no shortcut, deliberately)* | **Database/XML Coherence** (checkable) | Database menu (§17/§26, FQ-003, **implemented** 2026-08-06). It replaces three previously unshortcut entry points — Check: XML→Database, Check: Database→XML and View ▸ Find table reference — none of which carried a shortcut either, so nothing is lost; the merged view is read-only and reached by toggle, not by keystroke |
 | Escape | **Return focus to the document** — never hide anything | Any editor's `FindReplaceBar` returns focus to its editor; the Caption Management tab's `CaptionFindReplaceBar` returns focus to the grid (FQ-016/FQ-017, 2026-08-07). Both bars used to *hide* on Escape; both are now permanent |
 | Ctrl+G | Go to line in XML | Caption grid |
@@ -7921,6 +8187,13 @@ is locked, which is more honest than a silently incomplete list):
 | `F3` · `Ctrl+L` · `Ctrl+Alt+F` · `Ctrl+Return` · `Ctrl+Space` · `Ctrl+G` | Window-level or context commands with **no menu entry**, so the menu walk cannot enumerate them and there is no row to move them from |
 | `Ctrl+C` · `Ctrl+X` · `Ctrl+V` | Qt built-ins **inside** the editor widgets (§26, FQ-016). A window-level shortcut on one of them would outrank the widget and break copy/cut/paste everywhere |
 | `F1`, **and the `help.manual` command itself** | The universal convention, and §7 pins `Help ▸ Manual` as the one entry no launch mode may hide. It is the only entry in **both** tables: nothing else may take `F1`, and Manual may not leave it — so its row is present but read-only |
+
+**`Ctrl+O` is NOT on that list — unbound is not the same as reserved.** `Ctrl+S`/`Ctrl+Shift+S` are
+reserved *because* they are unbound (the reflex must not return by the side door). `Ctrl+O`, unbound the same
+day for a different reason (five kinds of "open" and no non-arbitrary winner — §27's row), is left
+**free**: the ambiguity is about which open the app should *pick for everyone*, and an individual user
+picking one for themselves resolves it rather than reintroducing it. So the chord is offered as an
+assignable target like any other, with no default behind it.
 
 `Customize Shortcuts…` is itself an ordinary menu action, so it enumerates into the walk and is both
 pinnable and rebindable. Being **new**, it needs no `RENAMED_ID_ALIASES` row — that table is for moves.
@@ -8076,7 +8349,10 @@ is authoritative** (and is what appears in the body above).
 | 2026-08-09 | §7's *"Suppressible, escapable and REVERSIBLE"* launcher contract (FQ-010, 2026-08-07): the persisted **"Don't show this again"** checkbox writing the QSettings bool **`launcherSuppressed`** on **every** exit path, and **`File ▸ Show Launcher…`** re-opening the modal with **`force=True`** to keep the tick reversible | **The suppression mechanism is DELETED and the launcher becomes an UNCONDITIONAL starting gate** (FQ-027 — a documented capability withdrawn, recorded rather than silently dropped). Removed: the `QCheckBox` and its `suppress_requested`/`set_suppressed` accessors, `LAUNCHER_SUPPRESSED_SETTINGS_KEY` with `launcher_suppressed()`/`set_launcher_suppressed()`, and `show_launcher`'s `force=` parameter with its early-return and persist-on-exit paths — plus the `manual.md` passage describing them. Rationale: the launcher is now the one gate at which a **mode** is chosen, so a persisted "skip it forever" toggle is both redundant and a trap; `force=` existed **only** to bypass suppression and goes with it. In the same ruling **`File ▸ Show Launcher…` is RENAMED `File ▸ New Session`** — exactly **one** action, not two — and gains save-all (Cancel aborts the gesture) → close everything → restore the full menu bar → show the launcher unconditionally, making it both a general *"start over"* gesture and the mandatory escape hatch from Maintenance mode. The rename changes the command id, so it carries a **`RENAMED_ID_ALIASES`** row `file.show-launcher → file.new-session` and **never** a `LEGACY_ID_ALIASES` one (`ICON_ID_BY_COMMAND` is that dict inverted — FQ-021's landmine). Deliberately **no keyboard shortcut**: an action that closes every open document must not be one keystroke away. Rejected: keeping `Show Launcher…` as a light re-show and adding `New Session` beside it (owner: exactly one action) |
 | 2026-08-09 | §7/§8/§12/§13/§26/§27 (FQ-021, 2026-08-08): FQ-021 recorded as **fully shipped** — the header banner, the TOC's §12 blurb and every body site stating that `Navigation` gained **three mode-only members** (`Next Difference` / `Previous Difference` / `Apply Changes to Target`) moved off `Tools`, that `Prev Difference` was **relabelled** `Previous Difference`, that `RENAMED_ID_ALIASES` carries three `tools.* → navigation.*` rows, that hiding those members is §7's **third** accepted action-hide instance, and that Caption Mode's disable is already **narrowed** off the whole `Navigation` `QMenu` | **FQ-021 PARTLY SHIPPED — two legs of three (owner rule: the shipped feature is the truth).** Verified against HEAD `9b9aef7`. **In:** FQ-021a (`75e2cdb`) — Compare/Merge as a **MODE** (`CenterStage.enter_diff_merge_mode` / `leave_diff_merge_mode`, the panel-owned exit `diff_merge_panel._on_close`, called from `diff_merge_controller.py`) and the Raw XML **read-only REASONS SET** (`_raw_xml_read_only_reasons: set[str]`, the `raw_xml_read_only_reasons` property, `_set_raw_xml_read_only(reason, active=True)` composing the `" (read only in … + …)"` tab-title suffix, each `leave_*` discarding **only its own** reason, `reason=None` reserved as a whole-set reset no mode's `leave_*` may use); and FQ-021b (`1d53abd`) — the **`Bookmarks` → `Navigation` rename** with five `RENAMED_ID_ALIASES` rows (`bookmarks.* → navigation.*`), correctly **not** in `LEGACY_ID_ALIASES`. **NOT in — the third leg, still `Status: QUEUED` in `docs/FEATURE_QUEUE.md`:** `FindValidateController.build_navigation_menu` builds **exactly five members, all bookmark commands**, and the menu's only gate is Caption Mode via `set_bookmarks_enabled` (which still disables the `QMenu` **and** the five actions — equivalent only while no Difference member has joined); **`Next Difference` and `Prev Difference` are still on the window bar's `Tools` menu, ungated**, under the shipped label **`Prev Difference`** (the string *"Previous Difference"* appears **nowhere** in the package), pinned by `tests/ui/test_menus.py::test_tools_menu_contents` and looked up on `Tools` by `tests/ui/test_diff_merge_entry_points.py`; the three `tools.*` alias rows **do not exist**; and **`Apply Changes to Target` has NO menu entry anywhere** — FQ-020 deleted its `Tools` home expecting this leg to rehome it (`main_window.py:4955-4961`, verbatim: *"Until FQ-021 lands it has no menu home"*), so a shipped, tested implementation is **unreachable** and **the app offers no way to apply merge results to the target file**. That regression is **recorded as an open question (§29), not resolved** — `Navigation`, back to `Tools`, or a `DiffMergePanel`-local button is an owner call. The unshipped design is retained in §12/§7/§26 explicitly labelled *designed in the FQ-021 queue entry, not implemented*, never as behaviour. The 2026-08-08 FQ-021 row above is **amended in place**, not deleted |
 | 2026-08-09 | §27's closing statement: ***"Every binding in this table is FIXED"*** — set inline as a literal string at each action's construction site, *"with no central registry and no user-facing rebinding"* — plus §26's note that FQ-012 was *"not folded into this spec"* and §29's item recording it as an unsettled concurrent proposal | **Shortcuts are user-rebindable DEFAULTS — FQ-012 ships** (`5f53583` for the two new modules; the `View ▸ Customize Shortcuts…` entry and the host's capture/apply/persist pass verified in `ui/main_window.py`). Three layers, and the split is the design: **`ui/shortcut_registry.py`** (pure, **Qt-free**, the twin of `toolbar_registry.py`) holds normalization, the reserved tables and the conflict rule; **`ui/customize_shortcuts_dialog.py`** is a widget that holds no `QAction`, touches no `QMenuBar` and writes no QSettings; `MainWindow` does the three Qt jobs — capture-once defaults (`_shortcut_commands`), the `setShortcut()` pass (`_apply_shortcut_bindings`), persistence (`apply_and_save_shortcut_overrides`). Enumeration is **`ToolbarController.collect_menu_commands()`**, the same walk Customize Toolbar uses, never a second one. **The conflict rule is STEAL-or-REFUSE, and it could not have been "warn and allow"** — Qt answers two enabled shortcuts on one chord by firing **NEITHER** (the fact this codebase already recorded at `find_replace_bar.install_focus_shortcuts`), so a duplicate does not degrade to "first wins", it **deletes both commands from the keyboard**: `assign_shortcut` therefore clears the loser **in the same operation** (the map never holds a duplicate, not even transiently), `resolve_bindings` **re-derives the same steal at load** so a hand-edited settings file cannot install an ambiguous pair, the host's install runs **two passes** (clear all, then assign), and a chord held by a **non-menu** occupant is **refused, not stolen**, because the dialog owns menu QActions only and cannot clear a window-scoped `QShortcut`, a per-tab focus shortcut or a widget `keyPressEvent` — stealing what you cannot clear *produces* the ambiguity. **What remains genuinely unrebindable is a short, reasoned list, not the table:** `Ctrl+S`/`Ctrl+Shift+S` (deliberately unbound since FQ-020), `Ctrl+Z`/`Ctrl+Y` (window-scoped `QShortcut`s), `Ctrl+F`/`Ctrl+R` (per-tab focus shortcuts at six sites plus the caption pair), `Escape`, the menu-less window-level commands `F3`/`Ctrl+L`/`Ctrl+Alt+F`/`Ctrl+Return`/`Ctrl+Space`/`Ctrl+G`, `Ctrl+C`/`Ctrl+X`/`Ctrl+V` (Qt built-ins **inside** the editors — a window-level shortcut would outrank the widget and break copy everywhere), and `F1` **together with the `help.manual` command itself** (§7 pins it as the one entry no launch mode may hide). Persistence is the new QSettings key **`shortcutOverrides`** beside `toolbarIds`/`toolbarIconIds` (§7), same `"command_id=value"` shape, pruned on load, legacy/renamed ids mapped — with **one deliberate divergence from `toolbarIconIds`: an empty value is PRESERVED** (`"file.close="` = "the user cleared this"), which is itself recorded as an open question (§29). Rejected on the way: hiding the locked keys (a silently incomplete list), blocking every conflict outright, and hosting this in the dead `Edit ▸ Preferences…` stub (owner: *"Under View"*, a second single-purpose dialog, not a settings container) |
-| 2026-08-09 | §18.5's FQ-002 statement that the third (creation) entry point changes **nothing** in that subsection — *"Tab identity, title/tooltip rules, dirty tracking, the close prompt, Save / Save As…, Format Selection and §18.6 completion all behave exactly as for an edited object — the panel never knew whether the DB holds the object, **and must not start branching on it**"* — and §18.1's amendment that a table node's context menu holds *"exactly one creation entry — Add Trigger…"*, with column rows not existing in the tree at all | **A FOURTH kind of tab exists: the ALTER tab, whose save-to-object is suppressed STRUCTURALLY — FQ-025 slice 1 ships** (`bc02d9c`, `8a88da4`, `532da30`). Eight column operations (Add / Drop / Rename / Change type with `USING` / Set-Drop NOT NULL / Set-Drop DEFAULT) hang off a new **`Alter Table ▸` submenu** on table nodes **and** on the tree's **new column leaves** (`Columns  (N)` group per table — FQ-025's queue entry claimed column nodes already existed and merely lacked a menu; that was **false**). Eight pure emitters join `db/ddl_skeleton.py` under its existing allowlist-or-raise posture; five dialog classes in `ui/alter_column_dialogs.py` split by **what each collects**, not one per menu item. **The panel still does not branch — the REF does:** `ui/main_window.py::AlterDdlRef` (`kind="alter"`) is a separate duck-typed ref because `DdlObjectRef` cannot name a mutation without lying (its `qualified` would render **`pr.orders()`**, spelling a table as a zero-argument routine in every confirmation). Three deliberate values: **`name=""`** — `build_ladder` adds tier 3's `plpgsql_check` only when a name is present, and an ALTER creates no function to analyse, so *"tier 3 was never going to run"* is the honest state (tiers 0–2 still run); a **serial** per generation, because `open_ddl_object_tab` focuses an existing tab for a repeated key and **discards the new text**, and two ALTERs on one table are two statements; and a Save As… prefill (`alter_pr_orders.sql`) deliberately **not** §18.2's `schema.object.sql` scheme. **The narrowing:** the tab opens through **`_edit_ddl_live` always** (never `_edit_ddl_checked_out`) and is **never registered in the deploy manifest**, so no `ddl/<object>.sql` is seeded, no baseline hashed, no drift marker speaks for it — which is why FQ-002's "nothing changes" no longer covers every ref. Consequences recorded rather than hidden: **`Deployment ▸ Save in Project` opens Save As…** (its label reads slightly off), **Apply-to-Target refuses these buffers** because `parse_buffer_identity` finds no `CREATE` and precondition 1 blocks it (FQ-025's *"Apply-to-Target is not wired, a pre-existing gap"* was **stale** — it was wired projectless on 2026-08-08), **Apply-to-Sandbox is the intended run path and works**, and the `applied` bookkeeping row is **one per table** (`("alter", schema, "", table)`) so successive ALTERs overwrite each other — an accepted limit of recording a mutation in an object-keyed table; `db/ddl_check.py` was **not** changed. In the same pass `db/introspect.py` gains `ConstraintInfo`/`IndexInfo` (slice 2's data, fetched now so the format version moves once) and **`db/schema_snapshot.py::SNAPSHOT_VERSION` goes 1 → 2, REFUSING a v1 payload rather than loading it with the new sections empty** — refuse-never-degrade, because a half-loaded schema is exactly what makes `diff_schemas` emit DROPs; costless, since `Save Schema Snapshot…` was never built. **Slices 2 and 3 are NOT shipped** and are not written as behaviour anywhere |
+| 2026-08-09 | §18.5's FQ-002 statement that the third (creation) entry point changes **nothing** in that subsection — *"Tab identity, title/tooltip rules, dirty tracking, the close prompt, Save / Save As…, Format Selection and §18.6 completion all behave exactly as for an edited object — the panel never knew whether the DB holds the object, **and must not start branching on it**"* — and §18.1's amendment that a table node's context menu holds *"exactly one creation entry — Add Trigger…"*, with column rows not existing in the tree at all | **A FOURTH kind of tab exists: the ALTER tab, whose save-to-object is suppressed STRUCTURALLY — FQ-025 slice 1 ships** (`bc02d9c`, `8a88da4`, `532da30`). Eight column operations (Add / Drop / Rename / Change type with `USING` / Set-Drop NOT NULL / Set-Drop DEFAULT) hang off a new **`Alter Table ▸` submenu** on table nodes **and** on the tree's **new column leaves** (`Columns  (N)` group per table — FQ-025's queue entry claimed column nodes already existed and merely lacked a menu; that was **false**). Eight pure emitters join `db/ddl_skeleton.py` under its existing allowlist-or-raise posture; five dialog classes in `ui/alter_column_dialogs.py` split by **what each collects**, not one per menu item. **The panel still does not branch — the REF does:** `ui/main_window.py::AlterDdlRef` (`kind="alter"`) is a separate duck-typed ref because `DdlObjectRef` cannot name a mutation without lying (its `qualified` would render **`pr.orders()`**, spelling a table as a zero-argument routine in every confirmation). Three deliberate values: **`name=""`** — `build_ladder` adds tier 3's `plpgsql_check` only when a name is present, and an ALTER creates no function to analyse, so *"tier 3 was never going to run"* is the honest state (tiers 0–2 still run); a **serial** per generation, because `open_ddl_object_tab` focuses an existing tab for a repeated key and **discards the new text**, and two ALTERs on one table are two statements; and a Save As… prefill (`alter_pr_orders.sql`) deliberately **not** §18.2's `schema.object.sql` scheme. **The narrowing:** the tab opens through **`_edit_ddl_live` always** (never `_edit_ddl_checked_out`) and is **never registered in the deploy manifest**, so no `ddl/<object>.sql` is seeded, no baseline hashed, no drift marker speaks for it — which is why FQ-002's "nothing changes" no longer covers every ref. Consequences recorded rather than hidden: **`Deployment ▸ Save in Project` opens Save As…** (its label reads slightly off), **Apply-to-Target refuses these buffers** because `parse_buffer_identity` finds no `CREATE` and precondition 1 blocks it (FQ-025's *"Apply-to-Target is not wired, a pre-existing gap"* was **stale** — it was wired projectless on 2026-08-08), **Apply-to-Sandbox is the intended run path and works**, and the `applied` bookkeeping row is **one per table** (`("alter", schema, "", table)`) so successive ALTERs overwrite each other — an accepted limit of recording a mutation in an object-keyed table; `db/ddl_check.py` was **not** changed. In the same pass `db/introspect.py` gains `ConstraintInfo`/`IndexInfo` (slice 2's data, fetched now so the format version moves once) and **`db/schema_snapshot.py::SNAPSHOT_VERSION` goes 1 → 2, REFUSING a v1 payload rather than loading it with the new sections empty** — refuse-never-degrade, because a half-loaded schema is exactly what makes `diff_schemas` emit DROPs; costless, since `Save Schema Snapshot…` was never built. ~~**Slices 2 and 3 are NOT shipped** and are not written as behaviour anywhere~~ — **⚠ AMENDED the same day (see the two rows below): slice 2 shipped and is wired (`c19a09f`), and slice 3's emitters and dialogs shipped (`b8a005d`, `ef46625`) with its wiring landing separately.** Everything else in this row stands unchanged |
+| 2026-08-09 | FQ-025's own **open question 2**, and its stated recommendation: allow a **blank constraint name** on the two `ADD` operations so PostgreSQL auto-names the constraint | **CONSTRAINT NAMES ARE REQUIRED on both `ADD`s — the recommendation is settled AGAINST (slice 2, `c19a09f`).** `add_constraint_skeleton` and `add_foreign_key_skeleton` both raise `SkeletonError` on an empty name, and `_AddConstraintDialogBase` mirrors the refusal. The reason is **downstream, not local**: an auto-generated name like `orders_qty_check1` is exactly what turns the later **Drop** and **Rename** pickers into a guessing game, so a convenience at creation time buys an unfindable constraint forever. Requiring the name means every constraint this app creates can be found again by the person who created it. **One deliberate exception, recorded so it is not read as drift:** slice 3's `create_table_skeleton` emits its primary key **unnamed** (`PRIMARY KEY ("id")`), because a table's PK is the single case where Postgres's auto-name is both deterministic and the universal convention (`orders_pkey`) — naming it would produce noisier DDL saying the same thing. Rejected: allowing blank and *warning*, which would put the cost on the person who later has to drop the thing |
+| 2026-08-09 | §18.1/§18.5 (FQ-025 slice 1, earlier the same day): the `Alter Table ▸` submenu as **eight** column operations, `ALTER_TABLE_ACTIONS` as an authored flat tuple, and slices 2/3 as **unbuilt** with `DatabaseSchema.constraints`/`.indexes` *"populated and read by nothing"* | **SLICE 2 SHIPS AND IS WIRED (`c19a09f`); SLICE 3's EMITTERS AND DIALOGS SHIP (`b8a005d`, `ef46625`) with its wiring landing separately.** The submenu carries **twelve** operations — eight column, a separator, then `Add Constraint…` / `Add Foreign Key…` / `Drop Constraint…` / `Rename Constraint…` — and `ALTER_TABLE_ACTIONS` is now **derived** by flattening `ALTER_TABLE_ACTION_GROUPS`, the grouping existing **only** so a separator can sit between two different questions; **one signal carries all twelve**, because the constraint ops need exactly the same context (which table, which column was clicked) and use it. **Four slice-2 rulings:** there is deliberately **no `Drop Foreign Key`** — a FK *is* a `pg_constraint` row and `DROP CONSTRAINT` is byte-identical for every type, so one unified emitter serves all of them (a guard test asserts `drop_foreign_key_skeleton` does not exist), which also makes `Drop Constraint…` the **single destination** a Drop-index picker routes constraint-backed rows to; **`EXCLUDE` is expression-shaped, not column-shaped** (its element list carries per-element operators — `room WITH =, during WITH &&` — that no column picker can express), so `CHECK`/`EXCLUDE` share a free-expression field under slice 1's `_expression` guard plus a method dropdown while `PRIMARY KEY`/`UNIQUE` take the column list, and **supplying the wrong shape is REFUSED, not ignored** (a silently dropped argument would ship a constraint that constrains the wrong thing); **Drop constraint WARNS, does not block** — a plain non-red note for a PK or an index-owning constraint with OK still enabled, matching slice 1's `DROP COLUMN`, because refusing would guess at dependencies this layer cannot see and would block the legitimate drop-then-re-add flow; and, accepted as a **rough edge**, the menu offers all twelve **unconditionally** (the panel does not know the constraint list), so Drop/Rename on a constraint-less table open and state their refusal in the dialog rather than being greyed out — the price of keeping `BrowserPanel` dialog-ignorant. **Slice 3 breaks the feature's own framing, and that is the point:** `DROP INDEX` is **not table-scoped** (an index's identity is `schema.name`, there is no `DROP INDEX … ON table`, and the emitter takes `index=`, not `table=`) and `CREATE INDEX` is **not an `ALTER TABLE`** at all — both contradict FQ-025's *"everything is an Alter Table op"*. Further slice-3 rulings: **`CREATE INDEX` never emits `CONCURRENTLY`** (it cannot run inside a transaction block, which is how Apply executes); **`CREATE TABLE` refuses everything except columns and an optional PK** (no FK/UNIQUE/CHECK/EXCLUDE, no indexes, no GENERATED/identity, no partitioning/inheritance/tablespace/UNLOGGED/IF NOT EXISTS — precisely what the other dialogs add to an existing table, where a checkbox-per-feature builder would have to guess at interactions and emit subtly wrong DDL); **comments are one dialog in two modes** with **two documented exceptions to slice 1's rules** — a blank comment emits `IS NULL` (removing a comment is otherwise unaskable) rather than *"emit nothing"* as `add_column_skeleton` does, and the existing comment **may be injected for editing**, because a comment is a **value** escaped as a string literal rather than free SQL, so the user-typed-only provenance rule genuinely does not apply; and **`DROP TABLE` has no confirmation** (the generated tab is the safeguard — a test asserts `DropTableDialog` holds zero `QLineEdit`s). Slice 1's `_comment_on_column` was **promoted** to the shared renderer rather than duplicated. **Two FQ-025 statements are FALSE and are recorded as such, not transcribed:** slice 2 did **not** include the `_CONSTRAINTS_SQL` widening (it shipped with slice 1's batch) and Drop-index did **not** need new index introspection (`IndexInfo` shipped in the same batch) — neither slice needed introspection work. **A trap recorded for future work:** index data is populated only by `fetch_routines_and_triggers`, so a `DatabaseSchema` from `fetch_schema` has `indexes == {}` and a `DropIndexDialog` fed from the wrong fetch would silently claim the table has no droppable indexes |
+| 2026-08-09 | §26/§27: **`File ▸ Open...` carries `Ctrl+O`** — §27's table row read *"Ctrl+O / Ctrl+W \| Open / Close \| Window. **Unchanged.**"* and §26's File-menu enumeration opened with *"Open (Ctrl+O)"* | **`Ctrl+O` IS UNBOUND — owner decision (`f621d4c`). The command is untouched; only its shortcut goes.** The reasoning generalises past this one chord: in an app that opens **`.pgtp` files, PHP files, DDL projects, XSDs and database objects**, one `Ctrl+O` must pick a winner among five kinds of *"open"* and **any winner is a guess at intent**; opening is additionally a once-per-session act that FQ-027's launcher now puts **one click away at startup**, so the key bought almost nothing and cost an ambiguity. **UNBOUND, not reassigned:** the chord is left **free**, and FQ-012's `View ▸ Customize Shortcuts…` lets a user bind it to whichever open they mean — deliberately without choosing a default *for* them. The rule stated once: **a shortcut is not owed to a command merely because the command is common.** **`Ctrl+W` is explicitly NOT affected** — `File ▸ Close` keeps it; the pairing was a table-layout artefact (FQ-020 had already split `Ctrl+S`/`Ctrl+Shift+S` out of the same row), and `Ctrl+W` is currently the test suite's specimen for three shipped properties (FQ-012's default-capture and shortcut-**steal** tests, FQ-027's hidden-command-loses-its-key test), so unbinding it too would take three unrelated regression tests with it |
 
 ---
 
@@ -8172,16 +8448,24 @@ unrecorded — nothing below was invented in the body above:
     key: inside that dialog the **new** key does nothing and the **old** key still works. Options (not
     ruled on): teach the dialog its host's resolved binding, exempt the command as reserved, or accept the
     split and say so in the manual.
-- **FQ-025 slice 1 (shipped 2026-08-09) leaves three, all recorded in §18.1/§18.5 as accepted limits rather
-  than defects:** (a) **`Deployment ▸ Save in Project` on an ALTER tab opens Save As…** and its label
-  therefore reads slightly off for what it does — whether it should be relabelled or hidden per tab kind is
-  an owner call, and hiding it would be the app's first per-tab-kind *label* rule rather than a visibility
-  rule; (b) **the `applied` bookkeeping row is one per table** for ALTERs (`("alter", schema, "", table)`),
+- **FQ-025 (slices 1 and 2 shipped and wired 2026-08-09; slice 3's emitters and dialogs shipped, its wiring
+  landing separately) leaves three open, all recorded in §18.1/§18.5 as accepted limits rather than
+  defects — re-verified after slices 2 and 3, which added nothing new here:** (a) **`Deployment ▸ Save in
+  Project` on an ALTER tab opens Save As…** and its label therefore reads slightly off for what it does —
+  whether it should be relabelled or hidden per tab kind is an owner call, and hiding it would be the app's
+  first per-tab-kind *label* rule rather than a visibility rule. Slices 2 and 3 **widen the mismatch without
+  changing the question**: the same `AlterDdlRef` now carries `CREATE INDEX` / `CREATE TABLE` /
+  `COMMENT ON` text too, so *"Save in Project"* names the destination even less well than it did for an
+  `ALTER`; (b) **the `applied` bookkeeping row is one per table** for ALTERs (`("alter", schema, "", table)`),
   so successive ALTERs on a table overwrite each other — widening the key would change every object's
-  bookkeeping identity, which is why `db/ddl_check.py` was left alone; (c) **slices 2 and 3 are unbuilt**
-  while their introspection already ships (`ConstraintInfo`/`IndexInfo`), so `DatabaseSchema.constraints`
-  and `.indexes` are currently populated and read by nothing — a deliberate, stated over-fetch (one
-  snapshot-version bump instead of two), not dead code to prune.
+  bookkeeping identity, which is why `db/ddl_check.py` was left alone. Slice 3 gives this a sharper edge that
+  is **recorded, not resolved**: a `DROP INDEX` buffer has no table at all in its identity, so its row keys
+  on whatever table the dialog was opened from; (c) ~~slices 2 and 3 are unbuilt while their introspection
+  already ships~~ — **half-closed.** `DatabaseSchema.constraints` **is** read now
+  (`MainWindow._alter_constraints_for` feeds the Drop/Rename pickers); `DatabaseSchema.indexes` is still
+  populated and read by nothing, because slice 3's `DropIndexDialog` has no menu entry yet. It remains a
+  deliberate, stated over-fetch (one snapshot-version bump instead of two), not dead code to prune — and see
+  §18.1's recorded trap that `indexes` is `{}` outside `fetch_routines_and_triggers`.
 
 - **Ability-code numeric mapping** (`*AbilityMode`): integer→label mapping still unknown; derive
   empirically. No longer blocking — powers editor hover tooltips.

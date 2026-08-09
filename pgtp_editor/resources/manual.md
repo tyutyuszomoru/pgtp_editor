@@ -1827,8 +1827,15 @@ supported way to work.
 
 The DDL Explorer can also **change an existing table**. In the **DDL Objects
 (Quality)** tree, right-click a table node — or one of its column rows under
-**`Columns  (N)`** — and open the **Alter Table ▸** submenu. It holds eight column
-operations:
+**`Columns  (N)`** — and open the **Alter Table ▸** submenu. It holds twelve
+entries in two groups, separated by a line: **the eight column operations** below,
+then **four constraint operations** — **Add Constraint…**, **Add Foreign Key…**,
+**Drop Constraint…** and **Rename Constraint…** — which have a section of their
+own (*Constraints and foreign keys*, next). The split is there because "what are
+this table's columns?" and "what are this table's constraints?" are two different
+questions, and twelve undifferentiated entries would read as one long list.
+
+The eight column operations are:
 
 | Entry | What it generates |
 |---|---|
@@ -1851,7 +1858,7 @@ operations:
 
 **Where the click lands is the dialog's starting point, not a cage.** Right-click
 a **column** row and that column is pre-selected; right-click the **table** node
-and you get the same eight operations with no column pre-selected (the dropdown
+and you get the same twelve operations with no column pre-selected (the dropdown
 simply starts at the table's first column). Either way the dialog states where it
 came from on a read-only **From:** line, and both the **Table:** and **Column:**
 dropdowns stay changeable — so a dialog you opened from the wrong row is a
@@ -1895,9 +1902,160 @@ Two entries are worth a word of their own:
 view or a constraint depends on will fail loudly, which is the safer default. If
 you really want the cascade, type the word into the tab yourself.
 
-> **Only column operations exist today.** Constraints, foreign keys, indexes,
-> table comments, and creating or dropping whole tables are not built yet; this
-> submenu offers the eight entries above and nothing more.
+### Constraints and foreign keys
+
+Below the separator, the **Alter Table ▸** submenu offers four constraint
+operations. They open from the same two places as the column entries — a table
+node or one of its column rows — carry the same click context, and generate text
+into the same kind of editable tab: **nothing here runs against a database
+either.**
+
+| Entry | What it generates |
+|---|---|
+| **Add Constraint…** | `ALTER TABLE … ADD CONSTRAINT … PRIMARY KEY / UNIQUE / CHECK / EXCLUDE …` |
+| **Add Foreign Key…** | `ALTER TABLE … ADD CONSTRAINT … FOREIGN KEY … REFERENCES …` |
+| **Drop Constraint…** | `ALTER TABLE … DROP CONSTRAINT …` |
+| **Rename Constraint…** | `ALTER TABLE … RENAME CONSTRAINT … TO …` |
+
+> **There is no "Drop Foreign Key", and that is deliberate.** In PostgreSQL a
+> foreign key **is** a constraint, and `ALTER TABLE … DROP CONSTRAINT` is the
+> identical statement for every type. A second entry would have generated exactly
+> the same SQL under another name. So **Drop Constraint…** is where a foreign key
+> goes too — its picker shows each constraint's type, which is how you tell a
+> `FOREIGN KEY` from a `CHECK` before dropping it.
+
+**Add Constraint… covers four types, and changes shape with the one you pick.**
+The **Type:** dropdown offers **PRIMARY KEY**, **UNIQUE**, **CHECK** and
+**EXCLUDE**:
+
+- **PRIMARY KEY** and **UNIQUE** are defined by a **column list**, so you get a
+  multi-column picker: one dropdown to start with, a **"+"** to add another row
+  and a **"−"** to take one away. **Row order is kept exactly as you arrange it**,
+  because a key's column order is semantic. The last row can never be removed —
+  no constraint here can be built from zero columns, so that is not offered as a
+  state.
+- **CHECK** and **EXCLUDE** are defined by an **expression**, so the column picker
+  is hidden and an **Expression:** field takes its place — `qty > 0` for a CHECK,
+  an element list such as `room WITH =, during WITH &&` for an EXCLUDE. Their
+  content simply cannot be expressed as a list of columns, which is why the field
+  replaces the picker rather than sitting next to it. **EXCLUDE** additionally
+  shows a **Using method:** dropdown (`gist` first, then `btree`, `spgist`,
+  `hash`), since an exclusion constraint is built on an index method.
+
+**A constraint name is required**, in both Add dialogs. Postgres would happily
+invent one if you left it out — and an invented `orders_qty_check1` is precisely
+what makes the **Drop Constraint…** and **Rename Constraint…** pickers unreadable
+a month later, when you are trying to find the constraint you mean among a list of
+machine-generated names. One field now, to keep those lists legible.
+
+**Add Foreign Key…** collects the constraint name, the **Local column(s)** (the
+same "+" picker), a **References table:** dropdown, the **Referenced column(s)**
+(a second picker of its own), and optional **ON DELETE:** / **ON UPDATE:**
+actions — `NO ACTION`, `RESTRICT`, `CASCADE`, `SET NULL`, `SET DEFAULT`, or
+**(none)**, which emits no clause at all. **Changing the referenced table
+repopulates its column list** on the spot, so the two halves can never come to
+describe different tables. Leaving an action on **(none)** keeps the generated
+text quiet about a choice you did not make; Postgres treats it as `NO ACTION`
+either way.
+
+**Drop Constraint… and Rename Constraint…** both start from a picker of the
+table's **existing named constraints**, each shown with its type and columns —
+`fk_customer — FOREIGN KEY (customer_id)`. The list follows the **Table:**
+dropdown, so re-picking a table re-reads its constraints. What reaches the
+generated SQL is always the bare constraint name, never the descriptive label.
+
+**Drop Constraint… warns, it does not refuse.** Pick the table's **primary key**
+and a plain (not red) note appears saying that dropping it also drops the index
+behind it, and that Postgres will refuse while another table's foreign key still
+references it. Pick any other **UNIQUE** or **EXCLUDE** constraint and the note
+says its index goes with it. **OK stays enabled in both cases**, on purpose:
+whether some other table still depends on this constraint is a question only the
+database can answer at the moment you run the statement, and refusing here would
+block the perfectly legitimate "drop the primary key, then add a different one"
+you came for. Generating the DDL changes nothing — see the note above.
+
+### Indexes, comments, and creating or dropping a table
+
+Six further operations exist on top of the twelve: **create index**, **drop
+index**, **set a table comment**, **set a column comment**, **create table** and
+**drop table**. Each has its dialog and its statement generator, and each obeys
+the same rules as everything else in this chapter — the lists are filled from the
+schema the explorer already fetched, the dialogs never open a connection, **OK**
+stays disabled until the statement actually renders, and confirming one only puts
+text into an editable tab.
+
+> **Where these sit in the menus is still being wired.** The dialogs and the
+> generated statements are what this section describes; once their entry points
+> land, this section will name them. Until then, do not go hunting for a menu path
+> here that isn't in the manual.
+
+**Create index** asks for an index name, one or more columns (the same "+"
+picker, order preserved), a **Unique** toggle and a **Method:** dropdown —
+`btree` (the default and the right answer for almost every index), `hash`,
+`gist`, `spgist`, `gin`, `brin`. The method is always spelled out in the
+generated `USING …`, so the statement says what it means instead of relying on
+you knowing Postgres's default. The index name is a **bare** name, not
+`schema.name`: an index is created in its table's schema, and Postgres rejects a
+dotted name in `CREATE INDEX`. The columns are **columns, not expressions** — an
+expression index such as `((lower(email)))` has its own parenthesisation rules, so
+`lower(email)` is refused here rather than quoted into an index on a column that
+does not exist; type it into the tab afterwards.
+
+> **`CONCURRENTLY` is never generated.** It cannot run inside a transaction
+> block, and applying generated DDL runs everything in one transaction — a
+> checkbox for it would produce text that fails on the way it is meant to be run.
+> If you want it, type the word into the tab and run it yourself.
+
+**Drop index** is the one operation that is not about a table: an index is named
+in its own right, as `schema.index_name`, and there is no `DROP INDEX … ON table`
+in PostgreSQL. So you pick the index itself from a list showing what each one is —
+`idx_orders_code — UNIQUE btree (code)`.
+
+> **The list deliberately hides indexes that exist only to back a constraint**,
+> and tells you it did. Postgres builds an implicit index for every PRIMARY KEY,
+> UNIQUE and EXCLUDE constraint, and then **refuses `DROP INDEX` on it** — the
+> constraint has to go instead. Offering those rows would offer a statement that
+> cannot succeed; dropping them silently would leave you wondering where the
+> unique index you can plainly see in the explorer went. So a plain note names
+> each one it left out, with the constraint that owns it, and points you at
+> **Drop Constraint…** — remove the constraint and its index goes with it.
+
+**Comments** are one dialog in two flavours — the table's comment, or one
+column's — chosen by the operation you picked rather than by a field inside it.
+The existing comment is offered for editing, which is the difference between
+changing a description and retyping it from memory. **Leaving the box empty
+removes the comment:** it generates `COMMENT ON … IS NULL`, which is the only
+spelling PostgreSQL has for "no comment", and an empty box is the only way you
+can ask for it. The dialog says so under the field, because "take that comment
+off" is a legitimate thing to want rather than an error.
+
+**Create table** is a small column builder: one row per column with a **Name**, a
+**Type** (the same editable list of common types the column dialogs use — anything
+else can simply be typed), a **Nullable** checkbox, an optional **Default**, and a
+**PK** checkbox marking it as part of the primary key. **"+"** adds a row, **"−"**
+removes one, and the last row cannot be removed. Row order is the created table's
+column order. The primary key is emitted unnamed (`PRIMARY KEY ("id")`), because
+Postgres's auto-name for it — `orders_pkey` — is the one auto-name that is both
+predictable and what everybody already uses.
+
+> **That is everything Create table expresses, on purpose.** No foreign keys, no
+> `UNIQUE` or `CHECK` constraints, no indexes, no identity/generated columns, and
+> no partitioning, inheritance or tablespace. There is no hidden checkbox for them
+> — those are exactly what the constraint and index operations above add to the
+> table once it exists, and the generated `CREATE TABLE` is editable text before
+> anything runs. A builder that tried to cover the whole of `CREATE TABLE` would
+> have to guess at how its own fields interact, which is the one outcome this
+> whole feature exists to avoid.
+
+**Drop table** asks nothing beyond which table, and **there is no "are you
+sure?"** — no confirmation dialog, no typing the table's name to unlock the
+button. That is the same safety model as every other operation here, stated where
+you are most likely to expect a scary prompt: **generating `DROP TABLE` executes
+nothing.** The statement lands in an editable tab you can read, change or simply
+close, and running it is a separate, explicit gesture. Putting the friction at
+generation time would put it where nothing happens and leave it absent where
+something does. No `CASCADE` is generated either, so PostgreSQL will refuse
+loudly if a view or another table's foreign key depends on the table.
 
 ### The tab an Alter Table operation opens
 
@@ -3081,6 +3239,15 @@ reflex cannot come back through the side door.
 now-permanent Find/Replace bar, which is in front of you whenever they apply — and
 both are broad enough to deserve a deliberate click (see *Find, Replace & Find
 All*).
+
+**File ▸ Open... has no shortcut any more.** **Ctrl+O** used to open a `.pgtp`,
+and it was unbound rather than moved: this app opens `.pgtp` files, PHP files,
+projects, XSDs and database objects, so one **Ctrl+O** has to pick a winner among
+five kinds of "open" — and whichever it picks is a guess about which one you
+meant. Opening is also a once-per-session act the launcher already puts one click
+away (see *Getting Started ▸ The startup launcher*). Pressing **Ctrl+O** now does
+nothing, and the chord is genuinely **free**: if you want it back on a particular
+open, assign it yourself in **View ▸ Customize Shortcuts…**.
 
 **Ctrl+A is new as a menu entry, not as behaviour.** Select-all always worked in
 every editor; nothing in the app had ever claimed the key. The **Select** menu
