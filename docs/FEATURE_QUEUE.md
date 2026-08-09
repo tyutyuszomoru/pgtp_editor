@@ -3324,6 +3324,19 @@ with the two new sections empty.
 ## FQ-026: Eight names, four operations — one vocabulary per apply/check gesture, a yes/no answer for the sandbox comparison, and the death of the button row
 **Status:** QUEUED
 
+**OWNER RULING (2026-08-10) — `Deploy this edit…` GOES, knowingly.** The owner: *"Deploy this edit… picker
+is not needed if the other menus are explicit of the target."* The condition is already met — `Deployment`
+carries `Save in Project`, `Run on sandbox` and `Run on quality`, each naming its destination — so the
+picker asks a question whose answer is already visible on the menu.
+
+This is recorded as a **deliberate withdrawal of a live, specified, shipped feature**, not as cleanup,
+because the entry's own stated premise was falsified: it says §18.5 "already declares the picker
+superseded … so the picker is currently a spec-vs-code gap". That was corrected on 2026-08-09 — the spec
+records the picker as **fully shipping on three always-present surfaces**, with FQ-020's `Deployment`
+entries added *alongside* it, and carries a ledger row saying so. Deleting it therefore needs its own
+supersession row, and the ruling above is what authorizes it. Do not implement this item on the entry's
+stale reasoning.
+
 **OWNER CLARIFICATION (2026-08-10) — read this before treating anything here as a conflict.** This entry is a
 **DEDUPLICATION**, plus a clarification of one action. It is not a redesign and nothing feeds into it:
 
