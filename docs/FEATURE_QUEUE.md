@@ -3116,3 +3116,181 @@ or deleting a documented menu action.
 *Collision status at triage:* clear — no concurrent session building ALTER-TABLE actions; `ddl_buffer_panel.py` / `ddl_skeleton.py` untouched by in-flight work (recent commits are the FQ-010..017 / bug-queue UX-review batch). Re-verify at pickup time.
 
 ---
+
+## FQ-026: Eight names, four operations — one vocabulary per apply/check gesture, a yes/no answer for the sandbox comparison, and the death of the button row
+**Status:** QUEUED
+**Requested:** 2026-08-09
+**Idea (verbatim/summarized):** The owner had to have the difference between eight labels explained to
+them — `Apply to Sandbox`, `Run on sandbox`, `Deploy this edit… → sandbox`, `Check Object in Sandbox`,
+`Check Object Without Applying`, `Run on quality`, `Deploy this edit… → quality`, `Apply to Target` — and
+asked, verbatim: (1) `Check Object in Sandbox` should give "the single line of *are we in line with
+sandbox*", because *"quality is already validated"*; (2) rename `Apply to Sandbox` → **"Check and commit
+to sandbox"**; (3) rename `Check Object Without Applying` → **"Check and rollback"**; (4) `Apply to
+Target` / `Run on quality` become one name, **"Apply to quality"**; (5) delete the panel buttons that
+duplicate menu entries; (6) get rid of `Deploy this edit…` entirely.
+
+**Problem:** Eight user-visible names denote **four** operations, and the naming carries no signal about
+what distinguishes them. Verified against the code:
+
+- `Apply to Sandbox` (panel button, `ddl_object_editor.py:1358`; context menu, `:848`; confirmation
+  **title**, `:1017-1018`), `Run on sandbox` (`Deployment` menu / `DESTINATION_LABELS[DEST_SANDBOX]`,
+  `:107-111`) and `Deploy this edit… → Run on sandbox` are all one path: `apply_to_sandbox()` →
+  `db/ddl_check.py::apply_and_check` (`:1388`) — whole ladder, `commit=True`, `applied` bookkeeping row
+  in the same transaction.
+- `Check Object Without Applying` (`Parsing` menu since BUG-039) → `probe_check` (`:1427`) — the
+  identical ladder with `commit=False` and no bookkeeping row.
+- `Check Object in Sandbox` (`Parsing` menu) → `recheck` (`:1749`) — applies nothing; tiers 0-2 report
+  "nothing to compile", tier 2 reports the bookkeeping fact `applied <timestamp>` plus D3's mandatory
+  stale-buffer caveat, tier 3 lints what is actually IN the sandbox.
+- `Apply to Target…` (panel button, `:1362`; confirmation **title** `"Apply to Target"`, `:1103-1104`),
+  `Run on quality` (`DESTINATION_LABELS[DEST_TARGET]`) and `Deploy this edit… → Run on quality` are all
+  `apply_to_target()` with its four hard preconditions.
+
+Two structural aggravators. **(a) The confirmation-dialog titles are separate string literals from the
+menu labels and have already drifted:** the menu says `Run on sandbox` / `Run on quality` while the
+confirmation says `Apply to Sandbox` / `Apply to Target`. A user who picks a menu entry is answering a
+modal that names the operation something else — a large part of what produced the confusion.
+**(b) `Deploy this edit…` is a PICKER, not a fifth gesture** — it writes no DDL, adds no confirmation of
+its own, and delegates to the three destinations. It exists because of FQ-009 ("the destinations are
+undiscoverable"); FQ-020's `Deployment` menu made all three discoverable by name on the menu bar, and
+**§18.5 already declares the picker superseded** (spec lines 4863 and 4936, dated 2026-08-08) while the
+code still builds the button unconditionally (`_build_apply_row`, `:1325-1368`). So the picker is
+currently a spec-vs-code gap, not a live design.
+
+Separately, `Check Object in Sandbox` reports through the two D3a Audit channels as a multi-tier
+narrative, when the question the owner actually asks when clicking it is one bit wide: *am I in line
+with the sandbox?*
+
+**Proposed approach:** Four operations, four names, one vocabulary each — plus one presentation change.
+
+1. **`Check Object in Sandbox` — PRESENTATION ONLY. `recheck` is UNCHANGED.** Owner ruling, verbatim:
+   *"The same way it does today. Don't change the underlying method, but the output should be a modal
+   telling the current return's last line."* / *"Keep underlying methods as they are, but return me a
+   simple answer."* The whole ladder still runs, **tier 3 still re-lints what is in the sandbox, and
+   nothing loses re-lint coverage.** What changes is that the gesture surfaces a **modal with one line
+   answering "are we in line with the sandbox?"**, sourced from the comparison `_recheck_tier2` already
+   performs at `db/ddl_check.py:1841` (`recorded != text_sha1(request.buffer_text)`). The comparison is
+   against **the tab's buffer** (owner-confirmed), and needs **no new query** — the hash is already in
+   the `applied` row.
+   - **The modal must have a line for BOTH states.** Today only the mismatch state speaks
+     (`CAVEAT_STALE_BUFFER`, `:186-190`); a matching buffer is an *absence*. An absence cannot be the
+     answer to a yes/no question, so a matching buffer needs an affirmative line ("this buffer matches
+     what was applied to the sandbox at `<applied_at>`") or the gesture answers itself half the time.
+   - **The name and the menu stay put.** Because the method is untouched, this remains a genuine check,
+     so `Check Object in Sandbox` keeps its name and its home on `Parsing` (which BUG-039 established as
+     "linting of the DDL"). No `RENAMED_ID_ALIASES` row needed for this one.
+2. **`Apply to Sandbox` → `Check and commit to sandbox`**, replacing the menu label
+   (`DESTINATION_LABELS[DEST_SANDBOX]`, today `"Run on sandbox"`), the context-menu entry (`:848`) and
+   the confirmation title (`:1018`) with the one string.
+3. **`Check Object Without Applying` → `Check and rollback`** (`Parsing` menu).
+4. **`Apply to Target` / `Run on quality` → `Apply to quality`**, one name replacing the menu label
+   (`DESTINATION_LABELS[DEST_TARGET]`) *and* the confirmation title (`:1104`). All four hard
+   preconditions are untouched.
+5. **Delete the panel button row.** `deploy_button` / `sandbox_button` / `target_button` and the whole
+   `_build_apply_row` construction go; every path is the menu bar. **Owner has explicitly accepted the
+   consequence**: a DDL object tab gets NO in-tab apply affordance, consistent with what FQ-020 did to
+   saving.
+6. **Delete `Deploy this edit…` entirely** — the picker method, `DESTINATION_LABELS`,
+   `DESTINATION_UNAVAILABLE_REASONS` (`:119`) and the destination constants, closing the gap with §18.5's
+   already-written supersession.
+
+**Vocabulary invariant this feature must establish (the actual fix for the reported confusion):** each
+operation has **one** name used identically across menu label, confirmation-dialog title, Audit `[Check]`
+line and manual. The drift at (a) above is the failure mode; a single source per operation (the pattern
+`DESTINATION_LABELS`' own docstring already argues for at `:103-106` — *"they must come from one place or
+the UI and the manual disagree"*) is the guard. That constant is being deleted, so its role must be
+re-homed, not dropped.
+
+**Cost the owner accepted as a design, NOT as an estimate — surfaced here deliberately:**
+`deploy_button` / `sandbox_button` / `target_button` / `deploy_this_edit` / `DESTINATION_LABELS` /
+`DEST_*` total **106 references across 9 files**: `tests/ui/test_ddl_object_editor.py` (**38**),
+`pgtp_editor/ui/ddl_object_editor.py` (34), `pgtp_editor/ui/main_window.py` (15),
+`tests/ui/test_sandbox_check_console_wiring.py` (5), `docs/superpowers/CONSOLIDATED_SPEC.md` (5),
+`docs/FEATURE_QUEUE.md` (6), `tests/ui/test_mainwindow_surface.py` (1), `docs/BUGFIX_QUEUE.md` (1),
+`docs/TEST_LOG.md` (1). Request 5 is a **test-surface migration**, not a delete: the assertions that
+today reach for a button must be rewritten against the `Deployment`/`Parsing` menu actions.
+
+**Renames are menu-path ids — `RENAMED_ID_ALIASES` rows are mandatory.** `ui/toolbar_registry.py:136-150`
+carries the FQ-020/FQ-021/FQ-022/BUG-039 rows to copy the pattern from (e.g.
+`"database.check-object-without-applying": "parsing.check-object-without-applying"`). Without a row per
+rename, a user's saved toolbar silently loses those buttons — the long comment at `:41-63` explains
+exactly this. Needed for renames 2, 3 and 4; **not** for 1.
+
+**Alternatives considered:**
+- *Rewriting `Check Object in Sandbox` as a hash-vs-`applied.text_sha1` boolean, dropping the ladder* —
+  what the request first read as. **Superseded by the owner's own clarification**, and rightly: it would
+  have dropped tier 3, which is the only thing that catches what changed *underneath* the object since
+  it was applied (a dependency altered, a table dropped). The premise "it's already been checked if it's
+  there" holds only at apply time. Keeping the method and changing the presentation gets the one-line
+  answer at zero cost to coverage.
+- *Comparing the buffer against a re-fetched live definition (`pg_get_functiondef`)* — rejected on
+  mechanism: Postgres normalizes what it hands back (whitespace, `AS $function$` quoting, argument
+  spelling), so a byte comparison would report "different" on an object applied unchanged seconds ago.
+  A normalizing comparison is real work for a worse answer. Moot now that the method is unchanged, but
+  recorded so it is not re-proposed.
+- *Keeping `Deploy this edit…` as a convenience umbrella* — rejected: it is a picker over three entries
+  that are already named on the menu bar since FQ-020, so it now adds a step and a fifth name for four
+  operations. §18.5 already says so.
+- *Keeping the panel buttons and renaming them only* — rejected by the owner: duplicate surfaces are
+  half the naming problem, and every duplicate is another string that can drift from the menu.
+- *Disabling rather than deleting the buttons* — rejected: §18.5 carve-out 2 is explicit that an
+  affordance whose seam is unwired is **ABSENT, not disabled**; a permanently-dead button row would
+  violate the section this feature edits.
+
+**Suggested placement:** **EXTEND, do not create.** Three sections, no new top-level one:
+- **§18.5 D3/D3a** — owns the check ladder and the apply gestures. Takes: the four canonical names; the
+  one-line modal for `Check Object in Sandbox` (with the both-states requirement); the deletion of the
+  button row (updating the "**A small button row** carries the three sandbox gestures" text at spec line
+  4545 and its v1 carve-out at 4644, both of which describe a row that is about to stop existing); and
+  the removal of the "Historical: the *Deploy this edit…* picker" block's remaining live wiring at
+  4936-4969.
+- **§7 / §26** — the Editor menu bar and the per-tab entry tables: spec lines 1042, 1094-1095, 1113-1114,
+  7013 (`Parsing` per-tab table), 7061-7070 (`Deployment` per-tab table, which explicitly notes
+  `DESTINATION_LABELS` "must be updated with the spec text").
+- **§30** — the modal is new UI surface: it must go through the **`ui/modals.py` seam** every other
+  confirmation uses (confirmed present), because §30 forbids a test reaching an un-patched
+  `QDialog.exec`/`QMessageBox.*`.
+- Plus a **`RENAMED_ID_ALIASES`** row per rename (§7's toolbar-persistence contract).
+
+**⚠️ This lands on spec text less than 48h old.** §18.5's supersession rows and the BUG-039/BUG-040
+ledger rows are dated 2026-08-08, and the picker's supersession is already written. `spec-maintainer`
+must **reconcile in place**, not append a competing narrative — several of the lines this feature edits
+were themselves written by the previous day's reconciliation.
+
+**Relationship to FQ-009 (read this before picking up either):** FQ-009 is `QUEUED — discoverability
+half PROCESSED (4bc73b6); the quality leg is APPROVED and pending`. This entry **deletes the half of
+FQ-009 that shipped** (the picker — its discoverability half, already declared superseded in §18.5 on
+2026-08-08), while FQ-009's own entry **stays open, by owner ruling — do NOT mark it superseded**: its
+quality leg is still wanted. The two entries now overlap, so whoever picks up FQ-009 must read FQ-026
+first and implement the quality leg against the `Deployment` menu, not against the picker.
+`Deployment ▸ Save in Project` survives as its own entry (§26 line 7061) and is not touched here.
+
+**Open questions:**
+1. **Modal *instead of* or *in addition to* the Audit output?** Today `recheck`'s result goes out over
+   both D3a channels (`check_reported` narrative + `check_findings` objects). The owner asked for a
+   modal with the single line; they did not say the tier detail and the findings should stop being
+   reported. Triage recommends **both** — modal answers the yes/no, Audit keeps the full ladder detail
+   and the clickable findings — but this is a real sub-decision for spec-maintainer.
+2. **Does the tab CONTEXT menu keep the apply gestures?** Request 5 names the button row, but
+   `ddl_object_editor.py:848` also offers `Apply to Sandbox` from the tab's context menu — another
+   duplicate surface with its own label string. Triage recommends deleting it too for consistency with
+   "menu bar only"; not explicitly ruled on.
+3. **Where does the one-name-per-operation constant live** once `DESTINATION_LABELS` is deleted? The
+   menu builder, a small module-level mapping, or the action registry — spec-maintainer's call, but the
+   invariant must have a single owner or the drift recurs.
+4. **`Check and commit to sandbox` / `Check and rollback` are noticeably longer** than what they replace
+   and will widen the `Deployment` / `Parsing` menus. Accepted as clearer; flagged in case a shorter
+   pair reading equally well emerges during design.
+
+*Collision status at triage:* **CLEAR.** The triage agent reported every file this feature touches as
+`UU` (conflicted) on `dev_review_01` and said not to start — that reading came from a stale git snapshot
+and is **corrected here in place**: the FQ-020 merge was resolved and committed as `04c3591` earlier the
+same day, and `git diff --diff-filter=U` reports zero unmerged paths. The working tree is clean apart
+from the queue files. Nothing blocks a pickup on merge grounds.
+
+What DOES want re-verification at pickup is line drift, not conflicts: `4828e3d` (BUG-038/039/040) moved
+the two check gestures onto `Parsing`, deleted `Open`/`Close Sandbox Session`, and reworded
+`DESTINATION_UNAVAILABLE_REASONS[DEST_SANDBOX]` — all in the same files and all landed after the line
+numbers cited above were read.
+
+---
