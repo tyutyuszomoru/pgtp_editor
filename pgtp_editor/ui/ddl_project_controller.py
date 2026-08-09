@@ -153,6 +153,7 @@ class DdlProjectController(QObject):
         target_params: Callable[[], object],
         refresh_status_window: Callable[[], None],
         explorer_schema: Callable[[], object],
+        sandbox_controller: object | None = None,
     ):
         super().__init__(parent)
         self._shell = shell
@@ -165,6 +166,13 @@ class DdlProjectController(QObject):
         self._target_params = target_params
         self._refresh_status_window = refresh_status_window
         self._explorer_schema = explorer_schema
+        #: The app's one `SandboxController`, handed to Project Settings so its
+        #: provisioning group (Provision / Reset / "create a database for me",
+        #: which `Database ▸ Sandbox Setup…` used to host) can act. Optional: a
+        #: controller built without one still opens the dialog, which then
+        #: states why provisioning is unavailable instead of showing dead
+        #: buttons.
+        self._sandbox_controller = sandbox_controller
 
         #: Local DDL-versioning project state (spec §18.2) -- deliberately
         #: separate from the open `.pgtp`: a project here is a plain chosen
@@ -713,7 +721,17 @@ class DdlProjectController(QObject):
         self.require_project(self._show_settings_dialog)
 
     def _show_settings_dialog(self) -> None:
-        dialog = ProjectSettingsDialog(self._settings, parent=self._shell.window)
+        # `confirm=None` on purpose: the CONTROLLER owns the single destructive
+        # prompt (a controller built without `confirm_destructive` refuses every
+        # destructive operation anyway), so passing one here too would ask the
+        # user twice for one Provision/Reset.
+        dialog = ProjectSettingsDialog(
+            self._settings,
+            parent=self._shell.window,
+            sandbox_controller=self._sandbox_controller,
+            project_dir=self._folder,
+            confirm=None,
+        )
         dialog.accepted.connect(lambda: self._save_settings(dialog))
         self._project_settings_dialog = dialog
         dialog.show()

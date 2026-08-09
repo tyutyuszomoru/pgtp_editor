@@ -111,9 +111,10 @@ from .async_task import run_async
 #: The maintenance database `create_sandbox_database`'s admin connection targets,
 #: since PostgreSQL forbids `CREATE DATABASE` inside the database being created.
 #: Defined here, once, because three surfaces need the same answer (§18.2's New
-#: Project step, `ui/sandbox_setup_dialog.py`, and this module's own
-#: `provision_new_database` callers); `DEFAULT_MAINTENANCE_DATABASE` in the setup
-#: dialog is an alias of this name, never a second literal.
+#: Project step, Project Settings' provisioning group, and this module's own
+#: `provision_new_database` callers); `DEFAULT_MAINTENANCE_DATABASE` in
+#: `ui/project_settings_dialog.py` is an alias of this name, never a second
+#: literal.
 MAINTENANCE_DATABASE = "postgres"
 
 #: `db/sandbox.py::_SANDBOX_DB_NAME_RE` is `^pgtp_sandbox_[a-z0-9_]{1,40}$`, so
@@ -1000,8 +1001,8 @@ class SandboxController(QObject):
         self, on_done: Callable[[SandboxOperationResult], None] | None = None
     ) -> None:
         """Run `CREATE EXTENSION IF NOT EXISTS plpgsql_check` through the live
-        session -- §18.8's Sandbox2 action button, and the same one-click
-        install the Sandbox Setup dialog offers (§18.5 D2).
+        session -- §18.8's Sandbox2 action button, which is the app's one
+        one-click install since `Sandbox Setup…` was deleted (§18.5 D2).
 
         Whether it is worth attempting is decided by the pure `install_gate`,
         not re-litigated here: an already-installed extension succeeds as a

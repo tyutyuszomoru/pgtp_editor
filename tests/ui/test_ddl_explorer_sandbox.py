@@ -197,15 +197,18 @@ def test_entry_and_open_tab_go_away_when_the_project_closes(qtbot, tmp_path):
     assert not window.left_tabs.isTabVisible(window.sandbox_ddl_browser_tab_index)
 
 
-def test_a_sandbox_added_later_via_sandbox_setup_reveals_the_entry(qtbot, tmp_path):
-    """§18.7's "or a sandbox added later via Sandbox Setup…" case -- the one
-    transition that does not go through `_bind_sandbox_controller_to_project`."""
+def test_a_sandbox_added_later_by_provisioning_reveals_the_entry(qtbot, tmp_path):
+    """§18.7's "or a sandbox added later" case -- the one transition that does
+    not go through `_bind_sandbox_controller_to_project`. Its source is now a
+    provisioning gesture in Project Settings (`Sandbox Setup…` is deleted), so
+    what is adopted is the dialog's `recorded_settings()`: what it actually
+    wrote to disk, never the live, possibly half-typed field state."""
     window = _window(qtbot, tmp_path)
     _open_project(window, tmp_path, sandbox_host=None)
     assert _sandbox_action(window).isVisible() is False
 
     class _Dialog:
-        def settings(self):
+        def recorded_settings(self):
             return ProjectSettings(
                 target=ConnectionParams(
                     host="target-host", database="quality", password="pw"
@@ -213,7 +216,7 @@ def test_a_sandbox_added_later_via_sandbox_setup_reveals_the_entry(qtbot, tmp_pa
                 sandbox=ConnectionParams(host="sandbox-host", database="sb"),
             )
 
-    window._adopt_sandbox_setup_settings(_Dialog())
+    window._adopt_provisioned_sandbox_settings(_Dialog())
 
     assert _sandbox_action(window).isVisible() is True
 

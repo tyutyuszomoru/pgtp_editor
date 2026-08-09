@@ -1,21 +1,26 @@
 # tests/ui/test_sandbox_setup_wiring.py
-"""The three sandbox gestures that existed as machinery but not as clicks:
+"""Where the sandbox's provisioning gestures live, and that they still refuse.
 
-* **Database ▸ Sandbox Setup…** -- `ui/sandbox_setup_dialog.py` shipped complete
-  with no menu entry anywhere, so re-provisioning had no entry point at all and
-  several user-facing strings already told the user to open a menu item that did
-  not exist. Wired non-modally, with `confirm=None` so the CONTROLLER owns the
-  single destructive prompt (passing both asks twice).
-* **The Project Status window's two dead node actions** -- Sandbox1's "run data
-  clone" and Sandbox2's "install plpgsql_check", now aimed at the controller's
-  zero-argument §18.8 adapters. Present whenever a sandbox is CONFIGURED and
-  stating the missing session when there is none (FQ-023's narrowing of
-  carve-out 2), absent only when the project has no sandbox at all.
+* **Project Settings ▸ Connections ▸ Sandbox provisioning** -- `Provision
+  sandbox`, `Reset sandbox` and `Create a sandbox database for me`. They used to
+  live in `Database ▸ Sandbox Setup…`, which BUG-040 hid in project mode on the
+  premise that Project Settings already owned every piece of sandbox
+  configuration. It did not: those three existed nowhere else, and projectless
+  the setup dialog built no controls at all -- so all three were unreachable in
+  every mode. The owner's ruling (2026-08-09) makes the premise true instead of
+  reverting the hiding: the gestures moved here and the menu entry is DELETED,
+  not hidden, because a hidden action stays pinnable to the toolbar.
+* **The Project Status window's two node actions** -- Sandbox1's "run data
+  clone" and Sandbox2's "install plpgsql_check", aimed at the controller's
+  zero-argument §18.8 adapters. Deliberately NOT duplicated into Project
+  Settings. Present whenever a sandbox is CONFIGURED and stating the missing
+  session when there is none (FQ-023's narrowing of carve-out 2), absent only
+  when the project has no sandbox at all.
 
 No modal is ever reached: `QMessageBox.question` is patched wherever a
-destructive operation can be confirmed, the setup dialog's persistence is an
-injected `settings_saver`, and every `db/sandbox.py` seam on the controller is
-stubbed, so nothing here opens a connection or issues `CREATE DATABASE`.
+destructive operation can be confirmed, and every `db/sandbox.py` seam on the
+controller is stubbed, so nothing here opens a connection or issues
+`CREATE DATABASE`.
 """
 from PySide6.QtCore import QSettings
 
@@ -24,8 +29,13 @@ from pgtp_editor.db.ddl_project import ProjectSettings, save_settings
 from pgtp_editor.db.sandbox import SandboxCapabilities, SandboxMode
 from pgtp_editor.ui import modals
 from pgtp_editor.ui.main_window import MainWindow
+from pgtp_editor.ui.project_settings_dialog import (
+    NO_SESSION_REASON,
+    NO_TARGET_REASON,
+    ProjectSettingsDialog,
+)
 from pgtp_editor.ui.project_status_model import NodeFamily
-from pgtp_editor.ui.sandbox_setup_dialog import SandboxSetupDialog
+from pgtp_editor.ui.sandbox_controller import SandboxController, SandboxOperation
 
 from tests.ui._sandbox_stubs import fake_session as _session, stub_sandbox_provisioning, sync_run
 
@@ -88,14 +98,14 @@ def _window(
     return window, project_dir
 
 
-def _open_setup(window, qtbot):
-    """Open the dialog through the real menu handler, then make its ONE own
-    off-thread call (`SandboxSession.applied()`) synchronous so no worker thread
-    outlives the test."""
-    dialog = window._open_sandbox_setup()
+def _open_settings(window, qtbot):
+    """Open Project Settings through the real handler (`File ▸ Project
+    Settings…`), then make its own off-thread calls (the two Test buttons)
+    synchronous so no worker thread outlives the test."""
+    window._ddl_project_ui.open_settings()
+    dialog = window._ddl_project_ui.project_settings_dialog
     qtbot.addWidget(dialog)
     dialog._run_async = sync_run
-    dialog._settings_saver = lambda *a, **k: None
     return dialog
 
 
@@ -120,7 +130,7 @@ def _audit_texts(window):
     return [panel.item(i).text() for i in range(panel.count())]
 
 
-# --- Database ▸ Sandbox Setup… --------------------------------------------
+# --- The Database menu no longer offers Sandbox Setup… --------------------
 
 
 def _setup_action(window):
@@ -129,55 +139,69 @@ def _setup_action(window):
         if menu is None or action.text() != "Database":
             continue
         for entry in menu.actions():
-            if entry.text() == "Sandbox Setup…":
+            if "Sandbox Setup" in entry.text():
                 return entry
     return None
 
 
-def test_the_database_menu_carries_a_sandbox_setup_entry(qtbot, tmp_path):
-    """The entry EXISTS in every mode and is never session-gated -- this is the
-    one gesture that can create a sandbox, so it must be reachable exactly when
-    there is no sandbox yet.
-
-    Its VISIBILITY is now projectless-only (BUG-040's third leg), which is why
-    this asserts only that it EXISTS and leaves the two modes to
-    `tests/ui/test_sandbox_check_console_wiring.py`. A project is open in this
-    fixture, so it is hidden -- hidden, never deleted, because projectless it is
-    the only way to get a sandbox at all.
-
-    No `isEnabled()` assertion: Qt's `QAction.isEnabled()` folds in visibility,
-    so a hidden action reports disabled and the check would say nothing about
-    the enabled-state posture it looks like it is guarding."""
+def test_the_database_menu_no_longer_offers_sandbox_setup(qtbot, tmp_path):
+    """Deleted, in every mode -- and deleted rather than hidden, so nothing is
+    left on `self` for a toolbar to pin (`ToolbarController._walk_menu_actions`
+    never tests `isVisible()`)."""
     window, _dir = _window(qtbot, tmp_path)
 
-    action = _setup_action(window)
-
-    assert action is not None
-    assert action is window._sandbox_setup_action
-    assert not action.isVisible()
+    assert _setup_action(window) is None
+    assert not hasattr(window, "_sandbox_setup_action")
+    assert not hasattr(window, "_open_sandbox_setup")
 
 
-def test_the_entry_opens_the_dialog_non_modally_bound_to_the_project(qtbot, tmp_path):
+def test_the_sandbox_setup_module_is_gone_entirely(qtbot, tmp_path):
+    """Its three gestures moved into Project Settings and its state display was
+    always §18.8\'s Project Status window\'s job, so nothing was left to import.
+    A dead-but-importable module is how the previous round of this got its
+    "unreachable" status in the first place."""
+    import importlib
+
+    try:
+        importlib.import_module("pgtp_editor.ui.sandbox_setup_dialog")
+    except ModuleNotFoundError:
+        return
+    raise AssertionError("ui/sandbox_setup_dialog.py should have been deleted")
+
+
+# --- Project Settings hosts the three provisioning actions ----------------
+
+
+def test_project_settings_offers_the_three_provisioning_actions(qtbot, tmp_path):
+    """All three, reachable with a project open -- which is the whole point of
+    the move: before it, none of them were reachable in any mode."""
     window, project_dir = _window(qtbot, tmp_path)
 
-    dialog = _open_setup(window, qtbot)
+    dialog = _open_settings(window, qtbot)
 
-    assert isinstance(dialog, SandboxSetupDialog)
-    assert dialog is window._sandbox_setup_dialog
+    assert isinstance(dialog, ProjectSettingsDialog)
     assert not dialog.isModal()
-    assert dialog._controller is window.sandbox_controller
-    assert dialog._settings == window._ddl_project_settings
+    assert dialog._sandbox_controller is window.sandbox_controller
     assert dialog._project_dir == project_dir
+    assert dialog._provision_button is not None
+    assert dialog._provision_button.text() == "Provision sandbox"
+    assert dialog._reset_button is not None
+    assert dialog._reset_button.text() == "Reset sandbox"
+    assert dialog._create_database_button is not None
+    assert (
+        dialog._create_database_button.text() == "Create a sandbox database for me"
+    )
     dialog.close()
 
 
 def test_the_dialog_leaves_confirmation_to_the_controller_so_it_asks_once(
     qtbot, tmp_path, monkeypatch
 ):
-    """The two-mode contract: `confirm=None` means the dialog pre-confirms
-    nothing and the controller's gate is the SINGLE prompt."""
+    """`confirm=None` means the dialog pre-confirms nothing and the controller\'s
+    own gate is the SINGLE prompt -- passing both would ask twice for one
+    Provision."""
     window, _dir = _window(qtbot, tmp_path)
-    dialog = _open_setup(window, qtbot)
+    dialog = _open_settings(window, qtbot)
     assert dialog._confirm is None
 
     asked = []
@@ -189,46 +213,202 @@ def test_the_dialog_leaves_confirmation_to_the_controller_so_it_asks_once(
             or modals.QMessageBox.StandardButton.Yes
         ),
     )
-    dialog.provision()
+    dialog._provision_button.click()
 
-    # Exactly one prompt, carrying the controller's own warning text.
-    assert len(asked) == 1
-    from pgtp_editor.ui.sandbox_controller import SandboxController, SandboxOperation
-
-    assert asked[0] == SandboxController.destructive_warning(
-        SandboxOperation.PROVISION
-    )
+    assert asked == [
+        SandboxController.destructive_warning(SandboxOperation.PROVISION)
+    ]
     dialog.close()
 
 
-def test_declining_the_controllers_prompt_surfaces_as_cancelled_in_the_dialog(
+def test_provisioning_is_abandoned_when_the_confirmation_is_declined(
     qtbot, tmp_path, monkeypatch
 ):
     window, _dir = _window(qtbot, tmp_path)
-    dialog = _open_setup(window, qtbot)
+    dialog = _open_settings(window, qtbot)
+    provisioned = []
+    window.sandbox_controller._provisioner = (
+        lambda snapshot, params, mode, **kwargs: provisioned.append(params)
+        or _session()
+    )
     _refuse_confirmations(monkeypatch)
 
-    dialog.provision()
+    dialog._provision_button.click()
 
-    assert "cancelled" in dialog.result_text().casefold()
-    assert not window.sandbox_controller.has_session
+    assert provisioned == []
+    assert any("cancelled" in text.casefold() for text in _audit_texts(window))
     dialog.close()
 
 
-def test_the_host_adopts_the_settings_the_dialog_recorded(
+def test_create_a_database_for_me_confirms_and_creates_the_typed_name(
     qtbot, tmp_path, monkeypatch
 ):
-    """A provisioning gesture may record a new mode / database name; the host
-    takes the dialog's OWN `ProjectSettings` rather than re-reading the file."""
+    """§18.5 D2\'s mandatory mitigation for the `ForeignDatabaseError` refusal:
+    the same confirmation, then `create_sandbox_database` against the
+    maintenance database (`CREATE DATABASE` cannot run inside the database being
+    created)."""
     window, _dir = _window(qtbot, tmp_path)
-    dialog = _open_setup(window, qtbot)
+    dialog = _open_settings(window, qtbot)
+    created = []
+    admin = []
+    window.sandbox_controller._database_creator = (
+        lambda admin_params, name: admin.append(admin_params) or created.append(name)
+    )
+    asked = []
+    monkeypatch.setattr(
+        modals.QMessageBox,
+        "question",
+        staticmethod(
+            lambda _p, _t, text, *a, **k: asked.append(text)
+            or modals.QMessageBox.StandardButton.Yes
+        ),
+    )
+    dialog._new_database_name_edit.setText("pgtp_sandbox_fresh")
+
+    dialog._create_database_button.click()
+
+    assert asked == [
+        SandboxController.destructive_warning(SandboxOperation.PROVISION)
+    ]
+    assert created == ["pgtp_sandbox_fresh"]
+    assert admin[0].database == dialog._maintenance_database
+    # The name that was actually created is what the dialog now shows and what
+    # it recorded -- the field and the file can never disagree.
+    assert dialog._sandbox_database_edit.text() == "pgtp_sandbox_fresh"
+    assert dialog.recorded_settings().sandbox.database == "pgtp_sandbox_fresh"
+    dialog.close()
+
+
+def test_declining_creates_no_database(qtbot, tmp_path, monkeypatch):
+    window, _dir = _window(qtbot, tmp_path)
+    dialog = _open_settings(window, qtbot)
+    created = []
+    window.sandbox_controller._database_creator = (
+        lambda admin_params, name: created.append(name)
+    )
+    _refuse_confirmations(monkeypatch)
+
+    dialog._create_database_button.click()
+
+    assert created == []
+    dialog.close()
+
+
+def test_reset_confirms_before_dropping_anything(qtbot, tmp_path, monkeypatch):
+    window, _dir = _window(qtbot, tmp_path)
+    dialog = _open_settings(window, qtbot)
+    resets = []
+    window.sandbox_controller.session.reset = lambda: resets.append(1)
+    asked = []
+    monkeypatch.setattr(
+        modals.QMessageBox,
+        "question",
+        staticmethod(
+            lambda _p, _t, text, *a, **k: asked.append(text)
+            or modals.QMessageBox.StandardButton.Yes
+        ),
+    )
+
+    dialog._reset_button.click()
+
+    assert asked == [SandboxController.destructive_warning(SandboxOperation.RESET)]
+    assert resets == [1]
+    dialog.close()
+
+
+def test_declining_the_reset_confirmation_drops_nothing(qtbot, tmp_path, monkeypatch):
+    window, _dir = _window(qtbot, tmp_path)
+    dialog = _open_settings(window, qtbot)
+    resets = []
+    window.sandbox_controller.session.reset = lambda: resets.append(1)
+    _refuse_confirmations(monkeypatch)
+
+    dialog._reset_button.click()
+
+    assert resets == []
+    assert any("cancelled" in text.casefold() for text in _audit_texts(window))
+    dialog.close()
+
+
+def test_reset_says_it_re_runs_the_creation_mode_not_the_checked_radio(
+    qtbot, tmp_path
+):
+    """The mode radios promise a change "takes effect the next time the sandbox
+    is reset/recreated". `SandboxSession.reset()` re-runs the mode the sandbox
+    was CREATED with, so with Reset in the same dialog the promise is kept by
+    Provision -- and the note beside Reset says exactly that instead of leaving
+    the user to discover it from a reset that silently did the old thing."""
+    window, _dir = _window(qtbot, tmp_path)
+
+    dialog = _open_settings(window, qtbot)
+
+    notes = dialog.sandbox_action_notes()
+    assert "created with (without data (schema only))" in notes
+    assert "takes effect when you Provision, not when you Reset" in notes
+    dialog.close()
+
+
+def test_an_unavailable_action_is_absent_with_its_reason_in_its_place(
+    qtbot, tmp_path
+):
+    """Carve-out 2 travelled with the gestures: no dead controls. With no target
+    there is nothing to build a baseline from, so Provision is ABSENT and the
+    reason stands where it was."""
+    window, project_dir = _window(qtbot, tmp_path)
+    dialog = _open_settings(window, qtbot)
+
+    dialog._target_host_edit.setText("")
+
+    assert dialog._provision_button is None
+    assert dialog._create_database_button is None
+    assert NO_TARGET_REASON in dialog.sandbox_action_notes()
+    dialog.close()
+
+
+def test_reset_is_absent_without_a_session_and_says_why(qtbot, tmp_path):
+    window, _dir = _window(qtbot, tmp_path, reachable=False)
+
+    dialog = _open_settings(window, qtbot)
+
+    assert not window.sandbox_controller.has_session
+    assert dialog._reset_button is None
+    assert NO_SESSION_REASON in dialog.sandbox_action_notes()
+    dialog.close()
+
+
+def test_provisioning_records_the_chosen_mode_before_it_runs(
+    qtbot, tmp_path, monkeypatch
+):
+    """D2a\'s mode is RECORDED, never re-derived -- written through the
+    settings saver before the operation starts, so a crash mid-provision still
+    leaves the project describing what it asked for."""
+    window, project_dir = _window(qtbot, tmp_path)
+    dialog = _open_settings(window, qtbot)
     _accept_confirmations(monkeypatch)
-    # Choose "with data", then provision: the dialog records the mode.
-    dialog._with_data_radio.setChecked(True)
+    dialog._sandbox_mode_with_data_radio.setChecked(True)
 
-    dialog.provision()
+    dialog._provision_button.click()
 
-    assert dialog.settings().sandbox_mode is SandboxMode.WITH_DATA
+    assert dialog.recorded_settings().sandbox_mode is SandboxMode.WITH_DATA
+    from pgtp_editor.db.ddl_project import load_settings
+
+    assert load_settings(project_dir).sandbox_mode is SandboxMode.WITH_DATA
+    dialog.close()
+
+
+def test_the_host_adopts_the_settings_provisioning_recorded(
+    qtbot, tmp_path, monkeypatch
+):
+    """Adopted on the PROVISION result, not on the dialog closing: the dialog is
+    non-modal and may be cancelled or left open for an hour, and the file was
+    written the moment provisioning started."""
+    window, _dir = _window(qtbot, tmp_path)
+    dialog = _open_settings(window, qtbot)
+    _accept_confirmations(monkeypatch)
+    dialog._sandbox_mode_with_data_radio.setChecked(True)
+
+    dialog._provision_button.click()
+
     assert window._ddl_project_settings.sandbox_mode is SandboxMode.WITH_DATA
     dialog.close()
 
@@ -237,14 +417,10 @@ def test_adopting_the_settings_does_not_drop_the_session_just_provisioned(
     qtbot, tmp_path, monkeypatch
 ):
     """Adoption must NOT rebind the controller: `set_project` closes the session,
-    and the session it would close is the one the dialog just created.
-
-    BUG-040 raised the stakes: since `_bind_sandbox_controller_to_project` now
-    OPENS a session, rebinding here would not merely drop the provisioned
-    session, it would double-open. The bypass is what keeps the Setup path
-    ending with exactly one live session."""
+    and the session it would close is the one just provisioned -- which since
+    BUG-040\'s auto-open would then be double-opened on top."""
     window, _dir = _window(qtbot, tmp_path)
-    dialog = _open_setup(window, qtbot)
+    dialog = _open_settings(window, qtbot)
     _accept_confirmations(monkeypatch)
     opens = []
     provisioned = []
@@ -255,34 +431,61 @@ def test_adopting_the_settings_does_not_drop_the_session_just_provisioned(
         or _session()
     )
 
-    dialog.provision()
+    dialog._provision_button.click()
 
-    assert window.sandbox_controller.has_session
-    # The dialog provisioned exactly one session and the host opened none on
-    # top of it -- adoption never went through the auto-opening bind.
+    assert controller.has_session
     assert len(provisioned) == 1
     assert opens == []
     dialog.close()
-    assert window.sandbox_controller.has_session
+    assert controller.has_session
 
 
-def test_the_console_refusal_names_gestures_that_exist(
+def test_the_host_ignores_uncommitted_field_edits(qtbot, tmp_path):
+    """`recorded_settings()`, never `settings()`: the live field state includes
+    edits the user has committed to nothing, and adopting those would make the
+    window describe a project no file agrees with."""
+    window, _dir = _window(qtbot, tmp_path)
+    dialog = _open_settings(window, qtbot)
+    before = window._ddl_project_settings
+
+    dialog._name_edit.setText("typed but never OK'd")
+    window._adopt_provisioned_sandbox_settings()
+
+    assert dialog.recorded_settings() is None
+    assert window._ddl_project_settings == before
+    dialog.close()
+
+
+def test_data_cloning_still_refuses_for_a_schema_only_sandbox(
     qtbot, tmp_path, monkeypatch
 ):
-    """The rule this test exists for has now outlived three wordings. It said
-    "Database ▸ Project Status…", which never opened a session; then
-    `Open Sandbox Session`, which BUG-040 deleted; then `Sandbox Setup…`, which
-    BUG-040's third leg made projectless-only.
+    """The refusal survived the move untouched, because it never lived in the
+    dialog: cloning into a schema-only sandbox would silently change what kind
+    of sandbox it is, and the mode is chosen once at creation time (D2a)."""
+    window, _dir = _window(qtbot, tmp_path, mode=SandboxMode.SCHEMA_ONLY)
+    cloned = []
+    window.sandbox_controller._cloner = lambda target, sandbox: cloned.append(1)
+    _accept_confirmations(monkeypatch)
 
-    The rule, sharpened by that third round: **the refusal may only name a way
-    back that is REACHABLE FROM WHERE THE REFUSAL FIRES.** "Exists in the menu
-    somewhere" is not enough — a sandbox exists only in project mode, so this
-    refusal fires only there, and `Sandbox Setup…` is hidden there. Naming a
-    hidden entry is the same dead end as naming a deleted one.
+    window.sandbox_controller.run_data_clone()
 
-    Since FQ-023 the refusal is a dialog that OFFERS to open the session;
-    declining leaves the same reason in the status bar, which is what is read
-    here (the offer itself is covered in `test_sandbox_check_console_wiring`)."""
+    assert cloned == []
+    assert any(
+        "without data" in text and "schema-only" in text
+        for text in _audit_texts(window)
+    )
+
+
+def test_the_console_refusal_names_gestures_that_exist(qtbot, tmp_path, monkeypatch):
+    """The rule this test exists for has now outlived four wordings: "Database ▸
+    Project Status…", then `Open Sandbox Session` (deleted by BUG-040), then
+    `Sandbox Setup…` (hidden in project mode by BUG-040), and now `Sandbox
+    Setup…` again (deleted outright).
+
+    The rule: **the refusal may only name a way back that is REACHABLE FROM
+    WHERE THE REFUSAL FIRES.** Naming a deleted entry is the same dead end as
+    naming a hidden one. Project Settings is the name that survives, and it is
+    now the truthful one -- it really does host the provisioning gestures."""
     window, _dir = _window(qtbot, tmp_path, reachable=False)
     _refuse_confirmations(monkeypatch)
 
@@ -290,8 +493,6 @@ def test_the_console_refusal_names_gestures_that_exist(
 
     message = window.statusBar().currentMessage()
     assert "Project Settings" in message
-    # ...and the entry it does NOT name is the one that is hidden right here.
-    assert _setup_action(window).isVisible() is False
     assert "Sandbox Setup" not in message
     assert "Open Sandbox Session" not in message
     assert "Project Status" not in message

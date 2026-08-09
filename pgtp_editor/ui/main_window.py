@@ -116,7 +116,6 @@ from pgtp_editor.ui.table_dialogs import (
     SetCommentDialog,
 )
 from pgtp_editor.ui.sandbox_controller import SandboxController, SandboxOperation
-from pgtp_editor.ui.sandbox_setup_dialog import SandboxSetupDialog
 from pgtp_editor.ui.new_routine_dialog import NewRoutineDialog
 from pgtp_editor.ui.new_trigger_dialog import NewTriggerDialog
 from pgtp_editor.ui.project_status_model import SandboxFact, build_diagram, quality_state
@@ -777,13 +776,15 @@ class MainWindow(QMainWindow):
         #: §18.5's "Deploy this edit…" picker as a menu entry (FQ-009). Always
         #: visible -- no session gate, because its Save destination needs none.
         self._deploy_this_edit_action = None
-        #: Database ▸ Sandbox Setup… -- always present (see `_build_database_menu`
-        #: for why it is not session-gated), so unlike the four above it needs no
-        #: visibility management. Kept on `self` only so the non-modal dialog it
-        #: opens outlives the handler's stack frame (the same keep-alive pattern
-        #: `DdlProjectController`'s two dialogs use).
-        self._sandbox_setup_action = None
-        self._sandbox_setup_dialog = None
+        # `Database ▸ Sandbox Setup…` used to live here. It is DELETED (owner
+        # ruling, 2026-08-09): Provision / Reset / "create a sandbox database
+        # for me" now live in Project Settings' sandbox group, which is what
+        # finally makes BUG-040's premise ("in project mode all sandbox
+        # configuration already lives in Project Settings") true. Deleted rather
+        # than hidden for the same reason BUG-040 deleted Open/Close Sandbox
+        # Session: `ToolbarController._walk_menu_actions` never tests
+        # `isVisible()`, so a hidden action stays pinnable and a toolbar button
+        # would keep firing a gesture the menu no longer offers.
 
         self.center_stage.xml_editor.textChanged.connect(self._on_editor_text_changed)
 
@@ -938,6 +939,11 @@ class MainWindow(QMainWindow):
             target_params=self._project_status_target,
             refresh_status_window=self._refresh_project_status_window,
             explorer_schema=lambda: getattr(self.ddl_browser_panel, "_schema", None),
+            # Project Settings hosts the three provisioning gestures now that
+            # `Database ▸ Sandbox Setup…` is gone, so the dialog it opens needs
+            # the app's ONE controller and the folder the recorded mode is
+            # written to.
+            sandbox_controller=self.sandbox_controller,
         )
         # The window title carries both the project folder and the document's
         # name + dirty marker, so both lanes' transitions refresh it.
@@ -2935,20 +2941,12 @@ class MainWindow(QMainWindow):
             lambda: self._deploy_active_ddl_object_edit()
         )
         menu.addSeparator()
-        # §18.5 D2/D2a's provisioning surface, PROJECTLESS-ONLY since BUG-040 --
-        # see `_refresh_sandbox_affordances`, which owns the visibility. It is
-        # still never gated on a SESSION or on a sandbox existing: this is the
-        # one entry point that can CREATE a sandbox, so hiding it whenever there
-        # is no sandbox would make it unreachable exactly when it is needed.
-        # What changed is only that in project mode Project Settings is that
-        # entry point instead. The dialog itself applies carve-out 2 internally
-        # -- every control whose operation cannot run is absent, with the reason
-        # stated in its place.
-        self._sandbox_setup_action = menu.addAction("Sandbox Setup…")
-        self._sandbox_setup_action.triggered.connect(
-            lambda: self._open_sandbox_setup()
-        )
-        menu.addSeparator()
+        # `Sandbox Setup…` stood here until 2026-08-09. §18.5 D2/D2a's three
+        # provisioning gestures moved into Project Settings' sandbox group
+        # (File ▸ Project Settings…), which already owned the sandbox connection
+        # and the recorded mode; the entry was deleted rather than hidden so no
+        # pinned toolbar button can outlive it.
+
         # §18.8: opening the window is itself a probe trigger, not a passive
         # read of a cached result -- see _open_project_status.
         project_status_action = menu.addAction("Project Status…")
@@ -3034,7 +3032,7 @@ class MainWindow(QMainWindow):
         """Record what the sandbox provisioning ACTUALLY did (FQ-007).
 
         On success the created database name is written into
-        `ProjectSettings.sandbox` so a later Sandbox Setup…/`reset()` re-opens the
+        `ProjectSettings.sandbox` so a later Provision/`reset()` re-opens the
         same database. The recorded `sandbox_mode` is **not** rewritten -- D2a's
         mode is the user's one-time choice; when a run could not honor it (a
         "with data" sandbox with no target to clone from) the result's reason says
@@ -4688,16 +4686,10 @@ class MainWindow(QMainWindow):
         REPORT (`_refuse_sandbox_gesture`), because absence cannot state a
         reason and the reason here is one click away from being fixed. They are
         never greyed out, which would state even less than the refusal."""
-        # `Sandbox Setup…` is PROJECTLESS-ONLY (BUG-040's third leg). In project
-        # mode the session connects itself and every piece of sandbox
-        # configuration -- provisioning, re-provisioning, the sandbox mode --
-        # lives in Project Settings, so the menu entry would be a second door
-        # onto a surface the project already owns. Projectless it is the only
-        # way to get a sandbox at all, which is why it is hidden rather than
-        # deleted: unlike Open/Close Session it still has a mode where it means
-        # something.
-        if self._sandbox_setup_action is not None:
-            self._sandbox_setup_action.setVisible(self._ddl_project_folder is None)
+        # Nothing to hide or show for `Sandbox Setup…` any more: the entry is
+        # gone and its three gestures live in Project Settings, whose own
+        # provisioning group applies carve-out 2 internally (a control whose
+        # operation cannot run is absent, with the reason in its place).
         # The presence predicate for the two Checks: `can_check` covers the live
         # session, `_configured_sandbox_params()` the FQ-023 present-and-
         # reporting case. Same "a host is set" reading as §18.7's Explorer gate,
@@ -4888,9 +4880,9 @@ class MainWindow(QMainWindow):
             # directly: that keeps the "nothing is configured" guard and the
             # Audit-panel outcome routing shared with the refusal dialog's own
             # `Open` button, so there is still exactly ONE way a session is
-            # acquired. `_adopt_sandbox_setup_settings` deliberately does not
-            # route through this method, so the Setup dialog's freshly
-            # provisioned session is never dropped and re-opened here.
+            # acquired. `_adopt_provisioned_sandbox_settings` deliberately does
+            # not route through this method, so a freshly provisioned session is
+            # never dropped and re-opened here.
             self._open_sandbox_session()
         # §18.7's second Explorer follows the PROJECT (does this project have a
         # sandbox configured?), not the session — so it is refreshed here, at the
@@ -4917,67 +4909,43 @@ class MainWindow(QMainWindow):
             return
         self.sandbox_controller.open_session()
 
-    def _open_sandbox_setup(self):
-        """Database ▸ Sandbox Setup… -- §18.5 D2/D2a's provisioning surface, and
-        the ONE re-provisioning entry point in the app (§18.2's New Project step
-        provisions once, at creation time, and has no way back).
+    def _adopt_provisioned_sandbox_settings(self, dialog=None) -> None:
+        """Take over whatever a provisioning gesture in **Project Settings**
+        recorded (D2a's `sandbox_mode`, and the database name a "create one for
+        me" gesture chose) -- the successor to `_adopt_sandbox_setup_settings`,
+        which read the deleted Sandbox Setup dialog.
 
-        Non-modal (`show()`, never `exec()`), like every other dialog here, so
-        the long-running provisioning it kicks off does not block the window.
-
-        **`confirm=None` on purpose: the CONTROLLER owns the single destructive
-        prompt.** The dialog's two-mode contract means passing `confirm=` here as
-        well would ask the user twice for one Provision/Re-clone/Reset, and the
-        controller's gate is the one that must exist anyway -- a controller built
-        without `confirm_destructive` refuses every destructive operation, and
-        this window has always supplied `_confirm_destructive_sandbox_operation`
-        for exactly that. A decline still surfaces in the dialog, as the
-        controller's own stated "cancelled -- this operation was not confirmed."
-        result.
-        """
-        dialog = SandboxSetupDialog(
-            self.sandbox_controller,
-            self,
-            settings=self._ddl_project_settings,
-            project_dir=self._ddl_project_folder,
-            confirm=None,
-        )
-        # A provisioning gesture may record a new `sandbox_mode` or a
-        # newly created sandbox database name; adopt the dialog's OWN
-        # `ProjectSettings` rather than re-reading the file it just wrote.
-        dialog.finished.connect(
-            lambda _result, dlg=dialog: self._adopt_sandbox_setup_settings(dlg)
-        )
-        self._sandbox_setup_dialog = dialog
-        dialog.show()
-        return dialog
-
-    def _adopt_sandbox_setup_settings(self, dialog=None) -> None:
-        """Take over whatever the Sandbox Setup dialog recorded in the project's
-        `ProjectSettings` (D2a's `sandbox_mode`, and the database name a
-        "create one for me" gesture chose).
+        Why this still exists after the move, rather than being covered by
+        Project Settings' OK path: the dialog is NON-MODAL and provisioning
+        writes the file the moment it starts, so between that write and an OK
+        that may never come (the user can Cancel, or leave it open for an hour)
+        the window would otherwise keep describing the previous sandbox. So this
+        runs on the PROVISION result, not on the dialog closing.
 
         Adoption is deliberately NOT `_bind_sandbox_controller_to_project()`:
         that calls `set_project`, which drops the live session -- and the session
-        this would drop is the one the dialog just provisioned. The dialog has
-        already pointed the controller at the right sandbox (`set_project` before
-        provisioning) and already persisted the settings through its
-        `settings_saver`, so the host's remaining job is only to stop describing
-        the previous sandbox.
+        it would drop is the one just provisioned (and, since BUG-040's
+        auto-open, would then double-open). The dialog has already pointed the
+        controller at the right sandbox and already persisted the settings
+        through its `settings_saver`, so the host's remaining job is only to stop
+        describing the previous sandbox.
         """
-        dialog = self._sandbox_setup_dialog if dialog is None else dialog
+        dialog = self._ddl_project_ui.project_settings_dialog if dialog is None else dialog
         if dialog is None or self._ddl_project_settings is None:
             return
-        settings = dialog.settings()
+        # `recorded_settings()`, never `settings()`: the latter is the live field
+        # state including edits the user has not committed to anything, while
+        # the former is exactly what was written to disk.
+        settings = dialog.recorded_settings()
         if settings is None or settings == self._ddl_project_settings:
             return
         self._ddl_project_settings = settings
         self._refresh_project_status_window()
-        # §18.7's "or a sandbox added later via Sandbox Setup…" case: a project
-        # that had no sandbox now has one, and this is the one transition that
-        # does NOT go through `_bind_sandbox_controller_to_project` (see above),
-        # so the second Explorer's entry would otherwise stay absent until the
-        # next project transition.
+        # §18.7's "or a sandbox added later" case: a project that had no sandbox
+        # now has one, and this is the one transition that does NOT go through
+        # `_bind_sandbox_controller_to_project` (see above), so the second
+        # Explorer's entry would otherwise stay absent until the next project
+        # transition.
         self._refresh_ddl_explorer_affordances()
 
     def _refresh_project_status_window(self) -> None:
@@ -5031,10 +4999,10 @@ class MainWindow(QMainWindow):
             return
         if operation is SandboxOperation.PROVISION:
             # A provisioning run may have recorded a new mode or a newly created
-            # database name in the Sandbox Setup dialog's settings; adopt them
-            # now rather than only when the (non-modal, possibly long-lived)
-            # dialog is closed.
-            self._adopt_sandbox_setup_settings()
+            # database name in Project Settings' settings; adopt them now rather
+            # than only when the (non-modal, possibly long-lived) dialog is
+            # closed -- or never, if it is cancelled.
+            self._adopt_provisioned_sandbox_settings()
         name = operation.value if operation is not None else "sandbox"
         if result.ok:
             text = f"{_SANDBOX_PREFIX}{name}: " + (reason or "done.")

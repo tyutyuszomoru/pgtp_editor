@@ -1433,8 +1433,10 @@ def test_only_the_new_database_operation_reports_a_database_name():
     assert results[-1].database_name == ""
 
 
-def test_the_maintenance_database_is_one_constant_shared_with_the_setup_dialog():
-    from pgtp_editor.ui import sandbox_setup_dialog
+def test_the_maintenance_database_is_one_constant_shared_with_project_settings():
+    """The provisioning surface moved from `Sandbox Setup…` into Project
+    Settings; the maintenance-database name did not fork on the way."""
+    from pgtp_editor.ui import project_settings_dialog
 
     assert MAINTENANCE_DATABASE == "postgres"
-    assert sandbox_setup_dialog.DEFAULT_MAINTENANCE_DATABASE is MAINTENANCE_DATABASE
+    assert project_settings_dialog.DEFAULT_MAINTENANCE_DATABASE is MAINTENANCE_DATABASE

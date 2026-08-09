@@ -571,36 +571,46 @@ def test_the_database_menu_offers_no_session_lifecycle_entries(qtbot, tmp_path):
     assert not any("Sandbox Session" in label for label in labels)
 
 
-def _setup_action_visible(window):
-    action = find_action(find_top_menu(window, "Database"), "Sandbox Setup…")
-    return action is not None and action.isVisible()
+def _setup_action(window):
+    return find_action(find_top_menu(window, "Database"), "Sandbox Setup…")
 
 
-def test_sandbox_setup_is_offered_projectless(qtbot, tmp_path):
-    """BUG-040's third leg. Projectless it is the ONLY way to get a sandbox at
-    all, so unlike the two session-lifecycle entries it is hidden rather than
-    deleted -- it still has a mode where it means something."""
-    assert _setup_action_visible(_window(qtbot, tmp_path)) is True
+def test_the_database_menu_offers_no_sandbox_setup_entry_projectless(qtbot, tmp_path):
+    """`Sandbox Setup…` is DELETED (owner ruling, 2026-08-09) -- not hidden, and
+    not projectless-only either. BUG-040 had hidden it in project mode on the
+    premise that Project Settings already owned every piece of sandbox
+    configuration; that premise was false (Provision / Reset / "create a sandbox
+    database for me" existed nowhere else) and projectless the dialog was inert
+    anyway, so the three gestures moved into Project Settings and the entry went
+    away in every mode."""
+    assert _setup_action(_window(qtbot, tmp_path)) is None
 
 
-def test_sandbox_setup_is_hidden_once_a_project_is_open(qtbot, tmp_path, monkeypatch):
-    """In project mode the session connects itself and the sandbox connection
-    and mode live in Project Settings, so the menu entry would be a second door
-    onto the project's own surface."""
+def test_the_database_menu_offers_no_sandbox_setup_entry_in_project_mode(
+    qtbot, tmp_path, monkeypatch
+):
+    """Deleted rather than hidden for the same reason the session-lifecycle
+    entries were: `ToolbarController._walk_menu_actions` never tests
+    `isVisible()`, so a hidden action stays pinnable and a toolbar button would
+    bypass the menu's visibility entirely."""
     window, _controller, _session = _project_window(qtbot, tmp_path, monkeypatch)
-    assert _setup_action_visible(window) is False
+
+    assert _setup_action(window) is None
+    assert not any(
+        "Sandbox Setup" in action.text()
+        for action in find_top_menu(window, "Database").actions()
+    )
 
 
-def test_sandbox_setup_comes_back_when_the_project_closes(qtbot, tmp_path, monkeypatch):
-    """The gate is the PROJECT, not a one-way hide: closing the project returns
-    the app to the mode the entry belongs to. Asserted because the visibility is
-    driven from `_refresh_sandbox_affordances`, which a project transition must
-    reach in both directions."""
+def test_closing_the_project_does_not_bring_sandbox_setup_back(
+    qtbot, tmp_path, monkeypatch
+):
+    """The entry is gone, not gated: no project transition can resurrect it."""
     window, _controller, _session = _project_window(qtbot, tmp_path, monkeypatch)
-    assert _setup_action_visible(window) is False
 
     window._ddl_project_ui.close_project()
-    assert _setup_action_visible(window) is True
+
+    assert _setup_action(window) is None
 
 
 def test_no_session_is_opened_projectless(qtbot, tmp_path):

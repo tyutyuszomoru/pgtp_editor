@@ -55,7 +55,7 @@ EXPECTED_HOST_SURFACE = {
     "_active_ddl_object_panel_for",
     "_active_deployment_group",
     "_add_stub_action",
-    "_adopt_sandbox_setup_settings",
+    "_adopt_provisioned_sandbox_settings",
     "_apply_caption_edits",
     "_apply_ddl_object_to_sandbox",
     "_apply_ddl_object_to_target",
@@ -217,7 +217,6 @@ EXPECTED_HOST_SURFACE = {
     "_open_log_folder",
     "_open_project_status",
     "_open_sandbox_session",
-    "_open_sandbox_setup",
     "_open_sandbox_sql_console",
     "_owning_table_name",
     "_parsing_menu",
@@ -274,8 +273,6 @@ EXPECTED_HOST_SURFACE = {
     "_sandbox_database_label",
     "_sandbox_probe_check_action",
     "_sandbox_session_provider",
-    "_sandbox_setup_action",
-    "_sandbox_setup_dialog",
     # FQ-020: `_save_active_tab` is DELETED, not moved -- it was the four-way save
     # router behind `Ctrl+S` / `File ▸ Save` whose `else` branch wrote the `.pgtp`
     # from six unrelated tabs. Its absence here is part of the §7 invariant.

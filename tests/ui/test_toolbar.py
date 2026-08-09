@@ -877,6 +877,29 @@ def test_a_pinned_session_lifecycle_button_is_dropped_not_left_dead(qtbot, tmp_p
     assert "parsing.check-object-without-applying" in live
 
 
+def test_a_pinned_sandbox_setup_button_is_dropped_not_left_dead(qtbot, tmp_path):
+    """`Database ▸ Sandbox Setup…` was DELETED (owner ruling, 2026-08-09) once
+    its three provisioning gestures moved into Project Settings. A deletion is
+    not a move, so there is deliberately no `RENAMED_ID_ALIASES` row and a pinned
+    button degrades the FQ-020 `file.save` way -- `resolve_ids` drops an id that
+    no longer resolves.
+
+    This hazard is precisely why the action was deleted rather than hidden the
+    way BUG-040 left it: a toolbar button bypasses menu visibility entirely, so
+    the hidden action was still pinnable and still clickable."""
+    path = str(tmp_path / "s.ini")
+    seed = QSettings(path, QSettings.Format.IniFormat)
+    seed.setValue("toolbarIds", ["database.sandbox-setup", "file.open"])
+    seed.sync()
+
+    window = MainWindow(settings=QSettings(path, QSettings.Format.IniFormat))
+    qtbot.addWidget(window)
+
+    assert window._toolbar_ui.command_ids == ["file.open"]
+    live = {command_id for command_id, _label in window._toolbar_ui.all_menu_commands()}
+    assert "database.sandbox-setup" not in live
+
+
 def test_no_assignments_leaves_toolbar_behavior_unchanged(qtbot, tmp_path):
     """Back-compat: an existing saved toolbar keeps each button's default."""
     window = MainWindow(
