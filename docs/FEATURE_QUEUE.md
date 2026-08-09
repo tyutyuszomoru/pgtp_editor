@@ -2081,7 +2081,21 @@ modal and its two mode-gated shortcuts as settled design. Reuse `clear_all_filte
 ---
 
 ## FQ-018: Status-bar live indicators for Quality and Sandbox connectivity (30s poll, gated on window-active)
-**Status:** QUEUED
+**Status:** ABSORBED INTO FQ-028 (owner ruling, 2026-08-10) — **not a separate feature and never will be.**
+The owner: *"FQ-018 and FQ-028 don't overlap. FQ-028 is the large scale solution, and FQ-018 is part of that
+solution."* FQ-028's own text already said so (*"Refines FQ-018 — Part 2.4 subsumes its status-bar
+portion"*), and `CONSOLIDATED_SPEC.md` records it as absorbed with a §28 ledger row, so a reader does not go
+hunting for an unbuilt feature.
+
+The connectivity indicators ship as part of FQ-028's Part 2 status bar, under its governing rule (owner,
+2026-08-10): *"the status bar needs to avoid being a message board — it should have some well defined
+information on it constantly."* A slot either always states a defined fact or it does not belong in the
+bar, which is why the spec gives the poll an explicit `UNKNOWN` state: a not-yet-answered probe must SAY
+so rather than render blank or stale-green.
+
+**One genuine override to know about:** FQ-028 changes this entry's design, it does not merely host it —
+the Quality dot's standalone-mode behaviour was overridden, and the three-state (rather than binary)
+reading was added. Do not implement this entry as written; implement FQ-028's Part 2.
 **Requested:** 2026-08-08
 **Idea (verbatim/summarized):** "In the status bar I would like to see with a 30s polling when the window
 is active: 1. whether the app is connected to quality 2. whether the app is connected to sandbox."
