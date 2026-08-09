@@ -1,6 +1,53 @@
 # PGTP Editor — Consolidated Specification
 
-> **Status:** living document · **Last synthesized:** 2026-08-09 — **FQ-025 slices 2 and 3 folded in, plus
+> **Status:** living document · **Last synthesized:** 2026-08-10 — **HARMONIZATION PASS (retroactive
+> cleanup, no new design; two ledger rows, §28).** Four ghosts that had shipped without the spec following
+> them are now corrected everywhere they were stated: **(1) `Database ▸ Sandbox Setup…` and
+> `ui/sandbox_setup_dialog.py` are DELETED**, provisioning having moved into `File ▸ Project Settings… ▸
+> Connections` (~25 body sites swept; §29's provisioning question CLOSED; ledger row). **(2) FQ-021's third
+> leg SHIPPED** (`1ccfe9d`) — `Next Difference` / `Previous Difference` / `Apply Changes to Target` are
+> Compare/Merge-mode-only `Navigation` members, `Tools` has none of them, and §29's *"`Apply Changes to
+> Target` is unreachable"* regression is CLOSED (ledger row). **(3) `Ctrl+W` is UNBOUND** from
+> `File ▸ Close`, and `CodeEditorDialog`'s `Ctrl+S`/`Ctrl+W` pair — the last carve-out for either chord —
+> is DELETED, so both keys are now dead **without exception**. **(4) FQ-030 slice 1's PURE layer shipped**
+> (`sql/from_clause.py`, `ALIAS_REF` in `sql/caret_context.py`) with its UI consumer deliberately unwired,
+> recorded as such in §18.6 — which also now states BUG-041's structural constraint (`NEW.`/`OLD.`
+> completion cannot fire inside a `$$ … $$` body, because the caret resolver treats the whole body as one
+> opaque token) as a fix-toward-spec rather than a spec correction. (Previously the same day:) **FQ-028, the app-shell chrome
+> redesign, folded in (four ledger rows, §28), absorbing FQ-029 and SUBSUMING FQ-018.** Three coordinated
+> parts, all in §7 (plus a §18.8 poller and a §26 View-menu row). **Part 1/3: the single
+> `Audit / Problems` dock — specified since this document began — is DISSOLVED into THREE surfaces with
+> one lifecycle each.** A prefix no longer buys a share of one panel; it names a **destination**:
+> **Findings** (a LEFT-dock tab, `[Find]` + `[Bookmark]`, ephemeral last-operation-wins — the centre pane
+> was considered and rejected, because a centre tab hides the editor it should jump into), **Results** (a
+> bottom tab, `[Check]` + `[Lint]` + `[Validate]` + `[Schema]` VERIFY, **accumulated** with a
+> blank-line + `%Y-%m-%d %H:%M:%S` + 40-dash run separator), and the **Activity Log** — FQ-019's shipped
+> panel **REPOSITIONED** out of its own dock into the other bottom tab, unchanged internally. The
+> **complete nine-prefix disposition table is written into §7 verbatim** (plus a tenth, `[Sandbox]`, that
+> FQ-028 did not know about), and the nine-prefix *reservation* rule survives in its anti-annexation form
+> while only its one-panel premise dies. `ui/audit_router.py::AuditRouter` **quacks like the
+> `QListWidget`** the ~15 producers were written against, so `addItem` and the whole
+> `_on_audit_item_clicked` / `Qt.UserRole+N` click contract are untouched — **FQ-028 changes where a row
+> is shown, never how it navigates.** **Part 2: the status bar becomes STATIC-ONLY**, under the owner's
+> rule as the acceptance test for every slot it will ever have — *"the status bar needs to avoid being a
+> message board — it should have some well defined information on it constantly"*: **a slot either always
+> states a defined fact, or it does not belong there.** The ~40 transient `showMessage` call sites did not
+> move; **the SINK did** (`StaticStatusBar.showMessage` paints nothing and journals), closing the seam in
+> one place. A **colour-coded mode indicator** (FQ-029, merged) renders on **two** surfaces — a
+> right-anchored panel in the Main Toolbar behind an expanding spacer, and the upgraded `_mode_label`,
+> never a second label — from **ONE** source of truth and **one** `_refresh_mode_indicator()`, **passive
+> only**, **theme-aware** via the pure `mode_colors(light)` (explicitly not the DEBUG chip's hardcoded
+> red), major = colour, minor = text. **Terminology gains no fifth meaning of "mode"**: major = FQ-027's
+> SESSION workflow mode (hard dependency; in-memory, **no QSettings key**), minor = one of the three
+> already-named editor sub-states, and *"Editing"* is the **absence** of one. **FQ-018 is a COMPONENT of
+> this feature, not a parallel one** (owner: *"FQ-028 is the large scale solution, and FQ-018 is part of
+> that solution"*) — its Quality/Sandbox dots ship here, reusing §18.8's own `QualityState`/`SandboxState`
+> rather than a second notion of "connected", **overridden to project-mode-only for BOTH dots** and gated
+> on `DdlProjectController.is_open`, **not** on the "Project" workflow label. **The implementation is
+> landing in parallel:** `ui/audit_router.py`, `ui/findings_panel.py`, `ui/status_bar.py`,
+> `ui/connectivity.py` and `ui/mode_indicator.py` are verified in the tree; `ui/main_window.py` still
+> builds the old two docks, so the host wiring is stated as **specified**, and flagged as such at each
+> point. (Previously 2026-08-09:) **FQ-025 slices 2 and 3 folded in, plus
 > the `Ctrl+O` unbinding (three ledger rows, §28).** The `Alter Table ▸` submenu now carries **twelve**
 > operations: slice 1's eight column ones, a separator, then slice 2's `Add Constraint…` / `Add Foreign
 > Key…` / `Drop Constraint…` / `Rename Constraint…` (`c19a09f`), all twelve on **one** signal because the
@@ -24,7 +71,10 @@
 > TABLE` has no confirmation**, the generated tab being the safeguard. Also folded in: **`Ctrl+O` is
 > UNBOUND** (`f621d4c`, owner decision) — `File ▸ Open...` is unchanged, but one `Ctrl+O` in an app that
 > opens five kinds of thing must guess at intent, and the launcher now puts opening one click away; the
-> chord is left **free** for FQ-012 rebinding, and **`Ctrl+W` is untouched**. (Previously the same day:) **two shipped features folded in (two
+> chord is left **free** for FQ-012 rebinding. *(That pass's closing claim that **`Ctrl+W` is untouched**
+> is SUPERSEDED — status-corrected 2026-08-10: `Ctrl+W` was unbound from `File ▸ Close` the same day, for
+> `Ctrl+O`'s exact reason, and the last carve-out for **both** chords — `CodeEditorDialog`'s OK/Cancel pair
+> — was deleted with them. §7/§27.)* (Previously the same day:) **two shipped features folded in (two
 > ledger rows, §28): FQ-012 *Customize Shortcuts…* and FQ-025 slice 1's `Alter Table ▸` column
 > operations.** §27's closing claim that ***"every binding in this table is FIXED"* is OVERTURNED** — every
 > menu-bar QAction's shortcut is now a user-rebindable **default**, through `ui/shortcut_registry.py`
@@ -72,6 +122,27 @@
 > a status-accuracy correction pass (one ledger row, §28), then a second status-accuracy correction pass —
 > **FQ-021 only PARTLY shipped** (one amended + one new ledger row, §28; §29's FQ-021 item rewritten as an
 > unreachable-capability regression).**
+> **⚠ THE FQ-021 STATUS-ACCURACY PASS BELOW IS ITSELF NOW STALE — corrected 2026-08-10.** Its subject,
+> **FQ-021's third leg, HAS SINCE SHIPPED** (`1ccfe9d`; `docs/FEATURE_QUEUE.md` FQ-021 is `PROCESSED —
+> all three legs`). Verified in the tree 2026-08-10: `FindValidateController.build_navigation_menu` builds
+> **eight** members — the five bookmark commands, a separator, then **`Next Difference`**,
+> **`Previous Difference`** (relabelled from Tools' `Prev Difference`) and **`Apply Changes to Target`** —
+> the three being **Compare/Merge-MODE-only**, built once and only `setVisible`-toggled by
+> `set_diff_mode_members_visible`, driven by `CenterStage.diff_merge_mode_changed` (**the MODE, never
+> `currentChanged`**, because `leave_diff_merge_mode`'s final `setCurrentIndex(raw_xml)` emits nothing when
+> Raw XML is already current — a reachable state via the panel's Close button, which would have left the
+> three visible after the mode ended). `RENAMED_ID_ALIASES` carries `tools.next-difference →
+> navigation.next-difference` and `tools.prev-difference → navigation.previous-difference` (**the label IS
+> the id's last segment, so the move and the relabel are one id change**), and `Tools` has neither —
+> `tests/ui/test_menus.py` asserts both are absent there. `set_bookmarks_enabled` **stopped disabling the
+> whole `QMenu`** and gates the five bookmark actions individually, exactly as its own docstring had
+> predicted it would have to: Caption Mode has no reason to touch the Difference commands, a comparison
+> loaded while captions are being edited still being navigable. **So `Apply Changes to Target` is
+> REACHABLE again and §29's unreachable-capability regression is CLOSED** — the regression was real, lasted
+> from FQ-020 until `1ccfe9d`, and was found by spec harmonization rather than by a test, which is the
+> reason it is left recorded here rather than deleted. The hide-the-action cost is accepted on FQ-015's
+> `Select ▸ Select Parent Block` precedent: none of the three is a *default* toolbar button, so only a
+> user-pinned button comes and goes with the mode. **Read the block below only as history.**
 > **Status-accuracy pass — FQ-021 shipped TWO of its three legs, and the spec had recorded all three.**
 > Shipped and correctly specified: **FQ-021a**, Compare/Merge as a **MODE** with the panel-owned exit
 > (`CenterStage.enter_diff_merge_mode` / `leave_diff_merge_mode`, `diff_merge_panel._on_close`) and the Raw
@@ -130,9 +201,18 @@
 > refusal strings name `Project Settings`**, not `Sandbox Setup…` (`9b9aef7` —
 > `DESTINATION_UNAVAILABLE_REASONS[DEST_SANDBOX]` and `sql_console_panel.NO_SESSION_TEXT`, quoted verbatim
 > in §18.5 D3a/D4), because a refusal must name a place the user can actually reach from where they are.
-> **The hole this leaves is RECORDED, not resolved (§29):** provisioning lives only in
-> `ui/sandbox_setup_dialog.py`, which is now unreachable in project mode, and Project Settings can edit a
-> sandbox connection but cannot create one — an owner call. (Previously 2026-08-08:) **the development-deployment-pipeline
+> **The hole that left is now CLOSED (folded in 2026-08-10; one ledger row, §28,
+> recording an owner ruling of 2026-08-09 that shipped without one).** The owner took direction (b):
+> the three provisioning gestures — **`Provision sandbox`**, **`Reset sandbox`** and D2's mandatory
+> *"create a sandbox database for me"* row — **moved into `File ▸ Project Settings… ▸ Connections`**, into a
+> `Sandbox provisioning` group under the D2a mode radios, and **`Database ▸ Sandbox Setup…` was DELETED
+> outright along with `ui/sandbox_setup_dialog.py`** (verified absent from the tree 2026-08-10) — deleted
+> rather than left hidden because, once its capabilities moved, the action named nothing in any mode, and
+> a hidden QAction stays pinnable. **What deliberately did NOT move:** the D2a data clone and the one-click
+> `Install plpgsql_check`, which stay on §18.8's Sandbox1/Sandbox2 node buttons — so **the install now has
+> exactly ONE UI entry point, not two**. §29's provisioning item and its three demanded string sweeps are
+> **closed**, and ~25 body sites naming `Sandbox Setup…` as a home, a recovery path or an entry point were
+> corrected in the same pass. (Previously 2026-08-08:) **the development-deployment-pipeline
 > review batch FQ-020/FQ-021/FQ-022/FQ-023/FQ-024 folded in (nine ledger rows, §28).** §7/§26/§27: **`File ▸
 > Save`, `File ▸ Save As…`, `Ctrl+S` and `Ctrl+Shift+S` are DELETED** and `_save_active_tab` deleted outright
 > (with the pre-existing wrong-target defect it caused recorded as the standing invariant against re-adding
@@ -148,8 +228,8 @@
 > — through a **new `RENAMED_ID_ALIASES` table that must never be `LEGACY_ID_ALIASES`**, since
 > `ICON_ID_BY_COMMAND` is that dict inverted and a rename row would silently produce a wrong icon-id
 > mapping. **(FQ-021's third leg — the Difference commands and `Apply Changes to Target` as mode-only
-> `Navigation` members — is designed in the queue entry but NOT implemented; see the correction pass
-> above.)** §18.1/§18.2/§18.5: the DDL Explorer right-click collapses to **one `Edit DDL`**, two behaviours
+> `Navigation` members — SHIPPED `1ccfe9d`; the 2026-08-09 correction pass above that recorded it as
+> unimplemented is itself superseded, 2026-08-10.)** §18.1/§18.2/§18.5: the DDL Explorer right-click collapses to **one `Edit DDL`**, two behaviours
 > selected by project state, keyed on **`ref.key` always** — fixing a verified silent-divergence bug where
 > checkout-then-Edit opened **two identically-titled tabs with two save destinations**; `checkout_requested`
 > is withdrawn. §18.7 is **being implemented, session-free** (`bool(sandbox_params.host)`, never
@@ -180,12 +260,12 @@
 4. [Technology choices](#4-technology-choices)
 5. [Package / module layout](#5-package--module-layout)
 6. [Data model](#6-data-model)
-7. [App shell](#7-app-shell) — *includes the startup launch modal — **THREE columns / the app's three modes since FQ-027 (2026-08-09)**, with the `launcherSuppressed` suppression **deleted** and `Show Launcher…` renamed **`New Session`** — plus **Maintenance mode**, the app's first launch mode (**session-only**, window-menu-bar only) and its **two deliberately distinct hiding rules (capability vs. intent)**; FQ-011 was **never implemented** and is superseded. Also the second, fixed **Editor menu bar** (FQ-016, 2026-08-07 — **five menus since 2026-08-08**). **There is NO app-level save router and `Ctrl+S` is dead app-wide** (FQ-020, 2026-08-08), `File ▸ Revert` is now **`Discard Changes`**, the default toolbar is **five** buttons with no Save, and renames go through the new **`RENAMED_ID_ALIASES`**, never `LEGACY_ID_ALIASES`. **`Parsing` is tab-kind-gated since BUG-039 (2026-08-09)** — `_refresh_editor_menu_affordances` now does **four** things*
+7. [App shell](#7-app-shell) — *includes the startup launch modal — **THREE columns / the app's three modes since FQ-027 (2026-08-09)**, with the `launcherSuppressed` suppression **deleted** and `Show Launcher…` renamed **`New Session`** — plus **Maintenance mode**, the app's first launch mode (**session-only**, window-menu-bar only) and its **two deliberately distinct hiding rules (capability vs. intent)**; FQ-011 was **never implemented** and is superseded. Also the second, fixed **Editor menu bar** (FQ-016, 2026-08-07 — **five menus since 2026-08-08**). **There is NO app-level save router and `Ctrl+S` is dead app-wide** (FQ-020, 2026-08-08), `File ▸ Revert` is now **`Discard Changes`**, the default toolbar is **five** buttons with no Save, and renames go through the new **`RENAMED_ID_ALIASES`**, never `LEGACY_ID_ALIASES`. **`Parsing` is tab-kind-gated since BUG-039 (2026-08-09)** — `_refresh_editor_menu_affordances` now does **four** things. **FQ-028 (2026-08-10) rewrites the shell's chrome:** the single `Audit / Problems` dock is **dissolved** into a left-dock **Findings** tab + a two-tab bottom dock (**Activity Log** — FQ-019's panel repositioned — and **Results**), routed by `ui/audit_router.py`; the **status bar becomes static-only** under the *"never a message board"* rule, carrying a colour-coded **major/minor mode indicator** mirrored into the top toolbar, a **busy slot** with a live elapsed counter, and **FQ-018's Quality/Sandbox dots — which ship here as a component, never as a separate feature***
 8. [Raw XML editor](#8-raw-xml-editor) — *project-mode-only bookmark persistence (FQ-013) and `List All Bookmarks` (FQ-014) — **both shipped** 2026-08-07; the `Select` menu with trigger-time dispatch (FQ-015) and the permanently visible Find/Replace bar (FQ-016) — **both shipped***
 9. [Editor ↔ Tree sync & Reparse](#9-editor--tree-sync--reparse)
 10. [Properties panel](#10-properties-panel)
 11. [Schema: curated XSD, learning & completion](#11-schema-curated-xsd-learning--completion) — *the `Schema` menu is **Maintenance mode's home menu** (FQ-027, 2026-08-09): the only window-bar menu besides a trimmed `File` and `Help` that survives the mode's filter, whole and ungated; the launcher's Maintenance column is `Edit XSD` + `Import XSD`*
-12. [Diff / Merge](#12-diff--merge) — *Compare/Merge is a **MODE** since FQ-021a (**shipped** `75e2cdb`): Raw XML goes read-only via §8's reasons set, `DiffMergePanel` owns the exit, the entry point is `Deployment ▸ Compare/Merge pgtp`. **FQ-021's third leg did NOT ship** (status-corrected 2026-08-09): `Next Difference` / **`Prev Difference`** are still on the window bar's **`Tools`** menu, ungated, and **`Apply Changes to Target` has no menu home at all** — an unreachable shipped capability, §29*
+12. [Diff / Merge](#12-diff--merge) — *Compare/Merge is a **MODE** since FQ-021a (**shipped** `75e2cdb`): Raw XML goes read-only via §8's reasons set, `DiffMergePanel` owns the exit, the entry point is `Deployment ▸ Compare/Merge pgtp`. **FQ-021's third leg has now SHIPPED too (`1ccfe9d`, status-corrected 2026-08-10):** `Next Difference` / **`Previous Difference`** (relabelled) and **`Apply Changes to Target`** are **mode-only members of the Editor bar's `Navigation` menu**, off `Tools` entirely, gated on `diff_merge_mode_changed` rather than on the current tab. The unreachable-capability regression §29 recorded is **closed***
 13. [Captions](#13-captions) — *the find/replace **modal is deleted**; the in-panel bar is permanent, with `Replace All` + `Clear filter` + a filter/project scope dropdown (FQ-017, 2026-08-07)*
 14. [Columns](#14-columns)
 15. [Search, Find All & Table References](#15-search-find-all--table-references) — *table references folded into §17's Database/XML Coherence view (FQ-003, 2026-08-06); §15 keeps a pointer only*
@@ -201,7 +281,7 @@
       closed, not a decision reversed; the **unattached** trigger function remains an open question (§29).*
     - [18.6 Schema-aware Ctrl+Space completion in the DDL object editor](#186-schema-aware-ctrlspace-completion-in-the-ddl-object-editor) — *implemented*
     - [18.7 Two live DDL Explorer instances — target vs. sandbox](#187-two-live-ddl-explorer-instances--target-vs-sandbox) — *settled design (2026-08-05), **now being implemented** (FQ-022, 2026-08-08): `DDL Explorer (Quality)` / `DDL Explorer (Sandbox)`, **session-free** (`bool(sandbox_params.host)`, never `has_session`)*
-    - [18.8 The Project Status window](#188-the-project-status-window) — *implemented (5-node diagram, per-node click-through windows, Database ▸ Project Status…); Sandbox1's data-clone and Sandbox2's install buttons are **now wired** (`_refresh_project_status_sandbox_actions`, sandbox-configured predicate), and the App node's action window is still the flagged placeholder (§29)*
+    - [18.8 The Project Status window](#188-the-project-status-window) — *implemented (5-node diagram, per-node click-through windows, Database ▸ Project Status…); Sandbox1's data-clone and Sandbox2's install buttons are **now wired** (`_refresh_project_status_sandbox_actions`, sandbox-configured predicate), and the App node's action window is still the flagged placeholder (§29). **FQ-028/FQ-018 (2026-08-10):** it gains a **30 s window-active-gated poller** — the app's first repeating-interval `QTimer` — shared with §7's status-bar connectivity dots, which makes this window **auto-refreshing while open** instead of static*
 19. [PHP generation (vendor) & Save](#19-php-generation-vendor--save)
 20. [re_phpgen — own generator & gap loop](#20-re_phpgen--own-generator--gap-loop)
     - [20.4 Production cutover](#204-production-cutover-target-design--not-yet-reached) — *planned*
@@ -211,7 +291,7 @@
 24. [In-app manual](#24-in-app-manual)
 25. [Debug mode](#25-debug-mode)
 26. [Consolidated menu bar](#26-consolidated-menu-bar) — ***two** menu bars since FQ-016 (2026-08-07): the window bar, and [the Editor menu bar](#the-editor-menu-bar-fq-016-2026-08-07) (**History · Select · Parsing · Navigation · Deployment** — five since 2026-08-08). `Edit` no longer exists; **File loses `Save`/`Save As…`** and Tools loses **all four** Compare/Merge entries. **2026-08-09: `Parsing` gains the two Check gestures and Database loses them, along with `Open`/`Close Sandbox Session`**. **FQ-027 (2026-08-09):** `File ▸ Show Launcher…` → **`New Session`**, and the window bar gains a **[Maintenance-mode membership table](#window-bar-membership-in-maintenance-mode-fq-027-2026-08-09)** — the app's one **intent**-based filter, distinct from every capability-based *absent, not disabled* rule in this section*
-27. [Consolidated keyboard shortcuts](#27-consolidated-keyboard-shortcuts) — *the table lists **DEFAULTS**, not fixed bindings: every **menu-bar** QAction is user-rebindable through `View ▸ Customize Shortcuts…` (FQ-012, 2026-08-09), on a **steal-or-refuse** conflict rule because Qt fires **neither** of two shortcuts on one chord; the short list of genuinely unrebindable keys is enumerated there. **`Ctrl+S`/`Ctrl+Shift+S` are deliberately unbound app-wide** (stated, not omitted), the one carve-out being `CodeEditorDialog`'s OK/Cancel pair; **`Ctrl+O` joins them as deliberately unbound 2026-08-09** — but *free* rather than reserved, so a user may rebind it — while **`Ctrl+W` keeps `File ▸ Close`***
+27. [Consolidated keyboard shortcuts](#27-consolidated-keyboard-shortcuts) — *the table lists **DEFAULTS**, not fixed bindings: every **menu-bar** QAction is user-rebindable through `View ▸ Customize Shortcuts…` (FQ-012, 2026-08-09), on a **steal-or-refuse** conflict rule because Qt fires **neither** of two shortcuts on one chord; the short list of genuinely unrebindable keys is enumerated there. **`Ctrl+S`/`Ctrl+Shift+S` are deliberately unbound app-wide** (stated, not omitted) and now **without any carve-out** — `CodeEditorDialog`'s OK/Cancel pair, the last one, was deleted 2026-08-09 and the dialog answers `Return`/`Escape` instead; **`Ctrl+O` and `Ctrl+W` join them as deliberately unbound 2026-08-09** — but *free* rather than reserved, so a user may rebind either (status-corrected 2026-08-10, superseding *"`Ctrl+W` keeps `File ▸ Close`"*)*
 28. [Supersession ledger](#28-supersession-ledger)
 29. [Open questions](#29-open-questions)
 30. [Testing policy](#30-testing-policy)
@@ -446,11 +526,16 @@ pgtp_editor/
 │   ├── caret_context.py # resolve_caret_context(text, pos) → CaretContext | None — pure caret parsing
 │   │                  # (dotted identifier path / NEW.·OLD. row variable) over that same tokenizer,
 │   │                  # for §18.6's schema-aware Ctrl+Space completion; knows nothing of a live schema
-│   ├── statements.py  # SHIPS but is **UNWIRED** (§18.5 D4) — split_statements(text) over that same
-│   │                  # tokenizer: top-level `;` only, never inside a dollar-quoted body, string or
-│   │                  # comment; + classify_statement(sql). Tested (tests/sql/test_statements.py) but
-│   │                  # NO importer: ui/sql_console_panel.py still sends the whole buffer as one
-│   │                  # execute (the module's own docstring states this). No user gesture reaches it
+│   ├── statements.py  # split_statements(text) over that same tokenizer: top-level `;` only, never
+│   │                  # inside a dollar-quoted body, string or comment; + classify_statement(sql).
+│   │                  # Its INTENDED consumer (§18.5 D4) is still unwired — ui/sql_console_panel.py
+│   │                  # sends the whole buffer as one execute — but the module is no longer importer-
+│   │                  # less: sql/from_clause.py (2026-08-10) uses split_statements for per-statement
+│   │                  # scope. Its docstring's "NOT WIRED / nothing imports this module yet" is STALE
+│   ├── from_clause.py # FROM-clause / alias SCOPE analysis (analyze_from_scope → FromScope), pure and
+│   │                  # Qt-free; reuses tokenizer.py for opacity and statements.py for boundaries.
+│   │                  # SHIPS and is tested; its UI consumer (the ALIAS_REF branch in
+│   │                  # ui/ddl_object_editor.py::_show_completions) is a queued follow-up — §18.6
 │   └── formatter.py   # format_selection(text, *, indent_unit="    ") → FormatResult; _Reindenter frame walk
 ├── lint/              # §22 PHP linting — SHIPS (commit 90c6806), consumed by ui/php_file_tab.py (§21);
 │   │                  # Qt-free except config.py (QStandardPaths, the generation/config.py precedent)
@@ -625,8 +710,9 @@ reimplement.
 
 **Layout:** IDE-style docked panels. Left dock is a `QTabWidget` (`self.left_tabs`) hosting **Project
 tree**, **Contents** (manual), the **Database/XML Coherence** view (§17 — one tab; it replaces the
-former separate "Database Check" and "Table references" tabs, FQ-003) and **DDL Objects** (§18.1)
-tabs (the latter two hidden until invoked). Center is a tabbed `CenterStage` (Raw XML
+former separate "Database Check" and "Table references" tabs, FQ-003), **DDL Objects** (§18.1) and —
+since FQ-028 — **Findings** (the navigable search/navigation results tab, below)
+tabs (all but the first two hidden until invoked). Center is a tabbed `CenterStage` (Raw XML
 [default-visible working tab], Diff/Merge, Caption Management, Manual, Edit XSD, DDL Explorer —
 non-Raw-XML tabs hidden until invoked). Every one of those is a **fixed** tab, created in
 `CenterStage.__init__` and addressed by a stored integer index (`raw_xml_tab_index`, `xsd_tab_index`,
@@ -667,10 +753,13 @@ non-Raw-XML tabs hidden until invoked). Every one of those is a **fixed** tab, c
 > never sees a runtime tab, which is exactly the behavior wanted, but it means the fixed set's closability
 > is decided at construction and must not be recomputed later over a widened tab range.
 
-Bottom is a
-persistent **Audit/Problems** panel (`QListWidget`) shared by `[Schema]`, `[Validate]`, `[Find]`, `[PHP]`
-lines. Three further prefixes are **reserved against each other in all directions** — no feature may
-quietly annex another's prefix, and no fourth SQL-ish prefix may be added:
+Bottom is the **findings/journal dock area** — since FQ-028 (2026-08-10) a **two-tab** dock, not the
+single `Audit / Problems` `QListWidget` this spec carried from the beginning (ledger §28; the full
+contract is *The three audit surfaces* below).
+
+**The nine Audit prefixes still exist and are still reserved against one another — but a prefix now
+names a DESTINATION, not a share of one panel.** No feature may quietly annex another's prefix, and no
+fourth SQL-ish prefix may be added:
 
 | Prefix | Owner | Reports | State |
 |---|---|---|---|
@@ -681,15 +770,20 @@ quietly annex another's prefix, and no fourth SQL-ish prefix may be added:
 
 **No fourth SQL-ish prefix — and §18.5 D4's SQL console deliberately introduces none.** Ad-hoc query
 results, query **errors** and the console's own caveats render **inside the Sandbox SQL Console's own
-result panel** (`ui/sql_results_panel.py`), never in the Audit panel: a query error is not a validation
-finding, and inventing `[Run]`/`[Query]`/`[Exec]` would breach the reservation above. The Audit panel
-keeps exactly the prefixes in this table.
+result panel** (`ui/sql_results_panel.py`), never on any audit surface: a query error is not a validation
+finding, and inventing `[Run]`/`[Query]`/`[Exec]` would breach the reservation above.
+
+> **Reading this spec after FQ-028.** Dozens of sites in §8/§15/§16/§17/§18/§22 say *"reports to the
+> **Audit panel**"*. Read every one of them as *"writes an audit row, which `AuditRouter` places on the
+> surface its prefix names"* — the producer's call is unchanged (`audit.addItem(...)`), only the
+> destination is now decided centrally. Where such a site also asserts a **surface** (bottom dock,
+> reveal-the-dock, clear-on-rerun), the disposition table below is authoritative.
 
 Right dock is the **Properties** panel.
 
-**Dock visibility is bidirectional (BUG-007).** In `_build_view_menu` each of the **three dock actions**
-— "Project Tree" (`tree_dock`), "Properties Panel" (`properties_dock`), "Audit/Problems Panel"
-(`audit_dock`) — is wired **both ways**: `action.toggled → dock.setVisible` **and**
+**Dock visibility is bidirectional (BUG-007).** In `_build_view_menu` each **dock action** — "Project
+Tree" (`tree_dock`), "Properties Panel" (`properties_dock`) and the bottom findings/journal dock — is
+wired **both ways**: `action.toggled → dock.setVisible` **and**
 `dock.visibilityChanged → action.setChecked`. Closing a dock via its title-bar ✕ (or any programmatic
 hide/show) therefore keeps the menu checkbox honest. **No recursion guard is needed**: `QAction.toggled`
 and `QDockWidget.visibilityChanged` only fire on *actual* state changes, so the pair settles immediately
@@ -699,6 +793,256 @@ View-menu checkable keeps its one-way wiring: "Raw XML Panel" drives
 one-way wiring to `_toggle_table_references`, a `left_tabs` tab — is gone with FQ-003; the equivalent
 `left_tabs`-tab toggle is now Database ▸ **Database/XML Coherence**, §17/§26, and follows the same
 one-way pattern.)
+
+#### The three audit surfaces — the `Audit / Problems` dock is DISSOLVED (FQ-028, settled 2026-08-10)
+
+> **Status: partly built at the time of writing.** The five new pure/near-pure modules exist and are
+> verified in the tree — `ui/audit_router.py`, `ui/findings_panel.py`, `ui/status_bar.py`,
+> `ui/connectivity.py`, `ui/mode_indicator.py` — while `ui/main_window.py` still constructs
+> `self.audit_panel = QListWidget()` in a `QDockWidget("Audit / Problems")` beside a separate
+> `QDockWidget("Activity Log")`. **Everything below is the settled contract**; the host wiring pass is
+> landing in parallel. Where a name is stated as *specified* rather than *verified*, it is flagged.
+
+**The problem this replaces, recorded so it is not re-created.** One `QListWidget` did three unrelated
+jobs — (a) navigable click-to-jump findings, (b) operation narration, (c) one-off refusals — with three
+mutually contradictory lifecycles (Find cleared on rerun, Lint/Validate accumulated forever, one prefix
+cleared per tab), while ~40 transient `showMessage` calls duplicated much of it in the status bar. The
+fix is not a better single panel: **the three jobs need three lifecycles AND two locations**, so they get
+three surfaces, each with exactly one lifecycle.
+
+| Surface | Where | Holds | Lifecycle |
+|---|---|---|---|
+| **Findings** | **LEFT dock tab** (`left_tabs`) | `[Find]`, `[Bookmark]` — pure search/navigation results | **ephemeral, clear-all-on-new-content, last-operation-wins across types** |
+| **Results** | bottom dock, tab 2 | `[Check]`, `[Lint]`, `[Validate]`, `[Schema]` VERIFY findings | **accumulated** across runs, separated by a run header |
+| **Activity Log** | bottom dock, tab 1 | `[Schema]` learning chatter, `[PHP]` stdout, `[SQL]` refusals, `[Project]` status, **plus every transient the status bar used to scroll** | **append-only journal** (FQ-019's per-project JSONL) |
+
+**Complete disposition of every current Audit prefix — nothing is orphaned.** This table, not any prose
+summary, is the contract:
+
+| Prefix | Destination | Lifecycle / note |
+|---|---|---|
+| `[Find]` | Findings tab (left dock) | ephemeral, clear-on-new |
+| `[Bookmark]` | Findings tab (left dock) | ephemeral, clear-on-new |
+| `[Validate]` | Results tab | accumulated |
+| `[Lint]` | Results tab | accumulated |
+| `[Check]` findings | Results tab | accumulated. **`[Check]` NARRATIVE lines ride in the SAME run block** as that run's findings (FQ-028 open question 1, decided this way), so a run reads as one coherent unit rather than being split across two surfaces |
+| `[Schema]` **Verify** findings | Results tab | accumulated — Verify counts as a check (owner) |
+| `[Schema]` **learning** chatter | Activity Log | *"Learned N facts"*, *"NEW ELEMENT"* — narration, not a finding |
+| `[PHP]` generation stdout | Activity Log | narration |
+| `[SQL]` format-selection refusals | Activity Log | one-off refusals |
+| `[Project]` DDL-project status/errors | Activity Log | status/narration |
+| `[Sandbox]` sandbox-operation outcomes | Activity Log | **a TENTH prefix FQ-028's nine-row table did not know about** (`MainWindow._SANDBOX_PREFIX`). It is operation narration with a success/failure outcome — the journal's exact subject. Recorded here rather than silently absorbed |
+
+**`ui/audit_router.py::AuditRouter` is the one place a produced row is assigned a surface, and it is
+deliberately the ONLY thing the producers see change.** `find_controller`, `lint_controller`,
+`xsd_controller`, `generation_controller`, `ddl_project_controller` and the host's own reporters keep
+calling `audit.addItem(...)`: the router **quacks like the `QListWidget` they were written against**
+(`addItem` / `count` / `item` / `takeItem` / `clear`). Rewriting ~15 producers would have been ~15
+chances to hard-code a destination.
+
+- **Routing is pure and testable without Qt**: `prefix_of(text)` and
+  `classify(text, *, schema_verify=False) -> "findings" | "results" | "activity"`, over the module
+  `DESTINATIONS` map. **An unrecognised or unprefixed row goes to Results**, the closest thing to the old
+  dock, so nothing a producer emits can fall on the floor.
+- **`[Schema]` is the one prefix whose destination depends on the ROW, and the run — not the text —
+  decides it.** `xsd_controller` emits both a `"[Schema] VERIFY: …"` headline and bare
+  `"[Schema] line N: …"` issue rows during one verify pass, so the router carries a `schema_run` flag the
+  controller sets for the duration; matching on the text alone would send the issue rows to the journal.
+- **The virtual view is insertion-ordered and excludes both the journal and the run-separator
+  furniture.** `count()`/`item()`/`takeItem()` present Findings+Results as one list, which is what keeps
+  the producers' existing *"remove my own prior rows"* loops working — against the surface their rows
+  actually landed on.
+- **`takeItem` means two different things, on purpose.** On a **Findings** row it really removes it (that
+  *is* Find-All's clear-on-rerun). On a **Results** row it is **REFUSED** and instead **closes the current
+  run block**, so the next row opens a new one: the producer's *intent* (*"a new run of mine is
+  starting"*) is honoured while its *mechanism* (delete the old rows) is not, because Results accumulates
+  by design. `begin_results_run()` / its `end_results_run` alias let the host say so explicitly.
+
+**Findings and Results are ONE widget class, two instances** (`ui/findings_panel.py::FindingsPanel`,
+constructor flag `accumulate`). They differ on exactly one axis — what a new run does — and everything
+else (row shape, the `Qt.UserRole+N` payload convention, the click that jumps into the centre editor) is
+identical; two subclasses varying one boolean would have been two surfaces free to drift apart.
+
+- **Click routing is UNCHANGED** and this is load-bearing: rows are added with the plain `QListWidget`
+  API, every producer's `Qt.UserRole` line number and `UserRole+1` target keep working, and
+  `MainWindow._on_audit_item_clicked` stays the single dispatcher (raw / xsd / `DdlObjectRef.key` tuple /
+  PHP-tab key → jump to the target in the centre editor). **FQ-028 changes where a row is shown, never how
+  it navigates.**
+- **The run separator, exactly as the owner specified it**: a blank line, then a header line, then a
+  40-character dashed rule (`RUN_RULE = "-" * 40`). **Nothing is written before the first run** — an empty
+  panel does not open with a stray blank line. The header is
+  **`"%Y-%m-%d %H:%M:%S"`** — FQ-028 open question 2 decided **for** the `HH:MM:SS` suffix over the
+  owner's literal date-only form, because a date alone cannot tell two runs of the same check on the same
+  day apart, which is the entire point of keeping history.
+- **Separator rows are furniture, not findings.** Each carries `DECORATION_ROLE`
+  (`Qt.ItemDataRole.UserRole + 8`) and only `ItemIsEnabled`, so the router's virtual view excludes them, a
+  count of findings does not count the rule between them, and a click on one navigates nowhere.
+  `finding_items()` / `row_texts()` are the read-only accessors tests assert on.
+
+**The Findings tab's own rules** (Part 1): it is a **single persistent left-dock tab**, created once and
+reused; it **auto-opens and focuses** when a navigable op runs; the op's summary/count line stays as a
+**header row** inside the tab. Its lifecycle is **last-operation-wins across types** — run Find All, then
+List All Bookmarks, and the bookmarks *replace* the finds, because both answer *"where do I want to go
+next"* and only one such question is live at a time. The router enforces this by wiping the tab whenever
+the incoming prefix differs from the one on screen.
+
+> **Why the LEFT dock and not the centre pane** — recorded because it was considered and rejected. A
+> centre-pane results tab **hides the editor it is supposed to jump into**, which defeats step-through;
+> the left dock keeps the list and the target visible together. This also **retires FQ-014's rejection of
+> a dedicated bookmarks left-dock tab** (§8), which was rejected *only* on the grounds that the Audit dock
+> already was the app's list surface — an objection that dissolves when that dock is being restructured
+> anyway.
+
+**The bottom dock is two tabs, and FQ-019's Activity Log is REPOSITIONED into one of them.** FQ-019
+shipped (`bc02d9c`, `1aefc53`, `65a0f1b`) as its **own** dock beside `Audit / Problems`; FQ-028 moves it
+into **tab 1** of the single bottom dock, with **Results** as tab 2. Nothing about FQ-019's internals
+changes — `db/activity_log.py`'s entry shape/taxonomy/JSONL store and `ui/activity_panel.py`'s rendering,
+click-to-full-text viewer and per-project-vs-session-only distinction are unchanged; **only its host
+changes.** The two bottom docks and their two View-menu checkboxes collapse into one dock with one
+checkbox.
+
+**The Activity Log is where the ~40 transient status-bar messages now land** (see the status-bar rule
+below). Errors and refusals (*"Check — no sandbox session"*, *"Target failed"*) become journal entries
+under this rule too: accepted for v1 with the risk stated — if immediacy proves insufficient, a transient
+toast is a **later** entry, never a quiet re-opening of the status bar as a message board (§29).
+
+#### The status bar is STATIC-ONLY — the owner's rule, not a preference (FQ-028 Part 2)
+
+> **The rule, stated 2026-08-10 and the acceptance test for every slot the bar will ever grow:** *"The
+> status bar needs to avoid being a message board — it should have some well defined information on it
+> constantly."* **A slot either always states a defined fact, or it does not belong in the bar.** There is
+> no third category of "important enough to scroll past". Anything transient goes to the Activity Log
+> (above); anything navigable goes to Findings or Results.
+
+`ui/status_bar.py::StaticStatusBar` (a `QStatusBar` subclass) carries **permanent widgets only**:
+
+| Slot | Always states | Module |
+|---|---|---|
+| **Mode indicator** | the major mode, plus the minor mode when there is one | `ui/mode_indicator.py::ModeIndicator` |
+| **Busy slot** | `Idle`, or `<message> <n>s` with a live elapsed counter while an op runs | `ui/status_bar.py::BusySlot` |
+| **Quality dot** · **Sandbox dot** | connectivity, **while a project is open** | `ui/connectivity.py::ConnectivityIndicator` |
+| **DEBUG chip** | that debug logging is on (§25) | the existing `_debug_label` |
+
+- **The ~40 `showMessage` call sites did NOT move — the SINK did.** `StaticStatusBar.showMessage` is
+  **overridden**: it paints nothing and hands the text to the host's `notice_sink`, which journals it.
+  Rewriting forty call sites plus `ui/busy.py` and the `_shell_status` trampoline would have left forty
+  chances to reintroduce a message-board write; overriding the sink closes the seam **permanently and in
+  one place**. This is the same reasoning as `AuditRouter` quacking like a `QListWidget`.
+- **`currentMessage()` deliberately keeps returning the last notice**, because it is *the notice that was
+  emitted*, not something on screen — which is what lets callers (and ~80 existing suite assertions) keep
+  asking *"did that gesture report anything?"*. **`displayed_message()` is the honest answer to "what does
+  the bar paint", and it is always `""`** — that is the assertion that the bar is not a message board, and
+  it is a mandatory test.
+- **The busy slot is re-entrant by depth.** A blocking gesture can nest another, so `begin(message)` /
+  `end()` count: the slot shows the **outermost** message and returns to `Idle` only when the last one
+  ends. A nested op may never leave the bar claiming idle while the outer one still runs. `busy_text` is
+  a pure formatter so the shape is asserted without a clock; the counter ticks at
+  `BUSY_TICK_MS = 1000`. **`Idle` is never blank** — the slot is permanent and states its fact.
+  `ui/busy.py::busy_status` becomes a caller of `begin_busy`/`end_busy` rather than of `showMessage`
+  (**specified; not yet in the tree** — `busy.py` still calls `status_bar.showMessage(message)`, which
+  under `StaticStatusBar` degrades safely to a journal line).
+
+#### The mode indicator — one source of truth, two surfaces (FQ-028 Part 2, absorbing FQ-029)
+
+**Terminology is §7's and gains NO fifth meaning of "mode"** (see the *"mode has four meanings"* rule
+under the Editor menu bar, which this extends rather than competes with):
+
+| Term | Means | Values | Source |
+|---|---|---|---|
+| **Major mode** | the **SESSION workflow mode** FQ-027's launcher sets | Standalone · Project · Maintenance | `MainWindow.workflow_mode` / `set_workflow_mode` (**verified in the tree**) — in-memory, **session-only, NO QSettings key** |
+| **Minor mode** | an **active editor SUB-STATE**, shown only when there is one | Caption (§13) · Compare/Merge (§12) · Edit XSD (§11) | the three existing named states; *"Editing"* is the **absence** of a minor mode, not a fourth one |
+
+These are distinct from the other two established meanings of the word — **`_xsd_mode`** (which *curated
+vs. learned* XSD document the Edit XSD tab holds, §11) and **`DdlObjectRef.kind`** — and from *"active
+tab kind"*, which is what per-menu gating uses. The indicator **READS** these states; it adds no state
+machine, and per §7's standing rule the phrase *"active tab kind"* is still what gating must be written
+in.
+
+- **HARD dependency on FQ-027.** FQ-027 ships the launcher, `set_workflow_mode` and the Maintenance
+  filter, so the major mode's live value already exists in memory. **There must be exactly one readable
+  accessor and both surfaces must read it** — never a second, drifting notion. *(`ui/mode_indicator.py`'s
+  docstring names `MainWindow.current_mode()`; **no such method exists in the tree at the time of
+  writing** — `workflow_mode` / `set_workflow_mode` do. Whichever name survives, the invariant is one
+  accessor, not two.)*
+- **Two surfaces, one call.** **(a)** a right-anchored, colour-backed panel pinned into the movable Main
+  Toolbar (`ui/toolbar_controller.py`, `objectName("main_toolbar")`), reached by adding an **expanding
+  spacer `QWidget`** via `toolbar.addWidget(...)` *then* the indicator, so it stays flush right regardless
+  of how many command buttons precede it and regardless of where the user drags the toolbar; it must be
+  built where `addToolBar` lives, so it survives the same `saveState`/`restoreState`. **(b)** the status
+  bar's **upgraded `_mode_label`** — the same `ModeIndicator` class, **not a second label**.
+- **One update path.** A single `MainWindow._refresh_mode_indicator()`, shaped like the existing
+  `_refresh_*_affordances` convention, called at **every** major/minor transition (launcher pick ·
+  `File ▸ New Session` · Caption enter/leave · Compare/Merge enter/leave · Edit XSD enter/leave). Both
+  surfaces are rewritten by that one call; **no ad-hoc `setText`/`setStyleSheet` at a transition site.**
+- **PASSIVE ONLY (owner ruling).** No click handler, no context menu, no mode switching from either
+  surface. Mode changes stay with the launcher pick and `File ▸ New Session`.
+- **Text shape.** `mode_text(major, minor)` → `"Project"` or `"Project · Caption"` (`MODE_SEPARATOR`
+  `" · "`). **An unknown major-mode string is rendered verbatim, not swallowed** — a mode the indicator
+  cannot name is a bug worth seeing.
+- **It is NEVER blank.** FQ-028 open question 8 is decided: before a launcher column is picked the
+  indicator reads **`No Mode`** in a neutral palette, because *"no workflow mode has been chosen"* is
+  itself a defined fact and the status-bar rule admits no empty slot.
+- **Minor mode is TEXT, not a second colour.** The background is always the **major** mode's; the minor
+  mode is appended after the middle dot. Three majors × four editor sub-states would be a twelve-colour
+  vocabulary, which defeats *"easy recognition"*. (A two-tone/second-colour treatment is the recorded
+  alternative and remains the owner's to overrule, §29.)
+- **Theme-aware, unlike the DEBUG chip.** `mode_colors(light: bool) -> dict[str | None, tuple[bg, fg]]` is
+  **pure** — it builds and returns a fresh dict, mutating nothing, mirroring `theme.py`'s
+  `light_palette()`/`dark_palette()` split — and is **re-consulted when `apply_theme(app, light)` flips**.
+  Copying `_debug_label`'s hardcoded static red is explicitly forbidden: it does not re-theme.
+  `ModeIndicator.colors()` exposes the pair currently painted, which is what a theme test and a contrast
+  check read. The shipped starting palette (final values remain tunable with the owner, §29):
+
+  | Major mode | Light (bg / fg) | Dark (bg / fg) |
+  |---|---|---|
+  | *(none picked yet)* | `#E8E8E8` / `#3A3A3A` | `#3A3A3A` / `#D8D8D8` |
+  | **Standalone** | `#E3F2FD` / `#0D3B66` | `#1E3A5F` / `#CFE3FF` |
+  | **Project** | `#E6F4EA` / `#1B5E20` | `#1E3A28` / `#B6E3C0` |
+  | **Maintenance** | `#FDECEA` / `#8B1E1E` | `#3A2320` / `#F2B8AE` |
+
+  Contrast must be checked against the **live QDarkStyle chrome**, not the bare palette — §7's theme rule
+  is that an app-level QSS sits over the hand-rolled `QPalette`.
+
+#### The connectivity dots — FQ-018 is a COMPONENT of this feature, not a separate one
+
+**FQ-018 (status-bar Quality/Sandbox connectivity, 30 s poll) does not ship separately and never will.**
+It is Part 2.4 of FQ-028: the static status bar is the surface it asked for, and a queue entry describing
+a second, independently-designed indicator region would grow exactly the rival-indicator drift this
+feature exists to prevent. Owner: *"FQ-028 is the large scale solution, and FQ-018 is part of that
+solution."* Ledger §28. Its design is carried here whole:
+
+- **Two labelled dots, `Quality ●` and `Sandbox ●`** (`ui/connectivity.py::ConnectivityIndicator`), the
+  labels matching §18.8's **node names** so the two surfaces read alike.
+- **It re-derives nothing.** The states are §18.8's own enums, imported from
+  `ui/project_status_model.py`: `QualityState.NOT_SET_UP / OFFLINE / CONNECTION_OK` and
+  `SandboxState.NOT_SET_UP / OFFLINE / CONNECTED`. A second, drifting notion of *"connected"* is the
+  near-duplicate trap this project's placement gate exists to catch. `connectivity.sandbox_state_for(
+  configured, probe_error)` is deliberately shaped like `project_status_model.quality_state` — the
+  window's own sandbox classifier works off `ProjectCapabilityStatus.degraded_reason`, which the
+  lightweight poll does not compute, so the poll's two-fact answer maps onto the **same** enum rather than
+  inventing a parallel one.
+- **A fourth rendering state, `UNKNOWN`, belongs to the status bar alone** — the poll has not answered yet
+  (project just opened, window just regained focus, probe in flight). Shown as a **hollow grey dot** with
+  a tooltip saying so. This is the status-bar rule applied literally: *"we have not checked yet"* is a
+  defined fact, and it must not be rendered as a blank or as a stale green. Rendering table:
+  white = not set up · red = offline · green = reachable · hollow grey = not checked.
+  `dot_rendering(state)` falls back to `UNKNOWN` for anything it does not know — **a state this module
+  cannot name is never a reason to claim connectivity.**
+- **BOTH dots are PROJECT-MODE ONLY — FQ-028 overrides FQ-018** (which showed the Quality dot in
+  standalone too; ledger §28). They are **present when a project is actually open and absent
+  otherwise** — visibility, never a greyed-out third posture. **"Actually open" means
+  `DdlProjectController.is_open`, NOT the "Project" workflow-mode label**: the two can legitimately
+  disagree (a user picks the Project column, then cancels the open dialog), and the dots follow the real
+  fact.
+- **Green means REACHABLE, not fully capable.** The 30 s poll is a `SELECT 1`-shaped round trip;
+  `db/sandbox.py::probe()` (superuser, `pg_dump`/`pg_restore` discovery, `degraded_reason`) stays on
+  explicit user action in the Project Status window. **A dot may be green while §18.8 still reports a
+  capability degradation**, and that is correct: the bar answers *"is it up?"*, not *"is it fully
+  capable?"*.
+- **Polling** (§18.8 carries the poller — see there): the app's **first repeating-interval `QTimer`**
+  (every other `QTimer` is a one-shot debounce), 30 s, running **only while the main window is active**,
+  and always off the GUI thread via the established `run_async` seam. **One shared poller feeds both the
+  status bar and the §18.8 window**, so the two can never disagree about freshness.
 
 **Document state:** `_dirty` + `_set_dirty()` (title gets " *"); editor `textChanged` marks dirty;
 load/save/revert clears. **Theme toggles never dirty either document:** a theme change re-applies
@@ -783,12 +1127,18 @@ per-tab entry of the Editor bar's `Deployment` menu** (§26): `Save pgtp` / `Sav
   **`PhpFileTab`'s own `eventFilter` `Key_S` branch** (`php_file_tab.py:389-390`, which also accepts the
   `ShortcutOverride` so the window action never doubled it) — **dies too**, owner's words: *"Dies at all,
   inconsistency is a bad driver"* — its `Key_Z`/`Key_Y` branches **stay** (§18.5 carve-out 1); and
-  **`CodeEditorDialog`'s pair — MUST NOT DIE.** That dialog binds `Ctrl+S`/`Ctrl+W` **twice over**, a
-  `WindowShortcut`-scoped `QShortcut` (`code_editor.py:514-516`) **and** a duplicate `keyPressEvent` branch
-  (`:531-543`, present because `QShortcut` activation is unreliable under the offscreen test platform), and
-  both call `self.save`/`self.cancel` — the modal's **OK/Cancel**, the same slot as `button_box.accepted`,
-  which **writes nothing to disk**. **Both duplicates survive**; killing either would be an unrelated
-  regression in the `Edit code…` modal. The DDL object editor's own filter never claimed `Ctrl+S`
+  **`CodeEditorDialog`'s pair — CARVED OUT on 2026-08-08, then DELETED on 2026-08-09** (owner decision;
+  status-corrected 2026-08-10). The dialog had bound `Ctrl+S`/`Ctrl+W` **twice over** — a
+  `WindowShortcut`-scoped `QShortcut` **and** a duplicate `keyPressEvent` branch, both calling
+  `self.save`/`self.cancel`, i.e. the modal's **OK/Cancel**, which write nothing to disk. FQ-020 spared them
+  as an unrelated modal's local convention. **That carve-out is gone:** `ui/code_editor.py` now states at
+  the construction site that there is **NO `Ctrl+S` / `Ctrl+W`** here, *"this dialog was the last carve-out
+  for either chord"* — `Ctrl+S` having been dead app-wide since FQ-020 and `Ctrl+W` having lost `File ▸
+  Close` the same day. **OK and Cancel remain reachable by the button box and by `Return`/`Escape`**, Qt's
+  own dialog defaults, so no capability was withdrawn — only the two chords. This is the completion of the
+  same argument, not a new one: a chord left alive in exactly one modal is how a dead reflex survives.
+  *(Superseded: "MUST NOT DIE … both duplicates survive; killing either would be an unrelated regression".)*
+  The DDL object editor's own filter never claimed `Ctrl+S`
   (`Ctrl+Alt+F` / `Ctrl+Z` / `Ctrl+Y` only), so its Ctrl+S came solely from the window action and simply
   goes.
 - **Save still never executes anything against a database.** Pushing DDL to a database is the separate,
@@ -800,8 +1150,13 @@ per-tab entry of the Editor bar's `Deployment` menu** (§26): `Save pgtp` / `Sav
   *"The XSD tab has unsaved changes — save it first (Ctrl+S)."* — it must name **`Deployment ▸ Save XSD`**.
   Grep for siblings before assuming it is the only one.
 
-- **File ▸ Close** (Ctrl+W): if dirty, 3-way Save/Discard/Cancel (`_confirm_close()`, test-seam
-  `confirm=`); clears editor+tree, resets state.
+- **File ▸ Close** — **no shortcut** (`Ctrl+W` UNBOUND, owner decision 2026-08-09; status-corrected
+  2026-08-10, §27). The reason is `Ctrl+O`'s exactly: this app closes projects, `.pgtp` documents, PHP
+  tabs, DDL object tabs, the XSD tab and console tabs, so one `Ctrl+W` has to pick which "close" it means —
+  and the one it meant was **the rarest**, closing the whole project. Like `Ctrl+O` and unlike `Ctrl+S`, the
+  chord is left **free** rather than reserved, so a user may bind it to whichever close they actually mean
+  through `View ▸ Customize Shortcuts…`. Behaviour is unchanged: if dirty, 3-way Save/Discard/Cancel
+  (`_confirm_close()`, test-seam `confirm=`); clears editor+tree, resets state.
 - **File ▸ Discard Changes** (was `Revert`, renamed and re-specified by FQ-020; ledger §28): **reload the
   document from disk**, discarding edits since the last save. **Gated on the dirty flag**, never on a
   `.bak` existing.
@@ -1140,13 +1495,16 @@ default), `LEGACY_ID_ALIASES`, **`RENAMED_ID_ALIASES`** (below), `DEFAULT_TOOLBA
   | `database.check-object-in-sandbox` | `parsing.check-object-in-sandbox` | BUG-039, §18.5 D3a |
   | `database.check-object-without-applying` | `parsing.check-object-without-applying` | BUG-039, §18.5 D3a |
 
-  **There is deliberately NO row for the Difference commands** (status-corrected 2026-08-09; ledger §28).
-  FQ-021's third leg — moving `tools.next-difference` / `tools.prev-difference` /
-  `tools.apply-changes-to-target` onto `navigation.*` and relabelling `Prev Difference` →
-  `Previous Difference` — **did not ship**: the two Difference commands are still built on `Tools` and keep
-  their `tools.*` ids, and `Apply Changes to Target` has no menu action at all, so it has no id to alias.
-  Whoever implements that leg adds the three rows **then**, in the same commit as the move (the id is the
-  whole menu path, so the move without the rows silently drops a pinned button).
+  | `tools.next-difference` | `navigation.next-difference` | FQ-021 third leg, §12/§26 |
+  | `tools.prev-difference` | `navigation.previous-difference` | FQ-021 third leg — **note the last segment changes too**, because `Prev Difference` was relabelled `Previous Difference` and *the label IS the id's last segment*: the move and the relabel are **one** id change, not two |
+
+  *(Corrected 2026-08-10, superseding the 2026-08-09 statement that there is "deliberately NO row for the
+  Difference commands" because the leg had not shipped: it shipped in `1ccfe9d`, and the rows landed in the
+  same commit as the move — which is exactly what that statement demanded of whoever implemented it, the id
+  being the whole menu path, so a move without the rows silently drops a pinned button.
+  **`Apply Changes to Target` needs no row**: FQ-020 had already deleted its `Tools` action, so by the time
+  it acquired a `Navigation` home there was no live `tools.*` id to alias from — a deletion followed by a
+  creation, not a move.)*
 
 - **Per-tab menus: build every member ONCE at startup and gate with `setVisible` — never create/destroy
   actions per tab.** Stated here as a rule about per-tab menus **generally**, because it is a verified
@@ -1164,10 +1522,10 @@ default), `LEGACY_ID_ALIASES`, **`RENAMED_ID_ALIASES`** (below), `DEFAULT_TOOLBA
   precedent is `Select ▸ Select Parent Block` (FQ-015, the first accepted instance). The accepted
   instances, in order: (1) `Select ▸ Select Parent Block`; (2) **the `Deployment` menu's per-tab members**
   (FQ-020); (3) **the whole `Parsing` menu's four members** (BUG-039, 2026-08-09 — see the Parsing bullet
-  below and §26). *(A fourth was specified — `Navigation`'s three mode-only Compare/Merge members, FQ-021 —
-  but that leg **did not ship**; it is queued design, not a shipped instance. Status-corrected 2026-08-09,
-  ledger §28.)*
-  **(1)–(2) are not default buttons.** **(3) IS**: `Validate Project` is one of the five
+  below and §26); (4) **`Navigation`'s three mode-only Compare/Merge members** (FQ-021 third leg, shipped
+  `1ccfe9d` — status-corrected 2026-08-10, superseding the 2026-08-09 note that this leg "did not ship" and
+  was "queued design, not a shipped instance").
+  **(1)–(2) and (4) are not default buttons.** **(3) IS**: `Validate Project` is one of the five
   `DEFAULT_TOOLBAR_IDS`, so on a DDL object editor tab a *default* toolbar button goes empty. **That cost
   is ACCEPTED by owner ruling (BUG-039), not overlooked** — it is the same trade-off as (1), taken one
   step further, and it supersedes FQ-016's recorded reason for leaving `Parsing` ungated (ledger §28). The
@@ -1230,10 +1588,12 @@ it is not user-composable, and it is not the customizable toolbar above.
   **Navigation** (built by
   `FindValidateController.build_navigation_menu(self.editor_menu_bar)` — renamed from
   `build_bookmarks_menu` with the menu — which takes the bar to build on so the same method can host the
-  menu on either bar; **exactly the five bookmark actions, always visible**, because they are
-  per-*editor*. **FQ-021's three mode-only members (`Next Difference` / `Previous Difference` /
-  `Apply Changes to Target`) are NOT here — that leg did not ship**; the Difference commands are still on
-  the window bar's `Tools` menu and `Apply Changes to Target` has no menu home, §12/§26/§29) and
+  menu on either bar; **eight members in two groups split by a separator** — the five bookmark actions,
+  **always visible** because they are per-*editor*, then FQ-021's three **Compare/Merge-mode-only** members
+  `Next Difference` / `Previous Difference` / `Apply Changes to Target`, built once and only
+  `setVisible`-toggled by `set_diff_mode_members_visible`, driven by `CenterStage.diff_merge_mode_changed`
+  — **the MODE, never `currentChanged`** (§12/§26). *(Superseded 2026-08-10: "exactly the five bookmark
+  actions … that leg did not ship" — it shipped, `1ccfe9d`.)*) and
   **Deployment** (FQ-020 — **~8 actions built once at startup**, visibility flipped by active tab kind;
   §26 has the per-tab table). Enumerated in §26. The commented **insertion point**
   that stood between History and Parsing is gone, consumed by the real menu; no such placeholder comment
@@ -1248,7 +1608,10 @@ it is not user-composable, and it is not the customizable toolbar above.
 - **Per-menu membership is gated by the ACTIVE TAB KIND, never by mode** (`Parsing` was the original
   candidate; `Select` is the first actual user — see the shipped gating below). The word *"mode"*
   already carries four meanings in this project (Maintenance mode below, Caption Mode §13, `_xsd_mode`
-  §11, `DdlObjectRef.kind`) — **use "active tab kind"** in spec and code. This is **capability** gating
+  §11, `DdlObjectRef.kind`) — **use "active tab kind"** in spec and code. **FQ-028 adds no fifth meaning:
+  its "major mode" is the launch/Maintenance-mode notion (meaning 1) and its "minor mode" is a *name for
+  the set* {Caption, Compare/Merge, Edit XSD} — the already-named editor sub-states, one of which is
+  meaning 2.** See *The mode indicator* above for the mapping table. This is **capability** gating
   (rule A below; the same predicate §26 already uses for `Check DDL Object`, *"disabled unless a DDL
   object editor tab is active, kept in sync on `center_stage.currentChanged`"*), so it is independent of
   Maintenance mode's intent-based filter (rule B) — and the two are on **different bars** anyway: the
@@ -1286,17 +1649,18 @@ it is not user-composable, and it is not the customizable toolbar above.
      `Check Object Without Applying`) from the same active-tab-kind fact. See the Parsing bullet below for
      the predicate and the composition rule; case 4 is the first one that empties a **default** toolbar
      button, accepted by owner ruling.
-- **(FQ-021, third leg — DESIGNED, NOT SHIPPED; status-corrected 2026-08-09, ledger §28.) The
-  Compare/Merge mode's three `Navigation` members would be the ONE exception to `currentChanged`-driven
+- **(FQ-021, third leg — SHIPPED `1ccfe9d`; status-corrected 2026-08-10, ledger §28.) The
+  Compare/Merge mode's three `Navigation` members are the ONE exception to `currentChanged`-driven
   gating: they hang off the MODE TRANSITION, not off the active tab.** The mode outlives a tab switch
   exactly like Caption Mode does — the user may tab back to Raw XML while a comparison is loaded, and it
   must still be read-only and the Difference commands must still be reachable — so
-  `enter_diff_merge_mode()`/`leave_diff_merge_mode()` would refresh them, never
-  `center_stage.currentChanged` (§12). **In the shipped app there is nothing to refresh:** the two
-  Difference commands sit on `Tools` and are **ungated in every state** (a user can invoke them with no
-  comparison loaded), and `Apply Changes to Target` is unreachable. The mode transition therefore currently
-  drives only the read-only reason and the tab reveal. This rule stands as the binding constraint for
-  whoever implements the leg.
+  `CenterStage.diff_merge_mode_changed` (emitted by `enter_diff_merge_mode()`/`leave_diff_merge_mode()`)
+  drives `set_diff_mode_members_visible`, **never `center_stage.currentChanged`** (§12). The failure this
+  avoids is concrete rather than theoretical: `leave_diff_merge_mode` ends with
+  `setCurrentIndex(raw_xml)`, which emits **no** `currentChanged` when Raw XML is already current — a state
+  the panel's own Close button reaches — so a `currentChanged` gate would leave all three members visible
+  after the mode ended. A test asserts zero emissions while they still hide. *(Superseded: "would be … in
+  the shipped app there is nothing to refresh", written while the leg was unshipped.)*
 - **`Parsing` IS tab-kind-gated (BUG-039, settled 2026-08-09 — ledger §28; this REPLACES the earlier
   "deliberately NOT exercised" ruling).** The menu holds **four** members, **all built once in
   `_build_parsing_menu` at startup** and only ever `setVisible`-toggled (the build-once rule above is a
@@ -1446,7 +1810,7 @@ scattered across the `_build_*_menu` methods.
 |---|---|---|
 | **Trigger** | A fact about what the app *can do right now*: `has_session`, `_configured_sandbox_params()`, `bool(sandbox_params.host)`, `self._ddl_project_folder is None`, the active tab kind, `hasattr(editor, "select_parent_block")` | A fact about what the user *said they were doing*: they picked the launcher's **Maintenance** column this session |
 | **Justification** | **No dead controls.** A command that cannot run is noise, and clicking it could only produce a refusal | **Focus.** A one-off administrative task on the app's own schema should not be surrounded by the whole application |
-| **Applies to** | Every gated affordance in the app (§18.5 carve-out 2, §18.7, §26's *absent, not disabled* statements, `Select ▸ Select Parent Block`, `Parsing`'s tab-kind gate, `Sandbox Setup…`) | The window menu bar's **View · Database · Tools · Generation**, and the non-`New Session` items of **File** — nothing else, in no other mode |
+| **Applies to** | Every gated affordance in the app (§18.5 carve-out 2, §18.7, §26's *absent, not disabled* statements, `Select ▸ Select Parent Block`, `Parsing`'s tab-kind gate, `Database ▸ Sandbox SQL Console…`) | The window menu bar's **View · Database · Tools · Generation**, and the non-`New Session` items of **File** — nothing else, in no other mode |
 | **Does the command work if you could click it?** | **No** — that is precisely why it is hidden | **Yes** — the hidden commands run perfectly well; the app is deciding the user did not mean them |
 | **May it "state a reason" instead of vanishing?** | **Yes, and since FQ-023 it must** when the capability is *one click from applicable*: **present-and-reporting** rather than absent (§18.5 carve-out 2) | **No — there is nothing to report.** A refusal message would have to say "this works, but you said you were doing something else". The answer to a rule-B hide is `File ▸ New Session`, not a refusal string |
 | **Escape** | Acquire the capability (open a project, configure a sandbox, switch tabs) | `File ▸ New Session` — always visible, in every mode, by construction |
@@ -1491,8 +1855,8 @@ ruling, not an implementation detail.**
 
   | Situation | Posture | Precedent |
   |---|---|---|
-  | The command **no longer exists as a gesture** in any state | **DELETE the QAction** — a hidden one would leave a live toolbar button for a gesture the app no longer offers | `Open`/`Close Sandbox Session` (BUG-040) |
-  | The command **cannot run right now** but exists | **HIDE** (Rule A) — or **present-and-report** when it is one click from applicable | §18.5 carve-out 2, `Sandbox Setup…` |
+  | The command **no longer exists as a gesture** in any state | **DELETE the QAction** — a hidden one would leave a live toolbar button for a gesture the app no longer offers | `Open`/`Close Sandbox Session` (BUG-040); **`Sandbox Setup…` (2026-08-09) — deleted rather than left hidden even though its *capabilities* survived, because the capabilities were rehomed into Project Settings and the action itself no longer names anything** |
+  | The command **cannot run right now** but exists | **HIDE** (Rule A) — or **present-and-report** when it is one click from applicable | §18.5 carve-out 2, `Database ▸ Sandbox SQL Console…`, `Database ▸ DDL Explorer (Sandbox)` |
   | The command **works fine**, and the user has declared a different task | **HIDE** (Rule B) — the pinned toolbar button keeps working *on purpose*, because it points at a command that still does its job | Maintenance mode (FQ-027) |
 
   BUG-040 and FQ-027 reach opposite conclusions from the same `_walk_menu_actions` fact because the cases
@@ -1935,9 +2299,11 @@ could not see how many bookmarks existed, what was at them, or jump to the fourt
   command that produced literally nothing would read as broken.
 - **No shortcut**, matching `Clear All Bookmarks` — and placed **immediately after it**, last of the
   `Navigation` menu's bookmark group: this produces a report, and F2/Shift+F2 already own
-  stepping. **Reveals the Audit dock** through the existing injected `_show_audit_dock` callback (the same
-  way `CoherenceController` receives it) rather than reaching for `audit_dock` from a controller —
-  without it the command is a silent no-op whenever the dock is hidden.
+  stepping. **Reveals its results surface** through the existing injected `_show_audit_dock` callback (the
+  same way `CoherenceController` receives it) rather than reaching for the dock from a controller —
+  without it the command is a silent no-op whenever that surface is hidden. **Since FQ-028 (§7) the
+  surface is the left-dock `Findings` tab, which auto-opens and focuses**; the injected-callback shape is
+  what makes that a one-line host change and no controller change at all.
 - **A snapshot, not a live view**: toggling a bookmark afterwards does not re-sync the rows. The lane
   therefore subscribes `FindValidateController._on_editor_bookmarks_changed` to the mixin's observer
   registry (above) and acts on **`BOOKMARKS_RESET` only** — a `setPlainText` wiped that editor's set, so
@@ -1949,8 +2315,13 @@ could not see how many bookmarks existed, what was at them, or jump to the fourt
   the restore is in-range-only. The gutter mixin knows nothing about the Audit panel — it publishes
   `(editor, reason)` and the row-owning controller interprets it; the mixin is **never** handed a reference
   to the panel.
-- Rejected: a dedicated bookmarks list panel / left-dock tab (the Audit dock already *is* the app's
-  list-of-locations surface, with a working click router, three precedents and a clear-scope convention).
+- ~~Rejected: a dedicated bookmarks list panel / left-dock tab~~ — **that rejection is RETIRED by FQ-028
+  (2026-08-10).** It rested entirely on *"the Audit dock already **is** the app's list-of-locations
+  surface, with a working click router, three precedents and a clear-scope convention"* — an argument that
+  dissolves once that dock is dissolved. `[Bookmark]` rows now land on the **left-dock Findings tab**
+  (§7), which is exactly the surface this bullet declined to build; **the click router, the precedents and
+  the clear-scope convention all come with them unchanged**, which is why the rejection's reasoning is
+  spent rather than overruled.
 
 **Every editor's Find/Replace bar is PERMANENTLY VISIBLE** (FQ-016, settled 2026-08-07; full mechanics in
 §15, shortcuts in §27). This is a shared editor behaviour, not a per-tab one: all six `FindReplaceBar`
@@ -1976,13 +2347,14 @@ disable the actions' keyboard shortcuts in Qt (the precedent was
 two actions no longer exist since FQ-016 dissolved the Edit menu, but the Qt rule they demonstrated is
 unchanged and is what this gating depends on). **Since FQ-021b the host menu is `Navigation`**
 (`set_bookmarks_enabled` keeps its bookmark-scoped *name* deliberately — what Caption Mode gates is the
-bookmark action **group**, not "the menu"). **The shipped call disables the `QMenu` AND all five actions**,
-and that is currently equivalent to the group, because every member of `Navigation` **is** a bookmark
-action. **Standing constraint, restated as a precondition of FQ-021's unshipped third leg
-(status-corrected 2026-08-09):** the moment §12's mode-only `Next`/`Previous Difference` and
-`Apply Changes to Target` join this menu, **the whole-`QMenu` disable must be dropped** — those commands
-have nothing to do with captions and disabling the menu wholesale would kill Difference navigation during
-caption work. The five actions are the whole scope either way. The bar's own *widget* is separately hidden on the Caption Management tab (§26, resolved
+bookmark action **group**, not "the menu"). **The shipped call disables the FIVE ACTIONS and NOT the
+`QMenu`** — the whole-menu disable was **dropped** by FQ-021's third leg (`1ccfe9d`), exactly as the
+standing constraint required. *(Superseded 2026-08-09's "the shipped call disables the `QMenu` AND all
+five actions, and that is currently equivalent to the group": it stopped being equivalent the moment
+`Next Difference` / `Previous Difference` / `Apply Changes to Target` joined the menu.)* The reason is
+substantive, not mechanical: those three have nothing to do with captions, and **a comparison loaded while
+captions are being edited is still navigable** — disabling the menu wholesale would kill Difference
+navigation during caption work. The five actions are the whole scope. The bar's own *widget* is separately hidden on the Caption Management tab (§26, resolved
 2026-08-07) — that hides the bar, never the actions, so this action-level gating is still what actually
 kills the shortcuts.
 **Gutter bookmark toggling (single-click strip and the double-click on the line number) is
@@ -2071,7 +2443,9 @@ also exposes
 `replace_current_selection(text)` (FindReplaceBar's Replace contract, mirroring `XmlEditor`), which
 **no-ops on a read-only editor** — `QTextCursor` edits bypass `setReadOnly`, so this guard is what
 actually protects read-only DDL buffers. `CodeEditorDialog(QDialog)` hosts it with
-`saved(str)`/`cancelled` signals, **Ctrl+S** save / **Ctrl+W** cancel; never `.exec()` in tests.
+`saved(str)`/`cancelled` signals, accepted/cancelled by the button box or by **`Return`/`Escape`** (Qt's
+own dialog defaults) — **not** by `Ctrl+S`/`Ctrl+W`, which were deleted on 2026-08-09 as the last carve-out
+for either chord (§7/§27); never `.exec()` in tests.
 
 **Tier-1 fallback:** on `PgtpParseError`, `_handle_parse_failure` keeps the `QMessageBox.critical`
 dialog **and** re-reads the file, `setPlainText`, `highlight_error_line(exc.line)`, reveals + checks +
@@ -2449,33 +2823,42 @@ on the **mode transition**, never on `center_stage.currentChanged` (§7).
   **`DiffMergePanel` gets its own Close affordance whose `_on_close` calls `leave_diff_merge_mode()`.**
   Preferred over making the tab closable, because a **mode is not a tab** and `_closable`'s three members
   are all plain tabs.
-- **Where the three Compare/Merge commands live — SHIPPED STATE FIRST** (status-corrected 2026-08-09;
-  ledger §28):
+- **Where the three Compare/Merge commands live — SHIPPED** (`1ccfe9d`, FQ-021's third leg;
+  status-corrected 2026-08-10, ledger §28):
 
-  | Command | Shipped label | Shipped home | Gating |
-  |---|---|---|---|
-  | Next Difference | `Next Difference` | window bar ▸ **`Tools`** (`main_window.py::_build_tools_menu`) | **none** — invokable with no comparison loaded |
-  | Previous Difference | **`Prev Difference`** (the string *"Previous Difference"* exists **nowhere** in the package) | window bar ▸ **`Tools`** | **none** |
-  | Apply Changes to Target | *(no action object)* | **NO MENU ANYWHERE** | unreachable |
+  | Command | Shipped label | Shipped home | Command id | Gating |
+  |---|---|---|---|---|
+  | Next Difference | `Next Difference` | Editor bar ▸ **`Navigation`**, below the bookmark group's separator | `navigation.next-difference` | **Compare/Merge MODE only** — `setVisible(False)` outside it |
+  | Previous Difference | **`Previous Difference`** (relabelled from Tools' `Prev Difference`, matching `Previous Bookmark` two entries up) | Editor bar ▸ **`Navigation`** | `navigation.previous-difference` | same |
+  | Apply Changes to Target | `Apply Changes to Target` | Editor bar ▸ **`Navigation`** | `navigation.apply-changes-to-target` | same |
 
-  Both Difference actions are wired straight to `center_stage.diff_merge_panel.select_next_difference` /
-  `select_previous_difference`. **`DiffMergeController.apply_changes_to_target` is intact, tested and
-  reachable only from code** — FQ-020 removed its `Tools` entry on the explicit expectation that FQ-021
-  would rehome it, and that leg never landed, so **the app currently offers no way to apply merge results
-  to the target file.** Recorded as an open question, §29 — **not designed here.**
+  *(Supersedes the 2026-08-09 table, which recorded the two Difference commands as ungated on `Tools` under
+  the label `Prev Difference` and `Apply Changes to Target` as having no menu anywhere. `Tools` now has
+  none of the three — a test asserts their absence there.)*
 
-  **Designed but NOT implemented (FQ-021's third leg, still `QUEUED` in `docs/FEATURE_QUEUE.md`) — read
-  this as intent, never as behaviour:** the three commands move off `Tools` onto the Editor bar's
-  `Navigation` menu as its three **mode-only** members, `setVisible(False)` outside the mode (§7/§26), with
-  `Prev Difference` relabelled **`Previous Difference`** (matching `Previous Bookmark`; the label change
-  *is* the id change) and the three id moves carried by **`RENAMED_ID_ALIASES`**, never
-  `LEGACY_ID_ALIASES` (§7 — those three rows are **not** in the table today and must be added in the same
-  commit as the move). Nothing new would be authored: the two Difference commands already exist and already
-  walk the flattened leaves. **`Apply Changes to Target` deliberately does NOT go on `Deployment`**
-  (settled 2026-08-08): it is meaningful only while a comparison is loaded, and it **replaces the app's
-  open document**, so hosting it beside `Run on quality` would put two very differently-shaped irreversible
-  actions under one menu. That it would be a *write* on a menu named `Navigation` is a recorded strain, and
-  whether the rehoming target is `Navigation` at all is now part of §29's open question.
+  **Four properties of the shipped wiring worth the spec's attention:**
+  1. **Gated on the MODE, never on the tab.** `set_diff_mode_members_visible` is driven by
+     `CenterStage.diff_merge_mode_changed`, not `currentChanged` — because `leave_diff_merge_mode`'s final
+     `setCurrentIndex(raw_xml)` emits nothing when Raw XML is already current (reachable via the panel's
+     Close button), so a `currentChanged` gate would strand all three visible after the mode ended.
+  2. **Built once, only `setVisible`-toggled** — `ToolbarController._walk_menu_actions` never tests
+     `isVisible()`, so recreating them per mode would drop them out of Customize Toolbar and take saved
+     `toolbarIds` with them.
+  3. **The label change IS the id change**, so `RENAMED_ID_ALIASES` carries
+     `tools.prev-difference → navigation.previous-difference` (never `LEGACY_ID_ALIASES`, §7) — one row for
+     a move-plus-relabel. `Apply Changes to Target` gets **no** alias row: FQ-020 had already deleted its
+     `Tools` action, so there was no live id to alias from.
+  4. **The callbacks are passed in as arguments**, not reached for through
+     `self._shell.stage.diff_merge_panel` — this lane owns the menu, the Compare/Merge lane owns the
+     operation, and the host is the one place that already knows both.
+
+  **`Apply Changes to Target` deliberately does NOT go on `Deployment`** (settled 2026-08-08, unchanged):
+  it is meaningful only while a comparison is loaded, and it **replaces the app's open document**, so
+  hosting it beside `Run on quality` would put two very differently-shaped irreversible actions under one
+  menu. That it is a *write* on a menu named `Navigation` remains a recorded strain, mitigated by the
+  **separator** that keeps the bookmark group and the Compare/Merge group from reading as one list; it
+  keeps `DiffMergeController.apply_changes_to_target`'s own ambiguity gate and confirmation, so it is not
+  one keystroke away in §18.5's sense.
 - **Rejected:** fixing only the data loss (prompt before the reload) and skipping the mode — it leaves the
   deeper falsehood in place, an editable buffer whose edits are structurally excluded from the merge. Also
   rejected: a dedicated Diff/Merge toolbar or panel-local Next/Prev buttons (§7's toolbar is user-curated
@@ -2694,9 +3077,9 @@ mode-switch time; `set_find_actions`/`set_find_actions_enabled` are deleted with
 structural fix, not the disappearance of the caption shortcuts** — they still exist, rescoped to the panel. The same
 individual-action gating pattern **is applied** (implemented; §8) to the **`Navigation` menu's five bookmark
 actions** (`_bookmark_actions` = Toggle/Next/Previous/Clear All/List All,
-via `set_bookmarks_enabled`, which today disables the `QMenu` **and** the five actions — equivalent while
-every `Navigation` member is a bookmark action, and required to narrow to the five actions alone the moment
-FQ-021's unshipped third leg puts §12's Difference commands on this menu; §8/§26) — since Caption Mode's
+via `set_bookmarks_enabled`, which since FQ-021's third leg (`1ccfe9d`) disables **the five actions and
+not the `QMenu`** — the narrowing that leg's arrival required, because §12's three Difference commands now
+share the menu and a comparison stays navigable during caption work; §8/§26) — since Caption Mode's
 read-only editor makes
 line-anchored bookmark navigation ambiguous alongside caption-grid navigation — but **not** to gutter
 bookmark toggling itself, which stays a click-driven overlay independent of read-only state.
@@ -2770,11 +3153,16 @@ editing tab hosts its own `FindReplaceBar` instance; the Edit XSD one has full F
 DDL Explorer buffer is read-only so its Replace path no-ops via `CodeEditor.replace_current_selection`
 (§8). (The old "Find & Replace…" Ctrl+H stub was removed long before.)
 
-**Find All → Audit panel, streaming:** `_populate_find_all_results(term)` starts a chunked,
+**Find All → the `Findings` tab, streaming** (the left-dock tab since FQ-028, §7 — *"the Audit panel"*
+below and in the surrounding prose is the pre-FQ-028 name for the same routed channel; the producer code
+is unchanged): `_populate_find_all_results(term)` starts a chunked,
 `QTimer`-driven run (batch **200** matches/tick, snapshot text once, cancel any in-flight run). Items
 `"[Find] line N: preview"` (line on `UserRole`) + a trailing `"[Find] N match(es) for \"term\""` summary.
-`_clear_find_results` removes only `[Find]` items. Status bar: `Finding "term"… found N` / `Found N
-item(s)` / `Find All stopped — found N item(s)` / `N replacement(s) for "term"`. The Find All button
+`_clear_find_results` removes only `[Find]` items. The run still *emits* `Finding "term"… found N` /
+`Found N item(s)` / `Find All stopped — found N item(s)` / `N replacement(s) for "term"` through
+`showMessage` — **since FQ-028 those land in the Activity Log, not on the status bar** (§7: the bar is
+static-only; the sink was overridden rather than the call sites rewritten, so this text is unchanged and
+`currentMessage()` still returns it). The Find All button
 toggles to **Stop** while running. Single-threaded chunking only (no threads, no progress bar, no caps).
 **Since FQ-016 the bar's button is the ONLY way to start a Find All** — `Ctrl+Shift+F` is deleted, on the
 recorded reasoning that Find All writes `[Find]` rows into the Audit panel, is a deliberate and occasional
@@ -3114,7 +3502,9 @@ golden "freshly-added table" oracle; defaults are corpus-derived and **not yet f
 > `_refresh_sandbox_affordances`, a `SandboxController` is constructed and a session auto-opens on project
 > bind, BUG-040) — **the button row is present in the running app**. **What is still unbuilt is the
 > deployment-script generation** (`Generate Deployment SQL`, §18.5's rank-1 deliverable: no module, no
-> menu action), §18.3's two menu entries, and the wiring of `sql/statements.py`. The
+> menu action), §18.3's two menu entries, and the wiring of `sql/statements.py` **into the D4 console**
+> (`sql/from_clause.py` became the module's first importer on 2026-08-10, so it is no longer importer-less
+> — only its console consumer is missing). The
 > ladder, when built, must reuse the **already-landed** `db/schema_diff.py`/`db/migration_gen.py` (§18.3)
 > rather than building them again. The tab is
 > deliberately **decoupled from §18.2's git project for v1** — no
@@ -4508,14 +4898,31 @@ since the table wants width). The OK/Cancel `QDialogButtonBox` stays outside/bel
 inside any tab. Default size `560×480`, resizable (no `setFixedSize`). All fields keep their existing
 `self._…`-attribute get/set wiring — reparenting into tabs does not change how any value round-trips.
 
-> **What this dialog does NOT do, and why it matters since 2026-08-09.** The Connections tab **edits** a
-> sandbox connection; it **cannot provision** one. Provisioning, re-provisioning, the D2a data clone,
-> `Install plpgsql_check`, Reset Sandbox and the `ForeignDatabaseError` *"Create a sandbox database for
-> me"* offer all live in `ui/sandbox_setup_dialog.py`, which BUG-040's second leg (`4e36162`) made
-> **projectless-only** (§26). Both shipped sandbox refusal strings now name **Project Settings** because
-> it is what the user can reach (§18.5 carve-out 2 item 6) — which is honest about the connection and
-> silent about the *"none is set up yet"* half. **Open question (§29); no capability may be migrated into
-> this dialog without an owner ruling and a ledger row.**
+> **The Connections tab is also the app's PROVISIONING home (owner ruling 2026-08-09, shipped; ledger
+> §28).** *(Supersedes the one-day-old statement that it "edits a sandbox connection but cannot provision
+> one", and BUG-040 leg 2's premise that provisioning lived in a projectless-only `Sandbox Setup…`.)* The
+> sandbox connection group carries a **`Sandbox provisioning` `QGroupBox`** immediately under the D2a mode
+> radios — the placement is the argument: the radios promise *"changing this does not re-clone the sandbox
+> — it takes effect the next time the sandbox is provisioned"*, and these are the gestures that make that
+> promise keepable. It holds exactly three things
+> (`ProjectSettingsDialog._build_provisioning_rows` / `reset_sandbox`):
+>
+> | Control | Method | Contract |
+> |---|---|---|
+> | **`Provision sandbox`** | `provision_sandbox` → `_provision(create_database=False)` | Baseline-provision the already-configured sandbox database from the target (D2/D2a). |
+> | **"create a sandbox database for me"** row | `create_sandbox_database` → `_provision(create_database=True)` | D2's mandatory `ForeignDatabaseError` mitigation — create *and* provision in one operation. The refusal is stated in its own words directly above this row. |
+> | **`Reset sandbox`** | `reset_sandbox` | `DROP SCHEMA … CASCADE` + re-run baseline. Shown only once a sandbox exists to reset. |
+>
+> Three rules carried over intact from the deleted dialog, restated because they are what makes this
+> placement safe: **nothing destructive without a confirmation** — each goes through `_confirmed`, which
+> asks with `SandboxController.destructive_warning(op)`'s exact text, and passes `confirm=None` so the
+> controller's own `confirm_destructive` gate owns the single prompt (**the user is asked exactly once**);
+> **no dead controls** (§18.5 carve-out 2) — `_rebuild_sandbox_actions` builds the *reason* in place of a
+> control whose operation cannot run, never `setEnabled(False)`, and the reasons are readable back through
+> `unavailable_reasons()`; and **D2a's mode is recorded, never re-derived** (see §26 and carve-out 2 item 7).
+> **Two capabilities deliberately did NOT move here** — the D2a **data clone** and the one-click
+> **`Install plpgsql_check`** — because §18.8's Project Status window already owns those two node buttons
+> and one gesture must not have two homes with two visibility rules.
 
 **Each connection group on the "Connections" tab carries its own Test button + inline status label
 (FQ-001, 2026-08-05) — two *different* tests, reusing the two flavors that already exist, never a third.**
@@ -5144,9 +5551,11 @@ explicit exclusions below). Clause-level incompleteness is *not* a refusal reaso
 >   in `_build_database_menu`, although `db/schema_diff.py`, `db/migration_gen.py`, `db/schema_snapshot.py`,
 >   `db/deploy_bundle.py` and `ui/schema_compare_panel.py` all ship. §18.3's *"every module ships, nothing
 >   reaches them"* framing remains correct **for that subsection**.
-> - **`sql/statements.py` is unwired.** `split_statements`/`classify_statement` ship and are tested, but
->   **nothing imports the module** — the console still sends its whole buffer as one execute (the module's
->   own docstring says so). No user gesture reaches it.
+> - **`sql/statements.py`'s D4 consumer is unwired** — the console still sends its whole buffer as one
+>   execute, so no *user gesture* reaches `split_statements`/`classify_statement` in D4's sense. *(Corrected
+>   2026-08-10: the module is no longer importer-less. `sql/from_clause.py` imports `split_statements` for
+>   per-statement alias scope, making it the module's first consumer; the docstring's "NOT WIRED / nothing
+>   imports this module yet" is stale and is reported for correction.)*
 >
 > **`db/schema_diff.py`/`db/migration_gen.py` landed under §18.3** for the `routine`/`trigger` cases; the
 > still-unbuilt deployment-script generation must call them rather than duplicating diff/migration logic
@@ -5453,12 +5862,12 @@ specified above and arrive with `db/sandbox.py` + `db/ddl_check.py`.
 >   *2026-08-09 prediction that it would name* `Sandbox Setup…`.)
 > - **The refusal offers `Open a session now` inline**, and since BUG-040 that inline offer is the **only
 >   manual session-acquisition gesture left in the app** (see the auto-connect ruling immediately below).
->   `open_sandbox` remains the single ownership chokepoint (D2), so `ForeignDatabaseError` keeps
->   **Sandbox Setup…** as its principal home together with the mandatory *"Create a sandbox database for
->   me"* offer — **but that home is reachable only in PROJECTLESS mode** since BUG-040's second leg
->   (`4e36162`), and a sandbox exists only in **project** mode. The offer therefore has no reachable home
->   in the mode that can raise `ForeignDatabaseError`; this is a **shipped gap recorded as an open
->   question (§29), deliberately not resolved here.**
+>   `open_sandbox` remains the single ownership chokepoint (D2). `ForeignDatabaseError`'s principal home,
+>   together with the mandatory *"create a sandbox database for me"* offer, is
+>   **`File ▸ Project Settings… ▸ Connections`**'s `Sandbox provisioning` group (owner ruling 2026-08-09,
+>   shipped). *(Superseded twice: `Database ▸ Sandbox Setup…` as that home, and the intermediate
+>   2026-08-09 reading in which BUG-040 leg 2 left the offer with **no** reachable home in project mode —
+>   that gap is now CLOSED, §29.)*
 > - **Rejected: making the three gestures *disabled* rather than absent or reporting** — the worst of both,
 >   since a greyed control with no tooltip states even less than a stated refusal and contradicts this
 >   carve-out's letter. **Rejected: documenting the prerequisite in the manual only** — a manual cannot be
@@ -5513,19 +5922,19 @@ what makes the failure case survivable.
      click whose label says a session will be opened.*
    - **Re-binding the project** (close and reopen it), which runs `_bind_sandbox_controller_to_project`
      again and therefore retries the auto-open.
-   - **`Database ▸ Sandbox Setup…` is NOT one of them.** BUG-040's second leg (`4e36162`) made that entry
-     **projectless-only** — `_refresh_sandbox_affordances`' first statement is
-     `self._sandbox_setup_action.setVisible(self._ddl_project_folder is None)` — so it is **hidden in
-     exactly the mode where a failed auto-open can happen.** *(Superseded: the earlier reading of this
-     item, which named it as the configuration-is-wrong recovery path; ledger §28.)* What remains for the
-     configuration-is-wrong case in project mode is **`File ▸ Project Settings… ▸ Connections`**, which
-     is what the two shipped refusal strings name (item 6) — and which can **edit** a sandbox connection
-     but **cannot provision one**. That residue is an **open question (§29)**, not a design.
+   - **`File ▸ Project Settings… ▸ Connections`** — the configuration-is-wrong recovery path, and what
+     the two shipped refusal strings name (item 6). Since the 2026-08-09 provisioning move it can both
+     **edit** the sandbox connection **and provision one** (`Provision sandbox` / `Reset sandbox` / the
+     *"create a sandbox database for me"* row), so the recovery path is complete rather than partial.
+     *(Superseded twice: `Database ▸ Sandbox Setup…` as the recovery path — that entry and its dialog are
+     **deleted**, §26; and the intermediate reading that Project Settings "cannot provision one", which
+     was true for one day and is recorded closed in §29.)*
    - **There is NO explicit close.** The session is released on project transition by
      `set_project`/`clear_project`'s `close_session()`, and that is the only closing mechanism.
 6. **The two refusal strings, as SHIPPED (`9b9aef7`) — quoted, not paraphrased.** Both stopped naming a
-   deleted menu path *and* stopped naming `Sandbox Setup…`, because after leg 2 that entry is unreachable
-   from where the refusal fires. *(This supersedes this item's own earlier prediction that they would name
+   deleted menu path *and* stopped naming `Sandbox Setup…`. Re-verified 2026-08-10: they are now
+   **doubly right**, because Project Settings is not merely what the user can reach but also where
+   provisioning actually lives. *(This supersedes this item's own earlier prediction that they would name
    "the dialog's own `Open` button and `Sandbox Setup…`"; ledger §28.)*
    - `ui/ddl_object_editor.py::DESTINATION_UNAVAILABLE_REASONS[DEST_SANDBOX]` — reused **verbatim** by
      `MainWindow._refuse_sandbox_gesture`, which pairs it with the inline `Open` button:
@@ -5538,19 +5947,19 @@ what makes the failure case survivable.
    The rule these encode, stated once so it is not re-litigated per string: **a refusal must name a place
    the user can actually REACH from where they are.** Every spec sentence quoting the old wording changes
    with them (§18.5 D3a/D4, §18.8), or the manual and the UI disagree. Both strings deliberately point at
-   the **connection** rather than promising a fix for the *"none is set up yet"* case, because in project
-   mode there is no in-app remedy for that case at all — see §29.
+   the **connection** rather than promising a fix for the *"none is set up yet"* case. *(Superseded: the
+   reason once given for that — "in project mode there is no in-app remedy for that case at all" — which
+   stopped being true when provisioning moved into Project Settings. The strings still deliberately point
+   at the connection first, because a wrong connection is the likelier cause than an absent database.)*
 7. **Two paths that must NOT be disturbed:**
    - **Projectless mode**: no sandbox exists there, so the guard is a **no-op by construction**. No session
      is ever opened with `_ddl_project_folder is None`; that is a mandatory test, not an assumption.
-   - **The Sandbox Setup dialog**: `_adopt_sandbox_setup_settings` deliberately **bypasses**
-     `_bind_sandbox_controller_to_project` so it does not drop the session it just provisioned. Auto-open
-     lives inside `_bind_...` precisely so that bypass keeps working — **it must not double-open** the
-     session Setup has already established. *(Shipped state, stated rather than glossed: after leg 2 the
-     dialog's **only** caller — the `Database ▸ Sandbox Setup…` action, `_open_sandbox_setup` — is
-     projectless-only, while `_adopt_sandbox_setup_settings` returns early unless
-     `self._ddl_project_settings is not None`. The bypass is therefore preserved but currently
-     unreachable. Part of the §29 gap; **not** a licence to re-wire either side.)*
+   - **The provisioning path in Project Settings**: `_adopt_provisioned_sandbox_settings` deliberately
+     **bypasses** `_bind_sandbox_controller_to_project` so it does not drop the session the provisioning
+     gesture just established. Auto-open lives inside `_bind_...` precisely so that bypass keeps working —
+     **it must not double-open** that session. *(Supersedes the same statement made about the deleted
+     Sandbox Setup dialog and `_adopt_sandbox_setup_settings`; the invariant survived its host's deletion,
+     the name did not. It is now genuinely reachable, where after BUG-040 leg 2 it was not.)*
 
 **The principle this retires, reconciled in one pass.** `ui/sandbox_controller.py::set_project`'s
 docstring — *"Opens nothing and provisions nothing … no connection attempt happens as a side effect of a
@@ -5992,8 +6401,12 @@ applied(kind text, schema_name text, object_name text, table_name text,
 
 - `SandboxSession.apply(ref, ddl_text)` is **one** committing, atomic call: the DDL plus the `applied`
   upsert in a single transaction.
-- `SandboxSession.applied() -> list[AppliedObject]` is one `SELECT`, and is what the Sandbox Setup
-  dialog's working-set list and the deployment generator both read.
+- `SandboxSession.applied() -> list[AppliedObject]` is one `SELECT`. **Its only remaining reader is the
+  deployment generator** — `db/sandbox.py` says so at the definition (*"The deployment generator is now
+  its ONLY reader"*). *(Superseded: the Sandbox Setup dialog's working-set list, which went with the
+  dialog on 2026-08-09; no surface lists the working set today, and §18.7's sandbox DDL Explorer is what
+  answers "what is in my sandbox" instead — it shows baseline and out-of-band objects too, which
+  `applied()` structurally cannot.)*
 - `SandboxSession.reset()` is **schema-level** — `DROP SCHEMA <each app schema> CASCADE` (never the
   reserved bookkeeping schema) followed by a re-run of the baseline — deliberately **not**
   `DROP DATABASE`, which fails while any session is connected and would need a maintenance-database
@@ -6062,17 +6475,19 @@ finding. Provisioning is therefore core, not deferred.
   > **One action, two entry points — the apparent conflict between §18.5 and §18.8 is resolved this way
   > (2026-08-06, ledger §28).** There is exactly **one** install action:
   > `SandboxController.install_plpgsql_check()`, which consults the pure `install_gate` and then calls
-  > `db/sandbox.py::install_plpgsql_check(session)`. Its **primary UI home is Sandbox Setup…**, inside
-  > the dialog, next to the probe result it depends on — never a top-level menu item. §18.8's **Sandbox2
-  > action window** is a **second, equally valid entry point to that same controller method** (wired
-  > through the zero-argument adapter `SandboxController.on_install_plpgsql_check`), not a second
-  > implementation: it re-derives no gate, re-types no reason string and opens no session of its own.
-  > Both surfaces show `install_gate`'s reason verbatim when the gate refuses, and both show the same
-  > *"already installed."* line when there is nothing to do. **Since BUG-040's second leg (`4e36162`) the
-  > "primary" home is reachable only PROJECTLESS**, where there is no sandbox to install into — so with a
-  > project open the Sandbox2 action window is the only entry point, and it is not yet wired (§18.8). One
-  > install action, two entry points, is unchanged as a *rule*; that neither is currently usable in
-  > project mode is §29's open gap, recorded rather than resolved.
+  > `db/sandbox.py::install_plpgsql_check(session)`. **Correction, 2026-08-10: it now has exactly ONE UI
+  > home, not two** — §18.8's **Sandbox2 action window**, wired through the zero-argument adapter
+  > `SandboxController.on_install_plpgsql_check` and offered in project mode by
+  > `MainWindow._refresh_project_status_sandbox_actions`. It re-derives no gate, re-types no reason string
+  > and opens no session of its own; it shows `install_gate`'s reason verbatim when the gate refuses, and
+  > the same *"already installed."* line when there is nothing to do. *(Superseded: the "primary UI home is
+  > Sandbox Setup…, §18.8 is a second entry point" framing, and the intermediate 2026-08-09 reading in
+  > which neither entry point was usable in project mode. `Sandbox Setup…` and its dialog are **deleted**,
+  > and the provisioning move into Project Settings deliberately did **not** take this action with it —
+  > §18.5 D2/§18.2.)* The shipped code says so at the definition:
+  > `SandboxController.install_plpgsql_check`'s docstring calls it *"the app's one one-click install since
+  > `Sandbox Setup…` was deleted"*, and `db/ddl_check.py::REASON_INSTALL_LOCATIONS` names that one home
+  > verbatim — *"Install it from the Project Status window's plpgsql_check node."*
 - **Backend interface.** All of this sits behind a Qt-free protocol in `db/sandbox.py` so a managed or
   bundled server can be added later (§29) without the choice leaking into the UI:
 
@@ -6100,18 +6515,18 @@ finding. Provisioning is therefore core, not deferred.
 - **The "create a sandbox for me" offer is a mandatory mitigation, not optional polish.** The ownership
   rule collides head-on with the most likely real setup: the realistic sandbox is a local restore of
   production named `myapp_dev`. `open_sandbox` **will** refuse it, and a bare refusal reads as *the tool
-  being broken*. So wherever `ForeignDatabaseError` surfaces — principally **Sandbox Setup…** — the
-  refusal must be shown **together with an explicit "Create a sandbox database for me" action**
+  being broken*. So wherever `ForeignDatabaseError` surfaces — principally **`File ▸ Project Settings… ▸
+  Connections`**'s `Sandbox provisioning` group (§18.2) — the
+  refusal must be shown **together with an explicit "create a sandbox database for me" action**
   (`create_sandbox_database` + `build_baseline_sql` seeded from the **target** profile, off-thread with
   `busy_status`). A refusal without a way forward is the fastest route to the user concluding the tool is
   broken. *(A future "adopt this database" flow — stamp the marker after an explicit typed confirmation —
-  is worth designing but is deliberately not specified here.)* **Shipped caveat, stated because it
-  undercuts the mitigation:** since BUG-040's second leg (`4e36162`) `Sandbox Setup…` — the only surface
-  that hosts this offer — is **projectless-only**, so in project mode a `ForeignDatabaseError` reaches the
-  user through the Audit panel with **no reachable "Create a sandbox database for me" action at all**.
-  This is exactly the failure this bullet calls mandatory to avoid; it is **recorded as §29's open
-  question**, and resolving it (re-expose the entry in project mode, or migrate the offer into Project
-  Settings) is an owner call, not an implementer's.
+  is worth designing but is deliberately not specified here.)* **The shipped placement honours this
+  literally:** `ProjectSettingsDialog` states the `ForeignDatabaseError` refusal *in the refusal's own
+  words, directly above the row that answers it* — the refusal and the remedy are one visual unit, not a
+  message and a menu hunt. *(Superseded: the 2026-08-09 caveat that BUG-040 leg 2 had left this offer with
+  no reachable home in project mode — the mitigation is reachable again, in the mode that can raise the
+  error. §29's item is closed.)*
 
 ##### D2a — Optional "with data" sandbox cloning (settled 2026-08-05)
 
@@ -6362,9 +6777,9 @@ there is no Check gesture at all"; and "names `Database ▸ Open Sandbox Session
 **panel's button row** still follows the seam-wired rule (an
 unwired seam means no button), because a button cannot state a reason.
 The user's path back is stated where the absence or refusal is visible: the refusal's own **`Open`**
-button, **`File ▸ Project Settings… ▸ Connections`** (which is what the shipped refusal string names —
-**not** `Database ▸ Sandbox Setup…`, which is projectless-only since BUG-040's second leg, `4e36162`;
-superseded, ledger §28), or the Project Status window (§18.8), whose Sandbox node names the specific degradation
+button, **`File ▸ Project Settings… ▸ Connections`** (which is what the shipped refusal string names, and which
+since 2026-08-09 can also **provision** — `Database ▸ Sandbox Setup…` is deleted; superseded, ledger §28),
+or the Project Status window (§18.8), whose Sandbox node names the specific degradation
 (`ProjectCapabilityStatus.degraded_reason`, never a bare "sandbox unavailable"). **A missing sandbox is
 never reported as a clean check.**
 
@@ -6695,9 +7110,9 @@ cannot replace this in place"*) rather than emitting a script that errors halfwa
 **UI flow — review before write.** **Database ▸ Generate Deployment SQL…**, disabled unless a sandbox
 profile is configured. Both introspection calls run off the GUI thread (`self._run_async` +
 `busy_status`). Guards, each with its own specific message: no sandbox → **name `File ▸ Project
-Settings… ▸ Connections`, not `Sandbox Setup…`** (this command is project-scoped and that entry is
-projectless-only since BUG-040 leg 2 — the same "name a place the user can reach" rule the two shipped
-refusal strings encode, carve-out 2 item 6; provisioning from project mode is §29's open gap); empty
+Settings… ▸ Connections`** — the same "name a place the user can reach" rule the two shipped
+refusal strings encode (carve-out 2 item 6), and since 2026-08-09 the place that can actually **create**
+the missing sandbox as well as fix its connection (§18.2); empty
 applied set → *"nothing has been applied to the sandbox yet"*; drift blockers → the §12-style refusal
 naming every blocker; `UnsupportedDifference` → the table/column refusal. On success the script is shown
 in a **read-only preview tab** reusing `CodeEditor(language="sql")` (a dynamic tab, appended per §7's
@@ -6938,6 +7353,40 @@ three contexts:
 | `NEW.`/`OLD.` inside an **attached** trigger function | caret after `NEW.` or `OLD.` inside a routine's body, and that routine **is** some trigger's function (reverse lookup via `TriggerInfo.function_name`) | the column names of that trigger's target table (`TriggerInfo.table`) |
 | `NEW.`/`OLD.` inside an **unattached** trigger function | same trigger-context syntax, but no `TriggerInfo` currently references this routine | tells the user no trigger is defined for this function, then prompts a table pick (a small picker reusing an existing simple-selection-dialog idiom); once picked, offers that table's columns |
 
+> **A FOURTH context exists in the PURE LAYER and has NO UI CONSUMER — recorded so its half-built state is
+> not mistaken for either "done" or "not built" (FQ-030 slice 1, partly shipped 2026-08-10; the rest of
+> FQ-030 is `QUEUED` in `docs/FEATURE_QUEUE.md` and is therefore deliberately **not** written in as
+> design).** What genuinely ships and is tested:
+> - **`pgtp_editor/sql/from_clause.py`** — pure, Qt-free FROM-clause / alias **scope** analysis:
+>   `analyze_from_scope(text, pos) -> FromScope` answers *"which tables are in scope at the caret, and what
+>   does each alias refer to"*, so `FROM hr.jobcard jc` … `jc.` resolves to `hr.jobcard`. It **reuses rather
+>   than re-derives**: `sql/tokenizer.py` owns opaque regions (a `FROM` inside a literal, comment, quoted
+>   identifier or `$$ … $$` body is not a token here, so it can never be mistaken for a FROM clause — nothing
+>   in this module scans characters) and `sql/statements.py::split_statements` owns statement boundaries
+>   (scope is per statement; the caret's statement is *selected* from the splitter's output, never re-cut).
+>   Paren-nesting-aware scoping, every `JOIN` spelling via the `JOIN` keyword itself, `UPDATE … SET`, and —
+>   notably — **it descends into a `$$ … $$` body** when the caret is inside one. Its partiality is
+>   deliberate and self-declared: a CTE name yields a bare `TableRef` with no schema, derived tables and
+>   set-returning functions are flagged `is_derived=True` (the name is known *taken*, no catalog table backs
+>   it), `INSERT INTO` is ignored, and a bare `FROM jobcard` yields `schema=None` because guessing a
+>   search-path schema would be inventing a fact.
+> - **`sql/caret_context.py` gains `ALIAS_REF`** as a third `CaretContext.kind` beside `DOTTED_PATH` and
+>   `ROW_VARIABLE`, carrying the resolved `table_ref` (use `table_ref.qualified` as the
+>   `SchemaIndex.known_columns()` key) while still populating `parts`, so the `DOTTED_PATH` reading stays
+>   available as a fallback.
+> - **`sql/statements.py` now has its first importer.** Its docstring still opens *"**NOT WIRED.** Nothing
+>   imports this module yet"* — that sentence is **stale as of `from_clause.py`** and is reported for
+>   correction; the D4 console half of it (that `sql_console_panel.py` still sends the whole buffer as one
+>   execute) remains true.
+>
+> **The UI consumer is deliberately not wired**, and this is a sequencing decision, not an omission: the
+> single `elif` in `ui/ddl_object_editor.py::_show_completions` that would dispatch `ALIAS_REF` is a queued
+> follow-up, blocked on FQ-028's implementation holding that file. Until it lands, `_show_completions`
+> branches only on `ROW_VARIABLE`/`DOTTED_PATH` and the D4 console rejects anything that is not
+> `DOTTED_PATH`, so **alias completion is invisible everywhere, not only inside routine bodies.** BUG-041 is
+> necessary but **not sufficient** for alias completion in a body — the two are independent gaps that
+> happen to share a symptom.
+
 **Popup widget — reused, not rebuilt.** §11's `_CompletionPopup(QListWidget)` was **extracted out of
 `ui/xml_editor.py` into its own module `pgtp_editor/ui/completion_popup.py`** and is now imported by its
 consumers — `ui/xml_editor.py` (which re-exports the name so §11's call sites and tests are unchanged),
@@ -6957,6 +7406,26 @@ trigger-function body. Qt-free and unit-testable independent of Qt and of a live
 rest of `sql/`'s dependency posture (§5). This module's output — a resolved context (bare identifier,
 `schema.` prefix, `schema.table.` prefix, or `NEW.`/`OLD.` inside a body) — is what the panel uses to pick
 which of the table above's three rows applies and what prefix to filter on.
+
+> **⚠ A STRUCTURAL CONSTRAINT THE TABLE ABOVE DOES NOT YET HONOUR — stated so the fix's shape is
+> understandable rather than arbitrary (BUG-041, OPEN as of 2026-08-10; the spec is on the bug's side, so
+> this overrides nothing and carries no ledger row).** Rows 2 and 3 promise `NEW.`/`OLD.` completion
+> *"inside a routine's body"*, and **today it cannot fire there at all.**
+> `sql/caret_context.py::resolve_caret_context` returns `None` for a caret inside **any** opaque token
+> (`_caret_inside_opaque_token`), and `sql/tokenizer.py` classifies `DOLLAR_STRING` as opaque alongside
+> strings, comments and quoted identifiers. The DDL object tab feeds the resolver **the whole buffer**,
+> and `db/ddl_buffer.py::build_ddl_text` fills that buffer from `pg_get_functiondef` output — so *nearly
+> the entire editable buffer of a routine tab* is one `$function$ … $function$` token. Only row 1
+> (dotted path) can fire, and only on the `CREATE FUNCTION …` header line. The behaviour is deliberate
+> and pinned by a test
+> (`tests/sql/test_caret_context.py::test_caret_inside_dollar_quoted_body_is_unresolvable`), which is why
+> this is a **fix toward the spec**, not a spec correction: §18.6 states the intent and the code has never
+> met it. The property that must survive any fix is the one that test was really protecting — a string
+> literal or comment **nested inside** a body stays unresolvable. BUG-041 records four options and a
+> recommendation (descend into the body before the opacity check, mirroring `sql/from_clause.py`'s
+> existing `_dollar_body_at` rather than adding a fourth body locator to the repo); **no option is chosen
+> here.** Note the same defect makes FQ-030 slice 1's `ALIAS_REF` unreachable inside a body — see §18.6's
+> FQ-030 note below.
 
 **Data source — `db/introspect.py::fetch_routines_and_triggers` is widened, not duplicated.** DDL
 Explorer's existing connect-time fetch (§18.1) now also populates `DatabaseSchema.tables` by additionally
@@ -7054,15 +7523,17 @@ load-bearing here specifically):
 > **The owner's framing of the asymmetry this closes:** *"I see in the browser quality but not sandbox, and I
 > can apply to sandbox, but not quality."* The second half is FQ-020's `Run on quality`; this is the first.
 > Today the app **applies to a database it will not show, and shows a database it will not (yet) apply to**,
-> and nothing in the shipped UI can answer *"what is currently in my sandbox?"* beyond the Sandbox Setup
-> dialog's flat working-set list — which lists only what **this app** applied, not baseline objects or
-> anything applied out-of-band, so it cannot answer the question at all. *(Since BUG-040's second leg,
-> `4e36162`, that list is not even reachable with a project open — the dialog is projectless-only — which
-> makes the argument stronger, not weaker.)*
+> and nothing in the shipped UI can answer *"what is currently in my sandbox?"* — the app's only ever
+> answer was the deleted Sandbox Setup dialog's flat working-set list, which listed only what **this app**
+> applied, not baseline objects or anything applied out-of-band, so it could not answer the question at
+> all. *(Updated 2026-08-10: that list no longer exists at any surface, `applied()`'s only reader now
+> being the deployment generator — which makes the argument for this section stronger, not weaker.)*
 
-**What it is.** Once a project has a sandbox configured (§18.2's New Project sandbox step — since
-BUG-040's second leg, `4e36162`, that is the **only** in-project way to get one, because
-`Database ▸ Sandbox Setup…` is projectless-only; §29), a **second, separate DDL Explorer instance** becomes available: one
+**What it is.** Once a project has a sandbox configured — through §18.2's New Project sandbox step, or
+through `File ▸ Project Settings… ▸ Connections`'s `Sandbox provisioning` group, which are the **two**
+in-project ways to get one (*superseded: the 2026-08-09 claim that New Project was the only one, which
+held for the single day `Database ▸ Sandbox Setup…` was hidden before it was deleted*) — a **second,
+separate DDL Explorer instance** becomes available: one
 instance browses the **target** database (unchanged — today's single instance, connection `role =
 target`), and the other browses the **local sandbox** (`role = sandbox`, §18.5 D2). Both can be open
 simultaneously; each is its own left-dock tree tab and its own center-stage editor tab, not a toggle that
@@ -7189,9 +7660,10 @@ other instance's tree at all, exactly as if it were the only connection open.
 
 **Explicitly not designed here:** any merged/diffed view showing both trees side-by-side or overlaid
 (rejected by the "tolerate genuine divergence, no cross-referencing" rule above — that would be a different,
-undesigned feature, recorded because it is the intuitive design), and **reusing the Sandbox Setup dialog's
+undesigned feature, recorded because it is the intuitive design), and **reusing a flat `applied()`
 working-set list instead of a tree** (rejected: `applied()` lists only what *this app* applied, never the
-baseline or out-of-band objects). The menu/tab wording is **no longer open** — FQ-022 settled it above; the
+baseline or out-of-band objects — a rejection that has since been overtaken by events, the Sandbox Setup
+dialog that hosted such a list having been deleted on 2026-08-09). The menu/tab wording is **no longer open** — FQ-022 settled it above; the
 reset/destroy behaviour carries a recommendation and stays an open item (§29).
 
 ---
@@ -7227,15 +7699,44 @@ reset/destroy behaviour carries a recommendation and stays an open item (§29).
 >    as a side effect (the `Open Sandbox Session` menu item is deleted, BUG-040). The destructive one keeps
 >    the controller's own `confirm_destructive` gate (`on_run_data_clone` → `run_data_clone` →
 >    `_confirmed(CLONE_DATA)`), so the warning text is the controller's and no second dialog is opened here.
->    Sandbox2's button is **not** a second install action: it is one of two entry points to the single one
->    specified in §18.5 D2 (the other being Sandbox Setup…, the primary home). **Since BUG-040's second leg
->    (`4e36162`) that primary home is PROJECTLESS-ONLY**, and this window is project-scoped — so Sandbox2's
->    button is now the **only** install entry point a user with a project open can reach. That is one face
->    of the §29 provisioning gap (Project Settings cannot install `plpgsql_check` either); it is
->    **recorded, not resolved here**, and it does not change the "one install action, two entry points" rule.
+>    Sandbox2's button is **not** a second install action: since 2026-08-09 it is the **only** UI entry
+>    point to the single install action specified in §18.5 D2, the deleted `Sandbox Setup…` having been its
+>    other one. The 2026-08-09 provisioning move into Project Settings deliberately did **not** take the
+>    install (or the D2a data clone) with it, precisely so this node keeps sole ownership and one gesture
+>    does not acquire two homes with two visibility rules. *(Superseded: "one of two entry points … the
+>    other being Sandbox Setup…, the primary home", and the one-day reading in which no install entry point
+>    was reachable in project mode.)*
 > 3. **The App node's action window remains the deliberate placeholder** this subsection already flags as
 >    open in §29: it states the tier plainly (`_APP_TIER_TEXT`) and offers no action. What the App node
 >    should *do* is still undesigned.
+
+> **The window gains a 30 s POLLER, and stops being static-while-open (FQ-028 Part 2.4, absorbing
+> FQ-018; ledger §28).** Today the window re-probes on open and on explicit action and is otherwise
+> static. FQ-028's status-bar connectivity dots (§7) need a live answer, and **one shared poller feeds
+> both surfaces** so they can never disagree about freshness — which makes this window
+> **auto-refreshing while open**, a behaviour change recorded rather than absorbed. The contract:
+>
+> - **The app's FIRST repeating-interval `QTimer`.** Every existing `QTimer` here is a one-shot debounce
+>   (`_snapshot_timer` / `_auto_parse_timer` / `_bookmark_write_timer`, 400 ms). This one repeats at
+>   **30 s**.
+> - **Gated on window activity** — a new capability: `MainWindow` today has no `isActiveWindow()` gate, no
+>   `WindowActivate`/`WindowDeactivate` handling and no `applicationStateChanged`. The timer runs only
+>   while the main window is active, and **polls once immediately on regaining activation**, so a
+>   returning user never reads a dot that is up to 30 s stale.
+> - **Always off the GUI thread**, through the established `run_async` seam every connection test and
+>   `SandboxController` already use. A blocking connect every 30 s on the GUI thread would freeze the app.
+> - **Lightweight reachability only** — a `SELECT 1`-shaped round trip, never the full `probe()`
+>   (superuser check, `pg_dump`/`pg_restore` discovery, `degraded_reason`), which stays on explicit user
+>   action here. **Consequence, stated:** a status-bar dot can be **green** (reachable) while this window's
+>   richer state still flags a capability degradation on its next explicit probe.
+> - **The result feeds the pure state derivation already in this module** — `quality_state()` and
+>   `SandboxState` — never a second reachability notion. `ui/sandbox_controller.py::session_changed` says
+>   whether a session is *open*, not whether the DB is *reachable*: a useful input (no session → the
+>   sandbox dot cannot be green on the strength of a session alone), never sufficient on its own.
+> - **Three-state, never binary** — the literal request was a yes/no pair and was rejected, because binary
+>   makes a never-configured sandbox indistinguishable from one whose DB just went offline, and those need
+>   different user responses. §7 adds a fourth *rendering* state (`UNKNOWN`, not-yet-polled) that this
+>   window has no need for.
 
 **What it is.** A small graphical status window rendering project health as a **node-and-connector
 diagram**, read left-to-right as a horizontal chain that splits at the end: **quality → app → sandbox →
@@ -7397,10 +7898,11 @@ one uniform "opens an action window":**
   either opens a status/help window that **itself contains an embedded action button** — e.g. Sandbox1's
   window offers "run data clone now" / "redo clone." Sandbox2's window, when `not_installed`, offers an
   **"install the plpgsql_check extension"** action button (runs `CREATE EXTENSION IF NOT EXISTS
-  plpgsql_check` against the sandbox — the same one-click install already specified as living inside
-  Sandbox Setup, §18.5 ledger row 2026-08-02, via `install_plpgsql_check(session)`, now also reachable
-  from here — and, since BUG-040 leg 2 made that dialog projectless-only, the only project-mode entry
-  point once this button is wired; §29) — **not** "run a check," since this node is about installation state, not a lint result.
+  plpgsql_check` against the sandbox — the single install action of §18.5 D2, via
+  `install_plpgsql_check(session)`, of which **this window is now the app's only UI entry point**
+  (*superseded: "already specified as living inside Sandbox Setup", §18.5 ledger row 2026-08-02 — that
+  dialog was deleted 2026-08-09 and the install deliberately did not move with the provisioning gestures*);
+  the button **is wired** — `MainWindow._refresh_project_status_sandbox_actions`) — **not** "run a check," since this node is about installation state, not a lint result.
   When Sandbox2 is already `installed`, the window is purely informational (states the fact); **no
   meaningful action remains to offer in that state** — there is nothing left to install, and re-running
   `CREATE EXTENSION IF NOT EXISTS` on an already-installed extension is a no-op not worth surfacing as a
@@ -7690,7 +8192,7 @@ under File below is §18.2's later, distinct DDL-project action that merely reus
 
 - **File:** Open (**no shortcut** — `Ctrl+O` is unbound, 2026-08-09; §27), ⎯,
   **the §18.2 project action group** (see below), ⎯,
-  **Discard Changes**, Close (Ctrl+W), ⎯, **New Session**, Exit. Real build
+  **Discard Changes**, Close (**no shortcut** — `Ctrl+W` unbound 2026-08-09; §7/§27), ⎯, **New Session**, Exit. Real build
   order in `MainWindow._build_file_menu`: `Open…` · separator · **`Open PHP File…`** (§21 — no structural
   tie to a `.pgtp`, opens with or without a project) · separator · the **four** project actions · separator ·
   Discard Changes / Close · separator · `New Session` · Exit.
@@ -7732,12 +8234,15 @@ under File below is §18.2's later, distinct DDL-project action that merely reus
   with the menu, leaving `Ctrl+Shift+A` hostless for one commit (§7, ledger §28); `Auto Parse XML` → the
   Editor bar's **Parsing**.
 - **View** (real order and labels): ☑ Project Tree, ☑ Properties Panel,
-  ☑ Audit/Problems Panel, ☑ Raw XML Panel (checked by default), — , Expand All, Collapse All, — ,
+  ☑ **the bottom findings/journal dock** — *the former ☑ `Audit/Problems Panel`, whose dock FQ-028
+  dissolved into an **Activity Log + Results** two-tab dock (§7); the separate ☑ `Activity Log` checkbox
+  FQ-019 added collapses into it, since there is now one dock, not two*, ☑ Raw XML Panel (checked by
+  default), — , Expand All, Collapse All, — ,
   ☐ Light Theme, — , Customize Toolbar… (opens the toolbar customization dialog, §7),
   **Customize Shortcuts…** (FQ-012, 2026-08-09 — the rebinding dialog, §27; deliberately a **second
   single-purpose customization dialog** here rather than the start of a general Preferences container, and
-  **not** the dead `Edit ▸ Preferences…` stub, which the Edit menu's dissolution deleted). The three **dock**
-  checkboxes (Project Tree / Properties Panel / Audit/Problems Panel) are bidirectional — closing a dock
+  **not** the dead `Edit ▸ Preferences…` stub, which the Edit menu's dissolution deleted). The **dock**
+  checkboxes (Project Tree / Properties Panel / the bottom findings-journal dock) are bidirectional — closing a dock
   by its title-bar ✕ unchecks the menu item (BUG-007, §7). **The former ☐ "Find table reference" checkable
   is gone** (FQ-003, 2026-08-06) — table references are a sub-branch of the Database ▸ Database/XML
   Coherence view (§17), not an independently toggleable panel.
@@ -7770,40 +8275,48 @@ under File below is §18.2's later, distinct DDL-project action that merely reus
   no shortcut). Everything §18 adds lives in **this** menu (except §18.2's five project actions, which
   are on **File** — see below); no new top-level menu is created for it, and no "locate binary" action
   is added, because v1 spawns no external process. **The remaining entries below are target design
-  (2026-08-02) except THREE that SHIP and are verified in `_build_database_menu` (2026-08-09):
-  `Sandbox Setup…`, ☐ `Sandbox SQL Console…` and `Deploy This Edit…` (each described in its own bullet).
+  (2026-08-02) except TWO that SHIP and are verified in `_build_database_menu` (re-verified 2026-08-10):
+  ☐ `Sandbox SQL Console…` and `Deploy This Edit…` (each described in its own bullet).
   The rest — `Apply to Sandbox`, `Apply to Target Database…`, `Generate Deployment SQL…` — do
-  not exist on this menu:**
+  not exist on this menu, and `Sandbox Setup…` no longer exists anywhere:**
   - *(The sandbox-scoped second Explorer entry is **no longer a sketch** — it is
     **`DDL Explorer (Sandbox)`**, named and specified in the inventory above, with the first entry renamed
     **`DDL Explorer (Quality)`**; FQ-022, 2026-08-08. It is **absent entirely when no sandbox exists**, keyed
     on `bool(sandbox_params.host)` — never on `has_session`, because the sandbox Explorer is a pure read.)*
-  - ⎯ **Sandbox Setup…** (§18.5 D2/D2a) — **this one SHIPS** (`_build_database_menu`,
-    `self._sandbox_setup_action`, opening the non-modal `ui/sandbox_setup_dialog.py`), unlike the
-    remaining target-design entries after it. **Presence rule since BUG-040's second leg (`4e36162`,
-    ledger §28): PROJECTLESS-ONLY.** `_refresh_sandbox_affordances`' first statement is
-    `self._sandbox_setup_action.setVisible(self._ddl_project_folder is None)` — visible when **no**
-    project is open, **hidden whenever one is**. It is **hidden, not deleted** (unlike `Open`/`Close
-    Sandbox Session`): projectless it is still the only way to get a sandbox at all, so it has a mode
-    where it means something. It is still **never** gated on a session or on a sandbox existing — that
-    would hide the one entry point that can *create* one exactly when it is needed. *(Superseded: "always
-    present, session or no session, project or no project"; and its named role as BUG-040's
-    configuration-is-wrong recovery path — see carve-out 2 item 5.)* **Stated because hiding-vs-deleting
-    has a known consequence here (BUG-040's own argument for deleting `Open`/`Close Sandbox Session`):**
-    `ToolbarController._walk_menu_actions` never tests `isVisible()`, so `database.sandbox-setup` stays
-    enumerated in Customize Toolbar and a **pinned toolbar button remains clickable with a project open**,
-    bypassing the menu's visibility rule. That is an observed property of the shipped combination, not a
-    ruling — whether it is acceptable, or an argument for one of §29's two directions, is an owner call. **Consequence, deliberately recorded
-    and not resolved:** the dialog is the app's only home for provisioning / re-provisioning / data clone
-    / `Install plpgsql_check` / Reset Sandbox / the `ForeignDatabaseError` *"Create a sandbox database for
-    me"* offer, and a sandbox exists only in project mode — so those five capabilities have **no reachable
-    home in project mode** (§29). Its contents:
-    (the `role=sandbox` profile in the same `ConnectionSetupDialog`,
-    plus the capability-probe result, the one-click **Install plpgsql_check** button *inside* that dialog
-    next to the probe result, the working-set list and **Reset Sandbox**, and — when the configured
-    database is not app-owned — the refusal together with the mandatory **"Create a sandbox database for
-    me"** offer — the **Install plpgsql_check** button here is the *primary* home of the single install
-    action §18.8's Sandbox2 window is the second entry point to, §18.5 D2); **Apply to Sandbox**;
+  - ⎯ **`Sandbox Setup…` is DELETED, and so is the dialog behind it** (owner ruling 2026-08-09, shipped;
+    ledger §28). `ui/sandbox_setup_dialog.py` **no longer exists in the package** (verified 2026-08-10:
+    the only `ui/sandbox*.py` module is `sandbox_controller.py`), `MainWindow._open_sandbox_setup` and
+    `self._sandbox_setup_action` are gone, and `_build_database_menu` carries a comment at the spot the
+    entry used to occupy (`main_window.py:915-923`) recording why. **The three provisioning gestures moved
+    into `File ▸ Project Settings… ▸ Connections`**, into a `Sandbox provisioning` group inside the
+    sandbox connection group, immediately under the D2a mode radios:
+    **`Provision sandbox`**, **`Reset sandbox`** and D2's mandatory **"create a sandbox database for me"**
+    row (`ui/project_settings_dialog.py::_build_provisioning_rows` / `provision_sandbox` /
+    `create_sandbox_database` / `reset_sandbox`). Everything those gestures were is preserved and only the
+    host changed: each goes through `_confirmed` with `SandboxController.destructive_warning(op)`'s exact
+    text so the user is asked exactly once; **no dead controls** — `_rebuild_sandbox_actions` builds the
+    reason *instead of* the control rather than `setEnabled(False)` (§18.5 carve-out 2); the
+    `ForeignDatabaseError` refusal is stated in the refusal's own words directly above the "create one for
+    me" row; and D2a's mode is **recorded, never re-derived** — a provisioning gesture writes the settings
+    as typed through `settings_saver` **before** the operation starts, and `recorded_settings()` hands that
+    exact object back so the host adopts it instead of re-reading the file
+    (`MainWindow._adopt_provisioned_sandbox_settings`, the successor to the deleted
+    `_adopt_sandbox_setup_settings`; it reads `recorded_settings()`, **never** `settings()`, because the
+    latter is the live field state and not what the operation actually acted on).
+    **Data cloning and the `plpgsql_check` install are deliberately NOT duplicated there** — §18.8's
+    Project Status window already owns those two node buttons, and duplicating them would give one gesture
+    two homes and two visibility rules.
+    **Deleted rather than hidden**, for BUG-040's own reason: `ToolbarController._walk_menu_actions` never
+    tests `isVisible()`, so a hidden action stays enumerable in Customize Toolbar and a pinned toolbar
+    button would keep firing a gesture the menu no longer offers. A user who had pinned
+    `database.sandbox-setup` has it silently dropped by `resolve_ids` (the FQ-020 `save` precedent); **no
+    `RENAMED_ID_ALIASES` row** — the *action* was deleted, not moved, even though its capabilities were
+    rehomed. *(Superseded, in order: "always present, session or no session, project or no project"; its
+    named role as BUG-040's configuration-is-wrong recovery path; and BUG-040 leg 2's PROJECTLESS-ONLY
+    `setVisible(self._ddl_project_folder is None)` rule, which existed for one day and whose premise —
+    "in project mode all sandbox configuration already lives in Project Settings" — was false until this
+    move made it true.)*
+    The remaining **target-design** Database entries, none of which exist: **Apply to Sandbox**;
     **Apply to Target Database…** (the ellipsis marks the confirmation naming
     object + database, and it is additionally gated on a green sandbox validation and refused outright on
     a changed signature — §18.5); **Generate Deployment SQL…** (the feature's rank-1 deliverable;
@@ -7845,7 +8358,7 @@ under File below is §18.2's later, distinct DDL-project action that merely reus
 
     **Apply to Sandbox / Apply to Target Database…** are **disabled unless a DDL object editor
     tab is active**, kept in sync on `center_stage.currentChanged`; Apply is never automatic and never
-    implied by Save. Sandbox Setup, Sandbox SQL Console and Generate Deployment SQL do **not** require an
+    implied by Save. Sandbox SQL Console and Generate Deployment SQL do **not** require an
     object tab. There is
     no "locate binary" action — v1 spawns no external process, **except** §18.5 D2a's optional
     `pg_dump`/`pg_restore` sandbox data-cloning path, a narrowly-scoped exception to that invariant (§18.5
@@ -7868,19 +8381,20 @@ under File below is §18.2's later, distinct DDL-project action that merely reus
   only, on that tab, with no menu-bar entry and no shortcut: it is a navigation gesture, not a second
   execution path.)
 - **Tools — the SHIPPED inventory, in menu order** (pinned by
-  `tests/ui/test_menus.py::test_tools_menu_contents`; status-corrected 2026-08-09, ledger §28):
+  `tests/ui/test_menus.py::test_tools_menu_contents`; status-corrected 2026-08-10, ledger §28):
   `Manage Captions…` · ― · `Lint Current File` · ☐ `Lint on Save` · `Locate PHP Linter…` · ― ·
-  `Reparse Raw XML into Tree` · ― · **`Next Difference`** · **`Prev Difference`** · ― ·
-  ☐ `Start MCP Server`. (§22 — the three lint entries **do** exist in `_build_tools_menu` as of
-  2026-08-07; §22's *"the Tools-menu wiring is the remaining gap"* status note is stale. §23 —
-  `Start MCP Server` is checkable, unchecked at startup; unchecking is the stop gesture.)
-  > **Only TWO of the four Compare/Merge entries have left this menu.** `Compare / Merge Two Files...`
-  > became **`Deployment ▸ Compare/Merge pgtp`** on the Raw XML tab (FQ-020, §12), and
-  > **`Apply Changes to Target` was DELETED from Tools with nowhere to go** (FQ-020 routed it at FQ-021's
-  > then-queued mode surface; that leg never shipped, so the command is **unreachable** — §12/§29).
-  > **`Next Difference` and `Prev Difference` are STILL HERE and still ungated**, with `Prev Difference`
-  > keeping its original label — FQ-021's move-and-relabel is designed but **not implemented** (§12), and
-  > the three `RENAMED_ID_ALIASES` rows it needs are correspondingly **absent** (§7).
+  `Reparse Raw XML into Tree` · ― · ☐ `Start MCP Server`. (§22 — the three lint entries **do** exist in
+  `_build_tools_menu` as of 2026-08-07; §22's *"the Tools-menu wiring is the remaining gap"* status note
+  is stale. §23 — `Start MCP Server` is checkable, unchecked at startup; unchecking is the stop gesture.)
+  > **ALL FOUR Compare/Merge entries have now left this menu** (superseding 2026-08-09's *"only TWO … have
+  > left"*). `Compare / Merge Two Files...` became **`Deployment ▸ Compare/Merge pgtp`** on the Raw XML tab
+  > (FQ-020, §12); **`Next Difference` and `Prev Difference` moved onto the Editor bar's `Navigation` menu
+  > as Compare/Merge-mode-only members**, the latter relabelled **`Previous Difference`**, carried by two
+  > `RENAMED_ID_ALIASES` rows (FQ-021 third leg, `1ccfe9d`; §7/§12) — `tests/ui/test_menus.py` asserts both
+  > are absent from `Tools`; and **`Apply Changes to Target`**, deleted from `Tools` by FQ-020 with nowhere
+  > to go and **unreachable for the interval between**, landed on `Navigation` beside them. That interval
+  > was a genuine regression (the app offered no way to apply merge results at all) and is recorded in §29
+  > and the ledger rather than erased.
   **`Caption Filter…` is DELETED** with the caption modal (FQ-017, 2026-08-07 — ledger §28; §13).
   **`Validate Project` MOVED to the Editor bar's `Parsing`** (FQ-016, shipped — it is the owner's *"validate
   xml"*; its `LEGACY_ID_ALIASES` entry was updated in the same commit to `parsing.validate-project`, §7).
@@ -7975,20 +8489,20 @@ pair by active tab kind.
   only the first of the three would split lint across two bars).
 - **Navigation** (renamed from **Bookmarks**, FQ-021, 2026-08-08 — ledger §28; **every `bookmarks.*` command
   id changes to `navigation.*` and is carried by `RENAMED_ID_ALIASES`, never `LEGACY_ID_ALIASES`**, §7):
-  **FIVE members, all bookmark commands — that is the whole shipped menu** (status-corrected 2026-08-09,
-  ledger §28), hosted by `FindValidateController.build_navigation_menu(bar)`, which takes the bar to build
-  on: Toggle Bookmark (Ctrl+F2), Next Bookmark (F2), Previous Bookmark (Shift+F2), separator,
-  Clear All Bookmarks, **List All Bookmarks**. All five are **always visible** — they are per-*editor*, not
-  per-mode — so the menu itself is never hidden, and the **only** gating on it is Caption Mode
-  (`set_bookmarks_enabled`), never Compare/Merge mode.
-  > **FQ-021's third leg is NOT here.** The designed *"separator + three MODE-ONLY members moved off
-  > Tools"* — **`Next Difference`**, **`Previous Difference`** (relabelled from Tools' *"Prev Difference"*)
-  > and **`Apply Changes to Target`**, each `setVisible(False)` outside Compare/Merge mode and refreshed on
-  > the **mode transition** rather than `currentChanged` (§7/§12) — **did not ship**. The two Difference
-  > commands are still on `Tools`, ungated; `Apply Changes to Target` has **no menu home at all** and is
-  > unreachable (§12/§29). Consequently `Navigation` hosts **no write** today, and the *"an irreversible
-  > write on a menu named Navigation is strained"* concern is a property of the **queued** design, folded
-  > into §29's open question about where that command should land.
+  **EIGHT members in TWO groups split by a separator** (status-corrected 2026-08-10, ledger §28), hosted by
+  `FindValidateController.build_navigation_menu(bar)`, which takes the bar to build on.
+  **Group 1 — the five bookmark commands, ALWAYS visible** (they are per-*editor*, not per-mode, so the
+  menu itself is never hidden): Toggle Bookmark (Ctrl+F2), Next Bookmark (F2), Previous Bookmark
+  (Shift+F2), separator, Clear All Bookmarks, **List All Bookmarks**. The **only** gating on this group is
+  Caption Mode (`set_bookmarks_enabled`, which gates the five **actions** and no longer the `QMenu`).
+  **Group 2 — FQ-021's three Compare/Merge-MODE-ONLY members** (`1ccfe9d`), `setVisible(False)` outside the
+  mode via `set_diff_mode_members_visible`, refreshed on the **mode transition**
+  (`CenterStage.diff_merge_mode_changed`) and never on `currentChanged` (§7/§12): **`Next Difference`**,
+  **`Previous Difference`** (relabelled from Tools' `Prev Difference`) and **`Apply Changes to Target`**.
+  *(Supersedes 2026-08-09's "FIVE members, all bookmark commands — that is the whole shipped menu" and its
+  "FQ-021's third leg is NOT here" note.)* So `Navigation` **does** host a write today; the strain that
+  raised — an irreversible write on a menu named *Navigation* — is mitigated by the separator keeping the
+  two groups from reading as one list, and by the command's own confirmation and ambiguity gate (§12).
   **`List All Bookmarks` ships** (FQ-014, 2026-08-07; **no shortcut** — it writes clickable `[Bookmark]`
   rows into the Audit dock for the **active** editor only and reveals the dock, §7/§8).
   **Every action follows the active editor tab** (§8):
@@ -7998,11 +8512,11 @@ pair by active tab kind.
   `draft.editor`, any other tab → `stage.xml_editor` — and the menu never switches/reveals a tab. Target
   design (2026-08-01, §8/§13): **the five BOOKMARK actions are disabled together with their submenu-less
   group while Caption Mode is active** (gutter bookmark toggling stays usable). **As shipped,
-  `set_bookmarks_enabled(bool)` disables the `QMenu` AND each of `_bookmark_actions`** — equivalent to
-  "the group" precisely because the five bookmark actions are the menu's only members, and the per-action
-  half is mandatory for the Qt shortcut-disabling reason in §8. **The moment FQ-021's third leg lands, the
-  whole-`QMenu` half must be dropped**, or Caption Mode would gray out Difference navigation, which has
-  nothing to do with captions (the shipped `set_bookmarks_enabled` docstring says the same).
+  `set_bookmarks_enabled(bool)` disables each of `_bookmark_actions` and NOT the `QMenu`** — the
+  per-action half is mandatory for the Qt shortcut-disabling reason in §8, and the whole-`QMenu` half was
+  **dropped when FQ-021's third leg landed** (`1ccfe9d`), exactly as this paragraph and the method's own
+  docstring had required: Caption Mode must not gray out Difference navigation, which has nothing to do
+  with captions. *(Supersedes "as shipped … disables the `QMenu` AND each of `_bookmark_actions`".)*
 
 - **Deployment — NEW (FQ-020, settled 2026-08-08; ledger §28). Contents are per ACTIVE TAB KIND**, all ~8
   actions **built once at startup** and only ever `setVisible`-toggled through
@@ -8041,12 +8555,13 @@ pair by active tab kind.
 shows **nothing — the whole bar widget is hidden** (`_refresh_editor_menu_affordances`), which is exactly
 the recorded recommendation and what the visibility refresh gives for free. Hiding the *widget* rather than
 its actions is deliberate: a pinned toolbar button is the menu's own QAction and would otherwise vanish with
-it. **Actions — rather than the widget — are hidden in exactly three places on this bar**
-(status-corrected 2026-08-09): `Select ▸ Select Parent Block` (FQ-015), the **`Deployment` menu's per-tab
-members** (FQ-020) — both on the absent-not-greyed rule and neither a default toolbar button — and **all
-four `Parsing` members** (BUG-039), which *is* a default button and was accepted by owner ruling (§7).
-**`Navigation`'s three mode-only members are NOT among them**: that FQ-021 leg did not ship, and every
-`Navigation` member is unconditionally visible.
+it. **Actions — rather than the widget — are hidden in exactly four places on this bar**
+(status-corrected 2026-08-10): `Select ▸ Select Parent Block` (FQ-015), the **`Deployment` menu's per-tab
+members** (FQ-020), **all four `Parsing` members** (BUG-039) — which *is* a default button and was accepted
+by owner ruling (§7) — and **`Navigation`'s three mode-only Compare/Merge members** (FQ-021 third leg,
+`1ccfe9d`), none of which is a default button. *(Supersedes "exactly three places … `Navigation`'s three
+mode-only members are NOT among them: that FQ-021 leg did not ship".)* `Navigation`'s **five bookmark
+members remain unconditionally visible** — they are per-editor, not per-mode.
 
 > **FQ-012 is FOLDED IN and SHIPPED** (2026-08-09, ledger §28): *Customize Shortcuts…* is a real View-menu
 > entry (above) and §27's table now reads as **rebindable defaults**, not fixed bindings. The FQ-016 ruling
@@ -8070,7 +8585,7 @@ whichever `Deployment` entry they use (§7). `Undo`/`Redo`/`Validate` now resolv
 | Shortcut | Action | Context |
 |---|---|---|
 | **Ctrl+O** | **NOTHING — deliberately unbound** (owner decision, `f621d4c`, 2026-08-09; ledger §28) | **`File ▸ Open...` exists and is unchanged; it simply carries no shortcut.** The reasoning generalises beyond this one chord: in an app that opens **`.pgtp` files, PHP files, DDL projects, XSDs and database objects**, a single `Ctrl+O` has to pick a winner among five kinds of *"open"*, and **any winner is a guess at intent**. Opening is also a once-per-session act that FQ-027's launcher now puts **one click away at startup**, so the key bought almost nothing and cost an ambiguity. **It is UNBOUND, not reassigned** — the chord is free, and FQ-012's `View ▸ Customize Shortcuts…` lets anyone who disagrees bind it to whichever open they actually mean (which is also why no default was chosen *for* them). The rule this states once: **a shortcut is not owed to a command merely because the command is common.** |
-| Ctrl+W | **Close** | Window — `File ▸ Close`, **unchanged and still bound** (it was only ever paired with `Ctrl+O` in this table's layout, and FQ-020 split `Ctrl+S`/`Ctrl+Shift+S` out of the same row on 2026-08-08). **Worth knowing before anyone proposes unbinding it too:** `Ctrl+W` is currently the test suite's **specimen for three shipped properties** — FQ-012's default-capture test, FQ-012's shortcut-**steal** test and FQ-027's hidden-command-loses-its-key test all use `File ▸ Close` precisely because it owns a real default binding on a menu-bar QAction. That is a test-suite fact rather than a design one, but removing the binding would take three unrelated regression tests with it, so a replacement specimen is a prerequisite, not an afterthought |
+| **Ctrl+W** | **NOTHING — deliberately unbound** (owner decision, 2026-08-09; status-corrected 2026-08-10) | **`File ▸ Close` exists and is unchanged; it simply carries no shortcut.** *(Supersedes this table's 2026-08-09 row, which recorded it as "unchanged and still bound".)* **The reason is `Ctrl+O`'s, restated for closing:** this app closes projects, `.pgtp` documents, PHP tabs, DDL object tabs, the XSD tab and console tabs, so one `Ctrl+W` has to pick which *"close"* it means — and the one it actually meant was **the rarest of them**, closing the whole project. Like `Ctrl+O` and **unlike `Ctrl+S`**, the chord is **free rather than reserved**: a user may bind it through `View ▸ Customize Shortcuts…` to whichever close they mean. **The prerequisite the 2026-08-09 row named was real and was paid:** `File ▸ Close` had been the test suite's specimen for three shipped properties (FQ-012's default-capture test, FQ-012's shortcut-**steal** test, FQ-027's hidden-command-loses-its-key test), all of which needed a menu-bar QAction owning a real default binding — so unbinding it required a replacement specimen, and that requirement is recorded here as met rather than waived |
 | **Ctrl+S / Ctrl+Shift+S** | **NOTHING — deliberately unbound app-wide** | **Stated, not merely omitted** (FQ-020, 2026-08-08; ledger §28). Every save is a named click on the Editor bar's **`Deployment`** menu — `Save pgtp` / `Save as new pgtp` (Raw XML), `Save in Project` (a DDL object tab), `Save XSD`, `Save PHP File` (§26). `File ▸ Save`, `File ▸ Save As…` and the `_save_active_tab` router are **deleted**, and so is `PhpFileTab`'s own `Key_S` event-filter branch — owner: *"Dies at all, inconsistency is a bad driver"* — so the reflex has **one** answer everywhere instead of being right on one tab and silently wrong on the next. Pressing the key does **nothing at all: no write, no message, no status-bar hint** — a signpost was offered and **explicitly declined**, and implementers must not add one back. An absent row would read as an oversight, which is why this row exists; the manual's Keyboard Shortcuts chapter must say the same. **The one carve-out is the next row.** The former object-tab flow is unchanged apart from its trigger: the **first** `Deployment ▸ Save in Project` on a never-saved tab opens **Save As… (`*.sql`)** and remembers the path, and **cancelling that dialog from the close-confirmation prompt aborts the close** (§18.5). Save persists text only and **never** executes DDL |
 | Ctrl+Z / Ctrl+Y | Undo / Redo (single step) | Window — project snapshot history (`MainWindow._undo`). **Exception, pinned (implemented, §18.5 carve-out 1):** with the Edit XSD tab or a **DDL object editor tab** active, Ctrl+Z/Ctrl+Y drive **that editor's own native undo stack**. The object tab realizes it with an **event filter** on its editor that accepts the key and calls `editor.undo()`/`redo()` itself, because `CodeEditor` neither consumes nor re-emits the key and the window shortcut would otherwise revert the **Raw XML project buffer** |
 | Ctrl+F / Ctrl+R | **FOCUS** the owning tab's Find field / Replace field (FQ-016, 2026-08-07 — they no longer *show* a bar; the bar is permanently visible, §8/§15) | **Per tab, NOT window-level:** each of the six `FindReplaceBar` hosts installs its own pair of `WidgetWithChildrenShortcut` `QShortcut`s via `find_replace_bar.install_focus_shortcuts(host, bar)` — Raw XML tab, Edit XSD tab, DDL Explorer (`ddl_editor_panel`), the DDL object editor tab, a PHP file tab, a draft fragment tab — and `CaptionManagementPanel` owns an equivalent panel-scoped pair of its own (§13/FQ-017). **A window-level `Ctrl+F` is forbidden**: it would be *ambiguous* against those panel-scoped ones and Qt would fire **neither** (§7). Consequences: exactly one match is live for any focus location; **`Ctrl+F` is a NO-OP on tabs with no bar** (Manual, Diff/Merge) instead of yanking the user to Raw XML — which **closes** §29's reveal question in the recommended direction — and `FindValidateController.active_find_bar()`'s reveal fallback now serves **`F3` only**. Replace is **inert in the DDL Explorer** — that buffer is read-only (`CodeEditor.replace_current_selection` returns early on `isReadOnly()`) — and **live** in the DDL object editor, PHP and draft tabs. **No menu entry advertises either key any more** (the Edit menu is dissolved) and neither key is mode-gated, so the long-standing "the menu advertises one behaviour while the key does another" conflict disappears from both ends, and `set_find_actions`/`set_find_actions_enabled` are deleted (§7) |
@@ -8093,14 +8608,14 @@ has no other document to mean (ledger §28). **Window-level, NOT bar-local:** th
 | Ctrl+Return | **Run** — execute the selection, or the whole buffer when there is no selection, against the **sandbox** (§18.5 D4, target design 2026-08-06) | **Sandbox SQL Console tab only.** This is the one execution gesture that *does* carry a shortcut, and it does not reopen the *"an irreversible outward effect must not be one keystroke away"* rule — that rule is about **irreversibility**, and the sandbox is disposable and `reset()`-able by construction, which is the same asymmetry that authorizes ad-hoc execution at all (D4's safety boundary). Object-changing statements still pass the injected confirmation; there is **no target-database Run**, with or without a shortcut |
 | *(no shortcut, deliberately)* | **Check DDL Object** / **Check without applying** / **Generate Deployment SQL…** | Database menu, the DDL object editor tab's context menu, and (for the check gestures) its button row (§18.5. **Status 2026-08-06:** the tab's own applies ship, with the button row appearing only when the corresponding seam is wired; the **Check** gestures wait on `db/ddl_check.py` (D3a), and none of the Database-menu twins exists yet. **Since FQ-023, 2026-08-08:** the two Check menu gestures are **absent** only when no sandbox is *configured*, and **present-and-reporting** when one is configured with no session open). Apply is an **irreversible outward effect** and must not be one keystroke away. *(`Apply to Sandbox` / `Apply to Target Database…` are now `Deployment ▸ Run on sandbox` / `Run on quality` — next row. **`Deploy this edit…` is NOT superseded by that menu**: it ships alongside it on all three of its surfaces, and is likewise deliberately keyless — corrected 2026-08-09, ledger §28.)* |
 | *(no shortcut, deliberately)* | **Every `Deployment` entry** — `Compare/Merge pgtp` · `Save pgtp` · `Save as new pgtp` · `Deploy .pgtp` · `Save in Project` · `Run on sandbox` · `Run on quality` · `Save XSD` · `Save PHP File` | Editor menu bar ▸ **Deployment**, per active tab kind (FQ-020, 2026-08-08, §26). Deliberately keyless on two different grounds: the four **saves** because a keystroke save is exactly the wrong-target hazard the deleted router created (see the `Ctrl+S` row), and `Run on sandbox` / `Run on quality` / `Deploy .pgtp` because *"an irreversible outward effect must not be one keystroke away"* (§18.5) |
-| *(no shortcut, deliberately)* | **Next Difference** / **`Prev Difference`** | **Window menu bar ▸ `Tools`, UNGATED** — invokable with no comparison loaded (status-corrected 2026-08-09, ledger §28; §12/§26). FQ-021's designed move onto the Editor bar's **`Navigation`** menu as mode-only members, with `Prev` relabelled **`Previous Difference`**, is **queued, not implemented** — the shipped label is `Prev Difference` and the shipped ids are still `tools.*` |
+| *(no shortcut, deliberately)* | **Next Difference** / **Previous Difference** / **Apply Changes to Target** | **Editor menu bar ▸ `Navigation`, MODE-ONLY** — visible only inside Compare/Merge mode, hidden by `set_diff_mode_members_visible` otherwise (FQ-021 third leg, shipped `1ccfe9d`; status-corrected 2026-08-10). Off `Tools` entirely. `Prev Difference` is **relabelled `Previous Difference`**, and because the label is the id's last segment the ids are `navigation.next-difference` / `navigation.previous-difference` / `navigation.apply-changes-to-target`, reached from the old `tools.*` ids through `RENAMED_ID_ALIASES` |
 | *(no shortcut — and NO GESTURE AT ALL)* | **Apply Changes to Target** | **Unreachable: no menu entry anywhere in the app** (status-corrected 2026-08-09, ledger §28). FQ-020 removed its `Tools` entry expecting FQ-021 to rehome it onto the mode-scoped surface; that leg is still `QUEUED`. `DiffMergeController.apply_changes_to_target` ships intact — a **write that replaces the app's open document**, gated by §12's ambiguity gate — but nothing invokes it, so **merge results cannot be applied to the target file**. Where it should land is an owner call, §29 |
 | *(no shortcut, deliberately)* | **Add Trigger…** / **New Function/Procedure…** / the **twelve `Alter Table ▸`** operations (eight column + four constraint) | DDL Explorer tree context menus (table node / "Functions & Procedures" root / a **column leaf**) and, for the routine one, **Database ▸ New Function/Procedure…** (§18.1 — FQ-002 **implemented** 2026-08-06; FQ-025 slices 1 and 2 **implemented** 2026-08-09; slice 3's six further operations are **not yet on any menu**, so they have no row here). All of them are dialog-gated and write **nothing** to a database — they only open a §18.5 editor tab on generated text — so the reason for withholding a shortcut is menu-hygiene, not the irreversible-outward-effect rule above. **None of the `Alter Table ▸` entries is a menu-bar action**, so like `F3`/`Ctrl+L` they fall outside `collect_menu_commands()` and are neither pinnable nor rebindable (below). |
 | *(no shortcut, deliberately)* | **Database/XML Coherence** (checkable) | Database menu (§17/§26, FQ-003, **implemented** 2026-08-06). It replaces three previously unshortcut entry points — Check: XML→Database, Check: Database→XML and View ▸ Find table reference — none of which carried a shortcut either, so nothing is lost; the merged view is read-only and reached by toggle, not by keystroke |
 | Escape | **Return focus to the document** — never hide anything | Any editor's `FindReplaceBar` returns focus to its editor; the Caption Management tab's `CaptionFindReplaceBar` returns focus to the grid (FQ-016/FQ-017, 2026-08-07). Both bars used to *hide* on Escape; both are now permanent |
 | Ctrl+G | Go to line in XML | Caption grid |
 | Ctrl+Shift+B | Bracket-select, handled by **`CodeEditor.keyPressEvent` itself** | Code editor dialog (its **only** host — that dialog has no menu bar); also present on every `CodeEditor` tab, where it is **shadowed** by the Select menu's QAction: Qt's shortcut map consumes the chord before the focused widget, so exactly **one** call occurs (measured, FQ-015). Kept deliberately: it is the menu-less dialog's only path and the reliable one under the offscreen test platform, both paths now land on the same editor, and `select_enclosing_brackets` is idempotent. **FQ-012 interaction, recorded as an open question (§29):** the chord is hosted **twice** and only the QAction half is rebindable, so rebinding `Select ▸ Select Enclosing Block` away from `Ctrl+Shift+B` leaves the hardcoded handler answering the old key and the new key **does not work inside `CodeEditorDialog`** |
-| **Ctrl+S / Ctrl+W** | **OK (accept) / Cancel — NOT a save to disk** | **`CodeEditorDialog` only — the ONE surviving `Ctrl+S` in the app, explicitly carved out of FQ-020's deletion** (2026-08-08). `self.save` is the modal's **accept** slot, the same one `button_box.accepted` fires, and it **writes nothing to disk**; `Ctrl+W` is its cancel. Killing it would be an unrelated regression in the `Edit code…` modal (§8), which has no menu bar and no other keyboard path. **It is bound TWICE and both duplicates must survive:** a `WindowShortcut`-scoped `QShortcut` (`code_editor.py:514-516`) **and** a `keyPressEvent` branch (`:531-543`), the latter because `QShortcut` activation is unreliable under the offscreen test platform. A reader of the amended `Ctrl+S` row above would otherwise assume this pair was deleted too — hence this row, which §27 never carried before |
+| **Return / Escape** | **OK (accept) / Cancel — NOT a save to disk** | **`CodeEditorDialog`** (§8), which has no menu bar. `self.save` is the modal's **accept** slot, the same one `button_box.accepted` fires, and it **writes nothing to disk**. **This row records a deletion:** the dialog's `Ctrl+S`/`Ctrl+W` pair was carved out of FQ-020's deletion on 2026-08-08 as *"the ONE surviving `Ctrl+S` in the app"* (bound twice over — a `WindowShortcut` `QShortcut` **and** a `keyPressEvent` branch, the latter because `QShortcut` activation is unreliable under the offscreen test platform) and was **deleted on 2026-08-09** — `ui/code_editor.py` says so at the construction site: *"this dialog was the last carve-out for either chord"*. **No capability was withdrawn** — Qt's own `Return`/`Escape` dialog defaults and the button box still accept and cancel — only the two chords, so `Ctrl+S` and `Ctrl+W` are now dead **without exception** anywhere in the app. *(Supersedes the 2026-08-08 row asserting both duplicates must survive.)* |
 | F1 | Manual | Window |
 
 **§18.5 introduces exactly two new bindings** — `Ctrl+Alt+F` (which §18.4 had left TBD, shipped) and, as
@@ -8188,12 +8703,13 @@ is locked, which is more honest than a silently incomplete list):
 | `Ctrl+C` · `Ctrl+X` · `Ctrl+V` | Qt built-ins **inside** the editor widgets (§26, FQ-016). A window-level shortcut on one of them would outrank the widget and break copy/cut/paste everywhere |
 | `F1`, **and the `help.manual` command itself** | The universal convention, and §7 pins `Help ▸ Manual` as the one entry no launch mode may hide. It is the only entry in **both** tables: nothing else may take `F1`, and Manual may not leave it — so its row is present but read-only |
 
-**`Ctrl+O` is NOT on that list — unbound is not the same as reserved.** `Ctrl+S`/`Ctrl+Shift+S` are
-reserved *because* they are unbound (the reflex must not return by the side door). `Ctrl+O`, unbound the same
-day for a different reason (five kinds of "open" and no non-arbitrary winner — §27's row), is left
-**free**: the ambiguity is about which open the app should *pick for everyone*, and an individual user
-picking one for themselves resolves it rather than reintroducing it. So the chord is offered as an
-assignable target like any other, with no default behind it.
+**`Ctrl+O` and `Ctrl+W` are NOT on that list — unbound is not the same as reserved.**
+`Ctrl+S`/`Ctrl+Shift+S` are reserved *because* they are unbound (the reflex must not return by the side
+door). `Ctrl+O` and `Ctrl+W`, unbound the same day for the **same different** reason (five kinds of "open"
+and six kinds of "close", with no non-arbitrary winner among either — §27's rows), are left **free**: the
+ambiguity is about which open/close the app should *pick for everyone*, and an individual user picking one
+for themselves resolves it rather than reintroducing it. So both chords are offered as assignable targets
+like any other, with no default behind them.
 
 `Customize Shortcuts…` is itself an ordinary menu action, so it enumerates into the walk and is both
 pinnable and rebindable. Being **new**, it needs no `RENAMED_ID_ALIASES` row — that table is for moves.
@@ -8342,17 +8858,23 @@ is authoritative** (and is what appears in the body above).
 | 2026-08-08 | §18.5 carve-out 2's *"no dead controls"* posture, applied uniformly: **with no live session the control is ABSENT, not greyed out** — so with a project open, a sandbox configured and no session opened, `Check Object in Sandbox`, `Check Object Without Applying` and `Sandbox SQL Console…` are **absent from the menus entirely** (`_refresh_sandbox_affordances` binds visibility, never enabled-state), as are §18.8's two session-dependent node actions | **Carve-out 2 is NARROWED, not overturned: absent when no sandbox is CONFIGURED, present-and-REPORTING when one exists but no session is open** (FQ-023). Absence is right when a control is genuinely inapplicable and wrong when it is **one click from applicable**, because an absence cannot state a reason — the same defect class as the `[Check] tier3: unavailable` confusion D3a already fixed by *stating*. The pattern and even the sentence already exist in the app and are reused, not reinvented: the destination picker **states why** a destination is unavailable (`DESTINATION_UNAVAILABLE_REASONS`, FQ-009) and its sandbox refusal text **already reads "Open Sandbox Session"**. **LAZY SESSION OPENING IS REJECTED** by the owner — *"Don't open lazily, it needs to be an explicit decision."* The inline *"Open a session now"* offer **is still in scope** and is not lazy-open: the distinction is between a session opening as a **side effect** of some other gesture and it opening because the user clicked a thing whose label says it will. Safe reading: **no connection is ever attempted without a click whose label says a session will be opened.** `Database ▸ Open Sandbox Session` stays an explicit menu item (it is also how a user re-opens after an explicit close) and **`open_sandbox` stays the single ownership chokepoint**, so `ForeignDatabaseError` keeps Sandbox Setup… as its principal home with the mandatory *"Create a sandbox database for me"* offer. Same narrowing governs §18.8's two node buttons once their MainWindow wiring lands. Rejected: **disabled** rather than absent-or-reporting (states even less than a refusal and contradicts the carve-out's letter); documenting the prerequisite in the manual only (a manual cannot be read from an absence). **Drift recorded, and it argues the manual-session posture was a leftover:** `sandbox_controller.set_project` claims it *"opens nothing and provisions nothing"*, yet `refresh_capability_status` — called from `set_active_project` — already probes a real sandbox connection at project-open time |
 | 2026-08-09 | §7/§26: the Editor bar's **`Parsing` menu is deliberately UNGATED** — *"a considered decision, not an omission … `Validate Project` is one of the five **default** toolbar buttons, so gating it per tab would make a default button appear and disappear … §18.5 D3a's check members remain the next candidate"* — with §26/§18.5 D3a assigning **`Check Object in Sandbox` / `Check Object Without Applying` to the Database menu**, and §29 leaving their home an open owner call | **`Parsing` IS tab-kind-gated, and the two Check gestures MOVE to it — Database twins DELETED** (BUG-039, owner ruling). Four members built once in `_build_parsing_menu` and only `setVisible`-toggled: on a **DDL object editor tab** `Parsing` shows `Check Object in Sandbox` + `Check Object Without Applying` and **hides** `Auto Parse XML` + `Validate Project`; on **every other tab kind** the reverse. Gating is case **4** of `_refresh_editor_menu_affordances` (which now does FOUR things), and the tab predicate is **the same one `Deployment` uses** — `_active_deployment_group() == "ddl-object"`, i.e. `stage.active_ddl_object_panel() is not None` — so "is a DDL object tab active" keeps exactly one answer. The tab-kind gate **COMPOSES with, and does not replace,** the sandbox gate: the check members are visible iff `ddl_tab_active AND check_present`, where `check_present` is `_refresh_sandbox_affordances`'s existing **sandbox-CONFIGURED** predicate (`can_check or _configured_sandbox_params() is not None`), **never `has_session`** — FQ-023's present-and-reporting case survives intact — and **both** refresh entry points must funnel through one shared helper rather than each writing half the answer. **The blink cost is ACCEPTED, not overlooked:** `Validate Project` is a `DEFAULT_TOOLBAR_IDS` member, so a *default* toolbar button goes empty on a DDL tab — the fourth accepted action-hide instance (§7), on the `Select ▸ Select Parent Block` precedent, and the first one that empties a default button. **Build-once is a hard constraint**, not tidiness: `ToolbarController._walk_menu_actions` never tests `isVisible()`, so an action that does not exist at enumeration time drops out of Customize Toolbar and takes saved `toolbarIds` with it. Rejected: adding Parsing entries that *delegate* to surviving Database twins (one gesture, two homes, two visibility rules) |
 | 2026-08-09 | §18.5 carve-out 2 (FQ-023, 2026-08-08): ***"LAZY SESSION OPENING IS REJECTED** by the owner — 'Don't open lazily, it needs to be an explicit decision'"*, *"no connection is ever attempted without a click whose label says a session will be opened"*, and *"**`Database ▸ Open Sandbox Session` stays an explicit menu item** — it is also how a user re-opens after an explicit close"*; plus `sandbox_controller.set_project`'s stated principle that a project opening causes **no connection attempt as a side effect** | **The sandbox session AUTO-CONNECTS on project open, and the manual lifecycle actions are DELETED** (BUG-040, owner ruling — the most aggressive of the three options offered). `MainWindow._bind_sandbox_controller_to_project` calls **`_open_sandbox_session()` → `SandboxController.open_session` → `open_sandbox`** when `_configured_sandbox_params() is not None` — the **existing** ownership chokepoint (D2), **no new session-acquisition path**. **Best-effort, never fatal, never modal:** a sandbox that cannot connect degrades to exactly today's no-session state — `has_session` stays False, the distinguishable refusal (unreachable / not superuser / tools missing / foreign DB) reaches the **Audit panel** through the existing `SandboxOperationResult` routing, and Apply/Check keep refusing with a stated reason. **`Open Sandbox Session` / `Close Sandbox Session` are deleted, not hidden:** the report's "standalone" means *projectless*, and projectless has **no sandbox at all**, so the actions are reachable in **zero** states — and a *hidden* QAction stays enumerated, stays pinnable and **stays clickable from the toolbar**, which bypasses menu visibility. Pinned ids degrade silently through `resolve_ids` (FQ-020's `save` precedent); **no `RENAMED_ID_ALIASES` row** — a deletion is not a rename. **Recovery after a failed auto-open, named rather than left to absence:** the inline **`Open`** button in `_refuse_sandbox_gesture` (now the app's **only** manual session-acquisition gesture, and still obeying FQ-023's surviving principle that no connection happens without a click whose label says so), `Database ▸ Sandbox Setup…`, or re-binding the project; **there is no explicit close** — `set_project`/`clear_project`'s `close_session()` on project transition is the only closing mechanism. `DESTINATION_UNAVAILABLE_REASONS[DEST_SANDBOX]` must stop naming the deleted menu path, in the same commit. **The `set_project` "opens nothing" docstring is retired and reconciled:** it was already contradicted by `ddl_project_controller.refresh_capability_status`, which opens a real sandbox connection at project-open time — only the stateful session was withheld. Reconciled statements: `set_project` still opens/provisions nothing (mechanism); the **host** decides to open a session (policy); **D2's single ownership is unchanged** — what moved is *who triggers it and when*, never *how many ways in* — and reads stay ungated and session-free (§18.7). Untouched by construction: projectless (the guard is a no-op), and `_adopt_sandbox_setup_settings`, which deliberately bypasses `_bind_sandbox_controller_to_project` and **must not be double-opened** |
-| 2026-08-09 | §26/§18.5: **`Database ▸ Sandbox Setup…` is ALWAYS present** — *"never gated on a session or on a sandbox existing: this is the one entry point that can CREATE a sandbox, so hiding it whenever there is no sandbox would make it unreachable exactly when it is needed"* — and, in BUG-040's own recovery list (carve-out 2 item 5, written earlier the same day), **named as the configuration-is-wrong recovery path after a failed auto-open**, including `ForeignDatabaseError`'s *"Create a sandbox database for me"* offer | **PROJECTLESS-ONLY — shipped, BUG-040's second leg (`4e36162`).** `_refresh_sandbox_affordances`' first statement is `self._sandbox_setup_action.setVisible(self._ddl_project_folder is None)`: visible with **no** project open, hidden whenever one is. Rationale as shipped: in project mode the session connects itself and the sandbox *connection* lives in Project Settings, so the menu entry would be a second door onto a surface the project already owns. **Hidden, not deleted** — unlike `Open`/`Close Sandbox Session` it still has a mode where it means something (projectless it is the only way to get a sandbox at all), and the action is still built in `_build_database_menu`. **Consequence, recorded and NOT resolved: it stops being a recovery path.** A failed auto-open happens only in project mode, where the entry is hidden — so what remains is the inline **`Open`** button in `_refuse_sandbox_gesture` and **re-binding the project** (close/reopen re-runs `_bind_sandbox_controller_to_project` and retries), and carve-out 2 item 5 is rewritten to say exactly that. Every other spec site asserting its project-mode reachability is swept (§18.5 D2/D2a/D3a, §18.7, §18.8, §26). **The provisioning hole this opens is an OPEN QUESTION (§29), not a design:** Provision / Reset / data clone / `Install plpgsql_check` / the *"create a database for me"* offer live only in `ui/sandbox_setup_dialog.py`, Project Settings cannot do any of them, and a sandbox exists only in project mode |
-| 2026-08-09 | §18.5 carve-out 2 item 6 (BUG-040, written earlier the same day), which *predicted* the corrected refusal wording: `DESTINATION_UNAVAILABLE_REASONS[DEST_SANDBOX]` *"names the dialog's own `Open` button and **`Sandbox Setup…`** instead"*; and the FQ-023 statement that the sandbox refusal text *"already reads `Open Sandbox Session`"* | **Both refusal strings name `Project Settings`, and neither names `Sandbox Setup…` — shipped, BUG-040's third leg (`9b9aef7`).** `ddl_object_editor.py::DESTINATION_UNAVAILABLE_REASONS[DEST_SANDBOX]` = *"no sandbox session is open — the project's sandbox could not be reached, or none is set up yet (check its connection in Project Settings)"* (reused verbatim by `_refuse_sandbox_gesture`, which supplies the inline `Open` button); `sql_console_panel.py::NO_SESSION_TEXT` = *"No live sandbox session — the project's sandbox could not be reached; check its connection in Project Settings. Ad-hoc SQL runs against the sandbox and nowhere else."* The prediction was overtaken by leg 2 in the same bug: a refusal fires only in project mode, and `Sandbox Setup…` is hidden there, so naming it would send the user to a menu entry they cannot see. **The rule, stated once:** a refusal must name a place the user can actually REACH from where they are. Both strings deliberately point at the **connection** and promise nothing for the *"none is set up yet"* half, because in project mode there is no in-app remedy for it (§29). **Not swept by leg 3 and recorded as-is:** `db/ddl_check.py`'s tier-3 `installable` line still reads *"Install it from Database ▸ Sandbox Setup…, or the Project Status window's plpgsql_check node."*, and `ui/sandbox_controller.py`'s two `REASON_*` strings still say *"re-provision / re-run the data clone from Sandbox Setup"* — all three name a project-mode-unreachable entry. Flagged under the same §29 question; **no code change is proposed here** |
+| 2026-08-09 | §26/§18.5: **`Database ▸ Sandbox Setup…` is ALWAYS present** — *"never gated on a session or on a sandbox existing: this is the one entry point that can CREATE a sandbox, so hiding it whenever there is no sandbox would make it unreachable exactly when it is needed"* — and, in BUG-040's own recovery list (carve-out 2 item 5, written earlier the same day), **named as the configuration-is-wrong recovery path after a failed auto-open**, including `ForeignDatabaseError`'s *"Create a sandbox database for me"* offer | **PROJECTLESS-ONLY — shipped, BUG-040's second leg (`4e36162`).** `_refresh_sandbox_affordances`' first statement is `self._sandbox_setup_action.setVisible(self._ddl_project_folder is None)`: visible with **no** project open, hidden whenever one is. Rationale as shipped: in project mode the session connects itself and the sandbox *connection* lives in Project Settings, so the menu entry would be a second door onto a surface the project already owns. **Hidden, not deleted** — unlike `Open`/`Close Sandbox Session` it still has a mode where it means something (projectless it is the only way to get a sandbox at all), and the action is still built in `_build_database_menu`. **Consequence, recorded and NOT resolved: it stops being a recovery path.** A failed auto-open happens only in project mode, where the entry is hidden — so what remains is the inline **`Open`** button in `_refuse_sandbox_gesture` and **re-binding the project** (close/reopen re-runs `_bind_sandbox_controller_to_project` and retries), and carve-out 2 item 5 is rewritten to say exactly that. Every other spec site asserting its project-mode reachability is swept (§18.5 D2/D2a/D3a, §18.7, §18.8, §26). **The provisioning hole this opens is an OPEN QUESTION (§29), not a design:** Provision / Reset / data clone / `Install plpgsql_check` / the *"create a database for me"* offer live only in `ui/sandbox_setup_dialog.py`, Project Settings cannot do any of them, and a sandbox exists only in project mode. **⚠ THIS ROW IS ITSELF SUPERSEDED the next day — see the 2026-08-10 row at the end of this ledger: the owner ruled direction (b), the provisioning gestures moved into Project Settings, and `Sandbox Setup…` and its dialog were DELETED. This row's hidden-not-deleted rule, its provisioning hole and its §29 item are all closed; it is kept only for the reasoning about *why* leg 2 hid rather than deleted, which the successor row explicitly answers.** |
+| 2026-08-09 | §18.5 carve-out 2 item 6 (BUG-040, written earlier the same day), which *predicted* the corrected refusal wording: `DESTINATION_UNAVAILABLE_REASONS[DEST_SANDBOX]` *"names the dialog's own `Open` button and **`Sandbox Setup…`** instead"*; and the FQ-023 statement that the sandbox refusal text *"already reads `Open Sandbox Session`"* | **Both refusal strings name `Project Settings`, and neither names `Sandbox Setup…` — shipped, BUG-040's third leg (`9b9aef7`).** `ddl_object_editor.py::DESTINATION_UNAVAILABLE_REASONS[DEST_SANDBOX]` = *"no sandbox session is open — the project's sandbox could not be reached, or none is set up yet (check its connection in Project Settings)"* (reused verbatim by `_refuse_sandbox_gesture`, which supplies the inline `Open` button); `sql_console_panel.py::NO_SESSION_TEXT` = *"No live sandbox session — the project's sandbox could not be reached; check its connection in Project Settings. Ad-hoc SQL runs against the sandbox and nowhere else."* The prediction was overtaken by leg 2 in the same bug: a refusal fires only in project mode, and `Sandbox Setup…` is hidden there, so naming it would send the user to a menu entry they cannot see. **The rule, stated once:** a refusal must name a place the user can actually REACH from where they are. Both strings deliberately point at the **connection** and promise nothing for the *"none is set up yet"* half, because in project mode there is no in-app remedy for it (§29). **Not swept by leg 3 and recorded as-is:** `db/ddl_check.py`'s tier-3 `installable` line still reads *"Install it from Database ▸ Sandbox Setup…, or the Project Status window's plpgsql_check node."*, and `ui/sandbox_controller.py`'s two `REASON_*` strings still say *"re-provision / re-run the data clone from Sandbox Setup"* — all three name a project-mode-unreachable entry. Flagged under the same §29 question; **no code change is proposed here**. **⚠ THE UNSWEPT-STRINGS HALF OF THIS ROW IS CLOSED (verified 2026-08-10):** all three were swept when `Sandbox Setup…` was deleted — `REASON_INSTALL_LOCATIONS` now reads *"Install it from the Project Status window's plpgsql_check node."* and `sandbox_controller.py`'s two reasons name Project Settings' provisioning group. The two quoted refusal strings are unchanged and now doubly right, Project Settings being where provisioning actually lives |
 | 2026-08-09 | §18.5/§26/§27/§29 (FQ-020, 2026-08-08): the *"Deploy this edit…"* picker is **superseded** by the `Deployment` menu's three named destinations — §18.5's Ships list flagged it *"superseded … its delegation rule survives verbatim"*, §26's Database-menu block said *"**this picker is not built**"*, §18.5 reframed its whole ruleset under a *"**Historical:** … superseded 2026-08-08"* heading, and §29 closed the *"exact picker UI"* question as **MOOT — the picker is superseded**; plus §18.5's claim that `DESTINATION_LABELS` *"currently reads `Apply to Sandbox` / `Save (for a future batch deploy)` / `Apply to Target`"* | **THE PICKER FULLY SHIPS — FQ-020 added the three named entries IN ADDITION TO it, not instead of it (owner rule: the shipped feature is the truth).** Verified in code on **three** always-present surfaces: **`Database ▸ Deploy This Edit…`** (`main_window.py::_build_database_menu`, `self._deploy_this_edit_action` → `_deploy_active_ddl_object_edit()` — **no gate at all**, neither sandbox- nor tab-gated, and deliberately left on **Database** when BUG-039 moved the two check gestures to `Parsing`, because it is a destination picker, not a lint); the object tab's **context menu** (`_build_context_menu`); and the **leftmost button of the apply row** (`_build_apply_row`, `setAutoDefault(False)`) — **the row itself always exists**, only the two Apply buttons being seam-conditional, because the picker's Save destination needs no seam. The two surfaces have distinct, complementary roles: the `Deployment` entries are the **direct** gestures, the picker is the **umbrella** one that names all three destinations in one place and **states which are unavailable and why** (FQ-009's discoverability half, shipped in `4bc73b6`): `deploy_prompt_text()` appends a *"Not available right now:"* block, one `• <label>: <reason>.` line per missing destination from `DESTINATION_UNAVAILABLE_REASONS`, with **`Save` never listed** — it needs no seam. The modal is `_prompt_destination()`, a `QInputDialog.getItem` titled *"Deploy This Edit"*, with `deploy_destinations`/`unavailable_destinations`/`deploy_prompt_text` split out so tests read the prose without an un-patched modal. **The one half of the FQ-020 row that held:** `DESTINATION_LABELS` **did** change to `"Run on sandbox"` / `"Save in Project"` / `"Run on quality"`, so picker and menu name the same destination identically — the spec's "currently reads" sentence was itself stale. §29's item is re-opened-and-**ANSWERED-BY-THE-IMPLEMENTATION** rather than moot-by-supersession. **Not folded in and not spec:** `docs/FEATURE_QUEUE.md`'s **FQ-026 (QUEUED)** proposes unifying the four DDL gestures' vocabulary and may retire the picker — a queued idea is not a decision, and the picker is **not** described anywhere as pending removal |
 | 2026-08-09 | §7/§29 (FQ-011, 2026-08-07): the launch mode as a **PERSISTED** key in `QSettings("MDS","PGTP Editor")` beside `lightTheme`/`windowState`/`toolbarIds`, set by the launcher's **four** FQ-010 groups, with the per-mode membership left UNDECIDED, `Generate`-in-project-mode as the motivating example, and an escape hatch whose shape was open | **FQ-027 SUPERSEDES FQ-011 wherever they disagree (owner ruling), and it builds the mechanism FQ-011 only planned.** The ordering is the reason: FQ-010's launcher shipped, the owner used it, and FQ-027 is the design as revised by contact with the real thing. **Nothing of FQ-011 was ever implemented** — no `launchMode`/`launch_mode`/`_current_mode` key exists in `pgtp_editor/`, and the only shipped visibility gating is capability-based (`_refresh_sandbox_affordances`) or tab-kind-based (`_refresh_editor_menu_affordances`/`_refresh_parsing_menu_affordances`); §7's earlier claim that a launcher choice *"sets the persisted launch mode"* was wrong and had already been corrected to "planned only" (`eaa0cb5`), and now states the positive truth. **Three concrete disagreements, all resolved FQ-027's way:** (1) **Persistence** → **SESSION-ONLY**, and therefore **no QSettings key at all** — a mode that dies with the session cannot strand a user in a menu-less app after restart, which is most of what FQ-011's escape-hatch anxiety was about. (2) **Launcher shape** → **three columns (Standalone \| Project \| Maintenance)** in a 1×3 row, merging FQ-010's groups 1+3 into Standalone and narrowing group 4 to `Edit XSD` + `Import XSD`; the `launcherSuppressed` mechanism is deleted (row below). (3) **The `Generate`-in-project-mode case** → **not adopted**: only **Maintenance** gets a membership rule (File trimmed to `New Session` · Schema whole · Help whole; View/Database/Tools/Generation hidden), Project and Standalone are explicitly left alone, so no *default* toolbar button is emptied on a fresh install and FQ-011's own unanswered open question 4 is sidestepped rather than answered. **What SURVIVES from FQ-011 and is carried into §7 verbatim:** the mechanism (**visibility only, never enabled-state**, through **one** `_refresh_*_affordances`-style entry point — the app keeps exactly two postures); the rule that **`Help ▸ Manual` (F1) and the surface that clears the mode may never be filtered out of any mode**; the `_walk_menu_actions` enumeration fact (a hidden action stays enumerated, stays offered by Customize Toolbar and **keeps a pinned toolbar button working** — which FQ-027 relies on deliberately in its menu-bar-only scope, and which reads as the *opposite* of BUG-040's deletion ruling only until you note the cases differ: a BUG-040 button pointed at a **removed gesture**, an FQ-027 button points at a **command that still works**); and, above all, **THE OBJECTION, which is NOT retired by this supersession** — this remains the first time the codebase hides a command because the user *said they were doing something else* rather than because the command *cannot run*. §7 therefore states **two deliberately distinct rules** (A: capability · B: intent), each with its own trigger, justification, escape and *may-it-state-a-reason* answer, so a future reader can tell which governs a given menu item; §18.5 carve-out 2 and §26's *absent, not disabled* statements stay stated in **capability** terms and are explicitly untouched by rule B |
 | 2026-08-09 | §7's *"Suppressible, escapable and REVERSIBLE"* launcher contract (FQ-010, 2026-08-07): the persisted **"Don't show this again"** checkbox writing the QSettings bool **`launcherSuppressed`** on **every** exit path, and **`File ▸ Show Launcher…`** re-opening the modal with **`force=True`** to keep the tick reversible | **The suppression mechanism is DELETED and the launcher becomes an UNCONDITIONAL starting gate** (FQ-027 — a documented capability withdrawn, recorded rather than silently dropped). Removed: the `QCheckBox` and its `suppress_requested`/`set_suppressed` accessors, `LAUNCHER_SUPPRESSED_SETTINGS_KEY` with `launcher_suppressed()`/`set_launcher_suppressed()`, and `show_launcher`'s `force=` parameter with its early-return and persist-on-exit paths — plus the `manual.md` passage describing them. Rationale: the launcher is now the one gate at which a **mode** is chosen, so a persisted "skip it forever" toggle is both redundant and a trap; `force=` existed **only** to bypass suppression and goes with it. In the same ruling **`File ▸ Show Launcher…` is RENAMED `File ▸ New Session`** — exactly **one** action, not two — and gains save-all (Cancel aborts the gesture) → close everything → restore the full menu bar → show the launcher unconditionally, making it both a general *"start over"* gesture and the mandatory escape hatch from Maintenance mode. The rename changes the command id, so it carries a **`RENAMED_ID_ALIASES`** row `file.show-launcher → file.new-session` and **never** a `LEGACY_ID_ALIASES` one (`ICON_ID_BY_COMMAND` is that dict inverted — FQ-021's landmine). Deliberately **no keyboard shortcut**: an action that closes every open document must not be one keystroke away. Rejected: keeping `Show Launcher…` as a light re-show and adding `New Session` beside it (owner: exactly one action) |
-| 2026-08-09 | §7/§8/§12/§13/§26/§27 (FQ-021, 2026-08-08): FQ-021 recorded as **fully shipped** — the header banner, the TOC's §12 blurb and every body site stating that `Navigation` gained **three mode-only members** (`Next Difference` / `Previous Difference` / `Apply Changes to Target`) moved off `Tools`, that `Prev Difference` was **relabelled** `Previous Difference`, that `RENAMED_ID_ALIASES` carries three `tools.* → navigation.*` rows, that hiding those members is §7's **third** accepted action-hide instance, and that Caption Mode's disable is already **narrowed** off the whole `Navigation` `QMenu` | **FQ-021 PARTLY SHIPPED — two legs of three (owner rule: the shipped feature is the truth).** Verified against HEAD `9b9aef7`. **In:** FQ-021a (`75e2cdb`) — Compare/Merge as a **MODE** (`CenterStage.enter_diff_merge_mode` / `leave_diff_merge_mode`, the panel-owned exit `diff_merge_panel._on_close`, called from `diff_merge_controller.py`) and the Raw XML **read-only REASONS SET** (`_raw_xml_read_only_reasons: set[str]`, the `raw_xml_read_only_reasons` property, `_set_raw_xml_read_only(reason, active=True)` composing the `" (read only in … + …)"` tab-title suffix, each `leave_*` discarding **only its own** reason, `reason=None` reserved as a whole-set reset no mode's `leave_*` may use); and FQ-021b (`1d53abd`) — the **`Bookmarks` → `Navigation` rename** with five `RENAMED_ID_ALIASES` rows (`bookmarks.* → navigation.*`), correctly **not** in `LEGACY_ID_ALIASES`. **NOT in — the third leg, still `Status: QUEUED` in `docs/FEATURE_QUEUE.md`:** `FindValidateController.build_navigation_menu` builds **exactly five members, all bookmark commands**, and the menu's only gate is Caption Mode via `set_bookmarks_enabled` (which still disables the `QMenu` **and** the five actions — equivalent only while no Difference member has joined); **`Next Difference` and `Prev Difference` are still on the window bar's `Tools` menu, ungated**, under the shipped label **`Prev Difference`** (the string *"Previous Difference"* appears **nowhere** in the package), pinned by `tests/ui/test_menus.py::test_tools_menu_contents` and looked up on `Tools` by `tests/ui/test_diff_merge_entry_points.py`; the three `tools.*` alias rows **do not exist**; and **`Apply Changes to Target` has NO menu entry anywhere** — FQ-020 deleted its `Tools` home expecting this leg to rehome it (`main_window.py:4955-4961`, verbatim: *"Until FQ-021 lands it has no menu home"*), so a shipped, tested implementation is **unreachable** and **the app offers no way to apply merge results to the target file**. That regression is **recorded as an open question (§29), not resolved** — `Navigation`, back to `Tools`, or a `DiffMergePanel`-local button is an owner call. The unshipped design is retained in §12/§7/§26 explicitly labelled *designed in the FQ-021 queue entry, not implemented*, never as behaviour. The 2026-08-08 FQ-021 row above is **amended in place**, not deleted |
+| 2026-08-09 | §7/§8/§12/§13/§26/§27 (FQ-021, 2026-08-08): FQ-021 recorded as **fully shipped** — the header banner, the TOC's §12 blurb and every body site stating that `Navigation` gained **three mode-only members** (`Next Difference` / `Previous Difference` / `Apply Changes to Target`) moved off `Tools`, that `Prev Difference` was **relabelled** `Previous Difference`, that `RENAMED_ID_ALIASES` carries three `tools.* → navigation.*` rows, that hiding those members is §7's **third** accepted action-hide instance, and that Caption Mode's disable is already **narrowed** off the whole `Navigation` `QMenu` | **FQ-021 PARTLY SHIPPED — two legs of three (owner rule: the shipped feature is the truth).** Verified against HEAD `9b9aef7`. **In:** FQ-021a (`75e2cdb`) — Compare/Merge as a **MODE** (`CenterStage.enter_diff_merge_mode` / `leave_diff_merge_mode`, the panel-owned exit `diff_merge_panel._on_close`, called from `diff_merge_controller.py`) and the Raw XML **read-only REASONS SET** (`_raw_xml_read_only_reasons: set[str]`, the `raw_xml_read_only_reasons` property, `_set_raw_xml_read_only(reason, active=True)` composing the `" (read only in … + …)"` tab-title suffix, each `leave_*` discarding **only its own** reason, `reason=None` reserved as a whole-set reset no mode's `leave_*` may use); and FQ-021b (`1d53abd`) — the **`Bookmarks` → `Navigation` rename** with five `RENAMED_ID_ALIASES` rows (`bookmarks.* → navigation.*`), correctly **not** in `LEGACY_ID_ALIASES`. **NOT in — the third leg, still `Status: QUEUED` in `docs/FEATURE_QUEUE.md`:** `FindValidateController.build_navigation_menu` builds **exactly five members, all bookmark commands**, and the menu's only gate is Caption Mode via `set_bookmarks_enabled` (which still disables the `QMenu` **and** the five actions — equivalent only while no Difference member has joined); **`Next Difference` and `Prev Difference` are still on the window bar's `Tools` menu, ungated**, under the shipped label **`Prev Difference`** (the string *"Previous Difference"* appears **nowhere** in the package), pinned by `tests/ui/test_menus.py::test_tools_menu_contents` and looked up on `Tools` by `tests/ui/test_diff_merge_entry_points.py`; the three `tools.*` alias rows **do not exist**; and **`Apply Changes to Target` has NO menu entry anywhere** — FQ-020 deleted its `Tools` home expecting this leg to rehome it (`main_window.py:4955-4961`, verbatim: *"Until FQ-021 lands it has no menu home"*), so a shipped, tested implementation is **unreachable** and **the app offers no way to apply merge results to the target file**. That regression is **recorded as an open question (§29), not resolved** — `Navigation`, back to `Tools`, or a `DiffMergePanel`-local button is an owner call. The unshipped design is retained in §12/§7/§26 explicitly labelled *designed in the FQ-021 queue entry, not implemented*, never as behaviour. The 2026-08-08 FQ-021 row above is **amended in place**, not deleted. **⚠ THE "NOT IN" HALF OF THIS ROW IS ITSELF SUPERSEDED — see the 2026-08-10 row at the end of this ledger: the third leg shipped (`1ccfe9d`), the regression is closed, and the 2026-08-08 row's original claims are restored as truth.** This row is kept because the *interval* was real and the detection route (harmonization, not a test) is the lesson |
 | 2026-08-09 | §27's closing statement: ***"Every binding in this table is FIXED"*** — set inline as a literal string at each action's construction site, *"with no central registry and no user-facing rebinding"* — plus §26's note that FQ-012 was *"not folded into this spec"* and §29's item recording it as an unsettled concurrent proposal | **Shortcuts are user-rebindable DEFAULTS — FQ-012 ships** (`5f53583` for the two new modules; the `View ▸ Customize Shortcuts…` entry and the host's capture/apply/persist pass verified in `ui/main_window.py`). Three layers, and the split is the design: **`ui/shortcut_registry.py`** (pure, **Qt-free**, the twin of `toolbar_registry.py`) holds normalization, the reserved tables and the conflict rule; **`ui/customize_shortcuts_dialog.py`** is a widget that holds no `QAction`, touches no `QMenuBar` and writes no QSettings; `MainWindow` does the three Qt jobs — capture-once defaults (`_shortcut_commands`), the `setShortcut()` pass (`_apply_shortcut_bindings`), persistence (`apply_and_save_shortcut_overrides`). Enumeration is **`ToolbarController.collect_menu_commands()`**, the same walk Customize Toolbar uses, never a second one. **The conflict rule is STEAL-or-REFUSE, and it could not have been "warn and allow"** — Qt answers two enabled shortcuts on one chord by firing **NEITHER** (the fact this codebase already recorded at `find_replace_bar.install_focus_shortcuts`), so a duplicate does not degrade to "first wins", it **deletes both commands from the keyboard**: `assign_shortcut` therefore clears the loser **in the same operation** (the map never holds a duplicate, not even transiently), `resolve_bindings` **re-derives the same steal at load** so a hand-edited settings file cannot install an ambiguous pair, the host's install runs **two passes** (clear all, then assign), and a chord held by a **non-menu** occupant is **refused, not stolen**, because the dialog owns menu QActions only and cannot clear a window-scoped `QShortcut`, a per-tab focus shortcut or a widget `keyPressEvent` — stealing what you cannot clear *produces* the ambiguity. **What remains genuinely unrebindable is a short, reasoned list, not the table:** `Ctrl+S`/`Ctrl+Shift+S` (deliberately unbound since FQ-020), `Ctrl+Z`/`Ctrl+Y` (window-scoped `QShortcut`s), `Ctrl+F`/`Ctrl+R` (per-tab focus shortcuts at six sites plus the caption pair), `Escape`, the menu-less window-level commands `F3`/`Ctrl+L`/`Ctrl+Alt+F`/`Ctrl+Return`/`Ctrl+Space`/`Ctrl+G`, `Ctrl+C`/`Ctrl+X`/`Ctrl+V` (Qt built-ins **inside** the editors — a window-level shortcut would outrank the widget and break copy everywhere), and `F1` **together with the `help.manual` command itself** (§7 pins it as the one entry no launch mode may hide). Persistence is the new QSettings key **`shortcutOverrides`** beside `toolbarIds`/`toolbarIconIds` (§7), same `"command_id=value"` shape, pruned on load, legacy/renamed ids mapped — with **one deliberate divergence from `toolbarIconIds`: an empty value is PRESERVED** (`"file.close="` = "the user cleared this"), which is itself recorded as an open question (§29). Rejected on the way: hiding the locked keys (a silently incomplete list), blocking every conflict outright, and hosting this in the dead `Edit ▸ Preferences…` stub (owner: *"Under View"*, a second single-purpose dialog, not a settings container) |
 | 2026-08-09 | §18.5's FQ-002 statement that the third (creation) entry point changes **nothing** in that subsection — *"Tab identity, title/tooltip rules, dirty tracking, the close prompt, Save / Save As…, Format Selection and §18.6 completion all behave exactly as for an edited object — the panel never knew whether the DB holds the object, **and must not start branching on it**"* — and §18.1's amendment that a table node's context menu holds *"exactly one creation entry — Add Trigger…"*, with column rows not existing in the tree at all | **A FOURTH kind of tab exists: the ALTER tab, whose save-to-object is suppressed STRUCTURALLY — FQ-025 slice 1 ships** (`bc02d9c`, `8a88da4`, `532da30`). Eight column operations (Add / Drop / Rename / Change type with `USING` / Set-Drop NOT NULL / Set-Drop DEFAULT) hang off a new **`Alter Table ▸` submenu** on table nodes **and** on the tree's **new column leaves** (`Columns  (N)` group per table — FQ-025's queue entry claimed column nodes already existed and merely lacked a menu; that was **false**). Eight pure emitters join `db/ddl_skeleton.py` under its existing allowlist-or-raise posture; five dialog classes in `ui/alter_column_dialogs.py` split by **what each collects**, not one per menu item. **The panel still does not branch — the REF does:** `ui/main_window.py::AlterDdlRef` (`kind="alter"`) is a separate duck-typed ref because `DdlObjectRef` cannot name a mutation without lying (its `qualified` would render **`pr.orders()`**, spelling a table as a zero-argument routine in every confirmation). Three deliberate values: **`name=""`** — `build_ladder` adds tier 3's `plpgsql_check` only when a name is present, and an ALTER creates no function to analyse, so *"tier 3 was never going to run"* is the honest state (tiers 0–2 still run); a **serial** per generation, because `open_ddl_object_tab` focuses an existing tab for a repeated key and **discards the new text**, and two ALTERs on one table are two statements; and a Save As… prefill (`alter_pr_orders.sql`) deliberately **not** §18.2's `schema.object.sql` scheme. **The narrowing:** the tab opens through **`_edit_ddl_live` always** (never `_edit_ddl_checked_out`) and is **never registered in the deploy manifest**, so no `ddl/<object>.sql` is seeded, no baseline hashed, no drift marker speaks for it — which is why FQ-002's "nothing changes" no longer covers every ref. Consequences recorded rather than hidden: **`Deployment ▸ Save in Project` opens Save As…** (its label reads slightly off), **Apply-to-Target refuses these buffers** because `parse_buffer_identity` finds no `CREATE` and precondition 1 blocks it (FQ-025's *"Apply-to-Target is not wired, a pre-existing gap"* was **stale** — it was wired projectless on 2026-08-08), **Apply-to-Sandbox is the intended run path and works**, and the `applied` bookkeeping row is **one per table** (`("alter", schema, "", table)`) so successive ALTERs overwrite each other — an accepted limit of recording a mutation in an object-keyed table; `db/ddl_check.py` was **not** changed. In the same pass `db/introspect.py` gains `ConstraintInfo`/`IndexInfo` (slice 2's data, fetched now so the format version moves once) and **`db/schema_snapshot.py::SNAPSHOT_VERSION` goes 1 → 2, REFUSING a v1 payload rather than loading it with the new sections empty** — refuse-never-degrade, because a half-loaded schema is exactly what makes `diff_schemas` emit DROPs; costless, since `Save Schema Snapshot…` was never built. ~~**Slices 2 and 3 are NOT shipped** and are not written as behaviour anywhere~~ — **⚠ AMENDED the same day (see the two rows below): slice 2 shipped and is wired (`c19a09f`), and slice 3's emitters and dialogs shipped (`b8a005d`, `ef46625`) with its wiring landing separately.** Everything else in this row stands unchanged |
 | 2026-08-09 | FQ-025's own **open question 2**, and its stated recommendation: allow a **blank constraint name** on the two `ADD` operations so PostgreSQL auto-names the constraint | **CONSTRAINT NAMES ARE REQUIRED on both `ADD`s — the recommendation is settled AGAINST (slice 2, `c19a09f`).** `add_constraint_skeleton` and `add_foreign_key_skeleton` both raise `SkeletonError` on an empty name, and `_AddConstraintDialogBase` mirrors the refusal. The reason is **downstream, not local**: an auto-generated name like `orders_qty_check1` is exactly what turns the later **Drop** and **Rename** pickers into a guessing game, so a convenience at creation time buys an unfindable constraint forever. Requiring the name means every constraint this app creates can be found again by the person who created it. **One deliberate exception, recorded so it is not read as drift:** slice 3's `create_table_skeleton` emits its primary key **unnamed** (`PRIMARY KEY ("id")`), because a table's PK is the single case where Postgres's auto-name is both deterministic and the universal convention (`orders_pkey`) — naming it would produce noisier DDL saying the same thing. Rejected: allowing blank and *warning*, which would put the cost on the person who later has to drop the thing |
 | 2026-08-09 | §18.1/§18.5 (FQ-025 slice 1, earlier the same day): the `Alter Table ▸` submenu as **eight** column operations, `ALTER_TABLE_ACTIONS` as an authored flat tuple, and slices 2/3 as **unbuilt** with `DatabaseSchema.constraints`/`.indexes` *"populated and read by nothing"* | **SLICE 2 SHIPS AND IS WIRED (`c19a09f`); SLICE 3's EMITTERS AND DIALOGS SHIP (`b8a005d`, `ef46625`) with its wiring landing separately.** The submenu carries **twelve** operations — eight column, a separator, then `Add Constraint…` / `Add Foreign Key…` / `Drop Constraint…` / `Rename Constraint…` — and `ALTER_TABLE_ACTIONS` is now **derived** by flattening `ALTER_TABLE_ACTION_GROUPS`, the grouping existing **only** so a separator can sit between two different questions; **one signal carries all twelve**, because the constraint ops need exactly the same context (which table, which column was clicked) and use it. **Four slice-2 rulings:** there is deliberately **no `Drop Foreign Key`** — a FK *is* a `pg_constraint` row and `DROP CONSTRAINT` is byte-identical for every type, so one unified emitter serves all of them (a guard test asserts `drop_foreign_key_skeleton` does not exist), which also makes `Drop Constraint…` the **single destination** a Drop-index picker routes constraint-backed rows to; **`EXCLUDE` is expression-shaped, not column-shaped** (its element list carries per-element operators — `room WITH =, during WITH &&` — that no column picker can express), so `CHECK`/`EXCLUDE` share a free-expression field under slice 1's `_expression` guard plus a method dropdown while `PRIMARY KEY`/`UNIQUE` take the column list, and **supplying the wrong shape is REFUSED, not ignored** (a silently dropped argument would ship a constraint that constrains the wrong thing); **Drop constraint WARNS, does not block** — a plain non-red note for a PK or an index-owning constraint with OK still enabled, matching slice 1's `DROP COLUMN`, because refusing would guess at dependencies this layer cannot see and would block the legitimate drop-then-re-add flow; and, accepted as a **rough edge**, the menu offers all twelve **unconditionally** (the panel does not know the constraint list), so Drop/Rename on a constraint-less table open and state their refusal in the dialog rather than being greyed out — the price of keeping `BrowserPanel` dialog-ignorant. **Slice 3 breaks the feature's own framing, and that is the point:** `DROP INDEX` is **not table-scoped** (an index's identity is `schema.name`, there is no `DROP INDEX … ON table`, and the emitter takes `index=`, not `table=`) and `CREATE INDEX` is **not an `ALTER TABLE`** at all — both contradict FQ-025's *"everything is an Alter Table op"*. Further slice-3 rulings: **`CREATE INDEX` never emits `CONCURRENTLY`** (it cannot run inside a transaction block, which is how Apply executes); **`CREATE TABLE` refuses everything except columns and an optional PK** (no FK/UNIQUE/CHECK/EXCLUDE, no indexes, no GENERATED/identity, no partitioning/inheritance/tablespace/UNLOGGED/IF NOT EXISTS — precisely what the other dialogs add to an existing table, where a checkbox-per-feature builder would have to guess at interactions and emit subtly wrong DDL); **comments are one dialog in two modes** with **two documented exceptions to slice 1's rules** — a blank comment emits `IS NULL` (removing a comment is otherwise unaskable) rather than *"emit nothing"* as `add_column_skeleton` does, and the existing comment **may be injected for editing**, because a comment is a **value** escaped as a string literal rather than free SQL, so the user-typed-only provenance rule genuinely does not apply; and **`DROP TABLE` has no confirmation** (the generated tab is the safeguard — a test asserts `DropTableDialog` holds zero `QLineEdit`s). Slice 1's `_comment_on_column` was **promoted** to the shared renderer rather than duplicated. **Two FQ-025 statements are FALSE and are recorded as such, not transcribed:** slice 2 did **not** include the `_CONSTRAINTS_SQL` widening (it shipped with slice 1's batch) and Drop-index did **not** need new index introspection (`IndexInfo` shipped in the same batch) — neither slice needed introspection work. **A trap recorded for future work:** index data is populated only by `fetch_routines_and_triggers`, so a `DatabaseSchema` from `fetch_schema` has `indexes == {}` and a `DropIndexDialog` fed from the wrong fetch would silently claim the table has no droppable indexes |
 | 2026-08-09 | §26/§27: **`File ▸ Open...` carries `Ctrl+O`** — §27's table row read *"Ctrl+O / Ctrl+W \| Open / Close \| Window. **Unchanged.**"* and §26's File-menu enumeration opened with *"Open (Ctrl+O)"* | **`Ctrl+O` IS UNBOUND — owner decision (`f621d4c`). The command is untouched; only its shortcut goes.** The reasoning generalises past this one chord: in an app that opens **`.pgtp` files, PHP files, DDL projects, XSDs and database objects**, one `Ctrl+O` must pick a winner among five kinds of *"open"* and **any winner is a guess at intent**; opening is additionally a once-per-session act that FQ-027's launcher now puts **one click away at startup**, so the key bought almost nothing and cost an ambiguity. **UNBOUND, not reassigned:** the chord is left **free**, and FQ-012's `View ▸ Customize Shortcuts…` lets a user bind it to whichever open they mean — deliberately without choosing a default *for* them. The rule stated once: **a shortcut is not owed to a command merely because the command is common.** **`Ctrl+W` is explicitly NOT affected** — `File ▸ Close` keeps it; the pairing was a table-layout artefact (FQ-020 had already split `Ctrl+S`/`Ctrl+Shift+S` out of the same row), and `Ctrl+W` is currently the test suite's specimen for three shipped properties (FQ-012's default-capture and shortcut-**steal** tests, FQ-027's hidden-command-loses-its-key test), so unbinding it too would take three unrelated regression tests with it |
+| 2026-08-10 | §7 (carried since the spec's beginning): **ONE persistent bottom `Audit/Problems` panel** (`QListWidget`) in which the nine prefixes are *"reserved against each other in all directions"* — i.e. reserved for a share of **one surface** — with every producer's rows coexisting there, `[Find]` clearing on rerun, `[Lint]`/`[Validate]` accumulating forever and one prefix clearing per tab; plus §26's ☑ `Audit/Problems Panel` View-menu dock checkbox | **THE DOCK IS DISSOLVED INTO THREE SURFACES, one lifecycle each — FQ-028 Part 1 + Part 3.** A prefix now names a **DESTINATION**, not a share of a panel: **Findings** (a LEFT-dock tab — `[Find]` + `[Bookmark]`, ephemeral, clear-all-on-new, last-operation-wins across types), **Results** (bottom tab — `[Check]` + `[Lint]` + `[Validate]` + `[Schema]` VERIFY, **accumulated** with a blank line + `%Y-%m-%d %H:%M:%S` header + 40-char dashed rule between runs) and the **Activity Log** (bottom tab — `[Schema]` learning chatter, `[PHP]` stdout, `[SQL]` refusals, `[Project]` status, the tenth `[Sandbox]` prefix, and every transient the status bar used to scroll). The reservation rule **survives in its anti-annexation form** (no feature takes another's prefix; no fourth SQL-ish prefix) and only its one-panel premise dies. **Rejected: fixing the lifecycles in place** — the three jobs need three lifecycles *and* two locations (beside-the-editor for step-through, bottom for logs), which one widget cannot carry; that overload **is** the reported problem. **Rejected: the CENTRE pane for findings** — a centre tab hides the editor it should jump into, defeating step-through; this also retires FQ-014's rejection of a bookmarks left-dock tab, which rested solely on the Audit dock already existing. Mechanism: **`ui/audit_router.py::AuditRouter` quacks like the `QListWidget` the ~15 producers were written against**, so `audit.addItem(...)` is unchanged everywhere and **click routing through `_on_audit_item_clicked` + the `Qt.UserRole+N` convention is untouched** — FQ-028 changes where a row is shown, never how it navigates. `takeItem` on a Results row is **refused** and closes the run block instead: the producer's *intent* is honoured, its *mechanism* is not |
+| 2026-08-10 | §7/§25: the status bar as a general message surface — ~40 transient `showMessage` calls through the `_shell_status` trampoline and `ui/busy.py::busy_status`'s sticky messages, several duplicating rows that also landed in the Audit panel — beside a monochrome permanent `_mode_label` reading only *"Editing Mode"* / *"Caption Mode (XML read-only)"* | **THE STATUS BAR IS STATIC-ONLY, AND THE MODE READOUT BECOMES A COLOURED MAJOR+MINOR INDICATOR ON TWO SURFACES** (FQ-028 Part 2, absorbing FQ-029). **The owner's rule, which is the acceptance test for every future slot:** *"the status bar needs to avoid being a message board — it should have some well defined information on it constantly"* — a slot either always states a defined fact, or it does not belong there. Permanent widgets only: mode indicator · busy slot (`Idle`, or `<message> <n>s` ticking, **re-entrant by depth** so a nested op cannot leave the bar claiming idle) · the two connectivity dots · the DEBUG chip. **The ~40 call sites did NOT move — the SINK did:** `StaticStatusBar.showMessage` is overridden to paint nothing and journal the text, closing the seam in **one** place instead of leaving forty chances to reintroduce a message-board write; `currentMessage()` still returns the last notice (so ~80 existing assertions and every *"did it report anything?"* caller keep working) while **`displayed_message()` is always `""`**, which is the mandatory test that the bar is not a message board. The mode readout: **major mode = FQ-027's session workflow mode** (Standalone/Project/Maintenance, in-memory, **no QSettings key**), **minor mode = an active editor sub-state** (Caption / Compare/Merge / Edit XSD), shown only when there is one — *"Editing"* becomes the **absence** of a minor mode, not a state. **One source of truth, one `_refresh_mode_indicator()` update path, two renderings**: a right-anchored colour-backed panel pinned into the movable Main Toolbar behind an **expanding spacer widget**, and the upgraded `_mode_label` — **not a second label**. **PASSIVE ONLY** (owner): no click, no context menu, no mode switching from either surface. **Theme-aware** via the pure `mode_colors(light)`, re-consulted on `apply_theme` — explicitly **not** the DEBUG chip's hardcoded red, which does not re-theme. **Minor mode is TEXT, major mode is the colour** (3 majors × 4 sub-states would be a twelve-colour vocabulary that defeats *"easy recognition"*). **Never blank:** before a launcher pick it reads **`No Mode`** in a neutral palette. Rejected: keeping transients in the bar (that spew *is* the complaint); upgrading only the status-bar label and skipping the toolbar panel (owner wants both; the bar is at the far bottom and is being deliberately quieted); a clickable/mode-switching panel; hardcoded per-mode colours |
+| 2026-08-10 | **FQ-018** (`QUEUED` since 2026-08-08) as a **separate feature**: two permanent status-bar connectivity widgets on a 30 s window-active-gated poll, with the **Quality dot shown in standalone mode too** and the sandbox dot carrying a distinct *not-applicable* posture when no project is open | **FQ-018 IS A COMPONENT OF FQ-028, NOT A PARALLEL FEATURE — it ships as Part 2.4 and never separately** (owner: *"FQ-028 is the large scale solution, and FQ-018 is part of that solution"*; the entry itself says *"Refines FQ-018 — Part 2.4 subsumes its status-bar portion"*). Recorded so a future reader does not go looking for an unbuilt FQ-018. Its design is carried whole into §7/§18.8 — three reused states off §18.8's own `QualityState`/`SandboxState` (**never a second notion of "connected"**), the 30 s repeating timer (the app's first non-debounce `QTimer`), window-active gating with an immediate poll on re-activation, off-GUI-thread via `run_async`, lightweight `SELECT 1` reachability rather than the heavy `probe()`, and **one shared poller that also makes the §18.8 Project Status window auto-refresh while open** (it is static today — a behaviour change, not a side effect). **One decision is OVERRIDDEN:** **BOTH dots are project-mode-only**, present iff a project is **actually open** (`DdlProjectController.is_open`) and **absent** otherwise — never a greyed-out third posture — where FQ-018 would have shown Quality in standalone. *"Actually open"* deliberately does **not** mean the **"Project" workflow-mode label**: the two can legitimately disagree (Project column picked, open dialog cancelled), and the dots follow the real fact. **One addition:** a fourth *rendering* state, `UNKNOWN` (hollow grey, *"not checked yet"*), which the §18.8 window has no need for but the status bar's always-state-a-fact rule requires — a not-yet-answered poll must not render as blank or as a stale green |
+| 2026-08-10 | **FQ-019**'s Activity Log as its **own bottom dock** beside `Audit / Problems` (shipped `bc02d9c` / `1aefc53` / `65a0f1b`; `ui/main_window.py` builds `QDockWidget("Activity Log")` with its own View-menu checkbox and `splitDockWidget`s it horizontally against `audit_dock`), and `ui/activity_panel.py`'s docstring rationale *"**A separate dock, not an Audit prefix** … They sit side by side"* | **REPOSITIONED into TAB 1 of the single bottom dock, beside Results** (FQ-028 Part 3). **Nothing about FQ-019's internals changes** — `db/activity_log.py`'s entry shape, source taxonomy, JSONL per-project store and session-only-when-standalone rule, and `ui/activity_panel.py`'s rendering, click-to-full-text `CodeEditorDialog` viewer and context menu are untouched; **only its host does.** Two docks and two View-menu checkboxes collapse into one dock with one checkbox. The panel's *"separate dock, not an Audit prefix"* rationale is **half superseded and half reinforced**: it is no longer a separate **dock**, and it is still not an Audit **prefix** — it is now the **destination** four prefixes route to, plus every transient `showMessage`. §7's dock inventory changes accordingly |
+| 2026-08-10 *(records an owner ruling of 2026-08-09 that shipped without a ledger row)* | **BUG-040 leg 2 (row of 2026-08-09, two above):** `Database ▸ Sandbox Setup…` is **PROJECTLESS-ONLY, hidden not deleted**, `ui/sandbox_setup_dialog.py` remaining the app's only home for Provision / Reset / the D2a data clone / `Install plpgsql_check` / the `ForeignDatabaseError` *"create a sandbox database for me"* offer — with the resulting **provisioning hole recorded as an open question (§29)**; plus every body site naming that dialog as a home, a recovery path or an entry point (§18.2's *"the Connections tab cannot provision"*, §18.5 D2's *"primary UI home is Sandbox Setup…"* for the install, D2's `ForeignDatabaseError` mitigation home, carve-out 2 item 5, §18.7's *"the only in-project way to get a sandbox is New Project"*, §18.8's Sandbox2 *"one of two entry points"*, §26's Database-menu bullet, §7's hide/delete/report precedent table) | **DIRECTION (b) — THE PROVISIONING GESTURES MIGRATE INTO `File ▸ Project Settings… ▸ Connections`, AND `Database ▸ Sandbox Setup…` IS DELETED OUTRIGHT ALONG WITH ITS DIALOG** (owner ruling 2026-08-09, shipped; verified in the tree 2026-08-10 — `ui/sandbox_setup_dialog.py` no longer exists, the only `ui/sandbox*.py` module being `sandbox_controller.py`, and `main_window.py:915-923` carries a comment where the menu entry stood). **Why deleted rather than left hidden**, stated because it is the *opposite* call from the one leg 2 made a day earlier about the same action: leg 2 kept it because projectless it still meant something; once its capabilities moved, the action named nothing in any mode, and §7's precedent table then demands DELETE — `ToolbarController._walk_menu_actions` never tests `isVisible()`, so a hidden action stays pinnable and a toolbar button would keep firing a gesture the menu no longer offers. Pinned `database.sandbox-setup` degrades silently through `resolve_ids` (the FQ-020 `save` precedent); **no `RENAMED_ID_ALIASES` row — the action was deleted, not moved**, even though its capabilities were rehomed, because an alias row would point a saved id at a command with different semantics. **What moved: exactly three gestures**, into a `Sandbox provisioning` `QGroupBox` under the D2a mode radios in the sandbox connection group — `Provision sandbox`, `Reset sandbox`, and D2's mandatory *"create a sandbox database for me"* row (`ProjectSettingsDialog._build_provisioning_rows` / `provision_sandbox` / `create_sandbox_database` / `reset_sandbox`). The placement is the argument: the radios promise *"this takes effect the next time the sandbox is provisioned"*, and these are the gestures that make that promise keepable. Three properties carried over intact and re-stated so they are not re-litigated: **one confirmation, never two** (`_confirmed` asks with `SandboxController.destructive_warning(op)`'s exact text and passes `confirm=None` so the controller's own `confirm_destructive` gate owns the single prompt); **no dead controls** (`_rebuild_sandbox_actions` builds the *reason* in place of the control, never `setEnabled(False)` — §18.5 carve-out 2, readable back via `unavailable_reasons()`); and **D2a's mode is recorded, never re-derived** (a gesture writes the settings as typed through `settings_saver` **before** the operation, and `MainWindow._adopt_provisioned_sandbox_settings` reads `recorded_settings()`, never `settings()`). **What deliberately did NOT move, and it is not an oversight:** the **D2a data clone** and the one-click **`Install plpgsql_check`** stay on §18.8's Project Status Sandbox1/Sandbox2 node buttons, which are wired in project mode — duplicating them would give one gesture two homes and two visibility rules, the exact defect BUG-039 rejected for the Check gestures. Consequence for §18.5 D2: the install now has **ONE** UI entry point, not two, and `db/ddl_check.py::REASON_INSTALL_LOCATIONS` says so verbatim — *"Install it from the Project Status window's plpgsql_check node."* **This CLOSES §29's *"provisioning has no reachable home in project mode"* item, including its three demanded string sweeps** (`REASON_INSTALL_LOCATIONS` and `sandbox_controller.py`'s two re-provision/re-clone reasons, all verified naming reachable places on 2026-08-10). **It also retires the `applied()` working-set list from the UI entirely** — `db/sandbox.py` now names the deployment generator as its *"ONLY reader"*, and §18.7's sandbox DDL Explorer is what answers *"what is in my sandbox?"* instead, which `applied()` structurally never could |
+| 2026-08-10 | **The 2026-08-09 FQ-021 status-accuracy row** (three above) and every site it drove: `Next Difference` / **`Prev Difference`** *"still on the window bar's `Tools` menu, ungated"*, `Navigation` having *"exactly five members, all bookmark commands"*, *"no `tools.*` alias row exists"*, and **`Apply Changes to Target` having no menu home at all** — recorded in §29 as an unreachable shipped capability and an owner call in three directions | **FQ-021's THIRD LEG SHIPPED (`1ccfe9d`); the 2026-08-08 row's original claims are restored as truth and the regression is CLOSED.** The owner's answer to §29's three-way question was the **first** option — the destination is **`Navigation`**, as originally designed. `FindValidateController.build_navigation_menu` now builds **eight** members: the five bookmark commands, a separator, then `Next Difference`, **`Previous Difference`** and `Apply Changes to Target`. **The three are MODE-only, not tab-only**, and the distinction is load-bearing: visibility is driven by `CenterStage.diff_merge_mode_changed` through `set_diff_mode_members_visible`, **never by `currentChanged`**, because `leave_diff_merge_mode`'s closing `setCurrentIndex(raw_xml)` emits nothing when Raw XML is *already* current — a state the panel's own Close button reaches — so a `currentChanged` gate would have left all three visible after the mode ended (a test asserts zero emissions while they still hide). **Built once and only `setVisible`-toggled**, because `ToolbarController._walk_menu_actions` never tests `isVisible()`: an action that does not exist at enumeration time drops out of Customize Toolbar and takes saved `toolbarIds` with it. **`Prev Difference` → `Previous Difference`** to match `Previous Bookmark` two entries above it, and since **the label IS the id's last segment** the move and the relabel are **one** id change — `RENAMED_ID_ALIASES` carries `tools.next-difference → navigation.next-difference` and `tools.prev-difference → navigation.previous-difference` (never `LEGACY_ID_ALIASES`, FQ-021's own landmine: `ICON_ID_BY_COMMAND` is that dict inverted). **`set_bookmarks_enabled` stopped disabling the whole `QMenu`** and gates the five bookmark actions individually — its docstring had predicted this pass would force that, and the reason is substantive rather than mechanical: Caption Mode has no business disabling the Difference commands, a comparison loaded while captions are being edited still being navigable. The **accepted cost** is FQ-015's `Select ▸ Select Parent Block` precedent — a *user-pinned* toolbar button for one of the three comes and goes with the mode; none of them is a **default** button, so FQ-016's objection to gating `Parsing` does not apply. **The strain §29 recorded — an irreversible write on a menu named *Navigation*** — is answered by the **separator** splitting the two groups, which was the mitigation that item named; the write keeps `DiffMergeController.apply_changes_to_target`'s own ambiguity gate and confirmation, so it is not one keystroke away in the §18.5 sense. The three callbacks are **passed in as arguments** rather than reached for through `self._shell.stage.diff_merge_panel`: this lane owns the menu, the Compare/Merge lane owns the operation, and the host is the one place that already knows both |
 
 ---
 
@@ -8575,38 +9097,22 @@ unrecorded — nothing below was invented in the body above:
   deliberately outside the bookmark/selection surface, in which case `_bookmark_audit_route`'s
   `_NO_AUDIT_ROUTE` posture and an explicit *no fallback* branch are the honest encoding, not the
   current silent Raw XML fallback. **Not designed here; no fix is implied.**
-- **§18.5 / §18.2 / §26 — PROVISIONING HAS NO REACHABLE HOME IN PROJECT MODE (raised 2026-08-09 by
-  BUG-040's shipped second leg, `4e36162`; a real, shipped hole, documented in the code itself at
-  `ui/ddl_object_editor.py:125-137` as a KNOWN GAP awaiting an owner ruling). NOT designed, NOT fixed —
-  recorded.** The two dialogs and the two modes:
-  - **`ui/sandbox_setup_dialog.py`** (`Database ▸ Sandbox Setup…`, `MainWindow._open_sandbox_setup`, the
-    action's only caller) is now **projectless-only** — `_refresh_sandbox_affordances` opens with
-    `self._sandbox_setup_action.setVisible(self._ddl_project_folder is None)`.
-  - **`ui/project_settings_dialog.py::ProjectSettingsDialog`** (`File ▸ Project Settings… ▸ Connections`)
-    is the **project-mode** sandbox surface, and it can **edit a connection only**.
-
-  **A sandbox exists only in project mode, and the only dialog that can create one is reachable only in
-  projectless mode — where there is no sandbox to create.** The four capabilities that are consequently
-  **unreachable with a project open** are: **(1) provisioning / re-provisioning** a sandbox database
-  (`create_sandbox_database` + `build_baseline_sql`, and Reset Sandbox); **(2) the D2a data clone**
-  (`pg_dump`/`pg_restore` "with data" mode); **(3) the one-click `Install plpgsql_check`** (the Sandbox2
-  action window in §18.8 is the specified second entry point, but its MainWindow wiring still passes
-  `None`); **(4) `ForeignDatabaseError`'s mandatory *"Create a sandbox database for me"* offer** — which
-  §18.5 D2 calls *"a mandatory mitigation, not optional polish"* precisely because a bare ownership
-  refusal reads as the tool being broken.
-
-  The two shipped refusal strings are **honest** about this, not wrong: they name Project Settings because
-  that is what the user can reach, and they deliberately promise nothing for the *"none is set up yet"*
-  half (carve-out 2 item 6). Three older strings were **not** swept by leg 3 and still name the hidden
-  entry: `db/ddl_check.py`'s tier-3 `installable` line and `ui/sandbox_controller.py`'s two `REASON_*`
-  re-provision/re-clone reasons. Also unreachable by construction: `_adopt_sandbox_setup_settings`, which
-  returns early without `self._ddl_project_settings` while its dialog now opens only when that is `None`.
-
-  **The owner call, stated as two directions and not chosen here:** (a) **re-expose `Sandbox Setup…` in
-  project mode** (reverting leg 2, and re-answering the "second door onto a surface the project owns"
-  objection that motivated it), or (b) **migrate the provisioning capabilities into Project Settings ▸
-  Connections**, leaving the standalone dialog projectless. Either way the three unswept strings must
-  follow. **No implementer may pick one; it needs a ruling and a ledger row.**
+- **~~§18.5 / §18.2 / §26 — PROVISIONING HAS NO REACHABLE HOME IN PROJECT MODE~~ — RESOLVED 2026-08-09
+  (owner ruling) and SHIPPED; verified in the tree 2026-08-10. Direction (b) was taken.** The
+  provisioning gestures **migrated into `File ▸ Project Settings… ▸ Connections`** (a `Sandbox
+  provisioning` group under the D2a mode radios: `Provision sandbox`, `Reset sandbox`, and the
+  `ForeignDatabaseError` *"create a sandbox database for me"* row), and **`Database ▸ Sandbox Setup…` was
+  DELETED outright along with `ui/sandbox_setup_dialog.py`** — not merely hidden as BUG-040 leg 2
+  (`4e36162`) had left it, because a hidden QAction stays pinnable. The answer lives in §26's Database-menu
+  bullet, §18.5 D2/D2a, and `ui/project_settings_dialog.py`'s module docstring. **Also closed with it:** the
+  three "unswept strings" this item demanded — `db/ddl_check.py::REASON_INSTALL_LOCATIONS` now reads
+  *"Install it from the Project Status window's plpgsql_check node."* and `ui/sandbox_controller.py`'s two
+  re-provision/re-clone reasons now name Project Settings' provisioning group (verified verbatim
+  2026-08-10); and `_adopt_sandbox_setup_settings`, which is replaced by the settings-adoption path fed by
+  `ProjectSettingsDialog.recorded_settings()`. **What this ruling deliberately did NOT move, and it is not
+  an oversight:** the **D2a data clone** and the **one-click `Install plpgsql_check`** stay on §18.8's
+  Project Status window's Sandbox1/Sandbox2 action buttons — which are wired in project mode
+  (`_refresh_project_status_sandbox_actions`) — rather than being duplicated into Project Settings.
 - **§18.5 D4 — persistence of console buffers.** Not designed: whether the console tab's SQL text
   survives an app restart (or a project close), and whether a per-project history of executed statements
   is kept. v1's assumption is **no persistence at all** — the tab is session-only, like the object tab's
@@ -8740,8 +9246,20 @@ unrecorded — nothing below was invented in the body above:
   from a *skeleton* and registering a manifest entry for an object no database holds would poison the drift
   baseline. Whether creation *should* instead get its own deliberate "check this new object out" step is a
   separate design question, not answered here.
-- **FQ-021 — `Apply Changes to Target` is a SHIPPED CAPABILITY WITH NO REACHABLE GESTURE (a live
-  regression; recorded 2026-08-09, ledger §28, deliberately NOT designed here).** The implementation is
+- **~~FQ-021 — `Apply Changes to Target` is a SHIPPED CAPABILITY WITH NO REACHABLE GESTURE~~ — CLOSED
+  2026-08-10 by the shipped third leg (`1ccfe9d`).** The owner's choice among the three directions below
+  was the **first**: it landed on **`Navigation`** as originally designed, as a **Compare/Merge-mode-only**
+  member built once and `setVisible`-toggled, with the `tools.* → navigation.*` alias rows and the
+  narrowing of `set_bookmarks_enabled` off the whole `QMenu` both paid in the same commit — the two debts
+  this item said the winning option would owe. The recorded strain (an irreversible write on a menu named
+  *Navigation*) is answered by a **separator** splitting the bookmark group from the Compare/Merge group,
+  the mitigation this item named. **The history below is kept because the regression was real, lasted from
+  FQ-020 to `1ccfe9d`, and was caught by spec harmonization rather than by a test — which is the argument
+  for this whole section.**
+
+  <details><summary>The regression as it stood 2026-08-09 (historical)</summary>
+
+  The implementation is
   intact and tested — `ui/diff_merge_controller.py::DiffMergeController.apply_changes_to_target` (its
   confirmation/label strings at `:264` and `:312`) — and `tests/ui/test_menus.py::test_tools_menu_contents`
   positively asserts `find_action(menu, "Apply Changes to Target") is None`. **FQ-020 deleted its only menu
@@ -8762,6 +9280,8 @@ unrecorded — nothing below was invented in the body above:
   keystroke away."* **No option is specified as chosen.** Whichever wins, the same commit owes the
   `RENAMED_ID_ALIASES` rows (§7) and, if the destination is `Navigation`, the narrowing of
   `set_bookmarks_enabled` off the whole `QMenu` (§8/§26).
+
+  </details>
 - **FQ-020 — the projectless `Run on quality` password path must be chosen before it ships.** §18.5 states
   the two acceptable answers (a **session-only** prompt extended to the projectless branch, explicitly not
   written into app-level QSettings; or an explicit stated **refusal** before the confirmation) and rules out
@@ -8775,6 +9295,37 @@ unrecorded — nothing below was invented in the body above:
   context menu, apply-row button). Both original constraints hold in the shipped code and now govern the
   `Deployment` entries too: (a) no keyboard shortcut, and (b) each destination delegates to the existing
   gesture's own wiring/confirmations rather than reimplementing any of them.
+
+**From FQ-028 (the app-shell chrome redesign, 2026-08-10).** The entry carried eight; **four are decided
+in the body above and are recorded there, not here** — `[Check]` narrative rides in the Results run block
+(q1), the run header carries `HH:MM:SS` (q2), the indicator is never blank and reads `No Mode` before a
+launcher pick (q8), and one `FindingsPanel` class serves both tabs. What genuinely remains open:
+
+- **Is Activity-Log-only too quiet for errors and refusals?** v1 routes *every* transient there, including
+  *"Check — no sandbox session"* and *"Target failed"*. The risk was raised and accepted. If field use
+  shows failures going unnoticed, the answer is a **transient toast** — a new surface with its own
+  lifecycle, deliberately **not** a partial re-opening of the status bar as a message board, which would
+  dissolve the rule the whole of Part 2 rests on.
+- **Where the single current-major-mode accessor lives, and what it is called.** The value exists
+  (`MainWindow.workflow_mode` / `set_workflow_mode`, FQ-027, verified); `ui/mode_indicator.py`'s docstring
+  names a `MainWindow.current_mode()` that **does not exist in the tree**. Both surfaces must read **one**
+  accessor — whichever name wins, the drift must be closed rather than left with two spellings in the
+  prose and one in the code.
+- **Minor mode as a text suffix vs. a two-tone / second-colour treatment.** Text is shipped and reasoned
+  (a 12-combination colour vocabulary defeats *"easy recognition"*); the owner may overrule it if the
+  suffix proves insufficiently prominent.
+- **The exact per-mode colours** are a starting palette, and **AA-ish contrast has not been verified
+  against the live QDarkStyle chrome** (as opposed to the bare `QPalette`) — the app-level QSS sits over
+  the hand-rolled palette, so the bare-palette check is not the real one.
+- **What the busy slot shows for an op with no message, and whether `run_async` work reports through it at
+  all.** `BusySlot` is re-entrant by depth and specified for the synchronous `busy_status` path;
+  off-thread work (the connectivity poll, apply/check) has no stated relationship to it. A poll that
+  parked the bar at *"Checking connectivity… 30s"* every half-minute would re-create the noise this
+  removed, so the poll is assumed **silent** — stated as an assumption, not a decision.
+- **Whether the Results tab persists.** FQ-028 says it *"persists same as the Activity Log"* (per-project
+  JSONL, session-only standalone), but the shipped `FindingsPanel` is a plain `QListWidget` with **no
+  store** and the accumulate flag as its only lifecycle. Either a store lands, or the entry's persistence
+  claim is withdrawn — the spec must not carry both. **Unresolved at the time of writing.**
 
 ---
 
