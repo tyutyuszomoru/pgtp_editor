@@ -167,10 +167,11 @@ MIN_ROW_LIMIT = 1
 #: other §18.5 degradation does -- never a bare "unavailable".
 #:
 #: It must name a place the user can actually REACH from here, which is why it
-#: no longer says `Database ▸ Sandbox Setup…`: a sandbox exists only in project
-#: mode, so this console only exists there, and BUG-040 made that menu entry
-#: projectless-only. The session itself is no longer something to "open" at all
-#: -- it comes up with the project -- so the honest way back is the connection.
+#: no longer says `Database ▸ Sandbox Setup…` -- that entry was DELETED on
+#: 2026-08-09 and its gestures moved into Project Settings. The session itself
+#: is no longer something to "open" at all (it comes up with the project), so
+#: the honest way back is the connection, on the tab that now also carries
+#: Provision and Reset.
 NO_SESSION_TEXT = (
     "No live sandbox session — the project's sandbox could not be reached; "
     "check its connection in Project Settings. "

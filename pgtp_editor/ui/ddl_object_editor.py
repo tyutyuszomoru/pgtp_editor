@@ -122,19 +122,17 @@ DESTINATION_UNAVAILABLE_REASONS = {
     # the `Open` button on the refusal itself (this string is reused verbatim
     # inside that dialog) plus the place the connection can be corrected.
     #
-    # That place is **Project Settings, not `Sandbox Setup…`**, and the reason
-    # is a consequence of BUG-040's own third leg: a sandbox exists only in
-    # project mode, so this refusal fires only there — and `Sandbox Setup…` is
-    # now HIDDEN in project mode. Naming it would send the user to a menu entry
-    # they cannot see. Project Settings is where the sandbox connection lives in
-    # project mode and is always reachable.
+    # That place is **Project Settings**, which since 2026-08-09 is where the
+    # whole sandbox lives: the connection, the mode, and the `Provision sandbox`
+    # / `Reset sandbox` / `Create a sandbox database for me` group.
+    # `Database ▸ Sandbox Setup…` is deleted, so naming it would point at a menu
+    # entry that no longer exists.
     #
-    # KNOWN GAP, recorded on BUG-040 and awaiting an owner ruling: Project
-    # Settings can edit the connection but cannot PROVISION — Provision / Reset
-    # / "create a database for me" live only in `ui/sandbox_setup_dialog.py`. So
-    # "none is set up yet" currently has no in-project remedy at all, which is
-    # why this sentence points at the connection rather than promising a fix for
-    # the not-provisioned case.
+    # The gap this comment used to record is CLOSED. It said Project Settings
+    # could edit a connection but not provision, so "none is set up yet" had no
+    # in-project remedy — true while the provisioning gestures lived in the
+    # deleted dialog, and the reason the owner moved them. Both halves of this
+    # sentence now have a remedy on one tab.
     DEST_SANDBOX: (
         "no sandbox session is open — the project's sandbox could not be "
         "reached, or none is set up yet (check its connection in Project "

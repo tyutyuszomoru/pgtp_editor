@@ -200,10 +200,10 @@ REASON_NOT_INSTALLED_BASE = (
 #: §18.5 D3a requires the `installable` case to *name the one-click install and
 #: where it lives*, verbatim -- an "it is not installed" message the user cannot
 #: act on is the same dead end as no message.
-#: BUG-040 made `Database ▸ Sandbox Setup…` projectless-only, and a sandbox
-#: exists only in project mode — so naming it here would be the dead end this
-#: constant exists to prevent. The Project Status node is the reachable one, and
-#: it is genuinely wired in project mode
+#: `Database ▸ Sandbox Setup…` is DELETED (2026-08-09) and its gestures moved
+#: into Project Settings, so naming it here would be the dead end this constant
+#: exists to prevent. The Project Status node is the reachable one, and it is
+#: genuinely wired in project mode
 #: (`MainWindow._refresh_project_status_sandbox_actions`).
 REASON_INSTALL_LOCATIONS = (
     "Install it from the Project Status window's plpgsql_check node."
@@ -1220,8 +1220,8 @@ def not_installed_reason(caps: SandboxCapabilities) -> str:
     - install refused (the connection is not a superuser) -> `install_gate`'s
       **own** `CREATE EXTENSION requires superuser` sentence, taken from the
       gate so the wording exists in exactly one place. Telling a non-superuser
-      to "install it from Sandbox Setup" would point at a button that is not
-      offered to them.
+      to install it somewhere would point at a button that is not offered to
+      them.
     """
     offered, gate_reason = install_gate(caps)
     if offered or not gate_reason:

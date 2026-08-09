@@ -1024,9 +1024,12 @@ class SandboxSession:
         )
 
     def applied(self) -> list[AppliedObject]:
-        """One `SELECT` over the `applied` bookkeeping table -- what the
-        Sandbox Setup dialog's working-set list and the deployment generator
-        both read (§18.5 D2)."""
+        """One `SELECT` over the `applied` bookkeeping table (§18.5 D2).
+
+        The deployment generator is now its ONLY reader: the Sandbox Setup
+        dialog's working-set list was the other, and that dialog was deleted on
+        2026-08-09 when its provisioning gestures moved into Project Settings.
+        Nothing in the app currently SHOWS the working set."""
         rows = self.executor.query(
             self.params,
             f"SELECT kind, schema_name, object_name, table_name, applied_at, text_sha1 "

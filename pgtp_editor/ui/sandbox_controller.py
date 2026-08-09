@@ -324,8 +324,8 @@ _NO_NAME_CANDIDATES_REASON = (
 _NO_TARGET_BASELINE_NOTE = (
     "The sandbox was created EMPTY: the project has no target connection yet, "
     "so there was no database to build a baseline from. Set the target in "
-    "Project Settings — note that re-provisioning is not reachable with a "
-    "project open (BUG-040)."
+    "Project Settings, then re-provision from the Sandbox provisioning group "
+    "on the same tab."
 )
 
 #: A "with data" sandbox with no target to clone from cannot be cloned *yet*.
