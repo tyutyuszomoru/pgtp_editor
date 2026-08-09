@@ -15,6 +15,22 @@
   (`.claude/agents/spec-maintainer.md`) to fold it into `CONSOLIDATED_SPEC.md`
   with latest-wins reconciliation and a Supersession Ledger row for any override.
   The agent is the sole writer of specification content.
+- **The same agent HARMONIZES, and it does so first.** `spec-harmonizer` was
+  merged into `spec-maintainer` (2026-08-10): surveying the spec against shipped
+  code and authoring into it are one job, and the order is load-bearing. The spec
+  must be clean **before a new feature request arrives**, so nobody designs
+  against ghosts, and clean **before implementation starts**, because
+  contradictions in the spec become deep problems in the code. Dispatch it after
+  any batch of work lands, not only when folding something in.
+- **The spec is the final single truth**, so it carries the obligation to be
+  right: code and spec are never left diverged. If the spec is stale the agent
+  corrects it; if the CODE is wrong the agent dispatches `bug-triager` rather
+  than quietly rewriting the requirement to match. It also works
+  **retroactively** — filing features that shipped differently than specified,
+  and retiring assertions that no longer matter.
+- **When reconciliation changes what should be built, the agent RESTATES the
+  feature for implementation** rather than leaving the implementer to infer the
+  delta — and says explicitly that the restatement supersedes the queue entry.
 - **Brainstorming is gated by the same agent (placement gate).** Before design
   crystallizes, `spec-maintainer` first reports where the idea belongs and whether
   to extend an existing feature vs. create a new one — so the project grows
@@ -91,7 +107,7 @@
   session is mid-editing.
 - **When the user asks to pick up the queue** (typically once the main
   implementation task has wrapped up), read `docs/FEATURE_QUEUE.md`, dispatch
-  `spec-maintainer` (JOB 1) to fold each `QUEUED` entry into
+  `spec-maintainer` (it harmonizes first, then folds) to fold each `QUEUED` entry into
   `CONSOLIDATED_SPEC.md`, implement it, run the feature-tester /
   manual-maintainer policies above as usual, then flip that entry's `Status`
   line to `PROCESSED (<commit or spec §>)` in place rather than deleting it.
