@@ -151,6 +151,96 @@ def test_columns_sql_sources_column_comments():
     assert "col_description(a.attrelid, a.attnum)" in columns_sql
 
 
+# --- table comments (2026-08-09) ---------------------------------------------
+# `Set Table Comment…` seeds its box from `TableInfo.comment`; a blank box means
+# `IS NULL`, so a missing seed silently removed an existing comment.
+
+
+def test_relations_sql_sources_table_comments():
+    """The relation query must actually select `obj_description` on the
+    relation's own oid -- `pg_description` at `objsubid = 0`, the same catalog
+    the per-column `col_description` reads at `objsubid = attnum` -- not just
+    thread a `comment` field through row-unpacking."""
+    relations_sql = SCHEMA_SQL[0]
+    assert "obj_description(c.oid, 'pg_class')" in relations_sql
+
+
+def _commented_runner(relations, columns=(), constraints=()):
+    def runner(params, sql_list):
+        return [list(relations), list(columns), list(constraints)]
+
+    return runner
+
+
+def test_fetch_schema_surfaces_a_table_comment():
+    runner = _commented_runner(
+        [("pr", "equipment", "r", "every tracked machine")],
+        [("pr", "equipment", "id", "integer", True, None, None)],
+    )
+    schema = fetch_schema(_PARAMS, runner=runner)
+    assert schema.table("pr.equipment").comment == "every tracked machine"
+
+
+def test_a_table_without_a_comment_gives_none_not_empty_string():
+    """`None`, exactly as `ColumnInfo.comment` does -- `""` would be a comment
+    the user set to the empty string, which is a different thing."""
+    runner = _commented_runner([("pr", "equipment", "r", None)])
+    table = fetch_schema(_PARAMS, runner=runner).table("pr.equipment")
+    assert table.comment is None
+    assert table.comment != ""
+
+
+def test_relation_rows_without_a_comment_value_are_tolerated():
+    """The pre-widening 3-tuple row shape still builds a TableInfo (with no
+    comment) rather than raising -- the same tolerance `_build_constraints`
+    extends to short constraint rows."""
+    runner, _ = _canned_runner()
+    schema = fetch_schema(_PARAMS, runner=runner)
+    assert schema.table("pr.equipment").comment is None
+    assert schema.table("pr.eq_view").kind == "view"
+
+
+def test_table_comment_survives_quotes_newlines_and_unicode():
+    text = "it's a \"tricky\" one\nsecond line\ttab — ünïcödé ✓"
+    runner = _commented_runner([("pr", "equipment", "r", text)])
+    assert fetch_schema(_PARAMS, runner=runner).table("pr.equipment").comment == text
+
+
+def test_table_and_column_comments_are_independent():
+    """The regression this most endangers: column comments come from a
+    different query and must be untouched by the relation-level one."""
+    runner = _commented_runner(
+        [("pr", "equipment", "r", "the table's comment")],
+        [
+            ("pr", "equipment", "id", "integer", True, None, None),
+            ("pr", "equipment", "tag", "varchar(255)", False, None, "the column's"),
+        ],
+    )
+    schema = fetch_schema(_PARAMS, runner=runner)
+    assert schema.table("pr.equipment").comment == "the table's comment"
+    assert schema.column("pr.equipment", "tag").comment == "the column's"
+    assert schema.column("pr.equipment", "id").comment is None
+
+
+def test_table_comments_reach_the_other_two_fetch_entry_points():
+    """`fetch_routines_and_triggers` (DDL Explorer) and `snapshot_for_baseline`
+    share `_build_tables`, so both must carry the comment too."""
+    relations = [("pr", "equipment", "r", "shared comment")]
+    columns = [("pr", "equipment", "id", "integer", True, None, None)]
+
+    def explorer_runner(params, sql_list):
+        return [[], [], relations, columns, [], []]
+
+    schema = fetch_routines_and_triggers(_PARAMS, runner=explorer_runner)
+    assert schema.table("pr.equipment").comment == "shared comment"
+
+    def baseline_runner(params, sql_list):
+        return [[], [], relations, columns, [], [], []]
+
+    snapshot = snapshot_for_baseline(_PARAMS, runner=baseline_runner)
+    assert snapshot.schema.table("pr.equipment").comment == "shared comment"
+
+
 def test_fetch_schema_missing_column_returns_none():
     runner, _ = _canned_runner()
     schema = fetch_schema(_PARAMS, runner=runner)

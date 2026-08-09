@@ -70,6 +70,18 @@ class TableInfo:
     #: modeled no view definitions at all, so a routine touching a view
     #: failed to compile in the sandbox baseline).
     view_definition: str | None = None
+    #: `pg_catalog.obj_description(c.oid, 'pg_class')` -- the relation's OWN
+    #: comment (`pg_description.objsubid = 0`), as opposed to the per-column
+    #: rows (`objsubid = attnum`) that fill `ColumnInfo.comment`. Same
+    #: convention as that field in every respect: `None` when no
+    #: `COMMENT ON TABLE` was ever set (never `""`), and trailing/defaulted so
+    #: every existing positional or keyword `TableInfo(...)` construction
+    #: across the codebase and tests stays valid.
+    #:
+    #: Read by `Set Table Comment…` to SEED its dialog: a blank box means
+    #: `IS NULL`, the only way to ask for a comment's removal, so without this
+    #: an untouched OK silently dropped the table's existing comment.
+    comment: str | None = None
 
 
 @dataclass(frozen=True)
@@ -298,8 +310,19 @@ class DatabaseSchema:
 # Order of the three queries is load-bearing: fetch_schema unpacks them
 # positionally as [relations, columns, constraints].
 
+# Widened (2026-08-09) with a FOURTH selected value, additively: the relation's
+# own comment. `obj_description(c.oid, 'pg_class')` is `pg_description` filtered
+# to `objsubid = 0` -- the same catalog table `_COLUMNS_SQL`'s
+# `col_description(a.attrelid, a.attnum)` reads at `objsubid = attnum`, so this
+# is the existing mechanism keyed one level up, not a second one. It rides on
+# the relation query (one row per relation) rather than the per-column query,
+# and no new round trip is added. The first three values keep their meaning and
+# position, and `_build_tables` unpacks the row tolerantly (`*rest`), so the
+# many canned 3-tuple relation rows across the suite keep working and simply
+# yield `comment=None`.
 _RELATIONS_SQL = """
-SELECT n.nspname, c.relname, c.relkind
+SELECT n.nspname, c.relname, c.relkind,
+       pg_catalog.obj_description(c.oid, 'pg_class')
 FROM pg_catalog.pg_class c
 JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
 WHERE c.relkind IN ('r', 'p', 'v', 'm')
@@ -649,9 +672,15 @@ def _build_tables(
     get `view_definition=None` on every `TableInfo` exactly as before;
     `snapshot_for_baseline` is the only caller that supplies it.
     """
+    # Tolerant of the pre-2026-08-09 3-tuple row shape on purpose (the same
+    # posture `_build_constraints` takes): a relation row without a 4th value
+    # simply carries no comment, so canned rows across the suite keep working.
     kinds: dict[str, str] = {}
-    for schema_name, rel_name, relkind in relation_rows:
-        kinds[f"{schema_name}.{rel_name}"] = _KIND_BY_RELKIND.get(relkind, "table")
+    comments: dict[str, str | None] = {}
+    for schema_name, rel_name, relkind, *rest in relation_rows:
+        key = f"{schema_name}.{rel_name}"
+        kinds[key] = _KIND_BY_RELKIND.get(relkind, "table")
+        comments[key] = rest[0] if rest else None
 
     # Constraint membership: (table_key, column_name) -> contype set. FK rows
     # also carry the referenced "schema.table.column" (None for PKs).
@@ -696,6 +725,7 @@ def _build_tables(
             kind=kind,
             columns=columns_by_table.get(name, []),
             view_definition=view_definitions.get(name),
+            comment=comments.get(name),
         )
         for name, kind in kinds.items()
     }

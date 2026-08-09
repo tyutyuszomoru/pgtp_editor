@@ -84,6 +84,7 @@ def _full_schema() -> DatabaseSchema:
             ),
             _column("note", data_type="text", comment=None),
         ],
+        comment="one row per placed order",
     )
     order_view = TableInfo(
         name="pr.order_v",
@@ -181,6 +182,34 @@ def test_round_trip_preserves_optional_and_defaulted_column_fields():
     assert columns["note"].comment is None
     assert columns["id"].is_pk is True and columns["id"].is_nullable is False
     assert loaded.tables["pr.order_v"].view_definition == "SELECT id FROM pr.orders;"
+
+
+def test_round_trip_preserves_a_table_comment_and_its_absence():
+    # `TableInfo.comment` (2026-08-09) -- with the field set on one table and
+    # left at its default on the other, so both halves of the optional field
+    # are covered.
+    loaded = load_schema(dump_schema(_full_schema()))
+    assert loaded.tables["pr.orders"].comment == "one row per placed order"
+    assert loaded.tables["pr.order_v"].comment is None
+
+
+def test_round_trip_of_a_table_comment_with_quotes_newlines_and_unicode():
+    text = "it's a \"tricky\" one\nsecond line\ttab — ünïcödé ✓"
+    schema = DatabaseSchema(
+        tables={"pr.t": TableInfo(name="pr.t", kind="table", comment=text)}
+    )
+    assert load_schema(dump_schema(schema)).tables["pr.t"].comment == text
+
+
+def test_a_table_record_missing_the_comment_key_is_refused():
+    # An older (v2) table record, were it to reach the decoder past the version
+    # gate: refused, never defaulted to `None` -- "no table has a comment" is
+    # exactly the degraded schema this module will not produce.
+    payload = json.loads(dump_schema(_full_schema()))
+    del payload["schema"]["tables"]["pr.orders"]["comment"]
+    with pytest.raises(SnapshotFormatError) as excinfo:
+        load_schema(json.dumps(payload))
+    assert "comment" in str(excinfo.value)
 
 
 def test_round_trip_restores_args_as_tuples_not_lists():

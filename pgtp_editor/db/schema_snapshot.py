@@ -80,7 +80,22 @@ SNAPSHOT_FORMAT = "pgtp-editor.schema-snapshot"
 #: makes `diff_schemas` hand the user a script of DROPs. Costless in practice:
 #: `Save Schema Snapshot…` has never been built, so no snapshot can exist that
 #: was written by the app.
-SNAPSHOT_VERSION = 2
+#:
+#: **3 (2026-08-09):** `TableInfo` gained `comment` (the table's own
+#: `pg_description` row, so `Set Table Comment…` can seed the existing text
+#: instead of blanking it). This is a weaker change than 1→2's — one optional
+#: field on one record, not two whole sections — but the version still moves,
+#: for two reasons. First, `_record`/`_exact_keys` demand an EXACT key set, so
+#: a v2 table record would be refused anyway; the only question is *which*
+#: refusal the user reads, and "your reader is the wrong version" is true and
+#: actionable where "this file is truncated or hand-edited" is neither.
+#: Second, silently accepting a missing `comment` (the only alternative that
+#: would not move the version) would default it to `None` — i.e. load a schema
+#: asserting "no table has a comment", which is precisely the degraded state
+#: this module refuses to produce. Costless for the same reason as before:
+#: `Save Schema Snapshot…` has never been built, so no app-written snapshot of
+#: any version exists in the wild.
+SNAPSHOT_VERSION = 3
 
 # The exact field set each record carries, in the dataclasses' own order. Used
 # twice: to build the payload, and to reject a record whose keys do not match
@@ -98,7 +113,7 @@ COLUMN_FIELDS = (
     "fk_target",
     "comment",
 )
-TABLE_FIELDS = ("name", "kind", "columns", "view_definition")
+TABLE_FIELDS = ("name", "kind", "columns", "view_definition", "comment")
 ROUTINE_FIELDS = (
     "schema",
     "name",
@@ -218,6 +233,7 @@ def _encode_table(table: TableInfo) -> dict[str, Any]:
         "kind": table.kind,
         "columns": [_encode_column(column) for column in table.columns],
         "view_definition": table.view_definition,
+        "comment": table.comment,
     }
 
 
@@ -389,6 +405,7 @@ def _decode_table(value: Any, where: str) -> TableInfo:
             for index, column in enumerate(columns)
         ],
         view_definition=_opt_text(record["view_definition"], f"{where}.view_definition"),
+        comment=_opt_text(record["comment"], f"{where}.comment"),
     )
 
 
