@@ -7,13 +7,26 @@ and the tab-opening path is driven through the same seam Edit… uses.
 """
 import pytest
 from PySide6.QtCore import QSettings, Qt
-from PySide6.QtWidgets import QDialog
+from PySide6.QtWidgets import QDialog, QDialogButtonBox
 
 from pgtp_editor.db.ddl_check import CheckRequest, build_ladder
 from pgtp_editor.db.ddl_project import ProjectSettings, save_settings
 from pgtp_editor.db.sandbox import SandboxCapabilities
-from pgtp_editor.db.ddl_skeleton import add_column_skeleton, drop_column_skeleton
-from pgtp_editor.db.introspect import ColumnInfo, DatabaseSchema, RoutineInfo, TableInfo
+from pgtp_editor.db.ddl_skeleton import (
+    add_column_skeleton,
+    add_constraint_skeleton,
+    add_foreign_key_skeleton,
+    drop_column_skeleton,
+    drop_constraint_skeleton,
+    rename_constraint_skeleton,
+)
+from pgtp_editor.db.introspect import (
+    ColumnInfo,
+    ConstraintInfo,
+    DatabaseSchema,
+    RoutineInfo,
+    TableInfo,
+)
 from pgtp_editor.ui.alter_column_dialogs import (
     AddColumnDialog,
     ChangeColumnTypeDialog,
@@ -21,7 +34,16 @@ from pgtp_editor.ui.alter_column_dialogs import (
     RenameColumnDialog,
     SetColumnDefaultDialog,
 )
-from pgtp_editor.ui.ddl_buffer_panel import ALTER_TABLE_ACTIONS
+from pgtp_editor.ui.constraint_dialogs import (
+    AddConstraintDialog,
+    AddForeignKeyDialog,
+    DropConstraintDialog,
+    RenameConstraintDialog,
+)
+from pgtp_editor.ui.ddl_buffer_panel import (
+    ALTER_TABLE_COLUMN_ACTIONS,
+    ALTER_TABLE_CONSTRAINT_ACTIONS,
+)
 from pgtp_editor.ui.main_window import MainWindow
 from pgtp_editor.ui.new_routine_dialog import NewRoutineDialog
 from pgtp_editor.ui.new_trigger_dialog import NewTriggerDialog
@@ -343,7 +365,7 @@ def test_each_operation_opens_the_dialog_that_collects_its_fields(qtbot, tmp_pat
 
     built = {
         operation: type(window._alter_column_dialog(operation, _orders(window), "note"))
-        for operation, _label in ALTER_TABLE_ACTIONS
+        for operation, _label in ALTER_TABLE_COLUMN_ACTIONS
     }
 
     assert built == {
@@ -522,3 +544,292 @@ def test_the_ladder_hands_multi_statement_alter_text_over_as_one_element(qtbot, 
     # Tier 3 is not merely skipped by accident: an ALTER creates no function for
     # `plpgsql_check` to analyse, and the empty ref name says so.
     assert plan.check_index is None
+
+
+# --- FQ-025 slice 2: the Alter Table ▸ constraint operations -----------------
+#
+# The dialogs and emitters shipped a slice earlier as dead code; what is tested
+# here is the wiring that reaches them -- which id opens which dialog, and what
+# data the host injects. The dialogs still never touch a database: the existing
+# constraints and the referenced table's columns both arrive from the
+# `DatabaseSchema` the Explorer already holds.
+
+
+def _constraint_schema():
+    """Two real tables -- a foreign key needs somewhere to point -- and one
+    view, which must stay out of both dropdowns."""
+    return DatabaseSchema(
+        tables={
+            "pr.orders": TableInfo(
+                name="pr.orders",
+                kind="table",
+                columns=[
+                    ColumnInfo(
+                        name="id", data_type="integer", is_pk=True, is_fk=False,
+                        is_nullable=False, default=None,
+                    ),
+                    ColumnInfo(
+                        name="customer_id", data_type="integer", is_pk=False,
+                        is_fk=True, is_nullable=True, default=None,
+                    ),
+                ],
+            ),
+            "pr.customer": TableInfo(
+                name="pr.customer",
+                kind="table",
+                columns=[
+                    ColumnInfo(
+                        name="cust_id", data_type="integer", is_pk=True, is_fk=False,
+                        is_nullable=False, default=None,
+                    ),
+                    ColumnInfo(
+                        name="email", data_type="text", is_pk=False, is_fk=False,
+                        is_nullable=True, default=None,
+                    ),
+                ],
+            ),
+            "pr.v_orders": TableInfo(name="pr.v_orders", kind="view", columns=[]),
+        },
+        constraints={
+            "pr.orders.orders_pkey": ConstraintInfo(
+                schema="pr", table="orders", name="orders_pkey",
+                kind="primary key", columns=["id"],
+                definition="PRIMARY KEY (id)",
+            ),
+            "pr.orders.orders_qty_check": ConstraintInfo(
+                schema="pr", table="orders", name="orders_qty_check",
+                kind="check", columns=[], definition="CHECK ((qty > 0))",
+            ),
+            # Another table's constraint: it must never appear under pr.orders.
+            "pr.customer.customer_pkey": ConstraintInfo(
+                schema="pr", table="customer", name="customer_pkey",
+                kind="primary key", columns=["cust_id"],
+                definition="PRIMARY KEY (cust_id)",
+            ),
+        },
+    )
+
+
+def _constraint_window(qtbot, tmp_path):
+    window = _window(qtbot, tmp_path)
+    window._ddl_schema = _constraint_schema()
+    return window
+
+
+def test_the_four_constraint_operations_open_their_own_dialogs(qtbot, tmp_path):
+    """The same one mapping as slice 1's eight -- there is no second table and
+    no second signal, so a menu entry cannot come to open the wrong dialog."""
+    window = _constraint_window(qtbot, tmp_path)
+    table_info = window._ddl_schema.tables["pr.orders"]
+
+    built = {
+        operation: type(window._alter_column_dialog(operation, table_info, "customer_id"))
+        for operation, _label in ALTER_TABLE_CONSTRAINT_ACTIONS
+    }
+
+    assert built == {
+        "add_constraint": AddConstraintDialog,
+        "add_foreign_key": AddForeignKeyDialog,
+        "drop_constraint": DropConstraintDialog,
+        "rename_constraint": RenameConstraintDialog,
+    }
+
+
+@pytest.mark.parametrize("operation", ["drop_constraint", "rename_constraint"])
+def test_the_existing_constraints_reach_the_picker_with_their_types_shown(
+    qtbot, tmp_path, operation
+):
+    """`DROP CONSTRAINT` is the identical statement for every type, so the
+    picker's labels are the only place a FK is distinguishable from a CHECK
+    before it is dropped. The list is this table's alone."""
+    window = _constraint_window(qtbot, tmp_path)
+
+    dialog = window._alter_column_dialog(
+        operation, window._ddl_schema.tables["pr.orders"], "customer_id"
+    )
+    qtbot.addWidget(dialog)
+
+    assert dialog.available_constraints() == ["orders_pkey", "orders_qty_check"]
+    assert dialog.constraint_labels() == [
+        "orders_pkey — PRIMARY KEY (id)",
+        # No columns (a table-level CHECK has a NULL conkey), so its definition
+        # stands in rather than an empty pair of parentheses.
+        "orders_qty_check — CHECK — CHECK ((qty > 0))",
+    ]
+
+
+def test_the_constraint_list_follows_the_table_dropdown(qtbot, tmp_path):
+    """Injected as a CALLABLE, not a snapshot: re-picking a table reads the
+    current schema, and a constraint name is only meaningful against its
+    table."""
+    window = _constraint_window(qtbot, tmp_path)
+    dialog = window._alter_column_dialog(
+        "drop_constraint", window._ddl_schema.tables["pr.orders"], ""
+    )
+    qtbot.addWidget(dialog)
+
+    dialog._table_combo.setCurrentText("pr.customer")
+
+    assert dialog.available_constraints() == ["customer_pkey"]
+
+
+def test_dropping_a_primary_key_states_its_consequence_without_refusing(qtbot, tmp_path):
+    """It generates text into a tab; Postgres answers authoritatively when the
+    tab is run. So the note is a note, never a block."""
+    window = _constraint_window(qtbot, tmp_path)
+    dialog = window._alter_column_dialog(
+        "drop_constraint", window._ddl_schema.tables["pr.orders"], ""
+    )
+    qtbot.addWidget(dialog)
+
+    assert dialog.constraint_kind() == "primary key"
+    assert "PRIMARY KEY" in dialog.note()
+    ok_button = dialog._buttons.button(QDialogButtonBox.StandardButton.Ok)
+    assert ok_button.isEnabled()
+
+
+def test_the_foreign_key_dialog_repopulates_on_the_referenced_table(qtbot, tmp_path):
+    """The whole reason the target-table→column mapping is injected as the same
+    callable: picking a referenced table must offer THAT table's columns."""
+    window = _constraint_window(qtbot, tmp_path)
+    dialog = window._alter_column_dialog(
+        "add_foreign_key", window._ddl_schema.tables["pr.orders"], "customer_id"
+    )
+    qtbot.addWidget(dialog)
+
+    # The local side is this table's; views are in neither list.
+    assert dialog.available_tables() == ["pr.customer", "pr.orders"]
+    assert dialog.column_picker().available_columns() == ["id", "customer_id"]
+
+    dialog._ref_table_combo.setCurrentText("pr.customer")
+
+    assert dialog.ref_table() == "pr.customer"
+    assert dialog.available_ref_columns() == ["cust_id", "email"]
+
+
+def test_a_constraint_dialog_is_shown_non_modally_and_opens_nothing_until_accepted(
+    qtbot, tmp_path, monkeypatch
+):
+    monkeypatch.setattr(
+        QDialog, "exec", lambda self: pytest.fail("the dialog was exec()'d")
+    )
+    window = _constraint_window(qtbot, tmp_path)
+
+    window._on_ddl_alter_column_requested(
+        "drop_constraint", window._ddl_schema.tables["pr.orders"], ""
+    )
+
+    assert _alter_tabs(window) == []
+
+
+def test_accepting_a_drop_constraint_opens_a_tab_with_the_emitters_own_text(
+    qtbot, tmp_path
+):
+    window = _constraint_window(qtbot, tmp_path)
+    window._on_ddl_alter_column_requested(
+        "drop_constraint", window._ddl_schema.tables["pr.orders"], ""
+    )
+    dialog = window.findChild(DropConstraintDialog)
+
+    dialog.accept()
+
+    tabs = _alter_tabs(window)
+    assert len(tabs) == 1
+    assert tabs[0].editor.toPlainText() == drop_constraint_skeleton(
+        table="pr.orders", name="orders_pkey"
+    )
+    assert tabs[0].ref.kind == "alter"
+
+
+def test_accepting_a_rename_constraint_opens_a_tab_with_the_emitters_own_text(
+    qtbot, tmp_path
+):
+    window = _constraint_window(qtbot, tmp_path)
+    window._on_ddl_alter_column_requested(
+        "rename_constraint", window._ddl_schema.tables["pr.orders"], ""
+    )
+    dialog = window.findChild(RenameConstraintDialog)
+    dialog._new_name_edit.setText("orders_pk")
+
+    dialog.accept()
+
+    assert _alter_tabs(window)[0].editor.toPlainText() == rename_constraint_skeleton(
+        table="pr.orders", name="orders_pkey", new_name="orders_pk"
+    )
+
+
+def test_accepting_an_add_foreign_key_opens_a_tab_with_the_emitters_own_text(
+    qtbot, tmp_path
+):
+    window = _constraint_window(qtbot, tmp_path)
+    window._on_ddl_alter_column_requested(
+        "add_foreign_key", window._ddl_schema.tables["pr.orders"], "customer_id"
+    )
+    dialog = window.findChild(AddForeignKeyDialog)
+    dialog._name_edit.setText("fk_customer")
+    dialog._ref_table_combo.setCurrentText("pr.customer")
+
+    dialog.accept()
+
+    assert _alter_tabs(window)[0].editor.toPlainText() == add_foreign_key_skeleton(
+        table="pr.orders",
+        name="fk_customer",
+        columns=["customer_id"],
+        ref_table="pr.customer",
+        ref_columns=["cust_id"],
+        on_delete=None,
+        on_update=None,
+    )
+
+
+def test_accepting_an_add_constraint_opens_a_tab_with_the_emitters_own_text(
+    qtbot, tmp_path
+):
+    window = _constraint_window(qtbot, tmp_path)
+    window._on_ddl_alter_column_requested(
+        "add_constraint", window._ddl_schema.tables["pr.orders"], "id"
+    )
+    dialog = window.findChild(AddConstraintDialog)
+    dialog._name_edit.setText("orders_id_uq")
+    dialog._type_combo.setCurrentText("UNIQUE")
+
+    dialog.accept()
+
+    assert _alter_tabs(window)[0].editor.toPlainText() == add_constraint_skeleton(
+        table="pr.orders",
+        name="orders_id_uq",
+        constraint_type="UNIQUE",
+        columns=["id"],
+    )
+
+
+def test_a_cancelled_constraint_dialog_opens_nothing(qtbot, tmp_path):
+    window = _constraint_window(qtbot, tmp_path)
+    window._on_ddl_alter_column_requested(
+        "drop_constraint", window._ddl_schema.tables["pr.orders"], ""
+    )
+
+    window.findChild(DropConstraintDialog).reject()
+
+    assert _alter_tabs(window) == []
+
+
+def test_each_constraint_generation_gets_its_own_tab(qtbot, tmp_path):
+    """The serial counter again: `open_ddl_object_tab` focuses an existing tab
+    for a repeated key and DISCARDS the new text, and two drops on one table are
+    two different statements."""
+    window = _constraint_window(qtbot, tmp_path)
+    for name in ("orders_pkey", "orders_qty_check"):
+        window._on_ddl_alter_column_requested(
+            "drop_constraint", window._ddl_schema.tables["pr.orders"], ""
+        )
+        dialog = window.findChildren(DropConstraintDialog)[-1]
+        dialog._constraint_combo.setCurrentIndex(
+            dialog.available_constraints().index(name)
+        )
+        dialog.accept()
+
+    texts = [panel.editor.toPlainText() for panel in _alter_tabs(window)]
+
+    assert len(texts) == 2
+    assert texts[0] != texts[1]

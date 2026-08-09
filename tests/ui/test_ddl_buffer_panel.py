@@ -2,6 +2,8 @@ from pgtp_editor.db.ddl_buffer import build_ddl_text
 from pgtp_editor.db.introspect import ColumnInfo, DatabaseSchema, RoutineInfo, TableInfo, TriggerInfo
 from pgtp_editor.ui.ddl_buffer_panel import (
     ALTER_TABLE_ACTIONS,
+    ALTER_TABLE_COLUMN_ACTIONS,
+    ALTER_TABLE_CONSTRAINT_ACTIONS,
     ALTER_TABLE_MENU_TITLE,
     BrowserPanel,
     resolve_edit_target,
@@ -1463,15 +1465,19 @@ def test_a_table_with_no_table_info_gets_no_columns_group(qtbot):
     assert not any(label.startswith("Columns") for label in labels)
 
 
-def test_the_table_node_submenu_offers_the_eight_column_operations(qtbot):
+def _submenu_labels(submenu):
+    """The submenu's entries, separators dropped (they carry no text)."""
+    return [a.text() for a in submenu.actions() if not a.isSeparator()]
+
+
+def test_the_table_node_submenu_offers_the_twelve_alter_operations(qtbot):
+    """Slice 1's eight column operations, then slice 2's four constraint ones."""
     panel = _alter_panel(qtbot)
     table_item = panel.tree.topLevelItem(0).child(0)
 
     submenu = _submenu(panel._menu_for_item(table_item))
 
-    assert [action.text() for action in submenu.actions()] == [
-        label for _op, label in ALTER_TABLE_ACTIONS
-    ]
+    assert _submenu_labels(submenu) == [label for _op, label in ALTER_TABLE_ACTIONS]
     assert [label for _op, label in ALTER_TABLE_ACTIONS] == [
         "Add Column…",
         "Drop Column…",
@@ -1481,6 +1487,53 @@ def test_the_table_node_submenu_offers_the_eight_column_operations(qtbot):
         "Drop NOT NULL…",
         "Set DEFAULT…",
         "Drop DEFAULT…",
+        "Add Constraint…",
+        "Add Foreign Key…",
+        "Drop Constraint…",
+        "Rename Constraint…",
+    ]
+    # No `Drop Foreign Key…`: a FK *is* a constraint and `DROP CONSTRAINT` is
+    # the identical statement, so one entry covers every type (and stays the
+    # place a constraint-backed index has to be dropped from).
+    assert "Drop Foreign Key…" not in _submenu_labels(submenu)
+
+
+def test_a_separator_divides_the_column_operations_from_the_constraint_ones(qtbot):
+    """Twelve undifferentiated entries would read as one list; the two groups
+    answer different questions about the table."""
+    panel = _alter_panel(qtbot)
+    table_item = panel.tree.topLevelItem(0).child(0)
+
+    actions = _submenu(panel._menu_for_item(table_item)).actions()
+
+    separators = [i for i, action in enumerate(actions) if action.isSeparator()]
+    assert separators == [len(ALTER_TABLE_COLUMN_ACTIONS)]
+    assert [a.text() for a in actions[: separators[0]]] == [
+        label for _op, label in ALTER_TABLE_COLUMN_ACTIONS
+    ]
+    assert [a.text() for a in actions[separators[0] + 1 :]] == [
+        label for _op, label in ALTER_TABLE_CONSTRAINT_ACTIONS
+    ]
+
+
+def test_each_constraint_entry_emits_its_own_operation_id(qtbot):
+    """The four ride slice 1's signal, carrying the same click context -- a
+    parallel signal would be the same three arguments under another name."""
+    panel = _alter_panel(qtbot)
+    note_leaf = _columns_group(panel).child(1)
+    requested = []
+    panel.alter_column_requested.connect(
+        lambda op, table, column: requested.append((op, table.name, column))
+    )
+
+    submenu = _submenu(panel._menu_for_item(note_leaf))
+    for action in submenu.actions():
+        if action.text() in [label for _op, label in ALTER_TABLE_CONSTRAINT_ACTIONS]:
+            action.trigger()
+
+    assert requested == [
+        (operation, "pr.widget", "note")
+        for operation, _label in ALTER_TABLE_CONSTRAINT_ACTIONS
     ]
 
 
@@ -1513,9 +1566,7 @@ def test_a_column_leaf_menu_pre_fills_the_clicked_column(qtbot):
 
     assert [action.text() for action in menu.actions()] == [ALTER_TABLE_MENU_TITLE]
     submenu = _submenu(menu)
-    assert [action.text() for action in submenu.actions()] == [
-        label for _op, label in ALTER_TABLE_ACTIONS
-    ]
+    assert _submenu_labels(submenu) == [label for _op, label in ALTER_TABLE_ACTIONS]
     submenu.actions()[0].trigger()  # Add Column…
     assert requested == [("add_column", "pr.widget", "note")]
 
@@ -1552,10 +1603,22 @@ def test_a_view_offers_no_alter_table_submenu_anywhere(qtbot):
 
 def test_browse_only_suppresses_every_alter_table_entry(qtbot):
     """§18.7's sandbox Explorer must not offer schema mutations -- suppressed at
-    menu-BUILD time, so there is no dead control to click."""
+    menu-BUILD time, so there is no dead control to click. All TWELVE go: adding
+    a constraint or dropping a foreign key is the same kind of act as dropping a
+    column, and the sandbox tree exists to look at a sandbox, not reshape it."""
     panel = _alter_panel(qtbot, browse_only=True)
 
     table_item = panel.tree.topLevelItem(0).child(0)
     assert panel._menu_for_item(table_item) is None
     assert panel._menu_for_item(_columns_group(panel)) is None
     assert panel._menu_for_item(_columns_group(panel).child(0)) is None
+
+
+def test_a_view_offers_no_constraint_operations_either(qtbot):
+    """The submenu is refused wholesale on a view, so slice 2's four are gone
+    with slice 1's eight -- `ALTER TABLE … ADD CONSTRAINT` on a view is DDL the
+    server refuses just as surely."""
+    panel = _alter_panel(qtbot, kind="matview")
+    table_item = panel.tree.topLevelItem(0).child(0)
+
+    assert _submenu(panel._menu_for_item(table_item)) is None

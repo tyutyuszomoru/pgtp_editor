@@ -100,6 +100,12 @@ from pgtp_editor.ui.alter_column_dialogs import (
     RenameColumnDialog,
     SetColumnDefaultDialog,
 )
+from pgtp_editor.ui.constraint_dialogs import (
+    AddConstraintDialog,
+    AddForeignKeyDialog,
+    DropConstraintDialog,
+    RenameConstraintDialog,
+)
 from pgtp_editor.ui.sandbox_controller import SandboxController, SandboxOperation
 from pgtp_editor.ui.sandbox_setup_dialog import SandboxSetupDialog
 from pgtp_editor.ui.new_routine_dialog import NewRoutineDialog
@@ -113,8 +119,12 @@ from pgtp_editor.ui.diff_merge_controller import DiffMergeController
 from pgtp_editor.ui.find_controller import FindValidateController
 from pgtp_editor.ui.ddl_buffer_panel import (
     OP_ADD_COLUMN,
+    OP_ADD_CONSTRAINT,
+    OP_ADD_FOREIGN_KEY,
     OP_CHANGE_COLUMN_TYPE,
+    OP_DROP_CONSTRAINT,
     OP_RENAME_COLUMN,
+    OP_RENAME_CONSTRAINT,
     OP_SET_DEFAULT,
     BrowserPanel,
 )
@@ -3759,22 +3769,39 @@ class MainWindow(QMainWindow):
         dialog.accepted.connect(lambda: self._open_created_ddl_object(dialog))
         dialog.show()
 
-    # --- FQ-025 slice 1: altering an existing table's columns ----------------
+    # --- FQ-025: altering an existing table (columns, then constraints) ------
 
     #: Per-window counter behind `AlterDdlRef.serial` -- see that class. Class
     #: level so no instance can read it before the first generation.
     _alter_ddl_serial = 0
 
-    #: operation id -> the dialog class, or `(ColumnActionDialog, op)` for the
-    #: four operations that share one form. ONE table: the panel decides which
-    #: id it emits, this decides which dialog that id opens, and nothing in
-    #: between re-decides either.
+    #: operation id -> the dialog class. ONE table for all twelve operations:
+    #: the panel decides which id it emits, this decides which dialog that id
+    #: opens, and nothing in between re-decides either. The four ids missing
+    #: from it (`drop_column`, `set_not_null`, `drop_not_null`, `drop_default`)
+    #: are the ones that share `ColumnActionDialog` -- see `_alter_column_dialog`.
     _ALTER_COLUMN_DIALOGS = {
         OP_ADD_COLUMN: AddColumnDialog,
         OP_RENAME_COLUMN: RenameColumnDialog,
         OP_CHANGE_COLUMN_TYPE: ChangeColumnTypeDialog,
         OP_SET_DEFAULT: SetColumnDefaultDialog,
+        # Slice 2. `AddForeignKeyDialog` needs no extra injection beyond the
+        # slice-1 four: its "References table" dropdown reads the SAME table
+        # list, and its referenced-column picker the same `columns` callable,
+        # which is exactly what makes re-picking a target table repopulate from
+        # current data instead of from a snapshot.
+        OP_ADD_CONSTRAINT: AddConstraintDialog,
+        OP_ADD_FOREIGN_KEY: AddForeignKeyDialog,
+        OP_DROP_CONSTRAINT: DropConstraintDialog,
+        OP_RENAME_CONSTRAINT: RenameConstraintDialog,
     }
+
+    #: The two dialogs that additionally need the table's EXISTING constraints
+    #: (FQ-025 slice 2). They ask "which named constraint?", which no column or
+    #: table list can answer, so they take one more injected source -- and only
+    #: they do, because handing a `constraints=` kwarg to a dialog that has no
+    #: picker for it would be a TypeError waiting for the next refactor.
+    _ALTER_CONSTRAINT_LIST_DIALOGS = (DropConstraintDialog, RenameConstraintDialog)
 
     def _alter_column_table_names(self) -> list[str]:
         """Every table the "which table" dropdown offers (FQ-025).
@@ -3806,6 +3833,21 @@ class MainWindow(QMainWindow):
             return []
         return [column.name for column in info.columns]
 
+    def _alter_constraints_for(self, table: str):
+        """The named constraints on `table` (FQ-025 slice 2), as
+        `db.introspect.ConstraintInfo`s -- which the dialogs consume purely by
+        duck-typing `.name`/`.kind`/`.columns`/`.definition`, so nothing over
+        there imports the schema model.
+
+        A callable for the same reason `_alter_column_names_for` is one: the
+        constraint list must follow the dialog's table dropdown, and re-picking
+        a table must read the CURRENT schema. `constraints_for` is keyed by the
+        `schema.table` name the tree and the dropdown already speak.
+        """
+        if self._ddl_schema is None:
+            return []
+        return self._ddl_schema.constraints_for(table)
+
     def _alter_column_dialog(self, operation, table_info, column):
         """Build the dialog `operation` calls for, with its table/column data
         INJECTED (FQ-025) -- the dialogs never reach a database, so everything
@@ -3824,6 +3866,8 @@ class MainWindow(QMainWindow):
         )
         dialog_class = self._ALTER_COLUMN_DIALOGS.get(operation)
         if dialog_class is not None:
+            if dialog_class in self._ALTER_CONSTRAINT_LIST_DIALOGS:
+                kwargs["constraints"] = self._alter_constraints_for
             return dialog_class(**kwargs)
         if operation in COLUMN_ACTIONS:
             return ColumnActionDialog(operation=operation, **kwargs)
@@ -3831,7 +3875,8 @@ class MainWindow(QMainWindow):
 
     def _on_ddl_alter_column_requested(self, operation, table_info, column) -> None:
         """Right-click ▸ Alter Table ▸ … on a table node or a column leaf
-        (FQ-025 slice 1).
+        (FQ-025) -- all twelve operations, columns and constraints alike, arrive
+        here on the one signal and differ only in which dialog is built.
 
         Shown NON-MODALLY and read back on `accepted`, exactly as FQ-002's
         creation dialogs are (§30's no-un-patched-modal rule): the window stays

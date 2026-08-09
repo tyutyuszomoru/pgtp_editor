@@ -78,8 +78,8 @@ _LABEL_ROLE = Qt.ItemDataRole.UserRole + 4
 #: its column dropdown to, which a table row has nothing to say about.
 _COLUMN_ROLE = Qt.ItemDataRole.UserRole + 5
 
-#: FQ-025 slice 1's eight column operations, in menu order, as
-#: `(operation id, menu label)`.
+#: FQ-025 slice 1's eight column operations (slice 2's four constraint ones
+#: follow below), as `(operation id, menu label)` pairs.
 #:
 #: The four ids `alter_column_dialogs.ColumnActionDialog` already owns are
 #: IMPORTED rather than respelled here -- a second spelling of `"drop_column"`
@@ -92,7 +92,29 @@ OP_RENAME_COLUMN = "rename_column"
 OP_CHANGE_COLUMN_TYPE = "change_column_type"
 OP_SET_DEFAULT = "set_default"
 
-ALTER_TABLE_ACTIONS: tuple[tuple[str, str], ...] = (
+#: FQ-025 slice 2's four constraint operations. Their ids live here for the
+#: same reason the four above do -- one spelling, read by the panel that emits
+#: it and by the host that maps it to a dialog.
+#:
+#: There is deliberately NO `drop_foreign_key`: in Postgres a foreign key IS a
+#: constraint and `DROP CONSTRAINT` is the identical statement for every type,
+#: so the type is shown in `DropConstraintDialog`'s picker labels rather than
+#: split across two menu entries that would generate the same SQL. That one
+#: entry is also where a constraint-backed INDEX has to be dropped from (see
+#: `db.introspect.IndexInfo`), so a future `Drop index` picker has somewhere to
+#: route those rows to.
+OP_ADD_CONSTRAINT = "add_constraint"
+OP_ADD_FOREIGN_KEY = "add_foreign_key"
+OP_DROP_CONSTRAINT = "drop_constraint"
+OP_RENAME_CONSTRAINT = "rename_constraint"
+
+#: The two groups the `Alter Table ▸` submenu is built from, in menu order.
+#: Grouped rather than one flat tuple ONLY so a separator can sit between them:
+#: "what this table's columns are" and "what this table's constraints are" are
+#: two different questions, and twelve undifferentiated entries would read as
+#: one long list. Everything else -- ids, labels, order -- still comes from
+#: here alone.
+ALTER_TABLE_COLUMN_ACTIONS: tuple[tuple[str, str], ...] = (
     (OP_ADD_COLUMN, "Add Column…"),
     (OP_DROP_COLUMN, "Drop Column…"),
     (OP_RENAME_COLUMN, "Rename Column…"),
@@ -103,7 +125,26 @@ ALTER_TABLE_ACTIONS: tuple[tuple[str, str], ...] = (
     (OP_DROP_DEFAULT, "Drop DEFAULT…"),
 )
 
-#: The submenu these eight sit in, on both the table node and a column leaf.
+ALTER_TABLE_CONSTRAINT_ACTIONS: tuple[tuple[str, str], ...] = (
+    (OP_ADD_CONSTRAINT, "Add Constraint…"),
+    (OP_ADD_FOREIGN_KEY, "Add Foreign Key…"),
+    (OP_DROP_CONSTRAINT, "Drop Constraint…"),
+    (OP_RENAME_CONSTRAINT, "Rename Constraint…"),
+)
+
+ALTER_TABLE_ACTION_GROUPS: tuple[tuple[tuple[str, str], ...], ...] = (
+    ALTER_TABLE_COLUMN_ACTIONS,
+    ALTER_TABLE_CONSTRAINT_ACTIONS,
+)
+
+#: Every operation the submenu offers, flattened, in menu order. The host maps
+#: all twelve in one place (`MainWindow._alter_column_dialog`).
+ALTER_TABLE_ACTIONS: tuple[tuple[str, str], ...] = (
+    *ALTER_TABLE_COLUMN_ACTIONS,
+    *ALTER_TABLE_CONSTRAINT_ACTIONS,
+)
+
+#: The submenu these twelve sit in, on both the table node and a column leaf.
 ALTER_TABLE_MENU_TITLE = "Alter Table"
 
 #: The one unsaved/changed glyph in this app (§11/§18.2/§18.5): the editable
@@ -202,11 +243,20 @@ class BrowserPanel(QWidget):
     new_routine_requested = Signal()
 
     #: Right-click ▸ Alter Table ▸ <one of `ALTER_TABLE_ACTIONS`> on a table
-    #: node or on one of its column leaves (FQ-025 slice 1). Carries
+    #: node or on one of its column leaves (FQ-025 slices 1 and 2). Carries
     #: `(operation id, TableInfo, column name)`, where the column name is `""`
     #: for a click that came from the table node itself -- the dialog then opens
     #: with its column dropdown on that table's first column instead of a
     #: pre-selected one.
+    #:
+    #: **Slice 2's four constraint operations ride this same signal**, not a
+    #: parallel one: they carry exactly the same context (which table, and which
+    #: column the click came from, which the ADDs pre-select in their column
+    #: picker and the others show in the read-only "From:" line). A second
+    #: signal would have been the same three arguments under another name, and
+    #: two places for the host to forget to connect. Hence the name is now
+    #: slightly narrower than what it carries; renaming it would touch every
+    #: slice-1 connection for no behavioural gain.
     #:
     #: Deliberately the SAME shape as `add_trigger_requested`: the panel states
     #: what was clicked and knows nothing about dialogs, and the host builds,
@@ -606,7 +656,7 @@ class BrowserPanel(QWidget):
             menu = QMenu(self)
             # The SAME submenu, carrying the clicked column. A column row offers
             # nothing else, but it keeps the submenu rather than flattening the
-            # eight entries: one shape for one action set, and the title is what
+            # twelve entries: one shape for one action set, and the title is what
             # tells the user these produce `ALTER TABLE` rather than acting on
             # the column in place.
             if self._add_alter_table_submenu(menu, column_table, column=column_name) is None:
@@ -630,11 +680,15 @@ class BrowserPanel(QWidget):
         return None
 
     def _add_alter_table_submenu(self, menu: QMenu, table_info, *, column: str):
-        """FQ-025 slice 1's `Alter Table ▸` submenu, on `menu`.
+        """FQ-025's `Alter Table ▸` submenu, on `menu` -- slice 1's eight column
+        operations, a separator, then slice 2's four constraint ones.
 
         One builder for both entry points, so the table node and a column leaf
         can never come to offer different operation sets -- they differ in
-        exactly one thing, the pre-selected column, which is the parameter.
+        exactly one thing, the pre-selected column, which is the parameter. It
+        is also the reason slice 2 was four lines of data rather than a second
+        menu: extending `ALTER_TABLE_ACTION_GROUPS` reaches both entry points at
+        once, and there is no second copy that could have been missed.
 
         Returns the submenu (or `None` when none was added) so callers and tests
         can read its membership without re-deriving it.
@@ -651,11 +705,14 @@ class BrowserPanel(QWidget):
         # garbage-collected out from under the menu that is showing it.
         submenu = QMenu(ALTER_TABLE_MENU_TITLE, menu)
         menu.addMenu(submenu)
-        for operation, label in ALTER_TABLE_ACTIONS:
-            submenu.addAction(
-                label,
-                lambda operation=operation: self.alter_column_requested.emit(
-                    operation, table_info, column
-                ),
-            )
+        for index, group in enumerate(ALTER_TABLE_ACTION_GROUPS):
+            if index:
+                submenu.addSeparator()
+            for operation, label in group:
+                submenu.addAction(
+                    label,
+                    lambda operation=operation: self.alter_column_requested.emit(
+                        operation, table_info, column
+                    ),
+                )
         return submenu

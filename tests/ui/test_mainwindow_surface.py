@@ -98,13 +98,18 @@ EXPECTED_HOST_SURFACE = {
     "_connection_summary_for",
     "_current_project",
     "_current_project_path",
-    # FQ-025 slice 1: the Alter Table ▸ column operations. Host-owned for the
-    # same reason FQ-002's creation handlers are -- they build a dialog, inject
-    # data read off `_ddl_schema`, and open a tab through `_edit_ddl_live`.
+    # FQ-025: the Alter Table ▸ operations (slice 1's columns, slice 2's
+    # constraints). Host-owned for the same reason FQ-002's creation handlers
+    # are -- they build a dialog, inject data read off `_ddl_schema`, and open a
+    # tab through `_edit_ddl_live`. Slice 2 added exactly two names, both of
+    # them injection: which dialogs take a constraint list, and where that list
+    # comes from.
     "_ALTER_COLUMN_DIALOGS",
+    "_ALTER_CONSTRAINT_LIST_DIALOGS",
     "_alter_column_dialog",
     "_alter_column_names_for",
     "_alter_column_table_names",
+    "_alter_constraints_for",
     "_alter_ddl_serial",
     "_database_host_label",
     "_db_ui",
