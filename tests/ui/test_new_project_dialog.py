@@ -328,3 +328,244 @@ def test_git_section_states_it_is_not_yet_used(qtbot):
     qtbot.addWidget(dialog)
     labels = [child.text() for child in dialog.findChildren(type(dialog._folder_error_label))]
     assert any("not yet" in text.lower() or "later" in text.lower() for text in labels)
+
+
+# --- The `.pgtp` attach field and the quality section it reveals (FQ-035) -----
+_PGTP_WITH_TWO_CONNECTION_ELEMENTS = """<?xml version="1.0" encoding="UTF-8"?>
+<PGTPProject>
+  <ConnectionOptions host="quality.example.com" port="1111" database="erp"
+      login="app_user" password="KZG;MOOYZ^OQ]^C]\\?FVH*K;"/>
+  <ScriptConnectionOptions host="script.example.com" port="5579" database="script_db"
+      login="script_user" password="KZG;MOOYZ^OQ]^C]\\?FVH*K;"/>
+</PGTPProject>
+"""
+
+
+def _pgtp_file(tmp_path, text=_PGTP_WITH_TWO_CONNECTION_ELEMENTS, name="checkout.pgtp"):
+    path = tmp_path / name
+    path.write_text(text, encoding="utf-8")
+    return str(path)
+
+
+def test_pgtp_field_starts_empty_and_the_quality_section_is_hidden(qtbot):
+    """§7's rule: with no `.pgtp` there is nothing to populate the quality
+    section from, so it is HIDDEN -- not a disabled control being denied."""
+    dialog = NewProjectDialog()
+    qtbot.addWidget(dialog)
+    assert dialog.pgtp_path() == ""
+    assert dialog._quality_group.isVisibleTo(dialog) is False
+    assert dialog.target_params() == ConnectionParams()
+
+
+def test_browse_for_pgtp_uses_an_open_file_dialog_and_reveals_the_section(
+    qtbot, tmp_path, monkeypatch
+):
+    dialog = NewProjectDialog()
+    qtbot.addWidget(dialog)
+    path = _pgtp_file(tmp_path)
+    seen = []
+    monkeypatch.setattr(
+        "pgtp_editor.ui.new_project_dialog.QFileDialog.getOpenFileName",
+        staticmethod(lambda *a, **k: seen.append(a) or (path, "")),
+    )
+
+    dialog._browse_for_pgtp()
+
+    assert seen, "the attach field must open a FILE dialog, not a folder one"
+    assert dialog.pgtp_path() == path
+    assert dialog._quality_group.isVisibleTo(dialog) is True
+
+
+def test_cancelling_the_pgtp_picker_leaves_the_field_and_section_untouched(
+    qtbot, monkeypatch
+):
+    dialog = NewProjectDialog()
+    qtbot.addWidget(dialog)
+    monkeypatch.setattr(
+        "pgtp_editor.ui.new_project_dialog.QFileDialog.getOpenFileName",
+        staticmethod(lambda *a, **k: ("", "")),  # Cancel
+    )
+
+    dialog._browse_for_pgtp()
+
+    assert dialog.pgtp_path() == ""
+    assert dialog._quality_group.isVisibleTo(dialog) is False
+
+
+def test_attaching_a_pgtp_populates_the_quality_fields_from_connectionoptions(
+    qtbot, tmp_path
+):
+    dialog = NewProjectDialog()
+    qtbot.addWidget(dialog)
+
+    dialog.set_pgtp_path(_pgtp_file(tmp_path))
+
+    assert dialog.target_params() == ConnectionParams(
+        host="quality.example.com",
+        port="1111",
+        database="erp",
+        user="app_user",
+        password="",  # never in the XML -- the user supplies it
+    )
+
+
+def test_attaching_a_pgtp_never_reads_scriptconnectionoptions(qtbot, tmp_path):
+    """The vendor writes a second element with a DIFFERENT port (5579 vs 1111);
+    picking between two candidates would be a guess about which database a
+    project points at."""
+    dialog = NewProjectDialog()
+    qtbot.addWidget(dialog)
+
+    dialog.set_pgtp_path(_pgtp_file(tmp_path))
+
+    params = dialog.target_params()
+    assert params.port == "1111"
+    assert params.host == "quality.example.com"
+    assert "script" not in params.database
+
+
+def test_attaching_a_pgtp_never_seeds_the_sandbox(qtbot, tmp_path):
+    """"That is how a sandbox ends up pointed at production" -- the two groups
+    stay independent."""
+    dialog = NewProjectDialog()
+    qtbot.addWidget(dialog)
+
+    dialog.set_pgtp_path(_pgtp_file(tmp_path))
+
+    assert dialog.sandbox_params() == ConnectionParams()
+
+
+def test_the_quality_password_is_asked_for_and_survives_into_target_params(
+    qtbot, tmp_path
+):
+    dialog = NewProjectDialog()
+    qtbot.addWidget(dialog)
+    dialog.set_pgtp_path(_pgtp_file(tmp_path))
+
+    dialog._quality_password_edit.setText("typed-by-hand")
+
+    assert dialog.target_params().password == "typed-by-hand"
+
+
+def test_reattaching_a_different_pgtp_repopulates_rather_than_merges(qtbot, tmp_path):
+    dialog = NewProjectDialog()
+    qtbot.addWidget(dialog)
+    dialog.set_pgtp_path(_pgtp_file(tmp_path))
+    dialog._quality_password_edit.setText("stale")
+    other = _pgtp_file(
+        tmp_path,
+        text=(
+            '<?xml version="1.0" encoding="UTF-8"?>\n'
+            '<PGTPProject><ConnectionOptions host="other.example.com" port="2222"'
+            ' database="other" login="other_user"/></PGTPProject>\n'
+        ),
+        name="other.pgtp",
+    )
+
+    dialog.set_pgtp_path(other)
+
+    assert dialog.target_params() == ConnectionParams(
+        host="other.example.com", port="2222", database="other", user="other_user"
+    )
+
+
+def test_a_pgtp_without_connectionoptions_reveals_the_section_blank_with_a_note(
+    qtbot, tmp_path
+):
+    dialog = NewProjectDialog()
+    qtbot.addWidget(dialog)
+
+    dialog.set_pgtp_path(
+        _pgtp_file(tmp_path, text="<PGTPProject/>\n", name="bare.pgtp")
+    )
+
+    assert dialog._quality_group.isVisibleTo(dialog) is True
+    assert dialog.target_params() == ConnectionParams()
+    assert "connectionoptions" in dialog._quality_status_label.text().lower()
+
+
+def test_an_unparsable_pgtp_is_tolerated_like_the_open_time_linker(qtbot, tmp_path):
+    """Tolerant, not an error dialog: the open-time linker swallows an
+    unreadable source too, and the attach must not become an ambush."""
+    dialog = NewProjectDialog()
+    qtbot.addWidget(dialog)
+    broken = _pgtp_file(tmp_path, text="<PGTPProject><unclosed>", name="broken.pgtp")
+
+    dialog.set_pgtp_path(broken)
+
+    assert dialog.pgtp_path() == broken
+    assert dialog._quality_group.isVisibleTo(dialog) is True
+    assert dialog.target_params() == ConnectionParams()
+
+
+def test_attaching_a_pgtp_does_not_gate_accept(qtbot, tmp_path):
+    """No gate was added: the quality section may be blank, partial or untested
+    and accept must still succeed (DEC-260810134915 is OPEN -- a gate invented
+    here would be an answer to it)."""
+    dialog = NewProjectDialog()
+    qtbot.addWidget(dialog)
+    dialog._folder_edit.setText(str(tmp_path / "p"))
+    dialog.set_pgtp_path(_pgtp_file(tmp_path))
+    dialog._quality_host_edit.setText("")
+    dialog._quality_user_edit.setText("")
+    got = []
+    dialog.accepted.connect(lambda: got.append(True))
+
+    dialog._on_accept_clicked()
+
+    assert got == [True]
+
+
+# --- The quality Test button: a DIFFERENT probe from the sandbox one ----------
+def test_quality_test_uses_generic_connectivity_not_the_superuser_probe(
+    qtbot, tmp_path
+):
+    probed = []
+    tested = []
+    dialog = NewProjectDialog(
+        prober=lambda params: probed.append(params) or SandboxCapabilities(),
+        tester=lambda params: tested.append(params) or (True, "Connected."),
+    )
+    dialog._run_async = _sync_run
+    qtbot.addWidget(dialog)
+    dialog.set_pgtp_path(_pgtp_file(tmp_path))
+
+    dialog.test_quality()
+
+    assert probed == []  # a superuser demand would refuse a valid quality server
+    assert len(tested) == 1
+    assert tested[0].host == "quality.example.com"
+    assert dialog._quality_status_label.text() == "Connected."
+    assert "green" in dialog._quality_status_label.styleSheet()
+
+
+def test_quality_test_reports_a_failure_without_blocking_anything(qtbot, tmp_path):
+    dialog = NewProjectDialog(tester=lambda params: (False, "could not connect"))
+    dialog._run_async = _sync_run
+    qtbot.addWidget(dialog)
+    dialog._folder_edit.setText(str(tmp_path / "p"))
+    dialog.set_pgtp_path(_pgtp_file(tmp_path))
+
+    dialog.test_quality()
+
+    assert dialog._quality_status_label.text() == "could not connect"
+    assert "red" in dialog._quality_status_label.styleSheet()
+    got = []
+    dialog.accepted.connect(lambda: got.append(True))
+    dialog._on_accept_clicked()
+    assert got == [True]
+
+
+def test_quality_test_surfaces_a_broken_seam_and_re_enables_the_button(qtbot, tmp_path):
+    def boom(_params):
+        raise RuntimeError("driver exploded")
+
+    dialog = NewProjectDialog(tester=boom)
+    dialog._run_async = _sync_run
+    qtbot.addWidget(dialog)
+    dialog.set_pgtp_path(_pgtp_file(tmp_path))
+
+    dialog.test_quality()
+
+    assert "driver exploded" in dialog._quality_status_label.text()
+    assert dialog._quality_test_button.isEnabled() is True

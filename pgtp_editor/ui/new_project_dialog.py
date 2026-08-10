@@ -43,6 +43,33 @@ repository. This dialog collects that folder plus two OPTIONAL sections:
   The **Test** button probes the *maintenance* database
   (`MAINTENANCE_DATABASE`), which is exactly the connection
   `create_sandbox_database` will use.
+- **The project's `.pgtp`** (FQ-035, §18.2) -- an optional open-file field. Empty
+  is **today's behaviour byte for byte**: a sandbox-only project, no `PgtpLink`,
+  no target. Attaching one **reveals the quality (target) server section and
+  populates it** from the file's first `<ConnectionOptions>` element through
+  `db/config.py::connection_from_tree` -- the same function the first-open path
+  (`MainWindow._import_pgtp_connection_into_target`) already uses, so the two
+  ways of learning a project's target cannot age apart.
+
+  `<ScriptConnectionOptions>` is **never** read: the vendor writes a second
+  element with the same attribute set and, in this repo's own fixture, a
+  DIFFERENT port -- picking between two candidates would be a guess about which
+  database a project points at. The sandbox is **never** seeded from
+  `<ConnectionOptions>` either; that is how a sandbox ends up pointed at
+  production (§18.2). The two groups stay independent.
+- **Quality (target) server** -- host/port/database/user/password plus its own
+  **Test** button, **hidden (not disabled) while no `.pgtp` is attached** (§7's
+  rule: a control with no subject is not a denied control -- there would be
+  nothing to populate it from). Its `Test` is
+  `db/introspect.py::test_connection` (*"can we connect at all?"*), deliberately
+  NOT the sandbox's superuser `probe`: the quality database is only ever read,
+  and a superuser demand there would refuse a correctly-configured project.
+
+  `connection_from_tree` returns `password=""` unconditionally (the XML stores
+  it obfuscated and this app never de-obfuscates it), so the one field the
+  attach can never supply is exactly the one a `Test` most depends on -- which
+  is *why* this section earns a place at creation time, and why no completeness
+  gate could ever be sound here.
 - **Git** -- server/user/checkout-branch fields, captured but **inert**
   (§18.2: "explicit TBD/placeholder only, not designed"). No Test button,
   no validation beyond being present -- nothing reads these fields yet
@@ -74,14 +101,16 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from pgtp_editor.db.config import ConnectionParams
+from pgtp_editor.db.config import ConnectionParams, connection_from_tree
 from pgtp_editor.db.ddl_project import GitConfig
+from pgtp_editor.db.introspect import test_connection
 from pgtp_editor.db.sandbox import (
     SANDBOX_DB_PREFIX,
     SandboxCapabilities,
     SandboxMode,
     probe,
 )
+from pgtp_editor.model.parser import PgtpParseError, load_project
 from pgtp_editor.ui.async_task import run_async
 from pgtp_editor.ui.sandbox_controller import (
     MAINTENANCE_DATABASE,
@@ -89,6 +118,31 @@ from pgtp_editor.ui.sandbox_controller import (
 )
 
 Prober = Callable[[ConnectionParams], SandboxCapabilities]
+Tester = Callable[[ConnectionParams], "tuple[bool, str]"]
+ConnectionReader = Callable[[str], "ConnectionParams | None"]
+
+#: The `*.pgtp` filter for the attach field's open-file dialog.
+PGTP_FILE_FILTER = "PGTP projects (*.pgtp);;All files (*)"
+
+
+def read_pgtp_connection(path: str) -> ConnectionParams | None:
+    """The attached `.pgtp`'s target connection, or None when it cannot be read.
+
+    Parses the file the app's one way (`model/parser.py::load_project`, which
+    also repairs CESU-8 emoji) and reads the FIRST `<ConnectionOptions>` element
+    through `db/config.py::connection_from_tree` -- never
+    `<ScriptConnectionOptions>`, which the vendor writes with a different port.
+
+    **Tolerant, like the open-time linker** (§18.2's `link_pgtp_if_needed`
+    swallows an unreadable source rather than raising a modal at the user): an
+    unparsable or connection-less file yields None, which the dialog reports
+    inline. Attaching a bad file is never an error the user must clear.
+    """
+    try:
+        project = load_project(path)
+    except PgtpParseError:
+        return None
+    return connection_from_tree(project.tree)
 
 
 class NewProjectDialog(QDialog):
@@ -96,9 +150,16 @@ class NewProjectDialog(QDialog):
         self,
         parent: QWidget | None = None,
         prober: Prober = probe,
+        tester: Tester = test_connection,
+        connection_reader: ConnectionReader = read_pgtp_connection,
     ) -> None:
         super().__init__(parent)
         self._prober = prober
+        # FQ-035: two DIFFERENT probes on purpose -- `probe` asks "is this user a
+        # superuser?" for the sandbox, `test_connection` asks "can we connect at
+        # all?" for the quality server. Not an inconsistency to tidy up.
+        self._tester = tester
+        self._connection_reader = connection_reader
         # Off-thread executor seam, same convention as ConnectionSetupDialog:
         # tests replace this with a synchronous stub for determinism.
         self._run_async = run_async
@@ -122,6 +183,66 @@ class NewProjectDialog(QDialog):
         folder_row.addWidget(browse_button)
         folder_form = QFormLayout()
         folder_form.addRow("Project folder:", folder_row)
+
+        # -- the `.pgtp` attach field (FQ-035) --------------------------------
+        # The folder row's exact shape, with `getOpenFileName` in place of
+        # `getExistingDirectory`.
+        self._pgtp_edit = QLineEdit()
+        self._pgtp_edit.setReadOnly(True)
+        pgtp_browse_button = QPushButton("Browse…")
+        pgtp_browse_button.clicked.connect(self._browse_for_pgtp)
+        pgtp_row = QHBoxLayout()
+        pgtp_row.addWidget(self._pgtp_edit, 1)
+        pgtp_row.addWidget(pgtp_browse_button)
+        folder_form.addRow("Project .pgtp (optional):", pgtp_row)
+        pgtp_caveat = QLabel(
+            "Attaching the .pgtp this project is a checkout of links it to the"
+            " project and fills in the quality server below from its"
+            " <ConnectionOptions>. Leave it empty for a project with no .pgtp —"
+            " you can still open one later, which links it the same way."
+        )
+        pgtp_caveat.setWordWrap(True)
+        folder_form.addRow(pgtp_caveat)
+
+        # -- the quality (target) server, revealed by the attach (FQ-035) -----
+        # HIDDEN, not disabled, until a `.pgtp` is attached (§7): with no
+        # `.pgtp` there is nothing to populate it from, so it is not a control
+        # being denied -- it is a control with no subject.
+        self._quality_group = QGroupBox("Quality (target) server")
+        self._quality_host_edit = QLineEdit()
+        self._quality_port_edit = QLineEdit()
+        self._quality_database_edit = QLineEdit()
+        self._quality_user_edit = QLineEdit()
+        self._quality_password_edit = QLineEdit()
+        self._quality_password_edit.setEchoMode(QLineEdit.EchoMode.Password)
+        # Built here rather than reusing `ProjectSettingsDialog`'s form: there is
+        # no shared connection-field widget in this codebase (its
+        # `_build_connection_form`/`_add_test_row` are private statics on a
+        # QDialog subclass), and extracting one would touch all three dialogs --
+        # explicitly out of scope for a UX sequencing feature (§18.2, FQ-035).
+        quality_form = QFormLayout(self._quality_group)
+        quality_form.addRow("Host:", self._quality_host_edit)
+        quality_form.addRow("Port:", self._quality_port_edit)
+        quality_form.addRow("Database:", self._quality_database_edit)
+        quality_form.addRow("User:", self._quality_user_edit)
+        quality_form.addRow("Password:", self._quality_password_edit)
+        self._quality_test_button = QPushButton("Test")
+        self._quality_test_button.clicked.connect(self.test_quality)
+        self._quality_status_label = QLabel("")
+        quality_test_row = QHBoxLayout()
+        quality_test_row.addWidget(self._quality_test_button)
+        quality_test_row.addWidget(self._quality_status_label, 1)
+        quality_form.addRow(quality_test_row)
+        quality_note = QLabel(
+            "This is the quality/staging database the DDL Explorer and the"
+            " database checks read while this project is open. Host, port,"
+            " database and user come from the attached .pgtp; the PASSWORD is"
+            " never in the XML (it is stored obfuscated there and never read),"
+            " so it is the one field to supply here."
+        )
+        quality_note.setWordWrap(True)
+        quality_form.addRow(quality_note)
+        self._quality_group.setVisible(False)
 
         sandbox_group = QGroupBox("Local sandbox (optional)")
         self._sandbox_host_edit = QLineEdit()
@@ -206,6 +327,7 @@ class NewProjectDialog(QDialog):
         layout = QVBoxLayout(self)
         layout.addLayout(identity_form)
         layout.addLayout(folder_form)
+        layout.addWidget(self._quality_group)
         layout.addWidget(sandbox_group)
         layout.addWidget(git_group)
         layout.addWidget(self._folder_error_label)
@@ -220,10 +342,63 @@ class NewProjectDialog(QDialog):
         self._folder_error_label.setText("")
 
     def _on_accept_clicked(self) -> None:
+        # The folder is still this dialog's ONLY blocking validation. FQ-035 adds
+        # no gate: the quality section may be blank, partial or untested and
+        # accept must succeed anyway -- exactly as it does today for a blank
+        # sandbox connection. (Whether it should be gated is DEC-260810134915,
+        # open; a gate invented here would be an answer to it.)
         if not self.folder():
             self._folder_error_label.setText("Choose a project folder first.")
             return
         self.accept()
+
+    # --- The `.pgtp` attach, and the reveal it drives (FQ-035) ---------------
+    def _browse_for_pgtp(self) -> None:
+        path, _selected_filter = QFileDialog.getOpenFileName(
+            self,
+            "Attach the project's .pgtp",
+            self._pgtp_edit.text(),
+            PGTP_FILE_FILTER,
+        )
+        if not path:
+            return
+        self.set_pgtp_path(path)
+
+    def set_pgtp_path(self, path: str) -> None:
+        """Attach `path` (or detach, with `""`), revealing and re-populating the
+        quality section. The programmatic seam behind `Browse…`, so nothing has
+        to drive a file dialog to exercise the reveal."""
+        self._pgtp_edit.setText(path)
+        self._populate_quality_from_pgtp()
+
+    def _populate_quality_from_pgtp(self) -> None:
+        path = self.pgtp_path()
+        if not path:
+            self._quality_group.setVisible(False)
+            return
+        self._quality_group.setVisible(True)
+        self._quality_status_label.setText("")
+        self._quality_status_label.setStyleSheet("")
+        params = self._connection_reader(path)
+        # Re-attaching REPLACES what the previous file put here rather than
+        # merging: the fields describe the attached file, and a leftover host
+        # from a different .pgtp is worse than a blank one.
+        self._quality_host_edit.setText(params.host if params else "")
+        self._quality_port_edit.setText(params.port if params else "")
+        self._quality_database_edit.setText(params.database if params else "")
+        self._quality_user_edit.setText(params.user if params else "")
+        # `connection_from_tree` returns password="" unconditionally -- always
+        # cleared, never populated, by construction.
+        self._quality_password_edit.setText("")
+        if params is None:
+            self._quality_status_label.setText(
+                "No <ConnectionOptions> could be read from this .pgtp — fill the"
+                " fields in by hand if you want a quality connection."
+            )
+            return
+        self._quality_status_label.setText(
+            "Filled in from the .pgtp — enter the password (the XML never carries it)."
+        )
 
     # --- Getters (read after `accepted` fires) -------------------------------
     def name(self) -> str:
@@ -234,6 +409,28 @@ class NewProjectDialog(QDialog):
 
     def folder(self) -> str:
         return self._folder_edit.text()
+
+    def pgtp_path(self) -> str:
+        """The attached `.pgtp`'s **source** path, or `""` when none was attached
+        (FQ-035). This is the sshfs-mounted source, not a working copy -- see
+        `DdlProjectController.create_project` for what creation records from it."""
+        return self._pgtp_edit.text()
+
+    def target_params(self) -> ConnectionParams:
+        """The quality (target) connection as currently typed, or an EMPTY
+        `ConnectionParams` when no `.pgtp` is attached -- with the section hidden
+        there is no target being described, and a fresh project must land at
+        exactly today's empty default (§18.2). May be blank or partial with a
+        file attached too: nothing gates on it (DEC-260810134915 is open)."""
+        if not self.pgtp_path():
+            return ConnectionParams()
+        return ConnectionParams(
+            host=self._quality_host_edit.text(),
+            port=self._quality_port_edit.text(),
+            database=self._quality_database_edit.text(),
+            user=self._quality_user_edit.text(),
+            password=self._quality_password_edit.text(),
+        )
 
     def sandbox_params(self) -> ConnectionParams:
         """The sandbox **server** connection. `database` is deliberately empty
@@ -273,6 +470,41 @@ class NewProjectDialog(QDialog):
             server=self._git_server_edit.text(),
             user=self._git_user_edit.text(),
             checkout_branch=self._git_branch_edit.text(),
+        )
+
+    # --- Quality (target) connectivity Test (FQ-035) --------------------------
+    def test_quality(self) -> None:
+        """*"Can we connect at all?"* -- `db/introspect.py::test_connection`,
+        identical to `ConnectionSetupDialog.test` and
+        `ProjectSettingsDialog.test_target`, run off the GUI thread so an
+        unreachable host can't freeze the dialog.
+
+        Deliberately **not** the sandbox's superuser `probe`: the quality
+        database is only ever read (DDL Explorer, the checks), and a superuser
+        demand here would refuse a correctly-configured project. A red result is
+        informational -- accept is not gated on it."""
+        self._quality_test_button.setEnabled(False)
+        self._quality_status_label.setStyleSheet("")
+        self._quality_status_label.setText("Testing connection…")
+        params = self.target_params()
+
+        def on_result(result: "tuple[bool, str]") -> None:
+            ok, message = result
+            self._quality_status_label.setText(message)
+            self._quality_status_label.setStyleSheet(
+                "color: green;" if ok else "color: red;"
+            )
+            self._quality_test_button.setEnabled(True)
+
+        def on_error(exc: BaseException) -> None:
+            self._quality_status_label.setText(str(exc))
+            self._quality_status_label.setStyleSheet("color: red;")
+            self._quality_test_button.setEnabled(True)
+
+        self._run_async(
+            lambda: self._tester(params),
+            on_result=on_result,
+            on_error=on_error,
         )
 
     # --- Sandbox superuser Test ----------------------------------------------

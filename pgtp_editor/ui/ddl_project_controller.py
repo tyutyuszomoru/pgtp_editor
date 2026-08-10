@@ -124,6 +124,37 @@ from pgtp_editor.ui.ui_shell import UiShell
 _log = logging.getLogger(__name__)
 
 
+def _new_project_pgtp_link(dialog) -> PgtpLink:
+    """The `PgtpLink` a New Project accept records (FQ-035, §18.2).
+
+    Records the **`source_path` only**. `working_copy_path` and
+    `last_known_source_checksum` are left empty deliberately, because whether
+    accept COPIES the attached file into the project folder there and then, or
+    defers to the existing open-time copier, is **`DEC-260810134914` — still
+    open, and not answered here.**
+
+    **THE COPY, ONCE DECIDED, GOES IN THIS FUNCTION AND NOWHERE ELSE**: read the
+    source text, write it to `<folder>/<source name>` (the destination
+    `link_pgtp_if_needed` computes), and return the full three-field `PgtpLink`.
+    It therefore needs the project folder, which is why this takes the dialog and
+    is called from `create_project` at the single `ProjectSettings(...)`
+    construction site -- add `folder` as a second parameter there and the whole
+    change is local to these lines.
+
+    Why the two halves are NOT independently pickable: `link_pgtp_if_needed`
+    opens with `if self._settings.pgtp.working_copy_path: return` and is the only
+    code in the tree that writes a working copy, so recording a working-copy path
+    without also writing the file would disable the copier permanently. That
+    guard must not be relaxed -- it is what makes "never silently relinked" true.
+    Recording `source_path` alone leaves the copier free to run on first open,
+    which is why it is the state that does not pre-empt the decision.
+    """
+    source_path = dialog.pgtp_path()
+    if not source_path:
+        return PgtpLink()
+    return PgtpLink(source_path=source_path)
+
+
 class DdlProjectController(QObject):
     """Owns the active §18.2 local project: its folder, settings, capability
     tier and target reachability, plus the `.pgtp` link that ties it to a
@@ -311,10 +342,20 @@ class DdlProjectController(QObject):
         settings = ProjectSettings(
             name=dialog.name(),
             description=dialog.description(),
+            # FQ-035: creation now records the `.pgtp` link and the quality
+            # (target) connection the dialog collected, instead of leaving both
+            # at their empty defaults until first open or Project Settings. Both
+            # are empty when the user ignored the optional `.pgtp` field, so a
+            # sandbox-only project is created byte for byte as before.
+            pgtp=_new_project_pgtp_link(dialog),
+            target=dialog.target_params(),
             sandbox=dialog.sandbox_params(),
             sandbox_mode=dialog.sandbox_mode(),
             git=dialog.git_config(),
         )
+        # ONE settings write, as before: the sandbox-provisioning callback below
+        # re-saves with the created database name, and a third writer to
+        # `settings.json` in one flow is how those come to disagree.
         save_settings(folder, settings)
         self.set_active_project(folder, settings)
         self._shell.status(f"Created project: {folder}", 5000)

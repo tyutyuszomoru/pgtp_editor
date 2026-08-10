@@ -1973,3 +1973,149 @@ def test_no_password_prompt_projectless_or_without_a_host(qtbot, tmp_path):
     window._target_params_for_fetch()  # project open, no host configured
 
     assert asked == []
+
+
+# --- FQ-035: creation records the attached `.pgtp` and its quality target ----
+_ATTACHED_PGTP = """\
+<?xml version="1.0" encoding="UTF-8"?>
+<Project>
+  <ConnectionOptions host="quality" port="1111" login="app_user" database="erp" password="xx"/>
+  <ScriptConnectionOptions host="script" port="5579" login="s" database="s" password="xx"/>
+  <Presentation>
+    <Pages/>
+  </Presentation>
+</Project>
+"""
+
+
+def _new_project_dialog_with_pgtp(qtbot, window, project_dir, source, monkeypatch):
+    """A New Project dialog with a folder and an attached `.pgtp`. The controller
+    now probes a configured target on `set_active_project`, so the real
+    `test_connection` is stubbed out -- no test may reach a network."""
+    monkeypatch.setattr(
+        "pgtp_editor.ui.ddl_project_controller.db_test_connection",
+        lambda params: (True, "Connected."),
+    )
+    dialog = NewProjectDialog(parent=window)
+    qtbot.addWidget(dialog)
+    dialog._folder_edit.setText(str(project_dir))
+    dialog.set_pgtp_path(str(source))
+    return dialog
+
+
+def test_creating_a_project_records_the_attached_pgtp_source_path(
+    qtbot, tmp_path, monkeypatch
+):
+    window = _window(qtbot, tmp_path)
+    project_dir = tmp_path / "proj"
+    source = tmp_path / "erp.pgtp"
+    source.write_text(_ATTACHED_PGTP, encoding="utf-8")
+    dialog = _new_project_dialog_with_pgtp(qtbot, window, project_dir, source, monkeypatch)
+
+    window._ddl_project_ui.create_project(dialog)
+
+    link = load_settings(project_dir).pgtp
+    assert link.source_path == str(source)
+
+
+def test_creating_a_project_records_the_quality_target_from_the_attached_pgtp(
+    qtbot, tmp_path, monkeypatch
+):
+    """The point of FQ-035: `target` stops being an empty default that only
+    first-open fills in."""
+    window = _window(qtbot, tmp_path)
+    project_dir = tmp_path / "proj"
+    source = tmp_path / "erp.pgtp"
+    source.write_text(_ATTACHED_PGTP, encoding="utf-8")
+    dialog = _new_project_dialog_with_pgtp(qtbot, window, project_dir, source, monkeypatch)
+    dialog._quality_password_edit.setText("secret")
+
+    window._ddl_project_ui.create_project(dialog)
+
+    target = load_settings(project_dir).target
+    assert (target.host, target.port, target.database, target.user, target.password) == (
+        "quality", "1111", "erp", "app_user", "secret",
+    )
+
+
+def test_creating_a_project_with_a_pgtp_leaves_the_sandbox_untouched(
+    qtbot, tmp_path, monkeypatch
+):
+    """Never seed the sandbox from `<ConnectionOptions>` -- that is how a sandbox
+    ends up pointed at production."""
+    window = _window(qtbot, tmp_path)
+    project_dir = tmp_path / "proj"
+    source = tmp_path / "erp.pgtp"
+    source.write_text(_ATTACHED_PGTP, encoding="utf-8")
+    dialog = _new_project_dialog_with_pgtp(qtbot, window, project_dir, source, monkeypatch)
+
+    window._ddl_project_ui.create_project(dialog)
+
+    assert load_settings(project_dir).sandbox == ConnectionParams()
+
+
+def test_creating_a_project_without_a_pgtp_is_byte_for_byte_todays_behaviour(
+    qtbot, tmp_path
+):
+    """Ignoring the optional field must change nothing: no link, no target."""
+    window = _window(qtbot, tmp_path)
+    project_dir = tmp_path / "proj"
+    dialog = NewProjectDialog(parent=window)
+    qtbot.addWidget(dialog)
+    dialog._folder_edit.setText(str(project_dir))
+
+    window._ddl_project_ui.create_project(dialog)
+
+    loaded = load_settings(project_dir)
+    assert loaded.pgtp == PgtpLink()
+    assert loaded.target == ConnectionParams()
+
+
+def test_creation_does_not_copy_the_pgtp_yet_and_leaves_the_copier_free_to_run(
+    qtbot, tmp_path, monkeypatch
+):
+    """DEC-260810134914 is OPEN, so the copy is deliberately NOT done here.
+    Recording `source_path` alone is the state that does not pre-empt it: the
+    `working_copy_path` guard in `link_pgtp_if_needed` stays clear, so opening
+    the source still links it exactly as before."""
+    window = _window(qtbot, tmp_path)
+    project_dir = tmp_path / "proj"
+    source = tmp_path / "erp.pgtp"
+    source.write_text(_ATTACHED_PGTP, encoding="utf-8")
+    dialog = _new_project_dialog_with_pgtp(qtbot, window, project_dir, source, monkeypatch)
+
+    window._ddl_project_ui.create_project(dialog)
+
+    link = load_settings(project_dir).pgtp
+    assert link.working_copy_path is None
+    assert link.last_known_source_checksum is None
+    assert not (project_dir / "erp.pgtp").exists()
+
+    window.open_project_file(str(source))
+
+    linked = load_settings(project_dir).pgtp
+    assert linked.working_copy_path == str(project_dir / "erp.pgtp")
+    assert linked.last_known_source_checksum is not None
+    assert (project_dir / "erp.pgtp").exists()
+
+
+def test_a_target_supplied_at_creation_is_not_overwritten_on_first_open(
+    qtbot, tmp_path, monkeypatch
+):
+    """`_import_pgtp_connection_into_target` fires only when `target.host` is
+    still empty. That guard is vacuous at creation today and becomes
+    load-bearing the moment FQ-035 ships -- so it must not be relaxed."""
+    window = _window(qtbot, tmp_path)
+    project_dir = tmp_path / "proj"
+    source = tmp_path / "erp.pgtp"
+    source.write_text(_ATTACHED_PGTP, encoding="utf-8")
+    dialog = _new_project_dialog_with_pgtp(qtbot, window, project_dir, source, monkeypatch)
+    dialog._quality_host_edit.setText("corrected-host")
+    dialog._quality_password_edit.setText("secret")
+
+    window._ddl_project_ui.create_project(dialog)
+    window.open_project_file(str(source))
+
+    target = load_settings(project_dir).target
+    assert target.host == "corrected-host"
+    assert target.password == "secret"
