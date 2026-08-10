@@ -31,8 +31,16 @@ A session hit something it must not decide alone. Record it.
   answer, not a question.
 - a choice with an **obviously right answer** the dispatching session should just make. Filing trivia
   trains the owner to skim the queue, which is exactly how the old problem worked.
+- anything **already being decided** — work in flight, a running agent told to choose it, a question whose
+  answer lands with the next commit. Wait for it. A decision filed while it is being made reaches the owner
+  already dead, and they pay the reading cost anyway.
 
 If it fails those tests, say so in your report and file nothing.
+
+**The filing you are about to write must not contain its own disqualification.** If the entry needs a
+sentence like "this may already be answered by the time it is asked", or "this needs verifying before
+asking", you have found the reason not to file it yet — go verify, or wait, and file something the owner
+can answer cold. Writing the caveat down is not the same as honouring it.
 
 **A well-formed entry has all of these:**
 
