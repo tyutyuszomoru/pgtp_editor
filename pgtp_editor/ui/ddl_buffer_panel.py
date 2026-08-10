@@ -316,6 +316,14 @@ ALTER_TABLE_MENU_TITLE = "Alter Table"
 #: `BrowserPanel.create_table_requested`.
 CREATE_TABLE_LABEL = "Create Table…"
 
+#: BUG-062's re-introspection gesture. ONE label for the whole command -- this
+#: tree's context menu, the viewing pane's, and the host's Database-menu action --
+#: because a command id is its label, and eight names for four operations is
+#: recorded as a mistake not to repeat. It lives here rather than on either panel
+#: so both can import it: `ddl_editor_panel` already imports from this module
+#: (`resolve_edit_target`), and the reverse direction would be a cycle.
+RELOAD_LABEL = "Reload DDL"
+
 #: The one unsaved/changed glyph in this app (§11/§18.2/§18.5): the editable
 #: tab's title marker and the §18.2 `locally_edited` drift marker are both
 #: `*`, so the tree uses it too rather than inventing a third glyph.
@@ -450,6 +458,18 @@ class BrowserPanel(QWidget):
     #: are the tree's other creation gestures, and all three answer "make a new
     #: object" rather than "change this one".
     create_table_requested = Signal(str)
+
+    #: Right-click ▸ Reload DDL, anywhere in this tree (BUG-062). The twin of
+    #: `EditorPanel.reload_requested` -- see that signal for why reload is a
+    #: re-introspection rather than a re-render of a cached `SchemaIndex`, and why
+    #: it carries no role.
+    #:
+    #: The one entry a `browse_only` tree DOES offer. Every other gesture here is
+    #: an edit or a creation, which is why suppressing them all left the sandbox
+    #: tree with no menu at all; reloading is neither, and it is the gesture a
+    #: sandbox browse needs most (applying to a sandbox is exactly the operation
+    #: whose result the user then wants to re-read).
+    reload_requested = Signal()
 
     def __init__(
         self, parent: QWidget | None = None, *, browse_only: bool = False
@@ -786,13 +806,36 @@ class BrowserPanel(QWidget):
         have no context menu" rule could be carved out for creation without
         weakening the reason it was written.
         """
-        item = self.tree.itemAt(pos)
-        if item is None:
-            return
-        menu = self._menu_for_item(item)
-        if menu is None:
-            return
+        menu = self.context_menu_for_item(self.tree.itemAt(pos))
         menu.exec(self.tree.viewport().mapToGlobal(pos))
+
+    def context_menu_for_item(self, item) -> QMenu:
+        """The full menu for a right-click on `item` -- `item` being `None` for a
+        click on the tree's empty area.
+
+        `_menu_for_item`'s per-item gestures (when it offers any), plus
+        **`Reload DDL`**, which BUG-062 requires "wherever in DDL Objects": every
+        row, every branch root, the blank space below the last row, and the
+        `browse_only` sandbox tree where `_menu_for_item` offers nothing at all.
+        That is why this ALWAYS returns a menu while `_menu_for_item` may return
+        None -- there is no longer a right-click here that offers nothing, so the
+        "an empty menu under the cursor is worse than none" rule below stops
+        being reachable rather than being overruled.
+
+        Composed rather than folded into `_menu_for_item` so that method keeps
+        meaning exactly "what does this ITEM offer", which is what its three
+        keyed branches and their tests are about.
+
+        NO `setShortcut` on the reload action: `Ctrl+Shift+R` has exactly one
+        keyboard host, the `QShortcut` on the viewing pane (DEC-012).
+        """
+        menu = self._menu_for_item(item) if item is not None else None
+        if menu is None:
+            menu = QMenu(self)
+        else:
+            menu.addSeparator()
+        menu.addAction(RELOAD_LABEL, self.reload_requested.emit)
+        return menu
 
     def _menu_for_item(self, item) -> "QMenu | None":
         """The menu for `item`, or `None` when it offers nothing.

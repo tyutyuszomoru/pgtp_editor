@@ -285,6 +285,18 @@ RESERVED_SEQUENCES: dict[str, str] = {
     "Ctrl+Alt+F": "Format Selection — a context-menu command plus a shortcut "
                   "inside the Sandbox SQL Console and the DDL object tabs; "
                   "there is no menu-bar action to move (§27)",
+    # BUG-062. The same shape as `Ctrl+Alt+F` above, and reserved for the same
+    # reason: the chord's ONE keyboard host is a widget-scoped `QShortcut` (on
+    # the DDL Explorer's read-only viewing pane, `ddl_editor_panel.py`), so the
+    # menu walk cannot enumerate it and there is no row for the dialog to move.
+    # The command's menu-bar form (Database ▸ Reload DDL) and its two
+    # context-menu forms carry NO shortcut, per DEC-012's one-keyboard-host rule.
+    # A rebinding pointed here would be swallowed by whichever Explorer buffer
+    # has focus.
+    "Ctrl+Shift+R": "Reload DDL — a shortcut scoped to the DDL Explorer's "
+                    "viewing pane, where the caret says WHICH Explorer to "
+                    "re-introspect; the menu-bar and context-menu forms of the "
+                    "command carry no shortcut (§18.1)",
     # FQ-030's four editor gestures. Two are handled inside `CodeEditor`'s own
     # key handling and two inside the SQL panels', so none of them is a QAction
     # the menu walk could enumerate — exactly the situation Ctrl+Alt+F is in,

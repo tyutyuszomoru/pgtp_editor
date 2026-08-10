@@ -27,6 +27,7 @@ live/synthesized: the checked-out, editable form lives in `ddl/*.sql` files
 from __future__ import annotations
 
 from PySide6.QtCore import QEvent, Qt, Signal
+from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import QVBoxLayout, QWidget
 
 from pgtp_editor.ui.code_editor import (
@@ -35,7 +36,7 @@ from pgtp_editor.ui.code_editor import (
     CodeEditor,
     classify_undo_redo_chord,
 )
-from pgtp_editor.ui.ddl_buffer_panel import resolve_edit_target
+from pgtp_editor.ui.ddl_buffer_panel import RELOAD_LABEL, resolve_edit_target
 from pgtp_editor.ui.find_replace_bar import FindReplaceBar, install_focus_shortcuts
 
 
@@ -65,6 +66,24 @@ class EditorPanel(QWidget):
     #: `BrowserPanel`: `checkout_requested` is withdrawn and checkout is a
     #: branch of MainWindow's handler for this signal (§18.1/§18.2).
     edit_requested = Signal(object, str)
+
+    #: Right-click ▸ Reload DDL, or `Ctrl+Shift+R` with the caret in this buffer
+    #: (BUG-062). "Re-introspect the connection this Explorer was opened over and
+    #: rebuild everything from the result."
+    #:
+    #: A SIGNAL, not a call: §18.5 D1's injection idiom says this panel never
+    #: talks to a database, and the fetch it asks for is the host's
+    #: `_open_ddl_explorer(role)` -- the same path the Database-menu toggle runs,
+    #: which is why reload is a re-introspection and NOT a re-render of a cached
+    #: `SchemaIndex`. A cached index is exactly what goes stale when the user
+    #: applies a change, so serving reload from it would answer the gesture with
+    #: the data the gesture exists to replace. (BUG-045 is what reaching for the
+    #: database from here looks like.)
+    #:
+    #: Carries NO role: this panel does not know which of §18.7's two Explorers
+    #: it is, and it must not learn -- the host connects each instance's signal
+    #: to that instance's role, exactly as it does for `edit_requested`.
+    reload_requested = Signal()
 
     def __init__(
         self, parent: QWidget | None = None, *, browse_only: bool = False
@@ -115,6 +134,35 @@ class EditorPanel(QWidget):
         self._focus_find_shortcut, self._focus_replace_shortcut = (
             install_focus_shortcuts(self, self.find_replace_bar)
         )
+
+        # Reload DDL (BUG-062). `Ctrl+Shift+R`, scoped to this panel and its
+        # children so it fires with the caret in the buffer -- the
+        # `install_focus_shortcuts` / `DdlObjectEditorPanel._format_shortcut`
+        # scope, for the same reason.
+        #
+        # THIS QShortcut IS THE GESTURE'S ONLY KEYBOARD HOST (DEC-012, as
+        # answered: *any gesture with a command form -- menu bar OR context menu
+        # -- has exactly one keyboard host*). Reload has three affordances: this
+        # panel's context menu, the tree's, and the host's Database-menu action.
+        # Neither menu form carries a shortcut; both are click-only commands,
+        # exactly as `Format Selection` ships since BUG-054.
+        #
+        # Why the widget and not the QAction -- the choice the one-host rule
+        # leaves open, and which the Format Selection precedent already made the
+        # same way. Reload is per-ROLE (§18.7 gives the target and the sandbox
+        # their own Explorer, their own connection and their own tab), so a
+        # window-level chord would have to guess which of the two the user meant
+        # from something other than focus. Here the answer is the buffer the
+        # caret is in, which is the only place the question has one answer.
+        # `Ctrl+Shift+R` is free of all six binding mechanisms (nothing else
+        # binds it, and Qt's tables bind Refresh to F5 on both schemes); it is
+        # recorded in `shortcut_registry.RESERVED_SEQUENCES` so no rebinding can
+        # be pointed at it.
+        self._reload_shortcut = QShortcut(QKeySequence("Ctrl+Shift+R"), self)
+        self._reload_shortcut.setContext(
+            Qt.ShortcutContext.WidgetWithChildrenShortcut
+        )
+        self._reload_shortcut.activated.connect(self.reload_requested.emit)
 
     def set_ddl_text(self, text: str, spans=None, schema=None) -> None:
         """Replace the synthesized buffer (a fresh `build_ddl_text` result).
@@ -221,4 +269,16 @@ class EditorPanel(QWidget):
                     f"Edit DDL: {ref.qualified}",
                     lambda: self.edit_requested.emit(ref, source),
                 )
+        # Reload DDL (BUG-062), offered ANYWHERE in the buffer -- outside every
+        # object's span, and on a browse-only instance too. It is a property of
+        # the CONNECTION this tab was filled from, not of the clicked object, so
+        # unlike `Edit DDL` it has nothing to resolve and no reason to be absent.
+        # The sandbox instance needs it most: applying to a sandbox is precisely
+        # the operation whose result the user then wants to re-read.
+        #
+        # NO `setShortcut` here: `Ctrl+Shift+R` has exactly one keyboard host
+        # (the QShortcut in `__init__`), and adding it to this action would be
+        # the two-hosts-for-one-gesture defect DEC-012 forbids.
+        menu.addSeparator()
+        menu.addAction(RELOAD_LABEL, self.reload_requested.emit)
         return menu

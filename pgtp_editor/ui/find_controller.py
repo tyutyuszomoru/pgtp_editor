@@ -73,11 +73,17 @@ whole thing to public attributes.
 
 Two find-all entry points, deliberately named apart
 ---------------------------------------------------
-:meth:`find_all` is the *streaming run* — ``(term, target)`` in, Audit rows out.
-It is what a ``FindReplaceBar``'s Find-All button ultimately reaches (the host
-wires it as each bar's ``set_on_find_all``) and what
-``CoherenceController`` is injected with to list a DB node's occurrences.
-The second entry point, ``find_all_in_active_bar`` (*Edit ▸ Find All*), is
+:meth:`find_all` is the *streaming run* over the two tabs the host wires by hand
+— ``(term, target)`` in, Audit rows out — and what ``CoherenceController`` is
+injected with to list a DB node's occurrences. :meth:`find_all_in_bar` is the
+same run reached from **any other tab's bar** (BUG-060): the DDL Explorer
+buffer, an editable DDL object tab, a §21 PHP tab, an FQ-006 draft fragment. It
+is not a second implementation — both funnel into ``_start_find_all`` — and it
+is not wired per tab type either: an unwired ``FindReplaceBar`` *publishes* its
+Find-All request (``find_replace_bar.add_find_all_observer``) and this lane
+subscribes once, in its constructor.
+
+The retired third entry point, ``find_all_in_active_bar`` (*Edit ▸ Find All*), is
 **gone** with the Edit menu (FQ-016): Find All is started from the permanently
 visible bar's own button, which reaches :meth:`find_all` directly. The only
 "act on the active bar" method left here is :meth:`find_next`, F3's host.
@@ -109,6 +115,10 @@ from pgtp_editor.ui import search
 from pgtp_editor.ui.busy import busy_status
 from pgtp_editor.ui.center_stage import DDL_EXPLORER_SANDBOX
 from pgtp_editor.ui.editor_gutter import BOOKMARKS_RESET, add_bookmark_observer
+from pgtp_editor.ui.find_replace_bar import (
+    FIND_ALL_STOP_REQUESTED,
+    add_find_all_observer,
+)
 from pgtp_editor.ui.ui_shell import UiShell
 from pgtp_editor.validation import tier2
 
@@ -123,8 +133,10 @@ _VALIDATION_PREFIX = "[Validate] "
 #: table). A CONSTANT, never the literal typed at the call sites -- the
 #: `[Project]` prefix was typed inline in ten places and that is recorded as a
 #: mistake not to repeat. Deliberately NOT a reuse of `[Find]`: the two would
-#: clear each other, and `[Find]`'s `"raw"|"xsd"` target vocabulary cannot carry
-#: a DDL-object or PHP-tab payload under one prefix.
+#: clear each other (and, on the Findings tab, wipe each other outright -- the
+#: router shows ONE kind at a time). The two prefixes now share the SAME payload
+#: vocabulary, since BUG-060 widened Find All to every editor tab through
+#: `_bookmark_audit_route`; what they do not share is the run they belong to.
 _BOOKMARK_PREFIX = "[Bookmark] "
 
 #: Sentinel for "the active editor has NO route in `_on_audit_item_clicked`"
@@ -215,6 +227,19 @@ class FindValidateController(QObject):
         self._find_all_count = 0
         self._find_all_term = ""
         self._find_all_target = "raw"
+        #: The run's `UserRole+2` payload (only §22's PHP route needs one) and
+        #: the bar whose button is showing `Stop` -- see `_start_find_all`.
+        self._find_all_extra = None
+        self._find_all_bar = None
+
+        # BUG-060: Find All was a dead button on the DDL Explorer, DDL object,
+        # PHP and draft-fragment bars, because only the two bars the host wires
+        # by hand had a callback. Those bars now PUBLISH the request and this
+        # lane subscribes -- the same shape as the bookmark subscription above,
+        # and for the same reason (per-tab publishers created at runtime, one
+        # long-lived consumer). Held weakly there, so this does not affect the
+        # controller's lifetime.
+        add_find_all_observer(self._on_find_all_requested)
 
     # -- read-only surface ---------------------------------------------------
     # Each returns the LIVE object/value this module writes, so a test may stop
@@ -241,8 +266,12 @@ class FindValidateController(QObject):
         return self._find_all_term
 
     @property
-    def find_all_target(self) -> str:
-        """Which editor the current/last run searched: ``"raw"`` or ``"xsd"``."""
+    def find_all_target(self):
+        """The click-route discriminator the current/last run stamped on its
+        rows: ``"raw"``, ``"xsd"``, a `DdlObjectRef.key` tuple, §22's PHP
+        discriminator, or `_NO_AUDIT_ROUTE` for a document the click router has
+        no branch for (BUG-060) -- i.e. whatever
+        :meth:`_bookmark_audit_route` answers for the searched editor."""
         return self._find_all_target
 
     @property
@@ -548,23 +577,89 @@ class FindValidateController(QObject):
     # -- the streaming Find All ----------------------------------------------
 
     def find_all(self, term: str, target: str = "raw") -> None:
-        """Start a streaming Find All: results are appended to the Audit panel
-        a batch at a time on a 0ms QTimer, yielding to the event loop between
-        batches so the UI stays responsive and Stop takes effect promptly.
+        """Start a streaming Find All over the Raw XML or Edit XSD tab.
 
-        `target` selects which editor tab the search runs over -- "raw" (the
+        `target` selects which editor the search runs over -- "raw" (the
         Raw XML tab, the default) or "xsd" (the Edit XSD tab) -- and is
         stashed with each result so clicking it navigates the right editor.
+
+        The two tabs whose bars the HOST wires by hand, and the entry point
+        `CoherenceController` is injected with. Every other tab's bar reaches
+        :meth:`find_all_in_bar` instead, and both funnel into the one run
+        below -- the streaming machinery, the `[Find]` grammar and the
+        clear-on-rerun are shared, never forked per tab kind.
+        """
+        stage = self._shell.stage
+        editor = stage.xsd_editor if target == "xsd" else stage.xml_editor
+        bar = stage.xsd_find_replace_bar if target == "xsd" else stage.find_replace_bar
+        self._start_find_all(term, editor=editor, bar=bar, target=target, extra=None)
+
+    def find_all_in_bar(self, bar, term: str) -> None:
+        """Start a streaming Find All over whatever document `bar` searches
+        (BUG-060) -- the DDL Explorer buffer, an editable DDL object tab, a §21
+        PHP tab, an FQ-006 draft fragment, or either of the two tabs
+        :meth:`find_all` names.
+
+        Reached from `find_replace_bar`'s Find-All publication (see
+        :meth:`_on_find_all_requested`), which is how a bar nobody wired gets a
+        working button without a per-tab-type wiring line in the host.
+
+        The row payload is resolved by :meth:`_bookmark_audit_route`, i.e. the
+        SAME table `List All Bookmarks` uses, keyed on editor identity. That is
+        deliberate to the point of being the design: `[Find]` and `[Bookmark]`
+        rows are navigated by one router (`MainWindow._on_audit_item_clicked`),
+        so a second answer to "which target does this editor carry?" would be a
+        second chance to send the user to the wrong document. It also inherits
+        `_NO_AUDIT_ROUTE`: rows from the read-only DDL Explorer buffer and from
+        a draft fragment are emitted WITHOUT line/target roles, so they report
+        the matches and stay inert rather than navigating Raw XML (§7's
+        unmapped-line rule). They still land on the Findings tab, which is the
+        whole of what was missing.
+        """
+        editor = bar.editor
+        target, _label, extra = self._bookmark_audit_route(editor)
+        if target == "raw" and editor is not self._shell.stage.xml_editor:
+            # `_bookmark_audit_route`'s fallback is Raw XML, which is right for
+            # the Raw XML editor and a lie for anything else (a bar over an
+            # editor no stage table knows -- a not-yet-registered tab kind).
+            # Report the matches, navigate nothing.
+            target = _NO_AUDIT_ROUTE
+            extra = None
+        self._start_find_all(term, editor=editor, bar=bar, target=target, extra=extra)
+
+    def _on_find_all_requested(self, bar, term: str, reason: str) -> None:
+        """Subscribed to `find_replace_bar`'s Find-All publication in
+        `__init__` -- the `editor_gutter.add_bookmark_observer` idiom this lane
+        already uses, for the same reason: the publishers are per-tab widgets
+        created at runtime in three different modules, and the subscriber is
+        this one long-lived lane.
+
+        Only an UNWIRED bar publishes, so the host's explicit Raw XML / Edit XSD
+        wiring is untouched and a click can never start two runs."""
+        if reason == FIND_ALL_STOP_REQUESTED:
+            self.stop_find_all()
+            return
+        self.find_all_in_bar(bar, term)
+
+    def _start_find_all(self, term: str, *, editor, bar, target, extra) -> None:
+        """The one streaming run: results are appended to the Audit panel a
+        batch at a time on a 0ms QTimer, yielding to the event loop between
+        batches so the UI stays responsive and Stop takes effect promptly.
+
+        `bar` is RETAINED (`_find_all_bar`) rather than re-derived from `target`
+        when the run finishes: with per-tab bars there is no longer a mapping
+        from a target back to a bar (two Explorer tabs, N object tabs, N PHP
+        tabs), and the button that must return from `Stop` to `Find All` is the
+        one that was pressed.
         """
         self._cancel_find_all_timer()
         self.clear_find_results()
         self._find_all_term = term
         self._find_all_target = target
+        self._find_all_extra = extra
+        self._find_all_bar = bar
         self._find_all_count = 0
         self._find_all_stop = False
-        stage = self._shell.stage
-        editor = stage.xsd_editor if target == "xsd" else stage.xml_editor
-        bar = stage.xsd_find_replace_bar if target == "xsd" else stage.find_replace_bar
         text = editor.toPlainText()
         self._find_all_iter = search.iter_matches(text, term)
         bar.set_find_all_running(True)
@@ -584,8 +679,14 @@ class FindValidateController(QObject):
                 self._finish_find_all(stopped=False)
                 return
             item = QListWidgetItem(f"{_FIND_RESULT_PREFIX}line {match.line}: {match.preview}")
-            item.setData(Qt.ItemDataRole.UserRole, match.line)
-            item.setData(Qt.ItemDataRole.UserRole + 1, self._find_all_target)
+            if self._find_all_target is not _NO_AUDIT_ROUTE:
+                item.setData(Qt.ItemDataRole.UserRole, match.line)
+                item.setData(Qt.ItemDataRole.UserRole + 1, self._find_all_target)
+                if self._find_all_extra is not None:
+                    # §22's PHP payload is a PAIR -- the discriminator plus the
+                    # tab's CenterStage key -- and omitting the key makes every
+                    # such row inert (`_bookmark_audit_route`'s note).
+                    item.setData(Qt.ItemDataRole.UserRole + 2, self._find_all_extra)
             self._shell.audit.addItem(item)
             self._find_all_count += 1
         self._shell.status(
@@ -598,12 +699,11 @@ class FindValidateController(QObject):
             f'{_FIND_RESULT_PREFIX}{self._find_all_count} match(es) for "{self._find_all_term}"'
         )
         self._shell.audit.addItem(summary)  # no line data -> clicking is a no-op
-        stage = self._shell.stage
-        bar = (
-            stage.xsd_find_replace_bar
-            if self._find_all_target == "xsd"
-            else stage.find_replace_bar
-        )
+        bar = self._find_all_bar
+        if bar is None:
+            # Defensive only: `_start_find_all` always sets it. A run that was
+            # somehow entered without one still has to clear its status.
+            bar = self._shell.stage.find_replace_bar
         bar.set_find_all_running(False)
         if stopped:
             self._shell.status(

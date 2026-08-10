@@ -10,6 +10,7 @@ from pgtp_editor.ui.ddl_buffer_panel import (
     ALTER_TABLE_MENU_TITLE,
     ALTER_TABLE_TABLE_COMMENT_ACTIONS,
     CREATE_TABLE_LABEL,
+    RELOAD_LABEL,
     BrowserPanel,
     alter_table_action_groups,
     resolve_edit_target,
@@ -722,28 +723,33 @@ def test_edit_target_for_a_trigger(qtbot):
     assert source == "def1"
 
 
-def test_context_menu_on_an_argument_leaf_offers_no_edit(qtbot, monkeypatch):
-    """Argument-name child leaves carry no span -- no Edit… entry (§18.5)."""
+def test_context_menu_on_an_argument_leaf_offers_no_edit(qtbot):
+    """Argument-name child leaves carry no span -- no Edit… entry (§18.5).
+
+    Since BUG-062 such a leaf DOES get a menu: `Reload DDL` is offered wherever
+    the click lands, because it is a property of the connection and not of the
+    clicked row. What must stay true is that no editing entry appears -- asserted
+    through `context_menu_for_item` rather than `_on_context_menu`, which would
+    reach a real `QMenu.exec`."""
     schema = _schema()
     text, spans = build_ddl_text(schema)
     panel = BrowserPanel()
     qtbot.addWidget(panel)
     panel.set_schema(schema, spans)
-    from PySide6.QtCore import QPoint, Qt
-    from PySide6.QtWidgets import QTreeWidget
+    from PySide6.QtCore import Qt
 
     arg_leaf = _routine_item(panel).child(0)  # "item_id (integer)"
     assert arg_leaf.data(0, Qt.ItemDataRole.UserRole) is None
-    monkeypatch.setattr(QTreeWidget, "itemAt", lambda self, pos: arg_leaf)
-    got = []
-    panel.edit_requested.connect(lambda *a: got.append(a))
 
-    panel._on_context_menu(QPoint(0, 0))  # position is irrelevant, itemAt is patched
-
-    assert got == []
+    assert panel._menu_for_item(arg_leaf) is None  # nothing this ITEM offers
+    labels = [a.text() for a in panel.context_menu_for_item(arg_leaf).actions()]
+    assert labels == [RELOAD_LABEL]
 
 
-def test_context_menu_at_empty_position_does_nothing(qtbot):
+def test_context_menu_at_empty_position_offers_only_reload(qtbot):
+    """A right-click below the last row used to offer nothing at all. BUG-062
+    requires `Reload DDL` "wherever in DDL Objects", which includes the blank
+    area -- and still nothing else, since there is no item to act on."""
     schema = _schema()
     text, spans = build_ddl_text(schema)
     panel = BrowserPanel()
@@ -752,10 +758,9 @@ def test_context_menu_at_empty_position_does_nothing(qtbot):
     got = []
     panel.edit_requested.connect(lambda *a: got.append(a))
 
-    from PySide6.QtCore import QPoint
+    labels = [a.text() for a in panel.context_menu_for_item(None).actions()]
 
-    panel._on_context_menu(QPoint(-1, -1))  # below the last row: no item there
-
+    assert labels == [RELOAD_LABEL]
     assert got == []
 
 
@@ -783,6 +788,11 @@ def test_edit_menu_action_triggers_edit_requested(qtbot, monkeypatch):
         def addAction(self, label, cb=None):
             captured["actions"].append((label, cb))
 
+        def addSeparator(self):
+            # BUG-062 puts `Reload DDL` below a separator on every menu of this
+            # tree, so the fake has to accept one.
+            captured["actions"].append(("--", None))
+
         def exec(self, *a, **k):
             # The real menu only ever triggers the ONE action the user
             # clicked; simulate clicking "Edit DDL" specifically.
@@ -798,13 +808,69 @@ def test_edit_menu_action_triggers_edit_requested(qtbot, monkeypatch):
     panel._on_context_menu(QPoint(0, 0))  # position is irrelevant, itemAt is patched
 
     # ONE editing entry since FQ-024: `Check Out for Versioning` is withdrawn,
-    # and the row already names the object so the entry does not repeat it.
+    # and the row already names the object so the entry does not repeat it. The
+    # separator + `Reload DDL` below it are BUG-062's connection-level gesture,
+    # offered on every menu of this tree.
     labels = [label for label, _cb in captured["actions"]]
-    assert labels == ["Edit DDL"]
+    assert labels == ["Edit DDL", "--", RELOAD_LABEL]
     assert len(got) == 1
     ref, source = got[0]
     assert ref.name == "calc_total"
     assert source == "body1"
+
+
+# --- BUG-062: Reload DDL, wherever in the tree -------------------------------
+
+
+def test_reload_is_offered_on_an_object_row_and_emits_the_signal(qtbot):
+    schema = _schema()
+    text, spans = build_ddl_text(schema)
+    panel = BrowserPanel()
+    qtbot.addWidget(panel)
+    panel.set_schema(schema, spans)
+    got = []
+    panel.reload_requested.connect(lambda: got.append(True))
+
+    menu = panel.context_menu_for_item(_routine_item(panel))
+    reload_action = [a for a in menu.actions() if a.text() == RELOAD_LABEL][0]
+    reload_action.trigger()
+
+    assert got == [True]
+
+
+def test_reload_is_the_only_entry_a_browse_only_tree_offers(qtbot):
+    """§18.7's sandbox tree suppresses every edit/create gesture, which left it
+    with no menu at all. Reload is neither an edit nor a creation, and it is the
+    gesture a sandbox browse needs most (BUG-062)."""
+    schema = _schema()
+    text, spans = build_ddl_text(schema)
+    panel = BrowserPanel(browse_only=True)
+    qtbot.addWidget(panel)
+    panel.set_schema(schema, spans)
+    got = []
+    panel.reload_requested.connect(lambda: got.append(True))
+
+    menu = panel.context_menu_for_item(_routine_item(panel))
+
+    assert [a.text() for a in menu.actions()] == [RELOAD_LABEL]
+    menu.actions()[0].trigger()
+    assert got == [True]
+
+
+def test_the_reload_entry_carries_no_shortcut(qtbot):
+    """DEC-012: Reload DDL has exactly ONE keyboard host, the `Ctrl+Shift+R`
+    QShortcut on the Explorer's viewing pane. Every menu form is click-only, and
+    this is the invariant a future edit would break silently."""
+    schema = _schema()
+    text, spans = build_ddl_text(schema)
+    panel = BrowserPanel()
+    qtbot.addWidget(panel)
+    panel.set_schema(schema, spans)
+
+    menu = panel.context_menu_for_item(_routine_item(panel))
+
+    reload_action = [a for a in menu.actions() if a.text() == RELOAD_LABEL][0]
+    assert reload_action.shortcut().isEmpty()
 
 
 def test_the_object_row_menu_has_no_checkout_entry_or_signal(qtbot):
