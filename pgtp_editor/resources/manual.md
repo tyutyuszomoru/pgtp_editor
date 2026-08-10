@@ -252,7 +252,7 @@ answer to a simple question: *what does this command act on?*
 |---|---|
 | **History** | **History…**, **Undo**, **Redo** |
 | **Select** | **Select All** (Ctrl+A), **Select Enclosing Block** (Ctrl+Shift+B), **Select Parent Block** (Ctrl+Shift+A) |
-| **Parsing** | two faces, by tab: **Auto Parse XML** and **Validate Project** on an ordinary tab; **Check Object in Sandbox** and **Check Object Without Applying** on a DDL object editor tab |
+| **Parsing** | two faces, by tab: **Auto Parse XML** and **Validate Project** on an ordinary tab; **Check Object in Sandbox** and **Check and rollback** on a DDL object editor tab |
 | **Navigation** | **Toggle Bookmark**, **Next Bookmark**, **Previous Bookmark**, **Clear All Bookmarks**, **List All Bookmarks** |
 | **Deployment** | every save and every outward push, **by tab kind** — see *The Deployment Menu* |
 
@@ -314,7 +314,7 @@ work here is absent, not greyed out.**
 
 | Active tab | Parsing shows |
 |---|---|
-| **DDL object editor tab** | **Check Object in Sandbox**, **Check Object Without Applying** |
+| **DDL object editor tab** | **Check Object in Sandbox**, **Check and rollback** |
 | **every other tab** | **Auto Parse XML**, **Validate Project** |
 
 A DDL object tab holds SQL, not XML, so the XML pair has nothing to act on
@@ -348,7 +348,7 @@ go?"* — and its contents follow the tab in front of you.
 | Active tab | Deployment shows |
 |---|---|
 | **Raw XML** | **Compare/Merge pgtp**, **Save pgtp**, **Save as new pgtp**, **Deploy .pgtp** |
-| **DDL object editor** | **Save in Project**, **Run on sandbox**, **Run on quality** |
+| **DDL object editor** | **Save in Project**, **Check and commit to sandbox**, **Apply to quality** |
 | **Edit XSD / Edit AutoXSD** | **Save XSD** |
 | **PHP file** | **Save PHP File** |
 | anything else | **nothing** |
@@ -362,15 +362,15 @@ Caption Management and the Manual the whole Editor menu bar is hidden anyway —
 see *The Two Menu Bars*.)
 
 **Not one entry on this menu has a keyboard shortcut**, and that includes the two
-**Run on …** entries. Two different reasons meet here:
+database-touching entries. Two different reasons meet here:
 
 - **The saves are keyless** because the old **Ctrl+S** had to guess which tab you
   meant, and guessed wrong on six of them — writing the `.pgtp` when you were
   looking at the SQL console or a draft fragment. Four named entries wired to
   exactly one writer each cannot make that mistake.
-- **Run on sandbox, Run on quality and Deploy .pgtp are keyless** on the app's
-  standing rule that *an irreversible outward effect must not be one keystroke
-  away*.
+- **Check and commit to sandbox, Apply to quality and Deploy .pgtp are keyless**
+  on the app's standing rule that *an irreversible outward effect must not be one
+  keystroke away*.
 
 If you use one of them constantly, pin it to the toolbar (**View ▸ Customize
 Toolbar…**). Be aware that such a button **comes and goes with the tab**, exactly
@@ -391,11 +391,12 @@ as the menu entry does — that is the honest posture, not a bug.
   database, ever (see *DDL Explorer*). On a tab holding a generated `ALTER TABLE`
   statement it always asks where, because that tab has no project file of its own
   — see *DDL Explorer ▸ The tab an Alter Table operation opens*.
-- **Run on sandbox** / **Run on quality** — execute the active DDL object tab's
-  buffer against the project's sandbox, or against the quality database. Both are
-  confirm-gated and both name the database *and its host* before anything runs
-  (see *The Sandbox* and *DDL Explorer*). **Run on quality refuses an ALTER
-  buffer** and states its reason; **Run on sandbox** is that tab's run path.
+- **Check and commit to sandbox** / **Apply to quality** — execute the active DDL
+  object tab's buffer against the project's sandbox, or against the quality
+  database. Both are confirm-gated and both name the database *and its host*
+  before anything runs (see *The Sandbox* and *DDL Explorer*). **Apply to quality
+  refuses an ALTER buffer** and states its reason; **Check and commit to sandbox**
+  is that tab's run path.
 - **Save XSD** — write whichever schema the XSD tab currently holds, curated or
   auto (see *Schema Tools*).
 - **Save PHP File** — write the active PHP tab's file back where it came from
@@ -1964,23 +1965,23 @@ the live definition changed underneath them; your in-progress edits are never
 silently discarded to resync with the database.
 
 **Where an edit can go: the three destinations.** With this tab active, the
-**Deployment** menu names all three of them outright — **Save in Project**, **Run
-on sandbox**, **Run on quality** — so you no longer have to know a picker exists
-to find them. None of the three has a keyboard shortcut.
+**Deployment** menu names all three of them outright — **Save in Project**,
+**Check and commit to sandbox**, **Apply to quality** — and those are the only
+places they are offered. None of the three has a keyboard shortcut.
 
 - **Save in Project** writes a file and touches no database (above).
-- **Run on sandbox** commits the buffer to the project's sandbox and runs the
-  whole validation ladder over it. It needs a live sandbox session, which the
-  app opens for you when the project opens — see *The Sandbox ▸ Applying an
+- **Check and commit to sandbox** commits the buffer to the project's sandbox and
+  runs the whole validation ladder over it. It needs a live sandbox session, which
+  the app opens for you when the project opens — see *The Sandbox ▸ Applying an
   object to the sandbox*.
-- **Run on quality** executes the buffer against the **real** quality database.
+- **Apply to quality** executes the buffer against the **real** quality database.
   It works with a local project open **and** with no project at all — open a
   `.pgtp`, edit an object, push the fix — as long as a quality connection can be
   resolved. Working without a project, the connection derived from the `.pgtp`
   carries no password (passwords are never read from the XML), so you are asked
   for it once; the answer is kept **for this session only** and written nowhere.
 
-**Run on quality is guarded, in this order, and refuses out loud rather than
+**Apply to quality is guarded, in this order, and refuses out loud rather than
 silently:**
 
 1. **A changed signature is refused outright, with no override.** PostgreSQL
@@ -2002,12 +2003,21 @@ Appears*), and an apply that did not commit says so in as many words. The
 **Activity Log** keeps its own row for the attempt, with the full DDL and the
 full error one click away.
 
-**Deploy this edit…** (right-click) is still there and does the same three things
-under the same names: it asks where this edit should go and then runs that
-gesture — it writes nothing of its own. It lists only the destinations available
-right now, and **names the ones that are not, with what would bring them back**
-(the project's sandbox could not be reached or none is set up yet; no quality
-target resolvable).
+**The tab itself offers no apply affordance — the Deployment menu is the one
+place.** There is no row of buttons under the editor and no apply entry in the
+right-click menu; the tab's context menu holds only what is genuinely tab-local,
+**Format Selection** and **Run in Sandbox Console** (see *Schema-aware completion
+and gestures in the SQL editors*), neither of which reaches a database of its
+own. One gesture therefore has exactly one name, in exactly one place — the same
+name on the menu entry, on its confirmation dialog, on its `[Check]` line and in
+the status bar.
+
+**A destination that is not available says so, with what would bring it back.**
+Choosing **Check and commit to sandbox** with no reachable sandbox answers *"the
+project's sandbox could not be reached, or none is set up yet"* and points at
+**File ▸ Project Settings… ▸ Connections**; **Apply to quality** with no
+resolvable target names both places a target can come from. Neither is a silent
+no-op.
 
 ### Creating a new trigger, function, or procedure
 
@@ -2332,13 +2342,13 @@ different statements, so the second one never quietly replaces the first.
   line:** an ALTER is a *mutation of* a table, not an object with its own source
   file, so there is no `ddl/<object>.sql` it could be the contents of; writing one
   would put a change where the project expects a definition.
-- **Deployment ▸ Run on quality refuses an ALTER buffer, and says why.** That
+- **Deployment ▸ Apply to quality refuses an ALTER buffer, and says why.** That
   gesture's first precondition reads the object's signature out of the buffer and
   compares it with the live catalog, and an `ALTER TABLE` declares no such
   signature — so the refusal lands as a `[Check]` line saying the signature could
   not be determined and pointing at the reviewable deployment-script path. **The
-  intended run path for an ALTER is Deployment ▸ Run on sandbox**: try the change
-  where trying things is free.
+  intended run path for an ALTER is Deployment ▸ Check and commit to sandbox**:
+  try the change where trying things is free.
 - **`plpgsql_check` — tier 3 of the validation ladder — does not run here**, by
   design. An ALTER creates no function for it to analyse, so there is nothing for
   that tier to say. Tiers 0, 1 and 2 do run. A check report on an ALTER tab with
@@ -2589,9 +2599,9 @@ The run does five things:
 4. **records the created name** in the project's settings file
    (`.ddlproject/settings.json`), so a later provisioning or reset run reopens
    the same database instead of making a second one; and
-5. **leaves the session open.** That is why **Apply to Sandbox**, both check
-   gestures (**Parsing ▸ Check Object in Sandbox** and **Parsing ▸ Check Object
-   Without Applying**) and **Database ▸ Sandbox SQL Console…** are usable
+5. **leaves the session open.** That is why **Deployment ▸ Check and commit to
+   sandbox**, both check gestures (**Parsing ▸ Check Object in Sandbox** and
+   **Parsing ▸ Check and rollback**) and **Database ▸ Sandbox SQL Console…** are usable
    immediately after you create a project. Opening that project again later is
    the same story: the session comes back up by itself (see *The Sandbox*).
 
@@ -2853,7 +2863,7 @@ Pointing the sandbox connection at a database you made by hand is refused rather
 than written to.
 
 **With no session, the gestures that need one still say so.** They are not
-hidden: **Parsing ▸ Check Object in Sandbox**, **Check Object Without Applying**,
+hidden: **Parsing ▸ Check Object in Sandbox**, **Parsing ▸ Check and rollback**,
 **Database ▸ Sandbox SQL Console…** and the Project Status window's two sandbox
 buttons are all there whenever a sandbox is *configured*, and using one states
 the reason it cannot run — *"no sandbox session is open — the project's sandbox
@@ -2985,40 +2995,47 @@ thorough they are:
 
 | Gesture | Where | Runs | Changes the sandbox? |
 |---|---|---|---|
-| **Apply to Sandbox** (**Deployment ▸ Run on sandbox**) | the Deployment menu, plus the button and right-click entry in a DDL object editor tab | tiers 0, 1, 2 and — when `plpgsql_check` is installed — tier 3, all over your buffer | **yes** — commits |
-| **Parsing ▸ Check Object Without Applying** | the Editor menu bar, on a DDL object editor tab | the identical run, on the identical buffer | **no** — rolled back |
+| **Deployment ▸ Check and commit to sandbox** | the Deployment menu, on a DDL object editor tab | tiers 0, 1, 2 and — when `plpgsql_check` is installed — tier 3, all over your buffer | **yes** — commits |
+| **Parsing ▸ Check and rollback** | the Editor menu bar, on a DDL object editor tab | the identical run, on the identical buffer | **no** — rolled back |
 | **Parsing ▸ Check Object in Sandbox** | the Editor menu bar, on a DDL object editor tab | tier 3 over what the sandbox already holds; tier 2 reports bookkeeping only | **no** — reads only |
 
-**Both checks live on the Editor menu bar's Parsing menu and nowhere else** — they
-are the linting of the DDL in front of you, and Parsing is the per-tab menu. They
-used to be on the **Database** menu and are gone from it (see *The Two Menu Bars ▸
-Parsing, on a DDL object tab*).
+**The three names say exactly what each one does to the sandbox**, which is the
+only thing that distinguishes them: one **checks and commits**, one **checks and
+rolls back**, one **checks what is already in there**. Each gesture has one name
+and uses it everywhere — on its menu entry, on its confirmation dialog, on its
+`[Check]` lines and in the status bar.
 
-So: **Apply gives you the full verdict** as part of applying; **Check Object
-Without Applying gives you the same verdict and changes nothing**; and **Check
-Object in Sandbox asks the sandbox about the state it is already in**.
+**Both Parsing checks live on the Editor menu bar's Parsing menu and nowhere
+else** — they are the linting of the DDL in front of you, and Parsing is the
+per-tab menu. They used to be on the **Database** menu and are gone from it (see
+*The Two Menu Bars ▸ Parsing, on a DDL object tab*).
 
-The reason to pick the probe over Apply is not that it checks more — it checks
-exactly the same things. It is that it leaves the sandbox as it was. Use it when
-you want to know whether an edit would compile before letting it become what the
-sandbox holds; use Apply when you have decided this version is the one the sandbox
-should have.
+So: **Check and commit to sandbox gives you the full verdict** as part of
+applying; **Check and rollback gives you the same verdict and changes nothing**;
+and **Check Object in Sandbox asks the sandbox about the state it is already
+in**.
+
+The reason to pick **Check and rollback** over **Check and commit to sandbox** is
+not that it checks more — it checks exactly the same things. It is that it leaves
+the sandbox as it was. Use it when you want to know whether an edit would compile
+before letting it become what the sandbox holds; use the committing one when you
+have decided this version is the one the sandbox should have.
 
 None of the three has a keyboard shortcut. See *Keyboard Shortcuts*.
 
 ### Applying an object to the sandbox
 
-**Deployment ▸ Run on sandbox** is on the Editor menu bar for every open **DDL
-object editor tab** (see *The Deployment Menu*), and while a session is live the
-same gesture is also an **Apply to Sandbox** button under the editor and an entry
-in the tab's right-click menu. Without a session the menu entry stays put and
+**Deployment ▸ Check and commit to sandbox** is on the Editor menu bar for every
+open **DDL object editor tab** (see *The Deployment Menu*), and that menu is the
+**only** place it is offered — there is no button under the editor and no
+right-click entry for it. Without a session the menu entry stays put and
 says why it cannot run instead of applying anything. It commits the tab's current text to the sandbox database,
 records it in the sandbox's working set, and runs the whole validation ladder over
 it — the DDL, the bookkeeping and the checks all in one transaction, so the sandbox
 can never hold a definition without the record of what it holds.
 
 - It is **never a keyboard shortcut**. An irreversible outward effect should not
-  be one keystroke away, so applying is always a deliberate click or menu pick.
+  be one keystroke away, so applying is always a deliberate menu pick.
 - It always asks first, and the confirmation **names the object and the database
   — with its host** — it is about to write to; you never confirm a nameless
   destination.
@@ -3031,7 +3048,7 @@ can never hold a definition without the record of what it holds.
   **Activity Log** row, from the **Sandbox DB** source, carrying the full DDL and
   any full error text a click away.
 
-**Apply gives you the ladder's verdict; you do not have to check afterwards.** The
+**It gives you the ladder's verdict; you do not have to check afterwards.** The
 report you get names what compiled, what the lint said, what `plpgsql_check` found,
 and what could not be checked at all.
 
@@ -3048,22 +3065,23 @@ window; the status bar's busy slot counts the seconds while the apply is under
 way (see *The Status Bar*) and the full report lands when it finishes.
 
 **Writing to the real database is a different gesture, on the same menu.**
-**Deployment ▸ Run on quality** executes a DDL object tab's buffer against the
+**Deployment ▸ Apply to quality** executes a DDL object tab's buffer against the
 quality database, behind its own hard preconditions — including a green sandbox
 validation for exactly that text. It is described where it belongs, in *DDL
 Explorer ▸ Editing a single function, procedure, or trigger*. Nothing else in
 this chapter can reach anything but the sandbox.
 
-### Checking an object without applying it
+### Checking an object and rolling back
 
-**Parsing ▸ Check Object Without Applying** runs the ladder over the **active DDL
-object editor tab** exactly as **Apply to Sandbox** would — tier 2 really compiles
-your buffer, tier 1 really lints it, tier 3 really calls `plpgsql_check` — and then
+**Parsing ▸ Check and rollback** runs the ladder over the **active DDL
+object editor tab** exactly as **Check and commit to sandbox** would — tier 2 really
+compiles your buffer, tier 1 really lints it, tier 3 really calls `plpgsql_check` — and then
 **rolls the whole thing back**. The sandbox is left untouched, nothing is added to
 its working set, and the buffer is not marked as applied.
 
-This is the gesture that answers *"would this compile?"* without making it so. It
-is deliberately built from the same machinery as the apply: a probe that diverged
+This is the gesture that answers *"would this compile?"* without making it so. Its
+name says both halves — it really **checks**, and it then really **rolls back**.
+It is deliberately built from the same machinery as the apply: a probe that diverged
 from the real thing would be validating something other than what you are about to
 run.
 
@@ -3089,10 +3107,28 @@ have nothing to compile, and they say so instead of reporting a stale "passed":
   compiled, and nothing is.
 - **tier 3 really runs**, over the version in the sandbox.
 
+**It answers in one line, in a dialog, before you read anything else.** This
+gesture is clicked to ask a question one bit wide — *am I in line with the
+sandbox?* — so it states the verdict outright instead of leaving you to infer it
+from the absence of a caveat. The box is titled **Check Object in Sandbox** and
+says one of exactly four things:
+
+| The answer | What it means |
+|---|---|
+| *"… matches what the sandbox holds."* | your buffer and the sandbox agree |
+| *"… does NOT match what the sandbox holds."* | they have diverged — the detail line says since when |
+| *"The sandbox does not hold … at all."* | it has never been applied there. Not the same as "differs" |
+| *"Whether the sandbox holds … could not be determined."* | the comparison itself could not be made |
+
+Under the headline sits the ladder's own wording for *why*, so the dialog and the
+`[Check]` lines can never tell you two different stories. **The dialog is in
+addition to the Audit output, never instead of it** — the **Messages** tab still
+gets the whole ladder with every finding clickable.
+
 **If your buffer has changed since it was applied, the report carries a
 stale-buffer caveat**: the findings describe the version in the sandbox, not the
 text in front of you. When you want the verdict on the text you are looking at,
-use **Check Object Without Applying** or **Apply to Sandbox** — both compile your
+use **Check and rollback** or **Check and commit to sandbox** — both compile your
 buffer; this one does not.
 
 Both Check entries are present whenever a **DDL object tab is in front and the
@@ -3460,12 +3496,14 @@ toolbar), its checked state for toggles such as **Database ▸ DDL Explorer
 yourself in **View ▸ Customize Shortcuts…**, since the button and the menu entry
 can never drift apart. Toolbars you arranged in an earlier version of the editor
 are carried over unchanged — including a **DDL Explorer** button you pinned
-before the command was renamed to **DDL Explorer (Quality)**, and a **Check
-Object in Sandbox** or **Check Object Without Applying** button pinned while
-those two still lived on the **Database** menu. A button for a command that no
-longer exists at all — **Open Sandbox Session**, **Close Sandbox Session** and
-**Sandbox Setup…** are the current examples — is quietly dropped instead of
-sitting there doing nothing.
+before the command was renamed to **DDL Explorer (Quality)**, a **Check Object in
+Sandbox** button pinned while it still lived on the **Database** menu, and
+buttons for the three commands that were renamed to say what they do: **Run on
+sandbox** → **Check and commit to sandbox**, **Run on quality** → **Apply to
+quality**, and **Check Object Without Applying** → **Check and rollback**. A
+button for a command that no longer exists at all — **Deploy this edit…**,
+**Open Sandbox Session**, **Close Sandbox Session** and **Sandbox Setup…** are
+the current examples — is quietly dropped instead of sitting there doing nothing.
 
 Because a button *is* its menu command, a button also **disappears while its
 command is hidden**. That now includes the default **Validate Project** button,
@@ -3511,42 +3549,213 @@ exists is quietly discarded rather than breaking the toolbar.
 
 **The keys below are the defaults, not fixed bindings.** Every shortcut that
 belongs to a **menu command** can be rebound, cleared or put back — see
-*Changing a shortcut*, below — so once you have customized something, this table
-tells you what that command *shipped* with rather than what it answers to today.
+*Changing a shortcut*, below — so once you have customized something, these tables
+tell you what that command *shipped* with rather than what it answers to today.
 A short, reasoned list of keys cannot be changed at all; they are named in *What
 cannot be rebound, and why*, at the end of this chapter.
 
-| Shortcut | Where | Action |
-|----------|-------|--------|
-| **Ctrl+S** / **Ctrl+Shift+S** | Global | **Nothing — deliberately unbound.** Every save is a named entry on **Deployment** (see below) |
-| **F1** | Global | Open the Manual |
-| **Ctrl+F2** | Active editor tab | Toggle bookmark (disabled in Caption Mode) |
-| **F2** / **Shift+F2** | Active editor tab | Next / previous bookmark (disabled in Caption Mode) |
-| **Ctrl+Z** / **Ctrl+Y** | Raw XML | Undo / redo (snapshot history) |
-| **Ctrl+Z** / **Ctrl+Y** | Edit XSD / DDL object editor tab / PHP file tab | Undo / redo (that tab's own history only — never the project's) |
-| **Ctrl+Space** | Raw XML | Attribute / value completion |
-| **Ctrl+Space** | DDL object editor tab / Sandbox SQL console | Schema-aware name completion — the `schema.table.column` cascade, a `FROM`-clause alias, a `%ROWTYPE` local, or `NEW.`/`OLD.` columns |
-| **Ctrl+Alt+E** | DDL object editor tab / Sandbox SQL console | Expand the word before the caret into its plpgsql snippet |
-| **Ctrl+Alt+C** | DDL object editor tab / Sandbox SQL console | Expand a bare `SELECT` into the column list its `FROM` implies |
-| **Ctrl+Alt+J** | DDL object editor tab / Sandbox SQL console | Write the `JOIN … ON …` a foreign key implies (one candidate is applied, several are offered) |
-| **Ctrl+Shift+Space** | DDL object editor tab / Sandbox SQL console | Signature help for the call at the caret — a tooltip, inserting nothing |
-| **Ctrl+L** | Raw XML | Go To XSD (attribute's definition in the Edit XSD tab) |
-| **Ctrl+click** | Raw XML (mouse) | Jump to matching open/close tag |
-| **Alt+click** | Raw XML (mouse) | Jump to parent tag start |
-| **Ctrl+A** | Active editor tab (**Select ▸ Select All**) | Select the whole document |
-| **Ctrl+Shift+B** | Active editor tab (**Select ▸ Select Enclosing Block**) | Select the enclosing XML element (XML editors) or the innermost bracket pair (code editors), caret to start |
-| **Ctrl+Shift+A** | Active **XML** editor tab (**Select ▸ Select Parent Block**) | Select one nesting level up. Absent — and the key inert — on PHP, DDL object and DDL Explorer tabs |
-| **Ctrl+Shift+B** | Code Editor dialog | Bracket-select (the dialog has no menu bar) |
-| **Ctrl+F** | The active tab's Find/Replace bar | Focus the **Find** field. Nothing happens on a tab with no bar (Manual, Diff / Merge) |
-| **Ctrl+R** | The active tab's Find/Replace bar | Focus the **Replace with** field (inert replace in the read-only DDL Explorer) |
-| **F3** | Any editor tab with a bar | Find next — works with the caret in the editor |
-| **Escape** | A Find/Replace bar | Return focus to the editor (the caption bar: to the grid). Never hides the bar |
-| **Ctrl+Alt+F** | DDL object editor tab / Sandbox SQL console | Format Selection (reindent the current selection) |
-| **Ctrl+Return** | Sandbox SQL console | Run the selection, or the whole buffer, against the sandbox |
-| **Ctrl+F** / **Ctrl+R** | Caption Management | Focus the caption bar's Find / Replace-with field |
-| **Ctrl+G** | Caption Management | Go to line in Raw XML |
-| **Return** / **Escape** | Code Editor dialog | OK / Cancel (Qt's own dialog defaults — the dialog no longer answers **Ctrl+S** or **Ctrl+W**) |
-| **Ctrl+C / Ctrl+V / Ctrl+X** | Editors | Copy / Paste / Cut |
+**This reference is organised by *where you are*, not by chord, and that is not
+tidiness — it is accuracy.** The same key genuinely means different things in
+different surfaces: **Ctrl+Shift+B** selects an XML element in one editor and a
+bracket pair in another, **Tab** inserts a tab everywhere except during a
+template walk, and the SQL gestures are live in two places and inert in the rest.
+A single flat chord-to-action list would have to state one of those as *the*
+answer, and would be wrong most of the time it was read. Find your surface first;
+then read the chord.
+
+The app's editors come in **two families**, and most of the differences below
+follow from which one you are in:
+
+- **XML editors** — **Raw XML**, **Edit XSD** / **Edit AutoXSD**, and a generated
+  **draft fragment** tab.
+- **Code editors** — a **DDL object** tab, either **DDL Explorer**, a **PHP file**
+  tab, the **Sandbox SQL Console**, and the **Edit code…** dialog.
+
+**Everywhere in the app**
+
+| Shortcut | Action |
+|---|---|
+| **F1** | Open the Manual (**Help ▸ Manual**). Reachable in every mode, including Maintenance mode |
+| **Ctrl+C** / **Ctrl+X** / **Ctrl+V** | Copy / cut / paste. The editors' own built-ins; no menu command claims them |
+| **Ctrl+S** / **Ctrl+Shift+S** | **Nothing — deliberately unbound.** Every save is a named entry on **Deployment** (see below) |
+| **Ctrl+O** / **Ctrl+W** | **Nothing.** Both were unbound rather than moved, and both are free for you to assign (see below) |
+
+**On any editor tab**
+
+These come from the **Editor menu bar**, so they follow the tab in front of you
+and act on it — never on the Raw XML document behind it.
+
+| Shortcut | Command | Notes |
+|---|---|---|
+| **Ctrl+A** | **Select ▸ Select All** | Select the whole document. See *Ctrl+A is a special case*, below |
+| **Ctrl+Shift+B** | **Select ▸ Select Enclosing Block** | One command, two structural meanings — see *One chord, two meanings*, below |
+| **Ctrl+Shift+A** | **Select ▸ Select Parent Block** | One nesting level up. **XML editors only** — the entry is hidden on code-editor tabs and the chord goes quiet with it |
+| **Ctrl+F2** | **Navigation ▸ Toggle Bookmark** | Disabled for as long as **Caption Mode** lasts |
+| **F2** / **Shift+F2** | **Navigation ▸ Next / Previous Bookmark** | Disabled for as long as **Caption Mode** lasts |
+| **Ctrl+F** | *(no menu entry)* | Focus this tab's **Find** field |
+| **Ctrl+R** | *(no menu entry)* | Focus this tab's **Replace with** field |
+| **F3** | *(no menu entry)* | Find next in this tab's bar — and it works with the caret still in the **editor**, which is the whole point of it |
+| **Escape** | *(no menu entry)* | In a Find/Replace bar: return focus to the document. The bar is never hidden |
+
+**Ctrl+F / Ctrl+R belong to the tab, not to the window.** Six surfaces own their
+own pair — Raw XML, Edit XSD, a draft fragment tab, a PHP tab, a DDL object tab
+and either DDL Explorer — plus **Caption Management**, which has a seventh. Each
+pair is live only while its own surface has focus, which is why Find in the
+caption grid can never search the Raw XML by accident. **Three surfaces have no
+Find/Replace bar at all** — the **Manual** tab, the **Diff / Merge** tab and the
+**Sandbox SQL Console** — so **Ctrl+F**, **Ctrl+R** and **F3** do nothing there.
+
+**In an XML editor** (Raw XML, Edit XSD / Edit AutoXSD, a draft fragment tab)
+
+| Shortcut | Action |
+|---|---|
+| **Ctrl+Space** | Attribute / value completion, from the schema |
+| **Ctrl+Shift+B** | Select the innermost enclosing **XML element**, `<` through `>` |
+| **Ctrl+Shift+A** | Select one nesting level up |
+| **Ctrl+L** | **Go To XSD** — jump to the definition of the attribute at the caret, in the Edit XSD tab |
+| **Ctrl+Z** / **Ctrl+Y** / **Ctrl+Shift+Z** | Undo / redo, routed by tab — see the undo table below |
+| **Return** | Newline, indented to match the line you left |
+| **<** | Auto-closes: types `<>` and leaves the caret between them |
+| **>** | Closes the tag you just opened, when there is one to close |
+| **Ctrl+click** | Jump to the matching open/close tag |
+| **Alt+click** | Jump to the parent element's opening tag |
+
+**In a code editor** (DDL object tab, either DDL Explorer, PHP tab, Sandbox SQL
+Console, **Edit code…** dialog)
+
+| Shortcut | Action |
+|---|---|
+| **Ctrl+Shift+B** | Select the innermost balanced **bracket pair** — `()`, `[]` or `{}` |
+| **an opener or a quote** | Auto-closes; with a selection it **wraps** the selection instead of replacing it |
+| **a closer the editor inserted** | Types *through* it rather than inserting a second one |
+| **Tab** | Insert a tab character — **except** during a template walk, below |
+| **Ctrl+Alt+E** | Expand the word before the caret into its plpgsql snippet. **SQL buffers only** |
+| **Ctrl+Alt+C** | Expand a bare `SELECT` into the column list its `FROM` implies. **SQL buffers only** |
+
+**Ctrl+Alt+E and Ctrl+Alt+C are SQL-only by design.** The snippet set is plpgsql,
+so in a **PHP** tab or a `js` **Edit code…** dialog these keys are untouched — an
+expansion that dropped plpgsql into a PHP body would be a bug, not a convenience.
+In the read-only **DDL Explorer** they are live but state **"this buffer is
+read-only"** rather than doing nothing; and where no schema is wired,
+**Ctrl+Alt+C** answers *"expanding a SELECT needs a database schema, and this
+editor has none"*. A gesture that cannot run always says why (see *DDL Explorer ▸
+Schema-aware completion and gestures in the SQL editors*).
+
+**While a template walk is in progress** (after an expansion that left
+placeholders)
+
+| Shortcut | Action |
+|---|---|
+| **Tab** | Jump to the next placeholder, selecting it |
+| **Shift+Tab** | Jump to the previous placeholder |
+| **Escape** | Leave the walk. **Tab** is a tab character again |
+
+Nothing else changes while the walk is on, and the walk also ends when you click
+anywhere or the editor loses focus. Outside a walk these three keys are exactly
+what they always were — in particular **Escape** keeps its ordinary meaning of
+*return focus to the document* everywhere else in the app.
+
+**In a DDL object tab or the Sandbox SQL Console — and only there**
+
+These five need to know your database's schema, so they are live in exactly the
+two surfaces that have one wired and **inert in the other three code editors**
+(the DDL Explorer, a PHP tab, the **Edit code…** dialog).
+
+| Shortcut | Action |
+|---|---|
+| **Ctrl+Space** | Schema-aware name completion — the `schema.table.column` cascade, a `FROM`-clause alias, a `%ROWTYPE` local, or `NEW.`/`OLD.` columns |
+| **Ctrl+Alt+J** | Write the `JOIN … ON …` a foreign key implies (one candidate is applied, several are offered) |
+| **Ctrl+Shift+Space** | Signature help for the call at the caret — a tooltip, inserting nothing |
+| **Ctrl+Alt+F** | **Format Selection** — reindent the current selection. Needs a selection |
+| **Ctrl+Return** | *(Sandbox SQL Console only)* Run the selection, or the whole buffer, against the sandbox |
+
+**While the completion popup is open**
+
+The popup is its own small widget with its own keys, so these override whatever
+the editor underneath would have done:
+
+| Shortcut | Action |
+|---|---|
+| **Tab**, **Return** / **Enter** | Insert the highlighted item. (This is the popup's Tab, not the template walk's) |
+| **Up** / **Down** | Move through the list |
+| any printable character | Narrow the list |
+| **Backspace** | Widen it again |
+| **Escape** | Close the popup, inserting nothing |
+
+**In Caption Management**
+
+| Shortcut | Action |
+|---|---|
+| **Ctrl+F** / **Ctrl+R** | Focus the caption bar's **Find** / **Replace with** field |
+| **Escape** | Return focus from the bar to the **grid** |
+| **Ctrl+G** | Go to the current row's line in the Raw XML |
+| **Ctrl+C** / **Ctrl+V** | Copy the selection out of the grid / paste into the New value column |
+
+**In the Edit code… dialog** (and the Activity Log's read-only payload viewer)
+
+**The dialog has no menu bar**, so every menu-borne chord above is simply absent
+in it. What it does answer is what the editor widget itself handles, plus Qt's
+own dialog defaults:
+
+| Shortcut | Action |
+|---|---|
+| **Ctrl+Shift+B** | Bracket-select. The editor handles this itself, which is the only reason it works here |
+| **Return** | OK (Qt's default for the dialog's button box) |
+| **Escape** | Cancel |
+| **Ctrl+S** / **Ctrl+W** | **Nothing.** This dialog was the last carve-out for either chord and no longer answers them |
+
+**Undo and Redo depend on which tab you are in**
+
+**Ctrl+Z** and **Ctrl+Y** are one pair of keys over several different histories,
+and the tab decides which one. **History ▸ Undo** and **History ▸ Redo** on the
+Editor menu bar are a different thing again: they always drive the **project's**
+snapshot history, whatever tab is in front, and they carry no shortcut.
+
+| Where | **Ctrl+Z** / **Ctrl+Y** undoes |
+|---|---|
+| **Raw XML** | the **project's** snapshot history (the same one **History…** navigates) |
+| **Edit XSD / Edit AutoXSD** | that tab's own editing history — never the project's |
+| **DDL object tab** | that tab's own editing history. One **Ctrl+Z** takes back a whole template expansion, however many pieces it was built from |
+| **PHP file tab** | that tab's own editing history |
+| **Sandbox SQL Console** | that editor's own editing history |
+| **DDL Explorer** (either) | nothing to undo — the buffer is read-only |
+| **a draft fragment tab** | **nothing.** The keys are consumed there but reach no history |
+
+**Ctrl+Shift+Z** is a second redo key, and it works in the **XML** editors only.
+
+**Ctrl+A is a special case, and the reason is worth knowing.** Select-all always
+worked in every editor; the **Select** menu only made it findable. While the caret
+is in a text field or an editor, **that widget still handles Ctrl+A itself** —
+Qt lets a text control claim the standard editing chords before the window's menu
+action ever sees them. So the menu command's own shortcut fires only when focus is
+somewhere else, such as the project tree, and it then acts on the active editor.
+The practical consequences: the command cannot steal **Ctrl+A** from a text field,
+and it works in the read-only buffers too. **Select All is also not gated in
+Caption Mode**, unlike Find and Replace, because selecting text mutates nothing.
+
+**One chord, two meanings: Ctrl+Shift+B.** **Select ▸ Select Enclosing Block** is
+a single command that asks the editor in front of you what "the enclosing block"
+means. In an **XML editor** the answer is the innermost XML element; in a **code
+editor** it is the innermost balanced bracket pair, because SQL and PHP have no
+tags to enclose. It is one command with one key, not two competing ones.
+
+**Ctrl+Shift+A is absent rather than silently wrong.** "One nesting level up" is
+an XML idea, and a bracket pair has no parent walk that means anything to a reader
+of SQL or PHP — so on a PHP tab, a DDL object tab, either DDL Explorer and the
+Sandbox SQL Console the menu entry is not offered at all, and **Ctrl+Shift+A** is
+inert there rather than doing something approximate.
+
+**Ctrl+S and Ctrl+Shift+S are unbound app-wide, and that is stated here rather
+than merely left out of the table.** Every save is a named entry on the Editor
+bar's **Deployment** menu — **Save pgtp** / **Save as new pgtp** on Raw XML,
+**Save in Project** on a DDL object tab, **Save XSD**, **Save PHP File** (see
+*The Deployment Menu*). Pressing the old keys produces **no write, no message and
+no hint**: the dispatcher behind them had to guess which tab you meant and got it
+wrong on six of them, and one reflex that is right here and silently wrong there
+is worse than none. **There is no carve-out left** — the **Edit code…** dialog
+was the last one, and it no longer answers Ctrl+S either (see *The Code
+Editor*). Neither key can be handed to a different command — see *What cannot be
+rebound, and why* — so the reflex cannot come back through the side door.
 
 **Ctrl+S and Ctrl+Shift+S are unbound app-wide, and that is stated here rather
 than merely left out of the table.** Every save is a named entry on the Editor
@@ -3583,31 +3792,19 @@ winner among five kinds of "close". It now does nothing anywhere, and like
 **Ctrl+O** it is **free** for you to assign to whichever close you actually
 mean. (Unlike **Ctrl+S**, neither chord is reserved.)
 
-**Ctrl+A is new as a menu entry, not as behaviour.** Select-all always worked in
-every editor; nothing in the app had ever claimed the key. The **Select** menu
-simply makes it findable — and while the caret is in a text field or an editor,
-that widget still handles the key itself, exactly as before.
-
-The **Caption Management** tab and every editor tab own their own **Ctrl+F** /
-**Ctrl+R**, scoped to the surface you are looking at. Nothing is rebound as you
-change tabs or modes: each pair is simply live only while its own surface has
-focus, which is why Find in the caption grid can never search the Raw XML by
-accident.
-
 **No entry on the Deployment menu carries a shortcut** — not one of the nine.
 **Compare/Merge pgtp**, **Save pgtp**, **Save as new pgtp**, **Deploy .pgtp**,
-**Save in Project**, **Run on sandbox**, **Run on quality**, **Save XSD** and
-**Save PHP File** are all menu-only, the saves because a keystroke save is
-exactly the wrong-target hazard described above, and the pushes because *an
+**Save in Project**, **Check and commit to sandbox**, **Apply to quality**, **Save
+XSD** and **Save PHP File** are all menu-only, the saves because a keystroke save
+is exactly the wrong-target hazard described above, and the pushes because *an
 irreversible outward effect must not be one keystroke away*.
 
 **Nothing that reaches a database from a DDL object tab has a shortcut, on
-purpose** — not **Run on sandbox**, not **Run on quality**, not **Deploy this
-edit…**, and not either check gesture (**Parsing ▸ Check Object in Sandbox** and
-**Parsing ▸ Check Object Without Applying**), so a write to a database is never
-one keystroke away. **Ctrl+Return** in the Sandbox SQL console is the one
-exception, because that console can only ever reach the disposable sandbox (see
-*The Sandbox*).
+purpose** — not **Check and commit to sandbox**, not **Apply to quality**, and not
+either check gesture (**Parsing ▸ Check Object in Sandbox** and **Parsing ▸ Check
+and rollback**), so a write to a database is never one keystroke away.
+**Ctrl+Return** in the Sandbox SQL Console is the one exception, because that
+console can only ever reach the disposable sandbox (see *The Sandbox*).
 
 The other commands added recently are shortcut-free too: **File ▸ New
 Session**, **File ▸ Discard Changes**, **Parsing ▸ Auto Parse XML**, **Parsing ▸
@@ -3632,8 +3829,21 @@ In **Caption Mode** the **Navigation** menu's five bookmark entries — and
 **Ctrl+F2** / **F2** /
 **Shift+F2** with them — are disabled for as long as the mode lasts, because the Raw
 XML editor they act on is read-only there; the gutter still sets bookmarks (see
-*Bookmarks*). While the Caption Management tab itself is in front, the Editor menu
-bar is hidden entirely (see *The Two Menu Bars*).
+*Bookmarks*). **Select ▸ Select All is deliberately not gated**, because selecting
+text mutates nothing. While the Caption Management tab itself is in front, the
+Editor menu bar is hidden entirely (see *The Two Menu Bars*).
+
+**Maintenance mode hides menus; it does not disable their keys.** The mode trims
+the window menu bar down to **File**, **Schema** and **Help** (see *Getting
+Started ▸ Maintenance mode*), and hiding means *"not in your way"*, never
+*"prevented"* — a command whose menu is hidden keeps working, from the toolbar and
+from its keyboard shortcut. In practice this changes nothing you can feel, because
+**none of the menus the mode hides ships with a shortcut**: every default chord in
+this chapter belongs either to the Editor menu bar, which the mode leaves entirely
+alone, to **Help ▸ Manual**, which no mode may put out of reach, or to an editor
+widget. It matters only if *you* have assigned a chord to a command on **View**,
+**Database**, **Tools** or **Generation** — that chord stays live in Maintenance
+mode even though its menu is gone.
 
 ### Changing a shortcut — View ▸ Customize Shortcuts…
 
@@ -3724,9 +3934,9 @@ hunting for a row that was never there. None of these is arbitrary:
 | **Ctrl+S** / **Ctrl+Shift+S** | Deliberately unbound app-wide since saving moved to the **Deployment** menu (see *Getting Started ▸ Saving, closing, discarding*). Letting another command take them would bring the old reflex back by the side door. |
 | **Ctrl+Z** / **Ctrl+Y** | Undo and Redo for the project's snapshot history are window-scoped shortcuts, not menu commands, so there is no row to move them from. |
 | **Ctrl+F** / **Ctrl+R** | They focus the **current tab's** Find and Replace fields, and each tab's bar owns its own pair. A window-level menu shortcut on either key would be ambiguous against them, and neither would fire. |
-| **Escape** | Returns focus from a Find/Replace bar to the document. |
-| **F3**, **Ctrl+L**, **Ctrl+Alt+F**, **Ctrl+Return**, **Ctrl+Space**, **Ctrl+G** | Window-level or context-menu commands with no menu entry at all — the same reason they cannot be put on the toolbar. |
-| **Ctrl+Alt+E**, **Ctrl+Alt+C**, **Ctrl+Alt+J**, **Ctrl+Shift+Space** | The four SQL editor gestures. Each is answered by the editor widget itself, not by a menu command, so the dialog has no row it could move — and a menu command retargeted onto one of them would fight the editor for the key and neither would fire. |
+| **Escape** | Returns focus from a Find/Replace bar to the document — and leaves a template walk, where one is in progress. |
+| **F3**, **Ctrl+L**, **Ctrl+Alt+F**, **Ctrl+Return**, **Ctrl+Space**, **Ctrl+G** | Window-level, per-panel or context-menu commands with no menu entry at all — the same reason they cannot be put on the toolbar. |
+| **Ctrl+Alt+E**, **Ctrl+Alt+C**, **Ctrl+Alt+J**, **Ctrl+Shift+Space** | The four SQL editor gestures. Each is answered by the editor or its panel rather than by a menu command, so the dialog has no row it could move — and a menu command retargeted onto one of them would fight for the key and neither would fire. **Ctrl+Alt+J** and **Ctrl+Space** are answered by the *panel* specifically, because they need the database schema and no editor widget is allowed to hold one — that is the same rule that keeps an editor from ever talking to a database. |
 | **Ctrl+C** / **Ctrl+X** / **Ctrl+V** | Copy, cut and paste are the editors' **own** built-ins. A window-level shortcut on one of them would outrank the editor and break copy, cut or paste everywhere in the app. |
 | **F1**, and **Help ▸ Manual** itself | The universal convention, and **Help ▸ Manual** is the one entry no mode may put out of reach — including Maintenance mode (see *Getting Started ▸ Maintenance mode*). It is the only case locked from both ends: nothing else may take **F1**, and Manual may not leave it, so its row is present but read-only. |
 
