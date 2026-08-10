@@ -101,6 +101,16 @@ CORPUS = [
     # -- transaction control ----------------------------------------------
     "BEGIN;\nUPDATE t SET a = 1;\nEND;",
     "begin; select 1; commit;",
+    # Every spelling of the same statement, because for a long time only the bare
+    # `BEGIN;` one worked and the rest were refused outright (BUG-260810194657).
+    "BEGIN TRANSACTION;\nUPDATE t SET a = 1;\nCOMMIT;",
+    "BEGIN WORK;\nUPDATE t SET a = 1;\nEND;",
+    "BEGIN TRANSACTION ISOLATION LEVEL SERIALIZABLE;\nUPDATE t SET a = 1;\nROLLBACK;",
+    "begin read only;\nselect 1;\ncommit;",
+    "BEGIN TRANSACTION;\nCREATE FUNCTION f() RETURNS int AS $$ BEGIN RETURN 1; END $$"
+    " LANGUAGE plpgsql;\nCOMMIT;",
+    # ... and the block that merely *looks* like one of those spellings.
+    "BEGIN\nwork := 1;\nEND;",
     # -- comments and opaque regions --------------------------------------
     "-- leading note\nselect a from t; -- trailing note",
     "select a /* inline */, b from t;",
@@ -201,6 +211,9 @@ ADVERSARIAL = {
     "lone_end_semicolon": "end;",
     "lone_end_if": "end if;",
     "lone_begin": "begin",
+    "lone_begin_transaction": "begin transaction",  # phrase at the very end of the input
+    "begin_half_mode_list": "begin transaction isolation",
+    "begin_mode_head_only": "begin read",
     "deep_parens": "select " + "(" * 80 + "1" + ")" * 80 + " from t",
     "deep_blocks": "begin\n" * 40 + "x := 1;\n" + "end;\n" * 40,
     "unbalanced_deep_blocks": "begin\n" * 40 + "x := 1;\n" + "end;\n" * 39,

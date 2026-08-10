@@ -35,6 +35,8 @@ SAMPLES = [
     "update t set a = 1, b = 2 where id = $1;",
     "begin\nx := 1;\nend;",
     "begin\nif a then x := 1; elsif b then x := 2; else x := 3; end if;\nend;",
+    "begin transaction;\nupdate t set a = 1;\ncommit;",
+    "begin work;\nupdate t set a = 1;\nend;",
     "for i in 1..10 loop perform f(i); end loop;",
     "while more loop exit when done; end loop;",
     "select case when a then 'x' else 'y' end from t;",
@@ -214,6 +216,82 @@ def test_if_exists_modifier_is_not_a_block_opener():
 
 def test_transaction_begin_end_is_not_a_block():
     assert fmt("begin; update t set a = 1; end;") == "begin;\nupdate t\nset a = 1;\nend;"
+
+
+def test_begin_transaction_commit_is_accepted_and_not_indented_as_a_body():
+    """BUG-260810194657: this used to be *refused* as an unmatched BEGIN.
+
+    `BEGIN TRANSACTION` opened a plpgsql frame that `COMMIT` cannot close, so
+    Format Selection handed the text back with a bogus fatal issue -- while the
+    bare-`BEGIN;` spelling of the very same statement (above) formatted fine.
+    """
+    assert fmt("BEGIN TRANSACTION;\nUPDATE t SET a = 1;\nCOMMIT;") == (
+        "BEGIN TRANSACTION;\nUPDATE t\nSET a = 1;\nCOMMIT;"
+    )
+
+
+@pytest.mark.parametrize(
+    "header",
+    [
+        "begin transaction",
+        "begin work",
+        "begin transaction isolation level serializable",
+        "begin transaction read only",
+        "begin isolation level serializable",  # the noise word may be omitted
+        "begin read only",
+        "begin not deferrable",
+    ],
+)
+def test_every_transaction_begin_spelling_keeps_its_header_on_one_line(header):
+    """The header is a statement, not a block opener -- so nothing breaks after it.
+
+    Before the fix `_breaks_after` saw a `begin` frame on top and split the phrase
+    (`BEGIN\\n    TRANSACTION;`) on the spellings that were accepted at all.
+    """
+    once = fmt(f"{header};\nupdate t set a = 1;\ncommit;")
+    assert once == f"{header};\nupdate t\nset a = 1;\ncommit;"
+    assert fmt(once) == once
+
+
+def test_a_transaction_closed_with_end_is_not_indented_as_a_routine_body():
+    """`END` is a `COMMIT` synonym, so this is transaction control end to end.
+
+    It used to be accepted but misformatted -- phrase split, body indented one
+    level as if it were a routine body. The `END;` is now taken by the formatter's
+    `_saw_transaction_begin` path, which the `TRANSACTION`/`WORK` spellings could
+    never reach before.
+    """
+    assert fmt("BEGIN TRANSACTION;\nUPDATE t SET a = 1;\nEND;") == (
+        "BEGIN TRANSACTION;\nUPDATE t\nSET a = 1;\nEND;"
+    )
+    assert fmt("begin work;\nupdate t set a = 1;\nend;") == (
+        "begin work;\nupdate t\nset a = 1;\nend;"
+    )
+
+
+def test_a_transaction_wrapping_a_routine_definition_is_not_refused():
+    """The mixed selection: the wrapper used to refuse the whole thing."""
+    text = (
+        "BEGIN TRANSACTION;\n"
+        "CREATE FUNCTION f() RETURNS int AS $$ BEGIN RETURN 1; END $$ LANGUAGE plpgsql;\n"
+        "COMMIT;"
+    )
+    once = fmt(text)
+    assert code(once) == code(text)
+    assert once.startswith("BEGIN TRANSACTION;\n")
+    assert "$$ BEGIN RETURN 1; END $$" in once  # the body stays opaque
+
+
+@pytest.mark.parametrize("name", ["work", "transaction", "read", "isolation"])
+def test_a_block_assigning_to_a_transaction_phrase_word_is_still_a_block(name):
+    """The regression the fix could have introduced, and must not.
+
+    Matching the phrase on `Token.lowered` alone would read `BEGIN work := 1;` as
+    transaction control and then swallow the real `END;` as a `COMMIT` synonym --
+    silently losing a block frame. The phrase is only believed when a `;`, the end
+    of the input, or a transaction mode word follows it.
+    """
+    assert fmt(f"begin\n{name} := 1;\nend;") == f"begin\n    {name} := 1;\nend;"
 
 
 def test_full_create_function_body_stays_opaque():
