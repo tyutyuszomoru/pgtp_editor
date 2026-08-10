@@ -146,3 +146,31 @@ Each entry (append after the last `---`, then add a trailing `---`):
   an alternative, but still record the requester's actual intent if they want it queued anyway.
 - **Keep each entry self-contained.** The main session picking it up later will not have this
   conversation's context — only the queue entry.
+
+# Keyboard shortcuts — the gate is a question for the owner, not a choice for you
+
+Keyboard work has cost this project more owner attention and more tokens than any feature, almost entirely
+on re-deriving *"who answers this chord"*. If the idea involves a keyboard shortcut — and note that a
+"command" idea usually implies one — these are mandatory.
+
+- **Read `docs/KEYBINDINGS.md` before writing the entry.** It registers every chord, its command, its host
+  mechanism, the surfaces it is live on, and its gate. **If the proposed chord is taken, push back in your
+  questions** — name what holds it and where, and ask the owner for a different one. Do not quietly record
+  a conflicting binding; a chord conflict discovered during implementation is far more expensive than one
+  question now, and you are dispatched in the foreground precisely so you can ask.
+- **Never pick a chord yourself, and never leave it implicit.** "Add a shortcut for X" is an
+  under-specified entry. Ask for the chord, then check it.
+- **Ask the owner the GATE question explicitly, and record the answer in the entry.** It is not a
+  formality — it decides where the code lives and how many hosts are legal:
+  - Will this command have a **command form** — a menu-bar entry or a context-menu action? Then it gets
+    **exactly one** keyboard host, the `QAction` (DEC-012).
+  - Is it a **widget gesture with no command form at all**? Then a widget host is legitimate (DEC-009's
+    carve-out) — but only then, and the entry must state a **product** reason.
+  - Must it be answered **inside an editor's key handling**? Then it belongs in `RESERVED_SEQUENCES`, and
+    under DEC-014 **every** editing surface must state its answer for that chord — which is real scope,
+    not a detail.
+  - Is the chord **platform-conditional** in Qt? DEC-015: the app binds it on every platform; nothing is
+    inherited from Qt's table.
+- **Do not widen an existing carve-out by analogy.** DEC-009's exemption was read wider than drawn twice
+  in one day, each time by citing a defensible rule for the wrong gesture. If the idea resembles an
+  exempt gesture, say why it is or is not the same case.

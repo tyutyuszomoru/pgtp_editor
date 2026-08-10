@@ -154,6 +154,43 @@
 - An answered entry may contradict the spec, the manual, or a queue entry. `owner-decision` reports
   that; reconciling it belongs to `spec-maintainer`, `manual-maintainer`, or `bug-triager` as usual.
 
+## Keyboard shortcuts (mandatory — this is the most expensive area in the project)
+
+Keyboard work has consumed more owner attention and more tokens than any feature, almost
+entirely on re-deriving facts that should have been written down once: five owner decisions
+and a dozen bugs in a single day. Every one of them was a *"who answers this chord"* question
+that nothing in the repo could answer. These rules exist to end that.
+
+- **`docs/KEYBINDINGS.md` is the single register of every chord in the app** — the chord, the
+  command, which mechanism hosts it, which surfaces it is live on, and its gate. **It is kept
+  true by a test, not by discipline.** `shortcut_registry.RESERVED_SEQUENCES` was meant to be
+  this and rotted precisely because its docstring says *"transcribed from §27"* — a hand
+  transcription silently lost `Ctrl+Shift+Z` until BUG-050. A ledger nobody verifies is a
+  second document, not a source of truth.
+- **Before proposing or assigning any chord, read the ledger, and PUSH BACK if it is taken.**
+  Name what holds it and on which surfaces. Do not offer a "probably free" chord and do not
+  reason from a menu listing — six different mechanisms can answer a keystroke here
+  (`QAction.setShortcut`, `QShortcut`, `keyPressEvent`, `eventFilter`/`ShortcutOverride`,
+  context-menu actions, and Qt's `StandardKey` platform defaults), and a chord bound by any of
+  them is bound.
+- **Always establish the GATE before the chord, and ask the owner rather than deciding it.**
+  The gate is not a formality; it determines where the code lives and how many hosts are legal:
+  - **Does the command have a command form** — a menu-bar entry *or* a context-menu action?
+    Then it has **exactly one keyboard host** (DEC-012), and that host is the `QAction`.
+  - **No command form at all?** A widget host is legitimate (DEC-009's carve-out) — but only
+    then, and the reason must be a product reason, never "the tests need it".
+  - **Answered inside a widget's key handling?** It must be in `RESERVED_SEQUENCES`, and under
+    DEC-014 *every* editing surface must state its answer for that chord.
+  - **Is the chord platform-conditional?** Qt's table is not the app's answer — DEC-015: an
+    operation's chord is bound by this app on every platform, never inherited.
+- **Never bind by feel, and never widen a carve-out by analogy.** DEC-009's exemption was read
+  wider than it was drawn twice in one day (BUG-052, BUG-063), each time by a comment citing a
+  defensible rule for the wrong gesture.
+- **The offscreen test platform runs Qt's WINDOWS keyboard scheme**, so Linux-only key
+  behaviour is invisible to the whole suite. Assert the handler, never Qt's native answer. And
+  `QShortcut` *does* fire offscreen — the requirement is that the widget's top level has been
+  `show()`n, which is what every "offscreen is unreliable" comment in this repo got wrong.
+
 ## Test environment
 
 Development happens on **both Windows and Linux**, and the two differ in which
