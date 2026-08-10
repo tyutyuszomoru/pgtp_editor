@@ -347,3 +347,164 @@ def test_choosing_a_completion_marks_the_panel_dirty(qtbot):
 
     assert panel.is_dirty() is True
     assert seen == [True]
+
+
+# ===========================================================================
+# FQ-030 slices 1 & 3: `alias.` and `local.` completion
+#
+# Both are REFINEMENTS of the dotted path (`sql/caret_context.py`), so the two
+# things worth pinning are (a) the panel actually consumes them -- the branches
+# were dead until this pass -- and (b) when the refinement resolves to nothing
+# completable, it DEGRADES to the dotted-path reading instead of opening an
+# empty popup or swallowing the caret.
+#
+# The buffers here are `pg_get_functiondef`-shaped on purpose: an alias inside
+# a `$$ ... $$` body is exactly the case that was dead, because the tokenizer
+# keeps a body opaque for every other consumer.
+# ===========================================================================
+from pgtp_editor.sql.caret_context import (  # noqa: E402
+    ALIAS_REF,
+    LOCAL_REF,
+    resolve_caret_context,
+)
+
+
+def _routine(body: str, declare: str = "") -> str:
+    """`pg_get_functiondef`-shaped text with `body` inside the dollar quote."""
+    return (
+        "CREATE OR REPLACE FUNCTION pr.audit_log()\n"
+        " RETURNS trigger\n"
+        " LANGUAGE plpgsql\n"
+        "AS $function$\n"
+        + declare
+        + "BEGIN\n"
+        + body
+        + "END;\n"
+        "$function$\n"
+    )
+
+
+# --- ALIAS_REF (slice 1) ----------------------------------------------------
+def test_alias_dot_inside_a_dollar_body_offers_the_aliased_tables_columns(qtbot):
+    """End to end, and the case that was dead until this pass: the alias is
+    bound by a FROM clause that lives INSIDE the routine body, which is one
+    opaque token to every other consumer of the tokenizer."""
+    text = _routine("  SELECT eq. FROM pr.equipment eq;\n")
+    panel = _panel(qtbot, text=text, schema_index=_index())
+    _put_caret_after(panel, "SELECT eq.")
+    _ctrl_space(panel)
+    popup = panel._completion_popup
+    assert popup is not None and popup.isVisible()
+    assert popup.visible_keys() == ["id", "tag"]
+
+
+def test_alias_dot_filters_columns_by_the_typed_prefix(qtbot):
+    text = _routine("  SELECT eq.ta FROM pr.equipment eq;\n")
+    panel = _panel(qtbot, text=text, schema_index=_index())
+    _put_caret_after(panel, "eq.ta")
+    _ctrl_space(panel)
+    assert panel._completion_popup.visible_keys() == ["tag"]
+
+
+def test_choosing_an_alias_column_replaces_the_typed_prefix(qtbot):
+    text = _routine("  SELECT eq.ta FROM pr.equipment eq;\n")
+    panel = _panel(qtbot, text=text, schema_index=_index())
+    _put_caret_after(panel, "eq.ta")
+    _ctrl_space(panel)
+    panel._completion_popup.chosen.emit("tag")
+    assert "SELECT eq.tag FROM" in panel.text()
+
+
+def test_alias_of_a_bare_table_degrades_to_the_dotted_path_reading(qtbot):
+    """`FROM equipment eq` writes no schema, and nothing may guess a search
+    path -- `TableRef.qualified` is None. The panel must fall back to reading
+    `eq` as a schema name (which offers nothing here) rather than crash or open
+    an empty popup."""
+    text = _routine("  SELECT eq. FROM equipment eq;\n")
+    panel = _panel(qtbot, text=text, schema_index=_index())
+    _put_caret_after(panel, "SELECT eq.")
+    context = resolve_caret_context(text, panel.editor.textCursor().position())
+    assert context.kind == ALIAS_REF and context.table_ref.qualified is None
+    _ctrl_space(panel)
+    assert panel._completion_popup is None or not panel._completion_popup.isVisible()
+
+
+# --- LOCAL_REF (slice 3) ----------------------------------------------------
+def test_local_rowtype_variable_offers_its_tables_columns(qtbot):
+    text = _routine("  IF rec. THEN\n", declare="DECLARE rec pr.equipment%ROWTYPE;\n")
+    panel = _panel(qtbot, text=text, schema_index=_index())
+    _put_caret_after(panel, "IF rec.")
+    _ctrl_space(panel)
+    popup = panel._completion_popup
+    assert popup is not None and popup.isVisible()
+    assert popup.visible_keys() == ["id", "tag"]
+
+
+def test_local_rowtype_completion_filters_by_prefix_and_inserts(qtbot):
+    text = _routine("  IF rec.i THEN\n", declare="DECLARE rec pr.equipment%ROWTYPE;\n")
+    panel = _panel(qtbot, text=text, schema_index=_index())
+    _put_caret_after(panel, "rec.i")
+    _ctrl_space(panel)
+    assert panel._completion_popup.visible_keys() == ["id"]
+    panel._completion_popup.chosen.emit("id")
+    assert "IF rec.id THEN" in panel.text()
+
+
+def test_local_with_no_qualified_rowtype_degrades_instead_of_popping_empty(qtbot):
+    """A bare `equipment%ROWTYPE` (no schema written) leaves
+    `rowtype_qualified` None -- there is nothing this can know. The context
+    still resolves as LOCAL_REF, so the branch IS exercised; it must simply
+    offer nothing rather than open an empty popup."""
+    text = _routine("  IF rec. THEN\n", declare="DECLARE rec equipment%ROWTYPE;\n")
+    panel = _panel(qtbot, text=text, schema_index=_index())
+    _put_caret_after(panel, "IF rec.")
+    context = resolve_caret_context(text, panel.editor.textCursor().position())
+    assert context.kind == LOCAL_REF and context.local_symbol.rowtype_qualified is None
+    _ctrl_space(panel)
+    assert panel._completion_popup is None or not panel._completion_popup.isVisible()
+
+
+def test_a_scalar_local_offers_nothing_and_does_not_raise(qtbot):
+    text = _routine("  IF n. THEN\n", declare="DECLARE n integer;\n")
+    panel = _panel(qtbot, text=text, schema_index=_index())
+    _put_caret_after(panel, "IF n.")
+    _ctrl_space(panel)
+    assert panel._completion_popup is None or not panel._completion_popup.isVisible()
+
+
+def test_plain_dotted_path_still_wins_where_no_refinement_applies(qtbot):
+    """The refinements must not have cost the original reading: a real schema
+    name inside the same body still offers that schema's tables."""
+    text = _routine("  SELECT * FROM pr.;\n")
+    panel = _panel(qtbot, text=text, schema_index=_index())
+    _put_caret_after(panel, "FROM pr.")
+    _ctrl_space(panel)
+    assert panel._completion_popup.visible_keys() == ["eq_view", "equipment"]
+
+
+# --- The cost of resolution is paid on an explicit trigger only -------------
+def test_completion_is_not_resolved_while_typing(qtbot):
+    """`resolve_caret_context` re-tokenizes the buffer several times (~24 ms on
+    a 4 KB routine, ~240 ms on a 42 KB one), so it may only run from the
+    deliberate Ctrl+Space press -- never from an edit signal. Typing a
+    character, including a `.`, must not resolve anything."""
+    import pgtp_editor.ui.ddl_object_editor as mod
+
+    calls = []
+    original = mod.resolve_caret_context
+
+    def spy(text, pos):
+        calls.append(pos)
+        return original(text, pos)
+
+    panel = _panel(qtbot, text=_routine("  SELECT * FROM pr.equipment eq;\n"), schema_index=_index())
+    _put_caret_after(panel, "BEGIN\n")
+    panel.editor.setFocus()
+    mod.resolve_caret_context = spy
+    try:
+        QTest.keyClicks(panel.editor, "eq.")
+        assert calls == []
+        _ctrl_space(panel)
+        assert calls  # only the explicit trigger resolves
+    finally:
+        mod.resolve_caret_context = original

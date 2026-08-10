@@ -77,7 +77,13 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from pgtp_editor.sql.caret_context import DOTTED_PATH, ROW_VARIABLE, resolve_caret_context
+from pgtp_editor.sql.caret_context import (
+    ALIAS_REF,
+    DOTTED_PATH,
+    LOCAL_REF,
+    ROW_VARIABLE,
+    resolve_caret_context,
+)
 from pgtp_editor.sql.formatter import format_selection as _format_selection_text
 from pgtp_editor.ui.code_editor import CodeEditor
 from pgtp_editor.ui.completion_popup import CompletionPopupHostMixin
@@ -796,8 +802,22 @@ class DdlObjectEditorPanel(CompletionPopupHostMixin, QWidget):
 
     def set_text(self, text: str) -> None:
         """Load the buffer WITHOUT marking it dirty -- this is the injected
-        load half, not a user edit."""
+        load half, not a user edit.
+
+        Re-arms the gutter's body-relative line column (FQ-031) **after** the
+        `setPlainText`, which deliberately clears the anchor: an anchor
+        describes one document, and a stale one would misnumber every line of a
+        swapped one rather than merely omit the column. Only a routine tab asks
+        for it -- a `CREATE TRIGGER` buffer has no body of its own (the body
+        lives in the function the trigger calls, which opens as its own
+        `function` tab and gets its own anchor). All the arithmetic and every
+        bit of dollar-quote knowledge stays behind
+        `EditorGutter.set_body_line_anchor_from_text`; a buffer with no
+        locatable opener (a `LANGUAGE sql` routine) yields None there and the
+        column simply does not appear."""
         self.editor.setPlainText(text)
+        if not self._ref.is_trigger:
+            self.editor.set_body_line_anchor_from_text(text)
         self.editor.document().setModified(False)
 
     # --- Dirty state ------------------------------------------------------
@@ -1443,11 +1463,26 @@ class DdlObjectEditorPanel(CompletionPopupHostMixin, QWidget):
 
     def _show_completions(self) -> None:
         """Ctrl+Space entry point (§18.6). Resolves the caret context and
-        opens the popup for whichever of the three rows applies:
-        schema-qualified table reference, NEW./OLD. in an attached trigger
-        function, or NEW./OLD. in an unattached one (table-pick prompt
-        first). No-op when no `SchemaIndex` is injected or the caret is not
-        in a resolvable position."""
+        opens the popup for whichever row applies: schema-qualified table
+        reference, NEW./OLD. in an attached trigger function, NEW./OLD. in an
+        unattached one (table-pick prompt first), a FROM-clause `alias.`
+        (FQ-030 slice 1) or a declared `local.` (slice 3). No-op when no
+        `SchemaIndex` is injected or the caret is not in a resolvable
+        position.
+
+        **Explicit-trigger only.** This runs from the Ctrl+Space key press in
+        `eventFilter` and nowhere else -- nothing connects it to
+        `textChanged`. That is what makes `resolve_caret_context`'s cost
+        (it re-tokenizes the buffer for `statement_at` / `from_clause` /
+        `routine_scope`) affordable: it is paid once per deliberate keystroke,
+        not once per character typed. **Do not connect this to an
+        edit signal without first making that path cheap** -- on a 40 KB
+        routine body a single resolve is a few hundred milliseconds, which is
+        a visible stall if it happens while typing.
+
+        Precedence between the kinds is decided in the pure layer
+        (`sql/caret_context.py`): ALIAS_REF beats LOCAL_REF beats DOTTED_PATH
+        for a one-segment name. Nothing is re-ranked here."""
         if self._schema_index is None:
             return
         context = resolve_caret_context(self.editor.toPlainText(), self.editor.textCursor().position())
@@ -1455,8 +1490,56 @@ class DdlObjectEditorPanel(CompletionPopupHostMixin, QWidget):
             return
         if context.kind == ROW_VARIABLE:
             self._show_row_variable_completions(context)
+        elif context.kind == ALIAS_REF:
+            self._show_alias_ref_completions(context)
+        elif context.kind == LOCAL_REF:
+            self._show_local_ref_completions(context)
         elif context.kind == DOTTED_PATH:
             self._show_dotted_path_completions(context)
+
+    def _show_alias_ref_completions(self, context) -> None:
+        """`alias.` where the caret's own FROM clause binds `alias` to a real
+        table (§18.6 / FQ-030 slice 1): offer that table's columns.
+
+        `table_ref.qualified` is the `SchemaIndex.known_columns()` key, and it
+        is None when the table was written bare (`FROM jobcard j` -- no schema,
+        and nothing here may guess a search path). Then, and whenever the table
+        is not in the fetched schema, this degrades to the `DOTTED_PATH`
+        reading of the very same context (the refinement keeps `parts`
+        populated precisely so that fallback needs no re-resolution)."""
+        ref = context.table_ref
+        table = ref.qualified if ref is not None else None
+        if table is None or not self._show_column_completions(table, context.prefix):
+            self._show_dotted_path_completions(context)
+
+    def _show_local_ref_completions(self, context) -> None:
+        """`local.` where `local` is declared by the routine the caret is in
+        (§18.6 / FQ-030 slice 3): a `rec hr.jobcard%ROWTYPE` offers that
+        table's columns.
+
+        `local_symbol.rowtype_qualified` is None for every local whose fields
+        cannot be known from the text -- a `record`, a loop variable, a scalar,
+        or a bare `jobcard%ROWTYPE` with no schema. There is nothing to offer
+        then, so this degrades to the `DOTTED_PATH` reading rather than opening
+        an empty popup."""
+        symbol = context.local_symbol
+        table = symbol.rowtype_qualified if symbol is not None else None
+        if table is None or not self._show_column_completions(table, context.prefix):
+            self._show_dotted_path_completions(context)
+
+    def _show_column_completions(self, table: str, prefix: str) -> bool:
+        """Open the popup on `table`'s columns filtered by `prefix`. Returns
+        False (and opens nothing) when the table is unknown or no column
+        matches, so a caller can fall back instead of showing an empty list."""
+        prefix_lower = prefix.lower()
+        names = [c for c in self._schema_index.known_columns(table) if c.lower().startswith(prefix_lower)]
+        if not names:
+            return False
+        popup = self._ensure_completion_popup()
+        popup.set_items([(c, c) for c in names])
+        self._rewire_popup(popup, self._complete_identifier)
+        self._popup_at_caret(popup)
+        return True
 
     def _show_dotted_path_completions(self, context) -> None:
         """Schema-qualified table reference (§18.6 row 1): no schema typed
@@ -1506,15 +1589,7 @@ class DdlObjectEditorPanel(CompletionPopupHostMixin, QWidget):
                 return  # user cancelled the picker
             self._unattached_trigger_table = table
 
-        columns = index.known_columns(table)
-        prefix = context.prefix.lower()
-        names = [c for c in columns if c.lower().startswith(prefix)]
-        if not names:
-            return
-        popup = self._ensure_completion_popup()
-        popup.set_items([(c, c) for c in names])
-        self._rewire_popup(popup, self._complete_identifier)
-        self._popup_at_caret(popup)
+        self._show_column_completions(table, context.prefix)
 
     def _prompt_unattached_trigger_table(self) -> str | None:
         """No trigger is defined for this function (§18.6): tell the user,

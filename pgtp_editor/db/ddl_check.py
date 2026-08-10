@@ -124,7 +124,8 @@ STATUS_ERRORED = "errored"
 #: "unavailable ()".
 REASON_TIER_NOT_BUILT = (
     "nothing was applied in this run, so this tier had nothing to compile: the "
-    "compile check runs on Apply to Sandbox and on Check-without-applying."
+    "compile check runs on Deployment ▸ Check and commit to sandbox and on "
+    "Parsing ▸ Check and rollback."
 )
 
 #: Tier 1 exists only on the notice channel (§18.5 D3). A runner that cannot
@@ -156,8 +157,8 @@ REASON_TIER0_COLLAPSED = (
 #: fall back to, which is the honest statement of the same design decision.
 REASON_TIER0_NO_SANDBOX = (
     "there is no offline syntax checker: tier 0 is PostgreSQL's own parser via "
-    "tier 2, and tier 2 did not run. Use Parsing \u25b8 Check Object Without "
-    "Applying to really compile this buffer -- it commits nothing."
+    "tier 2, and tier 2 did not run. Use Parsing \u25b8 Check and rollback to "
+    "really compile this buffer -- it commits nothing."
 )
 
 #: Tier 2 has no DDL to compile -- an empty buffer. Refused rather than reported
@@ -228,9 +229,9 @@ REASON_UNKNOWN_CAPABILITY = (
 REASON_OBJECT_ABSENT = (
     "the object was not found in the sandbox -- it was never applied, or it "
     "failed to compile there, so there was nothing to lint. Use "
-    "Parsing \u25b8 Check Object Without Applying to compile and lint this "
-    "buffer without changing the sandbox, or Apply to Sandbox to put it "
-    "there for good."
+    "Parsing \u25b8 Check and rollback to compile and lint this "
+    "buffer without changing the sandbox, or Deployment \u25b8 Check and "
+    "commit to sandbox to put it there for good."
 )
 
 REASON_RELATION_ABSENT = (
@@ -1397,7 +1398,8 @@ def apply_and_check(
     ddl_text: str | None = None,
     applier: Applier = apply_ddl,
 ) -> CheckReport:
-    """§18.5 D3's **"Apply to Sandbox"** gesture: apply this object's DDL to the
+    """§18.5 D3's **"Check and commit to sandbox"** gesture (FQ-026; was
+    *"Apply to Sandbox"*): apply this object's DDL to the
     sandbox and run the whole ladder over it, **committing**.
 
     One `apply_ddl` call, one transaction: the `SET`, the DDL, the `applied`
@@ -1436,7 +1438,8 @@ def probe_check(
     ddl_text: str | None = None,
     applier: Applier = apply_ddl,
 ) -> CheckReport:
-    """§18.5 D3's **"Check without applying"** probe: the identical ladder, run
+    """§18.5 D3's **"Check and rollback"** probe (FQ-026; was *"Check without
+    applying"*): the identical ladder, run
     with `apply_ddl(..., commit=False)`.
 
     **This is the one narrow place rollback survives** (§18.5 D2): a convenience

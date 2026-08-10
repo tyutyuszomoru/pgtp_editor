@@ -123,7 +123,7 @@ from ..db.sandbox_query import (
     QueryResult,
     run_sandbox_query,
 )
-from ..sql.caret_context import DOTTED_PATH, resolve_caret_context
+from ..sql.caret_context import ALIAS_REF, DOTTED_PATH, LOCAL_REF, resolve_caret_context
 from ..sql.formatter import format_selection as _format_selection_text
 from ..sql.statements import (
     CHANGES_OBJECTS,
@@ -806,18 +806,48 @@ class SqlConsolePanel(CompletionPopupHostMixin, QWidget):
     def show_completions(self) -> None:
         """Ctrl+Space: schema-qualified identifier completion at the caret.
 
-        Only §18.6's *dotted path* row applies here -- `NEW.`/`OLD.` row
-        variables are meaningful inside a trigger function body, and a console
-        buffer is not one, so there is nothing to resolve them against. No-op
-        with no `SchemaIndex` injected or an unresolvable caret."""
+        §18.6's *dotted path* row applies here, and so does FQ-030's
+        `ALIAS_REF` refinement of it: a console buffer is where a FROM clause
+        is most often hand-written, so `FROM hr.jobcard jc` ... `jc.` offers
+        that table's columns exactly as it does in a DDL tab. `NEW.`/`OLD.`
+        still does NOT: row variables are meaningful inside a trigger function
+        body, and a console buffer is not one, so there is nothing to resolve
+        them against.
+
+        `LOCAL_REF` is deliberately NOT consumed. `caret_context` descends into
+        a pasted `$$` body here too, so a pasted routine's `rec.` does resolve
+        -- but a console buffer is a script being *sent*, not a routine being
+        edited, and its declarations are not this panel's subject. What matters
+        is that it does not silently swallow the caret either: an unconsumed
+        refinement falls through to the `DOTTED_PATH` reading of the same
+        context (both kinds keep `parts` populated for exactly that), so the
+        old behavior survives instead of the guard turning into a dead branch.
+
+        No-op with no `SchemaIndex` injected or an unresolvable caret."""
         index = self._schema_index
         if index is None:
             return
         context = resolve_caret_context(
             self.editor.toPlainText(), self.editor.textCursor().position()
         )
-        if context is None or context.kind != DOTTED_PATH:
+        if context is None or context.kind not in (DOTTED_PATH, ALIAS_REF, LOCAL_REF):
             return
+        if context.kind == ALIAS_REF and context.table_ref is not None:
+            table = context.table_ref.qualified
+            prefix = context.prefix.lower()
+            columns = [
+                column
+                for column in (index.known_columns(table) if table else [])
+                if column.lower().startswith(prefix)
+            ]
+            if columns:
+                popup = self._ensure_completion_popup()
+                popup.set_items([(column, column) for column in columns])
+                self._rewire_popup(popup, self._complete_identifier)
+                self._popup_at_caret(popup)
+                return
+            # No schema written (`FROM jobcard j`) or the table is not in the
+            # fetched schema -- fall through to the DOTTED_PATH reading below.
         if not context.parts:
             prefix = context.prefix.lower()
             names = [

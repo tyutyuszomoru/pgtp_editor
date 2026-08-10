@@ -544,6 +544,7 @@ from pgtp_editor.ui.ddl_object_editor import (  # noqa: E402
     CHECK_PREFIX,
     GESTURE_APPLY_TO_QUALITY,
     GESTURE_CHECK_AND_COMMIT,
+    GESTURE_CHECK_AND_ROLLBACK,
     GESTURE_LABELS,
     GESTURE_UNAVAILABLE_REASONS,
     parse_buffer_identity,
@@ -1387,3 +1388,131 @@ def test_parse_buffer_identity_reads_a_trigger_name_and_table():
 
 def test_parse_buffer_identity_returns_none_when_there_is_no_create():
     assert parse_buffer_identity("SELECT 1;", _PLAIN) is None
+
+
+# ===========================================================================
+# FQ-031: the gutter's body-relative line column, armed by the DDL object tab
+#
+# The mechanism itself is `tests/ui/test_editor_gutter_body_numbers.py`'s
+# subject. What is pinned here is the WIRING: which tab kinds ask for the
+# anchor, and that a swapped document never keeps the previous one's.
+# ===========================================================================
+_FUNCTIONDEF = (
+    "CREATE OR REPLACE FUNCTION pr.bump(a integer)\n"
+    " RETURNS integer\n"
+    " LANGUAGE plpgsql\n"
+    "AS $function$\n"
+    "BEGIN\n"
+    "  RETURN a + 1;\n"
+    "END\n"
+    "$function$\n"
+)
+
+
+def test_a_function_tabs_buffer_arms_the_body_line_anchor(qtbot):
+    """A real `pg_get_functiondef` buffer: the `AS $function$` opener is line
+    4, so a `plpgsql_check` error at body line 1 is buffer line 4."""
+    panel = _panel(qtbot, text=_FUNCTIONDEF)
+    assert panel.editor.body_line_anchor() == 4
+    # Body line 1 IS the opener line (block 3, 0-based).
+    assert panel.editor.body_relative_line(3) == 1
+    assert panel.editor.body_relative_line(4) == 2
+
+
+def test_a_procedure_tab_arms_it_too(qtbot):
+    text = (
+        "CREATE OR REPLACE PROCEDURE pr.run()\n"
+        " LANGUAGE plpgsql\n"
+        "AS $procedure$\n"
+        "BEGIN\n"
+        "END\n"
+        "$procedure$\n"
+    )
+    panel = _panel(qtbot, ref=DdlObjectRef(kind="procedure", schema="pr", name="run"), text=text)
+    assert panel.editor.body_line_anchor() == 3
+
+
+def test_a_trigger_tab_leaves_the_column_off(qtbot):
+    """A `CREATE TRIGGER` buffer has no body of its own -- the body lives in
+    the function the trigger calls, which opens as its own tab and gets its own
+    anchor. Nothing may be numbered here."""
+    panel = _panel(
+        qtbot,
+        ref=_TRIGGER,
+        text="CREATE TRIGGER trg_audit AFTER INSERT ON pr.orders\n"
+        " FOR EACH ROW EXECUTE FUNCTION pr.audit();\n",
+    )
+    assert panel.editor.body_line_anchor() is None
+
+
+def test_a_routine_with_no_locatable_opener_leaves_the_column_off(qtbot):
+    """A `LANGUAGE sql` routine written without a dollar quote: `None` is a
+    real answer, never a guess -- the column simply does not appear."""
+    panel = _panel(
+        qtbot,
+        text="CREATE OR REPLACE FUNCTION pr.one()\n RETURNS integer\n LANGUAGE sql\n"
+        "AS 'SELECT 1';\n",
+    )
+    assert panel.editor.body_line_anchor() is None
+
+
+def test_swapping_the_document_re_anchors_rather_than_keeping_a_stale_offset(qtbot):
+    """`setPlainText` clears the anchor deliberately: a stale one would
+    misnumber every line of the new document rather than merely omit the
+    column. `set_text` must re-derive it from the text it just loaded."""
+    panel = _panel(qtbot, text=_FUNCTIONDEF)
+    assert panel.editor.body_line_anchor() == 4
+
+    panel.set_text("CREATE FUNCTION pr.b()\nAS $function$\nBEGIN\nEND\n$function$\n")
+    assert panel.editor.body_line_anchor() == 2
+
+    panel.set_text("SELECT 1;\n")
+    assert panel.editor.body_line_anchor() is None
+
+
+def test_re_anchoring_does_not_dirty_the_buffer(qtbot):
+    """`set_text` is the injected load half, not a user edit -- arming the
+    gutter must not have turned it into one."""
+    panel = _panel(qtbot, text="")
+    panel.set_text(_FUNCTIONDEF)
+    assert panel.is_dirty() is False
+
+
+# ===========================================================================
+# FQ-026 vocabulary: the check reasons name the gestures that actually exist
+# ===========================================================================
+def test_reason_tier_not_built_names_the_current_gestures(qtbot):
+    """`REASON_TIER_NOT_BUILT` is user-visible -- it is the detail line in the
+    comparison modal's "what was NOT checked" enumeration -- and it used to
+    name `Apply to Sandbox` / `Check-without-applying`, both retired by
+    FQ-026. `GESTURE_LABELS` is the single source for gesture names, so the
+    sentence is asserted against it rather than against a re-typed literal."""
+    from pgtp_editor.db.ddl_check import REASON_TIER_NOT_BUILT
+
+    assert GESTURE_LABELS[GESTURE_CHECK_AND_COMMIT] in REASON_TIER_NOT_BUILT
+    assert GESTURE_LABELS[GESTURE_CHECK_AND_ROLLBACK] in REASON_TIER_NOT_BUILT
+
+
+def test_no_check_reason_speaks_the_retired_vocabulary():
+    """The same class of drift, swept across every user-visible reason string
+    `db/ddl_check.py` exports -- one stale label is a bug, and the next one
+    would be too."""
+    import pgtp_editor.db.ddl_check as ddl_check
+
+    retired = (
+        "Apply to Sandbox",
+        "Check-without-applying",
+        "Check Object Without Applying",
+        "Check without applying",
+        "Apply to Target",
+        "Run on sandbox",
+        "Run on quality",
+    )
+    offenders = [
+        (name, label)
+        for name in dir(ddl_check)
+        if name.startswith("REASON_") or name.startswith("CAVEAT_")
+        for label in retired
+        if isinstance(getattr(ddl_check, name), str) and label in getattr(ddl_check, name)
+    ]
+    assert offenders == []

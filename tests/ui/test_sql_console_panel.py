@@ -429,6 +429,9 @@ class FakeIndex:
         tables = {"app": ["invoice", "item"], "public": ["users"]}.get(schema, [])
         return [t for t in tables if t.lower().startswith(prefix.lower())]
 
+    def known_columns(self, table):
+        return {"app.invoice": ["amount", "id"], "public.users": ["email"]}.get(table, [])
+
 
 def test_schema_index_is_injected_the_same_way_an_object_tab_gets_it(qtbot):
     console, _query = make_console(qtbot)
@@ -462,6 +465,77 @@ def test_ctrl_space_offers_schema_qualified_tables(qtbot):
 def test_ctrl_space_is_a_no_op_without_a_schema_index(qtbot):
     console, _query = make_console(qtbot)
     console.set_sql("SELECT * FROM app.i")
+
+    console.show_completions()
+
+    assert console._completion_popup is None
+
+
+def _caret_after(console, marker):
+    cursor = console.editor.textCursor()
+    cursor.setPosition(console.sql_text.index(marker) + len(marker))
+    console.editor.setTextCursor(cursor)
+
+
+def test_ctrl_space_offers_an_aliased_tables_columns(qtbot):
+    """FQ-030 slice 1, consumed here too: the console is where a FROM clause
+    is most often hand-written, so `FROM app.invoice inv` ... `inv.` offers
+    that table's columns."""
+    console, _query = make_console(qtbot)
+    console.set_schema_index(FakeIndex())
+    console.set_sql("SELECT inv. FROM app.invoice inv")
+    _caret_after(console, "SELECT inv.")
+
+    console.show_completions()
+
+    popup = console._completion_popup
+    assert popup is not None
+    assert [popup.item(i).text() for i in range(popup.count())] == ["amount", "id"]
+
+
+def test_an_alias_with_no_schema_falls_back_to_the_dotted_path_reading(qtbot):
+    """`FROM invoice inv` writes no schema and nothing may guess a search
+    path, so the refinement resolves to no table. The console must fall back to
+    reading `inv` as a schema name (which offers nothing here) rather than
+    silently swallow the caret or raise."""
+    console, _query = make_console(qtbot)
+    console.set_schema_index(FakeIndex())
+    console.set_sql("SELECT inv. FROM invoice inv")
+    _caret_after(console, "SELECT inv.")
+
+    console.show_completions()
+
+    assert console._completion_popup is None
+
+
+def test_a_local_in_a_pasted_body_is_not_consumed_but_still_falls_through(qtbot):
+    """`LOCAL_REF` is deliberately not a console context -- a console buffer is
+    a script being sent, not a routine being edited. `caret_context` does
+    descend into a pasted `$$` body, so the kind DOES come back; what is pinned
+    here is that the unconsumed refinement degrades to the dotted-path reading
+    instead of the guard turning into a dead branch."""
+    console, _query = make_console(qtbot)
+    console.set_schema_index(FakeIndex())
+    console.set_sql(
+        "CREATE FUNCTION f() RETURNS void LANGUAGE plpgsql AS $$\n"
+        "DECLARE rec app.invoice%ROWTYPE;\n"
+        "BEGIN\n"
+        "  IF rec. THEN\n"
+        "END;\n"
+        "$$;\n"
+    )
+    _caret_after(console, "IF rec.")
+
+    console.show_completions()
+
+    assert console._completion_popup is None
+
+
+def test_new_dot_is_still_not_a_console_context(qtbot):
+    console, _query = make_console(qtbot)
+    console.set_schema_index(FakeIndex())
+    console.set_sql("SELECT new.")
+    _caret_after(console, "new.")
 
     console.show_completions()
 
