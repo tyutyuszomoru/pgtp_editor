@@ -3461,9 +3461,66 @@ for every other consumer, and `dollar_body_at` should be named on `tokenizer.py`
 ---
 
 ## BUG-042: `[Project]` narration emitted *during* a project close is journalled but never seen — the transition that triggers the line also wipes the panel
-**Status:** OPEN
+**Status:** DECIDED — **option C** (route close-time `[Project]` narration to the **Messages** tab), owner
+ruling 2026-08-10. **Implementation in flight, not yet committed** — see *Owner ruling* below for exactly what
+was and was not in the working tree when this was written. Flip to `RESOLVED (<commit>)` once the change lands
+and the commit hash can be verified; do not backfill a hash that has not been observed.
 **Reported:** 2026-08-10
 **Report (verbatim):** "FQ-019's Activity Log replaces its display buffer on a project transition (`open_project`/`close_project` on the core, driven from `_on_activity_project_changed`). `[Project]` lines narrated *during* a close — the example given is *'N DDL object(s) have local edits pending a batch deploy'* — reach the closing project's `activity.jsonl` correctly, but vanish from the panel immediately, because the transition that triggered them also clears what the panel shows. So a user is told something at exactly the moment they can no longer read it."
+
+**Owner ruling (2026-08-10) — option C, and the naming correction that made it the obvious one**
+
+Close-time `[Project]` narration is routed to the **Messages** tab: the surface that accumulates and survives a
+project transition, which is exactly the reason `[Sandbox]` already routes there. Options A/B/D/E below stand
+as recorded and are all ruled out.
+
+**Read the cost recorded against option C as stale.** It reads *"a timing-based split of one prefix across two
+surfaces, which is what FQ-028's table was built to end"* — but that objection was mostly about the **label**,
+not the mechanism. FQ-028's bottom-dock tab was called **Results**, so filing a *message* there looked like a
+category error. The owner has since ruled that the name was simply wrong: *"These two panels only bear the same
+name… Change name of new Result window to Messages, keep Sandbox's result window."* Two unrelated surfaces had
+been sharing one word:
+
+- FQ-028's **bottom-dock tab**, which accumulates `[Check]` / `[Validate]` / `[Lint]` / `[Sandbox]` narration —
+  a **message log**. Renamed **Messages**.
+- `pgtp_editor/ui/sql_results_panel.py::SqlResultsPanel`, the Sandbox SQL Console's actual **query-result
+  grid**. Unchanged, keeps the name "Results".
+
+**No code was ever mis-built by this ambiguity, and that is worth recording plainly.** `SqlResultsPanel` is
+constructed in exactly one place, inside the console tab, and was never rerouted; FQ-028 rerouted only
+Audit/Problems content, which is what the owner intended throughout. It was a purely ambiguous *label* — which
+is also why it produced confusion rather than a defect, and why it survived implementation, spec and manual
+passes unnoticed. With the tab named Messages the ruling is not a compromise: a message goes to Messages, and
+it joins `[Sandbox]`, which is already there for the same timing reason.
+
+**What does NOT change — this is the constraint that ruled the other options out.** The line is *already*
+written correctly to the closing project's `activity.jsonl`, and the core's no-migration rule (entries never
+move between stores; `db/activity_log.py:554-573`) stays untouched. This ruling changes only **which panel
+renders** the line, never **which store persists** it. Any implementation that starts moving entries between
+stores has misread the ruling.
+
+**One open sub-decision — record, do not pre-resolve here.** `audit_router.DESTINATIONS` routes by **prefix**,
+so there are two shapes:
+
+1. move the whole `[Project]` prefix to the Messages tab (`PROJECT_PREFIX: TO_RESULTS`), or
+2. move only the close-time lines, via a **content marker** — the mechanism `[Schema]` already uses with
+   `SCHEMA_VERIFY_MARKER` (`audit_router.py:117`, consumed in `classify` at :141).
+
+The sibling implementing this was told to decide by **reading the actual `[Project]` emitters** rather than
+guessing which lines exist. Whichever shape lands, record it when flipping the Status line — it determines
+whether non-close `[Project]` narration (e.g. the checkout-drift path) also moved.
+
+**Implementation state observed in the working tree while writing this entry (uncommitted):**
+
+- The **rename is partly in flight**: `pgtp_editor/ui/findings_panel.py:52-59` already defines
+  `RESULTS_TAB_TITLE = "Messages"` with the collision rationale, `main_window.py:3010-3015` adds the view
+  action as "Messages", and `audit_router.py`'s module docstring/table and `ui_shell.py:97` are reworded to
+  "Messages tab". The identifier `TO_RESULTS` (`audit_router.py:95`) **deliberately keeps its spelling** —
+  documented at :90-94 as "a label is not a schema", since every producer test names it.
+- The **routing change itself is NOT yet in the tree**: `audit_router.py:109` still reads
+  `PROJECT_PREFIX: TO_ACTIVITY`, and no `[Project]` content marker exists.
+- `pgtp_editor/ui/sql_results_panel.py` is **untouched**, as intended.
+- Nothing here is committed. Do not cite a commit that has not been verified.
 
 **Root cause:** Verified end to end; the reported mechanism is exact.
 
@@ -3542,6 +3599,9 @@ accident to be patched around.
   is exactly the kind of per-line special-casing FQ-028's one-prefix-one-destination table was built to end —
   unless the split is made principled (e.g. a distinct prefix for close-time reminders, or `remind_pending_
   deploys_on_close` reporting through a Results-bound channel by construction rather than by prefix lookup).
+  **↑ CHOSEN, 2026-08-10 — and read this bullet's stated cost as superseded: the "Results" tab is now named
+  Messages, so the objection (a message filed under Results) was a label problem, not a mechanism problem. See
+  *Owner ruling* at the top of this entry.**
 - **(D) Hold the reminder as a modal/status affordance instead of a log line.** `close_project` already has a
   precedent one line above: `offer_pgtp_deploy_on_close` (`ddl_project_controller.py:485+`) asks a
   `QMessageBox.question`. §18.3's rule is *"closing is a reminder point, never a forcing point"* — a modal for
@@ -3559,7 +3619,18 @@ table. Gotcha for option C: producers call `audit.addItem(...)` and see nothing 
 quacks like the `QListWidget` they were written against) — a per-call destination override does not exist and
 adding one reopens the design FQ-028 closed.
 
-**Test impact:** `tests/ui/test_ddl_project_wiring.py` already covers this exact area — the test at ~:1184
+**Test impact:** **⚠ `tests/ui/test_ddl_project_wiring.py` currently ASSERTS THIS DEFECT AS INTENDED
+BEHAVIOUR — comment and all — and must be REWRITTEN, NOT EXTENDED.** The close-time assertion (the
+`window._ddl_project_ui.close_project()` case, ~:1203-1212) is followed by a comment that spells the bug out as
+if it were the design (*"this particular line is emitted DURING the close -- after which FQ-019's project
+transition replaces the on-screen buffer … So the reminder is asserted where it durably landed"*) and then
+asserts only against the journal file. Under option C the reminder must be asserted on the **Messages** tab as
+well; the comment must go, because it is exactly the kind of test prose that makes a bug read like a decision
+and is why this behaviour survived review. Keep the `activity_path(project_dir)` journal assertion — the store
+side is correct today and is the regression guard for the no-migration rule. Everything below stands as
+originally triaged:
+
+`tests/ui/test_ddl_project_wiring.py` already covers this exact area — the test at ~:1184
 opens a project with a stale `deployed` hash, calls `window._ddl_project_ui.close_project()` and its trailing
 comment literally documents the current (buggy) outcome: *"this particular line is emitted DURING the close --
 after which FQ-019's [journal replaces its buffer]"*. That test must be **rewritten, not extended**, whichever
@@ -3581,6 +3652,14 @@ and ends: *"If this ever needs to change it is a new entry, not a quiet patch."*
 entry. Whichever option is chosen (including E), `spec-maintainer` must be dispatched afterwards to replace
 that blockquote and, for option C, to add a row/qualification to the prefix→destination table (which currently
 maps `[Project]` → Activity Log unconditionally) plus a Supersession Ledger row. Do not edit the spec here.
+
+**Ruling makes this concrete:** option C is chosen, so after the fix lands `spec-maintainer` must (1) replace
+the *"recorded, not fixed"* blockquote with the ruling, (2) amend the prefix→destination table for `[Project]`
+— in whichever of the two shapes actually shipped (whole prefix vs. content marker; see *Owner ruling*), (3)
+sweep the **Results → Messages** tab rename through the FQ-028 sections, and (4) state the distinction the
+rename encodes: the bottom-dock **Messages** tab (a message log) is *not* the Sandbox SQL Console's **Results**
+grid (`ui/sql_results_panel.py`), which keeps its name. `manual-maintainer` is also implicated by the rename
+(the tab is named in the manual and in the View menu). Still: do not edit the spec or manual from this entry.
 
 ---
 
