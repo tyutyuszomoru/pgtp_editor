@@ -38,12 +38,22 @@
 > there could only ever be a second literal copy free to drift again.
 > **(6) BUG-045 — FQ-030's one debt is paid.** `SchemaIndex` publishes `column_infos()` / `routines()`;
 > the seam's private-`_schema` reach is **deleted outright, not kept as a fallback**.
-> **One new defect found and dispatched: BUG-055.** §7 accepted a stated risk — *"if immediacy proves
-> insufficient, a transient toast is a later entry"*. **It proved insufficient:** `StaticStatusBar`
-> paints nothing, so **~15 user-facing refusals reach nobody**, including BUG-048's own. §7 now carries
-> the durable split — **a notice belongs in the journal; a refusal must reach a surface the user is
-> already looking at** — with the fix reusing the Messages tab and `show_hint`, **not** reopening the
-> status bar.
+> **(7) CORRECTION, same day, to this pass's own BUG-055 claim — the premise was wrong and is WITHDRAWN.**
+> The earlier text here said §7's accepted risk *"proved insufficient"* because `StaticStatusBar` paints
+> nothing, so *"~15 user-facing refusals reach nobody"*. **They are not lost.** `showMessage` calls
+> `notice_sink` (`status_bar.py:131-136`), the sink is wired unconditionally (`main_window.py:642`), and
+> `_record_notice` → `record_activity` **appends the row to the Activity Log panel immediately**; the one
+> dropping branch is dead in the current construction order and is correct defensive code. **The rule
+> itself is not refuted, but its STATUS is downgraded from settled ruling to PROPOSAL** — *a notice
+> belongs in the journal; a refusal must reach a surface the user is already looking at* — because
+> applying it to ~15 shipped refusals is a **feature, not a correction**. It is **OPEN with
+> `owner-decision`**, and §7 now records what that decision actually turns on: **FQ-023's three reference
+> implementations refuse three different ways** (`_report_gesture_unavailable` dual-routes,
+> `_refuse_sandbox_gesture` raises a `QMessageBox`, the rest journal only). **BUG-055 stays OPEN with its
+> scope reduced to two stale comments** (`:5795-5798`, `:3514-3518`), which are prose defects over correct
+> behaviour. §7's ⚠ block and its §18.5 twin are corrected in place; §18.5's narrower claims — that
+> `showMessage` paints nothing, that `timeout` is ignored, and that the surviving `4000` is a pre-FQ-028
+> leftover — were **correct and survive**.
 > *(Previously the same day:)* **FQ-030's FINAL SLICE FOLDED IN, plus
 > three verified spec-vs-code divergences (three ledger rows, §28). `README.md` REWRITTEN in the same
 > pass** under this agent's standing README obligation: the project's front page still opened *"A
@@ -1228,27 +1238,52 @@ checkbox.
 **The Activity Log is where the ~40 transient status-bar messages now land** (see the status-bar rule
 below).
 
-> **⚠ THE RISK THIS PARAGRAPH ACCEPTED HAS MATERIALIZED — BUG-055.** It previously read: *"errors and
-> refusals (`Check — no sandbox session`, `Target failed`) become journal entries under this rule too:
-> accepted for v1 with the risk stated — if immediacy proves insufficient, a transient toast is a later
-> entry."* **Immediacy proved insufficient, and the toast is not the answer.** A sweep of the 30
-> `statusBar().showMessage` sites (all in `ui/main_window.py`) found **~15 that are user-facing refusals
-> with no other surface** — including BUG-048's *"Raw XML is read only in … — project history cannot
-> change it"* and `_on_read_only_edit_attempted`, whose own docstring still says *"flash a non-modal
-> hint"*. `StaticStatusBar.showMessage` paints nothing, and **the Activity Log tab is not even revealed**
-> (`_reveal_activity_tab` is wired only to `View ▸ Activity Log`), so those refusals reach nobody and the
-> gesture reads as a silent no-op — the outcome FQ-023's *"state the reason"* rule and BUG-048's
-> deliberate rejection of greying both existed to prevent. One shipped comment says so out loud and is
-> **false since FQ-028**: `_refuse_sandbox_gesture`'s *"Declining still leaves the reason on screen."*
+> **THE RISK THIS PARAGRAPH ACCEPTED HAS *NOT* MATERIALIZED — CORRECTED 2026-08-10.** This block
+> previously asserted that ~15 user-facing refusals **"reach nobody"** because `StaticStatusBar` paints
+> nothing. **That is false, and it was false when written.** The sink is followed end to end in the
+> current tree: `StaticStatusBar.showMessage` (`ui/status_bar.py:131-136`) stores the text and calls
+> `notice_sink(text)`; the sink is wired unconditionally at `ui/main_window.py:642`
+> (`StaticStatusBar(self, notice_sink=self._record_notice)`) and there is **no configuration where it is
+> `None`**; `_record_notice` (`:2179-2199`) calls `record_activity` (`:1764-1776`), which does
+> `activity_log.record(...)` **and** `activity_panel.append(entry)`. **The row materializes on the
+> Activity Log tab immediately, whether or not that tab is current** — so the missing reveal
+> (`_reveal_activity_tab` is wired only to `View ▸ Activity Log`) is *not* evidence of invisibility, and
+> the earlier block's use of it as proof was the reasoning error. `_record_notice`'s one dropping branch
+> (`activity_log is None`) is **dead in the current construction order** — `activity_log` is assigned at
+> `:892`, the earliest `showMessage` reachable during `__init__` is `:982` — and is **correct defensive
+> code that stays**: a half-built window must not crash over where to file a notice.
 >
-> **The split this makes explicit, and it is the durable part: a NOTICE and a REFUSAL are different
-> things.** A notice reports what happened and the journal is its right home — the ~12 progress/outcome
-> messages FQ-028 routed there stay exactly as they are. A **refusal answers a gesture the user just
-> made**, so it must reach a surface they are already looking at. **The fix reuses surfaces that already
-> exist rather than adding a toast** — `_report_gesture_unavailable`'s dual route to the **Messages** tab,
-> and `CodeEditor.report_refusal` → `show_hint`'s transient caret tooltip (FQ-030's refusal channel) —
-> so **§7's static-bar rule is NOT reopened**: `displayed_message() == ""` remains the guard, and nothing
-> returns to the bar. Tracked in `docs/BUGFIX_QUEUE.md`; a ledger row is owed when it lands.
+> **The stated risk therefore stands as originally accepted**: errors and refusals (`Check — no sandbox
+> session`, `Target failed`) are journal entries under this rule, *"accepted for v1 with the risk stated —
+> if immediacy proves insufficient, a transient toast is a later entry."*
+>
+> **What survives is a PROPOSAL, NOT A RULING — do not implement it as settled design.** The distinction
+> it draws is sound and the app already honours it in three places: **a notice reports what happened and
+> the journal is its right home; a refusal answers a gesture the user just made, so it should reach a
+> surface they are already looking at.** But it was recorded here as settled *because the risk had
+> materialized*, and it had not. Applying it uniformly would change **~15 shipped refusals**, which is a
+> **feature, not a correction**. It is **filed through `owner-decision` and OPEN at the time of writing**
+> (`docs/DECISION_QUEUE.md`); nothing here pre-empts that ruling.
+>
+> **The genuinely unsettled thing, and the useful residue: FQ-023's own reference implementations
+> disagree with each other.** FQ-023 requires a gesture that cannot run to state *why* without saying
+> *where*, and the three shipped shapes answer *where* three different ways:
+>
+> | Site | How the refusal surfaces |
+> |---|---|
+> | `_report_gesture_unavailable` (`ui/main_window.py:6415-6428`) | **dual-routes** — `_report_check_lines` to the Messages tab **and** `showMessage` |
+> | `_refuse_sandbox_gesture` (`:5785`) | raises a **`QMessageBox`** |
+> | the remaining ~15 | **journal only**, via the `showMessage` sink |
+>
+> That inconsistency is real, it is what the owner will be ruling on, and it is why the rule above is not
+> yet spec. **Whatever the ruling, §7's static-bar rule is not reopened**: `displayed_message() == ""`
+> remains the guard and nothing returns to the bar.
+>
+> **Two narrow defects DO survive and are tracked in BUG-055** (which stays `OPEN` with its scope reduced
+> to exactly these two — do not re-file them): `_refuse_sandbox_gesture`'s comment *"Declining still
+> leaves the reason on screen"* (`:5795-5798`) is **false since FQ-028**, and
+> `_on_read_only_edit_attempted`'s docstring (`:3514-3518`) promises to *"flash a non-modal hint"* over a
+> body that only journals. Both are stale prose over correct behaviour, not behavioural bugs.
 
 #### The status bar is STATIC-ONLY — the owner's rule, not a preference (FQ-028 Part 2)
 
@@ -6489,17 +6524,21 @@ required behavior:
 > set is somehow empty). This is FQ-023's rule applied to the history lane: **a gesture that cannot do the
 > right thing states why, rather than vanishing or greying.**
 >
-> **⚠ WHERE that reason actually lands is NOT where the fix intended.** `_history_write_refused` emits it
-> with `self.statusBar().showMessage(reason, 4000)`, and since FQ-028 the status bar is
-> `StaticStatusBar`, whose `showMessage` **paints nothing** and journals the text to the Activity Log
-> (`displayed_message()` is `""` by design, and the `timeout` argument is accepted and ignored). So the
-> refusal is *recorded* but never appears in front of the user, who sees a `Ctrl+Z` that silently does
-> nothing. **Filed as a defect rather than written in as design — BUG-055** — the surviving `4000`
-> argument shows the fix meant a transient notice, and this is the FQ-028 sink change catching a call
-> site written to the old contract. **It is not one call site: a sweep found ~15 refusals with the same
-> problem**, so §7 now carries the general rule — **a notice belongs in the journal, a refusal must reach
-> a surface the user is already looking at** — and the resolution reuses the Messages tab and
-> `show_hint`'s caret tooltip rather than reopening the status bar.
+> **WHERE that reason lands is the Activity Log, not a transient notice — and the `4000` is a leftover.**
+> `_history_write_refused` emits it with `self.statusBar().showMessage(reason, 4000)`. Since FQ-028 the
+> status bar is `StaticStatusBar`, whose `showMessage` **paints nothing** and hands the text to the
+> host's notice sink (`displayed_message()` is `""` by design, and the `timeout` argument is **accepted
+> and ignored**). The surviving **`4000` is a pre-FQ-028 leftover**: it shows the fix was written to the
+> old contract, in which the bar was a message board. **It is not one call site — ~15 refusals share the
+> same shape.**
+>
+> **The refusal is NOT lost, and an earlier revision of this block wrongly said it was** (corrected
+> 2026-08-10). The sink is wired unconditionally and appends the row to the Activity Log panel
+> immediately; §7 traces the path call by call. What is genuinely open is whether a *refusal* should
+> additionally reach a surface the user is already looking at — a **proposal filed through
+> `owner-decision` and unresolved at the time of writing**, not a rule of this document. See §7's block
+> for the three inconsistent shapes FQ-023's own reference implementations ship, which is what that
+> decision turns on.
 
 **2 — No sandbox button row in v1.** *Apply to Sandbox* / *Check* / *Check without applying* (and their
 menu twins — Database for Apply, `Parsing` for the two Checks since BUG-039) have their consumers in
