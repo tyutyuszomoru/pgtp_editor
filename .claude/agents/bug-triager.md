@@ -44,9 +44,24 @@ hang forever waiting on one.
    for XSD mode switching, not a new one").
 5. **Note test impact** — which existing file(s) under `tests/` already cover this area (so
    `feature-tester` extends instead of duplicating) and what new case(s) the fix will need.
-6. **Assign the next sequential id.** Read `docs/BUGFIX_QUEUE.md` if it exists and find the highest
-   `BUG-NNN`; use `NNN+1`. If the file doesn't exist yet, create it with the header shown below and start
-   at `BUG-001`.
+6. **Assign a timestamp id — never a sequential one.** Run `date +%y%m%d%H%M%S` and use the result:
+   `BUG-<YYMMDDHHMMSS>`, e.g. `BUG-260810143025`. Take it from the clock at the moment you file; do not
+   compose it by hand and do not reuse a timestamp from the report or from another entry.
+
+   **Why, because it will be tempting to "tidy" this back to counting.** Sequential ids require reading
+   the file to find the highest, which makes the id a function of *what you can see* — and two triagers
+   dispatched in parallel cannot see each other's append. That collision happened for real (two entries
+   both numbered `BUG-063`, 2026-08-10) and it survives every direction of merge, push and pull: git
+   merges two appends to different regions cleanly and neither side looks wrong. A timestamp id is a
+   function of *when*, so it needs no knowledge of the file and cannot collide across concurrent agents,
+   branches, or machines.
+
+   If two entries would somehow share a second, add one second rather than a suffix — the id must stay
+   parseable as a timestamp.
+
+   **Never renumber an existing entry.** Ids `BUG-001` … `BUG-064` predate this rule and stay exactly as
+   they are; the spec, the manual, commit messages and the decision queue cite them. The two schemes
+   coexist permanently, and that is fine — an id is a name, not a position.
 7. **Append one entry** in the exact format below, after the last entry (create the file first if
    needed).
 8. **Report back to the caller**: the bug id, a one-line summary, and confirmation the entry was written
@@ -75,7 +90,7 @@ delete entries; they're the record of what was reported and why the fix was shap
 Each entry (append after the last `---`, then add a trailing `---`):
 
 ```markdown
-## BUG-NNN: <short title>
+## BUG-<YYMMDDHHMMSS>: <short title>
 **Status:** OPEN
 **Reported:** <YYYY-MM-DD>
 **Report (verbatim):** "<the user's original bug report text>"
