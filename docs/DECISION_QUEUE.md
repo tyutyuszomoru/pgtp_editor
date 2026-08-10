@@ -997,12 +997,26 @@ is unavailable rather than vanishing — but it says *why*, not *where*. Its own
 disagree with each other, and all three ship:
 
 1. `MainWindow._report_gesture_unavailable` (`main_window.py:6415-6428`) — dual-routes: a `[Check]` line
-   (`audit_router.py:135`, `CHECK_PREFIX: TO_RESULTS`) **plus** the journal.
+   **plus** the journal. The `[Check]` line's destination constant is `TO_RESULTS`
+   (`audit_router.py:135`, `CHECK_PREFIX: TO_RESULTS`), which is the bottom dock tab **titled `Messages`**
+   in the UI (`audit_router.py:116-119`). So this refusal is visible on the **Messages** tab — a surface,
+   not a results grid.
 2. `MainWindow._refuse_sandbox_gesture` (`main_window.py:5750`) — raises a **`QMessageBox`** with an
    `Open` button.
 3. The remaining ~15 — **journal only**.
 
 That three-way inconsistency is the thing to settle.
+
+> **Corrected 2026-08-10 (fact, not scope).** As first filed, this entry said implementation 1 "routes to
+> Results, not Messages". That was wrong in the way that matters here: `TO_RESULTS` is the **identifier**,
+> and the tab it names has been **titled `Messages`** since the FQ-028 title collided with the Sandbox SQL
+> Console's genuine results grid — the identifier deliberately kept its old spelling, because "a label is
+> not a schema" (`audit_router.py:116-119`). One surface, two names. Read the old wording literally and you
+> would think one of the three implementations targeted a different surface than it does, in a decision
+> that is entirely about *where a refusal appears*. This is the **same one-surface-two-names confusion that
+> produced BUG-042**, tripped over again while documenting that bug's aftermath — so whenever `TO_RESULTS`
+> is cited anywhere, name the tab title alongside it. Status, options, recommendation and the FQ-028
+> boundary are unchanged by this correction.
 
 **A fourth mechanism already exists and is the natural home for the "immediate" answer:**
 `CodeEditor.report_refusal` (`code_editor.py:596-610`) → `show_hint(..., refusal=True)` (`:612-625`) — a
