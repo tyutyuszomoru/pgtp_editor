@@ -32,7 +32,7 @@ or a live connection; it only ever sees the finished `SchemaIndex` object
 """
 from __future__ import annotations
 
-from .introspect import ColumnInfo, DatabaseSchema, TriggerInfo
+from .introspect import ColumnInfo, DatabaseSchema, RoutineInfo, TriggerInfo
 
 #: How much of a free-text column attribute (its DEFAULT expression, its
 #: COMMENT) may reach a completion row before it is elided. A popup row is a
@@ -120,6 +120,38 @@ class SchemaIndex:
             for entry in self._column_entries.get(table, ())
             if entry[0].lower().startswith(prefix_lower)
         ]
+
+    def column_infos(self, table: str) -> list[ColumnInfo]:
+        """`table`'s `ColumnInfo` objects -- the whole column facts, not the
+        names `known_columns` returns nor the popup rows `column_entries` does.
+
+        `table` is the schema-qualified `"schema.table"` key both of those use;
+        a table the fetch never saw yields `[]`, never raises. The list is a
+        fresh copy, so a caller that sorts or trims it cannot disturb the fetch
+        (`known_columns`/`column_entries` read the same `TableInfo`).
+
+        This is what the FQ-030 join gesture reads for `ColumnInfo.fk_target`;
+        it exists so no caller has to reach behind the index for it.
+        """
+        info = self._schema.tables.get(table)
+        if info is None:
+            return []
+        return list(info.columns)
+
+    # --- Routines -----------------------------------------------------------
+    def routines(self) -> tuple[RoutineInfo, ...]:
+        """Every fetched routine, in `DatabaseSchema.routines` order.
+
+        Overloads are separate entries: that dict is keyed by
+        `RoutineInfo.signature` -- the name PLUS its argument types (§18.1) --
+        so `f(int)` and `f(text)` are two routines here. Order is preserved
+        because signature help ranks equally-fitting overloads stably.
+
+        `RoutineInfo` is returned as-is: `db/` publishes its own type and the
+        `sql/` adaptation stays in the caller, so `sql/` still never sees a
+        schema object.
+        """
+        return tuple(self._schema.routines.values())
 
     # --- Trigger/function reverse lookup ------------------------------------
     def trigger_for_function(

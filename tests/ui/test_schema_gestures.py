@@ -415,6 +415,19 @@ def test_signature_help_reads_no_database(qtbot):
     assert "connect(" not in source
 
 
+def test_seam_reaches_no_private_attribute_on_the_index(qtbot):
+    """BUG-045: the facts now come from `SchemaIndex.column_infos`/`routines`,
+    so nothing here reads the index's private `_schema`. Asserted on the reach
+    itself -- `self._schema_index` is legitimate and would false-positive a
+    bare `"_schema" not in source`."""
+    import pgtp_editor.ui.schema_gesture_seam as mod
+
+    source = open(mod.__file__, encoding="utf-8").read()
+    assert "_database_schema" not in source
+    assert '"_schema"' not in source
+    assert "column_infos" in source
+
+
 # --- nothing on an edit signal ----------------------------------------------
 def test_typing_never_resolves_a_call_site_or_a_join_site(qtbot, monkeypatch):
     """The performance invariant, restated for slice 3: both analyzers are

@@ -31,18 +31,18 @@ path may issue a lazy query). `SchemaGestureHostMixin` below is the small Qt
 half: the two gestures as the panels expose them, written once because the DDL
 object tab and the Sandbox SQL Console want them identically.
 
-READING FACTS `SchemaIndex` DOES NOT PUBLISH
---------------------------------------------
-`SchemaIndex` publishes column *names* (`known_columns`), popup *rows*
-(`column_entries`) and a trigger reverse lookup -- it publishes no `ColumnInfo`
-and no routine accessor at all. Both gestures need facts that live only on the
-underlying `db/introspect.py::DatabaseSchema` (`ColumnInfo.fk_target`,
-`RoutineInfo.args`/`return_type`), so `_database_schema` reaches it through the
-index. It asks for a public `schema()` first, so the day `SchemaIndex` grows
-one this module picks it up without an edit; today it falls back to the private
-attribute. Everything is duck-typed and tolerant of absence -- a stub index, a
-table the fetch never saw, a schema with no routines all yield "nothing to
-offer", never an exception, because this runs off a keystroke.
+WHAT THE INDEX IS ASKED FOR
+---------------------------
+Both gestures need more than column *names* (`known_columns`) and popup *rows*
+(`column_entries`): the join needs `ColumnInfo.fk_target` and signature help
+needs each routine's `args`/`return_type`. `SchemaIndex` publishes both --
+`column_infos(table)` and `routines()` (BUG-045) -- and this module reads
+nothing else off it, so `ui/` never touches a `db/` object's internals.
+
+Everything stays duck-typed and tolerant of absence: a stub index, an index
+that predates those accessors, a table the fetch never saw and a schema with no
+routines all yield "nothing to offer", never an exception, because this runs
+off a keystroke.
 """
 from __future__ import annotations
 
@@ -71,26 +71,16 @@ NO_SCHEMA_SIGNATURE = (
 )
 
 
-# --- reading the fetched schema behind the index ----------------------------
-def _database_schema(index):
-    """The `DatabaseSchema` behind `index`, or None."""
-    if index is None:
-        return None
-    getter = getattr(index, "schema", None)
-    if callable(getter):
-        try:
-            return getter()
-        except TypeError:  # pragma: no cover - a stub with a different arity
-            return None
-    return getattr(index, "_schema", None)
-
-
+# --- reading the index ------------------------------------------------------
 def table_columns(index, qualified: str) -> list:
     """`qualified`'s `ColumnInfo` list, or `[]` when it is not in the fetch."""
-    schema = _database_schema(index)
-    tables = getattr(schema, "tables", None) or {}
-    info = tables.get(qualified)
-    return list(getattr(info, "columns", ()) or ())
+    getter = getattr(index, "column_infos", None)
+    if not callable(getter):
+        return []
+    try:
+        return list(getter(qualified) or ())
+    except Exception:  # pragma: no cover - defensive at a keypress
+        return []
 
 
 def foreign_keys_for(index, site: JoinSite):
@@ -137,8 +127,13 @@ def routine_signatures(index) -> tuple:
     `RoutineInfo.signature` (name PLUS argument types, §18.1), so two overloads
     are two rows here and `signature_help` ranks them by arity fit.
     """
-    schema = _database_schema(index)
-    routines = getattr(schema, "routines", None) or {}
+    getter = getattr(index, "routines", None)
+    if not callable(getter):
+        return ()
+    try:
+        routines = tuple(getter() or ())
+    except Exception:  # pragma: no cover - defensive at a keypress
+        return ()
     return tuple(
         routine_signature(
             f"{routine.schema}.{routine.name}",
@@ -146,7 +141,7 @@ def routine_signatures(index) -> tuple:
             getattr(routine, "return_type", None),
             getattr(routine, "kind", "function"),
         )
-        for routine in routines.values()
+        for routine in routines
     )
 
 
