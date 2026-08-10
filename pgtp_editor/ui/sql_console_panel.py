@@ -134,10 +134,12 @@ from ..sql.statements import (
 )
 from .async_task import run_async
 from .code_editor import (
+    CLAIMED_NOT_UNDO_REDO,
     REDO,
     UNDO,
     CodeEditor,
     apply_editor_operation,
+    apply_shrink_structural_selection,
     classify_editor_chord,
     is_mutating_editor_operation,
 )
@@ -628,10 +630,16 @@ class SqlConsolePanel(SchemaGestureHostMixin, CompletionPopupHostMixin, QWidget)
                     # the Linux/KDE scheme only, so the app implements them on
                     # both (owner, 2026-08-10). The console buffer is editable.
                     apply_editor_operation(self.editor, operation)
-                # else: the answers that run nothing, consumed precisely so Qt
-                # cannot answer them instead -- Ctrl+Shift+Z (freed from redo by
-                # DEC-015; Qt binds it `KB_Win | KB_X11`) and the suppressed
-                # Alt+Backspace pair (Qt binds those `KB_Win` only).
+                elif operation == CLAIMED_NOT_UNDO_REDO:
+                    # `Ctrl+Shift+Z` = Shrink Selection (FQ-034). The chord was
+                    # already claimed here (DEC-015 freed it from redo, and Qt
+                    # binds it `KB_Win | KB_X11`, so the interception must stay);
+                    # this feature answers the claim rather than binding the
+                    # chord, which is why the menu action carries no shortcut.
+                    apply_shrink_structural_selection(self.editor)
+                # else: the answer that still runs nothing, consumed precisely so
+                # Qt cannot answer it instead -- the suppressed Alt+Backspace
+                # pair (Qt binds those `KB_Win` only).
                 return True
         if obj is self.editor and event.type() == QEvent.Type.ContextMenu:
             menu = self._build_context_menu()

@@ -124,13 +124,19 @@ def test_select_menu_contents_and_order(qtbot):
         "Select All",
         "―",
         "Select Enclosing Block",
-        "Select Parent Block",
+        "Expand Selection",
+        "Shrink Selection",
     ]
 
 
 def test_select_menu_shortcuts_are_the_three_unchanged_chords(qtbot):
     """§27: nothing is rebound. Ctrl+A is new to the MENU only — the widgets
-    have always implemented it."""
+    have always implemented it.
+
+    FQ-034 added a fourth entry and still rebound nothing: `Expand Selection`
+    keeps `Select Parent Block`'s `Ctrl+Shift+A`, and `Shrink Selection` carries
+    **no shortcut at all** (see the next test for why that is the design).
+    """
     window = _window(qtbot)
     menu = _select_menu(window)
     assert find_action(menu, "Select All").shortcut().toString() == "Ctrl+A"
@@ -139,11 +145,35 @@ def test_select_menu_shortcuts_are_the_three_unchanged_chords(qtbot):
         == "Ctrl+Shift+B"
     )
     assert (
-        find_action(menu, "Select Parent Block").shortcut().toString() == "Ctrl+Shift+A"
+        find_action(menu, "Expand Selection").shortcut().toString() == "Ctrl+Shift+A"
     )
     assert find_action(menu, "Select All") is window._select_all_action
     assert find_action(menu, "Select Enclosing Block") is window._select_enclosing_action
-    assert find_action(menu, "Select Parent Block") is window._select_parent_action
+    assert find_action(menu, "Expand Selection") is window._expand_selection_action
+    assert find_action(menu, "Shrink Selection") is window._shrink_selection_action
+
+
+def test_shrink_selection_action_carries_no_shortcut_at_all(qtbot):
+    """FQ-034's DEC-012 reconciliation, pinned.
+
+    `Ctrl+Shift+Z` is claimed by all six editing surfaces
+    (`CLAIMED_NOT_UNDO_REDO`), which accept its `ShortcutOverride` so Qt's native
+    redo cannot fire — a suppression DEC-014 mandates. A window `QAction` bound to
+    the same chord would be starved by exactly that override, so shrink's keyboard
+    host is the per-surface claim and the action is the command form only. The
+    chord must also stay RESERVED, so `Customize Shortcuts…` cannot hand it to
+    anything else.
+    """
+    from pgtp_editor.ui.shortcut_registry import (
+        CLAIMED_NOT_UNDO_REDO,
+        EDITOR_CHORDS,
+        RESERVED_SEQUENCES,
+    )
+
+    window = _window(qtbot)
+    assert window._shrink_selection_action.shortcut().isEmpty()
+    assert EDITOR_CHORDS["Ctrl+Shift+Z"] == CLAIMED_NOT_UNDO_REDO
+    assert "Ctrl+Shift+Z" in RESERVED_SEQUENCES
 
 
 # -- Select All ---------------------------------------------------------------
@@ -332,46 +362,95 @@ def test_select_enclosing_block_dispatch_picks_the_method_the_editor_has(qtbot, 
     assert not hasattr(tab.editor, "select_enclosing_block")
 
 
-# -- Select Parent Block: XML-only, absent where it has no meaning ------------
+# -- Expand / Shrink Selection: present where there is structure to climb -----
 
 
-def test_select_parent_block_in_raw_xml_walks_one_level_up(qtbot):
+def test_expand_selection_in_raw_xml_walks_one_level_up(qtbot):
+    """The XML family's grow is UNCHANGED by FQ-034 -- `select_parent_block` is
+    already one structural level per press, so the rename is all that reached it."""
     window = _window(qtbot)
     editor = window.center_stage.xml_editor
     _put_caret(editor, _RAW_XML.index("<ColumnPresentations/>") + 2)
 
-    window._select_parent_action.trigger()
+    window._expand_selection_action.trigger()
 
     selected = editor.textCursor().selectedText().replace(" ", "\n")
     assert selected.startswith("<Page ") and selected.endswith("</Page>")
 
 
-def test_select_parent_block_is_absent_on_code_editor_tabs(qtbot, tmp_path):
-    """A bracket pair has no "one nesting level up" that means anything in SQL or
-    PHP, so the entry is HIDDEN (the app's two-posture rule: present / absent) —
-    which also drops Ctrl+Shift+A there, since Qt keeps a shortcut live only
-    while its action is enabled AND visible."""
+def test_expand_selection_is_absent_only_where_there_is_no_structure(qtbot, tmp_path):
+    """FQ-034 rescoped this gate: before, the entry was hidden on EVERY
+    `CodeEditor` tab; now it is present wherever the editor answers
+    `supports_structural_expansion()` -- every SQL editor and every XML editor --
+    and hidden on PHP/JS, which have no plpgsql structure to climb. Hidden, never
+    greyed, which is also what drops Ctrl+Shift+A there.
+    """
     window = _window(qtbot, tmp_path)
-    assert window._select_parent_action.isVisible() is True
+    assert window._expand_selection_action.isVisible() is True
 
     panel = _ddl_object_tab(window)
     assert window.center_stage.currentWidget() is panel
-    assert window._select_parent_action.isVisible() is False
+    assert window._expand_selection_action.isVisible() is True
 
     tab = _php_tab(window, tmp_path)
     assert window.center_stage.currentWidget() is tab
-    assert window._select_parent_action.isVisible() is False
+    assert window._expand_selection_action.isVisible() is False
 
     stage = window.center_stage
     stage.setCurrentIndex(stage.ddl_tab_index)
-    assert window._select_parent_action.isVisible() is False
+    assert window._expand_selection_action.isVisible() is True
 
-    # ...and it comes back on an XML editor tab.
     stage.setCurrentIndex(stage.raw_xml_tab_index)
-    assert window._select_parent_action.isVisible() is True
+    assert window._expand_selection_action.isVisible() is True
 
 
-def test_select_parent_block_triggered_on_a_php_tab_is_a_no_op_not_raw_xml(
+def test_shrink_selection_is_hidden_on_xml_and_php_and_shown_on_sql(qtbot, tmp_path):
+    """Shrink is SQL-only, and XML's absence is a scope decision with a reason
+    (§8): XML's grow is stateless and re-derivable, so shrink there would mean
+    giving `XmlEditor` the expansion stack too. So the gate is `hasattr` (a class
+    fact -- `XmlEditor` has no such method) AND the per-instance language
+    predicate, which is what keeps it hidden on a PHP `CodeEditor` that DOES have
+    the method.
+    """
+    window = _window(qtbot, tmp_path)
+    assert not hasattr(window.center_stage.xml_editor, "shrink_structural_selection")
+    assert window._shrink_selection_action.isVisible() is False
+
+    panel = _ddl_object_tab(window)
+    assert hasattr(panel.editor, "shrink_structural_selection")
+    assert window._shrink_selection_action.isVisible() is True
+
+    tab = _php_tab(window, tmp_path)
+    assert hasattr(tab.editor, "shrink_structural_selection")  # the method exists...
+    assert tab.editor.supports_structural_expansion() is False  # ...the language does not
+    assert window._shrink_selection_action.isVisible() is False
+
+    stage = window.center_stage
+    stage.setCurrentIndex(stage.ddl_tab_index)  # the read-only DDL Explorer buffer
+    assert window._shrink_selection_action.isVisible() is True
+
+
+def test_the_sql_ladder_is_repeatable_and_shrink_walks_back_down(qtbot, tmp_path):
+    """The whole feature end to end on a real tab: press grow four times, then
+    shrink three times, landing back exactly where each press came from."""
+    window = _window(qtbot, tmp_path)
+    panel = _ddl_object_tab(window)
+    editor = panel.editor
+    editor.setPlainText("select a, coalesce(b, c) from t where a = 1;")
+    _put_caret(editor, editor.toPlainText().index("b,"))
+
+    grown = []
+    for _ in range(4):
+        window._expand_selection_action.trigger()
+        grown.append(editor.textCursor().selectedText())
+    assert grown == ["b", "b, c", "(b, c)", "select a, coalesce(b, c)"]
+
+    for expected in reversed(grown[:-1]):
+        window._shrink_selection_action.trigger()
+        assert editor.textCursor().selectedText() == expected
+
+
+def test_expand_selection_triggered_on_a_php_tab_is_a_no_op_not_raw_xml(
     qtbot, tmp_path
 ):
     """Second belt behind the visibility gate: a hidden action can still be
@@ -382,7 +461,8 @@ def test_select_parent_block_triggered_on_a_php_tab_is_a_no_op_not_raw_xml(
     _put_caret(tab.editor, _PHP.index("'shout'"))
     before = _raw_xml_state(window)
 
-    window._select_parent_action.trigger()
+    window._expand_selection_action.trigger()
+    window._shrink_selection_action.trigger()
 
     assert tab.editor.textCursor().hasSelection() is False
     assert _raw_xml_state(window) == before
@@ -399,7 +479,7 @@ def test_the_ctrl_shift_a_chord_itself_is_live_on_xml_and_dead_on_a_php_tab(
     editor = window.center_stage.xml_editor
     _put_caret(editor, _RAW_XML.index("<ColumnPresentations/>") + 2)
     fired = []
-    window._select_parent_action.triggered.connect(lambda: fired.append(1))
+    window._expand_selection_action.triggered.connect(lambda: fired.append(1))
     window.show()
     QApplication.processEvents()
     editor.setFocus()
@@ -604,7 +684,7 @@ def test_caret_lands_at_the_start_of_every_structural_selection(qtbot):
     cursor = editor.textCursor()
     assert cursor.position() == cursor.selectionStart()
 
-    window._select_parent_action.trigger()
+    window._expand_selection_action.trigger()
     cursor = editor.textCursor()
     assert cursor.position() == cursor.selectionStart()
     assert isinstance(cursor, QTextCursor)

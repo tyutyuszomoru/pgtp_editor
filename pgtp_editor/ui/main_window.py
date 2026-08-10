@@ -607,6 +607,22 @@ class AlterDdlRef:
         return f"{stem}.sql"
 
 
+def _supports_structural_expansion(editor) -> bool:
+    """Whether `editor` offers §8's structural expand ladder (FQ-034).
+
+    **A question put to the editor, not a `hasattr`.** The gate this replaces
+    asked `hasattr(editor, "select_parent_block")`, which is a *class* fact;
+    grow's real gate is a **per-instance** one — a `CodeEditor` has the ladder
+    only where its language is plpgsql — and `hasattr` cannot express that. So
+    both editor families answer one predicate,
+    `supports_structural_expansion()`, and this wrapper is only the "an editor
+    that never heard of the question says no" adapter (a future non-gutter editor
+    tab, or a `None`-ish stand-in in a test).
+    """
+    predicate = getattr(editor, "supports_structural_expansion", None)
+    return bool(predicate()) if callable(predicate) else False
+
+
 class MainWindow(QMainWindow):
     #: The ONE sanctioned bridge while a lane is mid-extraction: legacy host
     #: attribute name -> dotted path to resolve on the host instead
@@ -2595,8 +2611,8 @@ class MainWindow(QMainWindow):
         self._redo_action = redo_action
 
     def _build_select_menu(self):
-        """Select ▸ Select All · Select Enclosing Block · Select Parent Block
-        (FQ-015, §8/§26).
+        """Select ▸ Select All · Select Enclosing Block · Expand Selection ·
+        Shrink Selection (FQ-015, then FQ-034; §8/§26).
 
         `Select All` is a NEW entry for behaviour that already worked: nothing in
         the app binds Ctrl+A, so every editor's built-in select-all has always
@@ -2607,7 +2623,13 @@ class MainWindow(QMainWindow):
         Mode (unlike Find/Replace, which that mode owns): selecting text mutates
         nothing.
 
-        The other two MOVED here off the dissolved Edit menu — and are rebuilt,
+        **FQ-034 grew the menu to four.** `Select Parent Block` became the
+        repeatable `Expand Selection` (extended to the SQL editors) and gained
+        `Shrink Selection` beside it; see `_expand_structural_selection` and
+        `_shrink_structural_selection`.
+
+        The two block-selection entries MOVED here off the dissolved Edit menu —
+        and are rebuilt,
         not relocated: FQ-016 removed them with the menu, so between it and this
         change Ctrl+Shift+A had no host at all and Ctrl+Shift+B survived only
         through `CodeEditor.keyPressEvent`.
@@ -2640,10 +2662,28 @@ class MainWindow(QMainWindow):
         select_enclosing_action.setShortcut("Ctrl+Shift+B")
         select_enclosing_action.triggered.connect(self._select_enclosing_block)
         self._select_enclosing_action = select_enclosing_action
-        select_parent_action = menu.addAction("Select Parent Block")
-        select_parent_action.setShortcut("Ctrl+Shift+A")
-        select_parent_action.triggered.connect(self._select_parent_block)
-        self._select_parent_action = select_parent_action
+        # FQ-034's renamed grow entry plus its new inward twin. Order matters:
+        # `Expand Selection` keeps `Select Parent Block`'s place and
+        # `Shrink Selection` follows it immediately, so the pair reads as a pair.
+        expand_action = menu.addAction("Expand Selection")
+        expand_action.setShortcut("Ctrl+Shift+A")
+        expand_action.triggered.connect(self._expand_structural_selection)
+        self._expand_selection_action = expand_action
+        # **NO `setShortcut` HERE, and that is the feature's subtlest point.**
+        # `Ctrl+Shift+Z` is already claimed by all six editing surfaces
+        # (`CLAIMED_NOT_UNDO_REDO`), which accept its `ShortcutOverride` so Qt's
+        # native redo cannot fire -- a suppression DEC-014 *mandates* and DEC-015
+        # depends on. A window action bound to the same chord would be starved by
+        # exactly that override. So shrink's keyboard host is the existing
+        # per-surface claim, which now delegates to one
+        # `apply_shrink_structural_selection`; this action is the *command* form
+        # only. The stated price (§8): the pair is not symmetrically rebindable --
+        # grow can be moved through `View ▸ Customize Shortcuts…`, shrink cannot,
+        # and `Ctrl+Shift+Z` cannot be handed to anything else either because it
+        # stays in `RESERVED_SEQUENCES`.
+        shrink_action = menu.addAction("Shrink Selection")
+        shrink_action.triggered.connect(self._shrink_structural_selection)
+        self._shrink_selection_action = shrink_action
 
     def _select_all_in_active_editor(self) -> None:
         """`Select All` — the one member every editor family supports, since
@@ -2689,23 +2729,60 @@ class MainWindow(QMainWindow):
         if select is not None:
             select()
 
-    def _select_parent_block(self) -> None:
-        """`Select Parent Block` — XML-only, and ABSENT rather than silently
-        wrong where there is no parent element (FQ-015).
+    def _expand_structural_selection(self) -> None:
+        """`Expand Selection` — one structural level outward per press (FQ-034).
 
-        Only `XmlEditor` has `select_parent_block` ("one nesting level up"): a
-        bracket pair has no analogous parent walk that means anything to a
-        reader of SQL or PHP. So on a `CodeEditor` tab the entry is HIDDEN by
-        `_refresh_editor_menu_affordances` — visibility, matching the app's
-        two-posture rule (present / absent, never greyed) — which also drops
-        Ctrl+Shift+A there, since Qt keeps a shortcut live only while its action
-        is both enabled and visible. The capability guard below is the second
-        belt: the action can be triggered programmatically.
+        **Renamed from `Select Parent Block`, which described only the XML walk.**
+        The command now means the same thing on both editor families, so the label
+        — and therefore the command id, since the label IS the id's last segment
+        (§7) — moves `select.select-parent-block` → `select.expand-selection`,
+        with a `toolbar_registry.RENAMED_ID_ALIASES` row so a pinned toolbar
+        button and a stored shortcut override survive.
+
+        Dispatched BY CAPABILITY, never by assuming one method name, exactly like
+        `_select_enclosing_block`:
+
+        * `CodeEditor` with `language == "sql"` (DDL object tabs, the read-only
+          DDL Explorer buffer, the Sandbox SQL Console):
+          `expand_structural_selection` — the repeatable plpgsql ladder, word →
+          bracket group → clause → statement → each enclosing block →
+          `BEGIN…END`, with an expansion stack so `Shrink Selection` can invert it.
+        * `XmlEditor`: `select_parent_block` — the existing stateless parent walk,
+          unchanged, because it is *already* one structural level per press.
+
+        The entry is HIDDEN where neither applies (PHP/JS tabs), which also drops
+        `Ctrl+Shift+A` there since Qt keeps a shortcut live only while its action
+        is visible. The predicate below is the second belt, for the programmatic
+        and toolbar triggers that bypass visibility.
         """
         editor = self._find_ui.active_selection_editor()
-        select = getattr(editor, "select_parent_block", None)
+        if not _supports_structural_expansion(editor):
+            return
+        select = getattr(editor, "expand_structural_selection", None) or getattr(
+            editor, "select_parent_block", None
+        )
         if select is not None:
             select()
+
+    def _shrink_structural_selection(self) -> None:
+        """`Shrink Selection` — one structural level back inward (FQ-034).
+
+        SQL editors only. `XmlEditor` has no `shrink_structural_selection` at
+        all: its grow is stateless, so shrink would mean giving that family the
+        expansion stack too, for users who did not ask for it (§8). The entry is
+        hidden there by the same capability gate that hides grow on PHP tabs.
+
+        **This slot is the command form, not the keyboard host.** The chord
+        `Ctrl+Shift+Z` is answered inside each surface's own key handling — see
+        `_build_select_menu` for why it cannot be a `setShortcut` here — and both
+        paths run the same `CodeEditor.shrink_structural_selection`.
+        """
+        editor = self._find_ui.active_selection_editor()
+        if not _supports_structural_expansion(editor):
+            return
+        shrink = getattr(editor, "shrink_structural_selection", None)
+        if shrink is not None:
+            shrink()
 
     def _build_parsing_menu(self):
         """Parsing ▸ Auto Parse XML · Validate Project (FQ-016).
@@ -2966,14 +3043,14 @@ class MainWindow(QMainWindow):
            the recommendation and it is what the visibility refresh gives for
            free. Note it hides the *bar widget*, not the actions, so a pinned
            toolbar button never blinks out with it.
-        2. Hide `Select ▸ Select Parent Block` on tabs whose editor has no
-           parent-block concept (FQ-015). This is the seam's first real
-           **capability** gate — the kind `_build_parsing_menu`'s docstring says
-           it exists for — rather than a taste-based per-tab hide: a `CodeEditor`
-           (DDL Explorer, DDL object tab, PHP tab) genuinely has no "one nesting
-           level up", so the honest posture is absent, not a menu entry that
-           no-ops. Asking the editor itself (`hasattr`) keeps this correct for
-           free when a new editor tab kind appears. Unlike case 1 this hides an
+        2. Hide `Select ▸ Expand Selection` / `Shrink Selection` on tabs whose
+           editor has no structural ladder (FQ-015, rescoped by FQ-034). This is
+           the seam's first real **capability** gate — the kind
+           `_build_parsing_menu`'s docstring says it exists for — rather than a
+           taste-based per-tab hide: a PHP or JS `CodeEditor` genuinely has no
+           plpgsql structure to climb, so the honest posture is absent, not a menu
+           entry that no-ops. Asking the editor itself keeps this correct for free
+           when a new editor tab kind appears. Unlike case 1 this hides an
            *action*, so a user who pinned this command to the toolbar sees that
            button come and go with the tab — accepted, because the alternative is
            a toolbar button that does nothing.
@@ -2997,8 +3074,19 @@ class MainWindow(QMainWindow):
         # Save XSD` reachable inside the mode.
         self.editor_menu_bar.setVisible(index not in hidden_on)
         editor = self._find_ui.active_selection_editor()
-        self._select_parent_action.setVisible(
-            hasattr(editor, "select_parent_block")
+        # FQ-034: grow's gate is now a QUESTION on the editor rather than a
+        # `hasattr`, because a `CodeEditor` supports the ladder only in
+        # `language == "sql"` — a per-instance fact no class-level check can
+        # express. Shrink keeps the `hasattr` form, where it really IS a class
+        # fact (`XmlEditor` does not have the method), AND asks the predicate too,
+        # so a PHP tab — whose `CodeEditor` has the method but not the language —
+        # hides both entries rather than one. Hidden, never greyed, per the app's
+        # two-posture rule; both slots re-check inside themselves as the second
+        # belt for programmatic and toolbar triggers.
+        supports_expansion = _supports_structural_expansion(editor)
+        self._expand_selection_action.setVisible(supports_expansion)
+        self._shrink_selection_action.setVisible(
+            supports_expansion and hasattr(editor, "shrink_structural_selection")
         )
         group = self._active_deployment_group()
         for name, actions in self._deployment_actions.items():

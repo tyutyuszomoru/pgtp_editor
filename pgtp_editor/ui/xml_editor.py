@@ -71,9 +71,11 @@ from pgtp_editor.ui.editor_gutter import (  # noqa: F401  (re-exported names)
     GutterBookmarkFoldMixin,
 )
 from pgtp_editor.ui.code_editor import (
+    CLAIMED_NOT_UNDO_REDO,
     REDO,
     UNDO,
     apply_editor_operation,
+    apply_shrink_structural_selection,
     classify_editor_chord,
     is_mutating_editor_operation,
     is_paste_chord,
@@ -986,6 +988,24 @@ class XmlEditor(CompletionPopupHostMixin, GutterBookmarkFoldMixin, QPlainTextEdi
         self.setTextCursor(cursor)
         self.ensureCursorVisible()
 
+    def supports_structural_expansion(self) -> bool:
+        """`Select ▸ Expand Selection` is always available on an XML document.
+
+        The predicate exists because `CodeEditor`'s answer is a **per-instance**
+        fact (only `language == "sql"` has a plpgsql ladder), which the old
+        `hasattr(editor, "select_parent_block")` gate could not express -- so both
+        families answer one question instead (§8, FQ-034). Here it is
+        unconditional: every `XmlEditor` instance holds XML.
+
+        Note the asymmetry this class deliberately keeps: there is **no**
+        `shrink_structural_selection` here. XML's grow is stateless and
+        re-derived from `selectionStart()` each press, so shrink would need an
+        expansion stack on this class too -- a second host for that state, for a
+        family whose users did not ask for it. `Shrink Selection` is therefore
+        hidden on XML tabs, and `Ctrl+Shift+Z` stays claimed-and-inert there.
+        """
+        return True
+
     def select_parent_block(self) -> None:
         """Ctrl+Shift+A: select the block exactly one nesting level up from
         the current position. Stateless -- always re-derived from the current
@@ -1243,18 +1263,29 @@ class XmlEditor(CompletionPopupHostMixin, GutterBookmarkFoldMixin, QPlainTextEdi
             apply_editor_operation(self, operation)
             event.accept()
             return
+        if operation == CLAIMED_NOT_UNDO_REDO:
+            # `Ctrl+Shift+Z` = Shrink Selection (FQ-034), delegated to the one
+            # implementation every surface calls. **On this family it is inert,
+            # and that is a scope decision with a reason rather than an
+            # omission** (§8): XML's grow (`select_parent_block`) is stateless
+            # and re-derivable, so giving XML shrink would mean giving
+            # `XmlEditor` the expansion stack as well -- a second host for that
+            # state, for a family whose users did not ask for it. This editor
+            # therefore has no `shrink_structural_selection` at all, the shared
+            # helper finds none, and the chord is consumed exactly as before.
+            #
+            # Consuming it is the load-bearing half either way: DEC-015 freed
+            # the chord from redo, but Qt binds it as native Redo under
+            # `KB_Win | KB_X11`, so dropping the interception would leave Qt
+            # redoing anyway.
+            apply_shrink_structural_selection(self)
+            event.accept()
+            return
         if operation is not None:
-            # The reserved chords that answer NO operation, consumed rather than
-            # passed on -- which is the whole behaviour, because Qt would answer
-            # them itself and differently per platform:
-            #   Ctrl+Shift+Z -- freed from redo by DEC-015 ("Redo is always, on
-            #     all systems Ctrl+Y"). Qt binds it as native Redo under
-            #     `KB_Win | KB_X11`, so merely dropping the old redo branch would
-            #     have left Qt redoing anyway. FQ-034's shrink-selection lands
-            #     here.
-            #   Alt+Backspace / Alt+Shift+Backspace -- suppressed app-wide, so
-            #     the keyboard is identical on both systems (Qt binds them
-            #     `KB_Win` only).
+            # `Alt+Backspace` / `Alt+Shift+Backspace` -- suppressed app-wide, so
+            # the keyboard is identical on both systems (Qt binds them `KB_Win`
+            # only). Consumed rather than passed on: the interception IS the
+            # behaviour.
             event.accept()
             return
 

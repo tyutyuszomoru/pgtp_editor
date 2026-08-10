@@ -341,8 +341,14 @@ EXPECTED_HOST_SURFACE = {
     "_select_enclosing_action",
     "_select_enclosing_block",
     "_select_menu",
-    "_select_parent_action",
-    "_select_parent_block",
+    # FQ-034: `Select Parent Block` became the repeatable `Expand Selection`
+    # (`_select_parent_action`/`_select_parent_block` are gone), and gained the
+    # inward twin beside it. Two actions and two slots, on the host because the
+    # `Select` menu is the host's.
+    "_expand_selection_action",
+    "_expand_structural_selection",
+    "_shrink_selection_action",
+    "_shrink_structural_selection",
     "_session_target_passwords",
     "_set_left_panel_visible",
     "_settings",

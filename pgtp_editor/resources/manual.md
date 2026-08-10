@@ -289,7 +289,7 @@ answer to a simple question: *what does this command act on?*
 | Menu | Entries |
 |---|---|
 | **History** | **History…**, **Undo Project Edit**, **Redo Project Edit** — none of the three carries a shortcut |
-| **Select** | **Select All** (Ctrl+A), **Select Enclosing Block** (Ctrl+Shift+B), **Select Parent Block** (Ctrl+Shift+A) |
+| **Select** | **Select All** (Ctrl+A), **Select Enclosing Block** (Ctrl+Shift+B), **Expand Selection** (Ctrl+Shift+A), **Shrink Selection** (Ctrl+Shift+Z) |
 | **Parsing** | two faces, by tab: **Auto Parse XML** and **Validate Project** on an ordinary tab; **Check Object in Sandbox** and **Check and rollback** on a DDL object editor tab |
 | **Navigation** | **Toggle Bookmark**, **Next Bookmark**, **Previous Bookmark**, **Clear All Bookmarks**, **List All Bookmarks** — plus, only while a comparison is loaded, **Next Difference**, **Previous Difference** and **Apply Changes to Target** (see *Diff / Merge*) |
 | **Deployment** | every save and every outward push, **by tab kind** — see *The Deployment Menu* |
@@ -338,10 +338,12 @@ work here is absent, not greyed out.**
   the menu is simply empty — see *The Deployment Menu*.
 - **The Parsing menu has two faces and shows exactly one**, chosen by the tab in
   front of you — see *Parsing, on a DDL object tab*, below.
-- **Select ▸ Select Parent Block disappears on PHP tabs, DDL object tabs and the
-  DDL Explorer**, and **Ctrl+Shift+A** goes quiet with it. "One nesting level up"
-  is an XML idea; SQL and PHP have no parent element to walk to, so the entry is
-  not offered rather than offered and inert.
+- **Select ▸ Expand Selection and Shrink Selection disappear on PHP and
+  JavaScript tabs**, and **Ctrl+Shift+A** goes quiet with them. The ladder they
+  climb is XML nesting or plpgsql structure; neither exists in PHP or JS, so the
+  entries are not offered rather than offered and inert. **Shrink Selection is
+  additionally absent in the XML editors** — see *Expanding and shrinking the
+  selection*, below, for what each surface offers and why.
 - **Select ▸ Select Enclosing Block means the right thing for the language you
   are in**: in an XML editor (Raw XML, Edit XSD, a generated draft fragment) it
   selects the enclosing XML element; in a code editor (PHP tabs, DDL object tabs,
@@ -1114,8 +1116,8 @@ The tab hosts the same editor the **Edit code…** dialog uses, in PHP mode:
   bookmark strip (see *Bookmarks*).
 - **Auto-close** for `()`, `[]`, `{}`, `''`, `""`, **selection-wrap**, and
   **Select ▸ Select Enclosing Block** (**Ctrl+Shift+B**) to select the enclosing
-  bracket span. **Select Parent Block** is not offered here — see *The Two Menu
-  Bars*.
+  bracket span. **Expand Selection** and **Shrink Selection** are not offered
+  here — PHP has no plpgsql structure to climb; see *The Two Menu Bars*.
 - Its **own, permanently visible Find/Replace bar** — **Ctrl+F**, **Ctrl+R** and
   **F3** act on *this file*, never on the Raw XML, and Replace All is the bar's
   own button. **Find All** works here too, listing this file's matches in the
@@ -4054,7 +4056,7 @@ follow from which one you are in:
 | **Ctrl+C** / **Ctrl+X** / **Ctrl+V** | Copy / cut / paste. The editors' own built-ins; no menu command claims them. **Ctrl+Insert**, **Shift+Insert** and **Shift+Delete** are the older spelling of the same three and work everywhere too |
 | **Ctrl+S** / **Ctrl+Shift+S** | **Nothing — deliberately unbound.** Every save is a named entry on **Deployment** (see below) |
 | **Ctrl+O** / **Ctrl+W** | **Nothing.** Both were unbound rather than moved, and both are free for you to assign (see below) |
-| **Ctrl+Shift+Z** | **Nothing.** It is **not** a redo chord — every editing surface catches it and runs nothing (see *Undo and Redo*, below) |
+| **Ctrl+Shift+Z** | **Select ▸ Shrink Selection.** It is **not** a redo chord — every editing surface catches it, and in the SQL editors it steps the selection inward (see *Expanding and shrinking the selection*, below) |
 | **Alt+Backspace** / **Alt+Shift+Backspace** | **Nothing.** Suppressed in every editor, on both platforms (see *Undo and Redo*, below) |
 
 **On any editor tab**
@@ -4066,7 +4068,8 @@ and act on it — never on the Raw XML document behind it.
 |---|---|---|
 | **Ctrl+A** | **Select ▸ Select All** | Select the whole document. See *Ctrl+A is a special case*, below |
 | **Ctrl+Shift+B** | **Select ▸ Select Enclosing Block** | One command, two structural meanings — see *One chord, two meanings*, below |
-| **Ctrl+Shift+A** | **Select ▸ Select Parent Block** | One nesting level up. **XML editors only** — the entry is hidden on code-editor tabs and the chord goes quiet with it |
+| **Ctrl+Shift+A** | **Select ▸ Expand Selection** | One structural unit outward per press, repeatable. Everywhere except PHP / JS tabs, where the entry is hidden and the chord goes quiet with it |
+| **Ctrl+Shift+Z** | **Select ▸ Shrink Selection** | Back inward, one step per press. **SQL editors only**; not rebindable — see *Expanding and shrinking the selection*, below |
 | **Ctrl+F2** | **Navigation ▸ Toggle Bookmark** | Disabled for as long as **Caption Mode** lasts |
 | **F2** / **Shift+F2** | **Navigation ▸ Next / Previous Bookmark** | Disabled for as long as **Caption Mode** lasts |
 | **Ctrl+F** | *(no menu entry)* | Focus this tab's **Find** field |
@@ -4088,7 +4091,7 @@ Find/Replace bar at all** — the **Manual** tab, the **Diff / Merge** tab and t
 |---|---|
 | **Ctrl+Space** | Attribute / value completion, from the schema |
 | **Ctrl+Shift+B** | Select the innermost enclosing **XML element**, `<` through `>` |
-| **Ctrl+Shift+A** | Select one nesting level up |
+| **Ctrl+Shift+A** | **Expand Selection** — one nesting level up, repeatable |
 | **Ctrl+L** | **Go To XSD** — jump to the definition of the attribute at the caret, in the Edit XSD tab |
 | **Ctrl+Alt+F** | **Format Selection** — re-indent the selected XML by element depth. Needs a selection (see *The Autoformatter*) |
 | **Ctrl+Z** / **Ctrl+Y** | Undo / redo, routed by tab — see the undo table below |
@@ -4232,20 +4235,24 @@ else**. One operation with two spellings meant one of them was always the one a
 given surface had forgotten to wire, and on one platform the "second" redo was a
 dead key.
 
-So the chord does **nothing** today — but it is not simply unbound, and the
-difference is worth knowing if you ever wonder why nothing happens. Qt itself
-binds `Ctrl+Shift+Z` as its own native redo inside every text widget, on both
-Windows and Linux. **Every editing surface in the app therefore catches the chord
-and deliberately answers nothing**, which is the only way to stop Qt's redo from
-firing behind the app's back and editing a buffer without a history entry. It
-stays reserved for that reason: a command retargeted onto it would be swallowed by
-whichever editor has focus (see *What cannot be rebound, and why*).
+The chord now belongs to **Select ▸ Shrink Selection** (see *Expanding and
+shrinking the selection*, below) — but the reason it can only ever be that, and
+never a rebindable command of your choosing, is the same reason it stopped being
+redo. Qt itself binds `Ctrl+Shift+Z` as its own native redo inside every text
+widget, on both Windows and Linux, so **every editing surface in the app catches
+the chord before Qt can**, which is the only way to stop Qt's redo from firing
+behind the app's back and editing a buffer without a history entry. In the SQL
+editors that catch now runs shrink; in the XML editors and on a PHP tab it still
+runs nothing, on purpose. It stays reserved either way: a command retargeted onto
+it would be swallowed by whichever editor has focus (see *What cannot be rebound,
+and why*).
 
-The read-only **DDL Explorer** is worth one extra word: it catches `Ctrl+Shift+Z`
-like everywhere else, but it does **not** print the *"nothing to undo here"*
-sentence it prints for **Ctrl+Z** / **Ctrl+Y**. The chord is not asking for an
-undo, so answering it with an undo's reason would be a wrong reason, which is
-worse than none.
+The read-only **DDL Explorer** is worth one extra word: `Ctrl+Shift+Z` shrinks the
+selection there like in any other SQL editor — read-only makes no difference to
+selecting — and it does **not** print the *"nothing to undo here"* sentence it
+prints for **Ctrl+Z** / **Ctrl+Y**. The chord is not asking for an undo, so
+answering it with an undo's reason would be a wrong reason, which is worse than
+none.
 
 **Alt+Backspace and Alt+Shift+Backspace are suppressed in the same way.** Qt binds
 them as native undo and redo on **Windows only**, and a chord has to mean the same
@@ -4270,11 +4277,60 @@ means. In an **XML editor** the answer is the innermost XML element; in a **code
 editor** it is the innermost balanced bracket pair, because SQL and PHP have no
 tags to enclose. It is one command with one key, not two competing ones.
 
-**Ctrl+Shift+A is absent rather than silently wrong.** "One nesting level up" is
-an XML idea, and a bracket pair has no parent walk that means anything to a reader
-of SQL or PHP — so on a PHP tab, a DDL object tab, either DDL Explorer and the
-Sandbox SQL Console the menu entry is not offered at all, and **Ctrl+Shift+A** is
-inert there rather than doing something approximate.
+#### Expanding and shrinking the selection
+
+**Ctrl+Shift+A grows the selection outward one structural unit per press, and
+Ctrl+Shift+Z steps it back inward.** Press **Ctrl+Shift+A** with the caret in a
+plpgsql routine and it selects the word you are on; press it again for the
+enclosing bracket group (its contents first, then the brackets too); again for the
+clause; again for the statement; then once for **each** enclosing block, so an
+`IF` inside a `FOR` inside a `BEGIN` is three more presses; and finally the whole
+`BEGIN … END` body. Inside a `CASE` the current `WHEN … THEN` branch is a rung of
+its own before the whole `CASE`. **Ctrl+Shift+Z** walks back down the same steps.
+
+The point is **identifying** structure fast: selecting a `CASE` to delete it, a
+`LOOP` to reindent it, or a statement to comment it out, without a mouse.
+
+- **Not every rung exists everywhere, and that is deliberate.** Where there is no
+  clause keyword to anchor on — a bare assignment, a `RAISE NOTICE` — there is
+  simply no clause rung, and the press that would have taken it goes straight to
+  the statement. A rung may be missing; a rung that fires and changes nothing
+  never happens, because then you could not tell whether the ladder advanced or
+  ended.
+- **At the top, Ctrl+Shift+A does nothing** rather than announcing anything.
+  Selecting changes no text, so there is nothing to report.
+- **Strings, comments and quoted names are one rung each** — there is no structure
+  to climb inside a literal — while a `$$ … $$` routine body is climbed *into*,
+  because that body is the plpgsql this ladder exists for. A bracket inside a
+  string is not a bracket here.
+- **Ctrl+Shift+Z after a mouse selection, or after any edit, still works** — it
+  selects the largest structural unit lying wholly inside what is currently
+  selected, and does nothing when nothing is. So the key always moves the
+  selection inward, whether or not you got there with **Ctrl+Shift+A**.
+
+**Which surfaces offer which half:**
+
+| Where | Expand Selection (Ctrl+Shift+A) | Shrink Selection (Ctrl+Shift+Z) |
+|---|---|---|
+| DDL object tabs, either **DDL Explorer**, **Sandbox SQL Console** | yes — the full plpgsql ladder | yes |
+| **Raw XML**, **Edit XSD**, generated draft fragment tabs | yes — one XML nesting level per press, as before | no — the entry is not offered |
+| **PHP** / **JavaScript** tabs, the **Edit code…** dialog for event code | no | no |
+
+**Read-only makes no difference to either**, in the DDL Explorer or in Caption
+Mode: selecting text mutates nothing, exactly as with **Select All**.
+
+**Shrink Selection is the one Select command you cannot rebind.** Its menu entry
+carries no shortcut of its own: **Ctrl+Shift+Z** is caught inside every editor's
+own key handling, which is what stops Qt from treating it as a second redo (see
+*Ctrl+Shift+Z is not redo*, above), and a key caught there cannot also be a
+window command. So **Ctrl+Shift+A** can be moved through **View ▸ Customize
+Shortcuts…** while **Ctrl+Shift+Z** cannot, and cannot be given to anything else
+either. The pairing was worth the asymmetry; the asymmetry is real.
+
+**Select Parent Block was renamed.** It is now **Expand Selection**, on the same
+key, because the command means the same thing in the SQL editors as in the XML
+ones. A toolbar button or a custom shortcut you saved under the old name still
+works.
 
 **Ctrl+S and Ctrl+Shift+S are unbound app-wide, and that is stated here rather
 than merely left out of the table.** Every save is a named entry on the Editor
@@ -4473,7 +4529,7 @@ hunting for a row that was never there. None of these is arbitrary:
 |---|---|
 | **Ctrl+S** / **Ctrl+Shift+S** | Deliberately unbound app-wide since saving moved to the **Deployment** menu (see *Getting Started ▸ Saving, closing, discarding*). Letting another command take them would bring the old reflex back by the side door. |
 | **Ctrl+Z** / **Ctrl+Y** | Undo and Redo in whichever surface has focus: a window-scoped shortcut *plus* every editor's own key handling, and not a menu command, so there is no row to move them from. **Ctrl+Y** is bound by this app on every platform rather than inherited from the system, because Qt binds it only on Windows. The project-scoped twins — **History ▸ Undo Project Edit** and **History ▸ Redo Project Edit** — are ordinary menu commands and **are** rebindable. |
-| **Ctrl+Shift+Z** | **Not redo** (see *Undo and Redo*, above) and not free either: every editing surface catches it so Qt's own native redo cannot fire, so a command moved onto it would be swallowed by whichever editor has focus. |
+| **Ctrl+Shift+Z** | **Not redo** (see *Undo and Redo*, above) and not free either: every editing surface catches it so Qt's own native redo cannot fire, so a command moved onto it would be swallowed by whichever editor has focus. It answers **Select ▸ Shrink Selection**, which is therefore the one **Select** command you cannot rebind — see *Expanding and shrinking the selection*. |
 | **Alt+Backspace** / **Alt+Shift+Backspace** | Qt binds them as undo and redo on the **Windows** scheme only, so every editing surface consumes them and runs nothing — that suppression is what makes the keyboard identical on both platforms. A command retargeted here would be swallowed the same way. |
 | **Ctrl+F** / **Ctrl+R** | They focus the **current tab's** Find and Replace fields, and each tab's bar owns its own pair. A window-level menu shortcut on either key would be ambiguous against them, and neither would fire. |
 | **Escape** | Returns focus from a Find/Replace bar to the document — and leaves a template walk, where one is in progress. |

@@ -233,11 +233,11 @@ RESERVED_SEQUENCES: dict[str, str] = {
     # every editing surface must actively intercept it to keep Qt's redo from
     # firing (BUG-056 measured this on both schemes). A command moved here
     # would therefore be swallowed by whichever editor has focus.
-    "Ctrl+Shift+Z": "claimed and answered inside every text editor's own key "
-                    "handling — no longer a redo chord (DEC-015), but still "
-                    "intercepted there so Qt's native redo cannot fire, so a "
-                    "command moved here would be swallowed by the focused "
-                    "editor (§27)",
+    "Ctrl+Shift+Z": "Select ▸ Shrink Selection, answered inside every text "
+                    "editor's own key handling — no longer a redo chord "
+                    "(DEC-015), and still intercepted there so Qt's native redo "
+                    "cannot fire, so a command moved here would be swallowed by "
+                    "the focused editor (FQ-034, §27)",
     # Qt's legacy Windows-scheme undo/redo pair: `Alt+Backspace` = Undo,
     # `Alt+Shift+Backspace` = Redo, both carrying `KB_Win` **only** in the
     # compiled binding table (BUG-056 read it out of `libQt6Gui`). So Qt answers
@@ -432,14 +432,18 @@ RESERVED_SEQUENCES: dict[str, str] = {
 # operation itself is how a redo becomes an undo, silently, with the chord still
 # claimed so nothing looks broken.
 #
-# Two of the answers run no operation, and neither is a placeholder -- in
-# both cases the interception is the behaviour, because Qt would otherwise answer
-# the chord itself and the app's keyboard would differ per platform:
+# Two of the answers are not an editing operation at all, and neither is a
+# placeholder -- in both cases the interception is *itself* load-bearing, because
+# Qt would otherwise answer the chord and the app's keyboard would differ per
+# platform:
 #
-#   `CLAIMED_NOT_UNDO_REDO` -- `Ctrl+Shift+Z`. Reserved, intercepted, and waiting
-#       for FQ-034's shrink-selection. Qt binds it as native Redo under
-#       `KB_Win | KB_X11`, so DEC-015's "redo is always Ctrl+Y" is true only
-#       while every surface refuses it.
+#   `CLAIMED_NOT_UNDO_REDO` -- `Ctrl+Shift+Z`. Reserved, intercepted, and since
+#       FQ-034 it ANSWERS `Select ▸ Shrink Selection` (one shared implementation,
+#       `code_editor.apply_shrink_structural_selection`). Qt binds it as native
+#       Redo under `KB_Win | KB_X11`, so DEC-015's "redo is always Ctrl+Y" is true
+#       only while every surface refuses it -- which is also exactly why shrink's
+#       `QAction` carries NO `setShortcut`: a window action would be starved by
+#       the `ShortcutOverride` the surfaces must accept.
 #   `SUPPRESSED` -- `Alt+Backspace` / `Alt+Shift+Backspace`. Deliberately dead
 #       app-wide (see their rows above). Qt binds them `KB_Win` only, so
 #       suppressing them is what makes the keyboard identical on both systems,
