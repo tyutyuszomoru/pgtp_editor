@@ -171,6 +171,14 @@ on re-deriving *"who answers this chord"*. If the idea involves a keyboard short
     not a detail.
   - Is the chord **platform-conditional** in Qt? DEC-015: the app binds it on every platform; nothing is
     inherited from Qt's table.
+- **A chord means the same thing on every system, and the ledger records ONE binding per command.**
+  No platform-conditional shortcuts. Qt's own table is not uniform — its Windows scheme binds
+  `Ctrl+Y` and `Alt+Backspace`/`Alt+Shift+Backspace` for undo/redo where X11 does not, and
+  `Ctrl+Shift+Z` is bound on both. Wherever Qt would differ, **this app binds explicitly on both
+  platforms or suppresses the chord on both** — a chord that works on Windows and is dead on Linux
+  is a bug, not a platform nicety. This is why `Ctrl+Y` had to become an explicit binding
+  (DEC-015) and why the offscreen suite cannot be trusted here: it runs Qt's **Windows** scheme,
+  so a Linux-only dead key passes every test.
 - **Do not widen an existing carve-out by analogy.** DEC-009's exemption was read wider than drawn twice
   in one day, each time by citing a defensible rule for the wrong gesture. If the idea resembles an
   exempt gesture, say why it is or is not the same case.

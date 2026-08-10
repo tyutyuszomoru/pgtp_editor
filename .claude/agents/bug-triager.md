@@ -143,6 +143,14 @@ moves, or removes a keyboard shortcut, these are not optional.
   - answered inside a widget's key handling → must be in `RESERVED_SEQUENCES`, and under DEC-014 every
     editing surface states its answer for that chord;
   - platform-conditional → the app binds it on every platform, never inherited from Qt's table (DEC-015).
+- **A chord means the same thing on every system, and the ledger records ONE binding per command.**
+  No platform-conditional shortcuts. Qt's own table is not uniform — its Windows scheme binds
+  `Ctrl+Y` and `Alt+Backspace`/`Alt+Shift+Backspace` for undo/redo where X11 does not, and
+  `Ctrl+Shift+Z` is bound on both. Wherever Qt would differ, **this app binds explicitly on both
+  platforms or suppresses the chord on both** — a chord that works on Windows and is dead on Linux
+  is a bug, not a platform nicety. This is why `Ctrl+Y` had to become an explicit binding
+  (DEC-015) and why the offscreen suite cannot be trusted here: it runs Qt's **Windows** scheme,
+  so a Linux-only dead key passes every test.
 - **Two measured facts, so you do not re-file myths.** `QShortcut` **does** activate under
   `QT_QPA_PLATFORM=offscreen` — the requirement is that the widget's top level has been `show()`n, not the
   key-delivery target. And the offscreen platform runs Qt's **Windows** keyboard scheme, so Linux-only key
