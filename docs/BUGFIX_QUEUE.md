@@ -5348,3 +5348,383 @@ menu-bar action. §8 should say which side of the line that falls on, because th
 any future context-menu-only gesture.
 
 ---
+
+## BUG-055: every user-facing REFUSAL in the app is invisible — `showMessage` has been a journal-only sink since FQ-028, so BUG-048's "refused with a stated reason" (and ~15 sibling refusals) reach nobody
+**Status:** OPEN
+**Reported:** 2026-08-10 — found by `spec-maintainer` during a harmonization pass; **not** reported by the user.
+**Report (verbatim):** "Claim: BUG-048's refusal message is never shown to the user. BUG-048 (RESOLVED `e8df6c3`) added a refuse-with-a-stated-reason path for project-history writes against a read-only Raw XML buffer. The queue entry records the result as 'refused-with-a-reason (logged, plus a 4-second status-bar message naming the read-only reasons)', and the implementation deviated from the proposed greying *specifically* in order to state the reason instead. … So the reason lands as an Activity Log line in the bottom dock, which may not even be the visible tab, while the user pressing `Ctrl+Z` (or clicking `History ▸ Undo`) in Caption Mode or Compare/Merge mode sees the chord do **nothing at all**. … The surviving `4000` timeout argument is the evidence the fix was written against the pre-FQ-028 status-bar contract."
+
+**The claim is CONFIRMED, verbatim, and it is broader than the one call site.**
+
+**Root cause.** `pgtp_editor/ui/main_window.py:1955-1962`, `MainWindow._history_write_refused`:
+
+```python
+_log.info("history: refused — %s", reason)
+self.statusBar().showMessage(reason, 4000)
+return True
+```
+
+Since FQ-028 the bar is `pgtp_editor/ui/status_bar.py::StaticStatusBar` (`:120`). Its `showMessage`
+override (`:131-136`) **paints nothing**: it stores the text in `_last_notice` and forwards it to
+`notice_sink` (the Activity Log). `displayed_message()` (`:146-149`) returns `QStatusBar.currentMessage`,
+documented as *always* `""` — "the assertion that the bar is not a message board" — and the docstring
+says `timeout` is "accepted and ignored". So the surviving `4000` is dead evidence of the pre-FQ-028
+contract, exactly as reported.
+
+The Activity Log is not a surface the user is looking at when a keystroke is refused: `_record_audit_notice`
+(`:2161`) appends to the bottom dock's journal tab, and **nothing reveals it** — `_reveal_activity_tab`
+(`:2142`) is wired only to `View ▸ Activity Log` (`:3148`). If the dock is hidden, or the `Messages` tab
+is the current one, the refusal is invisible even in principle.
+
+**Reachable user paths, all verified in the tree:**
+1. **`Ctrl+Z` / `Ctrl+Y` on the Raw XML tab in Caption Mode** — `XmlEditor.keyPressEvent`
+   (`ui/xml_editor.py:1173+`) emits `undo_requested`, and the window shortcut slots
+   `_undo_from_shortcut` / `_redo_from_shortcut` (`main_window.py:1964`, `:1977`) call
+   `_history_write_refused` first. Dead key, no visible reason.
+2. **`Ctrl+Z` on the Raw XML tab in Compare/Merge mode** — same path; the read-only reason set comes from
+   `CenterStage.raw_xml_read_only_reasons()` (`ui/center_stage.py:528`).
+3. **`History ▸ Undo` / `Redo` / a jump-list click, from ANY tab, in either mode** — `_undo` (`:2002`),
+   `_redo` (`:2013`) and `_history_jump` (`:2029`) each call `_history_write_refused`. Worse than (1)
+   and (2): the menu item is enabled (greying was deliberately rejected, §7's "two postures, never a
+   third"), so the click is a full-price gesture that produces no observable effect whatsoever.
+4. **Typing into the read-only Raw XML editor in Caption Mode** — `XmlEditor.keyPressEvent`
+   (`:1158-1163`) emits `read_only_edit_attempted` → `MainWindow._on_read_only_edit_attempted`
+   (`:3514-3518`), whose docstring says *"Flash a non-modal hint"* and which does nothing but
+   `showMessage(..., 4000)`. Same defect, independently reachable, and its own docstring is now false.
+
+**THE SWEEP — this is the valuable part; FQ-028 moved the sink in one place and ~40 call sites kept
+compiling.** All 30 `statusBar().showMessage(...)` sites in `pgtp_editor/` are in `main_window.py`
+(plus the sink itself, `ui/busy.py:69`, and `find_controller.py`'s status-shaped stub). Classified:
+
+*(A) User-facing REFUSALS with NO other surface — the same defect as the report:*
+| Line | Method | Text |
+|---|---|---|
+| `1909` | `_not_implemented` | `Not yet implemented: {label}` |
+| `1961` | `_history_write_refused` | the BUG-048 reason (paths 1–3 above) |
+| `3368` | `_on_tree_edit_event_handler` | `This event handler has no source line to edit.` |
+| `3402` | `_on_tree_add_event_handler` | `This page has no source line to insert into.` |
+| `3419` | `_on_tree_add_event_handler._write_back` | `Could not insert {tag}: page not found in the buffer.` |
+| `3440` | `_enter_caption_mode` | `Manage Captions: open a project (Raw XML is empty) first.` |
+| `3517` | `_on_read_only_edit_attempted` | `Raw XML is read-only in Caption Mode…` (path 4) |
+| `3709`,`3715` | `_prompt_missing_connection` | `No database connection configured…` |
+| `3729` | `_open_connection_setup` | `Connection is defined in Project Settings while a project is open.` |
+| `4001` | `_open_ddl_explorer.on_error` | `{label} failed: {exc}` — an **error**, not a refusal, but same invisibility |
+| `5778` | `_refuse_sandbox_gesture` (ABSENT branch) | `{gesture} needs a sandbox — none is configured…` |
+| `5895` | `_open_sandbox_session` | `No sandbox configured for this project…` |
+| `6348` | `_active_ddl_object_panel_for` | `{gesture} runs on an open DDL object tab — open one first.` |
+| `6369` | `_save_active_xsd` | `Save XSD runs on the Edit XSD tab — open one first.` |
+| `6623` | `_check_active_ddl_object` | `Check runs on an open DDL object tab — open one first.` |
+
+Every one of these is FQ-023's "a gesture that cannot run states why" — and every one of them currently
+states it into a journal nobody is looking at. `_refuse_sandbox_gesture:5798` (`{gesture} — {reason}.`
+after the user declines the `Open` dialog) is a near-miss: its comment says *"Declining still leaves the
+reason on screen"*, which has been false since FQ-028.
+
+*(B) Already correctly dual-routed — the PATTERN TO COPY, not to change:* `_report_gesture_unavailable`
+(`:6420-6427`) writes `_report_check_lines([CHECK_PREFIX + …])` **and** `showMessage`. The `[Check]` row
+lands in the `Messages` tab via `ui/audit_router.py`. `_refuse_sandbox_gesture`'s main branch raises a
+real `modals.QMessageBox` (`:5785`). `EditorPanel.eventFilter` (`ui/ddl_editor_panel.py:166-185`) →
+`CodeEditor.report_refusal` (`ui/code_editor.py:595-610`) → `show_hint(..., refusal=True)` (`:612-636`)
+is the **keystroke** pattern: a caret tooltip *plus* an `expansion_refused` signal that `MainWindow._report_editor_gesture_refusal` (`:5161`) files as a durable `[SQL]` Activity row. Its docstring already
+states the doctrine this bug violates: *"A dock row alone would make a Ctrl+Alt+E … look like nothing
+happened."*
+
+*(C) Legitimately journal-only (do NOT touch — this is what FQ-028 deliberately routed):* `1053`
+(debug-log path), `3496` (`Updated N caption(s).`), `3841` (connection import), `3922`/`3930`/`3987`
+(DDL Explorer progress + load summary), `5064` (`Saved {path}`), `6885`/`6898` (MCP start/stop), and the
+Find/Replace counts injected via `set_on_status` (`:996`, `:1197`) — §15 already records that those land
+in the Activity Log by design.
+
+**Proposed fix.** Two pieces; the §7 static-bar rule is an owner ruling and is **not** reopened —
+`showMessage` stays in every converted call site (it is the durable journal record, and ~80 suite
+assertions read `currentMessage()`), a *second* surface is added beside it.
+
+1. **A caret-hint path for `XmlEditor`.** `XmlEditor` (`ui/xml_editor.py:413`) is
+   `CompletionPopupHostMixin, GutterBookmarkFoldMixin, QPlainTextEdit` — it is **not** a `CodeEditor` and
+   has no `show_hint`. Do **not** copy `CodeEditor.show_hint`'s body: extract its tooltip mechanics into
+   a new module-level helper (suggested `pgtp_editor/ui/hints.py::show_caret_hint(editor, text)` —
+   `QToolTip.showText(editor.viewport().mapToGlobal(editor.cursorRect().bottomLeft()), text, editor)`,
+   guarded on `editor.isVisible()` for the offscreen-platform reason already documented at
+   `code_editor.py:626-630`), then have `CodeEditor.show_hint` call it and give `XmlEditor` a
+   `show_hint(text)` + `hint_shown = Signal(str)` pair that does the same. **Gotcha:** do *not* give
+   `XmlEditor` an `expansion_refused` signal — nothing in Raw XML connects it (`:5280`, `:5362` connect
+   only DDL panels), the journal side is `MainWindow`'s job here, and a second unwired refusal signal is
+   how BUG-049's dead-signal class was born.
+2. **One refusal seam on `MainWindow`**, next to `_history_write_refused` (~`:1955`), e.g.
+   `_state_refusal(reason: str, *, at_editor=None) -> None`:
+   - always `self.statusBar().showMessage(reason)` — **drop the timeout argument** at every converted
+     site; it advertises a contract that no longer exists and is the tell that led to this bug;
+   - if `at_editor is not None and at_editor.isVisible()` → `at_editor.show_hint(reason)` (the gesture
+     answered a keystroke, at the place the user is looking);
+   - otherwise → `self._report_check_lines([CHECK_PREFIX + reason])` **and** `self._reveal_results_dock_tab()`
+     (`:2148`), which is the one reveal helper explicitly allowed to pop the dock (*"The user asked for
+     it"*) — correct here, because every (A) row answers a deliberate click.
+   The `isVisible()` fork is what makes **path 3** work: `History ▸ Undo` pressed from the PHP tab has no
+   visible Raw XML editor to anchor a tooltip to, so it must fall through to the `Messages` route.
+3. **Convert the (A) table.** `_history_write_refused` and `_on_read_only_edit_attempted` pass
+   `at_editor=self.center_stage.xml_editor`; the rest pass no anchor. `_refuse_sandbox_gesture:5798`
+   gets the seam too, so its *"still leaves the reason on screen"* comment becomes true again.
+   `_report_gesture_unavailable` (B) should be re-expressed through the same seam so there is one refusal
+   vocabulary, not two — behaviour-identical apart from gaining the reveal and losing the `8000`.
+
+**Gotchas.** (a) Keep `showMessage` — removing it would break `currentMessage()`-based assertions *and*
+lose the journal row; the bug is a missing second surface, not a wrong sink. (b) `_report_check_lines`
+appends **already-prefixed** lines verbatim (`:5179-5187`), so pass `CHECK_PREFIX + reason` and never let
+the row carry a `UserRole` — refusal rows are inert by §18.5 carve-out 6. (c) `CHECK_PREFIX` is defined
+**twice** (`ui/audit_router.py:108` = `"[Check]"`, `ui/ddl_object_editor.py:105` = `"[Check] "`, with the
+trailing space) and `main_window.py:102` imports the audit_router one — match `_report_gesture_unavailable`'s
+existing spacing rather than inventing a third. (d) `ui/ddl_object_editor.py` is being edited concurrently
+(BUG-054); this fix needs nothing from it. (e) Do **not** add a toast, and do **not** make the bar paint —
+§7's ruling stands.
+
+**Test impact.** Existing files that already cover this area (extend, do not duplicate):
+- `tests/ui/test_history_wiring.py` — `test_the_history_menu_also_refuses_a_locked_raw_xml_buffer:498`
+  asserts `"compare/merge mode" in window.statusBar().currentMessage()`. That assertion stays valid
+  (the journal side is unchanged) and must be **joined** by one asserting the visible surface.
+- `tests/ui/test_main_window.py:789-790` — the `read_only_edit_attempted` case, same shape.
+- `tests/ui/test_xml_editor.py:954-1019` — the five `read_only_edit_attempted` emission cases; add the
+  `hint_shown` assertion here (assert the **signal**, never `QToolTip`, per `code_editor.py:626-630`).
+- `tests/ui/test_status_bar_static.py:70` — the `displayed_message() == ""` invariant; must stay green,
+  and is the guard that the fix did not reopen the bar.
+- `tests/ui/test_mainwindow_surface.py:178,219` — the method-surface list gains the new seam's name.
+New cases needed: (i) `Ctrl+Z` on the Raw XML tab in Caption Mode emits `hint_shown` with the read-only
+reason; (ii) `History ▸ Undo` from a **non-Raw-XML** tab in Compare/Merge mode adds a `[Check]`-prefixed
+row and reveals the `Messages` tab; (iii) a representative tab-scope refusal (`_save_active_xsd`
+off-tab) lands in `Messages`; (iv) the `hints.py` helper is a no-op on a hidden editor.
+
+**Spec impact: YES — flag for `spec-maintainer` after the fix lands, and note the spec ALREADY flags it.**
+- `CONSOLIDATED_SPEC.md` §18.5's BUG-048 block (~`:6425-6437`) carries a **⚠ paragraph** stating exactly
+  this defect and saying it is *"filed as a defect rather than written in as design"* — this entry is that
+  filing; the ⚠ must be replaced with the shipped answer once fixed.
+- §7's Activity Log paragraph (~`:1180-1184`) is the passage that **made the current behaviour
+  intentional**: *"Errors and refusals … become journal entries under this rule too: accepted for v1 with
+  the risk stated — if immediacy proves insufficient, a transient toast is a later entry, never a quiet
+  re-opening of the status bar as a message board."* The fix is the finding that immediacy proved
+  insufficient — and it resolves it with the **caret tooltip + `Messages` reveal** already in the app
+  rather than the hypothesised toast, so §7 needs the sentence corrected, not merely footnoted, with a
+  Supersession Ledger row.
+- §7's static-bar rule and `displayed_message() == ""` are untouched by design and must be restated as
+  intact.
+
+---
+
+## BUG-056: the reported `Ctrl+Shift+Z` platform divergence is NOT real — but `Ctrl+Y` is, and it is dead in the Sandbox SQL Console on Linux (plus: the offscreen test platform runs the **Windows** keyboard scheme, so no test can ever see it)
+**Status:** OPEN
+**Reported:** 2026-08-10
+
+**Report (verbatim):** "`Ctrl+Shift+Z` in a **PHP tab** and in the **Sandbox SQL Console** is unspecified in
+code. Both are plain `CodeEditor`s with no `eventFilter` branch for that chord, so what happens falls
+through to Qt's platform default for `QKeySequence.StandardKey.Redo` — which is **`Ctrl+Shift+Z` on Linux**
+and **`Ctrl+Y` on Windows**. If that holds, the same keystroke redoes in a PHP tab on Linux and does
+nothing on Windows, with no code stating either intent." (Filed by `manual-maintainer` while documenting
+undo/redo routing; the triage brief additionally asked to verify the mechanism empirically, to establish
+the Windows answer from Qt's bindings rather than by guessing, and to check the mirror case `Ctrl+Y`.)
+
+**Verdict on the report as filed: the premise about `Ctrl+Shift+Z` is FALSE, measured.** The premise about
+"unspecified in code" is true, and following it up found a *different, real* divergence one chord over.
+
+---
+
+### What was measured (all on this checkout, `venv/bin/python`, PySide6 / Qt 6.11)
+
+**M1 — `Ctrl+Shift+Z` is a `Redo` binding under BOTH keyboard schemes.**
+`QKeySequence.keyBindings(QKeySequence.StandardKey.Redo)` returns:
+
+| Run | `platformName()` | Redo bindings | Undo bindings |
+|---|---|---|---|
+| `QT_QPA_PLATFORM=offscreen` | `offscreen` | `Ctrl+Y`, `Alt+Shift+Backspace`, **`Ctrl+Shift+Z`**, `Redo` | `Ctrl+Z`, `Alt+Backspace`, `Undo` |
+| no override (this desktop) | `wayland` | **`Ctrl+Shift+Z`**, `Redo` | `Ctrl+Z`, `F14`, `Undo` |
+
+**M2 — the `offscreen` platform IS the Windows keyboard scheme**, which is what makes the Windows answer
+measurable here rather than guessed. Qt picks the binding set from
+`QPlatformTheme::themeHint(KeyboardScheme)`; the `offscreen` plugin installs no theme, so it takes
+`QPlatformTheme`'s built-in default, and the built-in default is the **Windows** scheme. Two independent
+confirmations:
+- The offscreen run yields exactly the `KB_Win`-only rows — `Alt+Backspace` (Undo) and
+  `Alt+Shift+Backspace` (Redo) are the old Windows editing convention, and they appear **only** offscreen;
+  `Ctrl+Shift+Ins` (Paste, `KB_X11`) and `F14`/`F18` (X11 `Key_Undo`/`Key_Paste`) appear **only** on the
+  real desktop.
+- The compiled binding table was read straight out of `libQt6Gui.so.6` (PySide6's bundled copy,
+  `…/site-packages/PySide6/Qt/lib/libQt6Gui.so.6`, table at file offset `0x95b000`, 16-byte records of
+  `{uint standardKey, uint priority, uint shortcut, uint platformMask}`). The `Redo` rows
+  (`standardKey == 12`) are:
+
+  | shortcut | platform mask | meaning |
+  |---|---|---|
+  | `0x0B000003` = `Alt+Shift+Backspace` | `1` | `KB_Win` |
+  | `0x0600005A` = `Ctrl+Shift+Z` | `2` | `KB_Mac` |
+  | `0x0600005A` = `Ctrl+Shift+Z` | `5` | **`KB_Win | KB_X11`** |
+  | `0x04000059` = `Ctrl+Y` (priority 1) | `1` | **`KB_Win` only** |
+  | `0x01000124` = `Key_Redo` | `0xFFFF` | all |
+
+  The mask bits were solved empirically, not assumed: bit `1` rows matched offscreen and not on the
+  desktop, bit `4` rows matched on the desktop and not offscreen, mask `5` rows matched on **both** —
+  so `KB_Win = 1`, `KB_X11 = 4`, and `Ctrl+Shift+Z` carries `Win|X11`.
+
+  **Therefore `Ctrl+Shift+Z` redoes a `QPlainTextEdit` on Windows too**, and `Ctrl+Y` is a native redo
+  **only** on Windows.
+
+**M3 — which code path answers it.** Not `QShortcutMap`: the probe delivered keys with
+`QTest.keyClick(editor, …)` (which bypasses `QShortcutMap` — see the note at
+`tests/ui/test_ddl_object_editor.py:462-473` and `docs/TEST_LOG.md`'s 2026-08-02 row) and the redo still
+happened, so the handler is `QPlainTextEdit::keyPressEvent`'s own `event->matches(StandardKey::Redo)`
+branch. Widgets were `show()`n first, per the same measured constraint. No `MainWindow` was involved.
+
+**M4 — end-to-end behaviour of the two surfaces** (`PhpFileTab(text="")` and `SqlConsolePanel()`, shown,
+type → `Ctrl+Z` → chord):
+
+| Surface | chord | offscreen (= **Windows** scheme) | wayland (= this **Linux** desktop) |
+|---|---|---|---|
+| PHP tab | `Ctrl+Shift+Z` | **redoes** (native) | **redoes** (native) |
+| PHP tab | `Ctrl+Y` | redoes (its own `eventFilter`) | redoes (its own `eventFilter`) |
+| Sandbox SQL Console | `Ctrl+Shift+Z` | **redoes** (native) | **redoes** (native) |
+| **Sandbox SQL Console** | **`Ctrl+Y`** | **redoes** (native, `KB_Win`) | **NOTHING — dead key** |
+
+---
+
+**Root cause (of the real defect):** `pgtp_editor/ui/sql_console_panel.py::SqlConsolePanel` (class at
+`:377`, construction `:460-560`) hosts a `CodeEditor(language="sql")` and **installs no event filter at
+all** — `grep -n eventFilter sql_console_panel.py` returns nothing. It binds five `QShortcut`s
+(`Ctrl+Space`, `Ctrl+Alt+J`, `Ctrl+Shift+Space`, `Ctrl+Alt+F`, `Ctrl+Return`) and no undo/redo chord. So
+all three undo/redo chords fall through to `QPlainTextEdit`'s standard-key handling, whose `Redo` set is
+**platform-dependent**: `Ctrl+Y` is `KB_Win`-only. On Linux the key is therefore not consumed by the
+editor, reaches `MainWindow`'s window-level `Ctrl+Y` `QShortcut`
+(`pgtp_editor/ui/main_window.py:1180-1181`) → `_redo_from_shortcut` (`:1977-1983`), which returns
+immediately because the current tab is not Raw XML (BUG-048's scoping). Net effect on Linux: **silence** —
+no redo, no refusal, no journal line. On Windows the same keystroke redoes the console buffer. Same build,
+same source, two behaviours, and nothing in the code states either.
+
+The PHP tab escapes this only by accident of coverage: `PhpFileTab.eventFilter`
+(`pgtp_editor/ui/php_file_tab.py:388-410`) matches `Ctrl+Z` and `Ctrl+Y` explicitly (`mods ==
+ControlModifier`), so `Ctrl+Y` is platform-independent there; `Ctrl+Shift+Z` falls through to the native
+handler, which — per M1/M2 — answers identically on both schemes. So the PHP tab is *correct on both
+platforms today*, but by two different mechanisms, only one of which is written down.
+
+**Two further factual errors this measurement exposes (documentation, not behaviour):**
+1. `CONSOLIDATED_SPEC.md` §27's `Ctrl+Shift+Z` row (`:9918`) asserts *"**It is dead on `PhpFileTab`, the
+   Sandbox SQL Console and `CodeEditorDialog`**, which is what the manual says."* — **measured false**
+   (M4). It redoes on all three, natively, on both schemes.
+2. `pgtp_editor/ui/shortcut_registry.py:220-222`'s reason string says the chord is *"answered inside every
+   **XML** editor's own key handling"*. The reservation itself is **correct and even more justified than
+   stated** — every `CodeEditor` surface answers it too — but the stated reason is wrong, and BUG-050's
+   premise ("a menu command on this chord would only work while no *XML* editor has focus") understates
+   the scope: it would be shadowed by **every** text editor in the app.
+
+**Mirror case, checked as asked:** `Ctrl+Y` is the divergent chord (above). `Ctrl+Z` is safe — `Undo`'s
+`Ctrl+Z` row carries mask `0xFFFF` (all schemes). Two Windows-only bindings are additionally unreserved
+and unmentioned anywhere: **`Alt+Backspace` (native Undo) and `Alt+Shift+Backspace` (native Redo)**, both
+live on every `CodeEditor`/`XmlEditor` on Windows. `Customize Shortcuts…` will happily assign a menu
+command to either, and on Windows that command would be shadowed inside every editor while working fine on
+Linux — the identical class of bug BUG-050 was filed for, one platform over. Low severity (nobody presses
+them), but it belongs in the same fix or in a follow-up entry.
+
+**Proposed fix:**
+
+1. **`pgtp_editor/ui/sql_console_panel.py` — give `SqlConsolePanel` the same claim-and-answer filter every
+   other editor surface has.** In `__init__` (after the editor is built, ~`:460`) add
+   `self.editor.installEventFilter(self)`, and add an `eventFilter` shaped **exactly** like
+   `PhpFileTab.eventFilter` (`php_file_tab.py:388-410`) extended with the third chord — i.e. the
+   `DdlObjectEditorPanel.eventFilter` (`ddl_object_editor.py:894-925`) matching:
+   `is_undo = key == Key_Z and mods == ctrl`;
+   `is_redo = (key == Key_Y and mods == ctrl) or (key == Key_Z and mods == (ctrl | shift))`;
+   on `ShortcutOverride` → `event.accept()`; on `KeyPress` → `self.editor.undo()` / `self.editor.redo()`;
+   `return True`. The console buffer is **editable** (unlike the DDL Explorer), so it routes into its own
+   stack — do **not** copy `DdlEditorPanel`'s `report_refusal` branch.
+   - *Gotcha 1:* both halves are required. Accepting only the `ShortcutOverride` leaves the key dead;
+     answering only the `KeyPress` lets the window `QShortcut` also fire. This is stated verbatim in
+     `ddl_editor_panel.py:172-176` and in §18.5's rule block (`CONSOLIDATED_SPEC.md:6383-6406`).
+   - *Gotcha 2:* the panel already has `SchemaGestureHostMixin` / `CompletionPopupHostMixin` in its MRO
+     (`sql_console_panel.py:377`). Check whether either defines `eventFilter` before adding one, and keep
+     the `return super().eventFilter(obj, event)` fall-through so their behaviour survives.
+   - *Gotcha 3:* filter the **editor**, not the panel, and gate on `obj is self.editor` — the console
+     hosts a results table and a completion popup that must keep their own keys.
+   - *Gotcha 4:* the console's completion popup may be visible when the chord arrives; mirror whatever the
+     existing `Ctrl+Space` path does about popup state rather than inventing new handling.
+2. **`pgtp_editor/ui/php_file_tab.py` — add the `Ctrl+Shift+Z` branch** to `eventFilter`, changing
+   `ctrl = event.modifiers() == ControlModifier` into the same `is_undo`/`is_redo` pair. This is a
+   **no-behaviour-change** edit on both platforms (the native handler already does it) whose whole value is
+   that the tab's redo stops depending on a platform table: it becomes stated intent, matching the DDL
+   object tab and the DDL Explorer, and it removes the last surface where the app's answer to a
+   `RESERVED_SEQUENCES` chord is "whatever Qt decided".
+   - *Gotcha:* the file carries a loud "do **not** re-add a `Key_S` branch here" comment
+     (`php_file_tab.py:377-387`) — that constraint is untouched; add nothing but the redo chord.
+3. **`pgtp_editor/ui/code_editor.py::CodeEditorDialog` (`:901`)** — same situation (no undo/redo filter),
+   but no window `QShortcut` can reach it and it is a short-lived modal. **Recommendation: leave it
+   alone**, and if the shared helper of step 4 lands, adopt it there too so the four editable surfaces
+   stay identical.
+4. **Optional consolidation, recommended:** four sites now hand-repeat the same three-chord match
+   (`ddl_object_editor.py:900-913`, `ddl_editor_panel.py:156-164`, `php_file_tab.py:391-397`, and the new
+   console one). `DdlEditorPanel._is_undo_redo_chord` is already the extracted form. Lift it to a module
+   both panels import (e.g. `ui/code_editor.py` or a small `ui/undo_redo_chords.py`) returning
+   `("undo" | "redo" | None)`, and have all four call it. **Only the matching is shared** — the *answer*
+   differs per surface (own stack / refusal-with-reason / re-emit), which
+   `ddl_object_editor.py:905-911` and `ddl_editor_panel.py:144-155` both already say in comments. This is
+   the fourth `Ctrl+Z`-family bug (BUG-048, BUG-049, BUG-053, this one), and every one of them was "one of
+   N copies of the same chord match was missing a case" — the duplication *is* the recurrence mechanism.
+5. **`pgtp_editor/ui/shortcut_registry.py:220-222` — correct the reason string** for `Ctrl+Shift+Z` to say
+   it is answered inside **every text editor's** own key handling (XML editors explicitly; the SQL/PHP
+   `CodeEditor` surfaces natively, and explicitly once step 1/2 land). No key is added or removed. While
+   there, consider whether `Alt+Backspace` / `Alt+Shift+Backspace` deserve rows for the Windows-only
+   native bindings (see mirror case) — that is a genuine, if small, `RESERVED_SEQUENCES` gap.
+6. **Do NOT "fix" `Ctrl+Shift+Z` by removing it** anywhere. It works on every scheme; the defect is the
+   absence of a *statement*, not of behaviour.
+
+**Owner decision — flagged, NOT filed** (per the brief, nothing was written to `docs/DECISION_QUEUE.md`).
+The narrow question in the brief ("should this chord mean redo on every platform, or should the app follow
+each platform's convention?") turns out **not** to need a ruling for `Ctrl+Shift+Z` — the measurement
+answers it: it already means redo on every platform. The question that *does* survive, and is the owner's:
+
+> **Should the editors keep Qt's platform-native undo/redo chord set (so a Windows user gets
+> `Ctrl+Y`/`Alt+Backspace` and a Linux user does not), or should the app pin exactly three chords —
+> `Ctrl+Z` / `Ctrl+Y` / `Ctrl+Shift+Z` — identically on every platform and every surface?**
+>
+> This entry's fix assumes **pin**, because that is what §18.5's rule block already requires of every
+> center-stage surface and what `RESERVED_SEQUENCES` already promises the user in `Customize Shortcuts…`;
+> and because the project's own precedent is the FQ-020 ruling *"Dies at all, inconsistency is a bad
+> driver"*. But **pin** does mean deliberately overriding a platform convention (`Alt+Backspace` on
+> Windows would keep working natively unless it is also claimed), so it is a design ruling, not a bug fix
+> detail. The steps above are safe under either answer — they only make current behaviour explicit — so
+> implementation need not wait on it.
+
+**Test impact:**
+- `tests/ui/test_sql_console_panel.py` — **primary**. No undo/redo coverage exists there today. Add
+  mechanism-level cases in the established idiom (call `panel.eventFilter(...)` directly with synthesized
+  `ShortcutOverride` / `KeyPress` events, as `tests/ui/test_ddl_object_editor.py:462-560` does and explains
+  why): `ShortcutOverride` accepted for all three chords, `KeyPress` driving `editor.redo`/`undo`, and an
+  unrelated chord left unclaimed (the `test_shortcut_override_does_not_claim_unrelated_keys` guard shape).
+- `tests/ui/test_php_file_tab.py` — extend the existing `Ctrl+Z`/`Ctrl+Y` filter tests with the
+  `Ctrl+Shift+Z` case. Do not create a new module.
+- `tests/ui/test_shortcut_registry.py:295-309` — already asserts the `Ctrl+Shift+Z` row exists and its
+  ordering after `Ctrl+Y`; if the reason string is reworded, check nothing asserts its exact text.
+- `tests/ui/test_ddl_editor_panel.py`, `tests/ui/test_ddl_object_editor.py` — if step 4's shared helper
+  lands, these must keep testing each panel's **answer** (refusal vs. own stack) and only the *matching*
+  moves to the helper's own test.
+- **Mandatory caveat for whoever writes these tests, and the reason this defect survived four related bug
+  fixes:** the suite runs `QT_QPA_PLATFORM=offscreen`, which is the **Windows** keyboard scheme (M2). A
+  test that types `Ctrl+Y` into an unfiltered `QPlainTextEdit` **passes under the test harness on both dev
+  machines and still proves nothing about Linux at runtime.** Tests must therefore assert the *filter*
+  (that the panel claims and answers the chord), never the observable redo through the native path —
+  otherwise they are green for the wrong reason. Two existing comments should be corrected in passing:
+  `tests/ui/test_ddl_object_editor.py:571` says *"`QKeySequence.StandardKey.Redo` (Ctrl+Shift+Z on this
+  platform)"* — offscreen's *primary* Redo binding is `Ctrl+Y`, not `Ctrl+Shift+Z` — and any note implying
+  offscreen behaves like the host OS is wrong.
+
+**Spec impact: YES — flag for `spec-maintainer` after the fix lands.**
+- `CONSOLIDATED_SPEC.md:9918` (§27, the `Ctrl+Shift+Z` row) contains a **measured-false** assertion:
+  *"It is dead on `PhpFileTab`, the Sandbox SQL Console and `CodeEditorDialog`."* It is not dead on any of
+  them; `QPlainTextEdit` answers it natively under both the Windows and X11/KDE keyboard schemes. Needs a
+  correction plus a Supersession Ledger row.
+- `CONSOLIDATED_SPEC.md:6383-6406` (§18.5's claim-the-key rule block) lists **Sandbox SQL Console →
+  "yes — since BUG-048 — covered by the same window-shortcut scoping below."** That is the *hazard* being
+  covered, not the *rule*: the rule as written is *claim the key **and answer it***, and the console does
+  neither — scoping the window shortcut only guarantees silence. The row must be corrected to
+  **uncovered** until step 1 lands, then restated with the filter as its mechanism.
+- §27 should additionally record the platform fact itself, since it is the thing nobody knew: `Ctrl+Y` is a
+  Qt `StandardKey.Redo` binding on the **Windows scheme only**, which is why every surface must claim it
+  explicitly rather than lean on the native handler — and why the offscreen test platform (Windows scheme)
+  cannot detect the difference.
+- The manual is **correct as it stands** and needs no change from this entry: it deliberately documents
+  only the four surfaces whose behaviour was verifiable and asserts nothing about the PHP tab or the
+  Sandbox console. Once step 1/2 land, `manual-maintainer` can state all six.
+
+---
