@@ -4133,3 +4133,219 @@ and the same shape in `routine_signatures` over `getattr(index, "routines", None
 **Spec impact:** **Three places in `CONSOLIDATED_SPEC.md` must be updated by `spec-maintainer` after the fix lands — this is a spec-recorded debt being paid, so the record must be retired or it becomes a dead assertion.** (1) §18.9's blockquote "⚠ A DEBT THE SEAM PAYS FOR, RECORDED SO IT IS NOT MISTAKEN FOR THE INTENDED SHAPE" (~lines 8742-8754) describes the private-attribute fallback and the false `join_fk.py` docstring as current state and says the fix was *"filed to `bug-triager` on 2026-08-10 rather than fixed here"* — retire or rewrite it once resolved. (2) §18.6's `SchemaIndex` member table (~lines 8040-8046) lists the public surface and must gain rows for `column_infos` and `routines`. (3) The repository-map line for `schema_index.py` (~line 615, *"SchemaIndex — known_schemas/known_tables/known_columns/trigger_for_function"*) needs the new members. Also note the 2026-08-10 Supersession Ledger row (~line 9764) ends with *"One debt recorded, not hidden … dispatched to `bug-triager`, not fixed here"* — a follow-up ledger row should record that it was paid. **The current behaviour was never an intentional design decision** — the spec explicitly calls it debt, not the intended shape, so the fix needs no design reversal. `bug-triager` does not edit the spec; flag for `spec-maintainer`.
 
 ---
+## BUG-046: `Ctrl+Shift+B` is hosted twice — a `QAction` *and* a `CodeEditor.keyPressEvent` branch — on a premise ("QShortcut is unreliable offscreen") that is measurably FALSE
+**Status:** OPEN
+**Reported:** 2026-08-10
+**Report (verbatim):** "Ctrl+Shift+B must be handled the same way as other keyboard shortcuts: a QShortcut/QAction in the normal run, with direct key-press handling used only in testing. A test-environment constraint should not shape the production path."
+
+This is an owner **ruling to implement**, not a question to re-open. The design it reverses is
+recorded in `CONSOLIDATED_SPEC.md` §8 as *"measured, then KEPT"* — see **Spec impact**.
+
+### Root cause
+
+The chord has two live hosts:
+
+1. `pgtp_editor/ui/main_window.py:2415-2418` (`MainWindow._build_select_menu`) —
+   `Select ▸ Select Enclosing Block`, `setShortcut("Ctrl+Shift+B")`, dispatching by capability in
+   `_select_enclosing_block` (`main_window.py:2429-2460`).
+2. `pgtp_editor/ui/code_editor.py:740-746` (`CodeEditor.keyPressEvent`) — an unconditional
+   `Ctrl+Shift+B → self.select_enclosing_brackets()` branch, ahead of everything else in the handler.
+
+The comment at `code_editor.py:736-739` justifies (2) with two claims, and the docstring at
+`main_window.py:2444-2453` repeats them:
+
+- **Claim A** — it is the only host in the menu-less `CodeEditorDialog`. **TRUE.**
+  `CodeEditorDialog` (`code_editor.py:871-938`) is a bare `QDialog` holding one `CodeEditor` plus a
+  `QDialogButtonBox`; it deliberately installs **no** `QShortcut` at all (the `Ctrl+S`/`Ctrl+W`
+  carve-out was removed by the 2026-08-09 owner decision, `code_editor.py:902-912`). Removing the
+  `keyPressEvent` branch naively kills bracket-select in that dialog — which is reachable from
+  `MainWindow._open_code_editor_dialog` (`main_window.py:3183-3195`, the Editor "Edit code…"
+  gesture) **and** from `ActivityPanel.open_viewer` (`activity_panel.py:255-279`).
+- **Claim B** — *"QShortcut activation is not guaranteed under the offscreen platform."*
+  **FALSE, and it is the actual root cause of the duplication.** Measured on this checkout
+  (PySide6 6.11.1, `QT_QPA_PLATFORM=offscreen`, scratch tests, not committed):
+
+  | driving idiom | menu `QAction` shortcut | dialog `QShortcut` | `WidgetWithChildrenShortcut` |
+  |---|---|---|---|
+  | `w.show()`; `QApplication.processEvents()`; `editor.setFocus()`; `qtbot.keyClick(editor, …)` | **fires** | **fires** | **fires** |
+  | `QTest.keyClick(top.windowHandle(), …)` after `show()` | **fires** | **fires** | **fires** |
+  | widget never `show()`n (no `windowHandle()`) | does not fire | does not fire | does not fire |
+
+  The real rule is not "offscreen breaks shortcuts". It is that `QTest`/`qtbot` key delivery only
+  reaches Qt's shortcut map when the widget's **top level has been created** (i.e. `show()` was
+  called, so `windowHandle()` exists); otherwise the event is posted straight at the widget and the
+  shortcut map is bypassed. Every "unreliable offscreen" comment in the repo traces to tests that
+  build a bare widget without `show()`. Prototype proof that the proposed fix works offscreen: a
+  `QShortcut(QKeySequence("Ctrl+Shift+B"), dialog)` added to a real `CodeEditorDialog` and driven by
+  `qtbot.keyClick(dlg._editor, …)` after `show()` selects the bracket span correctly.
+
+**Two consequences worth recording, because they invalidate existing evidence:**
+
+- `tests/ui/test_select_menu.py::test_ctrl_shift_b_on_a_focused_code_editor_is_handled_once`
+  (lines 488-524) claims to prove *"the menu action WINS; Qt's shortcut map consumes the key before
+  it reaches the focused widget"* by counting calls. It does `window.show()` + `setFocus()`, so the
+  `QAction` genuinely does fire and the count of 1 is real — but the test cannot distinguish
+  *which* of the two handlers produced the single call, because it counts
+  `tab.editor.select_enclosing_brackets` which **both** paths land on. The "measured" claim in the
+  spec rests on a test that measures the total, not the winner.
+- `Ctrl+Shift+A` (`Select Parent Block`, `main_window.py:2419-2421`, `QAction`-only) **works today**
+  and its coverage is sound:
+  `tests/ui/test_select_menu.py::test_the_ctrl_shift_a_chord_itself_is_live_on_xml_and_dead_on_a_php_tab`
+  (lines 390-432) uses exactly the `show()` + `processEvents()` + `setFocus()` idiom the table above
+  shows does reach the shortcut map, and asserts the action fired. It also correctly asserts the
+  chord goes dead when the action is hidden — matching the measured "hidden action does not fire"
+  result. No related breakage there. (Verified green individually on this checkout; note the working
+  tree is mid-merge — `tests/ui/test_select_menu.py` and `pgtp_editor/ui/main_window.py` are `UU` in
+  `git status` — and the *whole file* run currently fails with unrelated cross-test contamination.
+  Re-baseline after the merge resolves; do not attribute that to this bug.)
+
+### Proposed fix
+
+Three edits, all small; the whole risk is in step 2.
+
+1. **`pgtp_editor/ui/code_editor.py` — delete the `Ctrl+Shift+B` branch** at lines 740-746 of
+   `CodeEditor.keyPressEvent`, and the comment at 736-739 with it. Do **not** touch the
+   `Ctrl+Alt+E` / `Ctrl+Alt+C` branch at 780-788 (see **Scope**, below — that is a separate,
+   undecided question). `select_enclosing_brackets` itself (`code_editor.py:413`) stays exactly as
+   it is; it becomes purely a slot.
+
+2. **`pgtp_editor/ui/code_editor.py` — give `CodeEditorDialog` its own `QShortcut`.** In
+   `CodeEditorDialog.__init__`, after `self._editor` is created (`code_editor.py:889`), add roughly:
+
+   ```python
+   self._select_enclosing_shortcut = QShortcut(QKeySequence("Ctrl+Shift+B"), self)
+   self._select_enclosing_shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
+   self._select_enclosing_shortcut.activated.connect(self._editor.select_enclosing_brackets)
+   ```
+
+   Gotchas:
+   - `QShortcut` and `QKeySequence` are already imported in this module (`code_editor.py:46`); `Qt`
+     is too. No new imports needed.
+   - **Keep the reference on `self`.** A `QShortcut` whose Python reference is dropped is garbage
+     collected and stops working — the same reason `find_replace_bar.install_focus_shortcuts`
+     (`find_replace_bar.py:248-256`) returns its two shortcuts for the caller to retain. This is the
+     single easiest thing to get wrong here.
+   - `WindowShortcut` (the default) is correct and sufficient — the dialog is the window. Do not use
+     `ApplicationShortcut` (it would fight the `MainWindow` action).
+   - Put it **next to** the existing `Ctrl+S`/`Ctrl+W` comment block (lines 902-912) so the "what
+     keys does this dialog own" story stays in one place, and replace that block's implicit "this
+     dialog owns no shortcuts" reading.
+
+3. **`pgtp_editor/ui/main_window.py` — rewrite the `_select_enclosing_block` docstring**
+   (lines 2444-2453). The whole "**The duplicate Ctrl+Shift+B handler, resolved (FQ-015 trap)**"
+   paragraph becomes wrong: there is no duplicate, the action is the sole host on every tab, and the
+   `CodeEditorDialog` hosts its own `QShortcut`. State the measured fact that replaces the retired
+   claim (shortcuts DO activate offscreen; what breaks is key delivery to a never-shown widget), so
+   the false premise is not re-derived by the next reader. The capability-dispatch paragraph
+   (2429-2443) is unaffected and stays.
+
+**Do NOT** add a `Ctrl+Shift+B` row to `shortcut_registry.RESERVED_SEQUENCES`. It is a menu command
+and must stay rebindable — that is the point of the ruling. (`Ctrl+Shift+B` is correctly absent from
+that dict today; `shortcut_registry.py:204-260`.)
+
+**Known limitation, deliberate, please state it in the code comment rather than fixing it silently:**
+the dialog's `QShortcut` is a literal `"Ctrl+Shift+B"` and does **not** follow a user rebinding of
+`Select ▸ Select Enclosing Block` (`MainWindow._apply_shortcut_bindings`, `main_window.py:3103-3131`,
+only walks `self._toolbar_ui.menu_commands` `QAction`s). Making it follow would mean passing the
+resolved sequence into the `CodeEditorDialog` constructor at both construction sites
+(`main_window.py:3195` and `activity_panel.py:266`) — the latter has no `MainWindow` to ask, so it
+would need a default. That is a real improvement but a **larger** change than the ruling asks for;
+if the implementer does not do it, the manual caveat shrinks rather than disappears (see below).
+
+### Scope beyond `Ctrl+Shift+B` — REPORTED, NOT DECIDED
+
+The same false premise is load-bearing for a family, all citing "offscreen" verbatim:
+
+| chord | where handled | has a menu entry? |
+|---|---|---|
+| `Ctrl+Alt+E`, `Ctrl+Alt+C` | `CodeEditor.keyPressEvent` (`code_editor.py:773-788`) | no |
+| `Ctrl+Alt+F` | `DdlObjectEditorPanel`: a real `QShortcut` (`ddl_object_editor.py:781-789`) **plus** a redundant `eventFilter` branch (`ddl_object_editor.py:887-896`) | no |
+| `Ctrl+Space` | `DdlObjectEditorPanel.eventFilter` (`ddl_object_editor.py:897-899`) | no |
+| `Ctrl+Alt+J`, `Ctrl+Alt+F`, `Ctrl+Space`, `Ctrl+Shift+Space` | `SqlConsolePanel`: already `QShortcut`s (`sql_console_panel.py:507-533`) | no |
+
+Cost if the owner extends the ruling: **small and mechanical** — roughly delete two branches in
+`code_editor.py` and add two `WidgetWithChildrenShortcut` `QShortcut`s to whatever hosts the editor,
+plus delete the two redundant `ddl_object_editor.eventFilter` branches (that panel already carries
+the working `QShortcut`, so those two branches are pure dead weight and are the cheapest, lowest-risk
+part of the family). Measured: `WidgetWithChildrenShortcut` fires correctly offscreen.
+
+But **correctness is a real question, not just cost**: unlike `Ctrl+Shift+B`, none of these has a
+menu entry, so none of them is "handled twice" — a gesture that belongs to the editor widget and to
+no command may legitimately live in the widget's own key handling, which is exactly the argument
+`shortcut_registry.RESERVED_SEQUENCES` already codifies for them (`Ctrl+Alt+F` at
+`shortcut_registry.py:233-238`, the FQ-030 four at 239-249: *"a menu command retargeted onto one of
+these keys would fight a widget that already answers to it"*). Those rows stay valid either way; if
+the family converts to `QShortcut`s the rows' **reason text** needs a light edit (they would become
+widget-scoped `QShortcut`s, still not menu-walk-enumerable). **Leave this family alone in this fix
+unless the owner rules it in.**
+
+### Test impact
+
+Existing coverage, all of it to be extended rather than duplicated:
+
+- `tests/ui/test_code_editor.py:171-180`
+  (`test_ctrl_shift_b_selects_bracket_span_caret_at_start`) — **will break.** It builds a bare
+  `CodeEditor("js")` with **no `show()` and no host**, so after step 1 there is nothing to answer the
+  chord. Re-point it at a `CodeEditorDialog` (`dlg.show()`, `processEvents()`,
+  `dlg._editor.setFocus()`, then `qtbot.keyClick(dlg._editor, …)`) — measured to pass. Keep a
+  separate direct-call test of `select_enclosing_brackets` for the pure span logic.
+- `tests/ui/test_select_menu.py:527-545`
+  (`test_the_editor_side_ctrl_shift_b_handler_is_retained_for_menuless_hosts`) — **delete or invert.**
+  Its whole subject (the retained widget handler) is gone. Replace with
+  *"the `CodeEditorDialog` answers `Ctrl+Shift+B` through its own `QShortcut`"* driven by a real key
+  press on a shown dialog.
+- `tests/ui/test_select_menu.py:488-524`
+  (`test_ctrl_shift_b_on_a_focused_code_editor_is_handled_once`) — **keep, but rewrite the docstring
+  and strengthen it.** It should now prove the `QAction` is the *only* host: connect a counter to
+  `window._select_enclosing_action.triggered` **as well as** wrapping
+  `tab.editor.select_enclosing_brackets`, and assert both are 1 — that distinguishes the winner,
+  which the current version cannot.
+- `tests/ui/test_select_menu.py:390-432` (`Ctrl+Shift+A`) — no change; it is the model idiom.
+
+New cases the fix needs:
+
+1. `CodeEditorDialog` answers `Ctrl+Shift+B` by real key press after `show()` (the Claim-A regression
+   guard — the one thing a naive removal silently kills).
+2. The dialog's shortcut object is retained on the dialog (e.g. `hasattr(dlg, "_select_enclosing_shortcut")`
+   / non-`None`), guarding the GC failure mode.
+3. A negative: a bare `CodeEditor` with no dialog and no window action no longer answers the chord —
+   pinning that the widget branch is really gone and cannot silently come back.
+4. Optionally, in `tests/ui/test_customize_shortcuts_dialog.py` or `tests/ui/test_shortcut_registry.py`:
+   assert `Ctrl+Shift+B` is **not** reserved and remains an assignable target, i.e. the chord is now
+   genuinely rebindable on the menu command.
+
+Note for whoever writes these: prefer the `show()` + `QApplication.processEvents()` + `setFocus()`
+idiom over `qtbot.waitExposed(...)` called without `with` — the latter does not actually wait, and
+was itself a source of the "shortcuts don't work offscreen" folklore.
+
+### Manual impact (flag for `manual-maintainer`, do not edit `manual.md` here)
+
+Two passages state the dual hosting as deliberate and become **wrong**:
+
+- `pgtp_editor/resources/manual.md:3705-3717` — the blockquote *"One caveat: Ctrl+Shift+B is handled
+  in two places"*, which tells the user that rebinding **Select ▸ Select Enclosing Block** does not
+  change the editors' behaviour. After the fix, rebinding **does** move the chord everywhere the
+  menu command acts. If the dialog keeps a literal `Ctrl+Shift+B` (see the known limitation above),
+  the caveat **shrinks to the Edit code… dialog only** rather than disappearing.
+- `pgtp_editor/resources/manual.md:957-961` — the Edit code… dialog bullet, which says the key
+  *"cannot be changed by rebinding"*; and the shortcut-table row at `manual.md:3539`
+  (*"Ctrl+Shift+B | Code Editor dialog | Bracket-select (the dialog has no menu bar)"*), whose
+  parenthetical reason changes from "handled by the widget" to "hosted by the dialog's own shortcut".
+- `manual.md:3728-3729`'s "keys with no menu entry" table rows are about the `Ctrl+Alt+*` family and
+  are **unaffected** unless the owner extends the scope.
+
+**Spec impact:** **Diverges from `CONSOLIDATED_SPEC.md` §8 — flag for `spec-maintainer` after the fix
+lands.** The current behaviour *was* an intentional, recorded decision: the blockquote at
+CONSOLIDATED_SPEC.md ~lines 2415-2421, **"The duplicate Ctrl+Shift+B handler: measured, then KEPT"**
+(*"it remains the reliable path under the offscreen test platform where QShortcut activation is not
+guaranteed"*), which explicitly closed a §29 open question. That blockquote must be rewritten, not
+merely deleted, and the retired premise named so it is not re-derived. Echo sites to sweep: the
+FQ-015 fold-in paragraph in the §28 header narrative (~line 350, *"`CodeEditor.keyPressEvent`'s
+duplicate `Ctrl+Shift+B` is **kept** (measured: the QAction wins where it exists; the handler is the
+only host in the menu-less `CodeEditorDialog`)"*), §27's `Ctrl+Shift+B` row (~line 2364), the §21
+PHP-tab reuse table row (~line 6163, *"bracket-select (Ctrl+Shift+B) | `CodeEditor.keyPressEvent`"*),
+~line 2733, and ~line 6183. A Supersession Ledger row is warranted: the 2026-08-07 FQ-015 decision is
+being reversed by owner ruling on 2026-08-10, on the grounds that its measurement premise was wrong.
+`bug-triager` does not edit the spec.
+
+---
