@@ -148,13 +148,23 @@ picked from occasionally — it is the work.
   left out for `DEC-260810134914` — that is the shape.
 - **Never invent an answer to unblock yourself.** A guess written into shipped code is far
   more expensive than a partial feature, because nothing marks it as a guess.
+- **Run parallel agents whenever the work allows it** — that is the default, not an
+  optimisation. Sequencing independent work is wasted wall-clock.
 - **Parallelise by file ownership, not by task.** Two agents in one file clobber each other —
-  there is no merge, only last-write-wins. Give each file exactly one owner; where two pieces
-  of work genuinely need the same file, either give them to one agent or put them in separate
-  worktrees and merge.
+  there is no merge, only last-write-wins. Give each file exactly one owner.
+- **Use a worktree when the merge is foreseeably impactless or minor**, i.e. the pieces touch
+  different files, or the same file in clearly different regions. That is what lets two pieces
+  of work share `main_window.py` safely. When a merge would be genuinely entangled — the same
+  function, the same dict, the same table — do **not** reach for a worktree: give both pieces
+  to one agent, which is cheaper than resolving a conflict nobody can review.
+- **Merge a worktree as soon as its tests pass, then delete it.** Do not accumulate them. A
+  stale worktree drifts from `main`, its agent's baseline number stops matching, and its diff
+  gets harder to judge with every commit that lands elsewhere. Merge → full suite → push →
+  `git worktree remove` + `git branch -D`. Leaving one parked is how work goes missing.
 - **Worktree agents MUST commit.** Uncommitted worktree changes have nothing to merge and are
-  lost. This has cost real work: two fixes were silently absent from a branch about to land on
-  `main` because their agents were told not to commit.
+  lost — a `git merge` of such a branch reports success and brings nothing. Verify by grepping
+  for a symbol the work introduced, never by trusting the merge output. This has cost real
+  work: two fixes were silently absent from a branch about to land on `main`.
 - **Run the full suite after every merge, not only in each worktree.** Integration failures
   are invisible to both sides — a merge has broken imports that neither track could see.
 - **Flip the status as each piece merges, not in a later sweep.** BUG-062 was found
