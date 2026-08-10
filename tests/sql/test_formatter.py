@@ -9,7 +9,7 @@ import unicodedata
 
 import pytest
 
-from pgtp_editor.sql import FormatResult, Issue, format_selection
+from pgtp_editor.sql import FormatConfig, FormatResult, Issue, format_selection
 from pgtp_editor.sql.tokenizer import tokenize
 
 
@@ -414,7 +414,12 @@ def test_whitespace_only_selection_is_returned_untouched():
 
 
 def test_indent_unit_is_configurable():
-    assert fmt("begin x := 1; end;", indent_unit="  ") == "begin\n  x := 1;\nend;"
+    # FQ-033: `indent_unit=` is gone -- the value moved into `FormatConfig`, so
+    # there is exactly one way to set it.
+    assert (
+        fmt("begin x := 1; end;", config=FormatConfig(indent_unit="  "))
+        == "begin\n  x := 1;\nend;"
+    )
 
 
 # --------------------------------------------------------------------------

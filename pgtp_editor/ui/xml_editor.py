@@ -45,7 +45,7 @@ from PySide6.QtGui import (
     QTextCursor,
     QTextFormat,
 )
-from PySide6.QtGui import QAction
+from PySide6.QtGui import QAction, QShortcut
 from PySide6.QtWidgets import (
     QMenu,
     QPlainTextEdit,
@@ -71,6 +71,8 @@ from pgtp_editor.ui.editor_gutter import (  # noqa: F401  (re-exported names)
     GutterBookmarkFoldMixin,
 )
 from pgtp_editor.ui.event_body import event_body_line_ranges
+from pgtp_editor.ui.format_settings import current_xml_config
+from pgtp_editor.xmlfmt import format_xml_selection
 
 STATE_NORMAL = 0  # in text content, outside any tag
 STATE_IN_UNCLOSED_STRING = 1  # inside a double-quoted attribute value
@@ -445,6 +447,18 @@ class XmlEditor(CompletionPopupHostMixin, GutterBookmarkFoldMixin, QPlainTextEdi
     # opening tag but not on a specific attribute. MainWindow opens the Edit
     # XSD tab and navigates to the matching definition line.
     goto_xsd_requested = Signal(str, str)
+    # Emitted when Format Selection (§18.4 part C) REFUSES: carries the list of
+    # fatal `sql.Issue`s, which MainWindow renders in the Activity Log under the
+    # **`[XML]`** prefix (§7 -- non-clickable, no line role, `[SQL]`'s treatment
+    # exactly). A new prefix rather than a reuse because an `[SQL]` row saying
+    # "this XML selection is mis-nested" would be a lie to the user.
+    #
+    # A read-only buffer produces NO row here: the gesture emits the existing
+    # `read_only_edit_attempted` instead, because the app already has one answer
+    # to "you cannot change this buffer" and FQ-021 already lists the reasons on
+    # screen. A selection-less Ctrl+Alt+F is a silent no-op, matching both SQL
+    # hosts.
+    format_refused = Signal(list)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -559,6 +573,23 @@ class XmlEditor(CompletionPopupHostMixin, GutterBookmarkFoldMixin, QPlainTextEdi
         # The shared Ctrl+Space completion popup (attribute names, then
         # chained values) and its wiring state -- see CompletionPopupHostMixin.
         self._init_completion_popup()
+        # Format Selection (§18.4 part C): Ctrl+Alt+F, enabled only with a
+        # selection. ONE gesture, TWO engines, dispatched by HOST SURFACE and
+        # never by sniffing the text -- this class is an XML surface, so it wires
+        # `xmlfmt` and the SQL engine is never reachable from here (a text-
+        # sniffing dispatcher would eventually guess wrong on a selection that
+        # looks like both, e.g. `<x>select 1</x>`).
+        #
+        # A panel-local `QShortcut` with `WidgetWithChildrenShortcut`, disabled
+        # without a selection: the shape both SQL hosts already ship
+        # (`ddl_object_editor.py`, `sql_console_panel.py`). It is the gesture's
+        # ONLY keyboard host -- there is deliberately NO `keyPressEvent` branch
+        # for Ctrl+Alt+F (DEC-004/BUG-046: double-hosting makes Qt fire neither).
+        self._format_shortcut = QShortcut(QKeySequence("Ctrl+Alt+F"), self)
+        self._format_shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+        self._format_shortcut.activated.connect(self.format_selection)
+        self._format_shortcut.setEnabled(False)
+        self.selectionChanged.connect(self._update_format_shortcut_enabled)
         self._rescan_structure()
         self._refresh_code_region_selections()
         self._highlight_current_line()
@@ -1302,7 +1333,84 @@ class XmlEditor(CompletionPopupHostMixin, GutterBookmarkFoldMixin, QPlainTextEdi
         wrap_action.setChecked(self.is_line_wrap_enabled())
         wrap_action.toggled.connect(self.set_line_wrap_enabled)
         menu.addAction(wrap_action)
+        # "Format Selection" (§18.4 part C) -- the gesture's COMMAND form, which
+        # this menu makes free (the SQL console has no context menu at all, which
+        # is why the chord is its only form there). It carries NO shortcut of its
+        # own: the panel-local QShortcut is the single keyboard host.
+        format_action = QAction("Format Selection", menu)
+        format_action.setEnabled(cursor.hasSelection() and not self.isReadOnly())
+        format_action.triggered.connect(self.format_selection)
+        menu.addAction(format_action)
         return menu
+
+    # --- Format Selection (§18.4 part C: the XML indentation engine) --------
+
+    def _update_format_shortcut_enabled(self) -> None:
+        self._format_shortcut.setEnabled(self.textCursor().hasSelection())
+
+    def format_selection(self) -> bool:
+        """Reindent the selected XML by element-nesting depth, in place.
+
+        Indentation only -- `xmlfmt` never touches element text, never breaks an
+        opening tag, and never enters a comment/CDATA/PI/DOCTYPE (§18.4 C's three
+        rules, each derived from §2's `.pgtp` layout guarantees). Returns True
+        when the buffer was rewritten.
+
+        THE DOCUMENT, NOT JUST THE SELECTION, is handed to the engine: the whole
+        reason a user reformats a fragment is that its indentation is wrong, so
+        the base depth must come from the selection's POSITION in the document
+        rather than from its own first line -- the one place the XML engine
+        deliberately diverges from the SQL engine's behaviour.
+
+        Three outcomes besides success, and none of them is a new channel:
+        * read-only buffer -> the existing `read_only_edit_attempted` signal (no
+          `[XML]` row: FQ-021 already lists the reasons on screen);
+        * no selection -> silent no-op, as on both SQL hosts;
+        * refusal -> the selection is left byte-for-byte unchanged, the offending
+          span is underlined, and `format_refused` carries the issues to the
+          `[XML]` Audit prefix.
+        """
+        cursor = self.textCursor()
+        if not cursor.hasSelection():
+            return False
+        if self.isReadOnly():
+            self.read_only_edit_attempted.emit()
+            return False
+        start, end = cursor.selectionStart(), cursor.selectionEnd()
+        result = format_xml_selection(
+            self.toPlainText(), start, end, config=current_xml_config()
+        )
+        if result.ok:
+            if result.text != self.toPlainText()[start:end]:
+                span = self._make_span_cursor(start, end)
+                span.beginEditBlock()  # one undo step for the whole reformat
+                span.insertText(result.text)
+                span.endEditBlock()
+            return True
+        self._underline_format_refusal(result.issues)
+        self.format_refused.emit(list(result.issues))
+        return False
+
+    def _underline_format_refusal(self, issues) -> None:
+        """Wave-underline the FIRST refused span (document offsets).
+
+        One span, not all of them, because `_set_oneshot_selection` is this
+        editor's single "overriding indicator" slot and the XML engine's refusals
+        are singular by construction anyway -- an unterminated construct is
+        reported alone, a split boundary names one construct, and the mis-nesting
+        walk stops at the first offender. Transient like every other one-shot:
+        cleared on the next cursor move.
+        """
+        if not issues:
+            return
+        issue = issues[0]
+        selection = QTextEdit.ExtraSelection()
+        fmt = QTextCharFormat()
+        fmt.setUnderlineStyle(QTextCharFormat.UnderlineStyle.WaveUnderline)
+        fmt.setUnderlineColor(QColor("red"))
+        selection.cursor = self._make_span_cursor(issue.start, issue.end)
+        selection.format = fmt
+        self._set_oneshot_selection(selection)
 
     def _emit_find_selected_text(self) -> None:
         # QTextCursor.selectedText() uses U+2029 (paragraph separator) to join

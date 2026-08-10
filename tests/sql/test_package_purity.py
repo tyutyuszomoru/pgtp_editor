@@ -96,6 +96,18 @@ def test_importing_the_package_loads_no_pyside6_module():
 def test_public_api_surface_is_the_documented_one():
     import pgtp_editor.sql as sql
 
-    assert set(sql.__all__) == {"format_selection", "FormatResult", "Issue", "SQL_KEYWORDS"}
+    # FQ-033 widened the pinned surface to SIX: both hosts and the Autoformatter
+    # settings dialog construct a config, and the facade is where they read it
+    # from. The per-rule record types (`KeywordCase`, `ClauseRule`) deliberately
+    # stay off it, reached through `pgtp_editor.sql.format_config` the way
+    # `tokenize`/`Token` are reached through `pgtp_editor.sql.tokenizer`.
+    assert set(sql.__all__) == {
+        "format_selection",
+        "FormatResult",
+        "Issue",
+        "SQL_KEYWORDS",
+        "FormatConfig",
+        "DEFAULT_FORMAT_CONFIG",
+    }
     for name in sql.__all__:
         assert hasattr(sql, name), name
