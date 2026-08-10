@@ -3274,7 +3274,7 @@ sandbox database for me` — and `Database ▸ Sandbox Setup…` no longer exist
 ---
 
 ## BUG-041: §18.6 completion (including `NEW.`/`OLD.`) is dead inside a `$$ … $$` routine body — the one place a plpgsql author types
-**Status:** OPEN
+**Status:** RESOLVED (8d0701c) — Option A + D, as recommended
 **Reported:** 2026-08-10
 **Report (verbatim):** "§18.6's schema-aware completion — including the shipped `NEW.`/`OLD.` row-variable completion — cannot fire inside a `$$ … $$` routine body, which is precisely where a plpgsql author types. So a feature documented as working in the DDL object editor is, in its main use case, dead. Mechanism, as reported by the agent that found it while building FQ-030's scope analyzer: `sql/caret_context.py::_caret_inside_opaque_token` returns `None` for a caret inside ANY opaque token, and a dollar-quoted body is one such token. The DDL object editor feeds `resolve_caret_context` the whole buffer, and `db/ddl_buffer.py` builds that buffer from `pg_get_functiondef` output — so the entire routine body is a single `DOLLAR_STRING`. The current behaviour is deliberate and tested (`tests/sql/test_caret_context.py::test_caret_inside_dollar_quoted_body_is_unresolvable`). Work out and record what the honest options are rather than asserting one. Note the analyzer's own half already handles this: `analyze_from_scope` descends into a dollar-quoted body when the caret is inside it."
 
@@ -3411,6 +3411,52 @@ sentence `from_clause.py`'s docstring already carries (:56-59); and (2) if `doll
 `sql/` tree should name it on `tokenizer.py`. Also worth a line in §18.6's status block: the FQ-030 slice-1
 `ALIAS_REF` kind exists in the pure layer with **no UI consumer yet** (see "Adjacent fact" above) — a status
 accuracy point, not a design one. Do not edit the spec here.
+
+**Resolution (8d0701c) — what actually shipped, and where this entry was wrong.**
+Option A + D were taken; Option B stays rejected for the reason recorded above (without the rebase it turns a
+silent no-op into a *wrong* popup). Verified in the shipped tree:
+- `pgtp_editor/sql/caret_context.py` — the descent lives in `_resolve` (:167-177), **before** the
+  `_caret_inside_opaque_token` call (:179), and only for `DOLLAR_STRING`: it locates the body, rebases to
+  `pos - body_start` and recurses on the body text, bounded by a local `_MAX_BODY_DEPTH = 5` (:69) mirroring
+  `from_clause`'s. Because the body text is re-tokenized, anything opaque *nested inside* it still returns
+  `None` — gotcha (1) honoured.
+- `pgtp_editor/sql/tokenizer.py` — the locator was **promoted**, not copied: public
+  `dollar_body_at(tokens, pos) -> tuple[str, int] | None` (:394), consumed by both `caret_context.py:172` and
+  `from_clause.py:425`. No third locator was created; `db/ddl_check.py::body_line_offset` was deliberately
+  left alone (line-based, answers a different question, and FQ-031 — since shipped — depends on it).
+- **One behaviour fix beyond this entry's plan.** The locator's bounds test was `start < pos < end`, which
+  excluded a caret at the **end of an unterminated body** — exactly where the caret sits while typing a new
+  routine, i.e. the commonest real case. `tokenizer.py:422` now reads
+  `tok.start < pos < tok.end or (tok.unterminated and pos == tok.end)`.
+
+**Two corrections to this entry's analysis, recorded so nobody re-hunts them:**
+1. **The "latent second defect" in `_complete_identifier` was not real.** This entry claimed the `prefix_len = 0`
+   fallback on a `None` context would insert without replacing the typed prefix. It does not:
+   `_complete_identifier` re-resolves the *same* caret with the *same* resolver, so inside a body it now gets a
+   context and replaces the prefix correctly, and the `None` fallback is only reachable where no popup can be
+   open in the first place. There is no residual symptom to chase.
+2. **The console assessment holds, and is now verified both ways.** With no `$$` in the buffer the code path is
+   byte-identical to before (ordinary ad-hoc SQL is unaffected), and a pasted routine definition gets the
+   *same* cure, since both surfaces go through the one resolver.
+
+**Tests as shipped** (`tests/sql/test_caret_context.py`, `tests/sql/test_tokenizer.py`): the deliberate test was
+**repurposed, not deleted** — `test_caret_inside_dollar_quoted_body_is_unresolvable` became
+`…_resolves_against_the_body` (:99), and what it was really protecting is now four tests: a string literal, a
+line comment, a block comment and a quoted identifier **nested inside** a body each still yield `None`
+(:283-302). Plus `pg_get_functiondef`-shaped `NEW.` / alias / dotted-path cases, prefix coordinates, header and
+trailing-`LANGUAGE` lines, an unterminated body, and a depth bound. `dollar_body_at` has its own unit block in
+`tests/sql/test_tokenizer.py` (:429 ff.), including the end-of-unterminated-body case.
+
+**Knock-on: this unblocked queued work immediately.** FQ-030's alias completion and its whole slice-3
+local-scope analyzer (`DECLARE` variables, `%ROWTYPE`, cursors) target symbols that exist *only* inside bodies
+and were structurally unreachable before this; `resolve_caret_context` now layers `LOCAL_REF` on top of the
+descent (`caret_context.py:150-164`), and the UI consumers were wired in `6142d73` — so the path is live end to
+end. The "Adjacent fact" note above (`ALIAS_REF` had no UI dispatcher) is therefore also closed by `6142d73`,
+not by this commit.
+
+**Still outstanding for `spec-maintainer`** (unchanged by this resolution): the two §18.6 / §5 clarifications
+described in *Spec impact* above — caret resolution descends into a body while the tokenizer keeps it opaque
+for every other consumer, and `dollar_body_at` should be named on `tokenizer.py` in §5's `sql/` tree.
 
 ---
 
