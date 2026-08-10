@@ -424,9 +424,29 @@ no code change.
 
 ## DEC-007 — What identity should an ALTER statement have in the `applied` bookkeeping table?
 
-- **Status:** OPEN
-- **Raised:** 2026-08-10, by `bug-triager` from BUG-044 (`docs/BUGFIX_QUEUE.md:3873`)
-- **Supersedes:** DEC-005
+- **Status:** ANSWERED (2026-08-10)
+- **Answer:** **Key an ALTER by its statement text (`db/sandbox.py::text_sha1(buffer_text)`).** The
+  mechanical fix is `bug-triager`'s proposed `CheckRequest.working_set_name` feeding only `working_set_ref`
+  and never `checked_name`, reusing the existing `object_name` column (no DDL migration). The semantic
+  consequence is **accepted and must be recorded**: the alter half of `applied` becomes an **append-only
+  event log**, while the object half stays a **desired-state** table — one table, two meanings, stated
+  plainly in §18.5 rather than avoided.
+- **Owner's reasoning:** a **wrong verdict is strictly worse than an untidy table** — silent wrong results
+  are the invariant this project holds above all. The **no-migration property is what makes the fix
+  deployable to sandboxes that already exist**: `_CREATE_BOOKKEEPING_SQL` is `CREATE TABLE IF NOT EXISTS`
+  with no migration path, so the operation+subject alternative (which needs a new key column) could never
+  reach an existing sandbox — and it *still* mis-handles two `Drop Column` generations on different columns
+  (`subject` is `""` for every `ALTER TABLE` flavour), so it does not even fix the reported defect.
+  Statement-text keying is correct for every collider, stays idempotent (identical text upserts in place),
+  and needs no migration. The object/event semantic split is **real** — an ALTER genuinely *is* an event,
+  not an object — and pretending otherwise is what produced this bug, so it is recorded, not hidden.
+- **Docstring caveat to state (owner-specified):** `CAVEAT_STALE_BUFFER` becomes **structurally
+  unreachable for `kind == "alter"`**, which is **correct** — an edited ALTER is a *different statement*,
+  not a stale version of one object. The docstring must say so, so the next reader does not read the
+  unreachability as a bug.
+- **Wider principle:** where the same table serves an object identity and an event, do not force one shape
+  onto both; record the split explicitly. Correctness of the verdict outranks uniformity of the record.
+- **Supersedes:** DEC-005 (whose question was put on a false premise; this is the real question).
 - **Blocks:** yes — BUG-044's fix cannot be implemented until this is settled. BUG-044 is a **silent wrong
   result**, the invariant this project holds above all others, so the block is on a correctness fix.
 
@@ -479,10 +499,11 @@ switches `plpgsql_check` on for ALTERs. `tests/ui/test_ddl_creation_wiring.py:50
   wrong answer by removing the answer. *Cost:* loses already-applied detection for alters entirely, a feature
   in current use, and the deployment generator would then never see an ALTER at all.
 
-**Recommendation: key by statement text.** A wrong verdict is strictly worse than an untidy table, and the
-no-migration property is what makes the fix deployable to sandboxes that already exist — the other correct
-shape cannot reach them. The semantic split is real and should be *recorded* in §18.5 rather than avoided: an
-ALTER genuinely is an event, and pretending otherwise is what produced this bug.
+**Recommendation (ADOPTED by the owner): key by statement text.** A wrong verdict is strictly worse than an
+untidy table, and the no-migration property is what makes the fix deployable to sandboxes that already
+exist — the other correct shape cannot reach them. The semantic split is real and should be *recorded* in
+§18.5 rather than avoided: an ALTER genuinely is an event, and pretending otherwise is what produced this
+bug.
 
 **Unblocks:** implementing BUG-044's fix (`CheckRequest.working_set_name`, the `AlterDdlRef.working_set_name`
 property, and the six new test cases listed at `docs/BUGFIX_QUEUE.md:4036-4044`), and `spec-maintainer`
@@ -493,10 +514,17 @@ and predates FQ-025's ALTER buffers.
 
 ## DEC-008 — What happens to the `applied` rows already written under the colliding alter key?
 
-- **Status:** OPEN
-- **Raised:** 2026-08-10, by `bug-triager` from BUG-044 (`docs/BUGFIX_QUEUE.md:4015-4018`)
-- **Blocks:** no on its own, but it must ship **with** DEC-007's fix — deciding it afterwards means a release
-  in which the old rows are still being read.
+- **Status:** ANSWERED (2026-08-10)
+- **Answer:** **Delete the orphan rows once, at session open** —
+  `DELETE FROM pgtp_editor_sandbox.applied WHERE kind = 'alter' AND object_name = ''`. The predicate must
+  be **exactly right** (it targets only the empty-`object_name` alter rows the collision produced; it must
+  not touch live rows). Ships **with** DEC-007's fix, in the same commit.
+- **Owner's reasoning:** same as DEC-007 — those rows can only ever produce a **wrong answer or no answer,
+  never a right one**, so nothing is preserved by keeping them. Deleting also **removes the standing
+  dependency** on a "no reader constructs the old key" claim holding true forever as the code changes
+  around it — the "leave them" option's safety rests entirely on that claim staying true, which is a
+  fragile thing to bet correctness on.
+- **Supersedes:** DEC-005's withdrawn cleanup concern is subsumed here.
 
 **Context.** Whatever DEC-007 decides, the rows already written under the key `("alter", schema, "", table)`
 will match no future request. They become inert orphans that read as "not in working set" — honest, since they
@@ -517,11 +545,11 @@ must be **verified in the implementation**, not assumed, before "leave them" is 
   it. *Cost:* a destructive one-off against user data, executed silently at open, with no undo — and the
   predicate must be exactly right or it deletes live rows.
 
-**Recommendation: delete them at session open,** on the same reasoning as DEC-007 — the rows can only ever
-produce a wrong answer or no answer, never a right one, so there is nothing to preserve, and deleting removes
-the dependency on a verification claim holding true forever as the code changes around it. If you prefer to
-leave them, the fix must carry an explicit test that no reader can still construct the empty-`object_name`
-alter key.
+**Recommendation (ADOPTED by the owner): delete them at session open,** on the same reasoning as DEC-007 —
+the rows can only ever produce a wrong answer or no answer, never a right one, so there is nothing to
+preserve, and deleting removes the dependency on a verification claim holding true forever as the code
+changes around it. If you prefer to leave them, the fix must carry an explicit test that no reader can still
+construct the empty-`object_name` alter key.
 
 **Unblocks:** the migration/cleanup half of BUG-044's fix, so it can ship in one commit rather than leaving a
 window in which stale rows are still consulted.
@@ -530,16 +558,24 @@ window in which stale rows are still consulted.
 
 ## DEC-009 — Does DEC-004's ruling extend to the `Ctrl+Alt+` editor-gesture family?
 
-- **Status:** OPEN
-- **Raised:** 2026-08-10, by `owner-decision`, as the scope question left open by DEC-004's ruling
-- **Blocks:** no. Nothing is waiting on it today. But it hardens: every future editor gesture added to this
-  family will copy whichever pattern is in place, so the longer it stands the more sites a later conversion
-  has to touch.
-- **May become cheaper shortly:** `bug-triager` is already reporting on DEC-004's conversion — whether a
-  `QShortcut` activates at all under the offscreen platform, and what the conversion costs in tests. If the
-  answer is "conversion is straightforward", this question is largely mechanical; if it is "`QShortcut` does
-  not fire offscreen", the cost side of the options below changes materially. **It is reasonable to defer
-  this entry until that report lands.**
+- **Status:** ANSWERED (2026-08-10)
+- **Answer:** **Keep the family as a documented widget-only category — decided now, not deferred.** Keep
+  `Ctrl+Alt+E`, `Ctrl+Alt+C`, `Ctrl+Alt+F`, `Ctrl+Alt+J` and `Ctrl+Space` hosted in their widgets; keep
+  `RESERVED_SEQUENCES` (`shortcut_registry.py:233-244`) and the manual's non-rebindable list **as they
+  are**; and **rewrite the misleading offscreen comments** at the widget sites to state the real *product*
+  reason instead. Do **not** convert them to `QShortcut`s.
+- **Owner's reasoning:** DEC-004's defect was **two hosts for one gesture**, not "a widget handles a key".
+  These gestures have **no menu entry**, so they are widget *behaviours* — like auto-close brackets — and
+  hosting them in the widget is a legitimate product decision, not a harness artefact. `Ctrl+Alt+J` and
+  `Ctrl+Space` already have **independent product reasons** (`Ctrl+Alt+J` needs a `SchemaIndex`, which no
+  editor widget may hold, §18.5 D1; completion is intrinsically a widget behaviour). The offscreen sentence
+  in those comments is a **bad justification for a defensible design** — a *documentation* defect, not a
+  design one — so the fix is to correct the justification, not the design.
+- **Wider principle:** DEC-004's rule ("the harness must not shape the product") bites only where the
+  harness is the *only* reason a design exists. A widget-hosted gesture with no menu command has a standing
+  product reason to live in the widget, so it is not in scope — but where a comment *cites the harness* for
+  such a gesture, the comment is wrong and must be rewritten to the real reason, lest the next reader read a
+  defensible design as the very defect DEC-004 ruled against.
 
 **Context.** DEC-004 ruled that `Ctrl+Shift+B` must be hosted as a normal shortcut, on the principle that
 *a design existing to satisfy the test harness rather than the product means the harness should change*.
@@ -590,7 +626,7 @@ down, is the crux.
   same harness-shaped-the-product defect DEC-004 just ruled against. These gestures also stay
   non-rebindable, which is a real limitation the manual must keep stating.
 
-**Recommendation: keep them as a documented widget-only category, and rewrite the comments.** The principle
+**Recommendation (ADOPTED by the owner): keep them as a documented widget-only category, and rewrite the comments.** The principle
 DEC-004 established is about *the harness shaping the product*, and for `Ctrl+Alt+J` and `Ctrl+Space` there
 is already an independent product reason (`SchemaIndex` ownership; completion is intrinsically a widget
 behaviour) — the offscreen sentence in those comments is a bad justification for a defensible design, which

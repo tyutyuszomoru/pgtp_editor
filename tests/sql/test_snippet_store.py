@@ -19,6 +19,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from pgtp_editor.sql.snippet_store import (
     ORIGIN_DEFAULT,
     ORIGIN_MODIFIED_DEFAULT,
@@ -188,3 +190,109 @@ def test_import_never_removes_an_existing_snippet():
 def test_duplicates_inside_the_imported_file_keep_the_first():
     plan = plan_import((), (Snippet("a", "1", "1"), Snippet("A", "2", "2")))
     assert plan.added == (Snippet("a", "1", "1"),)
+
+
+def test_apply_import_refuses_to_assume_the_collision_answer():
+    """`overwrite` has no default ON PURPOSE: a future caller that forgot it
+    would silently pick one side of a question the user must answer."""
+    with pytest.raises(TypeError):
+        apply_import(DEFAULT_SNIPPETS, (MINE,))
+
+
+# -- tolerance where tolerance is safe (the file is hand-editable) ------------
+
+
+def test_a_hand_written_file_may_omit_the_version_and_the_titles():
+    loaded = parse_snippets('{"snippets": [{"prefix": "x", "template": "SELECT 1"}]}')
+    assert loaded.ok and loaded.snippets == (Snippet("x", "", "SELECT 1"),)
+
+
+def test_an_unknown_version_and_extra_keys_are_not_a_refusal():
+    loaded = parse_snippets(
+        '{"version": 99, "comment": "mine", '
+        '"snippets": [{"prefix": "x", "template": "1", "note": "ignored"}]}'
+    )
+    assert loaded.ok and loaded.snippets == (Snippet("x", "", "1"),)
+
+
+def test_a_json_scalar_is_neither_an_object_nor_a_list():
+    loaded = parse_snippets("5")
+    assert loaded.error and loaded.snippets == DEFAULT_SNIPPETS
+
+
+def test_an_object_without_a_snippets_list_says_which_key_is_missing():
+    loaded = parse_snippets('{"version": 1}')
+    assert loaded.error and "snippets" in loaded.error
+
+
+def test_snippets_pointing_at_something_that_is_not_a_list_is_refused():
+    loaded = parse_snippets('{"snippets": "case"}')
+    assert loaded.error and loaded.snippets == DEFAULT_SNIPPETS
+
+
+def test_a_row_that_is_not_an_object_is_refused_not_skipped():
+    loaded = parse_snippets('{"snippets": ["case"]}')
+    assert loaded.error and "entry 1" in loaded.error
+
+
+def test_a_row_whose_body_is_not_text_is_refused():
+    loaded = parse_snippets('{"snippets": [{"prefix": "x", "template": 7}]}')
+    assert loaded.error and "no body" in loaded.error
+
+
+def test_a_file_that_is_not_utf8_is_reported_not_raised(tmp_path):
+    path = tmp_path / SNIPPETS_FILENAME
+    path.write_bytes(b'{"snippets": [{"prefix": "\xff\xfe", "template": "x"}]}')
+    loaded = load_snippets(path)
+    assert loaded.error and loaded.snippets == DEFAULT_SNIPPETS
+
+
+def test_a_body_in_the_users_own_language_stays_readable_in_the_file(tmp_path):
+    """`ensure_ascii=False` is what makes "editable by the users" true for a
+    body that is not English — and the round trip must not damage it."""
+    accented = Snippet("ház", "ékezetes", "-- árvíztűrő\nSELECT {{0}};")
+    path = tmp_path / SNIPPETS_FILENAME
+    save_snippets(path, (accented,))
+    assert "árvíztűrő" in path.read_text(encoding="utf-8")
+    assert load_snippets(path).snippets == (accented,)
+
+
+# -- the file holds the WHOLE set, and that survives a round trip -------------
+
+
+def test_a_deleted_built_in_stays_deleted_across_a_save_and_reload(tmp_path):
+    """The whole point of storing the set rather than a diff: nothing silently
+    re-adds a shipped snippet the user threw away."""
+    path = tmp_path / SNIPPETS_FILENAME
+    kept = DEFAULT_SNIPPETS[1:]
+    save_snippets(path, kept)
+    loaded = load_snippets(path)
+    assert loaded.snippets == kept
+    assert defaults_missing_from(loaded.snippets) == (DEFAULT_SNIPPETS[0],)
+
+
+def test_an_edited_built_in_survives_the_round_trip_as_edited(tmp_path):
+    shipped = DEFAULT_SNIPPETS[0]
+    edited = Snippet(shipped.prefix, shipped.title, "MY OWN BODY {{0}}")
+    path = tmp_path / SNIPPETS_FILENAME
+    save_snippets(path, (edited,) + DEFAULT_SNIPPETS[1:])
+    back = load_snippets(path).snippets
+    assert back[0] == edited
+    assert origin_of(back[0]) == ORIGIN_MODIFIED_DEFAULT
+    assert defaults_missing_from(back) == ()  # not "missing", just theirs now
+
+
+def test_saving_an_empty_set_is_kept_rather_than_read_as_a_fresh_install(tmp_path):
+    """"I deleted them all" is an answer, and it must not come back as the
+    defaults on the next start."""
+    path = tmp_path / SNIPPETS_FILENAME
+    save_snippets(path, ())
+    loaded = load_snippets(path)
+    assert loaded.ok and loaded.snippets == () and loaded.from_file
+
+
+def test_saving_replaces_rather_than_appends(tmp_path):
+    path = tmp_path / SNIPPETS_FILENAME
+    save_snippets(path, DEFAULT_SNIPPETS)
+    save_snippets(path, (MINE,))
+    assert load_snippets(path).snippets == (MINE,)

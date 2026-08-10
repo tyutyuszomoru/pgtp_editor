@@ -119,6 +119,25 @@ def test_no_settings_command_carries_a_keyboard_shortcut(window):
         assert action.shortcut().isEmpty(), action.text()
 
 
+def test_no_settings_command_at_any_depth_carries_a_shortcut(window):
+    """The same DEC-006 rule as above, swept RECURSIVELY and over `shortcuts()`
+    as well as `shortcut()` — a submenu added later, or a second binding set
+    with `setShortcuts`, would otherwise slip past the shallow check and fire
+    outside Maintenance mode."""
+    win = window()
+
+    def sweep(menu, seen):
+        for action in menu.actions():
+            assert action.shortcut().isEmpty(), action.text()
+            assert list(action.shortcuts()) == [], action.text()
+            sub = action.menu()
+            if sub is not None and id(sub) not in seen:
+                seen.add(id(sub))
+                sweep(sub, seen)
+
+    sweep(_settings_menu(win), set())
+
+
 def test_the_maintenance_filter_still_hides_the_ordinary_menus(window):
     """The inverse rule must not have broken the subtractive one."""
     win = window()
