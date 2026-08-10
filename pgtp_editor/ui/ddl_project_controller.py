@@ -58,6 +58,14 @@ The copy itself lives in exactly one place, :func:`check_out_pgtp`, because a
 requires **one definition of linking** for both routes. (2) is the open-time
 entry point onto it; :meth:`create_project` is the creation-time one.
 
+All three read the link through one predicate, :meth:`_linked_working_copy`
+(BUG-260810173246): a recorded ``working_copy_path`` with no file behind it is
+**not a link**, so it is honoured by nobody — (1) passes the source through
+untouched instead of redirecting an open at a missing file, (3) says so and falls
+back to its folder scan, and (2) treats the project as unlinked so the next open
+of the *same* source repairs it. Repointing at a *different* source stays
+forbidden.
+
 (1) and (2) are called by the document lane through injected callables; (3)
 calls the document lane back through ``open_pgtp_file``. Because every provider
 is a callable resolved at CALL time, that cycle needs no two-phase construction
@@ -489,14 +497,31 @@ class DdlProjectController(QObject):
         Scope, exactly as triaged: **zero** candidates -> silent no-op (no
         error, nothing to open yet); **one** -> auto-open it; **multiple**
         unlinked candidates -> report via the Audit panel rather than
-        guessing which one the user means."""
+        guessing which one the user means.
+
+        **BUG-260810173246:** the `return` used to sit OUTSIDE the `exists()`
+        branch, so a recorded-but-missing working copy silently suppressed the
+        candidate scan below -- the project opened with nothing loaded and no
+        explanation, even though the scan would very often have found the copy
+        the user still has. A missing working copy now files one Audit line and
+        **falls through** to the scan. If the scan opens a single candidate,
+        `link_pgtp_if_needed` re-creates the link from it: the two steps are one
+        self-healing behaviour, not two coincidences."""
         working_copy_path = settings.pgtp.working_copy_path
         if working_copy_path:
-            if Path(working_copy_path).exists():
+            if self._linked_working_copy(settings.pgtp) is not None:
                 self._open_pgtp_file(working_copy_path)
-            return
-        # Not yet linked -- fall back to scanning the project folder itself
-        # for a `.pgtp` the user may have dropped in directly.
+                return
+            self._shell.audit.addItem(
+                QListWidgetItem(
+                    f"[Project] The linked .pgtp working copy is missing "
+                    f"({working_copy_path}) -- the link will be re-created the "
+                    "next time you open the source."
+                )
+            )
+        # Not yet linked (or the recorded copy is gone) -- fall back to scanning
+        # the project folder itself for a `.pgtp` the user may have dropped in
+        # directly.
         candidates = sorted(folder_path.glob("*.pgtp"))
         if not candidates:
             return  # zero -- nothing to do
@@ -736,10 +761,26 @@ class DdlProjectController(QObject):
         against the sshfs-mounted source, surfaced (never auto-resolved) via
         the Audit panel -- recomputed fresh on every load, never cached
         (§18.2). The per-object DDL `*`/`!` drift comparison runs alongside
-        the DDL Explorer tree it renders onto (§18.2/§18.8, see BrowserPanel)."""
+        the DDL Explorer tree it renders onto (§18.2/§18.8, see BrowserPanel).
+
+        BUG-260810173246, two corrections. **A drift verdict needs a WHOLE
+        link**: this compares the working copy's world against the source, so a
+        project whose `working_copy_path` is empty or points at a deleted file
+        has nothing to compare and gets no verdict -- the missing-working-copy
+        line filed by `auto_open_linked_pgtp` is the honest report for that
+        state. And the *"checksum recorded"* line was **false every time it
+        appeared**: nothing in this method ever calls `save_settings`, so it
+        claimed a write that did not happen. It now says what is actually true
+        -- no checksum is recorded yet. Rewording, not persisting, is the
+        deliberate half of that choice: `open_project` writes nothing, and a
+        third writer of `settings.json` in the open flow is exactly how these
+        records come to disagree (see `create_project`'s single-write note).
+        `deploy_pgtp` remains the gesture that records a checksum."""
         link = settings.pgtp
         if not link.source_path:
             return  # no .pgtp linked to this project yet -- nothing to compare
+        if self._linked_working_copy(link) is None:
+            return  # a half-link: no working copy, so no drift to speak of
         try:
             source_text = Path(link.source_path).read_text(encoding="utf-8")
         except OSError as exc:
@@ -748,7 +789,10 @@ class DdlProjectController(QObject):
             return
         current_checksum = content_hash(source_text)
         if link.last_known_source_checksum is None:
-            message = f"[Project] Source .pgtp checksum recorded ({link.source_path})."
+            message = (
+                f"[Project] No .pgtp checksum recorded yet for this project "
+                f"({link.source_path}) -- recorded by the next Deploy .pgtp."
+            )
         elif current_checksum != link.last_known_source_checksum:
             message = (
                 f"[Project] Source .pgtp has changed since this project last saw it "
@@ -760,6 +804,30 @@ class DdlProjectController(QObject):
 
     # -- the `.pgtp` link (§18.2) --------------------------------------------
 
+    def _linked_working_copy(self, link=None) -> "Path | None":
+        """BUG-260810173246: the **one** definition of "this project has a
+        working copy" — the recorded path AND a real file behind it.
+
+        `check_out_pgtp` is the one copier for the same reason this is the one
+        predicate: three separate `.exists()` checks in the three readers
+        (`resolve_pgtp_path`, `auto_open_linked_pgtp`, `report_project_drift`)
+        would age apart. A `working_copy_path` with no file behind it is **not a
+        link** — every reader must treat it as unlinked rather than trusting the
+        string, which is what turned an open of a healthy source into a
+        parse-error dialog for a file the user never asked for.
+
+        Returns the `Path` when the working copy is really there, else `None`.
+        Pass `link` to test a link that is not (yet) the active project's.
+        """
+        if link is None:
+            if self._settings is None:
+                return None
+            link = self._settings.pgtp
+        if not link.working_copy_path:
+            return None
+        working_copy = Path(link.working_copy_path)
+        return working_copy if working_copy.exists() else None
+
     def resolve_pgtp_path(self, path) -> str:
         """If `path` is the sshfs-mounted source of an ALREADY-linked §18.2
         project, resolve to the local working copy instead -- **every**
@@ -769,12 +837,24 @@ class DdlProjectController(QObject):
         saves back at the source, defeating the whole no-`.bak` model).
         Unlinked / no-project cases pass `path` through unchanged -- this is
         also what makes first-time linking possible at all, since
-        `link_pgtp_if_needed` needs the ORIGINAL source path."""
+        `link_pgtp_if_needed` needs the ORIGINAL source path.
+
+        **BUG-260810173246: the redirect requires the working copy to EXIST.**
+        A recorded path with no file behind it is not a link, so redirecting
+        there sent an open of the real, healthy source at a missing file, and
+        `load_project`'s `OSError` came back to the user as a `PgtpParseError`
+        dialog naming a file they never asked to open -- a missing file
+        misdiagnosed as malformed XML. When the working copy is gone we fall
+        through and return the source unchanged: the open loads the real file,
+        and `link_pgtp_if_needed` then repairs the link. No raise and no prompt
+        here -- this runs before EVERY load, including the projectless path."""
         if self._settings is None:
             return str(path)
         link = self._settings.pgtp
-        if link.source_path and link.working_copy_path and str(path) == link.source_path:
-            return link.working_copy_path
+        if link.source_path and str(path) == link.source_path:
+            working_copy = self._linked_working_copy(link)
+            if working_copy is not None:
+                return link.working_copy_path
         return str(path)
 
     def link_pgtp_if_needed(self) -> None:
@@ -790,12 +870,40 @@ class DdlProjectController(QObject):
 
         This is the ENTRY POINT for the open-time half of the link; the copy
         itself is `check_out_pgtp`, shared with creation (`DEC-260810134914`).
-        The `working_copy_path` guard belongs to this entry point and must not be
-        relaxed -- it is what makes "never silently relinked" true, and
-        `resolve_pgtp_path` depends on the two fields being written together."""
+        The guard belongs to this entry point and must not be relaxed -- it is
+        what makes "never silently relinked" true, and `resolve_pgtp_path`
+        depends on the two fields being written together.
+
+        **BUG-260810173246 -- what "already linked" means.** The guard now asks
+        for a working copy that EXISTS (`_linked_working_copy`), not merely for a
+        recorded string. This is *not* a relaxation of `DEC-260810134914`'s "do
+        not relax the guard" / §18.2 "The copy at accept -- ONE copier, and the
+        broken state is made UNREACHABLE": the ruling forbids relinking a link
+        that is **whole**, and a `working_copy_path` with no file behind it is
+        not a link at all -- re-creating it is repair, not a silent overwrite.
+        Every genuinely linked project still returns early here, untouched.
+
+        Two things the repair deliberately does NOT do:
+
+        * It never repoints a project at a **different** source. When the
+          recorded `source_path` names some other file than the `.pgtp` being
+          opened, we still return early -- that IS the relink the comment
+          forbids, whole link or not. Repair only ever re-copies the *same*
+          source the project already claims.
+        * It does not prompt. Recording a path was precisely what disabled the
+          copier, so a half-link written by a pre-`caed134` build has no UI
+          gesture that can repair it; healing on the next open of the source is
+          the recovery §18.2 already promises ("the user can still attach the
+          file later by opening it")."""
         if self._folder is None or self._settings is None:
             return
-        if self._settings.pgtp.working_copy_path:
+        link = self._settings.pgtp
+        if self._linked_working_copy(link) is not None:
+            return  # a whole link -- never silently relinked
+        opened = str(self._document_path())
+        if link.source_path and link.source_path != opened:
+            # Half-link, but pointing at a different source: repairing it would
+            # mean repointing the project, which is the forbidden relink.
             return
         try:
             link = check_out_pgtp(self._folder, Path(self._document_path()))
