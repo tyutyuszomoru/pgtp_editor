@@ -70,7 +70,7 @@ chip is never the DEBUG chip's hardcoded red that reads wrong in one theme.
 
 **Minor mode is TEXT, not a second colour** (FQ-028's recommendation, kept):
 the background is the MAJOR mode's, and the minor mode is appended after a
-middle dot — "Project · Caption". Three majors times four editor sub-states
+middle dot — "Project mode · Caption". Three majors times four editor sub-states
 would be a twelve-colour vocabulary, which defeats "easy recognition". The
 major mode is the one a colour must answer at a glance.
 """
@@ -86,10 +86,20 @@ MODE_PROJECT = "project"
 MODE_MAINTENANCE = "maintenance"
 
 #: What the user reads for each major mode.
+#:
+#: **Every label says the word "mode" out loud** (`BUG-260810174126`, owner
+#: report: *"Mode panel should explicitly say 'Mode' eg. 'Project mode' instead of
+#: Project"*). A chip reading a bare "Project" does not tell a reader it is a mode
+#: at all — it reads like the name of something. The pre-FQ-028 status label said
+#: "Editing Mode" / "Caption Mode"; the FQ-028 rewrite dropped the word and this
+#: restores it. Lowercase "mode" follows the report's own wording.
+#:
+#: `NO_MODE_LABEL` below is deliberately NOT re-cased to match — it already
+#: carries the word, and re-wording it was explicitly out of scope.
 MAJOR_LABELS = {
-    MODE_STANDALONE: "Standalone",
-    MODE_PROJECT: "Project",
-    MODE_MAINTENANCE: "Maintenance",
+    MODE_STANDALONE: "Standalone mode",
+    MODE_PROJECT: "Project mode",
+    MODE_MAINTENANCE: "Maintenance mode",
 }
 
 #: FQ-028 open question 8, decided: the indicator is NEVER blank. Before a
@@ -115,8 +125,14 @@ MODE_SEPARATOR = " · "
 #: everyone with no opt-out, no first-time dialog and no timeout, so a user who
 #: presses `Esc` by reflex lands somewhere letters no longer type and the
 #: indicator is the one thing on screen that says so and says the way out.
-EDITING_EDIT = "Edit"
-EDITING_COMMAND = "Command — press i to type"
+#: These say "mode" too, for `BUG-260810174126`'s reason and one more: the
+#: `editing_only` rendering (`CodeEditorDialog`'s chrome) shows **this segment and
+#: nothing else**, so it is the ONE surface where no major-mode label is present
+#: to supply the word. Fixing only `MAJOR_LABELS` would have left that chip
+#: reading a bare "Edit" — the exact defect, on the surface FQ-032 made
+#: load-bearing.
+EDITING_EDIT = "Edit mode"
+EDITING_COMMAND = "Command mode — press i to type"
 
 #: Per-mode (background, foreground), per theme. The starting palette FQ-028
 #: proposed, tuned only for the neutral no-mode entry. Keyed by the major mode,
@@ -270,15 +286,22 @@ class ModeIndicator(QLabel):
         self.setToolTip(self._tooltip())
 
     def _tooltip(self) -> str:
+        # Every label now spells "mode" itself (`BUG-260810174126`), so the
+        # tooltip names the DIMENSION the label belongs to and never repeats the
+        # word — "Editing mode: Edit mode" reads like a bug even though it is
+        # not.
         if self._editing_only:
-            return f"Editing mode: {self._editing or EDITING_EDIT}"
+            return (
+                "Which keyboard vocabulary this editor listens in: "
+                f"{self._editing or EDITING_EDIT}"
+            )
         parts = []
         if self._minor is None:
             parts.append("Workflow mode (File ▸ New Session to change it)")
         else:
             parts.append(
-                f"Workflow mode: {mode_text(self._major)} — active editor mode: {self._minor}"
+                f"{mode_text(self._major)} — active editor mode: {self._minor}"
             )
         if self._editing:
-            parts.append(f"editing mode: {self._editing}")
+            parts.append(f"keyboard: {self._editing}")
         return " — ".join(parts)

@@ -1133,8 +1133,8 @@ def test_no_file_or_buffer_or_window_command_is_HARD_CODED(editor):
 
 def test_mode_text_appends_the_editing_mode_as_a_THIRD_segment():
     assert mode_text("project", "Caption", EDITING_COMMAND).endswith(EDITING_COMMAND)
-    assert mode_text("project", None, EDITING_EDIT) == f"Project · {EDITING_EDIT}"
-    assert mode_text("project") == "Project"
+    assert mode_text("project", None, EDITING_EDIT) == f"Project mode · {EDITING_EDIT}"
+    assert mode_text("project") == "Project mode"
 
 
 def test_mode_colors_gains_NO_key_for_the_editing_mode():
@@ -1191,6 +1191,113 @@ def test_the_dialogs_indicator_follows_ITS_editors_transitions(qtbot):
     assert dialog.mode_indicator.text() == EDITING_COMMAND
     press(dialog._editor, "i")
     assert dialog.mode_indicator.text() == EDITING_EDIT
+
+
+# ---------------------------------------------------------------------------
+# The two-press escape -- `CodeEditorDialog` ONLY (owner ruling, 2026-08-10)
+# ---------------------------------------------------------------------------
+
+def test_two_presses_of_escape_cancel_the_dialog(qtbot):
+    """Command mode took away this modal's ONLY keyboard cancel (`Esc` was it;
+    `Ctrl+S`/`Ctrl+W` were deleted here). The owner restored it as a SECOND press:
+    the first enters Command mode, the second rejects."""
+    dialog = CodeEditorDialog("sql")
+    qtbot.addWidget(dialog)
+    dialog.show()
+    dialog._editor.setFocus()
+
+    escape(dialog._editor)
+    assert dialog._editor.in_command_mode
+    assert dialog.isVisible()
+
+    with qtbot.waitSignal(dialog.cancelled, timeout=1000):
+        escape(dialog._editor)
+    # `reject()` ran: the modal is down and reports the rejected code.
+    assert not dialog.isVisible()
+    assert dialog.result() == CodeEditorDialog.DialogCode.Rejected
+
+
+def test_the_first_escape_does_not_cancel_the_dialog(qtbot):
+    """A user reaching for the old one-press cancel must not lose the dialog
+    silently either -- and must not keep it either way by accident: press one is
+    the mode change and nothing else."""
+    dialog = CodeEditorDialog("sql")
+    qtbot.addWidget(dialog)
+    dialog.show()
+    dialog._editor.setFocus()
+    fired = []
+    dialog.cancelled.connect(lambda: fired.append(True))
+
+    escape(dialog._editor)
+
+    assert fired == []
+    assert dialog.mode_indicator.text() == EDITING_COMMAND
+
+
+def test_escape_with_something_PENDING_only_clears_it_and_stays(qtbot):
+    """Row 4' still wins in the dialog: clearing a half-typed `42d` must never
+    also close the dialog. That is what makes it a TWO-press escape rather than
+    "any second Esc"."""
+    dialog = CodeEditorDialog("sql")
+    qtbot.addWidget(dialog)
+    dialog.show()
+    dialog._editor.setFocus()
+    dialog.set_code("one\ntwo\nthree\n")
+    fired = []
+    dialog.cancelled.connect(lambda: fired.append(True))
+
+    escape(dialog._editor)
+    press(dialog._editor, "42d")
+    assert dialog._editor._vim_grammar.is_pending
+
+    escape(dialog._editor)
+    assert not dialog._editor._vim_grammar.is_pending
+    assert dialog._editor.in_command_mode
+    assert fired == []
+
+    # The press AFTER the pending state is cleared is the one that cancels.
+    with qtbot.waitSignal(dialog.cancelled, timeout=1000):
+        escape(dialog._editor)
+
+
+def test_the_divergence_is_the_DIALOG_ONLY_and_the_other_surfaces_stay(editor):
+    """The accepted cost is that `Esc` means something different in that one
+    modal. The five in-window surfaces are unchanged: `Esc` in Command mode with
+    nothing pending stays in Command mode, as vim does and as shipped."""
+    escape(editor)
+    assert editor.in_command_mode
+    escape(editor)
+    escape(editor)
+    assert editor.in_command_mode
+
+
+def test_only_the_dialog_installs_an_escape_fallback(qtbot, editor):
+    """Guards the "exactly one caller" rule the mechanism's docstring states."""
+    assert getattr(editor, "_vim_escape_fallback", None) is None
+    dialog = CodeEditorDialog("sql")
+    qtbot.addWidget(dialog)
+    assert getattr(dialog._editor, "_vim_escape_fallback", None) is not None
+
+
+def test_the_escape_fallback_is_held_WEAKLY(qtbot, code):
+    """A strong bound-method reference from a child editor back to its parent
+    dialog is a reference cycle between a widget and its child, which measurably
+    changed teardown order enough to leave a live Python wrapper over a destroyed
+    C++ dialog."""
+    import weakref
+
+    class Host:
+        def cancel(self):  # pragma: no cover - never called here
+            pass
+
+    host = Host()
+    code.set_command_mode_escape_fallback(host.cancel)
+    assert isinstance(code._vim_escape_fallback, weakref.WeakMethod)
+    del host
+    # A dead fallback must fall back to "stay in Command mode", never raise.
+    escape(code)
+    escape(code)
+    assert code.in_command_mode
 
 
 def test_an_editing_mode_transition_is_PUBLISHED_to_observers(code):
@@ -1250,7 +1357,7 @@ def test_the_editing_mode_is_ORTHOGONAL_to_the_minor_mode():
 
     text = mode_text("project", MINOR_DIFF, EDITING_COMMAND)
     assert MINOR_DIFF in text and EDITING_COMMAND in text
-    assert text == f"Project · {MINOR_DIFF} · {EDITING_COMMAND}"
+    assert text == f"Project mode · {MINOR_DIFF} · {EDITING_COMMAND}"
 
 
 def test_the_vim_keys_are_NOT_enumerated_into_customize_shortcuts():

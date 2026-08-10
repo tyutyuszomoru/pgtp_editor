@@ -754,13 +754,13 @@ def test_mode_label_flips_on_enter_and_close_caption_mode(qtbot):
     find_action(find_top_menu(window, "Tools"), "Manage Captions...").trigger()
     # Major mode keeps the colour; the minor mode is appended as text, on BOTH
     # surfaces, from the one `current_mode()` answer.
-    assert window._mode_label.text() == "Project · Caption"
-    assert window.toolbar_mode_indicator.text() == "Project · Caption"
+    assert window._mode_label.text() == "Project mode · Caption"
+    assert window.toolbar_mode_indicator.text() == "Project mode · Caption"
     assert window.current_mode() == ("project", "Caption")
 
     window.center_stage.caption_management_panel.close_panel()
-    assert window._mode_label.text() == "Project"
-    assert window.toolbar_mode_indicator.text() == "Project"
+    assert window._mode_label.text() == "Project mode"
+    assert window.toolbar_mode_indicator.text() == "Project mode"
 
 
 def test_caption_go_to_line_switches_to_raw_xml_and_navigates(qtbot):

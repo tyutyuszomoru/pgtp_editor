@@ -50,6 +50,15 @@ The mode model -- five rules, and none of them is a setting
 * **The mouse stays fully live in both editing modes and never changes the
   editing mode.** A click that moved the mode would make the indicator lie about
   a state the user did not ask to leave.
+* **`Esc` in Command mode stays in Command mode -- with ONE surface excepted, on
+  purpose.** At the five in-window editing surfaces `Esc` clears any pending
+  count/operator and stays, always. `CodeEditorDialog` alone treats `Esc` with
+  nothing pending as *cancel the dialog*, because Command mode took away that
+  modal's only keyboard cancel and vim has no dialogs whose behaviour could be
+  contradicted. The mechanism is the opt-in
+  :meth:`VimModeMixin.set_command_mode_escape_fallback`, whose docstring carries
+  the owner ruling and the accepted cost; there is exactly one caller and it must
+  stay that way.
 * **The plain (Edit-mode) editor gains NOTHING.** Every advanced operation lives
   only in Command mode. That is the sentence that makes this a specification
   rather than an addition: no invented parallel keymap ever appears in Edit mode.
@@ -445,6 +454,49 @@ class VimModeMixin:
         self._vim_grammar = VimGrammar()
         self._vim_command_line: VimCommandLine | None = None
         self._vim_command_provider = None
+        self._vim_escape_fallback = None
+
+    # --- the ONE per-surface divergence in `Esc`'s meaning ------------------
+    def set_command_mode_escape_fallback(self, callback) -> None:
+        """Nominate what `Esc` does in Command mode when **nothing is pending**.
+
+        Default: nothing — `Esc` never leaves Command mode, which is vim's own
+        behaviour and what all six editing surfaces ship.
+
+        **`CodeEditorDialog` is the single caller, and that divergence is
+        deliberate.** Rationale, recorded here so nobody "harmonises" it away:
+        giving that dialog Command mode (`DEC-260810193639`) took away its ONLY
+        keyboard cancel, because `Esc` *was* the cancel and `Ctrl+S`/`Ctrl+W` had
+        been deleted there on 2026-08-09. A modal whose only way out is the mouse
+        is a real regression for a keyboard-only user, not a purist's quibble —
+        and **vim has no dialogs to be authentic about**, so there is no vim
+        behaviour being contradicted, only an absence being filled. The owner
+        ruled the two-press escape (2026-08-10):
+
+            Edit mode                     : Esc -> enter Command mode
+            Command mode, pending         : Esc -> clear pending state, stay
+            Command mode, nothing pending : Esc -> the fallback (reject)
+
+        **The accepted cost, stated:** `Esc` means something different in that
+        dialog than at the other five surfaces, where the third row still stays
+        put. That asymmetry was chosen over an unreachable Cancel. Do not widen
+        this to the other surfaces by analogy — none of them is a modal, so none
+        of them loses anything by `Esc` staying.
+
+        A bound method is held **WEAKLY**, the same idiom (and the same
+        `_resolve_observer` helper) the editing-mode observer registry uses. That
+        is not tidiness: the one real caller hands its editor a bound method of
+        the editor's own parent dialog, and holding it strongly would put a
+        reference cycle between a widget and its child — which measurably changed
+        teardown order enough to leave a live Python wrapper over a destroyed C++
+        dialog.
+        """
+        if callback is None:
+            self._vim_escape_fallback = None
+            return
+        self._vim_escape_fallback = (
+            weakref.WeakMethod(callback) if hasattr(callback, "__self__") else callback
+        )
 
     # --- the mode ----------------------------------------------------------
     @property
@@ -596,9 +648,23 @@ class VimModeMixin:
         modifiers = event.modifiers()
         if key == Qt.Key.Key_Escape:
             if self.in_command_mode:
-                # Row 4': discard any pending count/operator and STAY in Command
-                # mode. `Esc` never leaves the mode.
-                self._vim_grammar.reset()
+                if self._vim_grammar.is_pending:
+                    # Row 4': discard the half-typed count/operator and STAY in
+                    # Command mode. Unconditional at every surface -- clearing a
+                    # `42d` must never also close anything.
+                    self._vim_grammar.reset()
+                    return True
+                fallback = _resolve_observer(
+                    getattr(self, "_vim_escape_fallback", None)
+                )
+                if fallback is not None:
+                    # The second press of the two-press escape. Only
+                    # `CodeEditorDialog` installs one; see
+                    # `set_command_mode_escape_fallback` for why exactly one
+                    # surface diverges here and what it costs.
+                    fallback()
+                    return True
+                # `Esc` never leaves the mode anywhere else.
                 return True
             return self.enter_command_mode()
 

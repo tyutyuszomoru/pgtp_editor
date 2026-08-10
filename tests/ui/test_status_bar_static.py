@@ -348,7 +348,7 @@ def test_the_dots_follow_real_project_openness_not_the_workflow_label(
 
     window.set_workflow_mode("project")
 
-    assert window._mode_label.text() == "Project"
+    assert window._mode_label.text() == "Project mode"
     assert not window._quality_dot.isVisibleTo(window)
 
 
