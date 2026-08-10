@@ -14,7 +14,7 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 # pgtp_editor/ui/edit_snippets_dialog.py
-"""The "Edit Snippets…" dialog (FQ-030) — `Schema` menu, Maintenance mode only.
+"""The "Edit Snippets…" dialog (FQ-030) — `Settings` menu, Maintenance mode only.
 
 **A plain table of trigger word ↔ body. Explicitly not a builder.** FQ-030
 rejected a drag-and-drop snippet composer in as many words; the body is a

@@ -8540,10 +8540,12 @@ one uniform "opens an action window":**
 > flagged that module and the four keystrokes' host wiring as "specified, not yet confirmed" while the
 > sibling `ui/` work was in flight — **that flag is retired; all four gestures are verified in the tree.**)*
 >
-> **Still to come:** the **snippet store** and the **Maintenance-mode snippet editor** — the last
-> substantive piece of FQ-030. Its blocker was **not** "Maintenance mode is unbuilt" (that mode has
-> shipped); it is the store's **shape**, settled by DEC-001 on 2026-08-10 and folded in under *No snippet
-> persistence in v1* below. `docs/FEATURE_QUEUE.md`'s FQ-030 and this section must agree on that.
+> **The final slice SHIPPED TOO (`229dc11`, 2026-08-10): the snippet store, the snippet editor, its
+> export/import, and the app's first Maintenance-only menu, `Settings`.** *(This banner previously read
+> "Still to come: the snippet store and the Maintenance-mode snippet editor", and named neither `Settings`,
+> `snippets.json`, `Restore Built-ins` nor import/export — a dead assertion over shipped work, retired
+> here. `docs/FEATURE_QUEUE.md`'s FQ-030 is `PROCESSED`.)* Full contract under **The snippet store** below.
+> **FQ-030 is complete.** Outstanding debt against it is **BUG-045** only.
 
 **What it is.** Four explicit, keyboard-triggered authoring gestures in the app's SQL editors — §18.5's
 DDL object tab and §18.5 D4's Sandbox SQL Console — sitting beside §18.6's Ctrl+Space completion rather

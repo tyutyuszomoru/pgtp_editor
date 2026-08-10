@@ -22,7 +22,7 @@ Three jobs, and nothing else:
    resolving that path is the one part that needs app knowledge, so it is here.
 2. **Loading it at startup and pushing the result into the editors**, so a
    saved snippet is live in every SQL editor without a restart.
-3. **`Schema ▸ Edit Snippets…` and its Export / Import**, including the
+3. **`Settings ▸ Edit Snippets…` and its Export / Import**, including the
    collision question, which is the only modal in this lane.
 
 WHERE THE STORE LIVES, AND WHY THAT DIRECTORY
@@ -93,7 +93,7 @@ def snippets_path(base_dir: Path | None = None) -> Path:
 
 
 class SnippetController(QObject):
-    """Owns the snippet set in force and the `Schema ▸ Edit Snippets…` gesture."""
+    """Owns the snippet set in force and the `Settings ▸ Edit Snippets…` gesture."""
 
     def __init__(
         self,
@@ -162,7 +162,7 @@ class SnippetController(QObject):
         if callable(setter):
             setter(self._snippets)
 
-    # -- Schema ▸ Edit Snippets… ---------------------------------------------
+    # -- Settings ▸ Edit Snippets… ---------------------------------------------
 
     def open_editor(self) -> EditSnippetsDialog:
         """Show the editor (single-instance, non-modal, house style).
