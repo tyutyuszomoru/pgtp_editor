@@ -4531,3 +4531,272 @@ option 1 is chosen) to say in one sentence that rows written before this build c
 `bug-triager` does not edit the manual.
 
 ---
+
+## BUG-048: `Ctrl+Z` on the read-only DDL Explorer tab silently reverts the **Raw XML project buffer** — the exact hazard §18.5 carve-out 1 pinned, at the sibling site nobody filtered
+**Status:** OPEN
+**Reported:** 2026-08-10
+**Report (verbatim):** "`pgtp_editor/ui/ddl_editor_panel.py` installs no undo filter. The open question the manual agent could not settle without running code: does Qt's read-only `QPlainTextEdit` let the **window-level `Ctrl+Z` `QShortcut`** through? If it does, the consequence is bad: pressing `Ctrl+Z` in a read-only DDL Explorer tab would run **project snapshot undo on the Raw XML buffer** — a mutation of a different document than the one the user is looking at, triggered from a tab that is supposed to be read-only."
+
+**Answer to the open question: YES, and it is confirmed end-to-end in the real `MainWindow`.**
+A scratch pytest-qt run (not committed) built `MainWindow(generator_config_dir=tmp_path)`, `show()`ed
+it, pushed two snapshots onto the Raw XML history, called `center_stage.show_ddl_explorer()`, focused
+`panel.editor`, and delivered the key at the **window** level
+(`QTest.keyClick(w.windowHandle(), Qt.Key.Key_Z, ControlModifier)` — which is what a real key press
+does; `qtbot.keyClick(widget, …)` sends straight to the widget and bypasses `QShortcutMap` entirely,
+so it can never observe this and must not be used to "prove" the opposite):
+
+```
+current tab: DDL Explorer (Quality)   focus: CodeEditor
+RAW XML before: '<root><a/><b/></root>'
+RAW XML after : '<root><a/></root>'      MUTATED: True
+```
+
+An isolated probe pins the Qt rule behind it (window-level delivery, `show()`n window, offscreen):
+
+| focused widget | window `Ctrl+Z` `QShortcut` fires? |
+| --- | --- |
+| `QLabel` (control) | **yes** |
+| `CodeEditor`, editable | no — the editor's native undo takes it |
+| `CodeEditor`, `setReadOnly(True)` | **yes** |
+| `XmlEditor`, editable | no — `keyPressEvent` emits `undo_requested` |
+| `XmlEditor`, `setReadOnly(True)` | **yes** — `keyPressEvent` is never even reached |
+
+**Root cause:** A read-only `QPlainTextEdit` does **not** accept the `ShortcutOverride` event for
+`QKeySequence.StandardKey.Undo`/`Redo` (it has no undo to offer), so Qt falls through to the
+window-scoped `QShortcut(QKeySequence("Ctrl+Z"), self)` created at `pgtp_editor/ui/main_window.py:1138`
+and wired to `MainWindow._undo` (`main_window.py:1907`). `_undo` is **unscoped**: it calls
+`self._history.undo()` and `_apply_history_text` (`main_window.py:1899`), which does
+`self.center_stage.xml_editor.setPlainText(text)` — a `QTextCursor`-level write that
+`setReadOnly(True)` does not stop — with no check of which tab is current and no check of whether the
+Raw XML editor is read-only. `pgtp_editor/ui/ddl_editor_panel.py:55-113` (`EditorPanel.__init__`)
+sets `self.editor.setReadOnly(True)` at line 88 and *does* `installEventFilter(self)` at line 97, but
+its `eventFilter` (`ddl_editor_panel.py:144-149`) handles **only** `QEvent.Type.ContextMenu` — the
+undo chords are not claimed.
+
+`DdlObjectEditorPanel` has exactly this filter and this is not a coincidence:
+`pgtp_editor/ui/ddl_object_editor.py:870-886` accepts `ShortcutOverride` for `Ctrl+Z`/`Ctrl+Y` and
+routes `KeyPress` to `editor.undo()`/`redo()`, under the comment *"no double-undo, no leak into the
+Raw XML buffer"*. `CONSOLIDATED_SPEC.md` §18.5 carve-out 1 (~line 6191-6208) and its 2026-08-02
+Supersession Ledger row (~line 9694) state the hazard verbatim — *"Ctrl+Z would silently revert the
+Raw XML project buffer while the user is looking at SQL"* — and pin a mandatory regression test for
+it. **The carve-out was applied to the object *editor* tab only; the read-only DDL Explorer tab
+(both roles, Quality and Sandbox) is the sibling that was never filtered.**
+
+**Second affected site, same root cause, found while verifying:** Raw XML **while itself held
+read-only** — Caption Mode or Compare/Merge Mode (`center_stage._set_raw_xml_read_only`,
+`center_stage.py:532`). Probe with `RAW_XML_READ_ONLY_DIFF_MERGE_MODE` active and `xml_editor`
+focused: `'<root><a/><b/></root>'` → `'<root><a/></root>'`, **MUTATED: True**. `XmlEditor`'s own
+`keyPressEvent` re-emission (`xml_editor.py:1166-1168`) never runs, because the read-only editor does
+not claim the `ShortcutOverride`. So `Ctrl+Z` walks straight through the read-only lock that FQ-021
+installed **as a data-loss guard** for Compare/Merge and rewrites the buffer mid-merge. Same class:
+`_undo` is unscoped. Any other focused read-only `QPlainTextEdit` is in the same boat —
+`schema_compare_panel.py:90` (`_monospace`), `diff_merge_panel.py:122` (`event_diff_text`) — as is any
+non-editor focus (project tree, findings dock), which is arguably wanted for the tree but is the same
+unguarded path.
+
+**Proposed fix:** Two layers. Do **both** — the second alone leaves the user with a dead key and no
+reason, the first alone leaves the docks unguarded.
+
+1. **Central scope guard (closes the whole class), `pgtp_editor/ui/main_window.py`.** Do **not**
+   disable or delete the window `QShortcut` — the spec's ledger row explicitly forbids that shape
+   (*"never by disabling the window shortcut"*), and it would break Ctrl+Z for the ordinary Raw XML
+   case. Instead insert a scope check on the **shortcut path only**: connect `self._undo_shortcut` /
+   `self._redo_shortcut` (lines 1138-1141) to new `_undo_from_shortcut` / `_redo_from_shortcut`
+   wrappers that return early unless the Raw XML tab is the current tab **and**
+   `center_stage.xml_editor.isReadOnly()` is False, delegating to `_undo`/`_redo` otherwise.
+   **Gotcha — leave `_undo`/`_redo` themselves unguarded**: the History menu's `Undo`/`Redo`
+   `QAction`s (`main_window.py:2395-2401`) connect straight to them, and those are explicit,
+   deliberate clicks; guarding the shared method would silently kill the menu entries too. If the
+   implementer wants the menu to stay honest, grey them via `setEnabled` on tab change rather than
+   making them no-op. There is already a `currentChanged` consumer on `center_stage` to hang that
+   off; find it rather than adding a second connection.
+2. **A stated reason at the DDL Explorer, `pgtp_editor/ui/ddl_editor_panel.py`.** Extend the existing
+   `EditorPanel.eventFilter` (line 144) with an undo/redo branch **copied in shape from
+   `ddl_object_editor.py:870-886`**: for `obj is self.editor` and `event.type()` in
+   `(ShortcutOverride, KeyPress)`, match `Ctrl+Z`, `Ctrl+Y` **and `Ctrl+Shift+Z`** (see BUG-050) —
+   on `ShortcutOverride` call `event.accept()` (this is the part that stops the window shortcut; it is
+   easy to write only the `KeyPress` half and see no change), on `KeyPress` call
+   `self.editor.report_refusal("this buffer is read only — there is nothing to undo here")`
+   (`code_editor.py:596`, the FQ-023 "state the reason, never nothing" channel) — and `return True`.
+   Note the existing `eventFilter` ends in `return super().eventFilter(obj, event)`; keep that as the
+   fallthrough. `EditorPanel` is constructed twice (Quality + Sandbox roles) from one class, so one
+   branch covers both.
+
+Do not "fix" this by making the DDL Explorer editable, and do not route its Ctrl+Z into
+`CodeEditor.undo()`: the buffer is synthesized by `build_ddl_text` and read-only by design (§18.1), so
+a working undo stack there would be undoing text the user never typed.
+
+**Test impact:**
+- `tests/ui/test_history_wiring.py` — owns the snapshot-undo wiring (line 280+ already asserts
+  `undo_requested`/`redo_requested` drive it). Extend, do not duplicate: add a case that `show()`s the
+  window, makes the DDL Explorer current, focuses `panel.editor`, delivers Ctrl+Z at
+  `window.windowHandle()`, and asserts the Raw XML text is **byte-identical** — the same assertion
+  shape §18.5's pinned object-tab test uses. Add the twin for read-only Raw XML under
+  `RAW_XML_READ_ONLY_DIFF_MERGE_MODE`.
+- `tests/ui/test_ddl_editor_panel.py` — owns `EditorPanel`; add the refusal-message case (assert
+  `report_refusal` was reached, patched, rather than driving a real tooltip).
+- `tests/ui/test_ddl_object_editor.py` / `test_ddl_object_editor_wiring.py` already carry the
+  `Key_Z` object-tab carve-out tests — read them first for the established assertion idiom.
+- **Test-writing gotcha, established today (BUG-046, re-confirmed here):** `QShortcut` **does**
+  activate under `QT_QPA_PLATFORM=offscreen`. Two conditions are non-negotiable: the window must be
+  `show()`n, and the key must be delivered to `window.windowHandle()`, not to the widget. Several
+  comments in the repo (`code_editor.py:743-745,779-783`, `ddl_object_editor.py:898`) assert
+  QShortcut is unreliable offscreen; that premise is false and it is what let this bug hide.
+
+**Spec impact:** No design reversal — this is code failing an invariant the spec already states.
+`CONSOLIDATED_SPEC.md` §18.5 carve-out 1 (~6191-6208), §27's `Ctrl+Z`/`Ctrl+Y` row (~9473) and the
+2026-08-02 ledger row (~9694) all describe the carve-out as covering *the Edit XSD tab and the DDL
+object editor tab* only. After the fix lands, dispatch `spec-maintainer` to widen the statement from
+"two carved-out tabs" to the actual rule — **project-history Ctrl+Z acts only when Raw XML is the
+current tab and is writable; everywhere else it is refused with a reason** — and to record that the
+read-only Compare/Merge lock was previously bypassable by Ctrl+Z (FQ-021's guard, §27). `bug-triager`
+does not edit the spec.
+
+---
+
+## BUG-049: `Ctrl+Z` in an FQ-006 draft fragment tab is a dead key — `XmlEditor` consumes it, emits `undo_requested` to nobody, and suppresses the native undo it replaced
+**Status:** OPEN
+**Reported:** 2026-08-10
+**Report (verbatim):** "`XmlEditor.undo_requested` / `redo_requested` are reportedly connected only for `xml_editor` and `xsd_editor` (`pgtp_editor/ui/main_window.py:1131-1140`). A draft fragment tab's editor consumes `Ctrl+Z` / `Ctrl+Y` / `Ctrl+Shift+Z` and emits to nobody — so the keystroke is swallowed and nothing happens, with no indication why."
+
+**Confirmed.** `XmlEditor` is instantiated at exactly three sites (`grep "XmlEditor("`):
+`center_stage.py:248` (`xml_editor`), `center_stage.py:267` (`xsd_editor`) and
+`center_stage.py:58` (`DraftFragmentTab.editor`). Only the first two have their signals connected —
+`main_window.py:1148-1149` (Raw XML → `self._undo`/`self._redo`) and `main_window.py:1156-1157`
+(XSD → `stage.xsd_editor.undo`/`.redo`). The draft's editor has no connection at all.
+
+**Root cause:** `pgtp_editor/ui/xml_editor.py:1165-1174`. `keyPressEvent` matches `Ctrl+Z`
+(→ `undo_requested.emit()`), and `Ctrl+Y` / `Ctrl+Shift+Z` (→ `redo_requested.emit()`), then calls
+`event.accept()` and `return`s **without** `super().keyPressEvent(event)`. In
+`DraftFragmentTab` (`pgtp_editor/ui/center_stage.py:41-84`) the signals have no receiver, so the
+emit is a no-op — and because the key was consumed, `QPlainTextEdit`'s own undo stack, which would
+otherwise have handled it perfectly well, never sees it either. The window-level `QShortcut` does not
+fire, so nothing else happens either (verified by probe: editable `XmlEditor` focused, window-level
+Ctrl+Z → `undo_requested` emitted, window shortcut **not** fired). Net user experience: **type into a
+draft, press Ctrl+Z, nothing happens, forever — with no message.** The refactor that gave `XmlEditor`
+a routed undo silently took the built-in one away from every future instance; the draft tab (FQ-006)
+is the instance that arrived after and was never wired.
+
+Note this is strictly a **dead key**, not the wrong-document mutation of BUG-048 — the draft tab's
+editor is editable, so it claims the `ShortcutOverride` and the Raw XML buffer is never touched. It is
+the milder half of the same design smell: `XmlEditor` unconditionally delegates undo to a host that
+may not exist.
+
+**Proposed fix:** Wire it in `DraftFragmentTab.__init__`
+(`pgtp_editor/ui/center_stage.py:58-60`), immediately after `self.editor = XmlEditor()`:
+
+```python
+self.editor.undo_requested.connect(self.editor.undo)
+self.editor.redo_requested.connect(self.editor.redo)
+```
+
+This is the **Edit XSD tab's precedent verbatim** (`main_window.py:1155-1157`, whose comment already
+explains the shape: a tab with no snapshot history routes its re-emission straight back into the
+editor). Put it in the tab, not in `MainWindow`: drafts are created dynamically and multiply
+(`center_stage.open_draft_fragment_tab`, line 724, called from `coherence_controller.py:438`), so
+`MainWindow` has no single construction site to hook, and a self-contained tab cannot be forgotten by
+the next caller.
+
+**Gotchas.** (a) A draft has no snapshot history and explicitly no save path or dirty concept
+(`DraftFragmentTab`'s docstring) — do **not** route it to `MainWindow._undo`; native per-keystroke
+undo is the right and only semantics here. (b) Consider whether `XmlEditor` should fall back to
+`super().keyPressEvent(event)` when the signal has no receivers, so the next unwired instance
+degrades to native undo instead of to nothing; `Signal.receivers()`-style introspection is awkward in
+PySide6, so the cheap durable alternative is a one-line class docstring note at
+`xml_editor.py:433-434` stating that an `XmlEditor` host **must** connect both signals. Either is
+acceptable; the connect above is the required part.
+
+**Test impact:**
+- `tests/ui/test_center_stage.py` — already covers `DraftFragmentTab` / `open_draft_fragment_tab`
+  (grep `draft`). Extend it: open a draft, `insertPlainText` into `tab.editor`, drive Ctrl+Z through
+  `keyPressEvent`, assert the text reverted. `tests/ui/test_create_from_table_wiring.py` covers the
+  route that opens drafts and is the wrong place for this.
+- `tests/ui/test_history_wiring.py` should keep asserting the Raw XML buffer is untouched by the
+  draft's Ctrl+Z (the negative half), so this fix and BUG-048 cannot regress into each other.
+
+**Spec impact:** `CONSOLIDATED_SPEC.md` §27's `Ctrl+Z`/`Ctrl+Y` row (~9473) enumerates the carve-outs
+as *"the Edit XSD tab or a DDL object editor tab"* and says nothing about draft fragment tabs; the
+FQ-006 draft-tab section describes the tab as *"a plain `XmlEditor` + `FindReplaceBar` (syntax
+highlighting and find/replace for free)"*, which reads as a promise that the editor's own affordances
+work. Nothing states the current behavior was intended, so this is a plain defect — but after the fix
+dispatch `spec-maintainer` to add the draft tab to §27's carve-out list, so the enumeration matches
+the three `XmlEditor` sites. `bug-triager` does not edit the spec.
+
+---
+
+## BUG-050: `Ctrl+Shift+Z` is missing from `RESERVED_SEQUENCES`, so Customize Shortcuts… will hand it to a menu command that then works only when no XML editor has focus
+**Status:** OPEN
+**Reported:** 2026-08-10
+**Report (verbatim):** "`pgtp_editor/ui/xml_editor.py:1170-1171` makes `Ctrl+Shift+Z` a second redo in every XML editor and consumes it (`event.accept()`), but `shortcut_registry.RESERVED_SEQUENCES` (`shortcut_registry.py:204-260`) reserves only `Ctrl+Z` / `Ctrl+Y`. So Customize Shortcuts… would let a user assign a menu command to `Ctrl+Shift+Z`, and the two would then fight — with the editor's handler consuming the event."
+
+**Confirmed, and the user-visible symptom is FOCUS-DEPENDENT, which is worse than a clean loss.**
+`pgtp_editor/ui/xml_editor.py:1170-1174` accepts `Ctrl+Shift+Z` as redo and `event.accept()`s it;
+`RESERVED_SEQUENCES` (`pgtp_editor/ui/shortcut_registry.py:204-260`) lists `Ctrl+Z` and `Ctrl+Y` with
+the reason *"project history Undo/Redo — a window-scoped shortcut, not a menu action (§27)"* and
+**does not list `Ctrl+Shift+Z`**. A scratch probe (window with a menu `QAction` on `Ctrl+Shift+Z`
+plus an `XmlEditor`, `show()`n, key delivered at `windowHandle()`):
+
+```
+XmlEditor FOCUSED  -> menu: []            editor: ['redo_requested']
+NON-EDITOR FOCUSED -> menu: ['menu-cmd']  editor: []
+```
+
+So the retargeted menu command **silently never fires while Raw XML, Edit XSD or a draft tab has
+focus**, and fires normally the moment focus is anywhere else — no ambiguity warning, no status
+message, nothing in the Customize dialog to hint at it. This is precisely the failure mode
+`RESERVED_SEQUENCES` exists to prevent, and precisely why the registry's own header distinguishes
+*"a key that may never be the TARGET of a rebinding, because something the dialog does not own already
+answers to it"* — a widget `keyPressEvent` is the canonical case (the header says so, in the
+`Ctrl+Alt+E`/`Ctrl+Alt+C` comment block at lines 236-241).
+
+**Root cause:** an omission in a hand-transcribed table. `Ctrl+Shift+Z` was added to
+`XmlEditor.keyPressEvent` as a second redo but never transcribed into §27 or into
+`RESERVED_SEQUENCES`, so `assign_shortcut`'s refuse-a-non-menu-occupant rule has no row to refuse on.
+
+**Proposed fix:** One registry row in `pgtp_editor/ui/shortcut_registry.py`, beside the existing
+`Ctrl+Z`/`Ctrl+Y` pair (lines ~215-219), in the same voice:
+
+```python
+"Ctrl+Shift+Z": "project history Redo (the second chord) — consumed inside "
+                "every XML editor's key handling, not a menu action (§27)",
+```
+
+That is the whole fix: `RESERVED_SEQUENCES` is already read by the conflict rule and rendered as a
+greyed read-only row in the dialog (`ReservedBinding`, FQ-012 decision 1: *"the user gets to SEE that
+the key exists and why it is locked"*), so no dialog change is needed. **Gotcha:** the reason string
+is user-facing text in that greyed row, so write it as an explanation, not a code note; and put it
+adjacent to `Ctrl+Z`/`Ctrl+Y` rather than at the end of the dict — the dict's grouping-by-rationale
+is load-bearing for the reader.
+
+**Secondary finding, judged in-scope but NOT a functional defect — the `Ctrl+Alt+F` reason string.**
+Its reason reads *"Format Selection — a context-menu command, not a menu-bar action (§27)"*. Verified
+against the code: `Ctrl+Alt+F` is additionally a real `QShortcut` in **two** panels
+(`sql_console_panel.py:531`, `ddl_object_editor.py:786`) **and** an `eventFilter` branch
+(`ddl_object_editor.py:887-895`). The row's **behaviour is correct** — the key is reserved, which is
+the outcome that matters, and the row cannot be reached by the menu walk either way. Only the stated
+*why* is incomplete, and it is shown to the user. Treat it as a copy fix riding along with the row
+above, not as a separate bug: reword to something like *"Format Selection — a context-menu command
+plus a `QShortcut` in the SQL Console and DDL object tabs; no menu-bar action to move (§27)"*.
+Nothing else in `RESERVED_SEQUENCES` diverged on a re-check of the remaining rows against the code
+(`Ctrl+S`/`Ctrl+Shift+S`, `Ctrl+F`/`Ctrl+R`, `Escape`, `F3`, `Ctrl+L`, `Ctrl+Alt+E`/`C`/`J`,
+`Ctrl+Shift+Space`, `Ctrl+Return`, `Ctrl+Space`, `Ctrl+G`, `Ctrl+C`/`X`/`V`, `F1`) — the one real
+gap is `Ctrl+Shift+Z`.
+
+**Test impact:** `tests/ui/test_shortcut_registry.py` is the owner (it already iterates
+`RESERVED_SEQUENCES` at lines 130-146 and asserts every reason is non-empty). Extend it: assert
+`"Ctrl+Shift+Z" in RESERVED_SEQUENCES`, and add an `assign_shortcut` case proving the chord is
+**refused, not stolen** (the non-menu-occupant branch), mirroring the existing `Ctrl+Z` case rather
+than writing a new idiom. `tests/ui/test_customize_shortcuts_dialog.py` should get the greyed-row
+assertion if it already has one for another reserved key. No new Qt-driven key test is needed — the
+registry is Qt-free and the fix is data.
+
+**Spec impact:** **Diverges from `CONSOLIDATED_SPEC.md` §27.** §27's consolidated shortcut table and
+its 2026-08-09 FQ-012 ledger row (~9755) both enumerate what is unrebindable and list only
+`Ctrl+Z`/`Ctrl+Y` for the history pair; `Ctrl+Shift+Z` appears nowhere in the spec (grep confirms:
+only `Ctrl+Z`/`Ctrl+Y` hits). The registry's header says it is *"Transcribed from §27"*, so the code
+row and the spec row must land together. After the fix, dispatch `spec-maintainer` to add
+`Ctrl+Shift+Z` to §27's table as a second redo chord consumed inside `XmlEditor`, to the FQ-012
+ledger row's unrebindable list, and to correct §27's `Ctrl+Alt+F` characterization to mention the two
+`QShortcut` hosts. `bug-triager` does not edit the spec.
+
+---
