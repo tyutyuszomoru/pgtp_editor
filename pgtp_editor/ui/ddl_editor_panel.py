@@ -34,7 +34,8 @@ from pgtp_editor.ui.code_editor import (
     REDO,
     UNDO,
     CodeEditor,
-    classify_undo_redo_chord,
+    classify_editor_chord,
+    is_mutating_editor_operation,
 )
 from pgtp_editor.ui.ddl_buffer_panel import RELOAD_LABEL, resolve_edit_target
 from pgtp_editor.ui.find_replace_bar import FindReplaceBar, install_focus_shortcuts
@@ -194,7 +195,7 @@ class EditorPanel(QWidget):
                 return span
         return None
 
-    #: The reserved undo/redo chord set (`EDITOR_UNDO_REDO_CHORDS`), claimed AND
+    #: The reserved editor chord set (`EDITOR_CHORDS`), claimed AND
     #: answered here (BUG-048).
     #: Shaped after `DdlObjectEditorPanel.eventFilter`'s §18.5 carve-out 1, for
     #: the same hazard at the sibling site nobody filtered: a read-only
@@ -207,9 +208,19 @@ class EditorPanel(QWidget):
     #: state the reason (FQ-023) rather than to leave a dead key.
     _UNDO_REDO_REFUSAL = "this buffer is read only — there is nothing to undo here"
 
+    #: The same shape for the four chords that would EDIT (paste, and the three
+    #: line-editing gestures the app took ownership of on 2026-08-10). They are
+    #: answered here, but the answer is a stated reason rather than an edit: the
+    #: buffer is synthesized by `build_ddl_text` and read-only by design (§18.1),
+    #: and `apply_editor_operation` refuses a read-only editor on its own — so
+    #: without this the key would be silently dead, which FQ-023 rules out. It is
+    #: a DIFFERENT sentence from the undo one on purpose: none of these asks for
+    #: an undo, and "there is nothing to undo here" would be the wrong reason.
+    _EDIT_REFUSAL = "this buffer is read only — edit the object in its own tab"
+
     def eventFilter(self, obj, event) -> bool:
         operation = (
-            classify_undo_redo_chord(event)
+            classify_editor_chord(event)
             if obj is self.editor
             and event.type()
             in (QEvent.Type.ShortcutOverride, QEvent.Type.KeyPress)
@@ -223,6 +234,8 @@ class EditorPanel(QWidget):
                 event.accept()
             elif operation in (UNDO, REDO):
                 self.editor.report_refusal(self._UNDO_REDO_REFUSAL)
+            elif is_mutating_editor_operation(operation):
+                self.editor.report_refusal(self._EDIT_REFUSAL)
             # else: `Ctrl+Shift+Z` (freed from redo by DEC-015) and the
             # `Alt+Backspace` pair (suppressed app-wide so the keyboard is
             # identical on both platforms). Both are claimed here for the same

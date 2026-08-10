@@ -1021,11 +1021,12 @@ def test_readonly_paste_hint_uses_the_apps_own_chords_not_qts_table(qtbot):
     _send_key(editor, _Qt2.Key.Key_Paste)
     assert len(emitted) == 3
 
-    # ...and `Ctrl+Shift+Ins`, which Qt binds as Paste on the Linux/KDE scheme
-    # ONLY, does not: whether the app binds or suppresses it is an open ruling,
-    # and inheriting it is exactly the platform-conditional behaviour DEC-015
-    # forbids. (On Linux this is a change: the hint used to fire there and not on
-    # Windows. Qt's own read-only refusal still blocks the paste itself.)
+    # ...and `Ctrl+Shift+Insert` is now one of them, on both platforms. The owner
+    # ruled (2026-08-10) that the app BINDS that chord as paste rather than
+    # inheriting or suppressing it -- it is live on Linux, so suppressing would
+    # have removed a working gesture -- so it joined `EDITOR_PASTE_CHORDS` and a
+    # read-only buffer owes it the same hint as `Ctrl+V`. (This assertion used to
+    # say the opposite, while the direction was an open ruling.)
     emitted.clear()
     _send_key(
         editor,
@@ -1033,8 +1034,60 @@ def test_readonly_paste_hint_uses_the_apps_own_chords_not_qts_table(qtbot):
         "",
         _Qt2.KeyboardModifier.ControlModifier | _Qt2.KeyboardModifier.ShiftModifier,
     )
-    assert emitted == []
+    assert emitted == [True]
     assert editor.toPlainText() == "<Page/>"
+
+
+def test_the_x11_only_editing_chords_are_answered_by_the_xml_editor(qtbot):
+    """The owner's 2026-08-10 ruling at this surface. `Ctrl+D`/`Ctrl+K`/`Ctrl+U`
+    are implemented by the app on both platforms, and this editor is one of the
+    six surfaces that answers them. Qt binds them on the Linux/KDE scheme only and
+    the offscreen platform runs Qt's **Windows** scheme, so what is asserted is
+    the app's handler — the only thing that exists on the platform the suite can
+    see, and the whole reason the ruling was worth implementing."""
+    def editor_at(text, position):
+        editor = XmlEditor()
+        qtbot.addWidget(editor)
+        editor.setPlainText(text)
+        cursor = editor.textCursor()
+        cursor.setPosition(position)
+        editor.setTextCursor(cursor)
+        return editor
+
+    ctrl = _Qt2.KeyboardModifier.ControlModifier
+
+    deleted_char = editor_at("<A/>\n<B/>", 0)
+    _send_key(deleted_char, _Qt2.Key.Key_D, "", ctrl)
+    assert deleted_char.toPlainText() == "A/>\n<B/>"
+
+    to_eol = editor_at("<A/>\n<B/>", 1)
+    _send_key(to_eol, _Qt2.Key.Key_K, "", ctrl)
+    assert to_eol.toPlainText() == "<\n<B/>"
+
+    whole_line = editor_at("<A/>\n<B/>", 1)
+    _send_key(whole_line, _Qt2.Key.Key_U, "", ctrl)
+    assert whole_line.toPlainText() == "<B/>"
+
+
+def test_the_editing_chords_raise_the_read_only_hint_instead_of_editing(qtbot):
+    """Caption Mode's read-only buffer: the three delete gestures are Ctrl chords,
+    so the "a Ctrl chord is a command, never typing" test would have called them
+    *not* an edit attempt and left them silently dead — while `Ctrl+U` deletes a
+    whole line, the most edit-like keystroke on the list. They get the hint for
+    exactly the reason `Ctrl+V` does."""
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    editor.setPlainText("<Page/>\n<Other/>")
+    editor.setReadOnly(True)
+    emitted = []
+    editor.read_only_edit_attempted.connect(lambda: emitted.append(True))
+    ctrl = _Qt2.KeyboardModifier.ControlModifier
+
+    for key in (_Qt2.Key.Key_D, _Qt2.Key.Key_K, _Qt2.Key.Key_U):
+        _send_key(editor, key, "", ctrl)
+
+    assert len(emitted) == 3
+    assert editor.toPlainText() == "<Page/>\n<Other/>"
 
 
 def test_readonly_navigation_key_does_not_emit(qtbot):

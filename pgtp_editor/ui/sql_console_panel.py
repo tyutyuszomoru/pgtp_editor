@@ -133,7 +133,14 @@ from ..sql.statements import (
     split_statements,
 )
 from .async_task import run_async
-from .code_editor import REDO, UNDO, CodeEditor, classify_undo_redo_chord
+from .code_editor import (
+    REDO,
+    UNDO,
+    CodeEditor,
+    apply_editor_operation,
+    classify_editor_chord,
+    is_mutating_editor_operation,
+)
 from .completion_popup import CompletionPopupHostMixin
 from .expand_select_seam import expand_select_expansion
 from .format_settings import current_sql_config
@@ -584,7 +591,7 @@ class SqlConsolePanel(SchemaGestureHostMixin, CompletionPopupHostMixin, QWidget)
     # --- the editor's own keys and menu (BUG-056, BUG-063) ------------------
 
     def eventFilter(self, obj, event) -> bool:
-        """The console editor's undo/redo chords and its context menu.
+        """The console editor's reserved editor chords and its context menu.
 
         **Why this exists at all (BUG-056).** This panel had no filter, so all
         three reserved undo/redo chords fell through to `QPlainTextEdit`'s
@@ -607,7 +614,7 @@ class SqlConsolePanel(SchemaGestureHostMixin, CompletionPopupHostMixin, QWidget)
             QEvent.Type.ShortcutOverride,
             QEvent.Type.KeyPress,
         ):
-            operation = classify_undo_redo_chord(event)
+            operation = classify_editor_chord(event)
             if operation is not None:
                 if event.type() == QEvent.Type.ShortcutOverride:
                     event.accept()
@@ -615,6 +622,12 @@ class SqlConsolePanel(SchemaGestureHostMixin, CompletionPopupHostMixin, QWidget)
                     self.editor.undo()
                 elif operation == REDO:
                     self.editor.redo()
+                elif is_mutating_editor_operation(operation):
+                    # Paste (`Ctrl+Shift+Insert`) and the three line-editing
+                    # gestures (`Ctrl+D`/`Ctrl+K`/`Ctrl+U`): Qt answers them on
+                    # the Linux/KDE scheme only, so the app implements them on
+                    # both (owner, 2026-08-10). The console buffer is editable.
+                    apply_editor_operation(self.editor, operation)
                 # else: the answers that run nothing, consumed precisely so Qt
                 # cannot answer them instead -- Ctrl+Shift+Z (freed from redo by
                 # DEC-015; Qt binds it `KB_Win | KB_X11`) and the suppressed

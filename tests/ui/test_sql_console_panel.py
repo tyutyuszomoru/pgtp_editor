@@ -706,6 +706,45 @@ def test_the_console_claims_the_non_operation_chords_without_redoing(qtbot):
         assert console.sql_text == undone
 
 
+def test_the_console_answers_the_x11_only_editing_chords_itself(qtbot):
+    """The owner's 2026-08-10 ruling, at this surface: `Ctrl+Shift+Insert` (paste)
+    and `Ctrl+D`/`Ctrl+K`/`Ctrl+U` are the app's own on both platforms. Qt binds
+    them on the Linux/KDE scheme only and the offscreen platform runs the
+    **Windows** scheme, so the filter's answer is the only observable one — which
+    is also the whole point of binding them: on Windows these gestures did not
+    exist before. The console buffer is editable, so they edit it."""
+    def console_at(text, position):
+        console, _query = make_console(qtbot)
+        console.editor.setPlainText(text)
+        cursor = console.editor.textCursor()
+        cursor.setPosition(position)
+        console.editor.setTextCursor(cursor)
+        return console
+
+    for key, position, expected in (
+        (Qt.Key.Key_D, 0, "elect 1\nselect 2"),
+        (Qt.Key.Key_K, 1, "s\nselect 2"),
+        (Qt.Key.Key_U, 1, "select 2"),
+    ):
+        console = console_at("select 1\nselect 2", position)
+        override = QKeyEvent(QEvent.Type.ShortcutOverride, key, _CTRL)
+        assert console.eventFilter(console.editor, override) is True
+        assert override.isAccepted() is True
+        consumed, _ = _deliver(console, QEvent.Type.KeyPress, key, _CTRL)
+        assert consumed is True, key
+        assert console.sql_text == expected, key
+
+    from PySide6.QtWidgets import QApplication
+
+    QApplication.clipboard().setText("-- ")
+    console = console_at("select 1", 0)
+    consumed, _ = _deliver(
+        console, QEvent.Type.KeyPress, Qt.Key.Key_Insert, _CTRL_SHIFT
+    )
+    assert consumed is True
+    assert console.sql_text == "-- select 1"
+
+
 def test_the_console_filter_does_not_claim_unrelated_keys(qtbot):
     """The filter must not become a key sink -- the results table and the
     completion popup keep their own keys, and anything else falls through."""

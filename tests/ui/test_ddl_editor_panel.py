@@ -587,6 +587,40 @@ def test_the_panel_states_why_there_is_nothing_to_undo(qtbot, monkeypatch):
     assert said == ["this buffer is read only — there is nothing to undo here"]
 
 
+def test_the_editing_chords_are_refused_with_their_own_reason_here(qtbot):
+    """This panel's buffer is synthesized and read-only (§18.1), so its answer to
+    the four chords the app took ownership of on 2026-08-10 —
+    `Ctrl+Shift+Insert` (paste) and `Ctrl+D`/`Ctrl+K`/`Ctrl+U` — is a stated
+    refusal, not an edit. Both halves matter: `apply_editor_operation` refuses a
+    read-only editor on its own, so without the refusal here the key would be
+    silently dead, which FQ-023 rules out.
+
+    The reason is a DIFFERENT sentence from the undo one, deliberately: none of
+    these asks for an undo, and "there is nothing to undo here" would be a wrong
+    reason — worse than none. This is the same distinction the suppressed chords
+    make in the test above, one step further."""
+    panel = EditorPanel()
+    qtbot.addWidget(panel)
+    panel.editor.setPlainText("create function f() ...")
+    said = []
+    panel.editor.report_refusal = said.append
+
+    for key, mods in (
+        (Qt.Key.Key_D, _CTRL),
+        (Qt.Key.Key_K, _CTRL),
+        (Qt.Key.Key_U, _CTRL),
+        (Qt.Key.Key_Insert, _CTRL_SHIFT),
+    ):
+        override = QKeyEvent(QEvent.Type.ShortcutOverride, key, mods)
+        assert panel.eventFilter(panel.editor, override) is True
+        assert override.isAccepted() is True
+        consumed, _ = _deliver(panel, QEvent.Type.KeyPress, key, mods)
+        assert consumed is True, (key, mods)
+
+    assert said == ["this buffer is read only — edit the object in its own tab"] * 4
+    assert panel.editor.toPlainText() == "create function f() ..."
+
+
 def test_other_keys_still_fall_through_the_panel_filter(qtbot):
     """The filter must not become a key sink: anything else goes to super()."""
     panel = EditorPanel()
