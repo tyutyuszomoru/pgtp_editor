@@ -184,6 +184,11 @@ RENAMED_ID_ALIASES: dict[str, str] = {
     # different surface entirely. Only the message-log tab is renamed.
     "view.results": "view.messages",
     "view.activity-log-results-panel": "view.activity-log-messages-panel",
+    # BUG-058: §18.8's `Project Status…` MOVED from the Database menu to `File`,
+    # directly under `Project Settings…`. Its label did not change, but the id is
+    # the whole menu path, so a toolbar saved before the move needs this row to
+    # keep its button. A MOVE, so it gets a row (unlike the deletions above).
+    "database.project-status": "file.project-status",
     # `database.deploy-this-edit` gets NO row: FQ-026 DELETES the picker, and a
     # deletion degrades through `resolve_ids` dropping the unresolvable id (the
     # `file.save` precedent). A row here would point a saved button at a

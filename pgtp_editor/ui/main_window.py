@@ -2965,10 +2965,30 @@ class MainWindow(QMainWindow):
         project_settings_action.triggered.connect(
             lambda: self._ddl_project_ui.open_settings()
         )
-        # §18.2's project group is FOUR entries, not five: `Deploy .pgtp` MOVED to
+        # BUG-058: `Project Status…` MOVED here from the Database menu, directly
+        # under `Project Settings…` (owner ruling, verbatim: "Project status
+        # should be in File, just below Project settings"). Same lambda-wrapped
+        # connect as its neighbours, for the BUG-021 reason stated above.
+        #
+        # Two things came with it and neither is incidental:
+        # * The move changes the command's menu-path id
+        #   (`database.project-status` -> `file.project-status`), so
+        #   `toolbar_registry.RENAMED_ID_ALIASES` carries a row -- a user who
+        #   pinned the Database-menu button keeps it.
+        # * It was an always-visible, ungated action in the Database menu and
+        #   stays one here: `_open_project_status` handles the projectless case
+        #   itself, and it is deliberately NOT in `_MAINTENANCE_FILE_ITEMS`, so
+        #   Maintenance mode trims it exactly as it trims `Project Settings…`,
+        #   its new neighbour. (In its old home the whole Database menu was
+        #   hidden in that mode, so the availability answer is unchanged.)
+        project_status_action = menu.addAction("Project Status…")
+        project_status_action.triggered.connect(lambda: self._open_project_status())
+        # §18.2's own project actions are FOUR, not five: `Deploy .pgtp` MOVED to
         # the Editor bar's `Deployment` menu (FQ-020), where it is meaningful only
         # while Raw XML is active. Its pinnable id changed with it, so
-        # `toolbar_registry.RENAMED_ID_ALIASES` carries a row.
+        # `toolbar_registry.RENAMED_ID_ALIASES` carries a row. The group above
+        # therefore reads FIVE entries: those four plus §18.8's `Project
+        # Status…`, which joined them from the Database menu (BUG-058).
         menu.addSeparator()
         # There is deliberately NO `Save` and NO `Save As…` here, and no `Ctrl+S`
         # or `Ctrl+Shift+S` anywhere in the app (§7/§27, FQ-020). Saving is four
@@ -3006,8 +3026,10 @@ class MainWindow(QMainWindow):
         # FQ-027: this WAS FQ-010's `Show Launcher…`, which only re-opened the
         # modal over the live session. It is RENAMED (one action, not two) and
         # given the full re-initiation the owner asked for: resolve unsaved
-        # work, close everything, clear the session workflow mode, re-enter the
-        # launcher. The rename changes its command id, so
+        # work, close everything, re-enter the launcher. (It used to clear the
+        # session workflow mode as its last step; BUG-059 removed that -- the
+        # mode stands until a new column is picked, so a dismissed launcher can
+        # never land in "No Mode".) The rename changes its command id, so
         # `toolbar_registry.RENAMED_ID_ALIASES` carries a row.
         #
         # It is ALSO the escape hatch from Maintenance mode's menu filter, which
@@ -3029,6 +3051,12 @@ class MainWindow(QMainWindow):
 
         No `force=` any more: FQ-027 deleted the suppression flag, so there is
         nothing left to bypass — the launcher always shows.
+
+        No `dismissable=` either, and that omission is the point (BUG-059):
+        `launcher_dialog.show_launcher` derives the regime from this window's
+        `workflow_mode`, so there is exactly one rule — obligatory choice while
+        the session has no mode, dismissable once it has one — and no caller can
+        open a dismissable launcher over a mode-less window.
         """
         from pgtp_editor.ui import launcher_dialog
 
@@ -3038,12 +3066,23 @@ class MainWindow(QMainWindow):
         """`File ▸ New Session` — re-initiate the app into its starting state
         (FQ-027). Returns True when the session was actually restarted.
 
-        Four steps, in the order that makes a cancel cheap: resolve unsaved
+        Three steps, in the order that makes a cancel cheap: resolve unsaved
         work (**every** cancel aborts the whole gesture and leaves the session
         exactly as it was), close every dynamic tab, close the document and the
-        §18.2 project, then clear the workflow mode — which restores the full
-        menu bar BEFORE the launcher goes up, so Maintenance mode can never be
-        re-entered on top of itself — and show the launcher.
+        §18.2 project, then show the launcher.
+
+        **The workflow mode is deliberately NOT cleared here (BUG-059).** It used
+        to be set to None just before the launcher went up; that was the only
+        production path (besides a freshly constructed window) into the invalid
+        "No Mode" state the owner ruled out — dismissing the re-opened launcher
+        landed in it. The mode now STANDS while the launcher is up, which is what
+        makes this launcher dismissable at all: closing it leaves the session in
+        the mode it was already in, and picking a column replaces that mode the
+        one way modes are ever entered. Re-picking the same column is harmless:
+        `set_workflow_mode` re-applies the filter idempotently, and the launcher's
+        entries come from `_walk_menu_actions`, which never tests `isVisible()` —
+        so every column is offered even while Maintenance mode has the menu bar
+        trimmed.
 
         Each prompt is the one that already exists for that surface (§11's
         `confirm_close_for_exit`, the stage's own tab-close route, the document
@@ -3072,7 +3111,6 @@ class MainWindow(QMainWindow):
         # The §18.2 project. Never a forcing point (`close_project` only
         # *offers* a pending deploy), so it cannot abort the gesture.
         self._ddl_project_ui.close_project()
-        self.set_workflow_mode(None)
         self.show_launcher()
         return True
 
@@ -3157,6 +3195,25 @@ class MainWindow(QMainWindow):
         results_action = menu.addAction("Messages")
         results_action.triggered.connect(self._reveal_results_dock_tab)
         self._results_action = results_action
+
+        # BUG-061: the LEFT dock's Findings tab (FQ-028 Part 1) had no user
+        # gesture at all -- its only reveal path was the router callback, so a
+        # session with no navigable op behind it looked like a tab that does not
+        # exist. Same shape as the two tab entries above: NOT checkable (a tab is
+        # in view or it is not), and it reuses `_reveal_findings_tab` rather than
+        # re-deriving the un-hide/focus sequence, so the menu and the router can
+        # never disagree about what "show the findings" means.
+        #
+        # A brand-new command, so NO `RENAMED_ID_ALIASES` row -- that table is
+        # for moves and renames. Being a menu action it enumerates into
+        # `ToolbarController._walk_menu_actions` as `view.findings`, which is
+        # what makes it pinnable and rebindable like its siblings. And, like
+        # them, it carries NO built-in shortcut: none of `Activity Log`,
+        # `Messages` or the three dock toggles has one, and FQ-012 lets a user
+        # bind one if they want it.
+        findings_action = menu.addAction("Findings")
+        findings_action.triggered.connect(self._reveal_findings_tab)
+        self._findings_action = findings_action
 
         self._raw_xml_panel_action = menu.addAction("Raw XML Panel")
         self._raw_xml_panel_action.setCheckable(True)
@@ -3683,17 +3740,26 @@ class MainWindow(QMainWindow):
         # `file.save` way -- `resolve_ids` drops what no longer resolves -- and
         # gets NO `RENAMED_ID_ALIASES` row, because this is a deletion, not a
         # move. Nothing became unreachable: the picker only ever delegated.
-        menu.addSeparator()
+        #
+        # NO `addSeparator()` here any more (BUG-058). It used to divide the
+        # sandbox group above from `Sandbox Setup…`/`Project Status…` below;
+        # both of those are gone (deleted 2026-08-09 and moved to File
+        # respectively), so keeping it would end the Database menu on a dangling
+        # rule with nothing under it.
         # `Sandbox Setup…` stood here until 2026-08-09. §18.5 D2/D2a's three
         # provisioning gestures moved into Project Settings' sandbox group
         # (File ▸ Project Settings…), which already owned the sandbox connection
         # and the recorded mode; the entry was deleted rather than hidden so no
         # pinned toolbar button can outlive it.
 
-        # §18.8: opening the window is itself a probe trigger, not a passive
-        # read of a cached result -- see _open_project_status.
-        project_status_action = menu.addAction("Project Status…")
-        project_status_action.triggered.connect(lambda: self._open_project_status())
+        # `Project Status…` stood here until BUG-058 and MOVED to the File menu,
+        # directly under `Project Settings…` (owner ruling: "Project status
+        # should be in File, just below Project settings"). It is a project-wide
+        # health screen, not a per-connection Database gesture, so it now sits
+        # with §18.2's project group. The move changes its menu-path id, so
+        # `toolbar_registry.RENAMED_ID_ALIASES` carries a row and a pinned
+        # button survives it.
+
         # Every sandbox-dependent entry above was created hidden; this is the
         # one place that decides which of them the current state earns.
         self._refresh_sandbox_affordances()
@@ -4454,7 +4520,8 @@ class MainWindow(QMainWindow):
         return connection_summary(params)
 
     def _open_project_status(self) -> None:
-        """Database ▸ Project Status… (§18.8).
+        """File ▸ Project Status… (§18.8) -- it sat on the Database menu until
+        BUG-058 moved it under `Project Settings…`.
 
         Opening the window is itself a probe trigger, not a passive read of a
         cached result -- a sandbox that died since the project was opened must
@@ -5593,10 +5660,17 @@ class MainWindow(QMainWindow):
     def set_workflow_mode(self, mode) -> None:
         """Enter (or leave, with None) a workflow mode and re-apply the filter.
 
-        Called by `launcher_dialog.show_launcher` when a column is picked, and
-        with None by `new_session`. Nothing else sets it — there is no separate
-        in-app mode toggle, by design: picking the Maintenance column IS how the
-        mode is entered, and `File ▸ New Session` is how it is left.
+        Called by `launcher_dialog.show_launcher` when a column is picked, and by
+        nothing else in production. There is no separate in-app mode toggle, by
+        design: picking the Maintenance column IS how the mode is entered, and
+        `File ▸ New Session` — which re-enters the launcher so another column can
+        be picked — is how it is left.
+
+        **Nothing in production passes None any more (BUG-059).** `new_session`
+        used to, right before re-showing the launcher, and a dismissed launcher
+        then left the app in the invalid "No Mode" state. None is still accepted
+        here (a freshly constructed window holds it, and the tests that check the
+        unfiltered bar set it) but no user gesture can produce it.
         """
         self._workflow_mode = mode
         self._refresh_workflow_mode_affordances()

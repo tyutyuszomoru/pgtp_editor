@@ -163,6 +163,10 @@ EXPECTED_HOST_SURFACE = {
     "_file_menu",
     "_find_next_action",
     "_file_activity_source",
+    # BUG-061: `View ▸ Findings`, held the same way its two sibling tab-focus
+    # entries (`_activity_action`, `_results_action`) are -- the left dock and
+    # its tabs are host structure, so its menu entry is a host attribute too.
+    "_findings_action",
     "_find_ui",
     "_flush_activity_writes",
     "_flush_bookmark_writes",

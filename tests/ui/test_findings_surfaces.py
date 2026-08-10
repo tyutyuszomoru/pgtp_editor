@@ -38,8 +38,10 @@ from pgtp_editor.ui.audit_router import (
     classify,
     prefix_of,
 )
+from pgtp_editor.ui import toolbar_registry
 from pgtp_editor.ui.findings_panel import RUN_RULE, FindingsPanel
 from pgtp_editor.ui.main_window import MainWindow
+from tests.ui._menu_helpers import action_labels, find_action, find_top_menu
 
 
 def _window(qtbot, tmp_path):
@@ -175,6 +177,68 @@ def test_a_findings_click_still_routes_through_the_one_dispatcher(qtbot, tmp_pat
 
     assert window.center_stage.currentIndex() == window.center_stage.raw_xml_tab_index
     assert window.center_stage.xml_editor.textCursor().blockNumber() + 1 == 3
+
+
+# --- BUG-061: the View-menu entry that summons it ----------------------------
+#
+# Owner report: "The 'Findings' tab doesn't exist, it's not in View to turn on
+# and off." It DID exist, but its only reveal path was the audit router, so a
+# session with no navigable op behind it could never see it.
+
+
+def test_the_view_menu_offers_findings_beside_its_sibling_tab_entries(qtbot, tmp_path):
+    window = _window(qtbot, tmp_path)
+    view_menu = find_top_menu(window, "View")
+    labels = action_labels(view_menu)
+
+    assert "Findings" in labels
+    # In the run of FOCUS entries, after the two bottom-dock tabs.
+    assert labels.index("Findings") == labels.index("Messages") + 1
+
+
+def test_the_findings_entry_is_a_focus_entry_with_no_shortcut(qtbot, tmp_path):
+    """Its two siblings are not checkable (a tab is in view or it is not) and
+    carry no built-in shortcut; this one must match rather than invent a third
+    posture or claim a key."""
+    window = _window(qtbot, tmp_path)
+    action = find_action(find_top_menu(window, "View"), "Findings")
+
+    assert action.isCheckable() is False
+    assert action.shortcut().isEmpty()
+    assert find_action(find_top_menu(window, "View"), "Activity Log").isCheckable() is (
+        False
+    )
+
+
+def test_the_findings_entry_reveals_the_tab_through_the_routers_own_path(
+    qtbot, tmp_path
+):
+    """Driven through the real `triggered` signal (BUG-021), and it must reuse
+    `_reveal_findings_tab` so the menu and the router can never disagree about
+    what "show the findings" means."""
+    window = _window(qtbot, tmp_path)
+    assert not window.left_tabs.isTabVisible(window.findings_tab_index)
+    # The dock carrying the tab may have been closed, so revealing the tab alone
+    # is not enough -- hide it first and assert the entry un-hides it too.
+    window.tree_dock.setVisible(False)
+
+    find_action(find_top_menu(window, "View"), "Findings").trigger()
+
+    assert window.tree_dock.isHidden() is False
+    assert window.left_tabs.isTabVisible(window.findings_tab_index)
+    assert window.left_tabs.currentWidget() is window.findings_panel
+
+
+def test_the_findings_command_is_pinnable_like_its_siblings(qtbot, tmp_path):
+    """A brand-new command, so NO `RENAMED_ID_ALIASES` row — but it must
+    enumerate into the command universe, which is what makes it pinnable and
+    rebindable."""
+    window = _window(qtbot, tmp_path)
+    known = dict(window._toolbar_ui.collect_menu_commands())
+
+    assert "view.findings" in known
+    assert "view.findings" not in toolbar_registry.RENAMED_ID_ALIASES
+    assert "view.findings" not in toolbar_registry.RENAMED_ID_ALIASES.values()
 
 
 # --- Part 3: the bottom dock's two tabs -------------------------------------

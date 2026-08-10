@@ -18,9 +18,9 @@ assert about a flag that no longer exists.
 `tests/test_main.py`.
 """
 import pytest
-from PySide6.QtCore import QSettings
-from PySide6.QtGui import QAction
-from PySide6.QtWidgets import QDialog
+from PySide6.QtCore import QEvent, QSettings, Qt
+from PySide6.QtGui import QAction, QCloseEvent, QKeyEvent
+from PySide6.QtWidgets import QDialog, QDialogButtonBox
 
 from pgtp_editor.ui import toolbar_registry
 from pgtp_editor.ui.launcher_dialog import (
@@ -275,9 +275,13 @@ def test_a_pick_reports_the_mode_of_its_column(command_id, mode):
 
 def test_an_ad_hoc_column_names_no_mode():
     """`groups=` is a test/caller seam; a column outside the taxonomy must not
-    invent a mode."""
+    invent a mode. `dismissable=True` because BUG-059's undismissable regime
+    REFUSES a mode-less pick — see
+    `test_an_undismissable_launcher_refuses_a_pick_that_names_no_mode`."""
     dialog = LauncherDialog(
-        _fake_entries(["file.open"]), groups=(("Whatever", ("file.open",)),)
+        _fake_entries(["file.open"]),
+        groups=(("Whatever", ("file.open",)),),
+        dismissable=True,
     )
     dialog.choose("file.open")
     assert dialog.chosen_workflow_mode is None
@@ -313,22 +317,151 @@ def test_show_launcher_runs_the_menus_own_action(qtbot, tmp_path):
     assert opened == [True]
 
 
-# -- Escape / close: land in the app, never quit -----------------------------
+# -- BUG-059: two regimes -- obligatory choice, then dismissable -------------
+#
+# Owner ruling: "do not permit to close the launcher without having chosen a
+# mode. If launcher is opened with a mode already chosen (new session), let it be
+# closed, otherwise make choice obligatory. this means that also window close
+# button must be disabled". `MainWindow._workflow_mode` starts as None and is
+# never read from settings (FQ-027), so a dismissable startup launcher was the
+# one path into the invalid "No Mode" state.
 
 
-def test_cancel_rejects_with_no_pick():
+def test_undismissable_is_the_default_regime():
+    """The safe regime is the DEFAULT: a caller must ask for dismissability
+    rather than remember to forbid it."""
+    assert LauncherDialog(_fake_entries(["file.open"])).dismissable is False
+
+
+def test_an_undismissable_launcher_offers_no_close_button():
     dialog = LauncherDialog(_fake_entries(["file.open"]))
+    assert dialog.button_box.buttons() == []
+    assert (
+        dialog.button_box.button(QDialogButtonBox.StandardButton.Close) is None
+    )
+
+
+def test_an_undismissable_launcher_drops_the_native_close_button_hints():
+    dialog = LauncherDialog(_fake_entries(["file.open"]))
+    flags = dialog.windowFlags()
+    assert not flags & Qt.WindowType.WindowCloseButtonHint
+    assert not flags & Qt.WindowType.WindowContextHelpButtonHint
+
+
+def test_an_undismissable_launcher_refuses_a_close_event():
+    """The AUTHORITATIVE barrier: the window-flag hint is advisory and covers
+    neither Alt+F4 nor a window-manager close, both of which arrive here."""
+    dialog = LauncherDialog(_fake_entries(["file.open"]))
+    # `result()` starts at 0, which IS `Rejected`, so the observable that
+    # distinguishes "never dismissed" from "dismissed" is `finished`.
+    finished = []
+    dialog.finished.connect(finished.append)
+    event = QCloseEvent()
+    event.accept()
+    dialog.closeEvent(event)
+    assert event.isAccepted() is False
+    assert dialog.close() is False
+    assert finished == []
+
+
+def test_an_undismissable_launcher_swallows_escape_reject_and_cancel():
+    """Every dismissal funnel is inert, so there is no exit without a pick —
+    "No Mode" is unreachable rather than merely unlikely."""
+    dialog = LauncherDialog(_fake_entries(["file.open"]))
+    finished = []
+    dialog.finished.connect(finished.append)
+
+    dialog.keyPressEvent(
+        QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_Escape, Qt.KeyboardModifier.NoModifier)
+    )
+    dialog.cancel()
+    dialog.reject()
+    dialog.button_box.rejected.emit()
+
+    assert dialog.chosen_command_id is None
+    assert finished == []
+
+
+def test_an_undismissable_launcher_still_accepts_a_pick():
+    dialog = LauncherDialog(_fake_entries(_all_group_ids()))
+    dialog.choose("file.new-project")
+    assert dialog.chosen_command_id == "file.new-project"
+    assert dialog.chosen_workflow_mode == MODE_PROJECT
+    assert dialog.result() == QDialog.DialogCode.Accepted
+
+
+def test_an_undismissable_launcher_refuses_a_pick_that_names_no_mode():
+    """The other half of unreachability: the only way OUT is an accept, and an
+    accept must carry a mode. Only an ad-hoc `groups=` column can fail this."""
+    dialog = LauncherDialog(
+        _fake_entries(["file.open"]), groups=(("Whatever", ("file.open",)),)
+    )
+    dialog.choose("file.open")
+    assert dialog.chosen_command_id is None
+    assert dialog.result() != QDialog.DialogCode.Accepted
+
+
+def test_a_dismissable_launcher_keeps_its_close_button_and_cancels():
+    dialog = LauncherDialog(_fake_entries(["file.open"]), dismissable=True)
+    assert dialog.button_box.button(QDialogButtonBox.StandardButton.Close) is not None
+    assert dialog.windowFlags() & Qt.WindowType.WindowCloseButtonHint
     dialog.cancel()
     assert dialog.chosen_command_id is None
     assert dialog.result() == QDialog.DialogCode.Rejected
 
 
+def test_a_dismissable_launchers_close_button_is_wired_to_reject():
+    dialog = LauncherDialog(_fake_entries(["file.open"]), dismissable=True)
+    dialog.button_box.rejected.emit()
+    assert dialog.result() == QDialog.DialogCode.Rejected
+    assert dialog.chosen_command_id is None
+
+
+def test_a_dismissable_launcher_accepts_a_close_event():
+    dialog = LauncherDialog(_fake_entries(["file.open"]), dismissable=True)
+    event = QCloseEvent()
+    event.accept()
+    dialog.closeEvent(event)
+    assert event.isAccepted() is True
+
+
+def test_show_launcher_derives_the_regime_from_the_windows_mode(qtbot, tmp_path):
+    """ONE rule, in ONE place: no mode -> obligatory choice; a mode already
+    chosen -> dismissable. No caller can open a dismissable launcher over a
+    mode-less window."""
+    window = MainWindow(settings=_ini_settings(tmp_path))
+    qtbot.addWidget(window)
+    seen = []
+
+    def _run(dialog):
+        seen.append(dialog.dismissable)
+        dialog.choose("file.open")
+
+    show_launcher(
+        window,
+        window._settings,
+        resolve_entries=lambda _w: _fake_entries(_all_group_ids()),
+        exec_dialog=_run,
+    )
+    assert seen == [False]  # started with no mode
+
+    show_launcher(
+        window,
+        window._settings,
+        resolve_entries=lambda _w: _fake_entries(_all_group_ids()),
+        exec_dialog=_run,
+    )
+    assert seen == [False, True]  # the first pick left a mode behind
+
+
 def test_escape_lands_in_the_app_rather_than_quitting(qtbot, tmp_path):
     """FQ-010: cancelling must leave the window up and running. Nothing here
-    closes, hides or quits anything — the app is simply still there."""
+    closes, hides or quits anything — the app is simply still there. Reachable
+    only once a mode is set (BUG-059), and the cancel RETAINS that mode."""
     window = MainWindow(settings=_ini_settings(tmp_path))
     qtbot.addWidget(window)
     window.show()
+    window.set_workflow_mode(MODE_STANDALONE)
     fired = []
     result = show_launcher(
         window,
@@ -339,14 +472,37 @@ def test_escape_lands_in_the_app_rather_than_quitting(qtbot, tmp_path):
     assert result is None
     assert fired == []
     assert window.isVisible() is True
+    assert window.workflow_mode == MODE_STANDALONE
+
+
+def test_a_startup_launcher_cannot_be_left_without_a_mode(qtbot, tmp_path):
+    """The end-to-end statement of the fix: over a mode-less window, every
+    dismissal gesture fails and the mode is only ever set by a pick."""
+    window = MainWindow(settings=_ini_settings(tmp_path))
+    qtbot.addWidget(window)
     assert window.workflow_mode is None
 
+    def _try_to_escape(dialog):
+        dialog.cancel()
+        dialog.reject()
+        dialog.close()
+        dialog.keyPressEvent(
+            QKeyEvent(
+                QEvent.Type.KeyPress, Qt.Key.Key_Escape, Qt.KeyboardModifier.NoModifier
+            )
+        )
+        assert dialog.chosen_command_id is None
+        # The only way out:
+        dialog.choose("file.open")
 
-def test_close_button_is_wired_to_reject():
-    dialog = LauncherDialog(_fake_entries(["file.open"]))
-    dialog.button_box.rejected.emit()
-    assert dialog.result() == QDialog.DialogCode.Rejected
-    assert dialog.chosen_command_id is None
+    result = show_launcher(
+        window,
+        window._settings,
+        resolve_entries=lambda _w: _fake_entries(_all_group_ids()),
+        exec_dialog=_try_to_escape,
+    )
+    assert result == "file.open"
+    assert window.workflow_mode == MODE_STANDALONE
 
 
 # -- the session workflow mode (FQ-027) --------------------------------------
@@ -688,7 +844,11 @@ def test_a_toolbar_saved_before_the_rename_still_resolves(qtbot, tmp_path):
     ]
 
 
-def test_new_session_clears_the_mode_and_reopens_the_launcher(qtbot, tmp_path):
+def test_new_session_retains_the_mode_and_reopens_the_launcher(qtbot, tmp_path):
+    """BUG-059 REVERSED FQ-027's clear-then-show. The mode STANDS while the
+    re-opened launcher is up — that is what makes this launcher dismissable at
+    all, and it is what a dismissal lands in. Clearing it was the one production
+    path into the invalid "No Mode" state."""
     window = MainWindow(settings=_ini_settings(tmp_path))
     qtbot.addWidget(window)
     window.set_workflow_mode(MODE_MAINTENANCE)
@@ -697,12 +857,38 @@ def test_new_session_clears_the_mode_and_reopens_the_launcher(qtbot, tmp_path):
 
     assert find_action(find_top_menu(window, "File"), "New Session").trigger() is None
 
-    # The mode was already cleared when the launcher went up: it must never be
-    # re-entered on top of itself, and the full menu bar is what the user picks
-    # the next mode from.
-    assert shown == [None]
-    assert window.workflow_mode is None
-    assert _visible_labels(window.menuBar()) == _unfiltered_window_labels(window)
+    assert shown == [MODE_MAINTENANCE]
+    assert window.workflow_mode == MODE_MAINTENANCE
+
+
+def test_new_session_never_passes_none_to_set_workflow_mode(qtbot, tmp_path):
+    """The invalid state is made unrepresentable by removing the WRITE, not by
+    checking for it afterwards: no user gesture sets the mode back to None."""
+    window = MainWindow(settings=_ini_settings(tmp_path))
+    qtbot.addWidget(window)
+    window.set_workflow_mode(MODE_MAINTENANCE)
+    window.show_launcher = lambda: None
+    modes = []
+    original = window.set_workflow_mode
+    window.set_workflow_mode = lambda mode: (modes.append(mode), original(mode))[1]
+
+    assert window.new_session() is True
+
+    assert modes == []
+
+
+def test_a_maintenance_launcher_still_offers_every_column(qtbot, tmp_path):
+    """The consequence of retaining the mode: the launcher goes up over a
+    TRIMMED menu bar. That is safe because `_walk_menu_actions` never tests
+    `isVisible()`, so all six entries are still resolved and offered."""
+    window = MainWindow(settings=_ini_settings(tmp_path))
+    qtbot.addWidget(window)
+    window.set_workflow_mode(MODE_MAINTENANCE)
+
+    entries = resolve_menu_entries(window)
+
+    for command_id in _all_group_ids():
+        assert command_id in entries
 
 
 def test_new_session_closes_the_document_and_the_project(qtbot, tmp_path):

@@ -61,9 +61,33 @@ for free and can never drift from it, and the button labels are the walk's own
 
 Behaviour
 ---------
-* **Escape / window-close lands in the app exactly as before, and NEVER quits.**
-  Quitting on cancel would turn the launcher into a gate on running the app at
-  all. :func:`show_launcher` simply returns ``None``.
+* **Picking a mode is OBLIGATORY when there is no mode yet (BUG-059).** Owner
+  ruling, verbatim: *"do not permit to close the launcher without having chosen a
+  mode. If launcher is opened with a mode already chosen (new session), let it be
+  closed, otherwise make choice obligatory. this means that also window close
+  button must be disabled"* — because ``MainWindow._workflow_mode`` starts as
+  ``None`` and is never read from settings (FQ-027), a dismissable startup
+  launcher left the app in the invalid *No Mode* state.
+
+  So the launcher has TWO regimes, chosen by :func:`show_launcher` from the
+  window's current mode, and the undismissable one is the DEFAULT:
+
+  - **No mode yet (startup)** → ``dismissable=False``: no ``Close`` button, no
+    native ✕ (``WindowCloseButtonHint`` stripped *and* ``closeEvent`` ignored,
+    which is the authoritative barrier — the hint is only advisory on some
+    window managers and does not cover ``Alt+F4``), ``reject()`` neutralised,
+    Escape swallowed, :meth:`LauncherDialog.cancel` inert, and
+    :meth:`LauncherDialog.choose` refuses a column that names no mode. Every
+    exit from the dialog therefore carries a mode: *No Mode* is not merely
+    unlikely, it is unreachable.
+  - **A mode already chosen (``File ▸ New Session``)** → ``dismissable=True``:
+    it closes as it always did, and dismissal **retains** the mode the session
+    is already in (``new_session`` no longer clears it — that clear was the only
+    other production path back to ``None``).
+* **Cancelling still NEVER quits.** Where dismissal is allowed it lands in the
+  app exactly as before (FQ-010: quitting would make the launcher a gate on
+  running the app at all) — :func:`show_launcher` simply returns ``None`` and
+  leaves the current mode standing.
 * **NOT suppressible (FQ-027).** FQ-010's "Don't show this again" checkbox, its
   ``launcherSuppressed`` QSettings key and the ``force=`` bypass that existed
   only to override it are **deleted**. The launcher is the single starting gate
@@ -190,11 +214,26 @@ class LauncherDialog(QDialog):
         entries: dict,
         *,
         groups: Sequence[tuple[str, Sequence[str]]] = LAUNCHER_GROUPS,
+        dismissable: bool = False,
         parent=None,
     ):
         super().__init__(parent)
         self.setWindowTitle("PGTP Editor")
         self.setModal(True)
+        #: BUG-059: whether this launcher may be left without a pick. FALSE by
+        #: default -- the safe regime is the one that cannot produce an invalid
+        #: state, so a caller must ASK for dismissability rather than forget to
+        #: forbid it. `show_launcher` derives it from the window's current mode.
+        self._dismissable = bool(dismissable)
+        if not self._dismissable:
+            # Advisory only (some WMs draw the ✕ regardless, and neither hint
+            # touches Alt+F4) -- `closeEvent` below is the real barrier. Kept
+            # anyway so the frame doesn't offer a button that does nothing.
+            self.setWindowFlags(
+                self.windowFlags()
+                & ~Qt.WindowType.WindowCloseButtonHint
+                & ~Qt.WindowType.WindowContextHelpButtonHint
+            )
         self._entries = entries
         self._chosen_command_id: str | None = None
         #: command_id -> the QPushButton standing for it (test seam).
@@ -222,10 +261,18 @@ class LauncherDialog(QDialog):
                 continue
             grid.addWidget(box, 0, index)
 
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close, self)
-        # Cancel/Escape/close lands in the app exactly as before -- it NEVER
-        # quits (FQ-010: quitting would make the launcher a gate on running the
-        # app at all).
+        # BUG-059: no `Close` button at all in the undismissable regime -- an
+        # empty box rather than no box, so `button_box` is always present for the
+        # test seam and the layout is identical in both regimes. Where the button
+        # DOES exist, cancel/Escape/close lands in the app exactly as before --
+        # it NEVER quits (FQ-010: quitting would make the launcher a gate on
+        # running the app at all).
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Close
+            if self._dismissable
+            else QDialogButtonBox.StandardButton.NoButton,
+            self,
+        )
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
         self.button_box = buttons
@@ -292,26 +339,66 @@ class LauncherDialog(QDialog):
         no pick, and for an ad-hoc `groups=` column that names no mode."""
         return GROUP_MODES.get(self.chosen_group_title or "")
 
+    @property
+    def dismissable(self) -> bool:
+        """Whether this launcher may be left without a pick (BUG-059)."""
+        return self._dismissable
+
     def choose(self, command_id: str) -> None:
         """Record a pick and accept. Does NOT trigger the action — that happens
         in :func:`show_launcher`, once the modal is down, so an action that opens
         its own file dialog is never stacked on top of this one."""
         if command_id not in self._entries:
             return
+        # BUG-059: in the undismissable regime a pick must NAME a mode, or it is
+        # refused. That is what makes "left the launcher with no mode"
+        # structurally impossible rather than merely improbable -- the only way
+        # out of an undismissable launcher is an `accept()` that carries a mode.
+        # Only an ad-hoc `groups=` column can fail this (all three real columns
+        # are in `GROUP_MODES`), and such a column belongs to the test/caller
+        # seam, which must ask for `dismissable=True` to use it.
+        if not self._dismissable:
+            if GROUP_MODES.get(self._group_of.get(command_id) or "") is None:
+                return
         self._chosen_command_id = command_id
         self.accept()
 
     def cancel(self) -> None:
-        """What Escape / the window close button do: no pick, reject."""
+        """What Escape / the window close button do: no pick, reject.
+
+        Inert when undismissable (BUG-059) — there is nothing to cancel INTO."""
+        if not self._dismissable:
+            return
         self._chosen_command_id = None
         self.reject()
 
+    def reject(self) -> None:
+        # Neutralised when undismissable, and this is the funnel that matters
+        # most: `QDialogButtonBox.rejected`, `QDialog`'s own Escape handling and
+        # any programmatic `reject()` all pass through here.
+        if not self._dismissable:
+            return
+        super().reject()
+
+    def closeEvent(self, event):
+        # THE authoritative barrier (BUG-059): `WindowCloseButtonHint` is only
+        # advisory and covers neither `Alt+F4` nor a window-manager close, both
+        # of which arrive here. Refusing the event is what actually keeps the
+        # modal up.
+        if not self._dismissable:
+            event.ignore()
+            return
+        super().closeEvent(event)
+
     def keyPressEvent(self, event):
-        # Explicit so the "Escape never quits, it just lands in the app" rule is
-        # visible here rather than inherited: QDialog's default already rejects,
-        # this only makes sure the pick stays cleared.
+        # Explicit so both rules are visible here rather than inherited:
+        # dismissable -> "Escape never quits, it just lands in the app" (QDialog
+        # would already reject; this only makes sure the pick stays cleared);
+        # undismissable -> Escape is SWALLOWED, so it never reaches QDialog's
+        # default reject at all.
         if event.key() == Qt.Key.Key_Escape:
-            self.cancel()
+            if self._dismissable:
+                self.cancel()
             return
         super().keyPressEvent(event)
 
@@ -321,14 +408,24 @@ def show_launcher(
     settings=None,
     *,
     groups: Sequence[tuple[str, Sequence[str]]] = LAUNCHER_GROUPS,
+    dismissable: bool | None = None,
     resolve_entries: Callable[[object], dict] | None = None,
     exec_dialog: Callable[[QDialog], int] | None = None,
 ) -> str | None:
     """Show the launcher over `window` and run the picked entry's action.
 
     Returns the picked ``command_id``, or ``None`` when the launcher was closed
-    without a pick. **Never quits the app** on any path, and — since FQ-027
+    without a pick — which BUG-059 makes possible **only** when the window is
+    already in a mode. **Never quits the app** on any path, and — since FQ-027
     deleted the suppression flag — it is never skipped either.
+
+    `dismissable` defaults to *"is there already a mode to fall back into?"*,
+    read straight off ``window.workflow_mode``: at startup there is none, so the
+    launcher is undismissable and a choice is obligatory; from
+    ``File ▸ New Session`` there is one, so it closes and that mode stands. This
+    is the ONE place the regime is decided, so no caller can accidentally open a
+    dismissable launcher over a mode-less window. Pass it explicitly only to
+    exercise a regime directly (the test seam).
 
     `settings` no longer has anything to read or write here (the only key this
     module ever owned was ``launcherSuppressed``); it is kept as a positional
@@ -340,7 +437,11 @@ def show_launcher(
     """
     resolve = resolve_entries if resolve_entries is not None else resolve_menu_entries
     entries = resolve(window)
-    dialog = LauncherDialog(entries, groups=groups, parent=window)
+    if dismissable is None:
+        dismissable = getattr(window, "workflow_mode", None) is not None
+    dialog = LauncherDialog(
+        entries, groups=groups, dismissable=dismissable, parent=window
+    )
     runner = exec_dialog if exec_dialog is not None else (lambda dlg: dlg.exec())
     runner(dialog)
 

@@ -30,8 +30,12 @@ def test_file_menu_contents(qtbot):
         # Editor bar's `Deployment` menu), `Revert` became `Discard Changes`, and
         # `Deploy .pgtp` MOVED to `Deployment` -- so §18.2's project group is
         # four entries, not five.
+        # BUG-058: `Project Status…` MOVED here from the Database menu, directly
+        # below `Project Settings…` (owner ruling). §18.2's own four project
+        # actions plus §18.8's status screen, so the group reads five.
         "Open...", "Open PHP File…", "―",
-        "New Project…", "Open Project…", "Close Project", "Project Settings…", "―",
+        "New Project…", "Open Project…", "Close Project", "Project Settings…",
+        "Project Status…", "―",
         "Discard Changes", "Close", "―", "New Session", "Exit",
     ]
 
@@ -433,6 +437,11 @@ def test_view_menu_contents(qtbot):
         # it now holds, and the two tabs get FOCUS entries (not checkable dock
         # toggles -- a tab is either in view or not, there is no third posture).
         "Activity Log / Messages Panel", "Activity Log", "Messages",
+        # BUG-061: the LEFT dock's Findings tab, in the same run of FOCUS entries
+        # (not checkable). It had no user gesture at all before -- only the audit
+        # router could reveal it -- so with no navigable op behind it the tab
+        # appeared not to exist.
+        "Findings",
         "Raw XML Panel",
         "―",
         "Expand All", "Collapse All",
