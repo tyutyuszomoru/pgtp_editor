@@ -24,7 +24,7 @@ The app opens on a **launcher** offering its three modes — **Standalone** (a `
 ### Shell
 
 - IDE-style docking. Left dock tabs: **Project tree**, **Contents** (manual), **Database/XML Coherence**, **DDL Objects**, **Findings**. Bottom dock: **Activity Log** (append-only per-project journal) and **Messages** (accumulated check/lint/validate output). Right dock: **Properties**.
-- Two menu bars. The window bar — File, View, Schema, Database, Tools, Generation, **Settings** (Maintenance mode only), Help — and an **Editor menu bar** above the central pane holding editing commands: **History · Select · Parsing · Navigation · Deployment**. Every command on either bar is pinnable to the customizable toolbar and rebindable via **View ▸ Customize Shortcuts…**.
+- Two menu bars. The window bar — File, View, Schema, Database, Tools, Generation, **Settings** (Maintenance mode only), Help — and an **Editor menu bar** above the central pane holding editing commands: **History · Select · Parsing · Navigation · Deployment**. Every command on either bar is pinnable to the customizable toolbar and rebindable via **View ▸ Customize Shortcuts…**, which refuses a short, reasoned list of chords that widgets already answer rather than silently creating a double binding Qt would resolve by firing neither. `docs/KEYBINDINGS.md` is the register of every chord in the app, verified against the code by a test.
 - A static status bar: a colour-coded mode indicator, a busy slot, and **Quality ●** / **Sandbox ●** connectivity dots polled every 30 s while the window is active. It is never a scrolling message board.
 - Light/Dark themes, persisted geometry, and a searchable Breeze icon picker for toolbar buttons.
 
@@ -71,7 +71,7 @@ Tests mirror the package layout (`pgtp_editor/<area>/foo.py` → `tests/<area>/t
 
     QT_QPA_PLATFORM=offscreen python -m pytest -q -n 10
 
-6675 passing / 51 skipped / 1 xfailed as of this writing, spanning the model, diff, schema-learning, validation, SQL analysis, database, generation and UI layers. `docs/TEST_LOG.md` is the committed record of verified runs.
+6714 passing / 51 skipped / 1 xfailed as of this writing, spanning the model, diff, schema-learning, validation, SQL analysis, database, generation and UI layers. `docs/TEST_LOG.md` is the committed record of verified runs.
 
 **Windows release:** `python optimized_build.py` produces a size-optimized onedir PyInstaller bundle at `dist/PGTPEditor/`; package it with `docs/installer.iss` (Inno Setup).
 

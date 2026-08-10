@@ -1,6 +1,61 @@
 # PGTP Editor — Consolidated Specification
 
-> **Status:** living document · **Last synthesized:** 2026-08-10 — **FQ-033 IS BUILT (`061e973`) and every
+> **Status:** living document · **Last synthesized:** 2026-08-10 (later pass) — **FQ-034 FOLDED IN as
+> §8's `Structural expand/shrink selection` block**, and the keyboard sweep that had to precede it found
+> that **three of the previous pass's own "in flight" and "OPEN" markers had landed** (`a9efb67`): DEC-015's
+> per-chord consequences, `docs/KEYBINDINGS.md`, and BUG-063. Details in **(F0)** below, which supersedes
+> the status half of items (B) and (D). **Six ledger rows added.** `README.md` revisited: FQ-034 is unbuilt
+> so no feature claim changed — the one edit was the stale test count.
+>
+> **(F0) THIS PASS — FQ-034, AND THE THREE STATUS MARKERS IT FORCED ME TO RE-CHECK FIRST.**
+>
+> **FQ-034 — the `Select` menu grows a repeatable structural ladder, and the feature is THREE parts, not
+> one.** Folded into **§8**'s structural-selection block (not §18.9, which the queue entry suggested — see
+> the restatement at the end of that block for why, and for the four other things the entry got wrong).
+> `Ctrl+Shift+A` today is a **single XML parent walk, hidden on every `CodeEditor` tab** — so *"make the
+> existing `Ctrl+Shift+A` repeatable"* describes work in three pieces: make the ladder repeatable **with a
+> stack**, give it to the **SQL** editors at all, and add **shrink**. The chord for shrink is **settled:
+> `Ctrl+Shift+Z`** (owner, DEC-015) — and the load-bearing fact an implementer will otherwise fight is that
+> **the chord is already CLAIMED, not free**: BUG-056 shipped it as `CLAIMED_NOT_UNDO_REDO` in
+> `shortcut_registry.EDITOR_UNDO_REDO_CHORDS`, intercepted by **all six** editing surfaces so Qt's native
+> redo (bound on `KB_Win` **and** `KB_X11`) cannot fire. **FQ-034 does not claim the chord; it gives the
+> existing claim an answer.** That is also why **grow and shrink are hosted by different mechanisms** —
+> grow stays a rebindable `QAction`, shrink cannot be one — and §8 states the DEC-012 reconciliation in
+> full, because it is the subtlest thing in the feature. The Qt-free span model is **two new `sql/`
+> modules**, `blocks.py` (the rule tables lifted out of `formatter.py`, exactly as FQ-033 lifted
+> `CLAUSE_STARTERS`) and `block_spans.py` (the walk), with the interface shaped for **FQ-032's deferred vim
+> text objects as a second caller** rather than for the ladder alone. **Two genuine ambiguities are flagged
+> for the owner, not decided** (§29): what shrink does when the selection was made by mouse, and the exact
+> boundary of the *clause* and *parameter* rungs.
+>
+> **⚠ THREE STATUS CLAIMS IN THE BANNER BELOW ARE NOW FALSE, AND ALL THREE ARE CORRECTED IN THE BODY.**
+> Recorded prominently because item (B) already generalised the lesson and this pass is the second
+> consecutive confirmation of it: *a "not wired / in flight / OPEN" finding is the class of statement with
+> the shortest half-life, because filing it is what causes it to be fixed. Re-check them FIRST.*
+>
+> 1. **DEC-015's per-chord consequences are SHIPPED (`a9efb67`), not in flight.** Item (D) and §27's banner
+>    said the opposite. `Ctrl+Y` is bound by the app on both platforms; `Ctrl+Shift+Z` is freed from redo and
+>    reclassified `CLAIMED_NOT_UNDO_REDO`; the legacy `Alt+Backspace` / `Alt+Shift+Backspace` pair is
+>    **SUPPRESSED on both platforms** — a call DEC-014 had left open and the owner has since made, with the
+>    reason recorded in `shortcut_registry.py`: they are Windows-only spellings in no menu, no manual page
+>    and no shortcut table, so binding them on Linux would be *inventing* a chord. §27's rows are rewritten.
+> 2. **`docs/KEYBINDINGS.md` EXISTS**, and item (D)'s *"does not exist yet"* is retired. It is the register
+>    §27 specified: one row per chord (command · host mechanism · surfaces · gate · reserved · notes), a
+>    measured per-scheme Appendix A, and five recorded *Known gaps*. It is verified by
+>    `tests/test_keybindings_ledger.py`, whose **Reserved column is a set equality against
+>    `RESERVED_SEQUENCES`** — which is why **any change to the reserved set must edit the ledger in the same
+>    commit**, and it already caught `Ctrl+Shift+R` missing a row during a merge.
+> 3. **BUG-063 is RESOLVED (`a9efb67`)** — the Sandbox SQL Console builds a context menu and carries the
+>    verbatim `Format Selection` item with **no `setShortcut`**. The previous pass wrote *"restore this to
+>    'both' when BUG-063 lands"* in four places; all four are restored (§8's DEC-012 bullet, §18.4's status
+>    banner, §26's parenthetical, §27's `Ctrl+Alt+F` row).
+>
+> **One further code-vs-spec correction found by the same sweep and applied:** BUG-064 renamed the History
+> menu's two entries to **`Undo Project Edit` / `Redo Project Edit`** and they carry **no shortcut at all**
+> — §26 still listed them as *"Undo (Ctrl+Z), Redo (Ctrl+Y)"*, which was wrong on both counts and made the
+> window-scoped chords look like menu bindings a user could move.
+>
+> *(Previous pass:)* **FQ-033 IS BUILT (`061e973`) and every
 > one of its "NOT YET BUILT" banners is RETIRED; BUG-057's dated curated-XSD drop folded in **with a version
 > ruling** (the bundled schema becomes **v1.3**, dispatched to `bug-triager` because code constants must
 > move); **DEC-015's cross-platform binding principle** folded into §27; and **FQ-035 folded into §18.2** —
@@ -592,7 +647,7 @@
 5. [Package / module layout](#5-package--module-layout)
 6. [Data model](#6-data-model)
 7. [App shell](#7-app-shell) — *includes the startup launch modal — **THREE columns / the app's three modes since FQ-027 (2026-08-09)**, with the `launcherSuppressed` suppression **deleted** and `Show Launcher…` renamed **`New Session`** — plus **Maintenance mode**, the app's first launch mode (**session-only**, window-menu-bar only) and its **two deliberately distinct hiding rules (capability vs. intent)**; FQ-011 was **never implemented** and is superseded. Also the second, fixed **Editor menu bar** (FQ-016, 2026-08-07 — **five menus since 2026-08-08**). **There is NO app-level save router and `Ctrl+S` is dead app-wide** (FQ-020, 2026-08-08), `File ▸ Revert` is now **`Discard Changes`**, the default toolbar is **five** buttons with no Save, and renames go through the new **`RENAMED_ID_ALIASES`**, never `LEGACY_ID_ALIASES`. **`Parsing` is tab-kind-gated since BUG-039 (2026-08-09)** — `_refresh_editor_menu_affordances` now does **four** things. **FQ-028 (2026-08-10, SHIPPED `69557d2`) rewrites the shell's chrome:** the single `Audit / Problems` dock is **dissolved** into a left-dock **Findings** tab + a two-tab bottom dock (**Activity Log** — FQ-019's panel repositioned — and **Results**), routed by `ui/audit_router.py`; the **status bar becomes static-only** under the *"never a message board"* rule, carrying a colour-coded **major/minor mode indicator** mirrored into the top toolbar, a **busy slot** with a live elapsed counter, and **FQ-018's Quality/Sandbox dots — which ship here as a component, never as a separate feature**. **FQ-030's final slice (2026-08-10, `229dc11`) adds the window bar's EIGHTH menu, `Settings` — the app's first MAINTENANCE-ONLY menu**, carried by `_MAINTENANCE_ONLY_MENU_TITLES` as the **inverse** of the existing survivor list inside the **same** visibility loop, and shortcut-free by rule because **DEC-006** established that hiding a `QMenu` leaves its children's chords live*
-8. [Raw XML editor](#8-raw-xml-editor) — *project-mode-only bookmark persistence (FQ-013) and `List All Bookmarks` (FQ-014) — **both shipped** 2026-08-07; the `Select` menu with trigger-time dispatch (FQ-015) and the permanently visible Find/Replace bar (FQ-016) — **both shipped**. The shared gutter gains a **second, body-relative number column** (FQ-031, **SHIPPED** `c7c34f1`/`6142d73`) — **zero cost when off**, pinned pixel-for-pixel; its only host today is §18.5's DDL object tab*
+8. [Raw XML editor](#8-raw-xml-editor) — *project-mode-only bookmark persistence (FQ-013) and `List All Bookmarks` (FQ-014) — **both shipped** 2026-08-07; the `Select` menu with trigger-time dispatch (FQ-015) and the permanently visible Find/Replace bar (FQ-016) — **both shipped**. The shared gutter gains a **second, body-relative number column** (FQ-031, **SHIPPED** `c7c34f1`/`6142d73`) — **zero cost when off**, pinned pixel-for-pixel; its only host today is §18.5's DDL object tab. **FQ-034, target design NOT YET BUILT (2026-08-10):** the `Select` menu grows to **four** entries — `Select Parent Block` becomes a repeatable **`Expand Selection`** with an expansion stack, extended to the SQL editors, plus a new **`Shrink Selection`** on `Ctrl+Shift+Z`; the ladder's spans come from two new Qt-free `sql/` modules (`blocks.py`, lifted out of `formatter.py`, and `block_spans.py`), and the two halves are hosted by **different mechanisms** because Qt claims `Ctrl+Shift+Z` natively on both schemes*
 9. [Editor ↔ Tree sync & Reparse](#9-editor--tree-sync--reparse)
 10. [Properties panel](#10-properties-panel)
 11. [Schema: curated XSD, learning & completion](#11-schema-curated-xsd-learning--completion) — *the `Schema` menu is **Maintenance mode's home menu** (FQ-027, 2026-08-09): the only window-bar menu besides a trimmed `File` and `Help` that survives the mode's filter, whole and ungated; the launcher's Maintenance column is `Edit XSD` + `Import XSD`. **BUG-057 (2026-08-10):** `docs/curated_<YYYYMMDD>.xsd` is the tracked authoritative drop, byte-pinned to the shipped `resources/curated.xsd` by a test — **the date identifies the DROP, the `vX.Y` marker identifies the CONTENT** — and the version rule is now stated: **the marker is the schema's identity, not the app's release counter, so any content change bumps it.** The bundled schema is ruled to **v1.3**; the six code/doc sites are enumerated there and dispatched*
@@ -622,8 +677,8 @@
 23. [MCP integration](#23-mcp-integration) — ***fully wired** (re-audited 2026-08-10): `pgtp_editor/mcp/` ships, headless `--mcp` works, and **Tools ▸ ☐ `Start MCP Server`** (`MainWindow._mcp_action`) is the GUI opt-in, unchecked at every launch with no persisted key. §23's *"remaining gap"* banner is **closed**; its *"opt-in in Preferences"* wording named the stub FQ-016 deleted and is corrected*
 24. [In-app manual](#24-in-app-manual)
 25. [Debug mode](#25-debug-mode)
-26. [Consolidated menu bar](#26-consolidated-menu-bar) — ***two** menu bars since FQ-016 (2026-08-07): the window bar, and [the Editor menu bar](#the-editor-menu-bar-fq-016-2026-08-07) (**History · Select · Parsing · Navigation · Deployment** — five since 2026-08-08). `Edit` no longer exists; **File loses `Save`/`Save As…`** and Tools loses **all four** Compare/Merge entries. **2026-08-09: `Parsing` gains the two Check gestures and Database loses them, along with `Open`/`Close Sandbox Session`**. **FQ-027 (2026-08-09):** `File ▸ Show Launcher…` → **`New Session`**, and the window bar gains a **[Maintenance-mode membership table](#window-bar-membership-in-maintenance-mode-fq-027-2026-08-09)** — the app's one **intent**-based filter, distinct from every capability-based *absent, not disabled* rule in this section. **The window bar gains an EIGHTH menu, `Settings`, 2026-08-10 (`229dc11`) — present in Maintenance mode and in NO other**, the filter's first additive half*
-27. [Consolidated keyboard shortcuts](#27-consolidated-keyboard-shortcuts) — *the table lists **DEFAULTS**, not fixed bindings: every **menu-bar** QAction is user-rebindable through `View ▸ Customize Shortcuts…` (FQ-012, 2026-08-09), on a **steal-or-refuse** conflict rule because Qt fires **neither** of two shortcuts on one chord; the short list of genuinely unrebindable keys is enumerated there. **`Ctrl+S`/`Ctrl+Shift+S` are deliberately unbound app-wide** (stated, not omitted) and now **without any carve-out** — `CodeEditorDialog`'s OK/Cancel pair, the last one, was deleted 2026-08-09 and the dialog answers `Return`/`Escape` instead; **`Ctrl+O` and `Ctrl+W` join them as deliberately unbound 2026-08-09** — but *free* rather than reserved, so a user may rebind either (status-corrected 2026-08-10, superseding *"`Ctrl+W` keeps `File ▸ Close`"*). **`Ctrl+Shift+Z` gains its first row 2026-08-10** — a second redo key, shipped long before and never written down; it is now **reserved** (BUG-050) and answered by the DDL object tab and the read-only DDL Explorer as well as the XML editors (BUG-048/BUG-053). **The `Ctrl+Shift+B` row is rewritten (BUG-046):** the duplicate `CodeEditor.keyPressEvent` host is **deleted** and its offscreen justification was **measured false** — one host per window, per §8's DEC-012 rule. **The section now opens with DEC-015's governing rule (2026-08-10): a chord means the same thing on every system — bound by this app on every platform, never inherited from Qt's platform table, and NO platform-conditional bindings.** With it: `docs/KEYBINDINGS.md` as the single chord register **kept true by a test, not by transcription**, and the warning that the offscreen suite runs Qt's **Windows** scheme so a Linux-only dead key passes every test. DEC-015's per-chord consequences — `Ctrl+Y` bound explicitly, `Ctrl+Shift+Z` freed from redo for FQ-034's shrink-selection — are **in flight and deliberately not asserted in the rows***
+26. [Consolidated menu bar](#26-consolidated-menu-bar) — ***two** menu bars since FQ-016 (2026-08-07): the window bar, and [the Editor menu bar](#the-editor-menu-bar-fq-016-2026-08-07) (**History · Select · Parsing · Navigation · Deployment** — five since 2026-08-08). `Edit` no longer exists; **File loses `Save`/`Save As…`** and Tools loses **all four** Compare/Merge entries. **2026-08-09: `Parsing` gains the two Check gestures and Database loses them, along with `Open`/`Close Sandbox Session`**. **FQ-027 (2026-08-09):** `File ▸ Show Launcher…` → **`New Session`**, and the window bar gains a **[Maintenance-mode membership table](#window-bar-membership-in-maintenance-mode-fq-027-2026-08-09)** — the app's one **intent**-based filter, distinct from every capability-based *absent, not disabled* rule in this section. **The window bar gains an EIGHTH menu, `Settings`, 2026-08-10 (`229dc11`) — present in Maintenance mode and in NO other**, the filter's first additive half. **BUG-064 (`a9efb67`): `History`'s two entries are `Undo Project Edit` / `Redo Project Edit` and carry NO shortcut** — they are a project-scoped command, not the menu twin of the focus-scoped `Ctrl+Z`/`Ctrl+Y`, and unlike those chords they **are** rebindable*
+27. [Consolidated keyboard shortcuts](#27-consolidated-keyboard-shortcuts) — *the table lists **DEFAULTS**, not fixed bindings: every **menu-bar** QAction is user-rebindable through `View ▸ Customize Shortcuts…` (FQ-012, 2026-08-09), on a **steal-or-refuse** conflict rule because Qt fires **neither** of two shortcuts on one chord; the short list of genuinely unrebindable keys is enumerated there. **`Ctrl+S`/`Ctrl+Shift+S` are deliberately unbound app-wide** (stated, not omitted) and now **without any carve-out** — `CodeEditorDialog`'s OK/Cancel pair, the last one, was deleted 2026-08-09 and the dialog answers `Return`/`Escape` instead; **`Ctrl+O` and `Ctrl+W` join them as deliberately unbound 2026-08-09** — but *free* rather than reserved, so a user may rebind either (status-corrected 2026-08-10, superseding *"`Ctrl+W` keeps `File ▸ Close`"*). **`Ctrl+Shift+Z` gains its first row 2026-08-10** — a second redo key, shipped long before and never written down; it is now **reserved** (BUG-050) and answered by the DDL object tab and the read-only DDL Explorer as well as the XML editors (BUG-048/BUG-053). **The `Ctrl+Shift+B` row is rewritten (BUG-046):** the duplicate `CodeEditor.keyPressEvent` host is **deleted** and its offscreen justification was **measured false** — one host per window, per §8's DEC-012 rule. **The section now opens with DEC-015's governing rule (2026-08-10): a chord means the same thing on every system — bound by this app on every platform, never inherited from Qt's platform table, and NO platform-conditional bindings.** With it: `docs/KEYBINDINGS.md` as the single chord register **kept true by a test, not by transcription**, and the warning that the offscreen suite runs Qt's **Windows** scheme so a Linux-only dead key passes every test. **DEC-015's per-chord consequences ALL SHIPPED (`a9efb67`) and the rows now assert them:** `Ctrl+Y` bound explicitly on both platforms, `Ctrl+Shift+Z` **freed from redo and reclassified `CLAIMED_NOT_UNDO_REDO`** — claimed by all six editing surfaces so Qt's native redo cannot fire, awaiting FQ-034's shrink-selection — and the legacy `Alt+Backspace` / `Alt+Shift+Backspace` pair **SUPPRESSED on both platforms**, the call DEC-014 had left open. **`docs/KEYBINDINGS.md` EXISTS**, with a measured per-scheme appendix and five recorded gaps, and its **Reserved column is a set equality against `RESERVED_SEQUENCES`**, so a reserved-set change ships with its ledger row in the same commit*
 28. [Supersession ledger](#28-supersession-ledger)
 29. [Open questions](#29-open-questions)
 30. [Testing policy](#30-testing-policy)
@@ -873,6 +928,15 @@ pgtp_editor/
 │   │                  # sends the whole buffer as one execute — but the module is no longer importer-
 │   │                  # less: sql/from_clause.py (2026-08-10) uses split_statements for per-statement
 │   │                  # scope. Its docstring's "NOT WIRED / nothing imports this module yet" is STALE
+│   ├── blocks.py      # FQ-034, NOT YET BUILT: the plpgsql BLOCK-BALANCE RULES, lifted out of formatter.py
+│   │                  # (BLOCK_OPENERS / BLOCK_CLOSERS / the two-token END IF|LOOP|CASE closers / the six
+│   │                  # false-positive guards). formatter.py re-aliases them (_BLOCK_STARTERS = ...), a
+│   │                  # plain re-bind of the SAME object, exactly as FQ-033 did with CLAUSE_STARTERS — so
+│   │                  # the reindenter and the span model can never disagree on where a block ends — §8
+│   ├── block_spans.py # FQ-034, NOT YET BUILT: the structural SPAN model over blocks.py + tokenizer.py +
+│   │                  # statements.py. structure_chain(text, pos) → smallest-to-largest StructureSpan
+│   │                  # chain, each carrying kind + an inner AND an outer span. Never raises. The ladder
+│   │                  # (§8) and FQ-032's deferred vim text objects are both callers — §8
 │   ├── from_clause.py # FROM-clause / alias SCOPE + SPANS: analyze_from_items → FromItems{items, clauses},
 │   │                  # analyze_from_scope → FromScope. Reuses tokenizer.py for opacity and
 │   │                  # statements.py for boundaries; descends into $$ bodies. Consumed by
@@ -2740,7 +2804,8 @@ and Parsing**):
 | `Select All` | Ctrl+A | the active editor's own `selectAll()` (`_select_all_in_active_editor`) | **new menu entry for behaviour that already worked** |
 | — separator — | | | |
 | `Select Enclosing Block` | Ctrl+Shift+B | `XmlEditor.select_enclosing_block` **or** `CodeEditor.select_enclosing_brackets`, whichever the editor has (`_select_enclosing_block`) | one command, two structural meanings |
-| `Select Parent Block` | Ctrl+Shift+A | `XmlEditor.select_parent_block` only (`_select_parent_block`) | **XML-only; HIDDEN on `CodeEditor` tabs** |
+| `Select Parent Block` | Ctrl+Shift+A | `XmlEditor.select_parent_block` only (`_select_parent_block`) | **XML-only; HIDDEN on `CodeEditor` tabs.** ⏳ **FQ-034 renames this entry `Expand Selection` and extends it to the SQL editors** — see *Structural expand/shrink selection* below. The row describes the TREE as of `1d53abd` |
+| ⏳ `Shrink Selection` | Ctrl+Shift+Z | *(FQ-034, NOT YET BUILT)* | **New entry.** The chord is already claimed-and-answered by every editing surface (`CLAIMED_NOT_UNDO_REDO`); FQ-034 gives that claim an answer rather than binding the chord afresh |
 
 - **Select All** is a **new menu entry for behaviour that already works.** Nothing in the app binds or
   steals Ctrl+A (the only near chord is `Ctrl+Shift+A`), so `QPlainTextEdit`'s built-in select-all was
@@ -2767,7 +2832,9 @@ and Parsing**):
   rule). Because Qt keeps a shortcut live only while its action is both enabled **and** visible, hiding the
   entry also **kills Ctrl+Shift+A there** — proven by a test that presses the chord on a PHP tab and
   asserts nothing was selected. `_select_parent_block` re-checks the capability as a **second belt** for
-  programmatic and toolbar triggers, which bypass visibility.
+  programmatic and toolbar triggers, which bypass visibility. ⏳ **FQ-034 changes all three of those facts**
+  — the entry is renamed `Expand Selection`, the gate becomes a per-*instance* capability question, and the
+  SQL editors gain the ladder; see *Structural expand/shrink selection* below. This bullet describes the tree.
 - Both block commands build the selection **caret-at-start** (anchor at end, position at start) then
   `ensureCursorVisible()`. Selections are built purely from character offsets — never from visual
   hit-testing — so they work with folded content.
@@ -2827,15 +2894,16 @@ first fought out over `Ctrl+Shift+B`. It governs every editor gesture in the app
   offered operation. Anyone extending DEC-009 to a gesture that appears on *any* menu is reading the
   carve-out wider than it was drawn. `Ctrl+Alt+F` **Format Selection** is precisely that case: the DDL
   object tab offers it as a context-menu action, so it is inside the one-host rule and **not** in DEC-009's
-  family. *(Corrected 2026-08-10: this bullet said the console offers it too. It does not —
-  `ui/sql_console_panel.py` builds **no context menu at all** — and that is a **code defect, BUG-063,
-  OPEN**, not a reason to reclassify the chord: the gesture's command form on the object tab is what puts
-  it inside the rule, and FQ-033 **has since shipped** the command form on the three `XmlEditor` surfaces —
-  so the console is now the app's **only** `Ctrl+Alt+F` host without one. **Restore this
-  bullet to "both" when BUG-063 lands.** §18.4's status banner, ledger §28.)* **The console's own comment
-  at `sql_console_panel.py:507-517` claims the chord is in DEC-009's family *"which has no menu command at
-  all"* — false, and carried by BUG-063: a defensible rule cited for the wrong gesture is how a carve-out
-  gets read wider than it was drawn. `ui/shortcut_registry.py` had already half-noticed —
+  family. **The Sandbox SQL Console offers it too — BUG-063 is RESOLVED (`a9efb67`), and this bullet is
+  restored to "both" as that entry required.** `SqlConsolePanel` builds a context menu over
+  `self.editor.createStandardContextMenu()` and adds the verbatim `Format Selection` item wired to
+  `self.format_selection`; the action carries **no `setShortcut`**, and that absence is *asserted*
+  (`tests/ui/test_sql_console_panel.py`, `assert action.shortcut().isEmpty()`) rather than assumed, so the
+  panel's `QShortcut` remains the single keyboard host. Both of the lying in-code comments went with the
+  fix. *(This bullet spent one day recording the opposite — that the console built no context menu at all,
+  filed as BUG-063 rather than rewritten away, on the ground that DEC-012's ruling rests on the command form
+  existing. The spec was right and the code was wrong; the sequence is kept because it is the intended
+  outcome of filing a spec-right/code-wrong finding.)* `ui/shortcut_registry.py` had already half-noticed —
   its `RESERVED_SEQUENCES` reason for `Ctrl+Alt+F` reads *"a context-menu command plus a shortcut … there
   is no menu-bar action to move"*.
 - **The single host for `Ctrl+Alt+F` is the `QShortcut`** — `WidgetWithChildrenShortcut` scope,
@@ -2859,6 +2927,260 @@ first fought out over `Ctrl+Shift+B`. It governs every editor gesture in the app
 - **Where a code comment cites the test harness for one of these gestures, the comment is wrong** — the
   harness is never the reason (BUG-052 rewrote the three that did, `f533350`). A defensible design
   justified by a false reason reads to the next maintainer as exactly the defect DEC-004 ruled against.
+
+##### Structural expand/shrink selection — the repeatable ladder (FQ-034, target design, NOT YET BUILT)
+
+> **Status: nothing in this block ships.** The tree as of `1d53abd` has a **single, stateless XML parent
+> walk on `Ctrl+Shift+A`, hidden on every `CodeEditor` tab**, and no shrink of any kind. Read every ⏳ mark
+> as *"to build"*. It supersedes `docs/FEATURE_QUEUE.md`'s FQ-034 entry wherever the two differ; the
+> entry's own errors are listed at the end.
+
+**What it is.** One repeatable chord grows the selection outward through the *structure of the text* — one
+level per press — and one chord steps it back inward. The motivating gesture is the owner's, verbatim:
+*"press to select progressively larger structural units — first the parameter/word we're on, then the
+statement, then the superior structure (a `CASE` branch → the whole `CASE`; a `FOR` from `LOOP` to `END`),
+then up to `BEGIN…END`"*. The point is **identifying** structure fast, not editing it: a plpgsql author who
+wants to delete a `CASE`, reindent a `LOOP` or comment a statement has to select it by mouse today.
+
+**THE FEATURE IS THREE PARTS, AND THE FIRST TWO ARE EASY TO MISREAD AS ONE.** The queue entry describes it
+as *"a repeatable `Ctrl+Shift+A`"*, which reads as an extension of shipped behaviour. It is not:
+
+| Part | Why it is separate work |
+|---|---|
+| **1. Make the ladder repeatable, with a stack** | XML's `select_parent_block` climbs one level per press but is **stateless** — re-derived from `cursor.selectionStart()` each time (above). Statelessness is what makes shrink impossible, so the stack is a *precondition* of part 3, not a refinement of part 1 |
+| **2. Give the ladder to the SQL editors at all** | `Ctrl+Shift+A` **does not exist** on a `CodeEditor` tab: `_select_parent_block` serves `XmlEditor` alone and `_refresh_editor_menu_affordances` hides the entry there, which (Qt keeps a shortcut live only while its action is visible) kills the chord too. All of the ladder's SQL rungs are new |
+| **3. Add shrink** | A new menu entry, a new answer for an already-claimed chord, and the stack from part 1 |
+
+**The ladder is a recursive climb, not five fixed levels.** Each press takes the next span in the chain
+`sql/block_spans.py::structure_chain` returns for the caret position:
+
+| Rung | Unit | Source |
+|---|---|---|
+| 1 | the word / identifier at the caret | the `WORD` token under the caret |
+| 2 | the enclosing `(…)` / `[…]` group — **inner first, then outer** (two presses) | `block_spans`, token-aware |
+| 3 | the enclosing clause (up to the previous clause starter) | `format_config.CLAUSE_STARTERS` |
+| 4 | the current statement | `sql/statements.py::statement_at` |
+| 5…n | **each** enclosing block, one press at a time — an `IF` inside a `FOR` inside a `BEGIN` is three presses | `sql/blocks.py` |
+| — | inside a `CASE`: the current `WHEN … THEN` branch, then the whole `CASE` | `sql/blocks.py` |
+| top | the whole `BEGIN … END` body | `sql/blocks.py` |
+
+The paren rung and the `WHEN`-branch sub-rung are **owner-approved additions** beyond the five the original
+request named. Grow bottoms at the word and tops at the outermost `BEGIN…END`; a grow with nothing larger
+left is a **no-op**, matching `select_parent_block`'s existing behaviour at the document root — deliberately
+**not** a refusal row, because selecting mutates nothing and a report per keypress at the top of the ladder
+is noise, not information (this is the one place FQ-030's *refusals over guesses* posture does not apply,
+and the reason is stated so it is not "corrected" later).
+
+**Editor scope: grow on both families, shrink on the SQL editors only.**
+
+| Surface | Grow (`Expand Selection`) | Shrink (`Shrink Selection`) |
+|---|---|---|
+| DDL object tab, Sandbox SQL Console (`CodeEditor`, `language == "sql"`) | ⏳ the full SQL ladder | ⏳ yes |
+| the read-only DDL Explorer buffer (`language == "sql"`) | ⏳ the full SQL ladder — read-only is irrelevant, selecting mutates nothing (the `Select All` precedent above) | ⏳ yes |
+| Raw XML / Edit XSD / draft fragment tabs (`XmlEditor`) | the existing parent walk, unchanged — it is *already* one structural level per press | **no — inert**, and the surface keeps answering the chord with nothing (below) |
+| PHP / JS tabs, `CodeEditorDialog` | **no** — the entry is hidden; there is no plpgsql structure to climb | **no** |
+
+**XML shrink is deliberately out of scope, and that is a scope decision with a reason, not an omission.**
+XML's grow is stateless and re-derivable, so giving it shrink means giving `XmlEditor` the stack as well —
+a second host for the state, for a family whose users did not ask for it. The XML surfaces therefore keep
+claiming `Ctrl+Shift+Z` and running nothing, exactly as they do today, and the `Shrink Selection` entry is
+**hidden** on those tabs by the same capability gate that hides the grow entry on PHP tabs.
+
+**The capability gate is a QUESTION on the editor, not a `hasattr`.** `_refresh_editor_menu_affordances`
+gates the existing entry on `hasattr(editor, "select_parent_block")` — a *class* fact. Grow's new gate is a
+*per-instance* fact (a `CodeEditor` supports the ladder only in `language == "sql"`), which `hasattr` cannot
+express, so both families answer one predicate: **`supports_structural_expansion() -> bool`** —
+`XmlEditor` returns `True`, `CodeEditor` returns `self._language == "sql"`. Shrink keeps the `hasattr`
+form (`shrink_structural_selection`), because there it really is a class fact: `XmlEditor` does not have the
+method at all. Both stay **hidden, never greyed**, per the app's two-posture rule, and both re-check the
+capability inside the slot as the second belt for programmatic and toolbar triggers.
+
+**The entry is RENAMED, which costs an alias row.** `Select Parent Block` describes only the XML walk. The
+command means the same thing on both families once part 2 lands, so the entry becomes ⏳ **`Expand
+Selection`**, its id moves `select.select-parent-block` → `select.expand-selection`, and — because the label
+*is* the id's last segment (§7) — that move needs a **`RENAMED_ID_ALIASES` row in the same commit**, or every
+pinned button and every user shortcut override for it silently drops. ⏳ `select.shrink-selection` is new and
+needs no alias. Menu order: `Expand Selection` keeps Parent Block's place and `Shrink Selection` follows it
+immediately, so the pair reads as a pair.
+
+###### The DEC-012 reconciliation — grow and shrink CANNOT be hosted the same way, and Qt is why
+
+This is the subtlest thing in the feature. Two facts have to hold at once:
+
+1. **DEC-012** (above): a gesture with a command form has **exactly one keyboard host**, and that host is
+   the `QAction`. Both `Select ▸` entries are menu commands, so both are inside the rule.
+2. **`Ctrl+Shift+Z` is already claimed by every editing surface** and *must stay claimed*.
+   `shortcut_registry.EDITOR_UNDO_REDO_CHORDS` maps it to **`CLAIMED_NOT_UNDO_REDO`**, and all six surfaces
+   accept its `ShortcutOverride` and consume its `KeyPress` — because Qt's compiled table binds it as native
+   `StandardKey.Redo` under **`KB_Win` and `KB_X11` alike** (BUG-056 measured both). Drop the interception
+   and Qt redoes; DEC-015's *"redo is always `Ctrl+Y`"* is true **only while every surface refuses it**.
+
+**Those two cannot be satisfied by the same mechanism, and the resolution is asymmetric on purpose:**
+
+- **Grow stays a plain menu `QAction` with `setShortcut("Ctrl+Shift+A")`** — one host, rebindable, exactly
+  as it ships. This works only because of a **measured** fact recorded in `docs/KEYBINDINGS.md`:
+  `QPlainTextEdit` does **not** claim `Ctrl+Shift+A` on either scheme (Qt's KDE scheme binds it as
+  `Deselect`, which no widget here implements), so the window action fires with focus inside an editor.
+- **Shrink's `QAction` carries NO `setShortcut` at all**, and `Ctrl+Shift+Z` stays in
+  `RESERVED_SEQUENCES` — so `Customize Shortcuts…` refuses it as a target and cannot hand it to another
+  command. Its keyboard answer is the **existing** `CLAIMED_NOT_UNDO_REDO` branch at each surface, which
+  stops running nothing and starts calling **one** method: `editor.shrink_structural_selection()`.
+- **That is not the double-hosting DEC-012 forbids.** DEC-012's defect is *two hosts that can drift* —
+  acquiring different gates, different rebinding behaviour, different lifetimes, with nothing failing when
+  they disagree. Here there is **one implementation and one answer**; the per-surface interceptions are the
+  suppression DEC-014 already *mandates*, and they all delegate to the same method, exactly as `Ctrl+Z` /
+  `Ctrl+Y` already delegate to each surface's own single answer. **Pin it mechanically:** a test asserts
+  every surface's `CLAIMED_NOT_UNDO_REDO` branch reaches `shrink_structural_selection` — the same shape as
+  the existing per-surface undo/redo assertions — so a seventh surface cannot be added with a private answer.
+- **`RESERVED_SEQUENCES`' reason string for `Ctrl+Shift+Z` changes with this feature**, from *"still
+  intercepted there so Qt's native redo cannot fire"* to naming shrink-selection as what the claim answers.
+  **`docs/KEYBINDINGS.md`'s `Ctrl+Shift+Z` row moves in the same commit** — its Reserved column is a **set
+  equality** against `RESERVED_SEQUENCES` in `tests/test_keybindings_ledger.py`, so the ledger is not
+  optional bookkeeping; a reserved-set change without its row fails the suite.
+
+> **The stated price, recorded because the owner should know it and because it will otherwise be
+> re-discovered as a bug: the pair is not symmetrically rebindable.** Grow can be moved through
+> `View ▸ Customize Shortcuts…`; **shrink cannot**, and `Ctrl+Shift+Z` cannot be handed to anything else
+> either. That is a direct consequence of the owner's choice of chord — Qt claims `Ctrl+Shift+Z` natively on
+> both schemes, so the app can only *intercept* it, and an intercepted chord is unreachable from a dialog
+> that only walks menu `QAction`s (§27). A chord Qt does not claim would have left both halves rebindable;
+> the chord's mnemonic value (`Ctrl+Shift+A` out, `Ctrl+Shift+Z` back) was preferred. This is the same
+> category as `Ctrl+Alt+F`'s un-rebindability, and it is the *only* cost the choice carries.
+
+###### The span model — Qt-free, in `sql/`, and shaped for TWO callers
+
+**`sql/` never learns about Qt and `ui/` never parses SQL.** Two new modules, both pinned by
+`tests/sql/test_package_purity.py`, both unit-tested without Qt in `tests/sql/`:
+
+| Module | Holds |
+|---|---|
+| ⏳ **`sql/blocks.py`** | the plpgsql **block-balance rules only**: `BLOCK_OPENERS`, `BLOCK_CLOSERS`, the two-token `END IF` / `END LOOP` / `END CASE` closers, and the six false-positive guards §18.4 enumerates (`DROP … IF EXISTS`, `BEGIN;`/`BEGIN TRANSACTION`, inline `DECLARE … CURSOR`, `EXCEPTION` dedents rather than opens, `END IF`/`END LOOP`/`END CASE`, bare `LOOP` vs a loop header, `EXIT WHEN`/`RAISE … WHEN`) |
+| ⏳ **`sql/block_spans.py`** | the walk: `structure_chain(text, pos) -> tuple[StructureSpan, ...]`, smallest → largest, every span containing `pos` |
+
+**`sql/blocks.py` exists to prevent the one fork this feature could produce, and its shape is copied from a
+precedent rather than invented.** `sql/formatter.py::_Reindenter` already contains a correct block-balance
+walk with the guards that make ordinary DDL not look like unbalanced plpgsql — but its frame stack is
+**throwaway**: it drives indentation and the refusal verdict and exposes no spans, so it cannot be consumed
+as-is. The mandate is therefore to **lift the rule tables, not to re-derive them**, and `formatter.py`
+re-aliases the lifted names (`_BLOCK_STARTERS = BLOCK_STARTERS`) — a plain re-bind of the **same object**,
+which is exactly what FQ-033 did when `CLAUSE_STARTERS` moved to `sql/format_config.py`, and it keeps the
+formatter's existing identity assertions holding unchanged. **A config-or-rules module must not import the
+engine it configures**, so `blocks.py` imports nothing from `formatter.py`.
+
+**The anti-fork guard is a test, not an instruction.** One test feeds §18.4's adversarial corpus — the same
+inputs the six false-positive guards exist for — through `structure_chain` and asserts the span model finds
+the **same block nesting** the reindenter's frame stack does. A rule that lives in one module and is
+verified against the other consumer cannot silently diverge; a comment saying *"keep these in sync"* can.
+
+**The interface returns a CHAIN, not a `next_larger(selection)`, and that is FQ-032's requirement showing
+up early.**
+
+```
+SpanKind = "word" | "paren" | "bracket" | "clause" | "statement" | "when" | "case"
+         | "if" | "loop" | "begin" | "declare" | "exception" | "dollar_body"
+
+@dataclass(frozen=True)
+class StructureSpan:
+    kind: str
+    outer: tuple[int, int]   # includes the delimiters / keywords: BEGIN…END, ( … ), WHEN…THEN…
+    inner: tuple[int, int]   # excludes them; == outer for kinds that have no delimiters
+    depth: int
+
+def structure_chain(text: str, pos: int) -> tuple[StructureSpan, ...]: ...
+```
+
+- **The ladder** takes the first chain member whose `outer` strictly contains the current selection.
+- **FQ-032's deferred vim text objects** (`docs/FEATURE_QUEUE.md` FQ-032 scopes them **out of v1** —
+  they are a *deferred future consumer*, not a shipping dependency) need something the ladder does not:
+  *"the span of kind K at the caret"*, and vim's `i` / `a` distinction — `i(` vs `a(` — which is precisely
+  the `inner` / `outer` pair. **Both are derivable from the chain; neither is derivable from a
+  `next_larger` function.** Shaping the model for the ladder alone is how the second caller ends up with a
+  second walk, so the chain is the published entry point and the ladder is a filter over it.
+- **`structure_chain` never raises and never guesses.** Unreadable or unbalanced text yields the spans it
+  *could* close and nothing more: an unclosed `BEGIN` contributes no span, so the ladder tops out one rung
+  lower instead of selecting a range whose end was invented. `()` on an empty chain. This is the
+  never-a-silent-wrong-result rule applied to a gesture that would otherwise **replace the user's
+  selection** with a wrong one.
+
+**Reuse, exhaustively, so none of it is re-implemented:**
+
+| Need | Existing thing |
+|---|---|
+| Tokens, and opacity (strings, `--`/`/* */` comments, `$$`/`$tag$` bodies) | `sql/tokenizer.py::tokenize` — the **one** lexer; nothing here scans characters |
+| Descending into a routine body | `sql/tokenizer.py::dollar_body_at` — the one body locator, already shared by `from_clause`/`caret_context`/`routine_scope` |
+| Statement boundaries (rung 4) | `sql/statements.py::statement_at` / `split_statements` — top-level `;` only |
+| Clause starters (rung 3) | `sql/format_config.py::CLAUSE_STARTERS` — eighteen members, already public |
+| Block matching (rungs 5…top) | ⏳ `sql/blocks.py`, lifted from `formatter.py` |
+| Trigger-time editor resolution | `FindValidateController.active_selection_editor()` |
+| Caret-at-start selection idiom | `code_editor.py`'s existing selection construction — anchor at end, position at start, then `ensureCursorVisible()` |
+
+**Opaque regions: a `$$` body is DESCENDED INTO, a string or comment is ONE unit.** The distinction is not
+arbitrary — it is `sql/caret_context.py`'s existing rule, adopted rather than re-decided: BUG-041 made
+completion descend into a `$$ … $$` body *before* the opacity test, because a routine body is plpgsql and
+is the entire point of the feature. A string literal or a comment, by contrast, has no structure to climb,
+so the whole token is a single rung and the next press goes to whatever encloses it.
+
+**Where the ladder's paren rung and `Ctrl+Shift+B` differ, and why both survive.**
+`ui/code_editor.py::enclosing_bracket_span` is a **character-level** scan: it does not know about strings,
+comments or `$$` bodies, so a `(` inside a literal counts. The ladder's paren rung is **token-level** and
+does not. **Both stay**, for a stated reason rather than as a fork: `Ctrl+Shift+B` also serves **PHP and JS**
+tabs, which have no SQL tokenizer to consult, so a single implementation is not available. In the SQL
+editors the two therefore agree on all ordinary input and can disagree on a bracket inside a literal, where
+the ladder is the correct one. `Ctrl+Shift+B` is **not absorbed into the ladder** — the queue entry left
+that open and it is settled here: the entry is a menu command with a live id, a rebinding users may already
+have stored, and a second host in `CodeEditorDialog`; deleting it to save one rung would break all three to
+buy nothing.
+
+###### The expansion stack — where it lives, and what invalidates it
+
+**Per editor, on the editor.** A selection stack is a property of *this document in this viewport*, so
+`CodeEditor` holds it: a list of `(start, end)` pairs, pushed by grow before it changes the selection and
+popped by shrink. Not on `MainWindow` — a host-side map keyed by editor would need a lifetime rule for
+closed tabs, and the state has no meaning outside the widget that owns the selection.
+
+**It is invalidated — dropped whole, never partially trusted — when:**
+
+- the document revision changes (any edit): the stored offsets describe text that no longer exists, and
+  restoring one would select a visibly wrong range. This is `_update_matching_tag_highlight`'s rule above,
+  applied to selections: **while stale, do nothing rather than something wrong.**
+- the current selection is not the one the last grow produced — i.e. the user clicked, dragged, or ran any
+  other selection command in between.
+
+**⚠ What shrink does with no stack is an OWNER QUESTION, and it is NOT decided here (§29).** The two
+candidates are genuinely different products: *(a)* shrink is a **no-op / stated refusal** when the selection
+did not come from a grow, which is the conservative reading of never-a-silent-wrong-result; or *(b)* shrink
+**derives** the largest chain member strictly inside the current selection, which is what expand-region
+implementations elsewhere do and which makes the chord useful after a mouse selection. (b) is not a guess in
+the destructive sense — it replaces a selection, not text — so the usual refusal argument does not settle it,
+which is exactly why it is an owner call rather than one I may make. Implement neither until it is answered;
+part 3 is otherwise unblocked, since the stack path is identical under both.
+
+###### ⚠ Restatement for implementation — what this supersedes in the queue entry
+
+`docs/FEATURE_QUEUE.md`'s FQ-034 is a pre-implementation document and **five of its statements are
+corrected here.** Implement from this block.
+
+1. **Open question 1 is ANSWERED: shrink is `Ctrl+Shift+Z`** (owner, via DEC-015 — *"Redo is always, on all
+   systems, `Ctrl+Y`"*, which is what freed the chord). The reasoning is the pairing: `Ctrl+Shift+A` grows
+   outward one structural level per press, `Ctrl+Shift+Z` shrinks back inward.
+2. **The entry says `Ctrl+Shift+A` is "free on code tabs today".** True but misleading, and it is the
+   sentence most likely to send an implementer down the wrong path: it is free *because the action is
+   hidden there*, so this is not a chord to claim — it is a **capability gate and a rename** to change.
+   Likewise **the shrink chord is not free at all**: it is claimed by six surfaces and must stay claimed.
+3. **The entry says to "wire in" `ui/code_editor.py::enclosing_bracket_span` as the paren rung. That is
+   impossible as written** — `sql/` may not import `ui/` (§5's arrow, test-enforced). The paren rung is
+   computed inside `block_spans.py` from tokens, which is also the *better* answer; see above for why
+   `enclosing_bracket_span` nevertheless stays.
+4. **Placement: the span model goes beside `caret_context.py` / `from_clause.py` in `sql/`, but its
+   SPECIFICATION lives here in §8, not in §18.9.** The entry suggested §18.9. §18.9 is FQ-030's section,
+   declared complete with nothing outstanding, and splitting one design across two sections puts the
+   ladder's central rule — the DEC-012 reconciliation — in neither. §8 already documents the Qt-free
+   `ui/xml_structure.py` scanner *beside* the XML structural selection it powers; this is the same pairing
+   for SQL. §5's module tree carries the two new modules and points here.
+5. **Open question 2 is settled** (`Ctrl+Shift+B` stays, above) and **question 4 is settled** (`$$` bodies
+   are descended into, other opaque tokens are one rung — `caret_context.py`'s existing rule). **Question 3
+   is answered by the `StructureSpan` schema above.** What remains genuinely open is in §29: shrink with no
+   stack, and the exact boundary of the *clause* and *parameter* rungs.
 
 **Matching-tag highlight & navigation:** on `cursorPositionChanged`, both the opening and closing tag
 of the enclosing element are highlighted (self-closing → none), using the revision-guarded `_spans`
@@ -6337,25 +6659,24 @@ whose working copies have pending changes:
 > the DDL object editor as **the** host; the console's host has shipped since D4 and §18.5 D4 already said
 > so — a stale singular corrected here, ledger §28.)*
 >
-> **The context-menu "Format Selection" item exists on the DDL object tab ONLY — BUG-063, OPEN.**
-> `ui/sql_console_panel.py` builds **no context menu at all** (no `addAction`, no `contextMenuEvent`, no
-> `createStandardContextMenu` — and no `eventFilter` either, so a fix adds that override rather than
-> extending one), so in the console the chord is the gesture's only form and right-click yields Qt's stock
-> `QPlainTextEdit` menu. **§26 and §27 both assert a context-menu item on *both* surfaces; that claim is
-> false against the tree, and it is filed as BUG-063 rather than rewritten away** — DEC-012's ruling that
-> *a context-menu entry IS a command* is the whole basis on which `Ctrl+Alt+F` sits inside the
-> one-keyboard-host rule, so the console lacking the command form is a defect in the code, not a spec
-> over-claim to delete. **The code already disagrees with itself in the direction of the fix:**
-> `ui/shortcut_registry.py:236` ships the reason text *"a context-menu command plus a shortcut inside the
-> Sandbox SQL Console and the DDL object tabs"*, so `RESERVED_SEQUENCES` is wrong today and becomes correct
-> once the item is added — no edit owed there. **Two in-code comments must move with the fix** (both in
-> BUG-063): `sql_console_panel.py:507-517` justifies the chord as DEC-009's family *"which has no menu
-> command at all"*, false for `Ctrl+Alt+F`; and `ddl_object_editor.py:800-804` cites the console as the
-> precedent for *"the QShortcut alone"*. **The load-bearing trap:** the new QAction must **not** carry
-> `setShortcut` — the `QShortcut` at `:538` stays the sole keyboard host, or the fix reintroduces the
-> DEC-004/BUG-046 double-hosting defect it exists to honour. **When BUG-063 lands, this passage, §26's
-> parenthetical, §27's `Ctrl+Alt+F` row and §8's DEC-012 bullet all go stale in the OPPOSITE direction and
-> must be restored to "both hosts"** — re-dispatch `spec-maintainer` post-commit.
+> **The context-menu "Format Selection" item exists on BOTH SQL surfaces — BUG-063 is RESOLVED
+> (`a9efb67`).** `SqlConsolePanel` builds a context menu over `self.editor.createStandardContextMenu()` and
+> adds the verbatim `Format Selection` item wired to `self.format_selection`, documented at the code site as
+> the gesture's *second, CLICK-ONLY host*. **The trap that entry named was honoured:** the new `QAction`
+> carries **no `setShortcut`**, so the panel's `QShortcut` remains the chord's sole keyboard host (DEC-012)
+> — and that absence is **asserted, not assumed** (`tests/ui/test_sql_console_panel.py`,
+> `assert action.shortcut().isEmpty()`). Both in-code comments that justified the chord as DEC-009's family
+> *"which has no menu command at all"* are fixed.
+>
+> *(This passage spent one day recording the opposite, and the sequence is kept because it is what filing a
+> spec-right/code-wrong finding is supposed to produce. It read: the console builds no context menu at all,
+> so §26 and §27's assertion of an item on both surfaces is false against the tree — **filed as BUG-063
+> rather than rewritten away**, because DEC-012's ruling that a context-menu entry IS a command is the whole
+> basis on which `Ctrl+Alt+F` sits inside the one-keyboard-host rule. It also noted that the code already
+> disagreed with itself in the direction of the fix: `RESERVED_SEQUENCES`' reason string already named both
+> surfaces, so no edit was owed there — and none was made. The four places that had to be restored to "both"
+> when it landed — this passage, §26's parenthetical, §27's `Ctrl+Alt+F` row and §8's DEC-012 bullet — all
+> are.)*
 >
 > **BUG-054 is DONE**, not in progress: `ui/ddl_object_editor.py`
 > carries the tombstone comment *"there is deliberately NO Ctrl+Alt+F branch here"* in its `eventFilter`,
@@ -10775,11 +11096,10 @@ under File below is §18.2's later, distinct DDL-project action that merely reus
     engine, the snapshot module and the diff viewer they would drive all ship (§18.3 status).
 
   ("Format Selection" is **not** a menu-bar item: it is a `Ctrl+Alt+F` action on the DDL object editor tab
-  **and (§18.5 D4) the Sandbox SQL Console tab**, with a context-menu entry **on the object tab only** —
-  `ui/sql_console_panel.py` builds no context menu at all. *(Corrected 2026-08-10: this sentence, and §27's
-  row, asserted the context-menu item on **both**; it is filed as **BUG-063, OPEN** as a code gap rather
-  than deleted here, since DEC-012's one-host ruling rests on the command form existing — §18.4's status
-  banner and ledger §28.)* FQ-033 **added, and SHIPPED (`061e973`), the same chord plus a context-menu
+  **and (§18.5 D4) the Sandbox SQL Console tab**, with a context-menu entry **on both** — the console's
+  landed with **BUG-063 (RESOLVED `a9efb67`)**, carrying no `setShortcut` so the chord keeps one keyboard
+  host. *(This sentence read "on the object tab only" for one day, while that gap was filed rather than
+  written away; §18.4's status banner and ledger §28.)* FQ-033 **added, and SHIPPED (`061e973`), the same chord plus a context-menu
   `Format Selection` entry on the three `XmlEditor` surfaces**, answered by a **separate XML engine** —
   §18.4. See §27. "Deploy
   this edit…" is likewise primarily a **context-menu item** on the object tab, mirrored onto this menu as
@@ -10885,11 +11205,19 @@ Block` (below — the seam's first capability gate), the `Deployment` menu's per
 BUG-039 (2026-08-09) — **all four `Parsing` members**, which swap between the XML pair and the DDL check
 pair by active tab kind.
 
-- **History:** History… (no shortcut — opens the non-modal history-jump navigator, §7), Undo (Ctrl+Z),
-  Redo (Ctrl+Y), **in that order** (owner: *"everyone uses Ctrl+Z/Ctrl+Y anyway"*). Ids become
-  `history.undo` / `history.redo`, both `LEGACY_ID_ALIASES`-pinned and therefore **updated in the same
-  commit** (§7). `Ctrl+Z`/`Ctrl+Y` keep §27's pinned carve-out routing them to the Edit XSD / DDL object
-  tab's own native undo stack.
+- **History:** History… (no shortcut — opens the non-modal history-jump navigator, §7), **`Undo Project
+  Edit`**, **`Redo Project Edit`**, **in that order** (owner: *"everyone uses Ctrl+Z/Ctrl+Y anyway"*).
+  **Neither carries a shortcut — BUG-064, RESOLVED `a9efb67`** (`tests/ui/test_history_wiring.py` asserts
+  both are empty). *(Supersedes this bullet's earlier *"Undo (Ctrl+Z), Redo (Ctrl+Y)"*, which was wrong on
+  both counts and made the window-scoped chords read as menu bindings a user could move; ledger §28.)*
+  **The rename is the whole ruling and its reason is worth keeping:** these are **project-scoped commands,
+  not the menu twin of the editor chord** — *"an explicit, deliberate click that means 'undo the project',
+  wherever the user is"* — so they were **named apart rather than merged with** `Ctrl+Z`/`Ctrl+Y`, which act
+  on whichever surface has focus. Ids therefore move `history.undo` → `history.undo-project-edit` (likewise
+  redo), carried by **`RENAMED_ID_ALIASES`** in the same commit, and the two are **rebindable** — which
+  `RESERVED_SEQUENCES`' reasons for `Ctrl+Z`/`Ctrl+Y` now say in so many words, so a user refused the chord
+  is told which command *can* move. `Ctrl+Z`/`Ctrl+Y` keep §27's pinned carve-out routing them to the Edit
+  XSD / DDL object tab's own native undo stack.
 - **Select — SHIPPED** (FQ-015, `9146524`, `_build_select_menu`, **between History and Parsing**):
   Select All (Ctrl+A — new entry for existing behaviour), separator, Select Enclosing Block (Ctrl+Shift+B),
   Select Parent Block (Ctrl+Shift+A). **All three resolve the active editor at *trigger* time** via
@@ -10900,6 +11228,12 @@ pair by active tab kind.
   object / PHP tabs. `Select Parent Block` is **XML-only and HIDDEN — never greyed — on `CodeEditor` tabs**
   by `_refresh_editor_menu_affordances`, which kills Ctrl+Shift+A there too. New pinnable ids:
   `select.select-all` / `select.select-enclosing-block` / `select.select-parent-block` (§7).
+  ⏳ **FQ-034 (target design, NOT YET BUILT) makes this menu FOUR entries:** `Select Parent Block` becomes
+  **`Expand Selection`** (`select.select-parent-block` → `select.expand-selection`, needing a
+  `RENAMED_ID_ALIASES` row in the same commit) and gains a repeatable SQL structural ladder plus a new
+  **`Shrink Selection`** entry (`select.shrink-selection`, **no `setShortcut`** — its chord `Ctrl+Shift+Z` is
+  answered by every editing surface's existing claim, not by the action). The full contract, including why
+  the two halves are hosted by different mechanisms, is in **§8**.
 - **Parsing — FOUR members, gated by ACTIVE TAB KIND** (BUG-039, settled 2026-08-09; ledger §28). Built
   once in `_build_parsing_menu`, only `setVisible`-toggled:
 
@@ -11037,9 +11371,19 @@ whichever `Deployment` entry they use (§7). `Undo`/`Redo`/`Validate` now resolv
 >    The reason is recorded because it is the failure this replaces: `shortcut_registry.RESERVED_SEQUENCES`
 >    was meant to be that register and rotted precisely because its docstring says *"transcribed from §27"* —
 >    a hand transcription, which silently lost `Ctrl+Shift+Z` until BUG-050. **A ledger nobody verifies is a
->    second document, not a source of truth.** *(The file does not exist yet — it lands with the in-flight
->    keyboard work. This section remains the design authority; the ledger is the mechanical check over it,
->    not a replacement for it.)*
+>    second document, not a source of truth.** **✅ THE FILE EXISTS (`a9efb67`)** — *(this consequence
+>    previously read "does not exist yet")*. Its shape, since design decisions hang off it: one row per chord
+>    with **Chord · Command · Host mechanism · Surfaces it is live on · Gate · Reserved · Notes**, where
+>    *Host mechanism* is one of exactly seven tokens (`QAction`, `QShortcut`, `QShortcut(StandardKey)`,
+>    `keyPressEvent`, `eventFilter`, `Qt default`, `unbound`) and *Gate* one of (`DEC-012`, `DEC-009`,
+>    `DEC-014`, `DEC-015`, `Qt`, `bare-key`, `dead`); a **measured** per-scheme Appendix A of Qt's own
+>    `StandardKey` table; and a *Known gaps* list of five recorded defects it deliberately does not fix
+>    (chief among them: `Ctrl+Insert`/`Shift+Insert` are bound but unreserved, `Ctrl+W` is dead but
+>    unreserved, and three caption-grid shortcuts rely on Qt's implicit `WindowShortcut`). **This section
+>    remains the design authority; the ledger is the mechanical check over it, not a replacement for it** —
+>    but the check has teeth: `tests/test_keybindings_ledger.py`'s **Reserved column is a set equality
+>    against `RESERVED_SEQUENCES`**, so **any change to the reserved set must edit the ledger in the same
+>    commit**, and that equality already caught `Ctrl+Shift+R` missing a row.
 > 2. **The offscreen test suite runs Qt's WINDOWS keyboard scheme**, so a Linux-only dead key passes every
 >    test in the repo. **Assert the handler, never Qt's native answer.** And `QShortcut` *does* fire
 >    offscreen — what fails is key delivery to a widget never `show()`n (DEC-004), which is what every
@@ -11054,21 +11398,37 @@ whichever `Deployment` entry they use (§7). `Undo`/`Redo`/`Validate` now resolv
 >    `eventFilter`/`ShortcutOverride`, context-menu actions, and Qt's `StandardKey` platform defaults — so a
 >    chord bound by any of them is bound, and **reasoning from a menu listing is not reading the ledger.**
 >
-> **⏳ DEC-015's per-chord consequences are IN FLIGHT and are deliberately NOT asserted in the rows below.**
-> The ruling also **frees `Ctrl+Shift+Z` from redo** (reserving it for FQ-034's shrink-selection counterpart
-> to `Ctrl+Shift+A`) and makes **`Ctrl+Y` an explicitly bound chord on both platforms** — which *withdraws*
-> part of BUG-053's shipped fix, rewrites `shortcut_registry.py`'s reason string for the chord, and releases
-> BUG-056 from hold. That work is owned by other sessions as this is written, so the `Ctrl+Shift+Z` row below
-> is marked **superseded-in-design, pending implementation** rather than rewritten into a claim the tree does
-> not yet honour. Do not implement from the row; implement from DEC-015 and re-dispatch `spec-maintainer`.
+> **✅ DEC-015's per-chord consequences are SHIPPED (`a9efb67`) and the rows below now assert them.**
+> *(This block previously read "IN FLIGHT and deliberately NOT asserted"; the `Ctrl+Shift+Z` row was marked
+> superseded-in-design. Both are retired — dead assertions over shipped work.)* What landed:
+>
+> - **`Ctrl+Shift+Z` is freed from redo** and reclassified **`CLAIMED_NOT_UNDO_REDO`** — claimed and
+>   intercepted by every editing surface *so Qt's native redo cannot fire*, answering nothing yet, and
+>   **reserved for FQ-034's shrink-selection** (§8), which is what will give the claim an answer.
+> - **`Ctrl+Y` is bound by the app on both platforms**, which *withdrew* part of BUG-053's shipped fix.
+> - **The legacy `Alt+Backspace` / `Alt+Shift+Backspace` pair is SUPPRESSED on both platforms** — the call
+>   DEC-014 left open, now made. Qt binds them `KB_Win` **only**, so the two legal outcomes were bind-both or
+>   suppress-both; suppress won because they are legacy Windows spellings appearing **in no menu, no manual
+>   page and no shortcut table**, so binding them on Linux would be *inventing* a keybinding rather than
+>   honouring a convention. **The interception IS the behaviour**: it is what makes the key dead on Windows
+>   too, rather than only on Linux.
+> - **The single matcher is `code_editor.classify_undo_redo_chord(event)`**, over the Qt-free table
+>   `shortcut_registry.EDITOR_UNDO_REDO_CHORDS` (`Ctrl+Z`→`UNDO`, `Ctrl+Y`→`REDO`,
+>   `Ctrl+Shift+Z`→`CLAIMED_NOT_UNDO_REDO`, the `Alt+Backspace` pair→`SUPPRESSED`). It **classifies and never
+>   returns a boolean**, and takes **no per-surface parameter** — DEC-014's stated reason being that a caller
+>   handed *"yes, an undo/redo chord"* and left to re-derive which one is how a redo silently becomes an undo,
+>   and per-surface variation is how BUG-053 happened. **Exactly six surfaces call it**, and every non-`None`
+>   answer must be consumed **including the two that run nothing**: letting one fall through hands the key to
+>   Qt's per-platform table, which is the divergence the whole rule exists to remove.
 
 | Shortcut | Action | Context |
 |---|---|---|
 | **Ctrl+O** | **NOTHING — deliberately unbound** (owner decision, `f621d4c`, 2026-08-09; ledger §28) | **`File ▸ Open...` exists and is unchanged; it simply carries no shortcut.** The reasoning generalises beyond this one chord: in an app that opens **`.pgtp` files, PHP files, DDL projects, XSDs and database objects**, a single `Ctrl+O` has to pick a winner among five kinds of *"open"*, and **any winner is a guess at intent**. Opening is also a once-per-session act that FQ-027's launcher now puts **one click away at startup**, so the key bought almost nothing and cost an ambiguity. **It is UNBOUND, not reassigned** — the chord is free, and FQ-012's `View ▸ Customize Shortcuts…` lets anyone who disagrees bind it to whichever open they actually mean (which is also why no default was chosen *for* them). The rule this states once: **a shortcut is not owed to a command merely because the command is common.** |
 | **Ctrl+W** | **NOTHING — deliberately unbound** (owner decision, 2026-08-09; status-corrected 2026-08-10) | **`File ▸ Close` exists and is unchanged; it simply carries no shortcut.** *(Supersedes this table's 2026-08-09 row, which recorded it as "unchanged and still bound".)* **The reason is `Ctrl+O`'s, restated for closing:** this app closes projects, `.pgtp` documents, PHP tabs, DDL object tabs, the XSD tab and console tabs, so one `Ctrl+W` has to pick which *"close"* it means — and the one it actually meant was **the rarest of them**, closing the whole project. Like `Ctrl+O` and **unlike `Ctrl+S`**, the chord is **free rather than reserved**: a user may bind it through `View ▸ Customize Shortcuts…` to whichever close they mean. **The prerequisite the 2026-08-09 row named was real and was paid:** `File ▸ Close` had been the test suite's specimen for three shipped properties (FQ-012's default-capture test, FQ-012's shortcut-**steal** test, FQ-027's hidden-command-loses-its-key test), all of which needed a menu-bar QAction owning a real default binding — so unbinding it required a replacement specimen, and that requirement is recorded here as met rather than waived |
 | **Ctrl+S / Ctrl+Shift+S** | **NOTHING — deliberately unbound app-wide** | **Stated, not merely omitted** (FQ-020, 2026-08-08; ledger §28). Every save is a named click on the Editor bar's **`Deployment`** menu — `Save pgtp` / `Save as new pgtp` (Raw XML), `Save in Project` (a DDL object tab), `Save XSD`, `Save PHP File` (§26). `File ▸ Save`, `File ▸ Save As…` and the `_save_active_tab` router are **deleted**, and so is `PhpFileTab`'s own `Key_S` event-filter branch — owner: *"Dies at all, inconsistency is a bad driver"* — so the reflex has **one** answer everywhere instead of being right on one tab and silently wrong on the next. Pressing the key does **nothing at all: no write, no message, no status-bar hint** — a signpost was offered and **explicitly declined**, and implementers must not add one back. An absent row would read as an oversight, which is why this row exists; the manual's Keyboard Shortcuts chapter must say the same. **The one carve-out is the next row.** The former object-tab flow is unchanged apart from its trigger: the **first** `Deployment ▸ Save in Project` on a never-saved tab opens **Save As… (`*.sql`)** and remembers the path, and **cancelling that dialog from the close-confirmation prompt aborts the close** (§18.5). Save persists text only and **never** executes DDL |
-| Ctrl+Z / Ctrl+Y | Undo / Redo (single step) | Window — project snapshot history (`MainWindow._undo`). **Exception, pinned (implemented, §18.5 carve-out 1):** with the Edit XSD tab or a **DDL object editor tab** active, Ctrl+Z/Ctrl+Y drive **that editor's own native undo stack**. The object tab realizes it with an **event filter** on its editor that accepts the key and calls `editor.undo()`/`redo()` itself, because `CodeEditor` neither consumes nor re-emits the key and the window shortcut would otherwise revert the **Raw XML project buffer** |
-| **Ctrl+Shift+Z** | **Redo — a SECOND redo key.** ⚠ **SUPERSEDED IN DESIGN BY DEC-015 (2026-08-10), PENDING IMPLEMENTATION — this row describes the TREE, not the intent.** DEC-015 rules one chord per operation on every platform: redo is `Ctrl+Y` alone, and `Ctrl+Shift+Z` is **freed for FQ-034's shrink-selection**, the inverse of `Ctrl+Shift+A`. Until that lands the tree still answers it as redo on the three surfaces named opposite, so the row stays factual and flagged rather than being rewritten ahead of the code | **RESERVED** — `ui/shortcut_registry.py::RESERVED_SEQUENCES` carries it (BUG-050, RESOLVED `e8df6c3`) with the reason *"project history Redo, the second chord — answered inside every XML editor's own key handling, so a command moved here would only work while no editor has focus (§27)"*. Where it is answered: **`XmlEditor.keyPressEvent`** (`ui/xml_editor.py:1177-1181`), whose branch answers `Ctrl+Y` **or** `Ctrl+Shift+Z` with `redo_requested.emit()` + `event.accept()` — so it means the **project snapshot redo** in Raw XML and the **XSD editor's own native redo** in Edit XSD / Edit AutoXSD, following `Ctrl+Y`'s routing exactly; **`DdlObjectEditorPanel.eventFilter`**, which routes it into that tab's own redo stack (BUG-053, RESOLVED `f533350` — it previously matched only `Ctrl+Y`, so the object editor answered the reserved chord differently from its sibling); and **`DdlEditorPanel._is_undo_redo_chord`** (`:163`), which claims it on the read-only DDL Explorer buffer and answers with a justified no-op (BUG-048). **There is no window-level `Ctrl+Shift+Z` `QShortcut`** — the window binds `Ctrl+Z`/`Ctrl+Y` only, so this chord is answered per surface or not at all. **It is dead on `PhpFileTab`, the Sandbox SQL Console and `CodeEditorDialog`**, which is what the manual says. *(Superseded 2026-08-10: this row's *"MISSING from `RESERVED_SEQUENCES` — BUG-050, OPEN"* warning and its claim that the chord lives in the XML editors **only**.)* |
+| Ctrl+Z / Ctrl+Y | Undo / Redo (single step), **in the surface that has focus** | A window-scoped `QShortcut` **plus every editing surface's own key handling** — six surfaces, all going through the one matcher `classify_undo_redo_chord`: `code_editor.py` (`CodeEditorDialog`), `xml_editor.py`, `php_file_tab.py`, `ddl_object_editor.py`, `ddl_editor_panel.py`, `sql_console_panel.py`. Each surface's *answer* differs and must — its own native stack, a stated read-only refusal, or re-emission into the project's snapshot history — while the *matching* is shared. **`Ctrl+Y` is bound by this app on every platform** (DEC-015): Qt binds it on the Windows scheme only, so a redo that leaned on Qt was a **dead key on Linux** — measured in the Sandbox SQL Console (BUG-056). **Exception, pinned (§18.5 carve-out 1):** with the Edit XSD tab or a **DDL object editor tab** active the chords drive **that editor's own native undo stack**, realized by an event filter that accepts the key and calls `editor.undo()`/`redo()`, because `CodeEditor` neither consumes nor re-emits it and the window shortcut would otherwise revert the **Raw XML project buffer**. **The project-wide twin is a DIFFERENT command:** `History ▸ Undo Project Edit` / `Redo Project Edit` carry **no shortcut** and **are** rebindable (BUG-064, §26) — `RESERVED_SEQUENCES`' reasons name them, so a user refused the chord is told which command can move |
+| **Alt+Backspace / Alt+Shift+Backspace** | **NOTHING — suppressed on both platforms, deliberately** (DEC-014's open call, decided 2026-08-10; ledger §28) | Qt's legacy Windows-scheme undo/redo pair, carrying **`KB_Win` only** in the compiled binding table (read out of `libQt6Gui` by BUG-056), so Qt answers them inside every `QPlainTextEdit` on Windows and not at all on X11. Owner rule: *"Keybindings must be the same on both systems."* Bind-both and suppress-both were the two legal outcomes; **suppress** won because these are legacy spellings in **no menu, no manual page and no shortcut table**, so binding them on Linux would be *inventing* a keybinding. `EDITOR_UNDO_REDO_CHORDS` classifies both **`SUPPRESSED`**; all six surfaces intercept and run nothing, which is what makes "dead" true on Windows too. **Reserved** for BUG-050's consequence: a menu command retargeted here would be swallowed by whichever editor has focus |
+| **Ctrl+Shift+Z** | **CLAIMED, and deliberately NOT redo** (DEC-015, shipped `a9efb67`) — ⏳ **reserved for FQ-034's `Select ▸ Shrink Selection`**, the inverse of `Ctrl+Shift+A`'s grow, which is the whole reason the chord was freed. Until FQ-034 lands the chord is claimed and answers **nothing**. *(Supersedes this row's earlier "**Redo — a SECOND redo key**", and the "superseded-in-design, pending implementation" flag that followed it; ledger §28.)* | **RESERVED**, and the reservation **survives the change of meaning for a sharper reason than before**: Qt's compiled table binds this chord as native `StandardKey.Redo` under **`KB_Win` *and* `KB_X11`** (BUG-056 measured both schemes), so **every editing surface must actively intercept it or Qt redoes anyway** — DEC-015's *"redo is always `Ctrl+Y`"* is true only while all six do. `EDITOR_UNDO_REDO_CHORDS` classifies it **`CLAIMED_NOT_UNDO_REDO`**, and the interception is answered by all six surfaces: `code_editor.py`, `xml_editor.py`, `php_file_tab.py`, `ddl_object_editor.py`, `ddl_editor_panel.py`, `sql_console_panel.py`. *(Superseded: the earlier claim that it is answered in the XML editors **only** and is **dead** on `PhpFileTab`, the console and `CodeEditorDialog` — those three now state their answer too, which is what DEC-014 requires; and, before that, BUG-050's "MISSING from `RESERVED_SEQUENCES`" warning.)* **There is still no window-level `Ctrl+Shift+Z` `QShortcut`** — the window binds `Ctrl+Z`/`Ctrl+Y` only — **and FQ-034 must not add one:** its `Shrink Selection` `QAction` deliberately carries no `setShortcut`, so the surfaces' existing claim is the single keyboard host (§8's DEC-012 reconciliation). **This is the row the hand-transcribed register lost** (BUG-050), and it is why `docs/KEYBINDINGS.md` is verified by a test |
 | Ctrl+F / Ctrl+R | **FOCUS** the owning tab's Find field / Replace field (FQ-016, 2026-08-07 — they no longer *show* a bar; the bar is permanently visible, §8/§15) | **Per tab, NOT window-level:** each of the six `FindReplaceBar` hosts installs its own pair of `WidgetWithChildrenShortcut` `QShortcut`s via `find_replace_bar.install_focus_shortcuts(host, bar)` — Raw XML tab, Edit XSD tab, DDL Explorer (`ddl_editor_panel`), the DDL object editor tab, a PHP file tab, a draft fragment tab — and `CaptionManagementPanel` owns an equivalent panel-scoped pair of its own (§13/FQ-017). **A window-level `Ctrl+F` is forbidden**: it would be *ambiguous* against those panel-scoped ones and Qt would fire **neither** (§7). Consequences: exactly one match is live for any focus location; **`Ctrl+F` is a NO-OP on tabs with no bar** (Manual, Diff/Merge) instead of yanking the user to Raw XML — which **closes** §29's reveal question in the recommended direction — and `FindValidateController.active_find_bar()`'s reveal fallback now serves **`F3` only**. Replace is **inert in the DDL Explorer** — that buffer is read-only (`CodeEditor.replace_current_selection` returns early on `isReadOnly()`) — and **live** in the DDL object editor, PHP and draft tabs. **No menu entry advertises either key any more** (the Edit menu is dissolved) and neither key is mode-gated, so the long-standing "the menu advertises one behaviour while the key does another" conflict disappears from both ends, and `set_find_actions`/`set_find_actions_enabled` are deleted (§7) |
 | **F3** | **Find Next** — routed to `active_find_bar().find_next()` | **Window-level shortcut with NO menu entry** (FQ-016, 2026-08-07). Owner ruling: *"why does F3 die? it should find next."* It survives the Edit menu's dissolution rebound onto the same window-level, menu-less shape as **Ctrl+L Go To XSD** (next block), using the exact dispatch the deleted Edit QAction used. **`F3` and `Ctrl+F` are deliberately ASYMMETRIC on
 a tab with no bar** (Manual, Diff/Merge, and §18.5 D4's Sandbox SQL Console): `Ctrl+F` is a **no-op** there,
@@ -11079,13 +11439,13 @@ can still move the user off the tab they are on — accepted because a bare "fin
 has no other document to mean (ledger §28). **Window-level, NOT bar-local:** the whole point is that it works while the caret is in the **editor**, so it must not be a `keyPressEvent` on `FindReplaceBar`, which would only fire once the bar already has focus. Consequence, accepted: a shortcut with no menu entry is **invisible to `_walk_menu_actions`** and therefore **can never be pinned** to the toolbar — it joins the existing `Ctrl+L` / `Ctrl+Alt+F` / `Ctrl+Return` category, alongside Find itself (*"Find unpinnable is fine"*) |
 | *(deleted)* | ~~Find All (Ctrl+Shift+F)~~ · ~~Replace All (Ctrl+Alt+Return)~~ | **Both chords are GONE** (FQ-016, 2026-08-07; ledger §28) — the commands survive as **buttons on the now-permanent bar**. Find All writes `[Find]` rows into the Audit panel: a deliberate, occasional act with a visible button earns little from a chord. Replace All is a **bulk edit that now sits beside a scope dropdown** (FQ-017's *"in filtered results"* / *"in all project"*, §13) which a keystroke would bypass entirely — losing the keystroke is a gain under this project's own rule that a broad, hard-to-inspect effect must not be one chord away |
 | **Ctrl+A** | **Select All** | **Editor menu bar ▸ Select** (**SHIPPED**, FQ-015 `9146524`, §8/§26). Acts on `active_selection_editor().selectAll()`, resolved at **trigger** time. The chord is **not new to the app** — `QPlainTextEdit`'s built-in select-all was always live and nothing bound or stole it; the menu entry is the feature. Qt's `ShortcutOverride` means a **focused** text widget still handles the key itself, so this QAction's shortcut fires only when focus is elsewhere (e.g. the structure tree) — which is also why it cannot steal Ctrl+A from a `QLineEdit`. **Live in read-only editors** (DDL Explorer, Raw XML in Caption Mode): `setReadOnly(True)` keeps Qt's selectable-text flag, and **deliberately not gated in Caption Mode** — selecting mutates nothing. This is exactly what the FQ-015 fix to `XmlEditor._is_text_modifying_key` protects (§8): a Ctrl chord is a command, so a read-only editor no longer swallows the key to flash its hint |
-| **Ctrl+Shift+B / Ctrl+Shift+A** | **Select Enclosing Block / Select Parent Block** | **Editor menu bar ▸ Select** (**SHIPPED**, FQ-015 `9146524`, §8/§26) — re-homed off the dissolved Edit menu and **rebuilt**, with **trigger-time dispatch** replacing the old build-time binding to the Raw XML editor (which made both chords act on the wrong document from any other tab). **Ctrl+Shift+B is per editor family:** XML element on Raw XML / Edit XSD / draft tabs, innermost balanced `()[]{}` on DDL Explorer / DDL object / PHP tabs. **Ctrl+Shift+A is XML-only and DEAD on `CodeEditor` tabs** — its action is hidden there (§7's capability gate), and Qt keeps a shortcut live only while its action is visible **and** enabled. Historical note (ledger §28): between `c327c9d` and `9146524` **Ctrl+Shift+A had no host at all** and Ctrl+Shift+B survived only through `CodeEditor.keyPressEvent` |
+| **Ctrl+Shift+B / Ctrl+Shift+A** | **Select Enclosing Block / Select Parent Block** | **Editor menu bar ▸ Select** (**SHIPPED**, FQ-015 `9146524`, §8/§26) — re-homed off the dissolved Edit menu and **rebuilt**, with **trigger-time dispatch** replacing the old build-time binding to the Raw XML editor (which made both chords act on the wrong document from any other tab). **Ctrl+Shift+B is per editor family:** XML element on Raw XML / Edit XSD / draft tabs, innermost balanced `()[]{}` on DDL Explorer / DDL object / PHP tabs. **Ctrl+Shift+A is XML-only and DEAD on `CodeEditor` tabs** — its action is hidden there (§7's capability gate), and Qt keeps a shortcut live only while its action is visible **and** enabled. **It fires with focus inside an editor because `QPlainTextEdit` does not claim it — measured on both schemes** (Qt's KDE scheme binds `Ctrl+Shift+A` as `Deselect`, which no widget here implements), and that measured fact is what lets grow stay an ordinary rebindable `QAction`. ⏳ **FQ-034 renames this entry `Expand Selection`, makes the walk repeatable with a stack, extends it to the SQL editors, and adds `Ctrl+Shift+Z` shrink** — §8. Historical note (ledger §28): between `c327c9d` and `9146524` **Ctrl+Shift+A had no host at all** and Ctrl+Shift+B survived only through `CodeEditor.keyPressEvent` |
 | Ctrl+click / Alt+click | Jump to matching tag / parent tag | Raw XML editor |
 | Ctrl+F2 / F2 / Shift+F2 | Toggle / Next / Previous Bookmark | The **active editor tab** — Raw XML / Edit XSD / DDL Explorer / the DDL object editor tab / a PHP file tab / a draft fragment tab — resolved at trigger time by `FindValidateController.active_bookmark_editor()`, never switching tabs (the **`Navigation` menu** on the Editor menu bar — renamed from `Bookmarks` by FQ-021b, 2026-08-08, §8/§26 — and **all five bookmark commands are its only members**, §26; **the five bookmark actions** are disabled in Caption Mode, §13 — target design 2026-08-01 — today together with the menu itself, which stays equivalent only while no Difference member has joined, §8). **`Clear All Bookmarks` and `List All Bookmarks` deliberately carry no shortcut** — the latter (FQ-014) **ships** (`FindValidateController.list_all_bookmarks`, §7/§8), it simply was never given a chord. **On a tab with no `active_bookmark_editor()` branch — today only §18.5 D4's Sandbox SQL Console — these three chords silently act on the Raw XML editor** (the `any other tab` fallback); flagged as an open question, §29 |
 | double-click (line-number gutter zone) | Toggle bookmark on that line | Raw XML editor gutter (settled 2026-08-01, **implemented** — commit `828fe02`, §8 — additive alongside the existing single-click 12px bookmark strip; NOT gated by Caption Mode) |
 | Ctrl+L | Go To XSD (jump to the attribute's definition in curated.xsd; always forces curated mode) | Window-level QAction (also in the Raw XML editor context menu). **The shape `F3` copies** (above): a window-level command with **no menu entry**, therefore outside `_walk_menu_actions` and un-pinnable — the category also holding `Ctrl+Alt+F` Format Selection and `Ctrl+Return` Run |
 | Ctrl+Space | Completion popup (`_CompletionPopup`, frameless, non-modal) | Three shipped contexts: the **Raw XML editor**'s schema-driven attribute/value completion (§11), the **DDL object editor tab**'s schema-aware SQL completion (§18.6), and the **Sandbox SQL Console tab** (per the manual's Keyboard Shortcuts chapter, which lists all three; §18.5 D4) |
-| Ctrl+Alt+F | **Format Selection** — *"reformat what I selected"*, on **two engines chosen by host surface, never by sniffing the text** (§18.4). Single undo step on success; `[SQL]` (SQL) or `[XML]` (XML, FQ-033) Audit lines + transient underline on refusal | **SQL engine, shipped:** the DDL object editor tab **and** the Sandbox SQL Console tab (§18.5/D4), in each case a `QShortcut` at `WidgetWithChildrenShortcut` scope, `setEnabled(False)` until a selection exists. **The context-menu item exists on the DDL object tab ONLY** — `ui/sql_console_panel.py` builds no context menu whatever. *(Corrected 2026-08-10: this row said "**plus a context-menu item on both**". Verified false and filed as **BUG-063, OPEN** rather than rewritten away, because DEC-012's ruling that a context-menu entry **is** a command is the basis on which this chord sits inside the one-host rule. **Restore this row to "both" when BUG-063 lands** — and note the fix must NOT `setShortcut` the new QAction: the `QShortcut` stays the sole keyboard host. §18.4's status banner, ledger §28.)* **That context-menu item is a COMMAND, so §8's one-keyboard-host rule applies and DEC-009's widget-only carve-out does NOT** (DEC-012): the `QShortcut` is the single host, and the DDL object tab's second `eventFilter` `Key_F` branch **is deleted — BUG-054 is DONE**, the tombstone comment standing where it was. It stays **reserved** in `RESERVED_SEQUENCES` — a context-menu command is still not a menu-bar action `Customize Shortcuts…` could move — so the chord is un-pinnable and un-rebindable. Without a selection it is a **silent no-op**, not §18.5 carve-out 4's refusal path. **XML engine — SHIPPED 2026-08-10 (`061e973`):** the same chord **plus a context-menu `Format Selection` entry** on the **three `XmlEditor` surfaces** (Raw XML, Edit XSD, the FQ-006 draft fragment tab), answered by `xmlfmt/` and never by the SQL tokenizer. The chord is a **panel-local `QShortcut` at `WidgetWithChildrenShortcut` scope, enabled only with a selection** (`ui/xml_editor.py:588-593`), and the context-menu `QAction` deliberately carries **no `setShortcut`** — the same single-keyboard-host discipline BUG-063 must observe on the console. On a read-only XML buffer it emits the existing `read_only_edit_attempted` hint and files **no** audit row; with no selection it is a silent no-op. ⏳ **The `[XML]` half of this row is still pending:** `format_refused` is emitted but unconnected and `audit_router.py` has no `XML_PREFIX`, so a refusal underlines its span and reports nowhere (§7's prefix table, §18.4 part C). *(The old note that "`Ctrl+Shift+F` stays Find All" no longer applies — that chord is deleted, see above.)* |
+| Ctrl+Alt+F | **Format Selection** — *"reformat what I selected"*, on **two engines chosen by host surface, never by sniffing the text** (§18.4). Single undo step on success; `[SQL]` (SQL) or `[XML]` (XML, FQ-033) Audit lines + transient underline on refusal | **SQL engine, shipped:** the DDL object editor tab **and** the Sandbox SQL Console tab (§18.5/D4), in each case a `QShortcut` at `WidgetWithChildrenShortcut` scope, `setEnabled(False)` until a selection exists. **The context-menu item exists on BOTH — BUG-063 is RESOLVED (`a9efb67`)**: `SqlConsolePanel` builds a context menu over `createStandardContextMenu()` and adds the verbatim `Format Selection` item, carrying **no `setShortcut`** (asserted, not assumed), so the panel's `QShortcut` stays the sole keyboard host. *(This row read "on the DDL object tab ONLY" for one day, while the gap was filed rather than written away — DEC-012's ruling that a context-menu entry **is** a command is the basis on which this chord sits inside the one-host rule, so a missing command form was a code defect, not a spec over-claim. §18.4's status banner, ledger §28.)* **That context-menu item is a COMMAND, so §8's one-keyboard-host rule applies and DEC-009's widget-only carve-out does NOT** (DEC-012): the `QShortcut` is the single host, and the DDL object tab's second `eventFilter` `Key_F` branch **is deleted — BUG-054 is DONE**, the tombstone comment standing where it was. It stays **reserved** in `RESERVED_SEQUENCES` — a context-menu command is still not a menu-bar action `Customize Shortcuts…` could move — so the chord is un-pinnable and un-rebindable. Without a selection it is a **silent no-op**, not §18.5 carve-out 4's refusal path. **XML engine — SHIPPED 2026-08-10 (`061e973`):** the same chord **plus a context-menu `Format Selection` entry** on the **three `XmlEditor` surfaces** (Raw XML, Edit XSD, the FQ-006 draft fragment tab), answered by `xmlfmt/` and never by the SQL tokenizer. The chord is a **panel-local `QShortcut` at `WidgetWithChildrenShortcut` scope, enabled only with a selection** (`ui/xml_editor.py:588-593`), and the context-menu `QAction` deliberately carries **no `setShortcut`** — the same single-keyboard-host discipline BUG-063 must observe on the console. On a read-only XML buffer it emits the existing `read_only_edit_attempted` hint and files **no** audit row; with no selection it is a silent no-op. ⏳ **The `[XML]` half of this row is still pending:** `format_refused` is emitted but unconnected and `audit_router.py` has no `XML_PREFIX`, so a refusal underlines its span and reports nowhere (§7's prefix table, §18.4 part C). *(The old note that "`Ctrl+Shift+F` stays Find All" no longer applies — that chord is deleted, see above.)* |
 | Ctrl+Return | **Run** — execute the selection, or the whole buffer when there is no selection, against the **sandbox** (§18.5 D4, target design 2026-08-06) | **Sandbox SQL Console tab only.** This is the one execution gesture that *does* carry a shortcut, and it does not reopen the *"an irreversible outward effect must not be one keystroke away"* rule — that rule is about **irreversibility**, and the sandbox is disposable and `reset()`-able by construction, which is the same asymmetry that authorizes ad-hoc execution at all (D4's safety boundary). Object-changing statements still pass the injected confirmation; there is **no target-database Run**, with or without a shortcut |
 | *(no shortcut, deliberately)* | **`Check Object in Sandbox`** / **`Check and rollback`** / **Generate Deployment SQL…** | The Editor bar's **`Parsing`** menu since BUG-039, relabelled by FQ-026 (`310cf92`); `Generate Deployment SQL…` still does not exist anywhere (§18.5). **Since FQ-023, 2026-08-08:** the two Check gestures are **absent** only when no sandbox is *configured*, and **present-and-reporting** when one is configured with no session open. Apply is an **irreversible outward effect** and must not be one keystroke away. *(Superseded, 2026-08-10: this row used to place them on **Database**, mention the tab's **button row**, and record `Deploy this edit…` as shipping keyless on three surfaces. BUG-039 moved them; **FQ-026 deleted the button row, the context-menu apply entries and the picker outright**.)* |
 | *(no shortcut, deliberately)* | **Every `Deployment` entry** — `Compare/Merge pgtp` · `Save pgtp` · `Save as new pgtp` · `Deploy .pgtp` · `Save in Project` · `Check and commit to sandbox` · `Apply to quality` · `Save XSD` · `Save PHP File` | Editor menu bar ▸ **Deployment**, per active tab kind (FQ-020, 2026-08-08, §26; the two DDL labels relabelled by FQ-026, `310cf92`). Deliberately keyless on two different grounds: the four **saves** because a keystroke save is exactly the wrong-target hazard the deleted router created (see the `Ctrl+S` row), and `Check and commit to sandbox` / `Apply to quality` / `Deploy .pgtp` because *"an irreversible outward effect must not be one keystroke away"* (§18.5) |
@@ -11176,17 +11536,24 @@ never-a-silent-wrong-result class this project refuses. Hence the two-rule confl
   order (an override always beats a default it collides with), so a hand-edited or half-pruned settings file
   cannot install an ambiguous pair either.
 
-**What stays unrebindable, and why** (`RESERVED_SEQUENCES` / `RESERVED_COMMAND_IDS`, transcribed from this
-section — the dialog shows them as **greyed, read-only rows** so the user can see the key exists and why it
-is locked, which is more honest than a silently incomplete list):
+**What stays unrebindable, and why** (`RESERVED_SEQUENCES` / `RESERVED_COMMAND_IDS` — the dialog shows them
+as **greyed, read-only rows** so the user can see the key exists and why it is locked, which is more honest
+than a silently incomplete list). **The table below is no longer only a transcription of this section, and
+that change is the point:** `docs/KEYBINDINGS.md`'s Reserved column is a **set equality against
+`RESERVED_SEQUENCES`** in `tests/test_keybindings_ledger.py`, so a reserved-set change ships with its ledger
+row **in the same commit** or the suite fails. Hand transcription is what let `Ctrl+Shift+Z` go missing until
+BUG-050, and what let `Ctrl+Shift+R` go missing again during a merge until the equality caught it:
 
 | Reserved | Reason |
 |---|---|
 | `Ctrl+S` · `Ctrl+Shift+S` | Deliberately unbound app-wide since FQ-020 (row above) — and therefore not available as a target either, or the reflex would come back by the side door |
-| `Ctrl+Z` · `Ctrl+Y` | Window-scoped `QShortcut`s for the project history — not menu actions, so the dialog cannot clear them |
+| `Ctrl+Z` · `Ctrl+Y` | **Two rows with two reasons, never one "the undo/redo chords" statement** (DEC-014): each is a window-scoped `QShortcut` **plus** every editing surface's own key handling, so neither is a menu action the dialog could clear. Each reason additionally names the project-wide twin — `History ▸ Undo Project Edit` / `Redo Project Edit` — which **is** rebindable, so the refusal message does not leave the user thinking this row is what moves it (BUG-064) |
+| **`Ctrl+Shift+Z`** | **Claimed and answered inside every text editor's own key handling — no longer a redo chord (DEC-015), but still intercepted there so Qt's native redo cannot fire**, so a command moved here would be swallowed by the focused editor. ⏳ FQ-034's shrink-selection is what the claim will answer; its `QAction` deliberately carries no shortcut, so this stays reserved rather than becoming rebindable (§8) |
+| **`Alt+Backspace` · `Alt+Shift+Backspace`** | Deliberately **dead app-wide**: Qt binds them as native Undo/Redo on the **Windows scheme only**, so every editor suppresses them to keep the keyboard identical on both platforms (row above). Reserved for the same consequence as `Ctrl+Shift+Z` |
 | `Ctrl+F` · `Ctrl+R` | Per-tab focus shortcuts at **six** `FindReplaceBar` sites plus the caption panel's own pair |
-| `Escape` | Returns focus to the document, per bar |
+| `Escape` | Returns focus to the document, per bar (and four narrower widget answers — the completion popup, tab-stop mode, the launcher) |
 | `F3` · `Ctrl+L` · `Ctrl+Alt+F` · `Ctrl+Return` · `Ctrl+Space` · `Ctrl+G` | Window-level or context commands with **no menu entry**, so the menu walk cannot enumerate them and there is no row to move them from |
+| **`Ctrl+Shift+R`** | **Reload DDL** — its one keyboard host is a `WidgetWithChildrenShortcut` `QShortcut` on the DDL Explorer's viewing pane, **per role**, because §18.7 gives each role its own Explorer and a window-level chord would have two candidate actions and no way to choose. The `Database ▸ Reload DDL` action and the two context-menu forms carry no shortcut (DEC-012). BUG-062 |
 | `Ctrl+C` · `Ctrl+X` · `Ctrl+V` | Qt built-ins **inside** the editor widgets (§26, FQ-016). A window-level shortcut on one of them would outrank the widget and break copy/cut/paste everywhere |
 | `F1`, **and the `help.manual` command itself** | The universal convention, and §7 pins `Help ▸ Manual` as the one entry no launch mode may hide. It is the only entry in **both** tables: nothing else may take `F1`, and Manual may not leave it — so its row is present but read-only |
 
@@ -11393,10 +11760,36 @@ is authoritative** (and is what appears in the body above).
 | 2026-08-10 | **§27 said nothing about platform scope at all** — every row read as though a chord's meaning were platform-independent by construction, while §7/§26's only platform notes concern macOS menu-bar absorption | **DEC-015 (ANSWERED): A CHORD MEANS THE SAME THING ON EVERY SYSTEM — AN OPERATION'S CHORD IS BOUND BY THIS APP ON EVERY PLATFORM, NEVER INHERITED FROM QT'S PLATFORM TABLE, AND THERE ARE NO PLATFORM-CONDITIONAL BINDINGS.** Owner's ruling on the case that produced it, verbatim: *"Redo is always, on all systems Ctrl+Y"*. **The reason is measured, not stylistic:** Qt's `KB_Win` scheme binds `Ctrl+Y` and the `Alt+Backspace` pair where X11 does not, so `Ctrl+Y` was a **dead key on Linux** — the owner's own dev platform — while passing every test, because **the offscreen suite runs Qt's WINDOWS scheme**. Generalised into §27 as a governing block: wherever Qt would differ, the app **binds explicitly on both platforms or suppresses the chord on both**, and *a chord that works on Windows and is dead on Linux is a bug, not a platform nicety*. Two operational consequences recorded with it: **`docs/KEYBINDINGS.md` is the single chord register, kept true by a TEST rather than by discipline** — `RESERVED_SEQUENCES` rotted precisely because its docstring said *"transcribed from §27"*, a hand transcription that silently lost `Ctrl+Shift+Z` until BUG-050, so **a ledger nobody verifies is a second document, not a source of truth** (the file does not exist yet; it lands with the in-flight keyboard work) — and **assert the handler, never Qt's native answer**. **The per-chord consequences are IN FLIGHT and deliberately NOT asserted:** DEC-015 also frees `Ctrl+Shift+Z` from redo for FQ-034's shrink-selection and makes `Ctrl+Y` explicit, which **withdraws part of BUG-053's shipped fix** and releases BUG-056 from hold; §27's `Ctrl+Shift+Z` row is therefore marked **superseded-in-design, pending implementation** rather than rewritten ahead of the tree |
 | 2026-08-10 | **This same day's own row above, recorded hours earlier: "TWO SEAMS SHIPPED UNWIRED", and specifically its claim that `open_autoformat_settings` has no caller outside its own tests so *"every user runs on `DEFAULT_FORMAT_CONFIG`"*** | **ONE SEAM, NOT TWO — `Settings ▸ Autoformatter settings…` EXISTS (`81bf658`) AND THE CONFIGURABLE SURFACE IS LIVE IN THE PRODUCT.** `_build_settings_menu` adds `menu.addAction(AUTOFORMAT_MENU_LABEL)` — the label **imported** from `ui/autoformat_settings_dialog.py::MENU_LABEL` rather than re-typed, so the menu row, the derived id `settings.autoformatter-settings` and the dialog cannot drift apart — wired to `open_autoformat_settings(self, settings=self._settings)`, held as `self._autoformat_settings_action`, **keyless** (DEC-006, and the menu's no-shortcut rule's **first live test, which held**) and **deliberately not in `DEFAULT_TOOLBAR_IDS`**. The menu is now held as `self._settings_menu` for the mode filter and the tests to reach by name, matching `_file_menu`; both names were added to `EXPECTED_HOST_SURFACE`; and the feature-tester's xfail was **removed rather than left to xpass silently**, which is the difference between a closed gap and a green suite that has stopped watching. **Corrected loudly rather than softened, because the superseded sentence was the sharpest line in the pass that wrote it** — a reader finding it would conclude the whole feature was inert. **The generalisation is the durable part: a "not wired" finding has the shortest half-life of any spec statement, because filing it is what causes it to be fixed — so state it plainly, and re-verify last pass's pending list FIRST on the next pass.** The remaining seam (`[XML]`) is **unchanged and still pending**, held on `audit_router.DESTINATIONS` while BUG-060/062 hold that file; §7's *reserved but not registered* wording and its xfail both stand |
 | 2026-08-10 | §18.2's New Project creation flow as **three** steps (folder · optional sandbox + provisioning mode · optional git placeholder), with the `.pgtp` link and the quality/target connection both acquired **later** — on first open (`link_pgtp_if_needed`, `_import_pgtp_connection_into_target`) or in Project Settings | **FQ-035 FOLDED IN AS TARGET DESIGN (NOT YET BUILT): FIVE STEPS, WITH AN OPTIONAL `.pgtp` ATTACH FIELD AND A QUALITY SECTION REVEALED AND POPULATED BY IT.** Placed **inside** §18.2's creation flow rather than as a new subsection: the dialog is one gesture with one accept path, and the entire point of the feature is that the three acts stop being disjoint. **It adds no capability** — `PgtpLink`, `connection_from_tree`, `test_connection` and `create_project` all ship; it is a **sequencing** change, and the payoff is stated precisely because it bounds the work: today the `.pgtp`↔quality-database relationship is only ever *inferred* from the fact that opening one populates the other. **Four contracts recorded so they are not re-derived:** the section is **hidden, not disabled**, without a `.pgtp` (§7's rule — a control with no subject is not a denied control); **`<ScriptConnectionOptions>` is never read** (the vendor writes a second element with, in this repo's own fixture, **a different port** — picking between two candidates is a guess about which database to point a project at); **the sandbox is never seeded from `<ConnectionOptions>`** (*"that is how a sandbox ends up pointed at production"*); and **the two `Test` buttons run two different probes on purpose** — quality uses `db/introspect.py::test_connection` (*can we connect?*), sandbox keeps `db/sandbox.py::probe` (*is this a superuser?*) — because a superuser demand on a quality connection would refuse a correctly-configured project. **Three queue-entry statements corrected:** there is **no reusable connection-field widget** to reuse (three dialogs each build their own form; `ProjectSettingsDialog._build_connection_form`/`_add_test_row` are **private statics**, and extracting a shared widget is explicitly out of scope), FQ-001's `Test` is **not** the New Project dialog's existing `Test`, and `_import_pgtp_connection_into_target`'s *"only when `target.host` is empty"* guard is **vacuous at creation but must not be relaxed** — it is what stops first open from overwriting a target supplied in the dialog. **Two ambiguities are FLAGGED FOR THE OWNER, not decided, ONE ENTRY EACH per the decision queue's rule: `DEC-260810134914`** (copy the attached `.pgtp` at accept time, or record `source_path` alone and let the existing copier run on first open) **and `DEC-260810134915`** (whether the quality section may be left unverified, or blank). **⚠ AMENDED THE SAME DAY — every cost this row originally attributed to the copy question was FALSIFIED against the code, and the corrected framing is what the entries now rest on.** (a) *"a file write on the accept path of a dialog that today only writes `settings.json`"* is **wrong**: `create_project` (`:308-324`) already `mkdir`s, `save_settings`es **and calls `_provision_sandbox`, which CREATES A DATABASE**, all unguarded on accept — and its own comment supplies the mitigation pattern, the sandbox going **last** *"so a failed sandbox never costs the user the project (§18's tier-2 degrade)"*. (b) **Deferral as originally described is IMPOSSIBLE, not merely costly:** `link_pgtp_if_needed` opens with `if self._settings.pgtp.working_copy_path: return` (`:672-673`) and is **the only code in the tree that writes a working copy**, so recording a path at accept is **precisely what disables the copier permanently** — the copy would never happen. Deferral can only mean recording `source_path` alone, a *different and weaker* proposal that leaves the link partial and the first-load checksum comparison with nothing to compare. **That guard must not be relaxed to invent a third option** — it is what makes *"never silently relinked"* true. (c) Two facts were missing from the quality question and change what a gate buys: **`refresh_target_connection_status` (`:575-612`) already re-probes the target with a real `SELECT 1` on EVERY project open**, and already reasons that *"a host-less profile has not failed — it has not been tried"*, so gating accept buys **earliness, not detection**; and **`connection_from_tree` returns `password=""` unconditionally** (`db/config.py:63-69`), so *"fully populated"* was never an achievable bar. **The rule this records for every future filing: verify the COSTS in an owner decision as carefully as the options, because a decision weighed against a cost that does not exist is worse than an undecided one** |
+| 2026-08-10 *(later pass)* | **The 2026-08-10 DEC-015 row above and §27's banner**: the per-chord consequences are *"IN FLIGHT and deliberately NOT asserted"*, `docs/KEYBINDINGS.md` *"does not exist yet"*, and §27's `Ctrl+Shift+Z` row marked **superseded-in-design, pending implementation** | **ALL THREE LANDED (`a9efb67`) AND §27 NOW ASSERTS THEM.** `Ctrl+Y` is bound by the app on both platforms; `Ctrl+Shift+Z` is freed from redo and classified **`CLAIMED_NOT_UNDO_REDO`** in `shortcut_registry.EDITOR_UNDO_REDO_CHORDS`, intercepted by **all six** editing surfaces so Qt's native redo — bound under `KB_Win` **and** `KB_X11` — cannot fire; and **the `Alt+Backspace` / `Alt+Shift+Backspace` pair is SUPPRESSED on both platforms**, the call DEC-014 had left open, with the reason recorded: they are Windows-only spellings in **no menu, no manual page and no shortcut table**, so binding them on Linux would be *inventing* a keybinding rather than honouring a convention. The one matcher is `code_editor.classify_undo_redo_chord`, which **classifies rather than returning a boolean** and takes **no per-surface parameter** (per-surface variation is how BUG-053 happened), and **every non-`None` answer must be consumed including the two that run nothing** — falling through hands the key back to Qt's per-platform table. `docs/KEYBINDINGS.md` **exists**, with a measured per-scheme Appendix A and five recorded *Known gaps*, and is verified by `tests/test_keybindings_ledger.py` whose **Reserved column is a set equality against `RESERVED_SEQUENCES`** — so **a reserved-set change ships with its ledger row in the same commit**, an equality that already caught `Ctrl+Shift+R` missing a row. §27's reserved table gains rows for `Ctrl+Shift+Z`, the `Alt+Backspace` pair and `Ctrl+Shift+R`, and its *"transcribed from this section"* framing is retired |
+| 2026-08-10 *(later pass)* | §8's DEC-012 bullet, §18.4's status banner, §26's Format-Selection parenthetical and §27's `Ctrl+Alt+F` row: **the context-menu `Format Selection` item exists on the DDL object tab ONLY**, filed as **BUG-063, OPEN**, each site carrying *"restore this to 'both' when BUG-063 lands"* | **BUG-063 IS RESOLVED (`a9efb67`) AND ALL FOUR SITES ARE RESTORED TO "BOTH".** `SqlConsolePanel` builds a context menu over `self.editor.createStandardContextMenu()` and adds the verbatim `Format Selection` item wired to `self.format_selection`; both in-code comments that justified the chord as DEC-009's family *"which has no menu command at all"* are fixed. **The trap the filing named was honoured and is now pinned rather than trusted:** the new `QAction` carries **no `setShortcut`**, and `tests/ui/test_sql_console_panel.py` asserts `action.shortcut().isEmpty()`, so the panel's `QShortcut` remains the chord's sole keyboard host and the fix did not reintroduce the DEC-004/BUG-046 double-hosting defect it existed to honour. **Recorded as a row rather than a quiet edit because it is the intended life-cycle of a spec-right/code-wrong finding:** the spec asserted a user-visible command that did not exist, the finding was **filed instead of written away** on the ground that DEC-012's *a context-menu entry IS a command* ruling rests on that command form existing, and the code moved to the spec |
+| 2026-08-10 *(later pass)* | §26's History bullet: **`Undo (Ctrl+Z)` / `Redo (Ctrl+Y)`** as the menu's two entries, ids `history.undo` / `history.redo` | **BUG-064 (RESOLVED `a9efb67`): the entries are `Undo Project Edit` / `Redo Project Edit` and carry NO SHORTCUT AT ALL** (`tests/ui/test_history_wiring.py` asserts both are empty), ids `history.undo-project-edit` / `history.redo-project-edit` through **`RENAMED_ID_ALIASES`** in the same commit. **The old bullet was wrong on both counts and the second was the harmful one** — it made the window-scoped chords read as menu bindings a user could move through `Customize Shortcuts…`, when they are reserved. **The ruling's reason is what makes the rename right rather than cosmetic:** these are **two different commands sharing a name**, not one command hosted twice — the History entry is *"an explicit, deliberate click that means 'undo the project', wherever the user is"*, while `Ctrl+Z`/`Ctrl+Y` act on whichever surface has focus — so they were **named apart rather than merged**, and `RESERVED_SEQUENCES`' reasons for both chords now say in so many words that the project-wide command *is* `History ▸ Undo Project Edit` and *is* rebindable, so a refusal message tells the user which command can actually move |
+| 2026-08-10 | §8's `Select` menu as **three** entries, with **`Select Parent Block` XML-only, hidden on every `CodeEditor` tab, stateless, and one parent walk per press** — and no shrink of any kind anywhere in the app | **FQ-034 FOLDED IN AS TARGET DESIGN (NOT YET BUILT): a FOUR-entry `Select` menu with a repeatable structural ladder and a shrink counterpart.** `Select Parent Block` becomes **`Expand Selection`** (`select.select-parent-block` → `select.expand-selection`, needing a `RENAMED_ID_ALIASES` row in the same commit — the label *is* the id's last segment), gains an expansion **stack**, and is extended to the SQL editors; a new **`Shrink Selection`** entry answers `Ctrl+Shift+Z`. **The feature is THREE parts, not one, and the queue entry's *"make the existing `Ctrl+Shift+A` repeatable"* framing hides two of them:** the chord **does not exist on any `CodeEditor` tab** today (the action is hidden there, which kills the shortcut), and XML's walk is **stateless**, which is what makes shrink impossible until the stack exists. **The DEC-012 reconciliation is the subtlest thing in it and is asymmetric on purpose:** grow stays a rebindable `QAction` with `setShortcut`, because `QPlainTextEdit` is **measured** not to claim `Ctrl+Shift+A` on either scheme; shrink's `QAction` carries **no shortcut at all**, because `Ctrl+Shift+Z` is already **claimed and intercepted by all six editing surfaces** (`CLAIMED_NOT_UNDO_REDO`) so Qt's native redo cannot fire — FQ-034 **gives that existing claim an answer** rather than binding the chord afresh, delegating from every surface to **one** `shrink_structural_selection`, pinned by a test. **The stated price, recorded so it is not re-discovered as a bug: the pair is not symmetrically rebindable** — grow can be moved, shrink cannot, which is the direct consequence of the owner's choice of a chord Qt claims natively, taken for the mnemonic pairing. **The span model is Qt-free in `sql/`: `blocks.py`** (the block-balance rules **lifted out of `formatter.py`**, which re-aliases them as the same objects — exactly FQ-033's `CLAUSE_STARTERS` move — with a test asserting the span model and the reindenter agree on §18.4's adversarial corpus, because that agreement is the whole anti-fork mandate) **and `block_spans.py`** (`structure_chain(text, pos)` → a smallest-to-largest chain of `StructureSpan{kind, inner, outer, depth}`). **The interface returns a CHAIN, not a `next_larger(selection)`**, because FQ-032's deferred vim text objects need *"the span of kind K at the caret"* and the `i`/`a` inner-outer distinction — derivable from a chain, not from a step function, and shaping the model for the ladder alone is how a second caller ends up with a second walk. **Four queue-entry statements corrected:** *"`Ctrl+Shift+A` is free on code tabs"* is true only because the action is hidden (so this is a rename and a capability gate, not a chord to claim); *"wire in `ui/code_editor.py::enclosing_bracket_span`"* is **impossible** — `sql/` may not import `ui/` — so the paren rung is token-level inside `block_spans.py`, which is also the better answer since the character-level helper counts brackets inside literals; the specification belongs in **§8, not §18.9** (§18.9 is FQ-030's completed section, and splitting the design would put the DEC-012 reconciliation in neither — §8 already documents the Qt-free `ui/xml_structure.py` scanner beside the XML selection it powers); and **`Ctrl+Shift+B` is NOT absorbed** into the ladder (it is a live menu command with stored user rebindings and a second host in `CodeEditorDialog`, and it also serves PHP/JS where no SQL tokenizer exists). **Open question 1 is ANSWERED — shrink is `Ctrl+Shift+Z`** (owner, via DEC-015, which freed it); questions 2 and 4 are settled in §8; **two genuinely open items go to §29**, not into the body: what shrink does with no stack, and the boundary of the *clause* and *parameter* rungs |
 
 ---
 
 ## 29. Open questions
+
+**From FQ-034 (2026-08-10) — two items, both flagged rather than decided because the answer is a product
+call and the feature is unblocked without it (§8):**
+
+- **What does `Shrink Selection` do when the selection was NOT produced by a grow?** The expansion stack is
+  empty after a mouse drag, after any edit (the stack is invalidated by a document revision change), and on
+  the first press. Two candidates, genuinely different products: **(a)** shrink is a **no-op or a stated
+  refusal** — the conservative reading, and consistent with `Select Parent Block`'s existing no-op at the
+  document root; **(b)** shrink **derives** the largest `structure_chain` member lying strictly inside the
+  current selection, which is what expand-region implementations elsewhere do and which makes the chord
+  useful straight after a mouse selection. **The usual tie-breaker does not apply**, and that is why this is
+  an owner call rather than one the spec may make: *never a silent wrong result* is about **destroying
+  work**, and (b) replaces a *selection*, not text. Both paths are identical once a stack exists, so parts 1
+  and 2 of FQ-034 can ship before this is answered.
+- **The exact boundary of the *clause* and *parameter* rungs.** The owner's request names the bottom rung
+  *"the parameter/word we're on"*, and the ladder folds those into one. Undecided: whether a **whole
+  parameter declaration** in a routine signature (`p_id integer DEFAULT 0` — name, type and default as one
+  unit) is its own rung between *word* and *paren group*; and whether a **clause** rung exists at all for
+  plpgsql *statements* that have no SQL clause starters in them (`RAISE NOTICE …`, an assignment), where
+  rung 3 would either collapse into rung 4 or select something arbitrary. A rung that sometimes selects
+  nothing new is worse than one rung fewer — the user presses again and cannot tell whether the ladder
+  advanced.
 
 **From the 2026-08-07 UX-review batch (FQ-010 – FQ-017).** These are genuinely undecided, not
 unrecorded — nothing below was invented in the body above:
