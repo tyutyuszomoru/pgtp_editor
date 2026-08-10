@@ -6231,6 +6231,13 @@ Passing a `StandardKey` (not a spelled chord) makes these `QShortcut`s answer **
 
 **Spec impact:** flag for `spec-maintainer` after the fix lands — do not edit the spec here. §27's reserved-key table (`CONSOLIDATED_SPEC.md:10804`) and the FQ-012 Ledger row (`:10968`) both state the clipboard stance as exactly *"`Ctrl+C` · `Ctrl+X` · `Ctrl+V` | Qt built-ins **inside** the editor widgets"*; that sentence needs widening to the uniform native set (`Shift+Ins`, `Ctrl+Ins`, `Shift+Del`) and, once Part 2 is ruled, a stated answer for `Ctrl+Shift+Ins` and the `F16`/`F18`/`F20` trio alongside the existing `Alt+Backspace` reasoning. `manual.md` needs `manual-maintainer` at `:302`, `:992`, `:3786`, `:3903` (the caption-grid row, if its chords change) and `:4163` (the non-rebindable table, which must gain the newly reserved chords). **Note for whoever picks this up:** `docs/KEYBINDINGS.md` — the standalone chord ledger referenced by `.claude/agents/bug-triager.md` — **does not exist in this checkout**; the de facto ledger is §27 plus `shortcut_registry.RESERVED_SEQUENCES` plus `tests/ui/test_shortcut_registry.py`. That gap is itself worth an entry, since the agent instructions direct triagers to a file that is not there.
 
+**Amendment (2026-08-10, the `docs/KEYBINDINGS.md` build sweep). Three corrections and one new obligation — this entry ABSORBS gaps 1 and the clipboard half of gap 5 from that ledger's Known-gaps list; do not file them again.**
+
+1. **`docs/KEYBINDINGS.md` now EXISTS**, with `tests/test_keybindings_ledger.py` asserting it against the code in both directions. The "does not exist in this checkout" note above is obsolete. **Consequence for this fix:** `test_keybindings_ledger.py::test_every_reserved_sequence_has_a_row_marked_reserved` asserts `RESERVED_SEQUENCES` and the ledger's **Reserved** column are the *same set*, so Part 1's three new rows (`Ctrl+Insert`, `Shift+Insert`, `Shift+Delete`) must flip that column to `yes` on `KEYBINDINGS.md:82`, `:83`, `:85` **in the same commit** or the suite reddens. Their Notes cells currently read "**Not reserved** — see [Known gaps]" and must be rewritten; Known gap 1 must be struck from `:164-171`. Note also that the ledger's canonical spelling is `Ctrl+Insert` / `Shift+Insert` / `Shift+Delete` (what `normalize_sequence` produces from `Ctrl+Ins`), and that `RESERVED_SEQUENCES` keys must be written in that canonical form — `test_every_chord_the_surfaces_intercept_is_a_reserved_sequence` (`tests/ui/test_shortcut_registry.py:318`) asserts `normalize_sequence(key) == key` for the editor-chord subset, and the ledger test normalizes both sides.
+2. **Root cause (c) understates the hole for `Ctrl+Insert` and `Shift+Insert`: they have a REAL app-owned host, not just Qt's built-in.** Measured 2026-08-10 on this checkout: `QShortcut(QKeySequence.StandardKey.Copy, table, slot).keys()` returns **`['Ctrl+C', 'Ctrl+Ins', 'Copy']`** — Qt 6's `StandardKey` constructor installs *every* chord of the standard key on the one `QShortcut`, not just the first. So `caption_management_panel.py:1080-1081` genuinely answers `Ctrl+Insert`, `Shift+Insert`, the `Copy`/`Paste` media keys (and on X11 `F16`/`F18`/`Ctrl+Shift+Ins`) today. That makes Part 1's reservation *not* merely a widening of a Qt-built-in stance: leaving `Ctrl+Insert` assignable puts a menu `QAction` against a live `QShortcut` in the same window, which is the two-enabled-shortcuts case where Qt fires **neither**. **Test gotcha, load-bearing:** assert with `shortcut.keys()`, never `shortcut.key()` — `key()` returns only `Ctrl+C` and hides the whole defect.
+3. **The `Ctrl+C`/`Ctrl+V` reason strings are separately wrong and are tracked as BUG-260810143057.** They say only *"a Qt built-in inside every editor widget"* while both also have that caption-grid `QShortcut` host. If Part 1 is implemented first, fold that entry's text change into the same edit of the same dict block rather than touching those rows twice.
+4. **Part 2 (owner call) is narrowed, and the rest of gap 5 is now filed separately.** `Ctrl+Shift+Insert` and `F16`/`F18`/`F20` remain exactly this entry's Part 2. The *non*-clipboard X11-only chords the sweep re-confirmed — **`F14`** (native Undo, bypasses the app's undo routing) and **`Ctrl+D`/`Ctrl+K`/`Ctrl+U`** — are now **BUG-260810143059**; do not pull them into this entry, they need a different mechanism (`EDITOR_UNDO_REDO_CHORDS`) and a different ruling.
+
 ---
 
 ## BUG-260810141459: the bundled curated XSD's content changed but its `v1.2` marker did not — bump to v1.3 in one commit
@@ -6275,5 +6282,190 @@ Gotchas:
 - **New case worth adding** (the one thing no test asserts today, and the reason this bug existed): a guard in `tests/schema_learning/test_storage.py` that the XML marker in `resources/curated.xsd` and `CURATED_BUNDLED_VERSION` **agree** — parse `v(\d+\.\d+)` out of the marker line and assert it equals the constant. Without it, the next curation can once again move one and not the other, and only a human reading two files would notice. This is the structural fix; the two literal bumps are just today's values.
 
 **Spec impact:** None outstanding — this entry *implements* a ruling already folded into the spec. `CONSOLIDATED_SPEC.md` §11 (`:3280`, `:3288-3309`) states the governing rule ("the version marker is the SCHEMA's identity, not the app's release counter — any content change to the bundled `curated.xsd` bumps it"), enumerates the same six sites, and carries the 2026-08-10 Supersession Ledger row (`:11287`). The spec text at `:3280` currently notes parenthetically that *"the code still says `1.2` as this is written"* — **once this lands, that parenthetical is stale and should be dropped**; flag for `spec-maintainer` after the fix commit, and do not edit the spec from the fix pass. §29's upgrade question (`:11421-11426`) stays **OPEN** with its precondition now satisfied.
+
+---
+
+## BUG-260810143056: three caption-panel shortcuts are window-scoped by accident, contained only by an untested invariant
+**Status:** OPEN
+**Reported:** 2026-08-10
+**Report (verbatim):** "Three shortcuts rely on Qt's implicit `WindowShortcut`. `caption_management_panel.py` sets `WidgetWithChildrenShortcut` on its `Ctrl+F`/`Ctrl+R` pair but **not** on `StandardKey.Copy`, `StandardKey.Paste` or `Ctrl+G` on the same panel. Measured: `Ctrl+G` fires from inside that panel's Find field. It is contained today only because a hidden `CenterStage` tab page's shortcuts do not fire — also measured, but an **unstated, untested invariant**. That is BUG-048's shape: correct behaviour resting on something nothing asserts."
+
+**Root cause:** `pgtp_editor/ui/caption_management_panel.py:1080-1082`, in the panel's construction:
+
+```python
+QShortcut(QKeySequence.StandardKey.Copy, self._table, self.copy_selection)
+QShortcut(QKeySequence.StandardKey.Paste, self._table, self.paste_into_new_value)
+QShortcut(QKeySequence("Ctrl+G"), self._table, self.go_to_line_current)
+```
+
+None of the three calls `setContext(...)`, so all three take Qt's default, `Qt.ShortcutContext.WindowShortcut` — **measured on this checkout** (each shortcut's `context()` printed after constructing the panel):
+
+| Shortcut | parent | context |
+|---|---|---|
+| `Ctrl+C` (`StandardKey.Copy`) | `QTableView` | `WindowShortcut` |
+| `Ctrl+V` (`StandardKey.Paste`) | `QTableView` | `WindowShortcut` |
+| `Ctrl+G` | `QTableView` | `WindowShortcut` |
+| `Ctrl+F` | `CaptionManagementPanel` | `WidgetWithChildrenShortcut` |
+| `Ctrl+R` | `CaptionManagementPanel` | `WidgetWithChildrenShortcut` |
+
+The last two rows are the pattern being violated: `caption_management_panel.py:1091-1098` sets the context explicitly on its own Find/Replace pair (and `find_replace_bar.install_focus_shortcuts` does the same at its six sites), precisely because a window-scoped focus shortcut would be ambiguous against the per-tab ones. The Copy/Paste/`Ctrl+G` trio predates that care and never got it.
+
+Two aggravating facts, both verified here:
+
+- **The `StandardKey` constructor installs every chord of the standard key on one `QShortcut`.** `QShortcut(StandardKey.Copy, ...).keys()` returns `['Ctrl+C', 'Ctrl+Ins', 'Copy']` (measured). So the window-scoped reach is not one chord each but the whole family — three window-scoped chords for Copy, three-to-five for Paste depending on the platform scheme. (`.key()` returns only `Ctrl+C`, which is why this reads as innocuous.)
+- **The containment is exactly the report's diagnosis.** `center_stage.py:255-257` adds the panel as a tab page and `:335`/`:604` call `setTabVisible(self.caption_management_tab_index, False)`; a `WindowShortcut` whose parent widget is not visible does not fire. Nothing in `tests/` asserts that, so the day the panel is shown alongside another tab (a split view, a dock, a detached window — all live directions in §12/§18) `Ctrl+G` and the clipboard family start firing from wherever focus happens to be in the window. `Ctrl+G` already fires from inside the panel's own Find field today, which is the visible tip of it.
+
+**Gate.** `Ctrl+G` is `DEC-012`: it has a command form — the click-only *Go to line in XML* context-menu entry on the same panel — so it gets **exactly one** keyboard host, and this `QShortcut` is it. That is satisfied already and must stay satisfied: **do not add a second host** while narrowing the scope. `Ctrl+C`/`Ctrl+V` are `Qt` + `DEC-009` (no command form; the Edit menu's Cut/Copy/Paste stubs were deleted under FQ-016). All three chords are already in `RESERVED_SEQUENCES`, so this fix does **not** change the reserved set and does not touch the ledger's Reserved column.
+
+**Proposed fix:** in `pgtp_editor/ui/caption_management_panel.py`, at the same construction site, state the scope on all three — keep the parents, keep the `QShortcut(seq, parent, slot)` shape, add nothing else:
+
+- `StandardKey.Copy` and `StandardKey.Paste`: parent stays `self._table`, add `.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)`. Correct scope because both slots act on the **grid's** selection (`copy_selection`, `paste_into_new_value` write `newValue` cells) — a copy fired while focus is in the Find field would silently copy the grid selection instead of the field's text, which is the current behaviour and is wrong.
+- `Ctrl+G`: parent it to **`self`** (the panel) rather than `self._table` and set `WidgetWithChildrenShortcut`, i.e. exactly the shape of the `Ctrl+F`/`Ctrl+R` pair three lines below. This **deliberately preserves** the measured behaviour that `Ctrl+G` works from inside the panel's Find field — that is useful (find a caption, jump to its line) and it becomes *stated and tested* instead of an accident of window scope. Say so in a comment; a later reader must not "tidy" it down to the table.
+
+Gotchas:
+
+- **Keep a Python reference or a C++ parent for every `QShortcut`.** These three currently survive only because they are parented to `self._table`; if the `Ctrl+G` one is reparented to `self`, that is still a C++ parent and fine, but do not restructure into a bare local with no parent (`code_editor.py:990-996` documents this exact GC trap for `Ctrl+Shift+B`).
+- **Do not "fix" this by narrowing to `WidgetShortcut`.** The grid is a `QTableView` with an editing delegate; `WidgetShortcut` would die the moment a cell editor takes focus.
+- **Do not solve it by relying on the hidden-tab behaviour** — the point of the entry is to stop resting on it.
+- Import note: `Qt` is already imported in this module (used at `:1005` for `ContextMenuPolicy`), so no new import is needed.
+
+**Test impact:**
+
+- `tests/ui/test_caption_management_panel.py` — **extend, do not add a file.** `test_panel_owns_panel_scoped_focus_shortcuts_for_ctrl_f_and_ctrl_r` (`:1427`) is the precedent to copy verbatim in shape: walk `panel.findChildren(QShortcut)` and assert each one's `context()`. New cases: (1) every `QShortcut` the panel owns states a non-`WindowShortcut` context — write it as a loop over `findChildren(QShortcut)` with no allow-list, so a fourth window-scoped shortcut added later fails immediately; (2) `Ctrl+G` still reaches `go_to_line_current` with focus in the panel's Find field (the deliberately preserved behaviour), patching the slot; (3) Copy fires with focus in the grid and **not** with focus in the Find field. Existing behaviour cases at `:340-410` (`test_go_to_line_invokes_callback_with_row_line`, `test_copy_selection_produces_tsv`, the paste trio) call the slots directly and are unaffected.
+- **Assert `keys()`, not `key()`,** anywhere the `StandardKey` shortcuts are inspected — `key()` reports only `Ctrl+C` and would hide both this bug and BUG-260810140553's.
+- `QShortcut` does activate under `QT_QPA_PLATFORM=offscreen` provided the top level has been `show()`n (measured, BUG-056); `qtbot.addWidget` + `panel.show()` is enough here.
+- `tests/test_keybindings_ledger.py` — no assertion changes, but `docs/KEYBINDINGS.md` rows `:71` (`Ctrl+C`), `:73` (`Ctrl+G`), `:78` (`Ctrl+V`) each say *"implicit `WindowShortcut` (see Known gaps)"* in their Notes, and Known gap 2 (`:172-179`) must be struck. Update them in the same commit — the ledger's prose is not test-enforced, so nothing will catch it going stale.
+
+**Spec impact:** none for the *rule* — DEC-009/DEC-012 and §27 already require a stated scope, so this is code catching up to recorded design, not a divergence. After the fix, flag for `spec-maintainer` only if §12's caption-grid section names the chords' scope (it should now state grid-scoped Copy/Paste and panel-scoped `Ctrl+G`). `manual.md` documents the caption grid's chords around `:3903`; `manual-maintainer` should confirm the *"from the Find field"* nuance for `Ctrl+G` matches what ships.
+
+---
+
+## BUG-260810143057: the reserved-key reasons for `Ctrl+C`/`Ctrl+V` misdescribe why — user-facing text that omits the real host
+**Status:** OPEN
+**Reported:** 2026-08-10
+**Report (verbatim):** "`RESERVED_SEQUENCES`' reasons for `Ctrl+C`/`Ctrl+V` are incomplete. Both say *"a Qt built-in inside every editor widget"*; both **also** have a real `QShortcut` host. That string is what the user is shown when the dialog refuses the key, so it is user-facing text that misdescribes why."
+
+**Root cause:** `pgtp_editor/ui/shortcut_registry.py:307-309`:
+
+```python
+"Ctrl+C": "Copy — a Qt built-in inside every editor widget (§26/§27)",
+"Ctrl+X": "Cut — a Qt built-in inside every editor widget (§26/§27)",
+"Ctrl+V": "Paste — a Qt built-in inside every editor widget (§26/§27)",
+```
+
+These strings are not comments: `refusal_for()` (`:454-472`) interpolates them into the message the Customize Shortcuts dialog shows when it refuses a key, and `RESERVED_BINDINGS` (`:382-385`) turns each into the greyed row's *reason* column — FQ-012 settled decision 1 chose read-only reserved rows precisely so the user is told **why**. For `Ctrl+C` and `Ctrl+V` the stated why is incomplete: besides Qt's widget built-in there is a real, app-owned host — `caption_management_panel.py:1080-1081` binds `StandardKey.Copy`/`StandardKey.Paste` on the caption grid to `copy_selection`/`paste_into_new_value`. `Ctrl+X` is **not** affected: nothing in the app hosts a Cut shortcut, so its string is accurate and must not be changed for symmetry.
+
+The precedent that this class of string gets fixed rather than tolerated is `Ctrl+Alt+F`: `tests/ui/test_shortcut_registry.py:388` (`test_the_format_selection_reason_names_its_shortcut_hosts`) exists because that reason *"used to say only 'a context-menu command'"* while the chord additionally had `QShortcut` hosts. Same defect, same remedy.
+
+**Proposed fix:** in `pgtp_editor/ui/shortcut_registry.py`, rewrite only the `Ctrl+C` and `Ctrl+V` values so each names **both** hosts and keeps the consequence sentence that already justifies the reservation. Shape (wording is the implementer's, these two facts are not):
+
+- `Ctrl+C`: *"Copy — Qt's built-in inside every editor widget, **and** a shortcut on the Caption Management grid (§26/§27)"*.
+- `Ctrl+V`: *"Paste — Qt's built-in inside every editor widget, **and** a shortcut on the Caption Management grid; the Raw XML editor also refuses it with the read-only hint in Caption Mode (§26/§27)"*.
+
+Gotchas:
+
+- **Keep the `(§26/§27)` citation suffix** — every value in the dict carries one and the reader/tests rely on the shape.
+- **Leave `Ctrl+X` alone** and leave the block comment at `:303-306` (which explains the FQ-016 stub deletion) intact; it is still the origin of the reservation.
+- **Do not merge the two rows into one clipboard statement.** DEC-014's "two operations, two reasons" rule is asserted for `Ctrl+Z`/`Ctrl+Y` (`tests/ui/test_shortcut_registry.py:360`) and applies here for the same reason — Copy and Paste are different operations with different surfaces.
+- **Sequencing:** BUG-260810140553's Part 1 adds `Ctrl+Insert`/`Shift+Insert`/`Shift+Delete` rows to this same block, and those new rows' reasons should be written in the shape this entry establishes. If both are implemented in one pass, edit the block once. If this one lands first, its wording is the template.
+
+**Test impact:**
+
+- `tests/ui/test_shortcut_registry.py` — **extend**. Copy the shape of `test_the_format_selection_reason_names_its_shortcut_hosts` (`:388`) into a new case asserting the `Ctrl+C` and `Ctrl+V` reasons each mention the caption grid **and** the widget built-in, and that `RESERVED_SEQUENCES["Ctrl+C"] != RESERVED_SEQUENCES["Ctrl+V"]`. `test_reserved_sequences_encode_what_section_27_pins` (`:127`) only asserts non-empty reasons and needs no change.
+- `tests/ui/test_customize_shortcuts_dialog.py` — check whether any case asserts a reserved reason string literally before editing (the dialog renders these); it is the other consumer.
+- No change to `tests/test_keybindings_ledger.py`: the Reserved **set** is untouched, and the ledger's own Notes for `:71`/`:78` already name the caption-grid host correctly (the ledger is *ahead* of the code here — which is the tell that this is a real gap, not a documentation preference).
+
+**Spec impact:** §27's reserved-key table states the clipboard stance as *"`Ctrl+C` · `Ctrl+X` · `Ctrl+V` | Qt built-ins **inside** the editor widgets"* (`CONSOLIDATED_SPEC.md:10804`, and the FQ-012 Ledger row at `:10968`) — the same omission, in the source the code was transcribed from. Flag for `spec-maintainer` after the fix lands; do not edit the spec from the fix pass. `manual.md:4163`'s non-rebindable table has the same row and needs `manual-maintainer`.
+
+---
+
+## BUG-260810143058: `Ctrl+W` is dead-but-unreserved — and the ledger, the manual and the code disagree about whether that is a bug
+**Status:** OPEN
+**Reported:** 2026-08-10
+**Report (verbatim):** "`Ctrl+W` is dead but unreserved. It was unbound app-wide on 2026-08-09 for the same reason as `Ctrl+S`, but only `Ctrl+S`/`Ctrl+Shift+S` were written into `RESERVED_SEQUENCES` — so `Customize Shortcuts…` can quietly reverse a deliberate decision."
+
+**Root cause — and the finding is that the report's premise does not hold: `Ctrl+W` was NOT unbound for the same reason as `Ctrl+S`, and the app currently states, in the manual, that it is deliberately free to assign.** Verified in three places:
+
+- `pgtp_editor/ui/shortcut_registry.py:204-212` reserves `Ctrl+S`/`Ctrl+Shift+S` with the reason *"deliberately unbound app-wide — every save is a named Deployment menu click (§27)"*. That is a **capability** decision (FQ-020: there is no save gesture anywhere, so no command may ever sit on those chords).
+- `pgtp_editor/ui/main_window.py:3068-3073`, at `close_action = menu.addAction("Close")`, gives a **different** reason: *"NO `Ctrl+W` (owner decision, 2026-08-09), for the same reason `Ctrl+O` lost its binding: this app closes projects, `.pgtp` documents, PHP tabs, DDL object tabs, the XSD tab and console tabs, so one `Ctrl+W` has to pick which 'close' it means — and the one it meant was the rarest, closing the whole project."* That is a **default-binding** decision: the chord is ambiguous *as a default*, not forbidden.
+- `pgtp_editor/resources/manual.md:3850` states the consequence to the user outright: *"**Ctrl+O** / **Ctrl+W** — **Nothing.** Both were unbound rather than moved, and both are free for you to assign (see below)"*, and `:4066` expands it (*"Ctrl+W is in exactly the same position"* as `Ctrl+O`). `tests/ui/test_launcher_dialog.py:627` records the same pairing.
+
+So `Ctrl+W` is unreserved **on purpose**, paired with `Ctrl+O` — which is also unreserved, and which the ledger's Known gap 4 does not mention at all. Reserving `Ctrl+W` alone would (a) contradict a documented invitation to the user, and (b) split a deliberately symmetric pair. `RESERVED_SEQUENCES`' own docstring (`:190-201`) draws exactly this line: reserved means *"something the dialog does not own already answers it (or the spec pins it as deliberately dead)"* — and nothing answers `Ctrl+W`, while "pinned dead" is a stronger claim than the 2026-08-09 decision made.
+
+**Two things ARE wrong, and they are both documentation:**
+
+1. **Known gap 4 in `docs/KEYBINDINGS.md:184-187` is itself incorrect** — it asserts the `Ctrl+S` rationale for `Ctrl+W` and calls the non-reservation an oversight. The ledger's machine-checked columns are right (`:116` says Reserved `no`, matching the code); only its prose is wrong, and prose is the part no test covers. The `Ctrl+W` row's *gate* token is also arguable: `dead` reads as "deliberately answered by nothing, app-wide" — true for `Ctrl+S`, but `Ctrl+W` is "no default, freely assignable", which the gate vocabulary at `:47-57` has no token for.
+2. **`pgtp_editor/ui/main_window.py:3074-3077` is stale.** It says *"This does NOT touch `CodeEditorDialog`'s own `Ctrl+W`, which is a dialog-local Cancel bound as a `QShortcut`"* — but `code_editor.py:979-985` removed exactly that (*"NO `Ctrl+S` / `Ctrl+W` (owner decision, 2026-08-09) — this dialog was the last carve-out for either chord"*), and `manual.md:3978` agrees the dialog no longer answers them. Grepped: no `Ctrl+W` binding exists anywhere in `pgtp_editor/`. So the comment describes a shortcut that does not exist and would send the next reader looking for it.
+
+**Proposed fix — the code change is a comment, and the direction needs a ruling. OWNER CALL, do not decide it in an implementation pass.**
+
+The question, self-contained: **is `Ctrl+W` (and `Ctrl+O`) "pinned dead like `Ctrl+S`" or "no default, yours to assign"?** They cannot be both, and the app currently ships the second answer while the ledger claims the first.
+
+- **Recommendation: keep them assignable** (i.e. no change to `RESERVED_SEQUENCES`). The 2026-08-09 reason was that no single "close" is the obvious default — that is an argument against a *default*, not against a user who knows which close they want. `Ctrl+S` is different in kind: FQ-020 removed the *capability* of a save gesture, so a command on `Ctrl+S` would contradict the design rather than exercise it. Reserving `Ctrl+W` would also cost the customize dialog two of the handful of genuinely free, conventional chords it can offer.
+- **If the owner instead rules "pinned dead":** then `Ctrl+O` must be reserved in the same commit (the pair is stated as symmetric in two places), both reasons must say *which* decision pins them (2026-08-09, ambiguous-close), `manual.md:3850` and `:4066` must be rewritten by `manual-maintainer` because they currently invite the opposite, and `KEYBINDINGS.md:116` needs a new `Ctrl+O` row plus a Reserved flip on both.
+
+**Regardless of the ruling, two edits are unblocked and should just be made:**
+
+- `pgtp_editor/ui/main_window.py:3074-3077`: delete or correct the stale `CodeEditorDialog`-owns-`Ctrl+W` paragraph, replacing it with a pointer to `code_editor.py:979-985` (the dialog's carve-out was removed the same day). Nothing functional changes.
+- `docs/KEYBINDINGS.md`: Known gap 4 must be rewritten to record the *actual* position — unbound with no default, deliberately assignable, paired with `Ctrl+O` — or struck and folded into the `Ctrl+W` row's Notes, with a `Ctrl+O` row added for the twin. **Not this triager's edit** (the ledger is outside my write scope) and not a code fix; whoever resolves this entry owns it.
+
+**Test impact:**
+
+- `tests/ui/test_shortcut_registry.py` — if the recommendation stands, add a case that **pins the distinction** so the next sweep does not re-file this: `"Ctrl+W" not in RESERVED_SEQUENCES and "Ctrl+O" not in RESERVED_SEQUENCES`, with the docstring carrying the reason (no default because "close" is ambiguous; not a capability ban like `Ctrl+S`), sitting next to `test_reserved_sequences_encode_what_section_27_pins` (`:127`). An unreserved-on-purpose chord needs an assertion exactly as much as a reserved one — that asymmetry is why this reached the queue. Note `test_reserved_lookup_is_spelling_insensitive` (`:150`) already relies on an unreserved chord (`reserved_reason("Ctrl+U") is None`).
+- `tests/ui/test_customize_shortcuts_dialog.py:20`, `:99`, `:122`, `:159`, `:219` and `tests/ui/test_shortcut_registry.py:32`, `:95`, `:102`, `:118`, `:216` all use `CommandBinding("file.close", …, "Ctrl+W")` as a **fixture default** and assign/steal it freely. If the owner rules "reserve", every one of those becomes a refusal and the fixtures must change chord — that blast radius is itself an argument for the recommendation, and whoever files the decision should say so.
+- `tests/ui/test_menus.py:49` asserts `"Close": ""` (no shortcut on the action) — unaffected either way, and it is the assertion that keeps the *default* unbound. **That file is in a conflicted (`UU`) state in the working tree; re-read before touching it.**
+- `tests/test_keybindings_ledger.py` — `test_rows_claiming_a_chord_is_dead_are_bound_by_nothing` (`:640`) covers the `Ctrl+W` row today and stays green under the recommendation. Under "reserve", `test_every_reserved_sequence_has_a_row_marked_reserved` (`:508`) forces the ledger flip in the same commit.
+
+**Spec impact:** likely a real gap. §27 pins `Ctrl+S`/`Ctrl+Shift+S` as deliberately dead; whether it states the weaker `Ctrl+O`/`Ctrl+W` position ("no default, assignable") needs checking, and if it does not, that omission is what let the ledger sweep read them as the same case. Flag for `spec-maintainer` once the ruling lands — the spec should carry **both** categories with the distinction named, since the queue has now spent one triage pass rediscovering it.
+
+---
+
+## BUG-260810143059: Qt's Linux-only editing chords reach the editors unfiltered — `F14` bypasses the app's undo routing, `Ctrl+D`/`Ctrl+K`/`Ctrl+U` are live on one platform only
+**Status:** OPEN
+**Reported:** 2026-08-10
+**Report (verbatim):** "Qt's Linux-only chords reach the editors unfiltered. The KDE scheme binds `F14` (Undo), `F16`/`F18`/`F20`, `Ctrl+Shift+Insert`, `Ctrl+D`, `Ctrl+K` and `Ctrl+U` inside every text widget where Windows binds nothing. **`F14`'s native undo bypasses the app's undo routing entirely** — a correctness gap, though no keyboard in use has an F13–F20 block. `Ctrl+D`/`Ctrl+K`/`Ctrl+U` are reachable today and simply do nothing on Windows."
+
+**Scope — read this first.** The clipboard half of the report (`Ctrl+Shift+Insert`, `F16`, `F18`, `F20`) belongs to **BUG-260810140553** and is its Part 2; that entry has the measured clipboard table and the framing for the ruling. **This entry is the remainder: `F14` (Undo) and `Ctrl+D`/`Ctrl+K`/`Ctrl+U`.** They are split off deliberately — a different mechanism (`EDITOR_UNDO_REDO_CHORDS` rather than the caption grid's `StandardKey` hosts) and, for `Ctrl+D`/`Ctrl+K`/`Ctrl+U`, a different question (plain editing keys, not a command family).
+
+**Root cause:** nothing in the app filters these chords, and the platform asymmetry comes straight out of Qt's per-scheme table (measured; `docs/KEYBINDINGS.md` Appendix A `:132-157` is the record, and its `test_appendix_a_matches_the_running_keyboard_scheme` re-measures the running scheme):
+
+| `StandardKey` | Windows scheme | Linux/KDE scheme | Effect of the app's silence |
+|---|---|---|---|
+| `Undo` | `Ctrl+Z`, `Alt+Backspace`, `Undo` | `Ctrl+Z`, **`F14`**, `Undo` | `F14` runs `QPlainTextEdit`'s **native** undo on Linux |
+| `Delete` | `Delete` | `Delete`, **`Ctrl+D`** | deletes a character on Linux, nothing on Windows |
+| `DeleteEndOfLine` | *(nothing)* | **`Ctrl+K`** | deletes to end of line on Linux, nothing on Windows |
+| `DeleteCompleteLine` | *(nothing)* | **`Ctrl+U`** | deletes the line on Linux, nothing on Windows |
+
+(a) **`F14` is the correctness gap, and it is BUG-056's defect exactly.** `shortcut_registry.EDITOR_UNDO_REDO_CHORDS` (`:356-362`) lists five chords — `Ctrl+Z`, `Ctrl+Y`, `Ctrl+Shift+Z`, `Alt+Backspace`, `Alt+Shift+Backspace` — and `code_editor.classify_undo_redo_chord` (`code_editor.py:114-131`) is the single matcher every editing surface consults (six call sites: `code_editor.py:1045`, `xml_editor.py:1210`, `php_file_tab.py:406`, `ddl_editor_panel.py:164`, `ddl_object_editor.py:916`, `sql_console_panel.py:610`). `F14` is not in that table, so on Linux it falls through to Qt and undoes the buffer **without** the routing DEC-014 exists to guarantee: no re-emission into the project's snapshot history, no read-only refusal in Caption Mode, no journal line. That is precisely what BUG-056 fixed for `Ctrl+Shift+Z` (which Qt binds as native Redo on both schemes and every surface now actively intercepts). Reachability is the only difference: no keyboard the owner uses has an `F13`…`F20` block, so this is a correctness gap rather than a live bug.
+
+(b) **`Ctrl+D`/`Ctrl+K`/`Ctrl+U` are the same platform split with a lower stake but a higher blast radius.** They are letter chords, so unlike the F-keys they are physically reachable on every keyboard: an editor on Linux deletes a character / to end of line / the whole line, and the identical keystroke on Windows does nothing. Nothing in the app binds them (grepped) and none is in `RESERVED_SEQUENCES`, so `Customize Shortcuts…` will hand any of the three to a menu command — which would then be **swallowed by every editor on Linux and work fine on Windows**, the nastiest shape available: a rebinding that works on one of the owner's two machines. BUG-260810140553 already flagged `Ctrl+D` as *"the highest-risk of the remaining splits"* for this reason.
+
+**Proposed fix — direction is an OWNER CALL, per family. Do not decide it in an implementation pass; the mechanism below is settled either way.**
+
+The rule (`CLAUDE.md`, owner 2026-08-10: a chord means the same thing on every system, so the app binds or suppresses on both) leaves two legal outcomes, and the two families do not obviously get the same one:
+
+- **`F14` — recommendation: SUPPRESS on both.** This is the `Alt+Backspace` case, not the `Ctrl+Shift+Insert` case: a legacy dedicated-key spelling with no presence in any menu, manual page or shortcut table, on a key essentially no keyboard in use has. Binding it on Windows would be *inventing* a keybinding; DEC-015 already settled one chord per operation (undo is `Ctrl+Z`, full stop). Suppressing also closes the routing bypass, which binding-as-undo would equally close — so the choice is between two correct answers, and suppression is the one consistent with the pair already suppressed for the same reason. **If the owner instead rules "bind it as undo everywhere"**, the only change is the operation constant (`UNDO` instead of `SUPPRESSED`); the mechanism is identical.
+- **`Ctrl+D`/`Ctrl+K`/`Ctrl+U` — genuinely open, and the two halves can be answered separately.** These are *editing behaviours*, not commands: Emacs/readline line-editing that a Linux user may well expect from muscle memory, and that BUG-260810140553's reasoning about `Ctrl+Shift+Insert` applies to ("live on Linux today; suppressing removes a working gesture"). Three outcomes are defensible: **suppress on both** (uniform, costs Linux users three working keys); **bind on both** (uniform, adds three real editing gestures on Windows — the most work, and it means the app owns delete-line behaviour it currently gets free); or **reserve-only** (accept the platform difference for a plain built-in editing key, but stop `Customize Shortcuts…` from handing the chord to a command — the split stays, the *silently-broken rebinding* goes away). **Recommendation: reserve-only as the floor, done regardless, and ask the owner only about suppress-vs-bind on top.** Reserving is cheap, purely subtractive and removes the one outcome that is unambiguously a bug.
+- **Note for whoever files the ruling:** `KEYBINDINGS.md:19-23` and its gate token `DEC-015` state the rule without a carve-out for physically-absent keys. If the owner wants such a carve-out (*"the uniformity rule does not reach keys no keyboard has"* — which would retire `F14`, `F16`, `F18`, `F20` in one line), that carve-out must be **stated in the spec**, or the next sweep re-files all four. BUG-260810140553's Part 2 raises the identical question for the clipboard trio; **the two entries should be ruled together, in one decision, or the answers will diverge.**
+
+**Mechanism, settled whichever way it is ruled — reuse, do not reinvent:**
+
+- **`F14`:** add `"F14": SUPPRESSED` (or `UNDO`) to `shortcut_registry.EDITOR_UNDO_REDO_CHORDS`. That is the whole functional change: `classify_undo_redo_chord` builds its lookup from that dict via `QKeySequence(sequence)[0]` → `(key, keyboardModifiers)` (`code_editor.py:103-111`), so a bare `F14` keys correctly as `(Key_F14, NoModifier)` and all six surfaces pick it up with no per-surface edit. **Verify the `QKeySequence("F14")[0]` round-trip on the actual PySide6 build before assuming it** — that is the one mechanical risk, and it is a two-line check.
+- **Every non-None answer must be consumed by its caller**, including `SUPPRESSED` — that is stated at `code_editor.py:115-120` and is what makes the key dead on Linux instead of falling through to Qt. Check each of the six call sites individually; they are not identical (`ddl_editor_panel.py:164` discards the return value, `xml_editor.py:1210` branches on Caption Mode).
+- **Preserve the `ShortcutOverride` branch** (`code_editor.py:1047-1048`) for any chord added, or a window-level shortcut can still outrank the editor.
+- **`RESERVED_SEQUENCES` must gain a row for every chord added to `EDITOR_UNDO_REDO_CHORDS`** — `tests/ui/test_shortcut_registry.py:318` asserts that invariant (and that the key is already in canonical spelling: `normalize_sequence("F14") == "F14"`, `"Ctrl+D"`, `"Ctrl+K"`, `"Ctrl+U"` all pass, verified against `_normalize_key`).
+- **TRIPWIRE:** `tests/ui/test_shortcut_registry.py:150` (`test_reserved_lookup_is_spelling_insensitive`) asserts **`reserved_reason("Ctrl+U") is None`** — it uses `Ctrl+U` as its example of a *free* chord. Reserving `Ctrl+U` reddens that test, and the fix is to move the example to a chord that is still free (**not** to weaken the assertion). Easy to mis-diagnose as a regression.
+- **The ledger must move in the same commit:** `test_every_reserved_sequence_has_a_row_marked_reserved` (`tests/test_keybindings_ledger.py:508`) makes `RESERVED_SEQUENCES` and the Reserved column one set, and `test_editor_chord_set_rows_state_the_operation_and_every_surface` (`:532`) requires any new `EDITOR_UNDO_REDO_CHORDS` row to have a `KEYBINDINGS.md` row naming its operation **and all six surfaces**. So each new chord needs a full new ledger row (`Ctrl+D`/`Ctrl+K`/`Ctrl+U` have none today; `F14` appears only in Appendix A `:134`). Known gap 5 (`:188-196`) must be struck or narrowed to whatever the ruling leaves open.
+- **Do not make any of it `sys.platform`-conditional.** The uniformity is in the behaviour; the code binds or suppresses unconditionally and is simply redundant on the scheme where Qt already agrees.
+
+**Test impact:**
+
+- `tests/ui/test_code_editor.py:432-442` — the DEC-014 fixed-set test for `classify_undo_redo_chord`; extend it with the new chord(s), asserting the classification and that the event is **accepted**. This is the file that owns the matcher.
+- `tests/ui/test_shortcut_registry.py` — extend `test_the_windows_only_native_undo_pair_is_reserved_and_stated_as_dead` (`:331`) or add its twin for the X11-only side; that test's shape (reserved + reason mentions the platform + `refusal_for` refuses it) is exactly right here. Plus the `Ctrl+U` tripwire fix at `:150`.
+- Per-surface suppression cases belong with the surfaces that already have undo/redo key cases (`tests/ui/test_xml_editor.py`, `tests/ui/test_php_file_tab.py`, `tests/ui/test_ddl_object_editor.py`, `tests/ui/test_sql_console_panel.py`, `tests/ui/test_ddl_editor_panel.py`) — **extend those, do not add a file.** For `xml_editor.py` specifically, `_is_text_modifying_key` (`:1179` area) is a second place `Ctrl+D`/`Ctrl+K`/`Ctrl+U` matter: in read-only Caption Mode they should raise the read-only hint on both platforms, and today they do not on either (they are not in its match set) while Qt happily edits on Linux if the editor is not actually `setReadOnly`. Worth a case.
+- `tests/test_keybindings_ledger.py` — no new assertions needed, but the ledger edits above are what keep it green.
+- **The suite cannot see this bug.** `QT_QPA_PLATFORM=offscreen` runs Qt's **Windows** scheme, so `F14`/`Ctrl+D`/`Ctrl+K`/`Ctrl+U` are unbound there and every Linux-only behaviour passes green either way. **Assert the app's handler ran / the event was consumed — never Qt's native answer, and never compare against `QKeySequence.keyBindings(...)`,** which returns different lists on CI and on the developer's desktop. `QShortcut` does activate offscreen provided the top level has been `show()`n (measured, BUG-056).
+
+**Spec impact:** flag for `spec-maintainer` after the ruling and the fix land; do not edit the spec from the fix pass. §27's undo/redo material states the `Alt+Backspace` pair's suppression and DEC-015's "redo is always `Ctrl+Y`" but says nothing about the X11-only `F14`, and §27's reserved-key table has no `Ctrl+D`/`Ctrl+K`/`Ctrl+U` row — both need the ruling's answer written down, in the same place as the `Alt+Backspace` reasoning so the two halves of the same rule are read together. If the owner grants the physically-absent-keys carve-out, that must be spec text, not a comment. `manual.md` needs `manual-maintainer` for the per-editor shortcut tables (`:3845` onwards) and the non-rebindable table (`:4163`) for any newly reserved chord.
 
 ---
