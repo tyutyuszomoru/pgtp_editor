@@ -47,6 +47,55 @@ venv/bin/python -c "import pytest, PySide6; print('ok')"
 Claude Code itself: install the CLI once (`npm i -g @anthropic-ai/claude-code` or your
 platform's installer) and authenticate with `claude` the first time.
 
+### PostgreSQL + the `plpgsql_check` extension (Windows)
+
+The app's sandbox check ladder needs a local **PostgreSQL** server, and its tier-3 static
+analysis needs the **`plpgsql_check`** extension *available on that server*. The app runs
+`CREATE EXTENSION IF NOT EXISTS plpgsql_check` for you when it provisions the sandbox — but
+it cannot install the OS-level binary, so you install both once, up front. This is the
+simplest, no-compiler path on Windows.
+
+**1. Install PostgreSQL — use version 16.** Download the official EDB installer from
+[postgresql.org/download/windows](https://www.postgresql.org/download/windows/) and run it
+(it bundles pgAdmin and the command-line tools). **Pick PostgreSQL 16**, not 17/18 — the
+one-click plpgsql_check binary below is built for 15/16, and matching versions is what keeps
+this compiler-free. During setup, remember the **`postgres` superuser password**: the
+sandbox connection must be a superuser, because `CREATE EXTENSION` requires it.
+
+**2. Add `plpgsql_check` — drop-in DLL, nothing to build.** Pavel Stěhule (the extension's
+author) publishes precompiled Windows binaries, so you never touch a compiler:
+
+- Download **`plpgsql_check-2.5.4-x64.zip`** from
+  [pgsql.cz/files/plpgsql_check-2.5.4-x64.zip](https://pgsql.cz/files/plpgsql_check-2.5.4-x64.zip)
+  (covers PostgreSQL 15 and 16) and extract it.
+- Copy three files into your PostgreSQL install (default `C:\Program Files\PostgreSQL\16\`):
+  | From the zip | Copy to | Note |
+  |---|---|---|
+  | `plpgsql_check-16.dll` | `…\PostgreSQL\16\lib\` | **rename to `plpgsql_check.dll`** — drop the `-16` suffix |
+  | `plpgsql_check.control` | `…\PostgreSQL\16\share\extension\` | |
+  | `plpgsql_check--*.sql` | `…\PostgreSQL\16\share\extension\` | all the `.sql` files |
+
+That makes the extension *available* to the server. You do **not** need to touch
+`postgresql.conf` or `shared_preload_libraries` — the app uses `plpgsql_check`'s
+function-call mode, which only needs the extension created in the database.
+
+**3. Enable it.** Easiest: let the app do it — in **Project Status ▸ the `plpgsql_check`
+node** (or the **New Project…** dialog) it runs the `CREATE EXTENSION` for you against the
+sandbox. To do it by hand instead, connect as the superuser and run:
+
+```sql
+CREATE EXTENSION IF NOT EXISTS plpgsql_check;
+```
+
+> **If you must use PostgreSQL 17 or 18** there is no ready-made DLL, and the only route is
+> building from source with Visual Studio + Meson (see the
+> [plpgsql_check README](https://github.com/okbob/plpgsql_check)). Avoid it — install 16 and
+> use the drop-in binary above.
+
+*Sources:* [PostgreSQL Windows installers](https://www.postgresql.org/download/windows/) ·
+[plpgsql_check (GitHub)](https://github.com/okbob/plpgsql_check) ·
+[precompiled Windows DLL 2.5.4](https://pgsql.cz/files/plpgsql_check-2.5.4-x64.zip).
+
 ## 1. Start the day: sync `main`
 
 Always begin from an up-to-date `main`. Never start work on a stale tree.
