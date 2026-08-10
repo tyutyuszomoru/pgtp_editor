@@ -747,11 +747,17 @@ The **Raw XML** tab is a full text editor over the project file.
 
 The editor keeps a rolling history of up to ten XML snapshots.
 
-- **Ctrl+Z** undoes and **Ctrl+Y** redoes a step.
+- **Ctrl+Z** undoes and **Ctrl+Y** — or **Ctrl+Shift+Z** — redoes a step. These
+  keys drive the project's history **only while the Raw XML tab is in front**;
+  every other tab answers them out of its own history (see *Keyboard Shortcuts ▸
+  Undo and Redo depend on which tab you are in*).
 - **History ▸ History…** (on the Editor menu bar, alongside **Undo** and
   **Redo**) opens a jump list of the recent snapshots so you can jump
   straight back to an earlier state. (Snapshots taken when a file is opened or
   reverted are baselines and are not offered as undo targets.)
+- **While the Raw XML buffer is locked read-only** — by **Caption Mode** or by
+  **Compare/Merge** — undo, redo and a jump from the list all **refuse and say
+  so** in the status bar rather than rewriting the buffer behind the lock.
 
 ### Schema-aware editing
 
@@ -1624,7 +1630,9 @@ nowhere. **Every invocation opens a new tab**, so you can generate the same tabl
 twice and compare, rather than having a second attempt overwrite the first. The
 tab is a full XML editor with highlighting **and its own Find/Replace bar**, so
 you can search and rework the fragment before copying it out. (Find All is the one
-inert control there, as in a DDL object editor tab.) It has **no save path and no
+inert control there, as in a DDL object editor tab.) **Ctrl+Z**, **Ctrl+Y** and
+**Ctrl+Shift+Z** undo and redo your edits to the draft, keystroke by keystroke,
+and never reach the project's snapshot history. It has **no save path and no
 unsaved-changes concept at all**, which is why
 its **✕** closes it immediately with no prompt — there was never anywhere for the
 text to be saved to, so a warning would be about nothing.
@@ -1789,6 +1797,11 @@ navigation comforts as the Raw XML editor:
   **F3** and its **Find All** button search the DDL buffer itself instead of
   bouncing you to Raw XML. The replace half (**Ctrl+R** and the **Replace** /
   **Replace All** buttons) is inert here, since the buffer is read-only.
+- **Undo says why it cannot run:** **Ctrl+Z**, **Ctrl+Y** and **Ctrl+Shift+Z**
+  answer here with *"this buffer is read only — there is nothing to undo here"*.
+  They are deliberately caught by this tab, because a read-only editor that let
+  them past would have them fall through to the window and revert the **Raw XML
+  project buffer** — a document you are not even looking at.
 
 Clicking an object in a DDL Objects tree scrolls it to the **top** of that
 tree's own DDL Explorer tab, so the whole definition is visible below its
@@ -1935,9 +1948,10 @@ actually works**.
 
 **Ctrl+Z and Ctrl+Y in this tab undo and redo only this tab's own edits** —
 they never touch the project's Raw XML undo history, even though the same
-shortcuts drive the project's snapshot history everywhere else. This is the
-one place in the app where Ctrl+Z means something different depending on
-which tab is focused.
+shortcuts drive the project's snapshot history on the Raw XML tab.
+**Ctrl+Shift+Z** is a second redo here, exactly like Ctrl+Y. Which history
+those keys reach depends on the tab in front of you, and the full routing is in
+*Keyboard Shortcuts ▸ Undo and Redo depend on which tab you are in*.
 
 **Saving** is **Deployment ▸ Save in Project**, while this tab is active (see
 *The Deployment Menu*). It never touches a database — it only writes a `.sql`
@@ -3896,7 +3910,7 @@ own dialog defaults:
 
 | Shortcut | Action |
 |---|---|
-| **Ctrl+Shift+B** | Bracket-select. The editor handles this itself, which is the only reason it works here |
+| **Ctrl+Shift+B** | Bracket-select. The dialog carries this one chord itself, which is the only reason it works here — and the only reason it does not follow a rebinding (see *The Code Editor ▸ Editing*) |
 | **Return** | OK (Qt's default for the dialog's button box) |
 | **Escape** | Cancel |
 | **Ctrl+S** / **Ctrl+W** | **Nothing.** This dialog was the last carve-out for either chord and no longer answers them |
@@ -3915,10 +3929,28 @@ snapshot history, whatever tab is in front, and they carry no shortcut.
 | **DDL object tab** | that tab's own editing history. One **Ctrl+Z** takes back a whole template expansion, however many pieces it was built from |
 | **PHP file tab** | that tab's own editing history |
 | **Sandbox SQL Console** | that editor's own editing history |
-| **DDL Explorer** (either) | nothing to undo — the buffer is read-only |
-| **a draft fragment tab** | **nothing.** The keys are consumed there but reach no history |
+| **a draft fragment tab** | that tab's own editing history, keystroke by keystroke. A draft has no snapshot history and no save path, so there is nothing else for the keys to mean |
+| **DDL Explorer** (either) | nothing — the buffer is read-only, and the key says so: *"this buffer is read only — there is nothing to undo here"* |
 
-**Ctrl+Shift+Z** is a second redo key, and it works in the **XML** editors only.
+**The read-only Explorer answers rather than staying silent, and that is a
+safety fix, not a courtesy.** Because a read-only editor never claims those keys
+for itself, **Ctrl+Z** used to fall through to the window and quietly revert the
+**Raw XML project buffer** — a different document than the one on screen. The
+Explorer now claims the chord and states the reason above instead.
+
+**History ▸ Undo and History ▸ Redo refuse out loud, too.** While the Raw XML
+buffer is held read-only — by **Caption Mode**, or by **Compare/Merge**'s
+data-loss lock — the two entries stay clickable rather than greyed, and clicking
+one puts its reason in the status bar: *"Raw XML is read only in … — project
+history cannot change it."* Jumping to a snapshot from **History…** is held by
+the same lock. An entry that states why it will not run beats one that has
+silently vanished (see *Compare / Merge* and *Caption Management*).
+
+**Ctrl+Shift+Z is a second redo key.** It redoes in the **XML** editors (Raw
+XML, Edit XSD / Edit AutoXSD, a draft fragment tab) and in a **DDL object tab**,
+each into that surface's own history — exactly where **Ctrl+Y** would have gone.
+In the read-only **DDL Explorer** it is refused with the same sentence as
+**Ctrl+Z**.
 
 **Ctrl+A is a special case, and the reason is worth knowing.** Select-all always
 worked in every editor; the **Select** menu only made it findable. While the caret
@@ -4106,16 +4138,13 @@ against a command that has since been renamed follows the rename, and a command
 you never customized always follows whatever default a later version of the editor
 gives it.
 
-> **One caveat: Ctrl+Shift+B is handled in two places.** Rebinding **Select ▸
-> Select Enclosing Block** moves the *menu command* onto your new key, but
-> **Ctrl+Shift+B keeps selecting the enclosing bracket span inside every code
-> editor** — PHP tabs, DDL object tabs, either DDL Explorer, the Sandbox SQL
-> console and the **Edit code…** dialog — because those editors handle that chord
-> themselves rather than through the menu. In the **Edit code…** dialog that
-> handler is the only thing keeping the gesture alive at all, since the dialog has
-> no menu bar and therefore no command to rebind. The XML editors (Raw XML, Edit
-> XSD, draft fragments) have no such second handler, so there the key really does
-> move.
+> **One caveat: the Edit code… dialog keeps Ctrl+Shift+B.** Rebinding **Select ▸
+> Select Enclosing Block** moves the command everywhere it is a menu command —
+> every editor tab, XML and code alike, including PHP tabs, DDL object tabs, both
+> DDL Explorers and the Sandbox SQL Console. The one place your new key does not
+> reach is the menu-less **Edit code…** dialog, which carries **Ctrl+Shift+B**
+> itself precisely because it has no menu bar and therefore no command to rebind
+> (see *The Code Editor ▸ Editing*). There the chord stays what it shipped as.
 
 ### What cannot be rebound, and why
 
@@ -4126,7 +4155,7 @@ hunting for a row that was never there. None of these is arbitrary:
 | Reserved | Why |
 |---|---|
 | **Ctrl+S** / **Ctrl+Shift+S** | Deliberately unbound app-wide since saving moved to the **Deployment** menu (see *Getting Started ▸ Saving, closing, discarding*). Letting another command take them would bring the old reflex back by the side door. |
-| **Ctrl+Z** / **Ctrl+Y** | Undo and Redo for the project's snapshot history are window-scoped shortcuts, not menu commands, so there is no row to move them from. |
+| **Ctrl+Z** / **Ctrl+Y** / **Ctrl+Shift+Z** | Undo and Redo for the project's snapshot history are window-scoped shortcuts, not menu commands, so there is no row to move them from. **Ctrl+Shift+Z**, the second redo chord, is additionally answered inside each editor's own key handling, so a command moved onto it would only fire while no editor had focus. |
 | **Ctrl+F** / **Ctrl+R** | They focus the **current tab's** Find and Replace fields, and each tab's bar owns its own pair. A window-level menu shortcut on either key would be ambiguous against them, and neither would fire. |
 | **Escape** | Returns focus from a Find/Replace bar to the document — and leaves a template walk, where one is in progress. |
 | **F3**, **Ctrl+L**, **Ctrl+Alt+F**, **Ctrl+Return**, **Ctrl+Space**, **Ctrl+G** | Window-level, per-panel or context-menu commands with no menu entry at all — the same reason they cannot be put on the toolbar. |
