@@ -136,12 +136,27 @@ SESSION_ONLY_SOURCES = frozenset({SOURCE_QUALITY_FILES})
 VERB_RAN = "ran"
 #: A check/lint pass (`db/ddl_check.py`).
 VERB_LINTED = "linted"
-#: The sandbox write.
-VERB_APPLY_SANDBOX = "Apply to Sandbox"
-#: The irreversible production write -- the single most audit-worthy action.
-VERB_APPLY_TARGET = "Apply to Target"
 
-DB_VERBS = (VERB_RAN, VERB_LINTED, VERB_APPLY_SANDBOX, VERB_APPLY_TARGET)
+#: `VERB_APPLY_SANDBOX` / `VERB_APPLY_TARGET` are DELIBERATELY GONE (BUG-047).
+#:
+#: They held `"Apply to Sandbox"` and `"Apply to Target"` -- two of the eight
+#: user-visible names FQ-026 retired -- so the journal printed a vocabulary no
+#: menu, dialog or manual page spoke. They are not "verbs the journal owns":
+#: they are the NAMES OF TWO GESTURES, and FQ-026's invariant (stated at
+#: `ui/ddl_object_editor.py::GESTURE_LABELS`) is *one name per operation, used
+#: identically across every surface* -- the Activity Log verb included.
+#:
+#: Do NOT restore them, not even re-pointed at the current names. This module is
+#: Qt-free on purpose and `GESTURE_LABELS` lives in `ui/`, which imports PySide6;
+#: `db/` must not import `ui/`. A constant here could therefore only ever be a
+#: SECOND literal copy of a gesture name, free to drift again -- precisely the
+#: defect FQ-026 exists to end. The gesture names are passed in from the call
+#: sites in `ui/main_window.py`, which read `GESTURE_LABELS` directly.
+#:
+#: `VERB_RAN` / `VERB_LINTED` stay: they are not gesture names but lowercase
+#: descriptions of what happened, so the invariant does not reach them.
+
+DB_VERBS = (VERB_RAN, VERB_LINTED)
 
 FILE_VERB_SAVED = "Saved"
 FILE_VERB_OPENED = "Opened"

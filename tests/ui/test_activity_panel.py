@@ -22,9 +22,12 @@ from pgtp_editor.db.activity_log import (
     SOURCE_PROJECT_FILES,
     SOURCE_QUALITY_FILES,
     SOURCE_SANDBOX_DB,
-    VERB_APPLY_SANDBOX,
-    VERB_APPLY_TARGET,
     ActivityEntry,
+)
+from pgtp_editor.ui.ddl_object_editor import (
+    GESTURE_APPLY_TO_QUALITY,
+    GESTURE_CHECK_AND_COMMIT,
+    GESTURE_LABELS,
 )
 from pgtp_editor.ui.activity_panel import (
     EMPTY_TEXT,
@@ -49,7 +52,7 @@ def ddl_entry(when=datetime(2026, 8, 8, 14, 3)) -> ActivityEntry:
     return ActivityEntry(
         timestamp=when,
         source=SOURCE_SANDBOX_DB,
-        verb=VERB_APPLY_SANDBOX,
+        verb=GESTURE_LABELS[GESTURE_CHECK_AND_COMMIT],
         ddl_full=LONG_DDL,
     )
 
@@ -66,7 +69,7 @@ def failed_entry(when=datetime(2026, 8, 8, 14, 7)) -> ActivityEntry:
     return ActivityEntry(
         timestamp=when,
         source=SOURCE_SANDBOX_DB,
-        verb=VERB_APPLY_TARGET,
+        verb=GESTURE_LABELS[GESTURE_APPLY_TO_QUALITY],
         ddl_full=LONG_DDL,
         status="error",
         error_full=LONG_ERROR,

@@ -67,8 +67,6 @@ from pgtp_editor.db.activity_log import (
     SOURCE_QUALITY_DB,
     SOURCE_QUALITY_FILES,
     SOURCE_SANDBOX_DB,
-    VERB_APPLY_SANDBOX,
-    VERB_APPLY_TARGET,
     VERB_LINTED,
     VERB_RAN,
     ActivityLog,
@@ -6247,8 +6245,19 @@ class MainWindow(QMainWindow):
                 # FQ-019: the irreversible production write -- the single most
                 # audit-worthy action, and the reason the journal keeps the full
                 # DDL rather than only its 20-character preview.
+                #
+                # BUG-047: the verb is the GESTURE'S name, read from
+                # `GESTURE_LABELS` -- never a literal and never a constant in
+                # the Qt-free `db/` layer. The journal is a sixth surface under
+                # FQ-026's one-name-per-operation invariant, so a rename of the
+                # menu label renames the journalled verb with it, by
+                # construction. Write-time only: rows already in
+                # `activity.jsonl` keep the name the app used when the user
+                # clicked (see `_apply_ddl_object_to_sandbox`).
                 self.record_activity(
-                    SOURCE_QUALITY_DB, VERB_APPLY_TARGET, ddl=text
+                    SOURCE_QUALITY_DB,
+                    GESTURE_LABELS[GESTURE_APPLY_TO_QUALITY],
+                    ddl=text,
                 )
             else:
                 message = getattr(outcome, "message", "") or "the transaction did not commit"
@@ -6260,7 +6269,10 @@ class MainWindow(QMainWindow):
                     ]
                 )
                 self.record_activity(
-                    SOURCE_QUALITY_DB, VERB_APPLY_TARGET, ddl=text, error=message
+                    SOURCE_QUALITY_DB,
+                    GESTURE_LABELS[GESTURE_APPLY_TO_QUALITY],
+                    ddl=text,
+                    error=message,
                 )
             # Let the panel render the per-statement/tier detail it already knows
             # how to render, without a second headline.
@@ -6280,7 +6292,7 @@ class MainWindow(QMainWindow):
             )
             self.record_activity(
                 SOURCE_QUALITY_DB,
-                VERB_APPLY_TARGET,
+                GESTURE_LABELS[GESTURE_APPLY_TO_QUALITY],
                 ddl=text,
                 error=f"{type(exc).__name__}: {exc}",
             )
@@ -6466,9 +6478,20 @@ class MainWindow(QMainWindow):
             # FQ-019: journalled off the REPORT, not off the panel -- an apply
             # whose tab was closed while it ran still happened, and still
             # belongs in the journal.
+            #
+            # BUG-047: the verb is the gesture's ONE name, read from
+            # `GESTURE_LABELS`. The rename is WRITE-TIME ONLY and there is no
+            # migration: `activity.jsonl` is append-only and this module's
+            # contract is that loading never rewrites, so rows written before
+            # this build keep `Apply to Sandbox` / `Apply to Target`. That is
+            # deliberate -- a journal records the past, and re-labelling a
+            # historical apply with a name that did not exist when the user
+            # clicked would be a small lie about it. `from_json_dict` accepts
+            # any non-empty verb and nothing filters on the verb set, so old
+            # rows keep loading and rendering unchanged.
             self.record_activity(
                 SOURCE_SANDBOX_DB,
-                VERB_APPLY_SANDBOX,
+                GESTURE_LABELS[GESTURE_CHECK_AND_COMMIT],
                 ddl=text,
                 error=self._activity_error_for_report(report, applied=True),
             )
