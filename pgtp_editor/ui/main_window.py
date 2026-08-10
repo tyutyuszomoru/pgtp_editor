@@ -521,6 +521,39 @@ class AlterDdlRef:
         table for every operation that names nothing else."""
         return self.subject or self.qualified_table
 
+    def working_set_name(self, buffer_text: str) -> str:
+        """This buffer's identity in the `applied` bookkeeping key -- the
+        `object_name` slot an ALTER has nothing to put in (BUG-044/DEC-007).
+
+        **`text_sha1` of the statement itself**, because that is the only value
+        that is genuinely per-statement. Every alternative still collides:
+        `name` is empty for all seventeen ALTER-family operations (the sixteen
+        of `ALTER_TABLE_ALL_ACTIONS` plus `OP_CREATE_TABLE`), so they all wrote
+        one row and silently overwrote each other; `operation` collides for two
+        `Drop Column…` generations; and `operation + subject` collides too,
+        because `subject` is empty for every `ALTER TABLE` flavour. Keying by
+        the text makes re-applying identical text idempotent (it upserts in
+        place) and makes two different ALTERs two rows.
+
+        Read by `db/ddl_check.py::CheckRequest.from_ref` and NOTHING else --
+        deliberately not `name`, which stays empty. `name` feeds `checked_name`,
+        and `build_ladder` switches tier 3's `plpgsql_check` on for any request
+        that has one; an ALTER creates no routine to analyse, so filling `name`
+        in would have run `plpgsql_check` on a routine that does not exist.
+
+        It takes the text rather than being a property because the identity
+        must follow the buffer as it is edited, and the ref is built once when
+        the tab is opened. Reusing `db/sandbox.py::text_sha1` (rather than
+        hashing here) is required: `applied.text_sha1` is compared against this
+        same function's output, and two independent hashings would drift.
+        """
+        # Lazy, like this module's other `db.sandbox` reaches (see
+        # `BOOKKEEPING_SCHEMA` in the sandbox-usage probe): one hash per check,
+        # and the ref stays independent of this module's import block.
+        from pgtp_editor.db.sandbox import text_sha1  # noqa: PLC0415
+
+        return text_sha1(buffer_text or "")
+
     @property
     def short_title(self) -> str:
         """The TAB TITLE. Says which statement is in the buffer and what it is

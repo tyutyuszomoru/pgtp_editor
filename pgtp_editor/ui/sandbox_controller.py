@@ -106,6 +106,7 @@ from ..db.sandbox import (
     open_sandbox,
     probe,
     provision_sandbox,
+    purge_orphaned_alter_rows,
 )
 from ..db.sandbox import (
     # The exact "CREATE EXTENSION requires superuser" sentence `install_gate`
@@ -488,6 +489,7 @@ class SandboxController(QObject):
         checker: Callable[..., object] = recheck,
         applier: Callable[..., object] = apply_and_check,
         probe_checker: Callable[..., object] = probe_check,
+        orphan_purger: Callable[[SandboxSession], None] = purge_orphaned_alter_rows,
     ) -> None:
         super().__init__(parent)
         # Plain attribute, replaced wholesale in tests -- the
@@ -510,6 +512,7 @@ class SandboxController(QObject):
         self._checker = checker
         self._applier = applier
         self._probe_checker = probe_checker
+        self._purge_orphans = orphan_purger
 
         self._session: SandboxSession | None = None
         self._capabilities: SandboxCapabilities | None = None
@@ -694,6 +697,12 @@ class SandboxController(QObject):
         (only under `SandboxMode.WITH_DATA`, per D2a), or *no sandbox
         configured*. A database PGTP Editor did not create fails with
         `ForeignDatabaseError`'s own message.
+
+        Once a session is open it also runs `purge_orphaned_alter_rows`
+        (DEC-008) on the same worker thread -- the one-time sweep of
+        bookkeeping rows written before BUG-044, which no request can key onto
+        any more. Best-effort: see the call site for why a failed sweep must
+        not fail the open.
         """
         params = self._sandbox_params
         if params is None:
@@ -722,6 +731,17 @@ class SandboxController(QObject):
                 baseline=baseline,
                 target_params=target_params,
             )
+            # DEC-008: drop the pre-BUG-044 alter bookkeeping rows, once per
+            # session open, on this worker thread (never on the GUI one).
+            # **Best-effort on purpose** -- those rows are inert since BUG-044
+            # (no request can key onto them any more), so failing to sweep
+            # them is hygiene lost, not correctness lost, and refusing to open
+            # the sandbox over it would trade a real capability for a tidy
+            # table.
+            try:
+                self._purge_orphans(session)
+            except Exception:  # noqa: BLE001, S110 -- see above; never blocks the open
+                pass
             return session, caps, None
 
         def on_result(

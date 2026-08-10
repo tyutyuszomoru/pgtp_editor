@@ -745,6 +745,36 @@ _CREATE_BOOKKEEPING_SQL = [
     )""",
 ]
 
+#: **The one-time cleanup of pre-BUG-044 alter rows (DEC-008).**
+#:
+#: Before BUG-044 every ALTER-family buffer on one table wrote the single key
+#: `(kind='alter', schema, object_name='', table)` and silently overwrote the
+#: previous one. Those rows carry no attribution to any statement -- the value
+#: that would identify them was never recorded -- so they can only ever produce
+#: a wrong answer or none, and nothing of value is lost by deleting them.
+#: They survive `SandboxSession.reset()`, which deliberately spares
+#: `BOOKKEEPING_SCHEMA`, which is why a cleanup is needed at all rather than
+#: waiting for the next reset.
+#:
+#: **Why this predicate cannot touch an object row.** It requires BOTH halves:
+#: - `kind = 'alter'` is written by exactly one ref type, `ui/main_window.py::
+#:   AlterDdlRef`, whose `kind` is the frozen default `"alter"`. No
+#:   `DdlObjectRef` ever carries it (its kinds are `function`/`procedure`/
+#:   `trigger`), so no object row can match this half at all -- the predicate
+#:   is already precise before the second half is considered.
+#: - `object_name = ''` cannot match a *post-fix* alter row either: those carry
+#:   `text_sha1(statement)`, a 40-character hex digest that is never empty --
+#:   `text_sha1("")` is a hash, not `""`. So the delete cannot eat a row this
+#:   version wrote, only rows the buggy version wrote.
+#: An object row would have to be an unnamed function to match, and an object
+#: with no name is not writable through any path: `working_set_ref` takes
+#: `object_name` from `CheckRequest.name`, and a nameless request cannot reach
+#: apply (tier 3 and `regprocedure_text` both key off the same value).
+_DELETE_ORPHANED_ALTER_ROWS_SQL = (
+    f"DELETE FROM {_APPLIED_TABLE_QUALIFIED} "
+    f"WHERE kind = 'alter' AND object_name = ''"
+)
+
 
 @dataclass(frozen=True)
 class AppliedObject:
@@ -1113,6 +1143,26 @@ def open_sandbox(
         baseline=baseline,
         target_params=target_params,
         executor=executor,
+    )
+
+
+def purge_orphaned_alter_rows(session: SandboxSession) -> None:
+    """Delete the pre-BUG-044 alter bookkeeping rows -- **once, at session
+    open** (DEC-008). Idempotent: after the first run there is nothing to
+    delete, and a sandbox that never held such a row deletes nothing.
+
+    Ensures the bookkeeping table exists first (the same
+    `CREATE ... IF NOT EXISTS` statements `provision_sandbox` runs, so this
+    creates nothing new and changes no row) purely so the DELETE cannot fail on
+    a sandbox that has not been provisioned yet.
+
+    See `_DELETE_ORPHANED_ALTER_ROWS_SQL` for why the predicate is provably
+    incapable of touching an object row, and why the orphans are worthless
+    rather than merely stale.
+    """
+    session.executor.execute(
+        session.params,
+        [*_CREATE_BOOKKEEPING_SQL, _DELETE_ORPHANED_ALTER_ROWS_SQL],
     )
 
 
