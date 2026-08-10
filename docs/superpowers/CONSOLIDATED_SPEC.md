@@ -1,7 +1,18 @@
 # PGTP Editor — Consolidated Specification
 
-> **Status:** living document · **Last synthesized:** 2026-08-10 — **FQ-028 SHIPPED (`69557d2`) and
-> FQ-026 FOLDED IN (three ledger rows, §28).**
+> **Status:** living document · **Last synthesized:** 2026-08-10 — **§17's keyed connection-profile
+> (`ProfileKey`) block DELETED on an owner ruling** (*"it's not needed, we have project settings
+> overriding it"*): per-project connection state lives in the project's `.ddlproject/settings.json`
+> (`ProjectSettings.target`/`.sandbox`, §18.2), `db/config.py`'s single `_GROUP = "db"` is the
+> **projectless** connection, and `MainWindow.active_target_params()` is the single selector across the
+> two (BUG-034). **The governing reason is now recorded as the owner stated it — PORTABILITY:** *"If I
+> have a single keyed store, I can't move the project from machine to machine. Project is a movable
+> artifact."* QSettings is machine-local by construction, so the keyed store was **structurally
+> incapable** of the per-project dimension, not merely superseded by it.
+> Nothing was implemented, so nothing is unbuilt; one ledger row (§28) carries the
+> withdrawal, and the five other sites that referenced the scheme (§18.2 ×2, §18.5 D2, §18.8's
+> capability table, §29's migration sub-question) are corrected in the same pass. **Previously the same
+> day: FQ-028 SHIPPED (`69557d2`) and FQ-026 FOLDED IN (three ledger rows, §28).**
 > **(1) The app-shell chrome redesign is BUILT, host wiring included** — `ui/audit_router.py`,
 > `ui/findings_panel.py`, `ui/mode_indicator.py`, `ui/connectivity.py`, `ui/status_bar.py` **and**
 > `ui/main_window.py`; suite green at **5787 passed / 45 skipped**. Every *"specified; not yet in the
@@ -3335,42 +3346,56 @@ the **password is never read from XML** (obfuscated there) — entered by the us
 - `db/config.py`: `ConnectionParams(host, port, database, user, password)` with `redacted()`
   (password→`***`); `connection_from_tree` (password `""`); `load_connection`/`save_connection`;
   `seed_params`. **Not Qt-free** — it imports `QtCore.QSettings` at module scope, the one stated
-  exception to §5's `db/` rule. Today it hardcodes a single QSettings group, `_GROUP = "db"`.
+  exception to §5's `db/` rule. It hardcodes a single QSettings group, `_GROUP = "db"`, holding exactly
+  one connection — the **app-level (projectless)** one. Loaders never raise: `load_connection` returns
+  `None` for an absent or garbage group (it keys off an empty `host`).
 
-**Connection profiles — one keying scheme for both dimensions (target design, §18.2 + §18.5).** §18.2
-needs a **per-project** key; §18.5 D2 needs a **profile role** (`target` | `sandbox`). These land as
-*one* mechanism, never two:
+**Where a connection lives — one rule (owner ruling, 2026-08-10; ledger §28).** `db/config.py`'s single
+`"db"` QSettings group is the connection used when **no project is open**, and that is all it is.
+**Per-project connection state does not live in app settings at all — it lives in the project**, as
+`ProjectSettings.target` / `ProjectSettings.sandbox` inside `<project>/.ddlproject/settings.json`
+(§18.2, `db/ddl_project.py`). There
+are therefore two stores by design, and consumers never choose between them by hand:
+**`MainWindow.active_target_params()` is the single selector** across both (BUG-034) — the project's
+target when a project is open, the `seed_params`-backed projectless params otherwise.
 
-> **STATUS BANNER, added 2026-08-10 because this block reads like shipped code and is not.** **NOTHING in
-> this `ProfileKey` block exists in the tree.** Verified: `db/config.py` has no `ProfileKey`, no
-> `DEFAULT_PROFILE`, no `_group_for`, and its `load_connection(settings)` / `save_connection(settings,
-> params)` / `seed_params(tree, settings)` carry **no `key=` parameter** — `_GROUP = "db"` is still a
-> single hardcoded group. **What actually ships in the second-profile role is different machinery
-> entirely**: the project's own `.ddlproject/settings.json` (`ProjectSettings.target` / `.sandbox`, §18.2)
-> — which is why §18.8's row already says *"§17's keyed `ProfileKey` scheme is target design, not
-> implemented … no new connection mechanism either way"*, and why the two must not be conflated. This
-> block is retained as the design of record for the app-level (projectless) profile store, whose
-> compatibility trick below is its whole point; it is **not** a description of behaviour.
+**The reason, and it is stronger than "something else got there first" — A PROJECT IS A MOVABLE
+ARTIFACT.** Owner's words, verbatim: *"If I have a single keyed store, I can't move the project from
+machine to machine. Project is a movable artifact."* `db/config.py`'s QSettings store is
+**machine-local by construction**: it is one machine's application registry/ini, and anything keyed
+into it — however cleverly keyed — is bound to that machine and cannot travel. `.ddlproject/settings.json`
+sits **inside the project folder**, so `target` and `sandbox` move with the folder: committed to the
+repo, cloned, or copied to another machine, and the connections arrive intact with no second
+out-of-band step. An earlier design gave `db/config.py` a keyed per-project/per-role QSettings profile
+store to serve the per-project dimension; it is **withdrawn**, was never implemented, and — this is the
+part that must not be lost — it was not merely superseded by machinery that happened to ship first, it
+was **structurally incapable** of the job. A keyed app-settings store would have permanently tied a
+portable artifact to one machine's registry. **Therefore: never reintroduce a keyed app-settings store
+for per-project connection state. The reason is PORTABILITY, not precedence — anyone proposing it later
+is proposing to make projects non-portable.** If a further connection dimension is ever proposed, extend
+the project settings file and that single selector.
 
-| Piece | Contract |
-|---|---|
-| `ProfileKey(project: str = "", role: str = "target")` (frozen dataclass), `DEFAULT_PROFILE = ProfileKey()` | The single key type. Both dimensions, one value. |
-| `_group_for(key) -> str` | `key == DEFAULT_PROFILE` → **the literal string `"db"`**, byte for byte the existing group. Otherwise `"db_profiles/<slug(project)>/<role>"`, where `slug` = `sha1(path.casefold())[:16]` (`""` → `"_global"`) because a QSettings group name cannot contain `/` or `\`. |
-| `load_connection(settings, key=DEFAULT_PROFILE)`, `save_connection(settings, params, key=DEFAULT_PROFILE)`, `seed_params(tree, settings, key=DEFAULT_PROFILE)` | A **trailing defaulted** parameter on each; every existing call site keeps working unchanged. |
+**Portability vs. the password — settled, with one residual the principle makes explicit.** §17's
+plaintext-password rule (above) and §18.2's password paragraph (2026-08-03 ledger row) together already
+answer whether a credential may travel: `ProjectSettings.target`/`.sandbox` **do** carry a `password`
+field, written plaintext into `settings.json` (`db/ddl_project.py::_connection_to_dict` emits
+`"password"`; `_connection_defaults()` gives `""`), and the **repository hazard is closed at the write**
+— `save_settings` calls `_ensure_gitignored(project_dir, f"{SETTINGS_DIRNAME}/")`, so `.ddlproject/`
+is added to the project's `.gitignore` every time settings are saved. The password therefore travels by
+**folder copy** (the portability path the ruling is about) but **not by commit/clone** (the path that
+would put a plaintext credential in a shared repo). This is the deliberate §18.2 design — gitignored
+**instead of** QSettings-hidden, never both — not an omission. Residual, stated rather than legislated:
+a git *clone* of a project consequently arrives **without** connections, so on that path the
+portability guarantee covers everything in the folder **except** the gitignored settings file; no
+policy for re-supplying them on clone is specified, and none is invented here.
 
-- **The compatibility trick is load-bearing and must be preserved:** routing the default profile back to
-  the *same* `"db"` group means existing users' saved connections are **not migrated at all** — there is
-  nothing to migrate, nothing to get wrong, and an older build still reads them. **Every existing test in
-  `tests/db/test_config.py` (9 as of 2026-08-02) must pass unedited**; that is itself the compatibility
-  proof, and new tests may only be *added*. This is why the scheme beats read-fallback-plus-dual-write.
-- **`seed_params` for a `role="sandbox"` key must NOT fall back to the project's `<ConnectionOptions>`.**
-  That element describes the **target** database; seeding the sandbox profile from it is exactly how
-  someone ends up pointing "the sandbox" at production. Sandbox seeding = saved settings only, else
-  blanks with a `localhost`/`5432` default.
-- Loaders keep the existing contract: an absent or garbage group returns `None` and **never raises**.
-- Two profiles means **two plaintext passwords** in QSettings — the existing plaintext caveat label must
-  be shown for the sandbox profile too, and a *superuser* sandbox password (needed for one-click
-  `CREATE EXTENSION`, §18.5) is a trade the user must be shown, not assumed to have accepted.
+- **A sandbox connection is NEVER seeded from the `.pgtp`'s `<ConnectionOptions>`.** That element
+  describes the **target** database; seeding a sandbox from it is exactly how someone ends up pointing
+  "the sandbox" at production. Shipped and load-bearing:
+  `MainWindow._import_pgtp_connection_into_target` (BUG-034) fills `ProjectSettings.target` only, and
+  says so — *"The **sandbox** is deliberately not seeded from this element: §17 defines
+  `<ConnectionOptions>` as the *target*, and seeding a sandbox from it is how a sandbox ends up pointed
+  at production."* A sandbox is configured by hand (Project Settings ▸ Connections, §18.2) or left blank.
 - `db/introspect.py` (psycopg lazily imported): `ColumnInfo(name, data_type, is_pk, is_fk, is_nullable,
   default, fk_target)`; `TableInfo(name, kind(table|view|matview), columns)`; `DatabaseSchema.tables`
   keyed schema-qualified (`pr.equipment`). `run_queries(params, sql)` is the **only** connection-opening
@@ -4967,8 +4992,9 @@ This is a deliberate pair of reversals from the original design, both owner-stat
 
 - **Password lives directly in this JSON, not in QSettings.** The earlier "Password handling" design —
   keeping the password **out of** git via the app's existing `db/config.py::ConnectionParams`/
-  `save_connection` QSettings mechanism, generalized to a keyed `ProfileKey(project, role)` — is
-  **superseded for project-scoped connections**. Owner's reasoning, preserved verbatim: *"if it remained
+  `save_connection` QSettings mechanism, generalized to a keyed per-project/per-role profile store — is
+  **superseded for project-scoped connections** (and that keyed store is since withdrawn outright, §17,
+  ledger 2026-08-10). Owner's reasoning, preserved verbatim: *"if it remained
   in QSettings, it wouldn't be project specific"* — the project must be **self-contained/portable**: a
   folder that can be copied, backed up, or handed off complete, not dependent on a separate app-level
   global settings store keyed by a path that may not even resolve on the machine it's copied to. The
@@ -5101,22 +5127,15 @@ attribute rather than a constructor parameter. The dialog still **persists nothi
 connection neither writes `settings.json` nor mutates the active project's live connection — it only
 reports.
 
-**Connection profile persistence — reconciled with §17's `ProfileKey` scheme, least-invention reading.**
-§17 specifies (**target design — not implemented**: `db/config.py` today still has only the single
-hardcoded `"db"` QSettings group, no `ProfileKey`) a keyed `ProfileKey(project, role)` scheme backed by
-QSettings, for exactly this project+role dimensionality. This revision changes **where the project-scoped
-connection profile is persisted — into the project's own JSON file — not how it is selected or edited
-at the UI layer.** `ConnectionSetupDialog`'s profile selector (§17/§18.5 D2) is likewise target design —
-**no selector has been built** (the shipped dialog carries no profile code, and is disabled outright
-while a project is open, BUG-024); as designed, the user would pick `target` or `sandbox` in that same
-dialog. What changes is the **backing store** for a
-project-scoped `ProfileKey`: instead of (or in addition to, as a migration convenience — unresolved,
-§29) a `db_profiles/<slug(project)>/<role>` QSettings group, the project's own connection profiles are
-read from and written to its `.ddlproject/settings.json`. The **non-project-scoped** default profile
-(`DEFAULT_PROFILE`, the literal `"db"` QSettings group used when no project is open) is **untouched** —
-that path has no project JSON to live in and keeps using QSettings exactly as §17 specifies. This is the
-reading that requires the least invention beyond what the owner actually stated: the persistence backend
-changes for project-scoped profiles; the UI/selector mechanism does not.
+**Connection persistence — the project is the store.** A project's connections live **only** in its own
+`.ddlproject/settings.json`, as `ProjectSettings.target` / `ProjectSettings.sandbox`; there is no keyed
+app-level profile store, and none is to be reintroduced (owner ruling 2026-08-10, §17, ledger §28 — the
+earlier keyed QSettings profile scheme is withdrawn, never having been implemented). `db/config.py`'s
+single `"db"` QSettings group keeps serving the **projectless** connection only, and
+`MainWindow.active_target_params()` is the single selector across the two (BUG-034, §17).
+`ConnectionSetupDialog` carries **no profile selector** — none was ever built, and the dialog is
+disabled outright while a project is open (BUG-024); with a project open, connections are edited in the
+**Project Settings…** dialog's Connections tab, which is the one project-scoped surface.
 
 **Checkout-to-edit.** The gesture and the tab are §18.5's (right-click ▸ **`Edit DDL`** on
 `BrowserPanel.tree` or inside an object's span in the read-only `EditorPanel` — see §18.5 for the
@@ -6600,13 +6619,14 @@ Apply-vs-Deploy table.
 
 #### D2 — Sandbox source: bring-your-own local PostgreSQL for v1
 
-The user runs their own local PostgreSQL server. The app adds a **second connection profile** with
-`role = sandbox` alongside the existing `role = target` connection, persisted through the **same**
-generalized `db/config.py` keyed-group scheme §18.2 already requires (§17) — one store, two dimensions
-(project key, profile role), never a second settings mechanism and **never a second connection dialog**:
-`ui/connection_setup_dialog.py` gains a profile selector, it is not forked. The exact keying scheme
-(`ProfileKey`, the `"db"` compatibility group, the sandbox's no-`<ConnectionOptions>`-fallback rule) is
-specified once, in §17.
+The user runs their own local PostgreSQL server. The app adds a **second connection** alongside the
+target one, and it is **the project that holds both**: `ProjectSettings.target` /
+`ProjectSettings.sandbox` in `.ddlproject/settings.json`, edited in the **Project Settings…** dialog's
+Connections tab (§18.2). There is no keyed app-settings profile store and no profile selector in
+`ui/connection_setup_dialog.py` — that dialog stays the **projectless** connection's dialog and is
+disabled while a project is open (BUG-024); the earlier "one keyed store, two dimensions" design is
+withdrawn (§17, ledger 2026-08-10). The sandbox's **no-`<ConnectionOptions>`-fallback rule** — a sandbox
+is never seeded from the `.pgtp`'s target element — is stated once, in §17, and still binds.
 
 **The sandbox is STATEFUL and accumulates applied edits — that is its purpose.** The earlier framing —
 *"apply in a transaction → always `ROLLBACK`; the sandbox database stays pristine across any number of
@@ -7888,7 +7908,7 @@ other instance's tree at all, exactly as if it were the only connection open.
 | Tree widget + rendering rules | `ui/ddl_buffer_panel.py::BrowserPanel` (§18.1) — instantiated twice, unchanged internals |
 | Read-only synthesized buffer + editor | `ui/ddl_editor_panel.py::EditorPanel` (§18.1) — instantiated twice, unchanged internals |
 | Introspection fetch | `db/introspect.py::fetch_routines_and_triggers` (§18.1/§18.6) — called once per role with that role's `ConnectionParams` |
-| Second connection profile | `role = sandbox` (§18.5 D2). §17's keyed `ProfileKey` scheme is **target design, not implemented** — what ships today is `db/config.py`'s single hardcoded `"db"` QSettings group plus the project-scoped profiles in the project's own `.ddlproject/settings.json` (`ProjectSettings.target`/`.sandbox`, §18.2, ledger 2026-08-03) — no new connection mechanism either way |
+| Second connection profile | The sandbox connection (§18.5 D2), held in the project: `ProjectSettings.sandbox` beside `.target` in `.ddlproject/settings.json` (§18.2). `db/config.py`'s single hardcoded `"db"` QSettings group remains the **projectless** connection only; the once-designed keyed profile store is **withdrawn** (§17, ledger 2026-08-10) — no new connection mechanism either way |
 | Dynamic, key-addressed tabs (not index-addressed) | §18.5's per-object `DdlObjectEditorPanel` tabs and their append-only/tail-only invariant + regression test (§18.5 carve-out 9) — the same pattern, keyed on connection role instead of object identity |
 | Drift markers | §18.2's `*`/`!` computation (`compute_drift_markers`) — invoked per connection, not shared |
 | "No dead controls" posture | §18.5 carve-out 2 (no sandbox button row until the sandbox lane exists) — mirrored here as "no second DDL Explorer entry until a sandbox exists" |
@@ -9066,7 +9086,7 @@ is authoritative** (and is what appears in the body above).
 | 2026-08-02 | §27 stated `Ctrl+Z`/`Ctrl+Y` flatly as *"Window"* — i.e. the project snapshot history — with no carve-out for a DDL object editor tab | **Pinned invariant with a mandatory regression test: `Ctrl+Z` in the object tab uses the editor's NATIVE undo.** The window-level `QShortcut` at `main_window.py:401` drives **project-history** undo over the **Raw XML buffer**; `XmlEditor` consumes and re-emits it and the XSD tab routes its re-emission back into its own editor, but **`CodeEditor` does neither** — so without this the object tab's Ctrl+Z would silently revert the Raw XML project buffer while the user is looking at SQL. Realized the XSD way (editor consumes, tab reroutes to its own `undo()`), never by disabling the window shortcut. Test: object tab active + dirty Raw XML → Ctrl+Z changes the object buffer and leaves the Raw XML text byte-identical |
 | 2026-08-02 | §18.5 read as one undivided increment: a panel button row carrying *Apply to Sandbox*/*Check*/*Check without applying*, Find All listed among the tab's inherited affordances, and no statement about a DDL Explorer re-run or `[SQL]` line behavior | **Six v1 scope carve-outs, owner-confirmed** (scope, not design reversals — the sandbox design above stands unchanged): (1) native `Ctrl+Z`, the row above; (2) **no button row and none of the three sandbox gestures in v1** — no dead or permanently-disabled controls, and the Database menu's five §18.5 entries likewise wait; (3) **Find All inert in the object tab**, matching the DDL Explorer precedent (`_populate_find_all_results` understands only `target="raw"`/`"xsd"`), while Find / Find Next / Replace / Replace All all work; (4) the Format-Selection **transient underline is panel-local** — `DdlObjectEditorPanel` owns the `setExtraSelections` call (verified: `CodeEditor` never calls it), cleared on the next edit or next format attempt; (5) **re-running Database ▸ DDL Explorer leaves open object tabs untouched and silent** — no reload, no marking, no prompt, even though live definitions may have changed underneath (drift is §18.2's `!` marker and §18.5's pre-generate drift check, later); (6) **`[SQL]` Audit lines are not clickable** — no line role, same as the existing `[Find]` summary line |
 | 2026-08-03 | §18.2's project definition: *"'Project' — a new concept, distinct from a `.pgtp` file. A project = a git repo containing: …"* (`.ddlproject/project.json`, `ddl/*.sql`, `.ddlproject/deployed.json`, all git-tracked) | **A project is fundamentally a local folder the user chooses on their own machine — not necessarily a git repository.** Git is an **optional, TBD/deferred configuration** a project may eventually carry (server, user, the checkout/branch this project's folder is meant to be a worktree of), never the definition of a project. Owner's framing, preserved verbatim: *"the only source of truth in our projects is production database DDL, production pgtp and production phps. Everything else is just a snapshot, approximation, history"* and, using git only as an analogy (git itself not required): *"main is prod, each checkout a branch, and each time we open in the pgtp a worktree."* New Project creation flow: (1) pick a folder — that folder IS the project; (2) optionally add a local sandbox (Postgres connection + a Test button that specifically verifies superuser, reusing §18.5 D2's `SandboxCapabilities.is_superuser` probe as a new entry point, not a new mechanism); (3) optionally configure git — explicit placeholder only, not designed, mechanism TBD, mirroring §18.3's existing git-commit placeholder. Opening an existing project now compares **two** things, both surfaced, neither auto-resolved: a checksum of the `.pgtp` working copy against the source `.pgtp` at its sshfs-mounted path, plus the existing per-object DDL drift comparison. Menu actions renamed/expanded accordingly: **New Project…** / **Open Project…** / **Close Project** / **Project Settings…** / **Deploy .pgtp** (§26) |
-| 2026-08-03 | §18.2's password-handling paragraph: the plaintext password is kept **out of** git by reusing `db/config.py`'s QSettings mechanism, generalized to a keyed `ProfileKey(project, role)` store (§17) | **The password now lives directly inside the project's own gitignored JSON file, not in QSettings, for project-scoped connections.** Owner's reasoning, preserved verbatim: *"if it remained in QSettings, it wouldn't be project specific"* — the project must be self-contained/portable (a folder that can be copied, backed up, or handed off complete), not dependent on a separate app-level global settings store keyed by a path that may not resolve elsewhere. The password never reaches git regardless, because the file it lives in is gitignored — gitignored **instead of** QSettings-hidden, not both. **Reconciled with §17's `ProfileKey` scheme on the least-invention reading:** the UI/selector mechanism (`ConnectionSetupDialog`'s profile selector, `target`/`sandbox`) is unchanged; only the **persistence backend** for a project-scoped `ProfileKey` changes, from a `db_profiles/<slug(project)>/<role>` QSettings group to the project's own `.ddlproject/settings.json`. The **non-project-scoped default profile** (`DEFAULT_PROFILE`, the literal `"db"` QSettings group used with no project open) is untouched and keeps using QSettings exactly as §17 already specifies |
+| 2026-08-03 | §18.2's password-handling paragraph: the plaintext password is kept **out of** git by reusing `db/config.py`'s QSettings mechanism, generalized to a keyed `ProfileKey(project, role)` store (§17) | **The password now lives directly inside the project's own gitignored JSON file, not in QSettings, for project-scoped connections.** Owner's reasoning, preserved verbatim: *"if it remained in QSettings, it wouldn't be project specific"* — the project must be self-contained/portable (a folder that can be copied, backed up, or handed off complete), not dependent on a separate app-level global settings store keyed by a path that may not resolve elsewhere. The password never reaches git regardless, because the file it lives in is gitignored — gitignored **instead of** QSettings-hidden, not both. At the time this was read as changing only the **persistence backend** of §17's then-current keyed profile scheme, leaving that scheme's selector and its non-project-scoped default profile in place. **That remainder is itself since withdrawn — see the 2026-08-10 row below**; the keyed scheme no longer exists anywhere in the spec, and §17's `"db"` QSettings group is simply the projectless connection |
 | 2026-08-03 | §18.2's two-file scheme: `.ddlproject/project.json` (identity/metadata/`.pgtp` link, git-tracked) + `.ddlproject/deployed.json` (deploy manifest, git-tracked) | **Merged into one centralized, gitignored, plaintext JSON file** (`.ddlproject/settings.json`), holding project identity, the `.pgtp` link + its checkout/drift state, both connection profiles (target + sandbox, including password — see the password-handling row above), and the deploy manifest (content-hash + deployed commit id per object, **unchanged in shape**). The deploy manifest no longer needs to be git-tracked for its stated original reason ("so last-deployed state travels across machines") because git integration for this whole model is itself still TBD/deferred (the row above) — there is no live git workflow yet for that state to travel through; **revisit this when git integration is designed.** Governing principle stated explicitly because it explains this merge and the password change together — owner's words: *"nothing the app manages should be a black box… plaintext files everywhere"* — the same spirit that already justified `ddl/*.sql` as plain per-object files, now stated as a principle for the whole local-project model. New UI surface: **Project Settings…** dialog exposing this JSON's full contents (§18.2/§26) |
 | 2026-08-03 | §7/§19's general `.pgtp` save behavior — plain save-in-place with a `.bak` sidecar written via `shutil.copy2` before overwriting an existing file, never on Save-As — implicitly assumed to apply universally, with no project-scoped carve-out | **Superseded, but ONLY within the local-project context — no-project-mode `.pgtp` save behavior is completely untouched by this row.** When a §18.2 local project is open, the `.pgtp` becomes a first-class checked-out artifact, parallel to a DDL object: the app works on a **local working copy** of the `.pgtp`; ordinary Ctrl+S/File ▸ Save writes to this working copy with **no `.bak`** (same rationale as `ddl/*.sql`'s existing no-`.bak` decision — the working copy itself is the safety net). Pushing the working copy back to overwrite the source `.pgtp` at the sshfs-mounted path is a separate, explicit **"Deploy .pgtp"** gesture, reachable both on-demand at any time (Database menu, mirroring DDL's on-demand batch Deploy, §18.3) and as a convenience prompt offered at project close if the working copy has unpushed changes (never forced). Outside a local project, §7/§19's existing plain-save-plus-`.bak` behavior is exactly as it was — this row does not touch it |
 | 2026-08-04 | §18.1: *"a **separate fetch path from `fetch_schema`**, not merged into it: an implementation choice to avoid touching `fetch_schema`'s existing 3-query contract and its tests, since the DB Check features never need routine/trigger data. The `DatabaseSchema` it returns always has an empty `.tables`; only `.routines`/`.triggers` are populated"* | **Widened, not merged: `fetch_routines_and_triggers` now additionally runs `SCHEMA_SQL` (§17) and populates `.tables` too** (§18.6). `fetch_schema` itself and its existing 3-query contract/tests are untouched, and DB Check keeps calling `fetch_schema` directly — this is one connect-time fetch on DDL Explorer now serving two consumers (routine/trigger browsing **and** §18.6's schema-aware Ctrl+Space completion, via the new `db/schema_index.py`), not a second parallel fetch and not a lazy per-keystroke query |
@@ -9138,6 +9158,7 @@ is authoritative** (and is what appears in the body above).
 | 2026-08-10 | **FQ-028's own nine-prefix disposition table, and this spec's 2026-08-10 restatement of it**, which recorded the tenth prefix **`[Sandbox]`** as routing to the **Activity Log** on the reasoning that a sandbox-operation outcome is narration and the journal is narration's home | **`[Sandbox]` routes to the RESULTS tab** (shipped `69557d2`; `audit_router.DESTINATIONS[SANDBOX_PREFIX] = TO_RESULTS`). The spec asserted a destination before the implementation had to make the call, and the implementation found a **timing hazard the reasoning had missed**: a `[Sandbox]` line is emitted **during a project transition** — BUG-040 auto-opens the session inside `set_active_project` — and FQ-019's journal **replaces its display buffer** on exactly that transition, so a line filed there is **wiped off screen by the very open it describes**. Results accumulates and survives the transition; the line is also, in substance, an operation outcome the user asked for. **The same wipe is a live, accepted caveat for `[Project]` narration during a project CLOSE:** it reaches the closing project's `activity.jsonl` and is not lost, but vanishes from the panel. The **open** direction was mitigated by connecting the journal's subscriber **first** (Qt delivers in connection order); the **close** direction is structural to FQ-019 and was deliberately left alone (§7) |
 | 2026-08-10 | **FQ-028's own mechanism for the toolbar mode panel**, written into §7 as settled contract: *"reached by adding an **expanding spacer `QWidget`** via `toolbar.addWidget(...)` then the indicator"*; plus §7's *"the ~40 `showMessage` call sites did NOT move"* left with `ui/busy.py` flagged **specified, not yet in the tree**, and `ui/mode_indicator.py`'s `MainWindow.current_mode()` flagged as naming a method that **does not exist** | **FQ-028 SHIPPED WHOLE (`69557d2`; suite green at 5787 passed / 45 skipped), and three of its own statements needed correcting by the implementation.** (1) **The spacer-plus-addWidget mechanism was INSUFFICIENT**: `ToolbarController.apply_ids` detaches every action on each rebuild and **Customize Toolbar's OK is a rebuild**, so a panel appended once at startup would have been silently deleted the first time a user pressed OK. The shipped seam is **`ToolbarController.set_trailing_widget`** with `_trailing_widget` / `_reattach_trailing()` re-adding spacer + panel after every `apply_ids`, plus a new **`command_actions`** property that excludes both — the panel is not a command, so it is never pinnable, never persisted and never counted as a toolbar button. (2) **`MainWindow.current_mode()` now EXISTS** and is the single accessor both surfaces read; §29's item is closed. (3) **`ui/busy.py` reaches `begin_busy`/`end_busy` by `getattr` with a `showMessage` fallback**, deliberately, so the helper still accepts any status-bar-shaped stub. **The two mechanisms worth carrying forward to the next restructuring, because they are why this landed without churn:** `AuditRouter` **presents the `QListWidget` API** the producers were written against — `addItem`/`count`/`item`/`takeItem` — so **not one producer changed** across a ~430-reference surface; and `StaticStatusBar` **overrides the SINK** rather than the ~40 call sites, so `_shell_status` and `busy.py` kept working untouched. **One shipped method reversed its meaning under the router:** `FindValidateController.clear_validation_results()` **no longer deletes** — every `takeItem` of a Results row is refused — it **opens a run block**, which is how *"Results accumulates"* and *"validation clears its previous output"* coexist. **The bottom dock keeps `objectName("audit_dock")`** (title `"Activity Log / Results"`) so saved geometry carries onto the two-tab panel and Qt drops the now-unknown `activity_dock` entry by itself. **FQ-019's Activity Log is a TAB, not a dock**, and §7's dock inventory says so |
 | 2026-08-10 | §18.5/§26/§29 (status-corrected 2026-08-09, ledger row above): the ***"Deploy this edit…"* picker FULLY SHIPS** on **three always-present surfaces** — `Database ▸ Deploy This Edit…`, the object tab's context menu, and the leftmost button of the apply row — with FQ-020's three `Deployment` entries added **in addition to**, not instead of, it; plus §18.5's *"a small **button row** carries the three sandbox gestures … the row **is present** in the running app"*; and the eight names denoting four operations, with the confirmation **titles** as separate literals from the menu labels | **FQ-026: THE PICKER AND THE BUTTON ROW ARE WITHDRAWN, AND EACH OPERATION GETS ONE NAME** (owner ruling 2026-08-10: *"Deploy this edit… picker is not needed if the other menus are explicit of the target."* — they are: `Deployment` carries `Save in Project`, `Run on sandbox`, `Run on quality`). **This row exists because the withdrawal is DELIBERATE, not corrective.** FQ-026's own body claims the picker is *"currently a spec-vs-code gap"* because §18.5 *"already declares it superseded"* — **that premise was FALSIFIED the day before the entry was written**: the 2026-08-09 pass corrected the record to say the picker fully ships and carries a ledger row saying so. So this deletes a **live, specified, shipped feature** on an owner ruling; nobody may re-read FQ-026's reasoning as tidy-up. **The rest is a DEDUPLICATION: the ACTIONS remain, the ENTRY POINTS go.** Four operations, one canonical name each — **`Check and commit to sandbox`** (`apply_and_check`, `commit=True`), **`Check and rollback`** (`probe_check`, `commit=False`), **`Check Object in Sandbox`** (`recheck` — name, home and method all **unchanged**) and **`Apply to quality`** (`apply_to_target`, all four preconditions untouched) — used identically at the menu label, the confirmation **TITLE**, the `[Check]` line and the manual. **The title-vs-label drift is the verified failure mode being fixed**: the menu said `Run on sandbox`/`Run on quality` while the confirmation said `Apply to Sandbox`/`Apply to Target`, so a user answered a modal that named the operation something else. `DESTINATION_LABELS` is deleted, so **its stated role — *"they must come from one place or the UI and the manual disagree"* — is RE-HOMED, not dropped.** Also deleted: the panel's `_build_apply_row` and its three buttons (callers, not capability — a DDL object tab gets **no in-tab apply affordance**, owner-accepted, consistent with FQ-020's treatment of saving) and the tab context menu's apply entries (open question 2, decided for *"menu bar only"*). `Check Object in Sandbox` gains a **one-line modal** through the `ui/modals.py` seam answering *"am I in line with the sandbox?"* from the hash comparison `_recheck_tier2` already performs — **with a line for BOTH states**, since a match is otherwise an absence and an absence cannot answer a yes/no question — **in ADDITION to** the two `[Check]` channels, not instead of them (open question 1). Three `RENAMED_ID_ALIASES` rows are mandatory (the label **is** the id's last segment); **none for the deleted picker — a deletion is not a rename.** Rejected: keeping the picker as a convenience umbrella (a fifth name for four operations); renaming the buttons instead of deleting them (duplicate surfaces are half the naming problem); **disabling** the button row (§18.5 carve-out 2 is explicit that an unwired affordance is **absent, not disabled**). **FQ-009 stays OPEN by owner ruling** — this withdraws its shipped discoverability half, but its quality leg is still wanted and must be built against the `Deployment` menu |
+| 2026-08-10 | §17's **"Connection profiles — one keying scheme for both dimensions"** block: a frozen `ProfileKey(project, role)` dataclass with `DEFAULT_PROFILE`, `_group_for(key)` mapping the default back to the literal `"db"` QSettings group and everything else to `db_profiles/<slug(project)>/<role>`, a trailing defaulted `key=` parameter on `load_connection`/`save_connection`/`seed_params`, and the *"compatibility trick is load-bearing"* note — designed as the **one** store serving §18.2's per-project dimension and §18.5 D2's `target`/`sandbox` role; plus the residue of the 2026-08-03 row above, which withdrew only its *persistence backend* and left its selector and default profile standing | **DELETED OUTRIGHT — there is no keyed connection-profile store, and none is to be reintroduced** (owner ruling: *"it's not needed, we have project settings overriding it. It was a simpler starting setup overrules."*). **Both needs it was invented for were met by machinery that actually shipped**: the project's own `.ddlproject/settings.json` carries `ProjectSettings.target` **and** `.sandbox` (§18.2, `db/ddl_project.py`), so the project dimension and the role dimension both live in the project. **THE GOVERNING REASON IS PORTABILITY, NOT PRECEDENCE — recorded 2026-08-10 in the owner's own stronger words:** *"If I have a single keyed store, I can't move the project from machine to machine. Project is a movable artifact."* `db/config.py`'s QSettings store is **machine-local by construction** — one machine's registry/ini — so anything keyed into it is bound to that machine and cannot travel; `.ddlproject/settings.json` lives **inside the project folder**, so its `target`/`sandbox` connections move with the folder when it is committed, cloned or copied. The keyed store was therefore not merely *superseded by* the machinery that shipped first, it was **structurally incapable of serving the per-project dimension at all**, and adopting it would have permanently tied a portable artifact to one machine's registry. This distinction is load-bearing for the future: a later proposal to key per-project connection state into app settings is a proposal to **make projects non-portable**, and must be refused on that ground rather than argued on convenience. **The password is not a counter-example** (checked against §17 and §18.2's 2026-08-03 row, and against the tree on 2026-08-10): `ProjectSettings` does carry a plaintext `password` per role (`_connection_to_dict`), but `save_settings` calls `_ensure_gitignored(project_dir, f"{SETTINGS_DIRNAME}/")`, so the credential travels by **folder copy** and never by **commit/clone** — the shared-repo hazard is closed at the write, exactly as §18.2 intended (*gitignored **instead of** QSettings-hidden, never both*). The residual — a clone arrives **without** connections, and no re-supply path on clone is specified — is recorded in §17 as an open edge, not resolved by this row. **Nothing was implemented, so nothing is being unbuilt** — verified in the tree on 2026-08-10: `db/config.py` contains no `ProfileKey`, no `DEFAULT_PROFILE`, no `_group_for`, and no `key=` parameter on any of the three functions. **A row rather than a silent deletion**, because the withdrawn design is still legible in the frozen plan `docs/superpowers/plans/2026-08-02-ddl-object-editor-and-sandbox.md` and in the 2026-08-03 row above, and a reader arriving from either needs the trail. **What §17 keeps, and why it is not a hedge against the ruling:** (a) one sentence stating that `db/config.py`'s single `_GROUP = "db"` is the **projectless** connection while per-project connections live in the project, with `MainWindow.active_target_params()` named as the **single selector** across the two (BUG-034) — the outcome is genuinely *two* stores, which is the exact confusion the deleted block existed to prevent, so the boundary must be stated somewhere or it gets re-discovered as a bug; and (b) the **sandbox is never seeded from `<ConnectionOptions>`** rule, which is a safety rule about production, not keying machinery, and which shipped code cites §17 for by name (`MainWindow._import_pgtp_connection_into_target`). **Dropped with the block and not re-homed:** the QSettings compatibility argument and its *"`tests/db/test_config.py` must pass unedited"* proof (moot — no change to `db/config.py` is proposed), and the *"two plaintext passwords in QSettings"* caveat (§18.2 already states that the project's settings file is gitignored plaintext including passwords, and §18.2's Connections tab already carries the superuser-sandbox probe) |
 
 ---
 
@@ -9468,9 +9489,9 @@ unrecorded — nothing below was invented in the body above:
   material for the reconciled reading. The migration-convenience question below is what remains.)* Since
   the project's own connection profiles now live inside `.ddlproject/settings.json`, a copied/moved
   project folder carries its connection profiles (including password) with it automatically — self-
-  contained by construction. Still unresolved: (a) whether a **non-project-scoped** `ProfileKey` slug
-  migration path is worth keeping for any transitional QSettings-backed profiles that predate this
-  revision (probably not, since nothing has shipped yet); (b) whether the optional `.pgtp` link inside
+  contained by construction. *(The former sub-question — whether a QSettings profile-slug migration path
+  was worth keeping — is **closed**: the keyed profile store is withdrawn, so there is nothing to migrate
+  from, §17 / ledger 2026-08-10.)* Still unresolved: whether the optional `.pgtp` link inside
   the JSON is stored relative to the project root or absolute (relative survives a folder move without
   edits; absolute is simpler to implement first).
 - **§18.5 D2a — `pg_dump`/`pg_restore` invocation details — largely ANSWERED by the shipped
