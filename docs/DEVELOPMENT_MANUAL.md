@@ -409,8 +409,14 @@ taken at the moment of filing — e.g. `BUG-260810143025` — never a running co
 deliberate: two people can triage bugs on two machines at once and their entries never
 collide on the same number, so git merges the two appends cleanly in either direction with
 no renumbering. (The legacy `BUG-001`…`BUG-064` predate this rule and stay exactly as they
-are — never renumber an existing entry.) Feature-queue ids (`FQ-NNN`) and decision ids
-(`DEC-NNN`) remain sequential for now; only the bug queue is timestamp-keyed.
+are — never renumber an existing entry.) **All three queues now use timestamp ids** the
+same way: feature entries are `FQ-<YYMMDDHHMMSS>` and decision entries are
+`DEC-<YYMMDDHHMMSS>`, each stamped at filing time for the same collision-free-merge reason.
+Only the legacy ids predating the rule stay sequential — `BUG-001`…`BUG-064`,
+`FQ-001`…`FQ-035`, `DEC-001`…`DEC-015` — and they are never renumbered; the two schemes
+coexist permanently, because an id is a name, not a position. (`feature-triage` and
+`owner-decision` have no `Bash` tool, so the dispatching session runs
+`date +%y%m%d%H%M%S` and passes the id in the prompt; `bug-triager` reads the clock itself.)
 
 **Status lifecycle:** `OPEN` → `RESOLVED (<commit>)`, flipped in place by whoever does the
 resolve pass.
@@ -421,7 +427,7 @@ resolve pass.
 The main session dispatches `feature-triage` in the **foreground**. Expect it to talk back
 — "which connection failure state should the button surface?", "should this EXTEND the
 existing Connections tab spec (§18.2) rather than be a new feature?" Answer its questions;
-it writes one `FQ-NNN` entry with `Status: QUEUED`.
+it writes one `FQ-<YYMMDDHHMMSS>` entry with `Status: QUEUED`.
 
 **Status lifecycle:** `QUEUED` → (drain pass: `spec-maintainer` folds it, you build it) →
 `PROCESSED (<commit or spec §>)`.
