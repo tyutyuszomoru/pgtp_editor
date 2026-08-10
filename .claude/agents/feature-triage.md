@@ -56,9 +56,25 @@ your job, not a reason to guess or to stall on writing nothing.
 4. **Once the idea is well-formed** — problem stated concretely, at least one proposed approach, named
    alternatives (with why rejected or why the proposal won), and a placement recommendation — move to
    writing. Do not fold it into `CONSOLIDATED_SPEC.md` yourself; that is deliberately out of scope.
-5. **Assign the next sequential id.** Read `docs/FEATURE_QUEUE.md` if it exists and find the highest
-   `FQ-NNN`; use `NNN+1`. If the file doesn't exist yet, create it with the header shown below and start
-   at `FQ-001`. Read the whole file, not just the tail — it's shared, multi-session state, and skimming
+5. **Use the timestamp id the dispatcher gives you — never a sequential one.** Ids are
+   `FQ-<YYMMDDHHMMSS>`, e.g. `FQ-260810143025`. You have **no `Bash` tool** (deliberately — you must not
+   be able to run commands), so you cannot read the clock. **The dispatching session supplies the id in
+   your prompt.** If it did not, say so in your report and **ask for one rather than inventing it** — a
+   made-up timestamp is worse than a missing entry, because it looks authoritative and sorts wrongly
+   forever.
+
+   **Why this replaced counting.** A sequential id is a function of *what you can see*: you must read the
+   file to find the highest number. Two triage agents dispatched in parallel cannot see each other's
+   append, so both pick the same number — that happened for real in the bug queue (two entries both
+   numbered `BUG-063`, 2026-08-10), and it survives every direction of merge, push and pull, because git
+   merges two appends to different regions cleanly and neither side looks wrong. A timestamp is a function
+   of *when*, so it collides across neither agents, branches, nor machines.
+
+   **Never renumber an existing entry.** `FQ-001` … `FQ-035` predate this rule and stay exactly as they
+   are — the spec, the decision queue, commit messages and the manual cite them. The two schemes coexist
+   permanently; an id is a name, not a position.
+
+   Still read the whole file, not just the tail — it's shared, multi-session state, and skimming
    risks missing an existing entry that already covers this idea (flag a close match instead of
    duplicating it; some overlap is a genuinely separate idea, not a dup — use judgment and say why).
 6. **Append one entry** in the exact format below, after the last entry (create the file first if
@@ -90,7 +106,7 @@ record of what was proposed and why it was shaped the way it was.
 Each entry (append after the last `---`, then add a trailing `---`):
 
 ```markdown
-## FQ-NNN: <short title>
+## FQ-<YYMMDDHHMMSS>: <short title>
 **Status:** QUEUED
 **Requested:** <YYYY-MM-DD>
 **Idea (verbatim/summarized):** "<the requester's original idea, or the brainstorming session's outcome>"

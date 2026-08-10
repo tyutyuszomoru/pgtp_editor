@@ -111,6 +111,16 @@
   `docs/FEATURE_QUEUE.md` — it never edits `CONSOLIDATED_SPEC.md`,
   `pgtp_editor/`, or `tests/`, so it cannot conflict with whatever the main
   session is mid-editing.
+- **Queue ids are timestamps, not counters — and the dispatcher supplies them.**
+  `FQ-<YYMMDDHHMMSS>` and `BUG-<YYMMDDHHMMSS>`. A sequential id is a function of what
+  the agent can *see*, so two agents dispatched in parallel pick the same number — that
+  happened for real (two `BUG-063` entries, 2026-08-10) and it survives every direction of
+  merge, push and pull, because git merges two appends to different regions cleanly and
+  neither side looks wrong. `bug-triager` has `Bash` and reads the clock itself; **
+  `feature-triage` deliberately has no `Bash`, so the dispatching session must run
+  `date +%y%m%d%H%M%S` and pass the id in the prompt.** It will ask rather than invent one.
+  Never renumber an existing `FQ-001…035` / `BUG-001…064` entry — the schemes coexist, and
+  an id is a name, not a position.
 - **When the user asks to pick up the queue** (typically once the main
   implementation task has wrapped up), read `docs/FEATURE_QUEUE.md`, dispatch
   `spec-maintainer` (it harmonizes first, then folds) to fold each `QUEUED` entry into
