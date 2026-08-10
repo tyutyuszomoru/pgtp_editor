@@ -102,20 +102,68 @@ def test_if_exists_is_a_modifier_but_a_real_if_is_not():
 def test_transaction_begin_is_told_apart_from_a_plpgsql_begin():
     """`BEGIN;` is transaction control; `BEGIN` followed by a body is a block.
 
-    **Pinned as-is, including a limitation this lift did NOT change.**
-    `BEGIN TRANSACTION` / `BEGIN WORK` are matched through `Token.keyword`, which
-    is non-None only for members of `sql/keywords.py::SQL_KEYWORDS` -- and neither
-    `transaction` nor `work` is a member, so `BEGIN_NOT_BLOCK_FOLLOWERS` never
-    fires for them and only the `;` half of the guard is live. That was already
-    true of `_Reindenter` before the rules moved here; this test records it rather
-    than silently "fixing" it, because widening `SQL_KEYWORDS` would change the
-    formatter's indentation and refusal verdicts, which is not FQ-034's business.
+    **Both halves of the guard are live now (BUG-260810194657).** They did not use
+    to be: the phrase half matched through `Token.keyword`, which is non-None only
+    for members of `sql/keywords.py::SQL_KEYWORDS`, and neither `transaction` nor
+    `work` is a member -- so `BEGIN TRANSACTION; ... COMMIT;` opened a plpgsql
+    frame that `COMMIT` could not close and the formatter *refused valid SQL*,
+    while the bare-`BEGIN;` spelling of the same statement formatted fine.
+
+    The fix matches the phrase on `Token.lowered`, and `SQL_KEYWORDS` was
+    deliberately **not** widened: it drives `Token.keyword`, which the formatter
+    reads for call-paren gluing and unary minus (`select work(1)` would become
+    `select work (1)`, `select t.work - 1` would become `select t.work -1`), and it
+    is shared *by identity* with the editor's highlighter, so a column named `work`
+    would paint as a keyword app-wide. That is the `declare_is_cursor` precedent
+    below -- `cursor` is absent from the set too.
     """
     assert blocks.begin_is_transaction(items("begin;"), 0) is True
     text = "begin\nx := 1;\nend;"
     assert blocks.begin_is_transaction(items(text), index_of(text, "begin")) is False
-    # The dormant half, asserted as dormant so the day it is fixed this test says so.
-    assert blocks.begin_is_transaction(items("begin transaction;"), 0) is False
+
+    # The half that used to be dormant, and is not any more.
+    assert blocks.begin_is_transaction(items("begin transaction;"), 0) is True
+    assert blocks.begin_is_transaction(items("begin work;"), 0) is True
+    assert blocks.begin_is_transaction(items("begin transaction"), 0) is True  # end of input
+    assert (
+        blocks.begin_is_transaction(items("begin transaction isolation level serializable;"), 0)
+        is True
+    )
+    # The noise word may be omitted: the mode list can follow `BEGIN` directly.
+    assert blocks.begin_is_transaction(items("begin isolation level serializable;"), 0) is True
+    assert blocks.begin_is_transaction(items("begin read only;"), 0) is True
+    assert blocks.begin_is_transaction(items("begin read write;"), 0) is True
+    assert blocks.begin_is_transaction(items("begin not deferrable;"), 0) is True
+    assert blocks.begin_is_transaction(items("begin deferrable;"), 0) is True
+
+
+def test_a_block_whose_first_statement_assigns_to_work_is_still_a_block():
+    """The false positive the `Token.keyword` accident was accidentally suppressing.
+
+    Matching the phrase on `lowered` *alone* would read `BEGIN work := 1; END;` --
+    a plpgsql block assigning to a variable named `work` -- as transaction control,
+    and the formatter would then swallow the real `END;` as a `COMMIT` synonym,
+    silently dropping a block frame. That is worse than the bug being fixed, so the
+    phrase is only believed when what follows it is a `;`, the end of the input, or
+    a transaction mode word. `:=` is none of those.
+    """
+    for text in ("begin\nwork := 1;\nend;", "begin\ntransaction := 1;\nend;"):
+        assert blocks.begin_is_transaction(items(text), index_of(text, "begin")) is False
+    # Same shape one token further out: a mode HEAD used as a variable name.
+    for text in ("begin\nread := 1;\nend;", "begin\nisolation := 1;\nend;"):
+        assert blocks.begin_is_transaction(items(text), index_of(text, "begin")) is False
+    # And a block that simply starts with a call, whose first token is a word.
+    text = "begin\nperform f();\nend;"
+    assert blocks.begin_is_transaction(items(text), index_of(text, "begin")) is False
+
+
+def test_the_begin_phrase_tables_carry_no_dead_entries():
+    """A dead table is what produced BUG-260810194657 -- keep them separated by role."""
+    assert blocks.BEGIN_NOT_BLOCK_FOLLOWERS == {"transaction", "work"}
+    assert "isolation" in blocks.BEGIN_TRANSACTION_MODE_HEADS  # a mode head, not a noise word
+    # Every mode head may also continue a mode list (`READ ONLY, READ WRITE`), so
+    # the heads are a subset -- if they ever diverge, one of the two is unreachable.
+    assert blocks.BEGIN_TRANSACTION_MODE_HEADS <= blocks.BEGIN_TRANSACTION_MODE_WORDS
 
 
 def test_a_bare_loop_opens_but_the_loop_in_end_loop_closes():
@@ -156,3 +204,22 @@ def test_next_keyword_and_next_token_are_bounds_safe():
     assert blocks.next_keyword(item_list, 1) is None  # off the end
     assert blocks.next_token(item_list, 1) is None
     assert blocks.next_token(item_list, 0).text == "1"
+
+
+def test_next_lowered_sees_phrase_words_that_next_keyword_cannot():
+    """The reason the helper exists: a phrase word need not be a dialect keyword.
+
+    `transaction`, `work` and `cursor` are all absent from `SQL_KEYWORDS` (and must
+    stay absent -- see `test_transaction_begin_is_told_apart_from_a_plpgsql_begin`),
+    so `Token.keyword` is None for them while `next_lowered` reads them fine.
+    """
+    item_list = items("BEGIN Transaction;")
+    assert blocks.next_keyword(item_list, 0) is None
+    assert blocks.next_lowered(item_list, 0) == "transaction"  # case-folded
+    # Punctuation and literals are not words: a phrase word is a word.
+    assert blocks.next_lowered(item_list, 1) is None  # the `;`
+    assert blocks.next_lowered(items("select 'Work'"), 0) is None  # a string literal
+    # Bounds-safe in both directions, like `next_keyword`.
+    assert blocks.next_lowered(item_list, 2) is None
+    assert blocks.next_lowered(item_list, 0, offset=-5) is None
+    assert blocks.next_lowered(item_list, 0, offset=0) == "begin"

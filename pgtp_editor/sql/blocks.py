@@ -42,12 +42,17 @@ from __future__ import annotations
 
 from typing import Sequence
 
-from .tokenizer import NEWLINE, PUNCT, WHITESPACE, Token
+from .tokenizer import NEWLINE, PUNCT, WHITESPACE, WORD, Token
 
 # --------------------------------------------------------------------------
 # The rule tables. All lowercase; matching goes through `Token.keyword`, which
 # is case-insensitive, so a keyword's *classification* lives here while its
 # text stays verbatim in the token.
+#
+# The exception -- and it is a rule now, not an accident: a table of words that
+# take part in a PHRASE this module recognizes (`BEGIN TRANSACTION`,
+# `DECLARE ... CURSOR`) matches on `Token.lowered` instead, because those words
+# are not dialect keywords and must not become ones. See `next_lowered`.
 # --------------------------------------------------------------------------
 
 #: Block keywords that start a new line (plpgsql block structure). Wider than
@@ -84,8 +89,38 @@ LOOP_STARTERS = frozenset({"then", "begin", "else", "exception", "loop", "declar
 #: `IF` here is a modifier (`DROP ... IF EXISTS`), not a block opener.
 IF_NOT_BLOCK_FOLLOWERS = frozenset({"exists"})
 
-#: `BEGIN` here is transaction control, not a plpgsql block.
-BEGIN_NOT_BLOCK_FOLLOWERS = frozenset({"transaction", "work", "isolation"})
+#: `BEGIN` here is transaction control, not a plpgsql block: the two noise words
+#: of `BEGIN TRANSACTION` / `BEGIN WORK`. Matched on `Token.lowered` and NOT
+#: through `Token.keyword` -- neither word is in `SQL_KEYWORDS` and neither may be
+#: added there (see `next_lowered`). `isolation` moved to the mode heads below,
+#: where it belongs: it is not a noise word, it is the head of a mode list.
+BEGIN_NOT_BLOCK_FOLLOWERS = frozenset({"transaction", "work"})
+
+#: Heads of a transaction *mode* list, which Postgres allows directly after
+#: `BEGIN` with the noise word left out (`BEGIN ISOLATION LEVEL SERIALIZABLE`,
+#: `BEGIN READ ONLY`, `BEGIN DEFERRABLE`, `BEGIN NOT DEFERRABLE`). §18.4's
+#: false-positive-guard table lists `BEGIN ISOLATION ...` explicitly.
+BEGIN_TRANSACTION_MODE_HEADS = frozenset({"isolation", "read", "deferrable", "not"})
+
+#: Words that may continue a transaction mode list. A phrase word or a mode head
+#: is only *believed* when what follows it is a `;`, the end of the input, or one
+#: of these -- the confirmation step that keeps `BEGIN work := 1; ... END;` a
+#: plpgsql block rather than transaction control (see `begin_is_transaction`).
+BEGIN_TRANSACTION_MODE_WORDS = frozenset(
+    {
+        "level",
+        "write",
+        "only",
+        "read",
+        "committed",
+        "uncommitted",
+        "repeatable",
+        "serializable",
+        "deferrable",
+        "not",
+        "isolation",
+    }
+)
 
 #: Per-frame hint for the "you never closed this" refusal message.
 UNMATCHED_BLOCK_HINT = {
@@ -117,6 +152,11 @@ STATEMENT_BOUNDARY_KEYWORDS = frozenset(
         "do",
     }
 )
+
+#: Precomputed union: what may follow `BEGIN` and still be transaction control.
+#: Built once rather than per call -- `begin_is_transaction` runs inside both
+#: consumers' token walks.
+_BEGIN_PHRASE_OR_MODE_HEAD = BEGIN_NOT_BLOCK_FOLLOWERS | BEGIN_TRANSACTION_MODE_HEADS
 
 #: How far ahead `declare_is_cursor` looks for the `CURSOR` keyword.
 _CURSOR_LOOKAHEAD = 8
@@ -159,6 +199,35 @@ def next_keyword(
     return None
 
 
+def next_lowered(
+    items: Sequence[tuple[Token, int]], index: int, offset: int = 1
+) -> str | None:
+    """The lowercased text of the word token `offset` significant tokens on.
+
+    **Not a tidier `next_keyword`, and must not be "simplified" into one.** A word
+    can participate in a phrase this module recognizes without being a dialect
+    keyword: `transaction`, `work`, `level`, `serializable`, `cursor`, `type`,
+    `rowtype` are all absent from `sql/keywords.py::SQL_KEYWORDS`, so
+    `Token.keyword` is `None` for every one of them. `declare_is_cursor` below has
+    always matched `tok.lowered == "cursor"` for exactly this reason, and
+    `formatter.py` does the same for `%TYPE`/`%ROWTYPE`.
+
+    Adding those words to `SQL_KEYWORDS` is not an option: the set drives
+    `Token.keyword`, which the formatter reads for call-paren gluing and unary
+    minus (`select work(1)` would become `select work (1)`), and it is shared *by
+    identity* with the editor's highlighter -- so a column named `work` would
+    paint as a keyword app-wide. BUG-260810194657 measured both.
+
+    Returns None for punctuation, literals and comments: a phrase word is a word.
+    """
+    target = index + offset
+    if 0 <= target < len(items):
+        tok = items[target][0]
+        if tok.kind == WORD:
+            return tok.lowered
+    return None
+
+
 def next_token(items: Sequence[tuple[Token, int]], index: int) -> Token | None:
     """The next significant token after `index`, or None at the end."""
     target = index + 1
@@ -180,17 +249,40 @@ def if_is_modifier(items: Sequence[tuple[Token, int]], index: int) -> bool:
     return follower == "not" and next_keyword(items, index, 2) in IF_NOT_BLOCK_FOLLOWERS
 
 
+def _is_semicolon(tok: Token | None) -> bool:
+    return tok is not None and tok.kind == PUNCT and tok.text == ";"
+
+
 def begin_is_transaction(items: Sequence[tuple[Token, int]], index: int) -> bool:
     """`BEGIN;` / `BEGIN TRANSACTION` is transaction control, not a block.
 
     Told apart by what follows: a plpgsql `BEGIN` is followed by the body, never
-    by `;` and never by `TRANSACTION`/`WORK`/`ISOLATION`.
+    by `;`, and never by the `TRANSACTION`/`WORK` noise word or a transaction mode
+    list. Three shapes count as transaction control:
+
+    * `BEGIN ;`
+    * `BEGIN TRANSACTION|WORK` -- then `;`, the end of the input, or a mode word;
+    * `BEGIN ISOLATION|READ|DEFERRABLE|NOT ...` -- the noise word omitted, same
+      confirmation.
+
+    **The confirmation is load-bearing, not padding** (BUG-260810194657). The
+    phrase words are matched on `Token.lowered`, so without it a plpgsql block
+    whose first statement assigns to a variable *named* `work` --
+    ``BEGIN\\nwork := 1;\\nEND;`` -- would read as transaction control and have its
+    real `END;` silently swallowed by the formatter's transaction path. `:=` is not
+    a mode word, so the phrase is not believed and the block stays a block.
     """
-    follower = next_keyword(items, index)
-    if follower in BEGIN_NOT_BLOCK_FOLLOWERS:
+    if _is_semicolon(next_token(items, index)):
         return True
-    after = next_token(items, index)
-    return after is not None and after.kind == PUNCT and after.text == ";"
+    follower = next_lowered(items, index)
+    if follower is None:
+        return False
+    if follower not in _BEGIN_PHRASE_OR_MODE_HEAD:
+        return False
+    after = next_token(items, index + 1)
+    if after is None or _is_semicolon(after):
+        return True  # `BEGIN TRANSACTION;` / `BEGIN WORK` at the end of the input
+    return next_lowered(items, index, 2) in BEGIN_TRANSACTION_MODE_WORDS
 
 
 def loop_opens_block(

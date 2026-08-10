@@ -321,6 +321,39 @@ def test_every_ladder_rung_strictly_contains_the_previous_one():
                 assert following[0] <= previous[0] and following[1] >= previous[1]
 
 
+def test_transaction_control_contributes_no_block_rung_in_any_spelling():
+    """BUG-260810194657's span-model symptom: a rung starting *inside* the phrase.
+
+    `BEGIN TRANSACTION; ... END;` used to yield a `kind='begin'` span whose inner
+    range started at `TRANSACTION` -- an expand-selection step that selects from the
+    middle of a two-word statement header. Transaction control is not a block, so it
+    must contribute no frame rung at all, exactly as the bare `BEGIN;` spelling does.
+
+    Asserted through the public `structure_chain` (the surface the ladder consumes)
+    and for the caret both inside the header and in the body.
+    """
+    for text in (
+        "BEGIN;\nUPDATE t SET a = 1;\nEND;\n",
+        "BEGIN TRANSACTION;\nUPDATE t SET a = 1;\nEND;\n",
+        "BEGIN WORK;\nUPDATE t SET a = 1;\nCOMMIT;\n",
+        "BEGIN TRANSACTION ISOLATION LEVEL SERIALIZABLE;\nUPDATE t SET a = 1;\nCOMMIT;\n",
+    ):
+        for marker in ("BEGIN", "SET a"):
+            chain = chain_at(text, marker)
+            assert "begin" not in [span.kind for span in chain], (text, marker, chain)
+            # And no rung may start in the middle of the header phrase.
+            header_end = text.index(";")
+            for span in chain:
+                assert not (0 < span.inner[0] < header_end), (text, marker, span)
+
+    # The block that only *looks* like the phrase still gets its `begin` rung, with
+    # the whole block as its outer range.
+    block = "BEGIN\nwork := 1;\nEND;\n"
+    frame = [span for span in chain_at(block, "work") if span.kind == "begin"]
+    assert len(frame) == 1
+    assert block[frame[0].outer[0] : frame[0].outer[1]] == "BEGIN\nwork := 1;\nEND"
+
+
 # --------------------------------------------------------------------------
 # THE ANTI-FORK GUARD
 # --------------------------------------------------------------------------
