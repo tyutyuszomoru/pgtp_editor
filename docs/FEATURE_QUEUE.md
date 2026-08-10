@@ -4723,3 +4723,42 @@ prefs. Confirm the live §18.4 / §18.x / FQ-027 section numbers at spec-fold ti
 **Open questions:** (1) copy-vs-reference of the attached `.pgtp` and how `source_path` is set for a file picked from an arbitrary location (vs. one already in the project folder) — follow the existing open-time PgtpLink convention, confirm at design time; (2) whether the quality Test button should be gated until the user supplies the password.
 
 ---
+
+## FQ-260810164455: Single source of truth for the app version — a `pgtp_editor/version.py` read from package metadata, surfaced in the About box
+**Status:** QUEUED
+**Requested:** 2026-08-10
+**Idea (verbatim/summarized):** "For the versioning of the app use a single point of truth, a single version.py that feeds into all other files (.iss installer, about modal, build filename, README, changelog etc). When cutting a new release or bumping version this single file should contain the version. Activity: (1) create version.py; (2) wire where it is read on runtime (build, about); (3) add to memory and CLAUDE that bumping version means the .iss needs updating." — *Note: challenged during triage; several premises turned out to be already-solved or wrong (see below), and the owner ruled on the reframed scope.*
+
+**Problem:** The app version currently lives in **two hardcoded places** with no importable single source:
+- `pyproject.toml:3` — `version = "0.4.0"` (the *de facto* source of truth today).
+- `pgtp_editor/mcp/server.py:55` — `SERVER_VERSION = "0.4.0"` (a **separate** value; see below — intentionally kept separate, not drift).
+
+Consequences: (a) **the running app cannot read its own version** — there is no `__version__` anywhere in `pgtp_editor/` (`main.py:211` only reads PySide6's version, not the app's); (b) **the About box shows no version at all** — `pgtp_editor/ui/about.py::ABOUT_TEXT` has no version string; (c) there is no single importable value for future consumers to depend on.
+
+Two premises in the original request were **already false** and are corrected here so the implementer does not redo settled work:
+- The Inno Setup installer is **already single-sourced**. `docs/installer.iss:26-46` runs an ISPP Pascal-Script scanner that reads `version = "x.y.z"` out of `pyproject.toml` at compile time (and `#pragma error`s if it cannot), building both `AppVersion` and `OutputBaseFilename = PGTPEditor_Setup_{#AppVersion}` from it. Its own comment already says *"Bump the version in pyproject.toml only."* So the request's step 3 — "bumping version means the .iss needs updating" — is **moot**: the .iss needs no manual edit on a bump.
+- The **build filename** carries no version: PyInstaller (`optimized_build.py`) emits a plain `PGTPEditor.exe`; the only versioned artifact name (`PGTPEditor_Setup_{#AppVersion}`) is constructed in the .iss, already from pyproject. So there is nothing to "feed into the build filename" beyond what the .iss already does.
+
+**Proposed approach (owner-ruled: the SAFE option — keep `pyproject.toml` literal, add a read-only accessor):**
+- **Keep `pyproject.toml:3` as the literal source of truth.** Do **not** switch pyproject to a dynamic `attr:` version — the working `docs/installer.iss:26-46` scanner reads the literal `version = "x.y.z"` line and must stay untouched.
+- **Create `pgtp_editor/version.py`** exposing `__version__`, resolved at import time via `importlib.metadata.version("pgtp-editor")`, with a sensible fallback (e.g. a literal default or reading `pyproject.toml`) for a source checkout / frozen app where package metadata may be unavailable. This gives the running app a single importable version without duplicating the string as a second literal.
+- **Wire the About box to it** (`pgtp_editor/ui/about.py`): render the version into `ABOUT_TEXT`, e.g. a `"PGTP Editor v0.4.0"` heading, reading `pgtp_editor.version.__version__`. Net-new — the box shows no version today.
+- **Leave `mcp/server.py:55` `SERVER_VERSION` independent — intentionally.** The MCP server protocol/tool version is deliberately decoupled from the app release version; it stays hardcoded/managed separately. This is recorded here so a future reader does **not** "fix" it as drift.
+- **Installer:** no code change; a **verify step** only — confirm `installer.iss:26-46` still resolves the version after `version.py` is added (it should, since pyproject stays literal). This replaces the request's (moot) "manually bump the .iss".
+- **README / CHANGELOG: out of scope.** No auto-rewrite script; no CHANGELOG is created (none exists). These stay updated by the existing `chore(release): x.y.z` release step. The feature stays focused on runtime/code + installer verification.
+
+**Definition of done (capture for the implementing session):** (1) `pgtp_editor/version.py` exposes a non-empty `__version__` reading `importlib.metadata` with a fallback; (2) the About box renders that version; (3) **the main session updates `CLAUDE.md` + auto-memory** with the actual bump rule — *"bump the version in `pyproject.toml` only; `version.py` and the installer follow automatically"* (feature-triage does **not** edit CLAUDE.md/memory itself — this is a DoD item for the main session); (4) verify `installer.iss` still resolves the version after the change; (5) `mcp/server.py` `SERVER_VERSION` intentionally left independent (documented, not "fixed").
+
+**Alternatives considered:**
+- *Move the source of truth to `version.py` and make pyproject read it dynamically (`[tool.setuptools.dynamic] version = {attr = "pgtp_editor.version.__version__"}`)* — closest to the literal request, but **rejected by the owner** as the risky option: a dynamic version stops emitting a literal `version = "x.y.z"` line, which would **break the working `installer.iss` scanner** (installer.iss:26-46) and require rewriting Pascal-Script that currently works. Not worth the risk for no functional gain.
+- *Add `__version__` as a second hardcoded literal in `version.py`* — rejected: that recreates the exact two-copies-drift the feature exists to kill. Reading package metadata means one literal (`pyproject.toml`) still governs.
+- *Fold `mcp/server.py::SERVER_VERSION` into the single source* — rejected by the owner: MCP server version is intentionally decoupled from the app release version.
+- *Scope README/CHANGELOG auto-rewrite* — rejected by the owner: prose in git, kept by the release step; not runtime-read; would balloon scope (and require creating a CHANGELOG).
+
+**Suggested placement:** CREATE a new **packaging / release-engineering** subsection in `CONSOLIDATED_SPEC.md` — no such section exists today (the spec mentions the Linux `.desktop` build artifact ~:1844 and an About-box licensing note ~:815, but has no release/versioning contract). The new subsection should state: `pyproject.toml` is the single literal version source; `pgtp_editor/version.py` re-exposes it via `importlib.metadata` for runtime; the About box renders it; `installer.iss` self-resolves it at compile time; the bump rule is "edit pyproject only"; and `mcp` `SERVER_VERSION` is an intentionally-separate value. This is a spec-maintainer job — flagged, not written here.
+
+**Open questions:** (1) exact fallback strategy in `version.py` when `importlib.metadata` is unavailable (frozen PyInstaller bundle / bare source checkout) — a literal default, or parse `pyproject.toml` at runtime? Confirm at design time; the frozen app is the important case since PyInstaller may not ship package metadata unless explicitly collected. (2) Whether the About-box version should also appear elsewhere (window title, status bar) — not requested; note only.
+
+**Test impact:** (a) a version-presence/import test — `pgtp_editor.version.__version__` is a non-empty string and **equals** the version in `pyproject.toml:3` (guards the two from silently diverging); (b) an About-box assertion that the rendered text contains the version. **No `.iss` auto-inject guard needed** since pyproject stays literal and the existing scanner is unchanged.
+
+---
