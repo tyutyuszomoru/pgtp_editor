@@ -32,7 +32,14 @@ or a live connection; it only ever sees the finished `SchemaIndex` object
 """
 from __future__ import annotations
 
-from .introspect import DatabaseSchema, TriggerInfo
+from .introspect import ColumnInfo, DatabaseSchema, TriggerInfo
+
+#: How much of a free-text column attribute (its DEFAULT expression, its
+#: COMMENT) may reach a completion row before it is elided. A popup row is a
+#: single line next to a caret, not a properties panel -- an unbounded
+#: `nextval('...'::regclass)` or a paragraph-long comment would push the
+#: useful part (name, type) off the visible width.
+_ATTRIBUTE_ELIDE_AT = 40
 
 
 class SchemaIndex:
@@ -56,6 +63,14 @@ class SchemaIndex:
         for trigger in schema.triggers.values():
             triggers_by_function.setdefault(trigger.function_name, []).append(trigger)
         self._triggers_by_function = triggers_by_function
+        # "schema.table" -> the popup-ready (key, display) pairs of its columns,
+        # rendered once here rather than per keystroke: completion is on the
+        # typing path (§18.6), so column_entries must stay a dict lookup plus a
+        # prefix filter, never a re-render of every column's attributes.
+        self._column_entries: dict[str, list[tuple[str, str]]] = {
+            table_key: [(column.name, _column_display(column)) for column in info.columns]
+            for table_key, info in schema.tables.items()
+        }
 
     # --- Schemas / tables / columns ----------------------------------------
     def known_schemas(self) -> list[str]:
@@ -81,6 +96,31 @@ class SchemaIndex:
             return []
         return [column.name for column in info.columns]
 
+    def column_entries(self, table: str, prefix: str = "") -> list[tuple[str, str]]:
+        """`table`'s columns as the shared completion popup's ``(key, display)``
+        pairs (§18.6 / FQ-030 slice 0), prefix-filtered like `known_tables`.
+
+        The *key* is the bare column name -- exactly what `known_columns`
+        returns and exactly what gets inserted into the buffer -- so this is a
+        drop-in widening of the `[(c, c) for c in known_columns(...)]` shape
+        both completion hosts build today. The *display* adds what a picker
+        needs to tell `id integer` from `id text`: the type, then PK / FK
+        target / NOT NULL / DEFAULT / COMMENT when the column carries them
+        (see `_column_display`).
+
+        `known_columns` is deliberately left alone -- callers that want plain
+        names (expand-SELECT, `%ROWTYPE` field lists) must not be forced to
+        unpack pairs, and the display text must not leak into generated SQL.
+
+        Never raises: an unknown `table`, or a `prefix` no column matches,
+        yields an empty list."""
+        prefix_lower = prefix.lower()
+        return [
+            entry
+            for entry in self._column_entries.get(table, ())
+            if entry[0].lower().startswith(prefix_lower)
+        ]
+
     # --- Trigger/function reverse lookup ------------------------------------
     def trigger_for_function(
         self, schema: str, name: str, arg_types: tuple[str, ...] | list[str] = ()
@@ -101,3 +141,38 @@ class SchemaIndex:
             if trigger.schema == schema:
                 return trigger
         return candidates[0] if candidates else None
+
+
+def _elide(text: str) -> str:
+    """`text` shortened to one popup row's worth, with an ellipsis when cut."""
+    text = " ".join(text.split())
+    if len(text) <= _ATTRIBUTE_ELIDE_AT:
+        return text
+    return text[: _ATTRIBUTE_ELIDE_AT - 1].rstrip() + "…"
+
+
+def _column_display(column: ColumnInfo) -> str:
+    """One completion row for `column`: its name, then the attributes it
+    actually carries, ``·``-separated -- e.g.
+    ``dept_id  integer · NOT NULL · -> hr.dept.id``.
+
+    Everything here is already on `ColumnInfo` (§18.1's widened introspection);
+    nothing is fetched. Attributes are omitted rather than negated: a nullable
+    column says nothing, only a NOT NULL one does, so the common row stays
+    short and the unusual one stands out.
+    """
+    parts = [column.data_type]
+    if column.is_pk:
+        parts.append("PK")
+    if column.fk_target:
+        parts.append(f"→ {column.fk_target}")
+    elif column.is_fk:
+        parts.append("FK")
+    if not column.is_nullable:
+        parts.append("NOT NULL")
+    if column.default:
+        parts.append(f"default {_elide(column.default)}")
+    if column.comment:
+        parts.append(_elide(column.comment))
+    detail = " · ".join(part for part in parts if part)
+    return f"{column.name}  {detail}" if detail else column.name
