@@ -2339,3 +2339,145 @@ surfaces. So the ladder's rung count is felt through a chord the user cannot mov
 **What an answer unblocks.** `sql/block_spans.py`'s `structure_chain` gets its final rung list, and with it the
 `StructureSpan.kind` vocabulary and the corpus test that pins the ladder against §18.4's adversarial SQL. It
 also lets `spec-maintainer` move §29's second FQ-034 item into §8's rung table.
+
+---
+
+## DEC-260810193637 — Does Command mode leave `Ctrl+D` / `Ctrl+K` / `Ctrl+U` as the app's line-editing gestures, or must they be freed for a later vim binding?
+
+- **Status:** OPEN
+- **Raised:** 2026-08-10, by `spec-maintainer`, while folding FQ-032 (vim editing mode) into
+  `CONSOLIDATED_SPEC.md` §8 as target design
+- **Blocks:** nothing. None of the three chords is in FQ-032's v1 command set, so there is **no defect
+  today** and the rest of FQ-032 can be built without this answer. It hardens with time: once a v2 command
+  set is designed against whichever answer the code happens to imply, reversing it costs a re-map.
+- **Id provenance:** the `DEC-` timestamp was assigned from an observed clock reading supplied by the
+  dispatching session, not from the moment of writing — do not read the exact second as the filing instant.
+
+**Context.** FQ-032 gives every EDITABLE editor a transient, per-tab **Command mode** entered with `Esc`
+(vim NORMAL), beside the default **Edit mode** (vim INSERT) — no setting, no persistence; in read-only
+editors the vim layer is inactive entirely. As folded, **v1 Command mode claims only bare keys and no
+`Ctrl` chord at all**, which is what turns the queue entry's headline risk ("whatever Command mode steals
+must be restored or copy-paste / find-focus silently break") into a non-problem rather than a managed one.
+
+The three chords at issue are already the app's. Since `55c2538` `Ctrl+D`, `Ctrl+K` and `Ctrl+U` are
+**app-implemented at all six editing surfaces on both platforms** — `DELETE_CHARACTER`,
+`DELETE_TO_END_OF_LINE`, `DELETE_LINE`, mapped at `pgtp_editor/ui/shortcut_registry.py:504-506`, with one
+implementation in `code_editor.apply_editor_operation`, all three carrying `RESERVED_SEQUENCES` rows
+(`shortcut_registry.py:392-403`) and all three with `docs/KEYBINDINGS.md` rows. That state is the owner's
+own ruling **DEC-260810143600**, taken deliberately **against** the reserve-only recommendation, on the
+ground that a half-applied uniformity rule is what the next sweep re-files.
+
+In vim, `Ctrl+D` is page-down and `Ctrl+U` is scroll-up. So the question is not about today's behaviour but
+about what a future extension of Command mode may claim.
+
+**Options.**
+- **They stay the app's, in BOTH editing modes.** Nothing to build, nothing to restore, and the three
+  shipped editing primitives keep working identically whichever mode the editor is in. *Cost:* vim's scroll
+  meanings are permanently unavailable in Command mode, and a vim user will press `Ctrl+D` expecting a page
+  down and delete a character instead — a destructive surprise, albeit an undoable one.
+- **Free them for a later vim binding.** Command mode could then offer vim's scrolling vocabulary. *Cost:*
+  it **reverses DEC-260810143600**, which the owner took deliberately days ago — that entry would then need
+  a `SUPERSEDED BY` line, and `docs/KEYBINDINGS.md` plus the manual's non-rebindable list would need
+  revising; it re-opens the steal/restore problem the v1 "no `Ctrl` chord" rule closes; and it either removes
+  three shipped editing primitives from Command mode (so the same key does different things in the two modes,
+  in the destructive direction) or removes them app-wide.
+
+**Recommendation: they stay the app's, in both editing modes**, and vim's scroll meanings stay permanently
+unavailable. `PageUp`/`PageDown` exist on every keyboard; three shipped editing primitives do not have a
+second spelling. This is put to the owner rather than settled in the spec because answering "free them"
+would reverse an owner ruling, and the spec does not reverse the owner's rulings for itself.
+
+**Unblocks:** a one-line rule in §8's vim block stating that the `Ctrl+D`/`Ctrl+K`/`Ctrl+U` family is
+mode-independent (or, on the other answer, a `feature-triage` entry for the re-map plus a revision of
+DEC-260810143600, `docs/KEYBINDINGS.md` and the manual's non-rebindable list).
+
+**Cross-references:** `CONSOLIDATED_SPEC.md` §8, *"Vim editing mode — Edit mode and Command mode over BOTH
+editor families"* (~:3820, note at ~:3991), and §29's three FQ-032 items, which state the same
+recommendation.
+
+---
+
+## DEC-260810193638 — Is vim's `Ctrl-R` redo dropped PERMANENTLY, or merely deferred?
+
+- **Status:** OPEN
+- **Raised:** 2026-08-10, by `spec-maintainer`, while folding FQ-032 into `CONSOLIDATED_SPEC.md` §8
+- **Blocks:** nothing. That `Ctrl-R` is **not built in v1** already follows from what shipped, and the spec
+  has restated it that way. What is open is only whether it is ever revisited.
+- **Id provenance:** the `DEC-` timestamp was assigned from an observed clock reading supplied by the
+  dispatching session, not from the moment of writing — do not read the exact second as the filing instant.
+
+**Context.** FQ-032 lists "`u` / `Ctrl-R`" for undo/redo and describes `Ctrl+R` as a "redo/redraw"
+collision. That is wrong about this app. `Ctrl+R` is a **reserved, per-tab `WidgetWithChildrenShortcut`
+`QShortcut` that focuses the Replace field**, installed at six `FindReplaceBar` hosts by
+`find_replace_bar.install_focus_shortcuts` (`pgtp_editor/ui/find_replace_bar.py:345-377`), plus the caption
+panel's own pair, and reserved at `shortcut_registry.py:278`.
+
+Claiming it for vim redo would need an `eventFilter` accepting `ShortcutOverride` (the shape the six
+surfaces already use for `Ctrl+Shift+Z`) and would **remove Replace-focus for as long as Command mode
+holds** — to buy a second spelling of an operation the app already answers uniformly with `Ctrl+Y` on both
+platforms (DEC-015).
+
+The property at stake is bigger than the one chord: **the first `Ctrl` chord Command mode claims re-opens
+the whole steal/restore problem**, which the v1 "bare keys only" rule currently closes outright.
+
+**Options.**
+- **Permanent.** Redo in Command mode is `Ctrl+Y`. Command mode never touches a `Ctrl` chord, so no
+  `ShortcutOverride` filter, no restore logic, and `Ctrl+F`/`Ctrl+R` mean the same thing in both modes
+  everywhere. *Cost:* a vim user's muscle memory for `Ctrl-R` is dead, and the mode is that much less
+  faithful to vim.
+- **Deferred, to be revisited.** Leaves the door open to full vim fidelity. *Cost:* the door is the
+  expensive part — as soon as it opens, Command mode is a keyboard *thief* rather than a bare-key layer,
+  and every future `Ctrl` chord request ("what about `Ctrl+V` block visual?") arrives with precedent. It
+  also means Replace-focus becomes conditional on an editing mode, which is a user-visible inconsistency
+  across six surfaces.
+
+**Recommendation: permanent.** Redo in Command mode is `Ctrl+Y`. Fidelity to vim is not worth converting a
+"claims no `Ctrl` chord ever" rule into a "claims some `Ctrl` chords" rule; the former is a property that
+can be stated and tested, the latter is a standing negotiation.
+
+**Unblocks:** §8 stating the no-`Ctrl`-chord rule as an invariant of the vim layer rather than as a v1
+scope note, and closing FQ-032's `Ctrl-R` item for good rather than leaving it as future work.
+
+**Cross-references:** `CONSOLIDATED_SPEC.md` §8's *Mode D restatement* (~:3981 and the header note at :34),
+and §29's three FQ-032 items. DEC-015 is the recorded ruling that `Ctrl+Y` is redo on both platforms.
+
+---
+
+## DEC-260810193639 — Is the vim layer INACTIVE in `CodeEditorDialog` (the "Edit code…" PHP/JS event-handler dialog)?
+
+- **Status:** OPEN
+- **Raised:** 2026-08-10, by `spec-maintainer`, while folding FQ-032 into `CONSOLIDATED_SPEC.md` §8
+- **Blocks:** nothing in the rest of FQ-032 — but it blocks that dialog specifically: if the layer is active
+  there and nobody notices, the dialog ships with one fewer exit than it has today.
+- **Id provenance:** the `DEC-` timestamp was assigned from an observed clock reading supplied by the
+  dispatching session, not from the moment of writing — do not read the exact second as the filing instant.
+
+**Context.** With FQ-032 folded, `Esc` has **six** meanings, ordered in §8 (~:3918). Five are free of
+conflict: the completion popup takes focus, so the editor never sees the key; a Find bar field is a
+different widget; tab-stop mode is a narrower state; read-only means the layer is off.
+
+The **one genuine collision is `CodeEditorDialog`** (`pgtp_editor/ui/code_editor.py:1108`), the
+**Edit code…** dialog for a PHP/JS event-handler body. Its `Esc` is Qt's dialog cancel, and since
+`Ctrl+S`/`Ctrl+W` were deleted there on 2026-08-09 (owner decision, recorded in the comment at
+`code_editor.py:1139-1148`) it is **that dialog's only keyboard cancel at all** — the comment says so
+explicitly: OK/Cancel remain reachable "by the button box, by `Return`/`Escape`". A Command mode that
+consumed `Esc` there would **delete an exit path**.
+
+**Options.**
+- **Vim layer inactive in `CodeEditorDialog`.** `Esc` keeps meaning cancel; no exit is lost. *Cost:* one
+  editable editor surface behaves unlike the others, which the manual and the spec must both state, and a
+  user who has learned Command mode loses it in that dialog.
+- **Command mode active there; cancel only via the button box (or `Alt`-mnemonic).** Uniform vim coverage
+  across every editable editor. *Cost:* it removes the dialog's only keyboard cancel, which is a real
+  regression for a modal, and it does so on the one surface with **no menu bar** — so the `:` command
+  palette has nothing to derive commands from and the mode is a stunted version of itself anyway.
+
+**Recommendation: inactive in that dialog.** It edits a PHP/JS handler body, has no menu bar for the `:`
+palette to derive commands from, and is the one editor host whose `Esc` means something irreplaceable. The
+alternative is legal but pays a real exit for a keyboard vocabulary that surface's users did not ask for.
+
+**Unblocks:** §8's `Esc` precedence list gaining a stated sixth-case exclusion (a named host where the layer
+is off, alongside "read-only"), and the FQ-032 implementation knowing at which hosts to install
+`VimModeMixin`.
+
+**Cross-references:** `CONSOLIDATED_SPEC.md` §8's `Esc` ordering (~:3918) and §29's three FQ-032 items.

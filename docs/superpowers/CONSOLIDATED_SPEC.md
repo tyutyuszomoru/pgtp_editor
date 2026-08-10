@@ -1,6 +1,75 @@
 # PGTP Editor — Consolidated Specification
 
-> **Status:** living document · **Last synthesized:** 2026-08-10 (status pass) — **THE PREVIOUS PASS'S OWN
+> **Status:** living document · **Last synthesized:** 2026-08-10 (FQ-032 fold) — **VIM EDITING MODE FOLDED IN
+> as §8's *Edit mode and Command mode* block, and folding it required settling `Esc` — a key with five
+> existing answers — into ONE stated precedence order. Three ledger rows added; one dead assertion in §29
+> retired; one part of the feature RESTATED (mode D) because reconciliation says it should not be built as
+> requested.** Details in **(I0)** below, which supersedes nothing in (H0).
+>
+> **(I0) THIS PASS — FQ-032 IS THE EDITING-PRIMITIVE LAYER'S SPECIFICATION, AND THE HARD PART WAS `Esc`.**
+>
+> **An implementation agent held `sql/`, `main_window.py` and `code_editor.py` while this pass ran (FQ-034), so
+> every statement resting on their work is written as ⏳ TARGET DESIGN.** Per the rule (G0) invented and (H0)
+> proved on itself, the pass opened by re-verifying (H0)'s own markers: **all of them still hold** —
+> `EDITOR_CHORDS` / `classify_editor_chord` / `apply_editor_operation` / `MUTATING_EDITOR_OPERATIONS` /
+> `EDITOR_PASTE_CHORDS` are all in the tree under those names, with all nine chord rows, and
+> `sql/blocks.py` / `sql/block_spans.py` are still **absent**, so §8's ladder block's ⏳ marks are still true.
+>
+> 1. **FQ-032 folded into §8** (*Vim editing mode — Edit mode and Command mode*), not a new top-level section:
+>    the decisive test is *where does a reader looking for "how the editor handles keys" look*, and every one
+>    of `Esc`'s existing answers is already documented in §8 or §27. A third place would be the defect, not the
+>    tidiness. **Its own framing is preserved because it is the reason it was approved:** vim mode is **not a
+>    fan feature — it is the SPECIFICATION of the editing-primitive layer the editor needs anyway**, adopted
+>    instead of inventing a bespoke Ctrl-chord keymap. `42j` is the case that decides it: a relative
+>    count-motion **no Windows editor and no menu can express**.
+> 2. **`Esc` had FIVE answers in the tree and FQ-032 makes a SIXTH, so the fold states the precedence order
+>    once, as a table** (§8). Verified by name, not paraphrase: `_CompletionPopup.keyPressEvent`,
+>    `CodeEditor.keyPressEvent`'s tab-stop branch, `FindReplaceBar.keyPressEvent`,
+>    `CaptionFindReplaceBar`'s equivalent, `LauncherDialog`'s swallow, and `QDialog`'s own cancel. **The
+>    ordering turned out to be mostly FREE rather than negotiated**, because `_popup_at_caret` calls
+>    `popup.setFocus()` — while the completion popup is open **the editor does not have focus at all**, so the
+>    queue entry's *"when no completion popup is open"* carve-out is a consequence of focus, not a check
+>    anyone has to write. **The one genuine collision is `CodeEditorDialog`**, where `Esc` is the dialog's only
+>    keyboard cancel since `Ctrl+W` was deleted — so a Command mode that ate it would delete an exit path.
+> 3. **⚠ MODE D RESTATEMENT — `Ctrl-R` should NOT be built as FQ-032 specifies it.** In this app `Ctrl+R` is a
+>    **reserved per-tab `WidgetWithChildrenShortcut` `QShortcut` that focuses the Replace field** at six
+>    hosts — not, as the entry assumed, a free-ish "redo/redraw". Claiming it needs an `eventFilter` that
+>    beats a reserved shortcut and **removes Replace-focus for as long as Command mode holds**, to buy a
+>    second spelling of an operation the app already answers uniformly with `Ctrl+Y` (DEC-015). **Dropping it
+>    leaves v1 claiming NO Ctrl chord at all** — which dissolves the entry's own biggest stated engineering
+>    risk, *"whatever Command mode steals must be restored"*, into nothing to steal and nothing to restore.
+> 4. **Three genuine collisions/ambiguities are FLAGGED, not decided** — §29, with a recommendation recorded
+>    for each so an answer can be a yes/no, and all three **filed as `DEC-260810193637` / `-38` / `-39`,
+>    verified in the queue before this pass closed** (they are also the pass's own worked example of why that
+>    verification is the rule: filing failed twice, and *"flagged for the owner"* would have covered it):
+>    `Ctrl+D`/`Ctrl+K`/`Ctrl+U` — app-implemented editing gestures at six surfaces since `55c2538` and page-
+>    scroll keys in vim; `Ctrl-R` (above); and whether vim is inactive in `CodeEditorDialog` to protect its
+>    only keyboard cancel.
+> 5. **Two reconciliations the fold had to make rather than assume.** *(a)* §7 states that mode terminology
+>    *"gains NO fifth meaning of `mode`"* — Edit/Command **is** a fifth, so it is admitted deliberately with
+>    its own name, **editing mode**, and the vocabulary is now three *named* dimensions with the bare word
+>    `mode` forbidden. *(b)* The status bar is **static-only** by owner rule, so the `:` command line **may not
+>    live there** and the exit hint is admissible only because *"which editing mode the focused editor is in"*
+>    is a permanent stated fact, not a message.
+> 6. **One dead assertion retired (`code-is-right / spec-was-stale`):** §29 still recorded
+>    `CodeEditor`'s duplicate `Ctrl+Shift+B` handler as ***"KEPT"*** with the reasoning *"measurement showed
+>    the QAction wins"* — BUG-046 **deleted** it and measured that premise **false**, which §8 and §27 both
+>    already say. §29 was the third register and the only one still lying. **Two more found by the same
+>    verify-every-name sweep and corrected:** the `show_hint` / `report_refusal` channel FQ-023 requires exists
+>    on **`CodeEditor` only**, not on `XmlEditor`, so a family-agnostic layer that must state refusals has **no
+>    shared hint path today** — and §8 paraphrased a user-visible string that does not exist, calling the
+>    context-menu entry *"Line-wrap"* where the label is verbatim **`Wrap Lines`**, which is `XmlEditor`-only.
+>    **Both findings changed the design rather than just the prose:** they are the two small shared-layer lifts
+>    FQ-032 forces, and the second is why **`:set` is `wrap`/`nowrap` and nothing else** — `:set number` was
+>    dropped on verification, because the gutter's number column has **no off switch**, so adding one *through
+>    the palette* would be inventing a setting in the one place this design forbids it.
+> 7. **`README.md` revisited (standing obligation) and CHANGED twice:** a *"Where it is going"* bullet for the
+>    editing-primitive layer — the README's honest home for specified-but-unbuilt work, beside
+>    `Generate Deployment SQL` — and the test count, which claimed **6789** where the newest row in
+>    `docs/TEST_LOG.md` records **6674 / 51**; it now cites the last *recorded* run instead of a number no
+>    register backs. No feature claim changed: FQ-032 ships nothing.
+>
+> *(Previous pass:)* **THE PREVIOUS PASS'S OWN
 > ⏳ MARKERS WERE ALL FALSE WITHIN HOURS: every chord ruling it folded as target design had SHIPPED
 > (`55c2538`), and `BUG-260810173246` is RESOLVED (`73f55c9`). Two ledger rows added.** Details in **(H0)**
 > below, which supersedes the status halves of (G0)'s items 1 and 3.
@@ -1044,7 +1113,9 @@ pgtp_editor/
 │   ├── block_spans.py # FQ-034, NOT YET BUILT: the structural SPAN model over blocks.py + tokenizer.py +
 │   │                  # statements.py. structure_chain(text, pos) → smallest-to-largest StructureSpan
 │   │                  # chain, each carrying kind + an inner AND an outer span. Never raises. The ladder
-│   │                  # (§8) and FQ-032's deferred vim text objects are both callers — §8
+│   │                  # (§8) is the FIRST caller; FQ-032's DEFERRED vim text objects (ciw / di" / ci( — out
+│   │                  # of that feature's v1, and the ONLY part of it that ever touches sql/) are the second,
+│   │                  # which is why the interface returns a CHAIN rather than a next_larger() — §8
 │   ├── from_clause.py # FROM-clause / alias SCOPE + SPANS: analyze_from_items → FromItems{items, clauses},
 │   │                  # analyze_from_scope → FromScope. Reuses tokenizer.py for opacity and
 │   │                  # statements.py for boundaries; descends into $$ bodies. Consumed by
@@ -1092,6 +1163,14 @@ pgtp_editor/
 │   │                  # Offsets are CLAMPED, not validated: a caller on a keystroke cannot make it raise
 │   └── config.py      # XmlFormatConfig{indent_unit="  "} — TWO spaces, because §2 fixes the on-disk
 │                      # .pgtp indentation unit at two
+├── vim/               # FQ-032, NOT YET BUILT: the vim command GRAMMAR — pure, Qt-free, document-free. A
+│                      # pending-state machine over keystrokes ("digits, then optionally an operator, then a
+│                      # motion or a doubled operator") returning a resolved command (count · operator ·
+│                      # motion). It is the part most easily got subtly wrong, so it does not live in a
+│                      # widget. Imports NEITHER ui/ NOR sql/ — every v1 motion is family-agnostic character
+│                      # and line arithmetic, because the layer serves XML, PHP and JS buffers too. Pinned by
+│                      # tests/vim/test_package_purity.py, in the shape tests/sql/ and tests/xmlfmt/ use.
+│                      # The Qt half is ui/vim_mode.py — §8
 ├── lint/              # §22 PHP linting — SHIPS (commit 90c6806), consumed by ui/php_file_tab.py (§21);
 │   │                  # Qt-free except config.py (QStandardPaths, the generation/config.py precedent)
 │   ├── findings.py    # pure: linter stdout/stderr/exit code → LintOutcome/LintStatus + ready-to-append
@@ -1133,7 +1212,10 @@ bypass are **deleted** with FQ-027's suppression removal — ledger §28; §7),
 `connection_setup_dialog.py`, `coherence_panel.py` (§17's merged view), `ddl_editor_panel.py`,
 `ddl_buffer_panel.py`, `ddl_object_editor.py` (§18.5's editable single-object tab),
 `completion_popup.py` (the `_CompletionPopup` shared by `xml_editor.py` and `ddl_object_editor.py`,
-§11/§18.6), `new_trigger_dialog.py` / `new_routine_dialog.py` (FQ-002 creation),
+§11/§18.6), `vim_mode.py` (**FQ-032, NOT YET BUILT**: `VimModeMixin` — the Qt half of the editing-mode
+layer, mixed into **both** `XmlEditor` and `CodeEditor` before `QPlainTextEdit`, applying `pgtp_editor/vim/`'s
+resolved commands through `QTextCursor`; owns the one `_exit_command_mode()` reset — §8),
+`new_trigger_dialog.py` / `new_routine_dialog.py` (FQ-002 creation),
 `alter_column_dialogs.py` (FQ-025 slice 1's five `Alter Table ▸` column dialog classes, split by what each
 collects — §18.1) / `constraint_dialogs.py` (slice 2's four, on two bases — *"what shall this new
 constraint contain?"* vs. *"which existing named constraint?"* — plus the shared `_ColumnListPicker`
@@ -1646,7 +1728,7 @@ below).
 
 | Slot | Always states | Module |
 |---|---|---|
-| **Mode indicator** | the major mode, plus the minor mode when there is one | `ui/mode_indicator.py::ModeIndicator` |
+| **Mode indicator** | the major mode, plus the minor mode when there is one, plus ⏳ the focused editor's **editing mode** (FQ-032) | `ui/mode_indicator.py::ModeIndicator` |
 | **Busy slot** | `Idle`, or `<message> <n>s` with a live elapsed counter while an op runs | `ui/status_bar.py::BusySlot` |
 | **Quality dot** · **Sandbox dot** | connectivity, **while a project is open** | `ui/connectivity.py::ConnectivityIndicator` |
 | **DEBUG chip** | that debug logging is on (§25) | the existing `_debug_label` |
@@ -1676,13 +1758,23 @@ below).
 
 #### The mode indicator — one source of truth, two surfaces (FQ-028 Part 2, absorbing FQ-029)
 
-**Terminology is §7's and gains NO fifth meaning of "mode"** (see the *"mode has four meanings"* rule
-under the Editor menu bar, which this extends rather than competes with):
+**Terminology is §7's, and FQ-032 adds the ONE further meaning of "mode" this vocabulary will ever take**
+(see the *"mode has four meanings"* rule under the Editor menu bar, which this extends rather than competes
+with):
 
 | Term | Means | Values | Source |
 |---|---|---|---|
 | **Major mode** | the **SESSION workflow mode** FQ-027's launcher sets | Standalone · Project · Maintenance | `MainWindow.workflow_mode` / `set_workflow_mode` (**verified in the tree**) — in-memory, **session-only, NO QSettings key** |
 | **Minor mode** | an **active editor SUB-STATE**, shown only when there is one | Caption (§13) · Compare/Merge (§12) · Edit XSD (§11) | the three existing named states; *"Editing"* is the **absence** of a minor mode, not a fourth one |
+| ⏳ **Editing mode** | which **keyboard vocabulary the focused editor is listening in** (FQ-032, §8) | **Edit** · **Command** | the editor's own transient per-widget state; **orthogonal** to both rows above, **never** winner-take-all |
+
+> **This is the fifth meaning of "mode", admitted rather than avoided** (previously this block said the
+> vocabulary *"gains NO fifth meaning"*; ledger §28). *"Edit mode"* and *"Command mode"* are the owner's
+> chosen **user-visible labels** for FQ-032, and renaming them to protect a documentation rule would be the
+> tail wagging the dog. **The rule is therefore restated, not broken: the word `mode` is never used bare.**
+> Every use carries its adjective — *major* / *minor* / *editing* — and the other established meanings
+> (`_xsd_mode`, `DdlObjectRef.kind`, and *"active tab kind"*, which is still what gating must be written in)
+> are unaffected.
 
 These are distinct from the other two established meanings of the word — **`_xsd_mode`** (which *curated
 vs. learned* XSD document the Edit XSD tab holds, §11) and **`DdlObjectRef.kind`** — and from *"active
@@ -1738,6 +1830,25 @@ in.
   mode is appended after the middle dot. Three majors × four editor sub-states would be a twelve-colour
   vocabulary, which defeats *"easy recognition"*. (A two-tone/second-colour treatment is the recorded
   alternative and remains the owner's to overrule, §29.)
+- ⏳ **The editing mode is a THIRD SEGMENT on this same indicator, and it is TEXT for the same reason
+  (FQ-032, §8).** `set_mode(major, minor)` gains an editing-mode argument and `mode_text` a third segment;
+  **`mode_colors` is NOT extended and gains no key.** The argument is the one already made and simply doubled:
+  three majors × four sub-states was twelve colours, and a colour per editing mode makes it **twenty-four** —
+  a vocabulary nobody recognises at a glance is not an indicator. **Both surfaces still render from the one
+  `_refresh_mode_indicator()` call**, which ⏳ gains two more triggers: an **editing-mode transition** and a
+  **tab/focus change** (the indicator shows the *focused* editor's editing mode, and the state is per-editor).
+- ⏳ **The segment is PRESENT exactly when the focused editor is editable, and ABSENT otherwise** — the same
+  present/absent posture the minor mode already uses, and the app's two-posture rule. It reads **`Edit`**, or
+  **`Command — press i to type`** while Command mode holds. Absence is correct for a read-only editor and for
+  a non-editor tab, because FQ-032 makes the vim layer **inactive** on read-only buffers, and a read-only
+  buffer **already names itself** in the Raw XML tab title (§8's reason-set seam).
+- ⏳ **The exit hint is admissible under the static-status-bar rule, and the reason matters.** *"Which editing
+  mode the focused editor is in"* is a **permanent stated fact about a persistent state** — not an event, not a
+  notice, not a message scrolling past — so it satisfies §7's *"a slot either always states a defined fact, or
+  it does not belong"*. **The `:` command line of FQ-032 does NOT satisfy it and must not be in the bar**
+  (§8). This is also the whole of the non-vim-user guard the owner accepted: the indicator plus the hint,
+  and **nothing else** — the prominence comes from the chip's existing bold, colour-backed styling on **two**
+  surfaces (toolbar and status bar) rather than from a new colour.
 - **Theme-aware, unlike the DEBUG chip.** `mode_colors(light: bool) -> dict[str | None, tuple[bg, fg]]` is
   **pure** — it builds and returns a fresh dict, mutating nothing, mirroring `theme.py`'s
   `light_palette()`/`dark_palette()` split — and is **re-consulted when `apply_theme(app, light)` flips**.
@@ -2379,7 +2490,11 @@ it is not user-composable, and it is not the customizable toolbar above.
   §11, `DdlObjectRef.kind`) — **use "active tab kind"** in spec and code. **FQ-028 adds no fifth meaning:
   its "major mode" is the launch/Maintenance-mode notion (meaning 1) and its "minor mode" is a *name for
   the set* {Caption, Compare/Merge, Edit XSD} — the already-named editor sub-states, one of which is
-  meaning 2.** See *The mode indicator* above for the mapping table. This is **capability** gating
+  meaning 2.** ⏳ **FQ-032 DOES add a fifth, deliberately — the *editing mode* (Edit / Command, §8)** — and it
+  is the reason this rule is restated rather than merely counted up: **the word `mode` is never used bare.**
+  Three *named* indicator dimensions exist (major · minor · editing), *"active tab kind"* remains what gating
+  is written in, and an editing mode gates **nothing on any menu**. See *The mode indicator* above for the
+  mapping table. This is **capability** gating
   (rule A below; the same predicate §26 already uses for `Check DDL Object`, *"disabled unless a DDL
   object editor tab is active, kept in sync on `center_stage.currentChanged`"*), so it is independent of
   Maintenance mode's intent-based filter (rule B) — and the two are on **different bars** anyway: the
@@ -2688,6 +2803,15 @@ ruling, not an implementation detail.**
 ---
 
 ## 8. Raw XML editor
+
+> **Scope note (2026-08-10) — this section's title under-describes it, and the number is kept stable rather
+> than corrected.** §8 is where **all** shared editor infrastructure and **all** editor key handling is
+> specified, for **both** families: `XmlEditor` and `CodeEditor`, the mixins they share
+> (`GutterBookmarkFoldMixin`, `CompletionPopupHostMixin`), DEC-012's one-gesture-one-keyboard-host rule,
+> FQ-034's structural ladder and its Qt-free `sql/` span model, and FQ-032's vim editing mode. A reader asking
+> *"how does the editor answer a key?"* looks **here** for the mechanism and in **§27** for the register of
+> chords. The heading is not renamed because *"§8"* is cited from a dozen places and an anchor change costs
+> more than the imprecision.
 
 `ui/xml_editor.py::XmlEditor(QPlainTextEdit)` with syntax highlighting, folding, a multi-zone gutter,
 auto-indent/auto-close, structural selection, tag navigation, bookmarks, and event-code styling.
@@ -3351,7 +3475,12 @@ document position (`_prepare_context_menu_at(doc_pos)`) before building the menu
 position-dependent entries (e.g. "Go To XSD", §11) reflect the clicked location rather than a
 stale caret. **Selection right-click ▸ "Find"** prepends to the standard context menu when a selection
 exists; emits `find_selected_text(str)` → MainWindow reveals Raw XML + prefills the Find bar.
-**Line-wrap** toggle lives in the editor's right-click context menu (checkable), not the View menu.
+The line-wrap toggle lives in the editor's right-click context menu (checkable), not the View menu; its
+label is verbatim **`Wrap Lines`** (`XmlEditor.contextMenuEvent` → `set_line_wrap_enabled` /
+`is_line_wrap_enabled`) — *corrected 2026-08-10, this sentence previously paraphrased it as "Line-wrap",
+which is not a string that exists.* **It is `XmlEditor`-only:** `CodeEditor` sets
+`LineWrapMode.NoWrap` in its constructor and offers no toggle at all (which is why FQ-032's `:set wrap`
+needs the capability lifted into the shared layer — below).
 
 **Bookmarks** (per-document; **session-only unless a project is open** — see "Bookmark persistence"
 below; carried by **every** editor that mixes in
@@ -3690,6 +3819,395 @@ actually protects read-only DDL buffers. `CodeEditorDialog(QDialog)` hosts it wi
 `saved(str)`/`cancelled` signals, accepted/cancelled by the button box or by **`Return`/`Escape`** (Qt's
 own dialog defaults) — **not** by `Ctrl+S`/`Ctrl+W`, which were deleted on 2026-08-09 as the last carve-out
 for either chord (§7/§27); never `.exec()` in tests.
+
+#### Vim editing mode — Edit mode and Command mode over BOTH editor families (FQ-032, target design, NOT YET BUILT)
+
+> **Status: nothing in this block ships.** Verified in the tree 2026-08-10: there is no vim layer, no mode
+> state on either editor family, and `ModeIndicator` carries exactly the two dimensions FQ-028 gave it
+> (`set_mode(major, minor)`). Read every ⏳ as *"to build"*. **This block supersedes `docs/FEATURE_QUEUE.md`'s
+> FQ-032 wherever the two differ**, and the entry's own errors — including one that changes what should be
+> built — are listed in the restatement at the end.
+
+**Why this feature exists, stated first because it is the only thing that makes the scope defensible.** The
+editors need advanced editing **operations** regardless: absolute go-to-line, **relative count-motions**,
+delete/change/yank by word, by line, by motion. Today none of them exists and none has a menu equivalent. The
+real choice was never *"vim or no vim"* — it was **adopt a standard command vocabulary or invent one**, and
+inventing keybindings is this project's *made-up commands* trap with an extra handicap: **Windows editors offer
+no such commands to copy**, so there is nothing to be consistent with. Vim's command grammar is the 40-year-
+stable, documented, transferable vocabulary for exactly this layer.
+
+> **Vim mode is not a fan feature. It IS the specification of the editing-primitive layer the editor needs
+> anyway.**
+
+The case that decides it is the owner's, and it is worth keeping verbatim: **`42j` — "go down 42 lines."** No
+Windows editor expresses it, no menu can express it, and no invented Ctrl-chord expresses it *cleanly*, because
+the thing that has to be expressed is a **count applied to a motion** — a grammar, not a command. Secondary
+payoff, accepted as secondary: the owner's server-side vim and this IDE become one command language.
+
+##### Terminology — and the FIFTH meaning of "mode", admitted deliberately
+
+| Term | Means | Values | Scope |
+|---|---|---|---|
+| **Edit mode** | the default, ordinary Windows-style typing — **today's editor, 100% unchanged**. (== vim's INSERT) | — | per editable editor |
+| **Command mode** | the `Esc`-entered vim command state. (== vim's NORMAL) | — | per editable editor, **transient** |
+
+> **The word *"normal"* is dropped from this feature entirely** (owner-agreed) because it collides with vim's
+> own NORMAL and would make every sentence ambiguous about which vocabulary it is speaking. **Never write
+> *"normal mode"* anywhere.** The two labels above are the only ones.
+
+**§7's mode-terminology rule said the vocabulary *"gains NO fifth meaning of `mode`"*. This is a fifth, and it
+is admitted rather than smuggled** — because *"Edit mode"* and *"Command mode"* are the owner's chosen
+user-visible labels and renaming them to avoid a documentation problem would be the tail wagging the dog. The
+rule is therefore restated rather than broken: **the word `mode` is never used bare.** Three named dimensions
+now exist, and each is written with its adjective everywhere:
+
+| Dimension | Set | Winner-take-all? | Scope |
+|---|---|---|---|
+| **major mode** (§7) | Standalone · Project · Maintenance | n/a | session |
+| **minor mode** (§7) | Caption · Compare/Merge · Edit XSD, or none | **yes** | window |
+| ⏳ **editing mode** (this block) | Edit · Command | **no — orthogonal** | **per editor** |
+
+*(The other established meanings — `_xsd_mode`, `DdlObjectRef.kind`, and *"active tab kind"*, which is still
+the phrase per-menu gating must be written in — are unaffected.)*
+
+##### The mode model — five rules, and none of them is a setting
+
+- ⏳ **NO enable/disable setting and NO persistence, anywhere.** Vim is always available. This is
+  vim-authentic (vim has no *"enable vim"* option) and it keeps a transient runtime fact out of `QSettings`.
+  **This SUPERSEDES the opt-in toggle floated mid-brainstorm** (ledger §28).
+- ⏳ **Command mode is TRANSIENT and PER-EDITOR.** Every tab is independent; losing focus drops that editor
+  back to Edit mode; **refocusing never resurrects it**. There is no *"which tab was in Command mode"* map
+  anywhere, for the same reason FQ-034's expansion stack lives on the editor: the state has no meaning
+  outside the widget that owns the caret.
+- ⏳ **On a read-only editor `Esc` does nothing and the vim layer is inactive ENTIRELY.** Read-only is
+  read-only, and vim ⊆ editable editors. This is not a simplification for its own sake: it **deletes the whole
+  motion-vs-mutation-in-a-read-only-buffer problem** — no *"motions are fine but operators refuse"* split, no
+  per-command read-only table, no new refusal sentences. The predicate is asked **at the keystroke**
+  (`isReadOnly()`), never at construction, because Caption Mode and Compare/Merge flip it at runtime (below).
+- ⏳ **Safety for a non-vim user is the mode indicator plus an exit hint, and NOTHING else** (owner accepted
+  explicitly). Because `Esc` → Command mode is on for everyone, a user who presses `Esc` by reflex lands in a
+  state where letters no longer type. **The accepted mitigation is that the indicator says so and tells them
+  the way out.** There is **no opt-out**, no first-time dialog and no timeout.
+- ⏳ **The mouse stays fully live in both editing modes and never changes the editing mode.** Click positions
+  the caret, drag selects, in Command mode exactly as in Edit mode. *(A click that moved the editing mode
+  would make the indicator lie about a state the user did not ask to leave.)*
+- ⏳ **The plain (Edit-mode) editor gains NOTHING — no new operations, no new Ctrl-bindings.** Every advanced
+  operation lives **only** in Command mode. **This is the whole point of the feature**, and it is the sentence
+  that makes it a specification rather than an addition: no invented parallel keymap ever appears in Edit mode,
+  so §27's chord table does not grow by one row for editing primitives.
+
+##### The way in and the way out — stated as a table, because exits are where this class of feature fails
+
+| Transition | Trigger | Notes |
+|---|---|---|
+| Edit → Command | ⏳ `Esc`, in a **focused, editable** editor, with no completion popup open | see the `Esc` precedence table below |
+| Command → Edit | ⏳ an insert-entry command: `i a I A o O s S cc C`, **and `v` / `V`** | `d{motion}` / `c{motion}` also land in Edit mode when the operator is `c` |
+| Command → Edit | ⏳ **focus loss** — `focusOutEvent` on the editor | tab switch, click into another widget, a `:` command that opens a dialog, **and the completion popup taking focus**: all one mechanism, none of them special-cased |
+| Command → Edit | ⏳ the editor **becomes read-only** while Command mode holds | Caption Mode / Compare/Merge entry, through §8's `_set_raw_xml_read_only(reason)` seam. A mode that turns the buffer read-only under a Command-mode caret must not leave the layer live with nothing it may do |
+| Command → Edit | ⏳ **document swap** — the mixin's `setPlainText` | the same moment that resets bookmarks, fold state, the FQ-031 gutter anchor and FQ-034's expansion stack. Pending command state (a half-typed `42d`) describes a document that no longer exists |
+| Command → Command | never restored | **refocusing an editor never returns it to Command mode** |
+
+**There is exactly one reset path and everything above funnels into it**, ⏳ `_exit_command_mode()`, which
+also discards any pending count/operator. Six triggers with six ad-hoc resets is how one of them ends up
+missing, and the missing one is a mode with no way out.
+
+**`focusOutEvent` is the established precedent, not a new idea:** `CodeEditor.focusOutEvent` already calls
+`exit_tab_stop_mode()` for exactly this reason — transient editor state that the user cannot see the boundary
+of must not outlive focus. `XmlEditor` has **no `focusOutEvent` override today**, so ⏳ the shared mixin
+supplies one for both families.
+
+##### `Esc` — the precedence order, stated ONCE because this key now has SIX meanings
+
+`Esc` is the most contested key in the app. Five answers are already in the tree and FQ-032 adds a sixth, so
+the order is stated here rather than discovered per bug report. **This is one rule with several legitimate
+targets, not a conflict** — each row is a different widget or a different state, and the ordering below is
+mostly a *consequence* of Qt focus rather than a negotiated policy:
+
+| # | Condition | Answer | Where |
+|---|---|---|---|
+| 1 | the **completion popup** is open | dismiss the popup | `ui/completion_popup.py::_CompletionPopup.keyPressEvent` (`Key_Escape` → `cancelled`) |
+| 2 | focus is in a **`FindReplaceBar`** field | **return focus to the editor** — never hide the bar | `ui/find_replace_bar.py::FindReplaceBar.keyPressEvent` (FQ-016) |
+| 2′ | focus is in the **caption bar** | return focus to the **grid** | `ui/caption_management_panel.py` (FQ-017) |
+| 3 | the editor is in **tab-stop mode** after an expansion | abandon the walk | `CodeEditor.keyPressEvent` → `exit_tab_stop_mode()` (§18.9) |
+| 4 | ⏳ the editor is **editable** and in **Edit mode** | **enter Command mode** | ⏳ the vim mixin's `keyPressEvent` |
+| 4′ | ⏳ the editor is **editable** and in **Command mode** | discard any pending count/operator; **stay** in Command mode | ⏳ same |
+| 5 | the editor is **read-only** | **nothing at all** — no hint, no journal line, no refusal | vim is inactive entirely (above) |
+| 6 | focus is in a **`QDialog`** with no narrower answer | Qt's own **cancel** | `CodeEditorDialog`, and the launcher, which **swallows** `Esc` when undismissable |
+
+- **Rows 1 and 2 need no arbitration against row 4, and that is a fact about focus rather than a rule.**
+  `CompletionPopupHostMixin._popup_at_caret` calls **`popup.setFocus()`**, so while the popup is open the
+  **editor does not have focus and never sees the key**; and a `FindReplaceBar` field is a different widget.
+  The queue entry's *"`Esc` (when no completion popup is open)"* carve-out is therefore **already true and
+  needs no code** — but it is written down here because a future implementer who moved the popup to a
+  non-focus-stealing design would break row 4 without touching it.
+- **The popup taking focus is itself a focus loss on the editor**, so it drops Command mode through the one
+  reset path. Harmless and consistent: `Ctrl+Space` is not a Command-mode command, so the only way to reach
+  that sequence is from Edit mode, where there is nothing to drop.
+- ⚠ **Row 6 versus row 4 is the ONE genuine collision, and it is FLAGGED, not decided (§29).** `CodeEditor`
+  is hosted inside **`CodeEditorDialog`**, where `Esc` is Qt's cancel — **and, since `Ctrl+S`/`Ctrl+W` were
+  deleted there on 2026-08-09, `Esc` is that dialog's only keyboard cancel at all.** A Command mode that
+  consumed it would **delete an exit path**, which is the failure this document's own exit-tracing rule exists
+  to catch. **The recommended answer, for the owner to confirm: the vim layer is INACTIVE in
+  `CodeEditorDialog`** — it edits a PHP/JS event-handler body, has no menu bar for a `:` palette to derive
+  from, and is the one editor host whose `Esc` already means something irreplaceable.
+- **`Esc` stays in `RESERVED_SEQUENCES` and this feature adds no reservation** — it is already reserved, with
+  its reason naming the narrower widget answers (§27). ⏳ That reason gains *"and Command-mode entry"*.
+
+##### Chord coexistence — Command mode claims NO `Ctrl` chord, and that is a design output, not an omission
+
+**How `u` relates to `classify_editor_chord`: it goes BESIDE the matcher, never through it.**
+
+- ⏳ **`u` is a bare letter.** It is not in `EDITOR_CHORDS`, gets no row there, needs no reservation, and is
+  invisible to every one of the six surfaces' `eventFilter`s — which act **only** on a non-`None`
+  `classify_editor_chord` answer and therefore pass bare letters straight through to the editor's own
+  `keyPressEvent`, where the vim mixin sits. **So the existing interception machinery needs no change at all.**
+- **A state-dependent row in `EDITOR_CHORDS` would destroy that table's invariant**, which is the reason it
+  exists: *one table, one matcher, one call site per surface*, giving **the same answer at all six surfaces
+  regardless of any surface's state** (§27 — the rename `EDITOR_UNDO_REDO_CHORDS` → `EDITOR_CHORDS` was made
+  precisely to avoid a second matcher). A row whose meaning depended on which editing mode an editor happened
+  to be in would reintroduce per-surface, per-state variation — **which is BUG-053's exact shape**.
+- ⏳ **`u` calls the same thing `Ctrl+Z` calls at that surface** — the surface's own single undo answer
+  (native stack, re-emission into the project's snapshot history, or a stated read-only refusal, per §27's
+  `Ctrl+Z`/`Ctrl+Y` row). Not `QPlainTextEdit.undo()` directly: that is `F14`'s recorded defect
+  (§27's physically-absent-keys carve-out) — undo that bypasses the app's routing — and reaching for it here
+  would reproduce a bug the project has already written down, on a **reachable** key.
+- ⏳ **`Ctrl+Z` and `Ctrl+Y` keep working in Command mode**, unchanged, at every surface. Command mode adds
+  a vocabulary; it does not subtract the app's.
+
+> ⏳ **v1 Command mode claims no `Ctrl` chord whatsoever. There is therefore nothing to steal and nothing to
+> restore** — which dissolves the queue entry's own headline engineering risk (*"whatever Command mode steals
+> MUST be restored in Edit mode / on focus loss, or copy-paste / find-focus silently break"*) rather than
+> managing it. Preserving that property is a **constraint on any future extension of this feature**, not an
+> accident of v1's scope: the first Ctrl chord Command mode claims re-opens the whole restore problem, and its
+> proposer owes the exit path as well as the entry path.
+
+**`Ctrl+R` is NOT built in v1 — restated, see the restatement below.** FQ-032 lists `u` / `Ctrl-R` for
+undo/redo. In this app **`Ctrl+R` is a reserved, per-tab `WidgetWithChildrenShortcut` `QShortcut` that focuses
+the Replace field** (`find_replace_bar.install_focus_shortcuts`, six hosts, plus the caption panel's own pair)
+— not the loosely-bound "redo/redraw" the entry assumed. Redo's app-wide answer is **`Ctrl+Y`, bound by this
+app on both platforms** (DEC-015), and it is live in Command mode already.
+
+⚠ **`Ctrl+D` / `Ctrl+K` / `Ctrl+U` are a genuine collision the queue entry could not have known about, and it
+is FLAGGED (§29), not decided here.** Since `55c2538` all three are **app-implemented editing gestures at all
+six surfaces on both platforms** (`DELETE_CHARACTER` / `DELETE_TO_END_OF_LINE` / `DELETE_LINE`, one
+implementation in `code_editor.apply_editor_operation`, all three **reserved**). In vim `Ctrl+D` is page-down
+and `Ctrl+U` is scroll-up. **Neither is in FQ-032's v1 set**, so nothing breaks today — but the chords are now
+live app-wide, and a later vim binding would have to take a shipped gesture away. **The recommendation put to
+the owner is to leave them as the app's line-editing gestures in BOTH editing modes**, and to treat vim's
+scroll meanings as permanently unavailable: they duplicate `PageUp`/`PageDown`, which every keyboard has, so
+the trade is *"lose a vim reflex, keep three shipped primitives"*. **Recorded as a recommendation, not a
+ruling.**
+
+##### The v1 command set — this IS the agreed scope, walked command-by-command with the owner
+
+**Enter Edit mode from Command mode** (and `Esc` re-enters Command mode): ⏳ `i a I A o O s S cc C` — **and
+`v` / `V`**.
+
+> ⏳ **There is NO vim visual mode.** `v` and `V` are **insert-entry aliases**: they drop to Edit mode so the
+> user selects **the Windows-native way**, with the mouse or `Shift`+motion. Owner: selection is a Windows
+> method.
+
+**The contract consequence, stated because a vim user will otherwise hit it as a bug:** the
+**select-with-`v`-then-`d` reflex does not exist here.** There are exactly two ways to operate on a range —
+**operator + motion in Command mode**, or **select Windows-style and use `Ctrl+C`/`Ctrl+X`/`Delete` in Edit
+mode.** A `d` pressed after a Windows-style selection is a Command-mode `d` **waiting for a motion**, not
+*"delete the selection"*.
+
+| Group | ⏳ v1 members | Notes |
+|---|---|---|
+| **Motions** | `h j k l` · `w b e` · `0 ^ $` · `gg G` · `NG` · `f t F T` · `%` · `{ }` | live in Command mode **and** operator-pending |
+| **Counts** | `N{motion}` — `5j`, `3w`, `42G` | **LOAD-BEARING.** `42j` is the whole motivating case and has no alternative anywhere in the app |
+| **Operators — MOTION-ONLY** | `d{motion}` `c{motion}` `y{motion}`; doubled `dd yy cc`; `x` `X`; `D` `Y`; `p` `P`; `r{char}` | no visual-selection target, because there is no visual mode. `c` lands in Edit mode |
+| **Undo / redo** | `u`, and the app's own `Ctrl+Y` | routed to the surface's existing undo answer (above). `Ctrl-R` **dropped** — restatement below |
+| **Search** | `/` `n` `N` | ⏳ `/` **opens and drives the app's EXISTING Find bar** — `FindReplaceBar.focus_find` / `find_next`. **No second search engine**, and no second results surface |
+| **Palette** | `:` | below |
+
+**All v1 motions are family-agnostic character/line arithmetic, and NONE of them may reach into `sql/`.**
+This is the boundary an implementer will otherwise cross by reflex, so it is stated as a rule:
+
+| ⏳ Motion | Computed from | Must NOT use |
+|---|---|---|
+| `h j k l` · `0 ^ $` · `gg G` · `NG` · `{ }` | characters, lines and blank lines in the buffer — pure text arithmetic | anything language-aware |
+| `w b e` | **vim's own character-class rule** (word / punctuation / whitespace runs) | `sql/tokenizer.py`. Vim's word is not a SQL token, and the layer serves **XML, PHP and JS** buffers where no SQL tokenizer applies |
+| `f t F T` · `r{char}` | a character search on the current line | — |
+| `%` | **character-level** bracket matching, the same family as `ui/code_editor.py::enclosing_bracket_span` | the token-level paren rung of FQ-034's ladder |
+
+- **`%` inherits a divergence this document already records and accepts.** A character-level scan counts a
+  `(` inside a string literal or a comment; §8's ladder block already states that `Ctrl+Shift+B` has exactly
+  this property and that **both** implementations survive, *because `Ctrl+Shift+B` also serves PHP and JS tabs,
+  which have no SQL tokenizer to consult.* `%` is in the same position for the same reason, so it takes the
+  same answer rather than a new one.
+- ⏳ **`sql/block_spans.py::structure_chain` is consumed by NOTHING in FQ-032 v1.** Its second caller is the
+  **deferred text objects** (`ciw`, `di"`, `ci(`), which are **explicitly out of v1** — and that is precisely
+  what the interface was shaped for: *"the span of kind K at the caret"* and the `i`/`a` inner-vs-outer
+  distinction come from a **chain**, not from a `next_larger()` step function (see the ladder's span-model
+  block above, and §5's module tree). **When text objects are built they are the only part of this feature
+  that touches `sql/`, they are SQL-only, and every other surface must state that they are unavailable there**
+  rather than falling back to a character guess. §5's *"`sql/` never learns about Qt and `ui/` never parses
+  SQL"* arrow is unchanged by FQ-032.
+
+##### The clipboard — ONE shared SYSTEM clipboard, no vim registers
+
+- ⏳ `y` / `Y` **and every delete** (`d{motion}` / `dd` / `x` / `X` / `D` / `c{motion}`) write the **system
+  clipboard**. That is vim's own unnamed-register behaviour, so `dd`+`p` moves text, and it **interoperates
+  with `Ctrl+C`/`Ctrl+V` and with other applications**.
+- ⏳ `p` / `P` paste **plain text, INLINE**, exactly as `Ctrl+V` does.
+- **Two costs are accepted deliberately and recorded so nobody "fixes" them into a register system:**
+  1. **`dd` clobbers the clipboard.** Vim's own behaviour; the user who wanted their clipboard kept has
+     `Ctrl+Z`.
+  2. **There is NO linewise paste.** `yy` followed by `p` inserts **inline**, not as a new line. A linewise
+     flag is a second piece of state travelling with the text — *i.e.* **a parallel register by another name**,
+     which is exactly what choosing one system clipboard avoids.
+- The payoff being bought: **one clipboard across Edit mode, Command mode and every other application.**
+- ⏳ Paste goes through the same path the app already owns — `EDITOR_PASTE_CHORDS` / `apply_editor_operation`'s
+  `PASTE` branch delegating to `QPlainTextEdit.paste()` — so the read-only guard and the single undo step stay
+  Qt's, and the app adds only the gesture.
+
+##### The `:` palette — the app's OWN menu tree, derived and never designed
+
+⏳ **`:` opens a one-line command entry, in Command mode only**, and its namespace **IS the menu tree**.
+
+- **Derive, don't design.** The verbs come from the **shipped FQ-012 enumeration** — verified in the tree
+  2026-08-10: `ui/toolbar_registry.py::command_id_for` and `::menu_path_label`, and
+  `ui/toolbar_controller.py::ToolbarController.collect_menu_commands`. *(The brainstorm placed all three in
+  `ui/shortcut_registry.py`; they are not there — that module holds the rules and the ambiguous-chord lesson.)*
+  So `:deploy quality` triggers the real `Deployment ▸ Apply to quality` `QAction`. **The `:` namespace
+  auto-syncs as the menus change and there is never a second vocabulary to maintain** — the same argument that
+  makes `collect_menu_commands()` the one command universe for Customize Toolbar *and* Customize Shortcuts.
+- ⏳ **The line fuzzy-completes from that same enumeration**, so verbs are **discovered, not memorised**. The
+  completion surface reuses the shipped `_CompletionPopup` idiom (frameless, non-modal, filter-as-you-type);
+  it is **not** a new list widget.
+- ⏳ **Verb-derivation rule, picked rather than left open** (the entry's open question 1): the completion
+  matches against the **full `menu_path_label()` path** (`Deployment › Apply to quality`), and the palette
+  echoes that path. Leaf-only was rejected because leaf labels are **not unique** across two menu bars
+  (`Save XSD` vs `Save PHP File` are, but `Reload DDL` exists as a menu action *and* two context-menu forms),
+  and a palette whose verb is ambiguous has to invent a disambiguator — which is a second vocabulary.
+- **⚠ It may NOT live in the status bar.** §7's owner rule is that the status bar is **static-only** — *"a
+  slot either always states a defined fact, or it does not belong in the bar"* — and `StaticStatusBar.showMessage`
+  is overridden to paint nothing. ⏳ The `:` line is therefore its **own transient widget over the editor**,
+  and it is **not a `QDialog`** either, because `Esc` inside it must cancel the palette and return to Command
+  mode rather than reaching row 6 of the precedence table.
+- ⏳ **`:set <option>` — v1 is `wrap` / `nowrap` and NOTHING ELSE**, on one rule: **`:set` may only reach an
+  option the app already has, so the palette never becomes the place a setting is invented.** Checked against
+  the tree 2026-08-10 rather than assumed, and the check cut the list to one:
+  - **`wrap` / `nowrap`** maps to the existing `XmlEditor.set_line_wrap_enabled` /
+    `is_line_wrap_enabled`, whose command form is the editor context menu's checkable **`Wrap Lines`** entry.
+    ⏳ **`CodeEditor` has no toggle** — it sets `LineWrapMode.NoWrap` in its constructor and never changes it —
+    **so this is the second small shared-layer lift FQ-032 forces**, beside `show_hint`/`report_refusal`
+    above. Both lifts are the same shape and the same reason: *a family-agnostic layer may not be given a
+    private copy of something one family already implements.*
+  - **`number` / `nonumber` are DELIBERATELY EXCLUDED.** The gutter's line-number column is
+    **unconditional** — nothing in `ui/editor_gutter.py` turns it off — so `:set nonumber` would be a **new
+    capability**, and adding it *through the palette* is exactly the smuggling this rule forbids. FQ-031's
+    body-relative column is likewise host-driven and has *"no user-visible toggle"* by decision (§8); the
+    palette does not get to overrule that.
+  *(The entry left the `:set` list open — it is picked here, and picked smaller than the entry's own
+  parenthetical suggested, because the verification found only one option that exists.)*
+- **Nothing else.** Every file/buffer/window operation is excluded — below.
+- **Executing a `:` command that changes focus resets Command mode**, through the one focus-loss path and with
+  no special case (the entry's open question 4, confirmed rather than assumed).
+
+##### Explicitly EXCLUDED from v1 (owner-confirmed)
+
+| Excluded | Why, in one line |
+|---|---|
+| **ALL file/buffer/window operations** — `:w :q :wq ZZ :e :bn :bp`, `Ctrl-W` splits, tab commands | Save/close/tab-switch stay 100% the app's own mechanisms. **`Ctrl+S` is deliberately dead app-wide** (FQ-020) and **`Ctrl+W` is deliberately unbound** (§27's third chord category) — a `:w` reflex would reinstate by the side door precisely the wrong-target save FQ-020 deleted. Save is reachable through the `:` palette as the app's own `Deployment ▸` action. **This also removes `Ctrl-W` from the collision map entirely** |
+| vim **visual mode** and blockwise `Ctrl-V` | selection is Windows-native (above); and `Ctrl+V` is paste, reserved |
+| **text objects** (`ciw`, `di"`), registers, macros, `.` repeat, marks, `:s///` | deferred. Text objects are the one deferred item with a shipped-dependency story: FQ-034's `structure_chain` (above) |
+| `Ctrl-R` | **restated below** — not merely deferred; it should not be built as specified |
+
+##### Architecture — one engine, one mixin, and the two things it must NOT do
+
+- ⏳ **Write the vim engine ONCE, family-agnostic.** Both families mutate through `QTextCursor`
+  (`movePosition` / `setPosition` / `KeepAnchor` / `insertText` / `beginEditBlock`), so **there is no reason
+  for per-family logic and per-family logic is the duplication trap.** ⏳ `ui/vim_mode.py::VimModeMixin`,
+  mixed into **`XmlEditor`** and **`CodeEditor`** exactly as the two existing shared mixins are: declared
+  **before** `QPlainTextEdit` in the MRO, with **no `__init__` of its own**, each host calling
+  ⏳ `_init_vim_mode()` from its own constructor after `super().__init__(parent)`. Verified declarations to
+  extend: `class XmlEditor(CompletionPopupHostMixin, GutterBookmarkFoldMixin, QPlainTextEdit)` and
+  `class CodeEditor(GutterBookmarkFoldMixin, QPlainTextEdit)`.
+- ⏳ **The grammar is PURE and Qt-free, in its own package.** A pending-state machine — *"digits, then
+  optionally an operator, then a motion or a doubled operator"* — is the most testable part of the feature and
+  the part most likely to be got subtly wrong, so it does not live in a widget. ⏳ **`pgtp_editor/vim/`**,
+  beside `sql/` and `xmlfmt/`: it takes keystrokes and returns a resolved command (count, operator, motion,
+  register-free), and **knows nothing about Qt, about documents, or about which editor it serves**. Pinned by
+  a `tests/vim/test_package_purity.py` in the shape `tests/sql/` and `tests/xmlfmt/` already use, and it
+  imports **neither `ui/` nor `sql/`**. The Qt half — turning a resolved command into `QTextCursor` work — is
+  the mixin.
+- **The interception seam needs nothing new.** The editors are plain `QPlainTextEdit` (**not** QScintilla), and
+  the mixin's `keyPressEvent` is sufficient **because Command mode claims only bare keys**: the host panels'
+  `eventFilter`s on the editor see every key first but act only on a non-`None` `classify_editor_chord`
+  answer, so letters reach the widget untouched. **An `installEventFilter` interposer is deliberately NOT
+  used** — it would be the mechanism required to beat a `QShortcut`, and v1 has no `QShortcut` to beat.
+- ⏳ **The editing-mode indicator EXTENDS `ui/mode_indicator.py::ModeIndicator`; it is never a second
+  widget.** See §7's mode-indicator block for the added dimension and for why it is **text, not a colour**.
+- ⚠ **The refusal channel FQ-023 requires does not exist on both families today, and this feature is what
+  forces the fix.** A Command-mode gesture that cannot run — `f` finding no character, `:` matching no
+  command, `G` past the end — **must state why** (DEC-013 / FQ-023). `CodeEditor` has
+  `report_refusal(reason)` → `show_hint(text, refusal=True)` → caret tooltip **plus** the
+  `expansion_refused` signal the host files as an audit row. **`XmlEditor` has neither method** (it has only
+  `read_only_edit_attempted`). ⏳ **The answer is to LIFT `show_hint` / `report_refusal` into the shared editor
+  layer so both families use ONE implementation** — not to give the vim mixin a private hint, which would be
+  the app's second hint path and would make a refusal look different depending on which tab raised it. §8's
+  standing discipline (*"one `_EditorGutter`"*, *"one gutter `paintEvent`"*, *"one lexer"*) applies.
+
+##### What this feature must NOT become — the duplication traps, named
+
+- **It is not a fourth minor mode.** The shipped minor mode is **winner-take-all** and **window-scoped**
+  (Caption > Compare/Merge > Edit XSD); the editing mode is **orthogonal and per-editor**. Folding Edit/Command
+  into that stack would mis-model it and would make *"Compare/Merge"* and *"Command"* mutually exclusive for
+  no reason.
+- **It adds no dispatcher.** §7's rule stands unamended: *never add a fourth dispatcher*, and *do not
+  reintroduce a tab-dispatching save under any name.* The vim layer resolves nothing by tab — **the editor that
+  has focus is the editor the keys go to**, which is Qt's own answer and needs no `active_*_editor()` branch.
+  A `:` command reaches its target through `collect_menu_commands()` and `QAction.trigger()`, which is the
+  existing dispatch, not a new one.
+- **It routes through no shortcut registry.** FQ-012's machinery governs **menu-action** shortcuts; the vim
+  keymap is a **separate keymap inside the editor** and must never be enumerated into `Customize
+  Shortcuts…`. Consequence, stated so it is not filed as a bug: **the vim keys are not rebindable**, for the
+  same structural reason `Ctrl+Alt+F` and `Ctrl+Alt+E` are not — and, unlike those, the whole point is that
+  they are a *standard* vocabulary, so rebinding them would defeat the feature's own rationale.
+- **It adds no menu entry, no toolbar button and no setting.** There is nothing to pin and nothing to persist.
+- **It ships no new chord row and no new reservation** (above). `Esc`'s existing reserved reason gains a
+  clause; nothing else in §27's tables changes.
+
+##### ⚠ Restatement for implementation — what this supersedes in the queue entry
+
+`docs/FEATURE_QUEUE.md`'s FQ-032 is a pre-implementation document. **Implement from this block.** Five of its
+statements are corrected, and **the first changes what should be built:**
+
+1. **⚠ `Ctrl-R` IS NOT PART OF v1. Do not implement it.** The entry lists *"Undo/redo: `u` / `Ctrl-R`"* and
+   separately names `Ctrl+R` as a *"hot"* collision it describes as **"redo/redraw"**. That is wrong about the
+   app: **`Ctrl+R` focuses the Replace field**, at six `FindReplaceBar` hosts plus the caption panel, through
+   `install_focus_shortcuts`' `WidgetWithChildrenShortcut` `QShortcut`s — **and it is in
+   `RESERVED_SEQUENCES`**. Claiming it would require an `eventFilter` accepting `ShortcutOverride` (the shape
+   the six surfaces use for `Ctrl+Shift+Z`) and would **remove Replace-focus for as long as Command mode
+   holds**, buying a second spelling of an operation the app already answers uniformly with `Ctrl+Y`.
+   **Redo in Command mode is `Ctrl+Y`.** The gain is larger than the loss: with `Ctrl-R` gone, **v1 claims no
+   `Ctrl` chord at all**, and the entry's own biggest stated risk — *"whatever Command mode steals MUST be
+   restored… or copy-paste / find-focus silently break"* — **ceases to exist** rather than being managed.
+2. **The entry's *"`Ctrl+D` / `Ctrl+U` (half-page scroll) are unbound today = free"* is FALSE as of
+   `55c2538`.** All three of `Ctrl+D`/`Ctrl+K`/`Ctrl+U` are **app-implemented, reserved editing gestures at
+   six surfaces on both platforms**. Neither is in v1, so nothing is blocked — but the sentence is the one most
+   likely to send an implementer to claim a shipped chord. Flagged for the owner (§29); the recommendation is
+   that they stay the app's.
+3. **The entry's file:line citations are already stale and must not be trusted** — it cites
+   `ui/code_editor.py:253` for the class and `:708` for `keyPressEvent`; the tree has **`:478`** and
+   **`:966`**, and `code_editor.py` was being edited while this block was written. **Verify by name, never by
+   line.** The names, all verified 2026-08-10: `CodeEditor`, `XmlEditor`, `GutterBookmarkFoldMixin`,
+   `CompletionPopupHostMixin`, `_CompletionPopup`, `ModeIndicator`, `mode_colors`, `mode_text`,
+   `classify_editor_chord`, `apply_editor_operation`, `EDITOR_CHORDS`, `EDITOR_PASTE_CHORDS`,
+   `command_id_for`, `menu_path_label`, `collect_menu_commands`, `install_focus_shortcuts`,
+   `exit_tab_stop_mode`, `report_refusal`, `show_hint`.
+4. **The entry proposes `installEventFilter` as the interception seam. v1 does not need it** — bare keys reach
+   `keyPressEvent` untouched because the host filters act only on `classify_editor_chord`. Using an event
+   filter anyway would install the mechanism whose only purpose is beating a `QShortcut`, and would invite the
+   very chord-stealing the design avoids.
+5. **The entry's four open questions are all answered here, none is left open:** (1) the `:` verb rule is the
+   **full menu path**; (2) `:set` is **`number` / `nonumber` / `wrap` / `nowrap`**; (3) restore mechanics for
+   stolen Ctrl-chords are **moot — nothing is stolen**; (4) a focus-changing `:` command **does** reset
+   Command mode, through the one reset path. **What IS open is different and is in §29:** `Ctrl+D`/`Ctrl+K`/
+   `Ctrl+U`, `Ctrl-R`'s permanent status, and whether the layer is inactive in `CodeEditorDialog`.
 
 **Tier-1 fallback:** on `PgtpParseError`, `_handle_parse_failure` keeps the `QMessageBox.critical`
 dialog **and** re-reads the file, `setPlainText`, `highlight_error_line(exc.line)`, reveals + checks +
@@ -11860,12 +12378,13 @@ has no other document to mean (ledger §28). **Window-level, NOT bar-local:** th
 | **Ctrl+Alt+J** | **JOIN on foreign key** — write the JOIN an FK implies, offering an ordered candidate list when more than one applies (§18.9) | Same two editors, via `ui/schema_gesture_seam.py::SchemaGestureHostMixin` — **shipped `f5d2601`**. Reserved sequence; no menu entry. Hosted by `QShortcut` in the console and by the `eventFilter` in the DDL object tab, each following that panel's own existing convention |
 | **Ctrl+Shift+Space** | **Signature help** for the call at the caret — a **query**: a transient tooltip at the caret, **inserts nothing** (§18.9) | Same two editors, same mixin — **shipped `f5d2601`**. Reserved sequence; no menu entry |
 | **Tab / Shift+Tab / Escape** | **Next / previous / leave tab stop**, consumed **only while in tab-stop mode** after an expansion (§18.9) | Any `CodeEditor` that has just applied an `Expansion`. Outside tab-stop mode all three keep their normal meanings — Escape in particular still means *"return focus to the document"* (below), never *"hide something"* |
+| ⏳ **the Command-mode key layer** — `h j k l w b e 0 ^ $ gg G NG f t F T % { }` · `N{motion}` · `d c y` + motions · `dd yy cc x X D Y p P r` · `i a I A o O s S v V` · `u` · `/ n N` · `:` | **Vim's command vocabulary, live only while an editable editor is in Command mode** (FQ-032, §8). **It is a SEPARATE keymap inside the editor, not entries in any table on this page** | **This row adds NO chord to this section's register and NO row to `RESERVED_SEQUENCES`, by design.** ⏳ **Command mode claims only BARE keys — no `Ctrl` chord whatsoever** — so nothing is stolen from a `QShortcut` or a `QAction` and **nothing has to be restored** on the way out; the host panels' `eventFilter`s act only on a non-`None` `classify_editor_chord`, so bare letters reach the editor's `keyPressEvent` untouched. `u` therefore sits **beside** that matcher, never in `EDITOR_CHORDS`: a state-dependent row there would break the one property the table exists for — *the same answer at all six surfaces regardless of state* — which is BUG-053's shape. `u` calls the surface's **own** single undo answer (the `Ctrl+Z`/`Ctrl+Y` row above), never `QPlainTextEdit.undo()` directly, which is `F14`'s recorded bypass defect on a reachable key. **`Ctrl+Z`/`Ctrl+Y` keep working in Command mode.** **⚠ `Ctrl-R` is NOT built** — in this app `Ctrl+R` is a reserved per-tab Replace-focus `QShortcut` (row above), and redo is `Ctrl+Y` on both platforms (DEC-015); §8's restatement. **The keys are not rebindable**, structurally: `Customize Shortcuts…` walks menu `QAction`s only, and a *standard* vocabulary that users rebound would defeat the feature's own rationale. **Entry is `Esc`** (see the `Escape` row) |
 | *(no shortcut, deliberately)* | **Next Difference** / **Previous Difference** / **Apply Changes to Target** | **Editor menu bar ▸ `Navigation`, MODE-ONLY** — visible only inside Compare/Merge mode, hidden by `set_diff_mode_members_visible` otherwise (FQ-021 third leg, shipped `1ccfe9d`; status-corrected 2026-08-10). Off `Tools` entirely. `Prev Difference` is **relabelled `Previous Difference`**, and because the label is the id's last segment the ids are `navigation.next-difference` / `navigation.previous-difference` / `navigation.apply-changes-to-target`, reached from the old `tools.*` ids through `RENAMED_ID_ALIASES` |
 | ~~*(no shortcut — and NO GESTURE AT ALL)*~~ | ~~**Apply Changes to Target** is unreachable~~ | **ROW RETIRED — the regression is CLOSED.** It was real, lasted from FQ-020 until `1ccfe9d`, and was found by spec harmonization rather than by a test, which is why the fact is kept rather than deleted. FQ-021's third leg shipped and rehomed the command onto the mode-only `Navigation` menu — see the row **above**, which is now the live one. *(This row directly contradicted its own neighbour for a day; that is what a status-accuracy pass looks like when only half of it lands.)* |
 | *(no shortcut, deliberately)* | **Add Trigger…** / **New Function/Procedure…** / the **twelve `Alter Table ▸`** operations (eight column + four constraint) | DDL Explorer tree context menus (table node / "Functions & Procedures" root / a **column leaf**) and, for the routine one, **Database ▸ New Function/Procedure…** (§18.1 — FQ-002 **implemented** 2026-08-06; FQ-025 slices 1 and 2 **implemented** 2026-08-09; slice 3's six further operations are **not yet on any menu**, so they have no row here). All of them are dialog-gated and write **nothing** to a database — they only open a §18.5 editor tab on generated text — so the reason for withholding a shortcut is menu-hygiene, not the irreversible-outward-effect rule above. **None of the `Alter Table ▸` entries is a menu-bar action**, so like `F3`/`Ctrl+L` they fall outside `collect_menu_commands()` and are neither pinnable nor rebindable (below). |
 | *(no shortcut, deliberately — as a RULE, not per entry)* | **Every entry on the `Settings` menu** — **both** of them: `Edit Snippets…` and **`Autoformatter settings…`** (`81bf658`, §18.4 part D). The rule was applied to the new entry at the point it landed, which is the whole reason it is written as a property of the menu rather than of one action | The window bar's **Maintenance-only** `Settings` menu (FQ-030 final slice, `229dc11`; §18.9/§26). The reason is structural rather than stylistic: **hiding a `QMenu` does not disable its children** (DEC-006), so a chord on a maintenance-only entry would open its dialog from **outside** the mode the entry exists inside. This applies to every future entry on this menu and to any future maintenance-only menu. Two tests pin it, one recursively over submenus — so a new entry is covered automatically. **It is a rule about what the app SHIPS, not an enforcement guarantee:** the same `collect_menu_commands()` walk that makes these entries pinnable also lists them in `Customize Shortcuts…` with an empty default, so a user may bind one deliberately (§18.9, §18.4 part D rule 3) |
 | *(no shortcut, deliberately)* | **Database/XML Coherence** (checkable) | Database menu (§17/§26, FQ-003, **implemented** 2026-08-06). It replaces three previously unshortcut entry points — Check: XML→Database, Check: Database→XML and View ▸ Find table reference — none of which carried a shortcut either, so nothing is lost; the merged view is read-only and reached by toggle, not by keystroke |
-| Escape | **Return focus to the document** — never hide anything | Any editor's `FindReplaceBar` returns focus to its editor; the Caption Management tab's `CaptionFindReplaceBar` returns focus to the grid (FQ-016/FQ-017, 2026-08-07). Both bars used to *hide* on Escape; both are now permanent |
+| Escape | **SIX meanings, in ONE stated precedence order — §8 owns the table** | The order, verified by name 2026-08-10: **(1)** the **completion popup** is open → dismiss it (`_CompletionPopup.keyPressEvent`); **(2)** focus is in a `FindReplaceBar` → **return focus to the document, never hide** (FQ-016/FQ-017 — both bars used to hide, both are now permanent), and the caption bar's twin returns focus to the **grid**; **(3)** the editor is in **tab-stop mode** → abandon the walk (§18.9); ⏳ **(4)** an **editable** editor in **Edit mode** → **enter Command mode** (FQ-032, §8); ⏳ **(4′)** in Command mode → discard any pending count/operator and **stay**; **(5)** a **read-only** editor → **nothing at all**, because FQ-032's layer is inactive there; **(6)** a `QDialog` with no narrower answer → Qt's **cancel** (the launcher **swallows** it when undismissable). **Rows 1 and 2 need no arbitration against row 4 — that is a fact about focus, not a rule:** `_popup_at_caret` calls `popup.setFocus()`, so the editor never sees the key while the popup is up, and a bar field is a different widget. ⚠ **Row 6 versus row 4 is the one real collision and is FLAGGED (§29):** in `CodeEditorDialog`, `Esc` has been the **only** keyboard cancel since `Ctrl+S`/`Ctrl+W` were deleted there, so Command mode must not eat it — recommended answer, the vim layer is **inactive in that dialog** |
 | Ctrl+G | Go to line in XML | Caption grid |
 | Ctrl+Shift+B | Bracket-select — **one host per window** | **`CodeEditorDialog`**: its own `QShortcut(QKeySequence("Ctrl+Shift+B"), self)` at **`WindowShortcut`** scope (never `ApplicationShortcut`, which would fight the MainWindow action), held on `self` so it is not garbage-collected — that dialog has no menu bar to carry the QAction. **Everywhere else:** the `Select ▸ Select Enclosing Block` QAction (row above). **The duplicate `CodeEditor.keyPressEvent` branch is DELETED** (BUG-046, `e8df6c3`) — its *"QShortcut activation is not guaranteed under the offscreen platform"* justification was **measured false**; shortcuts do activate offscreen, what fails is key delivery to a widget never `show()`n, so **the test sends the key at `window.windowHandle()`** (DEC-004: the harness is what changes, not the product). This is §8's one-gesture-one-keyboard-host rule. *(Supersedes the 2026-08-07 row: *"handled by `CodeEditor.keyPressEvent` itself … kept deliberately … the reliable one under the offscreen test platform"*.)* **The surviving FQ-012 interaction is NOT a second host and stays an open question (§29):** the dialog's sequence is a **literal**, so rebinding `Select ▸ Select Enclosing Block` moves the QAction and leaves the dialog answering the old key — the two live in different windows and never fire together, but they can disagree |
 | **Return / Escape** | **OK (accept) / Cancel — NOT a save to disk** | **`CodeEditorDialog`** (§8), which has no menu bar. `self.save` is the modal's **accept** slot, the same one `button_box.accepted` fires, and it **writes nothing to disk**. **This row records a deletion:** the dialog's `Ctrl+S`/`Ctrl+W` pair was carved out of FQ-020's deletion on 2026-08-08 as *"the ONE surviving `Ctrl+S` in the app"* (bound twice over — a `WindowShortcut` `QShortcut` **and** a `keyPressEvent` branch, the latter because `QShortcut` activation is unreliable under the offscreen test platform) and was **deleted on 2026-08-09** — `ui/code_editor.py` says so at the construction site: *"this dialog was the last carve-out for either chord"*. **No capability was withdrawn** — Qt's own `Return`/`Escape` dialog defaults and the button box still accept and cancel — only the two chords, so `Ctrl+S` and `Ctrl+W` are now dead **without exception** anywhere in the app. *(Supersedes the 2026-08-08 row asserting both duplicates must survive.)* |
@@ -11956,14 +12475,14 @@ BUG-050, and what let `Ctrl+Shift+R` go missing again during a merge until the e
 | `Ctrl+Z` · `Ctrl+Y` | **Two rows with two reasons, never one "the undo/redo chords" statement** (DEC-014): each is a window-scoped `QShortcut` **plus** every editing surface's own key handling, so neither is a menu action the dialog could clear. Each reason additionally names the project-wide twin — `History ▸ Undo Project Edit` / `Redo Project Edit` — which **is** rebindable, so the refusal message does not leave the user thinking this row is what moves it (BUG-064) |
 | **`Ctrl+Shift+Z`** | **Claimed and answered inside every text editor's own key handling — no longer a redo chord (DEC-015), but still intercepted there so Qt's native redo cannot fire**, so a command moved here would be swallowed by the focused editor. ⏳ FQ-034's shrink-selection is what the claim will answer; its `QAction` deliberately carries no shortcut, so this stays reserved rather than becoming rebindable (§8) |
 | **`Alt+Backspace` · `Alt+Shift+Backspace`** | Deliberately **dead app-wide**: Qt binds them as native Undo/Redo on the **Windows scheme only**, so every editor suppresses them to keep the keyboard identical on both platforms (row above). Reserved for the same consequence as `Ctrl+Shift+Z` |
-| `Ctrl+F` · `Ctrl+R` | Per-tab focus shortcuts at **six** `FindReplaceBar` sites plus the caption panel's own pair |
-| `Escape` | Returns focus to the document, per bar (and four narrower widget answers — the completion popup, tab-stop mode, the launcher) |
+| `Ctrl+F` · `Ctrl+R` | Per-tab focus shortcuts at **six** `FindReplaceBar` sites plus the caption panel's own pair. **`Ctrl+R` is what makes FQ-032's `Ctrl-R` redo unbuildable as requested** (§8's restatement): claiming it means beating a reserved `WidgetWithChildrenShortcut` shortcut with an `eventFilter` and **taking Replace-focus away for as long as Command mode holds**, to buy a second spelling of an operation `Ctrl+Y` already answers uniformly |
+| `Escape` | Returns focus to the document, per bar (and four narrower widget answers — the completion popup, tab-stop mode, the launcher, a dialog's cancel) — ⏳ **plus Command-mode entry** on an editable editor (FQ-032). Six answers under one stated precedence order, §8/§27's row above; the reservation is what keeps a menu command from becoming a seventh |
 | `F3` · `Ctrl+L` · `Ctrl+Alt+F` · `Ctrl+Return` · `Ctrl+Space` · `Ctrl+G` | Window-level or context commands with **no menu entry**, so the menu walk cannot enumerate them and there is no row to move them from |
 | **`Ctrl+Shift+R`** | **Reload DDL** — its one keyboard host is a `WidgetWithChildrenShortcut` `QShortcut` on the DDL Explorer's viewing pane, **per role**, because §18.7 gives each role its own Explorer and a window-level chord would have two candidate actions and no way to choose. The `Database ▸ Reload DDL` action and the two context-menu forms carry no shortcut (DEC-012). BUG-062 |
 | `Ctrl+C` · `Ctrl+X` · `Ctrl+V` | Qt built-ins **inside** the editor widgets (§26, FQ-016). A window-level shortcut on one of them would outrank the widget and break copy/cut/paste everywhere. Each reason is **its own sentence, never one merged "the clipboard chords" statement** (DEC-014): `Ctrl+C` and `Ctrl+V` additionally name the **caption grid's** real slots as a second host, because that is what the dialog shows the user when it refuses the key; **`Ctrl+X` deliberately does NOT get the same sentence** — nothing in the app hosts a Cut shortcut, so *"a Qt built-in"* is the whole truth there and symmetry would make it a lie |
 | `Ctrl+Insert` · `Shift+Insert` · `Shift+Delete` | Qt's **older spellings** of copy / paste / cut, built into every editor widget on **both** keyboard schemes (measured 2026-08-10, so no bind-or-suppress ruling was needed). Reserved as the pure widening of the row above: a menu command assigned to `Shift+Insert` would have killed paste-by-`Shift+Insert` in every editor on every platform. **The same pass gave the app its own paste-chord set, `shortcut_registry.EDITOR_PASTE_CHORDS`, replacing `event.matches(QKeySequence.StandardKey.Paste)` in the read-only editors' *"this editor is read-only"* hint** — asking Qt's per-scheme table meant the hint fired for different keys on Windows and on Linux, which is the DEC-015 defect in miniature. It started as exactly Qt's **Windows-scheme** paste set, i.e. the subset native on **both**, so nothing that used to raise the hint stopped doing so |
 | **`Ctrl+Shift+Insert`** | **Paste's third spelling, bound by the app on both platforms** (`DEC-260810164600`; the row in the table above states why this is not a breach of one-chord-per-operation). Reserved for `Ctrl+V`'s reason: a command retargeted here would be outranked by the widget. **✅ IN `RESERVED_SEQUENCES` (`55c2538`)** — *(this row read "Target design — not yet in `RESERVED_SEQUENCES`")* — **and it has JOINED `EDITOR_PASTE_CHORDS`**, now `("Ctrl+V", "Ctrl+Shift+Insert", "Shift+Insert", "Paste")`, for the reason that set exists rather than in spite of it: it is now one of the **app's own** paste chords, so a read-only surface owes it the same hint as `Ctrl+V`. The remaining KDE-only spelling, the `F18` Paste key, stays **out** — the physically-absent-keys carve-out leaves it to Qt |
-| **`Ctrl+D` · `Ctrl+K` · `Ctrl+U`** | **Delete character / to end of line / whole line — implemented by the app at all six editing surfaces on both platforms** (`DEC-260810143600`), so each is answered inside the editors' own key handling and is not a menu action the dialog could clear. **✅ ALL THREE ARE IN `RESERVED_SEQUENCES` (`55c2538`)**, and the suite's free-chord example moved `Ctrl+U` → **`Ctrl+M`** across sixteen sites *without weakening any assertion*. *(This row read "Target design — none of the three is in `RESERVED_SEQUENCES` today".)* `Ctrl+U`'s reason additionally states that it is **destructive, so it is one undo step** — the only one of the three whose reason says so, because it is the only one that can lose a whole line to one keystroke |
+| **`Ctrl+D` · `Ctrl+K` · `Ctrl+U`** | **Delete character / to end of line / whole line — implemented by the app at all six editing surfaces on both platforms** (`DEC-260810143600`), so each is answered inside the editors' own key handling and is not a menu action the dialog could clear. **✅ ALL THREE ARE IN `RESERVED_SEQUENCES` (`55c2538`)**, and the suite's free-chord example moved `Ctrl+U` → **`Ctrl+M`** across sixteen sites *without weakening any assertion*. *(This row read "Target design — none of the three is in `RESERVED_SEQUENCES` today".)* `Ctrl+U`'s reason additionally states that it is **destructive, so it is one undo step** — the only one of the three whose reason says so, because it is the only one that can lose a whole line to one keystroke. **⚠ FQ-032 collides with two of these and the collision is FLAGGED, not decided (§29):** in vim `Ctrl+D` is page-down and `Ctrl+U` is scroll-up. **Neither is in FQ-032's v1 set, so nothing is at risk today** — but a later vim binding would have to take a shipped gesture away, and the queue entry's *"`Ctrl+D` / `Ctrl+U` … are unbound today = free"* was already false when it was written. Recommendation put to the owner: **they stay the app's line-editing gestures in BOTH editing modes**, and vim's scroll meanings stay permanently unavailable, because `PageUp`/`PageDown` exist on every keyboard and three shipped primitives do not |
 | `F1`, **and the `help.manual` command itself** | The universal convention, and §7 pins `Help ▸ Manual` as the one entry no launch mode may hide. It is the only entry in **both** tables: nothing else may take `F1`, and Manual may not leave it — so its row is present but read-only |
 
 #### A chord with no default is a THIRD category — *"no default, freely assignable"* (DEC-260810143559, owner, 2026-08-10)
@@ -12209,10 +12728,49 @@ is authoritative** (and is what appears in the body above).
 | 2026-08-10 *(harmonization)* | §18.7's status banner: *"settled design (2026-08-05), NOW BEING IMPLEMENTED"*, asserting **one** `BrowserPanel`, **one** left-dock DDL Objects tab, **one** center Explorer tab and **one** connection feeding all of it; §18.7's `Edit DDL`-from-the-sandbox risk box and §29's matching item, both *"owner confirmation pending"*; §18.1's *"`browse_only=True` … the sandbox Explorer offers no context menu at all"*; and §18.4's host table cell *"no context menu exists on this panel — dispatched"* | **FOUR DEAD ASSERTIONS OVER SHIPPED WORK, CORRECTED IN PLACE. (a) FQ-022 SHIPPED (`aa7a0e1`): two of each ship** — `MainWindow.sandbox_ddl_browser_panel` and `CenterStage.sandbox_ddl_editor_panel`, both `browse_only=True`, with `Database ▸ DDL Explorer (Quality)` / `DDL Explorer (Sandbox)`, one role-parameterized path driving both, and four things §18.7 asked for deliberately **not** built (no sandbox drift markers, no `SchemaIndex` repoint, no second reachability notion, no reset re-fetch) plus two recorded deviations (tabs fixed at construction; `RENAMED_ID_ALIASES` created here). **(b) The `Edit DDL`-from-the-sandbox question is CLOSED BY IMPLEMENTATION, not by ruling** — the **second** safe answer shipped, browse-only, suppressing `Edit DDL`, both creation entries and FQ-025's twelve column operations at menu-**build** time (a signal emitting into nothing is the dead control carve-out 2 forbids). **The owner never chose between the two safe answers, so adopting the other is a NEW decision, not the pending confirmation this item was waiting for.** FQ-022's **item 5** — `open_ddl_object_tab`'s reserved `key=` seam, for one identity existing in both databases — stays genuinely open. **(c) The sandbox tree DOES have a context menu: exactly one entry, `Reload DDL`** (BUG-062), composed on top of `_menu_for_item`'s `None`, with **no `setShortcut`** (DEC-012). Its reason is the sharp part: reloading is **neither an edit nor a creation**, and it is the gesture a sandbox browse needs most — applying to a sandbox is precisely the operation whose result the user then wants to re-read. Consequence: *"an empty menu under the cursor is worse than none"* stops being **reachable** rather than being overruled. **(d) §18.4's console cell was the ONE site of four that the BUG-063 restoring pass missed** — recorded because it is the second consecutive pass to find a *"status restored everywhere"* claim with a survivor, which is why each restore is now pinned to a named commit at the site itself. **(e) §27's own reserved table was missing THREE SHIPPED RESERVATIONS** — `Ctrl+Insert` / `Shift+Insert` / `Shift+Delete`, reserved in code since `d0a0804` — and the reason it drifted is worth stating because it is a gap in the tripwire: `tests/test_keybindings_ledger.py`'s set equality binds `RESERVED_SEQUENCES` to **`docs/KEYBINDINGS.md`**, not to this section, so **§27 is the one register in the chain that no test checks**. It stays the design authority (the ledger is the mechanical check over it), which is precisely why a reserved-set change must be folded here by hand in the same pass — and why the `Ctrl+C`/`Ctrl+V`/`Ctrl+X` row now carries the *"two operations, two reasons, and `Ctrl+X` deliberately gets no second sentence"* rule the code comment already stated and this table did not |
 | 2026-08-10 *(status pass)* | **The 2026-08-10 `DEC-260810143600`/`DEC-260810164600` row above**, which said in bold *"All of it is TARGET DESIGN; none has shipped (`EDITOR_UNDO_REDO_CHORDS` holds three rows and `Ctrl+D`/`Ctrl+K`/`Ctrl+U` appear nowhere in `shortcut_registry.py`)"*; §27's two ⏳ chord rows and its two ⏳ reserved-table rows; §27's *"gaps 4 and 5 are ANSWERED but not yet implemented"*; and **every spelling of `EDITOR_UNDO_REDO_CHORDS` / `classify_undo_redo_chord` in the body** (§8's DEC-012 reconciliation, §27's banner and four table rows) | **ALL OF IT SHIPPED (`55c2538`), AND THE RENAME IT FORCED IS RECORDED WITH ITS REASON RATHER THAN AS A FACT.** `Ctrl+Shift+Insert` is bound as **paste on both platforms**, answered at all six surfaces, **reserved**, and **joined `EDITOR_PASTE_CHORDS`** — so a read-only surface owes it the same hint as `Ctrl+V`, which is the reason that app-owned set exists rather than an exception to it. `Ctrl+D`/`Ctrl+K`/`Ctrl+U` are **app-implemented** at all six surfaces through **one** `code_editor.apply_editor_operation`, whose docstring is now the single register of every boundary answer (selection wins; `Ctrl+D` at document end is a no-op with no edit block; `Ctrl+K` at end of line eats the newline; `Ctrl+U` takes the preceding newline on a last line; one `beginEditBlock` each; an active tab-stop walk is **abandoned** first; `PASTE` delegates to Qt so only the *chord* is the app's contribution) — **Windows gained three gestures**, and the function refuses a read-only editor itself because `QTextCursor` edits bypass `setReadOnly`, leaving the **refusal to the caller**. The read-only DDL Explorer answers with a **distinct sentence** from its undo refusal (`"…edit the object in its own tab"` vs `"…there is nothing to undo here"`), selected through `MUTATING_EDITOR_OPERATIONS` / `is_mutating_editor_operation`, because *none of these asks for an undo and a wrong reason is worse than none*. The **F-key carve-out is in the code** as a block comment above `EDITOR_CHORDS`, with `F14`'s bypass marked knowingly accepted, a stated hardware trigger for revisiting, and an explicit instruction not to tidy a suppression row in for it. **`EDITOR_UNDO_REDO_CHORDS` → `EDITOR_CHORDS` and `classify_undo_redo_chord` → `classify_editor_chord`, and the WHY is the load-bearing part** — the alternative, a second table with a second matcher, would give every surface **two calls to make**, and a surface that forgot one *is* BUG-048/049/053/056; one table, one matcher, one call site per surface is what keeps *"every intercepted chord is reserved"* checkable in one place and makes a new chord automatically answered at all six. **Any name the body still spelled the old way was therefore stale, and all of them are corrected.** The free-chord test specimen moved `Ctrl+U` → **`Ctrl+M`** across sixteen sites **without weakening an assertion**, and **all five of `docs/KEYBINDINGS.md`'s Known gaps are closed** — gap 4 **struck** rather than narrowed, since the ruling ratified prose already there. **Recorded as a row because the interval is the point again: this document asserted "not yet built" over four chord families that had shipped, which is the fifth consecutive confirmation that a "not built / pending" claim has the shortest half-life of any statement here — and the rule the last pass added (re-verify your own target-design claims before the pass closes) is what caught it.** |
 | 2026-08-10 *(status pass)* | §18.2's ⚠ block: *"THE STATE IS UNREACHABLE FROM CREATION, BUT THE CONSUMERS ARE NOT YET HARDENED AGAINST IT — `BUG-260810173246`, OPEN"*, with three misbehaving readers enumerated; and the two sites stating `link_pgtp_if_needed`'s guard as the literal `if self._settings.pgtp.working_copy_path: return` | **BUG-260810173246 IS RESOLVED (`73f55c9`): ONE PREDICATE, `_linked_working_copy`, FOR ALL THREE READERS AND FOR THE WRITER'S OWN GUARD — *a recorded `working_copy_path` with no file behind it is NOT A LINK*.** One predicate for the same reason there is one copier: **three separate `.exists()` calls in three readers would age apart.** The sharpest defect is gone — `resolve_pgtp_path` no longer redirects an open of the **real, healthy source** at a missing copy, so the **missing file misdiagnosed as malformed XML** (a `PgtpParseError` dialog naming a file the user never opened) cannot happen; `auto_open_linked_pgtp` **says so and still attempts** its folder-scan rescue instead of suppressing it silently; `report_project_drift` returns early. **The repair is checked against *"never silently relinked"* rather than excused past it:** the guard now asks for a working copy that **exists**, which is **not** the relaxation `DEC-260810134914` forbids — *the ruling forbids relinking a link that is WHOLE, and a path with nothing behind it is not a link at all*, so re-creating it is **repair**. Two properties make that safe: **re-copying the SAME source restores the fields rather than changing them**, and **a SECOND guard means a DIFFERENT recorded `source_path` is never silently repointed** — that one *is* the forbidden relink, whole link or not. It **does not prompt**, deliberately: a half-link from a pre-`caed134` build has **no UI gesture** that could repair it, so healing on the next open of the source is the recovery §18.2 already promised — **the exit path for a state the app could previously enter and not leave.** And the *"Source .pgtp checksum recorded"* journal line was **false every time it appeared** (nothing in that method calls `save_settings`); it is **reworded, not made true**, because `open_project` writes nothing and **a third writer of `settings.json` in the open flow is exactly how these records come to disagree** — `deploy_pgtp` remains the gesture that records a checksum. **The general shape worth keeping: a producer-side ruling does not reach the artifacts already on disk, so *"make the bad state unreachable"* is two jobs — close the producer, and make the readers refuse to honour the bad state.** |
+| 2026-08-10 *(FQ-032 fold)* | **Nothing in this document described an editing-mode layer of any kind**; §7's mode block stated that the vocabulary *"gains NO fifth meaning of `mode`"*; §27's `Escape` row named **one** meaning (*"return focus to the document — never hide anything"*) with three narrower widget answers listed only in the reserved table; and the editors' *advanced editing operations* — relative count-motions above all — did not exist and had no home | **FQ-032 FOLDED INTO §8 AS TARGET DESIGN (NOT YET BUILT): VIM EDITING MODE, WHICH IS THE SPECIFICATION OF THE EDITING-PRIMITIVE LAYER RATHER THAN A FEATURE FOR VIM USERS.** Placed in **§8** (not a new top-level section, which the entry also declined): §8 owns all shared editor infrastructure and all editor key handling for **both** families, and every existing answer to `Esc` is documented in §8 or §27 — a third place would be the defect. **The rationale is folded in because it is the approval:** the editors need absolute go-to-line, delete/change/yank by word and line, and **relative count-motions**, and the real choice was *adopt a standard vocabulary or invent one* — with the extra handicap that **Windows editors offer none to copy**. `42j` is the deciding case: a count applied to a motion is a **grammar**, which no invented Ctrl-chord expresses cleanly. **(1) NO enable/disable setting and NO persistence** — vim-authentic, and it keeps a transient runtime fact out of `QSettings`; **this supersedes the opt-in toggle floated mid-brainstorm.** **(2) Terminology: `Edit mode` (== vim INSERT) and `Command mode` (== vim NORMAL), and the word *"normal"* is dropped entirely** because it collides with vim's own NORMAL. **(3) Command mode is TRANSIENT and PER-EDITOR**, with **one** reset path taking six triggers (insert-entry command · focus loss · the buffer becoming read-only · document swap · a focus-changing `:` command · tab switch) and **never** resurrected on refocus — `CodeEditor.focusOutEvent`'s existing `exit_tab_stop_mode()` is the precedent, and `XmlEditor` gains the override it lacks. **(4) On a read-only editor `Esc` does nothing and the layer is inactive ENTIRELY**, which **deletes** the whole motion-vs-mutation-in-read-only problem rather than answering it. **(5) The plain Edit-mode editor gains NOTHING** — that is the feature's point, and it is why §27's chord table grows by no editing-primitive row. **(6) ONE shared system clipboard, no registers**, with two costs accepted and recorded so they are not "fixed": `dd` clobbers the clipboard, and **there is no linewise paste** (a linewise flag is a parallel register by another name). **(7) No visual mode — `v`/`V` are insert-entry aliases**, so selection stays Windows-native; contract consequence stated: **the select-then-`d` reflex does not exist here.** **(8) The `:` palette DERIVES from the shipped FQ-012 menu enumeration** (`command_id_for` / `menu_path_label` / `collect_menu_commands` — verified in `toolbar_registry.py` / `toolbar_controller.py`, **not** `shortcut_registry.py` as the brainstorm said), so the namespace **is** the menu tree and there is never a second vocabulary; it matches on the **full menu path**, and — reconciled against §7's static-status-bar rule — **it may not live in the status bar** and is not a `QDialog` either. **(9) The editing mode is a THIRD SEGMENT on the shipped `ModeIndicator`, TEXT and not a colour**: the twelve-colour argument doubles to twenty-four, and the exit hint is admissible in the static bar only because *"which editing mode the focused editor is in"* is a permanent stated fact. **(10) `u` sits BESIDE `classify_editor_chord`, never in `EDITOR_CHORDS`** — a state-dependent row would destroy that table's one property (*the same answer at all six surfaces regardless of state*), which is BUG-053's shape — and it calls the surface's **own** undo answer, never `QPlainTextEdit.undo()`, which is `F14`'s recorded bypass defect on a reachable key |
+| 2026-08-10 *(FQ-032 fold)* | **`docs/FEATURE_QUEUE.md`'s FQ-032, which specifies `u` / `Ctrl-R` for undo/redo, describes `Ctrl+R` as *"redo/redraw"* among the *"hot"* collisions, and names collision-restore discipline (*"whatever Command mode steals MUST be restored… or copy-paste / find-focus silently break"*) as **the load-bearing engineering risk*** | **⚠ MODE-D RESTATEMENT: `Ctrl-R` IS NOT BUILT, AND REMOVING IT DISSOLVES THE ENTRY'S OWN BIGGEST RISK RATHER THAN MANAGING IT.** In this app `Ctrl+R` is a **reserved, per-tab `WidgetWithChildrenShortcut` `QShortcut` that focuses the Replace field** — `find_replace_bar.install_focus_shortcuts` at six `FindReplaceBar` hosts, plus the caption panel's own pair — not the loosely-bound *"redo/redraw"* the entry assumed. Claiming it needs an `eventFilter` accepting `ShortcutOverride` (the shape the six surfaces use for `Ctrl+Shift+Z`) **and takes Replace-focus away for as long as Command mode holds**, to buy a **second spelling** of an operation the app already answers uniformly with **`Ctrl+Y` on both platforms** (DEC-015). **Redo in Command mode is `Ctrl+Y`.** The consequence is the durable part: ⏳ **v1 Command mode claims no `Ctrl` chord whatsoever**, so **there is nothing to steal and nothing to restore** — and preserving that is now a **constraint on any future extension**, not an accident of scope: the first `Ctrl` chord Command mode claims re-opens the entire restore problem, and its proposer owes the exit path as well as the entry path. **Three further entry statements corrected:** *"`Ctrl+D` / `Ctrl+U` (half-page scroll) are unbound today = free"* was **false as of `55c2538`** (all three of `Ctrl+D`/`Ctrl+K`/`Ctrl+U` are app-implemented, reserved gestures at six surfaces on both platforms — flagged for the owner in §29, recommendation *they stay the app's*); the entry's `installEventFilter` seam is **not needed** in v1, because the host filters act only on a non-`None` `classify_editor_chord` and bare letters reach `keyPressEvent` untouched — installing it anyway would add the mechanism whose only purpose is beating a `QShortcut`; and the entry's `code_editor.py:253` / `:708` citations are already **stale** (`:478` / `:966`), so this block enumerates the **names** to verify instead. **All four of the entry's open questions are answered here; the three genuinely open items are different ones and are in §29** — `Ctrl+D`/`Ctrl+K`/`Ctrl+U`, `Ctrl-R`'s permanence, and whether the layer is inactive in `CodeEditorDialog`, where `Esc` has been the **only keyboard cancel** since `Ctrl+S`/`Ctrl+W` were deleted there |
+| 2026-08-10 *(FQ-032 fold)* | **§29's FQ-015 item: *"the duplicate handler is KEPT: measurement showed the QAction wins wherever it exists (one call, not two), and the handler is the only host in the menu-less `CodeEditorDialog`"*** | **DEAD ASSERTION RETIRED — BUG-046 (`e8df6c3`) DELETED `CodeEditor.keyPressEvent`'s duplicate `Ctrl+Shift+B` branch AND MEASURED ITS PREMISE FALSE.** Shortcuts **do** activate offscreen; what fails is key delivery to a widget never `show()`n, so the test drives the key at `window.windowHandle()` (DEC-004: the harness changes, not the product). `code_editor.py` carries a tombstone comment where the branch stood, and `CodeEditorDialog` keeps the gesture through **its own `QShortcut`**, not the widget. **§8 and §27 had both been corrected; §29 was the third register and the only one still lying** — found by the `Esc`-precedence sweep, which had to enumerate every editor key answer, and recorded because *the register nobody re-reads is the register that rots*: §29 holds struck items precisely so they read as history, and this one had been struck for the wrong reason. **Struck in place rather than deleted, so which register rotted stays visible.** |
 
 ---
 
 ## 29. Open questions
+
+**From FQ-032 (2026-08-10) — THREE items flagged rather than decided, all of them keyboard-boundary
+questions the queue entry could not have known about.** **None of them blocks implementation of the rest of
+FQ-032**, and the recommendation for each is recorded so an answer can be a yes/no rather than a design
+session (§8).
+
+> **All three ARE FILED** — `DEC-260810193637` (the `Ctrl+D`/`Ctrl+K`/`Ctrl+U` question), `DEC-260810193638`
+> (`Ctrl-R`'s permanence) and `DEC-260810193639` (`CodeEditorDialog`), all `OPEN`, each carrying the
+> recommendation stated below. *(This note read *"NOT yet entries in `docs/DECISION_QUEUE.md` … three entries
+> are still owed"* for the length of one pass: filing failed twice — once for want of ids, once to an
+> interruption mid-write — and the note existed so that a **decision believed filed**, which is a decision
+> nobody asks, could not hide behind the phrase *"flagged for the owner"*. Retired only after the three ids
+> were read back out of the queue.)*
+
+- **Does Command mode leave `Ctrl+D` / `Ctrl+K` / `Ctrl+U` as the app's line-editing gestures, or must they be
+  freed for a later vim binding?** Since `55c2538` all three are **app-implemented at all six editing surfaces
+  on both platforms** and **reserved** — by the owner's own ruling, taken *against* the recommendation, on the
+  ground that a half-applied uniformity rule is what the next sweep re-files. In vim `Ctrl+D` is page-down and
+  `Ctrl+U` is scroll-up. **Neither is in FQ-032's v1 set, so there is no defect today**, and the question is
+  purely about what a future extension may claim. **Recommendation: they stay the app's, in BOTH editing
+  modes** — `PageUp`/`PageDown` already give the scroll, and taking a shipped primitive away to restore a vim
+  reflex spends the more valuable thing. *The reason this is an owner question at all: it would reverse a
+  ruling the owner made three days' worth of decisions ago, and this document does not reverse those for itself.*
+- **Is `Ctrl-R` dropped permanently, or deferred?** §8 restates it as **not built in v1** because `Ctrl+R` is a
+  reserved per-tab Replace-focus `QShortcut` at six hosts and redo is already `Ctrl+Y` uniformly (DEC-015).
+  That much follows from what shipped. **What is genuinely open is whether it is ever revisited** — and the
+  property worth protecting is larger than the chord: **v1 claims no `Ctrl` chord at all**, which is what makes
+  *"whatever Command mode steals must be restored"* a non-problem rather than a managed risk. The first `Ctrl`
+  chord Command mode claims re-opens it. **Recommendation: permanent.**
+- **Is the vim layer INACTIVE in `CodeEditorDialog`?** ⚠ This is the one place `Esc`'s precedence order has a
+  real collision: that dialog's `Esc` is Qt's cancel, and since `Ctrl+S`/`Ctrl+W` were deleted there on
+  2026-08-09 it is the **only keyboard cancel it has**. A Command mode that consumed it would **delete an exit
+  path**. **Recommendation: inactive** — the dialog edits a PHP/JS handler body, has no menu bar for a `:`
+  palette to derive from, and is the one host whose `Esc` means something irreplaceable. *(The alternative —
+  Command mode there, cancel only by the button box — is legal but pays a real exit with a keyboard vocabulary
+  that surface's users did not ask for.)*
 
 **~~From FQ-034 (2026-08-10) — two items flagged rather than decided~~ — BOTH ANSWERED BY THE OWNER
 2026-08-10 AND MOVED INTO §8 AS STATED RULES. Nothing about FQ-034 is open.** They are struck here rather
@@ -12301,9 +12859,16 @@ unrecorded — nothing below was invented in the body above:
   duplicate Ctrl+Shift+B handler?~~ — BOTH RESOLVED 2026-08-07 (`9146524`, FQ-015, §8):** `Select All` **is**
   live in the DDL Explorer buffer and in Caption-Mode Raw XML, now covered by tests — and the verification
   found a real defect on the way (`XmlEditor._is_text_modifying_key` classified a Ctrl chord's printable
-  `text()` as typing, so a read-only editor swallowed Ctrl+A; fixed). The duplicate handler is **KEPT**:
+  `text()` as typing, so a read-only editor swallowed Ctrl+A; fixed). ~~The duplicate handler is **KEPT**:
   measurement showed the QAction wins wherever it exists (one call, not two), and the handler is the only
-  host in the menu-less `CodeEditorDialog`.
+  host in the menu-less `CodeEditorDialog`.~~ **⚠ THAT HALF WAS A DEAD ASSERTION AND IS RETIRED (corrected
+  2026-08-10; ledger §28).** BUG-046 (`e8df6c3`) **DELETED** the duplicate handler and measured its premise
+  **false** — *"shortcuts **do** activate offscreen; what fails is key delivery to a widget that was never
+  `show()`n"* — so the test drives the key at `window.windowHandle()` (DEC-004: the harness is what changes).
+  `CodeEditor.keyPressEvent` carries a tombstone comment saying it deliberately does **not** answer the chord,
+  and the dialog keeps the gesture through **its own `QShortcut`**, not through the widget. §8 and §27 both
+  already said this; **§29 was the third register and the only one still lying** — recorded rather than
+  silently deleted, because a struck item shows which register rotted.
 - **Caption bar details to confirm** (FQ-017, §13): does **`Extended`** survive in `mode_combo` (three modes
   exist, two were named; the body keeps all three because dropping one removes a real capability), and does
   **`Clear filter`** clear only the text filter or **all** filters including the tree-set row predicates the

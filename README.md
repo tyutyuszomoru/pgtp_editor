@@ -61,6 +61,7 @@ The app opens on a **launcher** offering its three modes — **Standalone** (a `
 - **`.pgtp` ↔ database synchronization** is the direction of travel: keeping the XML project and the live schema in step, so a change in either is a visible, reviewable event rather than a discovery.
 - **Git-backed DDL versioning** — checkout, drift markers and a reviewed deploy bundle — is designed and largely built; the git integration itself is an explicit placeholder.
 - **`Generate Deployment SQL`** — a reviewed deployment script as the deliverable of the edit/check loop — is specified and not yet built.
+- **An editing-primitive layer for the editors, specified as vim's command grammar.** The editors need relative count-motions, go-to-line and delete/change/yank by word, line and motion; the choice was to adopt a standard vocabulary or invent a parallel keymap of Ctrl-chords, and the standard one won — *"go down 42 lines"* is a count applied to a motion, which no menu and no Windows editor expresses. So `Esc` will put an editable editor into a **Command mode** beside the ordinary **Edit mode**, per tab, transient, with nothing persisted and no setting to turn on. **Edit mode gains nothing** — that is the point — and `:` addresses the app's own menu commands rather than inventing a second vocabulary. Specified, not yet built.
 - **`re_phpgen`'s stated end goal is production replacement of the vendor generator.** That wall opens only when the falsifiable promotion criteria hold, and even then cutover is per-project and explicit. Today it is gap-analysis only.
 
 ## Development
@@ -72,7 +73,7 @@ Tests mirror the package layout (`pgtp_editor/<area>/foo.py` → `tests/<area>/t
 
     QT_QPA_PLATFORM=offscreen python -m pytest -q -n 10
 
-6789 passing / 51 skipped as of this writing, spanning the model, diff, schema-learning, validation, SQL analysis, database, generation and UI layers. `docs/TEST_LOG.md` is the committed record of verified runs.
+6674 passing / 51 skipped at the last full-suite run recorded in [`docs/TEST_LOG.md`](docs/TEST_LOG.md), spanning the model, diff, schema-learning, validation, SQL analysis, database, generation and UI layers. That log is the committed record of verified runs, and this line cites it rather than a number of its own — a count nothing verifies is stale by the next commit.
 
 **Windows release:** `python optimized_build.py` produces a size-optimized onedir PyInstaller bundle at `dist/PGTPEditor/`; package it with `docs/installer.iss` (Inno Setup).
 
