@@ -965,3 +965,78 @@ even under (C) the second host must go.
 `Ctrl+Alt+F`'s row stays either way), and a `spec-maintainer` pass adding the context-menu-command case
 to §8's DEC-009 rule, which today distinguishes only *no menu command* from *menu-bar command* and is
 silent on the middle case.
+
+---
+
+## DEC-013 — Where must a refusal appear: is the journal enough, or must it reach a surface the user is already looking at?
+
+- **Status:** OPEN
+- **Raised:** 2026-08-10, by `bug-triager` from **BUG-055**, which established that the bug's original
+  premise (that these refusals are lost) is **false**, and that what remains is genuinely the owner's call
+  rather than a defect to fix.
+- **Blocks:** **BUG-055's remaining scope** — the entry is OPEN with its implementation plan withdrawn, and
+  cannot be re-scoped until this is settled. It also blocks a **`spec-maintainer`** correction: §7 and §18.5
+  currently carry the "reach a surface the user is looking at" rule **as settled design when it is only a
+  proposal** (that overstatement is being corrected in parallel; this decides what the corrected text says).
+
+**Context — all facts verified in the tree today.**
+
+FQ-028 closed the status bar as a message board, by owner ruling. `StaticStatusBar.showMessage` does not
+paint; it **journals** (`pgtp_editor/ui/status_bar.py:131-136`). Nothing is lost: `showMessage` →
+`notice_sink` → `MainWindow._record_notice` (`main_window.py:642`, `:2179`) → `record_activity`
+(`:1764`) → the Activity Log tab, where the row appears immediately.
+
+So the refusals that route this way are **journal-only, not surface-less**. The open question is whether
+that is enough. The row may land on a non-current tab or in a hidden dock with nothing revealing it, so a
+user who presses a key and is declined can see **no response at all**, while the reason is faithfully
+recorded. (For scale: 38 `showMessage` call sites across `pgtp_editor/ui/`; BUG-055 identifies roughly
+fifteen of them as refusals.)
+
+**Why this is unsettled rather than simply wrong.** FQ-023 established that a gesture must **state why** it
+is unavailable rather than vanishing — but it says *why*, not *where*. Its own reference implementations
+disagree with each other, and all three ship:
+
+1. `MainWindow._report_gesture_unavailable` (`main_window.py:6415-6428`) — dual-routes: a `[Check]` line
+   (`audit_router.py:135`, `CHECK_PREFIX: TO_RESULTS`) **plus** the journal.
+2. `MainWindow._refuse_sandbox_gesture` (`main_window.py:5750`) — raises a **`QMessageBox`** with an
+   `Open` button.
+3. The remaining ~15 — **journal only**.
+
+That three-way inconsistency is the thing to settle.
+
+**A fourth mechanism already exists and is the natural home for the "immediate" answer:**
+`CodeEditor.report_refusal` (`code_editor.py:596-610`) → `show_hint(..., refusal=True)` (`:612-625`) — a
+transient tooltip **at the caret**, plus an `expansion_refused` signal that files an Audit row. Its
+docstring already argues this decision's case in miniature: *"a dock row alone would make a Ctrl+Alt+E that
+matched no snippet look like nothing happened; a tooltip alone would vanish before it could be re-read."*
+
+**Options.**
+
+- **(A) The journal is enough.** No code change; FQ-028's ruling stands untouched and the Activity Log is
+  the single place reasons live. *Cost:* a declined keystroke can produce no visible response at all —
+  the exact failure FQ-023 exists to prevent. It also makes the two louder implementations (1 and 2 above)
+  the anomalies, so consistency would argue for quietening them, which is a behaviour regression nobody has
+  asked for.
+- **(B) A refusal must reach a surface the user is already looking at.** The rule `spec-maintainer` drafted:
+  immediate feedback at the point of action, via `report_refusal` / `show_hint` for editor gestures.
+  *Cost:* changes ~15 shipped refusals — that is a **feature**, not a correction, and routes through
+  `feature-triage`. It also needs a stated answer for refusals raised where **there is no caret to anchor a
+  tooltip to** (project-level and background gestures), which the option as drafted does not supply.
+- **(C) Tier it by kind.** Keystroke-answering refusals get the immediate surface; background and
+  non-gesture notices stay journal-only. *Cost:* someone must classify all ~15, and the boundary must be
+  stated well enough that a **future** call site knows which side it is on. An unclear rule here recreates
+  exactly today's three-way inconsistency, one call site at a time.
+
+**Recommendation: (C).** The distinction the code is already groping toward is *did the user just do
+something and get declined?* — which is precisely when silence is wrong, and precisely when a caret exists
+to anchor a hint to. A blanket rule in either direction either leaves keystrokes silent (A) or turns
+routine notices into interruptions (B).
+
+**Boundary, whichever is chosen: this must not reopen FQ-028.** The status bar stays closed as a message
+board. This decides between the **journal** and the **at-the-caret hint** — not between the journal and the
+status bar.
+
+**Unblocks:** BUG-055's remaining scope (currently OPEN with a withdrawn plan retained), and a
+`spec-maintainer` pass restating §7 and §18.5 to say what was actually decided instead of presenting the
+proposal as settled design. If the answer is (B) or (C), the ~15-site change is **new surface** and goes
+through **`feature-triage`** (foreground) into `docs/FEATURE_QUEUE.md`, not straight into the spec.
