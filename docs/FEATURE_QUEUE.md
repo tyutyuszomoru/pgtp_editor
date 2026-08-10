@@ -3690,7 +3690,32 @@ session-only mode; New Session is the escape hatch. Nothing remains undecided fo
 ---
 
 ## FQ-028: App-shell chrome redesign — Audit/Problems split + static status bar + a prominent color-coded mode indicator (left-dock findings tab, static status bar, colored toolbar+status-bar mode panel, bottom dock → Activity Log + Results tabs)
-**Status:** QUEUED
+**Status:** PROCESSED (`69557d2`; spec §5/§7/§18.5/§22/§23/§26 + three §28 ledger rows; manual `f5bbf97`) —
+all three parts in one landing, **with FQ-018 inside it**. Full suite 5787 passed / 45 skipped (+105).
+
+**Two mechanisms are why this landed without churn, and they are the reusable lesson:** `AuditRouter`
+replaces `window.audit_panel` with a facade that quacks like the `QListWidget` every producer was written
+against and routes by prefix — **not one producer changed**, across a ~430-reference surface. And
+`StaticStatusBar` overrides `showMessage` so it never paints, journalling instead, which let ~40 call
+sites, `_shell_status` and `busy.py` carry on untouched. Both kept a SHAPE while changing a DESTINATION.
+
+**Three of this entry's own statements were corrected by the implementation:** its "add an expanding
+spacer via `toolbar.addWidget`" was insufficient (`apply_ids` detaches every action, so Customize
+Toolbar's OK would have silently deleted the mode panel — it is now the controller's `_trailing_widget`);
+`current_mode()` had to be created; and `busy.py` needed a `getattr` fallback.
+
+**It also found a TENTH prefix the entry's "complete disposition of all 9" table omits.** `[Sandbox]`
+routes to **Results**, not the Activity Log, and the reason is mechanical rather than aesthetic: the line
+is emitted *inside* `set_active_project` (BUG-040's auto-open) and FQ-019's journal **replaces its display
+buffer** on that transition — a line filed there is wiped off screen by the very open it describes. The
+spec accepted that routing and amended its own earlier row. **Live caveat recorded with it:** the same
+wipe hits `[Project]` narration during a project *close*; it reaches the closing project's
+`activity.jsonl` but vanishes from the panel. The open direction was mitigated by subscriber ordering;
+the close direction is structural to FQ-019 and was deliberately left alone.
+
+`clear_validation_results` **reversed meaning** — it no longer deletes, it opens a run block. A saved
+layout survives: the bottom dock keeps `objectName("audit_dock")`, so existing geometry carries onto the
+two-tab panel and Qt drops the now-unknown `activity_dock` entry.
 **Requested:** 2026-08-09
 **MERGED 2026-08-09:** this entry now also contains the mode-indicator design formerly tracked as **FQ-029**
 (prominent, color-coded, right-anchored top-toolbar panel + upgraded status-bar label). The two overlapped
