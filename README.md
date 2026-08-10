@@ -32,6 +32,7 @@ The app opens on a **launcher** offering its three modes — **Standalone** (a `
 
 - **Model.** `lxml`-backed parse into typed `PageNode`/`DetailNode`/`ColumnNode`/`EventNode`, each carrying its full observed attribute set and source line numbers, with arbitrarily nested `Detail`-in-`Detail` structures and every `EventHandlers` child classified client- or server-side against the authoritative 40-handler list. A malformed file never yields a silently empty tree.
 - **Raw XML editor.** Syntax highlighting, folding, a multi-zone gutter, auto-indent and auto-close, Ctrl+click tag matching, structural block selection, bookmarks (persisted per project), and a permanently visible Find/Replace bar with streaming Find All.
+- **Format Selection (`Ctrl+Alt+F`) on any XML surface** — Raw XML, Edit XSD and draft fragment tabs — reindenting by element depth and *only* that: never inside an opening tag, never touching element text (which is where entity-escaped PHP/JS handler bodies live), never entering a comment or CDATA section. Mis-nested or half-cut selections are refused whole rather than reformatted into a shape the document does not have. The same chord reindents SQL in the SQL editors; which engine answers is decided by the surface, never by guessing from the text.
 - **Schema-aware completion.** Ctrl+Space completes attribute names and values from a hand-curated `curated.xsd`, editable in-app (Schema menu), with a learned second schema derived from every file opened.
 - **Diff / Merge as a mode.** A domain-aware structural differ (Pages by `fileName`, Details by `(tableName, caption)`), per-difference Apply/Skip, and write-back with `.bak` backup. Ambiguous matches are flagged, and the whole batch is refused rather than guessed at.
 - **Caption Management.** A dedicated grid for interface text across the project, with Excel-style header filters, staged edits, go-to-line, bulk transform and Unify.
@@ -70,7 +71,7 @@ Tests mirror the package layout (`pgtp_editor/<area>/foo.py` → `tests/<area>/t
 
     QT_QPA_PLATFORM=offscreen python -m pytest -q -n 10
 
-6343 passing / 45 skipped as of this writing, spanning the model, diff, schema-learning, validation, SQL analysis, database, generation and UI layers. `docs/TEST_LOG.md` is the committed record of verified runs.
+6616 passing / 45 skipped as of this writing, spanning the model, diff, schema-learning, validation, SQL analysis, database, generation and UI layers. `docs/TEST_LOG.md` is the committed record of verified runs.
 
 **Windows release:** `python optimized_build.py` produces a size-optimized onedir PyInstaller bundle at `dist/PGTPEditor/`; package it with `docs/installer.iss` (Inno Setup).
 
