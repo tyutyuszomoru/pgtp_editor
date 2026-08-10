@@ -112,6 +112,27 @@
   manual-maintainer policies above as usual, then flip that entry's `Status`
   line to `PROCESSED (<commit or spec §>)` in place rather than deleting it.
 
+## Owner decisions (mandatory routing)
+
+- **Never bury a decision the owner must make inside an implementation report.** Decisions raised
+  mid-report get missed; work then continues around them and the assumption hardens silently.
+  Every blocking or clarifying decision goes through the `owner-decision` subagent
+  (`.claude/agents/owner-decision.md`), which is the **sole writer** of
+  `docs/DECISION_QUEUE.md`. No other session or agent appends, answers, or flips a status there.
+- **To file one:** dispatch `owner-decision` with `run_in_background: true` the moment you hit a
+  choice you must not make alone — a design trade-off with no obviously right answer, a ruling that
+  would reverse recorded design, or a question whose wrong answer is expensive. Then **continue
+  with everything that decision does not block**; filing is not a reason to stop.
+- **Do not file** what the code can answer (go read it), what `CONSOLIDATED_SPEC.md` already
+  settles, or a choice with an obviously right answer — make that one and say you did. Filing
+  trivia trains the owner to skim the queue, which recreates the problem.
+- **To answer them:** the owner runs a session dedicated to decisions and dispatches
+  `owner-decision` in the **foreground**. It sweeps the queue, retires entries already overtaken by
+  shipped code, puts the live ones as self-contained questions, and writes the answers back **with
+  the owner's reasoning** — an answer without its why gets re-litigated.
+- An answered entry may contradict the spec, the manual, or a queue entry. `owner-decision` reports
+  that; reconciling it belongs to `spec-maintainer`, `manual-maintainer`, or `bug-triager` as usual.
+
 ## Test environment
 
 Development happens on **both Windows and Linux**, and the two differ in which
