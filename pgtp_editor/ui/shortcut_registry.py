@@ -256,7 +256,7 @@ RESERVED_SEQUENCES: dict[str, str] = {
     # looks for; leaving it costs two different keyboards on the owner's two
     # machines.
     #
-    # They are therefore in `EDITOR_UNDO_REDO_CHORDS` below as `SUPPRESSED`:
+    # They are therefore in `EDITOR_CHORDS` below as `SUPPRESSED`:
     # every editing surface intercepts them and runs nothing, which is what makes
     # "dead" true on Windows too rather than only on Linux. They stay reserved
     # here for the consequence of that: a menu command retargeted onto one would
@@ -282,9 +282,15 @@ RESERVED_SEQUENCES: dict[str, str] = {
     # enumerate them and this dialog has no row to move them from.
     "F3": "Find Next — a window-level command with no menu entry (§27)",
     "Ctrl+L": "Go To XSD — a window-level command with no menu entry (§27)",
-    "Ctrl+Alt+F": "Format Selection — a context-menu command plus a shortcut "
-                  "inside the Sandbox SQL Console and the DDL object tabs; "
-                  "there is no menu-bar action to move (§27)",
+    # The reason names ALL FIVE hosts (FQ-033 added the three `XmlEditor` ones,
+    # and this string went on listing two). It is what the Customize Shortcuts
+    # dialog shows the user when it refuses the key, so an incomplete list here
+    # is a wrong answer to a direct question -- and `docs/KEYBINDINGS.md` and
+    # `ui/format_settings.py` both already say five.
+    "Ctrl+Alt+F": "Format Selection — a context-menu command plus a shortcut on "
+                  "five editing surfaces: the Sandbox SQL Console, the DDL "
+                  "object tabs, and the Raw XML, Edit XSD and draft fragment "
+                  "tabs; there is no menu-bar action to move (§27)",
     # BUG-062. The same shape as `Ctrl+Alt+F` above, and reserved for the same
     # reason: the chord's ONE keyboard host is a widget-scoped `QShortcut` (on
     # the DDL Explorer's read-only viewing pane, `ddl_editor_panel.py`), so the
@@ -347,6 +353,54 @@ RESERVED_SEQUENCES: dict[str, str] = {
                     "Caption Mode (§26/§27)",
     "Shift+Delete": "Cut — Qt's older spelling of the chord, a built-in inside "
                     "every editor widget on both keyboard schemes (§26/§27)",
+    # The X11-only clipboard spelling, and the OPPOSITE case to `Alt+Backspace`
+    # above -- the analogy must not be applied mechanically. Qt lists this chord
+    # under `StandardKey.Paste` on the Linux/KDE scheme and not on the Windows
+    # one, so it pastes on Linux today and does nothing on Windows. Suppressing
+    # it would therefore *remove a working gesture* on the platform this project
+    # is developed on, where `Alt+Backspace` was dead there to begin with.
+    #
+    # **DECIDED (owner, 2026-08-10) -- BOUND EXPLICITLY ON BOTH PLATFORMS**,
+    # unconditionally and with no `sys.platform` test: redundant on X11, new on
+    # Windows. Exactly the shape DEC-015 used for `Ctrl+Y`. It is in
+    # `EDITOR_CHORDS` below as `PASTE`, answered at all six editing surfaces,
+    # and in `EDITOR_PASTE_CHORDS` so the read-only surfaces raise the same hint
+    # for it as for `Ctrl+V`.
+    "Ctrl+Shift+Insert": "Paste — bound by this app on every platform "
+                         "(DEC-015), inside every editing surface's own key "
+                         "handling; Qt itself binds it on the Linux/KDE "
+                         "keyboard scheme only (§26/§27)",
+    # The three readline/Emacs line-editing chords Qt answers on the KDE scheme
+    # and not on the Windows one: `StandardKey.Delete` gains `Ctrl+D` there,
+    # `DeleteEndOfLine` is `Ctrl+K` and `DeleteCompleteLine` is `Ctrl+U`, and the
+    # Windows scheme binds NONE of them.
+    #
+    # **DECIDED (owner, 2026-08-10) -- BOUND ON BOTH PLATFORMS, IMPLEMENTED BY
+    # THIS APP**, at all six editing surfaces, so Windows gains three gestures it
+    # never had. The owner was offered reserve-only as a cheaper floor and
+    # rejected it: reserve-only protects the customize dialog while leaving the
+    # editing behaviour split, i.e. a stated rule half-applied, and a
+    # half-applied rule is what the next sweep re-files. These are **letter
+    # chords on keys every keyboard has**, live on Linux and reachable from
+    # muscle memory, so the physically-absent-keys carve-out below cannot reach
+    # them and the uniformity rule applies in full.
+    #
+    # The accepted cost, recorded so nobody "simplifies" it back: the app now
+    # owns these primitives' edge cases forever, where before it got Qt's for
+    # free. They are settled in ONE place, `code_editor.apply_editor_operation`,
+    # which every surface calls -- see its docstring for each answer.
+    "Ctrl+D": "Delete the character after the caret — implemented by this app "
+              "at all six editing surfaces so the gesture is the same on every "
+              "platform (DEC-015); Qt binds it on the Linux/KDE keyboard "
+              "scheme only (§27)",
+    "Ctrl+K": "Delete from the caret to the end of the line — implemented by "
+              "this app at all six editing surfaces so the gesture is the same "
+              "on every platform (DEC-015); Qt binds it on the Linux/KDE "
+              "keyboard scheme only (§27)",
+    "Ctrl+U": "Delete the whole line — implemented by this app at all six "
+              "editing surfaces so the gesture is the same on every platform "
+              "(DEC-015); Qt binds it on the Linux/KDE keyboard scheme only, "
+              "and it is destructive, so it is one undo step (§27)",
     # §27: Manual. Universal convention, and `Help ▸ Manual` is the one menu
     # entry §7 pins as never filtered out of any launch mode.
     "F1": "Manual — pinned (§27)",
@@ -354,19 +408,31 @@ RESERVED_SEQUENCES: dict[str, str] = {
 
 # -- the chords every editing surface must answer (DEC-014) -------------------
 #
+# **This table is deliberately NOT called `EDITOR_UNDO_REDO_CHORDS` any more**
+# (renamed 2026-08-10, with `classify_undo_redo_chord` -> `classify_editor_chord`).
+# The owner's X11-chord rulings put a paste chord and three line-editing chords
+# into it, and the alternative -- a SECOND table with a second matcher -- was
+# rejected for the reason DEC-014 exists: a surface would then have two calls to
+# make, and the whole class of bug this machinery prevents (BUG-048, BUG-049,
+# BUG-053, BUG-056) is a surface that forgot one. **One table, one matcher, one
+# call site per surface** keeps "every intercepted chord is reserved" checkable
+# in one place and makes a newly added chord automatically answered at all six
+# surfaces. The names are wider; the invariant is unchanged.
+#
 # DEC-014's invariant, verbatim: *"For every chord `RESERVED_SEQUENCES` reserves
 # because an editor answers it, every editing surface states its answer."* This
 # table IS that set, sourced from the reservations above rather than written out
 # again as a literal triple somewhere in the widget code -- so a surface, the
 # dialog's greyed row and the reason the user reads all come from one place.
 #
-# It maps chord -> **operation**, never chord -> True. `Ctrl+Z` and `Ctrl+Y` are
+# It maps chord -> **operation**, never chord -> True, and that generalizes
+# without change to the six operations it now holds. `Ctrl+Z` and `Ctrl+Y` are
 # different operations, and DEC-014 forbids a bare "is this an undo/redo chord"
 # boolean for a stated reason: a caller that trusts one and re-derives the
 # operation itself is how a redo becomes an undo, silently, with the chord still
 # claimed so nothing looks broken.
 #
-# Two of the four answers run no operation, and neither is a placeholder -- in
+# Two of the answers run no operation, and neither is a placeholder -- in
 # both cases the interception is the behaviour, because Qt would otherwise answer
 # the chord itself and the app's keyboard would differ per platform:
 #
@@ -380,25 +446,64 @@ RESERVED_SEQUENCES: dict[str, str] = {
 #       per the owner's rule that a chord means the same thing on Windows and
 #       Linux or is not bound at all.
 #
+# Four answers MUTATE the buffer -- `PASTE`, `DELETE_CHARACTER`,
+# `DELETE_TO_END_OF_LINE`, `DELETE_LINE` -- and they are the owner's 2026-08-10
+# X11-chord rulings: Qt binds all four on the Linux/KDE scheme only, and rather
+# than suppress working, reachable gestures the app implements them itself on both
+# platforms. Their single implementation is `code_editor.apply_editor_operation`;
+# a read-only surface still answers them, by stating a refusal instead of editing.
+#
 # **The rule for adding a row here:** a chord Qt answers on one platform's scheme
 # and not the other must be either bound by this app on both or suppressed on
 # both -- never left to Qt. The test suite cannot check this (the offscreen
 # platform runs Qt's *Windows* scheme, so a Linux-only dead key is invisible to
 # it); reason from the binding table.
 #
+# **THE ONE STATED EXCEPTION -- physically-absent keys (owner, 2026-08-10).** The
+# uniformity rule *does not reach keys no keyboard in use actually has*, so
+# `F14` (Qt's KDE-scheme Undo) and `F16`/`F18`/`F20` (the Sun/HP Copy/Paste/Cut
+# keys) deliberately have **no row here and no reservation**. This is a stated
+# carve-out with a stated trigger for its own review, not an oversight:
+#
+#   **`F14`'s undo-routing bypass is KNOWINGLY ACCEPTED AS UNREACHABLE.** On the
+#   KDE scheme `F14` runs `QPlainTextEdit`'s *native* undo inside every editing
+#   surface -- no re-emission into the project's snapshot history, no read-only
+#   refusal in Caption Mode, no journal line. That is exactly the defect BUG-056
+#   fixed for `Ctrl+Shift+Z`, and it is accepted here only because no reachable
+#   key fires it. **If a keyboard with an `F13`...`F20` block ever comes into use
+#   this is a live defect again, and the carve-out is what must be revisited --
+#   not the rule.** Do not re-file it as a defect while the carve-out stands, and
+#   do not "tidy" a suppression row in for it: adding one would state that the
+#   rule reaches absent keys, which the owner ruled it does not.
+#
 # The Qt-side matcher that consumes this lives in `ui/code_editor.py`
-# (`classify_undo_redo_chord`) -- this module stays Qt-free.
+# (`classify_editor_chord`) -- this module stays Qt-free.
 UNDO = "undo"
 REDO = "redo"
 CLAIMED_NOT_UNDO_REDO = "claimed"
 SUPPRESSED = "suppressed"
+PASTE = "paste"
+DELETE_CHARACTER = "delete-character"
+DELETE_TO_END_OF_LINE = "delete-to-end-of-line"
+DELETE_LINE = "delete-line"
 
-EDITOR_UNDO_REDO_CHORDS: dict[str, str] = {
+#: The operations that CHANGE the buffer, so a surface knows a stated refusal is
+#: owed when its buffer is read-only. Derived from nothing -- named here once, and
+#: consumed through `code_editor.is_mutating_editor_operation`.
+MUTATING_EDITOR_OPERATIONS: frozenset[str] = frozenset(
+    {PASTE, DELETE_CHARACTER, DELETE_TO_END_OF_LINE, DELETE_LINE}
+)
+
+EDITOR_CHORDS: dict[str, str] = {
     "Ctrl+Z": UNDO,
     "Ctrl+Y": REDO,
     "Ctrl+Shift+Z": CLAIMED_NOT_UNDO_REDO,
     "Alt+Backspace": SUPPRESSED,
     "Alt+Shift+Backspace": SUPPRESSED,
+    "Ctrl+Shift+Insert": PASTE,
+    "Ctrl+D": DELETE_CHARACTER,
+    "Ctrl+K": DELETE_TO_END_OF_LINE,
+    "Ctrl+U": DELETE_LINE,
 }
 
 
@@ -412,14 +517,20 @@ EDITOR_UNDO_REDO_CHORDS: dict[str, str] = {
 # not the other. This table is the app's own answer instead, spelled out, so the
 # behaviour is identical on both.
 #
-# It is exactly Qt's Windows-scheme `StandardKey.Paste` set, which is the subset
-# native on BOTH schemes, so nothing that used to raise the hint on Windows
-# stopped doing so. `Ctrl+Shift+Ins` (Linux/KDE only) is deliberately absent:
-# whether the app binds it on both schemes or suppresses it on both is an open
-# owner ruling, and inheriting it in the meantime is the very defect this table
-# removes. Qt's own read-only refusal still blocks the paste itself either way;
-# what is uniform here is the app's hint.
-EDITOR_PASTE_CHORDS: tuple[str, ...] = ("Ctrl+V", "Shift+Insert", "Paste")
+# It was originally exactly Qt's Windows-scheme `StandardKey.Paste` set (the
+# subset native on BOTH schemes), so nothing that used to raise the hint on
+# Windows stopped doing so. `Ctrl+Shift+Insert` has since JOINED it, and for the
+# reason this table exists rather than in spite of it: the owner ruled (2026-08-10)
+# that the app binds that chord as paste on both platforms, so it is now one of
+# the app's own paste chords and a read-only surface owes it the same hint as
+# `Ctrl+V`. The remaining KDE-only spelling, the `F18` Paste key, is still absent
+# -- the physically-absent-keys carve-out (see `EDITOR_CHORDS`) leaves it to Qt.
+EDITOR_PASTE_CHORDS: tuple[str, ...] = (
+    "Ctrl+V",
+    "Ctrl+Shift+Insert",
+    "Shift+Insert",
+    "Paste",
+)
 
 
 RESERVED_COMMAND_IDS: dict[str, str] = {

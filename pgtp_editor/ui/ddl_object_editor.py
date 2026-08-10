@@ -89,7 +89,9 @@ from pgtp_editor.ui.code_editor import (
     REDO,
     UNDO,
     CodeEditor,
-    classify_undo_redo_chord,
+    apply_editor_operation,
+    classify_editor_chord,
+    is_mutating_editor_operation,
 )
 from pgtp_editor.ui.format_settings import current_sql_config
 from pgtp_editor.ui.completion_popup import CompletionPopupHostMixin
@@ -913,7 +915,7 @@ class DdlObjectEditorPanel(
             # differently -- its buffer is synthesized and read-only, so it
             # refuses with a stated reason, whereas this tab is editable and
             # routes undo/redo into its own native stack.
-            operation = classify_undo_redo_chord(event)
+            operation = classify_editor_chord(event)
             if operation is not None:
                 if event.type() == QEvent.Type.ShortcutOverride:
                     # Claim the sequence so Qt never also fires the
@@ -924,6 +926,14 @@ class DdlObjectEditorPanel(
                     self.editor.undo()
                 elif operation == REDO:
                     self.editor.redo()
+                elif is_mutating_editor_operation(operation):
+                    # Paste (`Ctrl+Shift+Insert`) and the three line-editing
+                    # gestures (`Ctrl+D`/`Ctrl+K`/`Ctrl+U`), bound by the app on
+                    # both platforms (owner, 2026-08-10) where Qt binds them on
+                    # the Linux/KDE scheme only. This tab is editable, so they
+                    # run; the sibling `DdlEditorPanel` states a refusal instead,
+                    # exactly as it does for undo.
+                    apply_editor_operation(self.editor, operation)
                 # else: the two answers that run no operation, and in both cases
                 # the claim is load-bearing rather than tidiness. Ctrl+Shift+Z
                 # (freed from redo by DEC-015): Qt carries it as native

@@ -16,8 +16,8 @@ to make the ledger the kind of thing that cannot rot quietly:
   deliberately dead -- the *absence* of any binding for it.
 
 **The code side is derived, never restated.** An AST walk finds every
-`setShortcut(...)` / `QShortcut(...)`, `EDITOR_UNDO_REDO_CHORDS` supplies the
-editor chord set, the set of surfaces that call `classify_undo_redo_chord`
+`setShortcut(...)` / `QShortcut(...)`, `EDITOR_CHORDS` supplies the
+editor chord set, the set of surfaces that call `classify_editor_chord`
 supplies "which editing surfaces state their answer", and Qt's own binding table
 is read with `QKeySequence.keyBindings`. A test that hardcoded the same list a
 second time would prove only that someone typed it twice.
@@ -41,7 +41,7 @@ from pathlib import Path
 import pytest
 
 from pgtp_editor.ui.shortcut_registry import (
-    EDITOR_UNDO_REDO_CHORDS,
+    EDITOR_CHORDS,
     RESERVED_SEQUENCES,
     normalize_sequence,
 )
@@ -73,12 +73,12 @@ GATES = {"DEC-009", "DEC-012", "DEC-014", "DEC-015", "Qt", "bare-key", "dead"}
 WIDGET_MECHANISMS = {KEY_PRESS_EVENT, EVENT_FILTER}
 
 #: What makes a module named by a row plausible as a keyboard host even when the
-#: chord itself is not a literal in that file: the shared undo/redo matcher, the
+#: chord itself is not a literal in that file: the shared editor-chord matcher, the
 #: shared per-tab focus-shortcut installer, a `Key_*` branch, or a `StandardKey`
 #: test. Deliberately loose -- the strong direction is code -> ledger; this only
 #: catches a row naming a module that has nothing to do with the keyboard.
 KEY_HANDLING_EVIDENCE = (
-    "classify_undo_redo_chord",
+    "classify_editor_chord",
     "install_focus_shortcuts",
     "Key_",
     "StandardKey",
@@ -300,12 +300,12 @@ def derive_bindings() -> list[Binding]:
     return bindings
 
 
-def derive_undo_redo_surfaces() -> set[str]:
+def derive_editor_chord_surfaces() -> set[str]:
     """The modules that state an answer for the reserved editor chord set."""
     return {
         path.name
         for path in sorted(PACKAGE_ROOT.rglob("*.py"))
-        if "classify_undo_redo_chord(" in path.read_text(encoding="utf-8")
+        if "classify_editor_chord(" in path.read_text(encoding="utf-8")
         and path.name != "shortcut_registry.py"
     }
 
@@ -534,28 +534,28 @@ def test_editor_chord_set_rows_state_the_operation_and_every_surface(by_chord):
     editor chord set claims, the row names the operation *and* every surface
     that states an answer -- the surface list derived from the code, not typed
     out here."""
-    surfaces = derive_undo_redo_surfaces()
+    surfaces = derive_editor_chord_surfaces()
     assert len(surfaces) >= 6, (
-        f"only {sorted(surfaces)} call classify_undo_redo_chord; the six "
+        f"only {sorted(surfaces)} call classify_editor_chord; the six "
         f"editing surfaces are the premise of DEC-014"
     )
-    for chord, operation in EDITOR_UNDO_REDO_CHORDS.items():
+    for chord, operation in EDITOR_CHORDS.items():
         normalized = normalize_sequence(chord)
         row = by_chord.get(normalized)
         assert row is not None, (
-            f"{normalized} is in EDITOR_UNDO_REDO_CHORDS and has no row in "
+            f"{normalized} is in EDITOR_CHORDS and has no row in "
             f"{LEDGER_PATH.name}"
         )
         assert operation.lower() in row.text.lower(), (
             f"{LEDGER_PATH.name}:{row.line_number}: {normalized} is classified "
-            f"{operation!r} by EDITOR_UNDO_REDO_CHORDS but the row never says "
+            f"{operation!r} by EDITOR_CHORDS but the row never says "
             f"so -- a chord whose row does not state its operation is how a "
             f"redo becomes an undo"
         )
         for surface in sorted(surfaces):
             assert surface in row.files, (
                 f"{LEDGER_PATH.name}:{row.line_number}: {normalized} is "
-                f"answered in `{surface}` (it calls classify_undo_redo_chord) "
+                f"answered in `{surface}` (it calls classify_editor_chord) "
                 f"but the row does not name that surface"
             )
         assert row.mechanisms & WIDGET_MECHANISMS, (
@@ -728,7 +728,7 @@ def test_widget_hosted_modifier_chords_are_reserved(ledger):
 
 def test_dec014_and_dec015_gates_are_used_consistently(ledger, by_chord):
     editor_chords = {
-        normalize_sequence(chord) for chord in EDITOR_UNDO_REDO_CHORDS
+        normalize_sequence(chord) for chord in EDITOR_CHORDS
     }
     for row in ledger:
         if "DEC-014" in row.gates:
@@ -736,7 +736,7 @@ def test_dec014_and_dec015_gates_are_used_consistently(ledger, by_chord):
                 f"{LEDGER_PATH.name}:{row.line_number}: {row.chord} carries "
                 f"the DEC-014 gate, which is the fixed chord set every editing "
                 f"surface must answer -- but it is not in "
-                f"EDITOR_UNDO_REDO_CHORDS"
+                f"EDITOR_CHORDS"
             )
     for chord in sorted(editor_chords):
         row = by_chord[chord]

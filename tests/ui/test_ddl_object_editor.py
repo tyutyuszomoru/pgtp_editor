@@ -601,6 +601,46 @@ def test_event_filter_ctrl_shift_z_key_press_is_claimed_and_does_not_redo(qtbot)
     assert panel.text() == "alpha\nbeta"
 
 
+def test_event_filter_answers_the_x11_only_editing_chords(qtbot):
+    """The owner's 2026-08-10 ruling at this surface: `Ctrl+Shift+Insert` (paste)
+    and `Ctrl+D`/`Ctrl+K`/`Ctrl+U` are implemented by the app on both platforms.
+    This tab is editable, so they edit — where the sibling `DdlEditorPanel`, whose
+    buffer is synthesized and read-only, states a refusal instead. Asserted
+    through the filter: the offscreen platform runs Qt's Windows scheme, which
+    binds none of these chords."""
+    ctrl = Qt.KeyboardModifier.ControlModifier
+    ctrl_shift = ctrl | Qt.KeyboardModifier.ShiftModifier
+
+    def panel_at(position):
+        panel = _panel(qtbot, text="alpha\nbeta\n")
+        cursor = panel.editor.textCursor()
+        cursor.setPosition(position)
+        panel.editor.setTextCursor(cursor)
+        return panel
+
+    for key, mods, position, expected in (
+        (Qt.Key.Key_D, ctrl, 0, "lpha\nbeta\n"),
+        (Qt.Key.Key_K, ctrl, 1, "a\nbeta\n"),
+        (Qt.Key.Key_U, ctrl, 1, "beta\n"),
+    ):
+        panel = panel_at(position)
+        override = _shortcut_override(key, mods)
+        assert panel.eventFilter(panel.editor, override) is True
+        assert override.isAccepted() is True
+        assert panel.eventFilter(panel.editor, _key_press(key, mods)) is True
+        assert panel.text() == expected, key
+
+    from PySide6.QtWidgets import QApplication
+
+    QApplication.clipboard().setText("-- ")
+    panel = panel_at(0)
+    assert (
+        panel.eventFilter(panel.editor, _key_press(Qt.Key.Key_Insert, ctrl_shift))
+        is True
+    )
+    assert panel.text() == "-- alpha\nbeta\n"
+
+
 def test_ctrl_shift_z_does_not_redo_through_a_real_key_press(qtbot):
     """The end-to-end half, and the ONLY test here that can see Qt's native
     redo -- so it is the one that proves the reassignment took.

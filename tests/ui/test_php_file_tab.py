@@ -260,6 +260,56 @@ def test_the_windows_only_alt_backspace_pair_is_suppressed(qtbot):
         assert tab.text() == "yzx"  # neither undone nor redone
 
 
+def test_the_x11_only_editing_chords_are_answered_by_this_tab(qtbot):
+    """The owner's 2026-08-10 ruling: `Ctrl+Shift+Insert` (paste) and
+    `Ctrl+D`/`Ctrl+K`/`Ctrl+U` are implemented by the app on BOTH platforms, at
+    all six editing surfaces. Qt binds them on the Linux/KDE scheme only, and the
+    offscreen platform runs the **Windows** scheme — so asserting the filter's
+    answer is the only way to test them at all, and a native-answer assertion
+    would be green for the wrong reason on the one platform the suite can see.
+
+    This tab's buffer is editable, so the answer is the edit itself."""
+    ctrl = Qt.KeyboardModifier.ControlModifier
+
+    def press(tab, key, mods=ctrl):
+        override = QKeyEvent(QEvent.Type.ShortcutOverride, key, mods)
+        assert tab.eventFilter(tab.editor, override) is True
+        assert override.isAccepted() is True
+        event = QKeyEvent(QEvent.Type.KeyPress, key, mods)
+        assert tab.eventFilter(tab.editor, event) is True
+
+    def tab_at(text, position):
+        tab = PhpFileTab(None, text)
+        qtbot.addWidget(tab)
+        cursor = tab.editor.textCursor()
+        cursor.setPosition(position)
+        tab.editor.setTextCursor(cursor)
+        return tab
+
+    deleted_char = tab_at("one\ntwo", 0)
+    press(deleted_char, Qt.Key.Key_D)
+    assert deleted_char.text() == "ne\ntwo"
+
+    to_eol = tab_at("one\ntwo", 1)
+    press(to_eol, Qt.Key.Key_K)
+    assert to_eol.text() == "o\ntwo"
+
+    whole_line = tab_at("one\ntwo", 1)
+    press(whole_line, Qt.Key.Key_U)
+    assert whole_line.text() == "two"
+
+    from PySide6.QtWidgets import QApplication
+
+    QApplication.clipboard().setText("!")
+    pasted = tab_at("one\ntwo", 0)
+    press(
+        pasted,
+        Qt.Key.Key_Insert,
+        Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.ShiftModifier,
+    )
+    assert pasted.text() == "!one\ntwo"
+
+
 def test_navigate_to_line_delegates_to_the_code_editor(qtbot):
     tab = PhpFileTab(None, "a\nb\nc\n")
     qtbot.addWidget(tab)

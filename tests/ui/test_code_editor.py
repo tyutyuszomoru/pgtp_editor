@@ -429,12 +429,12 @@ def test_the_matcher_classifies_rather_than_answering_yes_or_no():
     claimed, so nothing looks broken.
 
     `Ctrl+Z` and `Ctrl+Y` are DIFFERENT operations, and the matcher says which."""
-    from pgtp_editor.ui.code_editor import REDO, UNDO, classify_undo_redo_chord
+    from pgtp_editor.ui.code_editor import REDO, UNDO, classify_editor_chord
 
     ctrl = Qt.KeyboardModifier.ControlModifier
 
-    assert classify_undo_redo_chord(_chord(Qt.Key.Key_Z, ctrl)) == UNDO
-    assert classify_undo_redo_chord(_chord(Qt.Key.Key_Y, ctrl)) == REDO
+    assert classify_editor_chord(_chord(Qt.Key.Key_Z, ctrl)) == UNDO
+    assert classify_editor_chord(_chord(Qt.Key.Key_Y, ctrl)) == REDO
     assert UNDO != REDO
 
 
@@ -445,16 +445,16 @@ def test_the_matcher_takes_no_per_surface_parameter_and_covers_the_fixed_set():
     BUG-053 happened."""
     import inspect
 
-    from pgtp_editor.ui.code_editor import classify_undo_redo_chord
+    from pgtp_editor.ui.code_editor import classify_editor_chord
     from pgtp_editor.ui.shortcut_registry import (
-        EDITOR_UNDO_REDO_CHORDS,
+        EDITOR_CHORDS,
         RESERVED_SEQUENCES,
     )
 
-    assert list(inspect.signature(classify_undo_redo_chord).parameters) == ["event"]
+    assert list(inspect.signature(classify_editor_chord).parameters) == ["event"]
     # Every chord the surfaces intercept is a chord the dialog refuses as a
     # rebinding target -- one set, two artifacts that already existed.
-    for sequence in EDITOR_UNDO_REDO_CHORDS:
+    for sequence in EDITOR_CHORDS:
         assert sequence in RESERVED_SEQUENCES
 
 
@@ -471,7 +471,7 @@ def test_the_matcher_marks_the_chords_that_must_run_no_operation():
     from pgtp_editor.ui.code_editor import (
         CLAIMED_NOT_UNDO_REDO,
         SUPPRESSED,
-        classify_undo_redo_chord,
+        classify_editor_chord,
     )
 
     ctrl_shift = (
@@ -480,12 +480,12 @@ def test_the_matcher_marks_the_chords_that_must_run_no_operation():
     alt = Qt.KeyboardModifier.AltModifier
 
     assert (
-        classify_undo_redo_chord(_chord(Qt.Key.Key_Z, ctrl_shift))
+        classify_editor_chord(_chord(Qt.Key.Key_Z, ctrl_shift))
         == CLAIMED_NOT_UNDO_REDO
     )
-    assert classify_undo_redo_chord(_chord(Qt.Key.Key_Backspace, alt)) == SUPPRESSED
+    assert classify_editor_chord(_chord(Qt.Key.Key_Backspace, alt)) == SUPPRESSED
     assert (
-        classify_undo_redo_chord(
+        classify_editor_chord(
             _chord(Qt.Key.Key_Backspace, alt | Qt.KeyboardModifier.ShiftModifier)
         )
         == SUPPRESSED
@@ -493,7 +493,7 @@ def test_the_matcher_marks_the_chords_that_must_run_no_operation():
 
 
 def test_the_matcher_leaves_everything_else_alone():
-    from pgtp_editor.ui.code_editor import classify_undo_redo_chord
+    from pgtp_editor.ui.code_editor import classify_editor_chord
 
     ctrl = Qt.KeyboardModifier.ControlModifier
     for key, mods in (
@@ -503,7 +503,281 @@ def test_the_matcher_leaves_everything_else_alone():
         (Qt.Key.Key_Backspace, Qt.KeyboardModifier.NoModifier),
         (Qt.Key.Key_Backspace, ctrl),
     ):
-        assert classify_undo_redo_chord(_chord(key, mods)) is None, (key, mods)
+        assert classify_editor_chord(_chord(key, mods)) is None, (key, mods)
+
+
+def test_the_matcher_classifies_the_four_x11_only_chords_the_app_now_binds():
+    """The owner's 2026-08-10 rulings: `Ctrl+Shift+Insert`, `Ctrl+D`, `Ctrl+K` and
+    `Ctrl+U` are answered by the app on BOTH platforms, so they went into the same
+    fixed set — which is why the matcher and its table dropped the `undo_redo`
+    in their names. One table, one matcher, one call per surface: a second matcher
+    would have given each surface two calls to make, and a surface that forgets
+    one is the whole bug family this machinery exists to prevent.
+
+    The offscreen platform runs Qt's **Windows** scheme, which binds none of these
+    four, so asserting the app's classifier is the only way to test them at all.
+    """
+    from pgtp_editor.ui.code_editor import (
+        DELETE_CHARACTER,
+        DELETE_LINE,
+        DELETE_TO_END_OF_LINE,
+        PASTE,
+        classify_editor_chord,
+        is_mutating_editor_operation,
+    )
+
+    ctrl = Qt.KeyboardModifier.ControlModifier
+    ctrl_shift = ctrl | Qt.KeyboardModifier.ShiftModifier
+
+    assert classify_editor_chord(_chord(Qt.Key.Key_Insert, ctrl_shift)) == PASTE
+    assert classify_editor_chord(_chord(Qt.Key.Key_D, ctrl)) == DELETE_CHARACTER
+    assert (
+        classify_editor_chord(_chord(Qt.Key.Key_K, ctrl)) == DELETE_TO_END_OF_LINE
+    )
+    assert classify_editor_chord(_chord(Qt.Key.Key_U, ctrl)) == DELETE_LINE
+    # All four mutate, which is the question a read-only surface asks.
+    for operation in (PASTE, DELETE_CHARACTER, DELETE_TO_END_OF_LINE, DELETE_LINE):
+        assert is_mutating_editor_operation(operation) is True
+    from pgtp_editor.ui.code_editor import (
+        CLAIMED_NOT_UNDO_REDO,
+        REDO,
+        SUPPRESSED,
+        UNDO,
+    )
+
+    for operation in (UNDO, REDO, CLAIMED_NOT_UNDO_REDO, SUPPRESSED, None):
+        assert is_mutating_editor_operation(operation) is False
+
+
+def test_the_physically_absent_f_keys_are_deliberately_not_in_the_set():
+    """`F14` (Qt's KDE-scheme Undo) and `F16`/`F18`/`F20` are NOT matched, by
+    the owner's stated carve-out: the uniformity rule does not reach keys no
+    keyboard in use actually has.
+
+    `F14`'s undo-routing bypass — Qt's native undo, with no project snapshot
+    history, no Caption-Mode refusal and no journal line — is therefore
+    **knowingly accepted as unreachable, not overlooked.** Do not "fix" it by
+    adding a `SUPPRESSED` row: that would assert the rule reaches absent keys.
+    The trigger for revisiting it is a keyboard with an `F13`…`F20` block coming
+    into use."""
+    from pgtp_editor.ui.code_editor import classify_editor_chord
+
+    none = Qt.KeyboardModifier.NoModifier
+    for key in (Qt.Key.Key_F14, Qt.Key.Key_F16, Qt.Key.Key_F18, Qt.Key.Key_F20):
+        assert classify_editor_chord(_chord(key, none)) is None, key
+
+
+# ---------------------------------------------------------------------------
+# The app's own editing primitives (owner ruling 2026-08-10). Every edge case
+# here is now the APP's answer rather than Qt's, which is the accepted cost of
+# binding these chords on both platforms -- so each one is decided and asserted.
+# ---------------------------------------------------------------------------
+
+def _editor_with(text, position, selection_to=None):
+    from PySide6.QtGui import QTextCursor
+    from PySide6.QtWidgets import QPlainTextEdit
+
+    editor = QPlainTextEdit()
+    editor.setPlainText(text)
+    cursor = editor.textCursor()
+    cursor.setPosition(position)
+    if selection_to is not None:
+        cursor.setPosition(selection_to, QTextCursor.MoveMode.KeepAnchor)
+    editor.setTextCursor(cursor)
+    return editor
+
+
+def test_delete_character_deletes_forward_and_stops_at_the_document_end(qtbot):
+    from pgtp_editor.ui.code_editor import DELETE_CHARACTER, apply_editor_operation
+
+    editor = _editor_with("abc\ndef", 1)
+    qtbot.addWidget(editor)
+    assert apply_editor_operation(editor, DELETE_CHARACTER) is True
+    assert editor.toPlainText() == "ac\ndef"
+
+    # At the very end there is nothing after the caret: a no-op, and NOT an empty
+    # undo step (the edit block is never opened).
+    at_end = _editor_with("abc", 3)
+    qtbot.addWidget(at_end)
+    assert apply_editor_operation(at_end, DELETE_CHARACTER) is False
+    assert at_end.toPlainText() == "abc"
+
+    # At the end of a LINE it eats the newline, joining the next line -- the same
+    # thing the bare Delete key does, and the reason this is the app's answer now.
+    at_eol = _editor_with("ab\ncd", 2)
+    qtbot.addWidget(at_eol)
+    assert apply_editor_operation(at_eol, DELETE_CHARACTER) is True
+    assert at_eol.toPlainText() == "abcd"
+
+
+def test_delete_to_end_of_line_joins_the_next_line_when_already_at_the_end(qtbot):
+    """The decided edge case, and the one that makes repeated `Ctrl+K` useful:
+    pressed at the end of a line it deletes the newline. At the end of the
+    document there is nothing left to take, so it is a no-op rather than a
+    pointless undo step."""
+    from pgtp_editor.ui.code_editor import (
+        DELETE_TO_END_OF_LINE,
+        apply_editor_operation,
+    )
+
+    mid = _editor_with("abcd\nef", 2)
+    qtbot.addWidget(mid)
+    assert apply_editor_operation(mid, DELETE_TO_END_OF_LINE) is True
+    assert mid.toPlainText() == "ab\nef"
+
+    at_eol = _editor_with("abcd\nef", 4)
+    qtbot.addWidget(at_eol)
+    assert apply_editor_operation(at_eol, DELETE_TO_END_OF_LINE) is True
+    assert at_eol.toPlainText() == "abcdef"
+
+    at_doc_end = _editor_with("abcd", 4)
+    qtbot.addWidget(at_doc_end)
+    assert apply_editor_operation(at_doc_end, DELETE_TO_END_OF_LINE) is False
+    assert at_doc_end.toPlainText() == "abcd"
+
+
+def test_delete_line_takes_the_trailing_newline_or_the_preceding_one(qtbot):
+    """`Ctrl+U` on the LAST line is the edge case that has no obvious answer: the
+    last line carries no trailing newline, so taking "the line and its newline"
+    would leave an empty last line behind. Decided: it takes the newline BEFORE
+    the line instead, so the previous line becomes the last one. On a document
+    that is a single empty line there is nothing to delete at all."""
+    from pgtp_editor.ui.code_editor import DELETE_LINE, apply_editor_operation
+
+    first = _editor_with("one\ntwo\nthree", 1)
+    qtbot.addWidget(first)
+    assert apply_editor_operation(first, DELETE_LINE) is True
+    assert first.toPlainText() == "two\nthree"
+
+    last = _editor_with("one\ntwo\nthree", 10)
+    qtbot.addWidget(last)
+    assert apply_editor_operation(last, DELETE_LINE) is True
+    assert last.toPlainText() == "one\ntwo"  # no empty line left behind
+
+    only = _editor_with("only", 2)
+    qtbot.addWidget(only)
+    assert apply_editor_operation(only, DELETE_LINE) is True
+    assert only.toPlainText() == ""
+
+    empty = _editor_with("", 0)
+    qtbot.addWidget(empty)
+    assert apply_editor_operation(empty, DELETE_LINE) is False
+    assert empty.toPlainText() == ""
+
+
+def test_a_deleted_line_comes_back_in_ONE_undo_step(qtbot):
+    """`Ctrl+U` is destructive, so the ruling requires it to be a single undo
+    step: line text and newline go inside one edit block, and one `Ctrl+Z` brings
+    the whole line back."""
+    from pgtp_editor.ui.code_editor import DELETE_LINE, apply_editor_operation
+
+    editor = _editor_with("one\ntwo\nthree", 5)
+    qtbot.addWidget(editor)
+    apply_editor_operation(editor, DELETE_LINE)
+    assert editor.toPlainText() == "one\nthree"
+
+    editor.undo()
+    assert editor.toPlainText() == "one\ntwo\nthree"
+
+
+def test_a_selection_is_what_the_delete_gestures_delete(qtbot):
+    """With a selection active all three delete exactly the selection and nothing
+    more -- including `Ctrl+U`, which would otherwise throw away a whole line the
+    selection only touched part of. The selection is what the user can SEE is
+    targeted."""
+    from pgtp_editor.ui.code_editor import (
+        DELETE_CHARACTER,
+        DELETE_LINE,
+        DELETE_TO_END_OF_LINE,
+        apply_editor_operation,
+    )
+
+    for operation in (DELETE_CHARACTER, DELETE_TO_END_OF_LINE, DELETE_LINE):
+        editor = _editor_with("one\ntwo\nthree", 1, selection_to=5)
+        qtbot.addWidget(editor)
+        assert apply_editor_operation(editor, operation) is True
+        assert editor.toPlainText() == "owo\nthree", operation
+
+
+def test_a_read_only_buffer_is_never_edited_by_these_gestures(qtbot):
+    """QTextCursor edits bypass `setReadOnly`, so the guard has to live HERE and
+    not only in the surfaces. The surface's job is the other half: stating the
+    refusal, so the key is not silently dead (FQ-023)."""
+    from pgtp_editor.ui.code_editor import (
+        DELETE_CHARACTER,
+        DELETE_LINE,
+        DELETE_TO_END_OF_LINE,
+        PASTE,
+        apply_editor_operation,
+    )
+
+    for operation in (PASTE, DELETE_CHARACTER, DELETE_TO_END_OF_LINE, DELETE_LINE):
+        editor = _editor_with("one\ntwo", 1)
+        qtbot.addWidget(editor)
+        editor.setReadOnly(True)
+        assert apply_editor_operation(editor, operation) is False, operation
+        assert editor.toPlainText() == "one\ntwo"
+
+
+def test_a_delete_gesture_abandons_an_active_tab_stop_walk(qtbot):
+    """A template walk in progress is ABANDONED by these gestures, the same
+    answer a click gets. The stops are tracked `QTextCursor`s so a deletion
+    cannot corrupt them, but a walk whose placeholders the user has just deleted
+    has nowhere honest to go -- and a Tab that jumped somewhere unexpected would
+    be worse than a tab."""
+    from pgtp_editor.ui.code_editor import DELETE_LINE, apply_editor_operation
+
+    from pgtp_editor.sql.templates import expand_template
+
+    editor = CodeEditor("sql")
+    qtbot.addWidget(editor)
+    editor.apply_expansion(expand_template("a {{1:one}} b {{2:two}} c {{0}}"))
+    assert editor.in_tab_stop_mode is True
+
+    assert apply_editor_operation(editor, DELETE_LINE) is True
+    assert editor.in_tab_stop_mode is False
+    assert editor.tab_stop_index == -1
+
+
+def test_paste_is_delegated_to_qt_so_only_the_chord_is_the_apps(qtbot):
+    """The app's contribution for `Ctrl+Shift+Insert` is that the CHORD reaches
+    paste on both platforms; the clipboard, the read-only refusal and the single
+    undo step are already Qt's and are not reimplemented."""
+    from PySide6.QtWidgets import QApplication
+
+    from pgtp_editor.ui.code_editor import PASTE, apply_editor_operation
+
+    QApplication.clipboard().setText("pasted")
+    editor = _editor_with("ab", 1)
+    qtbot.addWidget(editor)
+
+    assert apply_editor_operation(editor, PASTE) is True
+    assert editor.toPlainText() == "apastedb"
+
+
+def test_the_dialog_answers_the_four_new_chords_through_its_filter(qtbot):
+    """`CodeEditorDialog` is one of the six surfaces, so it states its answer for
+    these chords too -- asserted through the FILTER, because the offscreen
+    platform runs Qt's Windows scheme, which binds none of them."""
+    from PySide6.QtCore import QEvent
+    from PySide6.QtGui import QKeyEvent
+
+    dialog = CodeEditorDialog(language="sql")
+    qtbot.addWidget(dialog)
+    dialog.set_code("one\ntwo\nthree")
+    editor = dialog._editor
+    cursor = editor.textCursor()
+    cursor.setPosition(5)
+    editor.setTextCursor(cursor)
+
+    ctrl = Qt.KeyboardModifier.ControlModifier
+    override = QKeyEvent(QEvent.Type.ShortcutOverride, Qt.Key.Key_U, ctrl)
+    assert dialog.eventFilter(editor, override) is True
+    assert override.isAccepted() is True
+
+    press = QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_U, ctrl)
+    assert dialog.eventFilter(editor, press) is True
+    assert dialog.code() == "one\nthree"
 
 
 # ---------------------------------------------------------------------------

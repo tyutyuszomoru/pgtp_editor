@@ -76,7 +76,9 @@ from pgtp_editor.ui.code_editor import (
     REDO,
     UNDO,
     CodeEditor,
-    classify_undo_redo_chord,
+    apply_editor_operation,
+    classify_editor_chord,
+    is_mutating_editor_operation,
 )
 from pgtp_editor.ui.find_replace_bar import FindReplaceBar, install_focus_shortcuts
 
@@ -403,7 +405,7 @@ class PhpFileTab(QWidget):
             QEvent.Type.ShortcutOverride,
             QEvent.Type.KeyPress,
         ):
-            operation = classify_undo_redo_chord(event)
+            operation = classify_editor_chord(event)
             if operation is not None:
                 if event.type() == QEvent.Type.ShortcutOverride:
                     # Claim the sequence so Qt never ALSO fires the
@@ -414,6 +416,13 @@ class PhpFileTab(QWidget):
                     self.editor.undo()
                 elif operation == REDO:
                     self.editor.redo()
+                elif is_mutating_editor_operation(operation):
+                    # Paste (`Ctrl+Shift+Insert`) and the three line-editing
+                    # gestures (`Ctrl+D`/`Ctrl+K`/`Ctrl+U`), which Qt answers on
+                    # the Linux/KDE scheme only: the app implements them on both
+                    # (owner, 2026-08-10). This tab's buffer is editable, so the
+                    # shared implementation simply runs.
+                    apply_editor_operation(self.editor, operation)
                 # else: the two answers that run nothing, both consumed on
                 # purpose. Ctrl+Shift+Z: DEC-015 freed it from redo, and since Qt
                 # answers it natively under `KB_Win | KB_X11` intercepting it

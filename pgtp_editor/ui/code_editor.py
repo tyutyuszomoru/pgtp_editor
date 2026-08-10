@@ -67,19 +67,24 @@ from pgtp_editor.sql.templates import (
 from pgtp_editor.ui.editor_gutter import GutterBookmarkFoldMixin
 from pgtp_editor.ui.shortcut_registry import (  # noqa: F401  (re-exported names)
     CLAIMED_NOT_UNDO_REDO,
+    DELETE_CHARACTER,
+    DELETE_LINE,
+    DELETE_TO_END_OF_LINE,
+    EDITOR_CHORDS,
     EDITOR_PASTE_CHORDS,
-    EDITOR_UNDO_REDO_CHORDS,
+    MUTATING_EDITOR_OPERATIONS,
+    PASTE,
     REDO,
     SUPPRESSED,
     UNDO,
 )
 
-# The three operation names are re-exported deliberately: a surface imports the
+# The operation names are re-exported deliberately: a surface imports the
 # matcher and the answers it can return from ONE module, and never spells a
 # chord out for itself.
 
 
-# -- the one undo/redo chord matcher every editing surface calls (DEC-014) ----
+# -- the one editor chord matcher every editing surface calls (DEC-014) -------
 #
 # DEC-014, verbatim: *"For every chord `RESERVED_SEQUENCES` reserves because an
 # editor answers it, every editing surface states its answer."* The set is
@@ -103,17 +108,23 @@ from pgtp_editor.ui.shortcut_registry import (  # noqa: F401  (re-exported names
 # app, not inherited from Qt's platform table"*).
 def _chord_combinations() -> dict[tuple[int, Qt.KeyboardModifier], str]:
     table: dict[tuple[int, Qt.KeyboardModifier], str] = {}
-    for sequence, operation in EDITOR_UNDO_REDO_CHORDS.items():
+    for sequence, operation in EDITOR_CHORDS.items():
         combination = QKeySequence(sequence)[0]
         table[(combination.key(), combination.keyboardModifiers())] = operation
     return table
 
 
-_UNDO_REDO_COMBINATIONS = _chord_combinations()
+_EDITOR_COMBINATIONS = _chord_combinations()
 
 
-def classify_undo_redo_chord(event) -> str | None:
-    """`UNDO`, `REDO`, `CLAIMED_NOT_UNDO_REDO`, `SUPPRESSED`, or None.
+def classify_editor_chord(event) -> str | None:
+    """One of the `EDITOR_CHORDS` operations, or None.
+
+    Renamed from `classify_undo_redo_chord` (2026-08-10) together with its table:
+    the owner's X11-chord rulings put a paste chord and three line-editing chords
+    into the same fixed set, and a SECOND matcher would give every surface two
+    calls to make -- which is the exact shape of the bug family this function
+    exists to prevent (BUG-048/049/053/056: a surface that forgot one).
 
     **Any non-None answer must be consumed by the caller**, including the two
     that run no operation. Neither is an "ignore me": letting the key fall
@@ -128,8 +139,133 @@ def classify_undo_redo_chord(event) -> str | None:
       native Undo/Redo under `KB_Win` **only**. Suppressed on every platform, per
       the owner's rule that a chord means the same thing on Windows and Linux or
       is not bound at all.
+    - `PASTE`, `DELETE_CHARACTER`, `DELETE_TO_END_OF_LINE`, `DELETE_LINE` --
+      `Ctrl+Shift+Insert`, `Ctrl+D`, `Ctrl+K`, `Ctrl+U`: Qt answers these on the
+      Linux/KDE scheme only, so the app implements them itself on both (owner,
+      2026-08-10). Editable surfaces run `apply_editor_operation`; a read-only
+      surface answers with its stated refusal, never with silence.
     """
-    return _UNDO_REDO_COMBINATIONS.get((event.key(), event.modifiers()))
+    return _EDITOR_COMBINATIONS.get((event.key(), event.modifiers()))
+
+
+def is_mutating_editor_operation(operation: str | None) -> bool:
+    """Whether `operation` would CHANGE the buffer.
+
+    The question a surface asks between "is this chord mine" and "may it run
+    here": a read-only surface owes these a stated refusal (FQ-023), an editable
+    one runs `apply_editor_operation`.
+    """
+    return operation in MUTATING_EDITOR_OPERATIONS
+
+
+# -- the app's own editing primitives, settled in exactly ONE place ------------
+#
+# The owner's 2026-08-10 ruling on `Ctrl+D` / `Ctrl+K` / `Ctrl+U` / `Ctrl+Shift+Insert`
+# binds them on both platforms, which means **the app owns these primitives' edge
+# cases forever** where it used to inherit Qt's on one platform and nothing on the
+# other. The cost was accepted explicitly, so the answers live here, once, rather
+# than six times: every surface calls this function, so no two surfaces can drift.
+def apply_editor_operation(editor, operation: str | None) -> bool:
+    """Run one of the app-owned mutating editor operations on `editor`.
+
+    Returns whether the buffer actually changed -- False for a no-op at a
+    boundary, and False on a read-only buffer (where the CALLER states the
+    refusal; this function never edits a read-only editor, because QTextCursor
+    edits bypass `setReadOnly` and the guard has to be here too).
+
+    **The edge cases, each decided rather than inherited:**
+
+    * **A selection is active** -- all three delete gestures delete exactly the
+      selection, and nothing more. The selection is what the user can see is
+      targeted, and a `Ctrl+U` that threw away a line the selection only touched
+      part of would be a destructive surprise.
+    * **`DELETE_CHARACTER` at the end of the document** -- no-op. No edit block,
+      so no empty undo step is pushed either.
+    * **`DELETE_TO_END_OF_LINE` already at the end of a line** -- deletes the
+      newline, joining the next line up. That is what makes repeated `Ctrl+K`
+      useful (and matches readline); at the very end of the document it is a
+      no-op instead.
+    * **`DELETE_LINE`, last line with no trailing newline** -- deletes the line's
+      text *and the newline before it*, so the previous line becomes the last one
+      rather than an empty line being left behind. On a document that is a single
+      empty line there is nothing to delete: no-op.
+    * **`DELETE_LINE` is destructive, so it is ONE undo step** -- text and newline
+      go in a single `beginEditBlock`/`endEditBlock` pair, so one `Ctrl+Z` brings
+      the whole line back. The same block wraps the other two for consistency.
+    * **Inside an active tab-stop walk** -- the walk is ABANDONED first
+      (`exit_tab_stop_mode`), the same answer a click gets. The stops are tracked
+      `QTextCursor`s, so a deletion cannot corrupt them, but a walk whose
+      placeholders the user just deleted has nowhere honest to go, and a Tab that
+      jumped somewhere unexpected would be worse than a tab.
+    * **`PASTE`** -- delegated to `QPlainTextEdit.paste()`: the clipboard, the
+      read-only refusal and the single undo step are already Qt's, and the only
+      thing the app is adding is that the CHORD reaches it on both platforms.
+    """
+    if not is_mutating_editor_operation(operation):
+        return False
+    if editor.isReadOnly():
+        return False
+    exit_walk = getattr(editor, "exit_tab_stop_mode", None)
+    if callable(exit_walk):
+        exit_walk()
+    if operation == PASTE:
+        editor.paste()
+        return True
+
+    cursor = editor.textCursor()
+    cursor.beginEditBlock()
+    try:
+        changed = _delete_for(cursor, operation)
+    finally:
+        cursor.endEditBlock()
+    if changed:
+        editor.setTextCursor(cursor)
+        editor.ensureCursorVisible()
+    return changed
+
+
+def _delete_for(cursor, operation: str) -> bool:
+    """The three deletions, on an already-open edit block. See
+    `apply_editor_operation` for why each boundary answers the way it does."""
+    if cursor.hasSelection():
+        cursor.removeSelectedText()
+        return True
+    if operation == DELETE_CHARACTER:
+        if cursor.atEnd():
+            return False
+        cursor.deleteChar()
+        return True
+    if operation == DELETE_TO_END_OF_LINE:
+        start = cursor.position()
+        cursor.movePosition(
+            QTextCursor.MoveOperation.EndOfBlock, QTextCursor.MoveMode.KeepAnchor
+        )
+        if cursor.position() > start:
+            cursor.removeSelectedText()
+            return True
+        cursor.setPosition(start)
+        if cursor.atEnd():
+            return False
+        cursor.deleteChar()  # at end of line: eat the newline, joining the next
+        return True
+    if operation == DELETE_LINE:
+        block = cursor.block()
+        start = block.position()
+        # `QTextBlock.length()` counts the block separator, so this is the
+        # position just past the block's last character on every block, last
+        # included.
+        end = start + block.length() - 1
+        if block.next().isValid():
+            end += 1  # take the trailing newline with the line
+        elif start > 0:
+            start -= 1  # the last line has none: take the one before it instead
+        if start == end:
+            return False  # the whole document is one empty line
+        cursor.setPosition(start)
+        cursor.setPosition(end, QTextCursor.MoveMode.KeepAnchor)
+        cursor.removeSelectedText()
+        return True
+    return False
 
 
 # The same trick for the paste family, and for the same reason: this must NOT be
@@ -1032,7 +1168,7 @@ class CodeEditorDialog(QDialog):
             self._editor.select_enclosing_brackets
         )
 
-        # The reserved undo/redo chord set, stated here too (DEC-014's fixed
+        # The reserved editor chord set, stated here too (DEC-014's fixed
         # set: *every* editing surface states its answer, and this dialog hosts
         # a full CodeEditor). Nothing can steal these keys from a modal -- no
         # window `QShortcut` reaches it -- so `Ctrl+Z`/`Ctrl+Y` would have worked
@@ -1056,7 +1192,7 @@ class CodeEditorDialog(QDialog):
                     )
 
     def eventFilter(self, obj, event) -> bool:
-        """The dialog's stated answer to the reserved undo/redo chords.
+        """The dialog's stated answer to the reserved editor chord set.
 
         Same two halves as every other surface (claim the `ShortcutOverride`,
         answer the `KeyPress`), routed into this editor's own native stack --
@@ -1066,7 +1202,7 @@ class CodeEditorDialog(QDialog):
             QEvent.Type.ShortcutOverride,
             QEvent.Type.KeyPress,
         ):
-            operation = classify_undo_redo_chord(event)
+            operation = classify_editor_chord(event)
             if operation is not None:
                 if event.type() == QEvent.Type.ShortcutOverride:
                     event.accept()
@@ -1074,6 +1210,12 @@ class CodeEditorDialog(QDialog):
                     self._editor.undo()
                 elif operation == REDO:
                     self._editor.redo()
+                elif is_mutating_editor_operation(operation):
+                    # Paste and the three line-editing gestures, bound by the
+                    # app on both platforms (owner, 2026-08-10). The dialog's
+                    # buffer is editable, so they simply run; the shared
+                    # implementation is what keeps all six surfaces identical.
+                    apply_editor_operation(self._editor, operation)
                 # else: the two answers that run nothing -- Ctrl+Shift+Z
                 # (DEC-015) and the suppressed Alt+Backspace pair. Consumed so
                 # Qt's own platform-conditional handling cannot answer instead.

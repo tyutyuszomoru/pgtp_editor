@@ -73,7 +73,9 @@ from pgtp_editor.ui.editor_gutter import (  # noqa: F401  (re-exported names)
 from pgtp_editor.ui.code_editor import (
     REDO,
     UNDO,
-    classify_undo_redo_chord,
+    apply_editor_operation,
+    classify_editor_chord,
+    is_mutating_editor_operation,
     is_paste_chord,
 )
 from pgtp_editor.ui.event_body import event_body_line_ranges
@@ -1186,6 +1188,13 @@ class XmlEditor(CompletionPopupHostMixin, GutterBookmarkFoldMixin, QPlainTextEdi
         """
         if is_paste_chord(event):
             return True
+        # The three line-editing gestures the app took ownership of on
+        # 2026-08-10 (`Ctrl+D`/`Ctrl+K`/`Ctrl+U`) are Ctrl chords, so the
+        # command-not-typing test below would call them "not an edit" -- and
+        # `Ctrl+U` deletes a whole line, which is the most edit-like keystroke on
+        # this list. They get the hint for exactly the reason `Ctrl+V` does.
+        if is_mutating_editor_operation(classify_editor_chord(event)):
+            return True
         if event.key() in (
             Qt.Key.Key_Backspace,
             Qt.Key.Key_Delete,
@@ -1215,13 +1224,23 @@ class XmlEditor(CompletionPopupHostMixin, GutterBookmarkFoldMixin, QPlainTextEdi
         # The chord set and the classification come from the ONE matcher every
         # editing surface calls (DEC-014's fixed set, `code_editor`); this
         # surface must not spell the chords out for itself.
-        operation = classify_undo_redo_chord(event)
+        operation = classify_editor_chord(event)
         if operation == UNDO:
             self.undo_requested.emit()
             event.accept()
             return
         if operation == REDO:
             self.redo_requested.emit()
+            event.accept()
+            return
+        if is_mutating_editor_operation(operation):
+            # Paste (`Ctrl+Shift+Insert`) and the three line-editing gestures
+            # (`Ctrl+D`/`Ctrl+K`/`Ctrl+U`), which Qt answers on the Linux/KDE
+            # scheme only and the app therefore implements on both (owner,
+            # 2026-08-10). A read-only Caption Mode buffer never reaches here:
+            # `_is_text_modifying_key` counts these as edit attempts, so the
+            # read-only branch above already emitted the hint and returned.
+            apply_editor_operation(self, operation)
             event.accept()
             return
         if operation is not None:
