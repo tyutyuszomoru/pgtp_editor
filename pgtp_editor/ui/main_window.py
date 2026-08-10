@@ -245,6 +245,11 @@ _log = logging.getLogger(__name__)
 #: Format Selection refusals (§18.4/§18.5). Not clickable, no line role
 #: (carve-out 6) -- the offending span is already underlined in the tab.
 _SQL_REFUSAL_PREFIX = "[SQL] "
+#: FQ-033's XML formatter refusals. A separate prefix from `[SQL]` because the
+#: two engines are separate and a reader filtering the journal wants to know
+#: which one refused -- but the same destination, for the reason recorded on
+#: `audit_router.XML_PREFIX`.
+_XML_REFUSAL_PREFIX = "[XML] "
 
 #: How long a bookmark change waits before it is written to
 #: `<project>/.ddlproject/bookmarks.json` (FQ-013). Deliberately coarse: a
@@ -1206,6 +1211,17 @@ class MainWindow(QMainWindow):
         # the whole distinction between the two commands.
         self.center_stage.xml_editor.undo_requested.connect(self._undo_raw_xml_history)
         self.center_stage.xml_editor.redo_requested.connect(self._redo_raw_xml_history)
+        # FQ-033 part C: the two SINGLETON XmlEditor hosts. The draft fragment
+        # tab's editor connects itself in `DraftFragmentTab.__init__` -- drafts
+        # multiply, so wiring it here would miss every one opened later.
+        self.center_stage.xml_editor.format_refused.connect(
+            self._report_xml_format_refusal
+        )
+        self.center_stage.xsd_editor.format_refused.connect(
+            self._report_xml_format_refusal
+        )
+        # ...and the draft fragment tabs, through CenterStage's aggregator.
+        self.center_stage.format_refused.connect(self._report_xml_format_refusal)
 
         # Edit XSD tab (spec §11): its own undo/redo routing. The XSD tab has
         # no snapshot history -- it relies solely on the editor's native undo,
@@ -5306,6 +5322,31 @@ class MainWindow(QMainWindow):
         self.audit_panel.addItem(
             QListWidgetItem(f"{_SQL_REFUSAL_PREFIX}{reason}")
         )
+
+    def _report_xml_format_refusal(self, issues) -> None:
+        """`XmlEditor.format_refused` (FQ-033 part C): one `[XML]` line per issue.
+
+        The XML indenter's twin of `_report_editor_gesture_refusal` above, and
+        deliberately the same shape: `[XML]` routes to the Activity Log, the
+        rows are never clickable and carry no line role, and the caret is
+        already at the spot (§18.5 carve-out 6). The editor underlines the
+        offending span itself; this is where the *reason* gets a durable home,
+        because the widget has no Audit panel to reach and the status bar has
+        been static since FQ-028.
+
+        Connected for all THREE `XmlEditor` hosts, and the third one is the
+        trap: Raw XML and Edit XSD are singletons wired here, but a draft
+        fragment tab's editor is created per draft, so its connect lives in
+        `DraftFragmentTab.__init__`. Wiring all three from here would silently
+        miss every draft opened afterwards -- exactly BUG-049, which was the
+        same mistake with `undo_requested`."""
+        for issue in issues:
+            line = getattr(issue, "start_line", None)
+            message = getattr(issue, "message", issue)
+            body = f"line {line}: {message}" if line else str(message)
+            self.audit_panel.addItem(
+                QListWidgetItem(f"{_XML_REFUSAL_PREFIX}{body}")
+            )
 
     # --- §18.5 D3a: the two Audit channels of a Check run -------------------
     def _report_check_lines(self, lines) -> None:

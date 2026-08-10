@@ -265,10 +265,6 @@ def test_the_settings_menu_reaches_the_autoformatter_dialog(qtbot, tmp_path):
     assert "Autoformatter settings…" in labels
 
 
-@pytest.mark.xfail(
-    reason="pending main_window.py wiring: XmlEditor.format_refused -> [XML] Activity Log",
-    strict=False,
-)
 def test_an_xml_refusal_reaches_the_xml_activity_log_prefix(qtbot, tmp_path):
     from PySide6.QtCore import QSettings as _QSettings
 
@@ -283,5 +279,11 @@ def test_an_xml_refusal_reaches_the_xml_activity_log_prefix(qtbot, tmp_path):
 
     editor.format_selection()
 
-    rows = window.activity_panel.lines() if hasattr(window, "activity_panel") else []
-    assert any(str(row).startswith("[XML]") for row in rows)
+    # `row_texts()` is the Activity Panel's read API -- the 36-use convention
+    # across tests/ui. The pending-wiring version guessed `lines()`, which does
+    # not exist, and asserted `startswith` -- but the Activity Log renders each
+    # row with a timestamp and a source ("... - Quality files [XML] line 1: ..."),
+    # so the prefix is CONTAINED, never leading. Containment is the convention
+    # the shipped `[SQL]` assertions already use.
+    rows = window.activity_panel.row_texts()
+    assert any("[XML] " in str(row) for row in rows), rows

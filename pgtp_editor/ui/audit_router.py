@@ -109,6 +109,12 @@ CHECK_PREFIX = "[Check]"
 SCHEMA_PREFIX = "[Schema]"
 PHP_PREFIX = "[PHP]"
 SQL_PREFIX = "[SQL]"
+#: FQ-033's XML formatter. Its SQL twin's refusals are `[SQL]`, and the two are
+#: the same kind of event -- one gesture, two engines -- so this routes to the
+#: same place for the same reason: a refusal the user just provoked wants a
+#: durable home, and splitting the pair across surfaces would only make the
+#: history harder to read.
+XML_PREFIX = "[XML]"
 PROJECT_PREFIX = "[Project]"
 SANDBOX_PREFIX = "[Sandbox]"
 
@@ -135,6 +141,7 @@ DESTINATIONS = {
     CHECK_PREFIX: TO_RESULTS,
     PHP_PREFIX: TO_ACTIVITY,
     SQL_PREFIX: TO_ACTIVITY,
+    XML_PREFIX: TO_ACTIVITY,
     PROJECT_PREFIX: TO_ACTIVITY,
     SANDBOX_PREFIX: TO_RESULTS,
 }

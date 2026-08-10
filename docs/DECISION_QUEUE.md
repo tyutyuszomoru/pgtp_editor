@@ -1694,3 +1694,200 @@ private statics, and extracting a shared widget is out of scope); the two `Test`
 different probes (`db/sandbox.py::probe` for the sandbox, `db/introspect.py::test_connection` for quality —
 a superuser demand on a quality connection would refuse a correctly-configured project); and
 `_import_pgtp_connection_into_target`'s empty-host guard is vacuous at creation but must not be relaxed.
+
+---
+
+## DEC-260810143559 — Is `Ctrl+W` (with `Ctrl+O`) *pinned dead* like `Ctrl+S`, or *no default, yours to assign*?
+
+- **Status:** OPEN
+- **Raised:** 2026-08-10, by `bug-triager` while triaging **BUG-260810143058**, itself raised by the
+  `docs/KEYBINDINGS.md` ledger sweep (Known gap 4).
+- **Blocks:** nothing shipped. It blocks **BUG-260810143058's direction** — whether
+  `shortcut_registry.RESERVED_SEQUENCES` gains rows for `Ctrl+W`/`Ctrl+O`. Two documentation fixes in that
+  entry are unblocked and ship regardless (listed at the end). The cost of *not* answering is that the two
+  documents keep contradicting each other and the next keyboard sweep re-files it a third time.
+
+**The situation.** On 2026-08-09 the owner unbound `Ctrl+W` (`File ▸ Close`) and `Ctrl+O` app-wide, and on the
+same day removed `CodeEditorDialog`'s last local `Ctrl+S`/`Ctrl+W` carve-out. The new ledger's Known gap 4
+reads that as an oversight — *"dead but unreserved"* — and concludes that `Customize Shortcuts…` can quietly
+reverse a deliberate decision by handing `Ctrl+W` to a menu command. **Triage refuted that framing, and this
+entry rests on the refutation:** `Ctrl+W` was not unbound for the `Ctrl+S` reason, and the app currently tells
+the user, in the manual, that it is free to assign.
+
+**Verified in the tree at filing time (all three re-read, not inherited):**
+
+- `pgtp_editor/ui/shortcut_registry.py:209-212` reserves `Ctrl+S`/`Ctrl+Shift+S` with the reason
+  *"deliberately unbound app-wide — every save is a named Deployment menu click (§27)"*. That is a
+  **capability** ruling (FQ-020): there is no save gesture anywhere, so no command may ever sit there.
+- `pgtp_editor/ui/main_window.py:3068-3072` gives `Ctrl+W` a **different** reason: *"this app closes
+  projects, `.pgtp` documents, PHP tabs, DDL object tabs, the XSD tab and console tabs, so one `Ctrl+W` has to
+  pick which 'close' it means — and the one it meant was the rarest, closing the whole project."* That is an
+  argument against a **default**, not against the chord existing.
+- `pgtp_editor/resources/manual.md:3850` states the consequence to the user outright: *"**Ctrl+O** /
+  **Ctrl+W** — **Nothing.** Both were unbound rather than moved, and both are free for you to assign"*, and
+  `:4066` expands it (*"Ctrl+W is in exactly the same position"*). So the pair is **symmetric and documented**
+  — and the ledger's gap-4 prose never mentions `Ctrl+O` at all.
+- Neither `Ctrl+W` nor `Ctrl+O` is a key in `RESERVED_SEQUENCES` (grepped: no `Ctrl+O` anywhere in
+  `shortcut_registry.py`). No binding for either chord exists anywhere in `pgtp_editor/` — every remaining hit
+  is a comment or a manual line.
+
+**The options.**
+
+- **A — Reserve both `Ctrl+W` and `Ctrl+O`** (treat them as pinned dead, like `Ctrl+S`). Protects the
+  2026-08-09 decision from being reversed through the customize dialog. Costs: it **contradicts a documented
+  invitation** (`manual.md:3850`, `:4066` must be rewritten by `manual-maintainer` to say the opposite); it
+  spends two of the handful of genuinely free, conventional chords the dialog can offer; and the test blast
+  radius is **ten uses of `"Ctrl+W"`** across `tests/ui/test_customize_shortcuts_dialog.py:20, 99, 122, 159,
+  219` and `tests/ui/test_shortcut_registry.py:32, 95, 102, 118, 216`, all of which use
+  `CommandBinding("file.close", …, "Ctrl+W")` as a fixture default and *assign or steal it freely* — under A
+  every one becomes a refusal and must change chord. That breadth is itself evidence the chord is treated as
+  live and assignable throughout the suite.
+- **B — Reserve neither, and pin the invitation with a test** (the triage recommendation). Nothing in
+  `pgtp_editor/` changes; the **ledger's prose is what was wrong**, not the code. A new case in
+  `tests/ui/test_shortcut_registry.py` asserts `"Ctrl+W" not in RESERVED_SEQUENCES and "Ctrl+O" not in
+  RESERVED_SEQUENCES` with the reason in its docstring, so an unreserved-on-purpose chord is defended exactly
+  as a reserved one is — the missing assertion is precisely why this reached the queue. Cost: a user who
+  assigns a command to `Ctrl+W` gets a second, differently-scoped "close" gesture, which the owner may find
+  confusing; and the gate vocabulary at `KEYBINDINGS.md:47-57` has **no token** for "no default, freely
+  assignable" (`dead` means *deliberately answered by nothing, app-wide*), so B needs either a new gate token
+  or the row's Notes carrying the distinction.
+- **C — Split the pair** (reserve one, not the other). Ruled out unless the owner supplies a reason the two
+  differ: the manual states them as the same case in two places and
+  `tests/ui/test_launcher_dialog.py:627` records the same pairing.
+
+**Recommendation: B.** The 2026-08-09 reason was *no single close is the obvious default* — that is an
+argument about a default, not a ban on the capability. `Ctrl+S` is different in kind: FQ-020 removed the
+*ability to save by gesture*, so a command on `Ctrl+S` would contradict the design rather than exercise it.
+`RESERVED_SEQUENCES`' own docstring (`shortcut_registry.py:195-198`) draws that exact line — reserved means
+*something the dialog does not own already answers it, or the spec pins it as deliberately dead* — and nothing
+answers `Ctrl+W`, while "pinned dead" is a stronger claim than the 2026-08-09 decision made.
+
+**A live constraint on whichever way this goes.** `docs/KEYBINDINGS.md` is now machine-verified by
+`tests/test_keybindings_ledger.py`, whose `test_every_reserved_sequence_has_a_row_marked_reserved` (`:508`)
+asserts `RESERVED_SEQUENCES` and the ledger's **Reserved** column are the *same set in both directions*. So
+**any change to `RESERVED_SEQUENCES` must edit the ledger in the same commit** or the suite reddens — under A
+that means flipping `KEYBINDINGS.md:117` to Reserved `yes` and adding a `Ctrl+O` row. This tripwire has
+already fired once in a merge; treat it as a hard constraint, not a nicety.
+
+**Two edits that ship regardless of the ruling** (recorded here so they are not held hostage to it):
+
+1. `pgtp_editor/ui/main_window.py:3074-3077` is **stale** — it says *"This does NOT touch
+   `CodeEditorDialog`'s own `Ctrl+W`, which is a dialog-local Cancel bound as a `QShortcut`"*, but
+   `code_editor.py:979-985` removed exactly that the same day (*"this dialog was the last carve-out for either
+   chord"*), `manual.md:3978` agrees, and `tests/ui/test_code_editor.py:567` asserts `"Ctrl+W" not in bound`.
+   The comment sends the next reader looking for a shortcut that does not exist; replace it with a pointer to
+   `code_editor.py:979-985`.
+2. `docs/KEYBINDINGS.md` Known gap 4 (`:185-188`) is **itself wrong** — it asserts the `Ctrl+S` rationale for
+   `Ctrl+W` and calls the non-reservation an oversight. Its machine-checked columns are right (`:117` says
+   Reserved `no`, matching the code); only the prose is wrong, and prose is the part no test covers.
+
+**What an answer unblocks.** BUG-260810143058 becomes implementable in one pass: either the no-op-plus-test of
+option B, or the coordinated reserve-both change (code + ledger + manual + ten fixtures) of option A. It also
+tells `spec-maintainer` what to write in §27, which today pins `Ctrl+S`/`Ctrl+Shift+S` as deliberately dead and
+says nothing about the weaker "no default, assignable" category — that omission is what let the sweep read the
+two cases as one.
+
+---
+
+## DEC-260810143600 — `F14` and `Ctrl+D`/`Ctrl+K`/`Ctrl+U`: suppress on both platforms, bind on both, or reserve-only?
+
+- **Status:** OPEN
+- **Raised:** 2026-08-10, by `bug-triager` while triaging **BUG-260810143059** (the non-clipboard remainder of
+  the `docs/KEYBINDINGS.md` sweep's Known gap 5).
+- **Blocks:** **BUG-260810143059's implementation** — the mechanism is settled either way, only the direction
+  is not. Nothing shipped is blocked. What hardens with time is the `Ctrl+D`/`Ctrl+K`/`Ctrl+U` half: they are
+  free rebinding targets today, so every day the customize dialog can hand one to a menu command that then
+  works on Windows and is silently swallowed on Linux.
+- **Must be ruled together with `BUG-260810140553` Part 2** (`Ctrl+Shift+Insert` and the `F16`/`F18`/`F20`
+  clipboard trio). Both halves apply the *same* uniformity rule to X11-only chords; ruled separately, the two
+  answers will diverge and the rule stops being a rule.
+
+**The situation.** Qt's `StandardKey` table is not uniform across platforms. On the Linux/KDE scheme Qt answers
+chords inside every text widget that the Windows scheme leaves unbound — measured, and recorded in
+`docs/KEYBINDINGS.md` Appendix A (`:133-157`), which `test_appendix_a_matches_the_running_keyboard_scheme`
+re-measures:
+
+| `StandardKey` | Windows scheme | Linux/KDE scheme | What the app's silence produces |
+|---|---|---|---|
+| `Undo` | `Ctrl+Z`, `Alt+Backspace`, `Undo` | `Ctrl+Z`, **`F14`**, `Undo` | `F14` runs `QPlainTextEdit`'s **native** undo on Linux |
+| `Delete` | `Delete` | `Delete`, **`Ctrl+D`** | deletes a character on Linux, nothing on Windows |
+| `DeleteEndOfLine` | *(nothing)* | **`Ctrl+K`** | deletes to end of line on Linux, nothing on Windows |
+| `DeleteCompleteLine` | *(nothing)* | **`Ctrl+U`** | deletes the line on Linux, nothing on Windows |
+
+`F14` is the correctness half: it **bypasses the app's undo routing entirely** — no re-emission into the
+project's snapshot history, no read-only refusal in Caption Mode, no journal line. That is the same defect
+BUG-056 fixed for `Ctrl+Shift+Z`. Verified: `shortcut_registry.EDITOR_UNDO_REDO_CHORDS` (`:368-374`) contains
+exactly five chords — `Ctrl+Z`, `Ctrl+Y`, `Ctrl+Shift+Z`, `Alt+Backspace`, `Alt+Shift+Backspace` — and `F14` is
+not among them, so it falls through to Qt at all six surfaces. `Ctrl+D`/`Ctrl+K`/`Ctrl+U` are the reachability
+half: nothing in the app binds them, none is in `RESERVED_SEQUENCES`, and they are physically present on every
+keyboard.
+
+**Why this is a genuinely new application of the owner's rule, not a repeat.** The rule (2026-08-10: *a chord
+means the same thing on every system, so the app binds or suppresses on both — never inherits from Qt*) was set
+on `Alt+Backspace`/`Alt+Shift+Backspace`, and the reasoning that decided them was **discoverability**: legacy
+spellings, in no menu, no manual page, no shortcut table, so binding them on the other platform would be
+*inventing* a keybinding (`shortcut_registry.py:246-263` records this verbatim). `F14` fits that reasoning
+exactly. `Ctrl+D`/`Ctrl+K`/`Ctrl+U` do **not**: they are **letter chords** on keys every user has, and they are
+readline/Emacs line-editing that a Linux user may reach for from muscle memory. This is the first time the rule
+meets a family where suppressing removes a *working, reachable* gesture.
+
+**The options — the two families can be answered separately, and probably should be.**
+
+*For `F14`:*
+
+- **Suppress on both** (recommended). One row, `"F14": SUPPRESSED`, in `EDITOR_UNDO_REDO_CHORDS` reaches all
+  six surfaces through `classify_undo_redo_chord` — BUG-056's mechanism, reused rather than reinvented. Closes
+  the routing bypass. Cost: nothing a user will notice, on a key essentially no keyboard in use has.
+- **Bind it as undo on both.** Also closes the bypass; identical mechanism, `UNDO` instead of `SUPPRESSED`.
+  Cost: it *invents* a second undo spelling on Windows, against DEC-015's settled one-chord-per-operation
+  (*"redo is always, on all systems, `Ctrl+Y`"*), for a key nobody can press.
+- **Leave it** — ruled out by the owner's own 2026-08-10 rule, which forbids inheriting a platform-conditional
+  chord from Qt. Only survives if the carve-out below is granted.
+
+*For `Ctrl+D`/`Ctrl+K`/`Ctrl+U`:*
+
+- **Reserve-only, as the floor** (recommended, and it can be done regardless of what goes on top). Accepts the
+  platform difference for plain built-in editing keys, but stops `Customize Shortcuts…` handing the chord to a
+  command. Purely subtractive; removes the one outcome that is **unambiguously a bug** — a rebinding that works
+  on one of the owner's two machines and is silently eaten on the other. Cost: the platform split in the
+  *editing behaviour* remains, so the uniformity rule is honoured only partly, and that partiality must be
+  written down or the next sweep re-files it.
+- **Suppress on both.** Fully uniform. Cost: takes three working editing keys away from Linux users, including
+  the owner's own machine.
+- **Bind on both.** Fully uniform in the other direction, and adds three real gestures on Windows. Cost: the
+  most work, and the app takes ownership of delete-line/delete-to-EOL behaviour it currently gets from Qt for
+  free, at six surfaces.
+
+**The open sub-question that would settle several rows at once.** `KEYBINDINGS.md:17-23` and the `DEC-015` gate
+token state the uniformity rule with **no carve-out for keys no keyboard in use actually has**. `F13`–`F20` are
+the test case: `F14` here, and `F16`/`F18`/`F20` in BUG-260810140553's Part 2. If the owner rules *"the
+uniformity rule does not reach physically-absent keys"*, all four retire in one line — but that carve-out must
+be **stated in the spec**, not left implicit, or the next sweep re-files every one of them. Answering this once
+is cheaper than answering four rows in turn.
+
+**One tripwire to record, because it will look like a regression.**
+`tests/ui/test_shortcut_registry.py:150-154` (`test_reserved_lookup_is_spelling_insensitive`) asserts
+`reserved_reason("Ctrl+U") is None` — it uses `Ctrl+U` as its example of a *free* chord. Reserving `Ctrl+U`
+reddens that test, and the correct fix is to **move the example to a chord that is still free**, never to weaken
+the assertion.
+
+**And the ledger constraint, which is live.** `docs/KEYBINDINGS.md` is machine-verified by
+`tests/test_keybindings_ledger.py`: `test_every_reserved_sequence_has_a_row_marked_reserved` (`:508`) makes
+`RESERVED_SEQUENCES` and the Reserved column one set in both directions, and
+`test_editor_chord_set_rows_state_the_operation_and_every_surface` (`:532`) requires every
+`EDITOR_UNDO_REDO_CHORDS` row to have a ledger row naming its **operation** and **all six surfaces**. So each
+chord this ruling touches needs a full new ledger row **in the same commit** (`Ctrl+D`/`Ctrl+K`/`Ctrl+U` have
+none today; `F14` appears only in Appendix A at `:135`), and Known gap 5 (`:189-197`) must be struck or narrowed
+to whatever the ruling leaves open. This tripwire has already fired once in a merge — it is a hard constraint,
+not a nicety.
+
+**Recommendation, in one line:** `SUPPRESSED` for `F14`, and **reserve-only as the floor** for
+`Ctrl+D`/`Ctrl+K`/`Ctrl+U`, with suppress-vs-bind on top of that floor being the only thing genuinely left to
+the owner — plus the physically-absent-keys carve-out answered yes or no, once, for both entries.
+
+**What an answer unblocks.** BUG-260810143059 becomes implementable: one `EDITOR_UNDO_REDO_CHORDS` row for
+`F14` (verify the `QKeySequence("F14")[0]` round-trip first — the one mechanical risk), the matching
+`RESERVED_SEQUENCES` rows, the ledger rows, and the per-surface cases at the five surface test files.
+BUG-260810140553's Part 2 unblocks with it. And `spec-maintainer` gets the text for §27, which today states the
+`Alt+Backspace` suppression and DEC-015's redo rule but says nothing about any X11-only chord and has no
+`Ctrl+D`/`Ctrl+K`/`Ctrl+U` row.

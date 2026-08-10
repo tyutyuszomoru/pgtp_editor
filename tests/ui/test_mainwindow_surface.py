@@ -165,6 +165,10 @@ EXPECTED_HOST_SURFACE = {
     # hidden -- the same reason `_edit_snippets_action` is here.
     "_autoformat_settings_action",
     "_settings_menu",
+    # FQ-033 part C's refusal sink. Belongs to the host because the Audit panel
+    # does: an editor must not reach it, which is exactly why the draft tabs
+    # route through CenterStage's aggregator to get here.
+    "_report_xml_format_refusal",
     "_enter_caption_mode",
     "_fetch_ddl_schema",
     "_file_menu",

@@ -192,6 +192,15 @@ class CenterStage(QTabWidget):
     # refresh hung off `currentChanged` alone would leave the three mode-only
     # members on screen after the mode ended.
     diff_merge_mode_changed = Signal(bool)
+    #: FQ-033 part C: an XML format refusal from a DRAFT FRAGMENT tab's editor.
+    #: The two singleton `XmlEditor`s are connected directly by `MainWindow`,
+    #: but drafts are created dynamically and multiply, so their editors cannot
+    #: be wired once from the host. This aggregates them: the connect happens at
+    #: the single creation site below, where it cannot be forgotten, and the host
+    #: subscribes to one stable signal. Same reasoning as BUG-049's per-tab undo
+    #: wiring, one step further because the destination is the Audit panel, which
+    #: a tab must not reach itself.
+    format_refused = Signal(list)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -745,6 +754,10 @@ class CenterStage(QTabWidget):
         self._draft_counter += 1
         key = (DRAFT_TAB_KEY_KIND, kind, table_name, self._draft_counter)
         tab = DraftFragmentTab(kind, table_name, text)
+        # FQ-033 part C. Here rather than in `DraftFragmentTab.__init__` because
+        # the tab must not know about the Audit panel; this is the one place a
+        # draft is ever created, so no draft can be missed.
+        tab.editor.format_refused.connect(self.format_refused)
         index = self.addTab(tab, tab.tab_title())
         self.setTabToolTip(index, tab.tab_tooltip())
         self._ddl_object_tabs[key] = tab
