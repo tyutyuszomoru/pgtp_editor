@@ -4800,3 +4800,197 @@ ledger row's unrebindable list, and to correct §27's `Ctrl+Alt+F` characterizat
 `QShortcut` hosts. `bug-triager` does not edit the spec.
 
 ---
+## BUG-051: `DEFAULT_RE_PHPGEN_ROOT` ships one developer's Windows account path as the fallback for every user — and it is returned on *unreadable/corrupt config* too, so "you never configured it" and "we could not read what you configured" are indistinguishable
+
+**Status:** OPEN
+**Reported:** 2026-08-10
+**Report (verbatim):** "Investigate a shipped default that points at one developer's machine. `pgtp_editor/generation/config.py:81` — `DEFAULT_RE_PHPGEN_ROOT = r"C:\Users\BotondZalai-RuzsicsP\Software dev\re_phpgen"`. This is a hardcoded absolute Windows path belonging to a specific user account, shipped as the fallback value for the `re_phpgen` root. Verify: (1) it is returned on every failure path, not just a missing key; (2) it is live — `generation_controller.py:377` and `:563` both call it; (3) development happens on both Windows and Linux, and on Linux the default is unrepresentable. Determine whether there is a discoverable remedy — a `spec-maintainer` sweep noted this constant and chose not to file it 'since it has a reachable remedy'; test that claim rather than inheriting it. Also check whether any other shipped constant embeds a machine-specific absolute path."
+
+**Root cause:** `pgtp_editor/generation/config.py:81` defines the constant, and
+`load_re_phpgen_root` (`config.py:84-92`) returns it from **five** distinct conditions, only one of
+which is "the user has not configured this yet":
+
+1. `OSError` reading the file — absent config (the genuine unconfigured case), but also
+   permission-denied, a directory in place of the file, or an I/O error;
+2. `ValueError`/`TypeError` from `json.loads` — the config file exists but is **corrupt**;
+3. parsed JSON is not a `dict`;
+4. the `re_phpgen_root` key is missing;
+5. the value is present but not a non-empty `str`.
+
+The return type is `str`, so the function has no vocabulary for "not configured" — every one of the
+five collapses into a path that looks exactly like a deliberate user setting. Cases 2 and 3 are the
+damaging ones: a user who **did** configure a valid root, whose `generator_config.json` later got
+truncated or corrupted, is told the runtime is *not set* and is sent to re-run a configuration step
+they already completed, with no hint that their stored settings were lost.
+
+**This is the lone outlier in its own file and its own package.** The two sibling accessors both
+already return `str | None` and both already make the unconfigured state explicit:
+`config.py:43-58 load_executable_path` (same file, same JSON document, same `base_dir` idiom) and
+`lint/config.py:52 load_lint_executable_path`. So this is not a design trade-off with two defensible
+sides — it is one function that departed from an established house pattern that sits eleven lines
+above it.
+
+*Confirmation of the three claims in the report:*
+
+**(1) Every failure path — CONFIRMED**, as enumerated above. Note the existing test suite already
+pins all five as intended behavior (`tests/generation/test_config.py:60-108`, seven tests asserting
+`== DEFAULT_RE_PHPGEN_ROOT`), so the fix is a deliberate behavior change, not an oversight repair.
+
+**(2) Live at both call sites — CONFIRMED**, and the two do materially different things:
+
+- **`ui/generation_controller.py:377`, `_re_phpgen_runtime()`** — the guard in front of *both*
+  `pangen()` (`:420`) and `analyze_gap()` (`:455`). It calls
+  `validate_re_phpgen_root(root)` (`generation/re_runner.py:49-51`, which is
+  `(Path(root)/"src"/"re_phpgen").is_dir()`) and, on False, shows
+  `QMessageBox.information(… "re_phpgen runtime not found. Set it via Generation > Locate panGen
+  Runtime...")` and returns None. **No crash, no confusing downstream failure — the guard holds and
+  the message names the remedy.** On Linux, `Path(r"C:\Users\...\re_phpgen")` is a single-component
+  *relative* path whose name happens to contain backslashes; `.is_dir()` is simply False. No
+  exception, no path-separator surprise.
+- **`ui/generation_controller.py:563`, `locate_pangen_runtime()`** — passes the value straight into
+  `QFileDialog.getExistingDirectory(...)` as the **starting directory**, with no validation. On Linux
+  (and on Windows under any other account) that directory does not exist, so Qt silently falls back
+  to an arbitrary location and the picker opens somewhere unhelpful. Cosmetic, but it is the one
+  moment the bogus default is actually *in front of* the user.
+
+**(3) Unrepresentable on Linux — CONFIRMED**, with the practical consequence that on Linux the
+default is *guaranteed* dead rather than merely probably-dead. Every Linux user without an explicit
+config hits it; the current checkout is Linux.
+
+*The "reachable remedy" claim — tested, and it substantially holds.* The menu action exists and is
+shipped: `GenerationController.build_menu` creates `Locate panGen Runtime...` under the **Generation**
+menu (asserted live at `tests/ui/test_pangen_menu.py:327` and `tests/ui/test_menus.py:719`), and the
+failure dialog names that exact path *at the moment of failure*. That is the criterion that matters,
+and it is met — **so I do not judge this a user-facing functional defect for the primary
+panGen/rePHPgen flow, and the earlier decision not to file it on those grounds was reasonable.**
+
+Two things the remedy does **not** cover, which is why it is still worth fixing:
+
+- **The corrupt-config case is actively misleading**, not merely unhelpful (see cases 2/3 above). The
+  message says "not found. Set it via…" to a user who set it. The remedy is reachable; it is the
+  *diagnosis* that is wrong.
+- **The manual documents none of it.** `pgtp_editor/resources/manual.md` contains **zero**
+  occurrences of `panGen` or `re_phpgen` (verified by grep); its *Generating PHP* section
+  (`manual.md:3566-3581`) lists only the three vendor entries — Locate PHP Generator Executable…,
+  Generate PHP…, Open Output Folder. So the remedy is discoverable from the dialog and the menu bar
+  only. Not this bug's job to fix, but the fixer should hand the gap to `manual-maintainer`.
+
+The residual and, in my judgment, **primary** defect is hygiene rather than function: a GPL-licensed
+source file distributed to users embeds a named individual's corporate Windows account
+(`BotondZalai-RuzsicsP`). That is a disclosure that no code path can remedy, present in every copy of
+the repository regardless of configuration.
+
+**Related finding, same file, same portability class — `resolve_re_phpgen_python`
+(`generation/re_runner.py:43-46`) hardcodes `<root>/venv/Scripts/python.exe`**, the Windows venv
+layout, and falls back to `sys.executable` when absent. On Linux a perfectly good
+`<root>/venv/bin/python` is **never** considered, so panGen always runs under the editor's own
+interpreter. It usually still starts (the caller prepends `<root>/src` to `PYTHONPATH` at
+`generation_controller.py:389-392`, so `-m re_phpgen` resolves from source without installation), but
+any third-party dependency of `re_phpgen` that the editor's venv lacks surfaces as a bare
+`panGen failed (exit N)` dialog (`_on_pangen_finished`, `:446-452`) — a confusing downstream failure
+with no mention of interpreter choice. Fixing this alongside is natural since it is the same file and
+the same assumption; **it can equally be split into its own entry** if the owner decides panGen is
+Windows-only (see the owner-call note below).
+
+**Other machine-specific constants: none.** Grepped `pgtp_editor/` for drive-letter prefixes
+(`[A-Za-z]:\`, `C:/`), `/home/<user>`, `/Users/`, `Program Files`, and the developer's name, across
+`*.py`, `*.md`, `*.json`, `*.toml`, `*.txt`. `config.py:81` is the **only** hit. Everything else the
+pattern caught was `f"…:\n\n{exc}"` message formatting. The two sibling path settings (PHP Generator
+executable, PHP linter executable) correctly ship **no** default at all — further evidence that this
+constant is a one-off slip rather than a convention.
+
+**Proposed fix:**
+
+*Primary (`pgtp_editor/generation/config.py`):*
+
+1. **Delete `DEFAULT_RE_PHPGEN_ROOT` (`:81`) outright.** Do not replace it with a different guessed
+   path (`~/re_phpgen`, a sibling-of-cwd probe, etc.) — a second guess reproduces the same "cannot
+   distinguish configured from guessed" defect with better manners.
+2. **Change `load_re_phpgen_root` to `-> str | None`** and make its body a structural copy of
+   `load_executable_path` (`:43-58`, eleven lines above): return `None` on `OSError`, on
+   `ValueError`/`TypeError`, on non-`dict`, and on a missing/non-`str` value. Keep the existing
+   extra guard that an **empty** string is also `None` (`load_executable_path` does not have that
+   check; retaining it here is correct and worth a short comment so a future harmonization pass does
+   not "simplify" it away). Update the function docstring and the module docstring at `:17-23`,
+   which currently describes only the executable key.
+3. Leave `save_re_phpgen_root` (`:95-106`) untouched.
+
+*Call site 1 — `ui/generation_controller.py:375-392`, `_re_phpgen_runtime`:*
+
+4. **Guard `None` before calling `validate_re_phpgen_root`.** *Easy to get wrong:* that function does
+   `Path(root)` and will raise `TypeError` on `None`; the current `if not validate_...` line cannot
+   simply be left as-is.
+5. **Split the one message into two**, because the whole point of the change is that the two states
+   are now distinguishable:
+   - not configured → keep today's wording verbatim (`"re_phpgen runtime not found. Set it via
+     Generation > Locate panGen Runtime..."`) so the working remedy path is preserved unchanged;
+   - configured but no longer valid → a message that **includes the stored path**, e.g. *"The
+     configured panGen runtime is no longer valid: `<root>`. Set it via Generation > Locate panGen
+     Runtime..."*. This is what makes a corrupted config, a moved checkout, or an unmounted drive
+     diagnosable instead of being reported as "you never set this".
+   Keep `QMessageBox.information` and the `return None` contract; both callers (`pangen`,
+   `analyze_gap`) already handle `None` correctly and need no change.
+
+*Call site 2 — `ui/generation_controller.py:559-564`, `locate_pangen_runtime`:*
+
+6. Pass `load_re_phpgen_root(base_dir=self._config_dir) or ""` as the dialog's start directory.
+   *Easy to get wrong:* `QFileDialog.getExistingDirectory` expects a `str`; handing it `None` is a
+   type error at the Qt boundary. The empty string is Qt's documented "no preferred directory".
+
+*Secondary (`pgtp_editor/generation/re_runner.py:43-46`), if taken:*
+
+7. Have `resolve_re_phpgen_python` probe **both** layouts — `venv/Scripts/python.exe` and
+   `venv/bin/python` — returning whichever exists, and `sys.executable` if neither does. Check the
+   Windows path first to preserve today's behavior exactly on Windows. Update the docstring and the
+   module docstring's `\\src` phrasing (`:22`), which is written Windows-first.
+
+**An owner call, flagged not made:** whether panGen/rePHPgen is *intended* to be a Windows-only
+feature. If yes, item 7 should be dropped and §20 should say so plainly instead of leaving the
+Windows assumption implicit in a helper. If no, item 7 belongs in this fix. **I do not consider the
+`str` → `str | None` signature change itself to be an owner call** — the report raises it as one, but
+the two sibling accessors in the same package already ship `str | None`, so choosing it is following
+the existing convention rather than setting new policy. *Per the dispatch instruction, nothing was
+written to `docs/DECISION_QUEUE.md`.*
+
+**Test impact:**
+
+- **`tests/generation/test_config.py` — the primary owner, and it must change, not merely extend.**
+  It imports `DEFAULT_RE_PHPGEN_ROOT` at `:4` (that import must go), and seven tests at `:60-108`
+  assert `load_re_phpgen_root(...) == DEFAULT_RE_PHPGEN_ROOT` for the unset, absent-file,
+  malformed-JSON, non-dict-JSON, wrong-typed-value, empty-string, and missing-key cases. Each flips
+  to `is None`. The round-trip and key-preservation tests (`:64-72`, `:111-136`) are unaffected. This
+  suite is thorough and should stay the same shape — flip the assertions, do not rewrite it.
+- **`tests/ui/test_pangen_menu.py` — extend, do not duplicate.** Its existing uses of
+  `load_re_phpgen_root` survive the change unchanged: `:279` (`!= str(bad)`), `:292`
+  (`== str(root)`), and `:549-558` (cancel is a no-op, `before == after` — `None == None` still
+  holds). New cases needed: (a) with no config, `pangen()` and `analyze_gap()` show the guidance
+  message and the message text contains `"Locate panGen Runtime"`; (b) with a **stored but invalid**
+  root, the message contains the stored path — the corrupt/stale case, which nothing covers today;
+  (c) `locate_pangen_runtime()` with no config passes `""` (never `None`) as the dialog's start
+  directory. Follow the file's existing monkeypatched-`modals` idiom; do not let a real
+  `QMessageBox`/`QFileDialog` execute.
+- **`tests/generation/test_re_runner.py`** (`:30-32` already covers `validate_re_phpgen_root`) is the
+  home for item 7: a POSIX-layout `venv/bin/python` case, a Windows-layout case, and a
+  neither-exists → `sys.executable` case. Create the fake interpreter files with `tmp_path`; do not
+  branch the test on the host OS, since `Path.is_file()` is layout-agnostic.
+
+**Spec impact:** **Diverges from `CONSOLIDATED_SPEC.md` §20**, in two places, both of which
+`spec-maintainer` must reconcile **after** the fix lands (`bug-triager` does not edit the spec):
+
+- **`CONSOLIDATED_SPEC.md:9068-9073`** — the 2026-08-10 §20 re-audit note (3) records this exact
+  constant, quotes the path, and concludes it is *"noted, not filed as a defect"* because the remedy
+  is reachable, adding *"whether a machine-specific default belongs in shipped code is an owner
+  call."* This entry is that filing. The note must be replaced (not merely amended) once the constant
+  is gone, otherwise the spec documents a constant that no longer exists — with a Supersession Ledger
+  row, since it reverses a recorded decision.
+- **`CONSOLIDATED_SPEC.md:9045-9046`** — describes runtime resolution as
+  `<root>\venv\Scripts\python.exe if present else sys.executable`, Windows-only. If item 7 is taken,
+  this sentence needs the POSIX layout added; if the owner rules panGen Windows-only, it needs that
+  stated explicitly instead of implied.
+- **Manual (`manual-maintainer`, separate dispatch):** `pgtp_editor/resources/manual.md` documents
+  none of the four panGen/rePHPgen menu entries (zero grep hits for `panGen`/`re_phpgen`); the
+  *Generating PHP* section at `:3566-3581` covers only the vendor generator. Pre-existing gap, not
+  caused by this bug, but it is the reason the remedy is dialog-only and it should be closed while
+  someone is in this code.
+
+---
