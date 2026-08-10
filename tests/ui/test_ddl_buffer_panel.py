@@ -10,6 +10,7 @@ from pgtp_editor.ui.ddl_buffer_panel import (
     ALTER_TABLE_MENU_TITLE,
     ALTER_TABLE_TABLE_COMMENT_ACTIONS,
     CREATE_TABLE_LABEL,
+    DISCARD_LOCAL_LABEL,
     RELOAD_LABEL,
     BrowserPanel,
     alter_table_action_groups,
@@ -886,6 +887,95 @@ def test_the_object_row_menu_has_no_checkout_entry_or_signal(qtbot):
 
     assert [a.text() for a in menu.actions()] == ["Edit DDL"]
     assert not hasattr(panel, "checkout_requested")
+
+
+# --- BUG-260810193333: Discard local change ----------------------------------
+
+
+def _panel_with_schema(qtbot, **kwargs):
+    schema = _schema()
+    _text, spans = build_ddl_text(schema)
+    panel = BrowserPanel(**kwargs)
+    qtbot.addWidget(panel)
+    panel.set_schema(schema, spans)
+    return panel
+
+
+def test_discard_local_is_absent_when_nothing_is_checked_out(qtbot):
+    """No predicate injected (projectless) means no local working copy exists,
+    so the entry is ABSENT rather than selectable-and-explaining."""
+    panel = _panel_with_schema(qtbot)
+
+    menu = panel._menu_for_item(_routine_item(panel))
+
+    assert [a.text() for a in menu.actions()] == ["Edit DDL"]
+
+
+def test_discard_local_is_offered_beside_edit_ddl_for_a_checked_out_object(qtbot):
+    panel = _panel_with_schema(qtbot)
+    panel.set_checked_out_predicate(lambda ref: True)
+    got = []
+    panel.discard_local_requested.connect(got.append)
+
+    menu = panel._menu_for_item(_routine_item(panel))
+
+    assert [a.text() for a in menu.actions()] == ["Edit DDL", DISCARD_LOCAL_LABEL]
+    menu.actions()[1].trigger()
+    assert len(got) == 1
+    assert got[0].name == "calc_total"
+
+
+def test_discard_local_is_offered_per_object_not_per_tree(qtbot):
+    """The predicate is asked with the row's own ref, so a checked-out routine
+    offers it and its neighbour does not."""
+    panel = _panel_with_schema(qtbot)
+    panel.set_checked_out_predicate(lambda ref: ref.name == "calc_total")
+
+    routines_root = panel.tree.topLevelItem(1)
+    offered = panel._menu_for_item(routines_root.child(1))
+    other = panel._menu_for_item(routines_root.child(0))
+
+    assert DISCARD_LOCAL_LABEL in [a.text() for a in offered.actions()]
+    assert DISCARD_LOCAL_LABEL not in [a.text() for a in other.actions()]
+
+
+def test_discard_local_is_never_offered_on_the_browse_only_tree(qtbot):
+    """§18.7's sandbox Explorer: discard is an edit gesture, and the sandbox
+    tree offers none -- even with a predicate wired that says yes."""
+    panel = _panel_with_schema(qtbot, browse_only=True)
+    panel.set_checked_out_predicate(lambda ref: True)
+
+    assert panel._menu_for_item(_routine_item(panel)) is None
+    labels = [a.text() for a in panel.context_menu_for_item(_routine_item(panel)).actions()]
+    assert labels == [RELOAD_LABEL]
+
+
+def test_discard_local_carries_no_shortcut(qtbot):
+    """DEC-012 / KEYBINDINGS.md: this is a context-menu-only command; no chord
+    is reserved for it, so the action must not claim one."""
+    panel = _panel_with_schema(qtbot)
+    panel.set_checked_out_predicate(lambda ref: True)
+
+    menu = panel._menu_for_item(_routine_item(panel))
+
+    action = [a for a in menu.actions() if a.text() == DISCARD_LOCAL_LABEL][0]
+    assert action.shortcut().isEmpty()
+
+
+def test_a_raising_checked_out_predicate_hides_the_entry_instead_of_the_menu(qtbot):
+    """The predicate reads the filesystem while a context menu is being built:
+    an unreadable project must cost one entry, never an exception out of a
+    right-click -- and hiding a destructive gesture is the safe direction."""
+    panel = _panel_with_schema(qtbot)
+
+    def boom(ref):
+        raise OSError("project folder went away")
+
+    panel.set_checked_out_predicate(boom)
+
+    menu = panel._menu_for_item(_routine_item(panel))
+
+    assert [a.text() for a in menu.actions()] == ["Edit DDL"]
 
 
 # --- */! drift markers (spec §18.2) -----------------------------------------

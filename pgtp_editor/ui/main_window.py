@@ -149,6 +149,7 @@ from pgtp_editor.ui.diff_merge_controller import DiffMergeController
 from pgtp_editor.ui.find_controller import FindValidateController
 from pgtp_editor.ui.ddl_buffer_panel import (
     RELOAD_LABEL as RELOAD_DDL_LABEL,
+    DISCARD_LOCAL_LABEL,
     OP_ADD_COLUMN,
     OP_ADD_CONSTRAINT,
     OP_ADD_FOREIGN_KEY,
@@ -811,6 +812,16 @@ class MainWindow(QMainWindow):
         # (spec §18.5, D1 entry point 1) -- ONE gesture whose behaviour the
         # handler picks from project state (FQ-024), not a pair of entries.
         self.ddl_browser_panel.edit_requested.connect(self._on_ddl_edit_requested)
+        # Right-click ▸ Discard local change: the checkout-drop that undoes
+        # `Edit DDL`'s project-open branch (BUG-260810193333). The predicate is
+        # what keeps the entry from appearing on an object that was never
+        # checked out -- the panel cannot know, so the host answers.
+        self.ddl_browser_panel.set_checked_out_predicate(
+            self._ddl_object_is_checked_out
+        )
+        self.ddl_browser_panel.discard_local_requested.connect(
+            self._on_ddl_discard_local_requested
+        )
         # Click on a Tables-branch table node populates the shared Properties
         # panel (spec §18.1, 2026-08-05) -- the same panel instance the
         # XML/XSD tree's own node-click already drives (_on_tree_selection_changed).
@@ -5284,6 +5295,152 @@ class MainWindow(QMainWindow):
         self._wire_ddl_object_dirty(panel, ref)
         panel.format_refused.connect(self._report_ddl_format_refusal)
         self._wire_ddl_object_panel_reporting(panel, ref)
+
+    def _ddl_checked_out_paths(self, ref):
+        """`(relpath, ddl_path)` for `ref`, or `(None, None)` when there is no
+        project to hold a working copy.
+
+        The single resolver both `Discard local change` and its visibility
+        predicate go through, so the entry can never be offered for one path and
+        act on another -- `_ddl_checkout_relpath` is the authority on WHICH
+        `ddl/*.sql` an overloaded routine owns, and asking it twice in two
+        places is how a discard would end up deleting a sibling overload's
+        file."""
+        if self._ddl_project_folder is None or self._ddl_project_settings is None:
+            return None, None
+        schema = getattr(self.ddl_browser_panel, "_schema", None)
+        relpath = self._ddl_checkout_relpath(ref, schema)
+        if not relpath:
+            return None, None
+        return relpath, (self._ddl_project_folder / relpath).resolve()
+
+    def _ddl_object_is_checked_out(self, ref) -> bool:
+        """`BrowserPanel`'s checked-out predicate (BUG-260810193333).
+
+        Checked out means the WORKING FILE exists -- that write is what §18.2
+        defines the checkout as (`_edit_ddl_checked_out`), and it is the thing
+        `Discard local change` deletes. Deliberately NOT keyed on the
+        `deployed` manifest entry: `_register_created_object` puts an entry
+        there for a brand-new object too, and a `deployed` row with no file is
+        exactly the half-state that must still be droppable rather than
+        invisible."""
+        _relpath, ddl_path = self._ddl_checked_out_paths(ref)
+        if ddl_path is None:
+            return False
+        try:
+            return ddl_path.is_file()
+        except OSError:
+            return False
+
+    def _on_ddl_discard_local_requested(self, ref) -> None:
+        """Right-click ▸ Discard local change (BUG-260810193333): drop THIS
+        object's checkout and return it to not-checked-out.
+
+        Four things belong to a checkout, and all four go together -- a
+        half-dropped link is worse than none (BUG-260810173246): the open
+        editable tab, the `ddl/<relpath>.sql` working file, the
+        `ProjectSettings.deployed[relpath]` last-deployed reference that drives
+        the `*`/`!` markers, and the tree's unsaved-edit overlay.
+
+        Three things it deliberately does NOT do:
+
+        * **It never touches the database.** Unlike `Apply to quality` this is
+          purely local; the live object is exactly as it was.
+        * **It does not prompt to save.** The tab may well be dirty -- throwing
+          those edits away is the entire gesture, so the confirmation below IS
+          the save/discard prompt, and routing through
+          `_on_ddl_object_close_requested` would offer to Save the very file
+          about to be deleted.
+        * **It touches only this object's `relpath`.** Overloads share a
+          `ddl/*.sql` directory and differ only by disambiguation, so the path
+          comes from the one resolver (`_ddl_checked_out_paths`) and nothing
+          wider is ever globbed.
+        """
+        relpath, ddl_path = self._ddl_checked_out_paths(ref)
+        if relpath is None:
+            self.audit_panel.addItem(
+                QListWidgetItem(
+                    f"[Project] {DISCARD_LOCAL_LABEL}: no project is open, so "
+                    f"{ref.qualified} has no local working copy to discard."
+                )
+            )
+            return
+        had_file = ddl_path.is_file()
+        settings = self._ddl_project_settings
+        had_entry = settings is not None and relpath in settings.deployed
+        if not had_file and not had_entry:
+            # Reported, never raised: the entry is predicate-gated, but the file
+            # can vanish between the right-click and the click.
+            self.audit_panel.addItem(
+                QListWidgetItem(
+                    f"[Project] {DISCARD_LOCAL_LABEL}: {ref.qualified} is not "
+                    "checked out; nothing was discarded."
+                )
+            )
+            return
+        if not self._confirm_discard_local_change(ref, relpath):
+            self.audit_panel.addItem(
+                QListWidgetItem(
+                    f"[Project] {DISCARD_LOCAL_LABEL} of {ref.qualified} "
+                    "cancelled; the local working copy was kept."
+                )
+            )
+            return
+        # Tab first: it holds the buffer, and closing it after the file is gone
+        # would leave a tab whose save destination does not exist.
+        if self.center_stage.ddl_object_tab(ref.key) is not None:
+            self.center_stage.close_ddl_object_tab(ref.key)
+        if had_file:
+            try:
+                ddl_path.unlink()
+            except OSError as exc:
+                self.audit_panel.addItem(
+                    QListWidgetItem(
+                        f"[Project] {DISCARD_LOCAL_LABEL} of {ref.qualified} "
+                        f"failed: could not delete {ddl_path} ({exc}). The "
+                        "last-deployed reference was left in place."
+                    )
+                )
+                self._refresh_ddl_drift_markers()
+                return
+        if had_entry:
+            settings.deployed.pop(relpath, None)
+            save_settings(self._ddl_project_folder, settings)
+        self.ddl_browser_panel.set_object_dirty(ref, False)
+        self._refresh_ddl_drift_markers()
+        self.audit_panel.addItem(
+            QListWidgetItem(
+                f"[Project] discarded the local change to {ref.qualified}: "
+                f"{relpath} was deleted and the object is no longer checked "
+                "out. The database was not touched."
+            )
+        )
+
+    def _confirm_discard_local_change(self, ref, relpath) -> bool:
+        """The destructive-gesture confirmation for `Discard local change`.
+
+        Reuses the app's one confirmation idiom -- a Yes/No
+        `modals.QMessageBox.question`, the same seam `_confirm_apply` and
+        `_confirm_destructive_sandbox_operation` use, monkeypatchable in tests
+        so no modal is ever reached -- rather than a fourth mechanism. It NAMES
+        the file, because the destroyed thing is that file, and says the
+        database is untouched, because "discard" next to a row of deploy
+        gestures could otherwise read as a revert of the live object."""
+        return (
+            modals.QMessageBox.question(
+                self,
+                DISCARD_LOCAL_LABEL,
+                f"Delete the local working copy of {ref.qualified}?\n\n"
+                f"{relpath} and its last-deployed reference will be removed, "
+                "any unsaved edits in its open tab are thrown away, and the "
+                "object goes back to not-checked-out.\n\n"
+                "The database is NOT touched: the live object stays exactly as "
+                "it is.",
+                modals.QMessageBox.StandardButton.Yes
+                | modals.QMessageBox.StandardButton.No,
+            )
+            == modals.QMessageBox.StandardButton.Yes
+        )
 
     def _register_checked_out_object(self, relpath, live_source) -> None:
         """Give a freshly checked-out object its last-deployed reference

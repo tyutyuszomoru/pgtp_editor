@@ -7,6 +7,7 @@ no sandbox button row (carve-out 2).
 """
 from pathlib import Path
 
+import pytest
 from PySide6.QtCore import QEvent, Qt
 from PySide6.QtGui import QKeyEvent, QKeySequence, QTextCursor
 from PySide6.QtTest import QTest
@@ -1028,26 +1029,69 @@ def test_apply_to_target_invokes_the_write_seam_when_everything_passes(qtbot):
     assert seams.target_calls == [(_PLAIN, _TARGET_SRC)]
 
 
-def test_precondition_1_refuses_a_changed_signature_naming_the_mismatch(qtbot):
-    """`CREATE OR REPLACE` on a changed (schema, name, argtypes) creates a
-    SECOND function and leaves the old one live -- refused outright, with no
-    override and no consent path."""
-    seams = _Seams(live=DdlObjectRef(kind="function", schema="pr", name="recalc",
-                                     arg_types=("integer",)))
-    panel = _wired(
-        qtbot,
-        seams,
-        text="CREATE OR REPLACE FUNCTION pr.recalc(p_id bigint) RETURNS void AS $$\n"
-        "BEGIN END;\n$$ LANGUAGE plpgsql;\n",
-    )
+_RENAMED_SRC = (
+    "CREATE OR REPLACE FUNCTION pr.recalc(p_id bigint) RETURNS void AS $$\n"
+    "BEGIN END;\n$$ LANGUAGE plpgsql;\n"
+)
+_LIVE_OTHER = DdlObjectRef(
+    kind="function", schema="pr", name="recalc", arg_types=("integer",)
+)
+
+
+def test_precondition_1_never_silently_no_ops_on_a_changed_signature(qtbot):
+    """The BUG-260810193333 regression pin, in the shape the report described.
+
+    A renamed/signature-changed buffer must NEVER leave the user with a deploy
+    gesture that appeared to succeed and did nothing: either the write seam runs
+    or the user is ASKED. The bug was that this branch returned False after one
+    Audit line and no dialog, while `Check and commit to sandbox` ran the very
+    same buffer.
+
+    `confirm=[]` is the teeth: the confirm stub pops from an empty list, so
+    reaching the seam without asking raises IndexError rather than passing.
+    """
+    seams = _Seams(live=_LIVE_OTHER, confirm=[])
+    panel = _wired(qtbot, seams, text=_RENAMED_SRC)
+    panel.record_check_report(_green())
+
+    with pytest.raises(IndexError):
+        panel.apply_to_target()
+
+    assert seams.confirms, "the mismatch must be put to the user, not swallowed"
+    assert seams.target_calls == []
+
+
+def test_precondition_1_runs_a_renamed_buffer_once_the_mismatch_is_confirmed(qtbot):
+    """Owner ruling 2026-08-10: trust the user, run the SQL. The confirmation
+    names BOTH identities and the second-object consequence."""
+    seams = _Seams(live=_LIVE_OTHER, confirm=[True, True])
+    panel = _wired(qtbot, seams, text=_RENAMED_SRC)
+    panel.record_check_report(_green())
+    lines = _audit(panel)
+
+    assert panel.apply_to_target() is True
+
+    assert seams.target_calls == [(_PLAIN, _RENAMED_SRC)]
+    title, text = seams.confirms[0]
+    assert "apply to quality" in title.lower()
+    assert "pr.recalc(bigint)" in text and "pr.recalc(integer)" in text
+    assert "second object" in text.lower()
+    joined = " ".join(lines)
+    assert "proceeding despite identity mismatch" in joined
+
+
+def test_precondition_1_declining_the_mismatch_aborts_and_says_so(qtbot):
+    """Cancel aborts -- but reports, so even the refusal is not silent."""
+    seams = _Seams(live=_LIVE_OTHER, confirm=[False])
+    panel = _wired(qtbot, seams, text=_RENAMED_SRC)
     panel.record_check_report(_green())
     lines = _audit(panel)
 
     assert panel.apply_to_target() is False
 
     assert seams.target_calls == []
-    assert seams.confirms == []  # no override is offered for this one
     joined = " ".join(lines)
+    assert "cancelled" in joined
     assert "pr.recalc(bigint)" in joined and "pr.recalc(integer)" in joined
 
 

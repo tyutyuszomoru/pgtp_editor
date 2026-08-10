@@ -698,14 +698,9 @@ def test_a_cancelled_password_prompt_refuses_BEFORE_the_confirmation(
     assert any("no quality target with a password is available" in l for l in lines)
 
 
-def test_precondition_1_still_refuses_a_changed_signature_projectless(
-    qtbot, tmp_path, monkeypatch
-):
-    """The one gate that has no override and no consent path, still enforced on
-    the newly wired leg: `CREATE OR REPLACE` on changed argument types creates a
-    SECOND function and leaves the old one live, so the statement succeeds and the
-    confirmation was truthful — no confirm gate can catch it."""
-    window, panel = _projectless_quality_window(qtbot, tmp_path, monkeypatch)
+def _mismatched_live_catalog(window, monkeypatch):
+    """Make the live catalog hold `pr.recalc(integer)` while the open tab's
+    buffer declares `pr.recalc()` -- the renamed/signature-changed case."""
     monkeypatch.setattr(
         window,
         "_fetch_ddl_schema",
@@ -717,6 +712,66 @@ def test_precondition_1_still_refuses_a_changed_signature_projectless(
             }
         ),
     )
+
+
+def test_a_changed_signature_warns_and_then_runs_the_sql_projectless(
+    qtbot, tmp_path, monkeypatch
+):
+    """BUG-260810193333, end to end on the wired leg. Owner ruling 2026-08-10:
+    *"trust the user that they know what they are doing, run the sql."*
+
+    This used to be the one gate with no override -- and that is exactly what
+    made `Apply to quality` look like it succeeded and do nothing while `Check
+    and commit to sandbox` ran the same buffer. It is now a confirm-gated
+    override; the write seam really is reached.
+    """
+    window, panel = _projectless_quality_window(qtbot, tmp_path, monkeypatch)
+    _mismatched_live_catalog(window, monkeypatch)
+    applied = []
+
+    def fake_apply_ddl(params, statements):
+        from pgtp_editor.db.apply import ApplyOutcome
+
+        applied.append(params)
+        return ApplyOutcome.succeeded((), committed=True)
+
+    monkeypatch.setattr("pgtp_editor.ui.main_window.apply_ddl", fake_apply_ddl)
+    # Synchronous stand-in for the off-thread runner, the project's convention.
+    monkeypatch.setattr(
+        "pgtp_editor.ui.main_window.run_async",
+        lambda parent, work, on_result, on_error=None: on_result(work()),
+    )
+    seen = []
+    monkeypatch.setattr(
+        modals.QMessageBox,
+        "question",
+        staticmethod(
+            lambda parent, title, text, *a, **k: seen.append((title, text))
+            or modals.QMessageBox.StandardButton.Yes
+        ),
+    )
+
+    assert panel.apply_to_target() is True
+
+    assert applied, "the buffer's SQL must actually reach the target"
+    # The mismatch is put FIRST, before precondition 2's override, and it names
+    # both identities plus the second-object consequence.
+    _title, text = seen[0]
+    assert "pr.recalc()" in text and "pr.recalc(integer)" in text
+    assert "second object" in text.lower()
+    lines = [
+        window.audit_panel.item(i).text() for i in range(window.audit_panel.count())
+    ]
+    assert any("proceeding despite identity mismatch" in line for line in lines)
+
+
+def test_declining_the_signature_warning_applies_nothing_and_is_not_silent(
+    qtbot, tmp_path, monkeypatch
+):
+    """The other half of the ruling: a declined warning aborts -- but SAYS so.
+    A deploy gesture that returns without a trace is the defect this fixed."""
+    window, panel = _projectless_quality_window(qtbot, tmp_path, monkeypatch)
+    _mismatched_live_catalog(window, monkeypatch)
     applied = []
     monkeypatch.setattr(
         "pgtp_editor.ui.main_window.apply_ddl",
@@ -725,15 +780,16 @@ def test_precondition_1_still_refuses_a_changed_signature_projectless(
     monkeypatch.setattr(
         modals.QMessageBox,
         "question",
-        staticmethod(lambda *a, **k: modals.QMessageBox.StandardButton.Yes),
+        staticmethod(lambda *a, **k: modals.QMessageBox.StandardButton.No),
     )
 
     assert panel.apply_to_target() is False
+
     assert applied == []
     lines = [
         window.audit_panel.item(i).text() for i in range(window.audit_panel.count())
     ]
-    assert any("signature differs from the live object" in line for line in lines)
+    assert any("cancelled at the signature mismatch" in line for line in lines)
 
 
 def test_an_unreadable_catalog_is_a_refusal_never_a_cleared_precondition(

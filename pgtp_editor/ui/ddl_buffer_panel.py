@@ -31,6 +31,8 @@ never trust prior state" posture for DB-sourced data (§18's truth model).
 """
 from __future__ import annotations
 
+from typing import Any, Callable
+
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QMenu,
@@ -324,6 +326,13 @@ CREATE_TABLE_LABEL = "Create Table…"
 #: (`resolve_edit_target`), and the reverse direction would be a cycle.
 RELOAD_LABEL = "Reload DDL"
 
+#: BUG-260810193333's checkout-drop gesture, for the same one-label reason as
+#: `RELOAD_LABEL`: the tree entry, the host's Audit lines and the confirmation
+#: title all say this, so there is exactly one string to move if it is renamed.
+#: No trailing "…" -- the ellipsis in this app means "opens a dialog that asks
+#: for input"; this one only asks for a Yes.
+DISCARD_LOCAL_LABEL = "Discard local change"
+
 #: The one unsaved/changed glyph in this app (§11/§18.2/§18.5): the editable
 #: tab's title marker and the §18.2 `locally_edited` drift marker are both
 #: `*`, so the tree uses it too rather than inventing a third glyph.
@@ -397,6 +406,20 @@ class BrowserPanel(QWidget):
     #: THIS signal rather than a second menu entry (§18.1/§18.2). The panel
     #: still knows nothing about projects.
     edit_requested = Signal(object, str)
+
+    #: Right-click ▸ Discard local change on a CHECKED-OUT object row
+    #: (BUG-260810193333, §18.2). Carries the object's `DdlObjectRef` alone --
+    #: unlike `edit_requested` it needs no source text, because discarding is
+    #: about deleting the local `ddl/*.sql` and its last-deployed reference,
+    #: never about rendering anything.
+    #:
+    #: The entry is offered ONLY when `set_checked_out_predicate`'s callable
+    #: says this object is checked out, so the panel still knows nothing about
+    #: projects -- and an unavailable gesture is absent rather than
+    #: selectable-but-dead (carve-out 2). The predicate is consulted at
+    #: menu-BUILD time, so a just-discarded object stops offering it with no
+    #: refresh bookkeeping of its own.
+    discard_local_requested = Signal(object)
 
     #: Left-click on a Tables-branch table node (spec §18.1, 2026-08-05):
     #: carries the clicked table's `TableInfo` so `MainWindow` can populate
@@ -509,6 +532,14 @@ class BrowserPanel(QWidget):
         # status without the tree items carrying redundant copies of it.
         self._schema: DatabaseSchema | None = None
 
+        # Host-injected `ref -> bool`: "is this object checked out right now?"
+        # Only the host knows (it owns the project folder and the `deployed`
+        # manifest), and only it can answer for the CURRENT state -- so this is
+        # a predicate consulted per right-click rather than a flag pushed on
+        # every refresh. Unset means "no project / nothing is checked out",
+        # which correctly hides `Discard local change` entirely.
+        self._checked_out: Callable[[Any], bool] | None = None
+
         #: `DdlObjectRef.key`s whose editable tab currently holds unsaved
         #: edits (BUG-033 layer a). Held on the PANEL, not on tree items: the
         #: tree is rebuilt wholesale by every `set_schema`, so anything keyed
@@ -524,6 +555,20 @@ class BrowserPanel(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self.tree)
+
+    def set_checked_out_predicate(
+        self, predicate: "Callable[[Any], bool] | None"
+    ) -> None:
+        """Inject the host's "is this object checked out?" answer, which gates
+        the `Discard local change` entry (BUG-260810193333).
+
+        Injected as a CALLABLE rather than pushed as a set, for the same reason
+        `_menu_for_item` resolves the edit target from `_schema` on demand: the
+        answer depends on project state the panel does not model, and it changes
+        for one object at a time (a checkout, a discard) without the tree being
+        rebuilt. Asking at menu-build time means the entry can never be stale.
+        """
+        self._checked_out = predicate
 
     def set_schema(
         self,
@@ -837,6 +882,22 @@ class BrowserPanel(QWidget):
         menu.addAction(RELOAD_LABEL, self.reload_requested.emit)
         return menu
 
+    def _is_checked_out(self, ref) -> bool:
+        """Ask the host's predicate, treating "no predicate" and "the predicate
+        raised" alike as NOT checked out.
+
+        A raise is swallowed deliberately and only here: this runs while a
+        context menu is being built, and the predicate reads the filesystem, so
+        an unreadable project folder must cost the user one missing entry rather
+        than an exception out of a right-click. The gesture it hides is
+        destructive, so hiding is the safe direction."""
+        if self._checked_out is None:
+            return False
+        try:
+            return bool(self._checked_out(ref))
+        except Exception:  # noqa: BLE001 -- see the docstring
+            return False
+
     def _menu_for_item(self, item) -> "QMenu | None":
         """The menu for `item`, or `None` when it offers nothing.
 
@@ -863,6 +924,15 @@ class BrowserPanel(QWidget):
             # equivalent, where the click landed in a multi-object buffer and
             # two overloads' entries must read differently.
             menu.addAction("Edit DDL", lambda: self.edit_requested.emit(ref, source))
+            # BESIDE Edit DDL, and only for an object that actually HAS a local
+            # working copy to throw away. Absent otherwise -- offering a
+            # "discard" on something never checked out would be a dead entry
+            # whose only possible outcome is an explanation.
+            if self._is_checked_out(ref):
+                menu.addAction(
+                    DISCARD_LOCAL_LABEL,
+                    lambda: self.discard_local_requested.emit(ref),
+                )
             return menu
 
         table_info = item.data(0, _TABLE_ROLE)

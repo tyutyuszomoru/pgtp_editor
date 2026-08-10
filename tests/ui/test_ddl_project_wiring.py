@@ -14,6 +14,7 @@ from PySide6.QtWidgets import QMessageBox
 
 from pgtp_editor.db.config import ConnectionParams
 from pgtp_editor.db.ddl_project import GitConfig, PgtpLink, ProjectSettings, load_settings
+from pgtp_editor.ui.ddl_buffer_panel import DISCARD_LOCAL_LABEL
 from pgtp_editor.ui.ddl_project_controller import DdlProjectController
 from pgtp_editor.ui.main_window import MainWindow
 from pgtp_editor.ui.new_project_dialog import NewProjectDialog
@@ -933,6 +934,198 @@ def test_checking_out_then_editing_the_same_object_yields_exactly_one_tab(qtbot,
 
     assert window.center_stage.ddl_object_panels() == [checked_out]
     assert window.center_stage.currentWidget() is checked_out
+
+
+# --- BUG-260810193333 Part B: Discard local change ---------------------------
+def _project_narration(window):
+    """`[Project]` rows are journalled, not listed (FQ-028's router) -- so the
+    Audit assertions read the journal the row actually lands in."""
+    return [e.verb or "" for e in window.activity_log.entries]
+
+
+def _answer_confirm(monkeypatch, button):
+    """Stub the ONE confirmation seam. Never a real modal (CLAUDE.md)."""
+    seen = []
+
+    def question(_parent, title, text, *a, **k):
+        seen.append((title, text))
+        return button
+
+    monkeypatch.setattr(
+        "pgtp_editor.ui.modals.QMessageBox.question", staticmethod(question)
+    )
+    return seen
+
+
+def _checked_out(window, tmp_path, *, source="CREATE FUNCTION pr.recalc() ..."):
+    from pgtp_editor.ui.ddl_object_editor import DdlObjectRef
+
+    project_dir = tmp_path / "proj"
+    _open_project(window, project_dir)
+    ref = DdlObjectRef(kind="function", schema="pr", name="recalc")
+    window._edit_ddl_checked_out(ref, source)
+    return ref, project_dir, (project_dir / "ddl" / "pr.recalc.sql")
+
+
+def test_the_checked_out_predicate_follows_the_working_file(qtbot, tmp_path):
+    """It is the panel's entry-visibility gate, and a checkout IS the file
+    write (§18.2) -- so the answer flips with the file, both ways."""
+    from pgtp_editor.ui.ddl_object_editor import DdlObjectRef
+
+    window = _window(qtbot, tmp_path)
+    other = DdlObjectRef(kind="function", schema="pr", name="never_touched")
+    assert window._ddl_object_is_checked_out(other) is False  # projectless
+
+    ref, _project_dir, ddl_path = _checked_out(window, tmp_path)
+
+    assert window._ddl_object_is_checked_out(ref) is True
+    assert window._ddl_object_is_checked_out(other) is False
+    ddl_path.unlink()
+    assert window._ddl_object_is_checked_out(ref) is False
+
+
+def test_discard_local_drops_the_file_the_reference_and_the_tab(qtbot, tmp_path, monkeypatch):
+    """All four pieces of a checkout go together -- a half-dropped link is
+    worse than none."""
+    window = _window(qtbot, tmp_path)
+    ref, project_dir, ddl_path = _checked_out(window, tmp_path)
+    assert window.center_stage.ddl_object_tab(ref.key) is not None
+    assert "ddl/pr.recalc.sql" in window._ddl_project_settings.deployed
+    _answer_confirm(monkeypatch, QMessageBox.StandardButton.Yes)
+
+    window._on_ddl_discard_local_requested(ref)
+
+    assert not ddl_path.exists()
+    assert "ddl/pr.recalc.sql" not in window._ddl_project_settings.deployed
+    assert "ddl/pr.recalc.sql" not in load_settings(project_dir).deployed  # persisted
+    assert window.center_stage.ddl_object_tab(ref.key) is None
+    assert window._ddl_object_is_checked_out(ref) is False
+
+
+def test_discard_local_throws_away_unsaved_edits_without_a_save_prompt(qtbot, tmp_path, monkeypatch):
+    """The confirmation IS the save/discard prompt: offering to Save the file
+    about to be deleted would be nonsense."""
+    window = _window(qtbot, tmp_path)
+    ref, _project_dir, ddl_path = _checked_out(window, tmp_path)
+    panel = window.center_stage.ddl_object_tab(ref.key)
+    panel.editor.insertPlainText("-- unsaved local work\n")
+    assert panel.is_dirty()
+    seen = _answer_confirm(monkeypatch, QMessageBox.StandardButton.Yes)
+
+    window._on_ddl_discard_local_requested(ref)
+
+    assert len(seen) == 1  # exactly one dialog, and it is the discard one
+    assert seen[0][0] == DISCARD_LOCAL_LABEL
+    assert not ddl_path.exists()
+    assert window.center_stage.ddl_object_tab(ref.key) is None
+
+
+def test_discard_local_confirmation_names_the_file_and_absolves_the_database(qtbot, tmp_path, monkeypatch):
+    window = _window(qtbot, tmp_path)
+    ref, _project_dir, _ddl_path = _checked_out(window, tmp_path)
+    seen = _answer_confirm(monkeypatch, QMessageBox.StandardButton.Yes)
+
+    window._on_ddl_discard_local_requested(ref)
+
+    _title, text = seen[0]
+    assert "pr.recalc.sql" in text
+    assert "pr.recalc()" in text
+    assert "NOT touched" in text
+
+
+def test_declining_the_discard_keeps_everything_and_says_so(qtbot, tmp_path, monkeypatch):
+    window = _window(qtbot, tmp_path)
+    ref, _project_dir, ddl_path = _checked_out(window, tmp_path)
+    _answer_confirm(monkeypatch, QMessageBox.StandardButton.No)
+
+    window._on_ddl_discard_local_requested(ref)
+
+    assert ddl_path.exists()
+    assert "ddl/pr.recalc.sql" in window._ddl_project_settings.deployed
+    assert window.center_stage.ddl_object_tab(ref.key) is not None
+    lines = _project_narration(window)
+    assert any("cancelled" in line for line in lines)
+
+
+def test_discard_local_touches_only_the_clicked_overloads_file(qtbot, tmp_path, monkeypatch):
+    """Overloads share the `ddl/` directory and differ only by disambiguation:
+    discarding one must not take its sibling with it."""
+    from pgtp_editor.db.introspect import DatabaseSchema, RoutineInfo
+    from pgtp_editor.ui.ddl_object_editor import DdlObjectRef
+
+    window = _window(qtbot, tmp_path)
+    project_dir = tmp_path / "proj"
+    _open_project(window, project_dir)
+    one = RoutineInfo(schema="pr", name="fmt", arg_types=["text"])
+    two = RoutineInfo(schema="pr", name="fmt", arg_types=["integer"])
+    window.ddl_browser_panel._schema = DatabaseSchema(
+        routines={one.signature: one, two.signature: two}
+    )
+    ref_one = DdlObjectRef(kind="function", schema="pr", name="fmt", arg_types=("text",))
+    ref_two = DdlObjectRef(
+        kind="function", schema="pr", name="fmt", arg_types=("integer",)
+    )
+    window._edit_ddl_checked_out(ref_one, "-- text overload\n")
+    window._edit_ddl_checked_out(ref_two, "-- integer overload\n")
+    # `routine_ddl_paths` orders overloads by argument-type tuple, so the
+    # integer one keeps the unsuffixed name and the text one is `_1`.
+    kept = project_dir / "ddl" / "pr.fmt.sql"
+    dropped = project_dir / "ddl" / "pr.fmt_1.sql"
+    assert kept.exists() and dropped.exists()
+    _answer_confirm(monkeypatch, QMessageBox.StandardButton.Yes)
+
+    window._on_ddl_discard_local_requested(ref_one)
+
+    assert kept.exists()
+    assert not dropped.exists()
+    assert window._ddl_object_is_checked_out(ref_two) is True
+    assert window._ddl_object_is_checked_out(ref_one) is False
+
+
+def test_discarding_something_not_checked_out_reports_instead_of_raising(qtbot, tmp_path, monkeypatch):
+    from pgtp_editor.ui.ddl_object_editor import DdlObjectRef
+
+    window = _window(qtbot, tmp_path)
+    _open_project(window, tmp_path / "proj")
+    ref = DdlObjectRef(kind="function", schema="pr", name="ghost")
+    monkeypatch.setattr(
+        "pgtp_editor.ui.modals.QMessageBox.question",
+        staticmethod(lambda *a, **k: (_ for _ in ()).throw(AssertionError("no modal"))),
+    )
+
+    window._on_ddl_discard_local_requested(ref)
+
+    lines = _project_narration(window)
+    assert any("is not checked out" in line for line in lines)
+
+
+def test_discard_local_projectless_reports_that_there_is_nothing_to_discard(qtbot, tmp_path, monkeypatch):
+    from pgtp_editor.ui.ddl_object_editor import DdlObjectRef
+
+    window = _window(qtbot, tmp_path)
+    monkeypatch.setattr(
+        "pgtp_editor.ui.modals.QMessageBox.question",
+        staticmethod(lambda *a, **k: (_ for _ in ()).throw(AssertionError("no modal"))),
+    )
+
+    window._on_ddl_discard_local_requested(
+        DdlObjectRef(kind="function", schema="pr", name="recalc")
+    )
+
+    lines = _project_narration(window)
+    assert any("no project is open" in line for line in lines)
+
+
+def test_the_explorer_tree_is_wired_to_the_discard_gesture(qtbot, tmp_path, monkeypatch):
+    """End to end from the panel signal, so the entry cannot ship emitting into
+    nothing (BUG-062's half-shipped shape)."""
+    window = _window(qtbot, tmp_path)
+    ref, _project_dir, ddl_path = _checked_out(window, tmp_path)
+    _answer_confirm(monkeypatch, QMessageBox.StandardButton.Yes)
+
+    window.ddl_browser_panel.discard_local_requested.emit(ref)
+
+    assert not ddl_path.exists()
 
 
 def test_an_already_open_projectless_tab_keeps_its_save_as_resolver(qtbot, tmp_path, monkeypatch):
