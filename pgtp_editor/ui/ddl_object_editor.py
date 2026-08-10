@@ -1277,7 +1277,9 @@ class DdlObjectEditorPanel(
         """Execute this buffer against the REAL target database, behind §18.5's
         four hard preconditions, in order:
 
-        1. **Signature-change refusal** -- no override, no consent path.
+        1. **Signature-change warning**, with a confirm-gated override naming
+           both identities (owner ruling 2026-08-10 -- see
+           `_precondition_signature`; this was a hard refusal until then).
         2. **Green sandbox validation**, with a *named* override enumerating
            exactly which tiers could not be checked.
         3. **Transactional apply, no revert snapshot** -- stated in the
@@ -1344,13 +1346,33 @@ class DdlObjectEditorPanel(
         return True
 
     def _precondition_signature(self, text: str) -> bool:
-        """Precondition 1 -- refuse a changed signature, naming the mismatch.
+        """Precondition 1 -- a changed signature WARNS, naming the mismatch,
+        and runs the buffer's SQL on confirm.
 
         `CREATE OR REPLACE` on a changed `(schema, name, argtypes)` CREATES A
-        SECOND FUNCTION and leaves the old one live: the statement succeeds and
-        the confirmation was truthful, so no confirm-gate can catch it. Refused
-        outright, with no override, and the user is pointed at the reviewable
-        deployment-script path (§18.3).
+        SECOND FUNCTION and leaves the old one live: PostgreSQL identifies a
+        routine by its argument types, so a rename or an argument change does
+        not replace anything -- it adds. **That consequence is real and is
+        NOT prevented here**; it is stated in the confirmation and accepted by
+        owner ruling (2026-08-10, BUG-260810193333): *"trust the user that they
+        know what they are doing, run the sql."* After a confirmed apply of a
+        renamed buffer the target holds BOTH objects, and dropping the old one
+        is the user's job (the deployment-script path, Database ▸ Compare
+        Schemas…, is still the reviewable way to do it).
+
+        This reverses the original hard "no override, no consent path" rule.
+        The reason it could not stay is the asymmetry it produced: `Check and
+        commit to sandbox` has no such precondition, so it RAN the renamed
+        buffer while `Apply to quality` reported one Audit line the user never
+        saw -- a deploy gesture that looked like it succeeded and did nothing.
+        A silent wrong result is the one outcome this app does not ship, so the
+        choice was between adding the guard to the sandbox path or turning this
+        one into a consent path; the owner chose the latter.
+
+        Every OTHER branch stays a hard refusal: an unparseable buffer, a
+        failed live-identity read (FQ-009 -- an unreachable database must never
+        become a cleared precondition), and the absent-object case, which
+        clears because creating is what the user asked for.
         """
         buffer_ref = parse_buffer_identity(text, self._ref)
         if buffer_ref is None:
@@ -1390,17 +1412,40 @@ class DdlObjectEditorPanel(
             )
             return True
         if _comparable(buffer_ref) != _comparable(live_ref):
+            mismatch = (
+                f"You checked out {live_ref.qualified}, but the buffer creates "
+                f"{buffer_ref.qualified}."
+            )
+            consequence = (
+                "PostgreSQL identifies a routine by (schema, name, argument "
+                "types), so this does NOT replace the object you checked out: "
+                f"it CREATES A SECOND OBJECT and leaves {live_ref.qualified} "
+                "live. Dropping the old one is up to you (Database ▸ Compare "
+                "Schemas… produces a reviewable script)."
+            )
+            gesture = GESTURE_LABELS[GESTURE_APPLY_TO_QUALITY]
+            if not self._confirm(
+                gesture,
+                f"{mismatch}\n\n{consequence}\n\n{gesture} anyway?",
+            ):
+                self._report(
+                    [
+                        f"{gesture} of {self._ref.qualified} cancelled at the "
+                        "signature mismatch; nothing was applied. "
+                        f"Buffer declares {buffer_ref.qualified}; the database "
+                        f"has {live_ref.qualified}."
+                    ]
+                )
+                return False
             self._report(
                 [
-                    "refused: the buffer's signature differs from the live object. "
-                    f"Buffer declares {buffer_ref.qualified}; the database has "
-                    f"{live_ref.qualified}. PostgreSQL identifies a routine by "
-                    "(schema, name, argument types), so applying this would create "
-                    "a second object and leave the old one live. Use the "
-                    "deployment-script path (Database ▸ Compare Schemas…)."
+                    "proceeding despite identity mismatch: buffer declares "
+                    f"{buffer_ref.qualified}; the database has "
+                    f"{live_ref.qualified}. Both objects will exist after this "
+                    "apply."
                 ]
             )
-            return False
+            return True
         return True
 
     def _precondition_validation(self, database: str) -> bool:
