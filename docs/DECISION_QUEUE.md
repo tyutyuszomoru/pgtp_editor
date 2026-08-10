@@ -56,6 +56,11 @@ feature queue records the *what to build*. `owner-decision` never writes to the 
 - **Unblocks:** FQ-030's store format (a single per-user file in the app config dir, with export/import),
   and the Maintenance-mode snippet editor (edits one store; add export/import affordances). **This is a
   design refinement to FQ-030 that `spec-maintainer` must fold into the spec before the store is built.**
+- **SHIPPED (verified 2026-08-10, sweep).** **FQ-030 is complete (`229dc11`)** and the store was built to
+  this answer: `pgtp_editor/sql/snippet_store.py` with `snippets.json` in the app's own folder, a single
+  per-user store, with explicit export/import. The verification block below (written when the store did
+  not exist) is retained as the record of what was true when the question was put — read it as history,
+  not as a description of the tree.
 - **Raised:** 2026-08-08, by the main session, from FQ-030's remaining scope
 - **Blocks:** yes — FQ-030's snippet store and its Maintenance-mode snippet editor cannot be built until
   this is settled. It is the last substantive piece of FQ-030.
@@ -251,6 +256,18 @@ inside every code editor. Once the chord is hosted normally it becomes **fully r
 becomes wrong. **`manual-maintainer` owes an update** when the fix lands. `owner-decision` does not edit the
 manual.
 
+**SHIPPED (verified 2026-08-10, sweep).** **BUG-046 is RESOLVED (`e8df6c3`)**, exactly as the ruling
+required and with the mechanical risk resolved in the ruling's favour: the offscreen premise was
+**measured false**, the `Ctrl+Shift+B` branch is gone from `CodeEditor.keyPressEvent` (a tombstone NOTE
+stands at `pgtp_editor/ui/code_editor.py:742-752`), and `CodeEditorDialog` owns the chord as its own
+`WindowShortcut` (`code_editor.py:940-944`) with the literal-sequence limitation stated in place. **The
+manual debt this entry predicted is now real and unpaid** — `resources/manual.md:4109-4114` still tells
+the user *"Ctrl+Shift+B is handled in two places"* and that it *"keeps selecting the enclosing bracket
+span inside every code editor"* regardless of rebinding, which is false for PHP tabs, DDL object tabs,
+both DDL Explorers and the Sandbox SQL console (those follow the rebound `Select ▸ Select Enclosing
+Block` now). It remains true **only** for the menu-less **Edit code…** dialog. `manual-maintainer` owes
+this; `owner-decision` does not edit the manual.
+
 **Unblocks:** `bug-triager`'s empirical finding converts straight into the fix — remove the `Ctrl+Shift+B`
 branch from `CodeEditor.keyPressEvent`, give `CodeEditorDialog` its own `QShortcut`, and rework
 `tests/ui/test_select_menu.py:488` (which currently pins the double-delivery) to match whichever driving
@@ -425,9 +442,12 @@ no code change.
 ## DEC-007 — What identity should an ALTER statement have in the `applied` bookkeeping table?
 
 - **Status:** ANSWERED (2026-08-10)
-- **In flight as of this writing.** The implementation is being built in an isolated worktree. Read this
-  entry as **decided-and-being-built**, not decided-and-pending: do not re-open the choice, and do not start
-  a second implementation of it.
+- **SHIPPED (verified 2026-08-10, sweep).** The former *"in flight in an isolated worktree"* note is
+  retired: **BUG-044 is RESOLVED** (`1c28d33`, merged from the worktree; fix commit `ffbc377`) —
+  `CheckRequest.working_set_name` shipped, filled by `_working_set_name_for(ref, buffer_text)`
+  (`db/ddl_check.py:450`, `:527`, `:580`). Nothing in this entry is pending; it is now the record of
+  **why** the alter half of `applied` is an event log, and the "do not silently fix it later" clause
+  below is its live obligation.
 - **Answer:** **Key an ALTER by its statement text.** The alter row's identity is
   `db/sandbox.py::text_sha1(buffer_text)`, carried in a **new `CheckRequest.working_set_name`** that feeds
   **only `working_set_ref`** and **never `checked_name`** — the latter is what gates tier 3, so keeping it
@@ -544,6 +564,8 @@ at `docs/BUGFIX_QUEUE.md:4036-4044`, and `spec-maintainer` restating §18.5 D2's
   otherwise **survives a reset** and keeps answering *"already applied"* for a sandbox that no longer holds
   the change. The rows are not merely inert clutter; sparing bookkeeping on reset is what turns them into a
   live source of wrong answers.
+- **SHIPPED (verified 2026-08-10, sweep).** Landed with DEC-007 in **BUG-044's fix** (`1c28d33` / fix
+  commit `ffbc377`), in the one commit this answer required. Nothing pending.
 - **Supersedes:** DEC-005's withdrawn cleanup concern is subsumed here.
 - **Unblocks (with DEC-007): BUG-044** — the migration/cleanup half of the fix, so it lands in the same
   commit as the new key and leaves no window in which stale rows are still consulted.
@@ -593,6 +615,12 @@ window in which stale rows are still consulted.
   editor widget may hold, §18.5 D1; completion is intrinsically a widget behaviour). The offscreen sentence
   in those comments is a **bad justification for a defensible design** — a *documentation* defect, not a
   design one — so the fix is to correct the justification, not the design.
+- **SHIPPED (verified 2026-08-10, sweep).** The comment rewrite this answer mandated is **BUG-052,
+  RESOLVED (`f533350`)**: the offscreen sentence is gone from `sql_console_panel.py`, `code_editor.py`
+  and `ddl_object_editor.py`, replaced by the product reason (see `sql_console_panel.py:507-513`,
+  `ddl_object_editor.py:909-917`). `RESERVED_SEQUENCES` and the manual's non-rebindable list are
+  unchanged, as directed. **One site was out of BUG-052's scope and is NOT settled by this entry:
+  `Ctrl+Alt+F`, which has a command form — see DEC-012.**
 - **Wider principle:** DEC-004's rule ("the harness must not shape the product") bites only where the
   harness is the *only* reason a design exists. A widget-hosted gesture with no menu command has a standing
   product reason to live in the widget, so it is not in scope — but where a comment *cites the harness* for
@@ -666,7 +694,20 @@ with its product rationale, plus a comment rewrite at the four sites and confirm
 
 ## DEC-010 — Did FQ-026 retire §26's `Apply to Sandbox` / `Apply to Target Database…`, or do they survive as future work?
 
-- **Status:** OPEN
+- **Status:** ANSWERED (2026-08-10)
+- **Answer: retired.** §26 stands as it now reads — `spec-maintainer`'s strike is **confirmed, not
+  reverted**. No code change; no spec change.
+- **Owner's reasoning:** FQ-026's **one home per gesture** rule is recent, deliberate and the owner's
+  own, and *a "future work" entry that contradicts a shipped rule is exactly the rot harmonization exists
+  to remove*. The stated cost was **accepted, not overlooked**: a struck entry is harder to rediscover
+  than a deferred one. It was accepted because if a database-centric route to these operations is
+  genuinely wanted, it should be **re-raised through `feature-triage` stating why a second home earns its
+  cost** — not inherited by default from a pre-FQ-026 spec.
+- **What this entry is FOR, now that it is answered:** it is **the record of why those two §26 entries are
+  gone**. That is precisely what the strike put at risk, and why `spec-maintainer` filed the decision
+  instead of letting the edit pass as bookkeeping. A future reader who finds §26 silent on a Database
+  route to the apply gestures should be sent here, not left to re-derive it.
+- **Unblocks:** nothing was blocked (neither entry was ever built). §26 is confirmed as it stands.
 - **Raised:** 2026-08-10, by `spec-maintainer`, while folding FQ-030 — it made the judgement, struck the
   entries, and filed this rather than letting the strike pass as bookkeeping.
 - **Blocks:** nothing in code — **these two entries were never built**. It decides only what §26 *promises*,
@@ -734,7 +775,11 @@ entries are gone), or a `spec-maintainer` pass to restore them with the FQ-026 c
   platform-scope sentence it lacks today — *panGen is cross-platform* — which is `spec-maintainer`'s to
   write, along with correcting `CONSOLIDATED_SPEC.md:9045-9046`, which currently documents the
   Windows-only layout (`<root>\venv\Scripts\python.exe` if present else `sys.executable`) **as the design**.
-- **Implementation in flight (verified in the tree at the time of writing).**
+- **SHIPPED (verified 2026-08-10, sweep).** **BUG-051 is RESOLVED (`6454908`)** — as one fix, as this
+  answer directed: `DEFAULT_RE_PHPGEN_ROOT` is deleted and `load_re_phpgen_root` returns `None` for every
+  distinct failure. Nothing here is pending; what remains is `spec-maintainer`'s §20 platform-scope
+  sentence, noted below.
+- **Implementation detail as verified when the answer was given.**
   `pgtp_editor/generation/re_runner.py:43-51` now probes both layouts and its docstring names them; the
   root check `validate_re_phpgen_root` (`:63-65`) was already cross-platform (`Path(root) / "src" /
   "re_phpgen"`), so the spec's `src\re_phpgen` spelling at `:9046` is a **prose backslash only**, not a
@@ -806,3 +851,117 @@ to run outside Windows at all.
 `DEFAULT_RE_PHPGEN_ROOT` removal) or two (Windows-only: ship the config fix alone and route the platform
 refusal + §20 scope statement through `spec-maintainer` and `feature-triage`). Either way §20 gains an
 explicit platform-scope sentence it does not have today.
+
+---
+
+## DEC-012 — `Ctrl+Alt+F` has a `QShortcut` **and** an `eventFilter` branch in the DDL object tab: is a context-menu command a "command" for DEC-004's one-host rule?
+
+- **Status:** ANSWERED (2026-08-10)
+- **Answer: option (A) — delete the duplicate.** The `QShortcut`
+  (`pgtp_editor/ui/ddl_object_editor.py:786-790`) becomes the **only keyboard host**; the `eventFilter`
+  `Key_F` branch (`:899-908`) goes. The **context-menu action (`:965`) stays** — it is a separate
+  affordance, not a duplicate host.
+- **Owner's reasoning:** the duplication has **no surviving justification** — both stated reasons are now
+  known false (the offscreen premise was measured false by BUG-046; the `CodeEditorDialog` precedent it
+  cites was deleted by BUG-046) — and the **single-host shape for this exact gesture already ships** in
+  `SqlConsolePanel` with the same scope and the same selection gate. So this is **applying DEC-004 as
+  written, not carving an exception into it**. Option (C) was **rejected as tidier-sounding but empty**:
+  even inside DEC-009's family the rule is one host, so the branch goes either way.
+- **WIDER PRINCIPLE — the durable part, and it settles a case §8 is currently silent on:**
+
+  > **Any gesture with a command form — menu bar *or* context menu — has exactly one keyboard host.**
+
+  DEC-009's carve-out is unchanged and is **narrower than it may read**: it covers gestures with **no
+  command form at all** (`Ctrl+Alt+E`, `Ctrl+Alt+C`, `Ctrl+Alt+J`, `Ctrl+Space`). A context-menu entry is
+  a command. Anyone tempted to extend DEC-009 to a gesture that appears on *any* menu is reading it wider
+  than the owner drew it.
+- **Implementation note, carried forward so it is not lost.**
+  `tests/ui/test_ddl_object_editor.py:577` (`test_shortcut_override_claims_ctrl_alt_f`) drives the filter
+  directly and must be **rewritten to a real key click on a shown widget — not deleted**; deleting it
+  leaves the gesture with **no keyboard coverage at all**. And the key must be sent to
+  **`window.windowHandle()`**: `qtbot.keyClick(widget, …)` bypasses `QShortcutMap` and would prove
+  nothing about whether the chord is bound.
+- **Unblocks:** **BUG-054** (delete `:899-908`, rewrite the dead comment at `:781-785`, rework that test;
+  `RESERVED_SEQUENCES` is untouched — `Ctrl+Alt+F`'s row stays), and a **`spec-maintainer`** pass adding
+  the context-menu case to §8, which today distinguishes only *no menu command* from *menu-bar command*.
+- **Raised:** 2026-08-10, by `bug-triager` as BUG-054 (found while verifying BUG-052's fix at `f533350`;
+  not filed by the user). Filed here rather than fixed in the bug queue because it is a live DEC-004
+  question and the answer may change behaviour.
+- **Blocks:** yes — **BUG-054 (OPEN)** cannot be implemented until this is settled; the entry states both
+  branches of the fix and stops at the decision. It also governs every **future context-menu-only
+  gesture**, which is why the answer is wider than one chord.
+
+**Context — every fact below verified in the tree today (`main` at `6280025`).**
+
+`Ctrl+Alt+F` (Format Selection) is answered in **three** places for the one `DdlObjectEditorPanel`:
+
+1. `pgtp_editor/ui/ddl_object_editor.py:786-790` — `QShortcut(QKeySequence("Ctrl+Alt+F"), self)` at
+   `WidgetWithChildrenShortcut` scope, `activated → format_selection`, and `setEnabled(False)` until a
+   selection exists (`_update_format_shortcut_enabled`, `:987-988`).
+2. `ddl_object_editor.py:899-908` — an `eventFilter` branch on `Key_F` + `Control|Alt` that claims
+   `ShortcutOverride` and calls `format_selection()` on `KeyPress`. **Unconditional** — no selection gate.
+3. `ddl_object_editor.py:965` — `menu.addAction("Format Selection", self.format_selection)` in the
+   editor's context menu, enabled only with a selection.
+
+Host 3 is a separate affordance and is not at issue. **Hosts 1 and 2 are the duplication.**
+
+**Why DEC-009's carve-out does not cover it.** DEC-009 kept `Ctrl+Alt+E` / `Ctrl+Alt+C` / `Ctrl+Alt+J` /
+`Ctrl+Space` widget-hosted *because they have no command form at all* — no second host to disagree with.
+`Ctrl+Alt+F` **does** have a command form (the context-menu action), which puts it inside DEC-004's rule
+that a gesture with a command has exactly one host. `shortcut_registry.py:236-238` already records it as
+*"a context-menu command plus a shortcut … there is no menu-bar action to move"* — i.e. the code already
+knows this one sits on the line.
+
+**The precedent in the same codebase.** `SqlConsolePanel` hosts the *same* gesture with the `QShortcut`
+alone (`pgtp_editor/ui/sql_console_panel.py:538-544`, same scope, same `setEnabled(False)` selection
+gate) and has **no `eventFilter` at all**. So single-hosting this gesture is already shipped and working
+elsewhere; the DDL object tab is the outlier.
+
+**The recorded justification is false.** `ddl_object_editor.py:781-785` still reads *"The redundant
+eventFilter branch below handles the key directly too, mirroring `CodeEditorDialog`'s Ctrl+S/Ctrl+W
+convention — QShortcut activation is not reliable under the offscreen platform in tests."* Both halves
+are dead: BUG-046 measured the offscreen premise false (`code_editor.py:742-752` — shortcuts *do*
+activate offscreen; what fails is key delivery to a widget never `show()`n), and BUG-046 (`e8df6c3`)
+**deleted** the `CodeEditorDialog` double-hosting the comment cites as precedent. `CodeEditorDialog` now
+answers neither `Ctrl+S` nor `Ctrl+W` (`manual.md:3902`).
+
+**One thing that is NOT a decision, checked so the owner does not have to weigh it.** BUG-054 warns that
+the two hosts behave differently without a selection. They do — but the difference is **invisible**:
+`format_selection` (`ddl_object_editor.py:993-1000`) opens with `if not cursor.hasSelection(): return`,
+a silent no-op. It is *not* the §18.5 carve-out 4 refusal path (that is for unformattable SQL). So a
+selection-less `Ctrl+Alt+F` does nothing today via host 2, and would do nothing via host 1 alone. There
+is no user-visible behaviour change hiding in this, and no FQ-023-style "state the reason" question.
+
+**Options.**
+
+- **(A) Single-host it: delete the `eventFilter` `Key_F` branch, leave the `QShortcut`.** Matches
+  `SqlConsolePanel` exactly, applies DEC-004 without an exception, and removes a comment that now cites
+  two deleted premises. *Cost:* the test `tests/ui/test_ddl_object_editor.py:577`
+  (`test_shortcut_override_claims_ctrl_alt_f`) drives `ShortcutOverride` at the filter directly and would
+  have to be rewritten to a shown-widget `QTest.keyClick`, not deleted — otherwise the gesture loses its
+  only keyboard coverage. `test_ctrl_alt_f_triggers_format_selection` (`:342`) already uses a real
+  `QTest.keyClick`, but which of the two hosts is answering it today is unverified, so the implementer
+  must confirm it still passes on the `QShortcut` alone rather than assume it.
+- **(B) Keep both, and write an honest reason.** Zero behavioural risk, no test churn. *Cost:* it makes
+  DEC-004's one-host rule carry a **stated exception**, and that exception needs a real product reason —
+  the two available ones are now known false, and "it works" is not one. It also leaves the object tab
+  and the console hosting the same gesture two different ways, which is the drift the harmonize pass
+  exists to remove.
+- **(C) Rule that a context-menu command is not a "command" for DEC-004's purposes, so `Ctrl+Alt+F`
+  joins DEC-009's widget-only family.** Consistent as a *rule*, and it answers the general case for
+  every future context-menu-only gesture in one stroke. *Cost:* it would license widget-hosting for
+  gestures that visibly *are* commands (they appear on a menu with a label), and it still does not
+  justify **two** hosts — even inside DEC-009's family, the rule is one host, so the console would then
+  be the wrong one and (A)'s deletion happens anyway, just under a different banner.
+
+**Recommendation: (A), with the general rule stated as "any gesture with a command form — menu bar or
+context menu — has exactly one keyboard host."** The duplication has no surviving justification, the
+single-host shape for this exact gesture is already shipped in `SqlConsolePanel`, and the change is one
+branch plus one test rewrite. (C) is the tempting rule because it is tidy, but it buys nothing here:
+even under (C) the second host must go.
+
+**Unblocks:** BUG-054's fix (delete `:899-908`, rewrite `:781-785`, rework
+`test_shortcut_override_claims_ctrl_alt_f` to a real key click, add nothing to `RESERVED_SEQUENCES` —
+`Ctrl+Alt+F`'s row stays either way), and a `spec-maintainer` pass adding the context-menu-command case
+to §8's DEC-009 rule, which today distinguishes only *no menu command* from *menu-bar command* and is
+silent on the middle case.
