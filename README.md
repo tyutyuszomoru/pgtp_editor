@@ -72,7 +72,7 @@ Tests mirror the package layout (`pgtp_editor/<area>/foo.py` → `tests/<area>/t
 
     QT_QPA_PLATFORM=offscreen python -m pytest -q -n 10
 
-6746 passing / 51 skipped as of this writing, spanning the model, diff, schema-learning, validation, SQL analysis, database, generation and UI layers. `docs/TEST_LOG.md` is the committed record of verified runs.
+6789 passing / 51 skipped as of this writing, spanning the model, diff, schema-learning, validation, SQL analysis, database, generation and UI layers. `docs/TEST_LOG.md` is the committed record of verified runs.
 
 **Windows release:** `python optimized_build.py` produces a size-optimized onedir PyInstaller bundle at `dist/PGTPEditor/`; package it with `docs/installer.iss` (Inno Setup).
 
