@@ -432,6 +432,18 @@ class FakeIndex:
     def known_columns(self, table):
         return {"app.invoice": ["amount", "id"], "public.users": ["email"]}.get(table, [])
 
+    def column_entries(self, table, prefix=""):
+        # The real `SchemaIndex.column_entries`: bare name as the KEY, the
+        # richer one-line description as the DISPLAY.
+        rows = {
+            "app.invoice": [
+                ("amount", "amount  numeric(12,2) · NOT NULL"),
+                ("id", "id  integer · PK"),
+            ],
+            "public.users": [("email", "email  text")],
+        }.get(table, [])
+        return [row for row in rows if row[0].lower().startswith(prefix.lower())]
+
 
 def test_schema_index_is_injected_the_same_way_an_object_tab_gets_it(qtbot):
     console, _query = make_console(qtbot)
@@ -490,7 +502,13 @@ def test_ctrl_space_offers_an_aliased_tables_columns(qtbot):
 
     popup = console._completion_popup
     assert popup is not None
-    assert [popup.item(i).text() for i in range(popup.count())] == ["amount", "id"]
+    # FQ-030 slice 0: the KEY is the bare column name -- what lands in the
+    # buffer -- and the DISPLAY carries the type and the column's attributes.
+    assert popup.visible_keys() == ["amount", "id"]
+    assert [popup.item(i).text() for i in range(popup.count())] == [
+        "amount  numeric(12,2) · NOT NULL",
+        "id  integer · PK",
+    ]
 
 
 def test_an_alias_with_no_schema_falls_back_to_the_dotted_path_reading(qtbot):

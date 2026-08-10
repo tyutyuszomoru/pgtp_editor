@@ -818,7 +818,7 @@ class MainWindow(QMainWindow):
         self.results_tab_index = self.bottom_tabs.addTab(
             self.results_panel, RESULTS_TAB_TITLE
         )
-        self.audit_dock = QDockWidget("Activity Log / Results", self)
+        self.audit_dock = QDockWidget("Activity Log / Messages", self)
         self.audit_dock.setObjectName("audit_dock")
         self.audit_dock.setWidget(self.bottom_tabs)
         self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self.audit_dock)
@@ -2012,14 +2012,14 @@ class MainWindow(QMainWindow):
         self.bottom_tabs.setCurrentWidget(self.activity_panel)
 
     def _reveal_results_dock_tab(self) -> None:
-        """View ▸ Results: un-hide the bottom dock and focus its Results tab.
+        """View ▸ Messages: un-hide the bottom dock and focus its Messages tab.
         The user asked for it, so unlike `_reveal_results_tab` this one is
         allowed to pop the dock."""
         self._show_audit_dock()
         self._reveal_results_tab()
 
     def _reveal_results_tab(self) -> None:
-        """Focus the bottom dock's Results tab. Deliberately does NOT un-hide
+        """Focus the bottom dock's Messages tab. Deliberately does NOT un-hide
         the dock: `_show_audit_dock` is the gesture that does that, and a
         background narration line must not pop a dock the user closed."""
         self.bottom_tabs.setCurrentWidget(self.results_panel)
@@ -2988,7 +2988,11 @@ class MainWindow(QMainWindow):
         # FQ-028: ONE bottom dock, two tabs. The toggle keeps the shape its
         # three sibling dock toggles have (both ways, so the title-bar ✕ keeps
         # the checkbox honest) and is renamed to what the dock now holds.
-        audit_action = menu.addAction("Activity Log / Results Panel")
+        # "Messages Panel", following the tab it names (see `results_action`
+        # below). Another menu-path id change, and another
+        # `RENAMED_ID_ALIASES` row: leaving this label pointing at a tab title
+        # that no longer exists is the drift the rename exists to remove.
+        audit_action = menu.addAction("Activity Log / Messages Panel")
         audit_action.setCheckable(True)
         audit_action.setChecked(True)
         audit_action.toggled.connect(self.audit_dock.setVisible)
@@ -3003,7 +3007,12 @@ class MainWindow(QMainWindow):
         activity_action.triggered.connect(self._reveal_activity_tab)
         self._activity_action = activity_action
 
-        results_action = menu.addAction("Results")
+        # Named "Messages", not "Results": the tab is a message log, and the one
+        # thing in this app that IS a results grid -- the Sandbox SQL Console's
+        # `SqlResultsPanel` -- keeps that word. `view.results` -> `view.messages`
+        # is a menu-path id change, so `toolbar_registry.RENAMED_ID_ALIASES`
+        # carries a row for it and a pinned button survives the rename.
+        results_action = menu.addAction("Messages")
         results_action.triggered.connect(self._reveal_results_dock_tab)
         self._results_action = results_action
 
@@ -4963,6 +4972,23 @@ class MainWindow(QMainWindow):
             )
             self.audit_panel.addItem(item)
 
+    def _report_editor_gesture_refusal(self, reason: str) -> None:
+        """An editor gesture refused (FQ-030 / FQ-023): one `[SQL]` Audit line.
+
+        `CodeEditor.expansion_refused` fires when a snippet expansion, an
+        expand-`SELECT`, a JOIN-on-FK or a signature-help lookup cannot run.
+        The widget itself can only show a caret tooltip -- it has no Audit
+        panel to reach, and the status bar has been static since FQ-028 -- so
+        THIS is where the reason gets a durable home: `[SQL]` routes to the
+        Activity Log (`ui/audit_router.py`), the same destination the Format
+        Selection refusal above already lands in, because the two are the same
+        kind of event and splitting them across surfaces would only make the
+        pair harder to find. Never clickable and carrying no line role, for the
+        same reason (§18.5 carve-out 6): the caret is already at the spot."""
+        self.audit_panel.addItem(
+            QListWidgetItem(f"{_SQL_REFUSAL_PREFIX}{reason}")
+        )
+
     # --- §18.5 D3a: the two Audit channels of a Check run -------------------
     def _report_check_lines(self, lines) -> None:
         """The NARRATIVE channel (`DdlObjectEditorPanel.check_reported`).
@@ -5065,6 +5091,9 @@ class MainWindow(QMainWindow):
         # hands back the SAME panel and must not stack a second connection.
         if not getattr(panel, "_pgtp_refusal_wired", False):
             panel.format_refused.connect(self._report_ddl_format_refusal)
+            panel.editor.expansion_refused.connect(
+                self._report_editor_gesture_refusal
+            )
             # FQ-019: the `ran` verb. Guarded by the same single-instance flag,
             # so re-invoking the menu entry cannot stack a second subscription
             # and journal every Run twice.
@@ -5144,6 +5173,7 @@ class MainWindow(QMainWindow):
         `Edit DDL` branches (`_edit_ddl_live` and `_edit_ddl_checked_out`) so
         the two can never drift apart."""
         panel.check_reported.connect(self._report_check_lines)
+        panel.editor.expansion_refused.connect(self._report_editor_gesture_refusal)
         panel.check_findings.connect(
             lambda findings, ref=ref: self._report_check_findings(findings, ref)
         )

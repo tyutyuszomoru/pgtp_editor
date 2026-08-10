@@ -88,6 +88,7 @@ from pgtp_editor.sql.formatter import format_selection as _format_selection_text
 from pgtp_editor.ui.code_editor import CodeEditor
 from pgtp_editor.ui.completion_popup import CompletionPopupHostMixin
 from pgtp_editor.ui.expand_select_seam import expand_select_expansion
+from pgtp_editor.ui.schema_gesture_seam import SchemaGestureHostMixin
 from pgtp_editor.ui.find_replace_bar import FindReplaceBar, install_focus_shortcuts
 
 if TYPE_CHECKING:  # pragma: no cover -- import-cycle/Qt-purity avoidance only
@@ -552,7 +553,9 @@ def report_unverified(report: Any) -> list[str]:
     return unverified
 
 
-class DdlObjectEditorPanel(CompletionPopupHostMixin, QWidget):
+class DdlObjectEditorPanel(
+    SchemaGestureHostMixin, CompletionPopupHostMixin, QWidget
+):
     """One editable DDL object, one tab (§18.5).
 
     Layout mirrors `EditorPanel` exactly: the editor above, its own
@@ -899,6 +902,33 @@ class DdlObjectEditorPanel(CompletionPopupHostMixin, QWidget):
                     event.accept()
                 else:
                     self._show_completions()
+                return True
+            # Ctrl+Alt+J: JOIN-on-FK (FQ-030 slice 3), in the `Ctrl+Alt+`
+            # editor-gesture family Format Selection established and next to
+            # the two expansion gestures `CodeEditor` handles itself. It is
+            # handled HERE rather than there because it needs a `SchemaIndex`,
+            # which no editor widget may hold (§18.5 D1).
+            if (
+                key == Qt.Key.Key_J
+                and event.modifiers()
+                == (Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.AltModifier)
+            ):
+                if event.type() == QEvent.Type.ShortcutOverride:
+                    event.accept()
+                else:
+                    self.join_on_fk()
+                return True
+            # Ctrl+Shift+Space: signature help (FQ-030 slice 3) -- the IDE
+            # convention, and one modifier away from the Ctrl+Space completion
+            # it is the sibling of. Explicit-trigger only, like everything else
+            # on this path: nothing here is connected to `textChanged`.
+            if key == Qt.Key.Key_Space and event.modifiers() == (
+                Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.ShiftModifier
+            ):
+                if event.type() == QEvent.Type.ShortcutOverride:
+                    event.accept()
+                else:
+                    self.show_signature_help()
                 return True
         if obj is self.editor and event.type() == QEvent.Type.ContextMenu:
             menu = self._build_context_menu()
@@ -1554,13 +1584,20 @@ class DdlObjectEditorPanel(CompletionPopupHostMixin, QWidget):
     def _show_column_completions(self, table: str, prefix: str) -> bool:
         """Open the popup on `table`'s columns filtered by `prefix`. Returns
         False (and opens nothing) when the table is unknown or no column
-        matches, so a caller can fall back instead of showing an empty list."""
-        prefix_lower = prefix.lower()
-        names = [c for c in self._schema_index.known_columns(table) if c.lower().startswith(prefix_lower)]
-        if not names:
+        matches, so a caller can fall back instead of showing an empty list.
+
+        `SchemaIndex.column_entries` does the filtering AND the rendering: the
+        popup's *key* stays the bare column name -- exactly what lands in the
+        buffer -- while its *display* adds the type and whatever the column
+        carries (PK, FK target, NOT NULL, default, comment), which is what
+        tells `id integer` from `id text` at the moment of choosing. The
+        display text must never reach the buffer, which is why this is a
+        `(key, display)` pair and not a widened key."""
+        entries = self._schema_index.column_entries(table, prefix)
+        if not entries:
             return False
         popup = self._ensure_completion_popup()
-        popup.set_items([(c, c) for c in names])
+        popup.set_items(entries)
         self._rewire_popup(popup, self._complete_identifier)
         self._popup_at_caret(popup)
         return True
@@ -1568,8 +1605,20 @@ class DdlObjectEditorPanel(CompletionPopupHostMixin, QWidget):
     def _show_dotted_path_completions(self, context) -> None:
         """Schema-qualified table reference (§18.6 row 1): no schema typed
         yet offers schema names; a schema (optionally partial table) offers
-        that schema's table names, schema-qualified, prefix-filtered."""
+        that schema's table names, schema-qualified, prefix-filtered; a schema
+        AND a table (`hr.jobcard.`) offers that table's columns.
+
+        The third segment is the cascade's last step and needs no new lookup
+        idiom: `parts` is already `("hr", "jobcard")` there, and
+        `"hr.jobcard"` is the `column_entries` key. Nothing matching shows
+        nothing, the same fallback convention the other two steps follow --
+        an empty popup would be a worse answer than none."""
         index = self._schema_index
+        if len(context.parts) >= 2:
+            self._show_column_completions(
+                f"{context.parts[0]}.{context.parts[1]}", context.prefix
+            )
+            return
         if not context.parts:
             names = [n for n in index.known_schemas() if n.lower().startswith(context.prefix.lower())]
             if not names:

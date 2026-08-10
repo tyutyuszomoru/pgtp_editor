@@ -271,6 +271,26 @@ def test_format_refusal_is_reported_to_audit_under_sql_prefix_not_clickable(qtbo
     assert window.audit_panel.count() == 0
 
 
+def test_an_expansion_refusal_reaches_the_audit_surface(qtbot, tmp_path):
+    """FQ-030: `CodeEditor` can only show a caret tooltip -- it has no Audit
+    panel to reach and the status bar has been static since FQ-028. The host
+    connects `expansion_refused` and files the reason as a `[SQL]` row, which
+    routes to the Activity Log exactly as the Format Selection refusal does."""
+    window = _window(qtbot, tmp_path)
+    window._on_ddl_edit_requested(_REF, "begin end;")
+    panel = window.center_stage.ddl_object_tab(_REF.key)
+
+    # `notaword` names no snippet, so the expand gesture refuses.
+    panel.editor.expand_snippet_at_caret()
+
+    texts = window.activity_panel.row_texts()
+    matches = [t for t in texts if "[SQL] " in t]
+    assert len(matches) == 1
+    assert "expand" in matches[0] or "snippet" in matches[0]
+    # A refusal is narration, not a navigable finding.
+    assert window.audit_panel.count() == 0
+
+
 def test_ctrl_z_with_ddl_object_tab_focused_touches_only_its_own_buffer(qtbot, tmp_path):
     """End-to-end regression (§18.5 carve-out 1): with the object tab focused
     and a dirty Raw XML document, Ctrl+Z must revert the OBJECT buffer, leave

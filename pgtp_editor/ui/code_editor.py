@@ -274,6 +274,13 @@ class CodeEditor(GutterBookmarkFoldMixin, QPlainTextEdit):
     #: transient tooltip at the caret (the status bar is static since FQ-028).
     expansion_refused = Signal(str)
 
+    #: Emitted for every transient caret hint this editor shows -- a refusal
+    #: (which also emits `expansion_refused`) or an answer, e.g. signature help
+    #: (FQ-030 slice 3). It exists because `QToolTip` shows nothing at all under
+    #: the offscreen platform, so this is the only thing a test can observe;
+    #: hosts are free to ignore it, and all of them do.
+    hint_shown = Signal(str)
+
     def __init__(self, language: str, parent=None):
         super().__init__(parent)
         self._language = language
@@ -583,24 +590,44 @@ class CodeEditor(GutterBookmarkFoldMixin, QPlainTextEdit):
     def report_refusal(self, reason: str) -> None:
         """State why a gesture could not run (FQ-023), never nothing.
 
-        Two channels, because the status bar is static since FQ-028 and this
-        widget has no Audit panel to reach: the `expansion_refused` signal --
-        the "report outward, never reach into MainWindow" precedent
-        `format_refused` set -- and a transient tooltip at the caret, so the
-        reason is visible even in the hosts that connect nothing.
+        Two channels, and both still earn their place now that a host DOES
+        connect the signal (`MainWindow._report_editor_gesture_refusal` files
+        it as an Audit `[SQL]` row, since the status bar is static since
+        FQ-028): the signal is the durable record, readable after the fact and
+        reachable by a test; the caret tooltip is the immediate one, at the
+        place the author is looking, for a refusal that answers a keystroke
+        they just pressed. A dock row alone would make a Ctrl+Alt+E that
+        matched no snippet look like nothing happened; a tooltip alone would
+        vanish before it could be re-read. The hosts that connect nothing (Raw
+        XML, the PHP tabs) still get the tooltip.
         """
-        text = reason or "this gesture cannot run here"
-        self.expansion_refused.emit(text)
+        self.show_hint(reason or "this gesture cannot run here", refusal=True)
+
+    def show_hint(self, text: str, *, refusal: bool = False) -> None:
+        """Show `text` as a transient tooltip at the caret -- the ONE hint path.
+
+        Signature help (FQ-030 slice 3) is a query, not an insertion: it has
+        nothing to put in the buffer and everything to say, so it says it here,
+        through the same channel a refusal uses. `refusal=True` additionally
+        emits `expansion_refused`, which is what makes a REFUSAL (and only a
+        refusal) reach the Audit surface -- an answered question is not a
+        notice and does not belong in a journal.
+        """
+        if not text:
+            return
+        if refusal:
+            self.expansion_refused.emit(text)
         if self.isVisible():
             # A tooltip anchored to a hidden widget has nowhere to appear, and
             # asking for one under the offscreen platform only produces a Qt
-            # warning. The signal above is the channel that always fires, and
+            # warning. `hint_shown` below is the channel that always fires, and
             # is what tests assert on.
             QToolTip.showText(
                 self.viewport().mapToGlobal(self.cursorRect().bottomLeft()),
                 text,
                 self,
             )
+        self.hint_shown.emit(text)
 
     # --- Tab-stop mode ------------------------------------------------------
 

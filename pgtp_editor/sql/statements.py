@@ -25,10 +25,14 @@ Two pure functions, Qt-free and connection-free like the rest of
 - `classify_statement(sql)` -- `"read" | "write" | "ddl" | "unknown"`, the gate
   for §18.5 D4's one confirmation ("this Run changes objects in the sandbox").
 
-**NOT WIRED.** Nothing imports this module yet: `ui/sql_console_panel.py` still
-sends the whole buffer as one execute, and will adopt these functions in a
-later pass. The module is deliberately standalone and side-effect free so that
-adoption is a call-site change only.
+**WIRED, and depended on by three other analyzers.** `ui/sql_console_panel.py`
+splits every Run through `split_statements` and gates §18.5 D4's confirmation on
+`classify_statement`/`CHANGES_OBJECTS`; `sql/from_clause.py` and
+`sql/routine_scope.py` both build on `statement_at` for statement scoping, and
+so -- through them -- do `sql/caret_context.py`, `sql/join_fk.py` and
+`sql/signature_help.py`. The module stays standalone and side-effect free, but
+it is no longer a spare part: a change to a boundary rule here is felt by every
+caret-context gesture, not just by the console's Run.
 
 REUSE, NOT A SECOND SCANNER
 ---------------------------

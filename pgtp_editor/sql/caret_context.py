@@ -79,7 +79,8 @@ LOCAL_REF = "local_ref"  # <local>.<prefix>, name declared by the routine
 class CaretContext:
     """What is "under the caret" for completion purposes.
 
-    ``kind`` is `DOTTED_PATH`, `ROW_VARIABLE` or `ALIAS_REF`.
+    ``kind`` is `DOTTED_PATH`, `ROW_VARIABLE`, `ALIAS_REF` or `LOCAL_REF` --
+    all four are documented below.
 
     For `DOTTED_PATH`: ``parts`` holds the dotted segments typed so far
     *before* the partial word at the caret (``()`` for a bare identifier,

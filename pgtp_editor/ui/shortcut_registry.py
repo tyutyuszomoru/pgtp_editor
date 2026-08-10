@@ -232,6 +232,18 @@ RESERVED_SEQUENCES: dict[str, str] = {
     "Ctrl+L": "Go To XSD — a window-level command with no menu entry (§27)",
     "Ctrl+Alt+F": "Format Selection — a context-menu command, not a menu-bar "
                   "action (§27)",
+    # FQ-030's four editor gestures. Two are handled inside `CodeEditor`'s own
+    # key handling and two inside the SQL panels', so none of them is a QAction
+    # the menu walk could enumerate — exactly the situation Ctrl+Alt+F is in,
+    # and they are recorded here for the same reason: a menu command retargeted
+    # onto one of these keys would fight a widget that already answers to it.
+    "Ctrl+Alt+E": "Expand Snippet, in the SQL editors (FQ-030)",
+    "Ctrl+Alt+C": "Expand SELECT into its column list, in the SQL editors "
+                  "(FQ-030)",
+    "Ctrl+Alt+J": "Write the JOIN a foreign key implies, in the SQL editors "
+                  "(FQ-030)",
+    "Ctrl+Shift+Space": "Signature help for the call at the caret, in the SQL "
+                        "editors (FQ-030)",
     "Ctrl+Return": "Run, on the Sandbox SQL Console tab (§27)",
     "Ctrl+Space": "the completion popup, in three editor contexts (§27)",
     "Ctrl+G": "Go to line, in the caption grid (§27)",

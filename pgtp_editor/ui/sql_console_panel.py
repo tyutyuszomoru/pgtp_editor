@@ -136,6 +136,7 @@ from .async_task import run_async
 from .code_editor import CodeEditor
 from .completion_popup import CompletionPopupHostMixin
 from .expand_select_seam import expand_select_expansion
+from .schema_gesture_seam import SchemaGestureHostMixin
 from .sql_results_panel import RunReport, SqlResultsPanel, StatementRun
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -373,7 +374,7 @@ def default_object_change_confirm(title: str, text: str) -> ObjectChangeConfirma
     )
 
 
-class SqlConsolePanel(CompletionPopupHostMixin, QWidget):
+class SqlConsolePanel(SchemaGestureHostMixin, CompletionPopupHostMixin, QWidget):
     """Editor + results grid for ad-hoc SQL against this project's sandbox.
 
     Constructor seams (all keyword-only; nothing here opens a connection):
@@ -512,6 +513,20 @@ class SqlConsolePanel(CompletionPopupHostMixin, QWidget):
             Qt.ShortcutContext.WidgetWithChildrenShortcut
         )
         self._completion_shortcut.activated.connect(self.show_completions)
+
+        # FQ-030 slice 3's two schema-fed gestures, wired the same way and for
+        # the same reason: both need the injected `SchemaIndex`, which the
+        # editor widget may not hold, so neither can live in `CodeEditor`'s own
+        # key handling next to Ctrl+Alt+E / Ctrl+Alt+C.
+        self._join_shortcut = QShortcut(QKeySequence("Ctrl+Alt+J"), self)
+        self._join_shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+        self._join_shortcut.activated.connect(self.join_on_fk)
+
+        self._signature_shortcut = QShortcut(QKeySequence("Ctrl+Shift+Space"), self)
+        self._signature_shortcut.setContext(
+            Qt.ShortcutContext.WidgetWithChildrenShortcut
+        )
+        self._signature_shortcut.activated.connect(self.show_signature_help)
 
         self._format_shortcut = QShortcut(QKeySequence("Ctrl+Alt+F"), self)
         self._format_shortcut.setContext(
@@ -852,21 +867,27 @@ class SqlConsolePanel(CompletionPopupHostMixin, QWidget):
             return
         if context.kind == ALIAS_REF and context.table_ref is not None:
             table = context.table_ref.qualified
-            prefix = context.prefix.lower()
-            columns = [
-                column
-                for column in (index.known_columns(table) if table else [])
-                if column.lower().startswith(prefix)
-            ]
-            if columns:
+            # `column_entries` filters AND renders: the key stays the bare
+            # column name (what gets inserted), the display adds type, PK, FK
+            # target, NOT NULL, default and comment. The display must never
+            # reach the buffer, which is exactly why it is the pair's tail.
+            entries = index.column_entries(table, context.prefix) if table else []
+            if entries:
                 popup = self._ensure_completion_popup()
-                popup.set_items([(column, column) for column in columns])
+                popup.set_items(entries)
                 self._rewire_popup(popup, self._complete_identifier)
                 self._popup_at_caret(popup)
                 return
             # No schema written (`FROM jobcard j`) or the table is not in the
             # fetched schema -- fall through to the DOTTED_PATH reading below.
-        if not context.parts:
+        if len(context.parts) >= 2:
+            # `hr.jobcard.` -- the cascade's third segment, offering that
+            # table's columns. Nothing matching shows nothing, the same
+            # fallback convention the other two steps follow.
+            items = index.column_entries(
+                f"{context.parts[0]}.{context.parts[1]}", context.prefix
+            )
+        elif not context.parts:
             prefix = context.prefix.lower()
             names = [
                 name

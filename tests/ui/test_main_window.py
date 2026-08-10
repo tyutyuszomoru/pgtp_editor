@@ -30,7 +30,7 @@ def test_audit_dock_on_bottom(qtbot):
     assert window.dockWidgetArea(window.audit_dock) == Qt.DockWidgetArea.BottomDockWidgetArea
     # FQ-028 retired the "Audit / Problems" title: the dock now HOLDS the two
     # surfaces that replaced it, and keeps the objectName so saved layouts do.
-    assert window.audit_dock.windowTitle() == "Activity Log / Results"
+    assert window.audit_dock.windowTitle() == "Activity Log / Messages"
     assert window.audit_dock.objectName() == "audit_dock"
 
 
