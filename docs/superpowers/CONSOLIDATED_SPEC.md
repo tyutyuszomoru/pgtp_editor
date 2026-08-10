@@ -1,8 +1,33 @@
 # PGTP Editor — Consolidated Specification
 
-> **Status:** living document · **Last synthesized:** 2026-08-10 — **TWO OWNER RULINGS AND ELEVEN BUG
-> FIXES FOLDED IN (six ledger rows, §28); `README.md` revisited under the standing README obligation and
-> changed only where this batch moved it.**
+> **Status:** living document · **Last synthesized:** 2026-08-10 — **FQ-033 FOLDED IN AS TARGET DESIGN
+> (four ledger rows, §28), ON TOP OF the earlier same-day batch of two owner rulings and eleven bug fixes
+> (six ledger rows). `README.md` revisited under the standing README obligation: CHECKED, NO CHANGE NEEDED
+> for FQ-033 — the feature is not built, and the README's "What it can do today" may never run ahead of
+> the tree.**
+>
+> **(0) FQ-033 — THE FORMATTER BECOMES CONFIGURABLE, AND TWO OF §18.4's NON-GOALS ARE RETIRED ON PURPOSE.**
+> Folded into **§18.4** as four sub-blocks (parts A–D), **NOT** a new subsection: the *gesture* is one
+> contract with one dispatch rule, and splitting the two engines across two sections would put that rule in
+> neither. **Nothing in it is built yet** — the blocks are the design to implement, and they **supersede
+> `docs/FEATURE_QUEUE.md`'s FQ-033 entry** wherever the two differ (the entry's own errors are listed at the
+> end of §18.4). The two overrides are **explicit owner decisions, each with its own ledger row**, not drift:
+> **(a)** *"the formatter never changes keyword/identifier casing"* is retired **for keywords only** —
+> `UPPER`/`lower`/`as-is`, default `as-is`, applied to `SQL_KEYWORDS` membership and nothing else; identifiers,
+> built-in types/functions and literals are **still never cased**, because the formatter is **offline with no
+> schema knowledge** and **Postgres quoted identifiers are case-sensitive**, making identifier casing a
+> silent-wrong-result risk in a command the user issued to change *layout*. **(b)** *"no rule catalog"* is
+> retired for a **bounded** break/indent rule set, bounded specifically so **idempotence is provable by
+> inspection** — the excluded rules (the `--` break, the `;` break, block-keyword breaks, and above all
+> every rule decided **by layout**, such as the `DECLARE` header) are part of the design, not gaps.
+> **The headline invariant changes to: *the output's non-whitespace tokens are identical to the input's —
+> identical except keyword casing, when casing is enabled.* Idempotence is preserved.** A **separate**
+> Qt-free `xmlfmt/` engine reindents XML by element depth behind the same `Ctrl+Alt+F`, dispatched **by host
+> surface, never by sniffing the text**, on **three** `XmlEditor` surfaces, under three hard rules derived
+> from §2 — chief among them **element text is never touched**, which is what protects the entity-escaped
+> handler bodies §2 stores inside elements. `Settings ▸ Autoformatter settings…` is the anticipated second
+> tenant of the shipped maintenance-only `Settings` menu, persisted in **`QSettings`** — with the reason
+> **DEC-001 does not govern** stated in full, since the next persistence question will ask it.
 > **(1) DEC-012 — §8 gains the case it was silent on, and a false premise dies with it.** The rule, stated
 > once because it governs every editor gesture: **any gesture with a command form — menu bar *or* context
 > menu — has exactly one keyboard host.** **DEC-009's carve-out survives and is NARROWER THAN IT READS** —
@@ -481,7 +506,7 @@
     - [18.1 Routines & triggers browsing (DDL Explorer)](#181-routines--triggers-browsing-ddl-explorer) — *implemented, including object **creation** (FQ-002, 2026-08-06); the object-row context menu collapses to **one `Edit DDL`** (FQ-024, 2026-08-08); **table ALTERing via the new `Alter Table ▸` submenu and the tree's new column leaves (FQ-025, 2026-08-09 — **twelve** wired operations after slices 1 and 2; slice 3's emitters + dialogs ship with no menu entry yet)**; XML cross-refs' pure layer (`db/routine_refs.py`) shipped — its UI consumer is the remaining gap*
     - [18.2 Projects, checkout & state markers](#182-projects-checkout--state-markers) — *implemented (git integration is an explicit TBD placeholder); **checkout is no longer a separate gesture** and the tab key is **`ref.key` always** (FQ-024, 2026-08-08)*
     - [18.3 Deploy workflow & schema diff/migration](#183-deploy-workflow--schema-diffmigration) — *all the pieces ship (diff/migration engine, `db/schema_snapshot.py`, `db/deploy_bundle.py`, `ui/schema_compare_panel.py`); **none are reachable** — no menu entries, no flow driving them*
-    - [18.4 SQL/plpgsql selection formatter](#184-sqlplpgsql-selection-formatter) — *implemented, core + consumer: `Ctrl+Alt+F` / context-menu Format Selection in the DDL object editor, `[SQL]` Audit refusals wired*
+    - [18.4 SQL/plpgsql selection formatter](#184-sqlplpgsql-selection-formatter) — *SQL engine implemented, core + **two** consumers: `Ctrl+Alt+F` Format Selection in the DDL object editor (with a context-menu item) and the Sandbox SQL Console (chord only), `[SQL]` Audit refusals wired. **FQ-033, target design NOT YET BUILT:** configurable keyword casing (keywords only) + a bounded break/indent rule set, a separate XML indentation engine behind the same gesture on the three `XmlEditor` surfaces, and `Settings ▸ Autoformatter settings…`*
     - [18.5 The DDL object editor, apply & sandbox validation](#185-the-ddl-object-editor-apply--sandbox-validation) — *partly implemented: the editable tab, Save/Save As, formatting and completion ship, and as of 2026-08-06 so do **Apply to Sandbox / Apply to Target / "Deploy this edit…"** (`ui/ddl_object_editor.py`, with all four Apply-to-Target preconditions enforced; **the *"Deploy this edit…"* picker and the tab's apply button row are WITHDRAWN by FQ-026, 2026-08-10 — a deliberate withdrawal of a shipped feature, with each of the four operations reduced to one name across menu label, confirmation title, `[Check]` line and manual: `Check and commit to sandbox` · `Check and rollback` · `Check Object in Sandbox` · `Apply to quality`; specified, implementation landing**) and the **sandbox session controller** (`ui/sandbox_controller.py`, the host for `db/sandbox.py`'s previously unreachable `open_sandbox`). **Reachability audited 2026-08-09 (`9b9aef7`): the whole validate/execute lane ships AND is reachable** — `db/apply.py` (`Deployment ▸ Run on quality`, `Apply to Target…`), `db/ddl_check.py`'s D3/**D3a** ladder plus the clickable `[Check]` findings channel (`Parsing ▸ Check Object in Sandbox` / `Check Object Without Applying`, `Deployment ▸ Run on sandbox`), **D4's Sandbox SQL Console** (`db/sandbox_query.py`, `ui/sql_console_panel.py`, `ui/sql_results_panel.py` — reached from `Database ▸ Sandbox SQL Console…` and the tab's `Run in Sandbox Console`), and the MainWindow wiring (`_wire_ddl_object_apply_seams` per open panel, so the button row is **present**). Still **not** built: **`Generate Deployment SQL`** — the rank-1 deliverable, no module and no menu action — plus §18.3's two Database-menu entries and the wiring of `sql/statements.py`. The deliverable remains the generated deployment SQL script. **2026-08-08:** Save's trigger becomes **`Deployment ▸ Save in Project`** (the mechanism, including the *"cancelling Save As from the close prompt aborts the close"* guard, is unchanged), the `Deployment` menu's three named destinations are added **beside** the still-shipping *"Deploy this edit…"* picker (*the 2026-08-08 "superseded / not built" claim is corrected 2026-08-09 — ledger §28*), **carve-out 2 is narrowed to present-and-reporting**, and **`Run on quality` works PROJECTLESS** by owner ruling. The former *"Does not ship — the validate/execute lane"* block is **deleted** and replaced by a per-module **entry-gesture table** (2026-08-09 audit). **2026-08-09 (BUG-040):** the sandbox session **auto-connects on project bind** (reversing FQ-023's lazy-open rejection), the manual `Open`/`Close Sandbox Session` menu items are **deleted**, and the two Check gestures now live on **`Parsing`** (BUG-039). **2026-08-09 (BUG-038):** D3a's tier-3
       `relid` binding is extended from the `CREATE TRIGGER` tab to the **trigger FUNCTION tab** — a gap
       closed, not a decision reversed; the **unattached** trigger function remains an open question (§29).*
@@ -769,7 +794,21 @@ pgtp_editor/
 │   │                  # returns defaults + an error and the lane goes read-only. LOCATION lives in
 │   │                  # ui/snippet_controller.py, deliberately — this half stays Qt-free
 │   ├── signature_help.py # find_call_site / signature_help / routine_signature — §18.9
-│   └── formatter.py   # format_selection(text, *, indent_unit="    ") → FormatResult; _Reindenter frame walk
+│   ├── formatter.py   # format_selection(text, *, indent_unit="    ") → FormatResult; _Reindenter frame walk.
+│   │                  # FQ-033 (NOT YET BUILT) replaces the keyword with `config: FormatConfig` — §18.4
+│   └── format_config.py # FQ-033, NOT YET BUILT: FormatConfig / ClauseRule / KeywordCase +
+│                      # DEFAULT_FORMAT_CONFIG. Qt-free; SPARSE clause_rules; unknown keys clamped to
+│                      # defaults, never reported (nothing can be lost) — §18.4
+├── xmlfmt/            # FQ-033 part C, NOT YET BUILT: the XML indentation formatter — a SECOND engine
+│   │                  # behind the same Format-Selection gesture. Qt-free; mirror tests/xmlfmt/.
+│   │                  # Deliberately NOT ui/xml_structure.py::scan (phantom tags inside comments/CDATA)
+│   │                  # and deliberately NOT lxml (raises on the fragment case) — §18.4
+│   ├── scanner.py     # opacity-aware lexer: tag_open/tag_close/tag_self_closing/text/comment/cdata/pi/
+│   │                  # doctype, verbatim text + spans, NEVER raises
+│   ├── formatter.py   # format_xml_selection(document, start, end, *, config) → FormatResult (the sql/
+│   │                  # FormatResult and Issue, imported — one refusal shape per GESTURE, not per dialect)
+│   └── config.py      # XmlFormatConfig{indent_unit="  "} — TWO spaces, because §2 fixes the on-disk
+│                      # .pgtp indentation unit at two
 ├── lint/              # §22 PHP linting — SHIPS (commit 90c6806), consumed by ui/php_file_tab.py (§21);
 │   │                  # Qt-free except config.py (QStandardPaths, the generation/config.py precedent)
 │   ├── findings.py    # pure: linter stdout/stderr/exit code → LintOutcome/LintStatus + ready-to-append
@@ -997,13 +1036,16 @@ Bottom is the **findings/journal dock area** — since FQ-028 (2026-08-10) a **t
 single `Audit / Problems` `QListWidget` this spec carried from the beginning (ledger §28; the full
 contract is *The three audit surfaces* below).
 
-**The nine Audit prefixes still exist and are still reserved against one another — but a prefix now
+**The Audit prefixes still exist and are still reserved against one another — but a prefix now
 names a DESTINATION, not a share of one panel.** No feature may quietly annex another's prefix, and no
-fourth SQL-ish prefix may be added:
+fourth SQL-ish prefix may be added. *(FQ-028 wrote a nine-prefix table; `[Sandbox]` made ten, and FQ-033's
+`[XML]` makes **eleven** when it lands. The count is not the rule — the **anti-annexation** rule is, which
+is why this sentence no longer quotes a number.)*
 
 | Prefix | Owner | Reports | State |
 |---|---|---|---|
-| `[SQL]` | §18.4 formatter, hosted by §18.5's tab | **Format Selection refusals** — layout only, no DB involved | **wired** (non-clickable, no line role) |
+| `[SQL]` | §18.4's **SQL** formatter, hosted by §18.5's DDL object tab and §18.5 D4's console | **Format Selection refusals** — layout only, no DB involved | **wired** (non-clickable, no line role) |
+| `[XML]` | §18.4's **XML** indentation formatter (FQ-033) | **Format Selection refusals on an XML surface** — a split/unterminated construct, or mis-nesting *inside* the selection | **NOT YET BUILT** (target design, §18.4). Same treatment as `[SQL]`: Activity Log, non-clickable, no line role. **A new prefix rather than a reuse:** an `[SQL]` row saying *"this XML selection is mis-nested"* is a lie to the user, and §16 owns `[Validate]` — annexation is forbidden. The *no fourth SQL-ish prefix* rule below does not bite, an XML reindenter not being SQL-ish (the reasoning `[Bookmark]` already carries) |
 | `[Check]` | §18.5 sandbox validation ladder | **SQL/plpgsql validation findings** (`db/ddl_check.py`) on **two channels** — narrative lines (per-tier outcome, caveats, apply/cancel notices; non-clickable) and **findings** (`[Check] SEVERITY line N: message`, line on `UserRole`, the object's `DdlObjectRef.key` on `UserRole+1`, click-to-navigate). A finding whose line could not be mapped (§18.5 D3's mandatory `None`) is rendered **without** a line and **without** roles — never a guessed line | **wired, both channels** (verified 2026-08-09): `DdlObjectEditorPanel.check_reported` carries the narrative channel and `check_findings` the clickable one, rendered by `MainWindow._report_check_findings` with the roles and the inert unmapped-line case (§18.5 D3a) |
 | `[Bookmark]` | §8's `List All Bookmarks` (FQ-014, 2026-08-07) | **The active editor's bookmarks** as clickable rows — `[Bookmark] line N: <preview>`, **1-based** line on `UserRole`, the active editor's existing click-target discriminator on `UserRole+1`, **and — for a PHP file tab only — that tab's `CenterStage` key on `UserRole+2`**, because the router's `"php"` branch reads the tab key from that slot and a row without it is inert (see §8). Plus a roles-less trailing count row and a roles-less empty-case row; an editor with **no** router branch at all (the read-only DDL Explorer buffer, an FQ-006 draft tab) gets **roles-less, inert** rows. Not SQL-ish, so the no-fourth-SQL-prefix rule below does not block it. **A module constant** (`_BOOKMARK_PREFIX` in `ui/find_controller.py`) beside `_FIND_RESULT_PREFIX`/`_VALIDATION_PREFIX` — never the literal typed inline | **wired** (`FindValidateController.list_all_bookmarks`, 2026-08-07) |
 | `[Lint]` | §22 | **PHP** linting only (`php -l` / `phpcs`) | **fully wired** (re-audited 2026-08-10): `pgtp_editor/lint/` and the tab-side emission ship (`PhpFileTab.lint_reported` carries already-`[Lint]`-prefixed `LintAuditLine`s), the **three Tools-menu entries** exist, and the append host is **`ui/lint_controller.py::LintController`**, which subscribes each opened PHP tab. *(Supersedes "the MainWindow append host is the remaining gap".)* Rows carry the PHP tab key on `UserRole+2` — the contract `[Bookmark]`'s PHP branch reuses |
@@ -1103,6 +1145,7 @@ summary, is the contract:
 | `[Schema]` **learning** chatter | Activity Log | *"Learned N facts"*, *"NEW ELEMENT"* — narration, not a finding |
 | `[PHP]` generation stdout | Activity Log | narration |
 | `[SQL]` format-selection refusals | Activity Log | one-off refusals |
+| `[XML]` XML-format-selection refusals | Activity Log | one-off refusals — **FQ-033, not yet built** (§18.4). An **eleventh** prefix, and the first added since `[Sandbox]`; a read-only XML buffer produces **no row at all** and reuses `XmlEditor.read_only_edit_attempted` instead |
 | `[Project]` DDL-project status/errors | Activity Log | status/narration |
 | `[Sandbox]` sandbox-operation outcomes | **Messages tab** | **a TENTH prefix FQ-028's nine-row table did not know about** (`MainWindow._SANDBOX_PREFIX = "[Sandbox] "`), routed to **Results** and **not** to the Activity Log that its narration shape would suggest. *(Corrected 2026-08-10 against the shipped `audit_router.DESTINATIONS`, which maps `SANDBOX_PREFIX → TO_RESULTS`; the spec had asserted Activity Log before the implementation made the call.)* **The reason is a real timing hazard, not taste:** a `[Sandbox]` line is emitted **during a project transition** — BUG-040 auto-opens the session inside `set_active_project` — and FQ-019's journal **replaces its display buffer** on exactly that transition, so a line filed there is wiped off screen by the very open it describes. Results accumulates and survives the transition. It is also, in substance, the outcome of an operation the user asked for |
 
@@ -2242,7 +2285,12 @@ that *work*; this is the first thing the mode **adds**, and it is admissible for
 hides the other four: it is administrative work on the app's own state, of no use while editing a project.
 **Nothing on a maintenance-only menu may carry a keyboard shortcut** — DEC-006 established that hiding a
 `QMenu` leaves its children's chords live, so a chord here would reach a Maintenance-only dialog from
-outside the mode. See §18.9 for the entry itself and for the pinnability trade.
+outside the mode. See §18.9 for `Edit Snippets…` and the pinnability trade, and §18.4 for the menu's second
+tenant, **`Autoformatter settings…`** (FQ-033, target design), which inherits the same rule. **That rule
+constrains what the app SHIPS, not what a user may choose:** `Customize Shortcuts…` enumerates from the
+same `collect_menu_commands()` walk that makes these entries pinnable, so a user *can* assign a chord to
+one — the same accepted trade, under DEC-006's own reasoning that the mode is a guardrail, not an
+enforcement boundary (§18.4 part D, rule 3).
 
 <!-- CONFLICT: FQ-027's owner answer Q1 words the File trim as "exactly New Session + Save + Save All —
 nothing else". Neither `Save` nor `Save All` names a File-menu action that exists: FQ-020 (2026-08-08)
@@ -2658,18 +2706,29 @@ first fought out over `Ctrl+Shift+B`. It governs every editor gesture in the app
 - **A context-menu entry IS a command.** It has a label, it appears on a menu, a user reads it as an
   offered operation. Anyone extending DEC-009 to a gesture that appears on *any* menu is reading the
   carve-out wider than it was drawn. `Ctrl+Alt+F` **Format Selection** is precisely that case: the DDL
-  object tab and the Sandbox SQL Console both offer it as a context-menu action, so it is inside the
-  one-host rule and **not** in DEC-009's family. `ui/shortcut_registry.py` had already half-noticed —
+  object tab offers it as a context-menu action, so it is inside the one-host rule and **not** in DEC-009's
+  family. *(Corrected 2026-08-10: this bullet said the console offers it too. It does not —
+  `ui/sql_console_panel.py` builds **no context menu at all** — and that is a **code defect, BUG-063,
+  OPEN**, not a reason to reclassify the chord: the gesture's command form on the object tab is what puts
+  it inside the rule, and FQ-033 widens the command form to the three `XmlEditor` surfaces. **Restore this
+  bullet to "both" when BUG-063 lands.** §18.4's status banner, ledger §28.)* **The console's own comment
+  at `sql_console_panel.py:507-517` claims the chord is in DEC-009's family *"which has no menu command at
+  all"* — false, and carried by BUG-063: a defensible rule cited for the wrong gesture is how a carve-out
+  gets read wider than it was drawn. `ui/shortcut_registry.py` had already half-noticed —
   its `RESERVED_SEQUENCES` reason for `Ctrl+Alt+F` reads *"a context-menu command plus a shortcut … there
   is no menu-bar action to move"*.
 - **The single host for `Ctrl+Alt+F` is the `QShortcut`** — `WidgetWithChildrenShortcut` scope,
   `setEnabled(False)` until a selection exists — which is the shape **`SqlConsolePanel` already ships**
   (`ui/sql_console_panel.py`, no `eventFilter` at all). The DDL object tab was the outlier and is being
-  brought into line by **BUG-054**; at the time of writing its `QShortcut` construction site already
-  carries the rule verbatim while the second `eventFilter` `Key_F` branch is still present, so treat the
-  rule as design and the tab's second host as landing. **No `RESERVED_SEQUENCES` change is owed either
-  way** — `Ctrl+Alt+F`'s row stays, because a context-menu command is still not a menu-bar action the
-  dialog could move.
+  brought into line by **BUG-054, which is DONE** — verified 2026-08-10: the `eventFilter`'s second
+  `Key_F` branch is gone and a tombstone comment stands where it was (*"there is deliberately NO
+  Ctrl+Alt+F branch here"*), so the `QShortcut` is now the single host on both panels. *(This bullet
+  previously read "is being brought into line … treat the tab's second host as landing"; a dead assertion
+  over shipped work, retired.)* **No `RESERVED_SEQUENCES` change is owed either way** — `Ctrl+Alt+F`'s row
+  stays, because a context-menu command is still not a menu-bar action the dialog could move. **FQ-033
+  does not disturb this rule:** the three `XmlEditor` surfaces get the same one-host shape (a
+  `WidgetWithChildrenShortcut` `QShortcut` plus a context-menu entry), and the chord means *"format this
+  selection"* on every host — one gesture, two engines chosen by surface (§18.4).
 - **What deleting the second host does NOT change:** `format_selection` opens with
   `if not cursor.hasSelection(): return`, so a selection-less `Ctrl+Alt+F` was already a silent no-op —
   the second host's missing selection gate had **no user-visible effect**. It is not §18.5 carve-out 4's
@@ -4090,7 +4149,7 @@ golden "freshly-added table" oracle; defaults are corpus-derived and **not yet f
 > | 18.1 Browsing (DDL Explorer) | **Implemented**, including FQ-002 object *creation*. XML cross-refs: the pure layer (`db/routine_refs.py`) shipped; its UI consumer is the remaining gap. |
 > | 18.2 Projects, checkout, markers | **Implemented** (git remains an explicit TBD placeholder). |
 > | 18.3 Deploy workflow & schema diff | **Pieces implemented, flow absent.** `db/schema_diff.py`, `db/migration_gen.py`, `db/schema_snapshot.py`, `db/deploy_bundle.py`, `ui/schema_compare_panel.py` all exist and are tested; **nothing reaches any of them** — no menu entries, no caller. |
-> | 18.4 Selection formatter | **Implemented, core + consumer** (`Ctrl+Alt+F` / context menu in the §18.5 tab, `[SQL]` Audit refusals wired). |
+> | 18.4 Selection formatter | **SQL engine implemented, core + TWO consumers** (`Ctrl+Alt+F` in the §18.5 tab — with a context-menu item — and in §18.5 D4's console; `[SQL]` Audit refusals wired). **FQ-033's configurable ruleset, keyword casing, XML engine and settings dialog: target design, NOT YET BUILT.** |
 > | 18.5 DDL object editor / apply / sandbox | **Partly implemented.** The editable tab ships, and so do the tab's three destination gestures — since FQ-020 (2026-08-08) surfaced as **`Deployment ▸ Save in Project` / `Run on sandbox` / `Run on quality`** **beside** the *"Deploy this edit…"* picker, which also still ships on three surfaces (`ui/ddl_object_editor.py`, all four Apply-to-Target preconditions enforced), the complete Qt-free sandbox layer (`db/sandbox.py`) and its lifecycle host (`ui/sandbox_controller.py`). **The validate/execute lane ships and is reachable too** (audited 2026-08-09): `db/apply.py`, `db/ddl_check.py`'s ladder **with** the clickable `[Check]` findings channel (D3a), `db/sandbox_query.py` + the D4 SQL console, and the MainWindow wiring (`_wire_ddl_object_apply_seams`). Still absent: the **deployment-script generation** (`Generate Deployment SQL`), and the unwired `sql/statements.py`. |
 > | 18.6 Ctrl+Space completion | **Implemented.** |
 > | 18.7 Two DDL Explorer instances | **Not implemented yet, but being implemented** (FQ-022, 2026-08-08) — still exactly one `BrowserPanel`, one dock tab, one connection today; the design's three open points (menu wording, the session question, reset behaviour) are now settled/recommended in §18.7. |
@@ -4133,9 +4192,13 @@ golden "freshly-added table" oracle; defaults are corpus-derived and **not yet f
 > **§18.4's SQL/plpgsql selection formatter is implemented end to end — core *and* consumer.** The Qt-free
 > package `pgtp_editor/sql/` (`__init__.py`/`keywords.py`/`issues.py`/`tokenizer.py`/`formatter.py`,
 > plus `caret_context.py` for §18.6) and its mirror `tests/sql/` are green, and `format_selection` **is
-> called**: `ui/ddl_object_editor.py::DdlObjectEditorPanel.format_selection`, bound to **`Ctrl+Alt+F`**
-> and a context-menu **"Format Selection"** item (both gated on a selection), with refusals emitted to the
-> Audit panel under the **`[SQL]`** prefix (`MainWindow`'s `[SQL]` handler).
+> called from **two** panels: `ui/ddl_object_editor.py::DdlObjectEditorPanel.format_selection` (bound to
+> **`Ctrl+Alt+F`** *and* a context-menu **"Format Selection"** item) and
+> `ui/sql_console_panel.py::SqlConsolePanel.format_selection` (the chord only — that panel builds no context
+> menu), both gated on a selection, with refusals emitted to the Audit panel under the **`[SQL]`** prefix
+> (`MainWindow`'s `[SQL]` handler). **FQ-033's four parts — configurable keyword casing, a bounded
+> break/indent rule set, a separate `xmlfmt/` XML engine behind the same gesture, and
+> `Settings ▸ Autoformatter settings…` — are TARGET DESIGN and NOT YET BUILT** (§18.4, ledger §28).
 >
 > **§18.5 is partly implemented.** The editable tab exists and works —
 > `ui/ddl_object_editor.py::DdlObjectEditorPanel`/`DdlObjectRef`, opened by key through
@@ -5909,43 +5972,85 @@ whose working copies have pending changes:
 
 ### 18.4 SQL/plpgsql selection formatter
 
-> **Status: implemented end to end — core (2026-08-01) *and* consumer.** The Qt-free package
-> `pgtp_editor/sql/` and its mirror `tests/sql/` ship, and `format_selection` **is called**: the host is
-> the **DDL object editor** (`ui/ddl_object_editor.py::DdlObjectEditorPanel`, §18.5), where
-> `DdlObjectEditorPanel.format_selection` is bound to **`Ctrl+Alt+F`** (a panel-local `QShortcut`) and to
-> a context-menu **"Format Selection"** item, both enabled only with a selection (§26/§27 carry the
-> binding). Refusals are no longer a contract but **wiring**: the panel emits them and `MainWindow`
+> **Status: the SQL engine is implemented end to end — core (2026-08-01) *and* consumer. FQ-033's
+> configurable ruleset, keyword casing, XML engine and settings dialog are TARGET DESIGN, specified below
+> and NOT YET BUILT (2026-08-10).** Read the three sub-blocks at the end of this subsection as the design
+> to implement; everything before them describes shipped behaviour.
+>
+> **What ships.** The Qt-free package `pgtp_editor/sql/` and its mirror `tests/sql/` ship, and
+> `format_selection` **is called from TWO hosts, not one**: the **DDL object editor**
+> (`ui/ddl_object_editor.py::DdlObjectEditorPanel`, §18.5) and the **Sandbox SQL Console**
+> (`ui/sql_console_panel.py::SqlConsolePanel`, §18.5 D4). Each binds **`Ctrl+Alt+F`** to its own
+> panel-local `QShortcut`, `setEnabled(False)` until a selection exists. *(This banner previously named
+> the DDL object editor as **the** host; the console's host has shipped since D4 and §18.5 D4 already said
+> so — a stale singular corrected here, ledger §28.)*
+>
+> **The context-menu "Format Selection" item exists on the DDL object tab ONLY — BUG-063, OPEN.**
+> `ui/sql_console_panel.py` builds **no context menu at all** (no `addAction`, no `contextMenuEvent`, no
+> `createStandardContextMenu` — and no `eventFilter` either, so a fix adds that override rather than
+> extending one), so in the console the chord is the gesture's only form and right-click yields Qt's stock
+> `QPlainTextEdit` menu. **§26 and §27 both assert a context-menu item on *both* surfaces; that claim is
+> false against the tree, and it is filed as BUG-063 rather than rewritten away** — DEC-012's ruling that
+> *a context-menu entry IS a command* is the whole basis on which `Ctrl+Alt+F` sits inside the
+> one-keyboard-host rule, so the console lacking the command form is a defect in the code, not a spec
+> over-claim to delete. **The code already disagrees with itself in the direction of the fix:**
+> `ui/shortcut_registry.py:236` ships the reason text *"a context-menu command plus a shortcut inside the
+> Sandbox SQL Console and the DDL object tabs"*, so `RESERVED_SEQUENCES` is wrong today and becomes correct
+> once the item is added — no edit owed there. **Two in-code comments must move with the fix** (both in
+> BUG-063): `sql_console_panel.py:507-517` justifies the chord as DEC-009's family *"which has no menu
+> command at all"*, false for `Ctrl+Alt+F`; and `ddl_object_editor.py:800-804` cites the console as the
+> precedent for *"the QShortcut alone"*. **The load-bearing trap:** the new QAction must **not** carry
+> `setShortcut` — the `QShortcut` at `:538` stays the sole keyboard host, or the fix reintroduces the
+> DEC-004/BUG-046 double-hosting defect it exists to honour. **When BUG-063 lands, this passage, §26's
+> parenthetical, §27's `Ctrl+Alt+F` row and §8's DEC-012 bullet all go stale in the OPPOSITE direction and
+> must be restored to "both hosts"** — re-dispatch `spec-maintainer` post-commit.
+>
+> **BUG-054 is DONE**, not in progress: `ui/ddl_object_editor.py`
+> carries the tombstone comment *"there is deliberately NO Ctrl+Alt+F branch here"* in its `eventFilter`,
+> so the `QShortcut` is now the single host on both panels.
+>
+> Refusals are no longer a contract but **wiring**: the panel emits them and `MainWindow`
 > renders them in the Audit panel under the **`[SQL]`** prefix — non-clickable, no line role — distinct
 > from §18.5's `[Check]` validation findings (**also wired**, both channels — 2026-08-09) and §22's `[Lint]`; the three-way
-> reservation is in §7. Unchanged: there is **no auto-format mode**, **no "Lint Selection" action**, and
-> **no rule catalog** beyond the tokenize/balance floor.
+> reservation is in §7. Unchanged and **not** superseded by FQ-033: there is **no auto-format mode** and
+> **no "Lint Selection" action**. *(The third member of that old triad — **"no rule catalog"** — is
+> **RETIRED by FQ-033**, deliberately and by owner decision; see **The configurable formatter** below and
+> ledger §28.)*
 
 **Problem framing.** Once §18.5's DDL object editor makes plpgsql function/trigger bodies hand-editable,
-"uniformity" for that editing means **consistent indentation and line breaks only** — not keyword
-casing, not identifier casing, not comma placement/style, not literal values. This subsection defines
-the formatter that enforces that narrow notion of uniformity.
+"uniformity" for that editing means **consistent indentation and line breaks** — and, since FQ-033,
+**optionally keyword casing**. It still never means identifier casing, comma placement/style, or literal
+values. *(This paragraph read "indentation and line breaks only — not keyword casing" until FQ-033
+retired that non-goal for keywords; identifiers, built-in types/functions and literals are still never
+cased, for the reason recorded below. Ledger §28.)*
 
 **Trigger & scope — explicit-only, no auto-mode, full stop:**
 
-- Invoked **only** by an explicit user action on the current text **selection**: **`Ctrl+Alt+F`** or the
-  **"Format Selection"** context-menu item in §18.5's DDL object editor tab, both enabled only when a
-  selection exists (§18.5 owns that wiring; §26/§27 record the binding). There is **no** auto-format-on-
+- Invoked **only** by an explicit user action on the current text **selection**: **`Ctrl+Alt+F`** on any
+  host surface, or the **"Format Selection"** context-menu item where that surface has one (today §18.5's
+  DDL object editor tab), enabled only when a selection exists (§18.5 owns that wiring; §26/§27 record the
+  binding). **Which engine answers the chord is decided by the host surface, never by sniffing the text** —
+  see *The XML indentation formatter* below. There is **no** auto-format-on-
   edit and **no** format-on-save, and — unlike Auto Parse XML (§9, off-by-default but togglable) — this
   formatter has **no auto-mode at all**: the user explicitly rejected an auto-mode as "intrusive and
   counterintuitive" during design. Do not add one without a fresh design decision superseding this one.
 - Operates on **arbitrary selections** — a complete statement, a bare fragment (`where a = 1`,
   `order by a, b`, `, b, c`, even `;` alone all format), or a chunk of plpgsql control-flow (e.g. a
   `BEGIN...END` block) — not necessarily a whole function or trigger body.
-- There is **no "Lint Selection" action** and **no rule catalog** beyond the tokenize/balance floor
-  described below (no keyword-casing rule, no comma-style rule, nothing semantic). If future prose
-  anywhere implies otherwise, that implication is wrong per this design.
+- There is **no "Lint Selection" action** and **nothing semantic** — no rule may consult a schema, a
+  database or the meaning of an identifier. *(Superseded in part by FQ-033: this bullet also said **"no
+  rule catalog"** and **"no keyword-casing rule"**. Both are retired by owner decision — a **bounded**
+  break/indent ruleset and a keyword-casing option now exist, specified below. The comma-style non-rule
+  and the semantic non-goal stand unchanged. Ledger §28.)*
 
 **Core algorithm — hand-built tokenizer + nesting-depth reindenter, not an adopted library:**
 
 Covers both plain-SQL clause structure (`SELECT`/`FROM`/`WHERE`/`JOIN`, paren depth) and plpgsql block
 structure (`BEGIN`/`END`, `IF`/`ELSIF`/`END IF`, `LOOP`/`END LOOP`, `CASE`/`WHEN`/`END`). Reindents
-**whitespace and line breaks only** — keyword casing, identifier casing, comma placement/style, and
-literal values are never touched.
+**whitespace and line breaks**, and — when FQ-033's casing option is enabled — rewrites **the case of
+keyword tokens and nothing else**. Identifier casing, comma placement/style and literal values are never
+touched. *(This paragraph said "whitespace and line breaks only — keyword casing … never touched" before
+FQ-033; ledger §28.)*
 
 **Module shape (the formatter's five modules — the `sql/` package as a whole has since grown beyond
 them: `caret_context.py` for §18.6, `statements.py` for §18.5 D4, see §5's tree; Qt-free, no DB/network
@@ -5959,7 +6064,7 @@ with `__init__.py` as the façade.
 
 | Symbol | Shape |
 |---|---|
-| `format_selection` | `format_selection(text: str, *, indent_unit: str = DEFAULT_INDENT_UNIT) -> FormatResult` (`DEFAULT_INDENT_UNIT = "    "`, four spaces) |
+| `format_selection` | **Shipped today:** `format_selection(text: str, *, indent_unit: str = DEFAULT_INDENT_UNIT) -> FormatResult` (`DEFAULT_INDENT_UNIT = "    "`, four spaces). **FQ-033 replaces the keyword with a config object:** `format_selection(text: str, *, config: FormatConfig = DEFAULT_FORMAT_CONFIG) -> FormatResult`, and **`indent_unit=` is REMOVED rather than kept alongside** — `FormatConfig.indent_unit` carries it, and two ways to set one value is the second-source-of-truth defect this document refuses everywhere else. No caller in `pgtp_editor/` passes `indent_unit=` today (both hosts call `format_selection(selected)`), so the migration is confined to `tests/sql/`, which must move in the same commit |
 | `FormatResult` | `@dataclass FormatResult{ok: bool, text: str, issues: list[Issue]}` — on refusal `ok=False` and `text` is the input **verbatim**, so even a caller that ignores `ok` cannot corrupt the selection |
 | `Issue` | `@dataclass(frozen=True) Issue{message, start, end, start_line, start_col, end_line, end_col, fatal=True}` + property `line == start_line` |
 | `tokenize` | `tokenize(text: str) -> list[Token]` — public on `pgtp_editor/sql/tokenizer.py` (lossless, verbatim, **never raises**) |
@@ -5967,7 +6072,11 @@ with `__init__.py` as the façade.
 
 `sql/__init__.py`'s `__all__` is exactly `{"format_selection", "FormatResult", "Issue",
 "SQL_KEYWORDS"}` and that surface is **test-pinned**; `tokenize`/`Token` are reached through
-`pgtp_editor.sql.tokenizer` rather than the façade.
+`pgtp_editor.sql.tokenizer` rather than the façade. **FQ-033 widens it to six** —
+`FormatConfig` and `DEFAULT_FORMAT_CONFIG` join it, because the settings dialog and both hosts construct
+a config and the façade is where they should read it from; `tests/sql/test_package_purity.py`'s pin moves
+in the same commit. Nothing else is added: the per-rule record types stay private to
+`sql/format_config.py`.
 
 `Issue` **mirrors and extends** `schema_learning/xsd_verify.py`'s `Issue{line, message, fatal}` (§11):
 same `message`/`fatal` framing, plus a precise span — 0-based `start`/`end` character offsets into the
@@ -6055,11 +6164,21 @@ each token carrying how many newlines preceded it), so deep nesting cannot blow 
   the **dominant EOL** (`\r\n` / `\n` / lone `\r`, ties → `\n`) is preserved; a trailing newline is
   preserved (and its absence too). **Empty / whitespace-only input is returned untouched with `ok=True`**
   (nothing to format, nothing to refuse).
-- **Guaranteed invariants (test-pinned over a realistic corpus, an adversarial set and seeded fuzz):**
-  the output's non-whitespace token texts equal the input's, in order, and only whitespace differs
-  (`"".join(out.split()) == "".join(in.split())`); keyword casing, identifier casing, comma placement and
-  literal values are never touched; formatting is **deterministic and idempotent**
-  (`fmt(fmt(x)) == fmt(x)`, for any `indent_unit`); no input raises or stalls.
+- **Guaranteed invariants (test-pinned over a realistic corpus, an adversarial set and seeded fuzz).
+  THE HEADLINE INVARIANT CHANGED WITH FQ-033 — state it in this exact form, because it is the sentence
+  that will be quoted:**
+
+  > **The output's non-whitespace tokens are identical to the input's, in order — identical *except for
+  > keyword casing*, and only when keyword casing is enabled.** With casing set to `as-is` (the default)
+  > the older, stricter form still holds literally: `"".join(out.split()) == "".join(in.split())`. With
+  > casing enabled, the comparison is made **case-insensitively on keyword tokens and byte-exactly on
+  > every other token**, which is the machine-checkable form of the same promise.
+
+  The rest is unchanged and is **not** superseded: **identifier casing, comma placement/style and literal
+  values are never touched**; **opaque regions are never cased or reindented internally**; formatting is
+  **deterministic and idempotent** (`fmt(fmt(x)) == fmt(x)`, for any config); no input raises or stalls.
+  *(The pre-FQ-033 wording — "the output's non-whitespace token texts equal the input's … keyword casing …
+  never touched" — is superseded; ledger §28.)*
 
 **False-positive guards (ordinary DDL must not hit the refusal gate).** These are load-bearing: without
 them, everyday statements would be read as unbalanced plpgsql.
@@ -6135,9 +6254,375 @@ explicit exclusions below). Clause-level incompleteness is *not* a refusal reaso
    `format_selection`'s refusal gate**, which stays tokenize/balance only, runs offline, and never
    touches a database. The two are separate surfaces reporting under separate Audit prefixes (`[SQL]`
    formatter refusals vs. `[Check]` validation findings, §7).
-3. To restate plainly: there is **no** "Lint Selection" action, **no** rule catalog beyond the
-   tokenize/balance floor, and **no** auto-format mode. Any of these appearing designed elsewhere in this
-   document would be drift from this settled decision.
+3. To restate plainly: there is **no** "Lint Selection" action and **no** auto-format mode. Either of
+   these appearing designed elsewhere in this document would be drift from this settled decision.
+   *(Superseded in part, 2026-08-10: this item also said **"no rule catalog beyond the tokenize/balance
+   floor"**. FQ-033 retires that clause by owner decision — there is now a **bounded** break/indent rule
+   set and a keyword-casing option. The tokenize/balance floor is still the **only refusal gate**, which is
+   the part that was actually load-bearing here. Ledger §28.)*
+
+---
+
+#### The configurable formatter — keyword casing and a bounded rule set (FQ-033 parts A + B, target design 2026-08-10)
+
+> **NOT YET BUILT.** Nothing in this block exists in `pgtp_editor/` yet. `docs/FEATURE_QUEUE.md`'s FQ-033
+> is the owner-converged request; **this block is the design to implement and supersedes that entry
+> wherever the two differ** — see *What FQ-033's entry got wrong or left open* at the end.
+
+**Two of this subsection's stated non-goals are retired by explicit owner decision, and each has its own
+ledger row.** They are not drift, not a contradiction to reconcile away, and not to be re-litigated: the
+owner asked for them after using the shipped formatter. What is retired is *exactly* two things —
+**"the formatter never changes keyword/identifier casing"** (retired **for keywords only**) and **"no rule
+catalog / tokenize-balance floor only"** (retired **for a bounded rule set**). Everything else in §18.4
+above survives verbatim.
+
+**PRESERVED, and none of it may be weakened to make this feature easier:**
+
+| Preserved invariant | Why it survives the override |
+|---|---|
+| **Refuse, don't guess** — invalid or unbalanced input is refused **entirely**, `ok=False`, `text` returned verbatim | The refusal gate is unchanged and is still the **only** gate. A configurable formatter that emitted a best-effort rewrite of input it could not read would be the *"silent wrong result"* the whole app is built against |
+| **Offline, no DB, token-only classification** | The formatter never gains schema knowledge. This is what bounds casing to keywords — see below |
+| **Idempotence** — `fmt(fmt(x)) == fmt(x)` for every reachable config | A hard design constraint on the config space, not a hope; the bounds below exist to guarantee it |
+| **Opaque regions never cased or reindented** — strings, `E'…'`, quoted identifiers, `$$…$$` / `$tag$…$tag$` bodies, `--` and `/* */` comments | Casing runs at **token emit** and `Token.kind` already tells opaque from `word`; a keyword-looking word inside a string is not a keyword token and is never touched |
+| **Selection-only invocation** — no auto-format, no format-on-save | Unchanged. Configurability changes *what* the gesture does, never *when* it fires |
+| **Identifiers, built-in types/functions and literals are NEVER cased** | The boundary that keeps the override safe. Stated with its reason immediately below |
+
+##### A. Keyword casing — `UPPER` / `lower` / `as-is`, KEYWORDS ONLY, default `as-is`
+
+Applied at **token emit** inside `_Reindenter`, to tokens whose `Token.keyword` is non-`None` — i.e.
+membership in **`sql/keywords.py::SQL_KEYWORDS`** and nothing else. `Token.keyword` is already a *view*
+(lowercased text when in the set, else `None`) and `Token.text` is already verbatim, so the classification
+this needs **already exists** and no new analysis is added.
+
+**Default is `as-is`, which is byte-identical to today's behaviour.** Nobody's formatting changes until
+they ask for it, and the stricter pre-FQ-033 invariant continues to hold literally under the default.
+
+**Casing identifiers, built-in types and built-in functions was proposed and REJECTED by the owner.
+Record the reasoning, because it is the boundary that makes this override safe rather than merely
+permitted:**
+
+- The formatter is **offline and has no schema knowledge**. It cannot know whether `text` is the built-in
+  type, a column called `text`, or a function in someone's schema.
+- **PostgreSQL quoted identifiers are case-sensitive.** `"MyTable"` and `mytable` are different objects.
+  A token-only formatter that recased identifiers would, on some real schema, silently change which object
+  a statement names — a **silent wrong result** produced by a *formatting* command, which is the worst
+  place in the app to produce one, because the user asked for a layout change and got a semantic one.
+- Keywords are the one class the tokenizer can classify **correctly and completely** from a fixed set, and
+  recasing a keyword can never change meaning: SQL keywords are case-insensitive and are never quoted.
+
+So the rule is not "keywords first, identifiers later" — it is **keywords, because keywords are the only
+tokens this engine is entitled to have an opinion about.** Widening it needs schema knowledge the formatter
+is specified never to have (§18.4's offline invariant), which means a *different* feature, not a config flag.
+
+**Idempotence is trivial here and must still be pinned:** casing is a function of the token's set
+membership, not of its current spelling, so a second pass computes the same output.
+
+##### B. A bounded, config-driven break/indent rule set
+
+Today's clause-starter set (`_CLAUSE_STARTERS`, `sql/formatter.py:66`) and the per-break indent decisions
+are hardcoded. FQ-033 makes a **deliberately narrow slice** of them configurable. The narrowness is the
+feature, not a first increment:
+
+> **HARD DESIGN CONSTRAINT: the reachable config space must be small enough that idempotence is provable
+> by inspection, not merely tested.** A formatter whose output is not a fixed point of its own rules is
+> worse than an unconfigurable one, because the damage appears only on the second invocation.
+
+**What IS configurable:**
+
+| Setting | Domain | Default | Notes |
+|---|---|---|---|
+| `indent_unit` | 1–8 spaces, or one tab | four spaces (`DEFAULT_INDENT_UNIT`) | already existed; moves into `FormatConfig` |
+| `keyword_case` | `as-is` · `upper` · `lower` | **`as-is`** | part A |
+| per-clause-starter **break** | `on` / `off`, keyed by a member of `_CLAUSE_STARTERS` | `on` for every member (today's behaviour) | e.g. break before `join` but not before `on` |
+| per-clause-starter **indent** | 0–4 levels, relative to the clause's own frame level | `0` for every member | the clause-continuation `+1` rule is unchanged and is *not* per keyword |
+| `join_phrase_break` | `on` / `off` | `on` | the whole JOIN-phrase rule as **one** flag, never per prefix word |
+| `xml_indent_width` | 1–8 spaces | **2** | part C; **2 because §2 fixes the on-disk `.pgtp` indentation unit at two spaces**, and a formatter that fought the file's own convention would make every reformatted selection a diff |
+
+**What is deliberately NOT configurable, each with the reason it is excluded.** These are not omissions to
+fill in later; three of them would break correctness or idempotence outright:
+
+| Fixed rule | Why it must stay fixed |
+|---|---|
+| **The break after a `--` line comment** | Anything appended to a line comment is **commented out**. A config flag here is a switch that silently deletes code |
+| **The break after `;`** | Two statements on one line is legal but it also feeds the next row's hazard |
+| **The `DECLARE`-header break, and every rule in the *False-positive guards* table that is decided BY LAYOUT** | **This is the sharp one.** §18.4 tells a plpgsql declaration section from a `DECLARE … CURSOR` statement by whether the `DECLARE` **ends its line**. If a user could turn that break off, pass 1 would emit `DECLARE x int;` on one line and **pass 2 would read it as a different construct** — a different frame stack, a different indentation, and possibly a **balance refusal on text the formatter itself produced**. Idempotence would fail in the one way that also produces a refusal. Any future rule whose meaning is decided by layout inherits this exclusion automatically |
+| **Breaks before block keywords** (`begin declare exception else elsif elseif end when`) and the two-token `END IF` / `END LOOP` / `END CASE` closers | These breaks are what the **balance walk** reads and what makes nesting legible; and a "no break before `end`" flag would contradict the fixed break after `;`, giving two rules one position and no stated winner |
+| **Author-newline preservation, the one-blank-line cap, leading-comma survival, the `CASE`-body-on-the-`then`-line rule, and every glue rule** | These are how *"never change comma placement or style"* is honoured. They are the formatter's contract with the author's own layout, not a preference |
+| **The refusal gate** | Not a rule catalog entry. There is no config that makes the formatter accept unbalanced input |
+
+**Config shape — `pgtp_editor/sql/format_config.py`, Qt-free, frozen dataclasses:**
+
+```
+FormatConfig(frozen)          # the whole formatter's configuration, one object
+  indent_unit:   str          = "    "
+  keyword_case:  KeywordCase  = KeywordCase.AS_IS      # AS_IS | UPPER | LOWER
+  clause_rules:  Mapping[str, ClauseRule] = {}         # keyword -> rule, SPARSE
+  join_phrase_break: bool     = True
+
+ClauseRule(frozen)
+  break_before:  bool = True
+  indent_levels: int  = 0     # 0..4
+
+DEFAULT_FORMAT_CONFIG = FormatConfig()                 # == today's shipped behaviour, exactly
+```
+
+**`clause_rules` is SPARSE — it holds only entries that DIFFER from the default**, and a key absent from it
+means "the shipped rule". Three consequences worth stating, because they are the difference between a
+config that ages well and one that becomes a compatibility obligation (§18.9's snippet-store lesson,
+applied to a much smaller artifact):
+
+1. A user's stored config does not freeze the keyword set, so **adding a keyword to `_CLAUSE_STARTERS`
+   later does not require touching anyone's saved settings** — the inverse of `snippets.json`'s
+   whole-set-freezes cost, and affordable here precisely because this file holds no user-authored content.
+2. **Unknown keys and out-of-range values are dropped or clamped to the default, silently.** This is the one
+   place the app deliberately does *not* report a bad input file, and the reason is that **nothing can be
+   lost**: a formatter preference is derivable from the dialog in ten seconds, so the snippet store's
+   *"never overwrite what you could not read"* posture would be ceremony. `load` never raises.
+3. **The engine reads `FormatConfig` and never reads `QSettings`.** `sql/` stays Qt-free and
+   database-free (`tests/sql/test_package_purity.py`); part D owns persistence.
+
+##### C. The XML indentation formatter — a SECOND ENGINE behind the SAME gesture
+
+> **NOT YET BUILT.** Target design.
+
+**One gesture, two engines, dispatched by host surface.** `Ctrl+Alt+F` means *"format this selection"*
+everywhere; **which** engine answers is decided by **the host panel**, statically, at wiring time — never
+by inspecting the selected text. A text-sniffing dispatcher would eventually guess wrong on a selection
+that looks like both (`<x>select 1</x>`), and a formatter that guesses is the one thing §18.4 forbids.
+
+| Host surface | Class | Engine | Command form |
+|---|---|---|---|
+| DDL object editor tab | `ui/ddl_object_editor.py::DdlObjectEditorPanel` | **SQL** (`sql/formatter.py`) | `Ctrl+Alt+F` **+ context-menu item** |
+| Sandbox SQL Console tab | `ui/sql_console_panel.py::SqlConsolePanel` | **SQL** | `Ctrl+Alt+F` only (no context menu exists on this panel — dispatched, see the status banner) |
+| **Raw XML tab** | `ui/center_stage.py`'s `xml_editor` (`XmlEditor`) | **XML** | `Ctrl+Alt+F` **+ context-menu item** (`XmlEditor` already builds a context menu, so the command form is free here) |
+| **Edit XSD tab** | `ui/center_stage.py`'s `xsd_editor` (`XmlEditor`) | **XML** | same. **XSD files are a first-class target, not incidental** (owner: *"xml formatting is also meant for xsd"*) — `.xsd` is XML and the identical element-depth engine formats it on identical terms |
+| **FQ-006 draft fragment tab** | `ui/center_stage.py::DraftFragmentTab.editor` (`XmlEditor`) | **XML** | same. **There are THREE `XmlEditor` instances in the app, not two** — FQ-033's entry says "both `XmlEditor`" and is wrong on the count. The draft tab is included because it is an editable XML buffer whose whole purpose is *review and copy out*, which is exactly when reindenting a fragment helps; excluding it would be an arbitrary asymmetry a user would read as a bug |
+| DDL Explorer buffer · PHP tabs · `CodeEditorDialog` | — | **neither** | Not XML, and not a SQL authoring surface with a selection contract. The gesture is **absent**, not refusing (§18.9's precedent: a refusal is right when a capability is *one click from applicable*, wrong when the surface could never qualify) |
+
+**What it does, and nothing more.** Reindent by **element-nesting depth only**. No attribute reordering,
+no case changes of any kind, no self-closing rewrites, no text reflow, no entity normalization, no
+attribute-quote normalization. **Purely the whitespace that sits between tags.**
+
+**THREE HARD RULES DERIVED FROM §2, and they are the reason this engine is safe to run on a `.pgtp`:**
+
+1. **Never break inside an opening tag.** §2: *"An element's opening tag (all its attributes) is on a
+   single line — relied upon by line-anchored edits (captions, DB rename)."* A pretty-printer that wrapped
+   long attribute lists would break §13's caption grid and §17's DB-rename path. The engine emits an
+   opening tag as one unit, always.
+2. **Never touch element TEXT.** §2: inline PHP/JS handler bodies are stored as **entity-escaped text
+   directly inside elements**. Reindenting that text would rewrite the shipped PHP. Concretely: **the
+   engine only ever adjusts whitespace at a position where the material between two tags is whitespace
+   only.** If an element has any non-whitespace content, that element's content *and its own two tags* are
+   emitted byte-for-byte as found — no break inserted after the open tag, none before the close tag.
+3. **Opaque, never entered:** comments (`<!-- -->`), `CDATA` sections, processing instructions (`<? ?>`),
+   and `<!DOCTYPE …>` including an internal subset. Their bytes are preserved exactly and their contents
+   are never scanned for tags. *(`.pgtp` has no CDATA by §2; `.xsd` may have comments and a PI, and both
+   file kinds go through the same engine.)*
+
+**Why byte-for-byte round-trip (§2's master invariant) is NOT contradicted, stated explicitly because a
+reader will otherwise think it is.** §2 binds every path that **round-trips a file the user did not ask to
+change** — parse, edit elsewhere, save. This gesture is different in kind: **the user selected text and
+issued a command whose entire purpose is to change that text's layout.** Typing in the Raw XML editor
+already changes the file; a deliberate Format Selection is not a new category of change, and §2's
+invariant was never a promise that the editor cannot edit. **The owner ruled explicitly: byte-round-trip is
+not a concern for this formatter and no warning or guard is required.** What *is* required is rules 1–3
+above — they are what keep the reformat from changing anything §2's *consumers* depend on. Note the
+asymmetry with the SQL engine: reformatting SQL cannot affect a `.pgtp` at all, so the SQL side never had
+this question.
+
+**Base depth comes from the SELECTION'S POSITION IN THE DOCUMENT, not from its first line's indentation** —
+and this is the one place the XML engine deliberately diverges from the SQL engine's behaviour. The SQL
+formatter re-applies the base indentation of the selection's own first content line. The XML formatter
+cannot: the reason a user reformats a fragment is that its indentation is *wrong*, so trusting the first
+line would preserve the very defect. Therefore the pure entry point takes the **whole document plus the
+selection span**:
+
+```
+pgtp_editor/xmlfmt/                     # NEW Qt-free package; mirror tests/xmlfmt/
+  scanner.py    # opacity-aware lexer: tag_open / tag_close / tag_self_closing / text /
+                # comment / cdata / pi / doctype, with verbatim text and spans; NEVER raises
+  formatter.py  # format_xml_selection(document: str, start: int, end: int, *,
+                #                      config: XmlFormatConfig) -> FormatResult
+  config.py     # XmlFormatConfig(frozen){indent_unit: str = "  "} + DEFAULT_XML_FORMAT_CONFIG
+```
+
+`format_xml_selection` scans `document[:start]` to establish the selection's **ancestor depth**, then
+re-emits `document[start:end]` at that depth. `result.text` replaces `[start, end)`. **On refusal `text` is
+the selected slice verbatim**, the same protection `format_selection` gives a caller that ignores `ok`.
+
+**Why a new scanner, and specifically why NOT the two obvious candidates** — the same investigation
+discipline §18.4 applied to `sqlparse`/`sqlfluff`/`sqlglot`:
+
+| Candidate | Why ruled out |
+|---|---|
+| `lxml` (already a dependency) | Raises on malformed or incomplete XML. A **selection is normally a fragment** — that is the whole invocation model — so the ordinary case is the one lxml cannot parse. It also normalizes on serialize, which rules 1–3 forbid |
+| **`ui/xml_structure.py::scan`** (Qt-free, lenient, already shared by folding / gutter / auto-indent / structural selection) | **It reports PHANTOM tags.** `_TAG_RE` is applied to the raw text with no opacity handling, so a `<Page/>` **inside a comment or a CDATA section** is scanned as a real element. For folding and gutter arrows that is accepted best-effort leniency and costs nothing; for an engine that **rewrites text** it would mis-track depth and reindent comment contents — a silent wrong result. **This is why the XML engine gets its own opacity-aware scanner rather than reusing `scan`, and it is not a criticism of `scan`**, whose docstring claims leniency and delivers it. Neither may the reverse happen: `xml_structure.scan` must not be "fixed" into the formatter's scanner, because four shipped features depend on its current tolerance |
+| The SQL tokenizer | Does not apply to XML in any respect. **Never wire the SQL path onto an XML surface** |
+
+**Refusals — the same posture, a narrower set.** The XML engine refuses **entirely** or not at all, with
+`Issue` spans, exactly like the SQL engine. What it refuses on:
+
+| Condition | Refuse? |
+|---|---|
+| The selection boundary **splits** a tag, a comment, a CDATA section, a PI or a DOCTYPE | **Refuse**, span = the split construct. Directly mirrors §18.4's *"a selection boundary that splits a string literal … in half"* |
+| An **unterminated** tag / comment / CDATA / PI running to end of selection | **Refuse**, reported **alone**, short-circuiting before any depth walk — §18.4's unterminated-opaque precedent, for the same reason: any depth conclusion drawn past a broken construct is unreliable |
+| **Mis-nested** tags *within* the selection (`<a><b></a></b>`) | **Refuse.** Reindenting it would emit a layout asserting a structure the document does not have |
+| Depth does not return to zero — an unmatched open or a close whose opener is **outside** the selection | **Do NOT refuse.** This is the XML analogue of §18.4's *"a bare fragment (`where a = 1`) is a legitimate selection"*, and it is the normal case |
+| Empty / whitespace-only selection | Returned untouched with `ok=True`, like the SQL engine |
+
+**`xmlfmt` reuses `Issue` and `FormatResult` by importing them from the `pgtp_editor.sql` façade rather
+than defining twins.** The reason is that the refusal *shape* belongs to the **gesture**, not to the SQL
+dialect: the host renders a span-underline and an audit row through one code path, and a second `Issue`
+type would mean a second renderer for one user-visible behaviour. (Contrast §18.4's deliberate choice to
+keep `sql.Issue` distinct from `schema_learning/xsd_verify.py`'s `Issue` — that one is a *different shape*
+with a *different consumer*.) The dependency runs one way only: `xmlfmt` imports `sql`, `sql` never imports
+`xmlfmt`. Should a third engine ever appear, lifting both types into a shared `formatting/` package is a
+pure refactor with no design content.
+
+**Refusals report under a NEW `[XML]` Audit prefix** (§7's disposition table), Activity Log, non-clickable,
+no line role — `[SQL]`'s treatment exactly. It is a new prefix rather than a reuse because **an `[SQL]`
+row saying *"this XML selection is mis-nested"* is a lie to the user**, and rather than an annexation of
+`[Validate]` because §16's XML validation owns that prefix and §7 forbids annexation. §7's *"no fourth
+SQL-ish prefix"* rule does not bite: an XML reindenter is not SQL-ish — the same reasoning §7 already
+records for `[Bookmark]`.
+
+**A read-only XML buffer is not a refusal — it reuses the mechanism that already exists.** Raw XML is
+read-only under Caption Mode (§13) and Compare/Merge mode (§12), and since FQ-021 those reasons are a
+**set** the tab already lists. The gesture therefore does nothing and emits `XmlEditor`'s existing
+**`read_only_edit_attempted`** signal, which `MainWindow` already answers with a non-modal hint. **No new
+refusal channel and no `[XML]` row**: the app already has one answer to *"you cannot change this buffer"*
+and the reasons are already on screen. Selection-less `Ctrl+Alt+F` stays a **silent no-op**, matching both
+SQL hosts.
+
+##### D. `Settings ▸ Autoformatter settings…` — the one place all of this is configured
+
+> **NOT YET BUILT.** Target design.
+
+A dialog reached from the window bar's **`Settings`** menu, which **ships** (`_build_settings_menu`,
+`229dc11`) and was built as a menu rather than a lone action **precisely so this could be its second
+tenant** (§18.9 says so explicitly, and `_build_settings_menu`'s docstring names *"a formatter ruleset"*).
+Adding it is one `addAction` line; nothing about it is entangled with the snippet lane.
+
+**It inherits the whole `Settings` contract, and both halves are load-bearing. State them here so the
+implementer does not rediscover them:**
+
+1. **It carries NO keyboard shortcut, as a rule of the menu rather than a choice about this entry.**
+   Hiding a top-level `QMenu` does **not** disable its child actions (`docs/DECISION_QUEUE.md` **DEC-006**,
+   ANSWERED: hiding here means *"not in your way"*, never *"prevented"*), so a chord would open a
+   Maintenance-only dialog **from outside Maintenance mode** — the one place the mode's own framing would
+   be false. `tests/ui/test_edit_snippets_menu.py`'s two guards are recursive over submenus and will cover
+   this entry automatically; do not add a shortcut to satisfy a reviewer who thinks the menu looks bare.
+2. **It IS pinnable to the toolbar, and that is the accepted trade, not a leak.**
+   `ToolbarController._walk_menu_actions` never tests `isVisible()`, so the command enumerates as
+   `settings.autoformatter-settings` / `Settings › Autoformatter settings` and a user who pins it reaches
+   the dialog outside Maintenance mode. That is **FQ-027 Q2's recorded trade taken deliberately** (§7's
+   hide/delete/report table, rule B): the command works fine everywhere. It must **not** be added to
+   `DEFAULT_TOOLBAR_IDS`.
+3. **The same walk also makes it REBINDABLE**, and this half was never written down.
+   `MainWindow._shortcut_commands` builds `Customize Shortcuts…`'s universe from that identical
+   `collect_menu_commands()` walk, capturing each command's current shortcut as its default — `""` here —
+   so **a user can assign a chord to a `Settings` entry through the UI even though the app ships none.**
+   This is the *same* accepted trade as pinnability under DEC-006's reasoning (a guardrail, not a security
+   boundary; someone who deliberately binds a key knows what they are doing), and it is recorded here
+   because rule 1 reads like an enforcement guarantee and is not one. **Rule 1 constrains what the app
+   ships, not what a user may choose.**
+
+**The menu is built unconditionally and only `setVisible`-toggled** (§7's build-once rule): an action that
+does not exist at enumeration time is invisible to `collect_menu_commands()`, which breaks Customize
+Toolbar *and* silently drops the id from a saved `toolbarIds`.
+
+**What the dialog configures** — exactly the settable surface of A, B and C, and nothing that is not in
+those tables: the keyword-casing choice; `indent_unit`; the per-clause-starter break/indent grid over
+`_CLAUSE_STARTERS`; `join_phrase_break`; and the XML indent width. Every control is a bounded widget (a
+combo, a spin box with min/max, a checkbox) — **there is no free-text rule entry**, which is how the
+bounded config space is enforced at the UI as well as in the loader.
+
+**Persistence: `QSettings`, and here is why DEC-001 does not govern.** The config lives under the
+`autoformatter` group of the app's existing `QSettings("MDS", "PGTP Editor")`, beside `lightTheme` /
+`toolbarIds` / `toolbarIconIds` / `shortcutOverrides`, with the key constant living in the owning module as
+`AUTOFORMAT_SETTINGS_KEY` — the convention every other key follows.
+
+> **DEC-001 (ANSWERED 2026-08-10) chose a user-editable JSON file in the app's folder for the snippet store
+> and explicitly REJECTED QSettings. That ruling does not reach this feature, and the distinction is worth
+> stating once because the next persistence question will ask it too.** DEC-001's *ground* was the
+> **artifact's shape and purpose**: the snippet store holds **multi-line SQL bodies** that a user is meant
+> to hand-author, and it must **cross between people by an explicit export/import gesture** — an INI cannot
+> hold the former and nothing in QSettings offers the latter. **Formatter config is neither.** It is
+> scalars and small flags; its editor **is** the dialog, so it needs no hand-authoring; and it is a personal
+> preference nobody shares, so it needs no export gesture. It is the same *kind* of state as
+> `shortcutOverrides` — a small keyed map of scalars, per-user, dialog-edited — and that is exactly where
+> `shortcutOverrides` lives.
+>
+> **The "not editable by users" objection is additionally weaker than it looks here:** the app's
+> `QSettings` is constructed `IniFormat` / `UserScope` on purpose, and `main_window.py` says why at the
+> construction site — *"so the location is a plain file under UserScope — portable, inspectable, and
+> redirectable by tests"*. It already **is** a hand-editable text file.
+>
+> **DEC-001's principle stands unweakened, and names the one thing that would reverse this:** *where the
+> project must stay portable, personal state lives in the app's own folder and crosses between people only
+> by an explicit export/import gesture.* If sharing a **house formatting style** between developers ever
+> becomes a requirement, that is an export/import gesture, DEC-001's principle applies in full, and the
+> location moves to a file. Until then a file would be ceremony. **Nothing goes into the project folder
+> either way** — a formatting preference is a property of the person, not of the schema.
+
+**Reuse map — what parts A–D build on rather than duplicate:**
+
+| Need | Existing thing reused |
+|---|---|
+| Keyword classification for casing | `sql/keywords.py::SQL_KEYWORDS` via `Token.keyword` — **no new classification** |
+| Tokenizing, opacity, glue rules, line/column bookkeeping | `sql/tokenizer.py` — **UNCHANGED** |
+| Frame stack, indentation, balance, refusal spans | `sql/formatter.py::_Reindenter` — made config-driven in place, still one frame stack |
+| Refusal shape and rendering | `sql/issues.py::Issue` + `FormatResult`, reused by `xmlfmt` |
+| Refusal reporting | the existing `[SQL]` Audit path for SQL; a new `[XML]` prefix on the same non-clickable terms |
+| "You cannot edit this buffer" | `XmlEditor.read_only_edit_attempted` — the mechanism that already exists |
+| A host for the settings command | the shipped `Settings` menu (`_build_settings_menu`) — one `addAction` |
+| Persistence plumbing and test redirection | `MainWindow._settings` (injectable `QSettings`, IniFormat/UserScope) |
+
+**Four in-code statements are CORRECT TODAY and become FALSE the moment part A lands. They must move in the
+same commit** — listed because a removal sweep after the fact is how they would otherwise be found, and one
+of them is the module's own headline docstring:
+
+| Location | Statement |
+|---|---|
+| `sql/formatter.py:22-23` | *"**only inter-token whitespace and newlines**: keyword casing, identifier casing, comma placement/style and literal values are never touched"* |
+| `sql/formatter.py:26` | *"Refusal is the only gate (§18.4: no semantic checks, no rule catalog)"* — the *no semantic checks* half stays; *no rule catalog* goes |
+| `sql/formatter.py:62` | *"goes through `Token.keyword` (case-insensitive), so casing is never rewritten"* |
+| `sql/tokenizer.py:24` | *"Token text is preserved **verbatim**: the tokenizer never changes casing…"* — this one stays **true and important**: the *tokenizer* still never changes casing; only the emit step in `_Reindenter` does. Do not weaken it while editing its neighbours |
+
+**§18.9's authoring aids deliberately do NOT follow `keyword_case`, and this is a decision rather than an
+oversight.** `sql/expand_select.py` and `sql/join_fk.py` derive the casing of the keywords they emit from
+**the user's own statement** (`FROM` yields `WHERE`, `from` yields `where`; a join follows the statement's
+own casing) — see §18.9. That stays. Reason: an expansion fires **at the caret while the author is typing**,
+and silently recasing text next to what they just typed is exactly the intrusiveness §18.4's
+no-auto-format rule exists to prevent. **Format Selection is the one gesture that imposes casing, because
+it is the one gesture the user invoked to change layout.** So a snippet-expanded `where` stays lowercase
+under `keyword_case = UPPER` until the author formats the selection — consistent, and consistent for a
+stated reason.
+
+##### What FQ-033's entry got wrong or left open — this block supersedes it
+
+Queue entries are written before implementation and this one was written before this reconciliation; where
+they differ, **this section is what the project means**:
+
+1. **"Target surfaces: the raw `.pgtp` XML editor AND the Edit XSD editor (both `XmlEditor`)"** — there are
+   **three** `XmlEditor` instances. The **FQ-006 draft fragment tab** is the third and is **included**;
+   see the host table.
+2. **"This dialog SEQUENCES AFTER FQ-027 … which is still QUEUED — so this … DEPENDS on FQ-027 landing;
+   reference FQ-027, do not assume it as spec."** — **FQ-027 SHIPPED, and so did the `Settings` menu**
+   (`229dc11`). There is no dependency left to wait on and the menu is not a forward reference; it is
+   §7/§26/§18.9 shipped behaviour, and this block cites it as such.
+3. **"CREATE a new sibling subsection under §18 for part C"** — placement decision reversed by the owner at
+   fold time: **all four parts live inside §18.4**, because the *gesture* is one contract and splitting the
+   two engines across two sections would put the dispatch rule in neither. §18.4's heading and anchor are
+   unchanged.
+4. **The entry left the config schema, the idempotence bounds, the XML selection/base-depth mechanism and
+   the persistence location open.** All four are settled above. The **layout-decided-`DECLARE`** exclusion
+   in particular is a bound the entry could not have known it needed.
+5. **The entry does not mention the `[XML]` Audit prefix, the read-only path, or rule 2 (element text is
+   never touched).** Rule 2 is the single most important safety property of part C and is derived from §2,
+   not from the request.
+6. **Dropped as already covered, per the entry itself:** *"extend to plpgsql"*. plpgsql block layout ships
+   and is tested (`BEGIN`/`DECLARE`/`EXCEPTION`/`IF`/`ELSE`/`ELSIF`/`END`/`WHEN`/`LOOP`).
 
 ### 18.5 The DDL object editor, apply & sandbox validation
 
@@ -6766,9 +7251,15 @@ Audit lines remain `[Validate]`, `[Find]` results and (later) `[Check]`.
   feature) and **transient** — cleared on the next edit or the next format attempt — never persistent
   state.
 - Offered **only in this tab** — **not** in the read-only DDL Explorer buffer, where a reformat could not
-  be applied anyway.
+  be applied anyway. *(Precision, 2026-08-10: this bullet is about the **context-menu item**; the chord's
+  host set has since grown to §18.5 D4's console, and FQ-033 adds three `XmlEditor` surfaces answered by a
+  separate engine — §18.4.)*
 - Restated from §18.4 and unchanged: **selection-only**, **no auto-format mode**, **no "Lint
-  Selection"**, and **no rule catalog beyond the tokenize/balance floor**.
+  Selection"**, and the **tokenize/balance floor is still the only refusal gate**. *(Superseded in part:
+  this bullet also said **"no rule catalog"**. FQ-033 retires that clause by owner decision — a bounded
+  break/indent rule set and a keyword-casing option now exist. What survives is the part that mattered,
+  namely that no rule may consult a schema, a database, or the meaning of an identifier, and that nothing
+  new blocks formatting. Ledger §28.)*
 
 #### Save and Apply are two distinct, explicit user gestures
 
@@ -9185,8 +9676,10 @@ defaults) — the store is a producer for a seam that already existed, not a new
 
 **A new top-level window-bar menu, `Settings`, visible ONLY in Maintenance mode** — see §7's Maintenance
 block and §26 for the mechanism, which is the **inverse** of the existing filter applied by the **same
-loop**, not a second mechanism. Its one entry today is **`Edit Snippets…`**; it is built as a menu rather
-than as a lone action because a second tenant is anticipated (FQ-033's autoformatter settings), and
+loop**, not a second mechanism. Its one **shipped** entry is **`Edit Snippets…`**; it is built as a menu
+rather than as a lone action because a second tenant was anticipated — **FQ-033's
+`Autoformatter settings…`, now specified in §18.4 as target design**, which is where that entry and the
+contract it inherits from this menu are written down — and
 because the alternative — hanging editor-of-app-state entries off `Schema` — would make `Schema` mean two
 things. *(`docs/FEATURE_QUEUE.md`'s FQ-030 entry says the editor's home is `Schema`; that was overtaken by
 an owner redirection mid-build and the entry is wrong. This section is the truth.)*
@@ -9208,6 +9701,17 @@ someone asks. *(Precision, since it is easy to mis-cite: the guard test is
 `tests/ui/test_edit_snippets_menu.py::test_the_command_is_enumerated_and_therefore_pinnable`, which
 asserts the command **enumerates** — nothing in the suite actually writes it into `toolbarIds`. Its
 complement, `test_nothing_else_reaches_the_editor`, asserts no other surface reaches the dialog.)*
+
+**The same walk makes it REBINDABLE, and that half had never been recorded.**
+`MainWindow._shortcut_commands` builds `Customize Shortcuts…`'s command universe from that identical
+`collect_menu_commands()` walk (its own comment says so: *"the SAME walk Customize Toolbar uses, never a
+second one"*), capturing each command's current shortcut as its default — `""` for this one — so **a user
+can assign a chord to a `Settings` entry through the UI, even though the app deliberately ships none.**
+This is the pinnability trade again rather than a hole in the no-shortcut rule: under DEC-006 the mode is
+*a guardrail, not a security boundary*, and someone who deliberately binds a key is even more clearly
+acting knowingly than someone who happens to know a built-in chord. **Read the no-shortcut rule as a
+constraint on what the app ships, never as an enforcement guarantee** — §18.4 part D restates this for the
+menu's second tenant, because a reader of the rule alone would guess wrong.
 
 **The menu is constructed unconditionally and only `setVisible`-toggled**, like every other per-mode and
 per-tab affordance in the app (§7's build-once rule): an action that does not exist at enumeration time is
@@ -9779,8 +10283,13 @@ under File below is §18.2's later, distinct DDL-project action that merely reus
   - (§18.3) **Compare Schemas…** and **Save Schema Snapshot…** — **still absent**, even though the
     engine, the snapshot module and the diff viewer they would drive all ship (§18.3 status).
 
-  ("Format Selection" is **not** a menu-bar item: it is a `Ctrl+Alt+F` action plus a context-menu entry
-  scoped to the DDL object editor tab **and (§18.5 D4) the Sandbox SQL Console tab** — see §27. "Deploy
+  ("Format Selection" is **not** a menu-bar item: it is a `Ctrl+Alt+F` action on the DDL object editor tab
+  **and (§18.5 D4) the Sandbox SQL Console tab**, with a context-menu entry **on the object tab only** —
+  `ui/sql_console_panel.py` builds no context menu at all. *(Corrected 2026-08-10: this sentence, and §27's
+  row, asserted the context-menu item on **both**; it is filed as **BUG-063, OPEN** as a code gap rather
+  than deleted here, since DEC-012's one-host ruling rests on the command form existing — §18.4's status
+  banner and ledger §28.)* FQ-033 adds the **same chord and a context-menu entry on the three `XmlEditor`
+  surfaces**, answered by a **separate XML engine** — target design, §18.4. See §27. "Deploy
   this edit…" is likewise primarily a **context-menu item** on the object tab, mirrored onto this menu as
   described above. **"Run in Sandbox Console"** — §18.5 D4's one bridge from the object tab, which
   **copies the selection into the console and focuses it without executing** — is a context-menu item
@@ -9810,12 +10319,14 @@ under File below is §18.2's later, distinct DDL-project action that merely reus
 - **Generation:** Locate PHP Generator Executable…, Generate PHP…, Open Output Folder, panGen (Generate
   Own PHP), rePHPgen (Analyze Gap), Save reJSON…, Locate panGen Runtime….
 - **Settings — NEW, and MAINTENANCE-MODE ONLY** (FQ-030 final slice, `229dc11`; `_build_settings_menu`,
-  built between `Generation` and `Help`): **`Edit Snippets…`** — one entry today, a menu rather than a
-  lone action because FQ-033 is anticipated as a second tenant. It is the app's first
-  **maintenance-only** menu, carried by `_MAINTENANCE_ONLY_MENU_TITLES` as the **inverse** of the
-  existing survivor list **inside the same visibility loop** (§7). **No entry on this menu carries a
-  shortcut**, by rule, because hiding a `QMenu` leaves its children's chords live (DEC-006) — see §18.9
-  for the store, the dialog and the accepted pinnability trade.
+  built between `Generation` and `Help`): **`Edit Snippets…`** — the one **shipped** entry, in a menu
+  rather than a lone action because FQ-033 was anticipated as a second tenant. **That second tenant is now
+  specified: `Autoformatter settings…`** (FQ-033, **target design, not yet built** — §18.4 part D owns it,
+  including the contract it inherits from this menu). It is the app's first **maintenance-only** menu,
+  carried by `_MAINTENANCE_ONLY_MENU_TITLES` as the **inverse** of the existing survivor list **inside the
+  same visibility loop** (§7). **No entry on this menu carries a shortcut**, by rule, because hiding a
+  `QMenu` leaves its children's chords live (DEC-006) — see §18.9 for the store, the dialog, and the
+  accepted **pinnability *and* rebindability** trades.
 - **Help:** Manual (F1), Open Log Folder, About. **`Manual` (F1) must never be filtered out of any launch
   mode** (§7) — otherwise the app can hide the only documentation explaining why commands are missing.
   The whole `Help` menu is therefore visible in Maintenance mode (below).
@@ -10033,7 +10544,7 @@ has no other document to mean (ledger §28). **Window-level, NOT bar-local:** th
 | double-click (line-number gutter zone) | Toggle bookmark on that line | Raw XML editor gutter (settled 2026-08-01, **implemented** — commit `828fe02`, §8 — additive alongside the existing single-click 12px bookmark strip; NOT gated by Caption Mode) |
 | Ctrl+L | Go To XSD (jump to the attribute's definition in curated.xsd; always forces curated mode) | Window-level QAction (also in the Raw XML editor context menu). **The shape `F3` copies** (above): a window-level command with **no menu entry**, therefore outside `_walk_menu_actions` and un-pinnable — the category also holding `Ctrl+Alt+F` Format Selection and `Ctrl+Return` Run |
 | Ctrl+Space | Completion popup (`_CompletionPopup`, frameless, non-modal) | Three shipped contexts: the **Raw XML editor**'s schema-driven attribute/value completion (§11), the **DDL object editor tab**'s schema-aware SQL completion (§18.6), and the **Sandbox SQL Console tab** (per the manual's Keyboard Shortcuts chapter, which lists all three; §18.5 D4) |
-| Ctrl+Alt+F | **Format Selection** (§18.4's `format_selection` on the current selection; single undo step on success, `[SQL]` Audit lines + transient underline on refusal) | The DDL object editor tab **and** the Sandbox SQL Console tab (**both implemented**, §18.5/D4), in each case a `QShortcut` at `WidgetWithChildrenShortcut` scope, `setEnabled(False)` until a selection exists — **plus a context-menu item on both**. **That context-menu item is a COMMAND, so §8's one-keyboard-host rule applies and DEC-009's widget-only carve-out does NOT** (DEC-012): the `QShortcut` is the single host, and the DDL object tab's second `eventFilter` `Key_F` branch is being deleted under **BUG-054** to match the console, which has always had only the one. It stays **reserved** in `RESERVED_SEQUENCES` either way — a context-menu command is still not a menu-bar action `Customize Shortcuts…` could move — so the chord is un-pinnable and un-rebindable. Without a selection it is a **silent no-op**, not §18.5 carve-out 4's refusal path. *(The old note that "`Ctrl+Shift+F` stays Find All" no longer applies — that chord is deleted, see above.)* |
+| Ctrl+Alt+F | **Format Selection** — *"reformat what I selected"*, on **two engines chosen by host surface, never by sniffing the text** (§18.4). Single undo step on success; `[SQL]` (SQL) or `[XML]` (XML, FQ-033) Audit lines + transient underline on refusal | **SQL engine, shipped:** the DDL object editor tab **and** the Sandbox SQL Console tab (§18.5/D4), in each case a `QShortcut` at `WidgetWithChildrenShortcut` scope, `setEnabled(False)` until a selection exists. **The context-menu item exists on the DDL object tab ONLY** — `ui/sql_console_panel.py` builds no context menu whatever. *(Corrected 2026-08-10: this row said "**plus a context-menu item on both**". Verified false and filed as **BUG-063, OPEN** rather than rewritten away, because DEC-012's ruling that a context-menu entry **is** a command is the basis on which this chord sits inside the one-host rule. **Restore this row to "both" when BUG-063 lands** — and note the fix must NOT `setShortcut` the new QAction: the `QShortcut` stays the sole keyboard host. §18.4's status banner, ledger §28.)* **That context-menu item is a COMMAND, so §8's one-keyboard-host rule applies and DEC-009's widget-only carve-out does NOT** (DEC-012): the `QShortcut` is the single host, and the DDL object tab's second `eventFilter` `Key_F` branch **is deleted — BUG-054 is DONE**, the tombstone comment standing where it was. It stays **reserved** in `RESERVED_SEQUENCES` — a context-menu command is still not a menu-bar action `Customize Shortcuts…` could move — so the chord is un-pinnable and un-rebindable. Without a selection it is a **silent no-op**, not §18.5 carve-out 4's refusal path. **XML engine — FQ-033, NOT YET BUILT:** the same chord plus a context-menu entry on the **three `XmlEditor` surfaces** (Raw XML, Edit XSD, the FQ-006 draft fragment tab), answered by `xmlfmt/` and never by the SQL tokenizer; on a read-only XML buffer it emits the existing `read_only_edit_attempted` hint and files **no** audit row. *(The old note that "`Ctrl+Shift+F` stays Find All" no longer applies — that chord is deleted, see above.)* |
 | Ctrl+Return | **Run** — execute the selection, or the whole buffer when there is no selection, against the **sandbox** (§18.5 D4, target design 2026-08-06) | **Sandbox SQL Console tab only.** This is the one execution gesture that *does* carry a shortcut, and it does not reopen the *"an irreversible outward effect must not be one keystroke away"* rule — that rule is about **irreversibility**, and the sandbox is disposable and `reset()`-able by construction, which is the same asymmetry that authorizes ad-hoc execution at all (D4's safety boundary). Object-changing statements still pass the injected confirmation; there is **no target-database Run**, with or without a shortcut |
 | *(no shortcut, deliberately)* | **`Check Object in Sandbox`** / **`Check and rollback`** / **Generate Deployment SQL…** | The Editor bar's **`Parsing`** menu since BUG-039, relabelled by FQ-026 (`310cf92`); `Generate Deployment SQL…` still does not exist anywhere (§18.5). **Since FQ-023, 2026-08-08:** the two Check gestures are **absent** only when no sandbox is *configured*, and **present-and-reporting** when one is configured with no session open. Apply is an **irreversible outward effect** and must not be one keystroke away. *(Superseded, 2026-08-10: this row used to place them on **Database**, mention the tab's **button row**, and record `Deploy this edit…` as shipping keyless on three surfaces. BUG-039 moved them; **FQ-026 deleted the button row, the context-menu apply entries and the picker outright**.)* |
 | *(no shortcut, deliberately)* | **Every `Deployment` entry** — `Compare/Merge pgtp` · `Save pgtp` · `Save as new pgtp` · `Deploy .pgtp` · `Save in Project` · `Check and commit to sandbox` · `Apply to quality` · `Save XSD` · `Save PHP File` | Editor menu bar ▸ **Deployment**, per active tab kind (FQ-020, 2026-08-08, §26; the two DDL labels relabelled by FQ-026, `310cf92`). Deliberately keyless on two different grounds: the four **saves** because a keystroke save is exactly the wrong-target hazard the deleted router created (see the `Ctrl+S` row), and `Check and commit to sandbox` / `Apply to quality` / `Deploy .pgtp` because *"an irreversible outward effect must not be one keystroke away"* (§18.5) |
@@ -10045,7 +10556,7 @@ has no other document to mean (ledger §28). **Window-level, NOT bar-local:** th
 | *(no shortcut, deliberately)* | **Next Difference** / **Previous Difference** / **Apply Changes to Target** | **Editor menu bar ▸ `Navigation`, MODE-ONLY** — visible only inside Compare/Merge mode, hidden by `set_diff_mode_members_visible` otherwise (FQ-021 third leg, shipped `1ccfe9d`; status-corrected 2026-08-10). Off `Tools` entirely. `Prev Difference` is **relabelled `Previous Difference`**, and because the label is the id's last segment the ids are `navigation.next-difference` / `navigation.previous-difference` / `navigation.apply-changes-to-target`, reached from the old `tools.*` ids through `RENAMED_ID_ALIASES` |
 | ~~*(no shortcut — and NO GESTURE AT ALL)*~~ | ~~**Apply Changes to Target** is unreachable~~ | **ROW RETIRED — the regression is CLOSED.** It was real, lasted from FQ-020 until `1ccfe9d`, and was found by spec harmonization rather than by a test, which is why the fact is kept rather than deleted. FQ-021's third leg shipped and rehomed the command onto the mode-only `Navigation` menu — see the row **above**, which is now the live one. *(This row directly contradicted its own neighbour for a day; that is what a status-accuracy pass looks like when only half of it lands.)* |
 | *(no shortcut, deliberately)* | **Add Trigger…** / **New Function/Procedure…** / the **twelve `Alter Table ▸`** operations (eight column + four constraint) | DDL Explorer tree context menus (table node / "Functions & Procedures" root / a **column leaf**) and, for the routine one, **Database ▸ New Function/Procedure…** (§18.1 — FQ-002 **implemented** 2026-08-06; FQ-025 slices 1 and 2 **implemented** 2026-08-09; slice 3's six further operations are **not yet on any menu**, so they have no row here). All of them are dialog-gated and write **nothing** to a database — they only open a §18.5 editor tab on generated text — so the reason for withholding a shortcut is menu-hygiene, not the irreversible-outward-effect rule above. **None of the `Alter Table ▸` entries is a menu-bar action**, so like `F3`/`Ctrl+L` they fall outside `collect_menu_commands()` and are neither pinnable nor rebindable (below). |
-| *(no shortcut, deliberately — as a RULE, not per entry)* | **Every entry on the `Settings` menu**, today `Edit Snippets…` | The window bar's **Maintenance-only** `Settings` menu (FQ-030 final slice, `229dc11`; §18.9/§26). The reason is structural rather than stylistic: **hiding a `QMenu` does not disable its children** (DEC-006), so a chord on a maintenance-only entry would open its dialog from **outside** the mode the entry exists inside. This applies to every future entry on this menu and to any future maintenance-only menu. Two tests pin it, one recursively over submenus |
+| *(no shortcut, deliberately — as a RULE, not per entry)* | **Every entry on the `Settings` menu** — `Edit Snippets…` today, plus **`Autoformatter settings…`** when FQ-033 lands (§18.4 part D) | The window bar's **Maintenance-only** `Settings` menu (FQ-030 final slice, `229dc11`; §18.9/§26). The reason is structural rather than stylistic: **hiding a `QMenu` does not disable its children** (DEC-006), so a chord on a maintenance-only entry would open its dialog from **outside** the mode the entry exists inside. This applies to every future entry on this menu and to any future maintenance-only menu. Two tests pin it, one recursively over submenus — so a new entry is covered automatically. **It is a rule about what the app SHIPS, not an enforcement guarantee:** the same `collect_menu_commands()` walk that makes these entries pinnable also lists them in `Customize Shortcuts…` with an empty default, so a user may bind one deliberately (§18.9, §18.4 part D rule 3) |
 | *(no shortcut, deliberately)* | **Database/XML Coherence** (checkable) | Database menu (§17/§26, FQ-003, **implemented** 2026-08-06). It replaces three previously unshortcut entry points — Check: XML→Database, Check: Database→XML and View ▸ Find table reference — none of which carried a shortcut either, so nothing is lost; the merged view is read-only and reached by toggle, not by keystroke |
 | Escape | **Return focus to the document** — never hide anything | Any editor's `FindReplaceBar` returns focus to its editor; the Caption Management tab's `CaptionFindReplaceBar` returns focus to the grid (FQ-016/FQ-017, 2026-08-07). Both bars used to *hide* on Escape; both are now permanent |
 | Ctrl+G | Go to line in XML | Caption grid |
@@ -10331,6 +10842,10 @@ is authoritative** (and is what appears in the body above).
 | 2026-08-10 | §18.5 carve-out 1's **BUG-048/BUG-049 OPEN** banner (*"the fix is BUG-048's, not this document's"*, with the DDL Explorer and the Sandbox SQL Console listed as **uncovered** and the draft fragment tab as *claims-then-drops*), and §27's `Ctrl+Shift+Z` row warning that the chord was **missing from `RESERVED_SEQUENCES`** | **ALL FOUR ARE RESOLVED (`e8df6c3`, `f533350`) — AND THE FIX SHIPPED BOTH SHAPES, BECAUSE THEY CLOSE TWO INDEPENDENT CAUSES.** (1) The window shortcut is **scoped, never disabled** (this carve-out's own ledger row forbids disabling): `_undo_from_shortcut`/`_redo_from_shortcut` fire only when the Raw XML tab is current **and** the buffer is writable. (2) **`_apply_history_text` refuses outright on a read-only editor** — the last-ditch check, because `setPlainText` is a `QTextCursor`-level write `setReadOnly(True)` does not gate, so no path (shortcut, History menu, jump list, `XmlEditor` re-emission) can write a locked buffer. Every uncovered surface now claims the chords: `DdlEditorPanel._is_undo_redo_chord` on the read-only Explorer (answering with a justified no-op), and `DraftFragmentTab.__init__` routing the draft tab's `undo_requested`/`redo_requested` into its **own** stack (BUG-049). **`History ▸ Undo` stays UNSCOPED BY TAB** — an explicit click means *"undo the project"*, wherever you are — **but is lock-scoped**, because a menu click straight through FQ-021's data-loss lock is **the same defect as the keystroke, not a milder one**. **DEVIATION from BUG-048's own proposal, recorded rather than smoothed over: the proposed GREYING of History ▸ Undo/Redo was REJECTED** in favour of refusing with a stated reason, because `_refresh_editor_menu_affordances` is **visibility-only — "two postures, never a third"** (§7), and greying would have introduced the third. **`Ctrl+Shift+Z` is now in `RESERVED_SEQUENCES`** (BUG-050) and `DdlObjectEditorPanel.eventFilter` matches it beside `Ctrl+Y` (BUG-053), closing a split where the object editor answered the reserved second redo chord differently from its read-only sibling — **wherever a surface claims `Ctrl+Z`/`Ctrl+Y` it must claim `Ctrl+Shift+Z` too.** **One thing the fix did NOT get right, filed rather than written in as design:** the refusal is emitted with `statusBar().showMessage(reason, 4000)`, and FQ-028's `StaticStatusBar.showMessage` **paints nothing** — so the reason is journalled to the Activity Log and the user sees a chord that silently does nothing, which is what the deviation existed to avoid |
 | 2026-08-10 | §18.5's FQ-026 banner: **"THE RENAME IS NOT COMPLETE — TWO RETIRED NAMES ARE STILL SHIPPING (BUG-047, OPEN)"**, plus §26's statement that FQ-026's invariant spans **five** surfaces | **THE RENAME IS COMPLETE AND THE INVARIANT HAS SIX SURFACES (BUG-047, `b52793d` / `68f01d9`).** `db/activity_log.py`'s `VERB_APPLY_SANDBOX` / `VERB_APPLY_TARGET` are **deleted, not re-pointed**, with a tombstone where they stood. **The reason they must not come back is a dependency fact, not tidiness:** `db/` must not import `ui/`, and `GESTURE_LABELS` lives in `ui/ddl_object_editor.py`, so any constant here could only ever be a **second literal copy** of a gesture name, free to drift again — the exact defect FQ-026 exists to end. The names are passed in from the `ui/main_window.py` call sites, which read `GESTURE_LABELS` directly. **`VERB_RAN`/`VERB_LINTED` stay** — lowercase descriptions of what happened, not gesture names, so the invariant does not reach them. **The Activity Log is the SIXTH surface** (menu label · confirmation title · `[Check]` line · status message · manual · **journal verb**), and it is the one most easily missed, because a journal reads as *the app's own record* rather than as a user-facing name — it is neither. **The persistence constraint is recorded for the next such rename:** these strings go into each project's `activity.jsonl`, so a journal rename either carries a read-side alias or accepts that old rows keep their old wording — a decision, never an oversight |
 | 2026-08-10 | §18.9's debt blockquote and §18.6's member table: `SchemaIndex` publishes **no `ColumnInfo` list and no routine accessor**, so `sql/join_fk.py`'s docstring described *"a caller that cannot actually be written"* and `ui/schema_gesture_seam.py::_database_schema` reached the underlying `DatabaseSchema` through a public-`schema()`-then-**private-`_schema`** fallback — *"filed as BUG-045, OPEN, rather than fixed here"* | **THE DEBT IS PAID AS A WIDENING (BUG-045, `d3d7d15`).** `column_infos(table) -> list[ColumnInfo]` returns a **fresh copy**, so a caller that sorts or trims it cannot disturb `known_columns`/`column_entries` reading the same `TableInfo`; `routines() -> tuple[RoutineInfo, ...]` preserves `DatabaseSchema.routines` **order**, because that dict is keyed by `RoutineInfo.signature` — name **plus** argument types — so overloads are separate entries and §18.9's signature help ranks equally-fitting ones **stably**. `RoutineInfo` is returned **as-is**: `db/` publishes its own type and the adaptation stays in the caller, so **`sql/` still never sees a schema object**. `known_columns` and `column_entries` are untouched, as §18.6's completion requires. **One deviation, and it is the stronger call: `_database_schema` was DELETED OUTRIGHT rather than kept as a fallback** — the seam now reads `getattr(index, "column_infos", None)` and **no path into `index._schema` remains**, so §5's dependency posture is *enforced* rather than merely preferred and renaming that attribute can no longer break two shipped gestures with nothing failing at the `db/` end. The `getattr` duck-typing stays, because a test source-asserts `"db.introspect" not in source` for the seam |
+| 2026-08-10 | **§18.4's non-goal that *"the formatter never changes keyword/identifier casing"***, stated four times over — in the subsection's problem framing (*"not keyword casing, not identifier casing"*), in the core-algorithm paragraph (*"Reindents **whitespace and line breaks only***"), in the trigger-and-scope bullet (*"no keyword-casing rule"*) and in the **headline guaranteed invariant** (*"the output's non-whitespace token texts equal the input's … keyword casing … never touched"*, `"".join(out.split()) == "".join(in.split())`) | **RETIRED FOR KEYWORDS BY EXPLICIT OWNER DECISION (FQ-033 part A, target design — NOT YET BUILT).** Configurable **`UPPER` / `lower` / `as-is`** casing, **default `as-is`** so nobody's formatting changes until they ask, applied at token emit to tokens whose `Token.keyword` is non-`None` — i.e. **`sql/keywords.py::SQL_KEYWORDS` membership and nothing else**, a classification that already exists, so no new analysis is added. **THE HEADLINE INVARIANT CHANGES, and the new form is the one to quote: *the output's non-whitespace tokens are identical to the input's, in order — identical **except keyword casing**, and only when casing is enabled.*** Under the default the older, stricter, byte-exact form still holds literally; with casing on, the check is case-insensitive **on keyword tokens** and byte-exact on every other token. **IDEMPOTENCE IS PRESERVED** — casing is a function of set membership, not of current spelling. **THE BOUNDARY IS THE POINT, and it is what makes the override safe rather than merely permitted: identifiers, built-in types, built-in functions and literals are STILL NEVER CASED.** The owner rejected widening it, and the reason is recorded because it must not be re-derived as an oversight: the formatter is **offline with no schema knowledge** (§18.4's own invariant), and **PostgreSQL quoted identifiers are case-sensitive**, so recasing an identifier would on some real schema **silently change which object a statement names** — a silent wrong result produced by a command the user issued to change *layout*. So this is not "keywords first, identifiers later": keywords are the only tokens this engine is entitled to have an opinion about, and widening it would need knowledge §18.4 forbids it ever having — a different feature, not a config flag. **Also preserved verbatim and not to be reconciled away:** refuse-don't-guess on invalid or unbalanced input; offline / no-DB / token-only classification; **opaque regions (strings, `E'…'`, quoted identifiers, `$$`/`$tag$` bodies, `--` and `/* */` comments) never cased or reindented**; selection-only invocation; comma placement/style and literal values untouched |
+| 2026-08-10 | **§18.4's non-goal *"no rule catalog beyond the tokenize/balance floor"***, stated in its status banner, its trigger-and-scope bullet and its out-of-scope item 3 (*"Any of these appearing designed elsewhere in this document would be drift from this settled decision"*); and `format_selection`'s `indent_unit=` keyword as the formatter's **only** configuration | **RETIRED BY EXPLICIT OWNER DECISION, AND REPLACED BY A DELIBERATELY BOUNDED RULE SET (FQ-033 part B, target design — NOT YET BUILT).** Today's hardcoded clause-starter set becomes config-driven through a frozen **`FormatConfig`** (`sql/format_config.py`, Qt-free) carrying `indent_unit`, `keyword_case`, a **SPARSE** `clause_rules: {keyword -> ClauseRule{break_before, indent_levels 0..4}}` map and `join_phrase_break`; **`format_selection`'s `indent_unit=` keyword is REMOVED rather than kept beside it**, because two ways to set one value is the second-source-of-truth defect this document refuses everywhere else (no caller in `pgtp_editor/` passes it; the migration is confined to `tests/sql/`). `sql/__init__.py`'s test-pinned `__all__` widens from four names to six. **THE NARROWNESS IS THE FEATURE, under a hard constraint: the reachable config space must be small enough that idempotence is provable by inspection, not merely tested** — a formatter whose output is not a fixed point of its own rules is worse than an unconfigurable one, because the damage appears only on the second invocation. **The exclusions are therefore part of the design, not gaps: the `--` line-comment break** (a flag there would silently comment out code), **the break after `;`**, **breaks before block keywords and the two-token `END IF`/`END LOOP`/`END CASE` closers** (what the balance walk reads, and a "no break before `end`" flag would contradict the fixed `;` break, giving one position two rules and no winner), **author-newline preservation / the one-blank-line cap / leading-comma survival / the `CASE`-body-on-`then` rule / every glue rule** (this is *how* "never change comma placement or style" is honoured), and **the refusal gate itself** — which remains the **only** gate, tokenize/balance only, offline, never a database. **The sharpest exclusion, and one the queue entry could not have known it needed: every rule the *False-positive guards* table decides BY LAYOUT — above all the `DECLARE`-header break.** §18.4 tells a plpgsql declaration section from a `DECLARE … CURSOR` statement by whether the `DECLARE` **ends its line**; a flag turning that break off would make pass 1 emit `DECLARE x int;` on one line and **pass 2 read a different construct** — different frame stack, different indentation, and possibly a **balance refusal on text the formatter itself produced**. Any future layout-decided rule inherits the exclusion automatically. **A user's stored config cannot age badly:** `clause_rules` is sparse, so widening `_CLAUSE_STARTERS` later touches nobody's settings, and unknown keys / out-of-range values are **clamped to defaults silently** — the one place the app deliberately does not report a bad input file, because **nothing can be lost** (contrast §18.9's snippet store, which holds user-authored content and therefore refuses to overwrite what it could not read) |
+| 2026-08-10 | **§18.4's status banner naming the DDL object editor as *"the host"* (singular) for `format_selection`**; **§26's and §27's assertion of a *"Format Selection"* context-menu item on BOTH SQL surfaces**; and §27's record of **BUG-054 as in progress** (*"is being deleted"*) | **THREE STATUS CORRECTIONS FROM THE FQ-033 FOLD, ONE OF WHICH IS A CODE DEFECT AND IS DISPATCHED.** **(a) There are TWO SQL hosts, not one** — `DdlObjectEditorPanel` and `SqlConsolePanel` each bind their own panel-local `Ctrl+Alt+F` `QShortcut`; §18.5 D4 already said so, so the singular in §18.4 was a stale survivor of the pre-D4 text and is corrected here rather than left for a reader to trip over. **(b) The context-menu item exists on the DDL object tab ONLY.** Verified: `ui/sql_console_panel.py` contains **no `addAction` and no `contextMenuEvent` at all**, so in the console the chord is the gesture's only form and the command is undiscoverable there. **This is recorded as CODE-WRONG, SPEC-RIGHT and dispatched to `bug-triager` — not rewritten to match the tree** — because **DEC-012's ruling that *a context-menu entry IS a command* is the entire basis on which `Ctrl+Alt+F` sits inside the one-keyboard-host rule** rather than in DEC-009's widget-only carve-out; deleting the claim would quietly move the chord into a family it was explicitly ruled out of. **(c) BUG-054 is DONE, not pending:** `ui/ddl_object_editor.py`'s `eventFilter` carries the tombstone *"there is deliberately NO Ctrl+Alt+F branch here"*, so the `QShortcut` is already the single host on both panels, and §27's *"is being deleted"* was a dead assertion over shipped work |
+| 2026-08-10 | **Nothing in this document said where an XML-side formatter would live, and §7's Audit-prefix reservation stood at ten prefixes**; §18.9's `Settings`-menu block recorded the **pinnability** trade only | **FQ-033 PARTS C + D FOLDED INTO §18.4 AS TARGET DESIGN (NOT YET BUILT), PLACED THERE RATHER THAN IN A NEW SUBSECTION.** The queue entry proposed a **new sibling subsection under §18** for the XML formatter; **reversed at fold time on the owner's instruction and on cohesion grounds** — the *gesture* is one contract with one dispatch rule, and splitting the two engines across two sections would put that rule in neither. §18.4's heading and anchor are unchanged. **(1) Two engines, ONE gesture, dispatched by HOST SURFACE and never by sniffing the text** — a text-sniffing dispatcher would eventually guess wrong on `<x>select 1</x>`, and a formatter that guesses is the one thing §18.4 forbids. **(2) THREE `XmlEditor` surfaces, not the two the entry names** (Raw XML, Edit XSD, **and the FQ-006 draft fragment tab**); **XSD is a first-class target, not incidental** (owner). **(3) A NEW Qt-free `pgtp_editor/xmlfmt/` package with its OWN opacity-aware scanner** — deliberately **not `lxml`** (it raises on malformed or incomplete input, and a selection is *normally* a fragment: the ordinary case is the one lxml cannot parse) and deliberately **not `ui/xml_structure.py::scan`**, whose regex has no opacity handling and therefore **reports PHANTOM tags from inside comments and CDATA** — accepted best-effort leniency for folding and the gutter, a **silent wrong result** for an engine that rewrites text. The converse is recorded too: `xml_structure.scan` must **not** be "fixed" into the formatter's scanner, four shipped features depending on its current tolerance. **(4) THREE HARD RULES DERIVED FROM §2, and they are why this is safe to run on a `.pgtp`:** never break inside an opening tag (§2 puts every attribute on one line and §13/§17's line-anchored edits rely on it); **never touch element TEXT** — whitespace is adjusted *only* where the material between two tags is whitespace only, so an element with content keeps its content **and its own two tags** byte-for-byte, which is what protects the entity-escaped PHP/JS handler bodies §2 stores inside elements; and comments / CDATA / PIs / DOCTYPE are opaque and never entered. **(5) §2's byte-for-byte round-trip invariant is NOT contradicted, and the reasoning is written down because a reader will assume it is:** §2 binds paths that round-trip a file **the user did not ask to change**; this is a command whose entire purpose is to change the selected text's layout, and typing in the Raw XML editor already changes the file. **The owner ruled byte-round-trip is not a concern here and no guard is required** — what *is* required is rules 1–3, which keep the reformat from disturbing anything §2's consumers depend on. **(6) Base depth comes from the SELECTION'S POSITION IN THE DOCUMENT, not its first line's indentation** — a deliberate divergence from the SQL engine, because the reason a user reformats a fragment is that its indentation is wrong, so the pure entry point takes `(document, start, end)`. **(7) `xmlfmt` REUSES `Issue`/`FormatResult` by importing the `sql` façade** rather than defining twins: the refusal shape belongs to the **gesture**, and one user-visible underline must not have two renderers (contrast §18.4's deliberate choice to keep `sql.Issue` distinct from `xsd_verify.Issue` — different shape, different consumer). Dependency one way only. **(8) An ELEVENTH Audit prefix, `[XML]`** — a new prefix because an `[SQL]` row saying *"this XML selection is mis-nested"* is a lie to the user, and not an annexation of §16's `[Validate]`; §7's *no fourth SQL-ish prefix* rule does not bite, an XML reindenter not being SQL-ish. **A read-only XML buffer produces no row at all** and reuses `XmlEditor.read_only_edit_attempted`, the answer the app already has to *"you cannot change this buffer"*. **(9) `Settings ▸ Autoformatter settings…` is the anticipated second tenant, and FQ-027 is NO LONGER A DEPENDENCY** — the entry says FQ-027 *"is still QUEUED"*; it and the `Settings` menu both shipped (`229dc11`), so the entry is wrong and this is shipped ground. **(10) Persistence is `QSettings` (`autoformatter` group), and DEC-001 does NOT govern — the distinction is stated once because the next persistence question will ask it.** DEC-001 rejected QSettings for the snippet store on the artifact's **shape and purpose**: multi-line SQL bodies meant to be hand-authored, crossing between people by explicit export/import. Formatter config is scalars and small flags, its editor **is** the dialog, and nobody shares it — the same *kind* of state as `shortcutOverrides`, which lives exactly there; and the app's `QSettings` is `IniFormat`/`UserScope` on purpose, *"a plain file … portable, inspectable"*, so it already **is** hand-editable. **DEC-001's principle stands and names what would reverse this:** if sharing a house formatting style ever becomes a requirement, that is an export/import gesture, the principle applies in full, and the location moves to a file. **(11) The `Settings` menu's REBINDABILITY is recorded, not just its pinnability** — `MainWindow._shortcut_commands` builds `Customize Shortcuts…` from the same `collect_menu_commands()` walk that never tests `isVisible()`, so a user may assign a chord to a maintenance-only entry although the app ships none. Same accepted trade as pinnability under DEC-006 (*a guardrail, not a security boundary*), and recorded because the no-shortcut rule reads like an enforcement guarantee and is not one |
 
 ---
 
@@ -10480,12 +10995,14 @@ unrecorded — nothing below was invented in the body above:
   list.)*
 - **Fold re-scan performance** and `line_index` O(N²) — accepted for now; optimize only if profiling
   demands.
-- **~~§18.4 formatter host, shortcut and audit prefix~~ — RESOLVED 2026-08-02 (§18.5):** the host is the
-  DDL object editor tab (`ui/ddl_object_editor.py::DdlObjectEditorPanel`), the trigger is `Ctrl+Alt+F`
-  plus a "Format Selection" context-menu item (selection-only), and refusals report under the `[SQL]`
-  Audit prefix with a transient underline over the `Issue` span. §26/§27 carry the binding, and as of
-  2026-08-06 **all of it is built and wired** (§18.4 status). **Still not open:** whether an auto-format mode exists — it does **not**, by explicit
-  decision (§18.4).
+- **~~§18.4 formatter host, shortcut and audit prefix~~ — RESOLVED 2026-08-02 (§18.5):** the trigger is
+  `Ctrl+Alt+F` (selection-only) plus a "Format Selection" context-menu item, and refusals report under the
+  `[SQL]` Audit prefix with a transient underline over the `Issue` span. The host set has since grown to
+  **two** — the DDL object editor tab (`DdlObjectEditorPanel`, chord **and** context item) and §18.5 D4's
+  Sandbox SQL Console (`SqlConsolePanel`, chord only) — and **FQ-033 widens it to five surfaces with a
+  second engine** (§18.4, target design). §26/§27 carry the binding, and the SQL half is **built and
+  wired**. **Still not open:** whether an auto-format mode exists — it does **not**, by explicit
+  decision (§18.4), and FQ-033 does not reopen it.
 - **~~What "Apply" writes to in a project-less v1 (§18.5)~~ — RESOLVED 2026-08-02:** **both** the
   sandbox and the target database, each its own explicit, confirm-gated gesture, through the new
   `db/apply.py` write seam; Save and Apply are separate gestures; §18.3's reviewed batch deploy stays
