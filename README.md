@@ -15,6 +15,8 @@ PHPGen remains the canonical thing that compiles `.pgtp` → PHP. This tool does
 
 **The specification is [`docs/superpowers/CONSOLIDATED_SPEC.md`](docs/superpowers/CONSOLIDATED_SPEC.md)** — the single authoritative source for current design, with a supersession ledger recording every overridden decision. (`docs/superpowers/specs/` is frozen historical record; read it for rationale, never for current behaviour. `docs/superpowers/plans/` holds per-feature implementation plans.) End users want **Help ▸ Manual** in the running app instead.
 
+**How this project is built is itself documented:** [`docs/VIBE_CODING_MANUAL.md`](docs/VIBE_CODING_MANUAL.md) describes the agent-driven development loop — one orchestrating session, a cast of specialist subagents, and a set of queue files each with exactly one writer (spec, manual, test log, bug queue, feature queue, decision queue). Read it before contributing; it explains who owns which file and why nothing ships without its spec, its tests and its manual entry caught up.
+
 ## What it can do today
 
 The app opens on a **launcher** offering its three modes — **Standalone** (a `.pgtp` file, no project), **Project** (a DDL project with target and sandbox databases) and **Maintenance** (one-off setup work on the app's own schema).
