@@ -16,17 +16,33 @@
 """SQL/plpgsql selection formatter core (spec §18.4).
 
 Pure and Qt-free (§5's dependency rule): no PySide6, no database, no I/O. The
-public entry point is `format_selection(text) -> FormatResult`, which reindents
-an editor selection (whitespace and line breaks only) or refuses and returns the
-selection untouched with fatal `Issue`s carrying precise spans.
+public entry point is `format_selection(text, config=...) -> FormatResult`, which
+reindents an editor selection (whitespace, line breaks, and -- opt-in --
+keyword casing) or refuses and returns the selection untouched with fatal
+`Issue`s carrying precise spans.
 
-Per §18.4 this is the **core only**: it has no UI consumer, no keyboard
-shortcut, and -- by explicit design decision -- no auto-format mode.
+`FormatConfig` / `DEFAULT_FORMAT_CONFIG` are on the façade because both hosts and
+the `Settings ▸ Autoformatter settings…` dialog construct a config and this is
+where they should read it from (FQ-033). The per-rule record types
+(`KeywordCase`, `ClauseRule`) stay in `sql/format_config.py` -- reachable, but
+not part of the pinned surface, the same way `tokenize`/`Token` are reached
+through `sql/tokenizer.py`.
+
+Per §18.4 the engine has no auto-format mode of any kind, by explicit design
+decision, and no configuration reaches its refusal gate.
 """
 from __future__ import annotations
 
+from .format_config import DEFAULT_FORMAT_CONFIG, FormatConfig
 from .formatter import FormatResult, format_selection
 from .issues import Issue
 from .keywords import SQL_KEYWORDS
 
-__all__ = ["format_selection", "FormatResult", "Issue", "SQL_KEYWORDS"]
+__all__ = [
+    "format_selection",
+    "FormatResult",
+    "Issue",
+    "SQL_KEYWORDS",
+    "FormatConfig",
+    "DEFAULT_FORMAT_CONFIG",
+]

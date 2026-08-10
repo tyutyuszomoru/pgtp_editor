@@ -21,7 +21,7 @@ import time
 
 import pytest
 
-from pgtp_editor.sql import FormatResult, format_selection
+from pgtp_editor.sql import FormatConfig, FormatResult, format_selection
 from pgtp_editor.sql.tokenizer import tokenize
 
 
@@ -172,12 +172,17 @@ def test_formatting_is_deterministic(text):
 
 
 def test_indent_unit_choice_does_not_change_the_token_stream():
+    # FQ-033: the unit is carried by `FormatConfig` now. `""` is no longer a
+    # *reachable* value (`FormatConfig.sanitized()` is the loader's gate and
+    # replaces it), but the engine is still handed it raw here, because "the unit
+    # never changes the token stream" must hold for whatever it is given.
     for unit in ("    ", "  ", "\t", ""):
+        config = FormatConfig(indent_unit=unit)
         for text in (TRIGGER_BODY, TRIGGER_FUNCTION, "begin if a then x := 1; end if; end;"):
-            result = format_selection(text, indent_unit=unit)
+            result = format_selection(text, config=config)
             assert result.ok, [issue.message for issue in result.issues]
             assert code(result.text) == code(text)
-            assert format_selection(result.text, indent_unit=unit).text == result.text
+            assert format_selection(result.text, config=config).text == result.text
 
 
 # --------------------------------------------------------------------------

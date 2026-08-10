@@ -136,6 +136,7 @@ from .async_task import run_async
 from .code_editor import CodeEditor
 from .completion_popup import CompletionPopupHostMixin
 from .expand_select_seam import expand_select_expansion
+from .format_settings import current_sql_config
 from .schema_gesture_seam import SchemaGestureHostMixin
 from .sql_results_panel import RunReport, SqlResultsPanel, StatementRun
 
@@ -810,7 +811,10 @@ class SqlConsolePanel(SchemaGestureHostMixin, CompletionPopupHostMixin, QWidget)
         if not cursor.hasSelection():
             return
         selected = cursor.selectedText().replace(" ", "\n")
-        result = _format_selection_text(selected)
+        # FQ-033: same as the DDL object tab -- the ruleset is read at gesture
+        # time from `ui/format_settings.py`, so both SQL hosts always agree with
+        # whatever the Autoformatter settings dialog last saved.
+        result = _format_selection_text(selected, config=current_sql_config())
         if result.ok:
             cursor.beginEditBlock()
             cursor.insertText(result.text)

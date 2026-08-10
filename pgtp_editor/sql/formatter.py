@@ -14,31 +14,48 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 # pgtp_editor/sql/formatter.py
-"""SQL/plpgsql selection formatter -- indentation and line breaks only (§18.4).
+"""SQL/plpgsql selection formatter -- layout, plus optional keyword casing (§18.4).
 
-`format_selection(text)` reindents an arbitrary editor selection (a whole
-statement, a bare fragment, or a chunk of plpgsql control flow) using a
+`format_selection(text, config=...)` reindents an arbitrary editor selection (a
+whole statement, a bare fragment, or a chunk of plpgsql control flow) using a
 nesting-depth walk over `tokenizer.tokenize`'s token stream. It rewrites
-**only inter-token whitespace and newlines**: keyword casing, identifier
-casing, comma placement/style and literal values are never touched, and the
-output's non-whitespace token texts are the input's, in order.
+**inter-token whitespace and newlines** and -- when `config.keyword_case` asks
+for it (FQ-033 part A; the default `AS_IS` is byte-identical to the older
+engine) -- **the case of keyword tokens and nothing else**. Identifier casing,
+comma placement/style and literal values are never touched. The headline
+invariant, in the form §18.4 states it:
 
-Refusal is the only gate (§18.4: no semantic checks, no rule catalog). When
-the selection cannot be confidently tokenized (a string / quoted identifier /
-dollar-quote / block comment cut in half by the selection boundary) or its
-parens/brackets/blocks are unbalanced, the formatter returns
-`ok=False` with the original text **verbatim** -- so a caller that ignores
-`ok` still cannot corrupt the selection -- plus one fatal `Issue` per problem
-carrying the precise span of the offending construct.
+    The output's non-whitespace tokens are identical to the input's, in order --
+    identical EXCEPT for keyword casing, and only when keyword casing is
+    enabled. Under the default (`AS_IS`) the stricter old form still holds
+    literally: "".join(out.split()) == "".join(in.split()).
 
-Not wired to anything: this is the reusable core only. There is no auto-format
-mode of any kind, by explicit design decision (§18.4).
+Refusal is the only gate (§18.4: no semantic checks). When the selection cannot
+be confidently tokenized (a string / quoted identifier / dollar-quote / block
+comment cut in half by the selection boundary) or its parens/brackets/blocks are
+unbalanced, the formatter returns `ok=False` with the original text **verbatim**
+-- so a caller that ignores `ok` still cannot corrupt the selection -- plus one
+fatal `Issue` per problem carrying the precise span of the offending construct.
+**No configuration reaches that gate**: there is no setting that makes the
+formatter accept unbalanced input.
+
+Which rules are configurable, which are fixed, and why the space is bounded is
+documented in `format_config.py` -- read it before adding a knob. There is no
+auto-format mode of any kind, by explicit design decision (§18.4).
 """
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from functools import lru_cache
 
+from .format_config import (
+    CLAUSE_STARTERS,
+    DEFAULT_FORMAT_CONFIG,
+    DEFAULT_INDENT_UNIT,
+    ClauseRule,
+    FormatConfig,
+    KeywordCase,
+)
 from .issues import Issue
 from .tokenizer import (
     BLOCK_COMMENT,
@@ -54,21 +71,19 @@ from .tokenizer import (
     tokenize,
 )
 
-#: One indent level.
-DEFAULT_INDENT_UNIT = "    "
-
 # --------------------------------------------------------------------------
 # Dialect subsets driving the line-break decisions. All lowercase; matching
-# goes through Token.keyword (case-insensitive), so casing is never rewritten.
+# goes through Token.keyword (case-insensitive), so a keyword's *classification*
+# never depends on how the author spelled it. Rewriting its case is a separate,
+# opt-in step that happens at token emit (`_Reindenter._emit_text`) -- the
+# tokenizer itself still never changes casing (see `tokenizer.py`).
 # --------------------------------------------------------------------------
 
-#: Clause keywords that start a new line (plain-SQL clause structure).
-_CLAUSE_STARTERS = frozenset(
-    """
-    select from where group having order limit offset union except intersect
-    join on values set returning with
-    """.split()
-)
+#: Clause keywords that start a new line (plain-SQL clause structure). Defined
+#: in `format_config.py` because the per-clause break/indent grid is keyed by it
+#: and the config module must not import the engine it configures. Aliased here
+#: under the module's historical private name, which the rules below read.
+_CLAUSE_STARTERS = CLAUSE_STARTERS
 
 #: Words that begin a JOIN phrase -- the break goes before them, not before
 #: the `join` they lead into (`left outer join` stays one line).
@@ -243,12 +258,19 @@ def _dominant_eol(text: str) -> str:
     return "\n"
 
 
-def format_selection(text: str, *, indent_unit: str = DEFAULT_INDENT_UNIT) -> FormatResult:
-    """Reindent `text`, or refuse and hand it back untouched.
+def format_selection(
+    text: str, *, config: FormatConfig = DEFAULT_FORMAT_CONFIG
+) -> FormatResult:
+    """Reindent `text` under `config`, or refuse and hand it back untouched.
 
-    Whitespace/newlines only -- see the module docstring for the full contract.
-    Deterministic and idempotent: formatting an already-formatted selection
-    reproduces it exactly.
+    Whitespace, newlines and (opt-in) keyword casing only -- see the module
+    docstring for the full contract. Deterministic and idempotent **for every
+    reachable config**: formatting an already-formatted selection with the same
+    config reproduces it exactly.
+
+    The old `indent_unit=` keyword is GONE rather than kept alongside
+    `config.indent_unit`: two ways to set one value is the second-source-of-truth
+    defect this project refuses everywhere else (§18.4's public-API table).
     """
     tokens = tokenize(text)
     items = _significant(tokens)
@@ -270,7 +292,7 @@ def format_selection(text: str, *, indent_unit: str = DEFAULT_INDENT_UNIT) -> Fo
     if unterminated:
         return FormatResult(ok=False, text=text, issues=unterminated)
 
-    formatter = _Reindenter(items, indent_unit=indent_unit)
+    formatter = _Reindenter(items, config=config)
     lines, issues = formatter.run()
     if issues:
         return FormatResult(ok=False, text=text, issues=issues)
@@ -298,9 +320,10 @@ class _Reindenter:
     refusal is recorded the produced lines are discarded by the caller.
     """
 
-    def __init__(self, items: list[tuple[Token, int]], *, indent_unit: str):
+    def __init__(self, items: list[tuple[Token, int]], *, config: FormatConfig):
         self._items = items
-        self._indent_unit = indent_unit
+        self._config = config
+        self._indent_unit = config.indent_unit
         self._frames: list[_Frame] = [_Frame(kind="root", token=None)]
         self._issues: list[Issue] = []
         self._lines: list[str] = []
@@ -416,14 +439,24 @@ class _Reindenter:
         level = self._level() - dedent + (1 if is_continuation else 0)
 
         if not self._lines and not self._parts:
+            # THE FIRST EMITTED LINE NEVER TAKES A PER-CLAUSE EXTRA INDENT, and
+            # that is an idempotence guard rather than a cosmetic choice:
+            # `format_selection` re-applies the selection's own first content
+            # line indentation to every output line, so indenting the first line
+            # here would make pass 2 read that indentation as the new base and
+            # push the whole block right again, forever. The first line anchors
+            # the block; per-clause indents apply to the lines below it.
             self._line_indent = max(level, 0)
         elif break_before:
-            self._start_line(level, blanks=min(max(newlines_before - 1, 0), 1))
+            self._start_line(
+                level + self._clause_indent(keyword),
+                blanks=min(max(newlines_before - 1, 0), 1),
+            )
 
         # --- emit ---
         if self._parts and self._space_before(tok, self._next_token(index)):
             self._parts.append(" ")
-        self._parts.append(tok.text)
+        self._parts.append(self._emit_text(tok))
 
         # --- openers and post-token state, after the text is placed ---
         self._open_frames(index, tok, keyword, prev_kw)
@@ -440,6 +473,43 @@ class _Reindenter:
         self._prev_prev = self._prev
         self._prev = tok
 
+    # -- configuration ----------------------------------------------------
+
+    def _rule(self, keyword: str) -> ClauseRule:
+        """The configured (or shipped-default) rule for a clause starter."""
+        return self._config.rule_for(keyword)
+
+    def _clause_indent(self, keyword: str | None) -> int:
+        """Extra levels for a clause starter that is starting its own line.
+
+        Zero for everything else, including continuation lines: the
+        clause-continuation `+1` is a property of the *nesting*, not of the
+        keyword, and stays out of the configurable space (§18.4 B).
+        """
+        if keyword is None or keyword not in _CLAUSE_STARTERS:
+            return 0
+        return self._rule(keyword).indent_levels
+
+    def _emit_text(self, tok: Token) -> str:
+        """The token's text as it goes into the output line.
+
+        The ONE place casing is applied, and only to tokens the tokenizer
+        classified as keywords -- `Token.keyword` is non-`None` for `word` tokens
+        in `SQL_KEYWORDS` and nothing else, so identifiers, built-in types and
+        functions, numbers, and every opaque region (strings, `E'...'`, quoted
+        identifiers, `$$...$$` bodies, `--` and `/* */` comments) can never reach
+        the rewrite. That boundary is deliberate: the formatter is offline and
+        has no schema knowledge, and Postgres quoted identifiers are
+        case-sensitive, so recasing anything but a keyword could silently change
+        which object a statement names (§18.4 A).
+
+        Idempotent by construction: the result is a function of the token's set
+        membership, not of its current spelling.
+        """
+        if tok.keyword is None or self._config.keyword_case is KeywordCase.AS_IS:
+            return tok.text
+        return self._config.case_of(tok.text)
+
     # -- break rules ------------------------------------------------------
 
     def _breaks_before(
@@ -450,12 +520,22 @@ class _Reindenter:
         if prev_kw == "end":
             return False  # `END IF` / `END LOOP` / `END CASE` are two tokens
         if keyword in _CLAUSE_STARTERS:
-            # `left outer join` breaks once, before `left`.
+            # `left outer join` breaks at most once, and at its first prefix
+            # word -- so the `join` itself never breaks after a prefix,
+            # whichever way `join_phrase_break` is set.
             if keyword == "join" and prev_kw in _JOIN_PREFIXES:
                 return False
-            return True
+            return self._rule(keyword).break_before
         if keyword in _JOIN_PREFIXES:
-            # `left outer join` breaks once, before `left`.
+            # `left outer join` breaks once, before `left`. `join_phrase_break`
+            # governs the PHRASE as a whole (§18.4 B: "never per prefix word"):
+            # switched off, a prefixed join introduces no break anywhere -- not
+            # before `left` and, by the branch above, not before `join` either,
+            # so `from a left outer join b` stays on one line instead of
+            # breaking in the middle of the phrase. A *bare* `join` keeps
+            # following its own clause rule.
+            if not self._config.join_phrase_break:
+                return False
             return prev_kw not in _JOIN_PREFIXES and self._leads_into_join(index)
         if keyword == "loop":
             # A bare `LOOP` opens a block; `FOR ... LOOP` / `WHILE ... LOOP`

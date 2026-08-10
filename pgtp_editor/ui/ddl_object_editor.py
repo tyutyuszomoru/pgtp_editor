@@ -86,6 +86,7 @@ from pgtp_editor.sql.caret_context import (
 )
 from pgtp_editor.sql.formatter import format_selection as _format_selection_text
 from pgtp_editor.ui.code_editor import CodeEditor
+from pgtp_editor.ui.format_settings import current_sql_config
 from pgtp_editor.ui.completion_popup import CompletionPopupHostMixin
 from pgtp_editor.ui.expand_select_seam import expand_select_expansion
 from pgtp_editor.ui.schema_gesture_seam import SchemaGestureHostMixin
@@ -1023,7 +1024,12 @@ class DdlObjectEditorPanel(
         # QTextCursor.selectedText() joins lines with U+2029 (paragraph
         # separator), never "\n" -- the tokenizer expects real newlines.
         selected = cursor.selectedText().replace(" ", "\n")
-        result = _format_selection_text(selected)
+        # FQ-033: the ruleset is read AT GESTURE TIME, so a change made in
+        # `Settings ▸ Autoformatter settings…` applies to the very next
+        # Ctrl+Alt+F with no notification plumbing between the dialog and every
+        # open tab. The default config is byte-identical to the pre-FQ-033
+        # behaviour, so an untouched install formats exactly as before.
+        result = _format_selection_text(selected, config=current_sql_config())
         if result.ok:
             cursor.beginEditBlock()
             cursor.insertText(result.text)
