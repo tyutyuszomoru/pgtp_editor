@@ -73,10 +73,12 @@ from PySide6.QtWidgets import QVBoxLayout, QWidget
 from pgtp_editor.lint.findings import LintOutcome, LintStatus, audit_lines
 from pgtp_editor.ui.async_task import run_async
 from pgtp_editor.ui.code_editor import (
+    CLAIMED_NOT_UNDO_REDO,
     REDO,
     UNDO,
     CodeEditor,
     apply_editor_operation,
+    apply_shrink_structural_selection,
     classify_editor_chord,
     is_mutating_editor_operation,
 )
@@ -423,12 +425,19 @@ class PhpFileTab(QWidget):
                     # (owner, 2026-08-10). This tab's buffer is editable, so the
                     # shared implementation simply runs.
                     apply_editor_operation(self.editor, operation)
-                # else: the two answers that run nothing, both consumed on
-                # purpose. Ctrl+Shift+Z: DEC-015 freed it from redo, and since Qt
-                # answers it natively under `KB_Win | KB_X11` intercepting it
-                # here is the only way to make that true (FQ-034 will bind
-                # shrink-selection). Alt+Backspace / Alt+Shift+Backspace:
-                # suppressed app-wide, because Qt binds them `KB_Win` only and a
-                # chord must mean the same thing on both systems.
+                elif operation == CLAIMED_NOT_UNDO_REDO:
+                    # `Ctrl+Shift+Z` = Shrink Selection (FQ-034). The claim came
+                    # first and stays: DEC-015 freed the chord from redo, and Qt
+                    # answers it natively under `KB_Win | KB_X11`, so intercepting
+                    # it here is the only way to make that true. All six surfaces
+                    # delegate to the one implementation. **On a PHP tab this is
+                    # inert** -- the ladder is plpgsql structure, and
+                    # `supports_structural_expansion` is False for `language ==
+                    # "php"` -- but the chord is still consumed, exactly as before.
+                    apply_shrink_structural_selection(self.editor)
+                # else: the one answer that still runs nothing --
+                # Alt+Backspace / Alt+Shift+Backspace, suppressed app-wide
+                # because Qt binds them `KB_Win` only and a chord must mean the
+                # same thing on both systems.
                 return True
         return super().eventFilter(obj, event)

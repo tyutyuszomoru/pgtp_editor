@@ -86,10 +86,12 @@ from pgtp_editor.sql.caret_context import (
 )
 from pgtp_editor.sql.formatter import format_selection as _format_selection_text
 from pgtp_editor.ui.code_editor import (
+    CLAIMED_NOT_UNDO_REDO,
     REDO,
     UNDO,
     CodeEditor,
     apply_editor_operation,
+    apply_shrink_structural_selection,
     classify_editor_chord,
     is_mutating_editor_operation,
 )
@@ -934,12 +936,18 @@ class DdlObjectEditorPanel(
                     # run; the sibling `DdlEditorPanel` states a refusal instead,
                     # exactly as it does for undo.
                     apply_editor_operation(self.editor, operation)
-                # else: the two answers that run no operation, and in both cases
-                # the claim is load-bearing rather than tidiness. Ctrl+Shift+Z
-                # (freed from redo by DEC-015): Qt carries it as native
-                # `StandardKey.Redo` under `KB_Win | KB_X11`, so letting it fall
-                # through would redo on both platforms and silently defeat the
-                # reassignment -- FQ-034's shrink-selection will answer it.
+                elif operation == CLAIMED_NOT_UNDO_REDO:
+                    # `Ctrl+Shift+Z` = Shrink Selection (FQ-034). The claim was
+                    # here first and is load-bearing rather than tidiness: Qt
+                    # carries the chord as native `StandardKey.Redo` under
+                    # `KB_Win | KB_X11`, so letting it fall through would redo on
+                    # both platforms and silently defeat DEC-015. This feature
+                    # gives that claim an answer instead of binding the chord --
+                    # which is why `Select ▸ Shrink Selection` carries no
+                    # `setShortcut`, and why every surface routes into the same
+                    # `apply_shrink_structural_selection`.
+                    apply_shrink_structural_selection(self.editor)
+                # else: the one answer that still runs no operation.
                 # Alt+Backspace / Alt+Shift+Backspace: Qt binds them `KB_Win`
                 # only, so suppressing them here is what keeps the keyboard
                 # identical on both systems.

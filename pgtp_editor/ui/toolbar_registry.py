@@ -204,6 +204,13 @@ RENAMED_ID_ALIASES: dict[str, str] = {
     # the whole menu path, so a toolbar saved before the move needs this row to
     # keep its button. A MOVE, so it gets a row (unlike the deletions above).
     "database.project-status": "file.project-status",
+    # FQ-034: `Select ▸ Select Parent Block` -> `Select ▸ Expand Selection`. The
+    # command survives and grows (it becomes repeatable and reaches the SQL
+    # editors), so this is a RENAME, not a deletion -- and since the label IS the
+    # id's last segment the id moves with it, taking every pinned toolbar button
+    # and every stored `Customize Shortcuts…` override with it unless this row
+    # exists. `select.shrink-selection` is brand new and needs no row.
+    "select.select-parent-block": "select.expand-selection",
     # `database.deploy-this-edit` gets NO row: FQ-026 DELETES the picker, and a
     # deletion degrades through `resolve_ids` dropping the unresolvable id (the
     # `file.save` precedent). A row here would point a saved button at a

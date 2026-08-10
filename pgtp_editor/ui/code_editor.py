@@ -56,6 +56,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
+from pgtp_editor.sql import block_spans
 from pgtp_editor.sql.keywords import SQL_KEYWORDS
 from pgtp_editor.sql.templates import (
     DEFAULT_SNIPPETS,
@@ -146,6 +147,35 @@ def classify_editor_chord(event) -> str | None:
       surface answers with its stated refusal, never with silence.
     """
     return _EDITOR_COMBINATIONS.get((event.key(), event.modifiers()))
+
+
+def apply_shrink_structural_selection(editor) -> bool:
+    """`Ctrl+Shift+Z`'s ONE answer, called from every editing surface (FQ-034).
+
+    **The chord is not bound by this feature -- the feature gives an existing
+    claim an answer.** `Ctrl+Shift+Z` is `CLAIMED_NOT_UNDO_REDO` in
+    `EDITOR_CHORDS`: Qt binds it as native `StandardKey.Redo` on the Windows *and*
+    X11 schemes, so all six surfaces already intercept it and accept its
+    `ShortcutOverride` to keep Qt's redo from firing (DEC-015, BUG-056). That
+    interception is mandated by DEC-014 and cannot be dropped, which is exactly
+    why `Select ▸ Shrink Selection`'s `QAction` carries **no `setShortcut`**: a
+    window action would be starved by the very override the surfaces must accept.
+
+    **This is not the double-hosting DEC-012 forbids.** DEC-012's defect is two
+    hosts that can *drift* -- different gates, different rebinding behaviour,
+    different lifetimes. Here there is one implementation and one answer, and the
+    per-surface interceptions all funnel into it, exactly as `Ctrl+Z`/`Ctrl+Y`
+    funnel into each surface's single undo/redo answer.
+
+    Returns whether the selection moved. Surfaces whose editor has no
+    `shrink_structural_selection` (every `XmlEditor`, by design -- §8 keeps the
+    XML family stateless and therefore shrink-less) get False and stay inert,
+    while still consuming the chord.
+    """
+    shrink = getattr(editor, "shrink_structural_selection", None)
+    if not callable(shrink):
+        return False
+    return bool(shrink())
 
 
 def is_mutating_editor_operation(operation: str | None) -> bool:
@@ -545,6 +575,16 @@ class CodeEditor(GutterBookmarkFoldMixin, QPlainTextEdit):
         self._tab_stop_cursors: list[QTextCursor] = []
         self._tab_stop_index = 0
 
+        # The structural expansion stack (FQ-034, §8). PER EDITOR, ON THE EDITOR:
+        # a selection stack is a property of *this document in this viewport*, so
+        # a host-side map keyed by editor would need a lifetime rule for closed
+        # tabs and the state would have no meaning outside the widget that owns
+        # the selection. `_expansion_revision` / `_expansion_selection` are the
+        # invalidation pair -- see `_expansion_stack_is_live`.
+        self._expansion_stack: list[tuple[int, int]] = []
+        self._expansion_revision: int | None = None
+        self._expansion_selection: tuple[int, int] | None = None
+
         self._init_gutter_bookmarks_folding()
         self._apply_gutter_theme_colors(self._palette_is_light())
 
@@ -650,6 +690,147 @@ class CodeEditor(GutterBookmarkFoldMixin, QPlainTextEdit):
         cursor.setPosition(start, QTextCursor.MoveMode.KeepAnchor)
         self.setTextCursor(cursor)
         self.ensureCursorVisible()
+
+    # --- Structural expand / shrink: the repeatable ladder (FQ-034, §8) -----
+    #
+    # `Ctrl+Shift+A` grows the selection outward one structural unit per press;
+    # `Ctrl+Shift+Z` steps it back inward. Three facts shape the code below.
+    #
+    # 1. **The spans come from `sql/block_spans.py`, which is Qt-free.** This
+    #    widget converts offsets into a `QTextCursor` and nothing else -- it does
+    #    not know what a `BEGIN` is, and `sql/` does not know what a widget is
+    #    (§5's arrow, test-enforced). The rung *policy* (inner-before-outer for a
+    #    bracket group, the sparse clause rung, "nothing larger left" = None) all
+    #    lives there too, so the same ladder is testable without Qt.
+    # 2. **The stack is what makes shrink possible at all.** `XmlEditor`'s parent
+    #    walk is stateless -- re-derived from `selectionStart()` every press --
+    #    which is precisely why that family has no shrink. Here grow pushes the
+    #    selection it is replacing, and shrink pops it.
+    # 3. **The paren rung is TOKEN-level, unlike `Ctrl+Shift+B`.**
+    #    `enclosing_bracket_span` scans characters and so counts a `(` inside a
+    #    string literal or a comment; the ladder consults the tokenizer and does
+    #    not. Both survive on purpose: `Ctrl+Shift+B` also serves PHP and JS tabs,
+    #    which have no SQL tokenizer to consult, so one implementation is not
+    #    available (§8).
+
+    def supports_structural_expansion(self) -> bool:
+        """Whether `Select ▸ Expand Selection` means anything on this editor.
+
+        **A QUESTION on the editor, not a `hasattr`, and that is the point.**
+        The gate this replaces asked `hasattr(editor, "select_parent_block")`, a
+        *class* fact. Grow's gate is a **per-instance** fact -- a `CodeEditor`
+        supports the ladder only where its language is plpgsql -- which `hasattr`
+        cannot express, so both editor families answer this one predicate
+        instead (`XmlEditor` returns True unconditionally).
+        """
+        return self._language == "sql"
+
+    def expand_structural_selection(self) -> bool:
+        """`Ctrl+Shift+A`: select the next larger structural unit. Repeatable.
+
+        Returns whether the selection moved. **Nothing larger left is a NO-OP,
+        deliberately not a refusal** (§8): selecting mutates nothing, so a report
+        per keypress at the top of the ladder would be noise rather than
+        information, and it matches `select_parent_block`'s behaviour at the
+        document root.
+        """
+        if not self.supports_structural_expansion():
+            return False
+        cursor = self.textCursor()
+        selection = (cursor.selectionStart(), cursor.selectionEnd())
+        # Caret-at-start is the app's selection idiom (see `select_enclosing_
+        # brackets`), so `selectionStart()` is where the user's caret sits and is
+        # the honest place to resolve the chain from -- the same reasoning
+        # `XmlEditor.select_parent_block` states for its own re-derivation.
+        chain = block_spans.structure_chain(self.toPlainText(), selection[0])
+        target = block_spans.expand_target(chain, selection)
+        if target is None:
+            return False
+        if not self._expansion_stack_is_live(selection):
+            self._expansion_stack = []
+        self._expansion_stack.append(selection)
+        self._apply_structural_selection(target)
+        return True
+
+    def shrink_structural_selection(self) -> bool:
+        """`Ctrl+Shift+Z`: step the selection back inward. Returns whether it moved.
+
+        Two modes, and **the user cannot see which one they are in** -- an
+        accepted cost, recorded rather than hidden (§8). The mitigation is that
+        both move the selection *inward*, so the gesture's direction never
+        surprises even when its exact target does.
+
+        * **With a live stack** (grow put this selection here, and nothing has
+          edited the document or moved the selection since) it POPS -- the exact
+          inverse of the press that produced the current selection.
+        * **With no stack** -- after a mouse drag, after any edit, on a first
+          press -- it selects the largest structural span lying **strictly
+          inside** the current selection (owner, `DEC-260810164601`). That was
+          chosen because it *subsumes* the conservative "do nothing": at the
+          innermost span nothing lies strictly inside, so `shrink_target` returns
+          None and this **is** a no-op there. There is deliberately **no special
+          case** for that, and none should be added -- the whole reason the
+          deriving option won is that it needs one branch fewer.
+
+        There is no refusal path either, so DEC-013's boundary never comes into
+        play: there is nothing to refuse.
+        """
+        if not self.supports_structural_expansion():
+            return False
+        cursor = self.textCursor()
+        selection = (cursor.selectionStart(), cursor.selectionEnd())
+        if self._expansion_stack_is_live(selection) and self._expansion_stack:
+            self._apply_structural_selection(self._expansion_stack.pop())
+            return True
+        self._expansion_stack = []
+        # One character inside the selection, so a selection that starts exactly
+        # on a `(` still resolves the chain that `(` opens. An empty selection
+        # lands back on the caret, where nothing is strictly inside it -- which
+        # is the no-op above, reached without a branch of its own.
+        #
+        # The chain is resolved from ONE position, which the ruling's wording
+        # ("the largest `structure_chain` member strictly inside the selection")
+        # implies and which is worth stating: repeated derives walk inward along
+        # the chain at the selection's start, not toward whichever construct is
+        # widest somewhere in the middle. Both properties the ruling weighed hold
+        # at every step -- the selection always moves inward, and every press that
+        # fires changes something.
+        probe = min(selection[0] + 1, selection[1])
+        chain = block_spans.structure_chain(self.toPlainText(), probe)
+        target = block_spans.shrink_target(chain, selection)
+        if target is None:
+            return False
+        self._apply_structural_selection(target)
+        return True
+
+    def _expansion_stack_is_live(self, selection: tuple[int, int]) -> bool:
+        """Whether the stack still describes the text and selection on screen.
+
+        Dropped whole, never partially trusted, when either half is stale:
+
+        * **the document revision changed** (any edit) -- the stored offsets
+          describe text that no longer exists, and restoring one would select a
+          visibly wrong range. This is `_update_matching_tag_highlight`'s rule
+          applied to selections: while stale, do nothing rather than something
+          wrong.
+        * **the selection is not the one the last grow produced** -- the user
+          clicked, dragged, or ran another selection command in between.
+        """
+        return (
+            self._expansion_revision == self.document().revision()
+            and self._expansion_selection == selection
+        )
+
+    def _apply_structural_selection(self, span: tuple[int, int]) -> None:
+        """Select `span` caret-at-start and remember it as the ladder's state."""
+        start, end = span
+        cursor = self.textCursor()
+        cursor.setPosition(end)
+        cursor.setPosition(start, QTextCursor.MoveMode.KeepAnchor)
+        self.setTextCursor(cursor)
+        self.ensureCursorVisible()
+        self._expansion_revision = self.document().revision()
+        self._expansion_selection = (start, end)
 
     # --- Template expansion: the ONE application path (FQ-030) -------------
     #
@@ -1216,9 +1397,20 @@ class CodeEditorDialog(QDialog):
                     # buffer is editable, so they simply run; the shared
                     # implementation is what keeps all six surfaces identical.
                     apply_editor_operation(self._editor, operation)
-                # else: the two answers that run nothing -- Ctrl+Shift+Z
-                # (DEC-015) and the suppressed Alt+Backspace pair. Consumed so
-                # Qt's own platform-conditional handling cannot answer instead.
+                elif operation == CLAIMED_NOT_UNDO_REDO:
+                    # `Ctrl+Shift+Z` = Shrink Selection (FQ-034). The claim was
+                    # already here (DEC-015 freed the chord from redo and Qt
+                    # answers it natively on both schemes, so the interception
+                    # must stay); this feature gives it an answer instead of
+                    # binding the chord afresh. One implementation for all six
+                    # surfaces -- `apply_shrink_structural_selection` -- so a
+                    # seventh cannot arrive with a private one. The dialog's
+                    # editor answers only where its language is plpgsql, which is
+                    # the same per-instance gate the menu entries use.
+                    apply_shrink_structural_selection(self._editor)
+                # else: the one answer that still runs nothing -- the suppressed
+                # Alt+Backspace pair, consumed so Qt's own platform-conditional
+                # handling cannot answer instead.
                 return True
         return super().eventFilter(obj, event)
 

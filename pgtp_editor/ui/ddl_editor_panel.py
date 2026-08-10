@@ -31,9 +31,11 @@ from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import QVBoxLayout, QWidget
 
 from pgtp_editor.ui.code_editor import (
+    CLAIMED_NOT_UNDO_REDO,
     REDO,
     UNDO,
     CodeEditor,
+    apply_shrink_structural_selection,
     classify_editor_chord,
     is_mutating_editor_operation,
 )
@@ -236,13 +238,21 @@ class EditorPanel(QWidget):
                 self.editor.report_refusal(self._UNDO_REDO_REFUSAL)
             elif is_mutating_editor_operation(operation):
                 self.editor.report_refusal(self._EDIT_REFUSAL)
-            # else: `Ctrl+Shift+Z` (freed from redo by DEC-015) and the
-            # `Alt+Backspace` pair (suppressed app-wide so the keyboard is
-            # identical on both platforms). Both are claimed here for the same
-            # reason as everywhere else — Qt would otherwise answer them itself —
-            # but the read-only refusal above must NOT be stated for them: none
-            # of them asks for an undo, so answering "nothing to undo here" would
-            # be a wrong reason, which is worse than none.
+            elif operation == CLAIMED_NOT_UNDO_REDO:
+                # `Ctrl+Shift+Z` = Shrink Selection (FQ-034), and it RUNS here
+                # even though every other gesture in this panel refuses: the
+                # buffer is read-only, and **read-only is irrelevant to
+                # selecting** — the same argument that keeps `Select All` and
+                # `Ctrl+Shift+B` live in this panel (§8). So no refusal is owed,
+                # and none is stated; the ladder simply works on the synthesized
+                # DDL, which is the surface where reading structure matters most.
+                apply_shrink_structural_selection(self.editor)
+            # else: the `Alt+Backspace` pair (suppressed app-wide so the keyboard
+            # is identical on both platforms), claimed here for the same reason as
+            # everywhere else — Qt would otherwise answer it itself — but the
+            # read-only refusal above must NOT be stated for it: it does not ask
+            # for an undo, so answering "nothing to undo here" would be a wrong
+            # reason, which is worse than none.
             return True
         if obj is self.editor and event.type() == QEvent.Type.ContextMenu:
             menu = self._build_context_menu_at(event.pos())

@@ -48,6 +48,20 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from functools import lru_cache
 
+from .blocks import (
+    BEGIN_NOT_BLOCK_FOLLOWERS,
+    BLOCK_FRAMES,
+    BLOCK_STARTERS,
+    IF_NOT_BLOCK_FOLLOWERS,
+    LOOP_STARTERS,
+    SOFT_FRAMES,
+    UNMATCHED_BLOCK_HINT,
+    begin_is_transaction,
+    declare_is_cursor,
+    if_is_modifier,
+    significant_tokens,
+    when_opens_branch,
+)
 from .format_config import (
     CLAUSE_STARTERS,
     DEFAULT_FORMAT_CONFIG,
@@ -89,20 +103,28 @@ _CLAUSE_STARTERS = CLAUSE_STARTERS
 #: the `join` they lead into (`left outer join` stays one line).
 _JOIN_PREFIXES = frozenset({"inner", "left", "right", "full", "cross", "outer", "natural"})
 
-#: Block keywords that start a new line (plpgsql block structure).
-_BLOCK_STARTERS = frozenset({"begin", "declare", "exception", "else", "elsif", "elseif", "end", "when"})
+#: Block keywords that start a new line (plpgsql block structure). LIFTED to
+#: `sql/blocks.py` (FQ-034) along with the three tables below and the four guard
+#: predicates, so §8's structural span model reads the same block-balance rules
+#: this engine does instead of re-deriving them. Aliased here under the module's
+#: historical private names -- a plain re-bind of the SAME objects, exactly as
+#: `_CLAUSE_STARTERS` above, so the formatter's own identity assertions keep
+#: holding unchanged. A rules module must not import the engine it configures, so
+#: the arrow runs this way and never back.
+_BLOCK_STARTERS = BLOCK_STARTERS
 
 #: After these the rest of the header is done -- the body starts on a new line.
+#: Deliberately NOT lifted: a line-break rule, not a block-balance rule.
 _BREAK_AFTER = frozenset({"begin", "declare", "loop", "exception"})
 
 #: Tokens after which a bare `LOOP` opens a loop rather than closing a header.
-_LOOP_STARTERS = frozenset({"then", "begin", "else", "exception", "loop", "declare"})
+_LOOP_STARTERS = LOOP_STARTERS
 
 #: `IF` here is a modifier (`DROP ... IF EXISTS`), not a block opener.
-_IF_NOT_BLOCK_FOLLOWERS = frozenset({"exists"})
+_IF_NOT_BLOCK_FOLLOWERS = IF_NOT_BLOCK_FOLLOWERS
 
 #: `BEGIN` here is transaction control, not a plpgsql block.
-_BEGIN_NOT_BLOCK_FOLLOWERS = frozenset({"transaction", "work", "isolation"})
+_BEGIN_NOT_BLOCK_FOLLOWERS = BEGIN_NOT_BLOCK_FOLLOWERS
 
 #: Keywords that end a clause context (so the next line is not a continuation).
 _CLAUSE_ENDERS = frozenset(
@@ -120,15 +142,15 @@ _UNARY_CONTEXT_PUNCT = frozenset(
 
 # Frame kinds. "paren"/"bracket" and the four block kinds are balance-relevant;
 # "declare"/"when" are soft (indent-only) frames that never cause a refusal.
-_SOFT_FRAMES = frozenset({"declare", "when"})
-_BLOCK_FRAMES = frozenset({"begin", "if", "loop", "case"})
+#
+# Both lifted to `sql/blocks.py` (FQ-034). `SOFT_FRAMES` there also carries
+# "exception", because the span model gives the exception part a soft frame so it
+# can be selected; this engine never pushes one, so the wider set costs nothing
+# here and the two consumers still read one table.
+_SOFT_FRAMES = SOFT_FRAMES
+_BLOCK_FRAMES = BLOCK_FRAMES
 
-_UNMATCHED_BLOCK_HINT = {
-    "begin": "no matching END",
-    "if": "no matching END IF",
-    "loop": "no matching END LOOP",
-    "case": "no matching END",
-}
+_UNMATCHED_BLOCK_HINT = UNMATCHED_BLOCK_HINT
 
 #: Characters Postgres may combine into a single (possibly user-defined)
 #: operator name. Two tokens whose texts meet at two of these fuse into one
@@ -210,19 +232,11 @@ def _issue(message: str, start: Token, end: Token | None = None) -> Issue:
     )
 
 
-def _significant(tokens: list[Token]) -> list[tuple[Token, int]]:
-    """Drop whitespace, keeping how many newlines preceded each real token."""
-    items: list[tuple[Token, int]] = []
-    newlines = 0
-    for tok in tokens:
-        if tok.kind == NEWLINE:
-            newlines += 1
-        elif tok.kind == WHITESPACE:
-            continue
-        else:
-            items.append((tok, newlines))
-            newlines = 0
-    return items
+#: Lifted to `sql/blocks.py` with the rule tables (FQ-034): the span model needs
+#: the identical `(token, newlines_before)` stream, because `declare_is_cursor`
+#: reads the newline count to tell a DECLARE *section* from a DECLARE CURSOR
+#: statement. Aliased, never re-implemented.
+_significant = significant_tokens
 
 
 def _base_indent(text: str) -> str:
@@ -581,7 +595,10 @@ class _Reindenter:
         usually stays on the same line.)
         """
         block = self._enclosing_block()
-        return block is not None and (block.kind == "case" or (block.kind == "begin" and block.in_exception))
+        return when_opens_branch(
+            block.kind if block is not None else None,
+            in_exception=bool(block is not None and block.in_exception),
+        )
 
     def _pop_when_frame(self) -> None:
         if self._top.kind == "when":
@@ -594,12 +611,7 @@ class _Reindenter:
         if keyword is None or prev_kw == "end":
             return
         if keyword == "begin":
-            follower = self._next_keyword(index)
-            next_tok = self._next_token(index)
-            transaction = follower in _BEGIN_NOT_BLOCK_FOLLOWERS or (
-                next_tok is not None and next_tok.kind == PUNCT and next_tok.text == ";"
-            )
-            if transaction:
+            if begin_is_transaction(self._items, index):
                 self._saw_transaction_begin = True
             else:
                 self._frames.append(_Frame(kind="begin", token=tok))
@@ -618,31 +630,20 @@ class _Reindenter:
             self._frames.append(_Frame(kind="when", token=tok))  # CASE's ELSE branch body
 
     def _if_is_modifier(self, index: int) -> bool:
-        """`IF EXISTS` / `IF NOT EXISTS` is a modifier, not a block opener."""
-        follower = self._next_keyword(index)
-        if follower in _IF_NOT_BLOCK_FOLLOWERS:
-            return True
-        return follower == "not" and self._next_keyword(index, 2) in _IF_NOT_BLOCK_FOLLOWERS
+        """`IF EXISTS` / `IF NOT EXISTS` is a modifier, not a block opener.
+
+        Delegated to `blocks.if_is_modifier` (FQ-034): one implementation, two
+        consumers, so the span model cannot answer this differently.
+        """
+        return if_is_modifier(self._items, index)
 
     def _declare_is_cursor(self, index: int) -> bool:
         """`DECLARE c CURSOR FOR ...` is a statement, not a plpgsql section.
 
-        Told apart by layout: a plpgsql DECLARE section ends its line (its
-        declarations follow indented below), while the cursor statement runs on
-        from `DECLARE` -- so only an inline `CURSOR` before the next `;` counts.
+        Delegated to `blocks.declare_is_cursor` (FQ-034); the layout rule it
+        turns on is documented there.
         """
-        if index + 1 >= len(self._items) or self._items[index + 1][1] > 0:
-            return False  # `DECLARE` ends the line: a plpgsql section
-        for offset in range(1, 8):
-            target = index + offset
-            if target >= len(self._items):
-                return False
-            tok = self._items[target][0]
-            if tok.kind == PUNCT and tok.text == ";":
-                return False
-            if tok.lowered == "cursor":
-                return True
-        return False
+        return declare_is_cursor(self._items, index)
 
     def _close_bracket(self, tok: Token) -> None:
         self._pop_soft()

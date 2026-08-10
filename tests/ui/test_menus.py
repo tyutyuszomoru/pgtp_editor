@@ -366,7 +366,7 @@ def test_select_enclosing_block_action_selects_block(qtbot):
     assert selected == expected
 
 
-def test_select_parent_block_action_selects_parent(qtbot):
+def test_expand_selection_action_selects_parent(qtbot):
     window = MainWindow()
     qtbot.addWidget(window)
     editor = window.center_stage.xml_editor
@@ -376,7 +376,7 @@ def test_select_parent_block_action_selects_parent(qtbot):
     cursor.setPosition(text.index("x"))
     editor.setTextCursor(cursor)
 
-    find_action(find_top_menu(window, "Select"), "Select Parent Block").trigger()
+    find_action(find_top_menu(window, "Select"), "Expand Selection").trigger()
 
     expected = text[text.index("<Detail>"):text.index("</Detail>") + len("</Detail>")]
     selected = editor.textCursor().selectedText().replace(" ", "\n")
