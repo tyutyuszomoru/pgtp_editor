@@ -681,3 +681,76 @@ stating why a second home is worth its cost — not inherited by default from a 
 
 **Unblocks:** either confirming §26 as it now stands (no work; this entry becomes the record of why the
 entries are gone), or a `spec-maintainer` pass to restore them with the FQ-026 contradiction flagged.
+
+---
+
+## DEC-011 — Is panGen / rePHPgen (§20) meant to be Windows-only, or must it work on Linux too?
+
+- **Status:** OPEN
+- **Raised:** 2026-08-10, by `bug-triager` while root-causing BUG-051 — it found the second Windows
+  assumption in the same feature and flagged it rather than deciding the platform scope itself.
+- **Blocks:** **BUG-051's fix shape.** That fix is written with the venv change bundled but explicitly
+  splittable (`docs/BUGFIX_QUEUE.md:4942`, step 7). This answer decides whether BUG-051 ships as one fix or
+  two, so it wants answering **before** BUG-051 is implemented, not after. Nothing else is blocked, but the
+  assumption hardens with every further §20 change made without a stated scope.
+
+**Context — all verified in the tree today.**
+
+`pgtp_editor/generation/re_runner.py:43-46` resolves the interpreter panGen runs under:
+
+```python
+def resolve_re_phpgen_python(root: str) -> str:
+    """The re_phpgen repo's venv python if present, else the editor's own."""
+    venv_python = Path(root) / "venv" / "Scripts" / "python.exe"
+    return str(venv_python) if venv_python.is_file() else sys.executable
+```
+
+`venv/Scripts/python.exe` is the **Windows** virtualenv layout. On Linux the runtime's real interpreter at
+`venv/bin/python` is never considered, so the branch silently falls through to `sys.executable` — the
+**editor's own** interpreter. If a re_phpgen dependency is absent there, the user gets a bare
+`panGen failed (exit N)` naming nothing. It is used live at `pgtp_editor/ui/generation_controller.py:386`.
+
+Confirmed alongside it:
+- `CONSOLIDATED_SPEC.md:9045-9046` (§20) **documents** the Windows layout as the design
+  (`<root>\venv\Scripts\python.exe` if present else `sys.executable`), and **§20 nowhere states a platform
+  scope** for the feature as a whole.
+- `tests/generation/test_re_runner.py:17-26` pins the current behaviour: one test creates
+  `venv/Scripts/python.exe` and expects it, one expects the `sys.executable` fallback. There is **no test
+  that exercises the Linux layout**, so nothing would catch it either way.
+- This is the **second** Windows-only assumption in the same feature. The first is BUG-051 itself:
+  `pgtp_editor/generation/config.py:81` ships `DEFAULT_RE_PHPGEN_ROOT = r"C:\Users\BotondZalai-RuzsicsP\…"`
+  as the fallback root for every user.
+
+Two independent Windows assumptions in one feature is either a deliberate platform scope nobody wrote down,
+or drift from working only on Windows — and the fix differs completely depending on which.
+
+**One fact that bears on it:** the **vendor** generator is intrinsically Windows (`PgPHPGeneratorPro.exe`,
+spec `:516`), but **panGen/re_phpgen is a separate Python repo** invoked as `python -m re_phpgen` — it has
+no inherent Windows dependency. So "the vendor is Windows-only" does not by itself settle §20. `CLAUDE.md`
+states development happens on **both Windows and Linux**, which is what makes this a real question.
+
+**Options.**
+
+- **Windows-only, stated.** Drop the venv fix; have §20 say plainly that panGen requires Windows, and make
+  the four Generation actions **refuse with that reason** on other platforms. *Cost:* a documented
+  capability gap on the platform this checkout runs on, and a narrowing of the product — which should be a
+  decision, not the description of an accident. It is still strictly better than today (a clear refusal
+  beats a silent wrong interpreter), but it forecloses Linux use of the feature.
+- **Cross-platform, fixed.** `resolve_re_phpgen_python` learns both layouts — `venv/Scripts/python.exe` and
+  `venv/bin/python`. *Cost:* small and mechanical, but it commits the project to keeping panGen working on
+  Linux, which means it must be exercised there; nothing currently does, and the existing tests would need
+  a Linux-layout case added.
+- **Leave it.** *Cost:* the silent-wrong-interpreter behaviour stays, and it fails in the worst available
+  way — not a refusal, but a run that appears to start and dies with an exit code that names nothing.
+  **Recommend against**; whichever scope is chosen, today's behaviour is not it.
+
+**Recommendation: decide the scope explicitly, and make the code say it.** If the answer is Windows-only,
+it must appear **in §20 and in the refusal the user sees**, because the current behaviour is neither
+Windows-only nor cross-platform. Between the two real options I lean **cross-platform**: it is the smaller
+change and matches a project developed on both platforms. But only the owner knows whether panGen is meant
+to run outside Windows at all.
+
+**Unblocks:** BUG-051 gets implemented as one fix (cross-platform: bundle the two-layout probe with the
+`DEFAULT_RE_PHPGEN_ROOT` removal) or two (Windows-only: ship the config fix alone and route the platform
+refusal + §20 scope statement through `spec-maintainer` and `feature-triage`). Either way §20 gains an
+explicit platform-scope sentence it does not have today.
