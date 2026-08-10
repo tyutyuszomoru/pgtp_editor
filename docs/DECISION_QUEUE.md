@@ -970,7 +970,54 @@ silent on the middle case.
 
 ## DEC-013 — Where must a refusal appear: is the journal enough, or must it reach a surface the user is already looking at?
 
-- **Status:** OPEN
+- **Status:** ANSWERED (2026-08-10)
+- **Answer: option (C) — tier it by kind.** Keystroke-answering refusals get the immediate surface;
+  background and non-gesture notices stay journal-only.
+- **The boundary, verbatim — this is the durable part of the answer, and (C) decays back into today's
+  three-way inconsistency without it:**
+
+  > **did the user just press a key and get declined?**
+  > **YES → tooltip at the caret + Audit row**
+  > **NO → journal only**
+
+  **The test is the user's action** — not the severity of the reason, and not which subsystem raised it. A
+  refusal that answers a keystroke is immediate; anything the app decided on its own is a notice. A future
+  call site classifies itself by asking that one question.
+- **Owner's reasoning: this extends a mechanism rather than inventing one.**
+  `CodeEditor.report_refusal` → `show_hint(..., refusal=True)` (`code_editor.py:596-625`) already ships
+  exactly this tiering for editor gestures, and its docstring argues the case: *"a dock row alone would make
+  a Ctrl+Alt+E that matched no snippet look like nothing happened; a tooltip alone would vanish before it
+  could be re-read."* Both blanket rules were rejected **for stated reasons**: **(A)** leaves a declined
+  keystroke silent, which is the failure FQ-023 exists to prevent, and consistency under (A) would argue for
+  **quietening** the two implementations that already work; **(B)** has no answer for a refusal with no caret
+  to anchor a tooltip to.
+- **Wider principle — judged to be real, and wider than refusals.** The owner's reasoning does establish
+  one, and the `report_refusal` docstring is its evidence from both ends:
+
+  > **Feedback belongs where the action happened; the record belongs in the journal; the two are not
+  > substitutes.**
+
+  What that forbids concretely: a call site picking one surface **instead of** the other (the immediate hint
+  does not excuse the missing Audit row, and the Audit row does not excuse the missing hint), and any rule
+  that decides immediacy by **severity** or by **which subsystem spoke**. Only *did the user just act?*
+  selects the tier.
+- **Carry-forward, all three unchanged by this answer.**
+  1. **FQ-028 is untouched.** The status bar stays closed as a message board. This chose between the
+     **journal** and the **at-the-caret hint** — never the status bar.
+  2. **The ~15-site change is NEW SURFACE.** It routes through **`feature-triage`** (foreground) into
+     `docs/FEATURE_QUEUE.md`, not straight into the spec.
+  3. **`spec-maintainer` owes §7 and §18.5 a restatement, and the distinction matters.** Those sections
+     currently present the *"reach a surface the user is looking at"* rule as **settled design when it was a
+     proposal**. It is now settled — but as **(C), tiered**, *not* as the unconditional rule those sections
+     describe. Restating it as unconditional would be a second overstatement replacing the first.
+- **Note for whoever implements it (a stale docstring the fix will likely rewrite anyway):**
+  `MainWindow._report_gesture_unavailable`'s docstring still reads *"State why a gesture cannot run, in the
+  Audit panel and on the status bar"* (`pgtp_editor/ui/main_window.py:6416`) — the status bar has not been a
+  surface since FQ-028.
+- **Unblocks:** **BUG-055's remaining scope** (OPEN with a withdrawn plan) can now be re-scoped: classify the
+  ~15 `showMessage` refusal sites against the boundary above, route the keystroke-answering ones through
+  `report_refusal`/`show_hint` **plus** their Audit row, and leave the rest journal-only. And
+  `spec-maintainer`'s §7 / §18.5 restatement per carry-forward 3.
 - **Raised:** 2026-08-10, by `bug-triager` from **BUG-055**, which established that the bug's original
   premise (that these refusals are lost) is **false**, and that what remains is genuinely the owner's call
   rather than a defect to fix.
@@ -1041,7 +1088,7 @@ matched no snippet look like nothing happened; a tooltip alone would vanish befo
   stated well enough that a **future** call site knows which side it is on. An unclear rule here recreates
   exactly today's three-way inconsistency, one call site at a time.
 
-**Recommendation: (C).** The distinction the code is already groping toward is *did the user just do
+**Recommendation (ADOPTED by the owner): (C).** The distinction the code is already groping toward is *did the user just do
 something and get declined?* — which is precisely when silence is wrong, and precisely when a caret exists
 to anchor a hint to. A blanket rule in either direction either leaves keystrokes silent (A) or turns
 routine notices into interruptions (B).
@@ -1054,3 +1101,116 @@ status bar.
 `spec-maintainer` pass restating §7 and §18.5 to say what was actually decided instead of presenting the
 proposal as settled design. If the answer is (B) or (C), the ~15-site change is **new surface** and goes
 through **`feature-triage`** (foreground) into `docs/FEATURE_QUEUE.md`, not straight into the spec.
+
+---
+
+## DEC-014 — Must every surface that claims `Ctrl+Z`/`Ctrl+Y` also claim `Ctrl+Shift+Z`, or is `PhpFileTab` correctly excluded?
+
+- **Status:** OPEN
+- **Raised:** 2026-08-10, by `spec-maintainer`'s placement gate, which found the spec contradicting **itself**
+  on this and refused to pick a winner rather than editing one side away as bookkeeping.
+- **Blocks:** yes, and with a deadline. It decides the **data shape** of the keyboard-hosting feature the
+  placement gate just recommended (EXTEND §8): if the rule is *"the three chords"*, the shared thing is a
+  **fixed set**; if it is *"the chords this surface opted into"*, the shared thing is **parameterised**. That
+  cannot be deferred past design. **And BUG-056 is OPEN with a proposed fix whose step 2 adds the
+  `Ctrl+Shift+Z` branch to `PhpFileTab` and whose step 4 proposes the shared matcher** — so if the bug queue
+  is resolved before this is answered, the rule gets settled by implementation, one surface at a time,
+  without ever being stated. Answer it **before** BUG-056 is implemented, not after.
+
+**The contradiction — both sides are current body text, verified in the tree today.**
+
+- **The rule.** A Supersession Ledger row (2026-08-10, commits `e8df6c3`/`f533350`,
+  `CONSOLIDATED_SPEC.md:10331`) closes with: *"wherever a surface claims `Ctrl+Z`/`Ctrl+Y` it must claim
+  `Ctrl+Shift+Z` too."* The same rule is stated **again in §18.5 carve-out 1's body**
+  (`CONSOLIDATED_SPEC.md:6499-6503`): *"**`Ctrl+Shift+Z` is part of the claim, not a separate chord.**
+  Wherever a surface matches `Ctrl+Z` / `Ctrl+Y` it must match the second redo chord too."* That same
+  carve-out's surface table lists **PHP file tab | yes | the same `eventFilter` shape** (`:6489`) — so by its
+  own rule the PHP tab owes the third chord.
+- **The exception.** §27's `Ctrl+Shift+Z` row (`CONSOLIDATED_SPEC.md:10019`) says the opposite for that very
+  surface: *"**It is dead on `PhpFileTab`, the Sandbox SQL Console and `CodeEditorDialog`**, which is what
+  the manual says."*
+- **The code agrees with §27's exclusion, not with the rule.** `PhpFileTab.eventFilter`
+  (`pgtp_editor/ui/php_file_tab.py:396-399`) matches `Ctrl+Z` and `Ctrl+Y` only:
+
+  ```python
+  if ctrl and key == Qt.Key.Key_Z:
+      handler = self.editor.undo
+  elif ctrl and key == Qt.Key.Key_Y:
+      handler = self.editor.redo
+  ```
+
+  Two body sections asserting opposite rules about the same surface is the spec **contradicting itself**, not
+  being stale — there is no later-wins reading that disposes of one.
+
+**One measured fact that reframes the question, so it is not answered as the wrong one.** BUG-056
+(`docs/BUGFIX_QUEUE.md:5578`, OPEN) measured the behaviour and §27's *"dead on `PhpFileTab`"* claim is
+**false**: `Ctrl+Shift+Z` **redoes a PHP tab natively on both platforms**, because `QPlainTextEdit`'s own
+`StandardKey.Redo` handling answers it and the compiled Qt binding table carries `Ctrl+Shift+Z` under
+`KB_Win | KB_X11` (BUG-056 M1–M4). So the question is **not** *"should the PHP tab answer this chord"* — it
+already does. It is *"must the surface **state** that it answers it, or may it leave the answer to Qt's
+platform table?"*
+
+**The platform dimension, which is the strongest argument in the whole entry.** BUG-056 also measured
+`Ctrl+Y` to be **`KB_Win`-only** — it is not a redo chord on Linux at all. That is why `Ctrl+Y` is a **dead
+key in the Sandbox SQL Console on Linux** and works on Windows from the same source: the console claims no
+undo/redo chord, so on Linux the key falls through to `MainWindow`'s window-level `Ctrl+Y` `QShortcut`, which
+returns immediately because the tab is not Raw XML (BUG-048's scoping) — *"no redo, no refusal, no journal
+line"*. So *"claim all three everywhere"* is not tidiness: **explicit claiming is what makes the app's answer
+platform-independent and stated**, and leaving chords to Qt is what produced the one real divergence found.
+
+**And a fact that cuts the other way, so the fixed set is not mistaken for a closed one.** Qt's Windows
+scheme also binds **`Alt+Backspace` (native Undo)** and **`Alt+Shift+Backspace` (native Redo)** on every
+`CodeEditor`/`XmlEditor` (BUG-056's binding table). Neither is in `RESERVED_SEQUENCES` and neither is claimed
+anywhere. So *"the three chords"* is a triple **Qt itself does not agree with**, and any rule phrased as a
+literal triple is already incomplete on the day it is written.
+
+**Options.**
+
+- **(A) Fixed set — every text-editing surface claims the same undo/redo chords explicitly, and the shared
+  matcher takes no per-surface parameter.** Makes the app's answer *stated* rather than derived from a
+  platform table, which is exactly what closes BUG-056's console divergence; the shared thing is a plain
+  function (`DdlEditorPanel._is_undo_redo_chord` is already its extracted form) and every new editing surface
+  is correct by construction with one call. Also removes the §27-vs-§18.5 contradiction by deleting the
+  exception. *Cost:* it hardcodes a set that is provably incomplete (the `Alt+Backspace` pair above), so the
+  rule needs a stated source of truth for *which* chords rather than a literal three; and it forces the claim
+  onto surfaces where nothing can steal the key anyway — `CodeEditorDialog` is a short-lived modal no window
+  `QShortcut` can reach, so its claim buys only uniformity.
+- **(B) Parameterised opt-in — the shared matcher takes the set of chords a given surface claims, and §27's
+  per-surface table stays authoritative.** Honest about what ships today, needs no change to `PhpFileTab`,
+  and lets a surface that genuinely wants Qt's native behaviour say so. *Cost:* per-surface variation is
+  **precisely how BUG-053 happened** — the object editor answered a `RESERVED_SEQUENCES` chord differently
+  from its read-only sibling — and this option institutionalises the variation instead of removing it. Every
+  new surface becomes a fresh decision, and the app's answer to a reserved chord stays *"whatever this
+  surface's author chose, plus whatever Qt decided on this platform."*
+- **(C) Rule by hazard, not by chord set — a surface must claim every chord a window-level shortcut could
+  steal, and may leave the rest to Qt.** The tightest rule on offer: it derives the requirement from the
+  actual danger (§18.5 carve-out 1's real hazard is `MainWindow`'s window-scoped `Ctrl+Z` rewriting the Raw
+  XML project buffer under a user looking at SQL), and it covers the console's `Ctrl+Y` case, which **is** a
+  theft on Linux. Under this rule **`PhpFileTab` is correctly excluded and the Ledger row is the side that is
+  wrong**: there is no window-level `Ctrl+Shift+Z` `QShortcut` at all (§27 states this outright), so nothing
+  can steal that chord from any surface. *Cost:* the rule's input is the window's shortcut list, so **adding
+  one window shortcut retroactively obliges every editing surface** — a coupling nothing in the code
+  currently expresses or tests. It also leaves each surface's answer to the *unstolen* chords resting on Qt's
+  platform table, which is the condition BUG-056 exists to end, and it re-opens the `Ctrl+Shift+Z` reservation's
+  own justification (`shortcut_registry.py:220`), which reserves the chord *because widgets answer it*.
+
+**Recommendation: (A), with the set sourced from `RESERVED_SEQUENCES` rather than written out as a literal
+triple.** The invariant worth having is the one BUG-056 names — *for every chord the registry reserves
+because an editor answers it, every editing surface states its answer* — which ties two artifacts that
+already exist to each other instead of inventing a third list. That makes the shared thing a fixed set
+**and** gives the `Alt+Backspace` pair a decidable home: either it enters `RESERVED_SEQUENCES` and is
+claimed, or it is deliberately left out — a stated decision either way, which is what neither of the other
+options produces. (C) is the more elegant rule and I want to record that it is genuinely arguable, but it
+makes correctness depend on a window-level list nobody consults when adding a surface, and it leaves the
+platform table as the app's answer of last resort.
+
+**What an answer unblocks, concretely.**
+1. The **§8 keyboard-hosting feature** the placement gate recommended can be designed: fixed-set matcher (A),
+   parameterised matcher (B), or hazard-derived rule (C). This is the design input it is waiting on.
+2. **`spec-maintainer`** removes the self-contradiction — either §27's *"dead on `PhpFileTab`…"* sentence
+   goes (A/B: and it must go regardless, since BUG-056 measured it false as a *behaviour* claim), or §18.5
+   carve-out 1's `:6499` rule and the `:10331` Ledger row are narrowed to what (C) actually requires.
+   `owner-decision` does not edit the spec.
+3. **BUG-056** gets a rule to implement against instead of a per-surface judgement — in particular whether
+   its step 2 (`PhpFileTab` gains the branch) and step 4 (the shared matcher, currently written assuming a
+   fixed three-chord set) are right as proposed.
