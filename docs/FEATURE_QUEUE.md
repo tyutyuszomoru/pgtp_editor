@@ -4681,7 +4681,16 @@ prefs. Confirm the live §18.4 / §18.x / FQ-027 section numbers at spec-fold ti
 ---
 
 ## FQ-034: Structural expand-selection for plpgsql/SQL editors — a repeatable Ctrl+Shift+A that grows the selection through nested SQL structure, plus a shrink counterpart
-**Status:** QUEUED
+**Status:** PROCESSED (spec §8; `cde65fa`). Three parts as folded: the ladder is repeatable with a stack,
+the SQL editors get it at all, and shrink exists. Both owner rulings shipped — `DEC-260810164601` (empty
+stack derives the largest span strictly inside the selection) and `DEC-260810164602` (no parameter rung,
+sparse clause rung).
+Two entry claims were falsified: *"wire in `ui/code_editor.py::enclosing_bracket_span`"* is impossible
+(`sql/` may not import `ui/`), so the paren rung is token-level — which is also better, since the
+character-level helper counts brackets inside literals; and `Ctrl+Shift+Z` was already **claimed**, so
+shrink gives the existing claim an answer rather than binding the chord. Shrink's `QAction` therefore
+carries no shortcut and the pair is deliberately not symmetrically rebindable.
+A latent formatter defect was found and deliberately left: `BEGIN_NOT_BLOCK_FOLLOWERS` never fires.
 **Requested:** 2026-08-10
 **Provenance note:** RE-CREATED 2026-08-10 — this entry was written earlier the same day but was lost while still uncommitted when a concurrent session reset/pulled the working tree; content restored verbatim from the brainstorm (product-brainstorming + spec-maintainer JOB-2 placement gate).
 **Idea (verbatim/summarized):** "Ctrl+Shift+A in DDL, especially in plpgsql (function/procedure) editing: press to select progressively larger structural units — first the parameter/word we're on, then the statement, then the superior structure (a CASE branch → the whole CASE; a FOR from LOOP to END), then up to BEGIN…END. Goal: identify structural elements fast."
