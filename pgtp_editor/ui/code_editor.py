@@ -778,9 +778,15 @@ class CodeEditor(GutterBookmarkFoldMixin, QPlainTextEdit):
 
         # The two expansion gestures, in the `Ctrl+Alt+` editor-gesture family
         # Format Selection (`Ctrl+Alt+F`) established. Handled in the widget
-        # rather than as QShortcuts for the same reason that one is handled
-        # twice: QShortcut activation is not reliable under the offscreen
-        # platform the tests run on. SQL only -- the snippet set is plpgsql,
+        # rather than as QShortcuts because the whole family has NO menu
+        # command: these are widget *behaviours* (like auto-close brackets),
+        # not commands, so the widget is their one legitimate host. DEC-009
+        # decided this deliberately -- the defect DEC-004 ruled against was
+        # *two hosts for one gesture*, not *a widget answers a key*, and a
+        # gesture with no menu entry cannot have two hosts. They also depend on
+        # caret state and on `self._language`, which a window-level shortcut
+        # would have to reach back into the focused widget to discover.
+        # SQL only -- the snippet set is plpgsql,
         # and a `Ctrl+Alt+E` that expanded plpgsql into a PHP body would be a
         # bug, so in js/php these keys stay untouched.
         if self._language == "sql" and event.modifiers() == (

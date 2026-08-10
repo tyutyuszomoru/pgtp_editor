@@ -504,10 +504,17 @@ class SqlConsolePanel(SchemaGestureHostMixin, CompletionPopupHostMixin, QWidget)
         layout.addLayout(controls)
         layout.addWidget(self.splitter, 1)
 
-        # Ctrl+Space completion and Ctrl+Alt+F Format Selection. Both get the
-        # redundant key handling `CodeEditorDialog`/`DdlObjectEditorPanel`
-        # established, because QShortcut activation is not reliable under the
-        # offscreen platform used by the tests.
+        # Ctrl+Space completion and Ctrl+Alt+F Format Selection. Both are
+        # hosted HERE, on the panel, and scoped
+        # `WidgetWithChildrenShortcut` -- never at the window -- because they
+        # belong to the `Ctrl+Alt+`/`Ctrl+Space` editor-gesture family, which
+        # has no menu command at all. DEC-009 keeps that family widget-owned
+        # deliberately: DEC-004's defect was *two hosts for one gesture*, and a
+        # gesture with no menu entry has only ever had one host. Completion
+        # additionally needs the injected `SchemaIndex`, which this panel holds
+        # and the `CodeEditor` widget may not (§18.5 D1), and the panel scope
+        # is what stops either gesture firing while focus is elsewhere in the
+        # window.
         self._completion_shortcut = QShortcut(QKeySequence("Ctrl+Space"), self)
         self._completion_shortcut.setContext(
             Qt.ShortcutContext.WidgetWithChildrenShortcut
