@@ -1502,7 +1502,32 @@ document.
 
 ## DEC-260810134914 — Does an attached `.pgtp` get copied when New Project is accepted, or is the copy deferred to the existing open-time copier?
 
-- **Status:** OPEN
+- **Status:** ANSWERED (2026-08-10)
+- **Answer: option (A) — copy at accept, sharing one copier.** Make `link_pgtp_if_needed`'s body callable with
+  an **explicit source path** (rather than only the open document's path) and call it from `create_project`. On
+  copy failure, **create the project with no `pgtp` link at all** and report the failure in the Audit panel —
+  so the broken-link state (a recorded `working_copy_path` pointing at nothing) **never exists**, and the user
+  can still attach the file later by opening it, which is the path that ships today.
+- **Owner's reasoning.** **One definition of linking**, which §18.2 requires outright (*"or the two ways of
+  linking would age apart"*). And the objection that killed (A) on paper **did not survive inspection**:
+  `create_project` already `mkdir`s, writes `settings.json` and **creates a database** on accept, so one more
+  side effect is a member of an existing category, not a new one — and that method's own comment already
+  supplies the ordering rule for it (the sandbox step goes **last**, *"so a failed sandbox never costs the user
+  the project"*). The copy is ordered the same way, before `ProjectSettings` is constructed, so the link is
+  recorded only if the copy succeeded.
+- **Wider principle (consistent with DEC-007/DEC-008, and worth stating because it decided this):** *a
+  recorded identity that points at nothing is worse than no record at all.* Options (C) and (D) were both ways
+  of shipping a partial link; the deciding question was not which was tidier but which states can exist. **The
+  failure path is designed so the bad state is unreachable, rather than tolerated and documented.**
+- **READY TO IMPLEMENT — this is the one hole left in shipped FQ-035 code, not pending design.** The change is
+  local: `_new_project_pgtp_link(dialog)` (`ddl_project_controller.py:127-155`) gains a `folder` parameter at
+  its single call site (`:350`), does the copy, and returns the full three-field `PgtpLink`. Its docstring
+  already says the copy *"GOES IN THIS FUNCTION AND NOWHERE ELSE"* and names this entry as the open call —
+  that docstring is now answered and must be rewritten to state the ruling.
+- **The guard that must NOT be relaxed, restated because the answer makes it load-bearing:**
+  `link_pgtp_if_needed` opens with `if self._settings.pgtp.working_copy_path: return` — *"never silently
+  relinked."* Under (A) that guard is what makes a second link attempt a no-op rather than a silent overwrite.
+  A refactor that moves the copy body out must keep the guard on the *entry point*, not lose it in the split.
 - **Raised:** 2026-08-10, by `spec-maintainer` while folding **FQ-035** into `CONSOLIDATED_SPEC.md` §18.2.
   Flagged there rather than decided (see the ⚠ banner at `CONSOLIDATED_SPEC.md:5665-5684`).
 - **Blocks:** **FQ-035's implementation.** FQ-035 is folded into the spec but **unbuilt**, and §18.2's status
@@ -1594,6 +1619,19 @@ single definition of linking, which is the constraint §18.2 states outright.
 `ddl_project_controller.py:308-324`, whether `link_pgtp_if_needed` grows an explicit-source parameter, and
 what happens when the copy fails. Nothing else in FQ-035 waits on it.
 
+> **RESTATED 2026-08-10 (ASK sweep, `main` at `a1bd869`) — THIS IS NO LONGER "BEFORE IMPLEMENTATION". IT IS A
+> HOLE IN SHIPPED CODE, AND THE COST OF LEAVING IT OPEN HAS CHANGED.** `82f2be6` shipped FQ-035's entire
+> buildable remainder: the attach field, the XML parse, the reveal, the quality form, both `Test` probes, the
+> settings write. **The deferred copy is now the two-field link this entry called option (C)**, living in
+> exactly one place — `_new_project_pgtp_link(dialog)` (`pgtp_editor/ui/ddl_project_controller.py:127-155`),
+> called from the single `ProjectSettings(...)` site at `:350`, returning `PgtpLink(source_path=…)` with
+> `working_copy_path` and `last_known_source_checksum` empty and a docstring that names this entry as open.
+> So (C)'s costs listed above are **live behaviour today**, not a hypothetical: a project created with an
+> attached `.pgtp` is in the "attached but not linked" state until the user happens to open that exact source
+> file, and nothing tells them which state they are in. The implementer left the hole in the one function
+> where the fix belongs and said so, which is the good version of this — but the answer now *changes shipped
+> behaviour* rather than deciding unwritten code.
+
 **Three corrections `spec-maintainer` recorded that stand regardless of this answer** (`CONSOLIDATED_SPEC.md`
 §18.2, superseding FQ-035's queue text — noted here only so this entry reads complete, not for decision):
 (i) there is **no reusable connection-field widget** — `ConnectionSetupDialog`, `ProjectSettingsDialog` and
@@ -1611,7 +1649,33 @@ overwritten from the XML on first open.
 
 ## DEC-260810134915 — May New Project be accepted with the quality connection left blank, or filled but never tested?
 
-- **Status:** OPEN
+- **Status:** ANSWERED (2026-08-10)
+- **Answer: option (D) — no gate, plus one advisory. Explicitly NOT the bare ratification of what shipped.**
+  Accept always succeeds. If the quality connection is **blank or was never tested**, say so **once** at
+  creation. The `Test` button and its inline status label already ship (`new_project_dialog.py:487-501`), so the
+  **only new thing is the accept-time notice** — and the placeholder comment at `:344-353` that names this
+  entry as open is replaced by the ruling.
+- **Owner's reasoning.** Two reasons, in the order that decided it. First, **a gate here cannot be made
+  honest**: `connection_from_tree` returns `password=""` unconditionally — the `.pgtp`'s obfuscated password is
+  never read by this codebase — so *"fully populated"* is not a bar the source data can ever clear, and any
+  gate is either unsatisfiable offline (a green `Test`) or checks the wrong thing (a non-empty host, which
+  gates the safe case and misses a wrong host entirely). Second, **detection already exists**:
+  `refresh_target_connection_status` re-probes the target with a real query on **every project open**, and
+  already reasons that *"a host-less profile has not failed — it has not been tried."* So a gate would buy
+  **earliness, not detection** — and creation should not be the one gesture in this app refusable for a network
+  condition.
+- **Why (D) and not (A), given (A) is what shipped:** the shipped behaviour is right and the *silence* is the
+  gap. The user attached a `.pgtp`, was shown a connection section, and left it blank or untested; saying so
+  once costs nothing and no refusal is ever wrong.
+- **Wider principle — this is the FQ-023/DEC-013 shape applied to a non-refusal:** *where the app declines to
+  gate something, it still owes the user a statement of what it noticed.* An advisory is the alternative to a
+  gate, not the absence of one.
+- **The sub-question is answered with it:** a `.pgtp` attached and then the revealed fields **cleared** means
+  **"no target", not an error** — and the code makes that the graceful outcome rather than merely the lenient
+  one. `_import_pgtp_connection_into_target` fires **only when `settings.target.host` is still empty**, so a
+  project created with the fields cleared has its target re-imported from the XML on first open, and one
+  created with them supplied has that import suppressed by the same guard. Both branches are coherent and
+  neither can silently overwrite the other. **That guard stays vacuous-at-creation and must not be relaxed.**
 - **Raised:** 2026-08-10, by `spec-maintainer` while folding **FQ-035** into `CONSOLIDATED_SPEC.md` §18.2.
   Flagged there rather than decided (⚠ banner at `CONSOLIDATED_SPEC.md:5665-5684`, ambiguity 2).
 - **Blocks:** **FQ-035's implementation** — specifically the dialog's accept-time validation rule. FQ-035 is
@@ -1688,6 +1752,17 @@ branch), the quality `Test` button's role becomes settled (advisory versus gatin
 case gets a defined meaning — after which FQ-035's dialog work is fully specified. It also tells
 `spec-maintainer` what to write in place of §18.2's ⚠ banner.
 
+> **RESTATED 2026-08-10 (ASK sweep, `main` at `a1bd869`) — OPTION (A) HAS SHIPPED AS THE DE-FACTO ANSWER, SO
+> THIS IS NOW RATIFY-OR-REVERSE.** `82f2be6` shipped the dialog with **no gate**:
+> `NewProjectDialog._on_accept_clicked` (`pgtp_editor/ui/new_project_dialog.py:344-353`) still has the folder
+> check as its only blocking validation, with a comment stating outright that *"FQ-035 adds no gate: the
+> quality section may be blank, partial or untested and accept must succeed anyway … (Whether it should be
+> gated is DEC-260810134915, open; a gate invented here would be an answer to it.)"* The quality section also
+> ships with a live `Test` button writing an inline status label (`:487-501`) — so the *advisory surface*
+> option (D) wants already exists; what does not exist is any notice on accept when the section was left
+> blank or never tested. The decision therefore reduces to: **ratify (A)** (delete that comment, keep the
+> behaviour), **add (D)'s one advisory**, or **reverse to a gate**, which now removes a shipped capability.
+
 **The same three FQ-035 corrections apply here and stand regardless of this answer:** no reusable
 connection-field widget (three dialogs each build their own form; `ProjectSettingsDialog`'s builders are
 private statics, and extracting a shared widget is out of scope); the two `Test` buttons are deliberately
@@ -1699,7 +1774,34 @@ a superuser demand on a quality connection would refuse a correctly-configured p
 
 ## DEC-260810143559 — Is `Ctrl+W` (with `Ctrl+O`) *pinned dead* like `Ctrl+S`, or *no default, yours to assign*?
 
-- **Status:** OPEN
+- **Status:** ANSWERED (2026-08-10)
+- **Answer: option (B) — reserve NEITHER, and pin the invitation with a test.** Nothing in
+  `RESERVED_SEQUENCES` changes; nothing in `pgtp_editor/` changes. A new case in
+  `tests/ui/test_shortcut_registry.py` asserts `"Ctrl+W" not in RESERVED_SEQUENCES` **and** `"Ctrl+O" not in
+  RESERVED_SEQUENCES`, **with the reason in its docstring**. The manual's invitation stands, and the ten
+  fixtures that use `CommandBinding("file.close", …, "Ctrl+W")` as a freely-assignable example keep working.
+- **Owner's reasoning.** The two chords are **not in `Ctrl+S`'s state**, and the register already says so.
+  `Ctrl+S`/`Ctrl+Shift+S` are reserved because FQ-020 removed the **capability** — there is no save gesture
+  anywhere, so no command may ever sit there. `Ctrl+W` lost its `File ▸ Close` binding for a narrower reason:
+  this app closes six different things, so **no single "close" is the obvious default**. That is an argument
+  against a default, not against a user who knows which close they mean. Reserving it would contradict a
+  documented invitation and spend two of the few genuinely free conventional chords the dialog can offer.
+- **The durable part — and it is why this entry produced work rather than nothing:**
+
+  > **An unreserved-on-purpose chord is defended by a test, exactly as a reserved one is.**
+
+  The *absence* of that assertion is precisely what let this reach the queue: a deliberate non-reservation
+  looked identical to an oversight, so a sweep read it as a bug and filed it. The test is the difference
+  between "nobody reserved this" and "this is not reserved, on purpose, for this reason."
+- **Consequences recorded.** `docs/KEYBINDINGS.md`'s Known gap 4 already states this position in prose
+  (rewritten in `d0a0804`), so **no register correction is owed** — the ruling ratifies it, and gap 4 can now be
+  struck rather than narrowed. The gate vocabulary still has **no token** for *"no default, freely
+  assignable"*: `Ctrl+W` carries `dead` and says the rest in its Notes. Whether to add a token is a separate,
+  smaller call and is **not** decided here. `spec-maintainer` owes §27 the weaker category, which today pins
+  `Ctrl+S`/`Ctrl+Shift+S` as deliberately dead and is silent on "no default, assignable" — that omission is what
+  let the sweep read the two cases as one.
+- **Option C (split the pair) stays ruled out**, and the ruling makes it permanent: the manual states the two
+  as the same case in two places, and reserving one alone would break a symmetry the app tells the user about.
 - **Raised:** 2026-08-10, by `bug-triager` while triaging **BUG-260810143058**, itself raised by the
   `docs/KEYBINDINGS.md` ledger sweep (Known gap 4).
 - **Blocks:** nothing shipped. It blocks **BUG-260810143058's direction** — whether
@@ -1787,11 +1889,64 @@ tells `spec-maintainer` what to write in §27, which today pins `Ctrl+S`/`Ctrl+S
 says nothing about the weaker "no default, assignable" category — that omission is what let the sweep read the
 two cases as one.
 
+**Re-verified 2026-08-10 (ASK sweep, `main` at `a1bd869`). NARROWED TO THE RULING ALONE — the groundwork has
+shipped.** `d0a0804` landed **both** of the "ships regardless" edits listed above: the stale
+`CodeEditorDialog` comment at the `File ▸ Close` site is rewritten (`main_window.py:3107-3109` now says the
+dialog's local `Ctrl+W` Cancel *"used to"* exist and points at `code_editor.py`), and `KEYBINDINGS.md`'s Known
+gap 4 (`:188-203`) is rewritten to the corrected framing — it now states in the register itself that the two
+chords have *no default and are deliberately assignable*, that this is **not** `Ctrl+S`'s state, and that the
+gate vocabulary has no token for the second state. **Nothing else moved:** `Ctrl+W` and `Ctrl+O` are still
+absent from `RESERVED_SEQUENCES` (grepped — no `Ctrl+W`, no `Ctrl+O` anywhere in `shortcut_registry.py`),
+`KEYBINDINGS.md:117` still reads Reserved `no`, and the manual still invites the user to assign both. So the
+only thing left in this entry is the **reserve-vs-assignable ruling**, and one consequence of the shipped
+prose is worth stating: the register now *documents* option B's position, so choosing A means correcting the
+register a second time in the same week.
+
 ---
 
 ## DEC-260810143600 — `F14` and `Ctrl+D`/`Ctrl+K`/`Ctrl+U`: suppress on both platforms, bind on both, or reserve-only?
 
-- **Status:** OPEN
+- **Status:** ANSWERED (2026-08-10) — **ruled as one package with `DEC-260810164600`; both entries carry the
+  answer.**
+- **Answer, this entry's half:**
+  - **`F14` → covered by the PHYSICALLY-ABSENT-KEYS CARVE-OUT, granted and to be written into §27**: the
+    uniformity rule does not reach keys no keyboard in use actually has. No `EDITOR_UNDO_REDO_CHORDS` row, no
+    reservation. **Its undo-routing bypass is knowingly accepted as unreachable, not overlooked** — see the
+    trigger for revisiting it in `DEC-260810164600`.
+  - **`Ctrl+D` / `Ctrl+K` / `Ctrl+U` → BIND ON BOTH PLATFORMS.** The app implements delete-character,
+    delete-to-end-of-line and delete-complete-line **itself, at all six editing surfaces**, and **Windows gains
+    three gestures it never had**.
+- **⚠ THE OWNER CHOSE AGAINST THE RECOMMENDATION HERE, and deliberately took the fullest option.**
+  `owner-decision` recommended **reserve-only as the floor** — purely subtractive, stopping `Customize
+  Shortcuts…` from handing out a chord that would work on one of the owner's two machines and be silently eaten
+  on the other, while leaving the *editing behaviour* split in place. The owner rejected the floor and chose to
+  bind. **The cost is accepted, not overlooked, and is recorded plainly so nobody later "simplifies" it back:**
+  - it is **the most work of the three options** — three gestures × six surfaces, plus reserved-sequence rows,
+    plus `docs/KEYBINDINGS.md` rows in the same commit;
+  - **the app takes ownership of editing primitives it currently gets from Qt for free**, and owns their edge
+    cases forever (what delete-line does on the last line, with a selection, at a document end, in a read-only
+    buffer — each now the app's answer, not Qt's);
+  - in exchange, **the uniformity rule is fully honoured for this family rather than partly**, which the floor
+    option explicitly was not. That was the deciding property: reserve-only would have left a stated rule
+    half-applied, and a half-applied rule is what the next sweep re-files.
+- **Why these are not the F-keys, in one line:** `Ctrl+D`/`Ctrl+K`/`Ctrl+U` are **letter chords on keys every
+  user has**, live on Linux, dead on Windows, and readline/Emacs line-editing a Linux user may reach for from
+  muscle memory. The carve-out cannot reach them, so the rule applies in full.
+- **Wider principle established by the pair of rulings:** *where the uniformity rule bites, it is applied in
+  full — the app binds the gesture on both platforms rather than merely preventing the chord being
+  reassigned.* Reserving a chord protects the customize dialog; **binding it protects the user.** A "floor"
+  that leaves the behaviour split is a mitigation, not a resolution, and this project does not settle for one
+  where the keys are reachable.
+- **Implementation scope this creates — `BUG-260810143059` and `BUG-260810140553` Part 2 must now cover it
+  TOGETHER**, since they touch the same table, the same six surfaces and the same ledger in one commit:
+  three new editing gestures at six surfaces, the `Ctrl+Shift+Insert` binding, the `RESERVED_SEQUENCES` rows,
+  the `docs/KEYBINDINGS.md` rows (the Reserved column is a **set equality** against `RESERVED_SEQUENCES` — this
+  tripwire has fired in a merge before), the §27 carve-out text, and the striking of Known gap 5. **Two
+  mechanical notes carried forward:** `EDITOR_UNDO_REDO_CHORDS` and `classify_undo_redo_chord` are **named for
+  undo/redo**, so clipboard and line-editing chords need a rename or a second table while keeping *"every
+  intercepted chord is reserved"* true (`tests/ui/test_code_editor.py:442`,
+  `tests/ui/test_shortcut_registry.py:318`); and `tests/ui/test_shortcut_registry.py:150-154` uses **`Ctrl+U`
+  as its example of a free chord** — move the example to a still-free chord, never weaken the assertion.
 - **Raised:** 2026-08-10, by `bug-triager` while triaging **BUG-260810143059** (the non-clipboard remainder of
   the `docs/KEYBINDINGS.md` sweep's Known gap 5).
 - **Blocks:** **BUG-260810143059's implementation** — the mechanism is settled either way, only the direction
@@ -1891,3 +2046,296 @@ the owner — plus the physically-absent-keys carve-out answered yes or no, once
 BUG-260810140553's Part 2 unblocks with it. And `spec-maintainer` gets the text for §27, which today states the
 `Alt+Backspace` suppression and DEC-015's redo rule but says nothing about any X11-only chord and has no
 `Ctrl+D`/`Ctrl+K`/`Ctrl+U` row.
+
+**Re-verified 2026-08-10 (ASK sweep, `main` at `a1bd869`). Still fully open; the groundwork under it shipped.**
+`d0a0804` landed the keyboard batch — `Ctrl+Insert`/`Shift+Insert`/`Shift+Delete` reserved with ledger rows
+(`shortcut_registry.py:342-348`), the `StandardKey` inheritance removed at both app-owned sites, the
+caption-panel scope fix, the `Ctrl+C`/`Ctrl+V` reason strings. **None of it touched this ruling's subject:**
+`EDITOR_UNDO_REDO_CHORDS` (`shortcut_registry.py:399-401`) still holds exactly three rows — `Ctrl+Shift+Z`
+(`CLAIMED_NOT_UNDO_REDO`), `Alt+Backspace`, `Alt+Shift+Backspace` (`SUPPRESSED`) — with **no `F14`**, and
+`Ctrl+D`/`Ctrl+K`/`Ctrl+U` appear nowhere in `shortcut_registry.py` at all. `KEYBINDINGS.md`'s Known gap 5
+(`:204-217`) was **narrowed, not closed**: no *app-owned* binding inherits an X11-only chord any more, so what
+is left is purely Qt's own widget-internal answer — which is exactly what this entry rules on.
+
+**Its other half is now filed as `DEC-260810164600`** (the clipboard chords `Ctrl+Shift+Insert` and
+`F16`/`F18`/`F20`). The two are **one uniformity rule applied to two families and must be answered together**;
+see that entry's cross-reference back here.
+
+---
+
+## DEC-260810164600 — `Ctrl+Shift+Insert` and the `F16`/`F18`/`F20` clipboard trio: bind on both platforms, suppress on both, or carve physically-absent keys out of the uniformity rule?
+
+- **Status:** ANSWERED (2026-08-10) — **ruled as one package with `DEC-260810143600`, which carries the same
+  answer block. Read them together; they were deliberately not ruled apart.**
+- **Answer, this entry's half:**
+  - **`Ctrl+Shift+Insert` → BIND EXPLICITLY ON BOTH PLATFORMS** (option A). Installed unconditionally —
+    redundant on X11, new on Windows — exactly the shape DEC-015 used for `Ctrl+Y`.
+  - **`F16` / `F18` / `F20` → the physically-absent-keys CARVE-OUT IS GRANTED**, and **must be written into
+    §27** rather than left implicit.
+- **Owner's reasoning.** `Ctrl+Shift+Insert` is the **opposite case to `Alt+Backspace`** and the analogy must
+  not be applied mechanically: that pair was suppressed because it was **dead on the machine the owner uses**,
+  whereas this chord is **live on Linux today**, so suppressing it would *remove a working paste gesture*.
+  Binding is both the cheaper and the less destructive side of the same rule. For the F-trio — dedicated Sun/HP
+  Copy/Paste/Cut keys, on no keyboard in use, in no menu, no manual page, no shortcut table — the rule simply
+  has nothing to protect.
+- **THE CARVE-OUT, as it must be stated in §27:** *the uniformity rule does not reach keys no keyboard in use
+  actually has.* It retires `F16`/`F18`/`F20` **and `F14`** (`DEC-260810143600`) in one line.
+- **Recorded so a future sweep does not re-file it: `F14`'s undo-routing bypass is KNOWINGLY ACCEPTED AS
+  UNREACHABLE, not overlooked.** `F14` runs `QPlainTextEdit`'s native undo — no re-emission into project
+  snapshot history, no read-only refusal in Caption Mode, no journal line — which is a *correctness* gap being
+  closed by a *hardware* argument. The owner was told this explicitly and accepted it on the ground that no
+  reachable key fires it. **If a keyboard with an `F14`…`F20` block ever comes into use, this is a live defect
+  again and the carve-out is what must be revisited — not the rule.**
+- **Wider principle:** *a rule about platform uniformity is about what a user can actually press.* The
+  uniformity rule exists because a chord that works on one machine and is dead on another is a bug; a chord no
+  machine can produce is not a divergence anyone can experience. But the carve-out is **a stated exception with
+  a stated trigger for its own review**, not a softening of the rule.
+- **Raised:** 2026-08-10, by the main session, lifting **BUG-260810140553 Part 2** out of the bug queue. Part 2
+  is an explicitly labelled *"OWNER CALL, do not decide it in the implementation pass"* that has been sitting
+  **inside `docs/BUGFIX_QUEUE.md`** (`:6229-6233`) — a decision living where nobody sweeps for decisions, which
+  is the exact failure this register exists to prevent. The bug entry's own text says *"the caller has said they
+  will file it; do not write to `docs/DECISION_QUEUE.md` from a bug-fix pass either."* This is that filing.
+- **MUST BE RULED TOGETHER WITH `DEC-260810143600`** (`F14` and `Ctrl+D`/`Ctrl+K`/`Ctrl+U`). Both halves apply
+  the **same** uniformity rule to X11-only chords that Qt answers inside every text widget; ruled apart, the two
+  answers diverge and the rule stops being a rule. That entry carries the reciprocal cross-reference.
+- **Blocks:** **BUG-260810140553's Part 2** — Part 1 shipped (`d0a0804`), Part 2 is untouched. Nothing shipped
+  is blocked. What hardens is nothing much: unlike the `Ctrl+D`/`Ctrl+K`/`Ctrl+U` half, none of these four is a
+  plausible rebinding target, so the cost of delay is that the ledger keeps a Known gap open and the next
+  keyboard sweep re-files it.
+
+**The situation.** Qt's `StandardKey` table differs per platform. Measured on this checkout (BUG-260810140553,
+and re-confirmed in `docs/KEYBINDINGS.md` Appendix A `:137-139`, which
+`test_appendix_a_matches_the_running_keyboard_scheme` re-measures):
+
+| `StandardKey` | Windows scheme | Linux/KDE scheme | The app's answer today |
+|---|---|---|---|
+| `Paste` | `Ctrl+V`, `Shift+Insert`, `Paste` | + **`Ctrl+Shift+Insert`**, **`F18`** | left to Qt inside the widgets |
+| `Copy` | `Ctrl+C`, `Ctrl+Insert`, `Copy` | + **`F16`** | left to Qt inside the widgets |
+| `Cut` | `Ctrl+X`, `Shift+Delete`, `Cut` | + **`F20`** | left to Qt inside the widgets |
+
+So `Ctrl+Shift+Insert` pastes on Linux and does nothing on Windows, and the F-trio likewise — which contradicts
+DEC-015's ruling that *an operation's chord is bound by this app on every platform, never inherited from Qt's
+platform table*.
+
+**What Part 1 already fixed, so this is not re-litigated.** `d0a0804` removed every **app-owned** inheritance:
+the caption grid's `QShortcut(QKeySequence.StandardKey.Copy, …)` pair became the spelled chords `Ctrl+C`/`Ctrl+V`
+(a `StandardKey` argument installs *every* chord the running scheme lists — that was the mechanism by which an
+app binding differed per platform), `XmlEditor`'s read-only-hint test now matches an app-owned
+`EDITOR_PASTE_CHORDS = ("Ctrl+V", "Shift+Insert", "Paste")` (`shortcut_registry.py:422`) which **deliberately
+excludes `Ctrl+Shift+Insert`**, and `Ctrl+Insert`/`Shift+Insert`/`Shift+Delete` are now reserved
+(`:342-348`) so the customize dialog refuses them. **What remains is purely Qt's own widget-internal answer**,
+which is what `KEYBINDINGS.md` Known gap 5 (`:204-217`) now says in so many words.
+
+**The two families inside this entry are not symmetric, and that is the whole decision.**
+
+*`Ctrl+Shift+Insert` — the opposite case to `Alt+Backspace`, and the analogy must not be applied mechanically.*
+The `Alt+Backspace` pair was suppressed on both platforms because it was **dead on the machine the owner uses**:
+a legacy Windows-only spelling in no menu, no manual page and no shortcut table, so binding it on Linux would
+have been *inventing* a keybinding (`shortcut_registry.py:246-263` records that reasoning verbatim).
+`Ctrl+Shift+Insert` is the reverse — **live on Linux today, on this project's own development platform** — so
+suppressing it *removes a working paste gesture*.
+
+*`F16`/`F18`/`F20` — these genuinely are the `Alt+Backspace` case.* Dedicated Sun/HP `Copy`/`Paste`/`Cut` keys,
+absent from essentially every keyboard in use, no presence anywhere in the app, no discoverability.
+
+**Options.**
+
+- **(A) Bind `Ctrl+Shift+Insert` explicitly on both platforms** — install it unconditionally (redundant on X11,
+  new on Windows), exactly the shape DEC-015 used for `Ctrl+Y`. *Cost:* a third paste spelling that appears in
+  no menu and must be added to the manual's chord table and the ledger; and the app takes ownership of a
+  clipboard gesture it currently gets from Qt free.
+- **(B) Suppress `Ctrl+Shift+Insert` on both platforms** — a `SUPPRESSED` row consumed at every editing surface.
+  *Cost:* **a capability regression on Linux**, i.e. on the owner's own machine, plus interception code at six
+  surfaces *and* the two non-`CodeEditor` editing surfaces (`caption_management_panel`'s `QTableWidget`,
+  `XmlEditor`) each needing a stated answer. Strictly more work than (A) to achieve strictly less.
+- **(C) Suppress the `F16`/`F18`/`F20` trio on both** — mechanism already exists and must be reused, not
+  reinvented: rows in `EDITOR_UNDO_REDO_CHORDS` consumed through `code_editor.classify_undo_redo_chord`.
+  *Cost:* the table and its matcher are **named for undo/redo**, so clipboard chords need a rename or a second
+  table; the DEC-014 invariant tests (`tests/ui/test_code_editor.py:442`,
+  `tests/ui/test_shortcut_registry.py:318`) key off that table and must keep *"every intercepted chord is
+  reserved"* true. Real refactoring for keys nobody can press.
+- **(D) Carve physically-absent keys out of the uniformity rule, and state the carve-out in the spec.** *"The
+  rule does not reach keys no keyboard in use actually has."* This retires `F16`/`F18`/`F20` **and `F14`** (in
+  `DEC-260810143600`) in one line. *Cost:* the rule gains its first exception, and the exception's boundary is
+  a judgement about hardware that ages — so it must be written into §27, not left implicit, or every sweep
+  re-files these four rows. `KEYBINDINGS.md:17-23` states the rule today with **no** such carve-out.
+
+**Recommendation: (A) + (D).** Bind `Ctrl+Shift+Insert` on both — binding is the cheaper *and* less destructive
+side of the same rule, and suppressing a paste key that works on the owner's machine to buy uniformity is the
+one outcome nobody wants. And grant the physically-absent-keys carve-out **explicitly in the spec**, which
+disposes of `F16`/`F18`/`F20` here and `F14` next door without pretending the rule was never violated.
+
+**One consequence of (D) worth seeing before granting it:** `F14` in `DEC-260810143600` is *not* purely
+cosmetic the way `F16`/`F18`/`F20` are — it runs `QPlainTextEdit`'s **native undo**, bypassing the app's undo
+routing (no re-emission into project history, no read-only refusal in Caption Mode, no journal line). Under (D)
+that bypass is knowingly accepted on the grounds that no reachable key triggers it. That is a defensible call,
+but it is a *correctness* gap being closed by a *hardware* argument, so it should be made deliberately.
+
+**What an answer unblocks.** BUG-260810140553 Part 2 becomes implementable in one pass with
+BUG-260810143059: the `Ctrl+Shift+Insert` binding (or suppression row), the `RESERVED_SEQUENCES` rows, the
+`docs/KEYBINDINGS.md` rows **in the same commit** (`test_every_reserved_sequence_has_a_row_marked_reserved`
+makes the reserved set and the ledger's Reserved column one set in both directions — this tripwire has fired in
+a merge before), the striking or narrowing of Known gap 5, and `spec-maintainer`'s §27 text, which today states
+the `Alt+Backspace` suppression and DEC-015's rule but says nothing about any X11-only chord.
+
+---
+
+## DEC-260810164601 — What does `Shrink Selection` do when there is no expansion stack — refuse, or derive a target from the current selection?
+
+- **Status:** ANSWERED (2026-08-10)
+- **Answer: option (b) — DERIVE.** With an empty stack, `Shrink Selection` selects the **largest
+  `structure_chain` member lying strictly inside the current selection**. Not a refusal, not a silent no-op.
+- **Owner's reasoning — the deciding property is subsumption, not preference.** (b) **contains** the
+  conservative option wherever that one is right: at the innermost span there is nothing strictly inside the
+  selection, so (b) *is* a no-op there — **with no special case**. So choosing (a) would have bought a refusal
+  path and an extra branch to get behaviour (b) already has. And the project's usual tie-breaker does not
+  reach this: *never a silent wrong result* is about **destroying work**, and (b) replaces a **selection**, not
+  text.
+- **Accepted cost, recorded because it is real.** Shrink now **behaves differently depending on invisible
+  state** — pop the stack if there is one, derive if there is not. The user cannot see which mode they are in.
+  This was weighed and taken; the mitigation is that both modes move the selection *inward*, so the gesture's
+  direction never surprises even when its exact target does.
+- **The owner was told the rebinding asymmetry before ruling, and it did not change the answer.** Grow keeps a
+  rebindable `QAction`; **shrink's carries no shortcut at all**, because `Ctrl+Shift+Z` is
+  `CLAIMED_NOT_UNDO_REDO` (`shortcut_registry.py:399`) and all six editing surfaces intercept it so Qt's native
+  redo cannot fire. **So a user who dislikes this behaviour cannot rebind away from it**, and
+  `Ctrl+Shift+Z` cannot be handed to anything else either. That raised the cost of choosing wrong and is part
+  of why the subsuming option won.
+- **One boundary the implementation must honour:** where the selection is **not a superset of any span**, this
+  is a **no-op — never an arbitrary selection**. Deriving is not licence to jump somewhere the selection does
+  not contain.
+- **Unblocks:** FQ-034 **part 3** — `shrink_structural_selection`'s body and its empty-stack branch. No refusal
+  path is needed, so DEC-013's *"keystroke-answering refusals get the caret tooltip"* boundary **does not come
+  into play here**; there is nothing to refuse. `spec-maintainer` replaces the first §29 FQ-034 item
+  (`CONSOLIDATED_SPEC.md:11775-11784`) with this rule stated in §8.
+- **Raised:** 2026-08-10, by `spec-maintainer` while folding **FQ-034** into `CONSOLIDATED_SPEC.md` §8
+  (`a1bd869`). Flagged into §29 rather than decided (`CONSOLIDATED_SPEC.md:11775-11784`), because the answer is
+  a product call.
+- **Blocks:** nothing yet, and that is deliberate — **FQ-034 parts 1 and 2 (the stack, and grow extended to the
+  SQL editors) ship without it**, and the two candidate behaviours are identical once a stack exists. What it
+  blocks is **part 3, shrink itself**: the `shrink_structural_selection` method cannot be written without it.
+
+**The situation, for someone who has not read FQ-034.** FQ-034 turns today's stateless single parent-walk
+(`Ctrl+Shift+A`, XML-only, hidden on every `CodeEditor` tab) into a repeatable structural ladder with an
+**expansion stack**, extends grow to the SQL editors, and adds a **`Shrink Selection`** counterpart on
+`Ctrl+Shift+Z` (settled by DEC-015, which freed that chord from redo). Shrink pops the stack. The question is
+what it does when the stack is **empty** — which is the case after a mouse drag, after any edit (the stack is
+invalidated on a document revision change), and on the very first press.
+
+**Two candidates, genuinely different products.**
+
+- **(a) Refuse or no-op.** The conservative reading, and consistent with `Select Parent Block`'s existing
+  behaviour at the document root — where it already does nothing. *Cost:* the chord does nothing after a mouse
+  selection, which is a common way to arrive at a selection; and if it is a *silent* no-op the user cannot tell
+  a refusal from a ladder that has stopped advancing. Making it a **stated** refusal costs an FQ-023-style
+  reason, which under DEC-013's boundary — *did the user just press a key and get declined? → tooltip at the
+  caret + Audit row* — means it must use `CodeEditor.report_refusal`, not a journal line alone.
+- **(b) Derive** the largest `structure_chain` member lying strictly inside the current selection. What
+  expand-region implementations elsewhere do, and it makes the chord useful immediately after a mouse
+  selection. *Cost:* shrink then does two different things depending on invisible state (stack present vs not),
+  and after a mouse selection it may jump somewhere the user did not choose.
+
+**Why the project's usual tie-breaker does not settle it** — and this is the reason the spec refused to decide:
+*never a silent wrong result* is about **destroying work**, and (b) replaces a **selection**, not text. Nothing
+is lost either way, so the invariant that decides most questions here is silent.
+
+**One price the owner has not been told, and it bears directly on this.** FQ-034's DEC-012 reconciliation makes
+the pair **asymmetrically rebindable**: grow keeps a normal `QAction` with `setShortcut` (measured: neither
+scheme's `QPlainTextEdit` claims `Ctrl+Shift+A`), but **shrink's `QAction` carries no shortcut at all**.
+`Ctrl+Shift+Z` is classified `CLAIMED_NOT_UNDO_REDO` (`shortcut_registry.py:399`) and intercepted by all six
+editing surfaces so Qt's native redo cannot fire, so FQ-034 gives that existing claim an answer rather than
+binding the chord afresh. **Consequence: grow can be moved through `Customize Shortcuts…`; shrink cannot, and
+`Ctrl+Shift+Z` cannot be handed to anything else either.** A user who finds shrink's empty-stack behaviour
+annoying therefore **cannot rebind away from it** — which argues for whichever behaviour is least likely to
+surprise, and raises the cost of choosing wrong.
+
+**Recommendation: (b), derive.** Three reasons. The tie-breaker that would favour caution is inapplicable
+(nothing is destroyed); a chord that does nothing on its most likely first use teaches the user it is broken;
+and (b) subsumes (a) in the only case where (a) is clearly right — at the innermost span there is nothing
+strictly inside the selection, so (b) *is* a no-op there, without a special case. The one thing (b) must not
+do is jump when the selection is not a superset of any span: state that as a no-op, not as an arbitrary
+selection.
+
+**What an answer unblocks.** FQ-034 part 3: `shrink_structural_selection`'s body, its empty-stack branch, and —
+under (a) — whether the refusal is silent or routed through `report_refusal` per DEC-013. It also lets
+`spec-maintainer` replace §29's flagged item with a stated rule in §8.
+
+---
+
+## DEC-260810164602 — Where do FQ-034's *clause* and *parameter* rungs stop: is a whole signature parameter its own rung, and is there a clause rung for statements with no clause starters?
+
+- **Status:** ANSWERED (2026-08-10)
+- **Answer: NO parameter rung; the clause rung is emitted ONLY where a clause starter exists** (a **sparse**
+  rung). `structure_chain` goes *word → paren group* inside a routine signature, and emits a clause member only
+  for statements that actually contain a SQL clause starter.
+- **Owner's reasoning — the spec's own criterion held, and it cuts the two sub-questions in opposite
+  directions.** The criterion is *a rung that sometimes selects nothing new is worse than one rung fewer*,
+  because the user presses again and cannot tell whether the ladder advanced or ended. A **sparse clause rung
+  never selects nothing** — it is simply **absent** in `RAISE NOTICE …` or an assignment, and every press that
+  *does* happen advances, so the ladder stays legible. A **parameter rung** would exist only inside a routine
+  signature, making press counts differ by syntactic context for a much smaller payoff — and it is **the rung
+  most easily added later, since the chain is a list**: inserting a member is a widening, not a redesign.
+- **Wider principle:** *a ladder rung may be absent, but it may never be present-and-empty.* Varying **chain
+  length** by construct is acceptable; a rung that fires and changes nothing is not. That is the test any future
+  rung proposal must pass, and it is why "add it now in case" was rejected in favour of "add it when the chain
+  needs it."
+- **Recorded:** the same rebinding asymmetry noted in `DEC-260810164601` applies — grow is rebindable, **shrink
+  is not** — so the ladder's rung count is felt through a chord the user cannot move, in both directions. The
+  owner ruled with that in view.
+- **Unblocks:** `sql/block_spans.py`'s `structure_chain` gets its final rung list, and with it the
+  `StructureSpan.kind` vocabulary and the corpus test pinning the ladder against §18.4's adversarial SQL.
+  `spec-maintainer` moves §29's second FQ-034 item (`CONSOLIDATED_SPEC.md:11785-11792`) into §8's rung table.
+- **Raised:** 2026-08-10, by `spec-maintainer` while folding **FQ-034** into `CONSOLIDATED_SPEC.md` §8
+  (`a1bd869`), flagged into §29 (`CONSOLIDATED_SPEC.md:11785-11792`) rather than decided.
+- **Blocks:** the **rung table** of FQ-034's ladder — i.e. what `structure_chain(text, pos)` in the new Qt-free
+  `sql/block_spans.py` returns for a caret inside a routine signature, and for a caret in a plpgsql statement
+  with no SQL clause in it. The stack, the menu entries, the chords and the grow/shrink hosting are all settled
+  and buildable; this decides the *contents* of the chain, which is the model's public shape.
+
+**The situation.** The owner's request named the bottom rung *"the parameter/word we're on"*, and the ladder as
+folded collapses *parameter* and *word* into one rung. Two boundaries were left undecided.
+
+1. **Is a whole parameter declaration its own rung?** In `p_id integer DEFAULT 0`, is there a rung between
+   *word* (`p_id`) and *paren group* (the whole argument list) that selects the three tokens as one unit?
+2. **Is there a *clause* rung at all for plpgsql statements with no SQL clause starters?** In `RAISE NOTICE
+   '…', x;` or a bare assignment there is no `SELECT`/`FROM`/`WHERE` to anchor a clause on, so rung 3 would
+   either collapse into rung 4 (the statement) or select something arbitrary.
+
+**The constraint the spec states, and it is the strongest input here:** *a rung that sometimes selects nothing
+new is worse than one rung fewer* — because the user presses again and cannot tell whether the ladder advanced
+or the ladder ended. The ladder's whole value is that each press visibly does something.
+
+**Options — these are two sub-questions and may be answered differently, but they are one judgement about how
+fine the ladder should be.**
+
+*Parameter rung:*
+- **Yes, add it.** Selecting a whole parameter declaration is a genuinely useful unit when editing a signature
+  (retype a type, move a default). *Cost:* it exists only inside a routine signature, so the ladder has a rung
+  that is present in one syntactic context and absent everywhere else — the user's press count to reach the
+  paren group differs depending on where they started. Also needs signature-position awareness in a
+  token-level span model that otherwise reasons about brackets and block keywords.
+- **No, word → paren group.** Uniform rung count everywhere. *Cost:* editing a signature takes an extra manual
+  selection, which is exactly the case the owner's example (*"the parameter/word we're on"*) came from.
+
+*Clause rung for clause-less statements:*
+- **Emit it only where a clause starter exists** (sparse rung). Honest: the rung appears when there is
+  something for it to select. *Cost:* the chain length varies by statement kind, so press counts are not
+  predictable across a function body — the same objection as the parameter rung, in a more common context.
+- **Never emit a clause rung; go word → statement.** Uniform and simple. *Cost:* inside a long `SELECT` the
+  jump from a word to the entire statement is a big one, and clause-level selection is one of the more useful
+  things the ladder could offer in SQL specifically.
+
+**Recommendation: no parameter rung; clause rung emitted only where a clause starter exists.** The two answers
+differ deliberately, on the spec's own criterion — a rung must never select nothing new. A clause rung that
+appears in SQL statements and not in `RAISE NOTICE` **never selects nothing**; it is simply absent, and the
+ladder stays legible because every press that happens still advances. A parameter rung buys one convenience in
+one context at the price of the same variability with a much smaller payoff, and it is the rung most easily
+added later — the chain is a list, so inserting a member is a widening, not a redesign.
+
+**Note the asymmetric-rebindability price applies here too** (see `DEC-260810164601`): grow keeps a rebindable
+`QAction`, **shrink's carries no shortcut at all** because `Ctrl+Shift+Z` is claimed by all six editing
+surfaces. So the ladder's rung count is felt through a chord the user cannot move, in both directions.
+
+**What an answer unblocks.** `sql/block_spans.py`'s `structure_chain` gets its final rung list, and with it the
+`StructureSpan.kind` vocabulary and the corpus test that pins the ladder against §18.4's adversarial SQL. It
+also lets `spec-maintainer` move §29's second FQ-034 item into §8's rung table.
