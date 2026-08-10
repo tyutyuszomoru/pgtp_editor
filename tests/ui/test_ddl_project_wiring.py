@@ -2441,6 +2441,73 @@ def test_auto_open_loads_the_working_copy_written_at_creation(
     assert window._current_project_path == str(project_dir / "erp.pgtp")
 
 
+# --- BUG-260810174459: New Project auto-opens the checked-out working copy ----
+def _accept_new_project(window, tmp_path, monkeypatch, *, source=None, on_ready=None):
+    """Drive the real File ▸ New Project path end to end: `new_project()` builds
+    the dialog and connects its accepted handler, so the dialog the test fills in
+    has to be THAT one -- a separately constructed dialog is connected to nothing.
+    Returns the project folder."""
+    monkeypatch.setattr(
+        "pgtp_editor.ui.ddl_project_controller.db_test_connection",
+        lambda params: (True, "Connected."),
+    )
+    project_dir = tmp_path / "proj"
+    window._ddl_project_ui.new_project(on_ready=on_ready)
+    dialog = window._ddl_project_ui.new_project_dialog
+    dialog._folder_edit.setText(str(project_dir))
+    if source is not None:
+        dialog.set_pgtp_path(str(source))
+    dialog.accepted.emit()
+    return project_dir
+
+
+def test_creating_a_project_with_an_attached_pgtp_opens_it(
+    qtbot, tmp_path, monkeypatch
+):
+    """The reported defect: the file was copied and linked, and the editor stayed
+    empty. No manual `auto_open_linked_pgtp` call here -- that is the point."""
+    window = _window(qtbot, tmp_path)
+    source = tmp_path / "erp.pgtp"
+    source.write_text(_ATTACHED_PGTP, encoding="utf-8")
+
+    project_dir = _accept_new_project(window, tmp_path, monkeypatch, source=source)
+
+    assert window._current_project_path == str(project_dir / "erp.pgtp")
+
+
+def test_create_with_an_on_ready_does_not_auto_open_the_linked_copy(
+    qtbot, tmp_path, monkeypatch
+):
+    """The `require_project` shape: the caller has its own `.pgtp` to load next,
+    so auto-opening here too would be BUG-021's silent double load."""
+    window = _window(qtbot, tmp_path)
+    source = tmp_path / "erp.pgtp"
+    source.write_text(_ATTACHED_PGTP, encoding="utf-8")
+    opened = []
+    window._ddl_project_ui._open_pgtp_file = lambda path: opened.append(path)
+    ready = []
+
+    _accept_new_project(
+        window, tmp_path, monkeypatch,
+        source=source, on_ready=lambda: ready.append(True),
+    )
+
+    assert ready == [True]
+    assert opened == []
+
+
+def test_creating_a_project_without_a_pgtp_opens_nothing(qtbot, tmp_path, monkeypatch):
+    """A sandbox-only project has nothing to open, and the folder scan finds no
+    candidate -- silence, not an error."""
+    window = _window(qtbot, tmp_path)
+    opened = []
+    window._ddl_project_ui._open_pgtp_file = lambda path: opened.append(path)
+
+    _accept_new_project(window, tmp_path, monkeypatch)
+
+    assert opened == []
+
+
 # --- DEC-260810134915: no gate, one accept-time advisory ----------------------
 def _journal_rows(window, before: int) -> list[str]:
     """`[Project]` narration is routed to the Activity Log, not the Messages
