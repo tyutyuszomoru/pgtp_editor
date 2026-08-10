@@ -162,7 +162,7 @@ The window has four areas:
 
 - **Left — Project Tree:** the structure of your project (pages, details, columns,
   event handlers). More tabs share this dock: **Contents** (this manual's
-  chapters), **Findings** (navigable results — see *Where Results Appear*),
+  chapters), **Findings** (navigable results — see *Where Output Appears*),
   **Database/XML Coherence** (while that view is on — see
   *Database/XML Coherence*), and **DDL Objects (Quality)** / **DDL Objects
   (Sandbox)** (while the matching DDL Explorer is on — see *DDL Explorer*).
@@ -175,8 +175,8 @@ The window has four areas:
   from a database table adds a draft tab (see *Database/XML Coherence*), and a
   live sandbox session adds the **Sandbox SQL** console tab (see *The Sandbox*).
 - **Right — Properties:** a read-only inspector for whatever you select in the tree.
-- **Bottom — Activity Log / Results:** one dock with two tabs, holding the
-  session's journal and what the checks reported — see *Where Results Appear*.
+- **Bottom — Activity Log / Messages:** one dock with two tabs, holding the
+  session's journal and what the checks reported — see *Where Output Appears*.
 
 A second, narrow **Editor menu bar** sits directly above the center area, holding
 the commands that act on the tab in front of you — see *The Two Menu Bars*.
@@ -411,7 +411,7 @@ one where this matters most: off its tab it would have written an *empty*
 
 ---
 
-## Where Results Appear
+## Where Output Appears
 
 Everything the editor produces for you to read lands on one of **three
 surfaces**, and which one it is depends on what kind of answer it is:
@@ -419,8 +419,19 @@ surfaces**, and which one it is depends on what kind of answer it is:
 | Surface | Where | What lands there | Lifetime |
 |---|---|---|---|
 | **Findings** | a tab in the **left dock**, beside Project Tree and Contents | navigable hits — **Find All** results and **List All Bookmarks** listings | replaced by the next such run |
-| **Results** | one tab of the **bottom dock** | what a check reported — **Validate Project**, PHP **lint**, the sandbox **Check** ladder, **Verify XSD**, sandbox provisioning outcomes | accumulates, run after run |
+| **Messages** | one tab of the **bottom dock** | what a check reported — **Validate Project**, PHP **lint**, the sandbox **Check** ladder, **Verify XSD**, sandbox provisioning outcomes | accumulates, run after run |
 | **Activity Log** | the other tab of the **bottom dock** | the session's journal — files opened and saved, database actions, schema learning, project notes, and every transient notice | append-only |
+
+> **Messages is not "results", and the difference matters.** The bottom dock's
+> check tab used to be called **Results**, which collided with the **one thing
+> in this app that really is a result set** — the grid of rows the **Sandbox SQL
+> Console** brings back when you run a query (see *The Sandbox ▸ The Sandbox SQL
+> Console*). Two unrelated surfaces answering to one word is how a reference to
+> "the Results panel" ends up meaning whichever of the two the reader had in
+> mind. So the check tab is **Messages** — it holds lines of text a tool wrote
+> for you — and **Results** now means the console's row grid and nothing else.
+> A toolbar button you pinned to the old **View ▸ Results** entry still works;
+> it follows the rename to **View ▸ Messages**.
 
 > **This replaces the single Audit / Problems dock.** There used to be one list
 > holding all of the above, with a reserved text prefix per producer so nine
@@ -453,9 +464,9 @@ very thing you are navigating.
   tab, a finding with no line number) are **listed but inert when clicked**,
   rather than sending you to a plausible-looking wrong place.
 
-### The Results tab — what the checks found, kept
+### The Messages tab — what the checks found, kept
 
-**Results** is the bottom dock's other tab, and it **accumulates**. Each run
+**Messages** is the bottom dock's other tab, and it **accumulates**. Each run
 opens with a separator — a blank line, a **dated header** (`2026-08-10 14:32:07`)
 and a dashed rule — and everything before it stays. Validation history is worth
 keeping: you can compare what this run said against what the last one said
@@ -465,9 +476,18 @@ Its rows are clickable in exactly the same way as the Findings tab's, so a
 `[Validate]`, `[Lint]` or `[Check]` line with a line number still jumps you
 there.
 
-A run that reports into Results **switches the bottom dock to this tab** so you
-see it — but it will not re-open a dock you closed. **View ▸ Results** brings it
+A run that reports into Messages **switches the bottom dock to this tab** so you
+see it — but it will not re-open a dock you closed. **View ▸ Messages** brings it
 back whenever you want it.
+
+**A few lines land here precisely because they would otherwise be lost.** When
+you close a project, the `[Project]` reminders the close produces — most
+visibly *"N DDL object(s) have local edits pending a batch deploy"* — are
+written to the closing project's activity journal **and** rendered here. Both,
+not either: the journal keeps the record inside the project it belongs to, and
+the Messages tab is what survives the close, so the reminder is still on screen
+when the project it refers to is gone (see *Local DDL-Versioning Projects ▸
+Closing a project*).
 
 ### The Activity Log tab — what this session did
 
@@ -496,11 +516,11 @@ buffer*, *DDL Explorer (Sandbox) failed: …*. See *The Status Bar*, below, for 
 
 ### Reaching them from the View menu
 
-- **View ▸ Activity Log / Results Panel** is the checkbox for the whole **bottom
+- **View ▸ Activity Log / Messages Panel** is the checkbox for the whole **bottom
   dock**, alongside **Project Tree** and **Properties Panel**. Closing the dock
   with the **✕** on its title bar unchecks the entry, and re-checking it brings
-  the dock back.
-- **View ▸ Activity Log** and **View ▸ Results** each **open the bottom dock if
+  the dock back. (The dock's own title bar reads **Activity Log / Messages**.)
+- **View ▸ Activity Log** and **View ▸ Messages** each **open the bottom dock if
   it is hidden and focus that tab**. They are not checkboxes: a tab is either the
   one in view or it is not, and there is no third state to check.
 - The **Findings** tab has no View entry of its own. It reveals itself when it
@@ -525,7 +545,7 @@ That is a deliberate reversal. The bar used to be where every transient notice
 appeared for a few seconds and then vanished — which meant that at any given
 moment it either said something you had already read or nothing at all, and a
 message you looked away from was simply gone. **Those notices now go to the
-Activity Log** (see *Where Results Appear*), where they are timestamped, kept,
+Activity Log** (see *Where Output Appears*), where they are timestamped, kept,
 and attributable to a source. If you expected the bar to tell you something and
 it did not, the Activity Log tab is where to look.
 
@@ -824,7 +844,7 @@ session-only.
 ### List All Bookmarks
 
 **Navigation ▸ List All Bookmarks** writes the **active editor's** bookmarks into
-the **Findings** tab in the left dock (see *Where Results Appear*) as one row per
+the **Findings** tab in the left dock (see *Where Output Appears*) as one row per
 bookmarked line, prefixed **`[Bookmark]`** and showing the line number with a
 preview of the text. **Click a row to jump to that line.** The tab opens and
 focuses itself — a command whose whole output is rows in a hidden tab would
@@ -836,7 +856,7 @@ It is the active editor only, like every other bookmark command, and it never
 switches tabs on you. Each listing **replaces whatever was in the Findings tab**
 — a previous bookmark listing, or a **Find All** result — because the tab answers
 one *"where do I want to go next?"* question at a time. The bottom dock's
-**Results** and **Activity Log** tabs are untouched by it.
+**Messages** and **Activity Log** tabs are untouched by it.
 
 **It is a snapshot, not a live view.** Toggling a bookmark after you asked for the
 list does not update the list — ask again. (Loading a new document does clear the
@@ -864,8 +884,8 @@ it, and the editor's height never jumps as it appears and vanishes.
   the end of the document. **F3 works from anywhere in the editor** — you do not
   have to be in the bar.
 - **Find All** lists every match as clickable rows in the **Findings** tab in the
-  left dock (see *Where Results Appear*), which opens and focuses itself as the
-  first row lands. Results stream in **continuously** so a large file stays
+  left dock (see *Where Output Appears*), which opens and focuses itself as the
+  first row lands. Matches stream in **continuously** so a large file stays
   responsive; while a run is going the button reads **Stop**, and the count
   (**"Found N items."**) is recorded in the **Activity Log**.
 - **Replace** replaces the current match and moves on; **Replace All** replaces
@@ -1098,7 +1118,8 @@ and reported as such.
 
 ### Reading the results
 
-Results land in the bottom dock's **Results** tab (see *Where Results Appear*),
+Lint findings land in the bottom dock's **Messages** tab (see *Where Output
+Appears*),
 each row prefixed **`[Lint]`** so you can tell them apart from the `[Validate]`
 and `[Check]` lines accumulated beside them. **Click a finding to jump to it** —
 the right PHP tab is focused and the caret is placed on that line. Each lint run
@@ -1374,10 +1395,10 @@ enclosing element's type definition, and otherwise tells you in the Activity Log
 **Schema ▸ Verify XSD** checks the schema against the dialect rules — duplicate
 enumeration values, `label` in the wrong place, `sums` on the wrong element,
 unknown base types, unresolvable type references, and the like. Each finding is a
-clickable `[Schema] VERIFY` line in the bottom dock's **Results** tab that opens
+clickable `[Schema] VERIFY` line in the bottom dock's **Messages** tab that opens
 the XSD tab at the offending line, and each run gets its own dated block there
-(see *Where Results Appear*). Verify findings are the one kind of `[Schema]` line
-that lands in Results rather than the Activity Log, because they are a check you
+(see *Where Output Appears*). Verify findings are the one kind of `[Schema]` line
+that lands in Messages rather than the Activity Log, because they are a check you
 asked for. It checks **whichever schema the tab currently holds** —
 curated or auto. Verification also runs automatically (report-only) every time
 you save the tab. When the tab has unsaved edits, Verify checks the tab's live
@@ -1399,7 +1420,7 @@ is in **Edit AutoXSD**.
   completion refreshes immediately; importing the auto schema does not touch
   completion. If the tab had unsaved edits, they are replaced by the imported
   text and the Activity Log says so; the import's own verification findings land
-  in the **Results** tab like any other Verify run.
+  in the **Messages** tab like any other Verify run.
 
 ---
 
@@ -1535,7 +1556,7 @@ database agree" from "no mismatches match this filter".
 - **Double-click** a Page, Detail, lookup, or reference row to jump to its line in
   the Raw XML editor. Double-clicking a relation or column row instead lists every
   occurrence of its `tableName=`/`fieldName=` token in the **Findings** tab (see
-  *Where Results Appear*) and seeds the Find bar, so **F3** steps through them.
+  *Where Output Appears*) and seeds the Find bar, so **F3** steps through them.
   When there is genuinely nothing to find, the **Activity Log** says which token
   it looked for and what that
   means, for example *No `tableName="orders"` in the buffer — the XML does not
@@ -1932,6 +1953,11 @@ is reported as a `[SQL]`-prefixed line in the **Activity Log**, and the exact
 offending text is underlined in red in the editor until your next edit or
 your next format attempt.
 
+**This tab also carries the five schema-aware editing gestures** — **Ctrl+Space**
+completion, **Ctrl+Alt+E**, **Ctrl+Alt+C**, **Ctrl+Alt+J** and
+**Ctrl+Shift+Space** — see *Schema-aware completion and gestures in the SQL
+editors*, at the end of this chapter.
+
 Re-running **Database ▸ DDL Explorer (Quality)** (a fresh fetch) never touches object
 tabs you already have open — they are not reloaded, marked, or closed, even if
 the live definition changed underneath them; your in-progress edits are never
@@ -1971,8 +1997,8 @@ silently:**
    successful-but-wrong apply cannot be undone from inside the app.
 
 An empty buffer is refused. Every outcome — applied, rolled back, refused,
-cancelled — lands as a `[Check]` line in the **Results** tab (see *Where Results
-Appear*), and an apply that did not commit says so in as many words. The
+cancelled — lands as a `[Check]` line in the **Messages** tab (see *Where Output
+Appears*), and an apply that did not commit says so in as many words. The
 **Activity Log** keeps its own row for the attempt, with the full DDL and the
 full error one click away.
 
@@ -2319,33 +2345,121 @@ different statements, so the second one never quietly replaces the first.
   tier 3 absent is the expected shape, not a failure (see *The Sandbox ▸ The
   validation ladder, and the three ways to run it*).
 
-### Schema-aware completion in the DDL object editor
+### Schema-aware completion and gestures in the SQL editors
 
-Inside an open DDL object editor tab (opened via **Edit DDL**, above, or by
-creating a new object), **Ctrl+Space** offers name completion drawn from the
-same object catalog the **Quality** explorer already fetched when you connected —
-it never makes an extra database round-trip when you invoke it, and a browse of
-the sandbox never replaces it: what you complete against is the database an edit
-is headed for. This is the same
-completion idiom as the Raw XML editor's Ctrl+Space (see *The Raw XML Editor ▸
-Schema-aware editing*), applied here to live database names instead of the
-`.pgtp` XSD schema. Three contexts are recognized:
+Writing SQL against a database the editor has already introspected should not
+mean retyping what it knows. Five keys put that knowledge at the caret:
 
-- **A schema name (optionally partial).** Ctrl+Space after it offers the
-  matching table names in that schema.
+| Key | What it does |
+|---|---|
+| **Ctrl+Space** | Completion popup for the name you are typing |
+| **Ctrl+Alt+E** | Expand the word before the caret into its plpgsql snippet |
+| **Ctrl+Alt+C** | Expand a bare `SELECT` into the column list it implies |
+| **Ctrl+Alt+J** | Write the `JOIN … ON …` a foreign key already implies |
+| **Ctrl+Shift+Space** | Show the signature of the call the caret is inside |
+
+**They work in exactly two places: an open DDL object editor tab, and the
+Sandbox SQL Console** (see *The Sandbox ▸ The Sandbox SQL Console*). Those are
+the app's two editable SQL surfaces, and both are handed the database catalog
+the **Quality** explorer already fetched when you connected. Everywhere else
+these keys are not offered — the Raw XML editor, a PHP tab and the **Edit code…**
+dialog hold no SQL and have no schema to answer with, and either read-only **DDL
+Explorer** buffer cannot be written into (asking anyway there says exactly that:
+*"this buffer is read-only"*).
+
+Nothing on this path touches the database. The catalog was fetched once, when
+you connected; invoking a gesture never makes a round-trip of its own, and a
+browse of the **sandbox** never replaces it — what you complete against is the
+database an edit is headed for.
+
+**Every one of these is explicit.** None of them fires as you type; each answers
+the key you pressed and nothing else.
+
+**Ctrl+Space — completion.** The same completion idiom as the Raw XML editor's
+Ctrl+Space (see *The Raw XML Editor ▸ Schema-aware editing*), applied to live
+database names instead of the `.pgtp` XSD schema. It recognizes:
+
+- **Nothing typed yet, or a partial schema name** — the schema names it knows.
+- **`schema.`** — the tables in that schema, schema-qualified, narrowed as you
+  type more.
+- **`schema.table.`** — that table's columns. This is the cascade's third step:
+  `hr.` gives you `hr.jobcard`, and `hr.jobcard.` gives you its columns.
+- **`alias.`, where the caret's own `FROM` clause binds that alias** — the
+  columns of the table it names, so `FROM hr.jobcard jc … jc.` completes. When
+  the table was written without a schema (`FROM jobcard j`), nothing here
+  guesses a search path; it falls back to reading the text as a plain dotted
+  path.
+- **`local.`, where the routine you are in declares that local as a
+  `%ROWTYPE`** — a `rec hr.jobcard%ROWTYPE` offers `hr.jobcard`'s columns. This
+  one is a DDL object tab's; a console buffer is a script being sent rather than
+  a routine being edited, so its declarations are not read there.
 - **`NEW.` or `OLD.` inside a trigger function that already has a trigger
-  attached to it.** Ctrl+Space offers that trigger's target table's column
-  names directly.
+  attached to it** — that trigger's target table's column names directly. (A
+  console buffer is not a trigger body, so row variables resolve to nothing
+  there.)
 - **`NEW.` or `OLD.` inside a trigger function with no trigger currently
-  attached to it.** Ctrl+Space tells you plainly that no trigger is defined
-  for this function, then opens a **"No Trigger Defined"** picker so you can
-  choose which table it belongs to; once chosen, its columns complete as
-  usual. This choice is remembered only for the current tab for the rest of
-  the session — it is **never saved to disk**, and you're prompted again if
-  you reopen the same function in a later session.
+  attached to it** — you are told plainly that no trigger is defined for this
+  function, then a **"No Trigger Defined"** picker opens so you can choose which
+  table it belongs to; once chosen, its columns complete as usual. That choice
+  lives in the current tab for the rest of the session, is **never saved to
+  disk**, and is asked again if you reopen the same function later.
 
-This completion is available only in the **editable** DDL object editor tab —
-neither read-only **DDL Explorer** viewer tab offers it.
+**A column row says more than a column name.** Each one reads as the name, then
+whatever that column actually carries — its type, `PK`, `→ hr.dept.id` for a
+foreign key, `NOT NULL`, its default, its comment — separated by `·`, so you can
+tell `id integer` from `id text` at the moment of choosing. Attributes are shown
+only when they apply: a nullable column simply says nothing about nullability, so
+the ordinary row stays short and the unusual one stands out. **Only the name is
+inserted** — the extra text is there to be read, never to land in your buffer.
+
+**Ctrl+Alt+E and Ctrl+Alt+C — the two expansions.**
+**Ctrl+Alt+E** expands the word immediately before the caret into its plpgsql
+snippet. **Ctrl+Alt+C** expands a bare `SELECT` at the caret into the column list
+the statement's own `FROM` implies — the schema-fed flavour of the same
+mechanism.
+
+Both are applied as **one undo step**, so a single **Ctrl+Z** takes the whole
+expansion back however many pieces it was assembled from. When the expanded text
+has placeholders to fill in, **Tab** and **Shift+Tab** walk them; the last one
+drops you out and Tab goes back to inserting a tab.
+
+They are SQL-only by design: the snippet set is plpgsql, and an expansion that
+dropped plpgsql into a PHP body would be a bug, so in a PHP or JavaScript editor
+these keys are left completely alone.
+
+**Ctrl+Alt+J — the JOIN a foreign key implies.**
+Put the caret in a `FROM` clause and press **Ctrl+Alt+J**: the editor reads the
+tables already in scope, looks at the foreign keys they declare, and writes the
+`JOIN … ON …` those keys imply.
+
+- **When exactly one join is possible it is written straight in**, as a single
+  undo step, like any other expansion.
+- **When several are possible you are offered them, not guessed at.** The same
+  completion popup opens, one row per candidate showing the `ON` clause it would
+  write, and **nothing is written until you pick one**. Escape leaves the buffer
+  untouched.
+
+**Ctrl+Shift+Space — signature help.**
+With the caret inside a call, it shows what that routine
+expects, as a transient tooltip at the caret. **It inserts nothing** — it is a
+question, not an edit.
+
+The tooltip is two lines, or three:
+
+1. the routine's signature;
+2. `→` and the parameter you are currently filling in, which is the one thing a
+   bare signature line does not tell you;
+3. only when the name has more than one overload, which of them you are being
+   shown (`(2 of 3 overloads)`). With a single signature that line is left off
+   rather than saying *1 of 1*.
+
+**When a gesture has nothing to offer, it says so.** None of these ever fails
+silently. The reason arrives in two
+places at once: a **tooltip at the caret**, where you are already looking,
+because it is answering a key you just pressed — and a **`[SQL]` row in the
+Activity Log**, which is still readable a minute later. The reason is specific
+(*"'foo' is not a snippet"*, *"writing a JOIN needs a database schema, and this
+editor has none"*, *"this buffer is read-only"*), never a generic beep.
 
 ---
 
@@ -2498,14 +2612,14 @@ stops with a message saying so, and nothing on the server is touched.
 **A sandbox failure never costs you the project.** If creating, provisioning, or
 `CREATE EXTENSION` fails, the project is still created — it just has no working
 sandbox (a tier-2 *quality project*, see *Project Status*). The exact reason
-appears in the **Results** tab on a line prefixed **`[Sandbox]`**, and the project
+appears in the **Messages** tab on a line prefixed **`[Sandbox]`**, and the project
 records **no** sandbox database, so nothing later claims a sandbox that isn't
 there. Its sandbox *server* details are kept, so you can fix the cause and try
 again.
 
 **If the project has no target connection yet** — likely, since you have just
 created it — there is nothing to build a baseline from, so the sandbox is created
-**empty** and the **Results** tab says exactly that, pointing you at **Project
+**empty** and the **Messages** tab says exactly that, pointing you at **Project
 Settings** to set the target and at re-provisioning afterwards. Choosing **With
 data** without a target likewise clones nothing and says so; your recorded choice
 is left alone, so it still applies once a target exists.
@@ -2598,7 +2712,7 @@ or a password rotation, say — instead of saving blind and finding out later.
 Both buttons test the values **currently typed in the fields**, not the
 last-saved settings, so you can check a change before committing to it with
 **OK**. Testing never saves anything by itself, and the result is shown only
-on that inline status line: no dialog, no Results or Activity Log entry. The test runs in
+on that inline status line: no dialog, no Messages or Activity Log entry. The test runs in
 the background, so an unreachable host can't freeze the dialog; the button is
 disabled until the result comes back.
 
@@ -2669,14 +2783,23 @@ project* — is how you make one active for this file: pick **New Project…** o
 ### Closing a project
 
 **Close Project** always succeeds — closing never forces anything. Along the
-way it reminds you, via `[Project]` lines in the **Activity Log**, of anything
-left informational and unresolved:
+way it reminds you, via `[Project]` lines, of anything left informational and
+unresolved:
 
 - If the `.pgtp` working copy has unpushed changes, it offers to **Deploy
   .pgtp** (see above) — a yes/no prompt, not a requirement.
 - If there are DDL objects with local edits not yet included in a batch
-  deploy, it adds an Activity Log line noting how many — it does not open any
-  deploy flow automatically.
+  deploy, it notes how many — *"N DDL object(s) have local edits pending a
+  batch deploy."* — and does not open any deploy flow automatically.
+
+**A close-time reminder goes to two places, and that is deliberate.** It is
+journalled into the closing project's own `activity.jsonl`, where it belongs to
+the project it is about, **and** it is rendered in the bottom dock's
+**Messages** tab (see *Where Output Appears*). The Activity Log is replaced when
+the project changes, so a reminder written only there would be wiped off screen
+by the very close that produced it — you would be told something at the exact
+moment you could no longer read it. Messages accumulates and survives the close,
+so the reminder is still in front of you afterwards.
 
 ---
 
@@ -2719,7 +2842,7 @@ asks you to.
 **Opening the session is best effort, and it never delays or fails a project
 open.** It is not modal, it never puts a dialog in your way, and if it cannot
 connect you simply have no session — exactly the state the app already knew how
-to describe. The outcome lands in the **Results** tab as a `[Sandbox]` line, and a
+to describe. The outcome lands in the **Messages** tab as a `[Sandbox]` line, and a
 refusal always says which refusal it was: the sandbox is unreachable, the user is
 not a superuser, `pg_dump`/`pg_restore` are missing from your `PATH` (only for a
 **With data** sandbox), no sandbox is configured — or the connected database is
@@ -2827,10 +2950,11 @@ nodes (see *Project Status ▸ Clicking a node*).
 
 ### The validation ladder, and the three ways to run it
 
-Validating a routine in the sandbox climbs a four-rung ladder, and the **Results**
-tab (see *Where Results Appear*) gets **one `[Check]` line per rung, always** —
+Validating a routine in the sandbox climbs a four-rung ladder, and the
+**Messages** tab (see *Where Output Appears*) gets **one `[Check]` line per rung,
+always** —
 never one summary line that quietly hides a rung nobody managed to check. Because
-Results accumulates, the previous run's ladder is still above this one, under its
+Messages accumulates, the previous run's ladder is still above this one, under its
 own dated header:
 
 - **tier 0 — syntax.** PostgreSQL's own parser is the syntax checker, reached by
@@ -2902,7 +3026,7 @@ can never hold a definition without the record of what it holds.
   else. Applying is not a test that cleans up after itself.
 - An empty buffer is refused outright rather than applied as an empty definition.
 - The outcome — the headline, all four tier lines, any caveats, and every
-  individual finding — is reported as `[Check]` lines in the **Results** tab. A
+  individual finding — is reported as `[Check]` lines in the **Messages** tab. A
   cancelled apply says so and applies nothing. The apply itself also gets one
   **Activity Log** row, from the **Sandbox DB** source, carrying the full DDL and
   any full error text a click away.
@@ -2997,8 +3121,8 @@ to it.
 
 ### Clicking a Check finding
 
-Whichever of the three gestures produced them, findings arrive in the **Results**
-tab as their own lines, in the same run block as the narrative tier lines, each tagged
+Whichever of the three gestures produced them, findings arrive in the
+**Messages** tab as their own lines, in the same run block as the narrative tier lines, each tagged
 **ERROR**, **WARNING**, or **INFO** and naming the line it was found on — for
 example *[Check] ERROR line 12: …*.
 
@@ -3013,7 +3137,10 @@ you have since closed does nothing rather than reopening a document you dismisse
 ### The Sandbox SQL Console
 
 **Database ▸ Sandbox SQL Console…** opens the **Sandbox SQL** tab in the center
-area: a SQL editor on top, a results grid below it. Like the other sandbox
+area: a SQL editor on top, and below it the **Results** grid — the rows your
+query actually brought back. This grid is the one thing in the app the word
+*results* refers to; the bottom dock's check tab is **Messages** (see *Where
+Output Appears*). Like the other sandbox
 gestures the menu entry is there whenever the project has a sandbox configured;
 without a live session it opens no console and states why, over the **Open**
 button that retries the connection (see *The sandbox session opens itself*).
@@ -3038,12 +3165,18 @@ knows about the sandbox session.
   returns no result set, or the database's error message — an error never shows up
   as a silently empty grid. `NULL` values in the grid are dimmed and italic, so
   they can't be confused with an empty string or the text `NULL`.
-- **Ctrl+Space** completes schema and table names (from the catalog the **Quality**
-  explorer already fetched), and **Ctrl+Alt+F** reformats the selection, exactly
-  as in a DDL object editor tab.
+- **Ctrl+Alt+F** reformats the selection, exactly as in a DDL object editor tab.
+- **The console is the second home of the schema-aware editing gestures** —
+  **Ctrl+Space** completion, **Ctrl+Alt+E**, **Ctrl+Alt+C**, **Ctrl+Alt+J** and
+  **Ctrl+Shift+Space** all behave here as they do in a DDL object tab, off the
+  same already-fetched **Quality** catalog. The one difference is `NEW.` /
+  `OLD.`: a row variable only means something inside a trigger function body,
+  and a console buffer is not one, so it resolves to nothing here. See *DDL
+  Explorer ▸ Schema-aware completion and gestures in the SQL editors* for what
+  each gesture does.
 - The console holds no document, so there is nothing to save and no unsaved
-  prompt when it closes. Losing the session clears the results but leaves your
-  typed SQL alone.
+  prompt when it closes. Losing the session clears the Results grid but leaves
+  your typed SQL alone.
 
 **Run in Sandbox Console** (right-click, in a DDL object editor tab, with text
 selected) sends that selection over to the console and focuses it — and
@@ -3197,7 +3330,7 @@ The entry point used to be **Tools ▸ Compare / Merge Two Files…**; comparing
 **Parsing ▸ Validate Project** — on the Editor menu bar, beside **Auto Parse
 XML** (see *The Two Menu Bars*) — checks your project for structural problems and
 reports them as `[Validate]` rows with severities (errors and warnings) in the
-bottom dock's **Results** tab (see *Where Results Appear*) — for
+bottom dock's **Messages** tab (see *Where Output Appears*) — for
 example duplicate top-level page file names, missing expected attributes, or
 unexpected children in container elements. **Click an issue to jump to it.** Each
 run opens its own dated block and the previous run's issues stay above it, so you
@@ -3258,12 +3391,12 @@ simply reads as busy instead of stalled.
   not follow your operating system's light/dark setting. Toolbar icons re-tint to
   stay legible in either theme, and your choice is remembered across restarts.
 - The **View** menu toggles each panel: **Project Tree**, **Properties Panel**,
-  **Activity Log / Results Panel** (the bottom dock), and **Raw XML Panel**. Each
+  **Activity Log / Messages Panel** (the bottom dock), and **Raw XML Panel**. Each
   checkbox always reflects whether its panel is currently visible — closing a
   panel with the ✕ on its own title bar unchecks the menu entry too, and
   re-checking it brings the panel back. Below them, **View ▸ Activity Log** and
-  **View ▸ Results** are not toggles: each opens the bottom dock if needed and
-  focuses that tab (see *Where Results Appear*).
+  **View ▸ Messages** are not toggles: each opens the bottom dock if needed and
+  focuses that tab (see *Where Output Appears*).
 - **View ▸ Expand All** / **Collapse All** open or fold the whole Project Tree.
 - **View ▸ Customize Toolbar…** chooses which commands appear on the toolbar and
   what icon each one carries (see *The toolbar*, below).
@@ -3392,8 +3525,11 @@ cannot be rebound, and why*, at the end of this chapter.
 | **Ctrl+Z** / **Ctrl+Y** | Raw XML | Undo / redo (snapshot history) |
 | **Ctrl+Z** / **Ctrl+Y** | Edit XSD / DDL object editor tab / PHP file tab | Undo / redo (that tab's own history only — never the project's) |
 | **Ctrl+Space** | Raw XML | Attribute / value completion |
-| **Ctrl+Space** | DDL object editor tab | Schema-aware name completion (schema/table names, or `NEW.`/`OLD.` column names) |
-| **Ctrl+Space** | Sandbox SQL console | Schema / table name completion |
+| **Ctrl+Space** | DDL object editor tab / Sandbox SQL console | Schema-aware name completion — the `schema.table.column` cascade, a `FROM`-clause alias, a `%ROWTYPE` local, or `NEW.`/`OLD.` columns |
+| **Ctrl+Alt+E** | DDL object editor tab / Sandbox SQL console | Expand the word before the caret into its plpgsql snippet |
+| **Ctrl+Alt+C** | DDL object editor tab / Sandbox SQL console | Expand a bare `SELECT` into the column list its `FROM` implies |
+| **Ctrl+Alt+J** | DDL object editor tab / Sandbox SQL console | Write the `JOIN … ON …` a foreign key implies (one candidate is applied, several are offered) |
+| **Ctrl+Shift+Space** | DDL object editor tab / Sandbox SQL console | Signature help for the call at the caret — a tooltip, inserting nothing |
 | **Ctrl+L** | Raw XML | Go To XSD (attribute's definition in the Edit XSD tab) |
 | **Ctrl+click** | Raw XML (mouse) | Jump to matching open/close tag |
 | **Alt+click** | Raw XML (mouse) | Jump to parent tag start |
@@ -3477,15 +3613,20 @@ The other commands added recently are shortcut-free too: **File ▸ New
 Session**, **File ▸ Discard Changes**, **Parsing ▸ Auto Parse XML**, **Parsing ▸
 Validate Project**, **History ▸ History…**, **Navigation ▸ Clear All Bookmarks**,
 **Navigation ▸ List All Bookmarks**, **View ▸ Activity Log**, **View ▸
-Results**, **Database ▸ DDL Explorer (Quality)**,
+Messages**, **Database ▸ DDL Explorer (Quality)**,
 **Database ▸ DDL Explorer (Sandbox)**, **Database ▸ Project Status…** and
 **Tools ▸ Start MCP Server** are all menu-only. If you use one often, put it on
 the toolbar (see *Appearance & Layout ▸ The toolbar*).
 
-**Six keys have no menu entry at all** — **F3**, **Ctrl+L**, **Ctrl+Alt+F**,
-**Ctrl+Return**, **Ctrl+Space** and **Ctrl+G**. That is why you can neither put
-them on the toolbar nor rebind them: a toolbar button *is* a menu item and the
-rebinding dialog lists menu commands, and these have no menu entry to be either.
+**Ten keys have no menu entry at all** — **F3**, **Ctrl+L**, **Ctrl+Alt+F**,
+**Ctrl+Return**, **Ctrl+Space**, **Ctrl+G**, and the four SQL editor gestures
+**Ctrl+Alt+E**, **Ctrl+Alt+C**, **Ctrl+Alt+J** and **Ctrl+Shift+Space** (see
+*DDL Explorer ▸ Schema-aware completion and gestures in the SQL editors*). That
+is why you can neither put them on the toolbar nor rebind them: a toolbar button
+*is* a menu item and the rebinding dialog lists menu commands, and these have no
+menu entry to be either. They are still **listed** in **View ▸ Customize
+Shortcuts…**, as greyed rows saying why they are locked — a key you can see and
+cannot take is better than one that is simply missing from the list.
 
 In **Caption Mode** the **Navigation** menu's five bookmark entries — and
 **Ctrl+F2** / **F2** /
@@ -3585,6 +3726,7 @@ hunting for a row that was never there. None of these is arbitrary:
 | **Ctrl+F** / **Ctrl+R** | They focus the **current tab's** Find and Replace fields, and each tab's bar owns its own pair. A window-level menu shortcut on either key would be ambiguous against them, and neither would fire. |
 | **Escape** | Returns focus from a Find/Replace bar to the document. |
 | **F3**, **Ctrl+L**, **Ctrl+Alt+F**, **Ctrl+Return**, **Ctrl+Space**, **Ctrl+G** | Window-level or context-menu commands with no menu entry at all — the same reason they cannot be put on the toolbar. |
+| **Ctrl+Alt+E**, **Ctrl+Alt+C**, **Ctrl+Alt+J**, **Ctrl+Shift+Space** | The four SQL editor gestures. Each is answered by the editor widget itself, not by a menu command, so the dialog has no row it could move — and a menu command retargeted onto one of them would fight the editor for the key and neither would fire. |
 | **Ctrl+C** / **Ctrl+X** / **Ctrl+V** | Copy, cut and paste are the editors' **own** built-ins. A window-level shortcut on one of them would outrank the editor and break copy, cut or paste everywhere in the app. |
 | **F1**, and **Help ▸ Manual** itself | The universal convention, and **Help ▸ Manual** is the one entry no mode may put out of reach — including Maintenance mode (see *Getting Started ▸ Maintenance mode*). It is the only case locked from both ends: nothing else may take **F1**, and Manual may not leave it, so its row is present but read-only. |
 
