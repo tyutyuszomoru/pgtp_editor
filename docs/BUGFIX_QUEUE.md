@@ -3413,3 +3413,268 @@ sentence `from_clause.py`'s docstring already carries (:56-59); and (2) if `doll
 accuracy point, not a design one. Do not edit the spec here.
 
 ---
+
+## BUG-042: `[Project]` narration emitted *during* a project close is journalled but never seen — the transition that triggers the line also wipes the panel
+**Status:** OPEN
+**Reported:** 2026-08-10
+**Report (verbatim):** "FQ-019's Activity Log replaces its display buffer on a project transition (`open_project`/`close_project` on the core, driven from `_on_activity_project_changed`). `[Project]` lines narrated *during* a close — the example given is *'N DDL object(s) have local edits pending a batch deploy'* — reach the closing project's `activity.jsonl` correctly, but vanish from the panel immediately, because the transition that triggered them also clears what the panel shows. So a user is told something at exactly the moment they can no longer read it."
+
+**Root cause:** Verified end to end; the reported mechanism is exact.
+
+`DdlProjectController.close_project` (`pgtp_editor/ui/ddl_project_controller.py:440-464`) runs its two
+reminder emitters **before** it broadcasts the transition:
+
+```
+446    self.offer_pgtp_deploy_on_close()
+447    self.remind_pending_deploys_on_close()
+...
+463    self.project_changed.emit(None, None)
+```
+
+`remind_pending_deploys_on_close` (`ddl_project_controller.py:466-483`) is the source of the example line —
+it calls `self._shell.audit.addItem(QListWidgetItem(f"[Project] {pending} DDL object(s) have local edits
+pending a batch deploy."))` while `self._folder` and `self._settings` are still set (it needs them:
+`compute_drift_markers(self._folder, self._settings, schema)` at :476).
+
+The row then travels: `AuditRouter.addItem` (`ui/audit_router.py:176-189`) classifies `[Project]` as
+`TO_ACTIVITY` and calls the activity sink → `MainWindow._record_audit_notice`
+(`ui/main_window.py:2021-2037`) → `_record_notice` (:2039-2059) → `record_activity` (:1690-1702), which does
+`self.activity_log.record(...)` **and** `self.activity_panel.append(entry)`. Because `_folder` is still set,
+`_file_activity_source()` (:1676-1688) returns `SOURCE_PROJECT_FILES`, so the entry is persistable into the
+closing project's store.
+
+A moment later `project_changed.emit(None, None)` reaches `MainWindow._on_activity_project_changed`
+(`ui/main_window.py:1722-1736`), the **first** connected subscriber (`main_window.py:1251-1253`, with the
+FQ-028 comment at :1243-1250 explaining why it is first). With `folder is None` it calls
+`ActivityLog.close_project` (`pgtp_editor/db/activity_log.py:567-573`):
+
+```
+570    self.flush()          # the line DOES reach the closing project's activity.jsonl
+571    self._project_dir = None
+572    self._entries = []    # <- the display buffer is replaced
+573    self._pending = []
+```
+
+and then `self.activity_panel.set_entries(self.activity_log.entries)` (`main_window.py:1736`) repaints the
+panel from the now-empty buffer. Net effect: **persisted correctly, on screen for microseconds.**
+
+The FQ-028 connection-order mitigation is real but only fixes the **open** direction: on an open, the journal
+has already swapped to the new project's store before any later subscriber narrates, so the narration lands in
+the store the panel is now showing. On a **close** the narration happens *before* the signal is emitted at all,
+so no connection ordering can help it — the emitters run inside `close_project`'s body, upstream of every
+subscriber.
+
+Note the wipe is a two-sided loss for a close: the line is gone from the panel *and* the panel is now the
+empty standalone buffer, so there is no surface at all in the session that carries it. The only way to read it
+is to reopen the project (the entry is in that project's `activity.jsonl`).
+
+**Proposed fix:** Options only — **do not pick one without an owner call**; each trades against a rule the core
+imposes deliberately.
+
+The hard constraint to respect in every option: `ActivityLog.open_project`/`close_project`
+(`db/activity_log.py:554-573`) exist precisely so entries **never migrate between stores** — a standalone entry
+must not leak into a project's `activity.jsonl` and vice versa. Any option that carries lines *across* the swap
+is arguing with that rule, and the docstrings at :554-561 and :466-470 state why it exists. It is not an
+accident to be patched around.
+
+- **(A) Emit earlier / emit before the transition is even started.** No change: this is already the case — the
+  emitters at `ddl_project_controller.py:446-447` run before `project_changed.emit`. The lateness is not in the
+  emit, it is in the *panel repaint*, so "emit sooner" cannot help. Record this as ruled out, so nobody
+  re-derives it.
+- **(B) Swap the display buffer later / carry a tail across the swap.** `_on_activity_project_changed` would
+  re-append the last N entries recorded during the transition after `set_entries`. This is the option that
+  fights the no-migration rule head-on: those rows belong to the closed project's store, and showing them in the
+  standalone buffer means the panel is displaying rows that `flush()` will never own again — a display-only
+  divergence from `ActivityLog.entries` that every other part of FQ-019 assumes cannot happen (the panel is a
+  pure render of `entries`). Cheap to write, expensive in invariants.
+- **(C) Route close-time narration to a surface that survives the transition.** This is what the shipped
+  `[Sandbox]` prefix already does: `audit_router.DESTINATIONS` maps `SANDBOX_PREFIX → TO_RESULTS` for exactly
+  this reason, documented in CONSOLIDATED_SPEC's routing table (*"a `[Sandbox]` line is emitted during a project
+  transition … Results accumulates and survives the transition"*). The close-time `[Project]` reminders are, in
+  substance, the outcome of an operation the user asked for (they asked to close), which is the same argument
+  that put `[Sandbox]` on Results. Cost: `[Project]` would then be split across two surfaces by *timing*, which
+  is exactly the kind of per-line special-casing FQ-028's one-prefix-one-destination table was built to end —
+  unless the split is made principled (e.g. a distinct prefix for close-time reminders, or `remind_pending_
+  deploys_on_close` reporting through a Results-bound channel by construction rather than by prefix lookup).
+- **(D) Hold the reminder as a modal/status affordance instead of a log line.** `close_project` already has a
+  precedent one line above: `offer_pgtp_deploy_on_close` (`ddl_project_controller.py:485+`) asks a
+  `QMessageBox.question`. §18.3's rule is *"closing is a reminder point, never a forcing point"* — a modal for
+  the pending-deploy count would be a forcing point and is probably wrong; a non-modal status-bar line is a
+  weaker surface than the one it already fails to reach. Recorded for completeness, weakest option.
+- **(E) Accept and make the acceptance honest.** Keep the behaviour but stop pretending the line was
+  delivered — e.g. have the close-time reminder say where it went (*"…recorded in this project's activity
+  log"*), or drop the reminder entirely on the grounds that a line nobody can read is worse than no line. This is
+  the only option that costs nothing structurally.
+
+Whichever is picked, the change site is small and well-bounded: `remind_pending_deploys_on_close`
+(`ddl_project_controller.py:466-483`) is the emitter, `MainWindow._on_activity_project_changed`
+(`main_window.py:1722-1736`) is the swap, and `ui/audit_router.py`'s `DESTINATIONS`/`classify` is the routing
+table. Gotcha for option C: producers call `audit.addItem(...)` and see nothing else (the router deliberately
+quacks like the `QListWidget` they were written against) — a per-call destination override does not exist and
+adding one reopens the design FQ-028 closed.
+
+**Test impact:** `tests/ui/test_ddl_project_wiring.py` already covers this exact area — the test at ~:1184
+opens a project with a stale `deployed` hash, calls `window._ddl_project_ui.close_project()` and its trailing
+comment literally documents the current (buggy) outcome: *"this particular line is emitted DURING the close --
+after which FQ-019's [journal replaces its buffer]"*. That test must be **rewritten, not extended**, whichever
+option lands, because it currently asserts the defect as intended behaviour. Also touched:
+`tests/ui/test_ddl_project_wiring.py`'s `[Project]`/`activity_panel.row_texts()` assertions around :770-810
+(the checkout-drift narration path, same sink, not close-time — should keep passing untouched and is the
+regression guard that the open direction was not broken). Core-level coverage lives in
+`tests/db/test_activity_log.py` (the `open_project`/`close_project` buffer-replacement contract) — if option B
+is chosen it needs a new case pinning whatever "panel may show rows the core does not own" means; options C/D/E
+need no core change at all. New cases needed either way: (1) a close with pending deploys leaves the reminder
+*readable somewhere* (name the surface), and (2) the closing project's `activity.jsonl` still contains the line
+(that part works today and must not regress).
+
+**Spec impact:** **Diverges from an explicitly recorded decision — this is a deliberate, documented caveat, not
+an unnoticed bug.** `docs/superpowers/CONSOLIDATED_SPEC.md` (the FQ-028 routing table, ~:813-889) carries a
+blockquote titled *"A live, accepted caveat that falls out of the same mechanism — recorded, not fixed"* which
+describes this exact close-direction behaviour, states the open direction was mitigated by connection order,
+and ends: *"If this ever needs to change it is a new entry, not a quiet patch."* This queue entry is that new
+entry. Whichever option is chosen (including E), `spec-maintainer` must be dispatched afterwards to replace
+that blockquote and, for option C, to add a row/qualification to the prefix→destination table (which currently
+maps `[Project]` → Activity Log unconditionally) plus a Supersession Ledger row. Do not edit the spec here.
+
+---
+
+## BUG-043: sandbox `run_async` workers outlive their `MainWindow` and emit on a deleted C++ object — a rotating, misattributed teardown ERROR that has trained the suite's red output to be ignored
+**Status:** OPEN
+**Reported:** 2026-08-10
+**Report (verbatim):** "`tests/ui/test_deployment_menu.py` reports a failure or a setup/teardown ERROR on roughly one full-suite run in two, and the test named changes between runs — `test_a_projectless_quality_apply_runs_and_reports_under_check`, `test_the_sandbox_confirmation_also_names_the_host_now`, and others in that file. It passes when the file is run alone. Other files have shown the same shape (`test_ddl_explorer_sandbox.py`, `test_database_menu.py`, `test_theme.py`), which suggests the mechanism is not confined to one file. TEARDOWN ERROR: Exceptions caught in Qt event loop: File `pgtp_editor/ui/sandbox_controller.py`, line 1358, in handle / line 1380, in _finish / RuntimeError: Signal source has been deleted. A `run_async` worker started by an earlier test completes after its `MainWindow` has been torn down, and `SandboxController._finish` emits `operation_finished` on a deleted C++ object."
+
+**Root cause:** Verified against the code; the reported mechanism is exact, and the culprit test is identifiable.
+
+The emitting frames are literal:
+
+- `pgtp_editor/ui/sandbox_controller.py:1357-1358` — `_error_handler`'s inner `def handle(exc)` calls
+  `self._finish(operation, False, str(exc) or exc.__class__.__name__, on_done)`.
+- `pgtp_editor/ui/sandbox_controller.py:1362-1380` — `_finish` ends with `self.operation_finished.emit(result)`.
+  `SandboxController` is a `QObject` (`sandbox_controller.py:414`) constructed with the window as parent
+  (`main_window.py:1027-1033`, `SandboxController(self, …)`), so when the `MainWindow` is destroyed at test
+  teardown the controller's C++ side goes with it and the `emit` raises `RuntimeError: Signal source has been
+  deleted`. `handle` runs as a queued slot on the GUI thread, so pytest-qt catches it out of the event loop and
+  attributes it to whichever test is running when it lands — which is exactly why the test name rotates.
+
+The delivery path that outlives teardown is `ui/async_task.py::run_async` (:71-105). It is correct by its own
+lights and that is what makes this leak durable: `_INFLIGHT` (:44-49) **deliberately holds every task alive
+until its result/error has been delivered on the GUI thread**, precisely so a callback can never be dropped.
+There is no cancellation seam, no owner check, and nothing ties a task's lifetime to the widget that started
+it.
+
+**The concrete culprit is `tests/ui/test_deployment_menu.py::test_the_sandbox_confirmation_also_names_the_host_now`
+(:532-555).** It saves a `ProjectSettings(sandbox=ConnectionParams(host="localhost", port="5433",
+database="sbox"))` and calls `window._ddl_project_ui.set_active_project(project_dir, settings)`. That reaches
+`DdlProjectController.set_active_project` → `self._bind_sandbox()` (`ddl_project_controller.py:425`) →
+`MainWindow._bind_sandbox_controller_to_project` (`main_window.py:5590-5654`), whose BUG-040 branch at :5641
+(`if settings is not None and params is not None and params.database:`) is **true** here (`database="sbox"`) and
+calls `self._open_sandbox_session()` → `SandboxController.open_session`. Inside `open_session`
+(`sandbox_controller.py:667-722`) the worker body is:
+
+```
+696    def work():
+697        caps = self._prober(params)
+698        reason = self._blocking_reason(caps)
+699        if reason is not None: return None, caps, reason
+700        session = self._opener(params, mode=..., schema_names=..., baseline=..., target_params=...)
+```
+
+The test stubs `probe_sandbox_capabilities` to return `SandboxCapabilities(is_superuser=True)` (so `_prober`
+is safe and `_blocking_reason` at :1251-1266 returns None — configured, no `probe_error`, superuser), and then
+`self._opener` is the **real `db/sandbox.py::open_sandbox`**, which really dials `localhost:5433/sbox` on a
+threadpool worker. That connection attempt fails (nothing is listening), raising into `run_async`'s error
+channel → `handle` → `_finish` → emit. The failure can take as long as the OS TCP path takes, which is why it
+lands in a *later* test, and why it is load-dependent (hence "one run in two", and why the file passes alone).
+
+**The test already knows about the hazard and fixes the wrong seam.** Its comment at :544-547 says exactly
+this — *"Opening a project starts an off-thread capability probe. Stubbed and made synchronous so its result
+cannot land after this window is destroyed"* — and it stubs `window._ddl_project_ui._run_async` (:548-550).
+That covers `DdlProjectController`'s two probes only. It does **not** cover `SandboxController`, because the two
+controllers get their runner from different places:
+
+- `DdlProjectController._run_async = shell.run_async` (`ddl_project_controller.py:160`), and `UiShell.run_async`
+  is `MainWindow._shell_run_async` (`main_window.py:1157`, :1952-1958) — a **trampoline that re-reads
+  `self._run_async` at call time**, specifically so the suite can inject a synchronous stand-in by assigning
+  `window._run_async`.
+- `SandboxController._run_async = run_async` (`sandbox_controller.py:482`) — **the module-level function,
+  captured in `__init__`, bypassing the trampoline entirely.**
+
+So `window._run_async = sync` — the project's documented convention, asserted as a seam in
+`tests/ui/test_mainwindow_surface.py:284` — silently does **not** make the sandbox lane synchronous. That
+asymmetry is the real defect; the flaky test names are the symptom.
+
+Blast radius beyond this one test: `refresh_capability_status` (`ddl_project_controller.py:507-557`) and
+`refresh_target_connection_status` (:559-596) *also* fire an async task on every `set_active_project`, and the
+latter runs a real `db_test_connection(target)` whenever a target host is configured. Those go through the
+trampoline, so `window._run_async` fixes them — but their result slots (`capability_status_changed.emit`,
+`self._refresh_status_window()`) are the same deleted-object hazard for any test that stubs neither. There are
+**58 `set_active_project` call sites across 12 files under `tests/ui/`**; the ones with **no** `sync_run` and no
+`_run_async` stub at all are `test_database_menu.py`, `test_ddl_object_editor_wiring.py`,
+`test_ddl_project_wiring.py`, `test_deployment_menu.py` and `test_generation.py`. Of those, only
+`test_deployment_menu.py:532` currently configures a sandbox `database`, so it is the one that reaches the
+*sandbox* leak today — the others are latent (they leak only fast, harmless tasks now, and become real leaks the
+moment someone adds a host/target to their settings).
+
+**Proposed fix:** Three levels; they are complementary rather than exclusive, and the recommendation is to take
+the per-controller one as the actual fix and the per-test one as cleanup, with the per-fixture one only if the
+first two prove insufficient.
+
+- **Per-controller (recommended as the fix — closes the class of bug, not the instance).** Two sub-parts:
+  1. **Route `SandboxController`'s runner through the same trampoline everything else uses.** In
+     `MainWindow.__init__`, right after the `SandboxController(...)` construction at `main_window.py:1027-1033`,
+     assign `self.sandbox_controller._run_async = self._shell_run_async` (do **not** pass `run_async` as a
+     constructor kwarg captured at build time — the whole point of `_shell_run_async` is the call-time read, see
+     its docstring at :1952-1958). After this, the existing, documented `window._run_async = sync_run`
+     convention covers the sandbox lane too, and ~5 test files stop being able to leak by omission.
+     Gotcha: `sandbox_controller.py:481-482`'s comment claims the attribute follows "the
+     ConnectionSetupDialog/NewProjectDialog convention" — that comment becomes wrong and must be updated in the
+     same change, or the next reader will re-break it.
+  2. **Make `_finish` survive a dead receiver.** Guard the emit at `sandbox_controller.py:1380` — e.g. wrap in
+     `try/except RuntimeError` with a `debuglog` note, or test `shiboken6.Shiboken.isValid(self)` before
+     emitting. Prefer the `try/except` (no new import, and it also covers the `on_done` callback at :1378-1379,
+     which can equally be a bound method of a deleted panel — note `on_done` runs *before* the emit, so a guard
+     on the emit alone does not cover it; wrap both). This is defence in depth for production too: nothing
+     in the app cancels an in-flight sandbox operation when a project closes or the window is destroyed, so the
+     same `RuntimeError` is reachable by a user who closes the app mid-probe.
+  3. Optionally, the deeper version: give `run_async` an owner/cancel seam (`ui/async_task.py:71-105`) so a task
+     can be dropped when its owner dies. Bigger change, touches the `_INFLIGHT` invariant documented at :44-49
+     (which exists to stop *silently dropped* callbacks — the exact opposite failure), so do not do this
+     casually; the guard in (2) buys most of the benefit for none of the risk.
+- **Per-test (cleanup, not sufficient alone).** Fix `test_deployment_menu.py:532-555` to stub
+  `window.sandbox_controller._run_async` (or `window._run_async` once fix 1 lands) rather than only
+  `window._ddl_project_ui._run_async`, and audit the five no-stub files above. `tests/ui/_sandbox_stubs.py::sync_run`
+  (:21-27) is the established stub and should be the one used — 18 files already import it. This alone is
+  insufficient because nothing prevents the next test from omitting it; the omission is invisible until it
+  poisons someone else's run weeks later.
+- **Per-fixture (safety net; consider alongside, not instead).** An autouse fixture in `tests/ui/conftest.py`
+  (which already hosts two autouse leak-guards with the same rationale — the app-style/palette reset and
+  `_isolated_qsettings`, both added because process-wide state leaked between tests) that after each test
+  drains `QThreadPool.globalInstance().waitForDone(timeout)` **before** widgets are destroyed, and/or fails the
+  test that leaves a task in `async_task._INFLIGHT`. The failing-loudly variant is the valuable one: it
+  attributes the leak to the test that *caused* it instead of the one that was running when it landed, which is
+  the whole complaint here. Gotcha: qtbot destroys widgets at its own teardown, so ordering against
+  `qtbot.addWidget`'s cleanup matters — a drain that runs after widget destruction is too late and just makes
+  the crash deterministic instead of preventing it.
+
+**Test impact:** Existing coverage of the seam: `tests/ui/test_async_task.py` (the real threadpool path, the one
+test that deliberately does *not* stub), `tests/ui/test_sandbox_controller.py:213` (`controller._run_async =
+runner`, the controller-level injection), `tests/ui/test_mainwindow_surface.py:284,314` (asserts `_run_async`
+and `_shell_run_async` exist as seams — **this is where a new assertion belongs** that
+`window.sandbox_controller._run_async` is the trampoline, i.e. that stubbing `window._run_async` reaches the
+sandbox lane), and `tests/ui/_sandbox_stubs.py::sync_run` (the shared stub, used by 18 files). The file to fix
+is `tests/ui/test_deployment_menu.py` (:532-555). New cases needed: (1) `SandboxController._finish` does not
+raise when its receiver has been deleted (construct a controller, delete the parent, invoke `_finish`, assert no
+`RuntimeError` — also covers the `on_done` callback), (2) assigning `window._run_async` makes a
+`_bind_sandbox_controller_to_project`-triggered `open_session` synchronous, and (3) if the conftest guard is
+adopted, a self-test that a leaked in-flight task fails its own test. **Verification note carried over from the
+report: the failure reproduces on stashed, untouched code, confirmed three times — it is not a regression from
+any recent work, so do not go looking for one.**
+
+**Spec impact:** None for the behaviour itself. `CONSOLIDATED_SPEC.md` §30's test-environment section describes
+the parallel-suite convention but records no rule about async-seam stubbing; if the per-fixture guard or the
+trampoline change lands, it is worth one sentence there — *"every off-GUI-thread seam is reachable from
+`window._run_async`"* — as a testability invariant. Flag `spec-maintainer` after the fix lands; do not edit the
+spec here. Note also that `sandbox_controller.py:481-482`'s in-code comment about the injection convention is
+documentation that will be falsified by the recommended fix and must be corrected with it.
+
+---
