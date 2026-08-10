@@ -1497,3 +1497,200 @@ is **re-routed, not removed**.
 claim survives, the redo meaning does not), §27 (`:10064`) and the §27 Ledger row; `manual.md:750`, `:1952`,
 `:3823`, `:3949` (*"Ctrl+Shift+Z is a second redo key"*), `:4158`. `owner-decision` does not edit either
 document.
+
+---
+
+## DEC-260810134914 — Does an attached `.pgtp` get copied when New Project is accepted, or is the copy deferred to the existing open-time copier?
+
+- **Status:** OPEN
+- **Raised:** 2026-08-10, by `spec-maintainer` while folding **FQ-035** into `CONSOLIDATED_SPEC.md` §18.2.
+  Flagged there rather than decided (see the ⚠ banner at `CONSOLIDATED_SPEC.md:5665-5684`).
+- **Blocks:** **FQ-035's implementation.** FQ-035 is folded into the spec but **unbuilt**, and §18.2's status
+  banner says so — this gates writing the code, not a shipped behaviour. Everything else in FQ-035 (the
+  attach field, the XML parse, the reveal, the auto-population, the two probes, the settings write) is
+  explicitly implementable without an answer; only *what `create_project` does with the file* waits.
+
+**The situation, for someone who has not seen FQ-035.** FQ-035 adds a `.pgtp` attach field to the New Project
+dialog. Attaching one also reveals a quality-server section auto-populated from that file (that is
+`DEC-260810134915`, filed separately). A `.pgtp` attached at creation must end up **linked** to the new
+project the same way one opened into an existing project already does: §18.2 treats the `.pgtp` as a
+checked-out artifact — the source lives on an sshfs-mounted quality server, and the project keeps a **local
+working copy** that the editor edits and `Deploy .pgtp` writes back. The link is
+`PgtpLink(source_path, working_copy_path, last_known_source_checksum)`
+(`pgtp_editor/db/ddl_project.py:67-77`).
+
+So the dialog's accept path either performs that copy itself, or records the intent and lets the existing
+copier do it later.
+
+**What the code actually says — this is the substance of the entry, and it corrects the framing the
+ambiguity was filed with.**
+
+1. **"The existing copier" is `DdlProjectController.link_pgtp_if_needed()`
+   (`pgtp_editor/ui/ddl_project_controller.py:660-697`), and it is the only code in the tree that writes a
+   working copy.** It reads the open document's path as the source, writes
+   `self._folder / source_path.name`, and records the three-field link.
+
+2. **It early-returns when `working_copy_path` is already set** (`ddl_project_controller.py:672-673`:
+   `if self._settings.pgtp.working_copy_path: return`, *"never silently relinked"*). **This falsifies the
+   deferral option as stated.** Recording a `working_copy_path` at accept time and expecting the existing
+   copier to fill it in later cannot work — the recorded path is precisely what permanently disables the
+   copier. Deferral would have to mean recording `source_path` only and leaving `working_copy_path=None`,
+   which is a *different* and weaker proposal: it produces a two-field link where the spec requires creation
+   to produce the same three fields the open-time path produces, and it makes
+   `report_project_drift` (`:614-639`, which keys on `source_path` alone) start reporting checksum drift for
+   a project that has no working copy at all.
+
+3. **"A file write on a dialog's accept path, which nothing else in this dialog does" is not accurate.**
+   `create_project` (`ddl_project_controller.py:308-324`) already does, on accept and unguarded:
+   `folder.mkdir(parents=True, exist_ok=True)`, then `save_settings(folder, settings)` (which writes
+   `.ddlproject/settings.json`), then `self._provision_sandbox(dialog)` — which **creates a database**.
+   Accept can therefore already fail for filesystem reasons today. The precedent is also already recorded in
+   that method's own comment: the sandbox step is deliberately ordered **last**, *"so a failed sandbox never
+   costs the user the project (§18's tier-2 degrade)."* One more side effect is not a new category; it is a
+   member of an existing one, with an existing rule about where to put it.
+
+4. **What a set-but-missing `working_copy_path` would actually do — all six consumers checked. Nothing
+   crashes; three misbehave silently.**
+   - `auto_open_linked_pgtp` (`:373-377`) — guarded by `Path(...).exists()`, but on a missing file it
+     **`return`s instead of falling through** to the "scan the folder for a single `.pgtp`" branch. So the
+     project silently opens with nothing loaded, *and* the fallback that would have rescued it is suppressed.
+   - `resolve_pgtp_path` (`:643-658`) — a pure string comparison, no existence check. It would **redirect an
+     open of the real source to the nonexistent working copy**. This is the sharp edge.
+   - `link_pgtp_if_needed` (`:672`) — permanently no-op, as above.
+   - `offer_pgtp_deploy_on_close` (`:501-508`) — `try/except OSError: return`. Tolerant, silent.
+   - `deploy_pgtp` (`:699-718`) — `try/except OSError` → a *"Deploy Failed"* critical box. Visible failure on
+     a user gesture; no crash.
+   - `pgtp_working_copy_path` (`:270-276`) → `main_window.py:1288` → `pgtp_document_controller.py:584-586` —
+     string comparison only. Tolerant.
+
+**Options.**
+
+- **(A) Copy at accept, sharing one copier.** Refactor `link_pgtp_if_needed` so its body is callable with an
+  **explicit source path** (rather than only the open document's path), and have `create_project` call it.
+  *Cost:* a real refactor of a method three other paths depend on, and one more failure mode on accept.
+  *Mitigation already precedented:* attempt the copy **before** constructing `ProjectSettings`, so the link
+  is recorded only if the copy succeeded; on failure surface via the Audit panel and create the project with
+  **no** `pgtp` link — the user can attach it later by opening it, which is the path that exists today. The
+  missing-path state then never occurs at all.
+- **(B) Copy at accept, duplicating the copy logic in `create_project`.** *Cost:* two definitions of "what
+  linking means", which §18.2 explicitly warns against (*"or the two ways of linking would age apart"*).
+  Cheap now, and the two drift the first time either changes.
+- **(C) Defer: record `source_path` only, `working_copy_path=None`.** *Cost:* not the three-field link the
+  spec requires of creation; `report_project_drift` fires on a project with no working copy; and the copy
+  only ever happens if the user later opens that exact source file — which, given `resolve_pgtp_path` passes
+  unlinked paths through, does work, but means "attached at creation" and "linked" are different states with
+  nothing telling the user which one they are in.
+- **(D) Defer with a full `PgtpLink` whose `working_copy_path` does not exist yet.** **Ruled out by the code,
+  not by taste:** `link_pgtp_if_needed`'s early return at `:672` means the copy would never happen, and the
+  three consumers in (4) above would misbehave forever rather than transiently.
+
+**Recommendation: (A).** The two claimed costs of copying at accept both fail on inspection — the accept path
+already writes files and already creates a database, and the tier-2-degrade ordering rule for exactly this
+situation is already written in the method. The one real cost is the refactor, and (C)/(D) do not avoid it so
+much as pay for it in a worse currency: a project whose recorded link points at nothing. (A) also keeps a
+single definition of linking, which is the constraint §18.2 states outright.
+
+**What an answer unblocks.** FQ-035's `create_project` change becomes writable: the exact call sequence in
+`ddl_project_controller.py:308-324`, whether `link_pgtp_if_needed` grows an explicit-source parameter, and
+what happens when the copy fails. Nothing else in FQ-035 waits on it.
+
+**Three corrections `spec-maintainer` recorded that stand regardless of this answer** (`CONSOLIDATED_SPEC.md`
+§18.2, superseding FQ-035's queue text — noted here only so this entry reads complete, not for decision):
+(i) there is **no reusable connection-field widget** — `ConnectionSetupDialog`, `ProjectSettingsDialog` and
+`NewProjectDialog` each build their own `QFormLayout`, and `ProjectSettingsDialog._build_connection_form` /
+`_add_test_row` are **private statics on a `QDialog` subclass**; extracting a shared widget is out of scope
+for FQ-035. (ii) The **two `Test` buttons are deliberately different probes** — sandbox `Test` is
+`db/sandbox.py::probe` (superuser + `pg_dump`/`pg_restore`), quality `Test` is
+`db/introspect.py::test_connection` (can we connect at all). (iii)
+`MainWindow._import_pgtp_connection_into_target`'s empty-host guard (`main_window.py:3968`,
+`if … or settings.target.host: return`) is **vacuous at creation** — the target is always empty there — but
+**must not be relaxed**, because it is what stops a target supplied at creation from being silently
+overwritten from the XML on first open.
+
+---
+
+## DEC-260810134915 — May New Project be accepted with the quality connection left blank, or filled but never tested?
+
+- **Status:** OPEN
+- **Raised:** 2026-08-10, by `spec-maintainer` while folding **FQ-035** into `CONSOLIDATED_SPEC.md` §18.2.
+  Flagged there rather than decided (⚠ banner at `CONSOLIDATED_SPEC.md:5665-5684`, ambiguity 2).
+- **Blocks:** **FQ-035's implementation** — specifically the dialog's accept-time validation rule. FQ-035 is
+  folded into the spec but **unbuilt** (§18.2's status banner says so), and the spec explicitly instructs the
+  implementer **not to invent a validation rule to unblock themselves**. So this gates code, not a shipped
+  behaviour. Everything else in FQ-035 proceeds without it.
+
+**The situation.** FQ-035 makes attaching a `.pgtp` in New Project reveal a **quality-server connection**
+section, auto-populated from that file's `<ConnectionOptions>`. The question is what the dialog does when the
+user clicks OK with that section **empty**, or **filled but never `Test`ed**.
+
+**The constraint that shapes every option, verified in code.** `db/config.py::connection_from_tree`
+(`pgtp_editor/db/config.py:45-69`) maps `host`/`port`/`database` and renames `login` → `user`, and returns
+**`password=""` always** (`config.py:68`; docstring: *"The password is always blank (the XML stores it
+obfuscated; we never use it)"*). The XML does carry a `password` attribute — SQL Maestro's obfuscated blob —
+and **nothing in this codebase reads or de-obfuscates it, anywhere**. That is *why* the section earns its
+place at creation: the one field the XML can never supply is the one the user has in mind at that moment.
+It also means **"fully populated" is not an achievable gate** — auto-population is complete by construction
+except for the field that decides whether a connection works.
+
+Two further standing rules, restated because this dialog is the one place both connections are on screen at
+once: **`<ScriptConnectionOptions>` must never be read** — the vendor writes a second element with the same
+attributes and, in the repo's own fixture, **a different port**, so choosing between them is a guess about
+which database to point a project at — and the **sandbox must never be seeded from `<ConnectionOptions>`**,
+which §17 defines as the *target* (`main_window.py:3962-3964`: *"seeding a sandbox from it is how a sandbox
+ends up pointed at production"*). The two groups stay independent.
+
+**What the dialog validates today.** Exactly one thing, and it is not blocking in the strong sense:
+`NewProjectDialog._on_accept_clicked` (`pgtp_editor/ui/new_project_dialog.py:222-226`) sets the inline label
+*"Choose a project folder first."* and returns without accepting. There is no other validation of any field —
+the sandbox connection can be blank, and `refresh_capability_status` handles that case explicitly
+(`ddl_project_controller.py:551`, `sandbox_configured = bool(sandbox_params.host)`).
+
+**What already handles an unverified or absent quality connection, verified.**
+`refresh_target_connection_status` (`ddl_project_controller.py:575-612`) **re-probes the target on every
+project open**, off the GUI thread, and returns early when there is no host — with the reason recorded in
+place: *"a host-less profile has not failed — it has not been tried."* §18.8's Quality node already has a
+`NOT_SET_UP` state to describe exactly this. So the "unconfirmed setting fails much later" cost is real but
+bounded: it surfaces on the next project open, in a surface built for it.
+
+**Options.**
+
+- **(A) No gate at all** — blank is fine, untested is fine. *Cost:* a project can be created naming a
+  quality server nobody has reached, and the user learns that later. *But* later is "next project open", via
+  a probe and a status node that already exist.
+- **(B) Gate accept on a green `Test`.** *Cost:* this becomes the dialog's **first blocking validation**, and
+  it **refuses an offline user** — someone creating a project on a train cannot reach the quality server.
+  Worse, it is a gate the data can never satisfy unaided: the password is never in the XML, so every user
+  must type one before they may create *any* project from a `.pgtp`.
+- **(C) Gate on non-empty fields only** (host present), no probe required. *Cost:* still a blocking
+  validation, still refuses a user who intends to fill it in later in Project Settings, and buys nothing —
+  an empty `target.host` is a state the whole app already handles (see above), while a non-empty but wrong
+  host is not detected by this gate at all. It gates the case that is safe and misses the case that is not.
+- **(D) No gate, plus a non-blocking advisory.** Accept always succeeds; if the quality connection is blank
+  or was never tested, say so once — inline in the dialog and/or as an Audit line on creation — and let the
+  user proceed. *Cost:* one more message the user can ignore; no refusal is ever wrong.
+
+**On the sub-question — "attached a `.pgtp` but then cleared the revealed fields":** recommend **"no
+target", not an error**, and the code makes this the graceful outcome rather than merely the lenient one.
+`_import_pgtp_connection_into_target` fires **only when `settings.target.host` is still empty**
+(`main_window.py:3968`). So a project created with the fields cleared has its target **re-imported from the
+XML on first open**; a project created with them supplied has that import suppressed by the same guard.
+Both branches are coherent, and neither can silently overwrite the other.
+
+**Recommendation: (D)** — (A)'s behaviour with an advisory. Two reasons, in order of weight. First, **a gate
+here cannot be made honest**: the password is structurally absent from the source data, so any gate is either
+unsatisfiable offline (B) or checks the wrong thing (C). Second, **the late-failure cost is already paid for
+elsewhere** — the target is re-probed on every project open and §18.8 has a state for "not set up" — so the
+gate would buy earliness, not detection. Creation should not be the one gesture in this app that can be
+refused for a network condition.
+
+**What an answer unblocks.** `NewProjectDialog._on_accept_clicked` gets its final form (unchanged, or one new
+branch), the quality `Test` button's role becomes settled (advisory versus gating), and the cleared-fields
+case gets a defined meaning — after which FQ-035's dialog work is fully specified. It also tells
+`spec-maintainer` what to write in place of §18.2's ⚠ banner.
+
+**The same three FQ-035 corrections apply here and stand regardless of this answer:** no reusable
+connection-field widget (three dialogs each build their own form; `ProjectSettingsDialog`'s builders are
+private statics, and extracting a shared widget is out of scope); the two `Test` buttons are deliberately
+different probes (`db/sandbox.py::probe` for the sandbox, `db/introspect.py::test_connection` for quality —
+a superuser demand on a quality connection would refuse a correctly-configured project); and
+`_import_pgtp_connection_into_target`'s empty-host guard is vacuous at creation but must not be relaxed.
