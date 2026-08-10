@@ -135,6 +135,11 @@
   Every blocking or clarifying decision goes through the `owner-decision` subagent
   (`.claude/agents/owner-decision.md`), which is the **sole writer** of
   `docs/DECISION_QUEUE.md`. No other session or agent appends, answers, or flips a status there.
+- **`DEC` ids are timestamps too, and the dispatcher supplies them** — `DEC-<YYMMDDHHMMSS>`,
+  same rule and same reason as `FQ`/`BUG`. Note that "sole writer" is not protection here:
+  it means only this agent writes the file, not that only one instance runs at a time, and
+  several have been dispatched concurrently. `owner-decision` has no `Bash`, so run
+  `date +%y%m%d%H%M%S` and pass the id; it will ask rather than invent one.
 - **To file one:** dispatch `owner-decision` with `run_in_background: true` the moment you hit a
   choice you must not make alone — a design trade-off with no obviously right answer, a ruling that
   would reverse recorded design, or a question whose wrong answer is expensive. Then **continue

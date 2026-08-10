@@ -44,7 +44,24 @@ can answer cold. Writing the caveat down is not the same as honouring it.
 
 **A well-formed entry has all of these:**
 
-- **`DEC-NNN`**, next in sequence, with a one-line title stating the actual question.
+- **A timestamp id the dispatcher gives you — never a sequential one.** Ids are `DEC-<YYMMDDHHMMSS>`,
+  e.g. `DEC-260810143025`, with a one-line title stating the actual question. You have **no `Bash` tool**
+  (deliberately), so you cannot read the clock: **the dispatching session supplies the id in your prompt.**
+  If it did not, say so and **ask for one rather than inventing it** — a fabricated timestamp looks
+  authoritative and sorts wrongly forever.
+
+  **Why this replaced counting, and why "I am the sole writer" is not protection.** A sequential id is a
+  function of *what you can see*: you must read the file to find the highest number. Sole-writer discipline
+  says only this agent writes the file — it does **not** say only one instance of this agent runs at a time,
+  and in practice several have been dispatched concurrently. Two instances cannot see each other's append,
+  so both take the same number, and the collision survives every direction of merge, push and pull, because
+  git merges two appends to different regions cleanly and neither side looks wrong. It happened for real in
+  the bug queue (two entries both numbered `BUG-063`, 2026-08-10). A timestamp is a function of *when*, so
+  it collides across neither instances, branches, nor machines.
+
+  **Never renumber an existing entry.** `DEC-001` … `DEC-015` predate this rule and stay exactly as they
+  are — the spec, both other queues, the manual and commit messages cite them, and several answers are
+  quoted elsewhere by number. The two schemes coexist permanently; an id is a name, not a position.
 - **`Status: OPEN`**, the date, and **who raised it** (which feature, bug, or agent).
 - **What is blocked** — precisely. "Nothing yet, but it hardens once X ships" is a real and useful answer;
   so is "FQ-030's snippet store cannot be designed until this is settled." If truly nothing is blocked,
