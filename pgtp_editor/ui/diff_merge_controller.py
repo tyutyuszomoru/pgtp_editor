@@ -71,6 +71,7 @@ from collections.abc import Callable
 from lxml import etree
 from PySide6.QtCore import QObject
 
+from pgtp_editor.db.activity_log import FILE_VERB_MERGED
 from pgtp_editor.diff.apply import apply_differences
 from pgtp_editor.diff.differ import compare_block, diff_project
 from pgtp_editor.diff.resolve import ResolutionError, resolve_path
@@ -90,9 +91,14 @@ class DiffMergeController(QObject):
         *,
         project: Callable[[], object | None],
         reload: Callable[[str], None],
+        record_activity: "Callable[..., object] | None" = None,
     ):
         super().__init__(parent)
         self._shell = shell
+        #: FQ-019: `MainWindow.record_file_activity(file_verb, error=None)`.
+        #: Optional and no-op by default so the lane's own tests need no new
+        #: argument; the lane emits the VERB and never decides the mode.
+        self._record_activity = record_activity or (lambda *a, **k: None)
         #: The open project (comparison source when one is loaded) and the
         #: re-open of a just-written target -- see the module docstring.
         self._project = project
@@ -164,7 +170,12 @@ class DiffMergeController(QObject):
         differences = diff_project(source, target)
         stage = self._shell.stage
         stage.diff_merge_panel.show_differences(differences)
-        stage.setCurrentIndex(stage.diff_merge_tab_index)
+        # FQ-021: entering the MODE, not just raising the tab -- which also
+        # makes Raw XML read-only for the duration (see
+        # `CenterStage.enter_diff_merge_mode`: the diff reads the parsed model,
+        # so a hand edit there cannot participate and Apply's reload would
+        # discard it).
+        stage.enter_diff_merge_mode()
 
     def compare_page_with(self, page_node) -> None:
         """Project tree ▸ right-click on a Page: diff it against the same
@@ -201,7 +212,12 @@ class DiffMergeController(QObject):
         differences = compare_block(page_node, target_page, path=[page_node.file_name], node_kind="page")
         stage = self._shell.stage
         stage.diff_merge_panel.show_differences(differences)
-        stage.setCurrentIndex(stage.diff_merge_tab_index)
+        # FQ-021: entering the MODE, not just raising the tab -- which also
+        # makes Raw XML read-only for the duration (see
+        # `CenterStage.enter_diff_merge_mode`: the diff reads the parsed model,
+        # so a hand edit there cannot participate and Apply's reload would
+        # discard it).
+        stage.enter_diff_merge_mode()
 
     def compare_detail_with(self, detail_node, source_path) -> None:
         """Project tree ▸ right-click on a Detail: resolve the same structural
@@ -236,7 +252,12 @@ class DiffMergeController(QObject):
         differences = compare_block(detail_node, result, path=source_path, node_kind="detail")
         stage = self._shell.stage
         stage.diff_merge_panel.show_differences(differences)
-        stage.setCurrentIndex(stage.diff_merge_tab_index)
+        # FQ-021: entering the MODE, not just raising the tab -- which also
+        # makes Raw XML read-only for the duration (see
+        # `CenterStage.enter_diff_merge_mode`: the diff reads the parsed model,
+        # so a hand edit there cannot participate and Apply's reload would
+        # discard it).
+        stage.enter_diff_merge_mode()
 
     # -- the write path ------------------------------------------------------
 
@@ -282,6 +303,15 @@ class DiffMergeController(QObject):
                 f"be applied (Target may have changed since this comparison was run). "
                 f"No changes were written to '{target_path}'.\n\n" + details,
             )
+            # FQ-019: an Apply that could not be applied is a FAILED merge, and
+            # the per-difference details are what the journal's viewer shows.
+            self._record_activity(
+                FILE_VERB_MERGED,
+                error=(
+                    f"{len(result.failed)} of {len(checked)} checked differences "
+                    f"could not be applied to '{target_path}'.\n" + details
+                ),
+            )
             return
 
         backup_path = target_path + ".bak"
@@ -291,10 +321,23 @@ class DiffMergeController(QObject):
         )
         with open(target_path, "wb") as f:
             f.write(serialized)
+        # FQ-019: the emit point the queue entry called for -- immediately after
+        # the disk write, before the modal, so a user who dismisses the dialog
+        # without reading it still has the fact recorded.
+        self._record_activity(FILE_VERB_MERGED)
 
         modals.QMessageBox.information(
             self._shell.window,
             "Apply Changes to Target",
             f"Applied {len(checked)} change(s) to '{target_path}'.\nBackup saved to '{backup_path}'.",
         )
+        # ORDER IS LOAD-BEARING (FQ-021, §12): leave the mode BEFORE the reload.
+        # `_reload` is `open_project_file`, which `setPlainText`s the just-written
+        # target into the Raw XML editor -- and Compare/Merge mode holds that
+        # editor read-only, so reloading first would drop the document into a
+        # widget the user cannot edit. Only the SUCCESS path leaves: a failed or
+        # refused Apply (no checks, ambiguous, apply_differences failures) returns
+        # above with the mode intact, which is what lets the user uncheck and
+        # retry against the same comparison.
+        self._shell.stage.leave_diff_merge_mode()
         self._reload(target_path)

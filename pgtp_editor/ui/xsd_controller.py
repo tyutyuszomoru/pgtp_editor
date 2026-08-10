@@ -532,7 +532,9 @@ class XsdController(QObject):
             return
         if self._dirty:
             self._shell.status(
-                "The XSD tab has unsaved changes — save it first (Ctrl+S).", 5000
+                "The XSD tab has unsaved changes — save it first "
+                "(Deployment ▸ Save XSD).",
+                5000,
             )
             return
         default_dir = self._shell.default_dir
@@ -628,6 +630,11 @@ class XsdController(QObject):
         stashed in UserRole+2 so the click re-opens the schema the issue was
         found in (curated vs auto)."""
         audit = self._shell.audit
+        # FQ-028: Verify results ACCUMULATE in the Messages tab, so each run
+        # opens its own separated block instead of merging into the last one.
+        begin_run = getattr(audit, "begin_results_run", None)
+        if begin_run is not None:
+            begin_run()
         if not issues:
             audit.addItem("[Schema] VERIFY: no issues found.")
             return

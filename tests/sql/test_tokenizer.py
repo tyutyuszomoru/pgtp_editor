@@ -19,6 +19,7 @@ from pgtp_editor.sql.tokenizer import (
     WHITESPACE,
     WORD,
     _Cursor,
+    dollar_body_at,
     tokenize,
 )
 
@@ -422,3 +423,74 @@ def test_decomposed_nfd_dollar_quote_tag_is_one_opaque_token():
     tok = tokenize(text)[0]
     assert tok.kind == DOLLAR_STRING
     assert tok.text == text
+
+
+# --------------------------------------------------------------------------
+# dollar_body_at -- the shared body locator (BUG-041 / option D).
+#
+# Promoted here from `from_clause._dollar_body_at` so `from_clause.py` (FROM
+# scope) and `caret_context.py` (completion context) descend into a routine
+# body through one implementation instead of two that drift apart on tag
+# length and unterminated bodies.
+# --------------------------------------------------------------------------
+
+
+def _body(text, pos):
+    return dollar_body_at(tokenize(text), pos)
+
+
+def test_dollar_body_at_returns_none_outside_any_body():
+    text = "select * from t"
+    assert _body(text, len(text)) is None
+    text = "create function f() as $$ x $$ language sql"
+    assert _body(text, 0) is None
+    assert _body(text, len(text)) is None
+
+
+def test_dollar_body_at_bare_body_text_and_offset():
+    text = "create function f() as $$ begin end $$ language sql"
+    caret = text.index("begin")
+    body, start = _body(text, caret)
+    assert body == " begin end "
+    assert start == text.index("$$") + 2
+    # The offset is the contract: rebasing lands on the same character.
+    assert text[start + (caret - start)] == "b"
+    assert body[caret - start :].startswith("begin")
+
+
+def test_dollar_body_at_accounts_for_the_tag_length():
+    text = "create function f() as $function$ begin end $function$ language sql"
+    caret = text.index("begin")
+    body, start = _body(text, caret)
+    assert body == " begin end "
+    assert start == text.index("$function$") + len("$function$")
+    assert body[caret - start :].startswith("begin")
+
+
+def test_dollar_body_at_unterminated_body_runs_to_end_of_text():
+    """The normal state while typing: the opener is there, the closer is not."""
+    text = "create function f() as $$ select * from hr.secret s"
+    body, start = _body(text, len(text) - 1)
+    assert body == " select * from hr.secret s"
+    assert start == text.index("$$") + 2
+
+
+def test_dollar_body_at_counts_the_end_of_an_unterminated_body_as_inside():
+    """Where the author's caret actually is while typing a new routine: the
+    end of an unterminated body is the end of the buffer, not a boundary to
+    fall outside of."""
+    text = "create function f() as $$ select * from hr.secret s"
+    assert _body(text, len(text)) == (" select * from hr.secret s", text.index("$$") + 2)
+
+
+def test_dollar_body_at_caret_inside_the_closing_tag_yields_an_empty_body():
+    text = "create function f() as $function$ begin end $function$ language sql"
+    caret = text.rindex("$function$") + 3  # inside the closing tag itself
+    assert _body(text, caret) == ("", text.index("$function$") + len("$function$"))
+
+
+def test_dollar_body_at_boundaries_are_not_inside():
+    text = "select $$ x $$"
+    opener = text.index("$$")
+    assert _body(text, opener) is None  # right before the opener
+    assert _body(text, len(text)) is None  # right after the closer

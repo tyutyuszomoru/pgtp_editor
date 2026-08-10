@@ -10,6 +10,7 @@ interaction: a procedure must not merely *tolerate* a blank return type, it
 must be structurally incapable of emitting a `RETURNS` clause.
 """
 import pytest
+from PySide6.QtCore import QSize
 
 from pgtp_editor.db.ddl_skeleton import SkeletonError
 from pgtp_editor.ui.new_routine_dialog import (
@@ -214,3 +215,35 @@ def test_skeleton_raises_rather_than_emitting_half_formed_sql(qtbot):
     dialog = _dialog(qtbot, name="calc", return_type="")
     with pytest.raises(SkeletonError):
         dialog.skeleton()
+
+
+# --- BUG-036: opening size ---------------------------------------------------
+def test_opens_at_560x200_and_stays_resizable(qtbot):
+    """BUG-036 #5. The opening size, not a lock — hence the companion asserts
+    that it can still grow and shrink. `setFixedSize(560, 200)` would satisfy
+    the first assertion and break every other one."""
+    dialog = _dialog(qtbot)
+
+    assert dialog.size() == QSize(560, 200)
+    assert dialog.maximumWidth() > 560
+    assert dialog.maximumHeight() > 200
+    assert dialog.minimumWidth() < 560
+    assert dialog.minimumHeight() < 200
+
+
+def test_a_validation_message_does_not_push_the_buttons_out_of_view(qtbot):
+    """BUG-036's acceptance criterion for the *shortest* requested height: 200px
+    is only 37px above this layout's 163px minimum, and the error label grows
+    when a message appears. The OK/Cancel box must stay wholly inside the
+    dialog with the longest message the validator produces."""
+    dialog = _dialog(qtbot)
+    dialog.show()
+    dialog._name_edit.setText("bad name!! with spaces and a hostile-looking identifier")
+
+    assert dialog._error_label.text()  # a message really is showing
+    assert dialog._buttons.geometry().bottom() <= dialog.height()
+    # and the three form rows are still above it
+    assert dialog._return_type_combo.geometry().bottom() < dialog._buttons.y()
+    # the message itself is not clipped either
+    error_label = dialog._error_label
+    assert error_label.heightForWidth(error_label.width()) <= error_label.height()

@@ -23,7 +23,7 @@ gate), `create_sandbox_database`, `provision_sandbox`, `clone_data`,
 `install_plpgsql_check(session)`, `SandboxSession.apply`/`applied`/`reset`,
 `probe`/`SandboxCapabilities`, `install_gate`, `determine_project_tier`. What it
 never had is a **holder**: nothing in `ui/` called `open_sandbox`, so no session
-existed for **Apply to Sandbox** to apply to and §18.8's Sandbox1/Sandbox2
+existed for **Check and commit to sandbox** to apply to and §18.8's Sandbox1/Sandbox2
 action buttons ("run data clone", "install plpgsql_check") had nothing to fire
 at. This module is exactly that holder and nothing more -- **it duplicates none
 of `db/sandbox.py`'s logic**; every decision (ownership, tier degradation, the
@@ -31,12 +31,22 @@ install gate's reason strings, which provisioning strategy a mode implies) is
 delegated to the function in `db/` that already owns it.
 
 **Off the GUI thread, through the established seam.** Every DB-touching
-operation goes through `self._run_async`, a plain attribute set to
-`ui/async_task.py::run_async` in `__init__` -- the same convention
+operation goes through `self._run_async`, a plain attribute defaulting to
+`ui/async_task.py::run_async` -- the same convention
 `ConnectionSetupDialog`/`NewProjectDialog`/`ProjectSettingsDialog` use, and the
 same one tests replace with a synchronous stand-in. Nothing here blocks the
 event loop, and results come back on the GUI thread where the caller may touch
 widgets.
+
+`MainWindow` **repoints that attribute at its `_shell_run_async` trampoline**
+right after constructing the controller, so `window._run_async = sync_run` --
+the one documented, window-wide injection point every other lane already
+honours -- reaches this lane too. It did not, before BUG-043: this attribute
+captured the module-level `run_async` at construction time, so a test that
+injected at the window silently left the sandbox lane on the real threadpool,
+and its worker outlived the window it was started from. Do NOT "simplify" this
+back to a constructor kwarg captured at build time; the trampoline's value is
+that it re-reads `window._run_async` at CALL time.
 
 **Never silently destroys data.** Provisioning, `reset()` and re-cloning all
 drop and recreate schemas, and §18's whole posture is surface-don't-auto-resolve:
@@ -71,6 +81,7 @@ dialog, and needs no `QApplication` interaction beyond `QObject.__init__`.
 """
 from __future__ import annotations
 
+import logging
 import re
 import secrets
 from collections.abc import Callable, Sequence
@@ -107,13 +118,16 @@ from ..db.sandbox import (
 )
 from .async_task import run_async
 
+_log = logging.getLogger(__name__)
+
 
 #: The maintenance database `create_sandbox_database`'s admin connection targets,
 #: since PostgreSQL forbids `CREATE DATABASE` inside the database being created.
 #: Defined here, once, because three surfaces need the same answer (§18.2's New
-#: Project step, `ui/sandbox_setup_dialog.py`, and this module's own
-#: `provision_new_database` callers); `DEFAULT_MAINTENANCE_DATABASE` in the setup
-#: dialog is an alias of this name, never a second literal.
+#: Project step, Project Settings' provisioning group, and this module's own
+#: `provision_new_database` callers); `DEFAULT_MAINTENANCE_DATABASE` in
+#: `ui/project_settings_dialog.py` is an alias of this name, never a second
+#: literal.
 MAINTENANCE_DATABASE = "postgres"
 
 #: `db/sandbox.py::_SANDBOX_DB_NAME_RE` is `^pgtp_sandbox_[a-z0-9_]{1,40}$`, so
@@ -228,7 +242,7 @@ class SandboxOperation(str, Enum):
     #: `SandboxOperation` as `CHECK` (non-destructive -- no
     #: `confirm_destructive` prompt)").
     CHECK = "check"
-    #: §18.5 D3's **Apply to Sandbox** -- `db/ddl_check.py::apply_and_check`:
+    #: §18.5 D3's **Check and commit to sandbox** -- `db/ddl_check.py::apply_and_check`:
     #: the ladder, committing, with the working-set row written in the same
     #: transaction.
     #:
@@ -305,7 +319,7 @@ _NO_CHECK_REQUEST_REASON = (
 #: gestures are separate sentences to the user, not because the situation
 #: differs.
 _NO_APPLY_REQUEST_REASON = (
-    "nothing to apply -- Apply to Sandbox needs the object whose tab it was "
+    "nothing to apply -- Check and commit to sandbox needs the object whose tab it was "
     "invoked from"
 )
 
@@ -323,7 +337,8 @@ _NO_NAME_CANDIDATES_REASON = (
 _NO_TARGET_BASELINE_NOTE = (
     "The sandbox was created EMPTY: the project has no target connection yet, "
     "so there was no database to build a baseline from. Set the target in "
-    "Project Settings, then re-provision from Sandbox Setup."
+    "Project Settings, then re-provision from the Sandbox provisioning group "
+    "on the same tab."
 )
 
 #: A "with data" sandbox with no target to clone from cannot be cloned *yet*.
@@ -332,7 +347,8 @@ _NO_TARGET_BASELINE_NOTE = (
 _WITH_DATA_NEEDS_TARGET_NOTE = (
     "'With data' was requested but the project has no target connection to "
     "clone from, so no data was cloned. Set the target in Project Settings, "
-    "then re-run the data clone from Sandbox Setup."
+    "then run the data clone from the Project Status window's sandbox "
+    "data node."
 )
 
 #: A green probe is still not an apply. Stated rather than reported as success,
@@ -450,7 +466,7 @@ class SandboxController(QObject):
     """
 
     #: True when a live session exists, False when it is gone -- the signal the
-    #: "Apply to Sandbox"/§18.7 sandbox DDL Explorer affordances gate on.
+    #: "Check and commit to sandbox"/§18.7 sandbox DDL Explorer affordances gate on.
     session_changed = Signal(bool)
     #: Emitted with one `SandboxOperationResult` as each operation finishes,
     #: successfully or not. `object`, so the dataclass rides across as-is.
@@ -474,8 +490,12 @@ class SandboxController(QObject):
         probe_checker: Callable[..., object] = probe_check,
     ) -> None:
         super().__init__(parent)
-        # Plain attribute, replaced wholesale by a synchronous stub in tests --
-        # the ConnectionSetupDialog/NewProjectDialog convention.
+        # Plain attribute, replaced wholesale in tests -- the
+        # ConnectionSetupDialog/NewProjectDialog convention. This module-level
+        # default is only the standalone fallback: `MainWindow` overwrites it
+        # with `self._shell_run_async` immediately after construction, so the
+        # window-wide `window._run_async` injection point covers this lane too
+        # (BUG-043 -- it did not, and workers outlived their window).
         self._run_async = run_async
 
         self._confirm_destructive = confirm_destructive
@@ -517,8 +537,21 @@ class SandboxController(QObject):
         is also what a later `reset()` re-runs. Drops any live session, since it
         belonged to the previous project.
 
-        **Opens nothing and provisions nothing** -- no destructive operation and
-        no connection attempt happens as a side effect of a project opening.
+        **THIS METHOD opens nothing and provisions nothing** -- it records
+        params and drops the old session, and no destructive operation happens
+        inside it. That is a statement about this method, not about project
+        opening: since BUG-040 the host DOES open the session right after
+        calling this (`MainWindow._bind_sandbox_controller_to_project`), and
+        `DdlProjectController.refresh_capability_status` had been connecting at
+        project-open time long before that. The line this docstring used to
+        carry -- *"no connection attempt happens as a side effect of a project
+        opening"* -- was policy stated in the wrong layer, and it had already
+        stopped being true.
+
+        The D2 single-ownership rule is unaffected and is what makes the split
+        clean: `open_session`/`open_sandbox` remains the ONE way a session is
+        acquired. Who calls it, and when, is the host's policy to set.
+
         `configured` defaults to "sandbox_params were supplied at all", which is
         `determine_project_tier`'s `sandbox_configured` input.
         """
@@ -551,12 +584,15 @@ class SandboxController(QObject):
 
     @property
     def can_check(self) -> bool:
-        """Whether the §18.5 D3a **Check** gesture should exist at all.
+        """Whether the §18.5 D3a **Check** gesture can RUN.
 
-        The host binds the Check control's *visibility* to this (carve-out 2's
-        "no dead controls": with no live `SandboxSession` there is no button and
-        no enabled menu item, the same posture as the absent apply row) -- not
-        its enabled state. It is deliberately a separate name from
+        The host binds the Check *button*'s presence to this (carve-out 2's "no
+        dead controls": with no live `SandboxSession` there is no button, the
+        same posture as the absent apply row) and never its enabled state. Since
+        FQ-023 it is no longer the host's *menu* gate: a Check menu entry is
+        present whenever a sandbox is configured and refuses with a stated reason
+        when this is False, because a menu entry can say why and a button
+        cannot. It is deliberately a separate name from
         `has_session` even though it currently returns the same fact, so the
         host expresses the intent it means and this predicate can grow a second
         precondition without every caller being revisited.
@@ -711,7 +747,7 @@ class SandboxController(QObject):
         if self._session is None:
             return
         self._session = None
-        self.session_changed.emit(False)
+        self._announce_session(False)
 
     def provision(
         self,
@@ -982,8 +1018,8 @@ class SandboxController(QObject):
         self, on_done: Callable[[SandboxOperationResult], None] | None = None
     ) -> None:
         """Run `CREATE EXTENSION IF NOT EXISTS plpgsql_check` through the live
-        session -- §18.8's Sandbox2 action button, and the same one-click
-        install the Sandbox Setup dialog offers (§18.5 D2).
+        session -- §18.8's Sandbox2 action button, which is the app's one
+        one-click install since `Sandbox Setup…` was deleted (§18.5 D2).
 
         Whether it is worth attempting is decided by the pure `install_gate`,
         not re-litigated here: an already-installed extension succeeds as a
@@ -1099,9 +1135,7 @@ class SandboxController(QObject):
                 capabilities=caps,
                 report=report,
             )
-            if on_done is not None:
-                on_done(result)
-            self.operation_finished.emit(result)
+            self._report(result, on_done)
 
         self._run_async(work, on_result=on_result, on_error=self._error_handler(
             SandboxOperation.CHECK, on_done
@@ -1115,7 +1149,7 @@ class SandboxController(QObject):
         ddl_text: str | None = None,
         probe: bool = False,
     ) -> None:
-        """**Apply to Sandbox** (§18.5 D3): apply one object's DDL to the live
+        """**Check and commit to sandbox** (§18.5 D3): apply one object's DDL to the live
         sandbox and run the whole ladder over it, in one transaction.
 
         Mirrors `run_check` exactly -- same session precondition, same
@@ -1179,9 +1213,7 @@ class SandboxController(QObject):
                 capabilities=caps,
                 report=report,
             )
-            if on_done is not None:
-                on_done(result)
-            self.operation_finished.emit(result)
+            self._report(result, on_done)
 
         self._run_async(work, on_result=on_result, on_error=self._error_handler(
             SandboxOperation.APPLY, on_done
@@ -1227,7 +1259,7 @@ class SandboxController(QObject):
 
     def _set_session(self, session: SandboxSession) -> None:
         self._session = session
-        self.session_changed.emit(True)
+        self._announce_session(True)
 
     def _blocking_reason(self, caps: SandboxCapabilities) -> str | None:
         """Why a session cannot be opened against `caps`, or None.
@@ -1356,6 +1388,54 @@ class SandboxController(QObject):
             capabilities=capabilities,
             database_name=database_name,
         )
+        # BUG-043: a worker can land after its receivers are gone. Nothing in
+        # the app cancels an in-flight sandbox operation when a project closes
+        # or the window is destroyed, so `on_done` may be a bound method of a
+        # dead panel and `self` may be a QObject whose C++ side went with its
+        # parent window -- both raise `RuntimeError` ("Internal C++ object
+        # already deleted" / "Signal source has been deleted"). There is no
+        # one left to report the outcome TO at that point, so dropping it is
+        # the correct answer; what is not correct is raising out of a queued
+        # slot, where Qt has no caller to hand the exception to (under pytest
+        # it surfaces as a teardown error charged to an unrelated test).
+        # `on_done` runs BEFORE the emit, so both need the guard, separately:
+        # a dead panel must not cost the still-live window its signal.
+        self._report(result, on_done)
+
+    def _report(
+        self,
+        result: SandboxOperationResult,
+        on_done: Callable[[SandboxOperationResult], None] | None,
+    ) -> None:
+        """Announce one finished operation to whoever is still there to hear it.
+
+        The single delivery point for `on_done` + `operation_finished`, because
+        BUG-043 showed the pair had been open-coded in three places (`_finish`
+        and the `run_check`/`run_apply` result callbacks) and a guard added to
+        one of them would have left the other two raising.
+        """
         if on_done is not None:
-            on_done(result)
-        self.operation_finished.emit(result)
+            try:
+                on_done(result)
+            except RuntimeError as exc:
+                _log.debug(
+                    "sandbox %s: on_done receiver is gone (%s)", result.operation, exc
+                )
+        try:
+            self.operation_finished.emit(result)
+        except RuntimeError as exc:
+            _log.debug("sandbox %s: signal source is gone (%s)", result.operation, exc)
+
+    def _announce_session(self, present: bool) -> None:
+        """`session_changed`, guarded the same way and for the same reason.
+
+        Not a duplicate of `_report`'s guard but the other half of it: a
+        SUCCESSFUL open landing after teardown never reaches `_report` -- it
+        raises here first, at `_set_session`. The filed bug only ever saw the
+        failure path (a refused connection), so guarding `_finish` alone would
+        have left the success path raising exactly as before.
+        """
+        try:
+            self.session_changed.emit(present)
+        except RuntimeError as exc:
+            _log.debug("sandbox: session_changed source is gone (%s)", exc)

@@ -35,9 +35,48 @@ from pgtp_editor.ui.main_window import MainWindow
 from pgtp_editor.ui.new_project_dialog import NewProjectDialog
 from pgtp_editor.ui.sandbox_controller import MAINTENANCE_DATABASE
 
-from ._sandbox_stubs import stub_sandbox_provisioning, sync_run
+from ._sandbox_stubs import fake_session, stub_sandbox_provisioning, sync_run
 
 _NAME_RE = re.compile(r"^pgtp_sandbox_[a-z0-9_]{1,40}$")
+
+
+def _refuse_uncreated_databases(window):
+    """Narrow the shared `_opener` stub so it only opens a database that has a
+    NAME, and record every attempt.
+
+    BUG-040 auto-opens a session on project bind — and on the CREATE path that
+    bind runs *before* provisioning has chosen a database name. The auto-open
+    guard is what keeps a nameless dial from happening at all; this stub is the
+    proof it holds, because a real server cannot hand back a sandbox session for
+    a database that does not exist yet while the shared stub happily would,
+    which would make "no sandbox was created, so there is no session" pass for
+    the wrong reason. Returns the list of params the opener was asked for —
+    `[]` is the expected shape on the create path.
+    """
+    asked = []
+
+    def opener(params, **kwargs):
+        asked.append(params)
+        if not params.database:
+            raise RuntimeError("no sandbox database to open")
+        return fake_session(params)
+
+    window.sandbox_controller._opener = opener
+    return asked
+
+
+def _reported_lines(window):
+    """Every line the app said, wherever FQ-028 routed it.
+
+    Provisioning speaks on two channels: `[Sandbox]` operation outcomes (the
+    Results tab, because they are emitted across a project transition that
+    replaces the journal's buffer) and journalled narration (the Activity Log).
+    These tests are about WHAT was said, not about which surface says it.
+    """
+    panel = window.audit_panel
+    return [panel.item(i).text() for i in range(panel.count())] + (
+        window.activity_panel.row_texts()
+    )
 
 
 def _window(qtbot, tmp_path):
@@ -142,16 +181,32 @@ def test_creating_a_project_creates_and_records_an_auto_named_sandbox_database(
 def test_the_session_is_live_after_creation_so_apply_to_sandbox_is_reachable(
     qtbot, tmp_path
 ):
+    """The session that matters is the PROVISIONED one, and BUG-040's auto-open
+    stays out of its way: on `New Project` the sandbox database has not been
+    named yet (`_provision_sandbox` chooses it, deliberately last), so the
+    auto-open guard requires a database and dials NOTHING here. Without that
+    guard every project creation spent a doomed connection and left the user an
+    "not a PGTP-created database" line in the Audit panel, one step before the
+    project provisioned correctly."""
+    from pgtp_editor.ui.ddl_object_editor import DdlObjectRef
+
     window = _window(qtbot, tmp_path)
     stub_sandbox_provisioning(window)
+    asked = _refuse_uncreated_databases(window)
     dialog = _dialog(qtbot, window, tmp_path)
 
     window._ddl_project_ui.create_project(dialog)
 
+    assert asked == []  # no dial at all before the database has a name
     assert window.sandbox_controller.has_session is True
     assert window.sandbox_controller.can_check is True
+    # BUG-039: the two check gestures are `Parsing` members gated on a DDL
+    # object tab being active, so their presence is asserted on one.
+    ref = DdlObjectRef(kind="function", schema="pr", name="recalc")
+    window._on_ddl_edit_requested(ref, "CREATE FUNCTION pr.recalc() ...")
+    window.center_stage.setCurrentWidget(window.center_stage.ddl_object_tab(ref.key))
     assert window._sandbox_check_action.isVisible() is True
-    assert window._close_sandbox_session_action.isVisible() is True
+    assert window._sandbox_probe_check_action.isVisible() is True
 
 
 def test_a_project_without_a_sandbox_connection_creates_nothing(qtbot, tmp_path):
@@ -207,6 +262,7 @@ def test_a_failed_creation_still_creates_the_project_and_records_no_sandbox_db(
 ):
     window = _window(qtbot, tmp_path)
     stub_sandbox_provisioning(window)
+    _refuse_uncreated_databases(window)
 
     def creator(admin_params, name):
         raise RuntimeError("permission denied to create database")
@@ -224,9 +280,7 @@ def test_a_failed_creation_still_creates_the_project_and_records_no_sandbox_db(
     assert load_settings(tmp_path / "proj").sandbox.database == ""
     assert window.sandbox_controller.has_session is False
     # the reason is surfaced, not swallowed
-    lines = [
-        window.audit_panel.item(i).text() for i in range(window.audit_panel.count())
-    ]
+    lines = _reported_lines(window)
     assert any("permission denied to create database" in line for line in lines)
 
 
@@ -298,9 +352,7 @@ def test_the_target_profile_is_what_the_baseline_is_built_from(qtbot, tmp_path):
     # sandbox is provisioned empty with that said out loud.
     assert snapshots == []
 
-    lines = [
-        window.audit_panel.item(i).text() for i in range(window.audit_panel.count())
-    ]
+    lines = _reported_lines(window)
     assert any("created EMPTY" in line for line in lines)
 
 
@@ -379,6 +431,7 @@ def test_the_step_explains_that_the_app_creates_the_database_itself(qtbot):
 def test_every_candidate_taken_records_no_sandbox_and_says_why(qtbot, tmp_path):
     window = _window(qtbot, tmp_path)
     stub_sandbox_provisioning(window)
+    _refuse_uncreated_databases(window)
     attempts = []
 
     def creator(admin_params, name):
@@ -394,9 +447,7 @@ def test_every_candidate_taken_records_no_sandbox_and_says_why(qtbot, tmp_path):
     assert window._ddl_project_settings.sandbox.database == ""
     assert load_settings(tmp_path / "proj").sandbox.database == ""
     assert window.sandbox_controller.has_session is False
-    lines = [
-        window.audit_panel.item(i).text() for i in range(window.audit_panel.count())
-    ]
+    lines = _reported_lines(window)
     assert any("already exists" in line for line in lines)
     assert any("no existing database was touched" in line for line in lines)
 
@@ -418,9 +469,7 @@ def test_a_refused_plpgsql_check_install_still_records_the_created_database(
 
     assert len(created) == 1
     assert load_settings(tmp_path / "proj").sandbox.database == created[0]
-    lines = [
-        window.audit_panel.item(i).text() for i in range(window.audit_panel.count())
-    ]
+    lines = _reported_lines(window)
     assert any("must be superuser to create extension" in line for line in lines)
 
 

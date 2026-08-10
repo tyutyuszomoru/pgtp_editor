@@ -258,9 +258,9 @@ def test_generate_streams_output_lines_into_audit_panel(qtbot, tmp_path):
     fake.emit_output("Generating page 1")
     fake.emit_output("Generating page 2")
 
-    texts = [window.audit_panel.item(i).text() for i in range(window.audit_panel.count())]
-    assert "[PHP] Generating page 1" in texts
-    assert "[PHP] Generating page 2" in texts
+    texts = window.activity_panel.row_texts()
+    assert any("[PHP] Generating page 1" in t for t in texts)
+    assert any("[PHP] Generating page 2" in t for t in texts)
 
 
 def test_generate_output_folder_prefilled_from_project_output_path(qtbot, tmp_path):
@@ -381,8 +381,8 @@ def test_zero_exit_shows_success_dialog_and_summary(qtbot, tmp_path):
         fake.emit_finished(0)
 
     assert mock_info.called
-    texts = [window.audit_panel.item(i).text() for i in range(window.audit_panel.count())]
-    assert "[PHP] Generation finished (exit 0)" in texts
+    texts = window.activity_panel.row_texts()
+    assert any("[PHP] Generation finished (exit 0)" in t for t in texts)
     assert window.statusBar().currentMessage() == "Generation succeeded"
 
 

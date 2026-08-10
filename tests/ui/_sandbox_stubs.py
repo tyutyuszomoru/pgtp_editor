@@ -31,7 +31,7 @@ def fake_session(params=None, schema_names=frozenset(), applied_rows=()):
     the params it was opened on and the schema set the controller records.
 
     `applied()` and `executor` are here because two other surfaces read them off
-    a live session -- `ui/sandbox_setup_dialog.py`'s working-set table and
+    a live session -- §18.8's Project Status window and
     `db/ddl_check.py`'s `CheckSession` protocol -- and a stub that lacks them
     makes the dialog raise inside a Qt slot rather than fail a test.
     """
@@ -41,6 +41,10 @@ def fake_session(params=None, schema_names=frozenset(), applied_rows=()):
         mode=None,
         executor=None,
         applied=lambda: list(applied_rows),
+        # `reset()` is here for the same reason: Project Settings' Reset button
+        # calls it through the controller, and a stub without it would fail as
+        # an AttributeError inside a Qt slot rather than as a test assertion.
+        reset=lambda: None,
     )
 
 

@@ -147,6 +147,14 @@ class NewRoutineDialog(QDialog):
 
         self._on_kind_changed()
 
+        # Opening size only (BUG-036): freely resizable afterwards, hence
+        # `resize()` and not `setFixedSize`. 200px is 37px more than the layout's
+        # 163px minimum, and the slack lands on the word-wrapping error label
+        # (a `QVBoxLayout` gives spare height to the only expanding item), so a
+        # validation message wraps into space that already exists instead of
+        # pushing the OK/Cancel box below the fold.
+        self.resize(560, 200)
+
     # --- Kind switching -------------------------------------------------------
     def _on_kind_changed(self, *_args: object) -> None:
         """Show the return-type row for a function; hide **and** disable it for

@@ -70,6 +70,18 @@ class TableInfo:
     #: modeled no view definitions at all, so a routine touching a view
     #: failed to compile in the sandbox baseline).
     view_definition: str | None = None
+    #: `pg_catalog.obj_description(c.oid, 'pg_class')` -- the relation's OWN
+    #: comment (`pg_description.objsubid = 0`), as opposed to the per-column
+    #: rows (`objsubid = attnum`) that fill `ColumnInfo.comment`. Same
+    #: convention as that field in every respect: `None` when no
+    #: `COMMENT ON TABLE` was ever set (never `""`), and trailing/defaulted so
+    #: every existing positional or keyword `TableInfo(...)` construction
+    #: across the codebase and tests stays valid.
+    #:
+    #: Read by `Set Table Comment…` to SEED its dialog: a blank box means
+    #: `IS NULL`, the only way to ask for a comment's removal, so without this
+    #: an untouched OK silently dropped the table's existing comment.
+    comment: str | None = None
 
 
 @dataclass(frozen=True)
@@ -122,16 +134,113 @@ class TriggerInfo:
 
 
 @dataclass(frozen=True)
+class ConstraintInfo:
+    """A **named** table constraint, sourced from ``pg_constraint`` (FQ-025).
+
+    `ColumnInfo.is_pk`/`is_fk`/`fk_target` answer *"is this column part of a
+    key?"*; this answers *"which named objects can I drop or rename?"* — the
+    question the unified `Drop constraint…` / `Rename constraint` dialogs ask.
+    `con.conname` was never selected before FQ-025, so no picker could exist.
+
+    `kind` is lowercase prose, following `TableInfo.kind` / `TriggerInfo.timing`
+    (the UI upper-cases for display): ``"primary key"``, ``"foreign key"``,
+    ``"unique"``, ``"check"`` or ``"exclude"``. `columns` are the constrained
+    columns in `conkey` order and can legitimately be **empty** — a
+    table-level `CHECK` referencing no column (`CHECK (true)`) has a NULL
+    `conkey`; such a constraint is still droppable, so it is captured, and
+    `definition` (`pg_get_constraintdef`) is what a picker shows for it.
+    """
+
+    schema: str
+    table: str
+    name: str
+    kind: str  # "primary key" | "foreign key" | "unique" | "check" | "exclude"
+    columns: list[str] = field(default_factory=list)
+    definition: str = ""  # `pg_get_constraintdef` -- e.g. "CHECK ((qty > 0))"
+
+    @property
+    def qualified_name(self) -> str:
+        """`schema.table.name` -- the key `DatabaseSchema.constraints` uses
+        (the same shape `DatabaseSchema.triggers` is keyed by)."""
+        return f"{self.schema}.{self.table}.{self.name}"
+
+    @property
+    def table_name(self) -> str:
+        """`schema.table` -- the `DatabaseSchema.tables` key this belongs to."""
+        return f"{self.schema}.{self.table}"
+
+
+@dataclass(frozen=True)
+class IndexInfo:
+    """An index, sourced from ``pg_index`` (FQ-025).
+
+    **Constraint-backed indexes are captured but marked, never silently
+    offered as droppable.** PostgreSQL creates an implicit index for every
+    PRIMARY KEY / UNIQUE / EXCLUDE constraint and then *refuses*
+    `DROP INDEX` on it ("cannot drop index ... because constraint ...
+    requires it") -- the user has to drop the constraint instead. Rather than
+    filter those rows out (which would make a "why is my unique index
+    missing from the list?" mystery), the backing constraint's name is
+    carried in `constraint_name` and `is_constraint_backed` is True. **A
+    `Drop index` picker must list only `is_constraint_backed == False` rows**
+    and route the rest to `Drop constraint…`; the full list stays available
+    for display purposes.
+
+    `columns` come from `pg_get_indexdef(indexrelid, n, true)` per key
+    attribute, so an expression index yields its expression text rather than a
+    missing entry. INCLUDE columns are not listed (`indnkeyatts` bounds the
+    loop) -- they are visible in `definition` if ever needed.
+    """
+
+    schema: str
+    table: str
+    name: str
+    columns: list[str] = field(default_factory=list)
+    is_unique: bool = False
+    is_primary: bool = False
+    method: str = ""  # `pg_am.amname` -- "btree" | "gin" | "gist" | ...
+    definition: str = ""  # full CREATE INDEX text (`pg_get_indexdef`)
+    #: Name of the constraint this index implicitly backs, or None for a
+    #: standalone `CREATE INDEX`. See the class docstring -- this is the
+    #: droppable-vs-not distinction.
+    constraint_name: str | None = None
+
+    @property
+    def is_constraint_backed(self) -> bool:
+        """True when a PK/UNIQUE/EXCLUDE constraint owns this index, so
+        `DROP INDEX` on it would be rejected by PostgreSQL."""
+        return self.constraint_name is not None
+
+    @property
+    def qualified_name(self) -> str:
+        """`schema.name` -- an index lives in its table's schema and its name
+        is unique there, so this (not `schema.table.name`) is its identity and
+        the key `DatabaseSchema.indexes` uses."""
+        return f"{self.schema}.{self.name}"
+
+    @property
+    def table_name(self) -> str:
+        """`schema.table` -- the `DatabaseSchema.tables` key this belongs to."""
+        return f"{self.schema}.{self.table}"
+
+
+@dataclass(frozen=True)
 class TypeInfo:
     """A domain or composite type, sourced from ``pg_type`` (§18.5 D2's
     "recorded gap" closure) -- just enough to reconstruct a catalog-shape
     `CREATE DOMAIN`/`CREATE TYPE ... AS (...)` for the sandbox baseline.
 
     Deliberately minimal, matching `build_baseline_sql`'s "catalog shape,
-    not full fidelity" posture (§18.5 D2): a domain's `CHECK` constraints are
-    NOT captured here (the omission list already drops `CHECK`-adjacent
-    fidelity from tables; domains follow the same "catalog-based `plpgsql_
-    check` reads no rows, only needs types to exist" reasoning).
+    not full fidelity" posture (§18.5 D2): a **domain's** `CHECK` constraints
+    are NOT captured here ("catalog-based `plpgsql_check` reads no rows, only
+    needs types to exist").
+
+    Note the narrowed scope of that omission since FQ-025: **table** `CHECK`
+    constraints ARE now captured, as `ConstraintInfo` on
+    `DatabaseSchema.constraints`, because the DDL Explorer's unified
+    `Drop constraint…` must list them by name. Only domain constraints
+    (`pg_constraint.conrelid = 0`, excluded by `_CONSTRAINTS_SQL`'s join to
+    `pg_class`) remain unmodeled.
     """
 
     schema: str
@@ -158,6 +267,15 @@ class DatabaseSchema:
     #: Domains and composite types, keyed by `schema.name` (§18.5 D2's
     #: "recorded gap" closure -- previously unmodeled entirely).
     types: dict[str, TypeInfo] = field(default_factory=dict)
+    #: Named table constraints, keyed by `schema.table.name` (FQ-025). Filled
+    #: by every fetch that runs `SCHEMA_SQL` -- the rows come free with the
+    #: constraint query the PK/FK column flags already use.
+    constraints: dict[str, ConstraintInfo] = field(default_factory=dict)
+    #: Indexes, keyed by `schema.index_name` (FQ-025). Only
+    #: `fetch_routines_and_triggers` runs the index query (`INDEX_SQL`), so
+    #: this is `{}` after `fetch_schema`/`snapshot_for_baseline` -- neither
+    #: DB Check nor the sandbox baseline needs indexes.
+    indexes: dict[str, IndexInfo] = field(default_factory=dict)
 
     def has_table(self, name: str) -> bool:
         return name in self.tables
@@ -174,14 +292,37 @@ class DatabaseSchema:
                 return column
         return None
 
+    def constraints_for(self, name: str) -> list[ConstraintInfo]:
+        """Every named constraint on ``schema.table``, in catalog order
+        (FQ-025) -- what the unified `Drop constraint…` picker lists. Empty
+        for a table with no constraints, and for an unknown table."""
+        return [c for c in self.constraints.values() if c.table_name == name]
+
+    def indexes_for(self, name: str) -> list[IndexInfo]:
+        """Every index on ``schema.table``, **including** constraint-backed
+        ones (FQ-025). A `Drop index` picker must filter
+        `is_constraint_backed` out -- see `IndexInfo`."""
+        return [i for i in self.indexes.values() if i.table_name == name]
+
 
 # --- pg_catalog queries -----------------------------------------------------
 # Non-system schemas only (exclude pg_catalog / information_schema / pg_toast).
 # Order of the three queries is load-bearing: fetch_schema unpacks them
 # positionally as [relations, columns, constraints].
 
+# Widened (2026-08-09) with a FOURTH selected value, additively: the relation's
+# own comment. `obj_description(c.oid, 'pg_class')` is `pg_description` filtered
+# to `objsubid = 0` -- the same catalog table `_COLUMNS_SQL`'s
+# `col_description(a.attrelid, a.attnum)` reads at `objsubid = attnum`, so this
+# is the existing mechanism keyed one level up, not a second one. It rides on
+# the relation query (one row per relation) rather than the per-column query,
+# and no new round trip is added. The first three values keep their meaning and
+# position, and `_build_tables` unpacks the row tolerantly (`*rest`), so the
+# many canned 3-tuple relation rows across the suite keep working and simply
+# yield `comment=None`.
 _RELATIONS_SQL = """
-SELECT n.nspname, c.relname, c.relkind
+SELECT n.nspname, c.relname, c.relkind,
+       pg_catalog.obj_description(c.oid, 'pg_class')
 FROM pg_catalog.pg_class c
 JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
 WHERE c.relkind IN ('r', 'p', 'v', 'm')
@@ -207,27 +348,58 @@ WHERE c.relkind IN ('r', 'p', 'v', 'm')
 ORDER BY a.attnum
 """
 
+# Widened by FQ-025 (slice 2) along three axes, all ADDITIVE -- the first five
+# selected values keep their meaning and position, so every existing consumer
+# (`_build_tables`'s PK/FK column flags, DB Check, the sandbox baseline) is
+# untouched:
+#   1. `con.conname` is now selected (position 6). Nothing could offer a
+#      "drop this constraint" list without it.
+#   2. `contype` now admits 'u' (UNIQUE), 'c' (CHECK) and 'x' (EXCLUDE) on top
+#      of 'p'/'f'. `_build_tables` ignores the three new types; only
+#      `_build_constraints` reads them.
+#   3. `pg_get_constraintdef` (position 7) -- the one thing that distinguishes
+#      two CHECKs on the same table for a user about to drop one.
+# The `generate_subscripts`/`pg_attribute` joins became LEFT joins so a
+# constraint with a NULL `conkey` (a table-level `CHECK (true)`) still yields
+# one row with a NULL column name instead of vanishing. PK/FK constraints
+# always have a `conkey`, so their rows are bit-for-bit what they were.
+# Domain constraints have `conrelid = 0` and are dropped by the inner join to
+# `pg_class`, as before.
 _CONSTRAINTS_SQL = """
 SELECT n.nspname, c.relname, lc.attname, con.contype,
-       CASE WHEN con.contype = 'f' THEN rn.nspname || '.' || rc.relname || '.' || rc_att.attname END
+       CASE WHEN con.contype = 'f' THEN rn.nspname || '.' || rc.relname || '.' || rc_att.attname END,
+       con.conname,
+       pg_catalog.pg_get_constraintdef(con.oid)
 FROM pg_catalog.pg_constraint con
 JOIN pg_catalog.pg_class c ON c.oid = con.conrelid
 JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
-JOIN generate_subscripts(con.conkey, 1) AS k(i) ON true
-JOIN pg_catalog.pg_attribute lc
+LEFT JOIN generate_subscripts(con.conkey, 1) AS k(i) ON true
+LEFT JOIN pg_catalog.pg_attribute lc
      ON lc.attrelid = con.conrelid AND lc.attnum = con.conkey[k.i]
 LEFT JOIN pg_catalog.pg_class rc ON rc.oid = con.confrelid
 LEFT JOIN pg_catalog.pg_namespace rn ON rn.oid = rc.relnamespace
 LEFT JOIN pg_catalog.pg_attribute rc_att
      ON rc_att.attrelid = con.confrelid AND rc_att.attnum = con.confkey[k.i]
-WHERE con.contype IN ('p', 'f')
+WHERE con.contype IN ('p', 'f', 'u', 'c', 'x')
   AND n.nspname NOT IN ('pg_catalog', 'information_schema')
   AND n.nspname NOT LIKE 'pg_toast%'
+ORDER BY n.nspname, c.relname, con.conname, k.i
 """
 
 SCHEMA_SQL: list[str] = [_RELATIONS_SQL, _COLUMNS_SQL, _CONSTRAINTS_SQL]
 
 _KIND_BY_RELKIND = {"r": "table", "p": "table", "v": "view", "m": "matview"}
+
+#: `pg_constraint.contype` -> the lowercase prose `ConstraintInfo.kind` carries
+#: (FQ-025). Only these five are selected by `_CONSTRAINTS_SQL`; a row with any
+#: other contype is ignored by `_build_constraints` rather than guessed at.
+_KIND_BY_CONTYPE = {
+    "p": "primary key",
+    "f": "foreign key",
+    "u": "unique",
+    "c": "check",
+    "x": "exclude",
+}
 
 # --- Routines & triggers (§18.1 DDL Explorer) -------------------------------
 # A separate query pair from SCHEMA_SQL/fetch_schema above -- routines/triggers
@@ -277,6 +449,46 @@ WHERE NOT t.tgisinternal
 
 ROUTINE_TRIGGER_SQL: list[str] = [_ROUTINES_SQL, _TRIGGERS_SQL]
 
+# --- Indexes (FQ-025) -------------------------------------------------------
+# A separate one-query list, appended by `fetch_routines_and_triggers` only:
+# the DDL Explorer's `Drop index` picker is the sole consumer, and neither DB
+# Check (`fetch_schema`) nor the sandbox baseline (`snapshot_for_baseline`,
+# whose posture is "catalog shape, not full fidelity") needs indexes -- so
+# their query contracts stay exactly as they were.
+#
+# `indisprimary`/`conindid` carry the droppable-vs-not distinction documented
+# on `IndexInfo`: an index a PK/UNIQUE/EXCLUDE constraint owns cannot be
+# dropped with `DROP INDEX`. Key columns are rendered one at a time by
+# `pg_get_indexdef(indexrelid, n, true)` so expression indexes yield their
+# expression text; `indnkeyatts` bounds the loop, excluding INCLUDE columns.
+_INDEXES_SQL = """
+SELECT n.nspname, c.relname, ic.relname, am.amname,
+       i.indisunique, i.indisprimary,
+       pg_catalog.pg_get_indexdef(i.indexrelid),
+       COALESCE(
+           (SELECT array_agg(pg_catalog.pg_get_indexdef(i.indexrelid, k.n::integer, true)
+                             ORDER BY k.n)
+            FROM generate_series(1, i.indnkeyatts) AS k(n)),
+           ARRAY[]::text[]
+       ),
+       (SELECT con.conname
+        FROM pg_catalog.pg_constraint con
+        WHERE con.conindid = i.indexrelid
+        LIMIT 1)
+FROM pg_catalog.pg_index i
+JOIN pg_catalog.pg_class ic ON ic.oid = i.indexrelid
+JOIN pg_catalog.pg_class c ON c.oid = i.indrelid
+JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+JOIN pg_catalog.pg_am am ON am.oid = ic.relam
+WHERE c.relkind IN ('r', 'p', 'm')
+  AND i.indislive
+  AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+  AND n.nspname NOT LIKE 'pg_toast%'
+ORDER BY n.nspname, c.relname, ic.relname
+"""
+
+INDEX_SQL: list[str] = [_INDEXES_SQL]
+
 # --- View definitions & domain/composite types (§18.5 D2 "recorded gap") ----
 # A separate query pair, consumed ONLY by `snapshot_for_baseline` -- neither
 # `fetch_schema` nor `fetch_routines_and_triggers` needs view bodies or
@@ -294,10 +506,14 @@ WHERE c.relkind IN ('v', 'm')
   AND n.nspname NOT LIKE 'pg_toast%'
 """
 
-# Domains: base type + NOT NULL only -- CHECK constraints are deliberately
-# NOT captured (§18.5 D2's "catalog-based, reads no rows" baseline: a domain
-# CHECK is data-validation fidelity, the same category of thing the baseline
-# already drops for tables via the PK/FK/DEFAULT omission list). Composites:
+# Domains: base type + NOT NULL only -- a DOMAIN's CHECK constraints are
+# deliberately NOT captured (§18.5 D2's "catalog-based, reads no rows"
+# baseline: a domain CHECK is data-validation fidelity). Scope note (FQ-025):
+# this omission no longer extends to TABLE check constraints -- those are
+# captured by `_CONSTRAINTS_SQL`/`ConstraintInfo` so the DDL Explorer can list
+# them by name for `Drop constraint…`. Domain constraints have
+# `pg_constraint.conrelid = 0` and are excluded there by the join to
+# `pg_class`, so the two statements do not conflict. Composites:
 # ordered attribute (name, type) pairs, sourced the same way table columns
 # are (`pg_attribute` + `format_type`), since a composite type IS a
 # `pg_class` row with relkind 'c' under the hood.
@@ -456,9 +672,15 @@ def _build_tables(
     get `view_definition=None` on every `TableInfo` exactly as before;
     `snapshot_for_baseline` is the only caller that supplies it.
     """
+    # Tolerant of the pre-2026-08-09 3-tuple row shape on purpose (the same
+    # posture `_build_constraints` takes): a relation row without a 4th value
+    # simply carries no comment, so canned rows across the suite keep working.
     kinds: dict[str, str] = {}
-    for schema_name, rel_name, relkind in relation_rows:
-        kinds[f"{schema_name}.{rel_name}"] = _KIND_BY_RELKIND.get(relkind, "table")
+    comments: dict[str, str | None] = {}
+    for schema_name, rel_name, relkind, *rest in relation_rows:
+        key = f"{schema_name}.{rel_name}"
+        kinds[key] = _KIND_BY_RELKIND.get(relkind, "table")
+        comments[key] = rest[0] if rest else None
 
     # Constraint membership: (table_key, column_name) -> contype set. FK rows
     # also carry the referenced "schema.table.column" (None for PKs).
@@ -503,9 +725,91 @@ def _build_tables(
             kind=kind,
             columns=columns_by_table.get(name, []),
             view_definition=view_definitions.get(name),
+            comment=comments.get(name),
         )
         for name, kind in kinds.items()
     }
+
+
+def _build_constraints(constraint_rows: Rows) -> dict[str, ConstraintInfo]:
+    """Assemble ``{"schema.table.name": ConstraintInfo}`` from the SAME
+    `_CONSTRAINTS_SQL` rows `_build_tables` reads for its PK/FK column flags
+    (FQ-025) -- one query, two views of it, never a second round trip.
+
+    `_CONSTRAINTS_SQL` emits one row per (constraint, column); the columns are
+    regrouped here, in arrival order, which the query's
+    ``ORDER BY … , k.i`` makes `conkey` order -- so a multi-column key reads
+    ``(a, b)``, not an arbitrary permutation.
+
+    **Tolerant of the pre-FQ-025 row shape on purpose**: a row without a
+    6th value (`conname`) is skipped rather than unpacked into an error, so
+    the many canned 4-/5-tuple constraint rows across the suite keep working
+    unchanged and simply contribute no named constraints.
+    """
+    kinds: dict[str, str] = {}
+    definitions: dict[str, str] = {}
+    identities: dict[str, tuple[str, str, str]] = {}
+    columns: dict[str, list[str]] = {}
+    for schema_name, rel_name, col_name, contype, *rest in constraint_rows:
+        name = rest[1] if len(rest) > 1 else None
+        kind = _KIND_BY_CONTYPE.get(contype)
+        if not name or kind is None:
+            continue
+        key = f"{schema_name}.{rel_name}.{name}"
+        if key not in identities:
+            identities[key] = (schema_name, rel_name, name)
+            kinds[key] = kind
+            definitions[key] = (rest[2] if len(rest) > 2 else None) or ""
+            columns[key] = []
+        if col_name and col_name not in columns[key]:
+            columns[key].append(col_name)
+
+    return {
+        key: ConstraintInfo(
+            schema=schema_name,
+            table=rel_name,
+            name=name,
+            kind=kinds[key],
+            columns=columns[key],
+            definition=definitions[key],
+        )
+        for key, (schema_name, rel_name, name) in identities.items()
+    }
+
+
+def _build_indexes(index_rows: Rows) -> dict[str, IndexInfo]:
+    """Assemble ``{"schema.index_name": IndexInfo}`` from `INDEX_SQL`'s rows
+    (FQ-025).
+
+    Constraint-backed indexes are kept and MARKED (`constraint_name`), not
+    filtered out -- see `IndexInfo` for why a `Drop index` picker must be the
+    thing that excludes them.
+    """
+    indexes: dict[str, IndexInfo] = {}
+    for (
+        schema_name,
+        table_name,
+        index_name,
+        method,
+        is_unique,
+        is_primary,
+        definition,
+        index_columns,
+        constraint_name,
+    ) in index_rows:
+        info = IndexInfo(
+            schema=schema_name,
+            table=table_name,
+            name=index_name,
+            columns=list(index_columns or []),
+            is_unique=bool(is_unique),
+            is_primary=bool(is_primary),
+            method=method or "",
+            definition=definition or "",
+            constraint_name=constraint_name,
+        )
+        indexes[info.qualified_name] = info
+    return indexes
 
 
 def _build_types(type_rows: Rows) -> dict[str, TypeInfo]:
@@ -533,11 +837,14 @@ def fetch_schema(params: ConnectionParams, runner: Runner = run_queries) -> Data
     started = time.monotonic()
     relation_rows, column_rows, constraint_rows = runner(params, list(SCHEMA_SQL))
     tables = _build_tables(relation_rows, column_rows, constraint_rows)
+    # Named constraints come free from rows already fetched (FQ-025) -- the
+    # query list is unchanged, so this stays the same 3-query contract.
+    constraints = _build_constraints(constraint_rows)
     elapsed = time.monotonic() - started
     _log.info(
         "db: fetch_schema finished %.3fs tables=%d", elapsed, len(tables)
     )
-    return DatabaseSchema(tables=tables)
+    return DatabaseSchema(tables=tables, constraints=constraints)
 
 
 def fetch_routines_and_triggers(
@@ -554,28 +861,50 @@ def fetch_routines_and_triggers(
     (§18.6) is built from the `.tables` this now returns, for schema-aware
     Ctrl+Space completion in the DDL object editor.
 
+    Widened again by FQ-025 with `INDEX_SQL`, in the same round trip: the
+    DDL Explorer's `Drop index` picker is the only consumer of index data, so
+    the query rides along here rather than in `fetch_schema` or
+    `snapshot_for_baseline`. `.constraints` (named constraints) is filled too,
+    from the `SCHEMA_SQL` rows already being fetched.
+
     `fetch_schema` itself is UNCHANGED -- its own 3-query contract and tests
     are untouched, and DB Check keeps calling it directly. This is one
     widened fetch serving two consumers, never a second parallel fetch.
     """
     _log.info("db: fetch_routines_and_triggers started %s", debuglog.redacted(params))
     started = time.monotonic()
-    routine_rows, trigger_rows, relation_rows, column_rows, constraint_rows = runner(
-        params, list(ROUTINE_TRIGGER_SQL) + list(SCHEMA_SQL)
-    )
+    (
+        routine_rows,
+        trigger_rows,
+        relation_rows,
+        column_rows,
+        constraint_rows,
+        index_rows,
+    ) = runner(params, list(ROUTINE_TRIGGER_SQL) + list(SCHEMA_SQL) + list(INDEX_SQL))
 
     routines, triggers = _build_routines_and_triggers(routine_rows, trigger_rows)
     tables = _build_tables(relation_rows, column_rows, constraint_rows)
+    constraints = _build_constraints(constraint_rows)
+    indexes = _build_indexes(index_rows)
 
     elapsed = time.monotonic() - started
     _log.info(
-        "db: fetch_routines_and_triggers finished %.3fs routines=%d triggers=%d tables=%d",
+        "db: fetch_routines_and_triggers finished %.3fs "
+        "routines=%d triggers=%d tables=%d constraints=%d indexes=%d",
         elapsed,
         len(routines),
         len(triggers),
         len(tables),
+        len(constraints),
+        len(indexes),
     )
-    return DatabaseSchema(routines=routines, triggers=triggers, tables=tables)
+    return DatabaseSchema(
+        routines=routines,
+        triggers=triggers,
+        tables=tables,
+        constraints=constraints,
+        indexes=indexes,
+    )
 
 
 def _build_routines_and_triggers(
@@ -677,6 +1006,7 @@ def snapshot_for_baseline(
 
     routines, triggers = _build_routines_and_triggers(routine_rows, trigger_rows)
     tables = _build_tables(relation_rows, column_rows, constraint_rows, viewdef_rows)
+    constraints = _build_constraints(constraint_rows)
     types = _build_types(type_rows)
 
     elapsed = time.monotonic() - started
@@ -689,7 +1019,13 @@ def snapshot_for_baseline(
         len(types),
     )
     return BaselineSnapshot(
-        schema=DatabaseSchema(tables=tables, routines=routines, triggers=triggers, types=types)
+        schema=DatabaseSchema(
+            tables=tables,
+            routines=routines,
+            triggers=triggers,
+            types=types,
+            constraints=constraints,
+        )
     )
 
 

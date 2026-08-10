@@ -590,9 +590,14 @@ def test_file_menu_open_php_file_opens_a_tab(qtbot, tmp_path):
     assert window.center_stage.php_file_tab(php_tab_key(path)) is not None
 
 
-def test_ctrl_s_with_a_php_tab_focused_saves_the_file_not_the_project(
+def test_deployment_save_php_file_saves_the_file_not_the_project(
     qtbot, tmp_path, monkeypatch
 ):
+    """FQ-020: was `test_ctrl_s_with_a_php_tab_focused_...`, driving the deleted
+    router. The §21 guarantee it protects is unchanged and still the point --
+    saving a PHP tab must never write the PROJECT -- and is now structural rather
+    than a branch: the entry is wired straight to `_php_tabs.save_active_tab()`
+    and there is no `else` that could reach `save_project`."""
     window = _window(qtbot, tmp_path)
     saved_project = []
     monkeypatch.setattr(
@@ -600,12 +605,20 @@ def test_ctrl_s_with_a_php_tab_focused_saves_the_file_not_the_project(
     )
     path = _php(tmp_path)
     tab = window._php_tabs.open_path(path)
-    _edit(tab, "<?php echo 'from the router';")
+    _edit(tab, "<?php echo 'from the menu';")
 
-    window._save_active_tab()
+    from tests.ui._menu_helpers import find_action, find_top_menu
+
+    deployment = find_top_menu(window, "Deployment")
+    action = find_action(deployment, "Save PHP File")
+    assert action is not None and action.isVisible()
+    # ...and none of the Raw XML entries is visible while a PHP tab is active, so
+    # there is no reachable path from this tab to the `.pgtp`.
+    assert find_action(deployment, "Save pgtp").isVisible() is False
+    action.trigger()
 
     assert saved_project == []
-    assert path.read_text(encoding="utf-8") == "<?php echo 'from the router';"
+    assert path.read_text(encoding="utf-8") == "<?php echo 'from the menu';"
 
 
 def test_ctrl_f_with_a_php_tab_focused_uses_that_tabs_own_find_bar(qtbot, tmp_path):

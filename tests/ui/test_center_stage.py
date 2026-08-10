@@ -10,13 +10,15 @@ from pgtp_editor.ui.sql_console_panel import CONSOLE_TAB_KEY, SqlConsolePanel
 def test_tabs_in_order(qtbot):
     stage = CenterStage()
     qtbot.addWidget(stage)
-    assert stage.count() == 6
+    assert stage.count() == 7
     assert stage.tabText(0) == "Diff / Merge"
     assert stage.tabText(1) == "Caption Management"
     assert stage.tabText(2) == "Raw XML"
     assert stage.tabText(3) == "Edit XSD"
-    assert stage.tabText(4) == "DDL Explorer"
-    assert stage.tabText(5) == "Manual"
+    # Two Explorer tabs since §18.7 (FQ-022), both labelled by connection role.
+    assert stage.tabText(4) == "DDL Explorer (Quality)"
+    assert stage.tabText(5) == "DDL Explorer (Sandbox)"
+    assert stage.tabText(6) == "Manual"
 
 
 def test_default_tab_visibility_raw_xml_shown_others_hidden(qtbot):
@@ -95,13 +97,13 @@ def test_show_ddl_explorer_reveals_switches_and_emits_true(qtbot):
     stage = CenterStage()
     qtbot.addWidget(stage)
     got = []
-    stage.ddl_explorer_visibility_changed.connect(got.append)
+    stage.ddl_explorer_visibility_changed.connect(lambda role, visible: got.append((role, visible)))
 
     stage.show_ddl_explorer()
 
     assert stage.isTabVisible(stage.ddl_tab_index) is True
     assert stage.currentIndex() == stage.ddl_tab_index
-    assert got == [True]
+    assert got == [("target", True)]
 
 
 def test_hide_ddl_explorer_hides_returns_to_raw_xml_and_emits_false(qtbot):
@@ -109,13 +111,13 @@ def test_hide_ddl_explorer_hides_returns_to_raw_xml_and_emits_false(qtbot):
     qtbot.addWidget(stage)
     stage.show_ddl_explorer()
     got = []
-    stage.ddl_explorer_visibility_changed.connect(got.append)
+    stage.ddl_explorer_visibility_changed.connect(lambda role, visible: got.append((role, visible)))
 
     stage.hide_ddl_explorer()
 
     assert stage.isTabVisible(stage.ddl_tab_index) is False
     assert stage.currentIndex() == stage.raw_xml_tab_index
-    assert got == [False]
+    assert got == [("target", False)]
 
 
 def test_hide_ddl_explorer_when_not_current_does_not_steal_current_tab(qtbot):
@@ -139,13 +141,13 @@ def test_ddl_tab_close_button_hides_directly(qtbot):
     qtbot.addWidget(stage)
     stage.show_ddl_explorer()
     got = []
-    stage.ddl_explorer_visibility_changed.connect(got.append)
+    stage.ddl_explorer_visibility_changed.connect(lambda role, visible: got.append((role, visible)))
 
     stage.tabCloseRequested.emit(stage.ddl_tab_index)
 
     assert stage.isTabVisible(stage.ddl_tab_index) is False
     assert stage.currentIndex() == stage.raw_xml_tab_index
-    assert got == [False]
+    assert got == [("target", False)]
 
 
 def test_ddl_tab_has_close_button_structural_tabs_do_not(qtbot):
@@ -173,6 +175,13 @@ def test_enter_caption_mode_keeps_raw_visible_readonly_shows_caption(qtbot):
     assert stage.xml_editor.isReadOnly() is True
     assert stage.isTabVisible(stage.caption_management_tab_index) is True
     assert stage.currentIndex() == stage.caption_management_tab_index
+    # BUG-037: the tab itself says why it refuses keystrokes. The status-bar
+    # `_mode_label` cue is at the far bottom of the window, not on the tab the
+    # user is typing into.
+    assert (
+        stage.tabText(stage.raw_xml_tab_index)
+        == "Raw XML (read only in caption mode)"
+    )
 
 
 def test_leave_caption_mode_restores_raw(qtbot):
@@ -184,6 +193,26 @@ def test_leave_caption_mode_restores_raw(qtbot):
     assert stage.xml_editor.isReadOnly() is False
     assert stage.isTabVisible(stage.caption_management_tab_index) is False
     assert stage.currentIndex() == stage.raw_xml_tab_index
+    assert stage.tabText(stage.raw_xml_tab_index) == "Raw XML"
+
+
+def test_the_read_only_flag_and_the_tab_title_cannot_drift(qtbot):
+    """BUG-037's root cause was that these were set in different places (the
+    flag in the mode methods, the title nowhere). One helper owns both, so a
+    future second read-only mode cannot re-introduce the mismatch by setting
+    only one of them."""
+    from pgtp_editor.ui.center_stage import RAW_XML_TAB_TITLE
+
+    stage = CenterStage()
+    qtbot.addWidget(stage)
+    for reason in ("read only in caption mode", "locked while diffing", None):
+        stage._set_raw_xml_read_only(reason)
+        title = stage.tabText(stage.raw_xml_tab_index)
+        assert stage.xml_editor.isReadOnly() is (reason is not None)
+        # Read-only <=> the title carries a reason, in both directions.
+        assert (title != RAW_XML_TAB_TITLE) is (reason is not None)
+        if reason is not None:
+            assert reason in title
 
 
 # --- Dynamic DDL object editor tabs (spec §18.5) ----------------------------

@@ -20,7 +20,7 @@ from pgtp_editor.ui.new_project_dialog import NewProjectDialog
 from pgtp_editor.ui.project_settings_dialog import ProjectSettingsDialog
 
 from ._menu_helpers import find_action, find_top_menu
-from ._sandbox_stubs import stub_sandbox_provisioning
+from ._sandbox_stubs import stub_sandbox_provisioning, sync_run
 from pgtp_editor.ui import modals
 
 
@@ -31,6 +31,12 @@ def _empty_settings(tmp_path):
 def _window(qtbot, tmp_path):
     window = MainWindow(settings=_empty_settings(tmp_path))
     qtbot.addWidget(window)
+    # BUG-043: the window-wide off-thread seam. `_shell_run_async` re-reads this
+    # at call time, and since BUG-043 the sandbox controller goes through that
+    # trampoline too, so this one line makes EVERY lane run in-test -- including
+    # `refresh_target_connection_status`, which really dialled a configured
+    # target host and delivered the result after this window was destroyed.
+    window._run_async = sync_run
     # FQ-007: New Project now CREATES + provisions the sandbox database, so the
     # controller's db/sandbox.py seams are stubbed here -- no test may reach a
     # real server, and none of these tests is about provisioning.
@@ -352,9 +358,9 @@ def test_open_ddl_project_with_multiple_unlinked_pgtp_reports_via_audit_and_gues
     window._ddl_project_ui.open_project()
 
     assert window._current_project is None  # never guessed which one
-    texts = [window.audit_panel.item(i).text() for i in range(window.audit_panel.count())]
+    texts = window.activity_panel.row_texts()
     assert any(
-        t.startswith("[Project]") and "multiple" in t.lower() for t in texts
+        ("[Project]" in t) and "multiple" in t.lower() for t in texts
     )
 
 
@@ -421,8 +427,8 @@ def test_open_reports_unchanged_source_pgtp(qtbot, tmp_path, monkeypatch):
 
     window._ddl_project_ui.open_project()
 
-    texts = [window.audit_panel.item(i).text() for i in range(window.audit_panel.count())]
-    assert any("unchanged" in t.lower() for t in texts if t.startswith("[Project]"))
+    texts = window.activity_panel.row_texts()
+    assert any("unchanged" in t.lower() for t in texts if ("[Project]" in t))
 
 
 def test_open_reports_drifted_source_pgtp(qtbot, tmp_path, monkeypatch):
@@ -449,9 +455,9 @@ def test_open_reports_drifted_source_pgtp(qtbot, tmp_path, monkeypatch):
 
     window._ddl_project_ui.open_project()
 
-    texts = [window.audit_panel.item(i).text() for i in range(window.audit_panel.count())]
+    texts = window.activity_panel.row_texts()
     assert any(
-        t.startswith("[Project]") and "changed" in t.lower() for t in texts
+        ("[Project]" in t) and "changed" in t.lower() for t in texts
     )
 
 
@@ -490,7 +496,7 @@ def test_open_reports_unreadable_source_pgtp_gracefully(qtbot, tmp_path, monkeyp
 
     window._ddl_project_ui.open_project()  # must not raise
 
-    texts = [window.audit_panel.item(i).text() for i in range(window.audit_panel.count())]
+    texts = window.activity_panel.row_texts()
     assert any("could not read" in t.lower() for t in texts)
 
 
@@ -647,7 +653,7 @@ def test_project_required_skips_the_dialog_entirely_when_already_open(qtbot, tmp
     assert got == [True]
 
 
-# --- Check Out for Versioning (§18.2) ---------------------------------------
+# --- Edit DDL, project-open branch: the §18.2 checkout (FQ-024) --------------
 def _open_project(window, folder):
     from pgtp_editor.db.ddl_project import ProjectSettings, save_settings
 
@@ -663,7 +669,7 @@ def test_checkout_seeds_the_file_when_absent(qtbot, tmp_path):
     _open_project(window, project_dir)
     ref = DdlObjectRef(kind="function", schema="pr", name="recalc")
 
-    window._checkout_and_edit(ref, "CREATE FUNCTION pr.recalc() ...")
+    window._edit_ddl_checked_out(ref, "CREATE FUNCTION pr.recalc() ...")
 
     ddl_path = project_dir / "ddl" / "pr.recalc.sql"
     assert ddl_path.read_text(encoding="utf-8") == "CREATE FUNCTION pr.recalc() ..."
@@ -677,11 +683,14 @@ def test_checkout_opens_a_tab_pointed_at_the_checked_out_file(qtbot, tmp_path):
     _open_project(window, project_dir)
     ref = DdlObjectRef(kind="function", schema="pr", name="recalc")
 
-    window._checkout_and_edit(ref, "CREATE FUNCTION pr.recalc() ...")
+    window._edit_ddl_checked_out(ref, "CREATE FUNCTION pr.recalc() ...")
 
     ddl_path = (project_dir / "ddl" / "pr.recalc.sql").resolve()
-    panel = window.center_stage.ddl_object_tab(str(ddl_path))
+    # Keyed on object identity, never on the resolved path (FQ-024) -- the save
+    # DESTINATION is the project-dependent part, not the key.
+    panel = window.center_stage.ddl_object_tab(ref.key)
     assert panel is not None
+    assert window.center_stage.ddl_object_tab(str(ddl_path)) is None
     assert panel.text() == "CREATE FUNCTION pr.recalc() ..."
     assert panel.resolve_save_path() == ddl_path
 
@@ -699,10 +708,9 @@ def test_checkout_of_an_already_checked_out_file_opens_from_disk_not_the_live_so
     ddl_path.write_text("-- hand-edited local truth\n", encoding="utf-8")
     ref = DdlObjectRef(kind="function", schema="pr", name="recalc")
 
-    window._checkout_and_edit(ref, "CREATE FUNCTION pr.recalc() ... -- stale live def")
+    window._edit_ddl_checked_out(ref, "CREATE FUNCTION pr.recalc() ... -- stale live def")
 
-    resolved_key = str(ddl_path.resolve())
-    panel = window.center_stage.ddl_object_tab(resolved_key)
+    panel = window.center_stage.ddl_object_tab(ref.key)
     assert panel.text() == "-- hand-edited local truth\n"
     assert ddl_path.read_text(encoding="utf-8") == "-- hand-edited local truth\n"  # untouched
 
@@ -714,14 +722,13 @@ def test_re_invoking_checkout_focuses_the_existing_tab(qtbot, tmp_path):
     project_dir = tmp_path / "proj"
     _open_project(window, project_dir)
     ref = DdlObjectRef(kind="function", schema="pr", name="recalc")
-    window._checkout_and_edit(ref, "text")
-    ddl_path = (project_dir / "ddl" / "pr.recalc.sql").resolve()
-    first = window.center_stage.ddl_object_tab(str(ddl_path))
+    window._edit_ddl_checked_out(ref, "text")
+    first = window.center_stage.ddl_object_tab(ref.key)
     window.center_stage.setCurrentIndex(window.center_stage.raw_xml_tab_index)
 
-    window._checkout_and_edit(ref, "ignored -- already checked out")
+    window._edit_ddl_checked_out(ref, "ignored -- already checked out")
 
-    second = window.center_stage.ddl_object_tab(str(ddl_path))
+    second = window.center_stage.ddl_object_tab(ref.key)
     assert second is first
     assert window.center_stage.currentWidget() is first
 
@@ -734,46 +741,34 @@ def test_checkout_of_a_trigger_uses_the_table_qualified_path(qtbot, tmp_path):
     _open_project(window, project_dir)
     ref = DdlObjectRef(kind="trigger", schema="pr", name="trg_audit", table="orders")
 
-    window._checkout_and_edit(ref, "CREATE TRIGGER trg_audit ...")
+    window._edit_ddl_checked_out(ref, "CREATE TRIGGER trg_audit ...")
 
     ddl_path = project_dir / "ddl" / "pr.orders.trg_audit.sql"
     assert ddl_path.exists()
 
 
-def test_checkout_requires_a_project_and_offers_create_open_cancel(qtbot, tmp_path, monkeypatch):
+def test_projectless_edit_ddl_never_raises_the_project_required_prompt(qtbot, tmp_path, monkeypatch):
+    """FQ-024: with ONE `Edit DDL` entry, `require_project`'s
+    Create…/Open…/Cancel modal must NOT ride along -- it would fire on every
+    edit in projectless mode, which is a first-class supported mode (§18.2)."""
     from pgtp_editor.ui.ddl_object_editor import DdlObjectRef
 
     window = _window(qtbot, tmp_path)
     ref = DdlObjectRef(kind="function", schema="pr", name="recalc")
+    monkeypatch.setattr(
+        "pgtp_editor.ui.modals.QMessageBox",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("must not prompt")),
+    )
+    monkeypatch.setattr(
+        window._ddl_project_ui,
+        "require_project",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("must not require a project")),
+    )
 
-    class _FakeBox:
-        ButtonRole = QMessageBox.ButtonRole
+    window._on_ddl_edit_requested(ref, "CREATE FUNCTION pr.recalc() ...")
 
-        def __init__(self, parent=None):
-            self.buttons = {}
-
-        def setWindowTitle(self, _title):
-            pass
-
-        def setText(self, _text):
-            pass
-
-        def addButton(self, label, role):
-            button = object()
-            self.buttons[label] = button
-            return button
-
-        def exec(self):
-            return None
-
-        def clickedButton(self):
-            return self.buttons["Cancel"]
-
-    monkeypatch.setattr("pgtp_editor.ui.modals.QMessageBox", _FakeBox)
-
-    window._on_ddl_checkout_requested(ref, "text")  # must not raise, no project created
-
-    assert window._ddl_project_folder is None
+    assert window._ddl_project_folder is None  # nothing created, nothing asked
+    assert window.center_stage.ddl_object_tab(ref.key) is not None
 
 
 def test_checkout_reports_drift_from_the_last_deployed_reference(qtbot, tmp_path):
@@ -789,10 +784,10 @@ def test_checkout_reports_drift_from_the_last_deployed_reference(qtbot, tmp_path
     window._ddl_project_ui.set_active_project(project_dir, settings)
     ref = DdlObjectRef(kind="function", schema="pr", name="recalc")
 
-    window._checkout_and_edit(ref, "CREATE FUNCTION pr.recalc() ... -- drifted")
+    window._edit_ddl_checked_out(ref, "CREATE FUNCTION pr.recalc() ... -- drifted")
 
-    texts = [window.audit_panel.item(i).text() for i in range(window.audit_panel.count())]
-    assert any(t.startswith("[Project]") and "drifted" in t.lower() for t in texts)
+    texts = window.activity_panel.row_texts()
+    assert any(("[Project]" in t) and "drifted" in t.lower() for t in texts)
 
 
 def test_checkout_reports_no_drift_when_hash_matches_the_deployed_reference(qtbot, tmp_path):
@@ -815,7 +810,7 @@ def test_checkout_reports_no_drift_when_hash_matches_the_deployed_reference(qtbo
     ref = DdlObjectRef(kind="function", schema="pr", name="recalc")
     before = window.audit_panel.count()
 
-    window._checkout_and_edit(ref, live_source)
+    window._edit_ddl_checked_out(ref, live_source)
 
     assert window.audit_panel.count() == before  # nothing drifted, nothing reported
 
@@ -837,10 +832,110 @@ def test_checkout_disambiguates_overloads_using_the_live_schema(qtbot, tmp_path)
     )
     ref = DdlObjectRef(kind="function", schema="pr", name="fmt", arg_types=("text",))
 
-    window._checkout_and_edit(ref, "CREATE FUNCTION pr.fmt(a text) ...")
+    window._edit_ddl_checked_out(ref, "CREATE FUNCTION pr.fmt(a text) ...")
 
     # "text" sorts after "integer" -- the second overload, so it gets _1.
     assert (project_dir / "ddl" / "pr.fmt_1.sql").exists()
+
+
+# --- Edit DDL: ONE gesture, two behaviours from project state (FQ-024) -------
+def test_edit_ddl_takes_the_checkout_branch_when_a_project_is_open(qtbot, tmp_path):
+    """The behaviour comes from project state, never from which words were
+    clicked: with a project open, `Edit DDL` IS the checkout."""
+    from pgtp_editor.ui.ddl_object_editor import DdlObjectRef
+
+    window = _window(qtbot, tmp_path)
+    project_dir = tmp_path / "proj"
+    _open_project(window, project_dir)
+    ref = DdlObjectRef(kind="function", schema="pr", name="recalc")
+
+    window._on_ddl_edit_requested(ref, "CREATE FUNCTION pr.recalc() ...")
+
+    ddl_path = (project_dir / "ddl" / "pr.recalc.sql").resolve()
+    assert ddl_path.read_text(encoding="utf-8") == "CREATE FUNCTION pr.recalc() ..."
+    assert window.center_stage.ddl_object_tab(ref.key).resolve_save_path() == ddl_path
+    assert "ddl/pr.recalc.sql" in load_settings(project_dir).deployed
+
+
+def test_projectless_edit_ddl_holds_the_live_source_and_writes_nothing(qtbot, tmp_path):
+    """The other branch: no checkout, no manifest, no file -- the tab holds the
+    live introspected definition and saves through Save As… later."""
+    from pgtp_editor.ui.ddl_object_editor import DdlObjectRef
+
+    window = _window(qtbot, tmp_path)
+    ref = DdlObjectRef(kind="function", schema="pr", name="recalc")
+
+    window._on_ddl_edit_requested(ref, "CREATE FUNCTION pr.recalc() ...")
+
+    panel = window.center_stage.ddl_object_tab(ref.key)
+    assert panel.text() == "CREATE FUNCTION pr.recalc() ..."
+    assert panel.save_path is None  # nothing resolved yet, nothing written
+    assert list(tmp_path.glob("**/*.sql")) == []
+
+
+def test_edit_ddl_twice_across_opening_a_project_yields_exactly_one_tab(qtbot, tmp_path):
+    """THE FQ-024 regression test, and the reason the keying rule is one rule.
+
+    Before this, the two branches keyed tabs in different namespaces -- the live
+    branch on `ref.key`, checkout on `str(ddl_path)` -- and neither existence
+    check consulted the other, so this exact sequence produced TWO identically
+    titled tabs with TWO different save destinations, silently diverging copies
+    of one object. `CenterStage.open_ddl_object_tab`'s docstring claimed the
+    opposite.
+    """
+    from pgtp_editor.ui.ddl_object_editor import DdlObjectRef
+
+    window = _window(qtbot, tmp_path)
+    ref = DdlObjectRef(kind="function", schema="pr", name="recalc")
+    window._on_ddl_edit_requested(ref, "CREATE FUNCTION pr.recalc() ...")
+    first = window.center_stage.ddl_object_tab(ref.key)
+    assert first is not None
+
+    _open_project(window, tmp_path / "proj")
+    window._on_ddl_edit_requested(ref, "CREATE FUNCTION pr.recalc() ...")
+
+    assert window.center_stage.ddl_object_panels() == [first]
+
+
+def test_checking_out_then_editing_the_same_object_yields_exactly_one_tab(qtbot, tmp_path):
+    """The same divergence in the order the user actually hit it: check out (a
+    project is open, so `Edit DDL` checks out), then invoke `Edit DDL` again."""
+    from pgtp_editor.ui.ddl_object_editor import DdlObjectRef
+
+    window = _window(qtbot, tmp_path)
+    _open_project(window, tmp_path / "proj")
+    ref = DdlObjectRef(kind="function", schema="pr", name="recalc")
+    window._edit_ddl_checked_out(ref, "CREATE FUNCTION pr.recalc() ...")
+    checked_out = window.center_stage.ddl_object_tab(ref.key)
+
+    window._on_ddl_edit_requested(ref, "CREATE FUNCTION pr.recalc() ...")
+
+    assert window.center_stage.ddl_object_panels() == [checked_out]
+    assert window.center_stage.currentWidget() is checked_out
+
+
+def test_an_already_open_projectless_tab_keeps_its_save_as_resolver(qtbot, tmp_path, monkeypatch):
+    """Documented current behaviour (FQ-024 open question, deliberately left
+    as-is): opening a project does NOT re-point an already-open tab's save
+    destination. §18.5 carve-out 5's posture -- a live edit's destination is
+    never silently moved under it -- so the tab still runs Save As…, and the
+    user closes and reopens it to get the object under versioning.
+    """
+    from pgtp_editor.ui.ddl_object_editor import DdlObjectRef
+
+    window = _window(qtbot, tmp_path)
+    ref = DdlObjectRef(kind="function", schema="pr", name="recalc")
+    window._on_ddl_edit_requested(ref, "CREATE FUNCTION pr.recalc() ...")
+    panel = window.center_stage.ddl_object_tab(ref.key)
+    project_dir = tmp_path / "proj"
+    _open_project(window, project_dir)
+    picked = tmp_path / "elsewhere.sql"
+    monkeypatch.setattr(
+        modals.QFileDialog, "getSaveFileName", staticmethod(lambda *a, **k: (str(picked), ""))
+    )
+
+    assert panel.resolve_save_path() == picked  # NOT project_dir/ddl/pr.recalc.sql
+    assert not (project_dir / "ddl").exists()
 
 
 # --- .pgtp working copy: linking, no-.bak, Deploy .pgtp (§18.2) -------------
@@ -1107,10 +1202,61 @@ def test_close_project_reminds_about_pending_ddl_deploys(qtbot, tmp_path):
 
     window._ddl_project_ui.close_project()
 
-    texts = [window.audit_panel.item(i).text() for i in range(window.audit_panel.count())]
-    assert any(
-        t.startswith("[Project]") and "pending a batch deploy" in t for t in texts
+    # FQ-028 routes `[Project]` narration into the Activity Log, and this
+    # particular line is emitted DURING the close -- after which FQ-019's
+    # project transition replaces the on-screen buffer with the (empty)
+    # standalone one. The journal write is unchanged and still the durable
+    # record: it lands in the CLOSING project's own file, which the transition
+    # flushed.
+    from pgtp_editor.db.activity_log import activity_path
+
+    journal = activity_path(project_dir).read_text(encoding="utf-8")
+    assert "[Project]" in journal and "pending a batch deploy" in journal
+
+
+def test_the_close_time_reminder_is_still_readable_after_the_close(qtbot, tmp_path):
+    """BUG-042: the reminder used to be told to a panel the same transition
+    wiped, so the user was informed at the exact moment they could no longer
+    read it. It now ALSO rides the Messages tab, which a project transition
+    does not clear."""
+    from pgtp_editor.db.ddl_project import DeployedObject, save_settings
+    from pgtp_editor.db.introspect import DatabaseSchema, RoutineInfo
+
+    window = _window(qtbot, tmp_path)
+    project_dir = tmp_path / "proj"
+    settings = ProjectSettings(
+        deployed={"ddl/pr.recalc.sql": DeployedObject(content_hash="stale-hash")}
     )
+    save_settings(project_dir, settings)
+    window._ddl_project_ui.set_active_project(project_dir, settings)
+    (project_dir / "ddl").mkdir()
+    (project_dir / "ddl" / "pr.recalc.sql").write_text("-- hand-edited\n", encoding="utf-8")
+    window.ddl_browser_panel._schema = DatabaseSchema(
+        routines={"pr.recalc()": RoutineInfo(schema="pr", name="recalc", source="live def")}
+    )
+
+    window._ddl_project_ui.close_project()
+
+    # The project is gone and the journal panel has been swapped to the
+    # standalone (empty) store -- and the reminder is STILL on screen.
+    assert window._ddl_project_folder is None
+    assert not any(
+        "pending a batch deploy" in row for row in window.activity_panel.row_texts()
+    )
+    assert any(
+        "pending a batch deploy" in row for row in window.results_panel.row_texts()
+    )
+
+
+def test_ordinary_project_narration_still_goes_only_to_the_journal(qtbot, tmp_path):
+    """BUG-042 moved close-time `[Project]` rows only. An open-time line runs
+    AFTER `project_changed` (FQ-019's store-switch-first ordering), survives on
+    its own, and must not be duplicated onto the Messages tab."""
+    window = _window(qtbot, tmp_path)
+    window.audit_panel.addItem("[Project] Source .pgtp unchanged since last opened (x).")
+
+    assert any("Source .pgtp unchanged" in row for row in window.activity_panel.row_texts())
+    assert window.results_panel.row_texts() == []
 
 
 def test_close_project_with_no_ddl_explorer_loaded_never_raises(qtbot, tmp_path):
@@ -1123,10 +1269,15 @@ def test_close_project_with_no_ddl_explorer_loaded_never_raises(qtbot, tmp_path)
     assert window._ddl_project_folder is None
 
 
-def test_database_menu_has_deploy_pgtp_action(qtbot, tmp_path):
+def test_deployment_menu_has_deploy_pgtp_action(qtbot, tmp_path):
+    """FQ-020 MOVED `Deploy .pgtp` off the File menu's §18.2 project group (five
+    -> four) onto the Editor bar's `Deployment` menu: it is meaningful only while
+    the Raw XML tab is active, which is exactly what the move expresses."""
     window = _window(qtbot, tmp_path)
-    menu = find_top_menu(window, "File")
-    assert find_action(menu, "Deploy .pgtp") is not None
+    assert find_action(find_top_menu(window, "File"), "Deploy .pgtp") is None
+    action = find_action(find_top_menu(window, "Deployment"), "Deploy .pgtp")
+    assert action is not None
+    assert action.isVisible()  # Raw XML is the tab a fresh window opens on
 
 
 # --- Window title shows the active project (owner request) -----------------
@@ -1369,7 +1520,12 @@ def test_save_ddl_object_dialog_defaults_to_the_project_folder(qtbot, tmp_path, 
 
     monkeypatch.setattr("pgtp_editor.ui.modals.QFileDialog.getSaveFileName", fake_save)
 
-    window._on_ddl_edit_requested(ref, "CREATE FUNCTION pr.recalc() ...")
+    # `_edit_ddl_live` directly, not `_on_ddl_edit_requested`: since FQ-024 a
+    # project being open sends the gesture down the checkout branch, which never
+    # opens Save As… at all. The Save-As branch can still meet an open project --
+    # a tab opened projectless keeps its resolver when a project opens later, and
+    # creation always uses it -- and this pins the prefill for exactly that.
+    window._edit_ddl_live(ref, "CREATE FUNCTION pr.recalc() ...")
     panel = window.center_stage.ddl_object_tab(ref.key)
     panel.resolve_save_path()
 

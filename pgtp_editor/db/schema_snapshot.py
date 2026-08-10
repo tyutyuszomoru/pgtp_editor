@@ -57,6 +57,8 @@ from .introspect import (
     ColumnInfo,
     DatabaseSchema,
     RoutineInfo,
+    ConstraintInfo,
+    IndexInfo,
     TableInfo,
     TriggerInfo,
     TypeInfo,
@@ -70,7 +72,30 @@ SNAPSHOT_FORMAT = "pgtp-editor.schema-snapshot"
 #: other value instead of guessing, which is what lets a future version add or
 #: rename fields without old code misreading a newer file as a schema that
 #: happens to be missing things.
-SNAPSHOT_VERSION = 1
+#:
+#: **2 (FQ-025):** `DatabaseSchema` gained `constraints` and `indexes`, so the
+#: payload gained two sections. A v1 file is REFUSED rather than loaded with
+#: those sections empty — this module's whole posture is refuse-never-degrade,
+#: and "loaded, but every constraint is missing" is precisely the shape that
+#: makes `diff_schemas` hand the user a script of DROPs. Costless in practice:
+#: `Save Schema Snapshot…` has never been built, so no snapshot can exist that
+#: was written by the app.
+#:
+#: **3 (2026-08-09):** `TableInfo` gained `comment` (the table's own
+#: `pg_description` row, so `Set Table Comment…` can seed the existing text
+#: instead of blanking it). This is a weaker change than 1→2's — one optional
+#: field on one record, not two whole sections — but the version still moves,
+#: for two reasons. First, `_record`/`_exact_keys` demand an EXACT key set, so
+#: a v2 table record would be refused anyway; the only question is *which*
+#: refusal the user reads, and "your reader is the wrong version" is true and
+#: actionable where "this file is truncated or hand-edited" is neither.
+#: Second, silently accepting a missing `comment` (the only alternative that
+#: would not move the version) would default it to `None` — i.e. load a schema
+#: asserting "no table has a comment", which is precisely the degraded state
+#: this module refuses to produce. Costless for the same reason as before:
+#: `Save Schema Snapshot…` has never been built, so no app-written snapshot of
+#: any version exists in the wild.
+SNAPSHOT_VERSION = 3
 
 # The exact field set each record carries, in the dataclasses' own order. Used
 # twice: to build the payload, and to reject a record whose keys do not match
@@ -88,7 +113,7 @@ COLUMN_FIELDS = (
     "fk_target",
     "comment",
 )
-TABLE_FIELDS = ("name", "kind", "columns", "view_definition")
+TABLE_FIELDS = ("name", "kind", "columns", "view_definition", "comment")
 ROUTINE_FIELDS = (
     "schema",
     "name",
@@ -102,7 +127,26 @@ ROUTINE_FIELDS = (
 TRIGGER_FIELDS = ("schema", "table", "name", "timing", "events", "function_name",
                   "definition")
 TYPE_FIELDS = ("schema", "name", "kind", "base_type", "not_null", "attributes")
-SCHEMA_SECTIONS = ("tables", "routines", "triggers", "types")
+CONSTRAINT_FIELDS = (
+    "schema",
+    "table",
+    "name",
+    "kind",
+    "columns",
+    "definition",
+)
+INDEX_FIELDS = (
+    "schema",
+    "table",
+    "name",
+    "columns",
+    "is_unique",
+    "is_primary",
+    "method",
+    "definition",
+    "constraint_name",
+)
+SCHEMA_SECTIONS = ("tables", "routines", "triggers", "types", "constraints", "indexes")
 _PAYLOAD_KEYS = ("format", "version", "schema")
 
 
@@ -151,6 +195,13 @@ def dump_schema(schema: DatabaseSchema) -> str:
                 key: _encode_trigger(value) for key, value in schema.triggers.items()
             },
             "types": {key: _encode_type(value) for key, value in schema.types.items()},
+            "constraints": {
+                key: _encode_constraint(value)
+                for key, value in schema.constraints.items()
+            },
+            "indexes": {
+                key: _encode_index(value) for key, value in schema.indexes.items()
+            },
         },
     }
     # sort_keys reaches every nested mapping, which is what makes the output
@@ -182,6 +233,7 @@ def _encode_table(table: TableInfo) -> dict[str, Any]:
         "kind": table.kind,
         "columns": [_encode_column(column) for column in table.columns],
         "view_definition": table.view_definition,
+        "comment": table.comment,
     }
 
 
@@ -214,6 +266,31 @@ def _encode_trigger(trigger: TriggerInfo) -> dict[str, Any]:
         "events": list(trigger.events),
         "function_name": trigger.function_name,
         "definition": trigger.definition,
+    }
+
+
+def _encode_constraint(constraint: ConstraintInfo) -> dict[str, Any]:
+    return {
+        "schema": constraint.schema,
+        "table": constraint.table,
+        "name": constraint.name,
+        "kind": constraint.kind,
+        "columns": list(constraint.columns),
+        "definition": constraint.definition,
+    }
+
+
+def _encode_index(index: IndexInfo) -> dict[str, Any]:
+    return {
+        "schema": index.schema,
+        "table": index.table,
+        "name": index.name,
+        "columns": list(index.columns),
+        "is_unique": index.is_unique,
+        "is_primary": index.is_primary,
+        "method": index.method,
+        "definition": index.definition,
+        "constraint_name": index.constraint_name,
     }
 
 
@@ -276,6 +353,10 @@ def load_schema(text: str) -> DatabaseSchema:
         routines=_decode_section(body["routines"], "routines", _decode_routine),
         triggers=_decode_section(body["triggers"], "triggers", _decode_trigger),
         types=_decode_section(body["types"], "types", _decode_type),
+        constraints=_decode_section(
+            body["constraints"], "constraints", _decode_constraint
+        ),
+        indexes=_decode_section(body["indexes"], "indexes", _decode_index),
     )
 
 
@@ -324,6 +405,7 @@ def _decode_table(value: Any, where: str) -> TableInfo:
             for index, column in enumerate(columns)
         ],
         view_definition=_opt_text(record["view_definition"], f"{where}.view_definition"),
+        comment=_opt_text(record["comment"], f"{where}.comment"),
     )
 
 
@@ -365,6 +447,35 @@ def _decode_trigger(value: Any, where: str) -> TriggerInfo:
         events=_text_list(record["events"], f"{where}.events"),
         function_name=_text(record["function_name"], f"{where}.function_name"),
         definition=_text(record["definition"], f"{where}.definition"),
+    )
+
+
+def _decode_constraint(value: Any, where: str) -> ConstraintInfo:
+    record = _record(value, CONSTRAINT_FIELDS, where)
+    return ConstraintInfo(
+        schema=_text(record["schema"], f"{where}.schema"),
+        table=_text(record["table"], f"{where}.table"),
+        name=_text(record["name"], f"{where}.name"),
+        kind=_text(record["kind"], f"{where}.kind"),
+        columns=_text_list(record["columns"], f"{where}.columns"),
+        definition=_text(record["definition"], f"{where}.definition"),
+    )
+
+
+def _decode_index(value: Any, where: str) -> IndexInfo:
+    record = _record(value, INDEX_FIELDS, where)
+    return IndexInfo(
+        schema=_text(record["schema"], f"{where}.schema"),
+        table=_text(record["table"], f"{where}.table"),
+        name=_text(record["name"], f"{where}.name"),
+        columns=_text_list(record["columns"], f"{where}.columns"),
+        is_unique=_flag(record["is_unique"], f"{where}.is_unique"),
+        is_primary=_flag(record["is_primary"], f"{where}.is_primary"),
+        method=_text(record["method"], f"{where}.method"),
+        definition=_text(record["definition"], f"{where}.definition"),
+        constraint_name=_opt_text(
+            record["constraint_name"], f"{where}.constraint_name"
+        ),
     )
 
 

@@ -12,9 +12,22 @@
 #
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
-"""The open `.pgtp` **document** lane: open, reparse, save, close, revert, and
-the two things that hang off "which file is open" — §7 Revert gating and §26
-Open Recent.
+"""The open `.pgtp` **document** lane: open, reparse, save, close, discard
+changes, and the one thing that hangs off "which file is open" — §7's
+Discard Changes gating.
+
+FQ-020 re-specified the last of those: `Revert` (reload `<path>.bak`, i.e. *undo
+my last save*, leaving the buffer dirty) is replaced by **Discard Changes**
+(reload from disk, leaving the buffer clean), gated on the **dirty flag** rather
+than on a `.bak` existing. `backup_path()` and the `.bak` reader are gone; the
+two remaining `.bak` writers (non-project `_write_project_text`, and the compare
+target's in `diff_merge_controller`) are untouched.
+
+FQ-010 removed the other one: there is no recent-files MRU here any more (no
+`recentFiles` key, no `File ▸ Open Recent`). Recent *files* suited the
+standalone-`.pgtp`-editor era the project has left; recent *projects* is the
+memory a project-centric app should have, and is a separate, later entry. Do not
+reintroduce an MRU in this lane.
 
 What it owns
 ------------
@@ -26,7 +39,8 @@ The four pieces of state the whole window used to read off the host directly:
   ``TypeError``);
 * :attr:`dirty` — whether the buffer differs from disk;
 * :attr:`loading` — the guard that makes a *programmatic* ``setPlainText``
-  (open / revert / close / parse-failure fallback) not count as a user edit.
+  (open / discard-changes / close / parse-failure fallback) not count as a
+  user edit.
 
 ``MainWindow`` keeps six permanent delegating properties over this lane and
 ``DdlProjectController`` (``_current_project``, ``_current_project_path``,
@@ -56,8 +70,8 @@ Three signals, and why the close path in particular is one
 
   It fires **only on a committed close**. A cancelled close (or a
   ``confirm="save"`` whose save was cancelled) returns before the emit, so the
-  still-open project keeps its tab; :meth:`revert` keeps the project loaded and
-  therefore never tears down either.
+  still-open project keeps its tab; :meth:`discard_changes` keeps the project
+  loaded and therefore never tears down either.
 
 ``silent`` on :meth:`reparse` is KEYWORD-ONLY on purpose
 --------------------------------------------------------
@@ -70,9 +84,10 @@ user is mid-keystroke. Keep both properties.
 
 The replaceable seams are ATTRIBUTES
 ------------------------------------
-:attr:`confirm_close`, :attr:`prompt_open_mode` and :attr:`save_project` are
+:attr:`confirm_close`, :attr:`confirm_discard_changes`, :attr:`prompt_open_mode`
+and :attr:`save_project` are
 plain instance attributes, not methods, because the suite assigns over them
-(two modals and "a save that succeeds / a save that was cancelled"). Every
+(three modals and "a save that succeeds / a save that was cancelled"). Every
 internal caller goes through the attribute, so an assignment on the finished
 object is honoured.
 
@@ -110,6 +125,11 @@ from pathlib import Path
 
 from PySide6.QtCore import QObject, Signal
 
+from pgtp_editor.db.activity_log import (
+    FILE_VERB_OPENED,
+    FILE_VERB_REVERTED,
+    FILE_VERB_SAVED,
+)
 from pgtp_editor.model.encoding import read_pgtp_text
 from pgtp_editor.model.parser import (
     PgtpParseError,
@@ -125,7 +145,8 @@ _log = logging.getLogger(__name__)
 
 class PgtpDocumentController(QObject):
     """Owns the open `.pgtp` document: its model, path, dirty/loading flags,
-    and the open / reparse / save / close / revert gestures over them."""
+    and the open / reparse / save / close / discard-changes gestures over
+    them."""
 
     #: A freshly parsed model, announced where the project tree is rebuilt from
     #: it (see the module docstring on the deliberate pre-adoption timing).
@@ -137,13 +158,6 @@ class PgtpDocumentController(QObject):
     #: A close was COMMITTED. Every project-tied surface tears itself down off
     #: this; nothing about them is inlined into `close()`. See BUG-011.
     project_closed = Signal()
-
-    #: QSettings key holding the recent-projects list, and its cap (§26).
-    #: Persisted through the SAME injectable store the window uses for
-    #: geometry/theme, so a test pointed at a temp ini gets a private MRU list
-    #: for free.
-    _RECENT_FILES_KEY = "recentFiles"
-    _RECENT_FILES_MAX = 10
 
     def __init__(
         self,
@@ -163,6 +177,7 @@ class PgtpDocumentController(QObject):
         has_ddl_project: Callable[[], bool],
         new_ddl_project: Callable[..., None],
         open_ddl_project: Callable[..., None],
+        record_activity: "Callable[..., object] | None" = None,
     ):
         super().__init__(parent)
         self._shell = shell
@@ -180,26 +195,33 @@ class PgtpDocumentController(QObject):
         self._has_ddl_project = has_ddl_project
         self._new_ddl_project = new_ddl_project
         self._open_ddl_project = open_ddl_project
+        #: FQ-019: `MainWindow.record_file_activity(file_verb, error=None)`, the
+        #: Activity Log's file emit point. Optional and defaulted to a no-op so
+        #: the ~40 tests that build this controller directly need no new
+        #: argument; the lane emits a VERB only and never decides whether the
+        #: action was standalone or project-scoped -- that is the host's one
+        #: `_file_activity_source` call, and persistence is the core's decision.
+        self._record_activity = record_activity or (lambda *a, **k: None)
 
         #: The last successfully parsed model, and the file a Save writes to.
         self._project = None
         self._path = None
         #: Document dirty-state tracking. `_loading` guards programmatic
-        #: setPlainText calls (load/revert/close) so they don't spuriously mark
-        #: the buffer dirty.
+        #: setPlainText calls (load/discard-changes/close) so they don't
+        #: spuriously mark the buffer dirty.
         self._dirty = False
         self._loading = False
 
-        #: File ▸ Revert, handed over once the File menu is built (§7). None
-        #: until then, which is also why `refresh_revert_action` is guarded.
-        self._revert_action = None
-        #: File ▸ Open Recent, likewise handed over (§26).
-        self._recent_menu = None
+        #: File ▸ Discard Changes, handed over once the File menu is built (§7).
+        #: None until then, which is also why
+        #: `refresh_discard_changes_action` is guarded.
+        self._discard_changes_action = None
 
         #: Replaceable seams -- ATTRIBUTES, not methods. See the module
         #: docstring: the suite assigns over them to keep two modals out of the
         #: run and to model a save that succeeds vs. one that was cancelled.
         self.confirm_close = self._confirm_close
+        self.confirm_discard_changes = self._confirm_discard_changes
         self.prompt_open_mode = self._prompt_open_mode
         self.save_project = self._save_project
 
@@ -247,38 +269,30 @@ class PgtpDocumentController(QObject):
 
     def set_dirty(self, dirty: bool) -> None:
         self._dirty = dirty
+        # FQ-020: Discard Changes is gated on THIS flag, so the gate can ride on
+        # every keystroke -- which the old `.bak`-existence gate could not (it
+        # would have meant a `stat` per keypress on a possibly-sshfs-mounted
+        # path, see `refresh_discard_changes_action`).
+        self.refresh_discard_changes_action()
         self.dirty_changed.emit(dirty)
 
     # -- read-only surface ---------------------------------------------------
 
     @property
-    def revert_action(self):
-        """File ▸ Revert, or None before the File menu is built (§7)."""
-        return self._revert_action
-
-    @property
-    def recent_menu(self):
-        """File ▸ Open Recent, or None before the File menu is built (§26)."""
-        return self._recent_menu
+    def discard_changes_action(self):
+        """File ▸ Discard Changes, or None before the File menu is built (§7)."""
+        return self._discard_changes_action
 
     # -- construction --------------------------------------------------------
 
-    def set_revert_action(self, action) -> None:
-        """Adopt File ▸ Revert and gate it immediately (§7).
+    def set_discard_changes_action(self, action) -> None:
+        """Adopt File ▸ Discard Changes and gate it immediately (§7).
 
         The host builds the File menu (most of it is not this lane's) and hands
         this one action over, mirroring `CoherenceController.set_toggle_action`.
         """
-        self._revert_action = action
-        self.refresh_revert_action()
-
-    def set_recent_menu(self, menu) -> None:
-        """Adopt File ▸ Open Recent: rebuild its children from the persisted MRU
-        list now and again every time it is about to be shown, so an entry whose
-        file was deleted meanwhile disappears instead of misfiring (§26)."""
-        self._recent_menu = menu
-        menu.aboutToShow.connect(self.rebuild_recent_menu)
-        self.rebuild_recent_menu()
+        self._discard_changes_action = action
+        self.refresh_discard_changes_action()
 
     # -- seams ---------------------------------------------------------------
 
@@ -362,9 +376,8 @@ class PgtpDocumentController(QObject):
 
     def open_pgtp_path(self, path) -> None:
         """Open a `.pgtp` the way File ▸ Open… does, given a path that came
-        from somewhere other than that dialog (§21's drag-and-drop and §26's
-        Open Recent both drop one here). Split out so no caller can fork the
-        §18.2 decision."""
+        from somewhere other than that dialog (§21's drag-and-drop drops one
+        here). Split out so no caller can fork the §18.2 decision."""
         if not self._has_ddl_project():
             self.prompt_open_mode(str(path))
         else:
@@ -403,7 +416,7 @@ class PgtpDocumentController(QObject):
                 self.project_changed.emit(project)
                 self._project = project
                 # Normalize to str so downstream string ops (e.g. the ".bak"
-                # path concatenation in revert / _write_project_text) never hit
+                # path concatenation in `_write_project_text`) never hit
                 # a TypeError when a caller passes a pathlib.Path instead of the
                 # QFileDialog string.
                 self._path = str(path)
@@ -436,13 +449,17 @@ class PgtpDocumentController(QObject):
 
         # Cursor restored here (busy_status __exit__), BEFORE any dialog.
         if parse_error is not None:
+            # FQ-019: a `.pgtp` that failed to parse was still an OPEN the user
+            # attempted, and the parse error is exactly the text the journal's
+            # click-through viewer exists to show in full.
+            self._record_activity(FILE_VERB_OPENED, error=f"{path}: {parse_error}")
             self._handle_parse_failure(path, parse_error)
             return
-        # §26 Open Recent + §7 Revert gating: both keyed off the file that just
-        # became the open project. Only on the SUCCESS path -- a file that would
-        # not parse is not something to offer re-opening from a menu.
-        self.remember_recent_file(path)
-        self.refresh_revert_action()
+        self._record_activity(FILE_VERB_OPENED)
+        # §7 Discard Changes gating: `set_dirty(False)` above already refreshed
+        # it, but only on the SUCCESS path -- a failed parse must not advertise
+        # the freshly-assigned path as discardable.
+        self.refresh_discard_changes_action()
         self._shell.status(f"Opened: {path}", 5000)
 
     def _handle_parse_failure(self, path, exc: PgtpParseError) -> None:
@@ -578,11 +595,13 @@ class PgtpDocumentController(QObject):
             modals.QMessageBox.critical(
                 self._shell.window, "Save Failed", f"Could not save:\n\n{exc}"
             )
+            self._record_activity(FILE_VERB_SAVED, error=f"{self._path}: {exc}")
             return
+        self._record_activity(FILE_VERB_SAVED)
+        # `set_dirty(False)` re-gates Discard Changes on its own now (FQ-020:
+        # the gate is the dirty flag, and a just-saved buffer has nothing to
+        # discard) -- no separate refresh call is needed here any more.
         self.set_dirty(False)
-        # The save just wrote `<path>.bak` (unless this is a §18.2 working
-        # copy), so Revert's availability may have flipped.
-        self.refresh_revert_action()
         self._shell.status(f"Saved {Path(self._path).name}", 5000)
 
     def save_as(self) -> None:
@@ -600,11 +619,11 @@ class PgtpDocumentController(QObject):
             modals.QMessageBox.critical(
                 self._shell.window, "Save Failed", f"Could not save:\n\n{exc}"
             )
+            self._record_activity(FILE_VERB_SAVED, error=f"{path}: {exc}")
             return
+        self._record_activity(FILE_VERB_SAVED)
         self._path = path
         self.set_dirty(False)
-        self.remember_recent_file(path)
-        self.refresh_revert_action()
         self._shell.status(f"Saved as {Path(path).name}", 5000)
 
     def ensure_saved(self, save_as: bool = False) -> bool:
@@ -622,7 +641,7 @@ class PgtpDocumentController(QObject):
             self.save_project()
         return bool(self._path)
 
-    # -- close / revert ------------------------------------------------------
+    # -- close / discard changes ---------------------------------------------
 
     def close(self, confirm=None) -> None:
         """Close the current project, prompting to resolve unsaved changes.
@@ -662,135 +681,115 @@ class PgtpDocumentController(QObject):
             self._loading = False
         self._project = None
         self._path = None
+        # No open file, nothing to discard -- `set_dirty` re-gates it (§7).
         self.set_dirty(False)
-        # No project, no `.bak` to revert to (§7).
-        self.refresh_revert_action()
         # The committed-close broadcast: project tree, snapshot history and the
         # coherence surface (BUG-011) all hang off this. A cancelled close
-        # returned above, and `revert` keeps the project loaded so it never
-        # tears down.
+        # returned above, and `discard_changes` keeps the project loaded so it
+        # never tears down.
         self.project_closed.emit()
         _log.info("file: close outcome=%s", outcome)
 
-    def backup_path(self) -> "str | None":
-        """The `<current>.bak` path Revert would read, or None when no project
-        is open. ONE definition, shared by `revert` and the enable gate below so
-        the menu item can never disagree with what Revert does."""
-        if not self._path:
-            return None
-        return str(self._path) + ".bak"
+    def refresh_discard_changes_action(self) -> None:
+        """Gate File ▸ Discard Changes on there being something to discard --
+        an open file whose buffer is dirty (§7, FQ-020).
 
-    def refresh_revert_action(self) -> None:
-        """Gate File ▸ Revert on the `.bak` actually existing (§7).
-
-        Called from every point that can change the answer -- open, save, save
-        as, revert, close -- rather than from `set_dirty`, which fires on every
-        keystroke and would turn this `exists()` into a per-keystroke `stat`
-        (the `.pgtp` may live on an sshfs mount, §18.2). Guarded on the action
-        existing because `set_revert_action` refreshes during menu construction
-        and earlier call paths run before the File menu exists at all.
+        The gate is the **dirty flag**, deliberately not a re-read of the file:
+        the command it now backs is *reload from disk*, so "the buffer differs
+        from disk" is exactly what `_dirty` already tracks. That makes it
+        *cheaper* than the `.bak`-existence gate it replaced, which had to be
+        kept off `set_dirty` because `Path(...).exists()` on every keystroke is a
+        `stat` on a possibly-sshfs-mounted path (§18.2). Guarded on the action
+        existing because `set_discard_changes_action` refreshes during menu
+        construction and earlier call paths run before the File menu exists.
         """
-        action = self._revert_action
+        action = self._discard_changes_action
         if action is None:
             return
-        bak_path = self.backup_path()
-        action.setEnabled(bak_path is not None and Path(bak_path).exists())
+        action.setEnabled(bool(self._path) and self._dirty)
 
-    def revert(self) -> None:
-        """Reload the project from its `<path>.bak` backup, if one exists.
+    def _confirm_discard_changes(self) -> bool:
+        """Confirm the discard, naming what is lost (§7). Its own method, and
+        reassigned as a seam in `__init__`, so tests never drive a real modal."""
+        return (
+            modals.QMessageBox.question(
+                self._shell.window,
+                "Discard Changes",
+                f"Discard all changes to {Path(self._path).name} and reload it "
+                "from disk?\n\nEdits made since the last save will be lost.",
+                modals.QMessageBox.StandardButton.Yes
+                | modals.QMessageBox.StandardButton.No,
+            )
+            == modals.QMessageBox.StandardButton.Yes
+        )
 
-        Restores the .bak content into the editor and rebuilds the tree from
-        it while keeping `project_path` pointing at the real file. The buffer
-        then differs from the on-disk file, so the document is marked dirty.
+    def discard_changes(self, confirm=None) -> None:
+        """File ▸ Discard Changes: **reload the document from disk**, throwing
+        away the edits made since the last save (§7, FQ-020).
+
+        This REPLACED `revert()`, which read `<path>.bak` -- *"undo my last
+        save"* -- and left the buffer dirty. The two are genuinely different
+        commands, which is why the label changed with the behaviour rather than
+        the word being quietly redefined; `backup_path()` and the `.bak` reader
+        are gone with it. Nothing here writes a `.bak` either, so the two
+        remaining writers (`_write_project_text` in non-project mode, and
+        `diff_merge_controller.apply_changes_to_target`, which writes beside the
+        *compare target*) are untouched by the change.
+
+        `confirm` is the test seam, mirroring `close(confirm=…)`: True/False
+        short-circuits the dialog.
         """
-        bak_path = self.backup_path()
-        if bak_path is None or not Path(bak_path).exists():
-            # Still defended at runtime even though the menu item is now gated
-            # on the same condition: the toolbar mirrors the action, and the
-            # `.bak` can vanish between the last refresh and the click.
-            self._shell.status("Nothing to revert to.", 5000)
-            self.refresh_revert_action()
+        if not self._path:
+            self._shell.status("No file is open — nothing to discard.", 5000)
+            self.refresh_discard_changes_action()
+            return
+        if not self._dirty:
+            # Still defended at runtime even though the action is gated on the
+            # same condition: the toolbar mirrors the action, and a pinned button
+            # can be clicked between refreshes.
+            self._shell.status("No unsaved changes to discard.", 5000)
+            self.refresh_discard_changes_action()
+            return
+        if confirm is None:
+            confirm = self.confirm_discard_changes()
+        if not confirm:
+            _log.info("file: discard-changes outcome=cancelled")
             return
 
-        _log.info("file: revert %s", bak_path)
+        path = self._path
+        _log.info("file: discard-changes %s", path)
         try:
-            project = load_project(bak_path)
+            project = load_project(path)
         except PgtpParseError as exc:
-            self._handle_parse_failure(bak_path, exc)
+            # The file on disk is what failed to parse, so the buffer is left
+            # exactly as it was -- discarding into an unparseable state would
+            # lose the user's edits AND give them nothing back.
+            # FQ-019: `Reverted` is the journal's name for this gesture (the
+            # `.bak`-reading `revert()` FQ-020 replaced is gone; Discard Changes
+            # is the surviving "put the file back" command).
+            self._record_activity(FILE_VERB_REVERTED, error=f"{path}: {exc}")
+            self._handle_parse_failure(path, exc)
             return
 
         editor = self._shell.stage.xml_editor
-        raw_text = self.read_raw_text(bak_path)
+        raw_text = self.read_raw_text(path)
         if raw_text is not None:
             self._loading = True
             try:
                 editor.setPlainText(raw_text)
             finally:
                 self._loading = False
-            # Seed the snapshot history with the reverted text so undo/redo
-            # semantics after a revert match a normal open.
+            # Seed the snapshot history with the on-disk text so undo/redo
+            # semantics after a discard match a normal open.
             self._history_push(
                 editor.toPlainText(),
-                f"Reverted {Path(self._path).name}",
+                f"Discarded changes in {Path(path).name}",
                 baseline=True,
             )
         self.project_changed.emit(project)
         self._project = project
-        self.set_dirty(True)
-        self.refresh_revert_action()
-        self._shell.status(f"Reverted to {Path(bak_path).name}", 5000)
-
-    # -- Open Recent (§26) ---------------------------------------------------
-
-    def recent_files(self) -> list:
-        """The persisted MRU list, most-recent first, pruned of entries whose
-        file no longer exists and capped. Reading prunes but does not write --
-        `remember_recent_file` is the only writer."""
-        stored = self._settings.value(self._RECENT_FILES_KEY, [])
-        if isinstance(stored, str):
-            # A single-element QStringList round-trips through the ini format
-            # as a bare string.
-            stored = [stored]
-        elif stored is None:
-            stored = []
-        paths = []
-        for entry in stored:
-            path = str(entry)
-            if path in paths or not Path(path).is_file():
-                continue
-            paths.append(path)
-        return paths[: self._RECENT_FILES_MAX]
-
-    def remember_recent_file(self, path) -> None:
-        """Push `path` to the head of the MRU list and persist it."""
-        path = str(path)
-        paths = [p for p in self.recent_files() if p != path]
-        paths.insert(0, path)
-        self._settings.setValue(
-            self._RECENT_FILES_KEY, paths[: self._RECENT_FILES_MAX]
-        )
-
-    def rebuild_recent_menu(self) -> None:
-        """Repopulate the Open Recent submenu from the pruned MRU list.
-
-        Every entry goes through the ONE project-open path (`open_file` via
-        `open_pgtp_path`, so §18.2's New/Open/Edit-Standalone chooser still
-        applies) -- never a second loader. An empty list shows a single disabled
-        placeholder rather than an empty menu that looks broken.
-        """
-        menu = self._recent_menu
-        if menu is None:
-            return
-        menu.clear()
-        paths = self.recent_files()
-        if not paths:
-            placeholder = menu.addAction("(no recent files)")
-            placeholder.setEnabled(False)
-            return
-        for path in paths:
-            action = menu.addAction(Path(path).name)
-            action.setToolTip(path)
-            # Default-argument binding, not a closure over the loop variable.
-            action.triggered.connect(
-                lambda _checked=False, target=path: self.open_pgtp_path(target)
-            )
+        # The buffer now IS the file on disk -- the opposite of `revert()`, which
+        # left it dirty because it had loaded a different file (`.bak`).
+        self.set_dirty(False)
+        self._record_activity(FILE_VERB_REVERTED)
+        self._shell.status(f"Discarded changes in {Path(path).name}", 5000)

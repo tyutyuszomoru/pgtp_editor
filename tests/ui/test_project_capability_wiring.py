@@ -789,9 +789,7 @@ def test_a_broken_inspection_seam_is_surfaced_and_leaves_the_facts_unknown(
 
     assert window._ddl_sandbox_content_facts is None
     assert _sandbox1_state(window) == "sandbox1_unknown"
-    messages = [
-        window.audit_panel.item(i).text() for i in range(window.audit_panel.count())
-    ]
+    messages = window.activity_panel.row_texts()
     assert any("Sandbox content inspection failed" in m for m in messages)
 
 

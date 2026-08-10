@@ -89,9 +89,9 @@ def test_the_host_and_its_collaborators_reach_modal_qt_only_through_modals():
     through ``modals`` and a local binding would keep them PASSING while
     testing nothing -- and could let an offscreen run reach a real modal.
 
-    Deliberately scoped to the decomposition surface. Seven leaf dialogs
+    Deliberately scoped to the decomposition surface. Six leaf dialogs
     (``about``, ``php_file_tab``, ``new_project_dialog``, ``new_trigger_dialog``,
-    ``caption_management_panel``, ``ddl_object_editor``, ``sandbox_setup_dialog``)
+    ``caption_management_panel``, ``ddl_object_editor``)
     are known to call modal Qt directly and are not covered by this rule.
     """
     offenders: list[str] = []

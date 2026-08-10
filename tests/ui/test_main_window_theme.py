@@ -49,7 +49,7 @@ def test_toggle_light_switches_to_fusion_and_keeps_icons(qtbot, _reset_app_theme
     app = QApplication.instance()
     assert calls == ["Fusion"]
     assert app.palette().color(QPalette.ColorRole.Window).lightness() > 200
-    icons = [action.icon() for action in window._toolbar_ui.toolbar.actions()]
+    icons = [action.icon() for action in window._toolbar_ui.command_actions]
     assert icons and all(not icon.isNull() for icon in icons)
 
 

@@ -153,6 +153,7 @@ class DdlProjectController(QObject):
         target_params: Callable[[], object],
         refresh_status_window: Callable[[], None],
         explorer_schema: Callable[[], object],
+        sandbox_controller: object | None = None,
     ):
         super().__init__(parent)
         self._shell = shell
@@ -165,6 +166,13 @@ class DdlProjectController(QObject):
         self._target_params = target_params
         self._refresh_status_window = refresh_status_window
         self._explorer_schema = explorer_schema
+        #: The app's one `SandboxController`, handed to Project Settings so its
+        #: provisioning group (Provision / Reset / "create a database for me",
+        #: which `Database ▸ Sandbox Setup…` used to host) can act. Optional: a
+        #: controller built without one still opens the dialog, which then
+        #: states why provisioning is unavailable instead of showing dead
+        #: buttons.
+        self._sandbox_controller = sandbox_controller
 
         #: Local DDL-versioning project state (spec §18.2) -- deliberately
         #: separate from the open `.pgtp`: a project here is a plain chosen
@@ -411,8 +419,9 @@ class DdlProjectController(QObject):
         if self._close_project_action is not None:
             self._close_project_action.setEnabled(True)
         # §18.5 D2: the sandbox controller follows the project. Its
-        # `set_project` drops any session that belonged to the previous project
-        # and connects to nothing.
+        # `set_project` drops any session that belonged to the previous project;
+        # the HOST then opens a fresh one for this project (BUG-040), so a
+        # connection is very much a consequence of getting here.
         self._bind_sandbox()
         self.refresh_project_dependent_actions()
         self.project_changed.emit(folder, settings)
@@ -434,8 +443,24 @@ class DdlProjectController(QObject):
         never forces it; closing itself always succeeds."""
         if self._folder is None:
             return
-        self.offer_pgtp_deploy_on_close()
-        self.remind_pending_deploys_on_close()
+        # BUG-042: everything narrated in here is emitted BEFORE
+        # `project_changed` (it needs the `_folder`/`_settings` the lines below
+        # clear), and FQ-019's journal replaces its display buffer on that
+        # transition -- so a `[Project]` line filed only in the journal was
+        # wiped off screen by the very close it described. The flag tells
+        # `AuditRouter` that these rows are close-time narration: it keeps
+        # journalling them into the CLOSING project's file exactly as before and
+        # additionally renders them on the Messages tab, which the transition
+        # does not clear. Restored in `finally` so a modal that raises cannot
+        # leave every later `[Project]` line mis-routed.
+        audit = self._shell.audit
+        previous = getattr(audit, "project_closing", False)
+        try:
+            audit.project_closing = True
+            self.offer_pgtp_deploy_on_close()
+            self.remind_pending_deploys_on_close()
+        finally:
+            audit.project_closing = previous
         self._folder = None
         self._settings = None
         self._capability_status = None
@@ -712,7 +737,17 @@ class DdlProjectController(QObject):
         self.require_project(self._show_settings_dialog)
 
     def _show_settings_dialog(self) -> None:
-        dialog = ProjectSettingsDialog(self._settings, parent=self._shell.window)
+        # `confirm=None` on purpose: the CONTROLLER owns the single destructive
+        # prompt (a controller built without `confirm_destructive` refuses every
+        # destructive operation anyway), so passing one here too would ask the
+        # user twice for one Provision/Reset.
+        dialog = ProjectSettingsDialog(
+            self._settings,
+            parent=self._shell.window,
+            sandbox_controller=self._sandbox_controller,
+            project_dir=self._folder,
+            confirm=None,
+        )
         dialog.accepted.connect(lambda: self._save_settings(dialog))
         self._project_settings_dialog = dialog
         dialog.show()

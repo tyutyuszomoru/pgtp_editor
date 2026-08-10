@@ -123,7 +123,7 @@ from ..db.sandbox_query import (
     QueryResult,
     run_sandbox_query,
 )
-from ..sql.caret_context import DOTTED_PATH, resolve_caret_context
+from ..sql.caret_context import ALIAS_REF, DOTTED_PATH, LOCAL_REF, resolve_caret_context
 from ..sql.formatter import format_selection as _format_selection_text
 from ..sql.statements import (
     CHANGES_OBJECTS,
@@ -135,6 +135,8 @@ from ..sql.statements import (
 from .async_task import run_async
 from .code_editor import CodeEditor
 from .completion_popup import CompletionPopupHostMixin
+from .expand_select_seam import expand_select_expansion
+from .schema_gesture_seam import SchemaGestureHostMixin
 from .sql_results_panel import RunReport, SqlResultsPanel, StatementRun
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -165,8 +167,16 @@ MIN_ROW_LIMIT = 1
 
 #: Why Run is refused with no live sandbox. Names the way back, the way every
 #: other §18.5 degradation does -- never a bare "unavailable".
+#:
+#: It must name a place the user can actually REACH from here, which is why it
+#: no longer says `Database ▸ Sandbox Setup…` -- that entry was DELETED on
+#: 2026-08-09 and its gestures moved into Project Settings. The session itself
+#: is no longer something to "open" at all (it comes up with the project), so
+#: the honest way back is the connection, on the tab that now also carries
+#: Provision and Reset.
 NO_SESSION_TEXT = (
-    "No live sandbox session — open one via Database ▸ Sandbox Setup…. "
+    "No live sandbox session — the project's sandbox could not be reached; "
+    "check its connection in Project Settings. "
     "Ad-hoc SQL runs against the sandbox and nowhere else."
 )
 
@@ -364,7 +374,7 @@ def default_object_change_confirm(title: str, text: str) -> ObjectChangeConfirma
     )
 
 
-class SqlConsolePanel(CompletionPopupHostMixin, QWidget):
+class SqlConsolePanel(SchemaGestureHostMixin, CompletionPopupHostMixin, QWidget):
     """Editor + results grid for ad-hoc SQL against this project's sandbox.
 
     Constructor seams (all keyword-only; nothing here opens a connection):
@@ -449,6 +459,10 @@ class SqlConsolePanel(CompletionPopupHostMixin, QWidget):
 
         self.editor = CodeEditor(language="sql")
         self.editor.setReadOnly(False)
+        # Expand-`SELECT` (FQ-030 slice 1): the one part of the gesture that
+        # needs a schema. Read at gesture time, so a later `set_schema_index`
+        # is picked up without re-wiring.
+        self.editor.set_dynamic_expander(self._expand_select_expansion)
         self.editor.setPlaceholderText(
             "SELECT … — runs against this project's sandbox database, never the target"
         )
@@ -499,6 +513,20 @@ class SqlConsolePanel(CompletionPopupHostMixin, QWidget):
             Qt.ShortcutContext.WidgetWithChildrenShortcut
         )
         self._completion_shortcut.activated.connect(self.show_completions)
+
+        # FQ-030 slice 3's two schema-fed gestures, wired the same way and for
+        # the same reason: both need the injected `SchemaIndex`, which the
+        # editor widget may not hold, so neither can live in `CodeEditor`'s own
+        # key handling next to Ctrl+Alt+E / Ctrl+Alt+C.
+        self._join_shortcut = QShortcut(QKeySequence("Ctrl+Alt+J"), self)
+        self._join_shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+        self._join_shortcut.activated.connect(self.join_on_fk)
+
+        self._signature_shortcut = QShortcut(QKeySequence("Ctrl+Shift+Space"), self)
+        self._signature_shortcut.setContext(
+            Qt.ShortcutContext.WidgetWithChildrenShortcut
+        )
+        self._signature_shortcut.activated.connect(self.show_signature_help)
 
         self._format_shortcut = QShortcut(QKeySequence("Ctrl+Alt+F"), self)
         self._format_shortcut.setContext(
@@ -795,22 +823,71 @@ class SqlConsolePanel(CompletionPopupHostMixin, QWidget):
         """The injected `SchemaIndex`, or None."""
         return self._schema_index
 
+    # --- Expand-`SELECT` (§18.6 / FQ-030 slice 1) --------------------------
+    def _expand_select_expansion(self, text: str, pos: int):
+        """`CodeEditor.set_dynamic_expander` seam: the buffer in, an
+        `Expansion` out (`ui/expand_select_seam.py`, shared verbatim with the
+        DDL object tab). Uses the already-injected index; queries nothing."""
+        return expand_select_expansion(self._schema_index, text, pos)
+
+    def expand_select(self) -> bool:
+        """Ctrl+Alt+C: expand the bare `SELECT` at the caret into its column
+        list (FQ-030 slice 1). The console is where a bare `SELECT FROM
+        hr.jobcard` is most often typed, so this is its home surface."""
+        return self.editor.expand_select_at_caret()
+
     def show_completions(self) -> None:
         """Ctrl+Space: schema-qualified identifier completion at the caret.
 
-        Only §18.6's *dotted path* row applies here -- `NEW.`/`OLD.` row
-        variables are meaningful inside a trigger function body, and a console
-        buffer is not one, so there is nothing to resolve them against. No-op
-        with no `SchemaIndex` injected or an unresolvable caret."""
+        §18.6's *dotted path* row applies here, and so does FQ-030's
+        `ALIAS_REF` refinement of it: a console buffer is where a FROM clause
+        is most often hand-written, so `FROM hr.jobcard jc` ... `jc.` offers
+        that table's columns exactly as it does in a DDL tab. `NEW.`/`OLD.`
+        still does NOT: row variables are meaningful inside a trigger function
+        body, and a console buffer is not one, so there is nothing to resolve
+        them against.
+
+        `LOCAL_REF` is deliberately NOT consumed. `caret_context` descends into
+        a pasted `$$` body here too, so a pasted routine's `rec.` does resolve
+        -- but a console buffer is a script being *sent*, not a routine being
+        edited, and its declarations are not this panel's subject. What matters
+        is that it does not silently swallow the caret either: an unconsumed
+        refinement falls through to the `DOTTED_PATH` reading of the same
+        context (both kinds keep `parts` populated for exactly that), so the
+        old behavior survives instead of the guard turning into a dead branch.
+
+        No-op with no `SchemaIndex` injected or an unresolvable caret."""
         index = self._schema_index
         if index is None:
             return
         context = resolve_caret_context(
             self.editor.toPlainText(), self.editor.textCursor().position()
         )
-        if context is None or context.kind != DOTTED_PATH:
+        if context is None or context.kind not in (DOTTED_PATH, ALIAS_REF, LOCAL_REF):
             return
-        if not context.parts:
+        if context.kind == ALIAS_REF and context.table_ref is not None:
+            table = context.table_ref.qualified
+            # `column_entries` filters AND renders: the key stays the bare
+            # column name (what gets inserted), the display adds type, PK, FK
+            # target, NOT NULL, default and comment. The display must never
+            # reach the buffer, which is exactly why it is the pair's tail.
+            entries = index.column_entries(table, context.prefix) if table else []
+            if entries:
+                popup = self._ensure_completion_popup()
+                popup.set_items(entries)
+                self._rewire_popup(popup, self._complete_identifier)
+                self._popup_at_caret(popup)
+                return
+            # No schema written (`FROM jobcard j`) or the table is not in the
+            # fetched schema -- fall through to the DOTTED_PATH reading below.
+        if len(context.parts) >= 2:
+            # `hr.jobcard.` -- the cascade's third segment, offering that
+            # table's columns. Nothing matching shows nothing, the same
+            # fallback convention the other two steps follow.
+            items = index.column_entries(
+                f"{context.parts[0]}.{context.parts[1]}", context.prefix
+            )
+        elif not context.parts:
             prefix = context.prefix.lower()
             names = [
                 name

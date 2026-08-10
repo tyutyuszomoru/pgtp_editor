@@ -31,7 +31,7 @@ from PySide6.QtWidgets import QVBoxLayout, QWidget
 
 from pgtp_editor.ui.code_editor import CodeEditor
 from pgtp_editor.ui.ddl_buffer_panel import resolve_edit_target
-from pgtp_editor.ui.find_replace_bar import FindReplaceBar
+from pgtp_editor.ui.find_replace_bar import FindReplaceBar, install_focus_shortcuts
 
 
 def _fold_regions_for_spans(spans) -> list[tuple[int, int, int]]:
@@ -53,25 +53,42 @@ def _fold_regions_for_spans(spans) -> list[tuple[int, int, int]]:
 
 
 class EditorPanel(QWidget):
-    #: Right-click inside an object's span ▸ Edit <schema>.<name>(<argtypes>)…
+    #: Right-click inside an object's span ▸ Edit DDL: <schema>.<name>(<argtypes>)
     #: (spec §18.5, D1 entry point 2). Same payload shape as
     #: `BrowserPanel.edit_requested` -- the object's `DdlObjectRef` and its
-    #: current source text.
+    #: current source text. The ONLY editing signal since FQ-024, mirroring
+    #: `BrowserPanel`: `checkout_requested` is withdrawn and checkout is a
+    #: branch of MainWindow's handler for this signal (§18.1/§18.2).
     edit_requested = Signal(object, str)
 
-    #: Right-click inside an object's span ▸ Check Out for Versioning
-    #: (spec §18.2). Same payload shape as `edit_requested`.
-    checkout_requested = Signal(object, str)
+    def __init__(
+        self, parent: QWidget | None = None, *, browse_only: bool = False
+    ) -> None:
+        """`browse_only` suppresses the right-click ▸ `Edit DDL` entry (§18.7,
+        FQ-022).
 
-    def __init__(self, parent: QWidget | None = None) -> None:
+        The SANDBOX Explorer instance passes it. `Edit DDL` from the sandbox's
+        buffer would reach `MainWindow._on_ddl_edit_requested`, which in project
+        mode takes the CHECKOUT branch and would seed `ddl/*.sql` from the
+        *sandbox's* definition -- poisoning §18.2's drift baseline, whose
+        reference point is the deployed target definition. Rather than teach the
+        panel about checkouts, the sandbox instance simply does not offer the
+        gesture (§18.7's "browse-only for v1", pending an owner ruling on whether
+        it should instead always take the projectless/live-source branch).
+
+        Off by default, so the target instance -- and every existing caller --
+        keeps today's behaviour untouched.
+        """
         super().__init__(parent)
+        #: Whether this instance offers `Edit DDL` at all (see above).
+        self._browse_only = browse_only
         self.editor = CodeEditor(language="sql")
         # Read-only by design (§18.1): phase-2 inline write-back, if ever
         # built, is a separate, diff-gated feature — this tab never edits.
         self.editor.setReadOnly(True)
         self.find_replace_bar = FindReplaceBar(self.editor)
 
-        # Retained so right-click ▸ Edit… (§18.5, D1 entry point 2) can find
+        # Retained so right-click ▸ Edit DDL (§18.5, D1 entry point 2) can find
         # which object the click landed inside; the schema that produced them
         # resolves the click to a `DdlObjectRef` + live source text (shared
         # helper with BrowserPanel's tree, `ddl_buffer_panel.resolve_edit_target`).
@@ -84,6 +101,15 @@ class EditorPanel(QWidget):
         layout.setSpacing(0)
         layout.addWidget(self.editor)
         layout.addWidget(self.find_replace_bar)
+
+        # FQ-016: the bar is permanently visible, so Ctrl+F / Ctrl+R FOCUS it.
+        # Scoped to this panel and its children so the keys work with the caret
+        # in the (read-only) buffer. Replace is inert here by design --
+        # `CodeEditor.replace_current_selection` early-returns on a read-only
+        # editor -- but focusing the field is not, so both keys are installed.
+        self._focus_find_shortcut, self._focus_replace_shortcut = (
+            install_focus_shortcuts(self, self.find_replace_bar)
+        )
 
     def set_ddl_text(self, text: str, spans=None, schema=None) -> None:
         """Replace the synthesized buffer (a fresh `build_ddl_text` result).
@@ -139,17 +165,19 @@ class EditorPanel(QWidget):
         line = cursor.blockNumber() + 1
         span = self._span_at_line(line)
         menu = self.editor.createStandardContextMenu()
-        if span is not None and self._schema is not None:
+        # A browse-only instance still gets the standard (copy/select-all) menu
+        # -- reading the buffer is the whole point of it -- just no Edit DDL.
+        if not self._browse_only and span is not None and self._schema is not None:
             resolved = resolve_edit_target(self._schema, span)
             if resolved is not None:
                 ref, source = resolved
                 menu.addSeparator()
+                # ONE editing entry (FQ-024), still carrying the full object
+                # identity: the click landed somewhere in a whole-schema buffer,
+                # so the entry has to say WHICH object it resolved to -- and two
+                # overloads of one name must read differently.
                 menu.addAction(
-                    f"Edit {ref.qualified}…",
+                    f"Edit DDL: {ref.qualified}",
                     lambda: self.edit_requested.emit(ref, source),
-                )
-                menu.addAction(
-                    "Check Out for Versioning",
-                    lambda: self.checkout_requested.emit(ref, source),
                 )
         return menu

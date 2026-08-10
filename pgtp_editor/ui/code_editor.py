@@ -18,12 +18,18 @@ JS/PHP code, opened as a modal-capable dialog from the XML editor / tree.
 
 Composed of a QPlainTextEdit subclass (``CodeEditor``) with per-language
 syntax highlighting and bracket/quote conveniences, and a hosting dialog
-(``CodeEditorDialog``) with OK/Cancel and Ctrl+S / Ctrl+W shortcuts.
+(``CodeEditorDialog``) with OK/Cancel buttons and no keyboard shortcuts.
 
 The auto-close behavior mirrors XmlEditor's approach: the editor tracks the
 closer characters it itself inserted (as QTextCursors so their positions
 self-adjust) so that "type-through" only skips over a closer this editor
 auto-inserted, never an arbitrary pre-existing one.
+
+``CodeEditor`` is also where FQ-030's **one** template-expansion path lives:
+`apply_expansion` takes an `sql/templates.py::Expansion` -- from a keyword
+snippet or from expand-`SELECT`, which are one mechanism and not two -- applies
+it as a single undo, and walks its tab stops on Tab. See the "Template
+expansion" section on the class.
 """
 from __future__ import annotations
 
@@ -46,10 +52,18 @@ from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QPlainTextEdit,
+    QToolTip,
     QVBoxLayout,
 )
 
 from pgtp_editor.sql.keywords import SQL_KEYWORDS
+from pgtp_editor.sql.templates import (
+    DEFAULT_SNIPPETS,
+    Expansion,
+    Snippet,
+    expand_template,
+    find_snippet,
+)
 from pgtp_editor.ui.editor_gutter import GutterBookmarkFoldMixin
 
 # Keyword lists kept as Qt-free module constants (unit-tested for existence /
@@ -252,6 +266,21 @@ class CodeEditor(GutterBookmarkFoldMixin, QPlainTextEdit):
     # tab-indented bodies unreadably wide.
     _SQL_TAB_STOP_CHARS = 4
 
+    #: Emitted when an expansion gesture (snippet or expand-`SELECT`) refuses,
+    #: carrying the reason fit to show the user -- never on success. The same
+    #: "report outward, never reach into MainWindow" precedent as
+    #: `DdlObjectEditorPanel.format_refused`; a host that connects nothing
+    #: still sees the reason, because `report_refusal` also shows it as a
+    #: transient tooltip at the caret (the status bar is static since FQ-028).
+    expansion_refused = Signal(str)
+
+    #: Emitted for every transient caret hint this editor shows -- a refusal
+    #: (which also emits `expansion_refused`) or an answer, e.g. signature help
+    #: (FQ-030 slice 3). It exists because `QToolTip` shows nothing at all under
+    #: the offscreen platform, so this is the only thing a test can observe;
+    #: hosts are free to ignore it, and all of them do.
+    hint_shown = Signal(str)
+
     def __init__(self, language: str, parent=None):
         super().__init__(parent)
         self._language = language
@@ -279,6 +308,17 @@ class CodeEditor(GutterBookmarkFoldMixin, QPlainTextEdit):
         # type-through logic so a typed closer only skips over a closer THIS
         # editor inserted, never an arbitrary pre-existing one.
         self._auto_closed_cursors: list[QTextCursor] = []
+
+        # Template expansion (FQ-030). The snippet set is the shipped plpgsql
+        # default until someone installs another via `set_snippets`; the
+        # schema-dynamic expander is unwired until a panel that HAS a
+        # `SchemaIndex` supplies one. Tab-stop mode is off, which is the state
+        # every editor is in except right after an expansion -- see
+        # `in_tab_stop_mode`.
+        self._snippets: tuple[Snippet, ...] = DEFAULT_SNIPPETS
+        self._dynamic_expander = None
+        self._tab_stop_cursors: list[QTextCursor] = []
+        self._tab_stop_index = 0
 
         self._init_gutter_bookmarks_folding()
         self._apply_gutter_theme_colors(self._palette_is_light())
@@ -386,6 +426,318 @@ class CodeEditor(GutterBookmarkFoldMixin, QPlainTextEdit):
         self.setTextCursor(cursor)
         self.ensureCursorVisible()
 
+    # --- Template expansion: the ONE application path (FQ-030) -------------
+    #
+    # `sql/templates.py` states the insight this half exists to honor: keyword
+    # snippets and expand-`SELECT` are ONE mechanism -- both hand back an
+    # `Expansion` (text + span + caret + tab stops) and both are applied here,
+    # by `apply_expansion`, in one undo block. There is deliberately no second
+    # insertion path: a caller that wants to insert something computes an
+    # `Expansion` for it.
+    #
+    # **Explicit-trigger only, like Ctrl+Space completion (§18.6).** Nothing
+    # here is connected to `textChanged`: the expansion gestures run from a key
+    # press and nowhere else, so the expensive resolvers they call
+    # (`resolve_caret_context`, `analyze_from_items`) are paid once per
+    # deliberate keystroke rather than once per typed character.
+
+    def set_snippets(self, snippets) -> None:
+        """Install the snippet set the expand gesture matches against.
+
+        The seam the user-defined store layers over the shipped defaults
+        through: `sql/templates.py::find_snippet` already takes a `snippets`
+        argument for exactly this, so the store never forks the engine.
+        `None` restores `DEFAULT_SNIPPETS`.
+
+        **The store now exists** and this is what installs it:
+        `sql/snippet_store.py` owns the format, `ui/snippet_controller.py`
+        resolves the one per-user file (DEC-001: the app's own folder, never
+        the `.pgtp` artifact) and `CenterStage.set_snippets` fans the loaded set
+        out over every SQL editor -- including tabs opened later. Nothing in
+        this widget had to change when it landed, which was the point of
+        putting the seam here first: this class still knows only "a set of
+        `Snippet`s", never where one came from or whether the user wrote it.
+        """
+        self._snippets = (
+            DEFAULT_SNIPPETS if snippets is None else tuple(snippets)
+        )
+
+    def snippets(self) -> tuple[Snippet, ...]:
+        """The snippet set in force -- the shipped defaults unless replaced."""
+        return self._snippets
+
+    @property
+    def language(self) -> str:
+        """`"sql"` / `"php"` / `"js"` -- which highlighter and which gestures.
+
+        Public because a host that fans a setting out over its editors has to
+        be able to tell them apart: the snippet set is plpgsql, so only the SQL
+        ones may be given it (the same reason `keyPressEvent` gates Ctrl+Alt+E).
+        """
+        return self._language
+
+    def set_dynamic_expander(self, expander) -> None:
+        """Wire the schema-dynamic expansion seam, or `None` to unwire it.
+
+        `expander(text, pos) -> Expansion | None` is called by
+        `expand_select_at_caret`. It lives OUTSIDE this widget because it needs
+        a `SchemaIndex`, which no editor may hold (§18.5 D1: the panel never
+        talks to a database, and this widget knows even less than a panel).
+        The hosting panel supplies a three-line adapter over
+        `sql/expand_select.py`. Unwired (the default -- Raw XML, PHP tabs, the
+        read-only DDL Explorer buffer) the gesture states that it has no schema
+        rather than doing nothing.
+        """
+        self._dynamic_expander = expander
+
+    def apply_expansion(self, expansion: Expansion) -> bool:
+        """Apply `expansion` -- the one insertion path. Returns whether it ran.
+
+        Replaces `[start, end)` with the expansion's text **in a single undo
+        block**, so one Ctrl+Z takes the whole expansion back however many
+        template pieces it was built from. The caret then lands on the
+        expansion's first tab stop (which, for a template whose only stop is
+        `{{0}}`, IS `expansion.caret`), or at `expansion.caret` when the
+        template declares no stops at all.
+
+        Tab-stop mode is entered only when the expansion has a stop the user
+        can actually walk TO -- i.e. at least one non-final stop. A template
+        whose sole stop is the final caret has nowhere for Tab to go, so the
+        editor stays in its ordinary state and Tab keeps inserting a tab, which
+        is what someone typing a `WHERE` condition right after expand-`SELECT`
+        expects.
+
+        A falsy `Expansion` is NOT applied and is NOT silent: its `reason` is
+        reported through `report_refusal` (FQ-023 -- a gesture that cannot run
+        says why).
+        """
+        if not expansion:
+            self.report_refusal(expansion.reason)
+            return False
+        if self.isReadOnly():
+            # QTextCursor edits bypass setReadOnly, so this guard is what
+            # actually protects the read-only DDL Explorer buffer (§18.1).
+            self.report_refusal("this buffer is read-only")
+            return False
+
+        self.exit_tab_stop_mode()
+        cursor = self.textCursor()
+        cursor.beginEditBlock()
+        cursor.setPosition(expansion.start)
+        cursor.setPosition(expansion.end, QTextCursor.MoveMode.KeepAnchor)
+        cursor.insertText(expansion.text)
+        cursor.endEditBlock()
+
+        walkable = [stop for stop in expansion.stops if not stop.is_final]
+        if walkable:
+            self._enter_tab_stop_mode(expansion.stops)
+        else:
+            cursor.setPosition(expansion.caret)
+            self.setTextCursor(cursor)
+        self.ensureCursorVisible()
+        return True
+
+    # --- The two gestures that feed it -------------------------------------
+
+    def word_before_caret(self) -> tuple[str, int]:
+        """The identifier-shaped word ending at the caret, and where it starts.
+
+        `("", pos)` when the character before the caret is not part of a word.
+        """
+        cursor = self.textCursor()
+        pos = cursor.position()
+        text = self.toPlainText()
+        start = pos
+        while start > 0 and (text[start - 1].isalnum() or text[start - 1] == "_"):
+            start -= 1
+        return text[start:pos], start
+
+    def snippet_expansion_at_caret(self) -> Expansion:
+        """The `Expansion` the word before the caret triggers -- pure, unapplied.
+
+        Falsy with a `reason` when that word names no snippet, which is the
+        normal answer for almost every word.
+        """
+        word, start = self.word_before_caret()
+        if not word:
+            return Expansion(reason="there is no word before the caret to expand")
+        snippet = find_snippet(word, self._snippets)
+        if snippet is None:
+            return Expansion(reason=f"'{word}' is not a snippet")
+        return expand_template(
+            snippet.template, at=start, end=start + len(word)
+        )
+
+    def expand_snippet_at_caret(self) -> bool:
+        """Ctrl+Alt+E: expand the word before the caret into its snippet."""
+        return self.apply_expansion(self.snippet_expansion_at_caret())
+
+    def expand_select_at_caret(self) -> bool:
+        """Ctrl+Alt+C: expand the bare `SELECT` at the caret into its columns.
+
+        The schema-dynamic flavor of the very same mechanism: the wired
+        `set_dynamic_expander` seam turns the buffer and the caret into an
+        `Expansion`, and `apply_expansion` applies it. Nothing about the
+        expansion's application differs from a snippet's.
+        """
+        expander = self._dynamic_expander
+        if expander is None:
+            self.report_refusal(
+                "expanding a SELECT needs a database schema, and this editor "
+                "has none"
+            )
+            return False
+        expansion = expander(self.toPlainText(), self.textCursor().position())
+        if expansion is None:
+            self.report_refusal("there is nothing to expand at the caret")
+            return False
+        return self.apply_expansion(expansion)
+
+    def report_refusal(self, reason: str) -> None:
+        """State why a gesture could not run (FQ-023), never nothing.
+
+        Two channels, and both still earn their place now that a host DOES
+        connect the signal (`MainWindow._report_editor_gesture_refusal` files
+        it as an Audit `[SQL]` row, since the status bar is static since
+        FQ-028): the signal is the durable record, readable after the fact and
+        reachable by a test; the caret tooltip is the immediate one, at the
+        place the author is looking, for a refusal that answers a keystroke
+        they just pressed. A dock row alone would make a Ctrl+Alt+E that
+        matched no snippet look like nothing happened; a tooltip alone would
+        vanish before it could be re-read. The hosts that connect nothing (Raw
+        XML, the PHP tabs) still get the tooltip.
+        """
+        self.show_hint(reason or "this gesture cannot run here", refusal=True)
+
+    def show_hint(self, text: str, *, refusal: bool = False) -> None:
+        """Show `text` as a transient tooltip at the caret -- the ONE hint path.
+
+        Signature help (FQ-030 slice 3) is a query, not an insertion: it has
+        nothing to put in the buffer and everything to say, so it says it here,
+        through the same channel a refusal uses. `refusal=True` additionally
+        emits `expansion_refused`, which is what makes a REFUSAL (and only a
+        refusal) reach the Audit surface -- an answered question is not a
+        notice and does not belong in a journal.
+        """
+        if not text:
+            return
+        if refusal:
+            self.expansion_refused.emit(text)
+        if self.isVisible():
+            # A tooltip anchored to a hidden widget has nowhere to appear, and
+            # asking for one under the offscreen platform only produces a Qt
+            # warning. `hint_shown` below is the channel that always fires, and
+            # is what tests assert on.
+            QToolTip.showText(
+                self.viewport().mapToGlobal(self.cursorRect().bottomLeft()),
+                text,
+                self,
+            )
+        self.hint_shown.emit(text)
+
+    # --- Tab-stop mode ------------------------------------------------------
+
+    @property
+    def in_tab_stop_mode(self) -> bool:
+        """Whether Tab/Shift+Tab currently walk an expansion's stops.
+
+        False everywhere except between an expansion with a walkable stop and
+        its exit, which is what keeps Tab byte-for-byte unchanged in Raw XML,
+        the PHP tabs and every editor that has not just expanded something.
+        """
+        return bool(self._tab_stop_cursors)
+
+    def tab_stop_spans(self) -> list[tuple[int, int]]:
+        """The live `(start, end)` of each remaining stop, in tab order.
+
+        Live because the stops are tracked as `QTextCursor`s (the
+        `_auto_closed_cursors` idiom): typing over a placeholder moves every
+        later stop with it, so no offset arithmetic is ever repeated.
+        """
+        return [
+            (cursor.selectionStart(), cursor.selectionEnd())
+            for cursor in self._tab_stop_cursors
+        ]
+
+    @property
+    def tab_stop_index(self) -> int:
+        """Which stop the caret is on, or -1 outside tab-stop mode."""
+        return self._tab_stop_index if self.in_tab_stop_mode else -1
+
+    def next_tab_stop(self) -> bool:
+        """Tab: move to the next stop. Walking past the last one EXITS.
+
+        Returns whether the key was consumed -- True for both the move and the
+        exiting step, so the Tab that leaves the last stop does not also insert
+        a tab character.
+        """
+        if not self.in_tab_stop_mode:
+            return False
+        if self._tab_stop_index + 1 >= len(self._tab_stop_cursors):
+            last = self._tab_stop_cursors[-1]
+            end = last.selectionEnd()
+            self.exit_tab_stop_mode()
+            cursor = self.textCursor()
+            cursor.setPosition(end)
+            self.setTextCursor(cursor)
+            return True
+        self._tab_stop_index += 1
+        self._select_current_tab_stop()
+        return True
+
+    def previous_tab_stop(self) -> bool:
+        """Shift+Tab: move to the previous stop. At the first one, stays put
+        (leaving backwards would drop the user out of a template they are
+        still filling in)."""
+        if not self.in_tab_stop_mode:
+            return False
+        if self._tab_stop_index > 0:
+            self._tab_stop_index -= 1
+        self._select_current_tab_stop()
+        return True
+
+    def exit_tab_stop_mode(self) -> None:
+        """Leave tab-stop mode: Tab is a tab again. Idempotent."""
+        self._tab_stop_cursors = []
+        self._tab_stop_index = 0
+
+    def _enter_tab_stop_mode(self, stops) -> None:
+        cursors: list[QTextCursor] = []
+        for stop in stops:
+            tracked = QTextCursor(self.document())
+            tracked.setPosition(stop.start)
+            if stop.end > stop.start:
+                tracked.setPosition(stop.end, QTextCursor.MoveMode.KeepAnchor)
+            cursors.append(tracked)
+        self._tab_stop_cursors = cursors
+        self._tab_stop_index = 0
+        self._select_current_tab_stop()
+
+    def _select_current_tab_stop(self) -> None:
+        tracked = self._tab_stop_cursors[self._tab_stop_index]
+        cursor = self.textCursor()
+        cursor.setPosition(tracked.selectionStart())
+        end = tracked.selectionEnd()
+        if end > tracked.selectionStart():
+            # Select the placeholder so the next character typed replaces it.
+            cursor.setPosition(end, QTextCursor.MoveMode.KeepAnchor)
+        self.setTextCursor(cursor)
+        self.ensureCursorVisible()
+
+    def mousePressEvent(self, event) -> None:
+        """A click anywhere leaves tab-stop mode -- the "clicking away" exit.
+
+        Any click, not only one outside the template: once the user navigates
+        by mouse there is no longer a walk in progress to resume, and a Tab
+        that silently jumped somewhere else would be worse than a tab.
+        """
+        self.exit_tab_stop_mode()
+        super().mousePressEvent(event)
+
+    def focusOutEvent(self, event) -> None:
+        self.exit_tab_stop_mode()
+        super().focusOutEvent(event)
+
     def keyPressEvent(self, event: QKeyEvent) -> None:
         # Ctrl+Shift+B: bracket-select. Handled here (in addition to the
         # QShortcut) so the behavior is reliably reachable when a key event is
@@ -398,6 +750,48 @@ class CodeEditor(GutterBookmarkFoldMixin, QPlainTextEdit):
         ):
             self.select_enclosing_brackets()
             return
+
+        # --- Template expansion (FQ-030) -----------------------------------
+        #
+        # Tab and Shift+Tab are taken ONLY while a walk is in progress. Outside
+        # tab-stop mode this branch is skipped entirely, so Tab keeps inserting
+        # a tab character in every editor exactly as it did before -- the PHP
+        # tabs, the Raw XML code dialogs, the console, an untouched DDL object
+        # tab. (The completion popup's own Tab-chooses-the-current-item is a
+        # different widget's key handler and is not affected either.)
+        key = event.key()
+        if self.in_tab_stop_mode:
+            if key == Qt.Key.Key_Tab and event.modifiers() == Qt.KeyboardModifier.NoModifier:
+                if self.next_tab_stop():
+                    return
+            elif key == Qt.Key.Key_Backtab or (
+                key == Qt.Key.Key_Tab
+                and event.modifiers() == Qt.KeyboardModifier.ShiftModifier
+            ):
+                if self.previous_tab_stop():
+                    return
+            elif key == Qt.Key.Key_Escape:
+                # Consumed only in tab-stop mode; Escape keeps its §27 meaning
+                # ("returns focus to the document") everywhere else.
+                self.exit_tab_stop_mode()
+                return
+
+        # The two expansion gestures, in the `Ctrl+Alt+` editor-gesture family
+        # Format Selection (`Ctrl+Alt+F`) established. Handled in the widget
+        # rather than as QShortcuts for the same reason that one is handled
+        # twice: QShortcut activation is not reliable under the offscreen
+        # platform the tests run on. SQL only -- the snippet set is plpgsql,
+        # and a `Ctrl+Alt+E` that expanded plpgsql into a PHP body would be a
+        # bug, so in js/php these keys stay untouched.
+        if self._language == "sql" and event.modifiers() == (
+            Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.AltModifier
+        ):
+            if key == Qt.Key.Key_E:
+                self.expand_snippet_at_caret()
+                return
+            if key == Qt.Key.Key_C:
+                self.expand_select_at_caret()
+                return
 
         char = event.text()
         cursor = self.textCursor()
@@ -511,10 +905,17 @@ class CodeEditorDialog(QDialog):
         layout.addWidget(self._editor)
         layout.addWidget(button_box)
 
-        save_shortcut = QShortcut(QKeySequence("Ctrl+S"), self, self.save)
-        save_shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
-        cancel_shortcut = QShortcut(QKeySequence("Ctrl+W"), self, self.cancel)
-        cancel_shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
+        # NO `Ctrl+S` / `Ctrl+W` (owner decision, 2026-08-09). This dialog was
+        # the last carve-out for either chord: `Ctrl+S` had been dead app-wide
+        # since FQ-020 moved saving onto `Deployment`, and `Ctrl+W` lost its
+        # `File ▸ Close` binding the same day. The owner chose total
+        # consistency -- neither chord does anything anywhere in the app --
+        # over the local convention that OK/Cancel in a text-editing modal are
+        # naturally those two keys.
+        #
+        # OK and Cancel remain reachable by the button box, by `Return`/`Escape`
+        # (Qt's own defaults for a QDialogButtonBox), and by the window's close
+        # button, so nothing became unreachable.
 
         # Open at 80% of the host (XML editor) window so there's room to work.
         self.setMinimumSize(480, 320)
@@ -527,20 +928,6 @@ class CodeEditorDialog(QDialog):
                         int(ref_size.width() * 0.8),
                         int(ref_size.height() * 0.8),
                     )
-
-    def keyPressEvent(self, event: QKeyEvent) -> None:
-        # Ctrl+S / Ctrl+W handled here in addition to the WindowShortcut
-        # QShortcuts above, so save/cancel are reliably reachable when a key
-        # event is delivered to the dialog directly (e.g. under the offscreen
-        # platform in tests, where QShortcut activation is not guaranteed).
-        if event.modifiers() == Qt.KeyboardModifier.ControlModifier:
-            if event.key() == Qt.Key.Key_S:
-                self.save()
-                return
-            if event.key() == Qt.Key.Key_W:
-                self.cancel()
-                return
-        super().keyPressEvent(event)
 
     def set_code(self, text: str) -> None:
         self._editor.setPlainText(text)

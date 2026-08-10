@@ -389,3 +389,43 @@ def tokenize(text: str) -> list[Token]:
         continue
 
     return tokens
+
+
+def dollar_body_at(tokens: list[Token], pos: int) -> tuple[str, int] | None:
+    """`(body_text, body_start_offset)` when `pos` sits inside a dollar-quoted
+    body, else None.
+
+    A routine body is one opaque token to the tokenizer, which is exactly what
+    keeps a `FROM` inside `$$ ... $$` out of the *enclosing* statement's scope.
+    But when the caret is inside that body, the body is the text that matters
+    -- so callers that answer a question *about the caret* (`from_clause.py`'s
+    scope analysis, `caret_context.py`'s completion-context resolution) descend
+    into it and re-analyze the body as text of its own. Both halves of the rule
+    fall out of the same token.
+
+    `pos` and the returned offset are in the coordinates of whatever text
+    `tokens` was produced from; a caller that recurses on `body_text` must
+    rebase the caret (`pos - body_start_offset`) on the way in and rebase any
+    offset it reports back (`+ body_start_offset`) on the way out.
+
+    Edge cases are answers, not exceptions: a tag of any length is handled via
+    `Token.tag`, an unterminated body (the normal state while typing) runs to
+    the end of the token *and counts the caret at its very end as inside* --
+    that end is the end of the buffer, where the author is typing, not a
+    boundary to fall outside of -- and a caret sitting inside the closing tag
+    itself yields an empty body rather than None: it is still "inside the body"
+    for scoping purposes, but nothing of the body precedes it.
+    """
+    for tok in tokens:
+        if tok.kind != DOLLAR_STRING:
+            continue
+        inside = tok.start < pos < tok.end or (tok.unterminated and pos == tok.end)
+        if not inside:
+            continue
+        marker = len(tok.tag or "") + 2
+        body_start = tok.start + marker
+        body_end = tok.end if tok.unterminated else tok.end - marker
+        if body_start <= pos <= body_end:
+            return tok.text[marker : body_end - tok.start], body_start
+        return "", body_start  # caret inside the closing tag itself
+    return None

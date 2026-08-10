@@ -1,6 +1,7 @@
 # tests/ui/test_project_settings_dialog.py
 """Tests for ProjectSettingsDialog (§18.2) -- the whole project JSON,
 viewable and editable, never a simplified subset. Never `.exec()`-ed."""
+from PySide6.QtCore import QSize
 from PySide6.QtWidgets import QLineEdit, QTableWidgetItem, QTabWidget
 
 from pgtp_editor.db.config import ConnectionParams
@@ -498,3 +499,38 @@ def test_the_target_group_states_that_it_is_the_connection_actually_used(qtbot):
     note = dialog._target_note.text()
     assert "actually use" in note
     assert "Blank means no target is configured yet." in note
+
+
+# --- BUG-036: opening size ---------------------------------------------------
+def test_opens_at_560x760_and_stays_resizable(qtbot):
+    """BUG-036 #1. 560x760 is the *opening* size, not a lock: the dialog must
+    still grow and shrink afterwards, so the assertion pairs the size with the
+    absence of any fixed-size constraint. A `setFixedSize` would pass the first
+    assert and fail the rest."""
+    dialog = ProjectSettingsDialog(_full_settings())
+    qtbot.addWidget(dialog)
+
+    assert dialog.size() == QSize(560, 760)
+    # Not fixed: the maximum is left far above the opening size, so it can grow...
+    assert dialog.maximumWidth() > 560
+    assert dialog.maximumHeight() > 760
+    # ...and its minimum stays strictly smaller, so it can shrink.
+    assert dialog.minimumWidth() < 560
+    assert dialog.minimumHeight() < 760
+
+
+def test_every_tab_fits_at_the_opening_size(qtbot):
+    """The BUG-036 acceptance criterion ("at open it should show all
+    information") is a claim about content, not about the `resize()` call: at
+    560x760 no tab may need more room than it has."""
+    dialog = ProjectSettingsDialog(_full_settings())
+    qtbot.addWidget(dialog)
+    dialog.show()
+
+    tabs = dialog.findChild(QTabWidget)
+    for index in range(tabs.count()):
+        tabs.setCurrentIndex(index)
+        page = tabs.widget(index)
+        needed = page.minimumSizeHint()
+        assert needed.width() <= page.width(), tabs.tabText(index)
+        assert needed.height() <= page.height(), tabs.tabText(index)

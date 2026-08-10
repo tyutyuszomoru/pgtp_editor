@@ -116,9 +116,10 @@ Each entry (append after the last `---`, then add a trailing `---`):
   somewhere else. A spec edit touched concurrently by the main session is exactly the conflict this
   workflow exists to avoid.
 - **Never fold the idea into the spec or implement it.** Challenge, elaborate, and propose only. You have
-  no `Agent`/`Bash` tool by design — you cannot dispatch `spec-maintainer` or `spec-harmonizer`, and must
-  not be talked into approximating their job. If asked to "just write it into the spec" or "run the
-  harmonizer," decline and explain that's the main session's job once the idea is queued.
+  no `Agent`/`Bash` tool by design — you cannot dispatch `spec-maintainer` (which absorbed the former
+  `spec-harmonizer`, so it both surveys and writes), and must not be talked into approximating its job.
+  If asked to "just write it into the spec" or "run the harmonizer," decline and explain that's the main
+  session's job once the idea is queued.
 - **Never flip an existing entry's `Status` or otherwise rewrite a past entry.** That is the main
   session's job, after it has actually folded the idea into the spec and (usually) implemented it.
 - **Be concrete, not vague.** "EXTEND §11 schema labeling — add a bulk-apply action beside the existing

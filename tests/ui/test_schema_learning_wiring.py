@@ -90,9 +90,11 @@ def test_open_project_file_appends_audit_entries_on_success(qtbot, tmp_path):
 
     window.open_project_file(str(project_path))
 
-    assert window.audit_panel.count() >= 1
-    first_entry_text = window.audit_panel.item(0).text()
-    assert first_entry_text.startswith("[Schema]")
+    # FQ-028: `[Schema]` LEARNING chatter is journal narration, not a finding,
+    # so it lands in the Activity Log rather than on a findings surface.
+    rows = window.activity_panel.row_texts()
+    assert rows
+    assert any("[Schema]" in row for row in rows)
 
 
 def test_second_open_of_same_shape_file_reuses_and_grows_existing_model(qtbot, tmp_path):
@@ -106,7 +108,7 @@ def test_second_open_of_same_shape_file_reuses_and_grows_existing_model(qtbot, t
     model_path = schema_model_path(storage_dir)
     first_mtime_ns = model_path.stat().st_mtime_ns
 
-    window.audit_panel.clear()
+    window.activity_panel.clear()
     window.open_project_file(str(project_path))
 
     # Re-opening the identical file merges into the *same* model file
@@ -165,11 +167,13 @@ def test_parse_failure_appends_no_schema_audit_entry(qtbot, tmp_path):
     broken_path.write_text(MALFORMED_PGTP, encoding="utf-8")
 
     # The one-time bundled-seed audit line from __init__ is not under test here.
-    window.audit_panel.clear()
+    window.activity_panel.clear()
     with patch("pgtp_editor.ui.modals.QMessageBox.critical"):
         window.open_project_file(str(broken_path))
 
-    assert window.audit_panel.count() == 0
+    # Other narration (the open itself) legitimately journals; what must NOT
+    # appear is a `[Schema]` learning line for a file that never parsed.
+    assert not any("[Schema]" in row for row in window.activity_panel.row_texts())
 
 
 def test_report_schema_events_with_exactly_20_events_prints_one_line_each(qtbot, tmp_path):
@@ -184,17 +188,16 @@ def test_report_schema_events_with_exactly_20_events_prints_one_line_each(qtbot,
         for i in range(20)
     ]
 
-    window.audit_panel.clear()  # drop the __init__ bundled-seed line
+    window.activity_panel.clear()  # drop the __init__ bundled-seed line
     window._xsd_ui.report_schema_events(events, str(source_path))
 
-    assert window.audit_panel.count() == 20
+    rows = window.activity_panel.row_texts()
+    assert len(rows) == 20
     for i in range(20):
         expected = f"[Schema] NEW ATTRIBUTE: Project/Presentation/Pages/Page@attr{i} (first seen in twenty.pgtp)"
-        assert window.audit_panel.item(i).text() == expected
+        assert expected in rows[i]
 
-    summary_prefix = "[Schema] Learned"
-    for i in range(window.audit_panel.count()):
-        assert not window.audit_panel.item(i).text().startswith(summary_prefix)
+    assert not any("[Schema] Learned" in row for row in rows)
 
 
 def test_report_schema_events_with_21_events_collapses_to_summary_line(qtbot, tmp_path):
@@ -209,19 +212,19 @@ def test_report_schema_events_with_21_events_collapses_to_summary_line(qtbot, tm
         for i in range(21)
     ]
 
-    window.audit_panel.clear()  # drop the __init__ bundled-seed line
+    window.activity_panel.clear()  # drop the __init__ bundled-seed line
     window._xsd_ui.report_schema_events(events, str(source_path))
 
-    assert window.audit_panel.count() == 1
-    expected = "[Schema] Learned 21 new structural facts from twentyone.pgtp"
-    assert window.audit_panel.item(0).text() == expected
+    rows = window.activity_panel.row_texts()
+    assert len(rows) == 1
+    assert "[Schema] Learned 21 new structural facts from twentyone.pgtp" in rows[0]
 
     for i in range(21):
         per_event_text = (
             f"[Schema] NEW ATTRIBUTE: Project/Presentation/Pages/Page@attr{i} "
             f"(first seen in twentyone.pgtp)"
         )
-        assert per_event_text != window.audit_panel.item(0).text()
+        assert per_event_text not in rows[0]
 
 
 def test_main_window_constructs_with_no_arguments_and_resolves_real_app_data_dir(qtbot):

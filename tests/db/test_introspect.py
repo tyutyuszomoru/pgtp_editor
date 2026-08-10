@@ -10,11 +10,14 @@ import logging
 from pgtp_editor.db.config import ConnectionParams
 from pgtp_editor.db.introspect import (
     BASELINE_EXTRA_SQL,
+    INDEX_SQL,
     ROUTINE_TRIGGER_SQL,
     SCHEMA_SQL,
     BaselineSnapshot,
     ColumnInfo,
+    ConstraintInfo,
     DatabaseSchema,
+    IndexInfo,
     RoutineInfo,
     TableInfo,
     TriggerInfo,
@@ -146,6 +149,96 @@ def test_columns_sql_sources_column_comments():
     without the catalog function that produces it."""
     columns_sql = SCHEMA_SQL[1]
     assert "col_description(a.attrelid, a.attnum)" in columns_sql
+
+
+# --- table comments (2026-08-09) ---------------------------------------------
+# `Set Table Comment…` seeds its box from `TableInfo.comment`; a blank box means
+# `IS NULL`, so a missing seed silently removed an existing comment.
+
+
+def test_relations_sql_sources_table_comments():
+    """The relation query must actually select `obj_description` on the
+    relation's own oid -- `pg_description` at `objsubid = 0`, the same catalog
+    the per-column `col_description` reads at `objsubid = attnum` -- not just
+    thread a `comment` field through row-unpacking."""
+    relations_sql = SCHEMA_SQL[0]
+    assert "obj_description(c.oid, 'pg_class')" in relations_sql
+
+
+def _commented_runner(relations, columns=(), constraints=()):
+    def runner(params, sql_list):
+        return [list(relations), list(columns), list(constraints)]
+
+    return runner
+
+
+def test_fetch_schema_surfaces_a_table_comment():
+    runner = _commented_runner(
+        [("pr", "equipment", "r", "every tracked machine")],
+        [("pr", "equipment", "id", "integer", True, None, None)],
+    )
+    schema = fetch_schema(_PARAMS, runner=runner)
+    assert schema.table("pr.equipment").comment == "every tracked machine"
+
+
+def test_a_table_without_a_comment_gives_none_not_empty_string():
+    """`None`, exactly as `ColumnInfo.comment` does -- `""` would be a comment
+    the user set to the empty string, which is a different thing."""
+    runner = _commented_runner([("pr", "equipment", "r", None)])
+    table = fetch_schema(_PARAMS, runner=runner).table("pr.equipment")
+    assert table.comment is None
+    assert table.comment != ""
+
+
+def test_relation_rows_without_a_comment_value_are_tolerated():
+    """The pre-widening 3-tuple row shape still builds a TableInfo (with no
+    comment) rather than raising -- the same tolerance `_build_constraints`
+    extends to short constraint rows."""
+    runner, _ = _canned_runner()
+    schema = fetch_schema(_PARAMS, runner=runner)
+    assert schema.table("pr.equipment").comment is None
+    assert schema.table("pr.eq_view").kind == "view"
+
+
+def test_table_comment_survives_quotes_newlines_and_unicode():
+    text = "it's a \"tricky\" one\nsecond line\ttab — ünïcödé ✓"
+    runner = _commented_runner([("pr", "equipment", "r", text)])
+    assert fetch_schema(_PARAMS, runner=runner).table("pr.equipment").comment == text
+
+
+def test_table_and_column_comments_are_independent():
+    """The regression this most endangers: column comments come from a
+    different query and must be untouched by the relation-level one."""
+    runner = _commented_runner(
+        [("pr", "equipment", "r", "the table's comment")],
+        [
+            ("pr", "equipment", "id", "integer", True, None, None),
+            ("pr", "equipment", "tag", "varchar(255)", False, None, "the column's"),
+        ],
+    )
+    schema = fetch_schema(_PARAMS, runner=runner)
+    assert schema.table("pr.equipment").comment == "the table's comment"
+    assert schema.column("pr.equipment", "tag").comment == "the column's"
+    assert schema.column("pr.equipment", "id").comment is None
+
+
+def test_table_comments_reach_the_other_two_fetch_entry_points():
+    """`fetch_routines_and_triggers` (DDL Explorer) and `snapshot_for_baseline`
+    share `_build_tables`, so both must carry the comment too."""
+    relations = [("pr", "equipment", "r", "shared comment")]
+    columns = [("pr", "equipment", "id", "integer", True, None, None)]
+
+    def explorer_runner(params, sql_list):
+        return [[], [], relations, columns, [], []]
+
+    schema = fetch_routines_and_triggers(_PARAMS, runner=explorer_runner)
+    assert schema.table("pr.equipment").comment == "shared comment"
+
+    def baseline_runner(params, sql_list):
+        return [[], [], relations, columns, [], [], []]
+
+    snapshot = snapshot_for_baseline(_PARAMS, runner=baseline_runner)
+    assert snapshot.schema.table("pr.equipment").comment == "shared comment"
 
 
 def test_fetch_schema_missing_column_returns_none():
@@ -392,7 +485,7 @@ def test_decode_trigger_type_before_with_no_event_bits():
     assert events == []
 
 
-def _canned_routine_trigger_runner(relations=None, columns=None, constraints=None):
+def _canned_routine_trigger_runner(relations=None, columns=None, constraints=None, indexes=None):
     # Columns: schema, name, prokind, return_type, language, source,
     # arg_types (IN-only, banner), all_arg_types, proargnames, proargmodes.
     routine_rows = [
@@ -418,18 +511,20 @@ def _canned_routine_trigger_runner(relations=None, columns=None, constraints=Non
             relations if relations is not None else [],
             columns if columns is not None else [],
             constraints if constraints is not None else [],
+            indexes if indexes is not None else [],
         ]
 
     return runner, calls
 
 
-def test_fetch_routines_and_triggers_passes_routine_trigger_and_schema_sql():
-    """The widened fetch (§18.6) runs BOTH query pairs in one round trip --
-    routines/triggers AND the same three queries `fetch_schema` runs."""
+def test_fetch_routines_and_triggers_passes_routine_trigger_schema_and_index_sql():
+    """The widened fetch (§18.6, widened again by FQ-025) runs all three query
+    sets in one round trip -- routines/triggers, the same three queries
+    `fetch_schema` runs, and the index query."""
     runner, calls = _canned_routine_trigger_runner()
     fetch_routines_and_triggers(_PARAMS, runner=runner)
     assert len(calls) == 1
-    assert calls[0][1] == list(ROUTINE_TRIGGER_SQL) + list(SCHEMA_SQL)
+    assert calls[0][1] == list(ROUTINE_TRIGGER_SQL) + list(SCHEMA_SQL) + list(INDEX_SQL)
 
 
 def test_fetch_routines_and_triggers_builds_routines_keyed_by_signature():
@@ -476,7 +571,7 @@ def test_fetch_routines_and_triggers_keeps_both_overloads_of_one_name():
     ]
 
     def runner(_params, _sql_list):
-        return [routine_rows, [], [], [], []]
+        return [routine_rows, [], [], [], [], []]
 
     schema = fetch_routines_and_triggers(_PARAMS, runner=runner)
 
@@ -541,7 +636,7 @@ def test_fetch_routines_and_triggers_correlates_out_args_end_to_end():
     ]
 
     def runner(_params, _sql_list):
-        return [routine_rows, [], [], [], []]
+        return [routine_rows, [], [], [], [], []]
 
     schema = fetch_routines_and_triggers(_PARAMS, runner=runner)
     # The key uses the IN-only `arg_types` -- `(text)`, not the three
@@ -711,3 +806,326 @@ def test_database_schema_types_defaults_empty_and_is_additive():
     must not break -- mirrors the same contract test for routines/triggers."""
     schema = DatabaseSchema(tables={})
     assert schema.types == {}
+
+
+# --- Named constraints & indexes (FQ-025 slice 2) ---------------------------
+# Constraint rows are now 7-wide:
+#   (schema, table, colname, contype, fk_target, conname, constraintdef)
+# Index rows (INDEX_SQL) are 9-wide:
+#   (schema, table, index_name, method, is_unique, is_primary, definition,
+#    [columns], backing_constraint_name)
+
+
+def _constraint_row(table, column, contype, name, definition="", fk_target=None):
+    return ("pr", table, column, contype, fk_target, name, definition)
+
+
+def _schema_with_constraints(constraint_rows, relations=None, columns=None):
+    def runner(_params, _sql_list):
+        return [
+            relations if relations is not None else [("pr", "equipment", "r")],
+            columns if columns is not None else [],
+            constraint_rows,
+        ]
+
+    return fetch_schema(_PARAMS, runner=runner)
+
+
+def test_constraint_names_surface_keyed_by_schema_table_name():
+    """`con.conname` was never selected before FQ-025, so no picker could
+    exist. It must now arrive keyed the way triggers are (`schema.table.name`)."""
+    schema = _schema_with_constraints(
+        [_constraint_row("equipment", "id", "p", "equipment_pkey")]
+    )
+    assert set(schema.constraints) == {"pr.equipment.equipment_pkey"}
+    info = schema.constraints["pr.equipment.equipment_pkey"]
+    assert info == ConstraintInfo(
+        schema="pr", table="equipment", name="equipment_pkey",
+        kind="primary key", columns=["id"], definition="",
+    )
+    assert info.qualified_name == "pr.equipment.equipment_pkey"
+    assert info.table_name == "pr.equipment"
+
+
+def test_every_newly_included_contype_is_classified():
+    """'u', 'c' and 'x' join 'p'/'f' -- and each maps to its own lowercase
+    prose kind, because the picker shows the type next to the name."""
+    schema = _schema_with_constraints(
+        [
+            _constraint_row("equipment", "id", "p", "eq_pkey"),
+            _constraint_row("equipment", "owner_id", "f", "eq_owner_fkey",
+                            fk_target="pr.owner.id"),
+            _constraint_row("equipment", "tag", "u", "eq_tag_key"),
+            _constraint_row("equipment", "qty", "c", "eq_qty_check",
+                            definition="CHECK ((qty > 0))"),
+            _constraint_row("equipment", "period", "x", "eq_period_excl"),
+        ]
+    )
+    kinds = {name: c.kind for name, c in schema.constraints.items()}
+    assert kinds == {
+        "pr.equipment.eq_pkey": "primary key",
+        "pr.equipment.eq_owner_fkey": "foreign key",
+        "pr.equipment.eq_tag_key": "unique",
+        "pr.equipment.eq_qty_check": "check",
+        "pr.equipment.eq_period_excl": "exclude",
+    }
+    assert schema.constraints["pr.equipment.eq_qty_check"].definition == "CHECK ((qty > 0))"
+
+
+def test_multi_column_constraint_groups_its_columns_in_conkey_order():
+    """`_CONSTRAINTS_SQL` emits one row per (constraint, column); the columns
+    regroup onto ONE ConstraintInfo, in the arrival order the query's
+    `ORDER BY ..., k.i` makes conkey order."""
+    schema = _schema_with_constraints(
+        [
+            _constraint_row("equipment", "site", "u", "eq_site_tag_key"),
+            _constraint_row("equipment", "tag", "u", "eq_site_tag_key"),
+        ]
+    )
+    assert len(schema.constraints) == 1
+    assert schema.constraints["pr.equipment.eq_site_tag_key"].columns == ["site", "tag"]
+
+
+def test_check_constraint_with_no_columns_is_still_captured():
+    """A table-level `CHECK (true)` has a NULL conkey -- the LEFT JOIN keeps
+    the row, and the constraint is still droppable, so it must be listed. Its
+    `definition` is the only thing a picker can show for it."""
+    schema = _schema_with_constraints(
+        [("pr", "equipment", None, "c", None, "eq_sane", "CHECK (true)")]
+    )
+    info = schema.constraints["pr.equipment.eq_sane"]
+    assert info.columns == []
+    assert info.definition == "CHECK (true)"
+    assert info.kind == "check"
+
+
+def test_table_with_no_constraints_and_no_indexes_yields_empty_collections():
+    runner, _ = _canned_routine_trigger_runner(
+        relations=[("pr", "bare", "r")],
+        columns=[("pr", "bare", "note", "text", False, None, None)],
+        constraints=[],
+        indexes=[],
+    )
+    schema = fetch_routines_and_triggers(_PARAMS, runner=runner)
+    assert schema.tables["pr.bare"].columns  # the table itself is still there
+    assert schema.constraints == {}
+    assert schema.indexes == {}
+    assert schema.constraints_for("pr.bare") == []
+    assert schema.indexes_for("pr.bare") == []
+
+
+def test_pre_fq025_constraint_rows_without_a_name_are_tolerated():
+    """The 4-/5-tuple canned rows used across the suite (and every existing
+    consumer of the PK/FK column flags) must keep working: no conname means
+    no ConstraintInfo, and the is_pk/is_fk flags are unaffected."""
+    schema = _schema_with_constraints(
+        [("pr", "equipment", "id", "p"), ("pr", "equipment", "owner_id", "f", "pr.o.id")],
+        columns=[
+            ("pr", "equipment", "id", "integer", True, None, None),
+            ("pr", "equipment", "owner_id", "integer", True, None, None),
+        ],
+    )
+    assert schema.constraints == {}
+    assert schema.column("pr.equipment", "id").is_pk is True
+    assert schema.column("pr.equipment", "owner_id").is_fk is True
+
+
+def test_constraints_for_filters_by_table():
+    schema = _schema_with_constraints(
+        [
+            _constraint_row("equipment", "id", "p", "eq_pkey"),
+            _constraint_row("part", "id", "p", "part_pkey"),
+        ],
+        relations=[("pr", "equipment", "r"), ("pr", "part", "r")],
+    )
+    assert [c.name for c in schema.constraints_for("pr.equipment")] == ["eq_pkey"]
+    assert [c.name for c in schema.constraints_for("pr.part")] == ["part_pkey"]
+    assert schema.constraints_for("pr.nope") == []
+
+
+def test_constraints_sql_selects_conname_and_the_widened_contypes():
+    """Pin the query itself, not just the row-unpacking: a `conname` threaded
+    through Python without being SELECTed would silently list nothing."""
+    constraints_sql = SCHEMA_SQL[2]
+    assert "con.conname" in constraints_sql
+    assert "pg_get_constraintdef(con.oid)" in constraints_sql
+    assert "con.contype IN ('p', 'f', 'u', 'c', 'x')" in constraints_sql
+    # A NULL conkey (table-level CHECK) must not drop the constraint row.
+    assert "LEFT JOIN generate_subscripts(con.conkey, 1)" in constraints_sql
+
+
+def _index_row(name, columns, is_unique=False, is_primary=False,
+               method="btree", constraint_name=None, table="equipment"):
+    return (
+        "pr", table, name, method, is_unique, is_primary,
+        f"CREATE INDEX {name} ...", columns, constraint_name,
+    )
+
+
+def test_indexes_are_built_keyed_by_schema_and_index_name():
+    runner, _ = _canned_routine_trigger_runner(
+        relations=[("pr", "equipment", "r")],
+        indexes=[_index_row("equipment_tag_idx", ["tag"])],
+    )
+    schema = fetch_routines_and_triggers(_PARAMS, runner=runner)
+    assert set(schema.indexes) == {"pr.equipment_tag_idx"}
+    info = schema.indexes["pr.equipment_tag_idx"]
+    assert info == IndexInfo(
+        schema="pr", table="equipment", name="equipment_tag_idx",
+        columns=["tag"], is_unique=False, is_primary=False, method="btree",
+        definition="CREATE INDEX equipment_tag_idx ...", constraint_name=None,
+    )
+    assert info.table_name == "pr.equipment"
+    assert info.qualified_name == "pr.equipment_tag_idx"
+
+
+def test_constraint_backed_index_is_marked_not_silently_offered():
+    """A PK's implicit index cannot be `DROP INDEX`ed -- Postgres refuses. It
+    is captured (so it is not a mystery omission) but carries the backing
+    constraint's name, and a Drop-index picker filters on
+    `is_constraint_backed`."""
+    runner, _ = _canned_routine_trigger_runner(
+        relations=[("pr", "equipment", "r")],
+        indexes=[
+            _index_row("equipment_pkey", ["id"], is_unique=True, is_primary=True,
+                       constraint_name="equipment_pkey"),
+            _index_row("equipment_tag_key", ["tag"], is_unique=True,
+                       constraint_name="equipment_tag_key"),
+            _index_row("equipment_tag_idx", ["lower(tag)"]),
+        ],
+    )
+    schema = fetch_routines_and_triggers(_PARAMS, runner=runner)
+
+    pk_index = schema.indexes["pr.equipment_pkey"]
+    unique_index = schema.indexes["pr.equipment_tag_key"]
+    standalone = schema.indexes["pr.equipment_tag_idx"]
+
+    assert pk_index.is_constraint_backed is True
+    assert pk_index.constraint_name == "equipment_pkey"
+    assert pk_index.is_primary is True
+    # A UNIQUE constraint's index is equally undroppable.
+    assert unique_index.is_constraint_backed is True
+    assert unique_index.is_primary is False
+
+    assert standalone.constraint_name is None
+    assert standalone.is_constraint_backed is False
+    # An expression index keeps its expression text as its "column".
+    assert standalone.columns == ["lower(tag)"]
+
+    # `indexes_for` returns EVERYTHING; the droppable filter is the caller's.
+    assert len(schema.indexes_for("pr.equipment")) == 3
+    droppable = [i for i in schema.indexes_for("pr.equipment") if not i.is_constraint_backed]
+    assert [i.name for i in droppable] == ["equipment_tag_idx"]
+
+
+def test_index_unique_flag_and_method_survive():
+    """The create side needs unique/method; the drop side shows them so the
+    user knows which index they are dropping."""
+    runner, _ = _canned_routine_trigger_runner(
+        relations=[("pr", "equipment", "r")],
+        indexes=[
+            _index_row("eq_doc_gin", ["doc"], method="gin"),
+            _index_row("eq_tag_uq", ["tag"], is_unique=True),
+        ],
+    )
+    schema = fetch_routines_and_triggers(_PARAMS, runner=runner)
+    assert schema.indexes["pr.eq_doc_gin"].method == "gin"
+    assert schema.indexes["pr.eq_doc_gin"].is_unique is False
+    assert schema.indexes["pr.eq_tag_uq"].is_unique is True
+    # A unique INDEX (not a unique CONSTRAINT) IS droppable.
+    assert schema.indexes["pr.eq_tag_uq"].is_constraint_backed is False
+
+
+def test_multi_column_index_keeps_column_order():
+    runner, _ = _canned_routine_trigger_runner(
+        relations=[("pr", "equipment", "r")],
+        indexes=[_index_row("eq_site_tag_idx", ["site", "tag"])],
+    )
+    schema = fetch_routines_and_triggers(_PARAMS, runner=runner)
+    assert schema.indexes["pr.eq_site_tag_idx"].columns == ["site", "tag"]
+
+
+def test_index_sql_is_one_query_sourcing_the_droppability_signal():
+    assert len(INDEX_SQL) == 1
+    index_sql = INDEX_SQL[0]
+    assert "pg_get_indexdef" in index_sql
+    assert "i.indisunique" in index_sql
+    assert "i.indisprimary" in index_sql
+    assert "am.amname" in index_sql
+    # The constraint-backed distinction comes from pg_constraint.conindid.
+    assert "con.conindid = i.indexrelid" in index_sql
+    # INCLUDE columns are excluded from `columns` by bounding on indnkeyatts.
+    assert "i.indnkeyatts" in index_sql
+
+
+def test_fetch_routines_and_triggers_also_populates_named_constraints():
+    runner, calls = _canned_routine_trigger_runner(
+        relations=[("pr", "equipment", "r")],
+        constraints=[_constraint_row("equipment", "id", "p", "equipment_pkey")],
+    )
+    schema = fetch_routines_and_triggers(_PARAMS, runner=runner)
+    assert "pr.equipment.equipment_pkey" in schema.constraints
+    # Still ONE round trip -- constraints ride the rows already fetched.
+    assert len(calls) == 1
+
+
+def test_fetch_schema_query_contract_is_unchanged_by_the_widening():
+    """FQ-025 adds NO query to DB Check's fetch: `.constraints` is built from
+    the constraint rows `fetch_schema` already retrieves."""
+    runner, calls = _canned_runner()
+    fetch_schema(_PARAMS, runner=runner)
+    assert calls[0][1] == list(SCHEMA_SQL)
+    assert len(calls[0][1]) == 3
+
+
+def test_fetch_schema_leaves_indexes_empty():
+    """Only `fetch_routines_and_triggers` runs `INDEX_SQL` -- DB Check has no
+    use for indexes and pays nothing for them."""
+    runner, _ = _canned_runner()
+    assert fetch_schema(_PARAMS, runner=runner).indexes == {}
+
+
+def test_snapshot_for_baseline_populates_constraints_but_not_indexes():
+    """The sandbox baseline is "catalog shape, not full fidelity": it gets the
+    named constraints for free with the rows it already fetches, and does NOT
+    grow an index query."""
+    relations = [("pr", "equipment", "r")]
+    constraints = [_constraint_row("equipment", "id", "p", "equipment_pkey")]
+    runner, calls = _canned_baseline_runner(relations=relations, constraints=constraints)
+    snapshot = snapshot_for_baseline(_PARAMS, runner=runner)
+    assert "pr.equipment.equipment_pkey" in snapshot.schema.constraints
+    assert snapshot.schema.indexes == {}
+    expected = list(ROUTINE_TRIGGER_SQL) + list(SCHEMA_SQL) + list(BASELINE_EXTRA_SQL)
+    assert calls[0][1] == expected
+
+
+def test_database_schema_constraints_and_indexes_default_empty_and_are_additive():
+    """Both new fields are trailing and defaulted, so positional/`tables=`-only
+    construction sites across the codebase keep working."""
+    table = TableInfo("s.t", "table", [])
+    for schema in (DatabaseSchema({"s.t": table}), DatabaseSchema(), DatabaseSchema(tables={})):
+        assert schema.constraints == {}
+        assert schema.indexes == {}
+        assert schema.constraints_for("s.t") == []
+        assert schema.indexes_for("s.t") == []
+
+
+def test_constraint_and_index_info_defaults():
+    """Mirrors the other dataclass back-compat tests: every field past the
+    identity is defaulted, and the mutable ones are per-instance."""
+    constraint = ConstraintInfo(schema="s", table="t", name="c", kind="check")
+    assert constraint.columns == []
+    assert constraint.definition == ""
+    assert ConstraintInfo(schema="s", table="t", name="d", kind="check").columns is not (
+        constraint.columns
+    )
+
+    index = IndexInfo(schema="s", table="t", name="i")
+    assert index.columns == []
+    assert index.is_unique is False
+    assert index.is_primary is False
+    assert index.method == ""
+    assert index.definition == ""
+    assert index.constraint_name is None
+    assert index.is_constraint_backed is False
+    assert IndexInfo(schema="s", table="t", name="j").columns is not index.columns

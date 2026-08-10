@@ -1,6 +1,7 @@
 # tests/ui/test_ddl_object_editor_wiring.py
 """MainWindow wiring for the editable DDL object tab (spec §18.5): opening
-via BrowserPanel's Edit… context menu, Ctrl+S/Ctrl+F/bookmark dispatch to the
+via BrowserPanel's Edit… context menu, `Deployment ▸ Save in Project` (FQ-020 --
+was Ctrl+S) / Ctrl+F / bookmark dispatch to the
 active tab, the Save-As-on-first-save flow, the close-confirmation prompt
 (including "cancelling Save As from Close aborts the close"), the `[SQL]`
 Audit reporting for Format Selection refusals, the mandatory Ctrl+Z
@@ -8,6 +9,7 @@ native-undo regression (carve-out 1) proving the Raw XML buffer is untouched,
 and carve-out 5 (re-running DDL Explorer leaves open object tabs untouched).
 """
 from lxml import etree
+import pytest
 from PySide6.QtCore import QSettings, Qt
 from PySide6.QtGui import QTextCursor
 from PySide6.QtTest import QTest
@@ -16,6 +18,8 @@ from pgtp_editor.db.config import ConnectionParams
 from pgtp_editor.db.introspect import DatabaseSchema, RoutineInfo
 from pgtp_editor.ui.ddl_object_editor import DdlObjectRef
 from pgtp_editor.ui.main_window import MainWindow
+
+from ._sandbox_stubs import sync_run
 from pgtp_editor.ui import modals
 
 
@@ -23,9 +27,35 @@ def _empty_settings(tmp_path):
     return QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat)
 
 
+
+@pytest.fixture(autouse=True)
+def comparison_modals(monkeypatch):
+    """§30 guard for FQ-026's new modal.
+
+    `Check Object in Sandbox` now ends in a one-line `QMessageBox.information`
+    stating whether the buffer matches what the sandbox holds, so every test
+    that runs the gesture would otherwise reach an un-patched modal. Patched
+    through the `ui/modals.py` seam (never through `main_window`'s namespace),
+    and RECORDING rather than silencing: the tests that are about the answer
+    read `(title, text)` straight out of this list.
+    """
+    seen: list[tuple] = []
+    monkeypatch.setattr(
+        modals.QMessageBox,
+        "information",
+        staticmethod(lambda *args, **kwargs: seen.append(tuple(args[1:3]))),
+    )
+    return seen
+
+
 def _window(qtbot, tmp_path):
     window = MainWindow(settings=_empty_settings(tmp_path))
     qtbot.addWidget(window)
+    # BUG-043: `_TARGET` carries a real host, so `set_active_project` fires
+    # `refresh_target_connection_status` and genuinely tries to resolve it on a
+    # worker thread -- which then outlives this window's teardown. Two tests
+    # below already stub this per-test; the helper does it for all of them.
+    window._run_async = sync_run
     return window
 
 
@@ -74,9 +104,13 @@ def test_edit_requested_again_focuses_the_existing_tab(qtbot, tmp_path):
     assert window.center_stage.currentWidget() is first
 
 
-def test_ctrl_s_on_the_ddl_object_tab_routes_to_save_as_then_remembers_path(
+def test_save_in_project_on_the_ddl_object_tab_runs_save_as_then_remembers_path(
     qtbot, tmp_path, monkeypatch
 ):
+    """FQ-020: was `test_ctrl_s_on_the_ddl_object_tab_...`. §18.5's Save-As flow
+    is unchanged -- dialog on the first save, silent writes to the remembered path
+    after -- only its trigger moved from `Ctrl+S` to `Deployment ▸ Save in
+    Project`."""
     window = _window(qtbot, tmp_path)
     window._on_ddl_edit_requested(_REF, "CREATE FUNCTION pr.recalc() ...")
     panel = window.center_stage.ddl_object_tab(_REF.key)
@@ -87,7 +121,14 @@ def test_ctrl_s_on_the_ddl_object_tab_routes_to_save_as_then_remembers_path(
         staticmethod(lambda *a, **k: (str(dest), "")),
     )
 
-    window._save_active_tab()
+    # Driven through the real menu entry, so the wiring is asserted end to end
+    # rather than the handler being called directly.
+    from tests.ui._menu_helpers import find_action, find_top_menu
+
+    action = find_action(find_top_menu(window, "Deployment"), "Save in Project")
+    assert action is not None and action.isVisible()
+    assert action.shortcut().isEmpty()
+    action.trigger()
 
     assert dest.read_text(encoding="utf-8") == panel.text()
     assert panel.is_dirty() is False
@@ -99,11 +140,14 @@ def test_ctrl_s_on_the_ddl_object_tab_routes_to_save_as_then_remembers_path(
         staticmethod(lambda *a, **k: (_ for _ in ()).throw(AssertionError("dialog reopened"))),
     )
     panel.editor.insertPlainText("more\n")
-    window._save_active_tab()
+    window._save_active_ddl_object()
     assert dest.read_text(encoding="utf-8") == panel.text()
 
 
-def test_ctrl_s_save_as_cancelled_leaves_tab_dirty_and_writes_nothing(qtbot, tmp_path, monkeypatch):
+def test_save_in_project_save_as_cancelled_leaves_tab_dirty_and_writes_nothing(
+    qtbot, tmp_path, monkeypatch
+):
+    """The cancel semantics §18.5 calls a data-loss guard, unchanged by FQ-020."""
     window = _window(qtbot, tmp_path)
     window._on_ddl_edit_requested(_REF, "text")
     panel = window.center_stage.ddl_object_tab(_REF.key)
@@ -113,7 +157,7 @@ def test_ctrl_s_save_as_cancelled_leaves_tab_dirty_and_writes_nothing(qtbot, tmp
         staticmethod(lambda *a, **k: ("", "")),  # Cancel
     )
 
-    window._save_active_tab()
+    window._save_active_ddl_object()
 
     assert panel.is_dirty() is True
     assert panel.save_path is None
@@ -216,12 +260,35 @@ def test_format_refusal_is_reported_to_audit_under_sql_prefix_not_clickable(qtbo
 
     panel.format_selection()
 
-    texts = [window.audit_panel.item(i).text() for i in range(window.audit_panel.count())]
-    matches = [t for t in texts if t.startswith("[SQL] ")]
+    # FQ-028: `[SQL]` format refusals are one-off narration, not navigable
+    # findings, so they are journalled in the Activity Log.
+    texts = window.activity_panel.row_texts()
+    matches = [t for t in texts if "[SQL] " in t]
     assert len(matches) == 1
     assert "Unmatched BEGIN" in matches[0]
-    item = window.audit_panel.item(window.audit_panel.count() - 1)
-    assert item.data(Qt.ItemDataRole.UserRole) is None  # not clickable, no line role
+    # ...and it reaches NO findings surface at all, so there is nothing to
+    # click: the offending span is already underlined in the tab itself.
+    assert window.audit_panel.count() == 0
+
+
+def test_an_expansion_refusal_reaches_the_audit_surface(qtbot, tmp_path):
+    """FQ-030: `CodeEditor` can only show a caret tooltip -- it has no Audit
+    panel to reach and the status bar has been static since FQ-028. The host
+    connects `expansion_refused` and files the reason as a `[SQL]` row, which
+    routes to the Activity Log exactly as the Format Selection refusal does."""
+    window = _window(qtbot, tmp_path)
+    window._on_ddl_edit_requested(_REF, "begin end;")
+    panel = window.center_stage.ddl_object_tab(_REF.key)
+
+    # `notaword` names no snippet, so the expand gesture refuses.
+    panel.editor.expand_snippet_at_caret()
+
+    texts = window.activity_panel.row_texts()
+    matches = [t for t in texts if "[SQL] " in t]
+    assert len(matches) == 1
+    assert "expand" in matches[0] or "snippet" in matches[0]
+    # A refusal is narration, not a navigable finding.
+    assert window.audit_panel.count() == 0
 
 
 def test_ctrl_z_with_ddl_object_tab_focused_touches_only_its_own_buffer(qtbot, tmp_path):
@@ -415,14 +482,13 @@ def test_saving_a_checked_out_object_makes_the_file_level_star_appear(qtbot, tmp
     window._ddl_project_ui.set_active_project(project_dir, settings)
     _load_explorer(window, monkeypatch)
 
-    window._checkout_and_edit(_REF, "-- live recalc\n")
+    window._edit_ddl_checked_out(_REF, "-- live recalc\n")
     # A fresh checkout is NOT locally edited -- the reference recorded is the
     # live definition it was taken from.
     assert _recalc_row(window).text(0) == "pr.recalc() [F]"
     assert load_settings(project_dir).deployed["ddl/pr.recalc.sql"].content_hash != ""
 
-    key = str((project_dir / "ddl" / "pr.recalc.sql").resolve())
-    panel = window.center_stage.ddl_object_tab(key)
+    panel = window.center_stage.ddl_object_tab(_REF.key)
     panel.editor.insertPlainText("-- edited\n")
     window._save_ddl_object_editor(panel)
 
@@ -452,8 +518,220 @@ def test_checkout_registers_the_live_hash_and_never_overwrites_a_real_reference(
     window._ddl_project_ui.set_active_project(project_dir, settings)
     _load_explorer(window, monkeypatch)
 
-    window._checkout_and_edit(_REF, "-- live recalc\n")
+    window._edit_ddl_checked_out(_REF, "-- live recalc\n")
 
     assert load_settings(project_dir).deployed["ddl/pr.recalc.sql"].content_hash == (
         "the-real-deploy"
     )
+
+
+# --- FQ-019: the DDL gestures are journalled --------------------------------
+# The Activity Log's four most audit-worthy rows come from here: the two Apply
+# actions, the two check gestures, and the tab's own Save. Each is driven
+# through the real gesture, so what is asserted is the WIRING, not `record`.
+
+
+class _FakeCheckReport:
+    """Just enough of `db/ddl_check.py::CheckReport` for the journal's reading
+    of it: `committed`, plus the tier/finding shape `report_blockers` walks."""
+
+    def __init__(self, committed=True, findings=()):
+        self.committed = committed
+        self.findings = tuple(findings)
+        self.caveats = ()
+        self.tier0 = self.tier1 = self.tier2 = self.tier3 = None
+
+
+class _FakeApplyResult:
+    def __init__(self, report):
+        self.report = report
+
+
+def _open_tab(window, text="CREATE FUNCTION pr.recalc() RETURNS void AS $$ $$;"):
+    window._on_ddl_edit_requested(_REF, text)
+    return window.center_stage.ddl_object_tab(_REF.key)
+
+
+def test_saving_a_ddl_object_tab_journals_a_saved_entry(qtbot, tmp_path, monkeypatch):
+    window = _window(qtbot, tmp_path)
+    panel = _open_tab(window)
+    dest = tmp_path / "pr.recalc.sql"
+    monkeypatch.setattr(
+        modals.QFileDialog, "getSaveFileName",
+        staticmethod(lambda *a, **k: (str(dest), "")),
+    )
+
+    assert window._save_ddl_object_editor(panel) is True
+
+    # The LAST FILE entry -- FQ-028 also journals transient notices, which carry
+    # no `file_verb`.
+    entry = [e for e in window.activity_log.entries if e.file_verb][-1]
+    assert entry.file_verb == "Saved"
+    assert entry.status == "success"
+
+
+def test_a_failed_ddl_object_save_journals_the_failure_with_the_os_error(
+    qtbot, tmp_path, monkeypatch
+):
+    window = _window(qtbot, tmp_path)
+    panel = _open_tab(window)
+    unwritable = tmp_path / "missing_dir" / "pr.recalc.sql"
+    monkeypatch.setattr(
+        modals.QFileDialog, "getSaveFileName",
+        staticmethod(lambda *a, **k: (str(unwritable), "")),
+    )
+    monkeypatch.setattr(
+        modals.QMessageBox, "critical", staticmethod(lambda *a, **k: None)
+    )
+
+    assert window._save_ddl_object_editor(panel) is False
+
+    entry = window.activity_log.entries[-1]
+    assert entry.file_verb == "Saved"
+    assert entry.failed
+    assert "pr.recalc.sql" in entry.error_full
+
+
+def test_an_apply_to_sandbox_journals_the_ddl_against_the_sandbox_source(
+    qtbot, tmp_path, monkeypatch
+):
+    window = _window(qtbot, tmp_path)
+    panel = _open_tab(window)
+    text = panel.text()
+    captured = {}
+
+    class _Session:
+        pass
+
+    monkeypatch.setattr(
+        type(window.sandbox_controller), "session", property(lambda self: _Session())
+    )
+    monkeypatch.setattr(
+        window.sandbox_controller,
+        "run_apply",
+        lambda request, on_done, **kwargs: captured.setdefault("on_done", on_done),
+    )
+
+    window._apply_ddl_object_to_sandbox(_REF, text)
+    captured["on_done"](_FakeApplyResult(_FakeCheckReport(committed=True)))
+
+    entry = window.activity_log.entries[-1]
+    assert entry.source == "Sandbox DB"
+    assert entry.verb == "Apply to Sandbox"
+    assert entry.ddl_full == text
+    assert entry.status == "success"
+
+
+def test_an_apply_to_sandbox_that_did_not_commit_is_journalled_as_failed(
+    qtbot, tmp_path, monkeypatch
+):
+    """An apply is judged on `committed`: "it ran but was rolled back" is not a
+    success, and the journal must not render it as one."""
+    window = _window(qtbot, tmp_path)
+    panel = _open_tab(window)
+    captured = {}
+
+    class _Session:
+        pass
+
+    monkeypatch.setattr(
+        type(window.sandbox_controller), "session", property(lambda self: _Session())
+    )
+    monkeypatch.setattr(
+        window.sandbox_controller,
+        "run_apply",
+        lambda request, on_done, **kwargs: captured.setdefault("on_done", on_done),
+    )
+
+    window._apply_ddl_object_to_sandbox(_REF, panel.text())
+    captured["on_done"](_FakeApplyResult(_FakeCheckReport(committed=False)))
+
+    entry = window.activity_log.entries[-1]
+    assert entry.failed
+    assert entry.error_full
+
+
+def test_a_check_gesture_journals_the_linted_verb_and_is_not_judged_on_commit(
+    qtbot, tmp_path, monkeypatch
+):
+    """A probe rolls back and a recheck applies nothing, so neither ever
+    reports `committed` -- and neither may therefore be journalled as failed
+    just for that."""
+    window = _window(qtbot, tmp_path)
+    panel = _open_tab(window)
+    window.center_stage.setCurrentWidget(panel)
+    captured = {}
+
+    monkeypatch.setattr(
+        type(window.sandbox_controller), "can_check", property(lambda self: True)
+    )
+    monkeypatch.setattr(
+        window.sandbox_controller,
+        "run_check",
+        lambda request, on_done, **kwargs: captured.setdefault("on_done", on_done),
+    )
+
+    window._check_active_ddl_object()
+    captured["on_done"](_FakeApplyResult(_FakeCheckReport(committed=False)))
+
+    entry = window.activity_log.entries[-1]
+    assert entry.source == "Sandbox DB"
+    assert entry.verb == "linted"
+    assert entry.status == "success"
+    assert entry.ddl_full == panel.text()
+
+
+def test_an_apply_to_target_journals_the_irreversible_write(qtbot, tmp_path, monkeypatch):
+    """The single most audit-worthy action, journalled against `Quality DB`
+    with the FULL DDL retained."""
+    window = _window(qtbot, tmp_path)
+    text = "CREATE FUNCTION pr.recalc() RETURNS void AS $$ $$;"
+    captured = {}
+    monkeypatch.setattr(
+        window, "_target_params_for_apply", lambda: _TARGET
+    )
+    monkeypatch.setattr(
+        "pgtp_editor.ui.main_window.run_async",
+        lambda parent, work, on_result, on_error: captured.update(
+            on_result=on_result, on_error=on_error
+        ),
+    )
+
+    window._apply_ddl_object_to_target(_REF, text)
+
+    class _Outcome:
+        committed = True
+        message = ""
+
+    captured["on_result"](_Outcome())
+
+    entry = window.activity_log.entries[-1]
+    assert entry.source == "Quality DB"
+    assert entry.verb == "Apply to Target"
+    assert entry.ddl_full == text
+    assert entry.status == "success"
+
+
+def test_an_apply_to_target_that_did_not_commit_is_journalled_as_failed(
+    qtbot, tmp_path, monkeypatch
+):
+    window = _window(qtbot, tmp_path)
+    captured = {}
+    monkeypatch.setattr(window, "_target_params_for_apply", lambda: _TARGET)
+    monkeypatch.setattr(
+        "pgtp_editor.ui.main_window.run_async",
+        lambda parent, work, on_result, on_error: captured.update(
+            on_result=on_result, on_error=on_error
+        ),
+    )
+    window._apply_ddl_object_to_target(_REF, "CREATE FUNCTION pr.recalc();")
+
+    class _Outcome:
+        committed = False
+        message = "permission denied for schema pr"
+
+    captured["on_result"](_Outcome())
+
+    entry = window.activity_log.entries[-1]
+    assert entry.failed
+    assert entry.error_full == "permission denied for schema pr"

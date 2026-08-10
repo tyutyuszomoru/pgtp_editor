@@ -25,11 +25,46 @@ and the deploy manifest's raw per-object entries.
 Shown non-modally (`show()`, never `.exec()`), same convention as every
 other dialog in this codebase: the caller reads `settings()` back after
 `accepted` fires and performs the actual `save_settings` write itself --
-this dialog persists nothing on its own.
+this dialog persists nothing on its own **except** through the one
+provisioning path described below.
+
+**Sandbox provisioning lives here (2026-08-09 owner ruling).** `Provision
+sandbox`, `Reset sandbox` and `Create a sandbox database for me` used to live in
+`Database ▸ Sandbox Setup…` (`ui/sandbox_setup_dialog.py`), which was DELETED:
+BUG-040 had hidden that menu entry in project mode on the premise that *"in
+project mode all sandbox configuration already lives in Project Settings"*, and
+this dialog carried only the connection fields, a Test button and the recorded
+mode -- so the premise was false and the three gestures were unreachable in
+every mode. They now sit on the **Connections** tab, in the sandbox connection
+group, immediately under the mode radios whose promise (*"takes effect the next
+time the sandbox is reset/recreated"*) they are what makes keepable.
+
+Everything those gestures were is preserved, only its host changed:
+
+- **nothing destructive happens without a confirmation** -- Provision, "create
+  one for me" and Reset each go through `_confirmed`, which asks with
+  `SandboxController.destructive_warning(op)`'s exact text; `confirm=None` (the
+  default, and what the app passes) leaves the single prompt to the controller's
+  own `confirm_destructive` gate, so the user is asked exactly once;
+- **no dead controls** (§18.5 carve-out 2): a control whose operation cannot run
+  is not built, and the reason takes its place -- hence `_rebuild_sandbox_actions`
+  rather than `setEnabled(False)`;
+- the `ForeignDatabaseError` refusal is stated in the refusal's own words, above
+  the *"create a sandbox database for me"* row that answers it;
+- D2a's mode is **recorded, never re-derived**: a provisioning gesture writes
+  the settings as currently typed (including the chosen mode and any freshly
+  created database name) through `settings_saver` BEFORE the operation starts,
+  and `recorded_settings()` hands that exact object back so the host adopts it
+  instead of re-reading the file.
+
+Data cloning and the `plpgsql_check` install are deliberately NOT duplicated
+here: §18.8's Project Status window already owns those two node buttons.
 """
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import replace
+from pathlib import Path
 
 from PySide6.QtWidgets import (
     QDialog,
@@ -50,15 +85,118 @@ from PySide6.QtWidgets import (
 )
 
 from pgtp_editor.db.config import ConnectionParams
-from pgtp_editor.db.ddl_project import DeployedObject, GitConfig, PgtpLink, ProjectSettings
+from pgtp_editor.db.ddl_project import (
+    DeployedObject,
+    GitConfig,
+    PgtpLink,
+    ProjectSettings,
+    save_settings,
+)
 from pgtp_editor.db.introspect import test_connection
-from pgtp_editor.db.sandbox import SandboxCapabilities, SandboxMode, probe
+from pgtp_editor.db.sandbox import (
+    SANDBOX_DB_PREFIX,
+    ForeignDatabaseError,
+    SandboxCapabilities,
+    SandboxMode,
+    is_app_owned,
+    probe,
+)
 from pgtp_editor.ui.async_task import run_async
+from pgtp_editor.ui.sandbox_controller import (
+    MAINTENANCE_DATABASE,
+    SandboxController,
+    SandboxOperation,
+    sandbox_name_stem,
+)
 
 _DEPLOYED_COLUMNS = ("Path", "Content hash", "Deployed commit")
 
 Tester = Callable[[ConnectionParams], "tuple[bool, str]"]
 Prober = Callable[[ConnectionParams], SandboxCapabilities]
+
+#: Which database `create_sandbox_database`'s admin connection targets --
+#: PostgreSQL forbids `CREATE DATABASE` inside the database being created. An
+#: **alias** of `ui/sandbox_controller.py::MAINTENANCE_DATABASE`, not a second
+#: literal, so §18.2's New Project step and this dialog cannot disagree.
+DEFAULT_MAINTENANCE_DATABASE = MAINTENANCE_DATABASE
+
+_MODE_LABELS = {
+    SandboxMode.SCHEMA_ONLY: "without data (schema only)",
+    SandboxMode.WITH_DATA: "with data (pg_dump/pg_restore clone)",
+}
+
+#: Stated where the provisioning controls would be when this dialog was built
+#: without the app's `SandboxController` (or without the project directory the
+#: recorded mode has to be written to) -- i.e. never in the running app, which
+#: always supplies both, but this dialog is also constructed bare in tests.
+NO_CONTROLLER_REASON = (
+    "Sandbox provisioning is unavailable: this dialog was opened without the "
+    "app's sandbox controller."
+)
+
+#: Stated where Provision would be when the sandbox group above is still blank.
+NO_SANDBOX_REASON = (
+    "No sandbox server is configured yet. Fill in the sandbox connection above "
+    "first — provisioning needs somewhere to provision."
+)
+
+#: Stated where Provision would be when the project has no target to build the
+#: baseline from. The controller refuses for the same reason; this is only the
+#: refusal made visible before the click rather than after it.
+NO_TARGET_REASON = (
+    "Provisioning builds the sandbox from the project's target database, but no "
+    "target connection is configured on this tab."
+)
+
+#: Stated where Reset would be with no live session.
+NO_SESSION_REASON = (
+    "No sandbox session is open, so the sandbox's contents cannot be changed. "
+    "Provision the sandbox first."
+)
+
+#: The *"create a sandbox database for me"* row's reason for existing (§18.5 D2's
+#: mandatory mitigation for the `ForeignDatabaseError` refusal).
+CREATE_DATABASE_NOTE = (
+    "PGTP Editor only writes to a sandbox database it created itself. If the "
+    "database above is not one, create one here — the name must look like "
+    f"'{SANDBOX_DB_PREFIX}myproject'."
+)
+
+#: What Reset actually re-runs. `SandboxSession.reset()` re-runs the mode the
+#: sandbox was CREATED with, not whichever radio is currently checked, so the
+#: mode note's *"next time it is reset/recreated"* promise is only kept by
+#: Provision when the mode is being CHANGED. Said here rather than left for the
+#: user to discover from a reset that silently did the old thing.
+RESET_MODE_NOTE = (
+    "Reset drops every application schema in the sandbox and rebuilds it in the "
+    "mode it was created with ({mode}). Changing the mode above takes effect "
+    "when you Provision, not when you Reset."
+)
+
+#: The incompleteness of the schema-only baseline, stated in the UI rather than
+#: buried (§18.5 D2). Shown where the schema-only mode is chosen.
+BASELINE_CAVEAT = (
+    "The schema-only baseline reproduces schemas, types, tables (columns only), "
+    "views, routines and triggers. Extensions, sequences, constraints, defaults "
+    "and data are NOT reproduced, so findings that reference them are "
+    "unreliable."
+)
+
+
+def _clear_layout(layout) -> None:
+    """Remove and destroy everything in `layout` -- how an unavailable control
+    becomes ABSENT rather than disabled (§18.5 carve-out 2)."""
+    while layout.count():
+        item = layout.takeAt(0)
+        widget = item.widget()
+        if widget is not None:
+            widget.setParent(None)
+            widget.deleteLater()
+            continue
+        child = item.layout()
+        if child is not None:
+            _clear_layout(child)
+            child.deleteLater()
 
 
 class ProjectSettingsDialog(QDialog):
@@ -68,6 +206,12 @@ class ProjectSettingsDialog(QDialog):
         parent: QWidget | None = None,
         tester: Tester = test_connection,
         prober: Prober = probe,
+        *,
+        sandbox_controller: SandboxController | None = None,
+        project_dir: str | Path | None = None,
+        confirm: Callable[[str], bool] | None = None,
+        settings_saver: Callable[..., None] = save_settings,
+        maintenance_database: str = DEFAULT_MAINTENANCE_DATABASE,
     ) -> None:
         super().__init__(parent)
         # Test seams, same convention as ConnectionSetupDialog (generic
@@ -77,6 +221,16 @@ class ProjectSettingsDialog(QDialog):
         self._prober = prober
         # Off-thread executor seam; tests replace it with a synchronous stub.
         self._run_async = run_async
+        # -- provisioning seams (see the module docstring) -------------------
+        self._sandbox_controller = sandbox_controller
+        self._project_dir = project_dir
+        self._confirm = confirm
+        self._settings_saver = settings_saver
+        self._maintenance_database = maintenance_database
+        #: The `ProjectSettings` a provisioning gesture PERSISTED, or None when
+        #: none has run. Deliberately not `settings()` (which is the live field
+        #: state): the host must adopt exactly what was written to disk.
+        self._recorded_settings: ProjectSettings | None = None
         self.setWindowTitle("Project Settings")
 
         identity_form = QFormLayout()
@@ -140,7 +294,8 @@ class ProjectSettingsDialog(QDialog):
         self._sandbox_mode_with_data_radio = QRadioButton("With data")
         mode_note = QLabel(
             "Changing this does not re-clone the sandbox -- it takes effect"
-            " the next time the sandbox is reset/recreated."
+            " the next time the sandbox is provisioned (Provision sandbox,"
+            " below)."
         )
         mode_note.setWordWrap(True)
         sandbox_mode_form = QFormLayout()
@@ -148,6 +303,21 @@ class ProjectSettingsDialog(QDialog):
         sandbox_mode_form.addRow(self._sandbox_mode_with_data_radio)
         sandbox_mode_form.addRow(mode_note)
         sandbox_group.layout().addRow(sandbox_mode_form)
+
+        # -- the three provisioning actions (owner ruling, 2026-08-09) -------
+        # Rebuilt wholesale on every state change rather than enabled/disabled,
+        # because carve-out 2 makes an unavailable control ABSENT with the
+        # reason in its place. `None` therefore means absent, never "disabled".
+        provisioning_group = QGroupBox("Sandbox provisioning")
+        self._sandbox_actions_layout = QVBoxLayout(provisioning_group)
+        self._provision_button: QPushButton | None = None
+        self._reset_button: QPushButton | None = None
+        self._create_database_button: QPushButton | None = None
+        self._new_database_name_edit: QLineEdit | None = None
+        self._sandbox_action_status = QLabel("")
+        self._sandbox_action_status.setWordWrap(True)
+        sandbox_group.layout().addRow(provisioning_group)
+        sandbox_group.layout().addRow(self._sandbox_action_status)
 
         git_group = QGroupBox("Git (optional -- not yet used)")
         self._git_server_edit = QLineEdit()
@@ -207,9 +377,27 @@ class ProjectSettingsDialog(QDialog):
         layout.addWidget(tabs)
         layout.addWidget(buttons)
 
-        self.resize(560, 480)
+        # Opening size only (BUG-036) -- the dialog stays freely resizable, so
+        # this is a `resize()` and deliberately not `setFixedSize`/`setMinimumSize`.
+        # 760 tall clears the tallest tab (Deploy manifest's table, Connections'
+        # two connection forms) with the OK/Cancel box still visible.
+        self.resize(560, 760)
 
         self.set_settings(settings)
+
+        # Which provisioning controls exist depends on what is typed above
+        # (a sandbox server, a target to build from) and on whether a session is
+        # live -- so every one of those is a rebuild trigger. Connected after
+        # `set_settings` so the seeding writes do not fire a rebuild before the
+        # action layout has ever been built.
+        self._sandbox_host_edit.textChanged.connect(self._rebuild_sandbox_actions)
+        self._target_host_edit.textChanged.connect(self._rebuild_sandbox_actions)
+        self._sandbox_mode_with_data_radio.toggled.connect(
+            self._rebuild_sandbox_actions
+        )
+        if sandbox_controller is not None:
+            sandbox_controller.session_changed.connect(self._on_session_changed)
+        self._rebuild_sandbox_actions()
 
     @staticmethod
     def _build_connection_form(group: QGroupBox) -> tuple[QLineEdit, QLineEdit, QLineEdit, QLineEdit, QLineEdit]:
@@ -333,6 +521,212 @@ class ProjectSettingsDialog(QDialog):
             return
         self._sandbox_status_label.setText("Connected — superuser.")
         self._sandbox_status_label.setStyleSheet("color: green;")
+
+    # --- Sandbox provisioning (§18.5 D2/D2a) ---------------------------------
+    def _on_session_changed(self, _alive: bool) -> None:
+        self._rebuild_sandbox_actions()
+
+    def _rebuild_sandbox_actions(self, *_args) -> None:
+        """Create only the controls whose operation can actually run now; a
+        label states the reason wherever one is missing (carve-out 2)."""
+        self._provision_button = None
+        self._reset_button = None
+        self._create_database_button = None
+        self._new_database_name_edit = None
+        _clear_layout(self._sandbox_actions_layout)
+
+        controller = self._sandbox_controller
+        if controller is None or self._project_dir is None:
+            self._add_action_note(NO_CONTROLLER_REASON)
+            return
+
+        if self.sandbox_mode() is SandboxMode.SCHEMA_ONLY:
+            self._add_action_note(BASELINE_CAVEAT)
+
+        if not self.sandbox_params().host:
+            self._add_action_note(NO_SANDBOX_REASON)
+        elif not self.target_params().host:
+            self._add_action_note(NO_TARGET_REASON)
+        else:
+            self._build_provisioning_rows()
+
+        if controller.has_session:
+            self._reset_button = self._add_action_button(
+                "Reset sandbox", self.reset_sandbox
+            )
+            self._add_action_note(
+                RESET_MODE_NOTE.format(mode=_MODE_LABELS[controller.mode])
+            )
+        else:
+            self._add_action_note(NO_SESSION_REASON)
+
+    def _build_provisioning_rows(self) -> None:
+        """`Provision sandbox` plus D2's mandatory *"create a sandbox database
+        for me"* mitigation, whose reason is `ForeignDatabaseError`'s own
+        sentence when the configured database really is a foreign one."""
+        self._provision_button = self._add_action_button(
+            "Provision sandbox", self.provision_sandbox
+        )
+        caps = self._sandbox_controller.capabilities
+        if caps is not None and caps.database and not is_app_owned(
+            caps.database, caps.owner_marker
+        ):
+            # The refusal's own wording, never a second version of it.
+            self._add_action_note(str(ForeignDatabaseError(caps.database)))
+        self._add_action_note(CREATE_DATABASE_NOTE)
+        row = QHBoxLayout()
+        self._new_database_name_edit = QLineEdit(self._suggested_database_name())
+        self._create_database_button = QPushButton("Create a sandbox database for me")
+        self._create_database_button.clicked.connect(self.create_sandbox_database)
+        row.addWidget(self._new_database_name_edit)
+        row.addWidget(self._create_database_button)
+        self._sandbox_actions_layout.addLayout(row)
+
+    def _add_action_note(self, text: str) -> QLabel:
+        label = QLabel(text)
+        label.setWordWrap(True)
+        self._sandbox_actions_layout.addWidget(label)
+        return label
+
+    def _add_action_button(self, text: str, handler: Callable[[], None]) -> QPushButton:
+        button = QPushButton(text)
+        button.clicked.connect(handler)
+        row = QHBoxLayout()
+        row.addWidget(button)
+        row.addStretch(1)
+        self._sandbox_actions_layout.addLayout(row)
+        return button
+
+    def _suggested_database_name(self) -> str:
+        current = self._sandbox_database_edit.text()
+        if current.startswith(SANDBOX_DB_PREFIX):
+            return current
+        # §18.2's New Project auto-naming slug rule, imported rather than
+        # re-derived, so the two surfaces suggest the same shape of name.
+        return f"{SANDBOX_DB_PREFIX}{sandbox_name_stem(self._name_edit.text())}"
+
+    def provision_sandbox(self) -> None:
+        """**Destructive.** Record the settings as typed (including D2a's mode),
+        then provision the configured sandbox database from the target."""
+        self._provision(create_database=False)
+
+    def create_sandbox_database(self) -> None:
+        """**Destructive.** D2's mandatory mitigation: create a fresh app-owned
+        sandbox database and provision it in the same operation."""
+        self._provision(create_database=True)
+
+    def _provision(self, *, create_database: bool) -> None:
+        controller = self._sandbox_controller
+        if controller is None or self._project_dir is None:
+            self._report(NO_CONTROLLER_REASON)
+            return
+        if not self._confirmed(SandboxOperation.PROVISION):
+            return
+        database_name = (
+            self._new_database_name_edit.text().strip()
+            if create_database and self._new_database_name_edit is not None
+            else ""
+        )
+        if create_database and not database_name:
+            self._report(
+                "Give the new sandbox database a name "
+                f"('{SANDBOX_DB_PREFIX}…') before creating it."
+            )
+            return
+
+        settings = self.settings()
+        if database_name:
+            settings = replace(
+                settings, sandbox=replace(settings.sandbox, database=database_name)
+            )
+            # Keep the field and the recorded settings in agreement, so a later
+            # OK writes the database that was actually created.
+            self._sandbox_database_edit.setText(database_name)
+        self._persist(settings)
+
+        controller.set_project(
+            sandbox_params=settings.sandbox,
+            target_params=settings.target,
+            mode=settings.sandbox_mode,
+            configured=bool(settings.sandbox.host),
+        )
+        admin_params = (
+            replace(settings.sandbox, database=self._maintenance_database)
+            if database_name
+            else None
+        )
+        controller.provision(
+            self._on_sandbox_operation,
+            admin_params=admin_params,
+            database_name=database_name or None,
+        )
+
+    def reset_sandbox(self) -> None:
+        """**Destructive.** `SandboxSession.reset()` -- drop every application
+        schema and re-run whichever mode this sandbox was created with."""
+        controller = self._sandbox_controller
+        if controller is None:
+            self._report(NO_CONTROLLER_REASON)
+            return
+        if not self._confirmed(SandboxOperation.RESET):
+            return
+        controller.reset_session(self._on_sandbox_operation)
+
+    def _confirmed(self, operation: SandboxOperation) -> bool:
+        """Ask the injected confirmation seam with the CONTROLLER's own warning
+        text. No `QMessageBox` is ever constructed here (§30); with no seam
+        injected the gesture proceeds to the controller, whose own
+        `confirm_destructive` gate is then the single prompt."""
+        if self._confirm is None:
+            return True
+        warning = SandboxController.destructive_warning(operation)
+        if self._confirm(warning):
+            return True
+        self._report(f"Cancelled — this operation was not confirmed. {warning}".strip())
+        return False
+
+    def _persist(self, settings: ProjectSettings) -> None:
+        """Write the settings a provisioning gesture is about to act on, BEFORE
+        it runs -- D2a's mode is recorded, never re-derived from the database."""
+        self._recorded_settings = settings
+        self._settings_saver(self._project_dir, settings)
+
+    def recorded_settings(self) -> ProjectSettings | None:
+        """What a provisioning gesture persisted, or None if none has run. The
+        host adopts this rather than re-reading the file it just wrote."""
+        return self._recorded_settings
+
+    def _on_sandbox_operation(self, result) -> None:
+        """Report one `SandboxOperationResult` -- its stated `reason` always,
+        success or failure, never swallowed -- then re-render."""
+        name = result.operation.value.replace("_", " ")
+        reason = (getattr(result, "reason", "") or "").strip()
+        if result.ok:
+            self._report(f"{name}: done." + (f" {reason}" if reason else ""))
+        else:
+            self._report(
+                f"{name} failed: {reason}"
+                if reason
+                else f"{name} failed, and reported no reason."
+            )
+        self._rebuild_sandbox_actions()
+
+    def _report(self, text: str) -> None:
+        self._sandbox_action_status.setText(text)
+
+    def sandbox_action_text(self) -> str:
+        """The last reported provisioning outcome -- what the user sees."""
+        return self._sandbox_action_status.text()
+
+    def sandbox_action_notes(self) -> str:
+        """Every reason-in-place-of-a-control the provisioning group shows."""
+        return "\n".join(
+            widget.text()
+            for index in range(self._sandbox_actions_layout.count())
+            if isinstance(
+                widget := self._sandbox_actions_layout.itemAt(index).widget(), QLabel
+            )
+        )
 
     # --- Load / save the whole ProjectSettings -------------------------------
     def set_settings(self, settings: ProjectSettings) -> None:

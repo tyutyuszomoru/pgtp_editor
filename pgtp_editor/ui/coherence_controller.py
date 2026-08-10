@@ -380,10 +380,11 @@ class CoherenceController(QObject):
         cursor.setPosition(0)
         editor.setTextCursor(cursor)
         # Seed the Find bar so Find Next / F3 step through occurrences of the
-        # token. show_find()'s prefill is a no-op now that the selection is clear.
+        # token. The bar is permanently visible (FQ-016), so seeding it is the
+        # whole gesture -- there is nothing left to reveal, and `set_find_text`
+        # is the unconditional setter (the focus path only fills an empty field).
         bar = stage.find_replace_bar
         bar.set_find_text(token)
-        bar.show_find()
         # List every occurrence in the bottom panel (reuses Find All), and
         # reveal the panel in case a prior DB check left it hidden.
         self._find_all(token)

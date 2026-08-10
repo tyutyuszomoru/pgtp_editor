@@ -385,24 +385,19 @@ def _local_pos_for_line(panel, line: int) -> QPoint:
 
 
 def _edit_action_target(menu):
-    """The "Edit …" QAction in `menu`, or None -- inspects the built menu
+    """The "Edit DDL: …" QAction in `menu`, or None -- inspects the built menu
     directly rather than ever driving a real modal `QMenu.exec` (the
     xml_editor.py `_build_context_menu` precedent)."""
     for action in menu.actions():
-        if action.text().startswith("Edit "):
+        if action.text().startswith("Edit DDL"):
             return action
     return None
 
 
-def _checkout_action_target(menu):
-    """The "Check Out for Versioning" QAction in `menu`, or None (§18.2)."""
-    for action in menu.actions():
-        if action.text() == "Check Out for Versioning":
-            return action
-    return None
-
-
-def test_right_click_inside_a_routine_span_offers_check_out_for_versioning(qtbot):
+def test_the_span_context_menu_offers_exactly_one_editing_entry(qtbot):
+    """FQ-024: `Check Out for Versioning` is withdrawn -- the span menu holds
+    ONE editing entry, and the panel no longer even declares the signal it
+    used to emit."""
     from pgtp_editor.db.ddl_buffer import build_ddl_text
 
     schema = _schema_with_two_objects()
@@ -410,19 +405,17 @@ def test_right_click_inside_a_routine_span_offers_check_out_for_versioning(qtbot
     panel = EditorPanel()
     qtbot.addWidget(panel)
     panel.set_ddl_text(text, spans, schema=schema)
-    got = []
-    panel.checkout_requested.connect(lambda ref, source: got.append((ref, source)))
 
     routine_span = next(s for s in spans if s.kind != "trigger")
     pos = _local_pos_for_line(panel, routine_span.start_line + 1)
     menu = panel._build_context_menu_at(pos)
-    action = _checkout_action_target(menu)
-    assert action is not None
-    action.trigger()
 
-    assert len(got) == 1
-    ref, source = got[0]
-    assert ref.name == "calc_total"
+    ddl_entries = [a.text() for a in menu.actions() if a.text().startswith("Edit DDL")]
+    assert ddl_entries == ["Edit DDL: pr.calc_total(integer)"]
+    assert not any(
+        a.text() == "Check Out for Versioning" for a in menu.actions()
+    )
+    assert not hasattr(panel, "checkout_requested")
 
 
 def test_right_click_inside_a_routine_span_offers_edit_with_its_qualified_name(qtbot):
@@ -441,7 +434,7 @@ def test_right_click_inside_a_routine_span_offers_edit_with_its_qualified_name(q
     menu = panel._build_context_menu_at(pos)
     action = _edit_action_target(menu)
     assert action is not None
-    assert action.text() == "Edit pr.calc_total(integer)…"
+    assert action.text() == "Edit DDL: pr.calc_total(integer)"
     action.trigger()
 
     assert len(got) == 1

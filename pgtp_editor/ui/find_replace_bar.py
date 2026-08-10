@@ -18,13 +18,22 @@
 inside the Raw XML tab. Operates on an injected editor via a small, explicit
 interface (toPlainText / textCursor / setTextCursor / setFocus / document /
 replace_current_selection) so it stays decoupled from MainWindow. Find All is
-delegated to an injected callback."""
+delegated to an injected callback.
+
+**The bar is PERMANENTLY VISIBLE, in its expanded form** (FQ-016, §8/§15/§27).
+It no longer hides itself on construction, there is no `show_find`/`show_replace`
+split (the replace row is always shown), and `Escape` returns focus to the
+editor instead of hiding anything. `Ctrl+F`/`Ctrl+R` are **focus** gestures:
+:meth:`focus_find` / :meth:`focus_replace`, hosted by
+:func:`install_focus_shortcuts` on the widget that owns the editor *and* the bar
+-- see that function for why they are not window-level.
+"""
 from __future__ import annotations
 
 from collections.abc import Callable
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QKeyEvent, QTextCursor
+from PySide6.QtGui import QKeyEvent, QKeySequence, QShortcut, QTextCursor
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QLineEdit,
@@ -78,7 +87,9 @@ class FindReplaceBar(QWidget):
         self._replace_all_button.clicked.connect(self.replace_all)
         self._find_field.returnPressed.connect(self.find_next)
 
-        self.hide()
+        # NO `self.hide()` here (FQ-016): the bar is visible from construction,
+        # in its expanded form (both rows), in every editor. Deleted, not left
+        # inert -- there is no hideable state left to restore.
 
     def set_on_find_all(self, callback: Callable[[str], None]) -> None:
         self._on_find_all = callback
@@ -95,37 +106,58 @@ class FindReplaceBar(QWidget):
         self._find_all_running = running
         self._find_all_button.setText("Stop" if running else "Find All")
 
-    # -- show / hide --------------------------------------------------------
+    # -- focus (the bar is never hidden) ------------------------------------
 
-    def show_find(self) -> None:
-        self._replace_row_widget.hide()
+    def focus_find(self) -> None:
+        """``Ctrl+F``: put the cursor in the Find field.
+
+        This is all `Ctrl+F` does since FQ-016 — the bar is already visible, so
+        there is nothing to show. The old `show_find` additionally hid the
+        replace row; that mode is gone.
+        """
         self._prefill_from_selection()
-        self.show()
         self._find_field.setFocus()
         self._find_field.selectAll()
 
-    def show_replace(self) -> None:
-        self._replace_row_widget.show()
+    def focus_replace(self) -> None:
+        """``Ctrl+R``: put the cursor in the Replace-with field.
+
+        Prefills Find from the editor selection on the same terms as
+        :meth:`focus_find`, so "select a word, press Ctrl+R" still arms the
+        search — but the caret lands where the user is about to type.
+        """
         self._prefill_from_selection()
-        self.show()
-        self._find_field.setFocus()
-        self._find_field.selectAll()
+        self._replace_field.setFocus()
+        self._replace_field.selectAll()
 
     def set_find_text(self, text: str) -> None:
         """Set the Find field's text (used by the editor's right-click
         "Find" path, which prefills from the selection and then runs
-        find_next). Distinct from _prefill_from_selection, which only fills
-        when opened with an active editor selection."""
+        find_next). Distinct from _prefill_from_selection, which fills only
+        from a live editor selection and only into an EMPTY field."""
         self._find_field.setText(text)
 
     def _prefill_from_selection(self) -> None:
+        """Seed Find from the editor's selection — **only when the field is
+        empty** (FQ-016, following FQ-017's precedent on the caption bar).
+
+        It used to run on every `show_find`/`show_replace`, where clobbering was
+        harmless because the bar had just appeared. On the *focus* path it would
+        overwrite a term the user typed a moment ago every time they pressed
+        Ctrl+F with an incidental selection still live in the editor — hostile
+        for a gesture whose whole job is "put my cursor there". `set_find_text`
+        stays unconditional; it is an explicit "search for this" command.
+        """
+        if self._find_field.text():
+            return
         selected = self._editor.textCursor().selectedText()
         if selected:
             self._find_field.setText(selected)
 
     def keyPressEvent(self, event: QKeyEvent) -> None:
         if event.key() == Qt.Key.Key_Escape:
-            self.hide()
+            # FQ-016: Escape returns focus to the document. It does NOT hide the
+            # bar — there is no hidden state any more.
             self._editor.setFocus()
             return
         super().keyPressEvent(event)
@@ -186,3 +218,41 @@ class FindReplaceBar(QWidget):
         cursor.setPosition(index + length, QTextCursor.MoveMode.KeepAnchor)
         self._editor.setTextCursor(cursor)
         self._editor.ensureCursorVisible()
+
+
+def install_focus_shortcuts(host: QWidget, bar: FindReplaceBar) -> tuple:
+    """Give `host` the two `Ctrl+F` / `Ctrl+R` **focus** shortcuts for `bar`.
+
+    `host` must be the widget that owns BOTH the editor and the bar (the tab
+    container / panel), because the context is
+    ``WidgetWithChildrenShortcut``: the keys have to fire while the caret is in
+    the **editor**, not only once the bar already has focus.
+
+    **Why per-host and not one window-level shortcut** — the thing a reader will
+    otherwise "simplify" away. FQ-017 gave the Caption Management panel its own
+    panel-scoped ``Ctrl+F``/``Ctrl+R`` (`caption_management_panel.py`), and Qt
+    does **not** prefer a narrower context over a wider one: two enabled
+    shortcuts matching the same key press are *ambiguous*, and neither fires
+    (only `activatedAmbiguously` does). A window-level `Ctrl+F` would therefore
+    break caption find/replace — the very conflict the old
+    `set_find_actions_enabled` gate existed to avoid, and which FQ-016 was able
+    to delete precisely because the keys became per-surface. Each editor tab
+    owning its own pair keeps exactly one match live for any focus location, and
+    makes `Ctrl+F` a **no-op on tabs with no bar** (Manual, Diff/Merge) rather
+    than yanking the user to Raw XML (§29).
+
+    `F3` is deliberately NOT here: it is a single window-level action routed
+    through `FindValidateController.active_find_bar()` (§27), because nothing
+    competes for it.
+
+    Returns the two `QShortcut`s so the caller can retain them (a `QShortcut`
+    parented to `host` is owned by it, but returning them keeps them
+    inspectable from tests).
+    """
+    find_shortcut = QShortcut(QKeySequence("Ctrl+F"), host)
+    find_shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+    find_shortcut.activated.connect(bar.focus_find)
+    replace_shortcut = QShortcut(QKeySequence("Ctrl+R"), host)
+    replace_shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+    replace_shortcut.activated.connect(bar.focus_replace)
+    return find_shortcut, replace_shortcut

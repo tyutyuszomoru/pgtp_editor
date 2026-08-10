@@ -20,7 +20,8 @@ Nothing here can reach a modal call: the panel opens non-modal `QDialog`s with
 involved.
 """
 import pytest
-from PySide6.QtCore import QSize
+from PySide6.QtCore import QSize, Qt
+from PySide6.QtWidgets import QWidget
 
 from pgtp_editor.db.sandbox import SandboxCapabilities, SandboxMode, determine_project_tier
 from pgtp_editor.ui import project_status_model as psm
@@ -497,3 +498,47 @@ def test_action_reprobes_after_running():
         panel.diagram.node(NodeFamily.SANDBOX2).state
         == "sandbox2_plpgsql_check_installed"
     )
+
+
+# --- BUG-036: opening size ---------------------------------------------------
+def test_opens_at_720x440_and_stays_resizable():
+    """BUG-036 #3. The size lives in the constructor rather than at
+    `main_window.py`'s open site, so every future opener inherits it — and it is
+    an opening size, so the pre-existing 420x320 minimum must stay strictly
+    smaller and no fixed size may be introduced."""
+    panel = ProjectStatusPanel(diagram=_full_diagram())
+
+    assert panel.size() == QSize(720, 440)
+    assert panel.maximumWidth() > 720
+    assert panel.maximumHeight() > 440
+    assert panel.minimumSize() == QSize(420, 320)
+
+
+def test_the_opening_size_survives_being_promoted_to_a_top_level_window():
+    """`main_window` builds the panel parented to itself and then flips
+    `Qt.WindowType.Window` on. Changing window flags can reset a widget's
+    geometry, so the size the user actually sees is asserted through that same
+    sequence rather than on a bare construction."""
+    parent = QWidget()
+    panel = ProjectStatusPanel(diagram=_full_diagram(), parent=parent)
+    panel.setWindowFlag(Qt.WindowType.Window, True)
+    panel.setWindowTitle("Project Status")
+    panel.show()
+
+    assert panel.size() == QSize(720, 440)
+
+
+def test_the_whole_node_diagram_fits_at_the_opening_size():
+    """The acceptance criterion for this window: the node row is a strip of
+    fixed-size frames whose natural width grows with the node count, so at
+    720x440 the full diagram must fit inside the scroll viewport with no
+    scrollbar engaged — nothing cut off at open."""
+    panel = ProjectStatusPanel(diagram=_full_diagram())
+    panel.show()
+
+    needed = panel.diagram_widget.sizeHint()
+    viewport = panel.scroll_area.viewport().size()
+    assert needed.width() <= viewport.width()
+    assert needed.height() <= viewport.height()
+    assert not panel.scroll_area.horizontalScrollBar().isVisible()
+    assert not panel.scroll_area.verticalScrollBar().isVisible()

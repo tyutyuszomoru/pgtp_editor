@@ -71,7 +71,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from PySide6.QtCore import QSettings
-from PySide6.QtWidgets import QListWidget, QWidget
+from PySide6.QtWidgets import QWidget
 
 from pgtp_editor.ui.center_stage import CenterStage
 
@@ -91,10 +91,16 @@ class UiShell:
     #: The center tab stack (Raw XML / XSD / Manual / DDL / Caption / ...).
     stage: CenterStage
 
-    #: The bottom "Audit / Problems" list every lane reports findings into.
-    audit: QListWidget
+    #: Where every lane reports its rows. Since FQ-028 this is the ROUTER
+    #: (`ui/audit_router.py::AuditRouter`), not a widget: the same
+    #: `addItem`/`count`/`item`/`takeItem` surface, but the prefix now names a
+    #: DESTINATION (left-dock Findings tab / bottom Messages tab / Activity Log)
+    #: instead of competing for room in one panel. No lane had to change.
+    audit: object
 
     #: ``statusBar().showMessage`` — ``(text)`` or ``(text, timeout_ms)``.
+    #: FQ-028: the bar no longer PAINTS this; it journals it in the Activity
+    #: Log (`ui/status_bar.py::StaticStatusBar`). Call sites are unchanged.
     status: Callable[..., None]
 
     #: The window's persistence store (an injected temp ini under test).

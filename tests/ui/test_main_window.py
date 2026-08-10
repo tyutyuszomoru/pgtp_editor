@@ -1,3 +1,4 @@
+import pytest
 from PySide6.QtCore import Qt
 
 from pgtp_editor.ui.main_window import MainWindow
@@ -27,7 +28,10 @@ def test_audit_dock_on_bottom(qtbot):
     window = MainWindow()
     qtbot.addWidget(window)
     assert window.dockWidgetArea(window.audit_dock) == Qt.DockWidgetArea.BottomDockWidgetArea
-    assert window.audit_dock.windowTitle() == "Audit / Problems"
+    # FQ-028 retired the "Audit / Problems" title: the dock now HOLDS the two
+    # surfaces that replaced it, and keeps the objectName so saved layouts do.
+    assert window.audit_dock.windowTitle() == "Activity Log / Messages"
+    assert window.audit_dock.objectName() == "audit_dock"
 
 
 def test_properties_dock_on_right(qtbot):
@@ -37,10 +41,21 @@ def test_properties_dock_on_right(qtbot):
     assert window.properties_dock.windowTitle() == "Properties"
 
 
-def test_center_stage_is_central_widget(qtbot):
+def test_center_stage_sits_below_the_editor_menu_bar_in_the_central_widget(qtbot):
+    """FQ-016 deliberately broke the old `centralWidget() is center_stage`
+    coupling: the central widget is now a container holding the Editor menu bar
+    ABOVE the stage (a QMainWindow's own menu/toolbar areas span the docks too,
+    so a bar strictly above the central pane cannot use them). What every other
+    caller depends on -- `window.center_stage` being the `CenterStage` -- is
+    unchanged."""
     window = MainWindow()
     qtbot.addWidget(window)
-    assert window.centralWidget() is window.center_stage
+    container = window.centralWidget()
+    assert container is not window.center_stage
+    assert window.center_stage.parent() is container
+    layout = container.layout()
+    assert layout.itemAt(0).widget() is window.editor_menu_bar
+    assert layout.itemAt(1).widget() is window.center_stage
 
 
 def test_not_implemented_shows_status_message(qtbot):
@@ -391,7 +406,10 @@ def test_find_all_populates_audit_panel_with_line_items_and_summary(qtbot):
 def test_find_all_clears_only_prior_find_entries(qtbot):
     window = MainWindow()
     qtbot.addWidget(window)
-    window.audit_panel.addItem("[Schema] seeded entry")
+    # FQ-028: `[Schema]` learning chatter is journalled, not listed, so the
+    # "survives a Find rerun" seed is a Results row -- which is the surface a
+    # Find rerun must not touch.
+    window.audit_panel.addItem("[Check] seeded entry")
     window.center_stage.xml_editor.setPlainText("page here")
 
     window._find_ui.find_all("page")
@@ -401,9 +419,9 @@ def test_find_all_clears_only_prior_find_entries(qtbot):
     texts = [window.audit_panel.item(i).text() for i in range(window.audit_panel.count())]
     # The seeded [Schema] entry survives exactly once; only ONE generation of
     # [Find] entries is present (result line + summary).
-    assert texts.count("[Schema] seeded entry") == 1
+    assert texts.count("[Check] seeded entry") == 1
     assert texts == [
-        "[Schema] seeded entry",
+        "[Check] seeded entry",
         "[Find] line 1: page here",
         '[Find] 1 match(es) for "page"',
     ]
@@ -433,7 +451,7 @@ def test_clicking_non_find_entry_is_a_noop(qtbot):
     window.center_stage.xml_editor.moveCursor(QTextCursor.MoveOperation.Start)
     before = window.center_stage.xml_editor.textCursor().blockNumber()
 
-    window.audit_panel.addItem("[Schema] not clickable to navigate")
+    window.audit_panel.addItem("[Check] not clickable to navigate")
     schema_item = window.audit_panel.item(window.audit_panel.count() - 1)
     window._on_audit_item_clicked(schema_item)  # no line data -> no-op
 
@@ -458,14 +476,14 @@ def test_clicking_summary_line_is_a_noop(qtbot):
     assert after == before
 
 
-def test_find_all_via_menu_populates_audit_panel(qtbot):
-    from tests.ui._menu_helpers import find_action, find_top_menu
-
+def test_find_all_via_the_bars_button_populates_audit_panel(qtbot):
+    """FQ-016: the bar's BUTTON is the only way to start a Find All -- the
+    Edit-menu entry and its Ctrl+Shift+F are both deleted."""
     window = MainWindow()
     qtbot.addWidget(window)
     window.center_stage.xml_editor.setPlainText("alpha page beta")
     window.center_stage.find_replace_bar._find_field.setText("page")
-    find_action(find_top_menu(window, "Edit"), "Find All").trigger()
+    window.center_stage.find_replace_bar._find_all_button.click()
     qtbot.waitUntil(lambda: not window.center_stage.find_replace_bar._find_all_running, timeout=5000)
 
     texts = [window.audit_panel.item(i).text() for i in range(window.audit_panel.count())]
@@ -473,9 +491,9 @@ def test_find_all_via_menu_populates_audit_panel(qtbot):
     assert '[Find] 1 match(es) for "page"' in texts
 
 
-def test_replace_all_via_menu_mutates_document(qtbot):
-    from tests.ui._menu_helpers import find_action, find_top_menu
-
+def test_replace_all_via_the_bars_button_mutates_document(qtbot):
+    """Ctrl+Alt+Return is deleted too (§27): Replace All is a bulk edit and
+    stays button-only."""
     window = MainWindow()
     qtbot.addWidget(window)
     window.center_stage.xml_editor.setPlainText("page page page")
@@ -483,7 +501,7 @@ def test_replace_all_via_menu_mutates_document(qtbot):
     bar._find_field.setText("page")
     bar._replace_field.setText("X")
 
-    find_action(find_top_menu(window, "Edit"), "Replace All").trigger()
+    bar._replace_all_button.click()
     assert window.center_stage.xml_editor.toPlainText() == "X X X"
 
 
@@ -714,10 +732,14 @@ def test_manage_captions_apply_then_reedit_uses_updated_snapshot(qtbot):
 
 # --- Phase 1: mode indicator + read-only hint -----------------------------
 
-def test_mode_label_initial_text_is_editing_mode(qtbot):
+def test_mode_label_states_the_major_mode_before_any_launcher_pick(qtbot):
+    """FQ-028: the label is never blank. With no launcher column picked there is
+    still a defined fact to state, and "Editing" was never a mode -- it is the
+    absence of a minor one."""
     window = MainWindow()
     qtbot.addWidget(window)
-    assert window._mode_label.text() == "Editing Mode"
+    assert window._mode_label.text() == "No Mode"
+    assert window.toolbar_mode_indicator.text() == "No Mode"
 
 
 def test_mode_label_flips_on_enter_and_close_caption_mode(qtbot):
@@ -728,11 +750,17 @@ def test_mode_label_flips_on_enter_and_close_caption_mode(qtbot):
     window.center_stage.xml_editor.setPlainText(
         '<Root>\n  <Page caption="Home"/>\n</Root>'
     )
+    window.set_workflow_mode("project")
     find_action(find_top_menu(window, "Tools"), "Manage Captions...").trigger()
-    assert window._mode_label.text() == "Caption Mode (XML read-only)"
+    # Major mode keeps the colour; the minor mode is appended as text, on BOTH
+    # surfaces, from the one `current_mode()` answer.
+    assert window._mode_label.text() == "Project · Caption"
+    assert window.toolbar_mode_indicator.text() == "Project · Caption"
+    assert window.current_mode() == ("project", "Caption")
 
     window.center_stage.caption_management_panel.close_panel()
-    assert window._mode_label.text() == "Editing Mode"
+    assert window._mode_label.text() == "Project"
+    assert window.toolbar_mode_indicator.text() == "Project"
 
 
 def test_caption_go_to_line_switches_to_raw_xml_and_navigates(qtbot):
@@ -762,7 +790,7 @@ def test_readonly_edit_attempt_flashes_status_hint(qtbot):
     assert "read-only" in window.statusBar().currentMessage()
 
 
-# -- Phase 4: shared find/filter/replace dialog wiring ----------------------
+# -- FQ-017: caption find/filter/replace lives ONLY in the permanent bar ----
 
 
 def _enter_caption_mode_with(window, snapshot):
@@ -772,182 +800,110 @@ def _enter_caption_mode_with(window, snapshot):
     find_action(find_top_menu(window, "Tools"), "Manage Captions...").trigger()
 
 
-def test_caption_filter_dialog_filters_grid(qtbot):
+def test_the_caption_filter_modal_is_gone_from_the_host(qtbot):
+    """FQ-017 deleted `ui/caption_find_replace_dialog.py` and every host-side
+    seam that reached it: the Tools entry, the two mode-gated window
+    QShortcuts, the factory and the four routing slots."""
     window = MainWindow()
     qtbot.addWidget(window)
-    _enter_caption_mode_with(
-        window,
-        '<Root>\n  <Page caption="Home"/>\n  <Page caption="Orders"/>\n</Root>',
-    )
-    dialog = window._make_caption_find_replace_dialog(replace_enabled=False)
-    dialog.find_field.setText("Home")
-    dialog._do_filter()
+    for gone in (
+        "_caption_find_replace_dialog",
+        "_make_caption_find_replace_dialog",
+        "_open_caption_filter_dialog",
+        "_open_caption_replace_dialog",
+        "_caption_shortcut_open_filter",
+        "_caption_shortcut_open_replace",
+        "_caption_filter_shortcut",
+        "_caption_replace_shortcut",
+        "_caption_apply_filter",
+        "_caption_replace_all",
+    ):
+        assert not hasattr(window, gone), gone
+    with pytest.raises(ImportError):
+        __import__("pgtp_editor.ui.caption_find_replace_dialog")
 
+
+def test_caption_filter_action_is_gone_from_the_tools_menu(qtbot):
+    from tests.ui._menu_helpers import find_action, find_top_menu
+
+    window = MainWindow()
+    qtbot.addWidget(window)
+    assert find_action(find_top_menu(window, "Tools"), "Caption Filter…") is None
+    # The tab that replaced it is still reachable.
+    assert find_action(find_top_menu(window, "Tools"), "Manage Captions...") is not None
+
+
+def test_caption_mode_needs_no_find_replace_gating_any_more(qtbot):
+    """FQ-016 deleted the gate rather than re-pointing it. `set_find_actions` /
+    `set_find_actions_enabled` existed ONLY so Caption Mode could disable the
+    Edit-menu Find…/Replace… QActions and let its own shortcuts win. With the
+    Edit menu dissolved, both sides' Ctrl+F/Ctrl+R are focus shortcuts scoped to
+    the surface that owns them, so exactly one is ever live -- structurally, not
+    by gating."""
+    from PySide6.QtGui import QShortcut
+
+    window = MainWindow()
+    qtbot.addWidget(window)
+    assert not hasattr(window._find_ui, "find_action")
+    assert not hasattr(window._find_ui, "set_find_actions")
+    assert not hasattr(window._find_ui, "set_find_actions_enabled")
+    # No window-parented Ctrl+F / Ctrl+R exists to be ambiguous with the caption
+    # panel's own panel-scoped pair.
+    window_combos = {
+        s.key().toString()
+        for s in window.findChildren(QShortcut)
+        if s.parent() is window
+    }
+    assert not {"Ctrl+F", "Ctrl+R"} & window_combos
+
+    _enter_caption_mode_with(window, '<Root>\n  <Page caption="Home"/>\n</Root>')
     panel = window.center_stage.caption_management_panel
-    proxy = panel._proxy
-    visible = [
-        proxy.index(r, 6).data(Qt.ItemDataRole.DisplayRole)
-        for r in range(proxy.rowCount())
-    ]
-    assert visible == ["Home"]
+    assert panel._focus_find_shortcut.key().toString() == "Ctrl+F"
+    assert panel._focus_replace_shortcut.key().toString() == "Ctrl+R"
+    window._close_caption_mode()
 
 
-def test_caption_replace_all_writes_new_value_and_reports(qtbot):
+def test_the_caption_bar_is_visible_as_soon_as_caption_mode_opens(qtbot):
     window = MainWindow()
     qtbot.addWidget(window)
     _enter_caption_mode_with(
         window,
         '<Root>\n  <Page caption="Home Page"/>\n  <Page caption="Orders Page"/>\n</Root>',
     )
-    dialog = window._make_caption_find_replace_dialog(replace_enabled=True)
-    dialog.find_field.setText("Page")
-    dialog.replace_field.setText("Screen")
-    dialog.global_radio.setChecked(True)
-    dialog._do_replace_all()
-
     panel = window.center_stage.caption_management_panel
+    bar = panel.find_replace_bar
+    assert bar.isHidden() is False
+    # And it is the one surface for filtering the grid. (set_find_text, so the
+    # live replace does not fire with an empty Replace-with and rewrite rows.)
+    bar.set_find_text("Home")
+    bar.apply_filter()
+    proxy = panel._proxy
+    visible = [
+        proxy.index(r, 6).data(Qt.ItemDataRole.DisplayRole)
+        for r in range(proxy.rowCount())
+    ]
+    assert visible == ["Home Page"]
+
+
+def test_the_caption_bar_replace_all_reaches_the_whole_project(qtbot):
+    """The one capability the deleted modal was the sole route to, now on the
+    bar behind the scope dropdown plus an explicit press."""
+    window = MainWindow()
+    qtbot.addWidget(window)
+    _enter_caption_mode_with(
+        window,
+        '<Root>\n  <Page caption="Home Page"/>\n  <Page caption="Orders Page"/>\n</Root>',
+    )
+    panel = window.center_stage.caption_management_panel
+    bar = panel.find_replace_bar
+    bar.find_field.setText("Home")
+    bar.apply_filter()
+    bar.replace_field.setText("Screen")
+    bar.find_field.setText("Page")
+    bar.set_scope("project")
+    bar.replace_all_button.click()
     assert panel._model.new_value_at(0) == "Home Screen"
     assert panel._model.new_value_at(1) == "Orders Screen"
-    assert "2 caption" in window.statusBar().currentMessage()
-
-
-def test_replace_dialog_preloads_active_filter_pattern(qtbot):
-    window = MainWindow()
-    qtbot.addWidget(window)
-    _enter_caption_mode_with(
-        window, '<Root>\n  <Page caption="Home"/>\n</Root>'
-    )
-    panel = window.center_stage.caption_management_panel
-    panel.apply_find_filter("Ho", "normal", False)
-    dialog = window._make_caption_find_replace_dialog(replace_enabled=True)
-    assert dialog.find_field.text() == "Ho"
-
-
-def test_caption_filter_invalid_regex_shows_inline_error(qtbot):
-    window = MainWindow()
-    qtbot.addWidget(window)
-    _enter_caption_mode_with(
-        window, '<Root>\n  <Page caption="Home"/>\n</Root>'
-    )
-    dialog = window._make_caption_find_replace_dialog(replace_enabled=False)
-    dialog.find_field.setText("(")
-    dialog.set_mode("regular")
-    dialog._do_filter()  # must not raise / not pop a modal
-    assert dialog.error_label.text() != ""
-
-
-def test_caption_ctrl_f_opens_caption_filter_dialog(qtbot):
-    # Issue #1: the window-scoped Ctrl+F shortcut (active in Caption Mode) opens
-    # the shared dialog in FILTER mode (no .exec() — we drive the connected
-    # slot, not a real key event).
-    window = MainWindow()
-    qtbot.addWidget(window)
-    _enter_caption_mode_with(window, '<Root>\n  <Page caption="Home"/>\n</Root>')
-    window._caption_filter_shortcut.activated.emit()
-    dialog = window._caption_find_replace_dialog
-    assert dialog is not None
-    assert dialog.windowTitle() == "Caption Filter"
-    assert not dialog._replace_enabled
-
-
-def test_caption_ctrl_r_opens_caption_replace_dialog(qtbot):
-    # Issue #1: the window-scoped Ctrl+R shortcut (active in Caption Mode) opens
-    # the shared dialog in REPLACE mode, pre-loading the active filter pattern.
-    window = MainWindow()
-    qtbot.addWidget(window)
-    _enter_caption_mode_with(window, '<Root>\n  <Page caption="Home"/>\n</Root>')
-    panel = window.center_stage.caption_management_panel
-    panel.apply_find_filter("Ho", "normal", False)
-    window._caption_replace_shortcut.activated.emit()
-    dialog = window._caption_find_replace_dialog
-    assert dialog is not None
-    assert dialog.windowTitle() == "Caption Replace"
-    assert dialog._replace_enabled
-    assert dialog.find_field.text() == "Ho"
-
-
-def test_caption_shortcuts_are_window_scoped_ctrl_f_ctrl_r(qtbot):
-    # The caption shortcuts must be WindowShortcut-scoped (fire anywhere in the
-    # window, not just when a particular widget has focus) and bound to
-    # Ctrl+F / Ctrl+R.
-    window = MainWindow()
-    qtbot.addWidget(window)
-    assert window._caption_filter_shortcut.key().toString() == "Ctrl+F"
-    assert window._caption_replace_shortcut.key().toString() == "Ctrl+R"
-    assert (
-        window._caption_filter_shortcut.context()
-        == Qt.ShortcutContext.WindowShortcut
-    )
-    assert (
-        window._caption_replace_shortcut.context()
-        == Qt.ShortcutContext.WindowShortcut
-    )
-
-
-def test_caption_shortcuts_disabled_outside_caption_mode(qtbot):
-    # Before entering Caption Mode: caption shortcuts disabled, editor
-    # Find…/Replace… enabled.
-    window = MainWindow()
-    qtbot.addWidget(window)
-    assert not window._caption_filter_shortcut.isEnabled()
-    assert not window._caption_replace_shortcut.isEnabled()
-    assert window._find_ui.find_action.isEnabled()
-    assert window._find_ui.replace_action.isEnabled()
-
-
-def test_enter_caption_mode_gates_shortcuts(qtbot):
-    # After entering Caption Mode: caption shortcuts enabled, editor
-    # Find…/Replace… disabled (so they cannot steal Ctrl+F / Ctrl+R).
-    window = MainWindow()
-    qtbot.addWidget(window)
-    _enter_caption_mode_with(window, '<Root>\n  <Page caption="Home"/>\n</Root>')
-    assert window._caption_filter_shortcut.isEnabled()
-    assert window._caption_replace_shortcut.isEnabled()
-    assert not window._find_ui.find_action.isEnabled()
-    assert not window._find_ui.replace_action.isEnabled()
-
-
-def test_close_caption_mode_restores_editor_actions(qtbot):
-    # After leaving Caption Mode: caption shortcuts disabled again, editor
-    # Find…/Replace… re-enabled.
-    window = MainWindow()
-    qtbot.addWidget(window)
-    _enter_caption_mode_with(window, '<Root>\n  <Page caption="Home"/>\n</Root>')
-    window._close_caption_mode()
-    assert not window._caption_filter_shortcut.isEnabled()
-    assert not window._caption_replace_shortcut.isEnabled()
-    assert window._find_ui.find_action.isEnabled()
-    assert window._find_ui.replace_action.isEnabled()
-
-
-def test_caption_replace_shortcut_routes_to_caption_after_go_to_line(qtbot):
-    # Focus-independence regression (issue #1): enter Caption Mode, then
-    # Go-to-line (which switches to the Raw XML tab / moves focus to the
-    # read-only editor). Triggering the caption Ctrl+R shortcut path must STILL
-    # open the caption Replace dialog — not the editor's replace bar — because
-    # the shortcut follows the mode, not focus. Driven via the connected slot
-    # (no real key events, no .exec()).
-    window = MainWindow()
-    qtbot.addWidget(window)
-    _enter_caption_mode_with(window, '<Root>\n  <Page caption="Home"/>\n</Root>')
-    # Simulate Go-to-line: switches tab to Raw XML and moves focus there.
-    window._caption_go_to_line(2)
-    # Drive the slot the _caption_replace_shortcut is connected to.
-    window._caption_replace_shortcut.activated.emit()
-    dialog = window._caption_find_replace_dialog
-    assert dialog is not None
-    # It routed to the CAPTION replace dialog, not the editor replace bar.
-    assert dialog.windowTitle() == "Caption Replace"
-    assert dialog._replace_enabled
-
-
-def test_caption_filter_action_exists_in_tools_menu(qtbot):
-    from tests.ui._menu_helpers import find_action, find_top_menu
-
-    window = MainWindow()
-    qtbot.addWidget(window)
-    action = find_action(find_top_menu(window, "Tools"), "Caption Filter…")
-    assert action is not None
 
 
 # ---------------------------------------------------------------------------
@@ -1010,24 +966,34 @@ def test_validate_duplicate_filename_populates_audit_and_status(qtbot):
     assert window.statusBar().currentMessage() == "Validation: 2 error(s), 0 warning(s)"
 
 
-def test_clear_validation_results_removes_only_validation_items(qtbot):
+def test_a_second_validation_run_ACCUMULATES_under_its_own_run_separator(qtbot):
+    """FQ-028 reversed this one deliberately.
+
+    `clear_validation_results` used to delete the previous run's rows. Results
+    now ACCUMULATE -- saved validation history is exactly what the owner asked
+    for -- so the sweep is read as a RUN BOUNDARY: the old rows stay and the new
+    run opens under its own dated separator.
+    """
     from PySide6.QtWidgets import QListWidgetItem
 
     window = MainWindow()
     qtbot.addWidget(window)
-    # Seed a schema entry that must survive.
-    window.audit_panel.addItem(QListWidgetItem("[Schema] x"))
+    window.audit_panel.addItem(QListWidgetItem("[Check] x"))
     _load_into_window(window, _DUP_FILENAME_XML)
     window._find_ui.validate_project()
-    assert _validation_items(window)  # validation items present
+    first = len(_validation_items(window))
+    assert first
 
-    window._find_ui.clear_validation_results()
+    window._find_ui.validate_project()
 
-    assert _validation_items(window) == []
+    assert len(_validation_items(window)) == first * 2
     remaining = [
         window.audit_panel.item(row).text() for row in range(window.audit_panel.count())
     ]
-    assert "[Schema] x" in remaining
+    assert "[Check] x" in remaining
+    # ...and the two runs are separated on screen by the dated rule.
+    rows = window.results_panel.row_texts()
+    assert rows.count("-" * 40) == 3  # the seed's run, then the two validations
 
 
 def test_clicking_validation_item_navigates_to_line(qtbot):

@@ -1,5 +1,7 @@
 """Tests for the three Diff/Merge comparison entry points wired into
-MainWindow and ProjectTreePanel: "Compare / Merge Two Files...",
+MainWindow and ProjectTreePanel: "Compare/Merge pgtp" (FQ-020 -- the relabelled,
+re-homed `Tools ▸ Compare / Merge Two Files...`, now on the Editor bar's
+`Deployment` menu and visible only while Raw XML is active),
 "Compare This Page With...", and "Compare This Detail With...".
 """
 from unittest.mock import patch
@@ -131,7 +133,10 @@ DUAL_CAPTION_CHANGED_PGTP = """\
 """
 
 
-def test_next_and_prev_difference_menu_actions_navigate_the_panel(qtbot, tmp_path):
+def test_next_and_previous_difference_menu_actions_navigate_the_panel(qtbot, tmp_path):
+    """FQ-021 MOVED both off `Tools` onto the Editor bar's `Navigation` menu,
+    relabelling `Prev Difference` -> `Previous Difference` to match
+    `Previous Bookmark`. Same panel steppers behind them."""
     window = MainWindow()
     qtbot.addWidget(window)
     source_path = _write(tmp_path, "source.pgtp", DUAL_CAPTION_CHANGED_PGTP)
@@ -143,9 +148,12 @@ def test_next_and_prev_difference_menu_actions_navigate_the_panel(qtbot, tmp_pat
     ):
         window._diff_ui.compare_two_files()
 
-    menu = find_top_menu(window, "Tools")
+    menu = find_top_menu(window, "Navigation")
     next_action = find_action(menu, "Next Difference")
-    prev_action = find_action(menu, "Prev Difference")
+    prev_action = find_action(menu, "Previous Difference")
+    # Visible, because the comparison above put the window in the mode.
+    assert next_action.isVisible() is True
+    assert prev_action.isVisible() is True
 
     panel = window.center_stage.diff_merge_panel
     leaves = panel._flattened_leaves()
@@ -162,9 +170,10 @@ def test_next_and_prev_difference_menu_actions_navigate_the_panel(qtbot, tmp_pat
 
 # NOTE (Phase D): the tree Page/Detail context menus no longer offer
 # "Compare This Page/Detail With..." (those menus were redesigned to
-# jump/select/see-in-caption). The Compare feature still lives in the
-# Tools menu ("Compare / Merge Two Files...") and in the underlying
-# MainWindow handlers, which these tests now drive directly.
+# jump/select/see-in-caption). The Compare feature still lives in a menu --
+# `Deployment ▸ Compare/Merge pgtp` since FQ-020, off Tools -- and in the
+# underlying MainWindow handlers, which these tests drive directly. The menu
+# entry's own wiring is covered by `tests/ui/test_deployment_menu.py`.
 
 
 def test_compare_this_page_with_real_handler(qtbot, tmp_path):

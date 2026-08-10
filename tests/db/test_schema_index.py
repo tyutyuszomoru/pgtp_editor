@@ -102,6 +102,101 @@ def test_known_columns_view_with_no_columns():
     assert index.known_columns("pr.eq_view") == []
 
 
+def test_column_entries_pairs_the_bare_name_with_a_typed_display():
+    """The popup's `(key, display)` shape: the key is exactly what
+    `known_columns` returns (it is what gets inserted), the display carries
+    the type so `id integer` is distinguishable from `id text`."""
+    index = SchemaIndex(_schema())
+    entries = index.column_entries("pr.equipment")
+    assert [key for key, _ in entries] == index.known_columns("pr.equipment")
+    assert entries[0] == ("id", "id  integer · PK · NOT NULL")
+    assert entries[1] == ("tag", "tag  varchar")
+
+
+def test_column_entries_prefix_filters_case_insensitive():
+    index = SchemaIndex(_schema())
+    assert [key for key, _ in index.column_entries("pr.equipment", "T")] == ["tag"]
+
+
+def test_column_entries_unknown_table_is_empty():
+    index = SchemaIndex(_schema())
+    assert index.column_entries("pr.nosuch") == []
+
+
+def test_column_entries_unknown_column_prefix_is_empty():
+    index = SchemaIndex(_schema())
+    assert index.column_entries("pr.equipment", "nosuch") == []
+
+
+def test_column_entries_view_with_no_columns():
+    index = SchemaIndex(_schema())
+    assert index.column_entries("pr.eq_view") == []
+
+
+def test_column_entries_renders_every_interesting_attribute():
+    schema = _schema()
+    schema.tables["hr.jobcard"] = TableInfo(
+        name="hr.jobcard",
+        kind="table",
+        columns=[
+            ColumnInfo(
+                name="id", data_type="integer", is_pk=True, is_fk=False,
+                is_nullable=False, default="nextval('hr.jobcard_id_seq')",
+            ),
+            ColumnInfo(
+                name="dept_id", data_type="integer", is_pk=False, is_fk=True,
+                is_nullable=False, default=None, fk_target="hr.dept.id",
+            ),
+            ColumnInfo(
+                name="note", data_type="text", is_pk=False, is_fk=False,
+                is_nullable=True, default=None, comment="free-text remark",
+            ),
+            ColumnInfo(
+                name="orphan_fk", data_type="integer", is_pk=False, is_fk=True,
+                is_nullable=True, default=None, fk_target=None,
+            ),
+        ],
+    )
+    displays = dict(SchemaIndex(schema).column_entries("hr.jobcard"))
+    assert displays["id"] == (
+        "id  integer · PK · NOT NULL · default nextval('hr.jobcard_id_seq')"
+    )
+    assert displays["dept_id"] == "dept_id  integer · → hr.dept.id · NOT NULL"
+    assert displays["note"] == "note  text · free-text remark"
+    # An FK whose target could not be resolved still says it is one.
+    assert displays["orphan_fk"] == "orphan_fk  integer · FK"
+
+
+def test_column_entries_elides_an_overlong_attribute():
+    schema = _schema()
+    schema.tables["hr.wordy"] = TableInfo(
+        name="hr.wordy",
+        kind="table",
+        columns=[
+            ColumnInfo(
+                name="c", data_type="text", is_pk=False, is_fk=False,
+                is_nullable=True, default=None, comment="x" * 200,
+            ),
+        ],
+    )
+    display = dict(SchemaIndex(schema).column_entries("hr.wordy"))["c"]
+    assert display.endswith("…")
+    assert len(display) < 80
+
+
+def test_known_columns_is_unchanged_by_the_richer_accessor():
+    """The regression that matters: the two live callers
+    (`ui/ddl_object_editor.py`, `ui/sql_console_panel.py`) still get bare
+    name strings, in table order, from the same `"schema.table"` key."""
+    index = SchemaIndex(_schema())
+    names = index.known_columns("pr.equipment")
+    assert names == ["id", "tag"]
+    assert all(isinstance(name, str) for name in names)
+    assert index.known_columns("hr.employee") == ["name"]
+    assert index.known_columns("pr.eq_view") == []
+    assert index.known_columns("pr.nosuch") == []
+
+
 def test_trigger_for_function_finds_attached_trigger():
     index = SchemaIndex(_schema())
     trigger = index.trigger_for_function("pr", "audit_log")

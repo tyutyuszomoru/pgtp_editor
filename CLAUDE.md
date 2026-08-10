@@ -15,6 +15,22 @@
   (`.claude/agents/spec-maintainer.md`) to fold it into `CONSOLIDATED_SPEC.md`
   with latest-wins reconciliation and a Supersession Ledger row for any override.
   The agent is the sole writer of specification content.
+- **The same agent HARMONIZES, and it does so first.** `spec-harmonizer` was
+  merged into `spec-maintainer` (2026-08-10): surveying the spec against shipped
+  code and authoring into it are one job, and the order is load-bearing. The spec
+  must be clean **before a new feature request arrives**, so nobody designs
+  against ghosts, and clean **before implementation starts**, because
+  contradictions in the spec become deep problems in the code. Dispatch it after
+  any batch of work lands, not only when folding something in.
+- **The spec is the final single truth**, so it carries the obligation to be
+  right: code and spec are never left diverged. If the spec is stale the agent
+  corrects it; if the CODE is wrong the agent dispatches `bug-triager` rather
+  than quietly rewriting the requirement to match. It also works
+  **retroactively** — filing features that shipped differently than specified,
+  and retiring assertions that no longer matter.
+- **When reconciliation changes what should be built, the agent RESTATES the
+  feature for implementation** rather than leaving the implementer to infer the
+  delta — and says explicitly that the restatement supersedes the queue entry.
 - **Brainstorming is gated by the same agent (placement gate).** Before design
   crystallizes, `spec-maintainer` first reports where the idea belongs and whether
   to extend an existing feature vs. create a new one — so the project grows
@@ -91,10 +107,31 @@
   session is mid-editing.
 - **When the user asks to pick up the queue** (typically once the main
   implementation task has wrapped up), read `docs/FEATURE_QUEUE.md`, dispatch
-  `spec-maintainer` (JOB 1) to fold each `QUEUED` entry into
+  `spec-maintainer` (it harmonizes first, then folds) to fold each `QUEUED` entry into
   `CONSOLIDATED_SPEC.md`, implement it, run the feature-tester /
   manual-maintainer policies above as usual, then flip that entry's `Status`
   line to `PROCESSED (<commit or spec §>)` in place rather than deleting it.
+
+## Owner decisions (mandatory routing)
+
+- **Never bury a decision the owner must make inside an implementation report.** Decisions raised
+  mid-report get missed; work then continues around them and the assumption hardens silently.
+  Every blocking or clarifying decision goes through the `owner-decision` subagent
+  (`.claude/agents/owner-decision.md`), which is the **sole writer** of
+  `docs/DECISION_QUEUE.md`. No other session or agent appends, answers, or flips a status there.
+- **To file one:** dispatch `owner-decision` with `run_in_background: true` the moment you hit a
+  choice you must not make alone — a design trade-off with no obviously right answer, a ruling that
+  would reverse recorded design, or a question whose wrong answer is expensive. Then **continue
+  with everything that decision does not block**; filing is not a reason to stop.
+- **Do not file** what the code can answer (go read it), what `CONSOLIDATED_SPEC.md` already
+  settles, or a choice with an obviously right answer — make that one and say you did. Filing
+  trivia trains the owner to skim the queue, which recreates the problem.
+- **To answer them:** the owner runs a session dedicated to decisions and dispatches
+  `owner-decision` in the **foreground**. It sweeps the queue, retires entries already overtaken by
+  shipped code, puts the live ones as self-contained questions, and writes the answers back **with
+  the owner's reasoning** — an answer without its why gets re-litigated.
+- An answered entry may contradict the spec, the manual, or a queue entry. `owner-decision` reports
+  that; reconciling it belongs to `spec-maintainer`, `manual-maintainer`, or `bug-triager` as usual.
 
 ## Test environment
 

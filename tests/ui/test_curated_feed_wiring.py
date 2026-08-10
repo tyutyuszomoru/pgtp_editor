@@ -84,7 +84,7 @@ def test_malformed_curated_keeps_last_good(window):
     assert window._xsd_ui.load_curated() is False
     model = window.center_stage.xml_editor.schema_model()
     assert model is not None  # last good schema stayed live
-    items = [window.audit_panel.item(i).text() for i in range(window.audit_panel.count())]
+    items = window.activity_panel.row_texts()
     assert any("Curated XSD has XML errors" in line for line in items)
 
 
@@ -95,7 +95,7 @@ def test_init_seeds_curated_from_bundled_and_audits_version(window):
     path = curated_xsd_path(window._schema_storage_dir)
     assert path.exists()
     assert path.read_text(encoding="utf-8") == bundled_curated_xsd_text()
-    items = [window.audit_panel.item(i).text() for i in range(window.audit_panel.count())]
+    items = window.activity_panel.row_texts()
     assert any(
         "bundled" in line.lower() and CURATED_BUNDLED_VERSION in line for line in items
     )
@@ -134,7 +134,7 @@ def test_bootstrap_falls_back_to_learned_model_when_no_bundled(window, monkeypat
 
     text = curated_xsd_path(window._schema_storage_dir).read_text(encoding="utf-8")
     assert "<xs:schema" in text and 'name="a"' in text
-    items = [window.audit_panel.item(i).text() for i in range(window.audit_panel.count())]
+    items = window.activity_panel.row_texts()
     assert any("Bootstrapped curated.xsd" in line for line in items)
 
 
@@ -186,7 +186,7 @@ def test_first_run_enrichment_bootstraps_and_feeds_editor(window, tmp_path, monk
     curated = curated_xsd_path(window._schema_storage_dir)
     assert curated.exists()
     assert "<xs:schema" in curated.read_text(encoding="utf-8")
-    items = [window.audit_panel.item(i).text() for i in range(window.audit_panel.count())]
+    items = window.activity_panel.row_texts()
     assert any("Bootstrapped curated.xsd" in line for line in items)
 
     # and the editor got fed from it — completion knows the learned structure

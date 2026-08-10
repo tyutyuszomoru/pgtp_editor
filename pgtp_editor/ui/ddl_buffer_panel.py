@@ -44,7 +44,14 @@ from PySide6.QtWidgets import (
 from pgtp_editor.db.ddl_buffer import DdlObjectSpan
 from pgtp_editor.db.ddl_project import DriftMarkers, routine_ddl_paths, trigger_ddl_path
 from pgtp_editor.db.introspect import DatabaseSchema
+from pgtp_editor.ui.alter_column_dialogs import (
+    OP_DROP_COLUMN,
+    OP_DROP_DEFAULT,
+    OP_DROP_NOT_NULL,
+    OP_SET_NOT_NULL,
+)
 from pgtp_editor.ui.ddl_object_editor import DdlObjectRef
+from pgtp_editor.ui.table_dialogs import OP_COLUMN_COMMENT, OP_TABLE_COMMENT
 
 _SPAN_ROLE = Qt.ItemDataRole.UserRole
 #: A table node's `TableInfo`, keyed on a role distinct from `_SPAN_ROLE` so
@@ -66,6 +73,248 @@ _OBJKEY_ROLE = Qt.ItemDataRole.UserRole + 3
 #: the overlay can be applied and removed repeatedly without re-parsing the
 #: visible text or ever stacking two `*`s on one row.
 _LABEL_ROLE = Qt.ItemDataRole.UserRole + 4
+#: A column leaf's `(TableInfo, column name)` (FQ-025 slice 1). Its own role,
+#: not `_TABLE_ROLE`, precisely because a column row must NOT behave like a
+#: table row: it carries the click context an "Alter Table ▸" dialog defaults
+#: its column dropdown to, which a table row has nothing to say about.
+_COLUMN_ROLE = Qt.ItemDataRole.UserRole + 5
+
+#: FQ-025 slice 1's eight column operations (slice 2's four constraint ones
+#: follow below), as `(operation id, menu label)` pairs.
+#:
+#: The four ids `alter_column_dialogs.ColumnActionDialog` already owns are
+#: IMPORTED rather than respelled here -- a second spelling of `"drop_column"`
+#: is exactly how a menu item comes to open the wrong dialog. The other four
+#: are declared here because each has a dialog class of its own and so needed
+#: no id over there; the host maps all eight in one place
+#: (`MainWindow._alter_column_dialog`).
+OP_ADD_COLUMN = "add_column"
+OP_RENAME_COLUMN = "rename_column"
+OP_CHANGE_COLUMN_TYPE = "change_column_type"
+OP_SET_DEFAULT = "set_default"
+
+#: FQ-025 slice 2's four constraint operations. Their ids live here for the
+#: same reason the four above do -- one spelling, read by the panel that emits
+#: it and by the host that maps it to a dialog.
+#:
+#: There is deliberately NO `drop_foreign_key`: in Postgres a foreign key IS a
+#: constraint and `DROP CONSTRAINT` is the identical statement for every type,
+#: so the type is shown in `DropConstraintDialog`'s picker labels rather than
+#: split across two menu entries that would generate the same SQL. That one
+#: entry is also where a constraint-backed INDEX has to be dropped from (see
+#: `db.introspect.IndexInfo`), so a future `Drop index` picker has somewhere to
+#: route those rows to.
+OP_ADD_CONSTRAINT = "add_constraint"
+OP_ADD_FOREIGN_KEY = "add_foreign_key"
+OP_DROP_CONSTRAINT = "drop_constraint"
+OP_RENAME_CONSTRAINT = "rename_constraint"
+
+#: FQ-025 slice 3's operations. Two are declared here like the ones above; the
+#: two comment ids are IMPORTED from `table_dialogs`, where `SetCommentDialog`
+#: already owns them as its `target=` values -- the same rule slice 1 followed
+#: for `ColumnActionDialog`'s four, and for the same reason: a second spelling
+#: of `"column_comment"` is how a menu item comes to open the wrong mode.
+#:
+#: `OP_CREATE_INDEX` and `OP_DROP_INDEX` sit on the `Alter Table ▸` submenu
+#: although NEITHER emits `ALTER TABLE` (`CREATE INDEX … ON t` and
+#: `DROP INDEX schema.name` are their own statements, and the latter names no
+#: table at all). The submenu groups what is *scoped to this table* -- which is
+#: the question the user is answering when they right-click one -- and its title
+#: is the label of the commonest case, not a promise about the generated verb.
+#: `OP_DROP_TABLE` rides along for the same reason, at the bottom.
+OP_CREATE_INDEX = "create_index"
+OP_DROP_INDEX = "drop_index"
+OP_SET_TABLE_COMMENT = OP_TABLE_COMMENT
+OP_SET_COLUMN_COMMENT = OP_COLUMN_COMMENT
+OP_DROP_TABLE = "drop_table"
+
+#: `Create Table…` -- NOT on the submenu, and not on `alter_column_requested`
+#: either (see `create_table_requested`). It exists as an id only so the tab the
+#: generation opens can name the operation it came from, exactly as the others
+#: do via `AlterDdlRef.operation`.
+OP_CREATE_TABLE = "create_table"
+
+#: The groups the `Alter Table ▸` submenu is built from, in menu order.
+#: Grouped rather than one flat tuple ONLY so separators can sit between them:
+#: "what this table's columns are", "what its constraints are", "what its
+#: indexes are", "what it says about itself" and "whether it exists at all" are
+#: five different questions, and sixteen undifferentiated entries would read as
+#: one long list. Everything else -- ids, labels, order -- still comes from
+#: here alone.
+ALTER_TABLE_COLUMN_ACTIONS: tuple[tuple[str, str], ...] = (
+    (OP_ADD_COLUMN, "Add Column…"),
+    (OP_DROP_COLUMN, "Drop Column…"),
+    (OP_RENAME_COLUMN, "Rename Column…"),
+    (OP_CHANGE_COLUMN_TYPE, "Change Column Type…"),
+    (OP_SET_NOT_NULL, "Set NOT NULL…"),
+    (OP_DROP_NOT_NULL, "Drop NOT NULL…"),
+    (OP_SET_DEFAULT, "Set DEFAULT…"),
+    (OP_DROP_DEFAULT, "Drop DEFAULT…"),
+)
+
+ALTER_TABLE_CONSTRAINT_ACTIONS: tuple[tuple[str, str], ...] = (
+    (OP_ADD_CONSTRAINT, "Add Constraint…"),
+    (OP_ADD_FOREIGN_KEY, "Add Foreign Key…"),
+    (OP_DROP_CONSTRAINT, "Drop Constraint…"),
+    (OP_RENAME_CONSTRAINT, "Rename Constraint…"),
+)
+
+ALTER_TABLE_INDEX_ACTIONS: tuple[tuple[str, str], ...] = (
+    (OP_CREATE_INDEX, "Create Index…"),
+    (OP_DROP_INDEX, "Drop Index…"),
+)
+
+#: The comment group, which is the ONE place the two entry points differ: a
+#: comment entry names its subject, and the subject is whatever was
+#: right-clicked. A `Set Column Comment…` offered from the table node would name
+#: a column the user never pointed at (the dropdown's first one), and a
+#: `Set Table Comment…` offered from a column leaf would quietly retarget the
+#: click one level up. Both are single-entry tuples so the assembly below stays
+#: one uniform "groups, separated" loop.
+ALTER_TABLE_TABLE_COMMENT_ACTIONS: tuple[tuple[str, str], ...] = (
+    (OP_SET_TABLE_COMMENT, "Set Table Comment…"),
+)
+
+ALTER_TABLE_COLUMN_COMMENT_ACTIONS: tuple[tuple[str, str], ...] = (
+    (OP_SET_COLUMN_COMMENT, "Set Column Comment…"),
+)
+
+#: `Drop Table…` gets a group (and therefore a separator) to itself rather than
+#: joining the index pair above: it is the one entry here that removes the
+#: object the whole menu is about, and it sits last so it is nowhere near a
+#: mis-click on `Drop Index…`. It carries NO confirmation, deliberately -- see
+#: `table_dialogs.DropTableDialog`: generating `DROP TABLE t` executes nothing,
+#: and the editable tab is the safeguard.
+ALTER_TABLE_DROP_TABLE_ACTIONS: tuple[tuple[str, str], ...] = (
+    (OP_DROP_TABLE, "Drop Table…"),
+)
+
+
+def alter_table_action_groups(
+    column: str = "",
+) -> tuple[tuple[tuple[str, str], ...], ...]:
+    """The submenu's groups for a click that came from `column` (`""` = the
+    table node itself).
+
+    A function rather than one module constant because slice 3 introduced the
+    first operation whose *presence* depends on the entry point -- the comment
+    pair above. Everything else is identical from both, and deliberately so:
+    one builder still produces both menus, so the table node and a column leaf
+    can never come to offer different constraint or index sets.
+    """
+    return (
+        ALTER_TABLE_COLUMN_ACTIONS,
+        ALTER_TABLE_CONSTRAINT_ACTIONS,
+        ALTER_TABLE_INDEX_ACTIONS,
+        ALTER_TABLE_COLUMN_COMMENT_ACTIONS
+        if column
+        else ALTER_TABLE_TABLE_COMMENT_ACTIONS,
+        ALTER_TABLE_DROP_TABLE_ACTIONS,
+    )
+
+
+#: The table node's groups -- the shape a caller means when it says "the
+#: submenu" without qualifying which click opened it.
+ALTER_TABLE_ACTION_GROUPS: tuple[tuple[tuple[str, str], ...], ...] = (
+    alter_table_action_groups()
+)
+
+#: Every operation the table node's submenu offers, flattened, in menu order.
+ALTER_TABLE_ACTIONS: tuple[tuple[str, str], ...] = tuple(
+    action for group in ALTER_TABLE_ACTION_GROUPS for action in group
+)
+
+#: Every operation EITHER entry point can emit -- the table node's fifteen plus
+#: the column leaf's own comment entry. The host maps all sixteen in one place
+#: (`MainWindow._alter_column_dialog`), so it needs the union rather than one
+#: entry point's view of it.
+ALTER_TABLE_ALL_ACTIONS: tuple[tuple[str, str], ...] = (
+    *ALTER_TABLE_ACTIONS,
+    *ALTER_TABLE_COLUMN_COMMENT_ACTIONS,
+)
+
+#: operation id -> the SQL statement that operation's emitter actually writes.
+#: Only the operations whose statement is NOT `ALTER TABLE` appear; everything
+#: absent gets `AlterDdlRef.statement`'s default, which is the honest answer for
+#: the twelve column/constraint operations that really do emit one.
+#:
+#: It lives here, beside the ids themselves, because it is a statement of FACT
+#: about each emitter in `db/ddl_skeleton.py` -- the same kind of fact as the
+#: labels above, and belonging to the same vocabulary. The tab titles read off
+#: it (see `AlterDdlRef.statement`), which is how a `Create Index…` generation
+#: stopped being titled `ALTER <table>`: the submenu it was reached from is
+#: `Alter Table ▸`, but the statement it produces is not an ALTER at all, and
+#: the tab must be named after the buffer, not after the route to it.
+ALTER_DDL_STATEMENTS: dict[str, str] = {
+    OP_CREATE_TABLE: "CREATE TABLE",
+    OP_DROP_TABLE: "DROP TABLE",
+    OP_CREATE_INDEX: "CREATE INDEX",
+    OP_DROP_INDEX: "DROP INDEX",
+    OP_SET_TABLE_COMMENT: "COMMENT ON TABLE",
+    OP_SET_COLUMN_COMMENT: "COMMENT ON COLUMN",
+}
+
+#: The statement every other operation emits, and the default the ref carries.
+DEFAULT_ALTER_DDL_STATEMENT = "ALTER TABLE"
+
+
+def alter_ddl_statement(operation: str) -> str:
+    """The SQL statement `operation` generates."""
+    return ALTER_DDL_STATEMENTS.get(operation, DEFAULT_ALTER_DDL_STATEMENT)
+
+
+def _qualified_in_schema_of(name: str, qualified_table: str) -> str:
+    """`name` in `qualified_table`'s schema, or `""` for an empty name. An
+    index lives in its table's schema in Postgres, so this is not a guess."""
+    if not name:
+        return ""
+    if "." in name:
+        return name
+    schema = qualified_table.rsplit(".", 1)[0] if "." in qualified_table else ""
+    return f"{schema}.{name}" if schema else name
+
+
+def alter_ddl_subject(dialog, operation: str, qualified_table: str) -> str:
+    """What the generated statement NAMES, fully qualified -- the half of a tab
+    title that no operation→label lookup can supply.
+
+    Read off the DIALOG, because the dialog is the only place the answer
+    exists: `DROP INDEX` names an index the user picked from a combo,
+    `COMMENT ON COLUMN` names a column, and neither is anywhere in the
+    `(schema, table)` pair `AlterDdlRef` is otherwise built from. That is
+    exactly why a verb-mapping-only fix read *worse* than the old wrong title:
+    the right verb over the wrong noun names a thing the statement never
+    mentions.
+
+    `""` means "the table", which `AlterDdlRef.qualified_subject` resolves --
+    the correct answer for every `ALTER TABLE`, `CREATE TABLE`, `DROP TABLE`
+    and `COMMENT ON TABLE`.
+
+    Duck-typed via `getattr` throughout: this module already knows the ids, and
+    making it import the dialog classes to isinstance-check them would invert
+    the dependency `table_dialogs` has on it.
+    """
+    if operation in (OP_CREATE_INDEX, OP_DROP_INDEX):
+        # `DropIndexDialog` hands back `schema.name` directly; `CreateIndexDialog`
+        # has only the bare name the user typed.
+        identity = (getattr(dialog, "index_identity", lambda: "")() or "").strip()
+        if identity:
+            return identity
+        name = (getattr(dialog, "index_name", lambda: "")() or "").strip()
+        return _qualified_in_schema_of(name, qualified_table)
+    if operation == OP_SET_COLUMN_COMMENT:
+        column = (getattr(dialog, "column", lambda: "")() or "").strip()
+        return f"{qualified_table}.{column}" if column else ""
+    return ""
+
+
+#: The submenu these sit in, on both the table node and a column leaf.
+ALTER_TABLE_MENU_TITLE = "Alter Table"
+
+#: FQ-002's `New Function/Procedure…` and this are the two *creation* entries in
+#: this tree, and they sit at the same level for the same reason -- see
+#: `BrowserPanel.create_table_requested`.
+CREATE_TABLE_LABEL = "Create Table…"
 
 #: The one unsaved/changed glyph in this app (§11/§18.2/§18.5): the editable
 #: tab's title marker and the §18.2 `locally_edited` drift marker are both
@@ -90,7 +339,7 @@ def resolve_edit_target(
     schema: DatabaseSchema, span: DdlObjectSpan
 ) -> tuple[DdlObjectRef, str] | None:
     """The `DdlObjectRef` + live source text for `span`, resolved against
-    `schema` (spec §18.5, D1). Shared by both right-click ▸ Edit… entry
+    `schema` (spec §18.5, D1). Shared by both right-click ▸ Edit DDL entry
     points -- `BrowserPanel.tree` here and the read-only DDL `EditorPanel`'s
     buffer (`ddl_editor_panel.py`) -- so routine/trigger identity is derived
     in exactly one place. Returns None if `schema` no longer has the object
@@ -128,22 +377,23 @@ def resolve_edit_target(
 class BrowserPanel(QWidget):
     navigate_requested = Signal(int)  # 1-based line in the EditorPanel buffer
 
-    #: Right-click ▸ Edit… on an object row (spec §18.5, D1 entry point 1).
+    #: Right-click ▸ Edit DDL on an object row (spec §18.5, D1 entry point 1).
     #: Carries the object's `DdlObjectRef` and its current source text (the
     #: live `RoutineInfo.source` / `TriggerInfo.definition` this tree was
     #: built from) -- everything MainWindow needs to open or focus the
     #: editable tab, with no second lookup back into the schema.
+    #:
+    #: The ONLY editing signal since FQ-024: the withdrawn `checkout_requested`
+    #: asked the user to pick between two gestures whose real difference is
+    #: project state, so checkout became a branch of MainWindow's handler for
+    #: THIS signal rather than a second menu entry (§18.1/§18.2). The panel
+    #: still knows nothing about projects.
     edit_requested = Signal(object, str)
-
-    #: Right-click ▸ Check Out for Versioning on an object row (spec §18.2).
-    #: Same payload shape as `edit_requested` -- checkout is a second variant
-    #: of the Edit… gesture, not a second tab type or a second editor.
-    checkout_requested = Signal(object, str)
 
     #: Left-click on a Tables-branch table node (spec §18.1, 2026-08-05):
     #: carries the clicked table's `TableInfo` so `MainWindow` can populate
     #: the shared `PropertiesPanel` (`show_node(table_info, "ddl_table")`).
-    #: Click-only for Edit…/Check Out -- a whole table has no single
+    #: Click-only for Edit DDL -- a whole table has no single
     #: `DdlObjectSpan`/source text for those to act on. It DOES carry a
     #: context menu for *creation* (see `add_trigger_requested`), which needs
     #: no source span precisely because the object does not exist yet.
@@ -152,7 +402,7 @@ class BrowserPanel(QWidget):
     #: Right-click ▸ Add Trigger… on a Tables-branch table node (FQ-002).
     #: Carries the clicked table's `TableInfo`. This is the carve-out to
     #: §18.1's original "table nodes have no context menu" rule: that rule
-    #: exists because Edit…/Check Out need a source span, and a
+    #: exists because Edit DDL needs a source span, and a
     #: not-yet-created trigger has none to need.
     add_trigger_requested = Signal(object)
 
@@ -161,8 +411,73 @@ class BrowserPanel(QWidget):
     #: not scoped to a specific parent object, so there is no context to pass.
     new_routine_requested = Signal()
 
-    def __init__(self, parent: QWidget | None = None) -> None:
+    #: Right-click ▸ Alter Table ▸ <one of `ALTER_TABLE_ACTIONS`> on a table
+    #: node or on one of its column leaves (FQ-025 slices 1 and 2). Carries
+    #: `(operation id, TableInfo, column name)`, where the column name is `""`
+    #: for a click that came from the table node itself -- the dialog then opens
+    #: with its column dropdown on that table's first column instead of a
+    #: pre-selected one.
+    #:
+    #: **Slice 2's four constraint operations ride this same signal**, not a
+    #: parallel one: they carry exactly the same context (which table, and which
+    #: column the click came from, which the ADDs pre-select in their column
+    #: picker and the others show in the read-only "From:" line). A second
+    #: signal would have been the same three arguments under another name, and
+    #: two places for the host to forget to connect. Hence the name is now
+    #: slightly narrower than what it carries; renaming it would touch every
+    #: slice-1 connection for no behavioural gain.
+    #:
+    #: Deliberately the SAME shape as `add_trigger_requested`: the panel states
+    #: what was clicked and knows nothing about dialogs, and the host builds,
+    #: populates and hosts the dialog (§18.1's creation-gesture wiring). The
+    #: operation id rides along rather than becoming eight signals, because all
+    #: eight carry identical context and differ only in which dialog the host
+    #: opens.
+    alter_column_requested = Signal(str, object, str)
+
+    #: Right-click ▸ Create Table… on the "Tables" branch root or on a table
+    #: node (FQ-025 slice 3). Carries the schema the new table should default
+    #: into (`"pr"` from a click on `pr.orders`, `""` from the branch root,
+    #: which names no schema).
+    #:
+    #: **Its own signal, not `alter_column_requested`.** That one's three
+    #: arguments are "which existing table, and which of its columns" -- a
+    #: table that does not exist yet has neither, and passing `None` for the
+    #: `TableInfo` would make every connected handler test for it. Creating a
+    #: table is also not an alteration of one, which is exactly why FQ-025 puts
+    #: this at the menu's TOP LEVEL beside FQ-002's `Add Trigger…` /
+    #: `New Function/Procedure…` rather than inside `Alter Table ▸`: those two
+    #: are the tree's other creation gestures, and all three answer "make a new
+    #: object" rather than "change this one".
+    create_table_requested = Signal(str)
+
+    def __init__(
+        self, parent: QWidget | None = None, *, browse_only: bool = False
+    ) -> None:
+        """`browse_only` makes this tree a pure viewer: no `Edit DDL`, no
+        `Add Trigger…`, no `New Function/Procedure…`, and no `Alter Table ▸`
+        (§18.7, FQ-022/FQ-025).
+
+        The SANDBOX Explorer instance passes it, for the reason recorded on
+        `EditorPanel.__init__`: `Edit DDL` from the sandbox tree would take
+        MainWindow's checkout branch in project mode and seed `ddl/*.sql` from
+        the sandbox's definition, poisoning §18.2's drift baseline. The two
+        *creation* entries are suppressed with it because they open FQ-002's
+        dialogs, whose product is a new object for the project/target lane --
+        offering them on a sandbox tree would state a scope the gesture does not
+        have. FQ-025's column operations are suppressed for the stronger form of
+        the same reason: they are schema MUTATIONS, and §18.7's sandbox Explorer
+        exists to look at a sandbox, never to reshape it from the tree.
+
+        Suppression happens at menu-BUILD time rather than by leaving the signals
+        unconnected: an entry that emits into nothing is a dead control, which is
+        exactly what carve-out 2's posture forbids.
+
+        Off by default, so the target instance keeps today's behaviour.
+        """
         super().__init__(parent)
+        #: Whether this instance offers the edit/create gestures (see above).
+        self._browse_only = browse_only
         self.tree = QTreeWidget()
         self.tree.setHeaderHidden(True)
         self.tree.itemClicked.connect(self._on_item_clicked)
@@ -170,7 +485,7 @@ class BrowserPanel(QWidget):
         self.tree.customContextMenuRequested.connect(self._on_context_menu)
 
         # The schema this tree was last built from, so a later right-click ▸
-        # Edit… can resolve a routine/trigger's full source text and overload
+        # Edit DDL can resolve a routine/trigger's full source text and overload
         # status without the tree items carrying redundant copies of it.
         self._schema: DatabaseSchema | None = None
 
@@ -321,6 +636,40 @@ class BrowserPanel(QWidget):
             for trigger in triggers:
                 span = span_by_trigger.get((trigger.schema, trigger.table, trigger.name))
                 self._add_trigger_leaf(table_item, trigger, span, markers)
+            self._add_columns_group(table_item, table_info)
+
+    @staticmethod
+    def _add_columns_group(table_item: QTreeWidgetItem, table_info) -> None:
+        """The table's columns, under one collapsible `Columns (N)` node
+        (FQ-025 slice 1).
+
+        Column rows exist so a right-click can carry *which column* into the
+        `Alter Table ▸` dialogs -- the entry's core interaction rule ("defaulting
+        to the table and the column the click was coming from"). Before this
+        there was no column row in the tree at all, so that context could only
+        ever have come from the table.
+
+        **Grouped rather than listed flat**, and added AFTER the trigger leaves:
+        a table's triggers are the thing this branch has always been about, and
+        thirty columns spilled directly under the table node would bury them.
+        The group node itself carries no role, so it clicks nowhere and offers no
+        menu -- it is a container, not a target.
+
+        Nothing is added for a table with no `TableInfo` (a trigger-only node) or
+        no columns: an empty `Columns (0)` folder states nothing.
+        """
+        columns = list(getattr(table_info, "columns", ()) or ())
+        if not columns:
+            return
+        group = QTreeWidgetItem([f"Columns  ({len(columns)})"])
+        table_item.addChild(group)
+        for column in columns:
+            # `TableInfo.columns`' own declared order, not alphabetical -- the
+            # same choice `properties_panel._rows_for_ddl_table` makes, so the
+            # two surfaces show one table the same way round.
+            leaf = QTreeWidgetItem([f"{column.name} ({column.data_type})"])
+            leaf.setData(0, _COLUMN_ROLE, (table_info, column.name))
+            group.addChild(leaf)
 
     def _build_routines_branch(
         self, schema: DatabaseSchema, span_by_routine, span_by_trigger, markers
@@ -417,6 +766,14 @@ class BrowserPanel(QWidget):
         table_info = item.data(0, _TABLE_ROLE)
         if table_info is not None:
             self.table_selected.emit(table_info)
+            return
+        column_context = item.data(0, _COLUMN_ROLE)
+        if column_context is not None:
+            # A column row shows its OWNING TABLE in the Properties panel
+            # (§18.1), which is where that column's type/default/comment already
+            # render -- the same node the user would have clicked one level up,
+            # reached without collapsing the group they are working in.
+            self.table_selected.emit(column_context[0])
 
     def _on_context_menu(self, pos) -> None:
         """Three distinct menus, keyed on what the clicked item IS.
@@ -442,7 +799,13 @@ class BrowserPanel(QWidget):
 
         Split out from `_on_context_menu` so tests can assert the offered
         entries without driving a modal `exec()`.
+
+        A `browse_only` instance (§18.7's sandbox tree) offers nothing anywhere:
+        all three menus below are edit/create gestures, so there is no partial
+        menu left to build.
         """
+        if self._browse_only:
+            return None
         span = item.data(0, _SPAN_ROLE)
         if span is not None:
             if self._schema is None:
@@ -452,22 +815,48 @@ class BrowserPanel(QWidget):
                 return None
             ref, source = resolved
             menu = QMenu(self)
-            menu.addAction(
-                f"Edit {ref.qualified}…", lambda: self.edit_requested.emit(ref, source)
-            )
-            menu.addAction(
-                "Check Out for Versioning",
-                lambda: self.checkout_requested.emit(ref, source),
-            )
+            # ONE editing entry (FQ-024). The clicked row already names the
+            # object, so the entry does not repeat it -- unlike `EditorPanel`'s
+            # equivalent, where the click landed in a multi-object buffer and
+            # two overloads' entries must read differently.
+            menu.addAction("Edit DDL", lambda: self.edit_requested.emit(ref, source))
             return menu
 
         table_info = item.data(0, _TABLE_ROLE)
         if table_info is not None:
             menu = QMenu(self)
+            # FQ-002's *creation* entry stays at the TOP LEVEL: it creates a new
+            # object, which is a different act from altering this one, and
+            # burying it in the mutation submenu would say otherwise.
             menu.addAction(
                 "Add Trigger…",
                 lambda: self.add_trigger_requested.emit(table_info),
             )
+            # The second creation entry, beside the first and above the
+            # mutation submenu. Offered from a table node -- not only from the
+            # branch root -- because a table node is the one place in this tree
+            # that names a SCHEMA, which is what pre-seeds the new table's name
+            # so it lands where the click was. Offered on a view's node too:
+            # what you create is a table regardless of what you clicked, which
+            # is why this is not inside the table-only submenu.
+            self._add_create_table_entry(menu, self._schema_of(table_info))
+            self._add_alter_table_submenu(menu, table_info, column="")
+            return menu
+
+        column_context = item.data(0, _COLUMN_ROLE)
+        if column_context is not None:
+            column_table, column_name = column_context
+            menu = QMenu(self)
+            # The SAME submenu, carrying the clicked column. A column row offers
+            # nothing else, but it keeps the submenu rather than flattening the
+            # twelve entries: one shape for one action set, and the title is what
+            # tells the user these produce `ALTER TABLE` rather than acting on
+            # the column in place.
+            if self._add_alter_table_submenu(menu, column_table, column=column_name) is None:
+                # A view's column: the submenu declined, and it was this menu's
+                # only content -- an empty menu under the cursor is worse than
+                # none (the same reason the fall-through below returns None).
+                return None
             return menu
 
         if item.data(0, _BRANCH_ROLE) == "routines":
@@ -478,7 +867,84 @@ class BrowserPanel(QWidget):
             )
             return menu
 
-        # Argument-name child leaves and the Tables branch root carry neither a
-        # span nor a creation context -- no menu at all, rather than an empty
+        if item.data(0, _BRANCH_ROLE) == "tables":
+            # The exact mirror of the routines root above, and the reason the
+            # Tables root -- which offered nothing until FQ-025 slice 3 -- has a
+            # menu at all: each branch root offers "create a new one of the kind
+            # this branch lists". No schema is passed, because the root names
+            # none; the dialog opens with an empty name field.
+            menu = QMenu(self)
+            self._add_create_table_entry(menu, "")
+            return menu
+
+        # Argument-name child leaves and the `Columns` group node carry neither
+        # a span nor a creation context -- no menu at all, rather than an empty
         # one popping up under the cursor.
         return None
+
+    @staticmethod
+    def _schema_of(table_info) -> str:
+        """`"pr"` from a `TableInfo` named `pr.orders`, `""` from an unqualified
+        one -- the click context `Create Table…` seeds its name field with."""
+        name = getattr(table_info, "name", "") or ""
+        return name.split(".", 1)[0] if "." in name else ""
+
+    def _add_create_table_entry(self, menu: QMenu, schema: str) -> None:
+        menu.addAction(
+            CREATE_TABLE_LABEL,
+            lambda: self.create_table_requested.emit(schema),
+        )
+
+    def _add_alter_table_submenu(self, menu: QMenu, table_info, *, column: str):
+        """FQ-025's `Alter Table ▸` submenu, on `menu` -- slice 1's eight column
+        operations, then slice 2's four constraint ones, then slice 3's two
+        index ones, the comment entry for whatever was clicked, and
+        `Drop Table…`, each group separated from the last.
+
+        One builder for both entry points, so the table node and a column leaf
+        can never come to offer different operation sets -- they differ in
+        exactly two things, both derived from the one `column` parameter: which
+        column the dialogs pre-select, and which comment entry is offered (see
+        `alter_table_action_groups`). It is also the reason slice 2 was four
+        lines of data and slice 3 mostly three more: extending the groups
+        reaches both entry points at once, and there is no second copy that
+        could have been missed.
+
+        **What lands here versus at the top level.** Everything on this submenu
+        is scoped to the clicked table, including the two index entries and
+        `Drop Table…`, none of which emits the literal words `ALTER TABLE`.
+        `Create Table…` is the one FQ-025 entry that is NOT scoped to it, and is
+        therefore the one that stays outside (see `create_table_requested`).
+
+        Returns the submenu (or `None` when none was added) so callers and tests
+        can read its membership without re-deriving it.
+
+        **Views and materialized views get no submenu.** Nearly every operation
+        here emits `ALTER TABLE` or `DROP TABLE`, and offering a table mutation
+        on a view would generate DDL the server refuses -- the
+        tab-is-the-safeguard principle covers *running* generated DDL, not
+        generating DDL that cannot be right. Slice 3's comment entries and
+        `Create Index…` do have legal view spellings (`COMMENT ON VIEW`, an
+        index on a materialized view), but the emitters behind them render
+        `TABLE`/an ordinary `CREATE INDEX`, so offering them here would still
+        produce the wrong statement; a view-shaped action set is a feature this
+        one does not claim to be.
+        """
+        if getattr(table_info, "kind", "table") != "table":
+            return None
+        # Built explicitly and then added, never `menu.addMenu("title")`: that
+        # overload hands the new QMenu's ownership to Python, so the submenu is
+        # garbage-collected out from under the menu that is showing it.
+        submenu = QMenu(ALTER_TABLE_MENU_TITLE, menu)
+        menu.addMenu(submenu)
+        for index, group in enumerate(alter_table_action_groups(column)):
+            if index:
+                submenu.addSeparator()
+            for operation, label in group:
+                submenu.addAction(
+                    label,
+                    lambda operation=operation: self.alter_column_requested.emit(
+                        operation, table_info, column
+                    ),
+                )
+        return submenu
