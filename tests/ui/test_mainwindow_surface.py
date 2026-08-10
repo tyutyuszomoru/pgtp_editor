@@ -158,6 +158,13 @@ EXPECTED_HOST_SURFACE = {
     "_edit_ddl_checked_out",
     "_edit_ddl_live",
     "_edit_snippets_action",
+    # FQ-033's Settings entry and the menu itself. Both belong to the host on
+    # purpose: `Settings` is the maintenance-only menu the mode filter toggles,
+    # so the host must hold the QMenu to show/hide it, and the action is kept
+    # (not rebuilt) so it stays enumerable for Customize Toolbar even while
+    # hidden -- the same reason `_edit_snippets_action` is here.
+    "_autoformat_settings_action",
+    "_settings_menu",
     "_enter_caption_mode",
     "_fetch_ddl_schema",
     "_file_menu",

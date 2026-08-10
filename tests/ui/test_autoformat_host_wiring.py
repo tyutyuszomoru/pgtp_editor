@@ -249,10 +249,6 @@ def test_the_gesture_is_ABSENT_not_refusing_on_a_php_tab(qtbot, tmp_path, store)
 # --------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    reason="pending main_window.py wiring: Settings > Autoformatter settings...",
-    strict=False,
-)
 def test_the_settings_menu_reaches_the_autoformatter_dialog(qtbot, tmp_path):
     from PySide6.QtCore import QSettings as _QSettings
 

@@ -215,6 +215,10 @@ from pgtp_editor.ui.project_tree import ProjectTreePanel
 from pgtp_editor.ui.properties_panel import PropertiesPanel
 from pgtp_editor.ui.theme import apply_theme
 from pgtp_editor.ui.audit_router import AuditRouter
+from pgtp_editor.ui.autoformat_settings_dialog import (
+    MENU_LABEL as AUTOFORMAT_MENU_LABEL,
+    open_autoformat_settings,
+)
 from pgtp_editor.ui.connectivity import (
     QUALITY_LABEL,
     SANDBOX_LABEL,
@@ -3667,9 +3671,20 @@ class MainWindow(QMainWindow):
         saved `toolbarIds` with it.
         """
         menu = self.menuBar().addMenu("Settings")
+        #: Held so the mode filter and tests can reach the menu by name rather
+        #: than hunting it out of `menuBar().actions()`, matching `_file_menu`.
+        self._settings_menu = menu
         edit_snippets = menu.addAction("Edit Snippets…")
         edit_snippets.triggered.connect(lambda: self._snippet_ui.open_editor())
         self._edit_snippets_action = edit_snippets
+        # FQ-033's second tenant -- the menu was built as a host for exactly
+        # this. No shortcut, per the rule above, and deliberately not in
+        # `DEFAULT_TOOLBAR_IDS`.
+        autoformat = menu.addAction(AUTOFORMAT_MENU_LABEL)
+        autoformat.triggered.connect(
+            lambda: open_autoformat_settings(self, settings=self._settings)
+        )
+        self._autoformat_settings_action = autoformat
         # A window is always constructed unfiltered (`_workflow_mode` is None),
         # so hidden is the correct starting state and matches what a later
         # refresh computes for the same mode.
