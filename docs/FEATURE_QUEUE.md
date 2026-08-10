@@ -4543,7 +4543,14 @@ it.
 ---
 
 ## FQ-033: Configurable SQL formatter (keyword casing + configurable line-breaks/indent) + a new XML indentation formatter + an Autoformatter-settings window (Maintenance mode) — EXPANDS §18.4 and intentionally overrides its "never change casing" non-goal
-**Status:** QUEUED
+**Status:** PROCESSED (spec §18.4; engine + dialog `061e973`, menu seam `81bf658`, `[XML]` refusal seam
+`1ad73c6`). Verified: 6712 passed / 51 skipped, TEST_LOG entry recorded, and the byte-identical-defaults
+promise checked against the pre-FQ-033 package over 6699 inputs with zero divergence. Two of the entry's own
+claims were falsified by implementation and the spec supersedes them: the XmlEditor host count is **three**
+(the draft fragment tab was missed), and the config lives in QSettings' `autoformatter` group rather than
+being left open — DEC-001's rejection of QSettings turned on the snippet store holding hand-authored
+multi-line SQL, which formatter scalars are not. Both `Ctrl+Alt+F` hosts and the `Settings` entry carry no
+shortcut, by rule.
 **Requested:** 2026-08-10
 **Idea (verbatim/summarized):** "Make the Format-Selection formatter configurable: (A) let the user choose SQL
 keyword casing (UPPER / lower / as-is); (B) turn today's hardcoded clause/block line-break + indent rules into
