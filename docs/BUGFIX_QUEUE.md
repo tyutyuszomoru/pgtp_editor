@@ -3870,3 +3870,191 @@ spec here. Note also that `sandbox_controller.py:481-482`'s in-code comment abou
 documentation that will be falsified by the recommended fix and must be corrected with it.
 
 ---
+## BUG-044: every ALTER on one table shares ONE `applied` bookkeeping row and silently overwrites it, so `Check Object in Sandbox` gives a WRONG verdict about which statement the sandbox holds
+
+**Status:** OPEN
+**Reported:** 2026-08-10
+**Report (verbatim):** "Investigate a suspected defect in applied-DDL bookkeeping. The claim: all alter operations on a single table share one bookkeeping row and overwrite each other. […] If the chain holds, `REASON_ALREADY_APPLIED` can compare a buffer's sha1 against a row that describes a *different statement* on the same table. That is not a missing answer, it is a **wrong** answer."
+
+**Verdict: the defect is REAL, and every link in the reported chain is confirmed.** It is reachable through
+ordinary use (two Alter Table ▸ … generations on one table, each committed to the sandbox), not through any
+unusual sequence.
+
+**Root cause:** the `applied` bookkeeping table is keyed by an OBJECT identity, and an ALTER buffer carries no
+object identity to put in it, so all ALTERs on a table collapse onto one row.
+
+1. **The key.** `pgtp_editor/db/sandbox.py:735-746` — `PRIMARY KEY (kind, schema_name, object_name,
+   table_name)`; spelled once as `CheckRequest.working_set_ref` (`pgtp_editor/db/ddl_check.py:594-601`,
+   `return (self.kind, self.schema, self.name, self.table or "")`).
+2. **`AlterDdlRef.name` is `""` and is never set — confirmed.** `pgtp_editor/ui/main_window.py:487` declares the
+   default; there is exactly **one** construction site in the whole tree, `MainWindow._open_generated_alter_ddl`
+   (`main_window.py:4645-4655`), and it passes `schema`, `table`, `operation`, `serial`, `statement`, `subject`
+   — never `name`. `grep -rn "AlterDdlRef(" pgtp_editor tests` returns that single line. There is no second
+   construction site that would change the picture.
+   **This emptiness is deliberate and load-bearing** (`main_window.py:435-440`): `CheckRequest.checked_name`
+   derives from `name`, and `build_ladder` (`ddl_check.py:971-977`) adds tier 3's `plpgsql_check` statements
+   only `if request.checked_name`. An ALTER creates no function to lint, so an empty name is what keeps tier 3
+   honestly off. `tests/ui/test_ddl_creation_wiring.py:507` pins `ref.name == ""` with that reason. **This is
+   the fix's central gotcha — see below.**
+3. **`subject` never reaches the key — confirmed.** `CheckRequest.from_ref` (`ddl_check.py:528-541`) reads
+   `kind`, `schema`, `name`, `arg_types`, `table` and nothing else; `subject` (the one field that distinguishes
+   `DROP INDEX pr.idx_a` from `DROP INDEX pr.idx_b`, `main_window.py:471-481`) is read only by
+   `qualified_subject` / `short_title` / `qualified`, i.e. by tab titles and confirmation text. `CheckRequest`
+   has no field for it at all.
+4. **The recording path is reached.** `MainWindow._apply_ddl_object_to_sandbox` (`main_window.py:6290`) builds
+   the request from the alter ref and calls `SandboxController.run_apply` → `ddl_check.apply_and_check`
+   (`ddl_check.py:1393`, `record_applied=True` at :1429) → `build_ladder` :965-968 →
+   `applied_upsert_sql(request.working_set_ref, ddl_text)`. Nothing anywhere gates on `kind == "alter"`
+   (`grep '"alter"'` in `ddl_check.py` and `ddl_object_editor.py`: no hits), so alter tabs take exactly the
+   object path.
+5. **The collision is silent.** `applied_upsert_sql` (`sandbox.py:790-798`) ends
+   `ON CONFLICT (kind, schema_name, object_name, table_name) DO UPDATE SET applied_at = EXCLUDED.applied_at,
+   text_sha1 = EXCLUDED.text_sha1` — the second ALTER overwrites the first's row in place, no error, no trace.
+
+So **every** ALTER buffer on `pr.invoice` writes the key `("alter", "pr", "", "invoice")`.
+
+**How many operations actually collide: seventeen, not sixteen.** From `pgtp_editor/ui/ddl_buffer_panel.py`:
+8 column ops (`ALTER_TABLE_COLUMN_ACTIONS`, :144-153: add/drop/rename column, change type, set/drop NOT NULL,
+set/drop DEFAULT) + 4 constraint ops (:155-160: add constraint, add foreign key, drop/rename constraint) +
+2 index ops (:162-165: create/drop index) + 2 comment ops (:174-180: table comment from the table node, column
+comment from a column leaf) + `Drop Table…` (:188-190) = the **sixteen** of `ALTER_TABLE_ALL_ACTIONS` (:231-234,
+whose own comment says "all sixteen"). **Plus `OP_CREATE_TABLE`** (:135), which is not on the submenu but
+produces an `AlterDdlRef` through the same `_open_generated_alter_ddl` with `table=` *the table being created* —
+so a `CREATE TABLE pr.invoice` row and every later ALTER on `pr.invoice` collide too. **Seventeen.**
+Worse, the collision is not only across operations: two `Drop Column…` generations on the same table (different
+columns) are two different statements with the same key, so even a single operation collides with itself.
+
+**Concrete reproduction of the WRONG verdict** (sandbox session open, table `pr.invoice`):
+
+*A — a false "does NOT match", on a buffer that was applied verbatim and never edited:*
+1. Right-click `pr.invoice` ▸ Alter Table ▸ **Add Column…**, column `note text` → tab A holds
+   `ALTER TABLE pr.invoice ADD COLUMN note text;`. `Deployment ▸ Check and commit to sandbox` → commits; row
+   `("alter","pr","","invoice")` written with `sha1(A)`.
+2. Right-click `pr.invoice` ▸ Alter Table ▸ **Drop Column…**, column `legacy` → tab B holds
+   `ALTER TABLE pr.invoice DROP COLUMN legacy;`. `Check and commit to sandbox` → commits; **the same row is
+   UPDATEd** to `sha1(B)`. Tab A's record is gone.
+3. Focus **tab A** (untouched since step 1), `Parsing ▸ Check Object in Sandbox`. `_recheck_tier2`
+   (`ddl_check.py:1837-1849`) finds the row, `sha1(A) != sha1(B)` → `CAVEAT_STALE_BUFFER` →
+   `sandbox_comparison` (`main_window.py:401-407`) → modal: **"ALTER TABLE pr.invoice does NOT match what the
+   sandbox holds."** plus *"this buffer has changed since it was last applied"*. Both sentences are false: the
+   buffer never changed and the sandbox does hold its effect.
+
+*B — a false "already applied", on a buffer that was NEVER applied:*
+1. Apply tab A as above (row written).
+2. Generate tab B (Drop Column) and **do not apply it**. Focus it, `Parsing ▸ Check Object in Sandbox`.
+3. The row for the key exists, so `_recheck_tier2` returns `STATUS_PASSED` with
+   `REASON_ALREADY_APPLIED` — *"the sandbox already holds this object, applied &lt;when&gt;"* — for a statement
+   the sandbox has never seen. The honest answer is `REASON_NOT_IN_WORKING_SET` (*"apply it to the sandbox
+   first"*). The stale caveat downgrades only the *modal* to DIFFERS; **tier 2's status is `passed`, and
+   `_tier0_outcome` (`ddl_check.py:1658-1666`) mirrors tier 2 — so tier 0 reads `passed` too**, and the report
+   is recorded for Apply-to-Target's precondition 2 via `panel.record_check_report`
+   (`main_window.py:6437`, `ddl_object_editor.py:1104-1109`).
+
+Two consequences worth recording alongside:
+- **The working-set sweep sees one ALTER per table, whichever was applied last.** `check_working_set`
+  (`ddl_check.py:1920`) keys its result dict by `applied_ref(row)`, and `request_from_applied` (:1889-1917)
+  rebuilds `CheckRequest(kind="alter", schema, name="", table)` — a request that cannot describe *any*
+  statement. When the deployment generator (named the table's ONLY remaining reader, `sandbox.py:1026-1032`)
+  is built, N-1 of every N ALTERs applied to a table will be invisible to it.
+- **`SandboxSession.reset()` deliberately spares `BOOKKEEPING_SCHEMA`** (`sandbox.py:1050-1067`), so these rows
+  outlive a sandbox reset: after a reset the surviving `("alter","pr","","invoice")` row still answers
+  "already applied" for a sandbox that no longer holds the change at all.
+
+**Proposed fix.**
+
+*The shape.* Give an ALTER buffer a bookkeeping identity of its own and put it in `object_name` — **without**
+touching `AlterDdlRef.name`.
+
+1. `pgtp_editor/db/ddl_check.py`, `CheckRequest`: add a field
+   `working_set_name: str | None = None` (documented as *"the `object_name` slot of the `applied` key when it
+   is NOT the checked routine's name — an ALTER has no routine name and must never be given one, because
+   `checked_name`/`build_ladder` would then switch tier 3 on"*), and change `working_set_ref` (:594-601) to
+   `return (self.kind, self.schema, self.working_set_name if self.working_set_name is not None else self.name,
+   self.table or "")`. **Do not** widen `name`, and **do not** derive `checked_name` from the new field —
+   `tests/ui/test_ddl_creation_wiring.py:507` and `main_window.py:435-440` exist precisely to stop that.
+2. `CheckRequest.from_ref` (:528-541): populate it from the ref, e.g.
+   `working_set_name=str(getattr(ref, "working_set_name", "") or "") or None`, and add a
+   `working_set_name` property to `AlterDdlRef` (`main_window.py:420-534`, beside `qualified_subject`) that
+   returns the per-statement identity. Keeping the derivation on the ref — the thing every consumer already
+   reads — matches how `statement`/`subject` were placed there in FQ-025 and keeps `from_ref` free of
+   `kind`-specific branching.
+3. **What that identity should be** — the recommendation is `db/sandbox.py::text_sha1(buffer_text)` of the
+   statement itself (reuse the existing helper; do not hash independently — its docstring says why). It is the
+   only value that is genuinely per-statement: `operation` alone collides across two Drop Column generations,
+   and `operation + subject` still collides for two different columns because `subject` is `""` for every
+   `ALTER TABLE` flavour. Note this means `from_ref` must take the identity from `buffer_text`, which it
+   already receives.
+   With it: re-applying the identical text upserts in place (idempotent, correct); two different ALTERs write
+   two rows; and `recheck` on an edited alter buffer finds **no** row and says `REASON_NOT_IN_WORKING_SET`
+   rather than a false `passed`. A side effect to state in the docstring rather than discover later:
+   `CAVEAT_STALE_BUFFER` becomes structurally unreachable for `kind == "alter"`, which is right — an edited
+   ALTER is a *different statement*, not a stale version of one object.
+4. Consider improving `sandbox_comparison`'s `COMPARISON_ABSENT` headline for alters (*"The sandbox does not
+   hold ALTER TABLE pr.invoice at all."* reads oddly for a mutation; *"this statement has not been applied to
+   the sandbox"* is the honest sentence). Optional, and separable from the correctness fix.
+
+*Gotchas.*
+- **No DDL migration is needed, and that is the main argument for reusing `object_name` over adding a fifth key
+  column.** `_CREATE_BOOKKEEPING_SQL` is `CREATE TABLE IF NOT EXISTS` only (`sandbox.py:735-746`) with no
+  migration mechanism anywhere, and `reset()` never drops the bookkeeping schema — so an existing sandbox's
+  `applied` table would silently keep a 4-column PK forever if a new column were added.
+- Nothing else may start reading `working_set_name`: `identity`, `regprocedure_text`, `trigger_drop_target` and
+  `checked_arg_types` must all keep deriving from `name`.
+
+*The one design choice inside the fix — I judge this the OWNER's, not mine.* Two questions, both about what
+`applied` MEANS rather than about code shape:
+- **(i) State vs. event log.** Keying alter rows by statement text turns the alter part of `applied` into an
+  append-only event log (one row per distinct ALTER ever applied, unbounded), while the object part stays a
+  desired-state table (one row per object). That is arguably exactly right — an ALTER *is* an event — but it
+  changes the table's meaning for the not-yet-built deployment generator, which is its only remaining reader,
+  and the spec presents `applied` as state. The alternatives are `operation+subject` keying (bounded rows, but
+  still gives a wrong answer for two different columns) or **not recording alter buffers at all**
+  (`record_applied=False` for `kind == "alter"`, with a stated *"an ALTER is not an object; the working set
+  records objects"* tier-2 reason — correct-by-construction, but the deployment generator then never sees an
+  ALTER).
+- **(ii) The rows already written.** Existing `("alter", schema, "", table)` rows will match no request after
+  the fix and become inert orphans that read as "not in working set" — honest, since they cannot be attributed
+  to any statement, but they linger through resets. Leave them, or issue a one-time
+  `DELETE FROM pgtp_editor_sandbox.applied WHERE kind = 'alter' AND object_name = ''` at session open?
+Please file these with `owner-decision`; I have not written to `docs/DECISION_QUEUE.md`.
+
+**Test impact.** Existing coverage to EXTEND, not duplicate:
+- `tests/db/test_ddl_check.py` — `:1353` `test_apply_and_check_commits_and_writes_the_working_set_row`,
+  `:1456` `test_recheck_tier2_reports_the_applied_timestamp`, `:1467`
+  `test_recheck_warns_when_the_buffer_differs_from_what_was_applied`, `:1475`
+  `test_recheck_tier2_is_unavailable_for_an_object_not_in_the_working_set`, `:825`
+  `test_request_from_applied_degrades_honestly_rather_than_guessing`, `:1255` `test_tier0_collapses_into_tier2`.
+- `tests/db/test_sandbox.py` — `:883` `test_sandbox_session_apply_upsert_carries_ref_fields_and_a_sha1_hash`,
+  `:1246` `test_applied_upsert_sql_is_one_statement_carrying_the_ref_and_the_hash`.
+- `tests/ui/test_ddl_creation_wiring.py` — `:493`
+  `test_the_alter_tab_identifies_itself_as_an_alter_not_an_object` (**must keep asserting `ref.name == ""`** and
+  gain the `working_set_name` assertion beside it), `:510`
+  `test_two_generations_get_two_tabs_never_one_silently_reused`.
+- `tests/ui/test_sandbox_check_console_wiring.py` and `tests/ui/test_mainwindow_surface.py` cover the check
+  gestures and `sandbox_comparison`.
+
+New cases needed: (1) two different `AlterDdlRef`s on one table produce **different** `working_set_ref`s
+(the direct regression test); (2) `CREATE TABLE pr.invoice`'s ref and a later `ALTER TABLE pr.invoice` ref do
+not collide; (3) two `Drop Column…` generations on the same table with different columns do not collide;
+(4) `_recheck_tier2` returns `REASON_NOT_IN_WORKING_SET` (not `REASON_ALREADY_APPLIED`) for an alter buffer
+whose statement was never applied while a *different* alter on the same table was — reproduction B above, the
+false-`passed` case; (5) reproduction A end-to-end at the `sandbox_comparison` level: tab A applied, tab B
+applied, tab A rechecked → `COMPARISON_MATCHES`, not `COMPARISON_DIFFERS`; (6) `build_ladder` still emits **no**
+tier-3 statements for an alter request that now carries a `working_set_name` — the guard against the fix
+switching `plpgsql_check` on for ALTERs.
+
+**Spec impact:** `CONSOLIDATED_SPEC.md` §18.5 D2's working-set section (lines ~6906-6931) states the `applied`
+table verbatim as `primary key (kind, schema_name, object_name, table_name)` and describes it purely in terms
+of *objects* — it predates FQ-025's ALTER buffers and **nowhere considers a buffer that is a mutation rather
+than an object**, so the current behaviour is an unnoticed gap, not a recorded decision. The fix diverges from
+that spelling and must be folded in: flag `spec-maintainer` after it lands, to state (a) what an ALTER's
+bookkeeping identity is and why it is not the object identity, (b) whichever answer the owner gives to design
+choice (i), and (c) the consequence for `text_sha1`'s stale-buffer role on alter buffers.
+**Related, do NOT treat as guidance:** `docs/DECISION_QUEUE.md` DEC-005 asks about `DROP INDEX` bookkeeping on
+an inverted premise (it claims the *table* is missing; the table is present and the *index name* is absent) and
+carries an owner answer given against that false premise, plus a CAUTION block saying so. Read it for
+background only. Its answer — *"a schema-qualified index name is a unique identity on its own"* — is about a
+question this bug supersedes: the actual `DROP INDEX` row today carries **neither** the index name **nor** any
+distinguishing value, and is one of the seventeen colliders above. Do not write to `DECISION_QUEUE.md`.
+
+---
