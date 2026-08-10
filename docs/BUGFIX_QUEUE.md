@@ -3872,7 +3872,22 @@ documentation that will be falsified by the recommended fix and must be correcte
 ---
 ## BUG-044: every ALTER on one table shares ONE `applied` bookkeeping row and silently overwrites it, so `Check Object in Sandbox` gives a WRONG verdict about which statement the sandbox holds
 
-**Status:** OPEN
+**Status:** RESOLVED (1c28d33, merged from a worktree; fix commit ffbc377) — `CheckRequest` gained a
+`working_set_name: str | None` field, filled by `_working_set_name_for(ref, buffer_text)`
+(`db/ddl_check.py:450`, `:527`, `:580`) from a `working_set_name(buffer_text)` hook the ref publishes;
+for an ALTER it is `text_sha1(buffer_text)`. **It feeds `working_set_ref` and NOTHING else**
+(`db/ddl_check.py:635-661`) — `name` stays empty so `checked_name` stays `None` and tier 3 stays off,
+which is exactly the constraint the entry set. Orphan purge shipped as
+`db/sandbox.py:1149::purge_orphaned_alter_rows`, injected into `SandboxController` as the
+`orphan_purger` seam (`ui/sandbox_controller.py:492`, `:515`) and run once per session open (`:742`).
+**Recorded so it is never mistaken for a regression:** `CAVEAT_STALE_BUFFER` is now *structurally
+unreachable* for `kind == "alter"`, because an alter row can only be found when the hashes already
+agree. That is correct, not a lost code path — an edited ALTER is a **different statement**, not a
+stale version of one object, and it reads as `REASON_NOT_IN_WORKING_SET`. The consequence is stated
+in the `working_set_ref` docstring: the alter half of `applied` is an **append-only event log** (one
+row per distinct ALTER ever applied) while the object half stays a desired-state table. Do not
+"fix" that asymmetry — it is what makes two generations of the same `ALTER TABLE … DROP COLUMN`
+distinguishable.
 **Reported:** 2026-08-10
 **Report (verbatim):** "Investigate a suspected defect in applied-DDL bookkeeping. The claim: all alter operations on a single table share one bookkeeping row and overwrite each other. […] If the chain holds, `REASON_ALREADY_APPLIED` can compare a buffer's sha1 against a row that describes a *different statement* on the same table. That is not a missing answer, it is a **wrong** answer."
 
@@ -4059,7 +4074,14 @@ distinguishing value, and is one of the seventeen colliders above. Do not write 
 
 ---
 ## BUG-045: `SchemaIndex` publishes no `ColumnInfo` list and no routine accessor — `ui/schema_gesture_seam.py` reaches into the private `_schema`, and `sql/join_fk.py`'s docstring describes a caller that cannot be written
-**Status:** OPEN
+**Status:** RESOLVED (d3d7d15) — `SchemaIndex.column_infos(table)` (`db/schema_index.py:124`) and
+`SchemaIndex.routines()` (`:142`) shipped as proposed; `known_columns` / `column_entries` were left
+exactly as they were, so §18.6 completion is untouched. `sql/join_fk.py:344-345`'s docstring now
+describes a caller that can actually be written. **Deviation worth noting:** the private
+`_database_schema` probe in `ui/schema_gesture_seam.py` was **deleted outright, not kept as a
+fallback** — the module now reads `getattr(index, "column_infos", None)` (`:77`) and there is no
+remaining path into `index._schema`, so §5's dependency posture is enforced rather than merely
+preferred.
 **Reported:** 2026-08-10
 **Report (verbatim):** "`db/schema_index.py::SchemaIndex` publishes no `ColumnInfo` list and no routine accessor, so FQ-030's schema gestures reach around it into a private attribute — and `sql/join_fk.py`'s docstring describes a caller that cannot be written. (1) `SchemaIndex`'s entire public surface is `known_schemas` / `known_tables` / `known_columns` (names only) / `column_entries` (pre-rendered display strings) / `trigger_for_function`; the underlying `DatabaseSchema` is the private `self._schema`, there is no `schema()` accessor, no accessor returning `ColumnInfo` objects, and nothing that touches `schema.routines` at all. (2) Consequence A — a docstring that describes an impossible caller: `foreign_keys_from_targets`' docstring says the caller 'is a one-liner over its `ColumnInfo` list', which cannot be written against `SchemaIndex`'s public API. (3) Consequence B — `ui/schema_gesture_seam.py::_database_schema` probes for a public `schema()` and falls back to `index._schema`. §5's dependency posture exists to keep `ui/` off other packages' internals; the docstring is actively false; and it silently pins `SchemaIndex.__init__`'s attribute name. Behaviour today is correct — this is a structural/encapsulation defect plus a false docstring. Note `known_columns`/`column_entries` are relied on by §18.6 completion and must stay exactly as they are — this is a widening, not a change. Also note `known_tables` and `trigger_for_function` both take a *parameter* named `schema`."
 
@@ -4134,7 +4156,13 @@ and the same shape in `routine_signatures` over `getattr(index, "routines", None
 
 ---
 ## BUG-046: `Ctrl+Shift+B` is hosted twice — a `QAction` *and* a `CodeEditor.keyPressEvent` branch — on a premise ("QShortcut is unreliable offscreen") that is measurably FALSE
-**Status:** OPEN
+**Status:** RESOLVED (e8df6c3) — the `Ctrl+Shift+B` branch is gone from `CodeEditor.keyPressEvent`;
+a NOTE at `ui/code_editor.py:742` tombstones it against reintroduction, and `CodeEditorDialog` now
+owns the gesture as its own `QShortcut(QKeySequence("Ctrl+Shift+B"), self)`
+(`ui/code_editor.py:920-934`), with the literal-sequence limitation stated in place. **Scope left
+open on purpose:** the sibling `Ctrl+Alt+` / `Ctrl+Space` family still carries the same false
+offscreen premise in its comments. That was routed to the owner as DEC-009, which has since been
+**ANSWERED** — see the new BUG-052 filed for the comment rewrite it mandates.
 **Reported:** 2026-08-10
 **Report (verbatim):** "Ctrl+Shift+B must be handled the same way as other keyboard shortcuts: a QShortcut/QAction in the normal run, with direct key-press handling used only in testing. A test-environment constraint should not shape the production path."
 
@@ -4351,7 +4379,19 @@ being reversed by owner ruling on 2026-08-10, on the grounds that its measuremen
 ---
 
 ## BUG-047: the Activity Log still journals `Apply to Sandbox` / `Apply to Target` — two dead names FQ-026 renamed everywhere else, so the user's own history uses a vocabulary the app no longer speaks
-**Status:** OPEN
+**Status:** RESOLVED (68f01d9, merged from a worktree; fix commit b52793d) — `VERB_APPLY_SANDBOX` /
+`VERB_APPLY_TARGET` are **deleted from `db/activity_log.py`**, replaced by a long tombstone comment
+(`:140-158`) that spells out why they must never be restored *even re-pointed at the current names*:
+`db/` is Qt-free and `GESTURE_LABELS` lives in `ui/`, so any constant here could only be a second
+literal copy of a gesture name, free to drift again. The names are now passed in from the four
+`ui/main_window.py` call sites, which read `GESTURE_LABELS` directly. `VERB_RAN` / `VERB_LINTED`
+stayed — they are lowercase descriptions, not gesture names.
+**Deviation, deliberate: write-time rename with NO migration**, chosen over the display-time aliasing
+the entry sketched. `activity.jsonl` was **not** rewritten. Old rows keep the name the app used at the
+moment the user clicked — that is what a journal is — and only new rows speak FQ-026's vocabulary. A
+test seeds a historical `"Apply to Target"` row (`tests/db/test_activity_log.py:50`,
+`LEGACY_APPLY_VERB`) and proves it still loads and renders, so the legacy vocabulary is pinned as
+supported-on-read rather than left to chance.
 **Reported:** 2026-08-10
 **Report (verbatim):** "`pgtp_editor/db/activity_log.py:140-142` still emits the verbs `"Apply to Sandbox"` and `"Apply to Target"` into the Activity Log, and they are live — reportedly reached from `pgtp_editor/ui/main_window.py:6139`, `:6151`, `:6171` and `:6359`. FQ-026 was a deduplication of vocabulary, and it states its own invariant in code at `pgtp_editor/ui/ddl_object_editor.py:116-118`: *"one name per operation, used identically across the menu label, the confirmation-dialog title, the Audit `[Check]` line, the status bar and the manual"*. If the Activity Log prints a name that no menu, dialog or manual page uses, the feature has not achieved the thing it exists to achieve — a user reading their own history sees a verb they cannot find anywhere in the app."
 
@@ -4533,7 +4573,25 @@ option 1 is chosen) to say in one sentence that rows written before this build c
 ---
 
 ## BUG-048: `Ctrl+Z` on the read-only DDL Explorer tab silently reverts the **Raw XML project buffer** — the exact hazard §18.5 carve-out 1 pinned, at the sibling site nobody filtered
-**Status:** OPEN
+**Status:** RESOLVED (e8df6c3) — **both independent causes closed**, and `ddl_editor_panel.py` now
+claims *and answers* `Ctrl+Z` / `Ctrl+Y` / `Ctrl+Shift+Z` in its own filter (`:144`, `:163`).
+1. The window shortcut is scoped: `_undo_from_shortcut` / `_redo_from_shortcut`
+   (`ui/main_window.py:1964`, `:1977`) fire only when the Raw XML tab is current **and** the buffer
+   is writable.
+2. `_apply_history_text` (`:1985`) refuses outright on a read-only editor — the last-ditch check,
+   because `setPlainText` is a `QTextCursor`-level write that `setReadOnly(True)` does **not** gate,
+   so no path (shortcut, History menu, jump list, `XmlEditor` re-emission) can write a locked buffer.
+
+**DEVIATION — the proposed greying was REJECTED, and the reasoning must not be smoothed over.** The
+entry proposed leaving `_undo`/`_redo` unguarded and greying the History ▸ Undo/Redo menu items
+instead. What shipped keeps them unguarded **for the tab scope** — History ▸ Undo pressed from
+another tab is still a deliberate "undo the project", by design — but adds a **read-only lock**
+guard (`_raw_xml_history_lock_reason` / `_history_write_refused`, `:1939-1962`) on `_undo`, `_redo`
+and `_history_jump`. Two reasons: `_refresh_editor_menu_affordances` is explicitly *visibility-only*
+("two postures, never a third"), so greying would have introduced a third; and an explicit menu click
+straight through FQ-021's data-loss lock is **the same defect as the keystroke**, not a milder one.
+The result is **refused-with-a-reason** (logged, plus a 4-second status-bar message naming the
+read-only reasons), never a silently greyed command.
 **Reported:** 2026-08-10
 **Report (verbatim):** "`pgtp_editor/ui/ddl_editor_panel.py` installs no undo filter. The open question the manual agent could not settle without running code: does Qt's read-only `QPlainTextEdit` let the **window-level `Ctrl+Z` `QShortcut`** through? If it does, the consequence is bad: pressing `Ctrl+Z` in a read-only DDL Explorer tab would run **project snapshot undo on the Raw XML buffer** — a mutation of a different document than the one the user is looking at, triggered from a tab that is supposed to be read-only."
 
@@ -4655,7 +4713,12 @@ does not edit the spec.
 ---
 
 ## BUG-049: `Ctrl+Z` in an FQ-006 draft fragment tab is a dead key — `XmlEditor` consumes it, emits `undo_requested` to nobody, and suppresses the native undo it replaced
-**Status:** OPEN
+**Status:** RESOLVED (e8df6c3) — `DraftFragmentTab.__init__` (`ui/center_stage.py:58-70`) connects
+`editor.undo_requested → editor.undo` and `editor.redo_requested → editor.redo`, the Edit XSD tab's
+precedent verbatim: a draft has no snapshot history, no save path and no dirty concept, so
+per-keystroke native undo is the right and only semantics. Wired **in the tab, not in
+`MainWindow`** — drafts are created dynamically and multiply, so a self-contained tab cannot be
+forgotten by the next caller. The reason the key was dead in the first place is recorded in place.
 **Reported:** 2026-08-10
 **Report (verbatim):** "`XmlEditor.undo_requested` / `redo_requested` are reportedly connected only for `xml_editor` and `xsd_editor` (`pgtp_editor/ui/main_window.py:1131-1140`). A draft fragment tab's editor consumes `Ctrl+Z` / `Ctrl+Y` / `Ctrl+Shift+Z` and emits to nobody — so the keystroke is swallowed and nothing happens, with no indication why."
 
@@ -4725,7 +4788,11 @@ the three `XmlEditor` sites. `bug-triager` does not edit the spec.
 ---
 
 ## BUG-050: `Ctrl+Shift+Z` is missing from `RESERVED_SEQUENCES`, so Customize Shortcuts… will hand it to a menu command that then works only when no XML editor has focus
-**Status:** OPEN
+**Status:** RESOLVED (e8df6c3) — `"Ctrl+Shift+Z"` now has its own row in `RESERVED_SEQUENCES`
+(`ui/shortcut_registry.py:220`), described as *"project history Redo, the second chord — answered
+inside …"*, so Customize Shortcuts… can no longer hand it to a menu command. Drive-by of the same
+class, as the entry asked: `Ctrl+Alt+F`'s reason string was corrected (`:236`) — it had described
+the wrong host.
 **Reported:** 2026-08-10
 **Report (verbatim):** "`pgtp_editor/ui/xml_editor.py:1170-1171` makes `Ctrl+Shift+Z` a second redo in every XML editor and consumes it (`event.accept()`), but `shortcut_registry.RESERVED_SEQUENCES` (`shortcut_registry.py:204-260`) reserves only `Ctrl+Z` / `Ctrl+Y`. So Customize Shortcuts… would let a user assign a menu command to `Ctrl+Shift+Z`, and the two would then fight — with the editor's handler consuming the event."
 
@@ -4802,7 +4869,19 @@ ledger row's unrebindable list, and to correct §27's `Ctrl+Alt+F` characterizat
 ---
 ## BUG-051: `DEFAULT_RE_PHPGEN_ROOT` ships one developer's Windows account path as the fallback for every user — and it is returned on *unreadable/corrupt config* too, so "you never configured it" and "we could not read what you configured" are indistinguishable
 
-**Status:** OPEN
+**Status:** RESOLVED (6454908) — `DEFAULT_RE_PHPGEN_ROOT` is **deleted**, not relocated;
+`load_re_phpgen_root(base_dir=None) -> str | None` (`generation/config.py:85`) now returns `None` for
+every distinct failure (file absent / unreadable / not valid JSON / not a dict / key missing), so
+"never configured" is no longer indistinguishable from "we could not read what you configured". An
+empty string is also treated as unconfigured — unlike `load_executable_path` — because `""` is a
+valid Qt "no preferred directory" sentinel and never a real root; that asymmetry is documented in
+place. The docstring states the principle: *ships no default, a guessed path is indistinguishable
+from a configured one.*
+**DEVIATION — the splittable venv step was NOT split off.** The entry offered the interpreter-probe
+work as a separable follow-up; **DEC-011 ruled panGen cross-platform**, so it shipped as one fix:
+`generation/re_runner.py:44-52` probes **both** venv layouts — `venv/Scripts/python.exe` (Windows)
+and `venv/bin/python` (POSIX) — **host's own layout first**, so a venv copied across platforms
+resolves predictably rather than by accident.
 **Reported:** 2026-08-10
 **Report (verbatim):** "Investigate a shipped default that points at one developer's machine. `pgtp_editor/generation/config.py:81` — `DEFAULT_RE_PHPGEN_ROOT = r"C:\Users\BotondZalai-RuzsicsP\Software dev\re_phpgen"`. This is a hardcoded absolute Windows path belonging to a specific user account, shipped as the fallback value for the `re_phpgen` root. Verify: (1) it is returned on every failure path, not just a missing key; (2) it is live — `generation_controller.py:377` and `:563` both call it; (3) development happens on both Windows and Linux, and on Linux the default is unrepresentable. Determine whether there is a discoverable remedy — a `spec-maintainer` sweep noted this constant and chose not to file it 'since it has a reachable remedy'; test that claim rather than inheriting it. Also check whether any other shipped constant embeds a machine-specific absolute path."
 
@@ -4992,5 +5071,127 @@ written to `docs/DECISION_QUEUE.md`.*
   *Generating PHP* section at `:3566-3581` covers only the vendor generator. Pre-existing gap, not
   caused by this bug, but it is the reason the remedy is dialog-only and it should be closed while
   someone is in this code.
+
+---
+
+## BUG-052: three comments still justify widget-hosted gestures with a measured-false "QShortcut is unreliable offscreen" — DEC-009 is ANSWERED and mandates rewriting them
+**Status:** OPEN
+**Reported:** 2026-08-10
+**Report (verbatim):** "Comments claiming 'QShortcut is unreliable offscreen' still stand in `sql_console_panel.py:507-511`, `code_editor.py:779-783` and `ddl_object_editor.py:898`. The premise is measured false, but converting that family is the scope BUG-046 explicitly left to the owner (decision queue DEC-009)."
+
+**Filed as its own entry rather than buried in BUG-046's resolution**, because it is no longer
+blocked: DEC-009 was reported as still OPEN, but at HEAD `1c28d33` it is **ANSWERED (2026-08-10)**
+(`docs/DECISION_QUEUE.md:581-600`), and the answer contains an explicit, unexecuted instruction:
+*"rewrite the misleading offscreen comments at the widget sites to state the real product reason
+instead. Do not convert them to `QShortcut`s."* An answered ruling with no implementation is exactly
+what gets lost.
+
+**Root cause:** documentation, not design. Three sites still cite the test harness as the reason a
+production design exists — verified verbatim at HEAD:
+
+- `pgtp_editor/ui/sql_console_panel.py:507-510` — *"Both get the redundant key handling
+  `CodeEditorDialog`/`DdlObjectEditorPanel` established, because QShortcut activation is not reliable
+  under the offscreen platform used by the tests."* Note the comment additionally **names
+  `CodeEditorDialog` as the precedent for redundant handling, which BUG-046 (e8df6c3) just
+  reversed** — `CodeEditorDialog` now hosts `Ctrl+Shift+B` as a plain `QShortcut` (`code_editor.py:934`).
+  That cross-reference is now factually wrong as well as badly reasoned.
+- `pgtp_editor/ui/code_editor.py:779-783` (`Ctrl+Alt+E` / `Ctrl+Alt+C`) — *"Handled in the widget
+  rather than as QShortcuts for the same reason that one is handled twice: QShortcut activation is not
+  reliable under the offscreen platform the tests run on."* The *"the same reason that one is handled
+  twice"* clause refers to the `Ctrl+Shift+B` double-hosting that no longer exists.
+- `pgtp_editor/ui/ddl_object_editor.py:896-899` (`Ctrl+Space`) — *"Handled here rather than as a
+  QShortcut for the same reason as `Ctrl+Alt+F` above — reliable under the offscreen platform in
+  tests."*
+
+**Proposed fix:** comment text only — **no behaviour change, no `QShortcut` conversion**, per DEC-009.
+Rewrite each of the three to state the real product reason the owner recorded:
+
+- These gestures have **no menu entry**, so they are widget *behaviours* (like auto-close brackets),
+  and hosting them in the widget is a legitimate product decision — not a harness artefact.
+  DEC-004's defect was *two hosts for one gesture*, not *a widget handles a key*.
+- Where a site has an additional independent reason, keep it: `Ctrl+Alt+J` needs a `SchemaIndex`,
+  which no editor widget may hold (§18.5 D1); completion (`Ctrl+Space`) is intrinsically a widget
+  behaviour.
+- Also fix the two now-stale cross-references to `CodeEditorDialog`'s double-hosting
+  (`sql_console_panel.py:508`, `code_editor.py:781`) — after e8df6c3 that precedent points at a
+  design that was deleted, so a reader following it lands on the opposite of what the comment claims.
+
+**Gotchas.** (a) Do **not** convert these to `QShortcut`s while "cleaning up" — DEC-009 rules that out
+explicitly, and a converted `Ctrl+Space` would break §18.6 completion's focus semantics. (b) Do not
+touch `RESERVED_SEQUENCES` (`ui/shortcut_registry.py:233-244`) or the manual's non-rebindable list —
+DEC-009 keeps both **as they are**; the reservations are what stop a rebound menu command being
+retargeted onto a key a widget already answers. (c) The `ddl_object_editor.py` line numbers shift with
+any edit above them; locate by the comment text, not the number.
+
+**Test impact:** none expected — this is comment-only. `tests/ui/test_code_editor.py`,
+`tests/ui/test_sql_console_panel.py`, `tests/ui/test_ddl_object_editor_completion.py` and
+`tests/ui/test_shortcut_registry.py` cover the behaviour that must stay green and unchanged; if any of
+them *fails* after this edit, something behavioural was changed by accident and should be reverted
+rather than re-baselined.
+
+**Spec impact:** `CONSOLIDATED_SPEC.md` §8 recorded the offscreen premise as *"measured, then KEPT"*
+(BUG-046 already flagged this). After this lands, flag for `spec-maintainer`: §8 should state
+DEC-009's actual rule — a widget-hosted gesture with **no menu command** has a standing product
+reason to live in the widget and is out of DEC-004's scope, while a gesture with a menu command must
+have exactly one host.
+
+---
+
+## BUG-053: `DdlObjectEditorPanel.eventFilter` does not match `Ctrl+Shift+Z`, so the object editor answers the reserved second redo chord differently from the DDL Explorer
+**Status:** OPEN
+**Reported:** 2026-08-10
+**Report (verbatim):** "`DdlObjectEditorPanel.eventFilter` still matches only `Ctrl+Z`/`Ctrl+Y`, not `Ctrl+Shift+Z`. Now that `Ctrl+Shift+Z` is a reserved redo chord, that tab answers it inconsistently with the DDL Explorer. No longer a data-loss path — the central guard covers it — so this is an inconsistency, not a defect of the same class."
+
+**Filed separately rather than reopening BUG-048**, because it is a genuinely different class of
+problem (consistency, not data loss) and would otherwise vanish inside a RESOLVED entry.
+
+**Not a data-loss path — confirmed, and this is why it is low severity.** BUG-048 (e8df6c3) closed
+the hazard centrally: `_undo_from_shortcut` / `_redo_from_shortcut` (`ui/main_window.py:1964`,
+`:1977`) fire only on the Raw XML tab, and `_apply_history_text` (`:1985`) refuses on a read-only
+buffer. So an unclaimed `Ctrl+Shift+Z` in the object editor cannot reach the project buffer. Also note
+`Ctrl+Shift+Z` is bound at the window only via `RESERVED_SEQUENCES` bookkeeping (BUG-050), not as a
+second window `QShortcut`, so today the key most likely just does nothing here.
+
+**Root cause:** `pgtp_editor/ui/ddl_object_editor.py:870-885`,
+`DdlObjectEditorPanel.eventFilter` — the undo/redo test is written inline and matches only two
+chords:
+
+```python
+is_undo = key == Qt.Key.Key_Z and event.modifiers() == Qt.KeyboardModifier.ControlModifier
+is_redo = key == Qt.Key.Key_Y and event.modifiers() == Qt.KeyboardModifier.ControlModifier
+```
+
+`Ctrl+Shift+Z` fails both (`modifiers()` is `Control|Shift`), so it is neither claimed on
+`ShortcutOverride` nor answered on `KeyPress`. Meanwhile `XmlEditor.keyPressEvent`
+(`ui/xml_editor.py:1165-1180`) treats it as redo, `ddl_editor_panel.py` claims and refuses it
+(`:163`), and `shortcut_registry.RESERVED_SEQUENCES` (`:220`) declares it reserved app-wide. The
+object editor is the one editor surface that does not honour its own reservation.
+
+**Proposed fix:** extend the existing filter — do **not** add a `QShortcut` (see BUG-052/DEC-009).
+The pattern to copy already exists at the sibling site: `DdlEditorPanel._is_undo_redo_chord`
+(`pgtp_editor/ui/ddl_editor_panel.py:156-164`) is a small predicate that matches
+`Ctrl+Z` / `Ctrl+Y` / `Ctrl+Shift+Z`. Either lift that helper to a shared location both panels import,
+or mirror it in `DdlObjectEditorPanel`. The **semantics differ and must not be copied wholesale**:
+`DdlEditorPanel` is a read-only synthesized buffer, so it *refuses with a reason*
+(`report_refusal(_UNDO_REDO_REFUSAL)`); `DdlObjectEditorPanel` is writable and must **route the chord
+into `self.editor.redo()`**, exactly as it already does for `Ctrl+Y`. Concretely: replace the two
+inline booleans with `is_undo = Ctrl+Z`, `is_redo = Ctrl+Y or Ctrl+Shift+Z`, leaving the existing
+`ShortcutOverride` → `event.accept()` / `KeyPress` → `undo()`/`redo()` split untouched.
+
+**Gotchas.** (a) Both halves are required — claiming the `ShortcutOverride` without answering the
+`KeyPress` reintroduces a dead key; the comment at `ddl_editor_panel.py:174-176` says this outright.
+(b) Compare `event.modifiers()` for exact equality against `Control|Shift` (the file's existing
+style); a `&` mask test would also swallow `Ctrl+Alt+Shift+Z`. (c) Keep the `Ctrl+Alt+F` /
+`Ctrl+Space` branches below untouched — they are DEC-009 territory.
+
+**Test impact:** `tests/ui/test_ddl_object_editor.py` already drives this `eventFilter` for `Ctrl+Z` /
+`Ctrl+Y`; extend it with a `Ctrl+Shift+Z` case asserting (1) the `ShortcutOverride` is accepted and
+(2) the `KeyPress` calls `redo()` on the editor — mirroring whatever `tests/ui/test_ddl_editor_panel.py`
+does for its own `Ctrl+Shift+Z` case (added by BUG-048/050). Do not add a new test module.
+`tests/ui/test_shortcut_registry.py` needs no change — the reservation row already exists.
+
+**Spec impact:** none. §18.5 carve-out 1 already describes the object tab as routing undo/redo into
+its own stack; this makes the code match that description for the second redo chord. If a future
+sweep wants the chord list stated once, that is a `spec-maintainer` call, not a blocker here.
 
 ---
