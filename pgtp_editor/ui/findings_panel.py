@@ -19,7 +19,7 @@
 
 **ONE widget class, two instances** — the implementer's call, recorded here
 because FQ-028 left it open. The left-dock **Findings** tab and the bottom-dock
-**Results** tab differ in exactly one axis: what happens when a new run starts.
+**Messages** tab differ in exactly one axis: what happens when a new run starts.
 Everything else — the row shape, the `Qt.UserRole+N` payload convention, the
 click that jumps into the centre editor — is identical, and duplicating a
 `QListWidget` subclass to vary one boolean would have produced two surfaces
@@ -29,7 +29,7 @@ free to drift apart. The axis is the ``accumulate`` flag:
   Last-operation-wins across types — run Find-All then List Bookmarks and the
   bookmarks replace the finds, because both are "where do I want to go next"
   and only one such question is live at a time.
-* ``accumulate=True`` (**Results**, bottom dock): a new run appends a
+* ``accumulate=True`` (**Messages**, bottom dock): a new run appends a
   **run separator** and keeps everything before it. Validation history is
   exactly what the owner asked to be saved across runs.
 
@@ -49,7 +49,14 @@ from PySide6.QtWidgets import QListWidget, QListWidgetItem
 #: Tab titles. Named here so the panel, the host wiring and the tests spell
 #: them once.
 FINDINGS_TAB_TITLE = "Findings"
-RESULTS_TAB_TITLE = "Results"
+#: FQ-028 called this tab "Results", which collided head-on with the Sandbox
+#: SQL Console's own `ui/sql_results_panel.py::SqlResultsPanel` -- the grid that
+#: shows the ROWS a `SELECT` returned. Two unrelated surfaces, one word. This
+#: one is a message log (`[Check]`, `[Validate]`, `[Sandbox]` narration), so it
+#: is named for what it holds; the console's grid keeps "Results", which is
+#: what it genuinely shows. The constant name stays `RESULTS_TAB_TITLE`
+#: (renaming the identifier would touch every host and test for no gain).
+RESULTS_TAB_TITLE = "Messages"
 
 #: Marks a row as run-separator furniture rather than a finding.
 DECORATION_ROLE = Qt.ItemDataRole.UserRole + 8
@@ -79,7 +86,7 @@ class FindingsPanel(QListWidget):
 
     def __init__(self, parent=None, *, accumulate: bool = False) -> None:
         super().__init__(parent)
-        #: Whether a new run appends (Results) or replaces (Findings).
+        #: Whether a new run appends (Messages) or replaces (Findings).
         self.accumulate = bool(accumulate)
 
     # -- run lifecycle -------------------------------------------------------

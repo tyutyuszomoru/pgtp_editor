@@ -27,22 +27,24 @@ because the router quacks like the `QListWidget` they were written against.
 
 **The destinations** (FQ-028's complete disposition table):
 
-===============  =========================  =========================
-Prefix           Destination                Lifecycle
-===============  =========================  =========================
-``[Find]``       Findings tab (left dock)   ephemeral, clear-on-new
-``[Bookmark]``   Findings tab (left dock)   ephemeral, clear-on-new
-``[Validate]``   Results tab (bottom)       accumulated
-``[Lint]``       Results tab (bottom)       accumulated
-``[Check]``      Results tab (bottom)       accumulated (narrative rides
-                                            in the same run block)
-``[Schema]``     Results tab **if VERIFY**   accumulated
-``[Schema]``     Activity Log otherwise     append-only journal
-``[PHP]``        Activity Log               append-only journal
-``[SQL]``        Activity Log               append-only journal
-``[Project]``    Activity Log               append-only journal
-``[Sandbox]``    Results tab (bottom)       accumulated
-===============  =========================  =========================
+===============  ==========================  ========================
+Prefix           Destination                 Lifecycle
+===============  ==========================  ========================
+``[Find]``       Findings tab (left dock)    ephemeral, clear-on-new
+``[Bookmark]``   Findings tab (left dock)    ephemeral, clear-on-new
+``[Validate]``   Messages tab (bottom)       accumulated
+``[Lint]``       Messages tab (bottom)       accumulated
+``[Check]``      Messages tab (bottom)       accumulated (narrative
+                                             rides in the same block)
+``[Schema]``     Messages tab **if VERIFY**  accumulated
+``[Schema]``     Activity Log otherwise      append-only journal
+``[PHP]``        Activity Log                append-only journal
+``[SQL]``        Activity Log                append-only journal
+``[Project]``    Activity Log                append-only journal
+``[Project]``    Activity Log **and** the    journalled *and*
+during a close   Messages tab                rendered — see BUG-042
+``[Sandbox]``    Messages tab (bottom)       accumulated
+===============  ==========================  ========================
 
 ``[Sandbox]`` is a **tenth** prefix (`ui/main_window.py::_SANDBOX_PREFIX`, the
 sandbox-operation outcome line) that FQ-028's nine-row table does not mention,
@@ -52,8 +54,32 @@ DURING a project transition (BUG-040 auto-opens the session inside
 `set_active_project`, before `project_changed` fires) and FQ-019's journal
 REPLACES its display buffer on that transition — a line filed there would be
 wiped off screen by the very open it describes. It is also, in substance, the
-outcome of an operation the user asked for. So it rides the Results tab, which
+outcome of an operation the user asked for. So it rides the Messages tab, which
 accumulates and survives the transition.
+
+**BUG-042: the one row with TWO destinations.** ``[Project]`` narration emitted
+*during a project close* — today only ``remind_pending_deploys_on_close``'s "N
+DDL object(s) have local edits pending a batch deploy" — was written to the
+closing project's ``activity.jsonl`` and then wiped off screen by the very
+transition that produced it, so the user was told something at the exact moment
+they could no longer read it. It cannot be emitted later: it runs upstream of
+``project_changed`` and needs the ``_folder``/``_settings`` that close then
+clears.
+
+It is the only case where a row goes to two places, and both are deliberate:
+the **journal write stays exactly as it was** (the line belongs to the closing
+project's history, and an entry never migrates between stores), and the
+**Messages tab additionally renders it**, because that tab is not cleared by a
+project transition and is therefore the only surface that can still show it.
+
+The split is by ROUTER STATE, not by prefix and not by text — the
+``schema_run`` precedent — because "was this emitted during a close?" is the
+actual criterion and no wording test can answer it. It is deliberately NOT the
+whole ``[Project]`` prefix: of this app's eight ``[Project]`` emit sites, seven
+are already fine (the open-time ones run *after* ``project_changed``, which is
+why FQ-019's store-switch-first ordering is load-bearing, and the async probe
+failures are off-transition entirely). Moving all of them would relocate seven
+correct journal lines to fix one broken one.
 
 **The virtual view.** `count()`/`item()`/`takeItem()` present the routed rows
 as one list in INSERTION order, excluding both the run-separator furniture and
@@ -63,8 +89,8 @@ loops keep working against the surface their rows actually landed on:
 
 * a `takeItem` of a **Findings** row really removes it — that is Find-All's
   clear-on-rerun;
-* a `takeItem` of a **Results** row is refused and instead CLOSES the current
-  run block, because Results accumulates by design. The producer's intent ("a
+* a `takeItem` of a **Messages** row is refused and instead CLOSES the current
+  run block, because Messages accumulates by design. The producer's intent ("a
   new run of mine is starting") is honoured; its mechanism (delete the old
   rows) is not.
 """
@@ -87,9 +113,16 @@ PROJECT_PREFIX = "[Project]"
 SANDBOX_PREFIX = "[Sandbox]"
 
 #: The three destinations, as plain strings so a test can name one.
+#: `TO_RESULTS` names the bottom dock's tab, which is titled **Messages** since
+#: the FQ-028 title collided with the Sandbox SQL Console's genuine results
+#: grid. The identifier keeps its spelling on purpose -- it is referenced by
+#: every producer test, and a label is not a schema.
 TO_FINDINGS = "findings"
 TO_RESULTS = "results"
 TO_ACTIVITY = "activity"
+#: BUG-042's one dual destination: journalled AND rendered on the Messages tab.
+#: Not a fourth surface -- a pairing of two of the three above.
+TO_ACTIVITY_AND_RESULTS = "activity+results"
 
 #: Prefix -> destination. `[Schema]` is absent because it is the one prefix
 #: whose destination depends on the row (`VERIFY` findings vs learning
@@ -124,22 +157,29 @@ def prefix_of(text: str) -> str | None:
     return stripped[: end + 1]
 
 
-def classify(text: str, *, schema_verify: bool = False) -> str:
+def classify(
+    text: str, *, schema_verify: bool = False, project_closing: bool = False
+) -> str:
     """Which surface a row with this text belongs on.
 
     `schema_verify` says a Verify XSD run is in flight, which is what routes a
-    bare `[Schema] line N: …` issue row to Results rather than to the journal.
-    An unrecognised or unprefixed row goes to **Results**: it is the closest
+    bare `[Schema] line N: …` issue row to Messages rather than to the journal.
+    `project_closing` says a project close is in flight, which is what adds the
+    Messages tab to a `[Project]` row's journal home (BUG-042; the journal is
+    still written -- see `TO_ACTIVITY_AND_RESULTS`).
+    An unrecognised or unprefixed row goes to **Messages**: it is the closest
     thing to the old dock (bottom, navigable, kept), so nothing is lost.
     """
     prefix = prefix_of(text)
     if prefix == SCHEMA_PREFIX:
         return TO_RESULTS if schema_verify or SCHEMA_VERIFY_MARKER in text else TO_ACTIVITY
+    if prefix == PROJECT_PREFIX and project_closing:
+        return TO_ACTIVITY_AND_RESULTS
     return DESTINATIONS.get(prefix, TO_RESULTS)
 
 
 class AuditRouter:
-    """Routes produced Audit rows onto the Findings tab, the Results tab or the
+    """Routes produced Audit rows onto the Findings tab, the Messages tab or the
     Activity Log, and presents the first two as one virtual list.
 
     `activity_sink` takes `(text, prefix)` and journals it; the host supplies
@@ -171,6 +211,10 @@ class AuditRouter:
         self._results_run_open = False
         #: Set while `xsd_controller` is emitting a Verify XSD run.
         self.schema_run = False
+        #: Set while `ddl_project_controller` is narrating a project CLOSE
+        #: (BUG-042). Rows produced inside that window are journalled as before
+        #: AND rendered on the Messages tab, which the close does not clear.
+        self.project_closing = False
 
     # -- the QListWidget surface the producers were written against ----------
     def addItem(self, item) -> None:
@@ -179,9 +223,20 @@ class AuditRouter:
         if not isinstance(item, QListWidgetItem):
             item = QListWidgetItem(str(item))
         text = item.text()
-        destination = classify(text, schema_verify=self.schema_run)
+        destination = classify(
+            text,
+            schema_verify=self.schema_run,
+            project_closing=self.project_closing,
+        )
         if destination == TO_ACTIVITY:
             self._activity_sink(text, prefix_of(text))
+            return
+        if destination == TO_ACTIVITY_AND_RESULTS:
+            # The journal write is unchanged -- the line belongs to the closing
+            # project's history -- and the Messages row is what makes it
+            # readable after the transition wipes the panel (BUG-042).
+            self._activity_sink(text, prefix_of(text))
+            self._route_results(item, prefix_of(text))
             return
         if destination == TO_FINDINGS:
             self._route_findings(item, prefix_of(text))
@@ -217,7 +272,7 @@ class AuditRouter:
         return None
 
     def takeItem(self, row: int):
-        """Remove row `row` — for a Findings row. For a Results row this
+        """Remove row `row` — for a Findings row. For a Messages row this
         REFUSES the removal and closes the run block instead (see the module
         docstring)."""
         if not (0 <= row < len(self._rows)):
@@ -250,7 +305,7 @@ class AuditRouter:
         self._findings_kind = None
 
     def begin_results_run(self) -> None:
-        """The next Results row opens a new run block."""
+        """The next Messages row opens a new run block."""
         self._results_run_open = False
 
     #: An explicit alias: a run that has finished is closed, so the next row —

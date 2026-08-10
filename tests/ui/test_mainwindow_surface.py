@@ -269,6 +269,9 @@ EXPECTED_HOST_SURFACE = {
     "_report_check_lines",
     "_report_ddl_checkout_drift",
     "_report_ddl_format_refusal",
+    # FQ-030: the editor-gesture refusal reporter, the Audit half of
+    # `CodeEditor.expansion_refused` (the widget can only show a tooltip).
+    "_report_editor_gesture_refusal",
     # FQ-026 renamed it with the vocabulary it reports in, and added the
     # one-line sandbox-comparison modal beside the gesture that raises it.
     "_report_gesture_unavailable",

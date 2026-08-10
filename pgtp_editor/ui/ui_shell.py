@@ -94,7 +94,7 @@ class UiShell:
     #: Where every lane reports its rows. Since FQ-028 this is the ROUTER
     #: (`ui/audit_router.py::AuditRouter`), not a widget: the same
     #: `addItem`/`count`/`item`/`takeItem` surface, but the prefix now names a
-    #: DESTINATION (left-dock Findings tab / bottom Results tab / Activity Log)
+    #: DESTINATION (left-dock Findings tab / bottom Messages tab / Activity Log)
     #: instead of competing for room in one panel. No lane had to change.
     audit: object
 

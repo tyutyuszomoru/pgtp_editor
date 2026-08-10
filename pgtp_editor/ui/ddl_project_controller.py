@@ -443,8 +443,24 @@ class DdlProjectController(QObject):
         never forces it; closing itself always succeeds."""
         if self._folder is None:
             return
-        self.offer_pgtp_deploy_on_close()
-        self.remind_pending_deploys_on_close()
+        # BUG-042: everything narrated in here is emitted BEFORE
+        # `project_changed` (it needs the `_folder`/`_settings` the lines below
+        # clear), and FQ-019's journal replaces its display buffer on that
+        # transition -- so a `[Project]` line filed only in the journal was
+        # wiped off screen by the very close it described. The flag tells
+        # `AuditRouter` that these rows are close-time narration: it keeps
+        # journalling them into the CLOSING project's file exactly as before and
+        # additionally renders them on the Messages tab, which the transition
+        # does not clear. Restored in `finally` so a modal that raises cannot
+        # leave every later `[Project]` line mis-routed.
+        audit = self._shell.audit
+        previous = getattr(audit, "project_closing", False)
+        try:
+            audit.project_closing = True
+            self.offer_pgtp_deploy_on_close()
+            self.remind_pending_deploys_on_close()
+        finally:
+            audit.project_closing = previous
         self._folder = None
         self._settings = None
         self._capability_status = None

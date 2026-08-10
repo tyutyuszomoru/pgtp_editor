@@ -432,7 +432,7 @@ def test_view_menu_contents(qtbot):
         # FQ-028: ONE bottom dock with two tabs. Its toggle is named for what
         # it now holds, and the two tabs get FOCUS entries (not checkable dock
         # toggles -- a tab is either in view or not, there is no third posture).
-        "Activity Log / Results Panel", "Activity Log", "Results",
+        "Activity Log / Messages Panel", "Activity Log", "Messages",
         "Raw XML Panel",
         "―",
         "Expand All", "Collapse All",
@@ -470,7 +470,7 @@ def test_view_menu_default_checked_states(qtbot):
     view_menu = find_top_menu(window, "View")
     assert find_action(view_menu, "Project Tree").isChecked() is True
     assert find_action(view_menu, "Properties Panel").isChecked() is True
-    assert find_action(view_menu, "Activity Log / Results Panel").isChecked() is True
+    assert find_action(view_menu, "Activity Log / Messages Panel").isChecked() is True
     assert find_action(view_menu, "Raw XML Panel").isChecked() is True
 
 
@@ -490,7 +490,7 @@ def test_toggling_audit_panel_hides_dock(qtbot):
     window.show()
     assert window.audit_dock.isVisible() is True
     view_menu = find_top_menu(window, "View")
-    find_action(view_menu, "Activity Log / Results Panel").trigger()
+    find_action(view_menu, "Activity Log / Messages Panel").trigger()
     assert window.audit_dock.isVisible() is False
 
 
@@ -515,7 +515,7 @@ def test_closing_dock_directly_unchecks_view_action(qtbot):
     for dock, label in (
         (window.tree_dock, "Project Tree"),
         (window.properties_dock, "Properties Panel"),
-        (window.audit_dock, "Activity Log / Results Panel"),
+        (window.audit_dock, "Activity Log / Messages Panel"),
     ):
         assert find_action(view_menu, label).isChecked() is True
         dock.close()
@@ -532,7 +532,7 @@ def test_reshowing_dock_rechecks_view_action(qtbot):
     for dock, label in (
         (window.tree_dock, "Project Tree"),
         (window.properties_dock, "Properties Panel"),
-        (window.audit_dock, "Activity Log / Results Panel"),
+        (window.audit_dock, "Activity Log / Messages Panel"),
     ):
         dock.close()
         assert find_action(view_menu, label).isChecked() is False
@@ -552,7 +552,7 @@ def test_view_action_reopens_dock_after_direct_close(qtbot):
     for dock, label in (
         (window.tree_dock, "Project Tree"),
         (window.properties_dock, "Properties Panel"),
-        (window.audit_dock, "Activity Log / Results Panel"),
+        (window.audit_dock, "Activity Log / Messages Panel"),
     ):
         dock.close()
         action = find_action(view_menu, label)

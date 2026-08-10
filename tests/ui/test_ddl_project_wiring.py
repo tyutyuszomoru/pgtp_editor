@@ -1205,12 +1205,58 @@ def test_close_project_reminds_about_pending_ddl_deploys(qtbot, tmp_path):
     # FQ-028 routes `[Project]` narration into the Activity Log, and this
     # particular line is emitted DURING the close -- after which FQ-019's
     # project transition replaces the on-screen buffer with the (empty)
-    # standalone one. So the reminder is asserted where it durably landed: the
-    # closing project's own journal file, which the transition flushed.
+    # standalone one. The journal write is unchanged and still the durable
+    # record: it lands in the CLOSING project's own file, which the transition
+    # flushed.
     from pgtp_editor.db.activity_log import activity_path
 
     journal = activity_path(project_dir).read_text(encoding="utf-8")
     assert "[Project]" in journal and "pending a batch deploy" in journal
+
+
+def test_the_close_time_reminder_is_still_readable_after_the_close(qtbot, tmp_path):
+    """BUG-042: the reminder used to be told to a panel the same transition
+    wiped, so the user was informed at the exact moment they could no longer
+    read it. It now ALSO rides the Messages tab, which a project transition
+    does not clear."""
+    from pgtp_editor.db.ddl_project import DeployedObject, save_settings
+    from pgtp_editor.db.introspect import DatabaseSchema, RoutineInfo
+
+    window = _window(qtbot, tmp_path)
+    project_dir = tmp_path / "proj"
+    settings = ProjectSettings(
+        deployed={"ddl/pr.recalc.sql": DeployedObject(content_hash="stale-hash")}
+    )
+    save_settings(project_dir, settings)
+    window._ddl_project_ui.set_active_project(project_dir, settings)
+    (project_dir / "ddl").mkdir()
+    (project_dir / "ddl" / "pr.recalc.sql").write_text("-- hand-edited\n", encoding="utf-8")
+    window.ddl_browser_panel._schema = DatabaseSchema(
+        routines={"pr.recalc()": RoutineInfo(schema="pr", name="recalc", source="live def")}
+    )
+
+    window._ddl_project_ui.close_project()
+
+    # The project is gone and the journal panel has been swapped to the
+    # standalone (empty) store -- and the reminder is STILL on screen.
+    assert window._ddl_project_folder is None
+    assert not any(
+        "pending a batch deploy" in row for row in window.activity_panel.row_texts()
+    )
+    assert any(
+        "pending a batch deploy" in row for row in window.results_panel.row_texts()
+    )
+
+
+def test_ordinary_project_narration_still_goes_only_to_the_journal(qtbot, tmp_path):
+    """BUG-042 moved close-time `[Project]` rows only. An open-time line runs
+    AFTER `project_changed` (FQ-019's store-switch-first ordering), survives on
+    its own, and must not be duplicated onto the Messages tab."""
+    window = _window(qtbot, tmp_path)
+    window.audit_panel.addItem("[Project] Source .pgtp unchanged since last opened (x).")
+
+    assert any("Source .pgtp unchanged" in row for row in window.activity_panel.row_texts())
+    assert window.results_panel.row_texts() == []
 
 
 def test_close_project_with_no_ddl_explorer_loaded_never_raises(qtbot, tmp_path):

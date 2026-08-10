@@ -768,7 +768,7 @@ class FindValidateController(QObject):
 
         It still expresses itself as "remove my prior `[Validate]` rows", which
         is what it literally did while every prefix shared one panel. Since
-        FQ-028 `[Validate]` rows live on the accumulating Results tab, where
+        FQ-028 `[Validate]` rows live on the accumulating Messages tab, where
         validation history is deliberately KEPT across runs, and the router
         reads this sweep as the run boundary it always meant: the rows stay and
         the next one opens under its own dated separator. Iterates from the

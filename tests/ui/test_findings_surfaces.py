@@ -186,8 +186,8 @@ def test_the_bottom_dock_hosts_exactly_two_tabs(qtbot, tmp_path):
     assert window.audit_dock.widget() is window.bottom_tabs
     assert window.bottom_tabs.count() == 2
     assert window.bottom_tabs.tabText(window.activity_tab_index) == "Activity Log"
-    assert window.bottom_tabs.tabText(window.results_tab_index) == "Results"
-    assert window.audit_dock.windowTitle() == "Activity Log / Results"
+    assert window.bottom_tabs.tabText(window.results_tab_index) == "Messages"
+    assert window.audit_dock.windowTitle() == "Activity Log / Messages"
 
 
 def test_results_accumulate_across_runs_under_a_dated_rule(qtbot, tmp_path):

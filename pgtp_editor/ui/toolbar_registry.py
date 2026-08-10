@@ -179,6 +179,11 @@ RENAMED_ID_ALIASES: dict[str, str] = {
     "parsing.check-object-without-applying": "parsing.check-and-rollback",
     "deployment.run-on-sandbox": "deployment.check-and-commit-to-sandbox",
     "deployment.run-on-quality": "deployment.apply-to-quality",
+    # `View ▸ Results` -> `View ▸ Messages`: FQ-028's bottom-dock tab was named
+    # the same as the Sandbox SQL Console's query-result grid, which is a
+    # different surface entirely. Only the message-log tab is renamed.
+    "view.results": "view.messages",
+    "view.activity-log-results-panel": "view.activity-log-messages-panel",
     # `database.deploy-this-edit` gets NO row: FQ-026 DELETES the picker, and a
     # deletion degrades through `resolve_ids` dropping the unresolvable id (the
     # `file.save` precedent). A row here would point a saved button at a
