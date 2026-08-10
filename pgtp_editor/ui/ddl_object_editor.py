@@ -779,10 +779,35 @@ class DdlObjectEditorPanel(
         self.editor.installEventFilter(self)
 
         # Format Selection (§18.4's consumer, §18.5): Ctrl+Alt+F, enabled only
-        # with a selection. The redundant eventFilter branch below handles the
-        # key directly too, mirroring CodeEditorDialog's Ctrl+S/Ctrl+W
-        # convention -- QShortcut activation is not reliable under the
-        # offscreen platform in tests.
+        # with a selection.
+        #
+        # THIS QShortcut IS THE GESTURE'S ONLY KEYBOARD HOST (DEC-012,
+        # BUG-054). The rule it applies: **any gesture with a command form --
+        # menu bar OR context menu -- has exactly one keyboard host.** Format
+        # Selection has a command form (the context-menu action in
+        # `_build_context_menu`), so it is inside that rule; DEC-009's
+        # widget-hosted carve-out is narrower than it reads and covers only
+        # gestures with NO command form at all (Ctrl+Alt+E, Ctrl+Alt+C,
+        # Ctrl+Alt+J, Ctrl+Space -- the branches below). A context-menu entry
+        # is a command, so it does not cover this one.
+        #
+        # The `eventFilter` branch that used to answer Key_F+Ctrl|Alt as well
+        # is DELETED. Both of its stated justifications were dead: "QShortcut
+        # activation is not reliable under the offscreen platform" is
+        # measurably false (BUG-046 -- shortcuts do activate offscreen; what
+        # fails is key delivery to a widget that was never `show()`n, so the
+        # test must send the key at the top level's `windowHandle()`), and the
+        # `CodeEditorDialog` Ctrl+S/Ctrl+W double-hosting it cited as precedent
+        # was itself removed by BUG-046. The sibling `SqlConsolePanel` already
+        # ships this exact gesture with the QShortcut alone -- same scope, same
+        # selection gate, no `eventFilter` -- so this is the shape that already
+        # works, not a new one.
+        #
+        # A consequence worth stating: the deleted branch was unconditional, so
+        # a selection-less Ctrl+Alt+F used to reach `format_selection`. It now
+        # does nothing, because the single host is disabled without a
+        # selection -- the same answer the context-menu action gives, and the
+        # same answer the console gives.
         self._format_shortcut = QShortcut(QKeySequence("Ctrl+Alt+F"), self)
         self._format_shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
         self._format_shortcut.activated.connect(self.format_selection)
@@ -896,20 +921,15 @@ class DdlObjectEditorPanel(
                 else:
                     self.editor.undo() if is_undo else self.editor.redo()
                 return True
-            if (
-                key == Qt.Key.Key_F
-                and event.modifiers()
-                == (Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.AltModifier)
-            ):
-                if event.type() == QEvent.Type.ShortcutOverride:
-                    event.accept()
-                else:
-                    self.format_selection()
-                return True
+            # NOTE (BUG-054/DEC-012): there is deliberately NO Ctrl+Alt+F
+            # branch here. Format Selection has a context-menu command, so it
+            # gets exactly one keyboard host -- the QShortcut in `__init__`.
+            # Do not re-add it; see the comment there.
+            #
             # Ctrl+Space: schema-aware completion (§18.6). Handled here rather
-            # than as a QShortcut for the same reason as Ctrl+Alt+F above: it
-            # has no menu command, so it is a widget behaviour and not a
-            # command with a second host (DEC-009), and it needs the injected
+            # than as a QShortcut because it has no menu command at all, so it
+            # is a widget behaviour and not a command with a second host
+            # (DEC-009's carve-out proper), and it needs the injected
             # `SchemaIndex` plus this panel's own caret/popup state -- neither
             # of which a `CodeEditor` widget may hold (§18.5 D1: the editor
             # panel never talks to a database). Completion is also

@@ -340,15 +340,28 @@ def test_format_selection_shortcut_is_disabled_without_a_selection(qtbot):
 
 
 def test_ctrl_alt_f_triggers_format_selection(qtbot):
+    """A REAL key press, through the panel's only keyboard host (BUG-054).
+
+    Two mechanics are load-bearing and the test proves nothing without both:
+    the panel must be `show()`n so its top level has a `windowHandle()`, and
+    the key must be delivered AT that handle -- `QTest.keyClick(widget, ...)`
+    posts straight at the widget and bypasses `QShortcutMap` entirely, so it
+    would pass only while some widget-level branch answered the chord.
+    """
     panel = _panel(qtbot, text="select a,b from t where a=1")
+    panel.show()
+    qtbot.waitExposed(panel)
     panel.editor.setFocus()
     _select_all(panel)
+    QApplication.processEvents()
+    assert panel.windowHandle() is not None
 
     QTest.keyClick(
-        panel.editor,
+        panel.windowHandle(),
         Qt.Key.Key_F,
         Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.AltModifier,
     )
+    QApplication.processEvents()
 
     assert panel.text() == "select a, b\nfrom t\nwhere a = 1"
 
@@ -452,8 +465,12 @@ def test_context_menu_format_selection_enabled_with_a_selection_and_triggers_it(
 # before the panel's filter is ever relevant, in this Qt/PySide6 version --
 # so `event.isAccepted()` after `sendEvent` is `True` for Ctrl+Z/Ctrl+Y with
 # or without the panel's filter installed, and cannot discriminate the two.
-# `Ctrl+Alt+F` has no such native binding, so it CAN be (and is) proven this
-# way. For Ctrl+Z/Ctrl+Y the tests below instead call `panel.eventFilter(...)`
+# (`Ctrl+Alt+F` used to be proven this way, back when a second `eventFilter`
+# branch answered it; BUG-054/DEC-012 deleted that branch, so the chord is now
+# covered by real key presses at a shown top level's `windowHandle()` instead
+# -- see `test_ctrl_alt_f_triggers_format_selection` and
+# `test_ctrl_alt_f_has_exactly_one_keyboard_host`.)
+# For Ctrl+Z/Ctrl+Y the tests below instead call `panel.eventFilter(...)`
 # directly -- unit-testing the panel's own documented logic (it claims the
 # ShortcutOverride and, on the KeyPress, calls its own `editor.undo()`/
 # `redo()`) independent of which widget would have won the ambiguous Qt
@@ -574,24 +591,56 @@ def test_ctrl_shift_z_redoes_through_a_real_key_press(qtbot):
     assert panel.text() == "alpha\nbeta"
 
 
-def test_shortcut_override_claims_ctrl_alt_f(qtbot):
-    """Unlike Ctrl+Z/Ctrl+Y, Ctrl+Alt+F has no native QPlainTextEdit binding,
-    so this genuinely proves the panel's own QShortcut/eventFilter claims it
-    -- verified to FAIL if `installEventFilter` is removed."""
-    panel = _panel(qtbot, text="alpha\n")
+def test_ctrl_alt_f_has_exactly_one_keyboard_host(qtbot, monkeypatch):
+    """BUG-054/DEC-012: the QShortcut is the ONLY keyboard host, so the chord
+    inherits its selection gate.
+
+    This replaces the old `test_shortcut_override_claims_ctrl_alt_f`, which
+    drove `panel.eventFilter` directly and therefore pinned the very duplicate
+    host the ruling deleted. Both halves fail if that branch is restored: it
+    was unconditional, so a selection-less Ctrl+Alt+F reached
+    `format_selection` anyway, and it answered the filter's own dispatch.
+
+    `format_selection` is patched on the CLASS before the panel exists, so the
+    `activated` connection binds the recorder -- patching the instance would
+    not, the signal already holds the original bound method.
+    """
+    calls = []
+    monkeypatch.setattr(
+        DdlObjectEditorPanel, "format_selection", lambda self: calls.append(1)
+    )
+    panel = _panel(qtbot, text="select a,b from t where a=1")
+    panel.show()
+    qtbot.waitExposed(panel)
+    panel.editor.setFocus()
+    QApplication.processEvents()
+    assert panel.windowHandle() is not None
+    assert panel.editor.textCursor().hasSelection() is False
     modifiers = Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.AltModifier
-    event = _shortcut_override(Qt.Key.Key_F, modifiers)
 
-    QApplication.sendEvent(panel.editor, event)
+    QTest.keyClick(panel.windowHandle(), Qt.Key.Key_F, modifiers)
+    QApplication.processEvents()
 
-    assert event.isAccepted() is True
+    assert calls == []  # gated: no selection, so the one host is disabled
+    # And the panel's own filter must not answer the chord at either event
+    # type -- the mechanism-level statement of "one host". Selected or not.
+    assert panel.eventFilter(panel.editor, _shortcut_override(Qt.Key.Key_F, modifiers)) is False
+    _select_all(panel)
+    assert panel.eventFilter(panel.editor, _key_press(Qt.Key.Key_F, modifiers)) is False
+    assert calls == []
+    # With a selection, the single host does fire -- through QShortcutMap, at
+    # the shown top level's windowHandle.
+    QTest.keyClick(panel.windowHandle(), Qt.Key.Key_F, modifiers)
+    QApplication.processEvents()
+    assert calls == [1]
 
 
 def test_shortcut_override_does_not_claim_unrelated_keys(qtbot):
     """The eventFilter must not blanket-accept every ShortcutOverride on the
-    editor -- only the specific sequences it claims (Ctrl+Z/Ctrl+Y/Ctrl+Alt+F).
-    An unrelated key with no editor-native binding (e.g. Ctrl+Alt+G) must be
-    left alone so other shortcuts keep working."""
+    editor -- only the specific sequences it claims (Ctrl+Z/Ctrl+Y and the
+    no-command-form widget gestures). An unrelated key with no editor-native
+    binding (e.g. Ctrl+Alt+G) must be left alone so other shortcuts keep
+    working."""
     panel = _panel(qtbot, text="alpha\n")
     modifiers = Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.AltModifier
     event = _shortcut_override(Qt.Key.Key_G, modifiers)
