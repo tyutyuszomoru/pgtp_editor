@@ -3,9 +3,10 @@
 sql-mode CodeEditor plus its own FindReplaceBar instance (the same per-tab
 routing precedent as the Edit XSD tab)."""
 from PySide6.QtCore import QEvent, QPoint, Qt
-from PySide6.QtGui import QKeyEvent
+from PySide6.QtGui import QKeyEvent, QKeySequence
 
 from pgtp_editor.ui.code_editor import CodeEditor, _SQL_KEYWORDS
+from pgtp_editor.ui.ddl_buffer_panel import RELOAD_LABEL
 from pgtp_editor.ui.ddl_editor_panel import EditorPanel
 from pgtp_editor.ui.find_replace_bar import FindReplaceBar
 
@@ -595,3 +596,109 @@ def test_other_keys_still_fall_through_the_panel_filter(qtbot):
     assert consumed is False
     consumed, _ = _deliver(panel, QEvent.Type.KeyPress, Qt.Key.Key_F, _CTRL)
     assert consumed is False
+
+
+# --- BUG-062: Reload DDL from the viewing pane -------------------------------
+#
+# The gesture the user had to close and reopen the tab for. The panel never
+# fetches: it asks (§18.5 D1's injection idiom), and the host answers with the
+# same `_open_ddl_explorer(role)` re-introspection the Database-menu toggle runs.
+
+
+def test_the_context_menu_offers_reload_anywhere_in_the_buffer(qtbot):
+    """Offered OUTSIDE every span, where `Edit DDL` is absent: reload is a
+    property of the connection, not of the clicked object."""
+    panel = EditorPanel()
+    qtbot.addWidget(panel)
+    panel.set_ddl_text(_TEXT + "\n-- not inside any span\n", spans=[])
+
+    menu = panel._build_context_menu_at(_local_pos_for_line(panel, 1))
+
+    assert _edit_action_target(menu) is None
+    assert RELOAD_LABEL in [a.text() for a in menu.actions()]
+
+
+def test_the_context_menu_reload_entry_emits_the_signal(qtbot):
+    panel = EditorPanel()
+    qtbot.addWidget(panel)
+    panel.set_ddl_text(_TEXT, spans=[])
+    got = []
+    panel.reload_requested.connect(lambda: got.append(True))
+
+    menu = panel._build_context_menu_at(_local_pos_for_line(panel, 1))
+    [a for a in menu.actions() if a.text() == RELOAD_LABEL][0].trigger()
+
+    assert got == [True]
+
+
+def test_a_browse_only_panel_still_offers_reload(qtbot):
+    """§18.7's sandbox instance suppresses `Edit DDL` and nothing else. Applying
+    to a sandbox is exactly the operation whose result the user re-reads."""
+    panel = EditorPanel(browse_only=True)
+    qtbot.addWidget(panel)
+    panel.set_ddl_text(_TEXT, spans=[])
+
+    menu = panel._build_context_menu_at(_local_pos_for_line(panel, 1))
+
+    assert RELOAD_LABEL in [a.text() for a in menu.actions()]
+
+
+def test_the_context_menu_reload_entry_carries_no_shortcut(qtbot):
+    """DEC-012's one-keyboard-host invariant, from the side that is easiest to
+    break silently: the menu form is click-only."""
+    panel = EditorPanel()
+    qtbot.addWidget(panel)
+    panel.set_ddl_text(_TEXT, spans=[])
+
+    menu = panel._build_context_menu_at(_local_pos_for_line(panel, 1))
+
+    action = [a for a in menu.actions() if a.text() == RELOAD_LABEL][0]
+    assert action.shortcut().isEmpty()
+
+
+def test_ctrl_shift_r_is_the_gestures_one_keyboard_host(qtbot):
+    """The chord itself, driven as a real key press at the top level's
+    `windowHandle()` -- `qtbot.keyClick(widget, …)` bypasses `QShortcutMap` and
+    would prove nothing about whether the chord is bound (DEC-012's
+    implementation note). `QShortcut` does fire offscreen; what it needs is a
+    shown top level."""
+    panel = EditorPanel()
+    qtbot.addWidget(panel)
+    panel.set_ddl_text(_TEXT, spans=[])
+    panel.show()
+    qtbot.waitExposed(panel)
+    panel.editor.setFocus()
+    got = []
+    panel.reload_requested.connect(lambda: got.append(True))
+
+    qtbot.keyClick(panel.windowHandle(), Qt.Key.Key_R, _CTRL | Qt.KeyboardModifier.ShiftModifier)
+
+    assert got == [True]
+
+
+def test_the_reload_shortcut_is_scoped_to_this_panel_and_its_children(qtbot):
+    """Per-ROLE, which is the whole reason the host is the widget and not a
+    window-level QAction: §18.7 gives the target and the sandbox their own
+    Explorer, and only focus can say which one `Ctrl+Shift+R` meant."""
+    panel = EditorPanel()
+    qtbot.addWidget(panel)
+
+    assert panel._reload_shortcut.key() == QKeySequence("Ctrl+Shift+R")
+    assert (
+        panel._reload_shortcut.context()
+        == Qt.ShortcutContext.WidgetWithChildrenShortcut
+    )
+
+
+def test_reload_is_a_signal_so_the_panel_never_touches_a_database(qtbot):
+    """§18.5 D1: this panel has no connection, no params and no fetch -- BUG-045
+    is what reaching for one from here looks like. It also carries NO role: the
+    host connects each instance to its own."""
+    panel = EditorPanel()
+    qtbot.addWidget(panel)
+
+    assert panel.reload_requested.__class__.__name__ == "SignalInstance"
+    got = []
+    panel.reload_requested.connect(lambda *args: got.append(args))
+    panel.reload_requested.emit()
+    assert got == [()]  # no role argument to get wrong

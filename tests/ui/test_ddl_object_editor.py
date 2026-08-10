@@ -123,19 +123,39 @@ def test_find_replace_bar_is_per_instance_and_wired_to_its_own_editor(qtbot):
     assert a.find_replace_bar.parent() is a
 
 
-def test_find_all_is_inert_and_never_reports_a_false_zero_matches(qtbot):
-    """Carve-out 3 (§18.5): Find All is present (the shared FindReplaceBar)
-    but produces no results at all here -- the panel wires no on_find_all
-    callback, so the bar's constructor default (`lambda term: None`) is what
-    runs. Calling it must not raise and must not flip find-all-running state
-    (which only a real results-reporting host would do), so nothing reports
-    a false "0 matches" as though the buffer had been searched."""
+def test_find_all_publishes_its_request_instead_of_being_inert(qtbot):
+    """§18.5 carve-out 3 is RETIRED (BUG-060). Find All used to produce no
+    results at all here: the panel wired no `on_find_all` callback, so the bar's
+    constructor default (`lambda term: None`) ran and the button did nothing.
+
+    The panel still wires nothing -- it has no audit surface and no business
+    knowing about one, which is why the fix is not a callback threaded down here
+    -- but an unwired bar now PUBLISHES the request, and the find lane answers
+    it (see `tests/ui/test_find_all_surfaces.py` for the results themselves).
+
+    The observer is registered and removed locally so the assertion does not
+    depend on which windows another test left alive."""
+    from pgtp_editor.ui.find_replace_bar import (
+        FIND_ALL_REQUESTED,
+        add_find_all_observer,
+        remove_find_all_observer,
+    )
+
     panel = _panel(qtbot, text="needle needle needle")
+    assert panel.find_replace_bar._on_find_all is None  # still no per-panel wiring
     panel.find_replace_bar._find_field.setText("needle")
+    published = []
 
-    panel.find_replace_bar.find_all()  # must not raise
+    def observer(bar, term, reason):
+        published.append((bar, term, reason))
 
-    assert panel.find_replace_bar._find_all_running is False
+    add_find_all_observer(observer)
+    try:
+        panel.find_replace_bar.find_all()
+    finally:
+        remove_find_all_observer(observer)
+
+    assert published == [(panel.find_replace_bar, "needle", FIND_ALL_REQUESTED)]
 
 
 def test_replace_current_selection_actually_replaces_here(qtbot):
