@@ -24,7 +24,8 @@ Mode terminology is §7's and gains no fifth meaning: **major** = FQ-027's
 SESSION workflow mode (in-memory, never a QSettings key), **minor** = an active
 editor sub-state, shown only when there is one.
 """
-from PySide6.QtCore import QSettings
+from PySide6.QtCore import QSettings, Qt
+from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
 from pgtp_editor.ui.launcher_dialog import (
@@ -264,3 +265,100 @@ def test_a_theme_flip_re_renders_both_surfaces(qtbot, tmp_path):
     # Leave the app palette as the suite found it.
     window._light_theme_action.setChecked(False)
     assert QApplication.instance() is not None
+
+
+# --- FQ-032: the THIRD segment, the focused editor's editing mode ------------
+
+
+def test_the_editing_mode_segment_is_present_on_a_focused_editable_editor(
+    qtbot, tmp_path
+):
+    """`set_mode(major, minor)` gained a third argument, and both surfaces still
+    render from the ONE `_refresh_mode_indicator` call."""
+    from pgtp_editor.ui.mode_indicator import EDITING_COMMAND, EDITING_EDIT
+
+    window = _window(qtbot, tmp_path)
+    window.show()
+    qtbot.waitExposed(window)
+    editor = window.center_stage.xml_editor
+    editor.setFocus()
+    QApplication.processEvents()
+    window._refresh_mode_indicator()
+    assert _both(window) == (
+        f"{NO_MODE_LABEL} · {EDITING_EDIT}",
+        f"{NO_MODE_LABEL} · {EDITING_EDIT}",
+    )
+
+    QTest.keyClick(editor, Qt.Key.Key_Escape)
+    assert _both(window) == (
+        f"{NO_MODE_LABEL} · {EDITING_COMMAND}",
+        f"{NO_MODE_LABEL} · {EDITING_COMMAND}",
+    )
+
+
+def test_an_editing_mode_transition_is_a_TRIGGER_for_the_one_refresh(qtbot, tmp_path):
+    """The indicator follows a transition on ANY editor -- published through
+    `vim_mode.add_editing_mode_observer`, the bookmark-observer idiom -- so no tab
+    creation site needs a wiring line."""
+    from pgtp_editor.ui.mode_indicator import EDITING_COMMAND
+
+    window = _window(qtbot, tmp_path)
+    window.show()
+    qtbot.waitExposed(window)
+    editor = window.center_stage.xml_editor
+    editor.setFocus()
+    QApplication.processEvents()
+    editor.enter_command_mode()  # no keystroke: only the publish can move the chip
+    assert EDITING_COMMAND in window._mode_label.text()
+
+
+def test_the_segment_is_ABSENT_when_the_focused_editor_is_read_only(qtbot, tmp_path):
+    """FQ-032 makes the layer inactive on a read-only buffer, and a read-only
+    buffer already names itself in its tab title."""
+    from pgtp_editor.ui.mode_indicator import EDITING_COMMAND, EDITING_EDIT
+
+    window = _window(qtbot, tmp_path)
+    window.show()
+    qtbot.waitExposed(window)
+    editor = window.center_stage.xml_editor
+    editor.setReadOnly(True)
+    editor.setFocus()
+    QApplication.processEvents()
+    window._refresh_mode_indicator()
+    text = window._mode_label.text()
+    assert EDITING_EDIT not in text and EDITING_COMMAND not in text
+    editor.setReadOnly(False)
+
+
+def test_the_segment_is_ABSENT_on_a_non_editor_focus(qtbot, tmp_path):
+    from pgtp_editor.ui.mode_indicator import EDITING_EDIT
+
+    window = _window(qtbot, tmp_path)
+    window.show()
+    qtbot.waitExposed(window)
+    window.project_tree.setFocus()
+    QApplication.processEvents()
+    window._refresh_mode_indicator()
+    assert EDITING_EDIT not in window._mode_label.text()
+    assert window.focused_editing_mode() is None
+
+
+def test_the_palette_namespace_IS_the_menu_tree(qtbot, tmp_path):
+    """Derive, don't design: the `:` verbs are the shipped FQ-012 enumeration, so
+    the namespace auto-syncs as the menus change."""
+    window = _window(qtbot, tmp_path)
+    entries = window.vim_command_entries()
+    assert entries
+    labels = {label for _cid, label in entries}
+    assert any("›" in label for label in labels), "the verb is the FULL menu path"
+    command_id = entries[0][0]
+    assert window.vim_command_action(command_id) is not None
+    assert window.vim_command_action("no.such.command") is None
+
+
+def test_an_editor_inside_the_window_resolves_the_palette_namespace(qtbot, tmp_path):
+    window = _window(qtbot, tmp_path)
+    window.show()
+    qtbot.waitExposed(window)
+    editor = window.center_stage.xml_editor
+    assert editor.vim_command_entries()

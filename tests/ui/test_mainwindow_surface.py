@@ -234,8 +234,16 @@ EXPECTED_HOST_SURFACE = {
     "_on_edit_code_requested",
     "_on_editor_block_count_changed",
     "_on_editor_bookmarks_changed",
+    # FQ-032, added on purpose. The editing-mode segment of the mode indicator
+    # follows the FOCUSED editor, so the host's ONE `_refresh_mode_indicator`
+    # gains two triggers -- an editing-mode transition on any editor (published
+    # through `vim_mode.add_editing_mode_observer`, the bookmark-observer idiom)
+    # and a focus change. Both are indicator refreshes, which is already the
+    # host's job, so there is no lane to move them onto.
+    "_on_editing_mode_changed",
     "_on_editor_line_clicked",
     "_on_editor_text_changed",
+    "_on_focus_changed_refresh_mode",
     "_on_light_theme_toggled",
     "_on_manual_chapter_selected",
     "_on_manual_visibility_changed",
@@ -408,6 +416,14 @@ EXPECTED_HOST_SURFACE = {
     "_record_notice",
     "_refresh_connectivity_affordances",
     "_refresh_mode_indicator",
+    # FQ-032, added on purpose. `focused_editing_mode()` is the third segment's
+    # input to `_refresh_mode_indicator`; `vim_command_entries` /
+    # `vim_command_action` are the `:` palette's namespace and dispatch, and they
+    # are the HOST's because the namespace IS the menu tree -- only the window can
+    # enumerate `ToolbarController.collect_menu_commands()`, and asking the
+    # top-level window is exactly what makes the palette unavailable in the
+    # menu-less `CodeEditorDialog`.
+    "focused_editing_mode",
     "_results_action",
     "_reveal_activity_tab",
     "_reveal_findings_tab",
@@ -462,6 +478,10 @@ EXPECTED_HOST_SURFACE = {
     "sandbox_ddl_browser_tab_index",
     "set_workflow_mode",
     "show_launcher",
+    # FQ-032's `:` palette namespace and its dispatch -- see the note beside
+    # `focused_editing_mode` above.
+    "vim_command_action",
+    "vim_command_entries",
     "workflow_mode",
     "tree_dock",
 }

@@ -80,8 +80,10 @@ from pgtp_editor.ui.code_editor import (
     is_mutating_editor_operation,
     is_paste_chord,
 )
+from pgtp_editor.ui.editor_shared import SharedEditorMixin
 from pgtp_editor.ui.event_body import event_body_line_ranges
 from pgtp_editor.ui.format_settings import current_xml_config
+from pgtp_editor.ui.vim_mode import VimModeMixin
 from pgtp_editor.xmlfmt import format_xml_selection
 
 STATE_NORMAL = 0  # in text content, outside any tag
@@ -422,7 +424,23 @@ def _closing_tag_start(text: str, span: xml_structure.TagSpan) -> int | None:
     return xml_structure.closing_tag_start(text, span)
 
 
-class XmlEditor(CompletionPopupHostMixin, GutterBookmarkFoldMixin, QPlainTextEdit):
+class XmlEditor(
+    CompletionPopupHostMixin,
+    GutterBookmarkFoldMixin,
+    SharedEditorMixin,
+    VimModeMixin,
+    QPlainTextEdit,
+):
+    """The Raw XML / Edit XSD editor.
+
+    Carries the same family-agnostic layers `CodeEditor` does, all declared
+    **before** `QPlainTextEdit`: the shared gutter/bookmark/fold base,
+    `SharedEditorMixin` (the ONE hint/refusal path and the ONE line-wrap toggle,
+    both lifted for FQ-032 -- this class had no `report_refusal` at all and
+    `CodeEditor` had no wrap toggle) and `VimModeMixin` (FQ-032's Edit-mode /
+    Command-mode layer).
+    """
+
     line_clicked = Signal(int)  # 1-based line of a left-mouse click in the text
     # Emitted when a text-modifying key is pressed while the editor is
     # read-only (Caption Mode). The base already blocks the edit; this signal
@@ -583,6 +601,9 @@ class XmlEditor(CompletionPopupHostMixin, GutterBookmarkFoldMixin, QPlainTextEdi
         # The shared Ctrl+Space completion popup (attribute names, then
         # chained values) and its wiring state -- see CompletionPopupHostMixin.
         self._init_completion_popup()
+        # FQ-032's editing-mode layer. Every editor starts in **Edit mode**,
+        # always -- no setting, no persistence, no restore.
+        self._init_vim_mode()
         # Format Selection (§18.4 part C): Ctrl+Alt+F, enabled only with a
         # selection. ONE gesture, TWO engines, dispatched by HOST SURFACE and
         # never by sniffing the text -- this class is an XML surface, so it wires
@@ -1174,15 +1195,25 @@ class XmlEditor(CompletionPopupHostMixin, GutterBookmarkFoldMixin, QPlainTextEdi
         cursor.insertText(text)  # QTextCursor.insertText replaces the selection
         self.setTextCursor(cursor)
 
-    def set_line_wrap_enabled(self, enabled: bool) -> None:
-        self.setLineWrapMode(
-            QPlainTextEdit.LineWrapMode.WidgetWidth
-            if enabled
-            else QPlainTextEdit.LineWrapMode.NoWrap
-        )
+    # `set_line_wrap_enabled` / `is_line_wrap_enabled` moved to
+    # `SharedEditorMixin` (`ui/editor_shared.py`), unchanged. FQ-032's
+    # `:set wrap` / `:set nowrap` is family-agnostic and `CodeEditor` had no
+    # toggle at all, and a family-agnostic layer may not be given a private copy
+    # of something one family already implements. The context menu's checkable
+    # `Wrap Lines` entry still drives exactly this method.
 
-    def is_line_wrap_enabled(self) -> bool:
-        return self.lineWrapMode() == QPlainTextEdit.LineWrapMode.WidgetWidth
+    def vim_undo(self) -> None:
+        """`u` in Command mode routes to THIS surface's undo answer -- the
+        window's document-level snapshot history, which is what `Ctrl+Z` does
+        here. Never `QPlainTextEdit.undo()`: that is `F14`'s recorded defect
+        (undo that bypasses the app's routing), and reproducing it on a reachable
+        key would be worse."""
+        self.undo_requested.emit()
+
+    def vim_redo(self) -> None:
+        """`Ctrl+R` in Command mode -- Command-mode ONLY
+        (`DEC-260810193638`); `Ctrl+Y` remains the app's redo everywhere."""
+        self.redo_requested.emit()
 
     @staticmethod
     def _is_text_modifying_key(event: QKeyEvent) -> bool:
@@ -1286,6 +1317,16 @@ class XmlEditor(CompletionPopupHostMixin, GutterBookmarkFoldMixin, QPlainTextEdi
             # the keyboard is identical on both systems (Qt binds them `KB_Win`
             # only). Consumed rather than passed on: the interception IS the
             # behaviour.
+            event.accept()
+            return
+
+        # FQ-032's editing-mode layer, HERE: after the read-only branch (row 5 of
+        # the `Esc` precedence order -- vim is inactive entirely on a read-only
+        # buffer) and after the `classify_editor_chord` block, so `Ctrl+Z`,
+        # `Ctrl+Y` and `Ctrl+D`/`Ctrl+K`/`Ctrl+U` keep this surface's answers.
+        # Those three are declined for a Command-mode editor inside
+        # `apply_editor_operation`, in ONE place, never here.
+        if self.handle_command_mode_key(event):
             event.accept()
             return
 

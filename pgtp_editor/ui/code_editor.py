@@ -66,6 +66,8 @@ from pgtp_editor.sql.templates import (
     find_snippet,
 )
 from pgtp_editor.ui.editor_gutter import GutterBookmarkFoldMixin
+from pgtp_editor.ui.editor_shared import SharedEditorMixin
+from pgtp_editor.ui.mode_indicator import ModeIndicator
 from pgtp_editor.ui.shortcut_registry import (  # noqa: F401  (re-exported names)
     CLAIMED_NOT_UNDO_REDO,
     DELETE_CHARACTER,
@@ -79,6 +81,7 @@ from pgtp_editor.ui.shortcut_registry import (  # noqa: F401  (re-exported names
     SUPPRESSED,
     UNDO,
 )
+from pgtp_editor.ui.vim_mode import VimModeMixin
 
 # The operation names are re-exported deliberately: a surface imports the
 # matcher and the answers it can return from ONE module, and never spells a
@@ -230,10 +233,15 @@ def apply_editor_operation(editor, operation: str | None) -> bool:
     * **`PASTE`** -- delegated to `QPlainTextEdit.paste()`: the clipboard, the
       read-only refusal and the single undo step are already Qt's, and the only
       thing the app is adding is that the CHORD reaches it on both platforms.
+    * **The editor is in COMMAND MODE (FQ-032)** -- the three DELETE operations
+      are DECLINED, and this is the one place that decline lives. See
+      `_command_mode_declines` below.
     """
     if not is_mutating_editor_operation(operation):
         return False
     if editor.isReadOnly():
+        return False
+    if _command_mode_declines(editor, operation):
         return False
     exit_walk = getattr(editor, "exit_tab_stop_mode", None)
     if callable(exit_walk):
@@ -252,6 +260,43 @@ def apply_editor_operation(editor, operation: str | None) -> bool:
         editor.setTextCursor(cursor)
         editor.ensureCursorVisible()
     return changed
+
+
+#: The three operations Command mode FREES, reserving their chords for later vim
+#: scrolling (`DEC-260810193637`). `PASTE` is deliberately absent: the ruling
+#: freed exactly three operations, so `Ctrl+Shift+Insert` and `Ctrl+V` keep
+#: pasting in Command mode.
+COMMAND_MODE_FREED_OPERATIONS = frozenset(
+    {DELETE_CHARACTER, DELETE_TO_END_OF_LINE, DELETE_LINE}
+)
+
+
+def _command_mode_declines(editor, operation: str | None) -> bool:
+    """Whether `editor` is in FQ-032's Command mode and `operation` is one of the
+    three it frees -- **the app's ONE mode test for these chords.**
+
+    `Ctrl+D` / `Ctrl+K` / `Ctrl+U` remain bound, reserved and app-implemented at
+    all six surfaces in **Edit** mode: Windows keeps the three gestures it gained
+    in `55c2538`, this function keeps being their one implementation, and every
+    edge case in its docstring still governs. **Only Command mode declines them**,
+    and the decline is HERE rather than in six `eventFilter`s -- six copies of a
+    mode test is six chances to drift, which is the argument that put these chords
+    in one function to begin with. The table's invariant is untouched: what became
+    mode-conditional is the APPLICATION, not the classification, so
+    `classify_editor_chord` still gives the same answer at all six surfaces.
+
+    **⚠ ACCEPTED COST, RECORDED SO A SWEEP DOES NOT FILE IT AS A BUG: a
+    mode-dependent hole with no visible reason.** A swallowed keystroke that does
+    nothing is normally exactly what FQ-023/DEC-013 forbid -- *state the reason,
+    never nothing*. **The owner accepted the silence explicitly**, so this is a
+    stated exception rather than an oversight, and the mitigation is the mode
+    indicator, which is the one thing on screen that explains why the key did
+    nothing. A future sweep meeting an inert `Ctrl+U` in Command mode should be
+    closed against this docstring, **not** re-filed.
+    """
+    if operation not in COMMAND_MODE_FREED_OPERATIONS:
+        return False
+    return bool(getattr(editor, "in_command_mode", False))
 
 
 def _delete_for(cursor, operation: str) -> bool:
@@ -505,12 +550,18 @@ class _CodeHighlighter(QSyntaxHighlighter):
                 self.setFormat(block_open, block_close + 2 - block_open, self._comment_format)
 
 
-class CodeEditor(GutterBookmarkFoldMixin, QPlainTextEdit):
+class CodeEditor(
+    GutterBookmarkFoldMixin, SharedEditorMixin, VimModeMixin, QPlainTextEdit
+):
     """QPlainTextEdit tuned for editing a single code body in one language
     ("js" | "php" | "sql").
 
     Carries the shared gutter/bookmark/fold base (`ui/editor_gutter.py`, §8) --
-    the same one `XmlEditor` uses, never a second parallel gutter. Foldable
+    the same one `XmlEditor` uses, never a second parallel gutter -- plus the two
+    other family-agnostic layers, both mixed in **before** `QPlainTextEdit` and
+    both shared with `XmlEditor`: `SharedEditorMixin` (the one hint/refusal path
+    and the one line-wrap toggle) and `VimModeMixin` (FQ-032's Edit-mode /
+    Command-mode layer). Foldable
     regions are supplied from outside via `set_fold_regions`; for the DDL
     Explorer's "sql" buffer `EditorPanel` derives them from the `DdlObjectSpan`
     index (one region per object body, banner → `end_line`, §18.1).
@@ -521,20 +572,12 @@ class CodeEditor(GutterBookmarkFoldMixin, QPlainTextEdit):
     # tab-indented bodies unreadably wide.
     _SQL_TAB_STOP_CHARS = 4
 
-    #: Emitted when an expansion gesture (snippet or expand-`SELECT`) refuses,
-    #: carrying the reason fit to show the user -- never on success. The same
-    #: "report outward, never reach into MainWindow" precedent as
-    #: `DdlObjectEditorPanel.format_refused`; a host that connects nothing
-    #: still sees the reason, because `report_refusal` also shows it as a
-    #: transient tooltip at the caret (the status bar is static since FQ-028).
-    expansion_refused = Signal(str)
-
-    #: Emitted for every transient caret hint this editor shows -- a refusal
-    #: (which also emits `expansion_refused`) or an answer, e.g. signature help
-    #: (FQ-030 slice 3). It exists because `QToolTip` shows nothing at all under
-    #: the offscreen platform, so this is the only thing a test can observe;
-    #: hosts are free to ignore it, and all of them do.
-    hint_shown = Signal(str)
+    # `expansion_refused` and `hint_shown` now live on `SharedEditorMixin`
+    # (`ui/editor_shared.py`) alongside `report_refusal` / `show_hint`, so
+    # `XmlEditor` states a refusal through the SAME implementation -- the lift
+    # FQ-032 forced, because a family-agnostic layer may not be given a private
+    # copy of something one family already implements. Both signals mean exactly
+    # what they meant before and every existing host connection is unchanged.
 
     def __init__(self, language: str, parent=None):
         super().__init__(parent)
@@ -586,6 +629,10 @@ class CodeEditor(GutterBookmarkFoldMixin, QPlainTextEdit):
         self._expansion_selection: tuple[int, int] | None = None
 
         self._init_gutter_bookmarks_folding()
+        # FQ-032's editing-mode layer. Every editor starts in **Edit mode**,
+        # always: no setting is read, nothing is restored, and there is no
+        # "which editor was in Command mode" map to consult.
+        self._init_vim_mode()
         self._apply_gutter_theme_colors(self._palette_is_light())
 
     # --- Shared gutter/bookmark/fold base hooks (§8) -----------------------
@@ -999,47 +1046,12 @@ class CodeEditor(GutterBookmarkFoldMixin, QPlainTextEdit):
             return False
         return self.apply_expansion(expansion)
 
-    def report_refusal(self, reason: str) -> None:
-        """State why a gesture could not run (FQ-023), never nothing.
-
-        Two channels, and both still earn their place now that a host DOES
-        connect the signal (`MainWindow._report_editor_gesture_refusal` files
-        it as an Audit `[SQL]` row, since the status bar is static since
-        FQ-028): the signal is the durable record, readable after the fact and
-        reachable by a test; the caret tooltip is the immediate one, at the
-        place the author is looking, for a refusal that answers a keystroke
-        they just pressed. A dock row alone would make a Ctrl+Alt+E that
-        matched no snippet look like nothing happened; a tooltip alone would
-        vanish before it could be re-read. The hosts that connect nothing (Raw
-        XML, the PHP tabs) still get the tooltip.
-        """
-        self.show_hint(reason or "this gesture cannot run here", refusal=True)
-
-    def show_hint(self, text: str, *, refusal: bool = False) -> None:
-        """Show `text` as a transient tooltip at the caret -- the ONE hint path.
-
-        Signature help (FQ-030 slice 3) is a query, not an insertion: it has
-        nothing to put in the buffer and everything to say, so it says it here,
-        through the same channel a refusal uses. `refusal=True` additionally
-        emits `expansion_refused`, which is what makes a REFUSAL (and only a
-        refusal) reach the Audit surface -- an answered question is not a
-        notice and does not belong in a journal.
-        """
-        if not text:
-            return
-        if refusal:
-            self.expansion_refused.emit(text)
-        if self.isVisible():
-            # A tooltip anchored to a hidden widget has nowhere to appear, and
-            # asking for one under the offscreen platform only produces a Qt
-            # warning. `hint_shown` below is the channel that always fires, and
-            # is what tests assert on.
-            QToolTip.showText(
-                self.viewport().mapToGlobal(self.cursorRect().bottomLeft()),
-                text,
-                self,
-            )
-        self.hint_shown.emit(text)
+    # `report_refusal` / `show_hint` moved to `SharedEditorMixin`
+    # (`ui/editor_shared.py`), unchanged, so `XmlEditor` -- which had NEITHER --
+    # reports a refusal through the same one implementation. FQ-032 forced the
+    # lift: a Command-mode gesture that cannot run must state why on both editor
+    # families, and a private hint inside the vim layer would have been the app's
+    # second hint path.
 
     # --- Tab-stop mode ------------------------------------------------------
 
@@ -1141,6 +1153,9 @@ class CodeEditor(GutterBookmarkFoldMixin, QPlainTextEdit):
         super().mousePressEvent(event)
 
     def focusOutEvent(self, event) -> None:
+        # `super()` reaches `VimModeMixin.focusOutEvent`, which drops Command
+        # mode -- transient editor state the user cannot see the boundary of must
+        # not outlive focus, which is the same reason the tab-stop walk ends here.
         self.exit_tab_stop_mode()
         super().focusOutEvent(event)
 
@@ -1204,6 +1219,17 @@ class CodeEditor(GutterBookmarkFoldMixin, QPlainTextEdit):
             if key == Qt.Key.Key_C:
                 self.expand_select_at_caret()
                 return
+
+        # FQ-032's editing-mode layer, HERE and not earlier: `Esc`'s precedence
+        # order puts tab-stop mode (row 3) ahead of Command-mode entry (row 4),
+        # and the `Ctrl+Alt+` gesture family above is not part of either
+        # vocabulary. Rows 1 and 2 need no arbitration -- the completion popup
+        # takes focus, so this editor never sees the key, and a `FindReplaceBar`
+        # field is a different widget. On a read-only editor the hook answers
+        # nothing at all (row 5).
+        if self.handle_command_mode_key(event):
+            event.accept()
+            return
 
         char = event.text()
         cursor = self.textCursor()
@@ -1313,8 +1339,40 @@ class CodeEditorDialog(QDialog):
         button_box.accepted.connect(self.save)
         button_box.rejected.connect(self.cancel)
 
+        # The dialog's editing-mode chrome (`DEC-260810193639`). **Load-bearing,
+        # not cosmetic.** The owner ruled that this deliberately minimal,
+        # menu-less dialog DOES get Command mode -- against the recommendation,
+        # which was that the vim layer be inactive here because `Esc` is this
+        # dialog's cancel and, since `Ctrl+S`/`Ctrl+W` were deleted on
+        # 2026-08-09, its ONLY keyboard cancel -- and attached the condition that
+        # makes it survivable: an indicator plus an exit hint. FQ-032's entire
+        # safety argument for a user who enters Command mode by accident is that
+        # indicator and hint, so **shipping Command mode here without them ships
+        # the version the owner declined.**
+        #
+        # This is the THIRD `ModeIndicator` surface where §7 said "two surfaces,
+        # one call": the first outside the main window and the first not driven by
+        # `MainWindow._refresh_mode_indicator()`, which a dialog cannot reach. It
+        # renders the EDITING-MODE segment only -- it is not a workflow surface
+        # and has no MainWindow to ask. That APPLIES §7's one-source-of-truth
+        # rule rather than excepting it: the single accessor answers major and
+        # minor, while the editing mode's source of truth is the editor itself.
+        #
+        # ⚠ THE CONSEQUENCE THE RULING DID NOT NAME, flagged rather than decided:
+        # `Esc` no longer cancels this dialog -- from Edit mode it enters Command
+        # mode, and from Command mode it clears pending state and stays. The
+        # dialog's only KEYBOARD cancel is therefore withdrawn. `Return` still
+        # accepts and Cancel remains reachable by the button box and the window
+        # close, so nothing is trapped, but a keyboard-only user loses a gesture.
+        # A two-press escape would restore it and is the obvious candidate -- but
+        # it is vim-inauthentic and is deliberately NOT implemented here.
+        self._mode_indicator = ModeIndicator(self, editing_only=True)
+        self._mode_indicator.set_editing_mode(self._editor.editing_mode_label())
+        self._editor.editing_mode_changed.connect(self._refresh_mode_indicator)
+
         layout = QVBoxLayout(self)
         layout.addWidget(self._editor)
+        layout.addWidget(self._mode_indicator)
         layout.addWidget(button_box)
 
         # NO `Ctrl+S` / `Ctrl+W` (owner decision, 2026-08-09). This dialog was
@@ -1413,6 +1471,16 @@ class CodeEditorDialog(QDialog):
                 # handling cannot answer instead.
                 return True
         return super().eventFilter(obj, event)
+
+    @property
+    def mode_indicator(self) -> ModeIndicator:
+        """The dialog's editing-mode chrome -- the guard the ruling attached."""
+        return self._mode_indicator
+
+    def _refresh_mode_indicator(self) -> None:
+        """The dialog's own refresh. Driven by ITS editor's transitions, never by
+        `MainWindow._refresh_mode_indicator()`, which a dialog cannot reach."""
+        self._mode_indicator.set_editing_mode(self._editor.editing_mode_label())
 
     def set_code(self, text: str) -> None:
         self._editor.setPlainText(text)
