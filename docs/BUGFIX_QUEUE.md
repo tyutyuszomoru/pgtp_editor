@@ -5854,3 +5854,236 @@ answers it: it already means redo on every platform. The question that *does* su
   Sandbox console. Once step 1/2 land, `manual-maintainer` can state all six.
 
 ---
+
+## BUG-057: Curated XSD should be included in releases (add a packaging guard)
+**Status:** OPEN
+**Reported:** 2026-08-10
+**Report (verbatim):** "the curated xsd should be included in the releases."
+
+**Root cause:** No confirmed broken code path — I could not reproduce an actual packaging gap by
+reading the build chain, and I am flagging that explicitly rather than inventing a root cause.
+
+The curated schema is `pgtp_editor/resources/curated.xsd` (git-tracked; 100 KB; added in `b94f625`,
+"Curated v1.2"). It is loaded at runtime by
+`pgtp_editor/schema_learning/storage.py:51` `bundled_curated_xsd_text()` via
+`resources.files("pgtp_editor") / "resources" / "curated.xsd"` (line 56) — the *identical* resolver
+shape used by `pgtp_editor/ui/manual_panel.py:37` (`manual.md`) and `pgtp_editor/ui/icons.py:76`
+(`resources/icons/breeze`). It is the one-time first-run seed for the user's app-data `curated.xsd`
+(`pgtp_editor/ui/xsd_controller.py:247` `ensure_bootstrap`), which is the SOLE feed for
+completion/hover/Properties labels (spec §11). If `bundled_curated_xsd_text()` returns `None` because
+the resource is missing from a frozen build, `ensure_bootstrap` falls through to generating a stub from
+the learned model — a silent degradation, not a crash: exactly the asymmetric-silent-failure class that
+already motivated the QtSvg guard in `optimized_build.py:66-69` and `tests/test_build_excludes.py`.
+
+Tracing the two release channels, the XSD *should* ship in both today:
+- **Windows PyInstaller/Inno release (the primary "release"):** `optimized_build.py:246,254` bundles the
+  ENTIRE `pgtp_editor/resources` folder via one `--add-data "<RESOURCES_SRC>:pgtp_editor/resources"`
+  (`RESOURCES_SRC` at line 41 = the whole dir), so `curated.xsd` rides along with `manual.md` and the
+  icons. The prune step `_prune_bundle` (lines 181-210) only deletes `Qt6*.dll` outside the allowlist,
+  `PRUNE_EXTRA_BINARIES`, and `PRUNE_QT_DIRS` (all under `PySide6/`) — it does NOT touch
+  `pgtp_editor/resources`. `docs/installer.iss:105` then copies `dist\PGTPEditor\*` recursively, so
+  nothing between build and installer drops it. The recent "tighten PyInstaller pruning" commit
+  (`ae3ad1e`) changed only Qt-DLL/dir pruning; it did not add or remove any `resources` handling.
+- **pip/wheel install:** `pyproject.toml:31` `[tool.setuptools.package-data]` lists `"resources/*.xsd"`,
+  so `curated.xsd` is packaged. Spec §11 (CONSOLIDATED_SPEC.md line 3129) explicitly asserts this.
+
+Because both paths already include it structurally, the plausible readings of the report are: (a) a
+release was cut before `curated.xsd` was git-tracked / before the package-data glob covered `.xsd` and
+the reporter saw the stub-generation fallback (historical, now fixed); (b) the reporter wants an
+enforced guarantee so a future prune/refactor can't silently drop it, matching the existing QtSvg-guard
+philosophy in this very build script; or (c) an actual on-disk release is missing it for a reason not
+visible in the source tree (a stale `dist/` reused across a checkout where the file was untracked). I
+cannot distinguish these from the code alone, and there is no runtime resolver bug to fix.
+
+**Proposed fix:** Do NOT change the runtime resolver or the `--add-data`/package-data wiring — both are
+already correct. Add a **packaging guard** so the guarantee is enforced and any future regression fails
+loudly (the same rationale as `tests/test_build_excludes.py`):
+
+1. **Build-script assertion (`optimized_build.py`).** In `build()`, after the existing
+   `RESOURCES_SRC.is_dir()` check (lines 238-243), assert the curated XSD is actually present in the
+   folder being bundled — e.g. `if not (RESOURCES_SRC / "curated.xsd").is_file(): raise SystemExit(...)`
+   with a message naming the file and that completion/hover break without it. This makes a clean-checkout
+   build refuse to produce a silently-degraded bundle. Follow the wording style of the existing
+   `RESOURCES_SRC`/`ICON_PATH` `SystemExit` guards. (Gotcha: keep it a check on `RESOURCES_SRC`, the
+   source dir PyInstaller reads — not on `dist/`, which does not exist yet at that point.)
+2. **Static presence test (`tests/`).** Add a test mirroring
+   `tests/ui/test_manual_resource.py` that asserts `files("pgtp_editor") / "resources" / "curated.xsd"`
+   resolves and its text contains the version marker
+   `<!-- PGTP Editor curated schema v1.2 -->` (spec §11 pins this marker and
+   `storage.CURATED_BUNDLED_VERSION = "1.2"`). This guards the pip/wheel channel and the resolver
+   contract `bundled_curated_xsd_text()` depends on.
+3. Optionally extend `tests/test_build_excludes.py` (or a sibling) with a check that
+   `optimized_build.RESOURCES_DEST == "pgtp_editor/resources"` and that the `--add-data` spec is still
+   wired into `build()` — a parallel to that file's `test_excluded_modules_are_wired_into_build_args`,
+   guarding the destination that makes `files("pgtp_editor")` resolve inside the frozen app (the
+   invariant called out in the comment at `optimized_build.py:37-40`).
+
+If investigation of an actual shipped installer confirms reading (c) — the file genuinely absent from a
+real `dist/` — the fix is to rebuild from a clean checkout (the source wiring is correct); the guard in
+step 1 is what prevents that state from recurring.
+
+**Test impact:** Existing `tests/ui/test_manual_resource.py` is the exact pattern to mirror for the new
+curated-XSD presence test (same `importlib.resources.files` shape). `tests/test_build_excludes.py`
+already guards `optimized_build.py`'s exclusion lists and is where the optional `--add-data`/RESOURCES_DEST
+wiring check belongs. `tests/schema_learning/test_storage.py` covers `bundled_curated_xsd_text()` and
+`curated_xsd_path()` — verify it (or add a case) asserts `bundled_curated_xsd_text()` returns non-`None`
+in the dev tree so the seed path is exercised. No new test file is needed for the build-script assertion
+itself (it is a `SystemExit` guard), though a unit test loading `optimized_build` and asserting the
+assertion string is present is cheap and matches the existing static-guard style.
+
+**Spec impact:** none — CONSOLIDATED_SPEC §11 (line 3129) already states `curated.xsd` ships in
+`[tool.setuptools.package-data]` and is the primary first-run seed, and this entry adds no new behaviour,
+only a guard around an already-specified guarantee. The spec has no PyInstaller/Inno release-packaging
+section (`optimized_build.py`/`installer.iss` are not spec'd); if the owner wants the "curated XSD ships
+in the frozen release" guarantee stated authoritatively, that is a small addition for `spec-maintainer`
+to fold into §11 after the guard lands — flag, do not edit here.
+
+---
+
+## BUG-058: Move "Project Status…" from the Database menu to File, directly below "Project Settings…"
+**Status:** OPEN
+**Reported:** 2026-08-10
+**Report (verbatim):** "Project status should be in File, just below Project settings"
+
+**Root cause:** Not a defect — a menu-placement request. The two actions exist and are wired; only their
+locations differ from what the owner wants. This is a MOVE, not an ADD.
+- `Project Settings…` is built in the **File** menu: `pgtp_editor/ui/main_window.py`,
+  `MainWindow._build_file_menu`, line 2964 —
+  `project_settings_action = menu.addAction("Project Settings…")`, connected (2965-2967) to
+  `lambda: self._ddl_project_ui.open_settings()`. It sits inside §18.2's project group
+  (`New Project…`, `Open Project…`, `Close Project`, `Project Settings…`), followed by a
+  `menu.addSeparator()` at line 2972.
+- `Project Status…` is built in the **Database** menu: `MainWindow._build_database_menu`, line 3695 —
+  `project_status_action = menu.addAction("Project Status…")`, connected (3696) to
+  `lambda: self._open_project_status()`. It is the LAST entry in the Database menu, added after a
+  `menu.addSeparator()` (3686) and immediately before the `self._refresh_sandbox_affordances()` call
+  (3699). The action is a plain always-enabled item: it is NOT held on an attribute, NOT gated, and NOT
+  in any refresh/affordance set (unlike its Database-menu neighbours). `_open_project_status` itself
+  (line 4456) handles the projectless case at runtime, so no menu-level enablement gate exists to carry
+  over. This makes the move clean — nothing else references the `project_status_action` local.
+
+**Proposed fix:** In `pgtp_editor/ui/main_window.py`:
+1. In `_build_database_menu`, DELETE the two lines that create and connect `project_status_action`
+   (3695-3696) and the explanatory comment above them (the `# §18.8: opening the window is itself a
+   probe trigger…` block at 3693-3694). Leave the preceding `menu.addSeparator()` (3686) — re-check
+   whether removing this last item leaves a now-trailing separator that should also go; the block above
+   it (the deleted `Sandbox Setup…` comment) ends in a separator, so verify the Database menu does not
+   end on a dangling `addSeparator()` after the removal.
+2. In `_build_file_menu`, INSERT the action immediately AFTER the `project_settings_action` wiring
+   (after line 2967, before the `menu.addSeparator()` at 2972) so it becomes the fifth item of §18.2's
+   project group, directly below `Project Settings…`:
+   ```python
+   project_status_action = menu.addAction("Project Status…")
+   project_status_action.triggered.connect(lambda: self._open_project_status())
+   ```
+   Mirror the exact label string ("Project Status…" with the U+2026 ellipsis) and the lambda-wrapped
+   connect (the lambda matters — a bare connect passes `triggered`'s `checked: bool`, the BUG-021
+   lesson noted in the same method).
+Gotchas:
+- Keep the `# Database ▸ Project Status… (§18.8)` docstring line inside `_open_project_status`
+  (line 4457) accurate — after the move it should read `File ▸ Project Status…`. Same for the
+  `_project_status_window` comment at line 700 if it names a menu path (it says "the menu entry", so
+  it is fine).
+- `_MAINTENANCE_FILE_ITEMS = ("New Session", "Exit")` (line 317) governs which File items survive
+  Maintenance mode; `Project Status…` is NOT in that tuple, so — correctly — it will be trimmed away in
+  Maintenance mode just like `Project Settings…`. No change needed there, but confirm this matches the
+  owner's intent (it is consistent with `Project Settings…`, its new neighbour).
+- Toolbar/pinning: the action's menu-path command id changes with the move (Database → File), so a user
+  who pinned it to the toolbar would lose the button silently. `toolbar_registry.RENAMED_ID_ALIASES`
+  is the established mechanism for exactly this (see the FQ-020 / FQ-027 rows). Add an alias row mapping
+  the old Database-scoped id to the new File-scoped id. Derive both ids the way §7's menu-path id
+  derivation does (verify the exact strings against `toolbar_registry` / `_walk_menu_actions`; likely
+  `database.project-status` → `file.project-status`). This is the one easy-to-miss part of the move.
+
+**Test impact:**
+- `tests/ui/test_menus.py::test_file_menu_contents` (line 13, the exact-order list at 33-35) MUST gain
+  `"Project Status…"` after `"Project Settings…"` in §18.2's project group — the expected list becomes
+  `… "Close Project", "Project Settings…", "Project Status…", "―", …`. This is a hard-equality contract,
+  so it fails until updated.
+- `tests/ui/test_ddl_creation_wiring.py::test_database_menu_offers_new_function_procedure_and_project_status`
+  (line 236: `assert "Project Status…" in labels` against the Database menu) will now FAIL — the item is
+  no longer in Database. Split/rename it: assert `"New Function/Procedure…"` stays in Database and move
+  the `"Project Status…"` presence assertion to the File menu (the two concerns no longer share a menu).
+- No test asserts the exact full Database-menu order (`test_menus.py` has no `test_database_menu_contents`
+  equivalent — searched), so no Database order contract breaks beyond the `in` check above.
+- `tests/ui/test_sandbox_setup_wiring.py` line 489/506 only asserts the refusal message does NOT contain
+  "Project Status" — unaffected by the move (the string is about refusal wording, not menu location).
+- New case to add: a File-menu wiring test that `Project Status…` triggered() opens the Project Status
+  window (mirror the `Project Settings…` wiring test at `tests/ui/test_ddl_project_wiring.py:528`), so a
+  broken lambda/connect is caught the BUG-021 way rather than by a direct method call.
+
+**Spec impact:** diverges from CONSOLIDATED_SPEC — the Database location is settled, spec'd design, not an
+accident. The spec names `Database ▸ Project Status…` in multiple places: §18.8 / TOC (line 490), the §18
+status table (line 4097), §26's Database-menu enumeration (line 9669-9671, which explicitly says
+"Everything §18 adds lives in **this** [Database] menu (except §18.2's five project actions, which are on
+**File**)"), and §26 line 10619 ("shipped: Database ▸ Project Status…, no shortcut"). Moving it to File
+makes it the SIXTH §18.2-style File action and contradicts all four spots. Flag for `spec-maintainer`
+after the fix lands: update those references to `File ▸ Project Status…`, and reconcile §26's "everything
+§18 adds lives in the Database menu except §18.2's five project actions" sentence (Project Status is a
+§18.8 action that now also lives on File). Do not edit the spec here.
+
+---
+
+## BUG-059: The startup launcher is dismissable, leaving the app in the invalid "No Mode" state
+**Status:** OPEN
+**Reported:** 2026-08-10
+**Report (verbatim):** "When launcher is closed without making a choice the software should either stay in the mode it was previously or if it's right after opening the app, it should enter in Standalone mode. \"No Mode\" is not an option."
+
+**SUPERSEDING OWNER REQUIREMENT (verbatim, replaces the above — this one wins):** "I've changed my mind, do not permit to close the launcher without having chosen a mode. If launcher is opened with a mode already chosen (new session), let it be closed, otherwise make choice obligatory. this means that also window close button must be disabled"
+
+**Root cause:** `pgtp_editor/ui/launcher_dialog.py` — three dismissal paths: the QDialogButtonBox Close button + rejected→reject (lines 225-231), Escape via keyPressEvent/cancel (304-316), and native ✕ / Alt+F4 from default window flags; `show_launcher` returns early on dismissal before `set_workflow_mode`. `pgtp_editor/ui/main_window.py`: `_workflow_mode=None` init (647); `new_session` clears the mode to None at line 3074 BEFORE showing the launcher, making "stay in previous mode" impossible. `pgtp_editor/ui/mode_indicator.py` renders None as `NO_MODE_LABEL="No Mode"` (70-74,119).
+
+**Proposed fix:** Thread a `dismissable` flag through `LauncherDialog.__init__` / `show_launcher`. When NOT dismissable (startup, no current mode): no Close button; strip `WindowCloseButtonHint`/`WindowContextHelpButtonHint`; override `closeEvent` to `ignore()` (the AUTHORITATIVE barrier — covers Alt+F4, since `WindowCloseButtonHint` is only advisory on some Linux WMs); neutralise `reject()`; swallow Escape in `keyPressEvent`; make `cancel()` a no-op; modality already handles click-outside. When dismissable (re-invoked with a mode already set, e.g. new session): allow dismissal and RETAIN the previously-set mode — rework the `main_window.py:3074` clear so the previous mode survives (capture `previous`, thread it in, re-apply on dismissal). Result: "No Mode" is never reachable because dismissal is impossible at startup, not because of a fallback.
+
+**Test impact:** `tests/ui` launcher/startup tests + `tests/ui/test_menus.py` mode-indicator. New cases: undismissable regime (no Close button, `WindowCloseButtonHint` cleared, `closeEvent` ignored, Escape/`reject()`/`cancel()` inert, pick still accepts) and dismissable regime (dismissal allowed, previous mode retained); `new_session` mode retention.
+
+**Spec impact:** overrules FQ-028 open-question-8 ("the indicator is NEVER blank") AND narrows FQ-010 ("Escape never quits / returns None") to the already-in-a-mode case — CONSOLIDATED_SPEC §7 / mode-indicator subsection (~line 1343). Flag for spec-maintainer with a Supersession Ledger row after the fix lands; do not edit spec.
+
+---
+
+## BUG-060: Find All is an unwired no-op in the DDL Explorer, DDL object, PHP file, and draft fragment tabs — its results reach no output
+**Status:** OPEN
+**Reported:** 2026-08-10
+**Report (verbatim):** "Find All's results are not wired in to any output."
+
+**Root cause:** The streaming Find-All engine `FindValidateController.find_all` (`pgtp_editor/ui/find_controller.py:550-574`) recognizes only two hardcoded targets — "raw" (searches `stage.xml_editor`) and "xsd" (searches `stage.xsd_editor`). Only two `FindReplaceBar`s are wired via `set_on_find_all` (`pgtp_editor/ui/main_window.py:990` and `:1198`). Every other bar is constructed with the default no-op callback `lambda term: None` (`pgtp_editor/ui/find_replace_bar.py:52`), so Find All in those tabs computes nothing and appends nothing to the Findings output surface.
+
+**Proposed fix:** NOT a regression — an owner-confirmed v1 scope carve-out (CONSOLIDATED_SPEC §18.5 carve-out 3 at line 6721; Supersession Ledger at 10242; lines 3756/6389/6420). The report is a request to finally do the deferred "generalize the dispatcher to arbitrary per-tab editors" work. Reuse the existing left-dock Findings tab / AuditRouter and the `_on_audit_item_clicked` router (do NOT invent a new panel), and factor the per-tab enumeration to agree with the existing `active_find_bar` / `_bookmark_audit_route` tables. NOTE: depends on / complements the "Findings tab not in View menu" entry (BUG-061) — resolve that one first so the surface is discoverable for manual verification.
+
+**Test impact:** `tests/ui` find/search tests, `tests/ui/test_findings_surfaces.py`; new cases per newly-wired tab kind.
+
+**Spec impact:** retire §18.5 carve-out 3 (flag for spec-maintainer); manual-maintainer must update the "one inert control" text at `manual.md:955/1080/1632/1797` after the fix lands. Do not edit spec/manual.
+
+---
+
+## BUG-061: The Findings tab exists in code but is unreachable from the View menu, so with no auto-reveal event it appears "not to exist"
+**Status:** OPEN
+**Reported:** 2026-08-10
+**Report (verbatim):** "The \"Findings\" tab doesn't exist, it's not in View to turn on and off."
+
+**Root cause:** The Findings surface IS built — `main_window.py:847-851` adds `findings_panel` (a `FindingsPanel`, title "Findings") as a hidden tab inside the left-dock `left_tabs` QTabWidget — but its only reveal path is the router callback `_reveal_findings_tab` (wired via `AuditRouter(..., on_findings=...)` at `main_window.py:884`; the callback itself at 2134-2140). `_build_view_menu` (`main_window.py:3105-3191`) gives focus entries to the two BOTTOM-dock tabs (Activity Log, Messages, lines 3147-3158) but NO entry for the left-dock Findings tab, so there is no user gesture to summon it. Confirmed against the shipped View-menu contract in `tests/ui/test_menus.py:427-445` (no "Findings" entry). `FindingsPanel FINDINGS_TAB_TITLE` at `findings_panel.py:51`.
+
+**Proposed fix:** Add a one-line focus action to `_build_view_menu` following the existing bottom-dock-tab precedent (`activity_action`/`results_action`), reusing the already-correct `_reveal_findings_tab`; not checkable.
+
+**Test impact:** `tests/ui/test_menus.py` (View-menu label list changes) and `tests/ui/test_findings_surfaces.py`.
+
+**Reconcile:** complementary to the Find-All entry (BUG-060), not blocking. Recommended resolve order: THIS entry first (tiny, self-contained, makes the surface discoverable so the Find-All wiring can be verified), then BUG-060. If they land together, avoid clobbering the shared `test_menus.py` label-list edit.
+
+**Spec impact:** flag for spec-maintainer; do not edit spec.
+
+---
+
+## BUG-062: DDL Explorer / DDL Objects has no reload gesture; re-introspecting after applying changes requires closing and reopening the tab
+**Status:** OPEN
+**Reported:** 2026-08-10
+**Report (verbatim):** "DDL Objects and DDL Explorer has no refresh button, therefore when applying changes, we need to close the tab and reopen again to reload.\n1. There should be a menupoint in Database to \"Reload DDL\",\n2. the same should be added to right click menu wherever in DDL Objects\n3. should also be triggered by Ctrl+Shift+R from the DDL Explorer Viewing pane (readonly editor tab)."
+
+**Root cause:** The full re-introspection path already exists in `MainWindow._open_ddl_explorer(role)` (`pgtp_editor/ui/main_window.py:3898-4009`) — re-fetches, rebuilds the tree, re-sets the read-only buffer, recomputes drift markers, rebuilds the completion index. But its ONLY caller is the checkable Database-menu toggle `_on_ddl_explorer_toggled` (`main_window.py:3855`), so reloading an already-open Explorer requires toggling off (just hides) then on (fetches).
+
+**Proposed fix:** Expose the existing path as ONE shared handler (e.g. `reload_ddl_explorer`) reached three ways: (1) a Database-menu QAction "Reload DDL" in `_build_database_menu`; (2) a "Reload DDL" item in the DDL explorer tree context menu (`customContextMenuRequested` handler), available on right-click anywhere in the tree; (3) `Ctrl+Shift+R` as a widget-scoped `QShortcut` on the READ-ONLY `EditorPanel` (`ddl_editor_panel.py` — NOTE the viewing pane is `EditorPanel`, NOT the editable `DdlObjectEditorPanel`; mirror `DdlObjectEditorPanel._format_shortcut` at `ddl_object_editor.py:811`). GOTCHA — DEC-012 one-keyboard-host rule (`docs/DECISION_QUEUE.md:857`): because Reload has both a menu-bar form and a context-menu form, it may have exactly ONE keyboard host — so `Ctrl+Shift+R` lives ONLY on the widget-scoped `QShortcut` and the Database-menu QAction must NOT also carry the shortcut; add a RESERVED_BINDINGS row in `shortcut_registry.py`. Reload does not clobber unsaved editable-tab work (only the completion index is replaced), so NO dirty-tab prompt is needed.
+
+**Test impact:** `tests/ui` DDL explorer / menu / shortcut tests.
+
+**Spec impact:** flag for spec-maintainer (§18.1 and §27); do not edit spec.
+
+---
