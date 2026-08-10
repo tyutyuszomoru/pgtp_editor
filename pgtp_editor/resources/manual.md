@@ -1341,7 +1341,7 @@ appears in completion** — when something new looks worth keeping, open it with
 find it, and add it to `curated.xsd` by hand.
 
 On first run, when you don't yet have a `curated.xsd`, the app **seeds** it by
-copying the curated schema bundled with the editor (**Curated v1.2**, a real
+copying the curated schema bundled with the editor (**Curated v1.3**, a real
 hand-commented starting schema). The seed happens only when the file is absent —
 `curated.xsd` is hand-owned, so the app never overwrites your edits behind your
 back. (If the bundled schema isn't packaged for some reason, the app falls back
