@@ -5349,14 +5349,166 @@ any future context-menu-only gesture.
 
 ---
 
-## BUG-055: every user-facing REFUSAL in the app is invisible — `showMessage` has been a journal-only sink since FQ-028, so BUG-048's "refused with a stated reason" (and ~15 sibling refusals) reach nobody
-**Status:** OPEN
-**Reported:** 2026-08-10 — found by `spec-maintainer` during a harmonization pass; **not** reported by the user.
+## BUG-055: RE-SCOPED — "the refusals are lost" is FALSE (every one is journalled); what actually survives is two comments that lie and ~15 dead `timeout` arguments, plus an owner question about immediacy
+**Status:** OPEN (RE-SCOPED 2026-08-10, second triage pass — the original premise is REFUTED; do **not** implement the original three-part fix below the fold without an owner ruling)
+**Reported:** 2026-08-10 — found by `spec-maintainer` during a harmonization pass; **not** reported by the user. Re-triaged the same day at the owner's request, who flagged the premise as his own error.
 **Report (verbatim):** "Claim: BUG-048's refusal message is never shown to the user. BUG-048 (RESOLVED `e8df6c3`) added a refuse-with-a-stated-reason path for project-history writes against a read-only Raw XML buffer. The queue entry records the result as 'refused-with-a-reason (logged, plus a 4-second status-bar message naming the read-only reasons)', and the implementation deviated from the proposed greying *specifically* in order to state the reason instead. … So the reason lands as an Activity Log line in the bottom dock, which may not even be the visible tab, while the user pressing `Ctrl+Z` (or clicking `History ▸ Undo`) in Caption Mode or Compare/Merge mode sees the chord do **nothing at all**. … The surviving `4000` timeout argument is the evidence the fix was written against the pre-FQ-028 status-bar contract."
 
-**The claim is CONFIRMED, verbatim, and it is broader than the one call site.**
+---
 
-**Root cause.** `pgtp_editor/ui/main_window.py:1955-1962`, `MainWindow._history_write_refused`:
+### VERDICT OF THE SECOND PASS (2026-08-10) — read this before anything below it
+
+**The premise "`showMessage` paints nothing, therefore ~15 refusals reach nobody / the reasons are
+lost" is FALSE.** `showMessage` painting nothing is FQ-028's *design*, not a broken contract, and the
+text is not dropped — it is journalled. The full sink chain was re-verified end to end in this tree:
+
+1. `ui/status_bar.py:131-136` — `StaticStatusBar.showMessage` stores the text and calls
+   `notice_sink(text)`. Its docstring states the intent outright: *"Journal `message` instead of
+   painting it. `timeout` is accepted and ignored: a notice has no expiry once it is a log line."*
+   The section it lives under is headed *"the message-board seam, permanently closed"*, and the module
+   docstring says the ~40 call sites were left alone on purpose: *"the sink did [move]"*.
+2. `ui/main_window.py:642` — `self.setStatusBar(StaticStatusBar(self, notice_sink=self._record_notice))`.
+   The sink is always wired; there is no configuration in which it is `None`.
+3. `ui/main_window.py:2179-2199` — `_record_notice` picks the §18.2 source lane
+   (`_file_activity_source()`, or `SOURCE_QUALITY_FILES` when the lane does not exist yet) and calls
+   `record_activity(source, verb=body)`.
+4. `ui/main_window.py:1764-1776` — `record_activity` calls `activity_log.record(...)` **and**
+   `activity_panel.append(entry)`, i.e. the row is materialized on the Activity Log tab immediately.
+
+**Is any message actually lost? NO — the one dropping path is dead in the current construction order.**
+`_record_notice` drops text when `getattr(self, "activity_log", None) is None`, with a stated reason
+(a half-built window must not crash over where to file a notice). In this tree `self.activity_log` is
+assigned at `main_window.py:892`, and the earliest `showMessage` reachable during `__init__` is
+`:982` (`Manual unavailable: {exc}`), followed by `:1053` (the DEBUG chip's log path). Both are
+**after** `:892`, so both are journalled. Two secondary hazards were checked and are also clear:
+`activity_panel` exists at `:861` (before `:892`), and `record_activity`'s
+`self._activity_write_timer` (`:1528`, i.e. *after* those two sites) is only touched when
+`activity_log.has_pending_writes` is true, which `db/activity_log.py:507-509` defines as
+`bool(self._pending) and self._project_dir is not None` — a freshly built standalone log has no
+project dir, so the timer is never reached. **No call site in `pgtp_editor/` loses its text.**
+(The guard is still correct defensive code and must not be removed: it is order-dependent, and moving
+the journal's construction later would silently reactivate it.)
+
+**So the entry's "(A) refusals with NO other surface" column is wrong as written.** Every one of those
+rows *has* a surface — the Activity Log tab of the bottom dock — and lands on it as a durable row.
+What the sweep actually found is not *lost*, it is **not immediate**: the row may be on a tab that is
+not current (`Messages` may be), or in a dock the user has hidden, and nothing reveals it
+(`_reveal_activity_tab:2142` is wired only to `View ▸ Activity Log`). That is a real difference from
+"reaches nobody", and it changes what, if anything, should be built.
+
+**Is "recorded but not immediate" a defect? That is an OWNER DECISION, not a bug — file it through
+`owner-decision`, do not implement it from this entry.** The two rules in play are both shipped design
+and they do not settle the question between them:
+
+- FQ-023 (`CONSOLIDATED_SPEC.md` §18.5 carve-out 2, ledger row 2026-08-08) says a gesture that cannot
+  run **states why rather than vanishing**. It does not say *where* the statement must land, and its
+  own reference implementations disagree: `_report_gesture_unavailable` (`main_window.py:6417-6428`)
+  routes to the **Messages** tab *and* the journal, `_refuse_sandbox_gesture` (`:5785`) raises a real
+  `QMessageBox`, and the rest journal only.
+- FQ-028 (§7, *"the status bar is STATIC-ONLY"*) says a transient notice belongs in the journal and
+  the bar never becomes a message board again. `displayed_message() == ""` is the guard.
+- The at-the-caret mechanism already exists for the editors that wanted it:
+  `CodeEditor.report_refusal` (`ui/code_editor.py:596`) → `show_hint(..., refusal=True)` (`:612`),
+  whose docstring already argues the immediacy case — *"A dock row alone would make a Ctrl+Alt+E …
+  look like nothing happened."* It is used by `EditorPanel.eventFilter` / the DDL panels, and
+  deliberately **not** by `XmlEditor` (which is not a `CodeEditor`).
+
+The honest statement of the open question, for `owner-decision`: *"a journalled reason satisfies
+FQ-023's letter; does it satisfy its intent for keystroke-answering refusals (`Ctrl+Z` on a read-only
+Raw XML buffer, typing into it), where the user is looking at the caret and not at the bottom dock?"*
+Whichever way that is answered, it is a **design choice about immediacy**, not a broken code path, and
+it must not be implemented off this entry's original write-up.
+
+### What is left that IS a defect (small, and the only part safe to implement now)
+
+**1. Two shipped comments/docstrings assert an on-screen surface that has not existed since FQ-028.**
+- `main_window.py:5795-5798`, `_refuse_sandbox_gesture`, the declined-dialog branch:
+  *"Declining still leaves the reason on screen: the user asked a question ('why can't I check?') and
+  it must stay answered after the dialog is gone."* — followed by
+  `self.statusBar().showMessage(f"{gesture} — {reason}.", 5000)`. Nothing is left **on screen**; the
+  reason is left **in the journal**. The comment is a straightforward lie about the sink and is what
+  made a reader (twice now) conclude the message was lost.
+- `main_window.py:3514-3518`, `_on_read_only_edit_attempted`: *"Flash a non-modal hint when the user
+  tries to edit the read-only Raw XML editor while in Caption Mode."* — the body only calls
+  `showMessage(..., 4000)`. Nothing flashes.
+
+**2. ~15 vestigial `timeout` arguments advertise a contract that no longer exists.** `4000`/`5000`/
+`8000`/`10000` at `main_window.py:1909, 1961, 3496, 3517, 4001, 5064, 5798, 5801, 6427, 6885, 6898`
+and the rest of the `showMessage` sweep. `StaticStatusBar.showMessage` accepts and ignores them
+(`status_bar.py:131-133`). They are harmless at runtime and actively misleading to read — they are
+exactly the evidence that produced this entry's false premise.
+
+**Proposed fix (this pass only — no behaviour change).**
+- Rewrite the two comments/docstrings above to say where the text actually goes, e.g.
+  `_refuse_sandbox_gesture`: *"Declining still leaves the reason recorded: `showMessage` journals to
+  the Activity Log (FQ-028) — the bar paints nothing."* `_on_read_only_edit_attempted`: *"Journal the
+  reason the keystroke did nothing (FQ-028 sink; the bar paints nothing)."* Do **not** describe either
+  as on-screen or transient.
+- Optionally drop the dead `timeout` arguments in the same pass. If done, do it as a **mechanical,
+  behaviour-free sweep of every `statusBar().showMessage(...)` site in `main_window.py`** — a partial
+  sweep leaves the same misleading half-signal. `ui/busy.py:69` already passes no timeout;
+  `ui/find_controller.py:143-156`'s status-shaped stub must keep accepting `*args` so the
+  `busy_status` protocol is unchanged.
+- **Do NOT** add a caret-hint path, a `hints.py` helper, an `XmlEditor.show_hint`, a `_state_refusal`
+  seam, or a `Messages`-tab reveal for refusals. Those all belong to the immediacy question above and
+  are blocked on the owner ruling. **Do not** make the bar paint, and **do not** remove `showMessage`
+  from any site (it is the journal write, and ~80 suite assertions read `currentMessage()`).
+
+**Test impact (for the comment/timeout pass).** Nothing behavioural changes, so no new case is
+required; the existing guards are what prove it:
+- `tests/ui/test_status_bar_static.py` — `displayed_message() == ""` and the "timeout is ignored"
+  assertions must stay green untouched.
+- `tests/ui/test_history_wiring.py:498` (`test_the_history_menu_also_refuses_a_locked_raw_xml_buffer`)
+  and the `read_only_edit_attempted` cases in `tests/ui/test_main_window.py:789-790` /
+  `tests/ui/test_xml_editor.py:954-1019` assert through `currentMessage()`; dropping the `timeout`
+  argument must not disturb them. Run these three files plus `test_status_bar_static.py` after the
+  sweep.
+- If a case is wanted for the finding itself, the durable one is a sink-chain test:
+  *a `showMessage` on the window's status bar appends exactly one Activity Log entry* — that is the
+  assertion whose absence let "the messages are lost" be believed twice.
+
+**Spec impact: YES, and it is the important part of this re-triage — route back to `spec-maintainer`.**
+`spec-maintainer` rewrote §7 on the strength of this entry's original claim, and part of what it wrote
+is contradicted by the code:
+- **`CONSOLIDATED_SPEC.md` §7, the ⚠ block at ~`:1230-1248`** now says *"the risk this paragraph
+  accepted HAS MATERIALIZED"*, *"~15 that are user-facing refusals **with no other surface**"* and
+  *"those refusals **reach nobody**"*. **The code contradicts the last two.** Every one of them
+  reaches the Activity Log, verifiably, and the Activity Log is a surface. The accurate statement is
+  *"~15 refusals are recorded in the journal only, which is not necessarily the visible tab"* — a
+  weaker finding, and one whose remedy is an open owner question rather than a settled defect. The
+  block should also stop citing the missing reveal as proof of invisibility: the row exists whether or
+  not the tab is current.
+- **The same block's §18.5 twin, the ⚠ paragraph in the BUG-048 block at ~`:6492-6500`**, carries the
+  identical *"never appears in front of the user"* / *"~15 refusals with the same problem"* wording and
+  needs the same correction. Its narrower factual claims — that `showMessage` paints nothing, that
+  `timeout` is ignored, that the surviving `4000` is a leftover from the pre-FQ-028 contract — are all
+  **correct** and should survive.
+- **The Supersession Ledger row at ~`:39-45`** ("One new defect found and dispatched: BUG-055 … ~15
+  user-facing refusals reach nobody") rests on the same false clause and needs the same rewording.
+- **Which part survives:** the durable rule §7 added — *"a notice belongs in the journal; a refusal
+  must reach a surface the user is already looking at"* — is **not** refuted by this pass. It is a
+  sound design principle, and the app already honours it in places
+  (`_report_gesture_unavailable`'s dual route, `CodeEditor.report_refusal`, `_refuse_sandbox_gesture`'s
+  `QMessageBox`). What it must not be recorded as is a **settled ruling reached because the risk
+  materialized** — it is a **proposal awaiting the owner's decision**, since honouring it uniformly
+  means changing ~15 shipped refusals. Until that decision lands, §7 should state the rule as the open
+  question it is, with the evidence corrected.
+
+**Why the original premise was wrong — recorded so nobody re-files it from the same observation.**
+Reading `StaticStatusBar.showMessage` and stopping at *"it never paints"* is the trap: the very next
+statement hands the text to `notice_sink`, and the sink is always wired. `displayed_message()`
+returning `""` is an **assertion about the bar**, not about the message. A future sweep that finds a
+`showMessage` with a stale `timeout` argument has found a cosmetic leftover, not a lost message —
+before filing, follow `notice_sink` → `_record_notice` → `record_activity` and check whether the site
+can fire before `main_window.py:892`. If it cannot, nothing is lost, and the only live question is the
+owner's one about immediacy.
+
+---
+
+### ORIGINAL FIRST-PASS WRITE-UP (superseded by the verdict above — retained for its sweep, which is still accurate as a *classification of call sites*; its "reaches nobody" framing is not)
+
+**Root cause (as originally filed).** `pgtp_editor/ui/main_window.py:1955-1962`,
+`MainWindow._history_write_refused`:
 
 ```python
 _log.info("history: refused — %s", reason)
@@ -5364,39 +5516,24 @@ self.statusBar().showMessage(reason, 4000)
 return True
 ```
 
-Since FQ-028 the bar is `pgtp_editor/ui/status_bar.py::StaticStatusBar` (`:120`). Its `showMessage`
-override (`:131-136`) **paints nothing**: it stores the text in `_last_notice` and forwards it to
-`notice_sink` (the Activity Log). `displayed_message()` (`:146-149`) returns `QStatusBar.currentMessage`,
-documented as *always* `""` — "the assertion that the bar is not a message board" — and the docstring
-says `timeout` is "accepted and ignored". So the surviving `4000` is dead evidence of the pre-FQ-028
-contract, exactly as reported.
-
-The Activity Log is not a surface the user is looking at when a keystroke is refused: `_record_audit_notice`
-(`:2161`) appends to the bottom dock's journal tab, and **nothing reveals it** — `_reveal_activity_tab`
-(`:2142`) is wired only to `View ▸ Activity Log` (`:3148`). If the dock is hidden, or the `Messages` tab
-is the current one, the refusal is invisible even in principle.
-
-**Reachable user paths, all verified in the tree:**
+Reachable user paths, all verified in the tree (still accurate as *paths*; each one records a journal
+row rather than showing nothing at all):
 1. **`Ctrl+Z` / `Ctrl+Y` on the Raw XML tab in Caption Mode** — `XmlEditor.keyPressEvent`
-   (`ui/xml_editor.py:1173+`) emits `undo_requested`, and the window shortcut slots
-   `_undo_from_shortcut` / `_redo_from_shortcut` (`main_window.py:1964`, `:1977`) call
-   `_history_write_refused` first. Dead key, no visible reason.
-2. **`Ctrl+Z` on the Raw XML tab in Compare/Merge mode** — same path; the read-only reason set comes from
+   (`ui/xml_editor.py:1173+`) emits `undo_requested`, and `_undo_from_shortcut` / `_redo_from_shortcut`
+   (`main_window.py:1964`, `:1977`) call `_history_write_refused` first.
+2. **`Ctrl+Z` on the Raw XML tab in Compare/Merge mode** — same path; the reason set comes from
    `CenterStage.raw_xml_read_only_reasons()` (`ui/center_stage.py:528`).
 3. **`History ▸ Undo` / `Redo` / a jump-list click, from ANY tab, in either mode** — `_undo` (`:2002`),
-   `_redo` (`:2013`) and `_history_jump` (`:2029`) each call `_history_write_refused`. Worse than (1)
-   and (2): the menu item is enabled (greying was deliberately rejected, §7's "two postures, never a
-   third"), so the click is a full-price gesture that produces no observable effect whatsoever.
+   `_redo` (`:2013`), `_history_jump` (`:2029`). The menu item is enabled (greying was deliberately
+   rejected, §7's "two postures, never a third").
 4. **Typing into the read-only Raw XML editor in Caption Mode** — `XmlEditor.keyPressEvent`
-   (`:1158-1163`) emits `read_only_edit_attempted` → `MainWindow._on_read_only_edit_attempted`
-   (`:3514-3518`), whose docstring says *"Flash a non-modal hint"* and which does nothing but
-   `showMessage(..., 4000)`. Same defect, independently reachable, and its own docstring is now false.
+   (`:1158-1163`) → `read_only_edit_attempted` → `_on_read_only_edit_attempted` (`:3514-3518`).
 
-**THE SWEEP — this is the valuable part; FQ-028 moved the sink in one place and ~40 call sites kept
-compiling.** All 30 `statusBar().showMessage(...)` sites in `pgtp_editor/` are in `main_window.py`
-(plus the sink itself, `ui/busy.py:69`, and `find_controller.py`'s status-shaped stub). Classified:
+**The sweep.** All 30 `statusBar().showMessage(...)` sites in `pgtp_editor/` are in `main_window.py`
+(plus the sink itself, `ui/busy.py:69`, and `find_controller.py`'s status-shaped stub). Classified —
+group (A) is *"a refusal, journal-only"*, **not** *"a refusal that reaches nobody"*:
 
-*(A) User-facing REFUSALS with NO other surface — the same defect as the report:*
+*(A) User-facing REFUSALS routed to the journal only:*
 | Line | Method | Text |
 |---|---|---|
 | `1909` | `_not_implemented` | `Not yet implemented: {label}` |
@@ -5408,104 +5545,34 @@ compiling.** All 30 `statusBar().showMessage(...)` sites in `pgtp_editor/` are i
 | `3517` | `_on_read_only_edit_attempted` | `Raw XML is read-only in Caption Mode…` (path 4) |
 | `3709`,`3715` | `_prompt_missing_connection` | `No database connection configured…` |
 | `3729` | `_open_connection_setup` | `Connection is defined in Project Settings while a project is open.` |
-| `4001` | `_open_ddl_explorer.on_error` | `{label} failed: {exc}` — an **error**, not a refusal, but same invisibility |
+| `4001` | `_open_ddl_explorer.on_error` | `{label} failed: {exc}` — an **error**, not a refusal |
 | `5778` | `_refuse_sandbox_gesture` (ABSENT branch) | `{gesture} needs a sandbox — none is configured…` |
 | `5895` | `_open_sandbox_session` | `No sandbox configured for this project…` |
 | `6348` | `_active_ddl_object_panel_for` | `{gesture} runs on an open DDL object tab — open one first.` |
 | `6369` | `_save_active_xsd` | `Save XSD runs on the Edit XSD tab — open one first.` |
 | `6623` | `_check_active_ddl_object` | `Check runs on an open DDL object tab — open one first.` |
 
-Every one of these is FQ-023's "a gesture that cannot run states why" — and every one of them currently
-states it into a journal nobody is looking at. `_refuse_sandbox_gesture:5798` (`{gesture} — {reason}.`
-after the user declines the `Open` dialog) is a near-miss: its comment says *"Declining still leaves the
-reason on screen"*, which has been false since FQ-028.
+*(B) Dual-routed already — the pattern the immediacy question would generalize:*
+`_report_gesture_unavailable` (`:6417-6428`) writes `_report_check_lines([CHECK_PREFIX + …])` **and**
+`showMessage`, so the `[Check]` row lands in the `Messages` tab via `ui/audit_router.py`.
+`_refuse_sandbox_gesture`'s main branch raises a real `modals.QMessageBox` (`:5785`).
+`EditorPanel.eventFilter` (`ui/ddl_editor_panel.py:166-185`) → `CodeEditor.report_refusal`
+(`ui/code_editor.py:595-610`) → `show_hint(..., refusal=True)` (`:612-636`) is the keystroke pattern.
 
-*(B) Already correctly dual-routed — the PATTERN TO COPY, not to change:* `_report_gesture_unavailable`
-(`:6420-6427`) writes `_report_check_lines([CHECK_PREFIX + …])` **and** `showMessage`. The `[Check]` row
-lands in the `Messages` tab via `ui/audit_router.py`. `_refuse_sandbox_gesture`'s main branch raises a
-real `modals.QMessageBox` (`:5785`). `EditorPanel.eventFilter` (`ui/ddl_editor_panel.py:166-185`) →
-`CodeEditor.report_refusal` (`ui/code_editor.py:595-610`) → `show_hint(..., refusal=True)` (`:612-636`)
-is the **keystroke** pattern: a caret tooltip *plus* an `expansion_refused` signal that `MainWindow._report_editor_gesture_refusal` (`:5161`) files as a durable `[SQL]` Activity row. Its docstring already
-states the doctrine this bug violates: *"A dock row alone would make a Ctrl+Alt+E … look like nothing
-happened."*
+*(C) Legitimately journal-only (do NOT touch — what FQ-028 deliberately routed):* `982` (manual load
+failure), `1053` (debug-log path), `3496` (`Updated N caption(s).`), `3841` (connection import),
+`3922`/`3930`/`3987` (DDL Explorer progress + load summary), `5064` (`Saved {path}`), `6885`/`6898`
+(MCP start/stop), and the Find/Replace counts injected via `set_on_status` (`:996`, `:1197`).
 
-*(C) Legitimately journal-only (do NOT touch — this is what FQ-028 deliberately routed):* `1053`
-(debug-log path), `3496` (`Updated N caption(s).`), `3841` (connection import), `3922`/`3930`/`3987`
-(DDL Explorer progress + load summary), `5064` (`Saved {path}`), `6885`/`6898` (MCP start/stop), and the
-Find/Replace counts injected via `set_on_status` (`:996`, `:1197`) — §15 already records that those land
-in the Activity Log by design.
-
-**Proposed fix.** Two pieces; the §7 static-bar rule is an owner ruling and is **not** reopened —
-`showMessage` stays in every converted call site (it is the durable journal record, and ~80 suite
-assertions read `currentMessage()`), a *second* surface is added beside it.
-
-1. **A caret-hint path for `XmlEditor`.** `XmlEditor` (`ui/xml_editor.py:413`) is
-   `CompletionPopupHostMixin, GutterBookmarkFoldMixin, QPlainTextEdit` — it is **not** a `CodeEditor` and
-   has no `show_hint`. Do **not** copy `CodeEditor.show_hint`'s body: extract its tooltip mechanics into
-   a new module-level helper (suggested `pgtp_editor/ui/hints.py::show_caret_hint(editor, text)` —
-   `QToolTip.showText(editor.viewport().mapToGlobal(editor.cursorRect().bottomLeft()), text, editor)`,
-   guarded on `editor.isVisible()` for the offscreen-platform reason already documented at
-   `code_editor.py:626-630`), then have `CodeEditor.show_hint` call it and give `XmlEditor` a
-   `show_hint(text)` + `hint_shown = Signal(str)` pair that does the same. **Gotcha:** do *not* give
-   `XmlEditor` an `expansion_refused` signal — nothing in Raw XML connects it (`:5280`, `:5362` connect
-   only DDL panels), the journal side is `MainWindow`'s job here, and a second unwired refusal signal is
-   how BUG-049's dead-signal class was born.
-2. **One refusal seam on `MainWindow`**, next to `_history_write_refused` (~`:1955`), e.g.
-   `_state_refusal(reason: str, *, at_editor=None) -> None`:
-   - always `self.statusBar().showMessage(reason)` — **drop the timeout argument** at every converted
-     site; it advertises a contract that no longer exists and is the tell that led to this bug;
-   - if `at_editor is not None and at_editor.isVisible()` → `at_editor.show_hint(reason)` (the gesture
-     answered a keystroke, at the place the user is looking);
-   - otherwise → `self._report_check_lines([CHECK_PREFIX + reason])` **and** `self._reveal_results_dock_tab()`
-     (`:2148`), which is the one reveal helper explicitly allowed to pop the dock (*"The user asked for
-     it"*) — correct here, because every (A) row answers a deliberate click.
-   The `isVisible()` fork is what makes **path 3** work: `History ▸ Undo` pressed from the PHP tab has no
-   visible Raw XML editor to anchor a tooltip to, so it must fall through to the `Messages` route.
-3. **Convert the (A) table.** `_history_write_refused` and `_on_read_only_edit_attempted` pass
-   `at_editor=self.center_stage.xml_editor`; the rest pass no anchor. `_refuse_sandbox_gesture:5798`
-   gets the seam too, so its *"still leaves the reason on screen"* comment becomes true again.
-   `_report_gesture_unavailable` (B) should be re-expressed through the same seam so there is one refusal
-   vocabulary, not two — behaviour-identical apart from gaining the reveal and losing the `8000`.
-
-**Gotchas.** (a) Keep `showMessage` — removing it would break `currentMessage()`-based assertions *and*
-lose the journal row; the bug is a missing second surface, not a wrong sink. (b) `_report_check_lines`
-appends **already-prefixed** lines verbatim (`:5179-5187`), so pass `CHECK_PREFIX + reason` and never let
-the row carry a `UserRole` — refusal rows are inert by §18.5 carve-out 6. (c) `CHECK_PREFIX` is defined
-**twice** (`ui/audit_router.py:108` = `"[Check]"`, `ui/ddl_object_editor.py:105` = `"[Check] "`, with the
-trailing space) and `main_window.py:102` imports the audit_router one — match `_report_gesture_unavailable`'s
-existing spacing rather than inventing a third. (d) `ui/ddl_object_editor.py` is being edited concurrently
-(BUG-054); this fix needs nothing from it. (e) Do **not** add a toast, and do **not** make the bar paint —
-§7's ruling stands.
-
-**Test impact.** Existing files that already cover this area (extend, do not duplicate):
-- `tests/ui/test_history_wiring.py` — `test_the_history_menu_also_refuses_a_locked_raw_xml_buffer:498`
-  asserts `"compare/merge mode" in window.statusBar().currentMessage()`. That assertion stays valid
-  (the journal side is unchanged) and must be **joined** by one asserting the visible surface.
-- `tests/ui/test_main_window.py:789-790` — the `read_only_edit_attempted` case, same shape.
-- `tests/ui/test_xml_editor.py:954-1019` — the five `read_only_edit_attempted` emission cases; add the
-  `hint_shown` assertion here (assert the **signal**, never `QToolTip`, per `code_editor.py:626-630`).
-- `tests/ui/test_status_bar_static.py:70` — the `displayed_message() == ""` invariant; must stay green,
-  and is the guard that the fix did not reopen the bar.
-- `tests/ui/test_mainwindow_surface.py:178,219` — the method-surface list gains the new seam's name.
-New cases needed: (i) `Ctrl+Z` on the Raw XML tab in Caption Mode emits `hint_shown` with the read-only
-reason; (ii) `History ▸ Undo` from a **non-Raw-XML** tab in Compare/Merge mode adds a `[Check]`-prefixed
-row and reveals the `Messages` tab; (iii) a representative tab-scope refusal (`_save_active_xsd`
-off-tab) lands in `Messages`; (iv) the `hints.py` helper is a no-op on a hidden editor.
-
-**Spec impact: YES — flag for `spec-maintainer` after the fix lands, and note the spec ALREADY flags it.**
-- `CONSOLIDATED_SPEC.md` §18.5's BUG-048 block (~`:6425-6437`) carries a **⚠ paragraph** stating exactly
-  this defect and saying it is *"filed as a defect rather than written in as design"* — this entry is that
-  filing; the ⚠ must be replaced with the shipped answer once fixed.
-- §7's Activity Log paragraph (~`:1180-1184`) is the passage that **made the current behaviour
-  intentional**: *"Errors and refusals … become journal entries under this rule too: accepted for v1 with
-  the risk stated — if immediacy proves insufficient, a transient toast is a later entry, never a quiet
-  re-opening of the status bar as a message board."* The fix is the finding that immediacy proved
-  insufficient — and it resolves it with the **caret tooltip + `Messages` reveal** already in the app
-  rather than the hypothesised toast, so §7 needs the sentence corrected, not merely footnoted, with a
-  Supersession Ledger row.
-- §7's static-bar rule and `displayed_message() == ""` are untouched by design and must be restated as
-  intact.
-
+*(The first pass's three-part implementation plan — `hints.py::show_caret_hint`, `XmlEditor.show_hint`
++ `hint_shown`, a `MainWindow._state_refusal` seam with an `isVisible()` fork and a `Messages` reveal,
+and the conversion of the whole (A) table — is **withdrawn pending the owner ruling**. If the ruling
+says refusals need an immediate surface, that plan is a reasonable starting shape and its gotchas hold:
+keep `showMessage` at every site; `_report_check_lines` appends already-prefixed lines verbatim
+(`:5179-5187`); `CHECK_PREFIX` is defined twice — `ui/audit_router.py:108` = `"[Check]"` vs
+`ui/ddl_object_editor.py:105` = `"[Check] "` — and `main_window.py:102` imports the audit_router one;
+do not give `XmlEditor` an unwired `expansion_refused` signal (BUG-049's dead-signal class); do not add
+a toast and do not make the bar paint.)*
 ---
 
 ## BUG-056: the reported `Ctrl+Shift+Z` platform divergence is NOT real — but `Ctrl+Y` is, and it is dead in the Sandbox SQL Console on Linux (plus: the offscreen test platform runs the **Windows** keyboard scheme, so no test can ever see it)
