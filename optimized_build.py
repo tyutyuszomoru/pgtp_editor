@@ -9,9 +9,12 @@ folder) - the exact onedir layout installer.iss expects to package.
 
 "Optimized" here means smaller output, not a faster build: unused PySide6
 Qt modules are excluded from the bundle (this app only ever imports
-QtCore/QtGui/QtWidgets - see the EXCLUDED_QT_MODULES comment below for how
-that was confirmed), and UPX compression is enabled automatically when a
-usable `upx` executable is found on PATH.
+QtCore/QtGui/QtWidgets/QtSvg - see the EXCLUDED_QT_MODULES comment below for
+how that was confirmed); the PyInstaller PySide6 hook still copies unused Qt
+DLLs, translations, QML modules, WebEngine data, and non-widgets plugin
+categories, so KEEP_QT_BINARIES + PRUNE_EXTRA_BINARIES + PRUNE_QT_DIRS strip
+those from the finished bundle after COLLECT; and UPX compression is enabled
+automatically when a usable `upx` executable is found on PATH.
 """
 from __future__ import annotations
 
@@ -103,43 +106,98 @@ EXCLUDED_QT_MODULES = [
 # so excluding them is safe. This is the single biggest size win.
 EXCLUDED_MODULES = ["numpy", "yaml"]
 
-# Qt shared libraries the PySide6 PyInstaller hook copies wholesale even though
-# a pure-QtWidgets app never loads them. Excluding the Python submodule (above)
-# does NOT drop the corresponding DLL, so we delete them from the finished
-# bundle instead. Names are matched against each file's basename, case-
-# insensitively. Removing these is the second-biggest win (~55 MB uncompressed).
-PRUNE_QT_BINARIES = [
-    "opengl32sw.dll",          # 20 MB software OpenGL fallback (QtQuick only)
-    "Qt6Quick.dll",
-    "Qt6Qml.dll",
-    "Qt6QmlMeta.dll",
-    "Qt6QmlModels.dll",
-    "Qt6QmlWorkerScript.dll",
-    "Qt6Pdf.dll",
-    "Qt6Network.dll",
-    "Qt6OpenGL.dll",
-    "Qt6VirtualKeyboard.dll",
+# Qt shared libraries we actively load. Any Qt6*.dll (or Qt63D*.dll) inside the
+# finished bundle whose basename is NOT in this allowlist is deleted after
+# COLLECT. The allowlist mirrors the Python modules we import (see the
+# EXCLUDED_QT_MODULES header above): QtCore + QtGui + QtWidgets + QtSvg. An
+# allowlist is used instead of a blocklist because PyInstaller's PySide6 hook
+# copies ~140 Qt DLLs (~290 MB) wholesale regardless of which .pyd modules are
+# excluded, and keeping the blocklist in sync would need a new entry per Qt
+# release. If a future feature imports another Qt module, add its DLL here AND
+# drop the module from EXCLUDED_QT_MODULES.
+KEEP_QT_BINARIES = [
+    "Qt6Core.dll",
+    "Qt6Gui.dll",
+    "Qt6Widgets.dll",
+    "Qt6Svg.dll",
 ]
 
-# Qt ships one .qm per language for its built-in strings; this app is English
-# only, so the whole translations/ tree is dead weight (~7 MB).
-PRUNE_QT_DIRS = ["PySide6/translations"]
+# Non-Qt runtime binaries the PySide6 PyInstaller hook still ships even though
+# nothing in this app loads them. Matched by exact basename, case-insensitively.
+#   - opengl32sw.dll: 20 MB software OpenGL fallback used only by QtQuick.
+#   - QtWebEngineProcess.exe: WebEngine's out-of-process helper.
+#   - avcodec/avformat/avutil/swresample/swscale: FFmpeg libs pulled in by
+#     QtMultimedia. ~18 MB combined.
+PRUNE_EXTRA_BINARIES = [
+    "opengl32sw.dll",
+    "QtWebEngineProcess.exe",
+    "avcodec-61.dll",
+    "avformat-61.dll",
+    "avutil-59.dll",
+    "swresample-5.dll",
+    "swscale-8.dll",
+]
+
+# Directories inside the finished bundle that a QtWidgets+QtSvg app never
+# loads. Deleted after COLLECT.
+#   - PySide6/translations: Qt's built-in localizations (~7 MB, English only).
+#   - PySide6/qml: QML modules used only by QtQuick/QtQml (~25 MB in-install).
+#   - PySide6/resources: QtWebEngine data (icudtl.dat, v8_context_snapshot.*,
+#     qtwebengine_*.pak) - ~101 MB in-install, of which the *devtools*.pak
+#     alone is 72 MB.
+#   - PySide6/plugins/<subdir>: Qt plugin categories none of our imported
+#     modules use. Intentionally kept: platforms/ (mandatory qwindows.dll),
+#     styles/ (native look), iconengines/ (SVG icons), imageformats/
+#     (PNG/JPG/SVG/ICO).
+PRUNE_QT_DIRS = [
+    "PySide6/translations",
+    "PySide6/qml",
+    "PySide6/resources",
+    "PySide6/plugins/assetimporters",
+    "PySide6/plugins/canbus",
+    "PySide6/plugins/designer",
+    "PySide6/plugins/generic",
+    "PySide6/plugins/geometryloaders",
+    "PySide6/plugins/geoservices",
+    "PySide6/plugins/multimedia",
+    "PySide6/plugins/networkinformation",
+    "PySide6/plugins/platforminputcontexts",
+    "PySide6/plugins/position",
+    "PySide6/plugins/qmllint",
+    "PySide6/plugins/qmltooling",
+    "PySide6/plugins/renderers",
+    "PySide6/plugins/renderplugins",
+    "PySide6/plugins/sceneparsers",
+    "PySide6/plugins/scxmldatamodel",
+    "PySide6/plugins/sensors",
+    "PySide6/plugins/sqldrivers",
+    "PySide6/plugins/texttospeech",
+    "PySide6/plugins/tls",
+    "PySide6/plugins/vectorimageformats",
+    "PySide6/plugins/webview",
+]
 
 
 def _prune_bundle(app_dir: Path) -> None:
     """Delete unused Qt libraries and data from the finished onedir bundle.
 
     PyInstaller has no CLI switch to drop the Qt DLLs its PySide6 hook collects
-    transitively, so we remove them here after COLLECT. Every path listed is a
-    file/dir we've confirmed a QtWidgets+QtSvg app does not load; the smoke test
-    in build() (launching the frozen exe) guards against an over-eager deletion.
+    transitively, so we remove them here after COLLECT. Qt shared libraries are
+    filtered against KEEP_QT_BINARIES (allowlist), extras against
+    PRUNE_EXTRA_BINARIES (blocklist), directories against PRUNE_QT_DIRS. Every
+    surface removed here is one this app has been confirmed not to load.
     """
     internal = app_dir / "_internal"
     freed = 0
 
-    deny = {name.lower() for name in PRUNE_QT_BINARIES}
+    keep = {name.lower() for name in KEEP_QT_BINARIES}
+    extra_deny = {name.lower() for name in PRUNE_EXTRA_BINARIES}
     for path in internal.rglob("*"):
-        if path.is_file() and path.name.lower() in deny:
+        if not path.is_file():
+            continue
+        name_lc = path.name.lower()
+        is_qt_lib = name_lc.startswith("qt6") and name_lc.endswith(".dll")
+        if (is_qt_lib and name_lc not in keep) or name_lc in extra_deny:
             freed += path.stat().st_size
             path.unlink()
 

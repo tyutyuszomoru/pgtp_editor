@@ -1,17 +1,26 @@
-# Runtime dependencies for PGTP Editor.
+# Dependencies for PGTP Editor: runtime + testing/build tooling in one file.
 #
 # Install into a virtualenv with:
 #   python -m venv .venv
 #   .venv\Scripts\activate
 #   pip install -r requirements.txt
 #
-# Mirrors [project.dependencies] in pyproject.toml - keep both in sync if
-# either changes. Prefer `pip install -e .` for actual development (see
-# requirements-dev.txt); this file exists for a plain venv/pip workflow
-# and for pinning exact versions used by a built release.
+# Runtime deps here mirror [project.dependencies] in pyproject.toml; the test
+# and build tools mirror [project.optional-dependencies].dev plus PyInstaller
+# (used by optimized_build.py to produce the Windows release bundle).
+# Keep in sync if versions change. For editable development installs prefer
+# `pip install -e .[dev]`.
 
+# Runtime
 PySide6>=6.6
 lxml>=5.0
 defusedxml>=0.7
 psycopg[binary]>=3.1
 qdarkstyle>=3.2
+
+# Testing + packaging
+pytest>=8.0
+pytest-qt>=4.4
+pytest-timeout>=2.4
+pytest-xdist>=3.8
+PyInstaller>=6.10
