@@ -1051,9 +1051,7 @@ class MainWindow(QMainWindow):
                 " border-radius: 3px; font-weight: bold; }"
             )
             self.statusBar().addPermanentWidget(self._debug_label)
-            self.statusBar().showMessage(
-                f"Debug logging: {self._debug_log_path}", 10000
-            )
+            self.statusBar().showMessage(f"Debug logging: {self._debug_log_path}")
 
         self.properties_panel = PropertiesPanel(xml_editor=self.center_stage.xml_editor)
         self.properties_dock = QDockWidget("Properties", self)
@@ -1176,17 +1174,34 @@ class MainWindow(QMainWindow):
         # project buffer, a document the user was not even looking at. The
         # shortcut is deliberately NOT disabled (§18.5's ledger row forbids that
         # shape); it is routed through a scope check instead.
+        #
+        # `Ctrl+Y` is bound HERE, explicitly, on every platform (DEC-015: *"Redo
+        # is always, on all systems Ctrl+Y"*). It is a Qt `StandardKey.Redo`
+        # binding under the **Windows** keyboard scheme only, so a redo that
+        # leaned on Qt answering it natively would be a dead key on Linux --
+        # measured, in the Sandbox SQL Console (BUG-056).
         self._undo_shortcut = QShortcut(QKeySequence("Ctrl+Z"), self)
-        self._undo_shortcut.activated.connect(self._undo_from_shortcut)
+        self._undo_shortcut.activated.connect(self._undo_raw_xml_history)
         self._redo_shortcut = QShortcut(QKeySequence("Ctrl+Y"), self)
-        self._redo_shortcut.activated.connect(self._redo_from_shortcut)
+        self._redo_shortcut.activated.connect(self._redo_raw_xml_history)
         # When the Raw XML editor has focus its native undo would shadow the
         # window shortcuts; the editor consumes Ctrl+Z/Ctrl+Y in keyPressEvent
-        # and routes them here instead. Both paths call the same _undo/_redo,
-        # and the focused editor consumes the key so the window shortcut does
-        # not also fire (no double-undo). (Sub-project C, C1.)
-        self.center_stage.xml_editor.undo_requested.connect(self._undo)
-        self.center_stage.xml_editor.redo_requested.connect(self._redo)
+        # and routes them here instead. The focused editor consumes the key so
+        # the window shortcut does not also fire (no double-undo). (Sub-project
+        # C, C1.)
+        #
+        # BOTH KEYSTROKE PATHS LAND ON THE SCOPED SLOT (BUG-064). They used to
+        # differ: the `QShortcut` reached the tab-scoped
+        # `_undo_from_shortcut` while this re-emission reached the UNSCOPED
+        # `_undo`. That was equivalent only by an invariant nothing stated —
+        # `QStackedWidget` hides the departed page and Qt clears focus from a
+        # hidden widget, so focus in `xml_editor` implied the Raw XML tab was
+        # current. Host an `XmlEditor` in a dock or beside another tab and the
+        # keystroke silently loses its tab scope, re-opening BUG-048. Every
+        # *keystroke* is scoped; only the History menu's *click* is not, which is
+        # the whole distinction between the two commands.
+        self.center_stage.xml_editor.undo_requested.connect(self._undo_raw_xml_history)
+        self.center_stage.xml_editor.redo_requested.connect(self._redo_raw_xml_history)
 
         # Edit XSD tab (spec §11): its own undo/redo routing. The XSD tab has
         # no snapshot history -- it relies solely on the editor's native undo,
@@ -1907,7 +1922,7 @@ class MainWindow(QMainWindow):
         self._refresh_mode_indicator()
 
     def _not_implemented(self, label):
-        self.statusBar().showMessage(f"Not yet implemented: {label}", 5000)
+        self.statusBar().showMessage(f"Not yet implemented: {label}")
 
     # -- Document state: dirty tracking + window title -----------------------
 
@@ -1959,24 +1974,36 @@ class MainWindow(QMainWindow):
         if reason is None:
             return False
         _log.info("history: refused — %s", reason)
-        self.statusBar().showMessage(reason, 4000)
+        self.statusBar().showMessage(reason)
         return True
 
-    def _undo_from_shortcut(self) -> None:
-        """The window `Ctrl+Z` shortcut's slot — scoped, unlike `_undo`.
+    def _undo_raw_xml_history(self) -> None:
+        """Every KEYSTROKE path into the project history — scoped, unlike `_undo`.
 
         Fires only when the Raw XML tab is current and writable. Anywhere else
         the key belongs to whatever has focus, and the tabs that hold a
         read-only editor state that themselves (`EditorPanel.eventFilter`,
-        `DdlObjectEditorPanel.eventFilter`) rather than leaving a dead key."""
+        `DdlObjectEditorPanel.eventFilter`) rather than leaving a dead key.
+
+        Named for **what it is** rather than for which host fired it (BUG-064:
+        it was `_undo_from_shortcut`), because it now has two callers — the
+        window `Ctrl+Z` `QShortcut` and the Raw XML editor's re-emission — and
+        the thing they share is the scope, not the host.
+
+        **This is one command, one function, one surface — not an app-level undo
+        router.** Do not grow it into a "one undo every surface calls" dispatcher:
+        that is §7's `_save_active_tab` failure with a different noun (a four-way
+        dispatch with an `else` fall-through made `Ctrl+S` on the SQL console
+        write the `.pgtp`). Every other surface answers its own chord locally.
+        """
         if self.center_stage.currentIndex() != self.center_stage.raw_xml_tab_index:
             return
         if self._history_write_refused():
             return
         self._undo()
 
-    def _redo_from_shortcut(self) -> None:
-        """The window `Ctrl+Y` shortcut's slot — see `_undo_from_shortcut`."""
+    def _redo_raw_xml_history(self) -> None:
+        """The redo twin — see `_undo_raw_xml_history`."""
         if self.center_stage.currentIndex() != self.center_stage.raw_xml_tab_index:
             return
         if self._history_write_refused():
@@ -2001,10 +2028,14 @@ class MainWindow(QMainWindow):
             self._restoring = False
 
     def _undo(self) -> None:
-        """Snapshot undo. Deliberately NOT tab-scoped: the History menu's
-        `Undo` is an explicit, deliberate click that means "undo the project",
+        """Snapshot undo. Deliberately NOT tab-scoped: `History ▸ Undo Project
+        Edit` is an explicit, deliberate click that means "undo the project",
         wherever the user is. It IS lock-scoped (see `_history_write_refused`)
-        — the read-only modes are data-loss guards, not view states."""
+        — the read-only modes are data-loss guards, not view states.
+
+        That scope is why this is a **different command** from the one `Ctrl+Z`
+        drives (`_undo_raw_xml_history`), and since BUG-064 the menu label says
+        so. Keystrokes go through the scoped slot; only a click reaches here."""
         if self._history_write_refused():
             return
         _log.info("history: undo")
@@ -2087,7 +2118,11 @@ class MainWindow(QMainWindow):
 
     def _shell_status(self, *args, **kwargs) -> None:
         """`UiShell.status` -- forwards to the status bar, resolved at call
-        time rather than captured, matching `showMessage(text[, timeout])`."""
+        time rather than captured. The signature stays `showMessage`'s
+        (`text[, timeout]`) because collaborators pass a status-bar-shaped
+        callable around; a `timeout` that arrives is accepted and **ignored**
+        (`StaticStatusBar.showMessage` journals, it never paints), which is why
+        this window's own call sites no longer pass one (BUG-055)."""
         self.statusBar().showMessage(*args, **kwargs)
 
     def _shell_run_async(self, *args, **kwargs):
@@ -2483,26 +2518,42 @@ class MainWindow(QMainWindow):
         self._refresh_editor_menu_affordances()
 
     def _build_history_menu(self):
-        """History ▸ History… · Undo · Redo — in that order (FQ-016).
+        """History ▸ History… · Undo Project Edit · Redo Project Edit — in that
+        order (FQ-016).
 
         The owner's ordering, verbatim reasoning: *"everyone uses
         Ctrl+Z/Ctrl+Y anyway"*, so the navigator that has no shortcut leads.
-        Undo/Redo are the same single-step actions the Ctrl+Z/Ctrl+Y shortcuts
-        drive (wired in `__init__`); `History…` opens the non-modal navigator
-        where moving back = undo and forward = redo.
+        `History…` opens the non-modal navigator where moving back = undo and
+        forward = redo.
 
-        Their command ids become `history.undo` / `history.redo`, both pinned in
-        `LEGACY_ID_ALIASES` — updated in the same commit, or two DEFAULT toolbar
-        buttons ship empty and iconless (`toolbar_registry`).
+        **These two are NOT the actions `Ctrl+Z`/`Ctrl+Y` drive, and the labels
+        say so (BUG-064).** They were called plain `Undo`/`Redo`, which made them
+        look like the chord's menu twin; they are a different command with a
+        different scope. A keystroke means *"undo here"* — it is answered by
+        whatever surface has focus, and at the window it is tab-scoped to Raw XML
+        (`_undo_raw_xml_history`). A click here means *"undo the project"*,
+        wherever the user is (`_undo`, deliberately unscoped by tab; see its
+        docstring). One `QAction` cannot tell how it was triggered, so the two
+        meanings cannot share a host — the fix is to name them apart, not to
+        merge them. They deliberately carry **no shortcut**, and the manual no
+        longer has to spend a paragraph undoing the old label.
+
+        **The label IS the command id** (`toolbar_registry.command_id_for`
+        slugifies the whole menu path), so renaming these entries renames the
+        commands: `history.undo` → `history.undo-project-edit`. Three tables move
+        with them in the same commit — `LEGACY_ID_ALIASES` (which
+        `DEFAULT_TOOLBAR_IDS` derives from and `ICON_ID_BY_COMMAND` inverts) and
+        `RENAMED_ID_ALIASES` — or two DEFAULT toolbar buttons ship empty and
+        iconless. FQ-022's precedent, same reasoning.
         """
         menu = self.editor_menu_bar.addMenu("History")
         history_action = menu.addAction("History…")
         history_action.triggered.connect(self._open_history_jump_list)
         self._history_action = history_action
-        undo_action = menu.addAction("Undo")
+        undo_action = menu.addAction("Undo Project Edit")
         undo_action.triggered.connect(self._undo)
         self._undo_action = undo_action
-        redo_action = menu.addAction("Redo")
+        redo_action = menu.addAction("Redo Project Edit")
         redo_action.triggered.connect(self._redo)
         self._redo_action = redo_action
 
@@ -3367,7 +3418,7 @@ class MainWindow(QMainWindow):
         start_line = getattr(node, "sourceline", None)
         if start_line is None:
             self.statusBar().showMessage(
-                "This event handler has no source line to edit.", 5000
+                "This event handler has no source line to edit."
             )
             return
         dialog = CodeEditorDialog(
@@ -3400,9 +3451,7 @@ class MainWindow(QMainWindow):
             return
         page_start_line = getattr(node, "sourceline", None)
         if page_start_line is None:
-            self.statusBar().showMessage(
-                "This page has no source line to insert into.", 5000
-            )
+            self.statusBar().showMessage("This page has no source line to insert into.")
             return
         side = classify_event_side(tag)
         dialog = CodeEditorDialog(
@@ -3418,13 +3467,12 @@ class MainWindow(QMainWindow):
                 updated = insert_event_handler(current, page_start_line, tag, new_code)
             except ValueError:
                 self.statusBar().showMessage(
-                    f"Could not insert {tag}: page not found in the buffer.", 5000
+                    f"Could not insert {tag}: page not found in the buffer."
                 )
                 return
             self.center_stage.xml_editor.setPlainText(updated)
             self.statusBar().showMessage(
-                f"Added event handler {tag}. Reparse Raw XML to see it in the tree.",
-                5000,
+                f"Added event handler {tag}. Reparse Raw XML to see it in the tree."
             )
 
         dialog.saved.connect(_write_back)
@@ -3439,7 +3487,7 @@ class MainWindow(QMainWindow):
         snapshot = self.center_stage.xml_editor.toPlainText()
         if not snapshot.strip():
             self.statusBar().showMessage(
-                "Manage Captions: open a project (Raw XML is empty) first.", 5000
+                "Manage Captions: open a project (Raw XML is empty) first."
             )
             return False
         entries = caption_scan.scan_captions(snapshot)
@@ -3494,7 +3542,7 @@ class MainWindow(QMainWindow):
         changed_count = len(panel.changed_edits())
         self.center_stage.xml_editor.setPlainText(edited_text)
         panel.load_entries(caption_scan.scan_captions(edited_text), snapshot_text=edited_text)
-        self.statusBar().showMessage(f"Updated {changed_count} caption(s).", 5000)
+        self.statusBar().showMessage(f"Updated {changed_count} caption(s).")
 
     def _close_caption_mode(self):
         """Panel Close callback: leave caption mode and restore Raw XML.
@@ -3513,10 +3561,16 @@ class MainWindow(QMainWindow):
         self.center_stage.xml_editor.navigate_to_line(line)
 
     def _on_read_only_edit_attempted(self) -> None:
-        """Flash a non-modal hint when the user tries to edit the read-only
-        Raw XML editor while in Caption Mode."""
+        """Journal the reason the keystroke did nothing, when the user tries to
+        edit the read-only Raw XML editor while in Caption Mode.
+
+        Nothing flashes and nothing is transient: `showMessage` is the journal
+        write (FQ-028's sink — the bar paints nothing), so the reason lands as an
+        Activity Log row. Whether a keystroke-answering refusal like this one
+        ALSO deserves something at the caret is an open owner question, not a
+        gap to be filled here (BUG-055 / DEC-013)."""
         self.statusBar().showMessage(
-            "Raw XML is read-only in Caption Mode — close Caption Mode to edit.", 4000
+            "Raw XML is read-only in Caption Mode — close Caption Mode to edit."
         )
 
     def _build_settings_menu(self):
@@ -3708,13 +3762,12 @@ class MainWindow(QMainWindow):
         used to always open Connection Setup on a missing host."""
         if self._ddl_project_folder is not None:
             self.statusBar().showMessage(
-                "No database connection configured — set one up in Project Settings.",
-                5000,
+                "No database connection configured — set one up in Project Settings."
             )
             self._ddl_project_ui.open_settings()
             return
         self.statusBar().showMessage(
-            "No database connection configured — set one up first.", 5000
+            "No database connection configured — set one up first."
         )
         self._open_connection_setup()
 
@@ -3728,8 +3781,7 @@ class MainWindow(QMainWindow):
         # directly on a missing connection, so guard here too.
         if self._ddl_project_folder is not None:
             self.statusBar().showMessage(
-                "Connection is defined in Project Settings while a project is open.",
-                5000,
+                "Connection is defined in Project Settings while a project is open."
             )
             return
         tree = (
@@ -3799,7 +3851,7 @@ class MainWindow(QMainWindow):
             save_settings(folder, updated)
             self._ddl_project_settings = updated
             self.statusBar().showMessage(
-                f"Created and provisioned sandbox database: {database}", 5000
+                f"Created and provisioned sandbox database: {database}"
             )
         # Re-probe either way: the stored tier/capability status must describe the
         # sandbox that now exists (or the one that does not), never the intent.
@@ -3841,8 +3893,7 @@ class MainWindow(QMainWindow):
         self._store_project_target(imported)
         self.statusBar().showMessage(
             f"Imported the .pgtp's connection into the project target: "
-            f"{imported.user}@{imported.host}:{imported.port}/{imported.database}",
-            5000,
+            f"{imported.user}@{imported.host}:{imported.port}/{imported.database}"
         )
 
     # -- DDL Explorer (spec §18.1) --------------------------------------------
@@ -3922,8 +3973,7 @@ class MainWindow(QMainWindow):
                 # modal, which configures the TARGET and would be the wrong door.
                 self.statusBar().showMessage(
                     "No sandbox configured for this project — set one up in "
-                    "Project Settings.",
-                    5000,
+                    "Project Settings."
                 )
                 return
             self._prompt_missing_connection()
@@ -3987,8 +4037,7 @@ class MainWindow(QMainWindow):
                     panel.set_schema_index(self._ddl_schema_index)
             self.statusBar().showMessage(
                 f"{label}: {len(schema.routines)} routine(s), "
-                f"{len(schema.triggers)} trigger(s).",
-                5000,
+                f"{len(schema.triggers)} trigger(s)."
             )
             _log.info("db: ddl explorer load finished role=%s", role)
 
@@ -3999,7 +4048,7 @@ class MainWindow(QMainWindow):
             # never lands the user on an empty tree that looks like an empty
             # database.
             _log.info("db: ddl explorer load failed role=%s %s", role, exc)
-            self.statusBar().showMessage(f"{label} failed: {exc}", 8000)
+            self.statusBar().showMessage(f"{label} failed: {exc}")
             if action is not None:
                 action.setChecked(False)
 
@@ -5062,7 +5111,7 @@ class MainWindow(QMainWindow):
         # already-clean document, so the overlay is dropped explicitly.
         self.ddl_browser_panel.set_object_dirty(panel.ref, False)
         self._refresh_ddl_drift_markers()
-        self.statusBar().showMessage(f"Saved {path}", 5000)
+        self.statusBar().showMessage(f"Saved {path}")
         return True
 
     def _wire_ddl_object_dirty(self, panel, ref) -> None:
@@ -5778,8 +5827,7 @@ class MainWindow(QMainWindow):
             # here, and an unexplained no-op is what FQ-023 exists to kill.
             self.statusBar().showMessage(
                 f"{gesture} needs a sandbox — none is configured for this "
-                "project; set one up in Project Settings.",
-                5000,
+                "project; set one up in Project Settings."
             )
             return False
         reason = GESTURE_UNAVAILABLE_REASONS[GESTURE_CHECK_AND_COMMIT]
@@ -5793,16 +5841,17 @@ class MainWindow(QMainWindow):
             | modals.QMessageBox.StandardButton.Cancel,
         )
         if answer != modals.QMessageBox.StandardButton.Open:
-            # Declining still leaves the reason on screen: the user asked a
-            # question ("why can't I check?") and it must stay answered after the
-            # dialog is gone.
-            self.statusBar().showMessage(f"{gesture} — {reason}.", 5000)
+            # Declining still leaves the reason RECORDED: the user asked a
+            # question ("why can't I check?") and it stays answered after the
+            # dialog is gone -- as an Activity Log row, because `showMessage`
+            # journals and the status bar paints nothing (FQ-028). Nothing is
+            # left on screen; the QMessageBox above was the on-screen answer.
+            self.statusBar().showMessage(f"{gesture} — {reason}.")
             return False
         self._open_sandbox_session()
         self.statusBar().showMessage(
             f"Opening a sandbox session — the outcome is reported in the Audit "
-            f"panel; re-run {gesture} once it is open.",
-            5000,
+            f"panel; re-run {gesture} once it is open."
         )
         return True
 
@@ -5895,8 +5944,7 @@ class MainWindow(QMainWindow):
         if self._configured_sandbox_params() is None:
             self.statusBar().showMessage(
                 "No sandbox configured for this project — set one up in "
-                "Project Settings.",
-                5000,
+                "Project Settings."
             )
             return
         self.sandbox_controller.open_session()
@@ -6347,7 +6395,7 @@ class MainWindow(QMainWindow):
         panel = self.center_stage.active_ddl_object_panel()
         if panel is None:
             self.statusBar().showMessage(
-                f"{gesture} runs on an open DDL object tab — open one first.", 5000
+                f"{gesture} runs on an open DDL object tab — open one first."
             )
         return panel
 
@@ -6368,7 +6416,7 @@ class MainWindow(QMainWindow):
         stage = self.center_stage
         if stage.currentIndex() != stage.xsd_tab_index:
             self.statusBar().showMessage(
-                "Save XSD runs on the Edit XSD tab — open one first.", 5000
+                "Save XSD runs on the Edit XSD tab — open one first."
             )
             return False
         self._xsd_ui.save()
@@ -6425,7 +6473,7 @@ class MainWindow(QMainWindow):
         reason = GESTURE_UNAVAILABLE_REASONS[gesture]
         label = GESTURE_LABELS[gesture]
         self._report_check_lines([CHECK_PREFIX + f"{label} is unavailable: {reason}."])
-        self.statusBar().showMessage(f"{label} is unavailable: {reason}.", 8000)
+        self.statusBar().showMessage(f"{label} is unavailable: {reason}.")
         return False
 
     def _sandbox_database_label(self) -> str:
@@ -6622,7 +6670,7 @@ class MainWindow(QMainWindow):
         panel = self.center_stage.active_ddl_object_panel()
         if panel is None:
             self.statusBar().showMessage(
-                "Check runs on an open DDL object tab — open one first.", 5000
+                "Check runs on an open DDL object tab — open one first."
             )
             return
         text = panel.text()
@@ -6876,14 +6924,12 @@ class MainWindow(QMainWindow):
                 self._mcp_session = starter(provider)
             except Exception as exc:  # pragma: no cover - defensive
                 _log.warning("mcp: start failed: %s", exc)
-                self.statusBar().showMessage(
-                    f"Could not start the MCP server: {exc}", 5000
-                )
+                self.statusBar().showMessage(f"Could not start the MCP server: {exc}")
                 if self._mcp_action is not None:
                     self._mcp_action.setChecked(False)
                 return
             _log.info("mcp: server started")
-            self.statusBar().showMessage("MCP server running on stdio.", 5000)
+            self.statusBar().showMessage("MCP server running on stdio.")
             return
 
         session = self._mcp_session
@@ -6896,7 +6942,7 @@ class MainWindow(QMainWindow):
         except Exception as exc:  # pragma: no cover - defensive
             _log.warning("mcp: stop failed: %s", exc)
         _log.info("mcp: server stopped")
-        self.statusBar().showMessage("MCP server stopped.", 5000)
+        self.statusBar().showMessage("MCP server stopped.")
 
     def _build_help_menu(self):
         menu = self.menuBar().addMenu("Help")

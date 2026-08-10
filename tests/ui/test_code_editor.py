@@ -412,6 +412,101 @@ def test_replace_current_selection_read_only_guard(qtbot):
 
 
 # ---------------------------------------------------------------------------
+# The shared undo/redo chord matcher (DEC-014).
+# ---------------------------------------------------------------------------
+
+def _chord(key, mods):
+    from PySide6.QtCore import QEvent
+    from PySide6.QtGui import QKeyEvent
+
+    return QKeyEvent(QEvent.Type.KeyPress, key, mods)
+
+
+def test_the_matcher_classifies_rather_than_answering_yes_or_no():
+    """DEC-014's constraint, and the reason it is a constraint: a caller handed a
+    bare *"is this an undo/redo chord"* boolean has to re-derive the operation
+    itself, and that is how a redo silently becomes an undo — the chord is still
+    claimed, so nothing looks broken.
+
+    `Ctrl+Z` and `Ctrl+Y` are DIFFERENT operations, and the matcher says which."""
+    from pgtp_editor.ui.code_editor import REDO, UNDO, classify_undo_redo_chord
+
+    ctrl = Qt.KeyboardModifier.ControlModifier
+
+    assert classify_undo_redo_chord(_chord(Qt.Key.Key_Z, ctrl)) == UNDO
+    assert classify_undo_redo_chord(_chord(Qt.Key.Key_Y, ctrl)) == REDO
+    assert UNDO != REDO
+
+
+def test_the_matcher_takes_no_per_surface_parameter_and_covers_the_fixed_set():
+    """DEC-014 chose option (A): a FIXED set, sourced from `RESERVED_SEQUENCES`,
+    with the shared matcher taking no per-surface argument. Option (B)'s
+    per-surface opt-in was rejected because per-surface variation is exactly how
+    BUG-053 happened."""
+    import inspect
+
+    from pgtp_editor.ui.code_editor import classify_undo_redo_chord
+    from pgtp_editor.ui.shortcut_registry import (
+        EDITOR_UNDO_REDO_CHORDS,
+        RESERVED_SEQUENCES,
+    )
+
+    assert list(inspect.signature(classify_undo_redo_chord).parameters) == ["event"]
+    # Every chord the surfaces intercept is a chord the dialog refuses as a
+    # rebinding target -- one set, two artifacts that already existed.
+    for sequence in EDITOR_UNDO_REDO_CHORDS:
+        assert sequence in RESERVED_SEQUENCES
+
+
+def test_the_matcher_marks_the_chords_that_must_run_no_operation():
+    """Two answers run nothing, and both must still be CONSUMED by the caller --
+    letting either fall through hands it to Qt, whose binding table is
+    per-platform.
+
+    `Ctrl+Shift+Z`: freed from redo by DEC-015, but Qt binds it as native Redo
+    under `KB_Win | KB_X11`, so it stays claimed (FQ-034 will answer it).
+    `Alt+Backspace` / `Alt+Shift+Backspace`: Qt binds them `KB_Win` ONLY, so
+    they are suppressed everywhere — the owner's rule is that a chord means the
+    same thing on both systems or is not bound at all."""
+    from pgtp_editor.ui.code_editor import (
+        CLAIMED_NOT_UNDO_REDO,
+        SUPPRESSED,
+        classify_undo_redo_chord,
+    )
+
+    ctrl_shift = (
+        Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.ShiftModifier
+    )
+    alt = Qt.KeyboardModifier.AltModifier
+
+    assert (
+        classify_undo_redo_chord(_chord(Qt.Key.Key_Z, ctrl_shift))
+        == CLAIMED_NOT_UNDO_REDO
+    )
+    assert classify_undo_redo_chord(_chord(Qt.Key.Key_Backspace, alt)) == SUPPRESSED
+    assert (
+        classify_undo_redo_chord(
+            _chord(Qt.Key.Key_Backspace, alt | Qt.KeyboardModifier.ShiftModifier)
+        )
+        == SUPPRESSED
+    )
+
+
+def test_the_matcher_leaves_everything_else_alone():
+    from pgtp_editor.ui.code_editor import classify_undo_redo_chord
+
+    ctrl = Qt.KeyboardModifier.ControlModifier
+    for key, mods in (
+        (Qt.Key.Key_Z, Qt.KeyboardModifier.NoModifier),
+        (Qt.Key.Key_Y, Qt.KeyboardModifier.ShiftModifier),
+        (Qt.Key.Key_A, ctrl),
+        (Qt.Key.Key_Backspace, Qt.KeyboardModifier.NoModifier),
+        (Qt.Key.Key_Backspace, ctrl),
+    ):
+        assert classify_undo_redo_chord(_chord(key, mods)) is None, (key, mods)
+
+
+# ---------------------------------------------------------------------------
 # Widget: CodeEditorDialog.
 # ---------------------------------------------------------------------------
 
@@ -479,6 +574,43 @@ def test_the_dialog_has_no_ctrl_s_or_ctrl_w(qtbot):
     qtbot.keyClick(dialog, Qt.Key.Key_S, Qt.KeyboardModifier.ControlModifier)
     qtbot.keyClick(dialog, Qt.Key.Key_W, Qt.KeyboardModifier.ControlModifier)
     assert fired == []
+
+
+def test_the_dialog_states_its_answer_to_the_reserved_undo_chords(qtbot):
+    """DEC-014's fixed set reaches this modal too, and its accepted cost is
+    recorded: nothing can steal these keys from a dialog, so the claim buys
+    uniformity — EXCEPT for the parts that are not cosmetic. `Ctrl+Y` is a Qt
+    `StandardKey.Redo` binding on the Windows scheme only, and `Ctrl+Shift+Z` is
+    a native redo on both, so without this filter the dialog's keyboard differed
+    between the owner's two machines."""
+    from PySide6.QtCore import QEvent
+    from PySide6.QtGui import QKeyEvent
+
+    dialog = CodeEditorDialog(language="js")
+    qtbot.addWidget(dialog)
+    dialog.set_code("var x = 1;")
+    dialog._editor.insertPlainText(" // note")
+    typed = dialog.code()
+    ctrl = Qt.KeyboardModifier.ControlModifier
+
+    def deliver(key, mods):
+        event = QKeyEvent(QEvent.Type.KeyPress, key, mods)
+        return dialog.eventFilter(dialog._editor, event)
+
+    assert deliver(Qt.Key.Key_Z, ctrl) is True
+    assert dialog.code() != typed
+    assert deliver(Qt.Key.Key_Y, ctrl) is True
+    assert dialog.code() == typed
+
+    # Ctrl+Shift+Z is claimed and is NOT a redo (DEC-015).
+    assert deliver(Qt.Key.Key_Z, ctrl) is True
+    undone = dialog.code()
+    assert (
+        deliver(Qt.Key.Key_Z, ctrl | Qt.KeyboardModifier.ShiftModifier) is True
+    )
+    assert dialog.code() == undone
+    # ...and an unrelated key is not swallowed.
+    assert deliver(Qt.Key.Key_A, ctrl) is False
 
 
 def test_the_dialogs_ok_and_cancel_are_still_reachable(qtbot):

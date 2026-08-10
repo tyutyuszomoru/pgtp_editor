@@ -189,6 +189,77 @@ def test_ctrl_z_undoes_this_tabs_own_stack(qtbot):
     assert tab.text() == "x"
 
 
+def test_ctrl_y_is_stated_here_rather_than_left_to_qts_platform_table(qtbot):
+    """BUG-056/DEC-015: `Ctrl+Y` is a Qt `StandardKey.Redo` binding on the
+    **Windows** keyboard scheme only, so a surface that leans on Qt's native
+    handler redoes on Windows and is a dead key on Linux -- measured in the
+    Sandbox SQL Console. This tab states the answer itself, so it is the same on
+    both systems. Asserted through the FILTER, never through a native redo: the
+    offscreen platform runs the Windows scheme, so the native path would be green
+    for the wrong reason."""
+    tab = PhpFileTab(None, "x")
+    qtbot.addWidget(tab)
+    tab.editor.insertPlainText("yz")
+    assert (
+        tab.eventFilter(
+            tab.editor,
+            QKeyEvent(
+                QEvent.Type.KeyPress, Qt.Key.Key_Z, Qt.KeyboardModifier.ControlModifier
+            ),
+        )
+        is True
+    )
+    assert tab.text() == "x"
+
+    event = QKeyEvent(
+        QEvent.Type.KeyPress, Qt.Key.Key_Y, Qt.KeyboardModifier.ControlModifier
+    )
+
+    assert tab.eventFilter(tab.editor, event) is True
+    assert tab.text() == "yzx"
+
+
+def test_ctrl_shift_z_is_claimed_here_and_is_not_a_redo(qtbot):
+    """DEC-015 freed `Ctrl+Shift+Z` from redo, and this tab must still CLAIM it:
+    Qt binds the chord as native Redo under `KB_Win | KB_X11`, so a tab that
+    stopped claiming it would keep redoing on both platforms and silently defeat
+    the reassignment. Both halves are asserted -- the override is accepted, and
+    the key press runs nothing."""
+    tab = PhpFileTab(None, "x")
+    qtbot.addWidget(tab)
+    tab.editor.insertPlainText("yz")
+    tab.editor.undo()
+    assert tab.text() == "x"
+    mods = Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.ShiftModifier
+
+    override = QKeyEvent(QEvent.Type.ShortcutOverride, Qt.Key.Key_Z, mods)
+    assert tab.eventFilter(tab.editor, override) is True
+    assert override.isAccepted() is True
+
+    assert (
+        tab.eventFilter(tab.editor, QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_Z, mods))
+        is True
+    )
+    assert tab.text() == "x"  # NOT redone
+
+
+def test_the_windows_only_alt_backspace_pair_is_suppressed(qtbot):
+    """Owner rule: a chord means the same thing on both systems or is not bound
+    at all. Qt binds `Alt+Backspace` (Undo) and `Alt+Shift+Backspace` (Redo)
+    under `KB_Win` **only**, so leaving them to Qt ships two different keyboards.
+    They are suppressed: consumed here, running nothing, on every platform."""
+    tab = PhpFileTab(None, "x")
+    qtbot.addWidget(tab)
+    tab.editor.insertPlainText("yz")
+    alt = Qt.KeyboardModifier.AltModifier
+    alt_shift = Qt.KeyboardModifier.AltModifier | Qt.KeyboardModifier.ShiftModifier
+
+    for mods in (alt, alt_shift):
+        event = QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_Backspace, mods)
+        assert tab.eventFilter(tab.editor, event) is True
+        assert tab.text() == "yzx"  # neither undone nor redone
+
+
 def test_navigate_to_line_delegates_to_the_code_editor(qtbot):
     tab = PhpFileTab(None, "a\nb\nc\n")
     qtbot.addWidget(tab)

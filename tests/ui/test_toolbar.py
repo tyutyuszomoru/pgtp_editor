@@ -29,8 +29,11 @@ from tests.ui._menu_helpers import find_action, find_top_menu
 # Editor menu bar, which is why the walk must cover both bars.
 DEFAULT_LABELS = [
     "Open...",
-    "Undo",
-    "Redo",
+    # Renamed by BUG-064: they are the PROJECT-scoped history commands, not the
+    # menu twin of Ctrl+Z. The default buttons keep their vendored `undo`/`redo`
+    # SVGs because `LEGACY_ID_ALIASES` moved with the labels.
+    "Undo Project Edit",
+    "Redo Project Edit",
     "Validate Project",
     "Generate PHP...",
 ]
@@ -110,23 +113,43 @@ def test_apply_and_save_persists_and_round_trips(qtbot, tmp_path):
     settings = _ini_settings(tmp_path)
     window = MainWindow(settings=settings)
     qtbot.addWidget(window)
-    window._toolbar_ui.apply_and_save(["history.undo", "deployment.save-pgtp"])
-    assert _toolbar_labels(window) == ["Undo", "Save pgtp"]
+    window._toolbar_ui.apply_and_save(
+        ["history.undo-project-edit", "deployment.save-pgtp"]
+    )
+    assert _toolbar_labels(window) == ["Undo Project Edit", "Save pgtp"]
 
     # A new window reading the same store restores that toolbar.
     settings2 = _ini_settings(tmp_path)
     window2 = MainWindow(settings=settings2)
     qtbot.addWidget(window2)
-    assert _toolbar_labels(window2) == ["Undo", "Save pgtp"]
+    assert _toolbar_labels(window2) == ["Undo Project Edit", "Save pgtp"]
 
 
 def test_stored_comma_string_is_restored(qtbot, tmp_path):
     settings = _ini_settings(tmp_path)
-    settings.setValue("toolbarIds", "history.undo,history.redo")
+    settings.setValue(
+        "toolbarIds", "history.undo-project-edit,history.redo-project-edit"
+    )
     settings.sync()
     window = MainWindow(settings=settings)
     qtbot.addWidget(window)
-    assert _toolbar_labels(window) == ["Undo", "Redo"]
+    assert _toolbar_labels(window) == ["Undo Project Edit", "Redo Project Edit"]
+
+
+def test_a_toolbar_saved_under_the_pre_rename_history_ids_survives(qtbot, tmp_path):
+    """BUG-064's rename went through BOTH alias tables, so a button saved under
+    either the bare legacy id or the OLD menu-path id still resolves. Without the
+    `RENAMED_ID_ALIASES` rows the menu-path form silently vanishes."""
+    settings = _ini_settings(tmp_path)
+    settings.setValue("toolbarIds", ["undo", "history.redo"])
+    settings.sync()
+    window = MainWindow(settings=settings)
+    qtbot.addWidget(window)
+    assert window._toolbar_ui.command_ids == [
+        "history.undo-project-edit",
+        "history.redo-project-edit",
+    ]
+    assert _toolbar_labels(window) == ["Undo Project Edit", "Redo Project Edit"]
 
 
 def test_unknown_stored_ids_are_dropped(qtbot, tmp_path):
@@ -184,13 +207,15 @@ def test_the_walk_covers_BOTH_menu_bars(qtbot, tmp_path):
     # ...and the Editor bar's four-menu inventory (Select is FQ-015's lane).
     # The bookmark members read `navigation.*` since FQ-021 retitled their menu.
     for command_id in (
-        "history.history", "history.undo", "history.redo",
+        "history.history",
+        "history.undo-project-edit",
+        "history.redo-project-edit",
         "parsing.auto-parse-xml", "parsing.validate-project",
         "navigation.toggle-bookmark", "navigation.next-bookmark",
         "navigation.previous-bookmark", "navigation.clear-all-bookmarks",
     ):
         assert command_id in ids, command_id
-    assert labels["history.undo"] == "History › Undo"
+    assert labels["history.undo-project-edit"] == "History › Undo Project Edit"
     assert labels["parsing.validate-project"] == "Parsing › Validate Project"
     # Window-bar roots come first, so a walk that dropped one is visible in order.
     assert ids.index("file.open") < ids.index("history.history")
@@ -206,7 +231,7 @@ def test_the_walk_accepts_a_single_menu_bar_too(qtbot, tmp_path):
     lane = ToolbarController(window._shell, parent=window)
     lane.build(window.editor_menu_bar, window.addToolBar)
     ids = [command_id for command_id, _label in lane.all_menu_commands()]
-    assert "history.undo" in ids
+    assert "history.undo-project-edit" in ids
     assert "file.open" not in ids
 
 
@@ -277,10 +302,10 @@ def test_legacy_stored_ids_still_restore(qtbot, tmp_path):
     # four successors are per-tab). The ids AROUND them survive, so this user
     # loses two buttons rather than having the toolbar reset to the default.
     assert window._toolbar_ui.command_ids == [
-        "history.undo",
+        "history.undo-project-edit",
         "generation.generate-php",
     ]
-    assert _toolbar_labels(window) == ["Undo", "Generate PHP..."]
+    assert _toolbar_labels(window) == ["Undo Project Edit", "Generate PHP..."]
 
 
 def test_legacy_comma_string_still_restores(qtbot, tmp_path):

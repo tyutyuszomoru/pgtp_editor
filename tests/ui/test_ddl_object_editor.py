@@ -523,9 +523,12 @@ def test_event_filter_ctrl_z_key_press_calls_the_panels_own_undo(qtbot):
 
 
 def test_event_filter_claims_ctrl_shift_z_shortcut_override(qtbot):
-    """BUG-053: Ctrl+Shift+Z is the second redo chord (BUG-050) and is
-    reserved app-wide, so this editable tab must claim it exactly as it
-    claims Ctrl+Y -- not leave it to the window."""
+    """DEC-015: Ctrl+Shift+Z is no longer redo, but it is still RESERVED and
+    still claimed here -- and now for a sharper reason. Qt's compiled binding
+    table carries the chord as native `StandardKey.Redo` under `KB_Win | KB_X11`
+    (BUG-056 measured both schemes), so a surface that stops claiming it does
+    not stop redoing: Qt answers instead. The claim is what makes *"redo is
+    always Ctrl+Y"* true."""
     panel = _panel(qtbot, text="alpha\n")
     modifiers = (
         Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.ShiftModifier
@@ -538,10 +541,14 @@ def test_event_filter_claims_ctrl_shift_z_shortcut_override(qtbot):
     assert event.isAccepted() is True
 
 
-def test_event_filter_ctrl_shift_z_key_press_redoes(qtbot):
-    """BUG-053: the sibling `DdlEditorPanel` REFUSES this chord because its
-    buffer is read-only; this panel is editable, so the chord must reach
-    `editor.redo()`. Copying the sibling's refusal would break redo here."""
+def test_event_filter_ctrl_shift_z_key_press_is_claimed_and_does_not_redo(qtbot):
+    """DEC-015: `Ctrl+Y` is redo, everywhere, and Ctrl+Shift+Z is not.
+
+    The chord is still consumed (`handled is True`) -- that is the point, since
+    passing it on lets Qt redo -- but it runs no operation. FQ-034's
+    shrink-selection is what will answer it. Undo through Ctrl+Z still works,
+    which is what tells the two chords apart: DEC-014 forbids collapsing them
+    into one predicate for exactly this reason."""
     panel = _panel(qtbot, text="alpha\n")
     panel.editor.setFocus()
     _move_cursor_to_end(panel)
@@ -561,18 +568,34 @@ def test_event_filter_ctrl_shift_z_key_press_redoes(qtbot):
     handled = panel.eventFilter(panel.editor, _key_press(Qt.Key.Key_Z, modifiers))
 
     assert handled is True
+    assert panel.text() == "alpha\n"
+    # And the operation the chord lost is still reachable by the one chord that
+    # owns it.
+    assert (
+        panel.eventFilter(
+            panel.editor,
+            _key_press(Qt.Key.Key_Y, Qt.KeyboardModifier.ControlModifier),
+        )
+        is True
+    )
     assert panel.text() == "alpha\nbeta"
 
 
-def test_ctrl_shift_z_redoes_through_a_real_key_press(qtbot):
-    """The end-to-end half: a real key press through a shown top level.
+def test_ctrl_shift_z_does_not_redo_through_a_real_key_press(qtbot):
+    """The end-to-end half, and the ONLY test here that can see Qt's native
+    redo -- so it is the one that proves the reassignment took.
 
-    Note this one passes with OR without the fix -- `QPlainTextEdit` binds
-    `QKeySequence.StandardKey.Redo` (Ctrl+Shift+Z on this platform) natively,
-    exactly as it does Ctrl+Z/Ctrl+Y, which is why the file's other undo/redo
-    tests drive `panel.eventFilter` directly (see the note above). It is kept
-    as the user-visible assertion; the two `eventFilter` tests above are the
-    ones that fail without the fix."""
+    It fails without the fix: `QPlainTextEdit` binds `Ctrl+Shift+Z` to
+    `StandardKey.Redo` natively under **both** keyboard schemes (`KB_Win |
+    KB_X11`, read out of the compiled table by BUG-056), so dropping the panel's
+    branch instead of re-routing it would leave the chord redoing anyway.
+
+    A note on what the harness can and cannot see: the offscreen platform runs
+    Qt's **Windows** keyboard scheme, whose primary `Redo` binding is `Ctrl+Y`
+    (not `Ctrl+Shift+Z`, as an earlier version of this comment claimed). Nothing
+    about the *Linux* platform table is observable from here, which is why every
+    other undo/redo case in this file asserts the filter rather than the native
+    path."""
     panel = _panel(qtbot, text="alpha\n")
     panel.show()
     qtbot.waitExposed(panel)
@@ -587,6 +610,10 @@ def test_ctrl_shift_z_redoes_through_a_real_key_press(qtbot):
         Qt.Key.Key_Z,
         Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.ShiftModifier,
     )
+
+    assert panel.text() == "alpha\n"
+
+    QTest.keyClick(panel.editor, Qt.Key.Key_Y, Qt.KeyboardModifier.ControlModifier)
 
     assert panel.text() == "alpha\nbeta"
 

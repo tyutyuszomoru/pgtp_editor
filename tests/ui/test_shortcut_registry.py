@@ -288,14 +288,87 @@ def test_resolve_shortcut_overrides_drops_a_hand_written_reserved_key():
     assert resolve_shortcut_overrides({"file.open": "Ctrl+F"}, ["file.open"]) == {}
 
 
-# -- BUG-050: the second redo chord ------------------------------------------
+# -- DEC-014 / DEC-015: the chords every editing surface answers -------------
+
+
+def test_the_editor_chord_table_maps_to_operations_not_to_booleans():
+    """DEC-014: the shared thing must CLASSIFY. A membership test would let a
+    caller re-derive the operation itself, which is how a redo becomes an undo
+    while the chord still looks claimed. `Ctrl+Z` and `Ctrl+Y` are different
+    operations, and after DEC-015 redo has exactly one spelling."""
+    from pgtp_editor.ui.shortcut_registry import (
+        CLAIMED_NOT_UNDO_REDO,
+        EDITOR_UNDO_REDO_CHORDS,
+        REDO,
+        SUPPRESSED,
+        UNDO,
+    )
+
+    assert EDITOR_UNDO_REDO_CHORDS["Ctrl+Z"] == UNDO
+    assert EDITOR_UNDO_REDO_CHORDS["Ctrl+Y"] == REDO
+    # Redo has ONE chord (DEC-015: "Redo is always, on all systems Ctrl+Y").
+    assert [
+        chord for chord, op in EDITOR_UNDO_REDO_CHORDS.items() if op == REDO
+    ] == ["Ctrl+Y"]
+    assert EDITOR_UNDO_REDO_CHORDS["Ctrl+Shift+Z"] == CLAIMED_NOT_UNDO_REDO
+    assert EDITOR_UNDO_REDO_CHORDS["Alt+Backspace"] == SUPPRESSED
+    assert EDITOR_UNDO_REDO_CHORDS["Alt+Shift+Backspace"] == SUPPRESSED
+
+
+def test_every_chord_the_surfaces_intercept_is_a_reserved_sequence():
+    """DEC-014's invariant ties the two artifacts that already exist: *for every
+    chord `RESERVED_SEQUENCES` reserves because an editor answers it, every
+    editing surface states its answer.* A chord intercepted by the editors but
+    missing here would be offered in Customize Shortcuts… as a target that is
+    silently swallowed by whichever editor has focus (BUG-050's defect)."""
+    from pgtp_editor.ui.shortcut_registry import EDITOR_UNDO_REDO_CHORDS
+
+    for sequence in EDITOR_UNDO_REDO_CHORDS:
+        assert sequence in RESERVED_SEQUENCES
+        assert normalize_sequence(sequence) == sequence
+
+
+def test_the_windows_only_native_undo_pair_is_reserved_and_stated_as_dead():
+    """The call DEC-014 left open, decided: `Alt+Backspace` / `Alt+Shift+Backspace`
+    are Qt's `KB_Win`-ONLY native undo/redo, so under the owner's rule (*a chord
+    means the same thing on both systems or is not bound at all*) they cannot be
+    left to Qt. They are SUPPRESSED on both platforms — hence reserved, since a
+    menu command moved onto one would be swallowed by every editor."""
+    for sequence in ("Alt+Backspace", "Alt+Shift+Backspace"):
+        assert sequence in RESERVED_SEQUENCES
+        reason = RESERVED_SEQUENCES[sequence]
+        assert "Windows" in reason
+        assert "dead" in reason
+        # And it is refused as a rebinding target, never stolen.
+        assert refusal_for("file.open", sequence)
+
+
+def test_the_undo_and_redo_reasons_point_at_their_rebindable_menu_twin():
+    """BUG-064: `Undo` named two different commands. The reserved rows are the
+    only place the dialog can explain the difference — rebinding
+    `History ▸ Undo Project Edit` cannot move `Ctrl+Z`, and a user who reads
+    "Undo" twice with no explanation has been told nothing."""
+    for sequence, twin in (
+        ("Ctrl+Z", "Undo Project Edit"),
+        ("Ctrl+Y", "Redo Project Edit"),
+    ):
+        reason = RESERVED_SEQUENCES[sequence]
+        assert twin in reason
+        assert "rebindable" in reason
+    # Two rows, two reasons: DEC-014 forbids collapsing the two operations into
+    # one statement.
+    assert RESERVED_SEQUENCES["Ctrl+Z"] != RESERVED_SEQUENCES["Ctrl+Y"]
+    # And Ctrl+Y's row records why it is bound by this app at all: Qt binds it on
+    # the Windows scheme only.
+    assert "platform" in RESERVED_SEQUENCES["Ctrl+Y"]
 
 
 def test_ctrl_shift_z_is_reserved_beside_the_history_pair():
-    """`XmlEditor.keyPressEvent` answers Ctrl+Shift+Z as a second redo and
-    CONSUMES it, so a menu command retargeted here would fire only while no XML
-    editor has focus — a focus-dependent silence, which is worse than a clean
-    loss and exactly what this table exists to prevent."""
+    """The chord is still reserved after DEC-015 freed it from redo, and for a
+    sharper reason: Qt binds it as native `StandardKey.Redo` under
+    `KB_Win | KB_X11`, so every editing surface intercepts it to keep Qt's redo
+    from firing. A menu command retargeted here would fire only while no editor
+    has focus — a focus-dependent silence, worse than a clean loss."""
     assert "Ctrl+Shift+Z" in RESERVED_SEQUENCES
     assert RESERVED_SEQUENCES["Ctrl+Shift+Z"].strip()
     # Grouped with the pair it belongs to, which the dict's order is meant to

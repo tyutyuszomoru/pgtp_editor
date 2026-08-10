@@ -173,8 +173,11 @@ EXPECTED_HOST_SURFACE = {
     "_history_entries",
     "_history_jump",
     # BUG-048: the project history writes only where it may. The two
-    # `*_from_shortcut` slots scope the window Ctrl+Z/Ctrl+Y to a writable Raw
-    # XML tab; the lock helpers state the reason when it is refused.
+    # `*_raw_xml_history` slots scope EVERY keystroke path (the window
+    # Ctrl+Z/Ctrl+Y shortcuts and the Raw XML editor's re-emission) to a writable
+    # Raw XML tab; the lock helpers state the reason when it is refused. They
+    # were `*_from_shortcut` until BUG-064 gave them the second caller and a name
+    # that describes the scope rather than the host.
     "_history_write_refused",
     "_identity_in_schema",
     "_import_pgtp_connection_into_target",
@@ -255,7 +258,7 @@ EXPECTED_HOST_SURFACE = {
     "_raw_xml_panel_action",
     "_redo",
     "_redo_action",
-    "_redo_from_shortcut",
+    "_redo_raw_xml_history",
     "_redo_shortcut",
     "_ref_for_created_object",
     "_refresh_ddl_drift_markers",
@@ -357,7 +360,7 @@ EXPECTED_HOST_SURFACE = {
     "_trigger_relation_for",
     "_undo",
     "_undo_action",
-    "_undo_from_shortcut",
+    "_undo_raw_xml_history",
     "_undo_shortcut",
     "_update_title",
     "_validate_project_action",

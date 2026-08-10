@@ -104,7 +104,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QEvent, Qt, Signal
 from PySide6.QtGui import QKeySequence, QShortcut, QTextCursor
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -133,7 +133,7 @@ from ..sql.statements import (
     split_statements,
 )
 from .async_task import run_async
-from .code_editor import CodeEditor
+from .code_editor import REDO, UNDO, CodeEditor, classify_undo_redo_chord
 from .completion_popup import CompletionPopupHostMixin
 from .expand_select_seam import expand_select_expansion
 from .schema_gesture_seam import SchemaGestureHostMixin
@@ -504,17 +504,31 @@ class SqlConsolePanel(SchemaGestureHostMixin, CompletionPopupHostMixin, QWidget)
         layout.addLayout(controls)
         layout.addWidget(self.splitter, 1)
 
-        # Ctrl+Space completion and Ctrl+Alt+F Format Selection. Both are
-        # hosted HERE, on the panel, and scoped
-        # `WidgetWithChildrenShortcut` -- never at the window -- because they
-        # belong to the `Ctrl+Alt+`/`Ctrl+Space` editor-gesture family, which
-        # has no menu command at all. DEC-009 keeps that family widget-owned
-        # deliberately: DEC-004's defect was *two hosts for one gesture*, and a
-        # gesture with no menu entry has only ever had one host. Completion
-        # additionally needs the injected `SchemaIndex`, which this panel holds
-        # and the `CodeEditor` widget may not (§18.5 D1), and the panel scope
-        # is what stops either gesture firing while focus is elsewhere in the
-        # window.
+        # This panel answers its own keys, and it answers them in two places
+        # with two different rules -- see `eventFilter` below for the undo/redo
+        # chord set, which is NOT part of the family described here.
+        #
+        # Ctrl+Space completion and Ctrl+Alt+F Format Selection are hosted HERE,
+        # on the panel, and scoped `WidgetWithChildrenShortcut` -- never at the
+        # window. `Ctrl+Space` / `Ctrl+Alt+J` / `Ctrl+Shift+Space` belong to
+        # DEC-009's widget-owned family, which has **no menu command at all**:
+        # DEC-004's defect was *two hosts for one gesture*, and a gesture with no
+        # menu entry has only ever had one host.
+        #
+        # **`Ctrl+Alt+F` is NOT in that family, and this comment used to claim it
+        # was (BUG-063).** Format Selection HAS a command form -- the
+        # context-menu action in `_build_context_menu`, on this panel since
+        # BUG-063 and on the DDL object tab before it -- which is exactly what
+        # puts it under DEC-012 instead: **a gesture with a command form, menu
+        # bar or context menu, gets exactly one keyboard host.** That host is
+        # this `QShortcut`. The menu item is a click-only command form and
+        # carries no `setShortcut`; there is deliberately no `Ctrl+Alt+F` branch
+        # in `eventFilter` either.
+        #
+        # Completion additionally needs the injected `SchemaIndex`, which this
+        # panel holds and the `CodeEditor` widget may not (§18.5 D1), and the
+        # panel scope is what stops either gesture firing while focus is
+        # elsewhere in the window.
         self._completion_shortcut = QShortcut(QKeySequence("Ctrl+Space"), self)
         self._completion_shortcut.setContext(
             Qt.ShortcutContext.WidgetWithChildrenShortcut
@@ -558,8 +572,84 @@ class SqlConsolePanel(SchemaGestureHostMixin, CompletionPopupHostMixin, QWidget)
         )
         self._run_shortcut.activated.connect(self.run)
 
+        # The panel's own key/menu filter, on the EDITOR and not on the panel:
+        # the console also hosts a results table and a completion popup, which
+        # must keep their own keys and their own right-click. See `eventFilter`.
+        self.editor.installEventFilter(self)
+
         if not self._session_available:
             self.results.set_enabled(False, NO_SESSION_TEXT)
+
+    # --- the editor's own keys and menu (BUG-056, BUG-063) ------------------
+
+    def eventFilter(self, obj, event) -> bool:
+        """The console editor's undo/redo chords and its context menu.
+
+        **Why this exists at all (BUG-056).** This panel had no filter, so all
+        three reserved undo/redo chords fell through to `QPlainTextEdit`'s
+        `StandardKey` handling -- and that table is **platform-dependent**:
+        `Ctrl+Y` is `KB_Win` only. Measured consequence, from one source tree:
+        `Ctrl+Y` redid the console buffer on Windows and did **nothing at all**
+        on Linux, where the key instead reached `MainWindow`'s window-level
+        `Ctrl+Y` shortcut, which returns immediately because this is not the Raw
+        XML tab (BUG-048's scoping) -- no redo, no refusal, no journal line.
+        DEC-014/DEC-015: the app states its answer, it does not inherit one.
+
+        Both halves are required and neither is optional. Accepting only the
+        `ShortcutOverride` leaves the key dead; answering only the `KeyPress`
+        lets the window `QShortcut` fire as well.
+
+        The buffer is editable (unlike the DDL Explorer's synthesized one), so
+        undo/redo route into the editor's own stack -- no refusal branch here.
+        """
+        if obj is self.editor and event.type() in (
+            QEvent.Type.ShortcutOverride,
+            QEvent.Type.KeyPress,
+        ):
+            operation = classify_undo_redo_chord(event)
+            if operation is not None:
+                if event.type() == QEvent.Type.ShortcutOverride:
+                    event.accept()
+                elif operation == UNDO:
+                    self.editor.undo()
+                elif operation == REDO:
+                    self.editor.redo()
+                # else: the answers that run nothing, consumed precisely so Qt
+                # cannot answer them instead -- Ctrl+Shift+Z (freed from redo by
+                # DEC-015; Qt binds it `KB_Win | KB_X11`) and the suppressed
+                # Alt+Backspace pair (Qt binds those `KB_Win` only).
+                return True
+        if obj is self.editor and event.type() == QEvent.Type.ContextMenu:
+            menu = self._build_context_menu()
+            menu.exec(event.globalPos())
+            return True
+        return super().eventFilter(obj, event)
+
+    def _build_context_menu(self):
+        """Build (but do not exec) the editor's context menu -- split out so
+        tests can inspect it directly instead of ever driving a real modal
+        `QMenu.exec` (the `ddl_object_editor.py` precedent this mirrors).
+
+        **Format Selection's second, CLICK-ONLY host (BUG-063).** The console
+        had the `Ctrl+Alt+F` shortcut and no menu item, which made it the one
+        surface where a gesture with a command form had no command. The action
+        carries **no `setShortcut`**: DEC-012 permits exactly one keyboard host
+        per gesture and the `QShortcut` in `__init__` is it. Adding a shortcut
+        here would re-create the double-hosting DEC-012 exists to forbid.
+
+        The enabled gate is the chord's own (`hasSelection`), so a
+        selection-less right-click shows the item **disabled** rather than
+        absent -- the same answer the key gives, and the DDL object tab's shape.
+
+        Nothing else belongs on this menu: there is no `Run in Sandbox Console`
+        bridge (the console **is** the target) and no apply gestures (FQ-026
+        removed those from the object tab's menu for a stated reason).
+        """
+        menu = self.editor.createStandardContextMenu()
+        menu.addSeparator()
+        action = menu.addAction("Format Selection", self.format_selection)
+        action.setEnabled(self.editor.textCursor().hasSelection())
+        return menu
 
     # --- identity -----------------------------------------------------------
 

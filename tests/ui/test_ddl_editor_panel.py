@@ -535,13 +535,41 @@ def test_the_panel_claims_the_shortcut_override_for_the_undo_chords(qtbot):
     for key, mods in (
         (Qt.Key.Key_Z, _CTRL),
         (Qt.Key.Key_Y, _CTRL),
-        (Qt.Key.Key_Z, _CTRL_SHIFT),  # the second redo chord (BUG-050)
+        # Still claimed, no longer redo (DEC-015): Qt binds it as native Redo
+        # under `KB_Win | KB_X11`, so the claim is what keeps Qt out.
+        (Qt.Key.Key_Z, _CTRL_SHIFT),
     ):
         consumed, event = _deliver(
             panel, QEvent.Type.ShortcutOverride, key, mods
         )
         assert consumed is True
         assert event.isAccepted() is True
+
+
+def test_the_chords_that_run_nothing_are_claimed_without_a_wrong_reason(qtbot):
+    """`Ctrl+Shift+Z` (freed from redo by DEC-015) and the suppressed
+    `Alt+Backspace` pair are consumed here — otherwise Qt answers them — but the
+    read-only refusal must NOT be stated for them: none of them asks for an undo,
+    and "nothing to undo here" would be a wrong reason, which is worse than
+    none."""
+    panel = EditorPanel()
+    qtbot.addWidget(panel)
+    said = []
+    panel.editor.report_refusal = said.append
+    alt = Qt.KeyboardModifier.AltModifier
+
+    for key, mods in (
+        (Qt.Key.Key_Z, _CTRL_SHIFT),
+        (Qt.Key.Key_Backspace, alt),
+        (Qt.Key.Key_Backspace, alt | Qt.KeyboardModifier.ShiftModifier),
+    ):
+        consumed, _ = _deliver(panel, QEvent.Type.KeyPress, key, mods)
+        assert consumed is True
+
+    assert said == []
+    # ...while the chords that DO ask for one still get it.
+    _deliver(panel, QEvent.Type.KeyPress, Qt.Key.Key_Y, _CTRL)
+    assert said == ["this buffer is read only — there is nothing to undo here"]
 
 
 def test_the_panel_states_why_there_is_nothing_to_undo(qtbot, monkeypatch):

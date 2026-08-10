@@ -72,7 +72,12 @@ from PySide6.QtWidgets import QVBoxLayout, QWidget
 
 from pgtp_editor.lint.findings import LintOutcome, LintStatus, audit_lines
 from pgtp_editor.ui.async_task import run_async
-from pgtp_editor.ui.code_editor import CodeEditor
+from pgtp_editor.ui.code_editor import (
+    REDO,
+    UNDO,
+    CodeEditor,
+    classify_undo_redo_chord,
+)
 from pgtp_editor.ui.find_replace_bar import FindReplaceBar, install_focus_shortcuts
 
 _log = logging.getLogger(__name__)
@@ -385,25 +390,36 @@ class PhpFileTab(QWidget):
     # `Deployment ▸ Save PHP File`. **Do not re-add a `Key_S` branch here.**
     # The `Ctrl+Z`/`Ctrl+Y` branches STAY: they are §18.5 carve-out 1's
     # native-undo routing, which has nothing to do with saving.
+    #
+    # The chords come from the shared matcher (DEC-014's fixed set) rather than
+    # being spelled out here, and that is what closed this tab's last dependence
+    # on Qt's platform table: `Ctrl+Y` is a native `StandardKey.Redo` binding on
+    # the **Windows scheme only**, so a tab that leans on the native handler
+    # redoes on Windows and is silent on Linux (BUG-056 measured exactly that in
+    # the Sandbox SQL Console). This tab already stated `Ctrl+Z`/`Ctrl+Y`;
+    # `Ctrl+Shift+Z` is now stated too -- as *not* redo (DEC-015).
     def eventFilter(self, obj, event) -> bool:
         if obj is self.editor and event.type() in (
             QEvent.Type.ShortcutOverride,
             QEvent.Type.KeyPress,
         ):
-            key = event.key()
-            ctrl = event.modifiers() == Qt.KeyboardModifier.ControlModifier
-            handler = None
-            if ctrl and key == Qt.Key.Key_Z:
-                handler = self.editor.undo
-            elif ctrl and key == Qt.Key.Key_Y:
-                handler = self.editor.redo
-            if handler is not None:
+            operation = classify_undo_redo_chord(event)
+            if operation is not None:
                 if event.type() == QEvent.Type.ShortcutOverride:
                     # Claim the sequence so Qt never ALSO fires the
                     # window-level QShortcut for this key press -- no double
                     # undo, and no leak into the project buffer.
                     event.accept()
-                else:
-                    handler()
+                elif operation == UNDO:
+                    self.editor.undo()
+                elif operation == REDO:
+                    self.editor.redo()
+                # else: the two answers that run nothing, both consumed on
+                # purpose. Ctrl+Shift+Z: DEC-015 freed it from redo, and since Qt
+                # answers it natively under `KB_Win | KB_X11` intercepting it
+                # here is the only way to make that true (FQ-034 will bind
+                # shrink-selection). Alt+Backspace / Alt+Shift+Backspace:
+                # suppressed app-wide, because Qt binds them `KB_Win` only and a
+                # chord must mean the same thing on both systems.
                 return True
         return super().eventFilter(obj, event)
