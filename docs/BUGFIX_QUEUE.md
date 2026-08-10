@@ -3731,7 +3731,7 @@ blockquote must be replaced, and the manual carries the Messages rename.
 ---
 
 ## BUG-043: sandbox `run_async` workers outlive their `MainWindow` and emit on a deleted C++ object — a rotating, misattributed teardown ERROR that has trained the suite's red output to be ignored
-**Status:** OPEN
+**Status:** RESOLVED (`f7f51b7`)
 **Reported:** 2026-08-10
 **Report (verbatim):** "`tests/ui/test_deployment_menu.py` reports a failure or a setup/teardown ERROR on roughly one full-suite run in two, and the test named changes between runs — `test_a_projectless_quality_apply_runs_and_reports_under_check`, `test_the_sandbox_confirmation_also_names_the_host_now`, and others in that file. It passes when the file is run alone. Other files have shown the same shape (`test_ddl_explorer_sandbox.py`, `test_database_menu.py`, `test_theme.py`), which suggests the mechanism is not confined to one file. TEARDOWN ERROR: Exceptions caught in Qt event loop: File `pgtp_editor/ui/sandbox_controller.py`, line 1358, in handle / line 1380, in _finish / RuntimeError: Signal source has been deleted. A `run_async` worker started by an earlier test completes after its `MainWindow` has been torn down, and `SandboxController._finish` emits `operation_finished` on a deleted C++ object."
 
@@ -3868,6 +3868,38 @@ trampoline change lands, it is worth one sentence there — *"every off-GUI-thre
 `window._run_async`"* — as a testability invariant. Flag `spec-maintainer` after the fix lands; do not edit the
 spec here. Note also that `sandbox_controller.py:481-482`'s in-code comment about the injection convention is
 documentation that will be falsified by the recommended fix and must be corrected with it.
+
+**Resolution (verified 2026-08-10 at HEAD `f533350`): the entry was STALE, not a second mechanism.**
+It was filed at 02:31 (`7116bf0`); the fix landed at 03:27 (`f7f51b7`), and the 05:40 queue sweep
+(`7f5563e`, "eight RESOLVED") simply missed flipping this one. Re-checked against the code rather
+than against green runs, since a leak that lands one run in two makes green weak evidence. All three
+halves of `f7f51b7` are intact at HEAD:
+
+1. **The asymmetry is closed.** `main_window.py:1088` — `self.sandbox_controller._run_async =
+   self._shell_run_async` — repoints the sandbox lane at the call-time trampoline
+   (`_shell_run_async`, `main_window.py:2092-2098`), so `window._run_async = sync` now reaches it.
+   `sandbox_controller.py:501`'s module-level default is documented as the standalone fallback only
+   (:496-500), with an explicit "do NOT simplify this back to a constructor kwarg".
+2. **Every emit is guarded, not just `_finish`.** `sandbox_controller.py` now contains exactly two
+   `.emit(` calls in the whole file, both inside `try/except RuntimeError`: `_report` (:1425-1446,
+   `on_done` + `operation_finished`) and `_announce_session` (:1449-1459, `session_changed`). All
+   five former emit sites route through them — `_finish` (:1423), `run_check` (:1158), `run_apply`
+   (:1236), `_set_session` (:1282), and the session-cleared path (:770). This corrects two things
+   the original triage got wrong, both noted in `f7f51b7`'s message: a *successful* late open never
+   reached `_finish` at all (it raised at `_set_session`'s emit), and `run_check`/`run_apply`
+   open-coded the pair and bypassed `_finish` entirely, so the `_finish`-only guard this entry
+   proposed would have left three of five sites raising.
+3. **The leak is caught at the source, loudly.** `tests/ui/conftest.py:123` `_no_leaked_async_tasks`
+   drains `async_task._INFLIGHT` first (so one test's leak cannot poison a later one) and then fails
+   *the leaking test*, naming the fix — which is what kills the rotating misattribution rather than
+   just silencing its symptom.
+4. **The named culprit is fixed at the test too.** `tests/ui/test_deployment_menu.py:69-77` injects
+   `window._run_async = sync_run` in the shared `_window` helper, and :557-559 records that the
+   hand-rolled `window._ddl_project_ui._run_async` stub this entry criticised was the wrong seam.
+
+So the reported mechanism is structurally dead: even if a worker does outlive its window, the emit
+is dropped with a debug log instead of raising out of a queued slot. Full suite at `f533350`:
+**6343 passed, 45 skipped** (it was 6162 at `f7f51b7`). Nothing further to implement.
 
 ---
 ## BUG-044: every ALTER on one table shares ONE `applied` bookkeeping row and silently overwrites it, so `Check Object in Sandbox` gives a WRONG verdict about which statement the sandbox holds
@@ -5075,7 +5107,7 @@ written to `docs/DECISION_QUEUE.md`.*
 ---
 
 ## BUG-052: three comments still justify widget-hosted gestures with a measured-false "QShortcut is unreliable offscreen" — DEC-009 is ANSWERED and mandates rewriting them
-**Status:** OPEN
+**Status:** RESOLVED (`f533350`)
 **Reported:** 2026-08-10
 **Report (verbatim):** "Comments claiming 'QShortcut is unreliable offscreen' still stand in `sql_console_panel.py:507-511`, `code_editor.py:779-783` and `ddl_object_editor.py:898`. The premise is measured false, but converting that family is the scope BUG-046 explicitly left to the owner (decision queue DEC-009)."
 
@@ -5135,10 +5167,37 @@ DEC-009's actual rule — a widget-hosted gesture with **no menu command** has a
 reason to live in the widget and is out of DEC-004's scope, while a gesture with a menu command must
 have exactly one host.
 
+**Resolution (`f533350`, verified at HEAD).** All three named sites now state the product reason and
+the offscreen premise is gone from each:
+
+- `sql_console_panel.py:507-518` — both gestures are panel-hosted at
+  `WidgetWithChildrenShortcut` scope because the `Ctrl+Alt+`/`Ctrl+Space` family **has no menu command
+  at all**, so DEC-004's *two hosts for one gesture* never applied; completion additionally needs the
+  injected `SchemaIndex` the `CodeEditor` widget may not hold (§18.5 D1), and the panel scope is what
+  stops either gesture firing while focus is elsewhere. The stale `CodeEditorDialog` double-hosting
+  cross-reference is gone.
+- `code_editor.py:779-790` — `Ctrl+Alt+E`/`Ctrl+Alt+C` are widget *behaviours*, not commands, and
+  depend on caret state and `self._language`, which a window shortcut would have to reach back into
+  the focused widget to discover. The *"same reason that one is handled twice"* clause is gone.
+- `ddl_object_editor.py:900-909` — `Ctrl+Space` has no menu command and needs the injected
+  `SchemaIndex` plus this panel's own caret/popup state (§18.5 D1); noted as intrinsically
+  focus-scoped.
+
+Per DEC-009, verified by diff: **no `QShortcut` conversions** (the commit's only functional change is
+BUG-053's chord matching) and **`RESERVED_SEQUENCES` untouched** — `ui/shortcut_registry.py` was last
+modified by `e8df6c3`. Suite green: 6343 passed, 45 skipped.
+
+**One residual, filed as BUG-054 rather than folded in here**, because it is a fourth site the report
+did not name and it is behavioural, not comment-only: `ddl_object_editor.py:781-785` (the `Ctrl+Alt+F`
+`QShortcut`) still says *"mirroring CodeEditorDialog's Ctrl+S/Ctrl+W convention — QShortcut activation
+is not reliable under the offscreen platform in tests"*. It is the antecedent the now-correct
+`Ctrl+Space` comment points back at (*"for the same reason as Ctrl+Alt+F above"*), so a reader
+following the reference still lands on the false premise.
+
 ---
 
 ## BUG-053: `DdlObjectEditorPanel.eventFilter` does not match `Ctrl+Shift+Z`, so the object editor answers the reserved second redo chord differently from the DDL Explorer
-**Status:** OPEN
+**Status:** RESOLVED (`f533350`)
 **Reported:** 2026-08-10
 **Report (verbatim):** "`DdlObjectEditorPanel.eventFilter` still matches only `Ctrl+Z`/`Ctrl+Y`, not `Ctrl+Shift+Z`. Now that `Ctrl+Shift+Z` is a reserved redo chord, that tab answers it inconsistently with the DDL Explorer. No longer a data-loss path — the central guard covers it — so this is an inconsistency, not a defect of the same class."
 
@@ -5193,5 +5252,99 @@ does for its own `Ctrl+Shift+Z` case (added by BUG-048/050). Do not add a new te
 **Spec impact:** none. §18.5 carve-out 1 already describes the object tab as routing undo/redo into
 its own stack; this makes the code match that description for the second redo chord. If a future
 sweep wants the chord list stated once, that is a `spec-maintainer` call, not a blocker here.
+
+**Resolution (`f533350`, verified at HEAD).** `ddl_object_editor.py:876-891` now reads
+`is_undo = Key_Z and mods == ctrl`, `is_redo = (Key_Y and mods == ctrl) or (Key_Z and mods == ctrl|shift)`,
+with the `ShortcutOverride` → `event.accept()` / `KeyPress` → `undo()`/`redo()` split untouched and exact
+modifier equality (no `&` mask), so `Ctrl+Alt+Shift+Z` is not swallowed. The mirroring was done in place
+rather than by lifting a shared helper, and the comment at :880-886 records why: **only the chord matching
+is shared with `DdlEditorPanel._is_undo_redo_chord`, not the branch body** — the sibling's buffer is
+synthesized and read-only so it refuses with a reason, while this tab is editable and must route into
+`editor.redo()`. Confirmed by diff that this is the entire functional change in the commit.
+
+**Test caveat — read this before trusting the coverage.** `tests/ui/test_ddl_object_editor.py` gained three
+cases, and they are not equally load-bearing:
+
+- `test_event_filter_claims_ctrl_shift_z_shortcut_override` and
+  `test_event_filter_ctrl_shift_z_key_press_redoes` drive `panel.eventFilter` directly. **These are the real
+  guards — they fail without the fix.**
+- `test_ctrl_shift_z_redoes_through_a_real_key_press` (:550) **passes with OR without the fix**, because
+  `QPlainTextEdit` binds `QKeySequence.StandardKey.Redo` to `Ctrl+Shift+Z` natively, exactly as it does
+  `Ctrl+Z`/`Ctrl+Y`. It is kept as the user-visible assertion only. A later reader must not treat it as
+  proof the panel claims the chord, and must not "consolidate" the two `eventFilter` tests into it —
+  doing so would silently delete all coverage of this fix. The file already carries the same note for its
+  other undo/redo tests, which is why they too go through `eventFilter` directly; the docstring at :550
+  now states the caveat inline.
+
+---
+
+## BUG-054: `Ctrl+Alt+F` in the DDL object tab has THREE hosts, and the redundancy is still justified by the offscreen premise BUG-046 measured false
+**Status:** OPEN
+**Reported:** 2026-08-10
+**Report (verbatim):** (found by `bug-triager` while verifying BUG-052's fix at `f533350`, not filed by
+the user) "`pgtp_editor/ui/ddl_object_editor.py:781-785` still reads *'The redundant eventFilter branch
+below handles the key directly too, mirroring CodeEditorDialog's Ctrl+S/Ctrl+W convention -- QShortcut
+activation is not reliable under the offscreen platform in tests.'* BUG-052 rewrote the three sites the
+report named; this fourth one in the same file was out of its scope, and unlike those three it is not
+comment-only — it documents an actual double-host."
+
+**Filed separately from BUG-052 because the class differs.** BUG-052 was comment-only by DEC-009's
+explicit ruling. This one is a live DEC-004 question — *two hosts for one gesture* — and answering it
+may change behaviour, so it must not be swept in as a wording tidy.
+
+**Root cause:** `Ctrl+Alt+F` (Format Selection) is answered in three places for the one panel:
+
+1. `ddl_object_editor.py:786-789` — `self._format_shortcut = QShortcut(QKeySequence("Ctrl+Alt+F"), self)`
+   at `WidgetWithChildrenShortcut` scope, `activated` → `format_selection`, `setEnabled(False)` until a
+   selection exists (`_update_format_shortcut_enabled`).
+2. `ddl_object_editor.py:900-907` — the `eventFilter` branch on `Key_F` + `Control|Alt`, claiming
+   `ShortcutOverride` and calling `self.format_selection()` on `KeyPress`. This is the branch :781-785
+   calls "redundant" and justifies with the offscreen premise.
+3. `ddl_object_editor.py:965` — `menu.addAction("Format Selection", self.format_selection)` in the
+   context menu.
+
+Host 3 is a legitimate separate affordance (a menu entry), and `ui/shortcut_registry.py:236-238`
+already records `Ctrl+Alt+F` as *"a context-menu command plus a shortcut … there is no menu-bar action
+to move"*. **Hosts 1 and 2 are the duplication**, and they are the exact shape DEC-004 ruled against —
+unlike the `Ctrl+Alt+E`/`Ctrl+Alt+C`/`Ctrl+Space` family, which DEC-009 kept widget-hosted precisely
+*because it has no command form*. `Ctrl+Alt+F` does have a command form, so DEC-009's carve-out does
+not cover it. Note the sibling `SqlConsolePanel` hosts the same gesture with the `QShortcut` **only** —
+it has no `eventFilter` at all (`grep -n "Key_F\|eventFilter" sql_console_panel.py` returns nothing) —
+so the console is already the single-host shape, and the object tab is the outlier.
+
+**Proposed fix:** two decisions, in order.
+
+- **(a) Delete the redundant branch, or keep it with an honest reason.** The recorded justification is
+  now known false: `code_editor.py:747-752` (BUG-046's note) states shortcuts *do* activate offscreen;
+  what fails is key delivery to a widget that was never `show()`n. If nothing else depends on the
+  branch, remove `eventFilter`'s `Key_F` branch (:900-907) and let the `QShortcut` be the only
+  keyboard host, matching `SqlConsolePanel`. **Check first** whether any test drives Format Selection
+  through `panel.eventFilter` directly rather than through a real key press —
+  `tests/ui/test_ddl_object_editor.py::test_shortcut_override_claims_ctrl_alt_f` does exactly that,
+  and its docstring argues the branch *genuinely* proves the claim because `Ctrl+Alt+F` has no native
+  `QPlainTextEdit` binding (unlike `Ctrl+Z`/`Ctrl+Y`). That test must be rewritten to a shown-widget
+  `QTest.keyClick`, not deleted — otherwise the gesture loses its only keyboard coverage.
+- **(b) If the branch is kept**, rewrite :781-785 to say why in product terms and drop the
+  `CodeEditorDialog` `Ctrl+S`/`Ctrl+W` cross-reference — `CodeEditorDialog`'s double-hosting precedent
+  was reversed by BUG-046 (`e8df6c3`), so the reference now points at a deleted design. A kept branch
+  also needs a note reconciling it with DEC-004, since this gesture *does* have a command form.
+
+**Gotchas.** (a) The `QShortcut` is `setEnabled(False)` without a selection while the `eventFilter`
+branch is unconditional — so today the two hosts do **not** behave identically, and deleting the branch
+changes what a selection-less `Ctrl+Alt+F` does (currently it reaches `format_selection`, which owns
+its own refusal path and the §18.5 carve-out 4 underline). Decide deliberately which behaviour is
+right and assert it. (b) Do not touch `RESERVED_SEQUENCES` — `Ctrl+Alt+F`'s row stays either way.
+(c) Keep the `Ctrl+Space` and `Ctrl+Alt+J` branches below untouched; DEC-009 settled those.
+
+**Test impact:** `tests/ui/test_ddl_object_editor.py` — `test_shortcut_override_claims_ctrl_alt_f` and
+its neighbours are the affected cases (see (a)); add a selection-less case pinning whatever behaviour
+(a) settles on. `tests/ui/test_sql_console_panel.py` shows the single-host pattern to match and needs
+no change. `tests/ui/test_shortcut_registry.py` needs no change.
+
+**Spec impact:** likely — flag for `spec-maintainer` after the fix. DEC-009's rule as folded into §8
+distinguishes *gesture with no menu command* (widget-hosted, fine) from *gesture with a command*
+(exactly one host). `Ctrl+Alt+F` is the awkward middle case: a **context-menu** command with no
+menu-bar action. §8 should say which side of the line that falls on, because the answer also governs
+any future context-menu-only gesture.
 
 ---
