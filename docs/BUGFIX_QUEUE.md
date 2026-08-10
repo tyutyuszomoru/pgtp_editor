@@ -6673,3 +6673,212 @@ Implementation:
 **Spec impact:** Part A DIVERGES from a recorded HARD rule and must be flagged prominently for `spec-maintainer` with a **Supersession Ledger** row. `CONSOLIDATED_SPEC.md` §18.5's Apply-to-quality preconditions list precondition 1 as **"Signature-change refusal — no override, no consent path"** (the phrasing is echoed in `apply_to_target`'s docstring at `ddl_object_editor.py:1272` and `_precondition_signature`'s at `:1338-1345`). The owner's ruling ("trust the user, run the sql") converts that hard, override-less refusal into a confirm-gated override (or removes it entirely). This reverses shipped, spec'd design, so it needs a ledger row recording the 2026-08-10 owner decision, not a quiet edit — do NOT edit the spec from the fix pass. Part B ADDS a new gesture to §18.2's checkout model / §18.5 D1's Explorer right-click ("Discard local change" deletes the `ddl/*.sql` working file + the `deployed` reference and closes the tab, returning the object to not-checked-out); flag for `spec-maintainer` to fold into §18.2/§18.5 after it lands. Manual (`pgtp_editor/resources/manual.md`) needs: (a) the Apply-to-quality section updated to say a renamed/identity-changed buffer now prompts-and-runs rather than refusing; (b) a note on the new "Discard local change" right-click entry — leave both to `manual-maintainer`.
 
 ---
+
+## BUG-260810194657: `BEGIN TRANSACTION` / `BEGIN WORK` opens a plpgsql block frame — the formatter refuses valid transaction control
+
+**Status:** OPEN
+**Reported:** 2026-08-10
+**Report (verbatim):** "Investigate a latent formatter defect found — and deliberately not fixed — while FQ-034 lifted the block-detection rules out of `sql/formatter.py` into the new `sql/blocks.py` (`cde65fa`). The claim: `BEGIN_NOT_BLOCK_FOLLOWERS` never fires. It exists to stop `BEGIN TRANSACTION` / `BEGIN WORK` being treated as a plpgsql block opener. But it matches through `Token.keyword`, and neither `transaction` nor `work` is in `SQL_KEYWORDS` — so only the bare `BEGIN;` half of the guard is live, and `BEGIN TRANSACTION` opens a plpgsql block frame that never closes as the author intended."
+
+**VERDICT: the claim is correct, and it is a real user-visible defect, not a dormant-guard cleanup.** It is also a code-vs-spec divergence: the spec *requires* the behaviour the guard fails to deliver. Verified by execution, not by reading.
+
+**Root cause**
+
+`pgtp_editor/sql/blocks.py:183-193`, `begin_is_transaction()`:
+
+```python
+follower = next_keyword(items, index)          # -> Token.keyword
+if follower in BEGIN_NOT_BLOCK_FOLLOWERS:      # {"transaction","work","isolation"}
+    return True
+after = next_token(items, index)
+return after is not None and after.kind == PUNCT and after.text == ";"
+```
+
+`next_keyword` (`blocks.py:152-159`) returns `items[target][0].keyword`, and `Token.keyword`
+(`sql/tokenizer.py:134-139`) is `None` unless the lowercased text is in
+`sql/keywords.py::SQL_KEYWORDS`. Measured against the shipped set: `transaction` → `False`,
+`work` → `False`, `isolation` → `False`. So `next_keyword` returns `None` for all three, the
+first branch is unreachable for every member of `BEGIN_NOT_BLOCK_FOLLOWERS`, and **only the
+`;` half of the guard is live**. The frozenset at `blocks.py:88` is dead code.
+
+Both consumers read the same broken predicate, so both are wrong in the same direction:
+`formatter.py:614` (`_Reindenter._open_frames`) and `block_spans.py:247`. The anti-fork
+guarantee holds — they agree, on the wrong answer.
+
+**What actually breaks today (measured with `venv/bin/python`, default `DEFAULT_FORMAT_CONFIG`)**
+
+1. **A refusal on valid, balanced SQL — the headline symptom.** `BEGIN TRANSACTION` pushes a
+   `begin` frame; `COMMIT`/`ROLLBACK` are not closers, so `_report_unclosed`
+   (`formatter.py:731`) fires. Input:
+
+   ```sql
+   BEGIN TRANSACTION;
+   UPDATE t SET a = 1;
+   COMMIT;
+   ```
+
+   Output: `ok=False`, text handed back verbatim, one fatal Issue
+   `"Unmatched BEGIN -- no matching END in the selection (line 1, column 1)."`
+   Format Selection appears to do nothing and reports a bogus error. Same for `BEGIN WORK;`,
+   `BEGIN TRANSACTION ISOLATION LEVEL SERIALIZABLE;`, `BEGIN TRANSACTION … ROLLBACK;`, and for
+   a mixed selection (`BEGIN TRANSACTION; CREATE FUNCTION … $$…$$; COMMIT;`) — the whole
+   selection is refused because of the wrapper. The bare-`BEGIN;` equivalent formats fine, so
+   the two spellings of the same statement behave differently.
+
+2. **Accepted but misformatted when the block is closed with `END;`** (legal in Postgres —
+   `END` is a synonym for `COMMIT`). Input `BEGIN TRANSACTION;\nUPDATE t SET a = 1;\nEND;\n`
+   currently yields:
+
+   ```
+   BEGIN
+       TRANSACTION;
+       UPDATE t
+       SET a = 1;
+   END;
+   ```
+
+   Two wrongs: `TRANSACTION` is split onto its own line (`_breaks_after`, `formatter.py:575-576`,
+   sees `self._top.kind == "begin"` and forces a break after `BEGIN`), and the whole transaction
+   body is indented one level as if it were a routine body. This is *stable and idempotent*, so
+   it is cosmetic-not-corrupting — but it is wrong output, so "nothing user-visible goes wrong"
+   is **not** the finding.
+
+3. **The span model (§8) emits a bogus rung.** `structure_chain` on the `END;` variant returns a
+   `kind='begin'` span with `inner=(6, 38)` — i.e. an expand-selection step whose selection
+   **starts in the middle of the `BEGIN TRANSACTION` phrase**, at `TRANSACTION`. On the
+   `COMMIT;` variant the frame simply never closes, so no span is emitted (silent, benign).
+
+Invariants checked and **not** violated today: refuse-don't-guess holds (symptom 1 is a
+false-positive refusal, not a guess); idempotence holds in symptom 2; opaque regions untouched;
+the `AS_IS` byte-identity of non-whitespace tokens holds. So the defect's cost is *false
+refusals and wrong indentation*, never corruption.
+
+**Proposed fix: match the phrase on `Token.lowered`, and DO NOT widen `SQL_KEYWORDS`.**
+
+The blast radius of widening is disqualifying — measured by monkeypatching
+`sql.tokenizer.SQL_KEYWORDS` to include the three words and re-running the engine:
+
+| input | today (`AS_IS`) | with the set widened (`AS_IS`) |
+|---|---|---|
+| `select work(1), transaction from t;` | `select work(1), transaction` | `select work (1), transaction` |
+| `select t.work - 1 from t;` | `select t.work - 1` | `select t.work -1` |
+
+Both change **default** output. `_call_paren` (`formatter.py:793-799`) glues `(` only when
+`prev.keyword is None`, and `_unary_minus_before` (`formatter.py:807-819`) reads a preceding
+keyword as unary context — so a column or function named `work` would lose its call glue and
+turn a binary minus into a unary one. Under `UPPER` it additionally recases the identifier
+(`WORK`, `TRANSACTION`), and `SQL_KEYWORDS` is *shared with the highlighter*
+(`ui/code_editor.py:354`, identity asserted by `tests/ui/test_code_editor.py:81`), so `work`
+would paint as a keyword in every editor in the app. That breaks FQ-033's "defaults are
+byte-identical to the pre-FQ-033 engine" promise (§18.4 / ledger 2026-08-10, pinned by
+`tests/ui/test_autoformat_host_wiring.py::test_an_untouched_install_formats_exactly_as_before`,
+~60 goldens in `tests/sql/test_formatter.py`, and the out-of-band 6 699-input comparison recorded
+in `docs/TEST_LOG.md`). **Widening is the wrong fix. Reject it.**
+
+**There is already a precedent for a non-keyword phrase word, thirty lines below the bug.**
+`declare_is_cursor` (`blocks.py:208-226`) matches `tok.lowered == "cursor"` — because `cursor`
+is *also* absent from `SQL_KEYWORDS`. `formatter.py:778/787` does the same for `%TYPE`/`%ROWTYPE`
+(`type`/`rowtype`, also absent). So the established mechanism for "a word that participates in a
+phrase but is not a dialect keyword" is `Token.lowered`, and it costs nothing outside the guard.
+
+Concrete change, all of it inside `pgtp_editor/sql/blocks.py` — **no formatter.py edit, no
+block_spans.py edit**, which is what preserves the FQ-034 anti-fork guarantee automatically
+(both consumers already call the one predicate, and `formatter.py:127`'s
+`_BEGIN_NOT_BLOCK_FOLLOWERS = BEGIN_NOT_BLOCK_FOLLOWERS` `is`-alias keeps holding):
+
+1. Add a `next_lowered(items, index, offset=1) -> str | None` helper beside `next_keyword`
+   (`blocks.py:152`), returning `items[target][0].lowered` for word tokens. Document *why*
+   it exists (the `declare_is_cursor` precedent) so nobody "tidies" it back to `next_keyword`.
+2. Rewrite `begin_is_transaction` to match the **two-token phrase**, confirmed by what follows
+   it, rather than a single follower keyword:
+   - follower is `;` → transaction control (unchanged, keeps `BEGIN;` working);
+   - follower lowers to `transaction` / `work`, **or** to a transaction-mode head
+     (`isolation` / `read` / `deferrable` / `not` — Postgres allows the mode directly after
+     `BEGIN`, and §18.4's guard table lists `BEGIN ISOLATION …`), **and** the token after
+     *that* is `;`, end-of-input, or a mode continuation
+     (`level` / `write` / `only` / `read` / `committed` / `uncommitted` / `repeatable` /
+     `serializable` / `deferrable` / `not` / `isolation`) → transaction control;
+   - otherwise → a plpgsql block.
+3. Rename/repurpose the tables: keep `BEGIN_NOT_BLOCK_FOLLOWERS` as the phrase words
+   (`transaction`, `work`) and add a mode-head/mode-continuation set. Do not leave the old
+   frozenset in place unused — a dead table is what produced this bug.
+
+**The confirmation step in (2) is load-bearing, not defensive padding.** Matching on `lowered`
+alone re-introduces a false positive the `keyword` accident was accidentally suppressing:
+`BEGIN\nwork := 1;\nEND;` — a plpgsql block whose first statement assigns to a variable named
+`work` — would be misread as transaction control, and the `END;` would then be swallowed by
+`_close_block`'s `_saw_transaction_begin` early return (`formatter.py:692`), silently dropping a
+real block frame. That is a *worse* bug than the one being fixed. I prototyped the rule above
+in-process and confirmed all of these come out right:
+
+| input | result with the prototype |
+|---|---|
+| `BEGIN; … COMMIT;` | ok, unchanged from today |
+| `BEGIN TRANSACTION; … COMMIT;` | ok — `BEGIN TRANSACTION;` on one line, body at level 0 |
+| `BEGIN WORK; … COMMIT;` | ok |
+| `BEGIN TRANSACTION ISOLATION LEVEL SERIALIZABLE; … COMMIT;` | ok, header on one line |
+| `BEGIN ISOLATION LEVEL SERIALIZABLE; … COMMIT;` | ok |
+| `BEGIN READ ONLY; … COMMIT;` | ok |
+| `BEGIN TRANSACTION; … END;` | ok, no bogus indent, no split phrase |
+| `BEGIN\nwork := 1;\nEND;` | **still a block** — body indented, `END;` closes it |
+| `BEGIN\ntransaction := 1;\nEND;` | **still a block** |
+
+All nine are idempotent under a second `format_selection` pass.
+
+**Gotchas for the implementer**
+
+- Do **not** touch `sql/keywords.py`. See the table above.
+- Do **not** duplicate the guard into `formatter.py` or `block_spans.py`; the whole point of
+  FQ-034 is that both call `blocks.begin_is_transaction`. `tests/sql/test_blocks.py:40`
+  asserts the `is`-identity of the alias — keep it.
+- `_saw_transaction_begin` (`formatter.py:349`, set at `:614`, read at `:692`) becomes reachable
+  for the `TRANSACTION`/`WORK` spellings for the first time. That is intended (it is what makes
+  a later bare `END;` at root accepted rather than reported as unmatched, exactly as §18.4's
+  guard table requires) — but it is a flag that was previously only ever set by `BEGIN;`, so the
+  `END;` path deserves a test of its own.
+- `blocks.py` must not import `formatter.py` (module docstring, `blocks.py:29-31`) and must stay
+  Qt-free (`tests/sql/test_package_purity.py`).
+
+**Test impact**
+
+- `tests/sql/test_blocks.py:102-118`
+  `test_transaction_begin_is_told_apart_from_a_plpgsql_begin` — **the pin must CHANGE, not stay
+  and not simply go.** Its docstring (lines 105-112) documents the limitation and its line 118
+  asserts `begin_is_transaction(items("begin transaction;"), 0) is False` with the comment *"The
+  dormant half, asserted as dormant so the day it is fixed this test says so."* This is that day:
+  flip the assertion to `is True`, replace the docstring's limitation paragraph with the
+  `Token.lowered` rationale and the reason `SQL_KEYWORDS` was **not** widened, and add cases for
+  `begin work;`, `begin transaction isolation level serializable;`, `begin isolation level …`,
+  `begin read only;`, plus the two false-positive guards (`begin\nwork := 1;\nend;` and
+  `begin\ntransaction := 1;\nend;` → `is False`). Also add a direct test for the new
+  `next_lowered` helper alongside the existing `next_keyword` coverage.
+- `tests/sql/test_formatter.py` — add golden-output cases for symptoms 1 and 2. Note the existing
+  golden at line 216 (`"begin; update t set a = 1; end;"`) exercises the `;` half only and must
+  come out unchanged. **A grep confirms `tests/` mentions `BEGIN TRANSACTION`/`BEGIN WORK` in
+  `test_blocks.py` and nowhere else**, so no existing golden moves.
+- `tests/sql/test_formatter_properties.py` — add `BEGIN TRANSACTION … COMMIT;` and
+  `BEGIN WORK … END;` to the corpus / adversarial rows (idempotence + refusal-free).
+- `tests/sql/test_block_spans.py:386`
+  `test_the_span_model_and_the_reindenter_agree_on_block_nesting` — the anti-fork corpus test.
+  Add the transaction-control rows to its corpus so the equal-nesting guarantee is re-asserted
+  over the fixed guard, and add a `structure_chain` case proving the bogus `begin` rung
+  (`inner=(6, 38)` above) is gone.
+- Baseline for the fix pass: `QT_QPA_PLATFORM=offscreen venv/bin/python -m pytest tests/sql -q -n 8`
+  is currently **1199 passed in ~4s**.
+
+**Spec impact: none needed — the fix brings the CODE into line with the spec, which already says
+so.** `CONSOLIDATED_SPEC.md:7695` (§18.4's "False-positive guards" table) states the requirement
+verbatim: *"`BEGIN;` and `BEGIN TRANSACTION|WORK|ISOLATION …` | transaction control, **not** a
+plpgsql block — and a later bare `END;` at root level is then accepted instead of reported as
+unmatched"*. So the current behaviour is **not** an intentional recorded decision — it is an
+undetected implementation gap against a spec assertion, which is why widening `SQL_KEYWORDS`
+(with its FQ-033 default-output consequences) is not on the table: the spec does not ask for
+`transaction`/`work` to be dialect keywords, only for the phrase to be recognized. Nothing to
+flag for `spec-maintainer` beyond, optionally, a one-line note that the guard is realized via
+`Token.lowered` rather than `SQL_KEYWORDS` membership and *why* — worth having, since this is the
+second guard in `blocks.py` to need it (`declare_is_cursor` was the first) and the pattern is now
+a rule rather than an exception. §18.4's spec text quoted above was read at a moment when a
+concurrent `spec-maintainer` may be rewriting the file; re-read §18.4's guard table before
+relying on the exact line number.
+
+---
